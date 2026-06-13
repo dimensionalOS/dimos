@@ -48,6 +48,10 @@ package-lock.json
 dist/
 build/
 
+# Rust build artifacts
+**/target/
+**/*.rs.bk
+
 # Ignore data directory but keep .lfs subdirectory
 data/*
 !data/.lfs/
@@ -62,8 +66,11 @@ MUJOCO_LOG.TXT
 # symlink one of .envrc.* if you'd like to use
 .envrc
 .claude
+.opencode/
 **/CLAUDE.md
+.omo/
 .direnv/
+.omo/
 
 /logs
 
@@ -75,6 +82,7 @@ MUJOCO_LOG.TXT
 /results
 results/
 **/cpp/result
+**/rust/result
 
 CLAUDE.MD
 /assets/teleop_certs/
@@ -102,3 +110,11 @@ perception2_*.db-wal
 
 # Large STL meshes for AgiBot X2 — committing via LFS or asset-package is a separate decision
 dimos/robot/agibot/x2_ultra/meshes/
+
+# Rerun recordings
+*.rrd
+
+/misc/fresh-ubuntu-tests/cache
+
+# openspec
+/openspec/changes/archive/

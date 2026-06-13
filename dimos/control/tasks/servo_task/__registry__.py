@@ -13,5 +13,5 @@
 # limitations under the License.
 
 TASK_FACTORIES = {
-    "servo": "dimos.control.tasks.servo_task:create_task",
+    "servo": "dimos.control.tasks.servo_task.servo_task:create_task",
 }

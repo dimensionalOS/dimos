@@ -18,9 +18,9 @@ from abc import abstractmethod
 from collections import deque
 from dataclasses import field
 from functools import reduce
+import threading
 import time
 
-from dimos.memory.timeseries.inmemory import InMemoryStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -29,6 +29,7 @@ from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service.spec import BaseConfig, Service
 from dimos.types.timestamped import to_human_readable
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.timeseries.inmemory import InMemoryStore
 
 logger = setup_logger()
 
@@ -59,6 +60,8 @@ class TFSpec(Service):
         child_frame: str,
         time_point: float | None = None,
         time_tolerance: float | None = None,
+        *,
+        forward_tolerance: float = 0.0,
     ) -> Transform | None: ...
 
     def receive_transform(self, *args: Transform) -> None: ...
@@ -112,29 +115,34 @@ class MultiTBuffer:
     def __init__(self, buffer_size: float = 10.0) -> None:
         self.buffers: dict[tuple[str, str], TBuffer] = {}
         self.buffer_size = buffer_size
+        self._cv = threading.Condition()
 
     def receive_transform(self, *args: Transform) -> None:
-        for transform in args:
-            key = (transform.frame_id, transform.child_frame_id)
-            if key not in self.buffers:
-                self.buffers[key] = TBuffer(self.buffer_size)
-            self.buffers[key].add(transform)
+        with self._cv:
+            for transform in args:
+                key = (transform.frame_id, transform.child_frame_id)
+                if key not in self.buffers:
+                    self.buffers[key] = TBuffer(self.buffer_size)
+                self.buffers[key].add(transform)
+            self._cv.notify_all()
 
     def get_frames(self) -> set[str]:
         frames = set()
-        for parent, child in self.buffers:
-            frames.add(parent)
-            frames.add(child)
+        with self._cv:
+            for parent, child in self.buffers:
+                frames.add(parent)
+                frames.add(child)
         return frames
 
     def get_connections(self, frame_id: str) -> set[str]:
         """Get all frames connected to the given frame (both as parent and child)."""
         connections = set()
-        for parent, child in self.buffers:
-            if parent == frame_id:
-                connections.add(child)
-            if child == frame_id:
-                connections.add(parent)
+        with self._cv:
+            for parent, child in self.buffers:
+                if parent == frame_id:
+                    connections.add(child)
+                if child == frame_id:
+                    connections.add(parent)
         return connections
 
     def get_transform(
@@ -151,18 +159,60 @@ class MultiTBuffer:
                 ts=time_point if time_point is not None else time.time(),
             )
 
-        # Check forward direction
-        key = (parent_frame, child_frame)
-        if key in self.buffers:
-            return self.buffers[key].get(time_point, time_tolerance)  # type: ignore[arg-type]
+        with self._cv:
+            # Check forward direction
+            key = (parent_frame, child_frame)
+            if key in self.buffers:
+                return self.buffers[key].get(time_point, time_tolerance)  # type: ignore[arg-type]
 
-        # Check reverse direction and return inverse
-        reverse_key = (child_frame, parent_frame)
-        if reverse_key in self.buffers:
-            transform = self.buffers[reverse_key].get(time_point, time_tolerance)  # type: ignore[arg-type]
-            return transform.inverse() if transform else None
+            # Check reverse direction and return inverse
+            reverse_key = (child_frame, parent_frame)
+            if reverse_key in self.buffers:
+                transform = self.buffers[reverse_key].get(time_point, time_tolerance)  # type: ignore[arg-type]
+                return transform.inverse() if transform else None
 
-        return None
+            return None
+
+    def _get(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: float | None = None,
+        time_tolerance: float | None = None,
+    ) -> Transform | None:
+        with self._cv:
+            simple = self.get_transform(parent_frame, child_frame, time_point, time_tolerance)
+
+            if simple is not None:
+                return simple
+
+            complex = self.get_transform_search(
+                parent_frame, child_frame, time_point, time_tolerance
+            )
+
+            if complex is None:
+                return None
+
+            return reduce(lambda t1, t2: t1 + t2, complex)
+
+    def _wait_get(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: float | None,
+        time_tolerance: float | None,
+        forward_tolerance: float,
+    ) -> Transform | None:
+        deadline = time.monotonic() + forward_tolerance
+        with self._cv:
+            while True:
+                result = self._get(parent_frame, child_frame, time_point, time_tolerance)
+                if result is not None:
+                    return result
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return None
+                self._cv.wait(timeout=remaining)
 
     def get(
         self,
@@ -170,21 +220,19 @@ class MultiTBuffer:
         child_frame: str,
         time_point: float | None = None,
         time_tolerance: float | None = None,
+        *,
+        forward_tolerance: float = 0.0,
     ) -> Transform | None:
-        simple = self.get_transform(parent_frame, child_frame, time_point, time_tolerance)
-
-        if simple is not None:
-            return simple
-
-        complex = self.get_transform_search(parent_frame, child_frame, time_point, time_tolerance)
-
-        if complex is None:
-            logger.warning(
-                f"No direct transform found between '{parent_frame}' and '{child_frame}' at '{to_human_readable(time_point or time.time())}', {self}"
+        result = self._get(parent_frame, child_frame, time_point, time_tolerance)
+        if result is None and forward_tolerance > 0:
+            result = self._wait_get(
+                parent_frame, child_frame, time_point, time_tolerance, forward_tolerance
             )
-            return None
-
-        return reduce(lambda t1, t2: t1 + t2, complex)
+        if result is None:
+            logger.warning(
+                f"No direct transform found between '{parent_frame}' and '{child_frame}' at '{to_human_readable(time_point or time.time())}'"
+            )
+        return result
 
     def get_transform_search(
         self,
@@ -194,36 +242,37 @@ class MultiTBuffer:
         time_tolerance: float | None = None,
     ) -> list[Transform] | None:
         """Search for shortest transform chain between parent and child frames using BFS."""
-        # Check if direct transform exists (already checked in get_transform, but for clarity)
-        direct = self.get_transform(parent_frame, child_frame, time_point, time_tolerance)
-        if direct is not None:
-            return [direct]
+        with self._cv:
+            # Check if direct transform exists (already checked in get_transform, but for clarity)
+            direct = self.get_transform(parent_frame, child_frame, time_point, time_tolerance)
+            if direct is not None:
+                return [direct]
 
-        # BFS to find shortest path
-        queue: deque[tuple[str, list[Transform]]] = deque([(parent_frame, [])])
-        visited = {parent_frame}
+            # BFS to find shortest path
+            queue: deque[tuple[str, list[Transform]]] = deque([(parent_frame, [])])
+            visited = {parent_frame}
 
-        while queue:
-            current_frame, path = queue.popleft()
+            while queue:
+                current_frame, path = queue.popleft()
 
-            if current_frame == child_frame:
-                return path
+                if current_frame == child_frame:
+                    return path
 
-            # Get all connections for current frame
-            connections = self.get_connections(current_frame)
+                # Get all connections for current frame
+                connections = self.get_connections(current_frame)
 
-            for next_frame in connections:
-                if next_frame not in visited:
-                    visited.add(next_frame)
+                for next_frame in connections:
+                    if next_frame not in visited:
+                        visited.add(next_frame)
 
-                    # Get the transform between current and next frame
-                    transform = self.get_transform(
-                        current_frame, next_frame, time_point, time_tolerance
-                    )
-                    if transform:
-                        queue.append((next_frame, [*path, transform]))
+                        # Get the transform between current and next frame
+                        transform = self.get_transform(
+                            current_frame, next_frame, time_point, time_tolerance
+                        )
+                        if transform:
+                            queue.append((next_frame, [*path, transform]))
 
-        return None
+            return None
 
     def graph(self) -> str:
         import subprocess
@@ -232,7 +281,9 @@ class MultiTBuffer:
             (frame_from, frame_to) = connection
             return f"{frame_from} -> {frame_to}"
 
-        graph_str = "\n".join(map(connection_str, self.buffers.keys()))
+        with self._cv:
+            keys = list(self.buffers.keys())
+        graph_str = "\n".join(map(connection_str, keys))
 
         try:
             result = subprocess.run(
@@ -246,11 +297,14 @@ class MultiTBuffer:
             return "no diagon installed"
 
     def __str__(self) -> str:
-        if not self.buffers:
+        with self._cv:
+            buffers = list(self.buffers.values())
+
+        if not buffers:
             return f"{self.__class__.__name__}(empty)"
 
-        lines = [f"{self.__class__.__name__}({len(self.buffers)} buffers):"]
-        for buffer in self.buffers.values():
+        lines = [f"{self.__class__.__name__}({len(buffers)} buffers):"]
+        for buffer in buffers:
             lines.append(f"  {buffer}")
 
         return "\n".join(lines)
@@ -307,11 +361,12 @@ class PubSubTF(MultiTBuffer, TFSpec):
     def publish_all(self) -> None:
         """Publish all transforms currently stored in all buffers."""
         all_transforms = []
-        for buffer in self.buffers.values():
-            # Get the latest transform from each buffer
-            latest = buffer.get()  # get() with no args returns latest
-            if latest:
-                all_transforms.append(latest)
+        with self._cv:
+            for buffer in self.buffers.values():
+                # Get the latest transform from each buffer
+                latest = buffer.get()  # get() with no args returns latest
+                if latest:
+                    all_transforms.append(latest)
 
         if all_transforms:
             self.publish(*all_transforms)
@@ -322,8 +377,16 @@ class PubSubTF(MultiTBuffer, TFSpec):
         child_frame: str,
         time_point: float | None = None,
         time_tolerance: float | None = None,
+        *,
+        forward_tolerance: float = 0.0,
     ) -> Transform | None:
-        return super().get(parent_frame, child_frame, time_point, time_tolerance)
+        return super().get(
+            parent_frame,
+            child_frame,
+            time_point,
+            time_tolerance,
+            forward_tolerance=forward_tolerance,
+        )
 
     def get_pose(
         self,
@@ -331,8 +394,16 @@ class PubSubTF(MultiTBuffer, TFSpec):
         child_frame: str,
         time_point: float | None = None,
         time_tolerance: float | None = None,
+        *,
+        forward_tolerance: float = 0.0,
     ) -> PoseStamped | None:
-        tf = self.get(parent_frame, child_frame, time_point, time_tolerance)
+        tf = self.get(
+            parent_frame,
+            child_frame,
+            time_point,
+            time_tolerance,
+            forward_tolerance=forward_tolerance,
+        )
         if not tf:
             return None
         return tf.to_pose()

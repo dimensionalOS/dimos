@@ -13,5 +13,5 @@
 # limitations under the License.
 
 TASK_FACTORIES = {
-    "trajectory": "dimos.control.tasks.trajectory_task:create_task",
+    "trajectory": "dimos.control.tasks.trajectory_task.trajectory_task:create_task",
 }

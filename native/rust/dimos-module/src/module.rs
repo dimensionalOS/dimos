@@ -1,16 +1,48 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
+use tracing::{error, info, warn};
+use tracing_subscriber::EnvFilter;
 
 use serde::de::DeserializeOwned;
+use serde::Deserialize;
+use validator::Validate;
 
 use crate::transport::Transport;
 
-const INPUT_CHANNEL_CAPACITY: usize = 16;
-const PUBLISH_CHANNEL_CAPACITY: usize = 64;
+/// Trait required by `Module::Config`s to ensure that configurations are
+/// validated correctly.
+pub trait ModuleConfig: DeserializeOwned + Debug + Validate {}
+impl<T: DeserializeOwned + Debug + Validate> ModuleConfig for T {}
+
+/// Default config type used by `#[derive(Module)]` when no `#[config]` field
+/// is used. Just a stand in for modules that don't use configurations.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NoConfig;
+
+impl Validate for NoConfig {
+    fn validate(&self) -> Result<(), validator::ValidationErrors> {
+        Ok(())
+    }
+}
+
+fn init_tracing() {
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let _ = tracing_subscriber::fmt()
+        .json()
+        .with_writer(std::io::stderr)
+        .with_env_filter(filter)
+        .try_init();
+}
+
+const INPUT_CHANNEL_CAPACITY: usize = 1024;
+const PUBLISH_CHANNEL_CAPACITY: usize = 1024;
 
 // Each input() call produces a TypedRoute that decodes its message type
 // and forwards it to the right Input's mpsc channel.
@@ -22,16 +54,34 @@ struct TypedRoute<T: Send + 'static> {
     topic: String,
     decode: fn(&[u8]) -> io::Result<T>,
     sender: mpsc::Sender<T>,
+    drop_count: AtomicU64,
+    last_log_ns: AtomicU64,
 }
 
 impl<T: Send + 'static> Route for TypedRoute<T> {
     fn try_dispatch(&self, data: &[u8]) {
         match (self.decode)(data) {
-            // If the input channel is full, the newest message is dropped.
-            Ok(msg) => {
-                let _ = self.sender.try_send(msg);
-            }
-            Err(e) => eprintln!("dimos_module: decode error on {}: {e}", self.topic),
+            Ok(msg) => match self.sender.try_send(msg) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    // throttle the warning logging per route
+                    // we can't use warn_throttled! because this code is shared across all route instances
+                    let n = self.drop_count.fetch_add(1, Ordering::Relaxed) + 1;
+                    if crate::log::check_and_record(
+                        &self.last_log_ns,
+                        Duration::from_secs(1).as_nanos() as u64,
+                    ) {
+                        warn!(
+                            topic = %self.topic,
+                            dropped = n,
+                            queue_cap = INPUT_CHANNEL_CAPACITY,
+                            "Dispatcher could not send message because handler was full.",
+                        );
+                    }
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {}
+            },
+            Err(e) => error!(topic = %self.topic, error = %e, "decode error"),
         }
     }
 }
@@ -94,8 +144,72 @@ fn parse_config_json<C: DeserializeOwned>(line: &str) -> io::Result<(HashMap<Str
     Ok((topics, config))
 }
 
+fn with_field(field: &str, message: String) -> String {
+    if field == "__all__" {
+        message
+    } else {
+        format!("{field}: {message}")
+    }
+}
+
+fn format_validation_errors(errors: &validator::ValidationErrors) -> String {
+    use validator::ValidationErrorsKind;
+    let mut messages = Vec::new();
+    for (field, kind) in errors.errors() {
+        match kind {
+            ValidationErrorsKind::Field(field_errs) => {
+                for err in field_errs {
+                    let label = err.message.as_deref().unwrap_or(err.code.as_ref());
+                    let mut bounds: Vec<String> = err
+                        .params
+                        .iter()
+                        .filter(|(k, _)| k.as_ref() != "value")
+                        .map(|(k, v)| format!("{k}={v}"))
+                        .collect();
+                    bounds.sort();
+                    let bounds_str = if bounds.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({})", bounds.join(", "))
+                    };
+                    let got = err
+                        .params
+                        .get("value")
+                        .map(|v| format!(" got {v}"))
+                        .unwrap_or_default();
+                    messages.push(with_field(field, format!("{label}{bounds_str}{got}")));
+                }
+            }
+            ValidationErrorsKind::Struct(nested) => {
+                messages.push(with_field(field, format_validation_errors(nested)));
+            }
+            ValidationErrorsKind::List(list) => {
+                for (idx, errs) in list {
+                    messages.push(format!(
+                        "{field}[{idx}]: {}",
+                        format_validation_errors(errs)
+                    ));
+                }
+            }
+        }
+    }
+    messages.join("; ")
+}
+
+fn validate_config<C: Validate>(config: &C) -> io::Result<()> {
+    config.validate().map_err(|errs| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "config validation failed: {}",
+                format_validation_errors(&errs)
+            ),
+        )
+    })
+}
+
 pub trait Module: Sized + Send + 'static {
-    type Config: DeserializeOwned + Debug;
+    type Config: ModuleConfig;
 
     fn build(builder: &mut Builder, config: Self::Config) -> Self;
 
@@ -149,6 +263,8 @@ impl Builder {
                 topic: topic.clone(),
                 decode,
                 sender: tx,
+                drop_count: AtomicU64::new(0),
+                last_log_ns: AtomicU64::new(0),
             }));
         Input {
             topic,
@@ -183,7 +299,7 @@ pub(crate) fn spawn_pubsub_tasks<T: Transport>(
                         }
                     }
                 }
-                Err(e) => eprintln!("dimos_module: recv error: {e}"),
+                Err(e) => error!(error = %e, "recv error"),
             }
         }
     });
@@ -192,7 +308,7 @@ pub(crate) fn spawn_pubsub_tasks<T: Transport>(
     let pub_handle = tokio::spawn(async move {
         while let Some((topic, data)) = publish_rx.recv().await {
             if let Err(e) = pub_transport.publish(&topic, &data).await {
-                eprintln!("dimos_module: publish error on {topic}: {e}");
+                error!(topic = %topic, error = %e, "publish error");
             }
         }
     });
@@ -202,34 +318,47 @@ pub(crate) fn spawn_pubsub_tasks<T: Transport>(
 
 fn propagate_task_failure(name: &str, res: Result<(), tokio::task::JoinError>) {
     match res {
-        Ok(()) => eprintln!("dimos_module: {name} task exited unexpectedly"),
+        Ok(()) => error!(task = name, "task exited unexpectedly"),
         Err(e) => {
-            eprintln!("dimos_module: {name} task panicked, propagating");
+            error!(task = name, "task panicked, propagating");
             std::panic::resume_unwind(e.into_panic());
         }
     }
 }
 
-pub async fn run<M, T>(transport: T) -> io::Result<()>
+pub async fn run<M, T>(transport: T)
 where
     M: Module,
     T: Transport,
 {
+    if let Err(e) = run_fallible::<M, T>(transport).await {
+        error!("{e}");
+        std::process::exit(1);
+    }
+}
+
+async fn run_fallible<M, T>(transport: T) -> io::Result<()>
+where
+    M: Module,
+    T: Transport,
+{
+    init_tracing();
+
     let mut line = String::new();
     BufReader::new(tokio::io::stdin())
         .read_line(&mut line)
         .await?;
     let (topics, config) = parse_config_json::<M::Config>(&line)?;
+    validate_config(&config)?;
 
     let exe = std::env::current_exe()
         .ok()
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
         .unwrap_or_else(|| "unknown".to_string());
-    eprintln!("[{exe}] topics received:");
     for (port, topic) in &topics {
-        eprintln!("  {port} -> {topic}");
+        info!(exe = %exe, port = %port, topic = %topic, "topic mapping");
     }
-    eprintln!("[{exe}] config: {config:?}");
+    info!(exe = %exe, config = ?config, "config loaded");
 
     let (publish_tx, publish_rx) = mpsc::channel::<(String, Vec<u8>)>(PUBLISH_CHANNEL_CAPACITY);
     let mut builder = Builder::new(topics, publish_tx);
@@ -262,7 +391,7 @@ mod tests {
     use super::*;
     use serde::Deserialize;
     use std::collections::VecDeque;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
     use tokio::sync::Notify;
@@ -326,6 +455,14 @@ mod tests {
             .unwrap()
             .push_back((channel.to_string(), data));
         notify.notify_one();
+    }
+
+    async fn wait_for(what: &str, mut cond: impl FnMut() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !cond() {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
 
     #[derive(Debug, Deserialize, Default, PartialEq)]
@@ -413,6 +550,38 @@ mod tests {
         assert!(result.is_err());
     }
 
+    // validate_config
+
+    #[derive(Debug, Deserialize, Validate)]
+    struct RangedConfig {
+        #[validate(range(min = 1, max = 10))]
+        value: i64,
+    }
+
+    #[test]
+    fn validate_config_passes_when_in_range() {
+        let cfg = RangedConfig { value: 5 };
+        assert!(validate_config(&cfg).is_ok());
+    }
+
+    #[test]
+    fn validate_config_returns_invalid_data_when_out_of_range() {
+        let cfg = RangedConfig { value: 0 };
+        let err = validate_config(&cfg).expect_err("expected validation failure");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        let msg = err.to_string();
+        assert!(msg.contains("value"), "error should name the field: {msg}");
+        assert!(
+            msg.contains("config validation failed"),
+            "error should be framed: {msg}",
+        );
+    }
+
+    #[test]
+    fn empty_config_validates() {
+        assert!(validate_config(&crate::module::NoConfig).is_ok());
+    }
+
     // topic_for fallback
 
     fn topics(pairs: &[(&str, &str)]) -> HashMap<String, String> {
@@ -466,6 +635,7 @@ mod tests {
     async fn slow_publish_does_not_block_recv() {
         let transport = ControllableMockTransport::new();
         let recv_log = transport.recv_log.clone();
+        let publish_log = transport.publish_log.clone();
         let inbound = transport.inbound.clone();
         let inbound_notify = transport.inbound_notify.clone();
         let publish_delay_ms = transport.publish_delay_ms.clone();
@@ -490,12 +660,16 @@ mod tests {
 
         inject_inbound(&inbound, &inbound_notify, "/data", vec![42u8]);
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        wait_for("recv to fire and publish to complete", || {
+            !recv_log.lock().unwrap().is_empty() && !publish_log.lock().unwrap().is_empty()
+        })
+        .await;
 
-        let recv_count = recv_log.lock().unwrap().len();
+        let recv_time = recv_log.lock().unwrap()[0];
+        let publish_time = publish_log.lock().unwrap()[0];
         assert!(
-            recv_count >= 1,
-            "expected recv to fire during slow publish; got {recv_count} events. \
+            recv_time < publish_time,
+            "expected recv to fire during the slow publish, not after it. \
              The recv path should be independent of publish latency."
         );
     }
@@ -511,9 +685,14 @@ mod tests {
         let (publish_tx, publish_rx) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
         let mut builder = Builder::new(topics(&[("slow", "/slow"), ("out", "/out")]), publish_tx);
 
-        // simulate slow processing function in a receive
+        // block the recv worker until the test releases it
+        static RECV_RELEASE: AtomicBool = AtomicBool::new(false);
+        RECV_RELEASE.store(false, Ordering::SeqCst);
         let _input = builder.input("slow", |b| {
-            std::thread::sleep(Duration::from_millis(200));
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !RECV_RELEASE.load(Ordering::SeqCst) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(1));
+            }
             Ok(b.to_vec())
         });
         let output = builder.output("out", |b: &Vec<u8>| b.clone());
@@ -529,16 +708,14 @@ mod tests {
 
         output.publish(&vec![42u8]).await.ok();
 
-        // receive should still be processing, but publish should go through by now
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // publish must complete while the recv worker stays blocked
+        wait_for("publish to complete while recv dispatch is blocked", || {
+            !publish_log.lock().unwrap().is_empty()
+        })
+        .await;
 
-        let publish_count = publish_log.lock().unwrap().len();
-        assert!(
-            publish_count >= 1,
-            "expected publish to fire during slow recv dispatch; got \
-             {publish_count} events. The publish path should be independent \
-             of recv-side CPU work."
-        );
+        // release the blocked decode so the runtime can shut down
+        RECV_RELEASE.store(true, Ordering::SeqCst);
     }
 
     // propagate_task_failure
@@ -563,5 +740,22 @@ mod tests {
     #[test]
     fn ok_does_not_panic() {
         propagate_task_failure("recv", Ok(()));
+    }
+
+    #[test]
+    #[tracing_test::traced_test]
+    fn typed_route_warns_and_counts_on_drop() {
+        let (tx, _rx) = mpsc::channel::<Vec<u8>>(1);
+        let route = TypedRoute {
+            topic: "/test".to_string(),
+            decode: |b| Ok(b.to_vec()),
+            sender: tx,
+            drop_count: AtomicU64::new(0),
+            last_log_ns: AtomicU64::new(0),
+        };
+        route.try_dispatch(&[1u8]); // fill queue
+        route.try_dispatch(&[1u8]); // now we warn
+        assert_eq!(route.drop_count.load(Ordering::Relaxed), 1);
+        assert!(logs_contain("handler was full"));
     }
 }

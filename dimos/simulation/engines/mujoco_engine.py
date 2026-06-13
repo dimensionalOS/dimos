@@ -60,6 +60,8 @@ _MUJOCO_FROM_BINARY_PATH = "from_binary_path"
 _RESET_WAIT_TIMEOUT_S = 5.0
 _RENDERER_GEOM_HEADROOM = 1024
 
+_MJJNT_FREE = int(mujoco.mjtJoint.mjJNT_FREE)  # type: ignore[attr-defined]
+
 
 @dataclass
 class CameraConfig:
@@ -157,6 +159,10 @@ class MujocoEngine(SimulationEngine):
             self._joint_mappings = list(self._robot_binding.joint_mappings)
         self._joint_names = [mapping.name for mapping in self._joint_mappings]
         self._num_joints = len(self._joint_names)
+        self._root_qpos_adr = self._robot_binding.root_qpos_adr if self._robot_binding else None
+        self._root_qvel_adr = self._robot_binding.root_qvel_adr if self._robot_binding else None
+        if self._root_qpos_adr is None:
+            self._root_qpos_adr, self._root_qvel_adr = self._find_first_freejoint_adrs()
         timestep = float(self._model.opt.timestep)
         self._control_frequency = 1.0 / timestep if timestep > 0.0 else 100.0
         self._root_free_qpos_adr: int | None = None
@@ -202,7 +208,11 @@ class MujocoEngine(SimulationEngine):
         before: StepHook | None = None,
         after: StepHook | None = None,
     ) -> None:
-        """Install pre/post step hooks after construction."""
+        """Install pre/post step hooks after construction.
+
+        Use when the hooks depend on engine state (joint count, gripper
+        index) that isn't known until the model is loaded.
+        """
         self._on_before_step = before
         self._on_after_step = after
 
@@ -252,6 +262,11 @@ class MujocoEngine(SimulationEngine):
             getattr(mujoco.MjModel, _MUJOCO_FROM_BINARY_PATH),
         )
         return load_binary_model(str(model_path))
+
+    def _find_first_freejoint_adrs(self) -> tuple[int | None, int | None]:
+        if self._model.njnt > 0 and int(self._model.jnt_type[0]) == _MJJNT_FREE:
+            return int(self._model.jnt_qposadr[0]), int(self._model.jnt_dofadr[0])
+        return None, None
 
     def _current_position(self, mapping: JointMapping) -> float:
         if mapping.joint_id is not None and mapping.qpos_adr is not None:
@@ -618,11 +633,27 @@ class MujocoEngine(SimulationEngine):
         return self._robot_binding
 
     @property
+    def has_root_freejoint(self) -> bool:
+        return self._root_qpos_adr is not None
+
+    @property
+    def root_qpos_adr(self) -> int | None:
+        return self._root_qpos_adr
+
+    @property
+    def root_qvel_adr(self) -> int | None:
+        return self._root_qvel_adr
+
+    @property
     def model(self) -> mujoco.MjModel:
         return self._model
 
     @property
     def data(self) -> mujoco.MjData:
+        """Live MjData. In-process consumers (sensors, PD hooks) read it
+        directly; physics integration in the sim thread mutates it under
+        ``self._lock`` so reads inside the same MujocoEngine instance are
+        coherent without extra locking."""
         return self._data
 
     @property
@@ -791,10 +822,6 @@ class MujocoEngine(SimulationEngine):
                     self._data.qvel[mapping.dof_adr] = 0.0
                     self._joint_velocities[i] = 0.0
             mujoco.mj_forward(self._model, self._data)
-
-    @property
-    def has_root_freejoint(self) -> bool:
-        return self._root_free_qpos_adr is not None
 
     def apply_root_twist(
         self,

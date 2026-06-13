@@ -29,30 +29,22 @@ import threading
 import time
 from typing import Any, TypeVar
 
-import cv2
 from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped
 from dimos_lcm.sensor_msgs import Joy as LCMJoy
-from dimos_lcm.std_msgs import Bool
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In, Out
+from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.teleop.quest.quest_types import Buttons, QuestControllerState
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.path_utils import get_project_root
 from dimos.web.robot_web_interface import RobotWebInterface
-
-# WebSocket message tags (server → client). The Quest WebXR client receives
-# these and routes by leading byte. Each camera tag carries a JPEG-encoded frame.
-_WS_TAG_CAMERA_JPEG = 0x01  # forward / head camera
-_WS_TAG_WORKSPACE_JPEG = 0x02  # workspace / down-looking camera
 
 logger = setup_logger()
 
@@ -82,10 +74,6 @@ class QuestTeleopConfig(ModuleConfig):
 
     control_loop_hz: float = 50.0
     server_port: int = 8443
-    # The WebXR client is a headset on the LAN — loopback (the
-    # FastAPIServer default via global_config.listen_host) would make the
-    # server unreachable from it. Same override vr_world uses.
-    listen_host: str = "0.0.0.0"
 
 
 _Config = TypeVar("_Config", bound=QuestTeleopConfig)
@@ -110,14 +98,6 @@ class QuestTeleopModule(Module):
     left_controller_output: Out[PoseStamped]
     right_controller_output: Out[PoseStamped]
     buttons: Out[Buttons]
-    # Optional: forward image streams to the WebXR client for in-VR display
-    # (rendered as textured quads in front of the user). Wire from a
-    # blueprint transport if you want camera-in-VR; leave unbound otherwise.
-    color_image: In[Image]  # forward-facing (tag 0x01)
-    workspace_image: In[Image]  # workspace / down-looking (tag 0x02)
-    # Optional: episode-recorder state. Forwarded to WebXR clients as a
-    # text frame so the operator gets an in-headset REC indicator.
-    recording: In[Bool]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -138,26 +118,20 @@ class QuestTeleopModule(Module):
 
         # Embedded web server — RobotWebInterface provides FastAPI app + run()/shutdown()
         self._web_server = RobotWebInterface(port=self.config.server_port)
-        self._web_server.host = self.config.listen_host
         self._web_server_thread: threading.Thread | None = None
-
-        # Camera-in-VR plumbing. ``_ws_clients`` is the set of active WebXR
-        # browser sessions; ``_server_loop`` is the uvicorn event loop, set
-        # the first time a client connects so we can schedule sends from
-        # the dimos image-callback thread.
-        self._ws_clients_lock = threading.Lock()
-        self._ws_clients: set[WebSocket] = set()
-        self._server_loop: asyncio.AbstractEventLoop | None = None
-        self._recording_active = False
-        self._last_camera_send = 0.0
-        self._last_workspace_send = 0.0
-        self._camera_min_dt = 1.0 / 30.0  # cap broadcast at 30 Hz per camera
 
         # Fingerprint-based message dispatch table
         self._decoders: dict[bytes, Any] = {
             LCMPoseStamped._get_packed_fingerprint(): self._on_pose_bytes,
             LCMJoy._get_packed_fingerprint(): self._on_joy_bytes,
         }
+
+        # Tracked here so subclasses can push from non-asyncio threads.
+        # _clients_lock guards add/discard/snapshot of the set across the
+        # uvicorn thread and the RX subscriber thread.
+        self._connected_clients: set[WebSocket] = set()
+        self._clients_lock = threading.Lock()
+        self._ws_loop: asyncio.AbstractEventLoop | None = None
 
         self._setup_routes()
 
@@ -177,17 +151,10 @@ class QuestTeleopModule(Module):
         @self._web_server.app.websocket("/ws")
         async def websocket_endpoint(ws: WebSocket) -> None:
             await ws.accept()
+            self._ws_loop = asyncio.get_running_loop()
+            with self._clients_lock:
+                self._connected_clients.add(ws)
             logger.info("Quest client connected")
-            # Capture the uvicorn event loop on first connect so the dimos
-            # image callback (running in a different thread) can schedule
-            # ws.send_bytes via run_coroutine_threadsafe.
-            self._server_loop = asyncio.get_running_loop()
-            with self._ws_clients_lock:
-                self._ws_clients.add(ws)
-            # Late-join sync: a headset connecting mid-episode still gets
-            # the REC indicator immediately.
-            if self._recording_active:
-                await self._send_json_safe(ws, {"type": "recording", "active": True})
             try:
                 while True:
                     data = await ws.receive_bytes()
@@ -202,98 +169,15 @@ class QuestTeleopModule(Module):
             except Exception:
                 logger.exception("WebSocket error")
             finally:
-                with self._ws_clients_lock:
-                    self._ws_clients.discard(ws)
+                with self._clients_lock:
+                    self._connected_clients.discard(ws)
 
     @rpc
     def start(self) -> None:
         super().start()
         self._start_server()
         self._start_control_loop()
-        # Forward image streams into connected WebXR sessions for in-VR
-        # display. Both are optional In streams; if a transport isn't wired
-        # for either, that stream stays silent.
-        for stream_attr, handler in (
-            ("color_image", self._on_color_image),
-            ("workspace_image", self._on_workspace_image),
-            ("recording", self._on_recording),
-        ):
-            try:
-                getattr(self, stream_attr).subscribe(handler)
-            except Exception:
-                logger.debug("Quest: %s not wired; skipping in-VR display", stream_attr)
         logger.info("Quest Teleoperation Module started")
-
-    def _on_recording(self, msg: Bool) -> None:
-        """Forward recorder state to WebXR clients (in-headset REC dot)."""
-        self._recording_active = bool(msg.data)
-        loop = self._server_loop
-        if loop is None:
-            return
-        with self._ws_clients_lock:
-            clients = tuple(self._ws_clients)
-        payload = {"type": "recording", "active": self._recording_active}
-        for ws in clients:
-            asyncio.run_coroutine_threadsafe(self._send_json_safe(ws, payload), loop)
-
-    async def _send_json_safe(self, ws: WebSocket, payload: dict[str, Any]) -> None:
-        try:
-            await ws.send_json(payload)
-        except Exception:
-            with self._ws_clients_lock:
-                self._ws_clients.discard(ws)
-
-    def _on_color_image(self, image: Image) -> None:
-        self._broadcast_image(image, tag=_WS_TAG_CAMERA_JPEG, is_workspace=False)
-
-    def _on_workspace_image(self, image: Image) -> None:
-        self._broadcast_image(image, tag=_WS_TAG_WORKSPACE_JPEG, is_workspace=True)
-
-    def _broadcast_image(self, image: Image, *, tag: int, is_workspace: bool) -> None:
-        """Encode an incoming Image as JPEG and broadcast to WebXR clients
-        with a one-byte tag identifying which camera it's from."""
-        # Per-camera frame-rate cap so the two streams don't starve each
-        # other when one publishes much faster than the other.
-        now = time.monotonic()
-        last_attr = "_last_workspace_send" if is_workspace else "_last_camera_send"
-        if now - getattr(self, last_attr) < self._camera_min_dt:
-            return
-        setattr(self, last_attr, now)
-
-        loop = self._server_loop
-        if loop is None:
-            return
-        with self._ws_clients_lock:
-            if not self._ws_clients:
-                return
-            clients = tuple(self._ws_clients)
-
-        try:
-            # Image.data is BGR/RGB numpy. cv2 needs BGR for .jpg encode; if
-            # we got RGB, swap channels. The cv2.imencode is the work, not
-            # the colour swap.
-            arr = image.data
-            if arr is None:
-                return
-            if str(image.format).endswith("RGB"):
-                arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
-            ok, buf = cv2.imencode(".jpg", arr, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
-            if not ok:
-                return
-            payload = bytes([tag]) + buf.tobytes()
-        except Exception:
-            logger.exception("Quest: failed to encode camera frame")
-            return
-
-        for ws in clients:
-            asyncio.run_coroutine_threadsafe(self._send_bytes_safe(ws, payload), loop)
-
-    async def _send_bytes_safe(self, ws: WebSocket, payload: bytes) -> None:
-        try:
-            await ws.send_bytes(payload)
-        except Exception:
-            with self._ws_clients_lock:
-                self._ws_clients.discard(ws)
 
     @rpc
     def stop(self) -> None:
@@ -344,8 +228,6 @@ class QuestTeleopModule(Module):
     def _on_pose_bytes(self, data: bytes) -> None:
         """Decode LCM bytes into PoseStamped, transform to robot frame."""
         msg = PoseStamped.lcm_decode(data)
-        if msg.frame_id not in {"left", "right"}:
-            return
         hand = self._resolve_hand(msg.frame_id)
         robot_pose = webxr_to_robot(msg, is_left_controller=(hand == Hand.LEFT))
         with self._lock:

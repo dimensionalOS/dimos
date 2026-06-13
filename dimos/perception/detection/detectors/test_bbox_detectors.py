@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 import pytest
-from reactivex.disposable import CompositeDisposable
 
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.Image import Image
@@ -31,29 +29,10 @@ def detector(request):
 
 
 @pytest.fixture(scope="session")
-def get_topic_annotations():
-    disposables = CompositeDisposable()
-
-    def topic_annotations(suffix: str = "unnamed"):
-        annotations: LCMTransport[ImageAnnotations] = LCMTransport(
-            f"/annotations_{suffix}", ImageAnnotations
-        )
-        disposables.add(annotations)
-        return annotations
-
-    yield topic_annotations
-    disposables.dispose()
-
-
-@pytest.fixture(scope="session")
-def detections(detector, test_image, topic_image, get_topic_annotations):
+def detections(detector, test_image, topic_image):
     """Get ImageDetections2D from any detector."""
     topic_image.publish(test_image)
     detections = detector.process_image(test_image)
-    annotations = detections.to_foxglove_annotations()
-    print("annotations:", annotations)
-    topic_annotations = get_topic_annotations(detector.__class__.__name__)
-    topic_annotations.publish(annotations)
     return detections
 
 
@@ -113,24 +92,6 @@ def test_detection_cropped_image(detections, test_image) -> None:
     if test_image.shape:
         assert cropped.shape[0] <= test_image.shape[0]
         assert cropped.shape[1] <= test_image.shape[1]
-
-
-def test_detection_annotations(detections) -> None:
-    """Test annotation generation for detections."""
-    detection = detections.detections[0]
-
-    # Test text annotations - all detections should have at least 2
-    text_annotations = detection.to_text_annotation()
-    assert len(text_annotations) >= 2  # confidence and name/track_id (person has keypoints too)
-
-    # Test points annotations - at least bbox
-    points_annotations = detection.to_points_annotation()
-    assert len(points_annotations) >= 1  # At least the bbox polygon
-
-    # Test image annotations
-    annotations = detection.to_image_annotations()
-    assert annotations.texts_length >= 2
-    assert annotations.points_length >= 1
 
 
 def test_detection_ros_conversion(detections) -> None:

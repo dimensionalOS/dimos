@@ -21,6 +21,7 @@ from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import pSHMTransport
+from dimos.mapping.costmapper import costmap_to_rerun
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.unitree.go2.blueprints.basic._babylon_sim import (
     go2_babylon_blueprint,
@@ -53,15 +54,6 @@ def _convert_camera_info(camera_info: Any) -> Any:
 
 def _convert_global_map(grid: Any) -> Any:
     return grid.to_rerun(bottom_cutoff=0)
-
-
-def _convert_navigation_costmap(grid: Any) -> Any:
-    return grid.to_rerun(
-        colormap="Accent",
-        z_offset=0.015,
-        opacity=0.2,
-        background="#484981",
-    )
 
 
 def _static_base_link(rr: Any) -> list[Any]:
@@ -110,7 +102,8 @@ rerun_config = {
     "visual_override": {
         "world/camera_info": _convert_camera_info,
         "world/global_map": _convert_global_map,
-        "world/navigation_costmap": _convert_navigation_costmap,
+        "world/merged_map": _convert_global_map,
+        "world/navigation_costmap": costmap_to_rerun,
     },
     "max_hz": {
         "world/global_map": 0,  # publishes at ~7.8 Hz
@@ -128,7 +121,6 @@ _with_vis = autoconnect(
     vis_module(
         viewer_backend=global_config.viewer,
         rerun_config=rerun_config,
-        foxglove_config={"shm_channels": ["/color_image#sensor_msgs.Image"]},
     ),
 )
 

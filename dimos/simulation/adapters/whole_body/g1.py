@@ -25,7 +25,6 @@ top of it) can't tell sim from real.
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 import time
 from typing import TYPE_CHECKING, Any
@@ -63,19 +62,18 @@ class SimMujocoG1WholeBodyAdapter:
     (q, kp, kd, tau) commands back into SHM for the engine's pre-step
     PD-with-feedforward hook to apply.
 
-    ``address`` (the MJCF XML path) is the discovery key — both sides
+    ``address`` (the MJCF XML path) is the discovery key - both sides
     derive the same SHM names from it via ``shm_key_from_path``.
     """
 
     def __init__(
         self,
         address: str | Path | None = None,
-        domain_id: int = 0,
         **_: Any,
     ) -> None:
         if address is None:
             raise ValueError(
-                "SimMujocoG1WholeBodyAdapter: address (MJCF XML path) is required — "
+                "SimMujocoG1WholeBodyAdapter: address (MJCF XML path) is required - "
                 "set HardwareComponent.address to the same MJCF path the "
                 "MujocoSimModule loads."
             )
@@ -87,7 +85,7 @@ class SimMujocoG1WholeBodyAdapter:
     # Lifecycle
 
     def connect(self) -> bool:
-        # Attach with retry — MujocoSimModule may still be starting up.
+        # Attach with retry - MujocoSimModule may still be starting up.
         deadline = time.monotonic() + _ATTACH_RETRY_TIMEOUT_S
         while True:
             try:
@@ -129,10 +127,9 @@ class SimMujocoG1WholeBodyAdapter:
 
     def disconnect(self) -> None:
         if self._shm is not None:
-            try:
-                self._shm.cleanup()
-            except Exception as e:  # best-effort cleanup
-                logger.warning(f"SHM cleanup raised: {e}")
+            # ManipShmReader.cleanup() is already best-effort: it closes each
+            # SHM buffer and swallows FileNotFoundError/OSError internally.
+            self._shm.cleanup()
         self._shm = None
         self._connected = False
 
@@ -163,33 +160,26 @@ class SimMujocoG1WholeBodyAdapter:
             return IMUState()
         assert self._shm is not None
         quat, gyro, accel = self._shm.read_imu()
-        # Derive ZYX Euler from the quaternion — matches the real G1 adapter.
-        w, x, y, z = quat
-        sinr = 2.0 * (w * x + y * z)
-        cosr = 1.0 - 2.0 * (x * x + y * y)
-        roll = math.atan2(sinr, cosr)
-        sinp = 2.0 * (w * y - z * x)
-        pitch = math.copysign(math.pi / 2.0, sinp) if abs(sinp) >= 1.0 else math.asin(sinp)
-        siny = 2.0 * (w * z + x * y)
-        cosy = 1.0 - 2.0 * (y * y + z * z)
-        yaw = math.atan2(siny, cosy)
+        # rpy is left at its zero default to match the real G1 adapter
+        # (TransportWholeBodyAdapter._on_imu). The WBC task's observation
+        # uses only quaternion + gyroscope, so euler is never read downstream.
         return IMUState(
             quaternion=quat,
             gyroscope=gyro,
             accelerometer=accel,
-            rpy=(roll, pitch, yaw),
         )
 
     def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
-        if not self._connected or self._shm is None:
+        if not self.is_connected():
             return False
+        assert self._shm is not None
         if len(commands) != _NUM_MOTORS:
             logger.error(
                 f"SimMujocoG1WholeBodyAdapter: expected {_NUM_MOTORS} commands, got {len(commands)}"
             )
             return False
         # Flatten the per-motor command into per-joint arrays.  POS_STOP
-        # ("no command") is replaced with 0.0 — the engine's PD only
+        # ("no command") is replaced with 0.0 - the engine's PD only
         # acts when kp > 0 anyway, so a zeroed q is harmless.
         q = [cmd.q if cmd.q != POS_STOP else 0.0 for cmd in commands]
         kp = [cmd.kp for cmd in commands]

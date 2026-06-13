@@ -17,13 +17,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from reactivex.disposable import Disposable
-
-from dimos.core.core import rpc
-from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.spec import mapping
@@ -31,8 +26,8 @@ from dimos.spec import mapping
 
 class RayTracingVoxelMapConfig(NativeModuleConfig):
     cwd: str | None = "rust"
-    executable: str = "target/release/voxel_ray_tracing"
-    build_command: str | None = "cargo build --release"
+    executable: str = "result/bin/voxel_ray_tracing"
+    build_command: str | None = "nix build path:."
     stdin_config: bool = True
 
     voxel_size: float = 0.1
@@ -48,13 +43,10 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     # Bounds for the health of voxels. Positive health means voxel is occupied.
     min_health: int = -2
     max_health: int = 1
-    transform_sensor_frame: bool = False
-    sensor_x: float = 0.0
-    sensor_y: float = 0.0
-    sensor_z: float = 0.0
-    sensor_roll_deg: float = 0.0
-    sensor_pitch_deg: float = 0.0
-    sensor_yaw_deg: float = 0.0
+    # Spare a clearing miss when |ray dot surface normal| is below this.
+    graze_cos: float = 0.7
+    # Only spare a voxel whose neighborhood was hit within this many frames.
+    recency_window: int = 15
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
@@ -65,31 +57,9 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
     lidar: In[PointCloud2]
     odometry: In[Odometry]
     global_map: Out[PointCloud2]
-
-
-class PoseStampedToOdometry(Module):
-    """Bridge PoseStamped odometry streams to nav_msgs.Odometry for native nav modules."""
-
-    odom: In[PoseStamped]
-    odometry: Out[Odometry]
-
-    @rpc
-    def start(self) -> None:
-        super().start()
-        self.register_disposable(Disposable(self.odom.subscribe(self._on_odom)))
-
-    def _on_odom(self, msg: PoseStamped) -> None:
-        self.odometry.publish(
-            Odometry(
-                ts=msg.ts,
-                frame_id=msg.frame_id,
-                child_frame_id="base_link",
-                pose=msg,
-            )
-        )
+    local_map: Out[PointCloud2]
 
 
 # Verify protocol port compliance (mypy will flag missing ports)
 if TYPE_CHECKING:
     RayTracingVoxelMap()
-    PoseStampedToOdometry()

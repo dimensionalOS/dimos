@@ -37,6 +37,7 @@ from typing import Any, Literal
 
 import mujoco
 import numpy as np
+from numpy.typing import NDArray
 import open3d as o3d  # type: ignore[import-untyped]
 from pydantic import Field
 import reactivex as rx
@@ -57,6 +58,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.simulation.engines.mujoco_engine import (
     CameraConfig,
@@ -64,6 +66,7 @@ from dimos.simulation.engines.mujoco_engine import (
     MujocoEngine,
 )
 from dimos.simulation.engines.mujoco_shm import (
+    CMD_MODE_PD_TAU,
     ManipShmWriter,
     shm_key_from_path,
 )
@@ -122,6 +125,115 @@ def _default_identity_transform() -> Transform:
         translation=Vector3(0.0, 0.0, 0.0),
         rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
     )
+
+
+def _imu_from_mujoco_wxyz(
+    quaternion: tuple[float, float, float, float],
+    gyroscope: tuple[float, float, float],
+    accelerometer: tuple[float, float, float],
+    *,
+    frame_id: str,
+    ts: float,
+) -> Imu:
+    w, x, y, z = quaternion
+    return Imu(
+        orientation=Quaternion(x, y, z, w),
+        angular_velocity=Vector3(*gyroscope),
+        linear_acceleration=Vector3(*accelerometer),
+        frame_id=frame_id,
+        ts=ts,
+    )
+
+
+class _WholeBodySimHooks:
+    """Per-step bridge between MuJoCo actuators and whole-body SHM."""
+
+    def __init__(
+        self,
+        shm: ManipShmWriter,
+        dof: int,
+        *,
+        gripper_idx: int | None = None,
+        gripper_ctrl_range: tuple[float, float] = (0.0, 1.0),
+        gripper_joint_range: tuple[float, float] = (0.0, 1.0),
+    ) -> None:
+        self._shm = shm
+        self._dof = dof
+        self._gripper_idx = gripper_idx
+        self._gripper_ctrl_range = gripper_ctrl_range
+        self._gripper_joint_range = gripper_joint_range
+        self._latest_pd_pos_target: NDArray[np.float64] | None = None
+        self._latest_pd_kp: NDArray[np.float64] | None = None
+        self._latest_pd_kd: NDArray[np.float64] | None = None
+        self._latest_pd_tau: NDArray[np.float64] | None = None
+
+    def pre_step(self, engine: MujocoEngine) -> None:
+        shm = self._shm
+        dof = self._dof
+
+        pos_cmd = shm.read_position_command(dof)
+        if pos_cmd is not None:
+            if shm.read_command_mode() == CMD_MODE_PD_TAU:
+                self._latest_pd_pos_target = pos_cmd
+            else:
+                engine.write_joint_command(JointState(position=pos_cmd.tolist()))
+
+        vel_cmd = shm.read_velocity_command(dof)
+        if vel_cmd is not None:
+            engine.write_joint_command(JointState(velocity=vel_cmd.tolist()))
+
+        kp_cmd = shm.read_kp_command(dof)
+        if kp_cmd is not None:
+            self._latest_pd_kp = kp_cmd
+        kd_cmd = shm.read_kd_command(dof)
+        if kd_cmd is not None:
+            self._latest_pd_kd = kd_cmd
+        tau_cmd = shm.read_tau_command(dof)
+        if tau_cmd is not None:
+            self._latest_pd_tau = tau_cmd
+
+        if (
+            self._latest_pd_pos_target is not None
+            and self._latest_pd_kp is not None
+            and self._latest_pd_kd is not None
+        ):
+            q = np.asarray(engine.joint_positions[:dof], dtype=np.float64)
+            dq = np.asarray(engine.joint_velocities[:dof], dtype=np.float64)
+            tau_ff = self._latest_pd_tau if self._latest_pd_tau is not None else np.zeros(dof)
+            tau = (
+                self._latest_pd_kp * (self._latest_pd_pos_target - q)
+                + self._latest_pd_kd * (-dq)
+                + tau_ff
+            )
+            engine.write_joint_command(JointState(effort=tau.tolist()))
+
+        if self._gripper_idx is not None:
+            gripper_cmd = shm.read_gripper_command()
+            if gripper_cmd is not None:
+                engine.set_position_target(
+                    self._gripper_idx, self._gripper_joint_to_ctrl(gripper_cmd)
+                )
+
+    def post_step(self, engine: MujocoEngine) -> None:
+        shm = self._shm
+        shm.write_joint_state(
+            positions=engine.joint_positions,
+            velocities=engine.joint_velocities,
+            efforts=engine.joint_efforts,
+        )
+        if self._gripper_idx is not None:
+            positions = engine.joint_positions
+            if self._gripper_idx < len(positions):
+                shm.write_gripper_state(positions[self._gripper_idx])
+
+    def _gripper_joint_to_ctrl(self, joint_position: float) -> float:
+        jlo, jhi = self._gripper_joint_range
+        clo, chi = self._gripper_ctrl_range
+        clamped = max(jlo, min(jhi, joint_position))
+        if jhi == jlo:
+            return clo
+        t = (clamped - jlo) / (jhi - jlo)
+        return chi - t * (chi - clo)
 
 
 class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
@@ -219,7 +331,7 @@ class MujocoSimModule(
     exposes joint state/commands to a ``ShmMujocoAdapter`` via shared memory.
 
     The adapter attaches to the same SHM buffers using the MJCF path as the
-    discovery key — no RPC, no globals. From ControlCoordinator's perspective
+    discovery key - no RPC, no globals. From ControlCoordinator's perspective
     the adapter is an ordinary ``ManipulatorAdapter``; SHM is its transport.
     """
 
@@ -681,6 +793,7 @@ class MujocoSimModule(
                 logger.error("SHM cleanup failed", error=str(exc))
                 errors.append(("shm.cleanup", exc))
 
+        self._sim_hooks = None
         self._camera_info_base = None
         self._sim_hooks = None
         self._shm_ready_signaled = False

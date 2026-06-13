@@ -1,5 +1,10 @@
 [build-system]
-requires = ["setuptools>=70", "wheel", "pybind11>=2.12"]
+requires = [
+    "setuptools>=70",
+    "wheel",
+    "pybind11>=2.12",
+    "tomli>=2.0; python_version < '3.11'",
+]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
@@ -41,6 +46,7 @@ exclude = [
     "**/*.js",
     "**/*.tcss",
     "**/*.xml",
+    "**/*.pyi",
     "rxpy_backpressure/*.txt",
 ]
 
@@ -88,7 +94,7 @@ classifiers = [
 
 dependencies = [
     # Transport Protocols
-    "dimos-lcm",
+    "dimos-lcm>=0.1.3",
     "PyTurboJPEG==1.8.2",
     # Core
     "numpy>=1.26.4",
@@ -120,18 +126,13 @@ dependencies = [
     "llvmlite>=0.42.0", # Required by numba 0.60+
     # TODO: rerun shouldn't be required but rn its in core (there is NO WAY to use dimos without rerun rn)
     # remove this once rerun is optional in core
-    # Pinned to 0.30.x so rerun-sdk and dimos-viewer (which is a fork of
-    # rerun's 0.30 series) speak the same gRPC wire format.  Allowing
-    # rerun-sdk 0.31+ produces a port mismatch (SDK→9876 vs viewer→9877)
-    # that crashes RerunBridge at startup.
-    "rerun-sdk>=0.30,<0.31",
-    "dimos-viewer>=0.30.0a2,<0.31",
+    "rerun-sdk==0.32.0a1",
+    "dimos-viewer==0.32.0a1",
     "toolz>=1.1.0",
     "protobuf>=6.33.5,<7",
     "psutil>=7.0.0",
     "sqlite-vec>=0.1.6",
     "lz4>=4.4.5",
-    "rpyc>=6.0.0",
     "bleak>=3.0.2",
     "cryptography>=46.0.5",
 ]
@@ -139,7 +140,6 @@ dependencies = [
 
 [project.scripts]
 lcmspy = "dimos.utils.cli.lcmspy.run_lcmspy:main"
-foxglove-bridge = "dimos.utils.cli.foxglove_bridge.run_foxglove_bridge:main"
 agentspy = "dimos.utils.cli.agentspy.agentspy:main"
 humancli = "dimos.utils.cli.human.humanclianim:main"
 dimos = "dimos.robot.cli.dimos:cli_main"
@@ -196,8 +196,8 @@ misc = [
 ]
 
 visualization = [
-    "rerun-sdk>=0.30,<0.31",
-    "dimos-viewer>=0.30.0a4,<0.31",
+    "rerun-sdk==0.32.0a1",
+    "dimos-viewer==0.32.0a1",
 ]
 
 agents = [
@@ -240,7 +240,7 @@ perception = [
 ]
 
 unitree = [
-    "dimos[base]",
+    "dimos[base,mapping]",
     "unitree-webrtc-connect-leshy>=2.0.7",
 ]
 
@@ -248,6 +248,7 @@ unitree-dds = [
     "dimos[unitree]",
     "unitree-sdk2py-dimos>=1.0.2",
     "cyclonedds>=0.10.5",
+    "mcap>=1.2.0",  # decode Go2 DDS mcap recordings (go2 dds store)
 ]
 
 manipulation = [
@@ -257,8 +258,9 @@ manipulation = [
 
     # Hardware SDKs
     "piper-sdk",
-    "pyrealsense2; sys_platform != 'darwin'",
+    "pyrealsense2-extended; sys_platform != 'darwin'",
     "xarm-python-sdk>=1.17.0",
+    "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
 
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
@@ -325,7 +327,9 @@ splat = [
     "gsplat>=1.5.0; platform_machine == 'x86_64' and sys_platform == 'linux'",
 ]
 
-navigation = [
+mapping = [
+    # PGO for reloc premap + nav_stack experiments
+    # Jeff's https://github.com/jeff-hykin/gtsam-extended
     "gtsam-extended>=4.3a1.post1",
 ]
 
@@ -375,27 +379,6 @@ dds = [
     "cyclonedds>=0.10.5",
 ]
 
-# Minimal dependencies for Docker modules that communicate with the DimOS host
-docker = [
-    "dimos-lcm",
-    "numpy>=1.26.4",
-    "scipy>=1.15.1",
-    "reactivex",
-    "plum-dispatch==2.5.7",
-    "structlog>=25.5.0,<26",
-    "pydantic",
-    "pydantic-settings>=2.11.0,<3",
-    "typer>=0.19.2,<1",
-    "requests>=2.28",
-    "opencv-python-headless",
-    "lcm",
-    "sortedcontainers",
-    "PyTurboJPEG",
-    "rerun-sdk",
-    "open3d-unofficial-arm>=0.19.0.post9; platform_system == 'Linux' and platform_machine == 'aarch64'",
-    "open3d>=0.18.0; platform_system != 'Linux' or platform_machine != 'aarch64'",
-]
-
 base = [
     "dimos[agents,web,perception,visualization]",
 ]
@@ -407,7 +390,7 @@ apriltag = [
 ]
 
 all = [
-    "dimos[agents,apriltag,base,cpu,cuda,docker,drone,ik,manipulation,misc,perception,psql,sim,unitree,visualization,web]",
+    "dimos[agents,apriltag,base,cpu,cuda,drone,ik,manipulation,misc,perception,psql,sim,unitree,visualization,web]",
 ]
 ik = [
     "daqp>=0.8.7",
@@ -449,14 +432,17 @@ tests = [
     "pytest-timeout==2.4.0",
     "pytest-xdist>=3.5.0",
     "pytest-cov>=5.0",
+    "pytest-error-for-skips>=2.0.2",
     "coverage>=7.0",
     "requests-mock==1.12.1",
 
     # Misc dev tools
     "pre_commit==4.2.0",
     "watchdog>=3.0.0",
-    "md-babel-py>=1.1.4",
+    "md-babel-py>=1.2.0",
     "py-spy",
+    # Builds the pyo3 Rust extension modules into the venv.
+    "maturin>=1.7",
 
     # LSP
     "python-lsp-server[all]==1.14.0",
@@ -464,7 +450,7 @@ tests = [
 
     # Deps the lint job swaps for stubs (`stubs/<pkg>/` or `types-*`):
     # the real packages are needed at test time, stubs cover mypy.
-    "dimos[apriltag,psql,drone,cpu]",
+    "dimos[apriltag,mapping,psql,drone,cpu]",
     "mujoco>=3.3.4",
     "pygame>=2.6.1",
     "python-can>=4",
@@ -507,17 +493,31 @@ lint = [
 tests-self-hosted = [
     {include-group = "tests"},
     "dimos[agents,perception,manipulation,sim,unitree,misc]",
+    # go2 dds store tests decode mcap (pure-Python). The full `unitree-dds` extra
+    # pulls `cyclonedds`, whose wheel needs a CycloneDDS C lib the ros-dev image
+    # doesn't expose to the build — and these tests never open a live DDS link.
+    "mcap>=1.2.0",
     # Needed to compile the in-tree extensions.
     "pybind11>=2.12",
 ]
 
 [tool.uv]
+required-version = ">=0.9.17"
 default-groups = ["tests"]
+exclude-newer = "7 days"
+exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false }
 override-dependencies = [
     # moondream pins pillow<11 but we need >=12.2.0 for security fixes
     # (CVE-2026-25990, CVE-2026-40192, CVE-2026-42311).
     "pillow>=12.2.0",
     "pytest==8.3.5", # because gtsam screwed up their dev dependencies
+    # langgraph-prebuilt>=1.0.9 imports ExecutionInfo from langgraph.runtime,
+    # which only exists in langgraph>=1.1; langchain==1.2.3 caps langgraph<1.1.
+    "langgraph-prebuilt<=1.0.8",
+    # opentelemetry-api>=1.39 requires importlib-metadata<8.8; without this cap
+    # uv picks importlib-metadata>=9 and cascades the otel stack down to 1.11.1,
+    # whose stale _pb2.py files crash with protobuf>=6.
+    "importlib-metadata<8.8.0",
 ]
 
 [tool.ruff]
@@ -578,6 +578,8 @@ exclude = "^dimos/models/Detic(/|$)|^dimos/rxpy_backpressure(/|$)|.*/test_.|.*/c
 [[tool.mypy.overrides]]
 module = [
     "annotation_protocol",
+    "a750_control",
+    "a750_control.*",
     "cyclonedds",
     "cyclonedds.*",
     "dimos_lcm.*",
@@ -585,6 +587,8 @@ module = [
     "faster_whisper",
     "geometry_msgs.*",
     "lazy_loader",
+    "mcap",
+    "mcap.*",
     "mujoco",
     "mujoco_playground.*",
     "nav_msgs.*",
@@ -597,8 +601,6 @@ module = [
     "plum.*",
     "portal",
     "psutil",
-    "rpyc",
-    "rpyc.*",
     "pycuda",
     "pycuda.*",
     "pydrake",
@@ -606,6 +608,8 @@ module = [
     "pyzed",
     "pyzed.*",
     "rclpy.*",
+    "reportlab",
+    "reportlab.*",
     "sam2.*",
     "scipy",
     "scipy.*",
@@ -644,7 +648,7 @@ env = [
   "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
   "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
 ]
-addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (tool or self_hosted or mujoco or dimsim or pimsim)'"
+addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (tool or self_hosted or mujoco or dimsim or pimsim or self_hosted_large)'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 

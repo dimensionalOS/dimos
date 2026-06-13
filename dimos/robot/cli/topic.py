@@ -29,7 +29,6 @@ _modules_to_try = [
     "dimos.msgs.sensor_msgs",
     "dimos.msgs.std_msgs",
     "dimos.msgs.vision_msgs",
-    "dimos.msgs.foxglove_msgs",
     "dimos.msgs.tf2_msgs",
 ]
 
@@ -115,7 +114,6 @@ def topic_send(topic: str, message_expr: str) -> None:
         "dimos.msgs.sensor_msgs",
         "dimos.msgs.std_msgs",
         "dimos.msgs.vision_msgs",
-        "dimos.msgs.foxglove_msgs",
         "dimos.msgs.tf2_msgs",
     ]
 

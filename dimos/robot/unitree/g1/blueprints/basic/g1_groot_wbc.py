@@ -406,9 +406,10 @@ def _sim_support_blueprints() -> tuple[Blueprint, ...]:
         return ()
 
     from dimos.mapping.costmapper import CostMapper
-    from dimos.mapping.ray_tracing.module import PoseStampedToOdometry, RayTracingVoxelMap
+    from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
     from dimos.mapping.static_costmap import StaticCostmapModule
     from dimos.mapping.voxels import VoxelGridMapper
+    from dimos.navigation.odometry_bridge import PoseStampedToOdometry
     from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 
     lidar_disabled = _env_bool("DIMOS_DISABLE_LIDAR", False)
@@ -419,10 +420,11 @@ def _sim_support_blueprints() -> tuple[Blueprint, ...]:
     )
     map_backend = os.environ.get("DIMOS_GLOBAL_MAP_BACKEND", "raytrace").lower()
     raytrace_mapper_available = _raytrace_mapper_available()
-    scene_lidar_publish_sensor_frame = _env_bool(
-        "DIMOS_SCENE_LIDAR_SENSOR_FRAME",
-        map_backend == "raytrace" and raytrace_mapper_available,
-    )
+    # scene_lidar raycasts in the MuJoCo world, so its native output is
+    # already world-frame — exactly what RayTracingVoxelMap consumes (it
+    # only applies odometry as the ray origin). Publish world-frame; the
+    # sensor mount offset is baked into the raycast origin inside the lidar.
+    scene_lidar_publish_sensor_frame = _env_bool("DIMOS_SCENE_LIDAR_SENSOR_FRAME", False)
     scene_lidar_scan_model = os.environ.get("DIMOS_SCENE_LIDAR_SCAN_MODEL", "mid360")
     scene_lidar_frame_id = os.environ.get("DIMOS_SCENE_LIDAR_FRAME_ID", _MID360_FRAME_ID)
     scene_lidar_sensor_x = _env_float("DIMOS_SCENE_LIDAR_SENSOR_X", _MID360_SENSOR_X_M)
@@ -526,16 +528,6 @@ def _sim_support_blueprints() -> tuple[Blueprint, ...]:
                 grace_depth=_env_float("DIMOS_RAYTRACE_GRACE_DEPTH", 0.2),
                 min_health=_env_int("DIMOS_RAYTRACE_MIN_HEALTH", -2),
                 max_health=_env_int("DIMOS_RAYTRACE_MAX_HEALTH", 1),
-                transform_sensor_frame=_env_bool(
-                    "DIMOS_RAYTRACE_TRANSFORM_SENSOR_FRAME",
-                    native_scene_lidar_enabled and scene_lidar_publish_sensor_frame,
-                ),
-                sensor_x=scene_lidar_sensor_x,
-                sensor_y=scene_lidar_sensor_y,
-                sensor_z=scene_lidar_sensor_z,
-                sensor_roll_deg=scene_lidar_sensor_roll,
-                sensor_pitch_deg=scene_lidar_sensor_pitch,
-                sensor_yaw_deg=scene_lidar_sensor_yaw,
             ).transports(
                 {
                     ("lidar", PointCloud2): LCMTransport("/lidar", PointCloud2),

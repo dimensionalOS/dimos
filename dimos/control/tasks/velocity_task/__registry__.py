@@ -13,5 +13,5 @@
 # limitations under the License.
 
 TASK_FACTORIES = {
-    "velocity": "dimos.control.tasks.velocity_task:create_task",
+    "velocity": "dimos.control.tasks.velocity_task.velocity_task:create_task",
 }

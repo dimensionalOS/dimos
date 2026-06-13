@@ -30,9 +30,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 import importlib
-import importlib.util
 import os
-from types import ModuleType
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -59,19 +57,23 @@ class ControlTaskRegistry:
                 if entry.startswith(("_", ".")):
                     continue
                 entry_path = os.path.join(root, entry)
-                manifest_path = os.path.join(entry_path, "__registry__.py")
-                if not os.path.isfile(manifest_path):
+                if not os.path.isdir(entry_path):
                     continue
 
-                module = self._load_manifest(entry, manifest_path)
+                module_name = f"dimos.control.tasks.{entry}.__registry__"
+                try:
+                    module = importlib.import_module(module_name)
+                except ModuleNotFoundError as exc:
+                    if exc.name == module_name:
+                        continue
+                    raise
+
                 task_factories = getattr(module, "TASK_FACTORIES", None)
                 if not isinstance(task_factories, Mapping):
-                    raise TypeError(f"{module.__name__} must define TASK_FACTORIES")
+                    raise TypeError(f"{module_name} must define TASK_FACTORIES")
                 for name, factory_path in task_factories.items():
                     if not isinstance(name, str) or not isinstance(factory_path, str):
-                        raise TypeError(
-                            f"{module.__name__}.TASK_FACTORIES must map strings to strings"
-                        )
+                        raise TypeError(f"{module_name}.TASK_FACTORIES must map strings to strings")
                     self.register_path(name, factory_path)
 
     def register_path(self, name: str, factory_path: str) -> None:
@@ -84,15 +86,6 @@ class ControlTaskRegistry:
             raise ValueError(f"Duplicate task type {key!r}: {existing!r} vs {factory_path!r}")
         self._factory_paths[key] = factory_path
 
-    def _load_manifest(self, entry: str, manifest_path: str) -> ModuleType:
-        module_name = f"dimos.control.tasks.{entry}.__registry__"
-        spec = importlib.util.spec_from_file_location(module_name, manifest_path)
-        if spec is None or spec.loader is None:
-            raise ImportError(f"Could not load task registry manifest {manifest_path!r}")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-
     def create(
         self,
         name: str,
@@ -104,11 +97,11 @@ class ControlTaskRegistry:
 
         Args:
             name: Registered task-type name (e.g. ``"trajectory"``).
-            cfg: ``TaskConfig`` carrying common fields plus task-specific
-                ``params`` validated by the selected task factory.
+            cfg: ``TaskConfig`` carrying the generic task envelope
+                (name/joint_names/priority) plus task-owned ``params``.
             hardware: Coordinator's hardware map. Tasks that need an
-                adapter resolve it from their params; pass ``None`` only
-                if no task in this registry needs hardware.
+                adapter resolve it from their typed params; pass ``None``
+                only if no task in this registry needs hardware.
         """
         key = name.lower()
         factory = self._resolve_factory(key)

@@ -15,10 +15,6 @@
 
 from typing import TYPE_CHECKING
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (
-    ImageAnnotations,
-)
-from lcm_msgs.foxglove_msgs import SceneUpdate  # type: ignore[import-not-found]
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
@@ -51,9 +47,6 @@ class Detection3DModule(Detection2DModule):
     pointcloud: In[PointCloud2]
 
     detections: Out[Detection2DArray]
-    annotations: Out[ImageAnnotations]
-    scene_update: Out[SceneUpdate]
-
     # just for visualization,
     # emits latest pointclouds of detected objects in a frame
     detected_pointcloud_0: Out[PointCloud2]
@@ -202,8 +195,6 @@ class Detection3DModule(Detection2DModule):
             pointcloud_topic = getattr(self, "detected_pointcloud_" + str(index))
             pointcloud_topic.publish(detection.pointcloud)
 
-        self.scene_update.publish(detections.to_foxglove_scene_update())
-
 
 def deploy(  # type: ignore[no-untyped-def]
     dimos: ModuleCoordinator,
@@ -217,9 +208,7 @@ def deploy(  # type: ignore[no-untyped-def]
     detector.image.connect(camera.color_image)
     detector.pointcloud.connect(lidar.pointcloud)
 
-    detector.annotations.transport = LCMTransport(f"{prefix}/annotations", ImageAnnotations)
     detector.detections.transport = LCMTransport(f"{prefix}/detections", Detection2DArray)
-    detector.scene_update.transport = LCMTransport(f"{prefix}/scene_update", SceneUpdate)
 
     detector.detected_image_0.transport = LCMTransport(f"{prefix}/image/0", Image)
     detector.detected_image_1.transport = LCMTransport(f"{prefix}/image/1", Image)

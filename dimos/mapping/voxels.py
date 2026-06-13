@@ -52,6 +52,7 @@ class VoxelGrid:
         device: str = "CUDA:0",
         carve_columns: bool = True,
         frame_id: str = "world",
+        show_startup_log: bool = True,
     ) -> None:
         self._voxel_size = voxel_size
         self._carve_columns = carve_columns
@@ -63,7 +64,8 @@ class VoxelGrid:
             else o3c.Device("CPU:0")
         )
 
-        logger.info(f"VoxelGrid using device: {dev}")
+        if show_startup_log:
+            logger.info(f"VoxelGrid using device: {dev}")
 
         self.vbg: o3d.t.geometry.VoxelBlockGrid | None = o3d.t.geometry.VoxelBlockGrid(
             attr_names=("dummy",),

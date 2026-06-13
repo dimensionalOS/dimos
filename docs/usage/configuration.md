@@ -30,11 +30,9 @@ try:
 except (TypeError, ValidationError) as e:
     print(f"Error: {e}")
 
-
 ```
 
-<!--Result:-->
-```
+```results
 Config(x=3, hello='world')
 Config(x=3, hello='override')
 Error: 1 validation error for Config
@@ -67,17 +65,14 @@ class MyModule(Module):
         super().__init__(**kwargs)
         print(self.config)
 
-
 myModule = MyModule(frame_id="frame_id_override", device="CPU")
 
 # In production, use dimos.deploy() instead:
 # myModule = dimos.deploy(MyModule, frame_id="frame_id_override")
 
-
 ```
 
-<!--Result:-->
-```
+```results
 Config(
     rpc_transport=<class 'dimos.protocol.rpc.pubsubrpc.LCMRPC'>,
     default_rpc_timeout=120.0,
@@ -91,11 +86,15 @@ Config(
         xarm7_ip=None,
         xarm6_ip=None,
         can_port=None,
-        simulation=False,
+        simulation='',
         replay=False,
-        replay_dir='go2_sf_office',
+        replay_db='go2_short',
         new_memory=False,
         viewer='rerun',
+        rerun_open='native',
+        rerun_web=False,
+        rerun_host=None,
+        rerun_websocket_server_port=3030,
         n_workers=2,
         memory_limit='auto',
         mujoco_camera_position=None,
@@ -111,10 +110,13 @@ Config(
         nerf_speed=1.0,
         planner_robot_speed=None,
         mcp_port=9990,
+        build_native=False,
         dtop=False,
         obstacle_avoidance=True,
         detection_model='moondream',
-        listen_host='127.0.0.1'
+        listen_host='127.0.0.1',
+        dimsim_scene='apt',
+        dimsim_port=8090
     ),
     publish_interval=0,
     voxel_size=0.05,

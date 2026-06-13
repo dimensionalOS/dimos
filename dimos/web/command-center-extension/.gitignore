@@ -1,6 +1,0 @@
-*.foxe
-/dist
-/dist-standalone
-/node_modules
-!/package.json
-!/package-lock.json

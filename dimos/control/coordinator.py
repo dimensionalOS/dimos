@@ -160,7 +160,7 @@ class ControlCoordinator(Module):
     # subscriber) can hold the GIL long enough that the tick loop misses
     # frames and the robot's onboard watchdog goes to damping. Force this
     # module onto its own worker process.
-    solo_worker: ClassVar[bool] = True
+    dedicated_worker: ClassVar[bool] = True
 
     # Output: Aggregated joint state for external consumers
     joint_state: Out[JointState]

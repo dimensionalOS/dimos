@@ -13,5 +13,5 @@
 # limitations under the License.
 
 TASK_FACTORIES = {
-    "teleop_ik": "dimos.control.tasks.teleop_task:create_task",
+    "teleop_ik": "dimos.control.tasks.teleop_task.teleop_task:create_task",
 }

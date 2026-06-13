@@ -13,5 +13,5 @@
 # limitations under the License.
 
 TASK_FACTORIES = {
-    "cartesian_ik": "dimos.control.tasks.cartesian_ik_task:create_task",
+    "cartesian_ik": "dimos.control.tasks.cartesian_ik_task.cartesian_ik_task:create_task",
 }

@@ -787,7 +787,7 @@ class SplatCameraModule(Module):
 
     # Splat rendering is expensive enough that it should never share a Python
     # worker with lidar / mapping modules that need to stay responsive.
-    solo_worker: ClassVar[bool] = True
+    dedicated_worker: ClassVar[bool] = True
 
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
