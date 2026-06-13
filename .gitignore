@@ -96,4 +96,3 @@ recording*.db
 *.rrd
 
 /misc/fresh-ubuntu-tests/cache
-.idea/

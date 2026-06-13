@@ -1,49 +1,31 @@
 from __future__ import annotations
 
-import json
 import os
 import socket
-from pathlib import Path
 
 import questionary
 
-from dimwizard.install import install
-
-_CONFIG_PATH = Path.home() / ".local" / "state" / "dimwizard" / "config.json"
-
-
-def is_configured() -> bool:
-    return _CONFIG_PATH.exists()
-
-
-def load_config() -> dict[str, str]:
-    return json.loads(_CONFIG_PATH.read_text())
-
-
-def save_config(robot_name: str) -> None:
-    _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _CONFIG_PATH.write_text(json.dumps({"robot_name": robot_name}, indent=2))
-
-
-def clear_config() -> None:
-    if _CONFIG_PATH.exists():
-        _CONFIG_PATH.unlink()
+from dimwizard.install import install, is_installed
 
 
 def setup_wizard() -> None:
-    """Hook for dimos run — runs setup on first invocation, skips on subsequent runs."""
-    if is_configured():
+    """Hook for dimos run - runs setup on invocation, skips if already installed."""
+    if is_installed():
         return
 
-    robot_name = os.environ.get("DIMENSIONAL_ROBOT_NAME", socket.gethostname())
+    robot_name = os.environ.get("DIMENSIONAL_ROBOT_NAME", socket.gethostname().split(".")[0])
     print()
     confirmed = questionary.confirm(
-        "First time running DimOS - set up robot network discovery? (recommended)",
+        "Set up robot network discovery? (recommended)",
         default=True,
     ).ask()
+
+    if confirmed is None:
+        raise KeyboardInterrupt
     if not confirmed:
         return
 
-    install()
-    save_config(robot_name)
+    if not install():
+        print("  ✗ Service installation failed — re-run `dimos run` to retry.\n")
+        return
     print(f"  ✓ {robot_name} is now discoverable on the network\n")

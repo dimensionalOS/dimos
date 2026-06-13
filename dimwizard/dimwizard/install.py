@@ -1,24 +1,62 @@
 from __future__ import annotations
 
+import os
 import platform
+import shlex
+import socket
 import subprocess
 import sys
 from pathlib import Path
+from xml.sax.saxutils import escape
+
+_DEFAULT_LCM_URL = "udpm://239.255.76.67:7667?ttl=1"
 
 _LABEL = "com.dimensional.dimwizard"
 _PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{_LABEL}.plist"
 _SYSTEMD_PATH = Path.home() / ".config" / "systemd" / "user" / "dimwizard.service"
 _LOG_PATH = Path.home() / "Library" / "Logs" / "dimwizard.log"
-_EXECUTABLE = [sys.executable, "-m", "dimwizard"]
 
 
-def install() -> None:
+def _find_executable() -> list[str]:
+    return [sys.executable, "-m", "dimwizard"]
+
+
+def is_installed() -> bool:
     if platform.system() == "Darwin":
-        _install_mac()
-    elif platform.system() == "Linux":
-        _install_linux()
-    else:
-        print(f"  Unsupported platform: {platform.system()}")
+        return _PLIST_PATH.exists()
+    if platform.system() == "Linux":
+        return _SYSTEMD_PATH.exists()
+    return False
+
+
+def is_running() -> bool:
+    if platform.system() == "Darwin":
+        result = subprocess.run(
+            ["launchctl", "list", _LABEL],
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0 and '"PID"' in result.stdout
+    if platform.system() == "Linux":
+        try:
+            result = subprocess.run(
+                ["systemctl", "--user", "is-active", "dimwizard"],
+                capture_output=True,
+                text=True,
+            )
+            return result.stdout.strip() == "active"
+        except FileNotFoundError:
+            return False
+    return False
+
+
+def install() -> bool:
+    if platform.system() == "Darwin":
+        return _install_mac()
+    if platform.system() == "Linux":
+        return _install_linux()
+    print(f"  Unsupported platform: {platform.system()}")
+    return False
 
 
 def uninstall() -> None:
@@ -28,13 +66,16 @@ def uninstall() -> None:
         _uninstall_linux()
 
 
-# ── macOS ─────────────────────────────────────────────────────────────────────
-
-def _install_mac() -> None:
+def _install_mac() -> bool:
     _PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
     _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    plist_args = "\n".join(f"        <string>{a}</string>" for a in _EXECUTABLE)
+    robot_name = os.environ.get("DIMENSIONAL_ROBOT_NAME", socket.gethostname().split(".")[0])
+    lcm_url = os.environ.get("LCM_DEFAULT_URL", _DEFAULT_LCM_URL)
+
+    executable = _find_executable()
+    plist_args = "\n".join(f"        <string>{escape(a)}</string>" for a in executable)
+    log_path = escape(str(_LOG_PATH))
 
     plist = f"""\
 <?xml version="1.0" encoding="UTF-8"?>
@@ -48,14 +89,24 @@ def _install_mac() -> None:
     <array>
 {plist_args}
     </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>DIMENSIONAL_ROBOT_NAME</key>
+        <string>{escape(robot_name)}</string>
+        <key>LCM_DEFAULT_URL</key>
+        <string>{escape(lcm_url)}</string>
+    </dict>
     <key>KeepAlive</key>
-    <true/>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>{_LOG_PATH}</string>
+    <string>{log_path}</string>
     <key>StandardErrorPath</key>
-    <string>{_LOG_PATH}</string>
+    <string>{log_path}</string>
 </dict>
 </plist>
 """
@@ -69,8 +120,10 @@ def _install_mac() -> None:
     )
     if result.returncode != 0:
         print(f"  Warning: launchctl load failed: {result.stderr.strip()}")
-    else:
-        print(f"  dimwizard installed — logs at {_LOG_PATH}")
+        _PLIST_PATH.unlink(missing_ok=True)
+        return False
+    print(f"  dimwizard installed — logs at {_LOG_PATH}")
+    return True
 
 
 def _uninstall_mac() -> None:
@@ -78,16 +131,17 @@ def _uninstall_mac() -> None:
         print("dimwizard is not installed.")
         return
     subprocess.run(["launchctl", "unload", "-w", str(_PLIST_PATH)], capture_output=True)
-    _PLIST_PATH.unlink()
+    _PLIST_PATH.unlink(missing_ok=True)
     print("  dimwizard removed.")
 
 
-# ── Linux ─────────────────────────────────────────────────────────────────────
-
-def _install_linux() -> None:
+def _install_linux() -> bool:
     _SYSTEMD_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    exec_start = " ".join(_EXECUTABLE)
+    robot_name = os.environ.get("DIMENSIONAL_ROBOT_NAME", socket.gethostname().split(".")[0])
+    lcm_url = os.environ.get("LCM_DEFAULT_URL", _DEFAULT_LCM_URL)
+
+    exec_start = " ".join(shlex.quote(a) for a in _find_executable())
 
     unit = f"""\
 [Unit]
@@ -97,9 +151,11 @@ After=network.target
 [Service]
 Type=simple
 ExecStart={exec_start}
-Restart=always
+Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+Environment="DIMENSIONAL_ROBOT_NAME={robot_name}"
+Environment="LCM_DEFAULT_URL={lcm_url}"
 
 [Install]
 WantedBy=default.target
@@ -110,10 +166,15 @@ WantedBy=default.target
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
         subprocess.run(["systemctl", "--user", "enable", "--now", "dimwizard"], check=True)
         print("  dimwizard installed.")
+        return True
     except FileNotFoundError:
         print(f"  systemctl not found — start manually: {exec_start}")
+        _SYSTEMD_PATH.unlink(missing_ok=True)
+        return False
     except subprocess.CalledProcessError as e:
         print(f"  Failed to enable service: {e}")
+        _SYSTEMD_PATH.unlink(missing_ok=True)
+        return False
 
 
 def _uninstall_linux() -> None:
@@ -124,6 +185,6 @@ def _uninstall_linux() -> None:
         subprocess.run(["systemctl", "--user", "disable", "--now", "dimwizard"], check=True)
     except subprocess.CalledProcessError:
         pass
-    _SYSTEMD_PATH.unlink()
+    _SYSTEMD_PATH.unlink(missing_ok=True)
     subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
     print("  dimwizard removed.")

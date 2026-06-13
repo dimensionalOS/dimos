@@ -1,24 +1,15 @@
 from __future__ import annotations
 
-import os
 import signal
+import sys
 import threading
 
 from dimwizard.advertise import Advertiser
-from dimwizard.setup import load_config
+from dimwizard.install import is_installed
 
 
-def _lcm_url() -> str:
-    return os.environ.get("LCM_DEFAULT_URL", "udpm://239.255.76.67:7667?ttl=1")
-
-
-def _run_beacon(robot_name: str) -> None:
-    advertiser = Advertiser(
-        robot_name=robot_name,
-        lcm_url=_lcm_url(),
-        port=7667,
-    )
-    advertiser.start()
+def _run_beacon() -> None:
+    advertiser = Advertiser()
 
     stop_event = threading.Event()
 
@@ -28,13 +19,21 @@ def _run_beacon(robot_name: str) -> None:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
+    advertiser.start()
     stop_event.wait()
     advertiser.stop()
 
 
 def main() -> None:
-    config = load_config()
-    _run_beacon(config["robot_name"])
+    if not is_installed():
+        print("dimwizard: not installed, exiting.", file=sys.stderr)
+        sys.exit(0)
+    try:
+        _run_beacon()
+    except Exception as e:
+        print(f"dimwizard: beacon error: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
-main()
+if __name__ == "__main__":
+    main()

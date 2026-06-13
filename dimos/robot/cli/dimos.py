@@ -824,8 +824,16 @@ def rerun_bridge_cmd(
 
 
 def _setup_wizard() -> None:
-    from dimwizard.setup import setup_wizard
-    setup_wizard()
+    try:
+        from dimwizard.setup import setup_wizard
+    except ImportError:
+        return
+    try:
+        setup_wizard()
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:
+        print(f"  dimwizard setup skipped: {e}")
 
 
 if __name__ == "__main__":
