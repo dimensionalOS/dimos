@@ -379,6 +379,29 @@ def test_native_planner_names_path_from_robot_config_when_start_is_unnamed(
     assert [state.name for state in result.path] == [["joint1", "joint2"]] * 3
 
 
+def test_native_planner_rejects_empty_path(
+    fake_roboplan: None, robot_config: RobotModelConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class EmptyPathRRT(FakeRRT):
+        def plan(
+            self, q_start: FakeJointConfiguration, q_goal: FakeJointConfiguration
+        ) -> FakeJointPath:
+            _ = (q_start, q_goal)
+            return FakeJointPath(["joint1", "joint2"], [])
+
+    monkeypatch.setattr(sys.modules["roboplan.rrt"], "RRT", EmptyPathRRT)
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    world.finalize()
+
+    start = JointState(name=["joint1", "joint2"], position=[0.0, 0.0])
+    goal = JointState(name=["joint1", "joint2"], position=[0.4, 0.2])
+    result = world.plan_joint_path(world, robot_id, start, goal, timeout=1.0)
+
+    assert result.status == PlanningStatus.NO_SOLUTION
+    assert result.path == []
+    assert "empty path" in result.message
+
+
 def test_collision_exclusion_pairs_are_written_to_generated_srdf(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:

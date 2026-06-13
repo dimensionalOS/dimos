@@ -397,6 +397,12 @@ class RoboPlanWorld:
                 planning_time=time.time() - start_time,
                 message=f"RoboPlan-native planning failed: {exc}",
             )
+        if not path_arrays:
+            return PlanningResult(
+                status=PlanningStatus.NO_SOLUTION,
+                planning_time=time.time() - start_time,
+                message="RoboPlan-native planning failed: returned an empty path",
+            )
         robot = self._get_robot(robot_id)
         path = [
             JointState(
