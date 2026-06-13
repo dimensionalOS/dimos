@@ -111,7 +111,7 @@ class PointLioConfig(NativeModuleConfig):
     # C++ binary reads YAML directly via yaml-cpp
     config: Annotated[
         Path, validate_as(...).transform(lambda p: p if p.is_absolute() else _CONFIG_DIR / p)
-    ] = Path("mid360.yaml")
+    ] = Path("default.yaml")
 
     debug: bool = False
 

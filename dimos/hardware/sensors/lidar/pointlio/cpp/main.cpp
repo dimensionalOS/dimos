@@ -11,7 +11,7 @@
 //   ./fastlio2_native \
 //       --lidar '/lidar#sensor_msgs.PointCloud2' \
 //       --odometry '/odometry#nav_msgs.Odometry' \
-//       --config_path /path/to/mid360.yaml \
+//       --config_path /path/to/default.yaml \
 //       --host_ip 192.168.1.5 --lidar_ip 192.168.1.155
 
 #include <lcm/lcm-cpp.hpp>
