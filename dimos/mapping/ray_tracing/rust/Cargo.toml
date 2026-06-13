@@ -22,10 +22,19 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde = { version = "1", features = ["derive"] }
 ahash = "0.8"
 tracing = "0.1"
-pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"] }
-numpy = "0.25"
+# pyo3/numpy only back the python extension (src/python.rs). They're behind
+# the `python` feature so the standalone binary (NativeModule) can build with
+# --no-default-features and avoid linking the pyo3 extension-module, which
+# does not link into a standalone binary on macOS arm64. maturin builds the
+# extension with default features on.
+pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"], optional = true }
+numpy = { version = "0.25", optional = true }
 validator = { version = "0.20", features = ["derive"] }
 nalgebra = "0.35.0"
+
+[features]
+default = ["python"]
+python = ["dep:pyo3", "dep:numpy"]
 
 [profile.release]
 lto = "thin"

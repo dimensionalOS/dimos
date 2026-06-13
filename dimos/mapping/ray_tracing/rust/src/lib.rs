@@ -3,4 +3,5 @@
 
 pub mod voxel_ray_tracer;
 
+#[cfg(feature = "python")]
 mod python;

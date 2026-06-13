@@ -12,13 +12,14 @@ use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::Header;
 use rayon::prelude::*;
 use serde::Deserialize;
+use validator::Validate;
 
 mod accel;
 mod entity;
 use accel::{Bvh, Triangle, RAY_EPSILON};
 use entity::{raycast as raycast_entity, Entity, EntityStateBatch, MeshCache};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 #[serde(deny_unknown_fields)]
 struct Config {
     scene_metadata_path: String,
@@ -617,9 +618,7 @@ async fn main() {
     let transport = LcmTransport::new()
         .await
         .expect("failed to create LCM transport");
-    run::<SceneLidar, _>(transport)
-        .await
-        .expect("scene_lidar run failed");
+    run::<SceneLidar, _>(transport).await;
 }
 
 #[cfg(test)]

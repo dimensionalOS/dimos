@@ -26,8 +26,13 @@ from dimos.spec import mapping
 
 class RayTracingVoxelMapConfig(NativeModuleConfig):
     cwd: str | None = "rust"
-    executable: str = "result/bin/voxel_ray_tracing"
-    build_command: str | None = "nix build path:."
+    executable: str = "target/release/voxel_ray_tracing"
+    # Build the standalone binary with cargo (no python feature -> no pyo3),
+    # which links cleanly on macOS arm64. The nix flake is unused for this
+    # binary; maturin still builds the python extension with default features.
+    build_command: str | None = (
+        "cargo build --release --bin voxel_ray_tracing --no-default-features"
+    )
     stdin_config: bool = True
 
     voxel_size: float = 0.1

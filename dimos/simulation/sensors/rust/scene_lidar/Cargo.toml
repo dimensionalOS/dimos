@@ -18,6 +18,7 @@ serde_json = "1"
 gltf = { version = "1", features = ["KHR_texture_transform"] }
 glam = "0.29"
 rayon = "1"
+validator = { version = "0.20", features = ["derive"] }
 
 [profile.release]
 lto = "thin"
