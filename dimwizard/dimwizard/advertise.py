@@ -54,9 +54,10 @@ class Advertiser:
         self._zeroconf.register_service(self._info)
 
     def stop(self) -> None:
-        if self._zeroconf is None or self._info is None:
+        if self._zeroconf is None:
             return
-        self._zeroconf.unregister_service(self._info)
+        if self._info is not None:
+            self._zeroconf.unregister_service(self._info)
+            self._info = None
         self._zeroconf.close()
         self._zeroconf = None
-        self._info = None

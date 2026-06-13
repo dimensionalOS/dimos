@@ -19,9 +19,11 @@ def _run_beacon() -> None:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
-    advertiser.start()
-    stop_event.wait()
-    advertiser.stop()
+    try:
+        advertiser.start()
+        stop_event.wait()
+    finally:
+        advertiser.stop()
 
 
 def main() -> None:
