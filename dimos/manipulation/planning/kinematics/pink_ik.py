@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus
 from dimos.manipulation.planning.spec.models import IKResult, WorldRobotID
@@ -43,6 +44,9 @@ logger = setup_logger()
 
 class PinkIKDependencyError(ImportError):
     """Raised when Pink or its QP solver dependencies are unavailable."""
+
+
+PinkIKConfig = PinkKinematicsConfig
 
 
 @dataclass(frozen=True)
@@ -81,43 +85,20 @@ class PinkIK:
 
     def __init__(
         self,
-        solver: str = "proxqp",
-        dt: float = 0.05,
-        max_iterations: int = 200,
-        damping: float = 1e-8,
-        position_cost: float = 1.0,
-        orientation_cost: float = 1.0,
-        posture_cost: float = 1e-3,
-        lm_damping: float = 1e-6,
-        gain: float = 0.5,
-        safety_break: bool = True,
+        config: PinkKinematicsConfig | None = None,
+        **overrides: Any,
     ) -> None:
         """Create a Pink IK backend.
 
         Args:
-            solver: qpsolvers backend name passed to Pink, e.g. ``"proxqp"``.
-            dt: Integration time step for each Pink differential IK iteration.
-            max_iterations: Maximum iterations per attempt.
-            damping: Tikhonov damping passed to ``pink.solve_ik``.
-            position_cost: FrameTask translational cost.
-            orientation_cost: FrameTask rotational cost.
-            posture_cost: PostureTask regularization cost. Set to 0 to disable.
-            lm_damping: FrameTask Levenberg-Marquardt damping.
-            gain: FrameTask gain.
-            safety_break: Pink safety-break behavior for limit violations.
+            config: Optional Pink IK configuration object.
+            **overrides: Per-field overrides applied to ``config`` for factory/CLI use.
         """
-        self._modules = _load_optional_dependencies(solver)
-        self._solver = solver
-        self._dt = dt
-        self._max_iterations = max_iterations
-        self._damping = damping
-        self._position_cost = position_cost
-        self._orientation_cost = orientation_cost
-        self._posture_cost = posture_cost
-        self._lm_damping = lm_damping
-        self._gain = gain
-        self._safety_break = safety_break
-        self._contexts: dict[str, _PinkRobotContext] = {}
+        config_values = (config or PinkKinematicsConfig()).model_dump()
+        config_values.update(overrides)
+        self.config = PinkKinematicsConfig(**config_values)
+        self._modules = _load_optional_dependencies(self.config.solver)
+        self._robot_contexts: dict[str, _PinkRobotContext] = {}
 
     def solve(
         self,
@@ -135,7 +116,7 @@ class PinkIK:
             return _failure(IKStatus.NO_SOLUTION, "World must be finalized before IK")
 
         try:
-            context = self._get_context(world, robot_id)
+            robot_context = self._get_robot_context(world, robot_id)
         except (FileNotFoundError, ImportError, ValueError) as exc:
             return _failure(IKStatus.NO_SOLUTION, f"Pink IK model setup failed: {exc}")
 
@@ -150,9 +131,9 @@ class PinkIK:
 
         for attempt in range(max_attempts):
             try:
-                q0 = self._initial_q(context, seed, lower_limits, upper_limits, attempt)
+                q0 = self._initial_q(robot_context, seed, lower_limits, upper_limits, attempt)
                 result = self._solve_single(
-                    context=context,
+                    robot_context=robot_context,
                     target_model=target_model,
                     seed_q=q0,
                     lower_limits=lower_limits,
@@ -185,7 +166,7 @@ class PinkIK:
 
     def _solve_single(
         self,
-        context: _PinkRobotContext,
+        robot_context: _PinkRobotContext,
         target_model: NDArray[np.float64],
         seed_q: NDArray[np.float64],
         lower_limits: NDArray[np.float64],
@@ -196,29 +177,29 @@ class PinkIK:
         pink = self._modules.pink
         pinocchio = self._modules.pinocchio
 
-        configuration = pink.Configuration(context.model, context.data, seed_q.copy())
+        configuration = pink.Configuration(robot_context.model, robot_context.data, seed_q.copy())
         target_se3 = _matrix_to_se3(pinocchio, target_model)
 
         frame_task = pink.tasks.FrameTask(
-            context.frame_name,
-            position_cost=self._position_cost,
-            orientation_cost=self._orientation_cost,
-            lm_damping=self._lm_damping,
-            gain=self._gain,
+            robot_context.frame_name,
+            position_cost=self.config.position_cost,
+            orientation_cost=self.config.orientation_cost,
+            lm_damping=self.config.lm_damping,
+            gain=self.config.gain,
         )
         frame_task.set_target(target_se3)
         tasks: list[Any] = [frame_task]
 
-        if self._posture_cost > 0.0:
-            posture_task = pink.tasks.PostureTask(cost=self._posture_cost)
+        if self.config.posture_cost > 0.0:
+            posture_task = pink.tasks.PostureTask(cost=self.config.posture_cost)
             posture_task.set_target_from_configuration(configuration)
             tasks.append(posture_task)
 
         final_position_error = float("inf")
         final_orientation_error = float("inf")
 
-        for iteration in range(self._max_iterations):
-            current_pose = self._current_frame_matrix(context, configuration.q)
+        for iteration in range(self.config.max_iterations):
+            current_pose = self._current_frame_matrix(robot_context, configuration.q)
             final_position_error, final_orientation_error = compute_pose_error(
                 current_pose, target_model
             )
@@ -227,8 +208,8 @@ class PinkIK:
                 and final_orientation_error <= orientation_tolerance
             ):
                 return _success(
-                    context.mapping.dimos_joint_names,
-                    self._q_to_dimos_positions(context, configuration.q),
+                    robot_context.mapping.dimos_joint_names,
+                    self._q_to_dimos_positions(robot_context, configuration.q),
                     final_position_error,
                     final_orientation_error,
                     iteration + 1,
@@ -237,14 +218,14 @@ class PinkIK:
             velocity = pink.solve_ik(
                 configuration,
                 tasks,
-                self._dt,
-                solver=self._solver,
-                damping=self._damping,
-                safety_break=self._safety_break,
+                self.config.dt,
+                solver=self.config.solver,
+                damping=self.config.damping,
+                safety_break=self.config.safety_break,
             )
-            configuration.integrate_inplace(velocity, self._dt)
+            configuration.integrate_inplace(velocity, self.config.dt)
 
-            joint_positions = self._q_to_dimos_positions(context, configuration.q)
+            joint_positions = self._q_to_dimos_positions(robot_context, configuration.q)
             if not _within_limits(joint_positions, lower_limits, upper_limits):
                 return IKResult(
                     status=IKStatus.JOINT_LIMITS,
@@ -260,17 +241,19 @@ class PinkIK:
             joint_state=None,
             position_error=final_position_error,
             orientation_error=final_orientation_error,
-            iterations=self._max_iterations,
+            iterations=self.config.max_iterations,
             message="Pink IK did not converge within the iteration budget",
         )
 
-    def _get_context(self, world: WorldSpec, robot_id: WorldRobotID) -> _PinkRobotContext:
+    def _get_robot_context(self, world: WorldSpec, robot_id: WorldRobotID) -> _PinkRobotContext:
         cache_key = str(robot_id)
-        if cache_key not in self._contexts:
-            self._contexts[cache_key] = self._build_context(world.get_robot_config(robot_id))
-        return self._contexts[cache_key]
+        if cache_key not in self._robot_contexts:
+            self._robot_contexts[cache_key] = self._build_robot_context(
+                world.get_robot_config(robot_id)
+            )
+        return self._robot_contexts[cache_key]
 
-    def _build_context(self, config: RobotModelConfig) -> _PinkRobotContext:
+    def _build_robot_context(self, config: RobotModelConfig) -> _PinkRobotContext:
         pinocchio = self._modules.pinocchio
         model_path = Path(config.model_path).resolve()
         if not model_path.exists():
@@ -505,4 +488,4 @@ def _collision_failure(result: IKResult) -> IKResult:
     )
 
 
-__all__ = ["PinkIK", "PinkIKDependencyError"]
+__all__ = ["PinkIK", "PinkIKConfig", "PinkIKDependencyError"]

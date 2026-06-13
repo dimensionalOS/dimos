@@ -27,6 +27,7 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModuleConfig,
     ManipulationState,
 )
+from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus
@@ -201,12 +202,13 @@ class TestRobotSelection:
 class TestPlanningInitialization:
     """Test planning backend configuration wiring."""
 
-    def test_kinematics_name_is_passed_to_factory(self, robot_config):
+    def test_kinematics_config_is_passed_to_factory(self, robot_config):
         """ManipulationModule config selects the requested IK backend."""
         module = _make_module()
+        kinematics = PinkKinematicsConfig(max_iterations=100, dt=0.02)
         module.config = ManipulationModuleConfig(
             robots=[robot_config],
-            kinematics_name="pink",
+            kinematics=kinematics,
             enable_viz=False,
         )
         mock_world_monitor = MagicMock(spec=WorldMonitor)
@@ -224,7 +226,48 @@ class TestPlanningInitialization:
             module._initialize_planning()
 
         mock_planner.assert_called_once_with(name="rrt_connect")
-        mock_kinematics.assert_called_once_with(name="pink")
+        mock_kinematics.assert_called_once_with(config=kinematics)
+
+    def test_legacy_kinematics_name_still_selects_backend(self, robot_config):
+        """The old kinematics_name field remains a compatibility shim."""
+        module = _make_module()
+        module.config = ManipulationModuleConfig(
+            robots=[robot_config],
+            kinematics_name="pink",
+            enable_viz=False,
+        )
+        mock_world_monitor = MagicMock(spec=WorldMonitor)
+        mock_world_monitor.add_robot.return_value = "robot_id"
+
+        with (
+            patch(
+                "dimos.manipulation.manipulation_module.WorldMonitor",
+                return_value=mock_world_monitor,
+            ),
+            patch("dimos.manipulation.manipulation_module.JointTrajectoryGenerator"),
+            patch("dimos.manipulation.manipulation_module.create_planner"),
+            patch("dimos.manipulation.manipulation_module.create_kinematics") as mock_kinematics,
+        ):
+            module._initialize_planning()
+
+        call_config = mock_kinematics.call_args.kwargs["config"]
+        assert isinstance(call_config, PinkKinematicsConfig)
+
+    def test_nested_kinematics_config_parses_cli_override_shape(self) -> None:
+        """Pydantic parses the nested CLI config shape used by -o overrides."""
+        config = ManipulationModuleConfig(
+            kinematics={
+                "backend": "pink",
+                "max_iterations": "100",
+                "dt": "0.02",
+                "posture_cost": "0.0",
+            }
+        )
+
+        assert isinstance(config.kinematics, PinkKinematicsConfig)
+        assert config.kinematics.max_iterations == 100
+        assert config.kinematics.dt == 0.02
+        assert config.kinematics.posture_cost == 0.0
 
     def test_solve_ik_rpc_calls_configured_backend(self, robot_config):
         """solve_ik returns the backend IKResult without path planning."""

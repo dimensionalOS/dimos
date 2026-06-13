@@ -26,9 +26,11 @@ import numpy as np
 import pytest
 
 from dimos.manipulation.planning.factory import create_kinematics
+from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.kinematics.jacobian_ik import JacobianIK
 from dimos.manipulation.planning.kinematics.pink_ik import (
     PinkIK,
+    PinkIKConfig,
     PinkIKDependencyError,
     _build_joint_mapping,
     _PinkModules,
@@ -174,18 +176,9 @@ def _robot_config() -> RobotModelConfig:
 
 def _pink_ik(converge: bool = True) -> PinkIK:
     ik = PinkIK.__new__(PinkIK)
+    ik.config = PinkIKConfig(max_iterations=3)
     ik._modules = _fake_modules(converge=converge)
-    ik._solver = "proxqp"
-    ik._dt = 0.05
-    ik._max_iterations = 3
-    ik._damping = 1e-8
-    ik._position_cost = 1.0
-    ik._orientation_cost = 1.0
-    ik._posture_cost = 1e-3
-    ik._lm_damping = 1e-6
-    ik._gain = 0.5
-    ik._safety_break = True
-    ik._contexts = {}
+    ik._robot_contexts = {}
     return ik
 
 
@@ -280,6 +273,36 @@ def test_create_kinematics_pink_returns_backend(monkeypatch: pytest.MonkeyPatch)
     assert isinstance(create_kinematics("pink"), PinkIK)
 
 
+def test_create_kinematics_pink_config_passes_tuning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dimos.manipulation.planning.kinematics import pink_ik
+
+    monkeypatch.setattr(pink_ik, "_load_optional_dependencies", lambda solver: _fake_modules())
+
+    ik = create_kinematics(config=PinkKinematicsConfig(max_iterations=7, dt=0.02, posture_cost=0.0))
+
+    assert isinstance(ik, PinkIK)
+    assert ik.config.max_iterations == 7
+    assert ik.config.dt == 0.02
+    assert ik.config.posture_cost == 0.0
+
+
+def test_pink_ik_config_overrides_are_applied(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dimos.manipulation.planning.kinematics import pink_ik
+
+    monkeypatch.setattr(pink_ik, "_load_optional_dependencies", lambda solver: _fake_modules())
+
+    ik = PinkIK(PinkIKConfig(solver="proxqp", dt=0.1), max_iterations=7, posture_cost=0.0)
+
+    assert ik.config == PinkIKConfig(
+        solver="proxqp",
+        dt=0.1,
+        max_iterations=7,
+        posture_cost=0.0,
+    )
+
+
 def test_joint_order_mapping_uses_names_not_positions() -> None:
     mapping = _build_joint_mapping(_FakeModel(), _robot_config())
     seed = JointState(name=["joint_b", "joint_c", "joint_a"], position=[20.0, 30.0, 10.0])
@@ -302,7 +325,7 @@ def test_solve_single_returns_successful_ik_result() -> None:
     target[:3, 3] = [0.1, 0.2, 0.3]
 
     result = ik._solve_single(
-        context=_context(),
+        robot_context=_context(),
         target_model=target,
         seed_q=np.zeros(3),
         lower_limits=np.array([-1.0, -1.0, -1.0]),
@@ -323,7 +346,7 @@ def test_solve_single_reports_non_convergence() -> None:
     target[:3, 3] = [0.1, 0.0, 0.0]
 
     result = ik._solve_single(
-        context=_context(),
+        robot_context=_context(),
         target_model=target,
         seed_q=np.zeros(3),
         lower_limits=np.array([-1.0, -1.0, -1.0]),
@@ -339,7 +362,7 @@ def test_solve_single_reports_non_convergence() -> None:
 def test_solve_rejects_collision_candidate() -> None:
     ik = _pink_ik(converge=True)
     context = _context()
-    ik._contexts = {"robot": context}
+    ik._robot_contexts = {"robot": context}
 
     result = ik.solve(
         world=cast("Any", _FakeWorld(collision_free=False)),
@@ -359,7 +382,7 @@ def test_solve_rejects_collision_candidate() -> None:
 def test_solve_retries_after_joint_limit_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     ik = _pink_ik(converge=True)
     context = _context()
-    ik._contexts = {"robot": context}
+    ik._robot_contexts = {"robot": context}
     calls = 0
 
     def fake_solve_single(**_: object) -> IKResult:

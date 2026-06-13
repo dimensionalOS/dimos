@@ -39,6 +39,11 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.manipulation.planning.factory import create_kinematics, create_planner
+from dimos.manipulation.planning.kinematics.config import (
+    JacobianKinematicsConfig,
+    ManipulationKinematicsConfig,
+    kinematics_config_from_name,
+)
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType
@@ -97,7 +102,9 @@ class ManipulationModuleConfig(ModuleConfig):
     planning_timeout: float = 10.0
     enable_viz: bool = False
     planner_name: str = "rrt_connect"  # "rrt_connect"
-    kinematics_name: str = "jacobian"  # "jacobian", "drake_optimization", or "pink"
+    kinematics: ManipulationKinematicsConfig = Field(default_factory=JacobianKinematicsConfig)
+    # Deprecated: use kinematics.backend instead.
+    kinematics_name: str | None = None  # "jacobian", "drake_optimization", or "pink"
     # Floor plane Z height (meters). When set, a box obstacle is added at startup
     # to prevent the planner from routing trajectories below this height.
     # Set to None to disable.
@@ -210,7 +217,10 @@ class ManipulationModule(Module):
                 logger.info(f"Visualization: {url}")
 
         self._planner = create_planner(name=self.config.planner_name)
-        self._kinematics = create_kinematics(name=self.config.kinematics_name)
+        kinematics_config = self.config.kinematics
+        if self.config.kinematics_name is not None:
+            kinematics_config = kinematics_config_from_name(self.config.kinematics_name)
+        self._kinematics = create_kinematics(config=kinematics_config)
 
         # Start TF publishing thread if any robot has tf_extra_links
         if any(c.tf_extra_links for _, c, _ in self._robots.values()):

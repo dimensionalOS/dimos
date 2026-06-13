@@ -46,6 +46,23 @@ dimos run coordinator-mock
 dimos run xarm7-planner-coordinator
 ```
 
+Select a non-default IK backend with nested module config overrides:
+
+```bash
+dimos run xarm7-planner-coordinator \
+  -o manipulationmodule.kinematics.backend=pink \
+  -o manipulationmodule.kinematics.max_iterations=100 \
+  -o manipulationmodule.kinematics.dt=0.02
+```
+
+For blueprints that instantiate `PickAndPlaceModule`, use the corresponding
+module prefix:
+
+```bash
+dimos run xarm-perception-sim \
+  -o pickandplacemodule.kinematics.backend=pink
+```
+
 Then use the IPython client:
 
 ```bash
