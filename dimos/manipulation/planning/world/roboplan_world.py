@@ -646,10 +646,16 @@ class RoboPlanWorld:
             method = self._lookup_method(target, names)
             if method is None:
                 continue
-            try:
-                return bool(method(scene_q))
-            except TypeError:
-                return bool(method(self._scene, scene_q))
+            args_options: tuple[tuple[Any, ...], ...] = (
+                (scene_q,),
+                (self._scene, scene_q),
+                (self._scene, target, scene_q),
+            )
+            for args in args_options:
+                try:
+                    return bool(method(*args))
+                except TypeError:
+                    continue
         raise ValueError("RoboPlan collision checking is unavailable from installed bindings")
 
     def _lookup_path_collision_checker(self) -> Any:

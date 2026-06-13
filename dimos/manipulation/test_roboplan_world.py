@@ -318,6 +318,29 @@ def test_collision_config_and_edge_checks(
     assert not world.check_edge_collision_free(robot_id, safe, colliding, step_size=0.05)
 
 
+def test_collision_check_falls_back_to_scene_after_context_signature_mismatch(
+    fake_roboplan: None, robot_config: RobotModelConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class UnsupportedCollisionContext:
+        def __init__(self, scene: FakeScene) -> None:
+            self.scene = scene
+
+        def hasCollisions(self, *_: Any) -> bool:
+            raise TypeError("unsupported collision-context signature")
+
+    monkeypatch.setattr(
+        sys.modules["roboplan.core"], "CollisionContext", UnsupportedCollisionContext
+    )
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    world.finalize()
+
+    safe = JointState(name=["joint1", "joint2"], position=[0.1, 0.2])
+    colliding = JointState(name=["joint1", "joint2"], position=[0.95, 0.2])
+
+    assert world.check_config_collision_free(robot_id, safe)
+    assert not world.check_config_collision_free(robot_id, colliding)
+
+
 def test_generic_rrt_planner_uses_roboplan_world_collision_checks(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
