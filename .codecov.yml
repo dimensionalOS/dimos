@@ -4,7 +4,9 @@ codecov:
     manual_trigger: true
 
 coverage:
-  status: false
+  status:
+    project:
+    patch:
 
 # Carry forward self-hosted, as these are not run on external PRs.
 flag_management:
@@ -13,7 +15,10 @@ flag_management:
       carryforward: true
     - name: SelfHosted-macos
       carryforward: true
+    - name: SelfHosted-Large
+      carryforward: true
 
 comment:
+  layout: "newheader, diff, flags, components, files, newfooter"
   require_head: false
   require_base: false

@@ -1,55 +1,19 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-mod adjacency;
-mod dijkstra;
-mod edges;
-mod nodes;
-mod planner;
-mod surfaces;
-mod voxel;
-
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use dimos_mls_planner::edges::{edges_to_segments, PlannerGraph};
+use dimos_mls_planner::mls_planner::{Config, Planner};
+use dimos_mls_planner::voxel::surface_point_xyz;
 use dimos_module::{error_throttled, run, warn_throttled, Input, LcmTransport, Module, Output};
 use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
-use serde::Deserialize;
 use tracing::info;
-use validator::Validate;
-
-use ahash::AHashSet;
-
-use crate::adjacency::{build_surface_cells, build_surface_lookup};
-use crate::edges::{build_node_edges, edges_to_segments, PlannerGraph};
-use crate::nodes::place_nodes;
-use crate::surfaces::{extract_surfaces, ColumnIz};
-use crate::voxel::{surface_point_xyz, voxelize, VoxelKey};
-
-#[derive(Debug, Deserialize, Validate)]
-#[serde(deny_unknown_fields)]
-struct Config {
-    world_frame: String,
-    #[validate(range(exclusive_min = 0.0))]
-    voxel_size: f32,
-    #[validate(range(exclusive_min = 0.0))]
-    robot_height: f32,
-    #[validate(range(min = 0))]
-    surface_dilation_passes: u32,
-    #[validate(range(min = 0))]
-    surface_erosion_passes: u32,
-    #[validate(range(exclusive_min = 0.0))]
-    node_spacing_m: f32,
-    #[validate(range(min = 0.0))]
-    node_wall_buffer_m: f32,
-    #[validate(range(min = 0.0))]
-    node_step_threshold_m: f32,
-}
 
 #[derive(Module)]
-#[module(setup = setup)]
 struct MlsPlanner {
     #[input(decode = PointCloud2::decode, handler = on_global_map)]
     global_map: Input<PointCloud2>,
@@ -75,32 +39,11 @@ struct MlsPlanner {
     #[config]
     config: Config,
 
-    clearance_cells: i32,
-    step_cells: i32,
-    planner_graph: Option<PlannerGraph>,
+    planner: Planner,
     latest_start: Option<(f32, f32, f32)>,
-
-    voxel_map_buf: AHashSet<VoxelKey>,
-    by_col_buf: ColumnIz,
-    surface_buf: Vec<VoxelKey>,
 }
 
 impl MlsPlanner {
-    async fn setup(&mut self) {
-        let cfg = &self.config;
-        self.clearance_cells = (cfg.robot_height / cfg.voxel_size).ceil() as i32;
-        self.step_cells = (cfg.node_step_threshold_m / cfg.voxel_size).floor() as i32;
-
-        info!(
-            world_frame = %cfg.world_frame,
-            voxel_size = cfg.voxel_size,
-            robot_height = cfg.robot_height,
-            clearance_cells = self.clearance_cells,
-            step_cells = self.step_cells,
-            "mls_planner ready",
-        );
-    }
-
     async fn on_global_map(&mut self, msg: PointCloud2) {
         let points = match extract_xyz(&msg) {
             Ok(p) => p,
@@ -117,84 +60,35 @@ impl MlsPlanner {
             return;
         }
 
+        let t = Instant::now();
+        self.planner.update_global_map(&points, &self.config);
+        let rebuild_ms = ms(t.elapsed());
+
         let voxel_size = self.config.voxel_size;
-        let step_cells = self.step_cells;
-        let clearance_cells = self.clearance_cells;
-        let dil = self.config.surface_dilation_passes;
-        let ero = self.config.surface_erosion_passes;
-        let spacing = self.config.node_spacing_m;
-        let wall_buf = self.config.node_wall_buffer_m;
-        let frame = self.config.world_frame.clone();
-
-        let t_surface = Instant::now();
-        self.voxel_map_buf.clear();
-        for &p in &points {
-            self.voxel_map_buf.insert(voxelize(p, voxel_size));
-        }
-        let voxels_count = self.voxel_map_buf.len();
-
-        extract_surfaces(
-            &self.voxel_map_buf,
-            clearance_cells,
-            dil,
-            ero,
-            &mut self.by_col_buf,
-            &mut self.surface_buf,
-        );
-        let surface_count = self.surface_buf.len();
-
-        let plg = self.planner_graph.get_or_insert_with(PlannerGraph::new);
-        build_surface_lookup(&self.surface_buf, &mut plg.surface_lookup);
-        build_surface_cells(&mut plg.cells, &plg.surface_lookup, voxel_size, step_cells);
-        let surface_ms = ms(t_surface.elapsed());
+        let frame = &self.config.world_frame;
+        let graph = self.planner.graph();
 
         let surface_points: Vec<(f32, f32, f32)> = self
-            .surface_buf
+            .planner
+            .surface()
             .iter()
             .map(|&(ix, iy, iz)| surface_point_xyz(ix, iy, iz, voxel_size))
             .collect();
-        publish_cloud(&self.surface_map, &surface_points, &frame, now()).await;
+        publish_cloud(&self.surface_map, &surface_points, frame, now()).await;
 
-        let t_nodes = Instant::now();
-        let plg = self.planner_graph.as_mut().expect("just inserted");
-        place_nodes(
-            &mut plg.cells,
-            voxel_size,
-            spacing,
-            wall_buf,
-            &mut plg.cell_state,
-            &mut plg.nodes,
-        );
-        let nodes_ms = ms(t_nodes.elapsed());
-        let nodes_count = plg.nodes.len();
+        let node_points: Vec<(f32, f32, f32)> = graph.nodes.iter().map(|n| n.pos).collect();
+        publish_cloud(&self.nodes, &node_points, frame, now()).await;
 
-        let node_points: Vec<(f32, f32, f32)> = plg.nodes.iter().map(|n| n.pos).collect();
-        publish_cloud(&self.nodes, &node_points, &frame, now()).await;
-
-        let t_edges = Instant::now();
-        let plg = self.planner_graph.as_mut().expect("just inserted");
-        build_node_edges(
-            &plg.cells,
-            &plg.nodes,
-            &mut plg.cell_state,
-            &mut plg.node_edges,
-            &mut plg.node_adj,
-        );
-        let edges_ms = ms(t_edges.elapsed());
-        let edges_count = plg.node_edges.len();
-
-        let edges_path = build_segments_path(plg, voxel_size, &frame, now());
+        let edges_path = build_segments_path(graph, voxel_size, frame, now());
         publish_path(&self.node_edges, &edges_path).await;
 
         info!(
             global_map_points = points.len(),
-            voxels = voxels_count,
-            surface_cells = surface_count,
-            nodes = nodes_count,
-            edges = edges_count,
-            surface_ms,
-            nodes_ms,
-            edges_ms,
+            voxels = self.planner.voxel_count(),
+            surface_cells = self.planner.surface().len(),
+            nodes = graph.nodes.len(),
+            edges = graph.node_edges.len(),
+            rebuild_ms,
             "global_map processed",
         );
     }
@@ -212,26 +106,12 @@ impl MlsPlanner {
             tracing::warn!("MLSPlanner received goal before start; skipping");
             return;
         };
-        let Some(plg) = self.planner_graph.as_ref() else {
-            tracing::warn!("MLSPlanner received goal before graph was built; skipping");
-            return;
-        };
-        if plg.nodes.is_empty() {
-            tracing::warn!("MLSPlanner received goal before graph had nodes; skipping");
-            return;
-        }
 
         let p = &msg.pose.position;
         let goal = (p.x as f32, p.y as f32, p.z as f32);
 
         let t_plan = Instant::now();
-        let waypoints = match planner::plan(
-            plg,
-            start,
-            goal,
-            self.config.voxel_size,
-            self.config.robot_height,
-        ) {
+        let waypoints = match self.planner.plan(start, goal, &self.config) {
             Some(wp) => wp,
             None => {
                 tracing::warn!(?start, ?goal, "no path between start and goal");
