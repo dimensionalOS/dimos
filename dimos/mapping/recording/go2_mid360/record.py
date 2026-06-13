@@ -148,7 +148,6 @@ unitree_go2_record = autoconnect(
         frame_id="world",
         map_freq=-1,
         lidar_ip=_LIDAR_IP,
-        max_velocity_norm_ms=3.1,  # meters/sec, 3.1 => 7mph, 5=>12mph. We want some padding
     ).remappings(
         [
             (FastLio2, "lidar", "fastlio_lidar"),

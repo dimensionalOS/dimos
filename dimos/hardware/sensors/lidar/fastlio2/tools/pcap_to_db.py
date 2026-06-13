@@ -77,10 +77,6 @@ _EPS = 1e-9
 _POLL_SEC = 1.0
 # Stop after the odom stream has been stagnant this long (pcap fully drained).
 _STAGNANT_SEC = 6.0
-# Go2 quadruped post-update velocity cap (m/s). Breaks the FAST-LIO velocity
-# runaway on aggressive motion; the dog cannot physically exceed this, so it
-# only ever clamps divergence. Zero disables. See FastLio2Config.
-_GO2_MAX_VELOCITY_MS = 3.1
 
 
 class RecConfig(ModuleConfig):
@@ -241,7 +237,7 @@ def _run(args: argparse.Namespace) -> int:
         offset_desc = f"auto: db wall-clock (R0={ref_start_ts:.2f})"
     print(
         f"[pcap_to_db] pcap={pcap_path.name} db={db_path.name} "
-        f"odom_freq={args.odom_freq}Hz vmax={args.max_velocity_norm_ms}m/s offset={offset_desc}",
+        f"odom_freq={args.odom_freq}Hz offset={offset_desc}",
         flush=True,
     )
 
@@ -249,7 +245,6 @@ def _run(args: argparse.Namespace) -> int:
         frame_id="world",
         map_freq=-1,
         odom_freq=args.odom_freq,
-        max_velocity_norm_ms=args.max_velocity_norm_ms,
         replay_pcap=pcap_path,
         deterministic_clock=False,
         debug=False,
@@ -323,13 +318,6 @@ def main(argv: list[str]) -> int:
         type=float,
         default=30.0,
         help="FAST-LIO odometry publish rate in Hz (default 30)",
-    )
-    parser.add_argument(
-        "--max-velocity-norm-ms",
-        type=float,
-        default=_GO2_MAX_VELOCITY_MS,
-        help=f"post-update velocity cap in m/s, anti-divergence (default {_GO2_MAX_VELOCITY_MS} "
-        "for go2; 0 disables)",
     )
     parser.add_argument(
         "--config",

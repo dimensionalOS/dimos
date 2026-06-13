@@ -506,14 +506,6 @@ int main(int argc, char** argv) {
     double msr_freq = mod.arg_float("msr_freq", 50.0f);
     double main_freq = mod.arg_float("main_freq", 5000.0f);
 
-    // Post-IESKF-update velocity cap. When |v_world| exceeds this value
-    // the EKF state is restored to the last accepted scan with vel=0 and
-    // map_incremental is skipped. Breaks the reinforcing-loop divergence
-    // that gives FAST-LIO multi-km/s velocity runaway on aggressive
-    // motion or large IMU gaps. Zero disables. Defaults sized to the
-    // Go2 quadruped envelope (~3.1 m/s); raise for faster platforms.
-    double max_velocity_norm_ms = mod.arg_float("max_velocity_norm_ms", 0.0f);
-
     // Livox hardware config
     std::string host_ip = mod.arg("host_ip", "192.168.1.5");
     std::string lidar_ip = mod.arg("lidar_ip", "192.168.1.155");
@@ -634,9 +626,6 @@ int main(int argc, char** argv) {
     // Init FAST-LIO with config
     if (debug) printf("[fastlio2] Initializing FAST-LIO...\n");
     FastLio fast_lio(config_path, msr_freq, main_freq);
-    if (max_velocity_norm_ms > 0.0) {
-        fast_lio.set_max_velocity_norm_ms(max_velocity_norm_ms);
-    }
     g_fastlio = &fast_lio;
     if (debug) printf("[fastlio2] FAST-LIO initialized.\n");
 

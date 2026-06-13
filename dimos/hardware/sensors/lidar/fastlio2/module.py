@@ -107,13 +107,6 @@ class FastLio2Config(NativeModuleConfig):
     map_voxel_size: float = 0.1
     map_max_range: float = 100.0
 
-    # VERY IMPORTANT
-    # this is used to prevent catestrophic divergence
-    # go2 dog should set this to 3.1 m/s
-    # it needs some buffer room (dog can't actually move that fast)
-    # but other than that buffer room, tigher=less chance of catestrophic divergence
-    max_velocity_norm_ms: float = 0.0
-
     # FAST-LIO YAML config (relative to config/ dir, or absolute path)
     # C++ binary reads YAML directly via yaml-cpp
     config: Annotated[
