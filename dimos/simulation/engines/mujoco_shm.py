@@ -40,8 +40,11 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# Upper bound on joint count per sim. Arms + gripper are typically <= 10.
-MAX_JOINTS = 16
+# Upper bound on joint count per sim. Single arms + gripper are <= 10, but a
+# dual-arm robot (e.g. R1Pro: 4 torso + 14 arm + 4 gripper-finger = 22) or a
+# humanoid needs more. Oversizing the SHM joint arrays is cheap and backward
+# compatible (readers/writers clamp to the actual joint count).
+MAX_JOINTS = 32
 _FLOAT_BYTES = 8  # float64
 _INT32_BYTES = 4
 
