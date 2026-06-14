@@ -319,6 +319,10 @@ drone = [
     "pymavlink"
 ]
 
+xlerobot = [
+    "lerobot[feetech]",
+]
+
 dds = [
     "cyclonedds>=0.10.5",
 ]
