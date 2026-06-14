@@ -16,9 +16,13 @@ teleop.dimensionalos.com {
         reverse_proxy 127.0.0.1:8450
     }
 
-    # Everything else → static frontend (SPA fallback)
+    # Everything else → static frontend (SPA fallback).
+    # no-cache = always revalidate via etag (304 when unchanged), so a deploy
+    # takes effect on next load instead of browsers (esp. iOS Safari) serving
+    # stale cached JS modules.
     handle {
         root * /opt/dimos-teleop/web
+        header Cache-Control "no-cache"
         try_files {path} /index.html
         file_server
     }
