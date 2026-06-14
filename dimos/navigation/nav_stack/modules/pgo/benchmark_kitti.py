@@ -25,12 +25,12 @@ import argparse
 import json
 from pathlib import Path
 
-from dimos.navigation.nav_stack.benchmarks.pose_graph_kitti360.runner import (
+from dimos.navigation.nav_stack.modules.pgo.pose_graph_kitti360.runner import (
     run_benchmark,
 )
 from dimos.navigation.nav_stack.modules.pgo.pgo import PGO
 
-# KITTI native lidar rate.
+# Warmup-resend floor for frame 0; playback is lockstep (ack-paced), not fixed-rate.
 DEFAULT_PUBLISH_INTERVAL_SEC = 0.1
 
 # Tuned PGO config for the KITTI-360 benchmark. See benchmark_regen.py
