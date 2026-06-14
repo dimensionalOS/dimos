@@ -44,6 +44,10 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.robot.catalog.galaxea import (
+    r1pro_arm as _catalog_r1pro_arm,
+    r1pro_bimanual as _catalog_r1pro_bimanual,
+)
 from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _catalog_xarm7
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -159,6 +163,151 @@ xarm7_planner_coordinator_agent = autoconnect(
     xarm7_planner_coordinator,
     McpServer.blueprint(),
     McpClient.blueprint(system_prompt=_BASE_MANIPULATION_AGENT_SYSTEM_PROMPT),
+)
+
+
+# ---------------------------------------------------------------------------
+# Galaxea R1Pro (left arm) — planner + mock coordinator + Viser visualization.
+# Visualization-only demo: open http://127.0.0.1:8095 to render the R1Pro, drag
+# the end-effector gizmo, and Plan / Preview / Execute via the Viser panel.
+# Usage: dimos run galaxea-viser-planner-coordinator
+# ---------------------------------------------------------------------------
+_r1pro_cfg = _catalog_r1pro_arm(
+    "left",
+    name="arm",
+    adapter_type="mock",
+    add_gripper=True,
+)
+
+_R1PRO_VISER_VIZ = {
+    "backend": "viser",
+    "host": "0.0.0.0",
+    "port": 8095,
+    "panel_enabled": True,
+    "allow_plan_execute": True,
+}
+
+galaxea_viser_planner_coordinator = autoconnect(
+    ManipulationModule.blueprint(
+        robots=[_r1pro_cfg.to_robot_model_config()],
+        planning_timeout=10.0,
+        kinematics_name="pink",  # Pink differential IK: fast, smooth, deterministic
+        visualization=_R1PRO_VISER_VIZ,
+    ),
+    ControlCoordinator.blueprint(
+        # 50Hz (not 100) so the state monitor writes the shared Drake context half as
+        # often, freeing the GIL/world-lock for the interactive gizmo IK eval. Still
+        # smooth for trajectory execution.
+        tick_rate=50.0,
+        publish_joint_state=True,
+        joint_state_frame_id="coordinator",
+        hardware=[_r1pro_cfg.to_hardware_component()],
+        tasks=[_r1pro_cfg.to_task_config()],
+    ),
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+    }
+)
+
+
+# Galaxea R1Pro left arm + LLM agent (gpt-4o) driving base manipulation skills.
+# No perception yet — move_to_pose / gripper / go_home over /human_input.
+# Usage: dimos run galaxea-viser-planner-coordinator-agent
+_R1PRO_AGENT_SYSTEM_PROMPT = """\
+You are a robotic manipulation assistant controlling the LEFT arm of a Galaxea
+R1Pro (a 7-DOF arm with a parallel-jaw gripper mounted on a torso).
+
+Available skills:
+- get_robot_state: Get current joint positions, end-effector pose, and gripper state.
+- move_to_pose: Move end-effector to ABSOLUTE x, y, z (meters) with optional roll, pitch, yaw (radians).
+- move_to_joints: Move to a joint configuration (comma-separated radians).
+- open_gripper / close_gripper / set_gripper: Control the gripper (open ~0.04 m, closed 0.0).
+- go_home / go_init: Return to the home / startup position.
+- reset: Clear a FAULT state and return to IDLE. Use this when a motion fails.
+
+COORDINATE SYSTEM (world frame, meters):
+- X axis = forward (away from the robot base), Y axis = left, Z axis = up.
+- The left arm mounts on the torso at roughly Z = 0.85 m, on the +Y side; its
+  natural working volume is about X = 0.1-0.5, Y = 0.1-0.5, Z = 0.6-1.0.
+
+CRITICAL WORKFLOW for relative movement (e.g. "move 20cm forward"):
+1. Call get_robot_state to read the CURRENT end-effector pose.
+2. Add the requested offset to the current position and call move_to_pose with the
+   ABSOLUTE target. Never pass only the offset.
+
+ERROR RECOVERY: if a motion fails or the state becomes FAULT, call reset before retrying.
+"""
+
+galaxea_viser_planner_coordinator_agent = autoconnect(
+    galaxea_viser_planner_coordinator,
+    McpServer.blueprint(),
+    McpClient.blueprint(system_prompt=_R1PRO_AGENT_SYSTEM_PROMPT),
+)
+
+
+# Galaxea R1Pro BIMANUAL: both arms (14 DOF) as one planning unit + mock coordinator
+# + viser. Multi-target IK (Pink) drives both arm tips at once; one synchronized
+# 14-joint path. Usage: dimos run galaxea-viser-bimanual
+_r1pro_dual_cfg = _catalog_r1pro_bimanual(name="arm", adapter_type="mock")
+
+# One gizmo per arm tip; both are solved together via multi-target IK.
+_R1PRO_BIMANUAL_VIZ = {
+    **_R1PRO_VISER_VIZ,
+    "pose_target_links": ["left_arm_link7", "right_arm_link7"],
+}
+
+galaxea_viser_bimanual = autoconnect(
+    ManipulationModule.blueprint(
+        robots=[_r1pro_dual_cfg.to_robot_model_config()],
+        planning_timeout=10.0,
+        # RoboPlan native planner + world: pinocchio/HPP-FCL collision (no Drake context
+        # clone), far faster than rrt_connect for the 14-joint bimanual problem.
+        # Requires: uv pip install "roboplan @ git+https://github.com/TomCC7/roboplan.git"
+        world_backend="roboplan",
+        planner_name="roboplan",
+        kinematics_name="pink",
+        visualization=_R1PRO_BIMANUAL_VIZ,
+    ),
+    ControlCoordinator.blueprint(
+        tick_rate=50.0,
+        publish_joint_state=True,
+        joint_state_frame_id="coordinator",
+        hardware=[_r1pro_dual_cfg.to_hardware_component()],
+        tasks=[_r1pro_dual_cfg.to_task_config()],
+    ),
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+    }
+)
+
+
+# Light-robot (xArm7) control for the viser gizmo responsiveness comparison vs the
+# heavy R1Pro — identical viser/pink/coordinator wiring, just a 7-link arm with tiny
+# meshes. If this gizmo tracks live and R1Pro doesn't, the bottleneck is robot weight
+# (render/update of the 28-joint/46-link body), not the viser code or the IK.
+# Usage: dimos run xarm7-viser-planner-coordinator
+_xarm7_viser_cfg = _catalog_xarm7(name="arm", adapter_type="mock", add_gripper=True)
+
+xarm7_viser_planner_coordinator = autoconnect(
+    ManipulationModule.blueprint(
+        robots=[_xarm7_viser_cfg.to_robot_model_config()],
+        planning_timeout=10.0,
+        kinematics_name="pink",
+        visualization=_R1PRO_VISER_VIZ,
+    ),
+    ControlCoordinator.blueprint(
+        tick_rate=50.0,
+        publish_joint_state=True,
+        joint_state_frame_id="coordinator",
+        hardware=[_xarm7_viser_cfg.to_hardware_component()],
+        tasks=[_xarm7_viser_cfg.to_task_config()],
+    ),
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+    }
 )
 
 

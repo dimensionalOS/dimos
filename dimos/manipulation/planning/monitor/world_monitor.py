@@ -21,9 +21,10 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.manipulation.planning.factory import create_world
 from dimos.manipulation.planning.monitor.robot_state_monitor import RobotStateMonitor
 from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
+from dimos.manipulation.planning.spec.models import PlanningSceneInfo
+from dimos.manipulation.planning.spec.protocols import VisualizationSpec, WorldSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
@@ -41,7 +42,6 @@ if TYPE_CHECKING:
         Obstacle,
         WorldRobotID,
     )
-    from dimos.manipulation.planning.spec.protocols import WorldSpec
     from dimos.msgs.vision_msgs.Detection3D import Detection3D
     from dimos.perception.detection.type.detection3d.object import Object
 
@@ -53,14 +53,14 @@ class WorldMonitor:
 
     def __init__(
         self,
-        backend: str = "drake",
-        enable_viz: bool = False,
-        **kwargs: Any,
+        world: WorldSpec,
+        visualization: VisualizationSpec | None = None,
     ) -> None:
-        self._backend = backend
-        self._world: WorldSpec = create_world(backend=backend, enable_viz=enable_viz, **kwargs)
+        self._world = world
+        self._visualization = visualization
         self._lock = threading.RLock()
         self._robot_joints: dict[WorldRobotID, list[str]] = {}
+        self._robot_configs: dict[WorldRobotID, RobotModelConfig] = {}
         self._state_monitors: dict[WorldRobotID, RobotStateMonitor] = {}
         self._obstacle_monitor: WorldObstacleMonitor | None = None
         self._viz_thread: threading.Thread | None = None
@@ -74,8 +74,21 @@ class WorldMonitor:
         with self._lock:
             robot_id = self._world.add_robot(config)
             self._robot_joints[robot_id] = config.joint_names
+            self._robot_configs[robot_id] = config
             logger.info(f"Added robot '{config.name}' as '{robot_id}'")
-            return robot_id
+        return robot_id
+
+    def planning_scene_info(self) -> PlanningSceneInfo:
+        """Return a stable metadata snapshot of the initialized planning scene."""
+        with self._lock:
+            return PlanningSceneInfo(robots=dict(self._robot_configs))
+
+    def sync_visualization_scene(self) -> None:
+        """Synchronize startup scene metadata to the attached visualization."""
+        visualization = self._visualization
+        if visualization is None:
+            return
+        visualization.initialize_scene(self.planning_scene_info())
 
     def get_robot_ids(self) -> list[WorldRobotID]:
         """Get all robot IDs."""
@@ -180,7 +193,8 @@ class WorldMonitor:
 
             logger.info("All monitors stopped")
 
-        self._world.close()
+        if self._visualization is not None:
+            self._visualization.close()
 
     # Message Handlers
 
@@ -418,15 +432,35 @@ class WorldMonitor:
 
     def get_visualization_url(self) -> str | None:
         """Get visualization URL or None if not enabled."""
-        if hasattr(self._world, "get_visualization_url"):
-            url = self._world.get_visualization_url()
+        if self._visualization is not None:
+            url = self._visualization.get_visualization_url()
             return str(url) if url else None
         return None
 
     def publish_visualization(self) -> None:
         """Force publish current state to visualization."""
-        if hasattr(self._world, "publish_visualization"):
-            self._world.publish_visualization()
+        if self._visualization is not None:
+            self._visualization.publish_visualization()
+
+    def show_preview(self, robot_id: WorldRobotID) -> None:
+        """Show the preview representation for a robot if visualization is available."""
+        if self._visualization is not None:
+            self._visualization.show_preview(robot_id)
+
+    def hide_preview(self, robot_id: WorldRobotID) -> None:
+        """Hide the preview representation for a robot if visualization is available."""
+        if self._visualization is not None:
+            self._visualization.hide_preview(robot_id)
+
+    def animate_path(
+        self,
+        robot_id: WorldRobotID,
+        path: JointPath,
+        duration: float = 3.0,
+    ) -> None:
+        """Animate a path if visualization is available."""
+        if self._visualization is not None:
+            self._visualization.animate_path(robot_id, path, duration)
 
     def start_visualization_thread(self, rate_hz: float = 10.0) -> None:
         """Start background thread for visualization updates at given rate."""
@@ -434,7 +468,7 @@ class WorldMonitor:
             logger.warning("Visualization thread already running")
             return
 
-        if not hasattr(self._world, "publish_visualization"):
+        if self._visualization is None:
             logger.warning("World does not support visualization")
             return
 
@@ -442,7 +476,7 @@ class WorldMonitor:
         self._viz_stop_event.clear()
         self._viz_thread = threading.Thread(
             target=self._visualization_loop,
-            name="MeshcatVizThread",
+            name="ManipulationVizThread",
             daemon=True,
         )
         self._viz_thread.start()
@@ -467,8 +501,7 @@ class WorldMonitor:
         period = 1.0 / self._viz_rate_hz
         while not self._viz_stop_event.is_set():
             try:
-                if hasattr(self._world, "publish_visualization"):
-                    self._world.publish_visualization()
+                self.publish_visualization()
             except Exception as e:
                 logger.debug(f"Visualization publish failed: {e}")
             time.sleep(period)
@@ -479,6 +512,15 @@ class WorldMonitor:
     def world(self) -> WorldSpec:
         """Get underlying WorldSpec. Not thread-safe for modifications."""
         return self._world
+
+    @property
+    def visualization(self) -> VisualizationSpec | None:
+        """Get optional visualization backend."""
+        return self._visualization
+
+    def set_visualization(self, visualization: VisualizationSpec | None) -> None:
+        """Set optional visualization backend after monitor construction."""
+        self._visualization = visualization
 
     def get_state_monitor(self, robot_id: str) -> RobotStateMonitor | None:
         """Get state monitor for a robot (may be None)."""

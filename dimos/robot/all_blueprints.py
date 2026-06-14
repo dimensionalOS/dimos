@@ -58,6 +58,9 @@ all_blueprints = {
     "drone-agentic": "dimos.robot.drone.blueprints.agentic.drone_agentic:drone_agentic",
     "drone-basic": "dimos.robot.drone.blueprints.basic.drone_basic:drone_basic",
     "dual-xarm6-planner": "dimos.manipulation.blueprints:dual_xarm6_planner",
+    "galaxea-viser-bimanual": "dimos.manipulation.blueprints:galaxea_viser_bimanual",
+    "galaxea-viser-planner-coordinator": "dimos.manipulation.blueprints:galaxea_viser_planner_coordinator",
+    "galaxea-viser-planner-coordinator-agent": "dimos.manipulation.blueprints:galaxea_viser_planner_coordinator_agent",
     "keyboard-teleop-a750": "dimos.robot.manipulators.a750.blueprints:keyboard_teleop_a750",
     "keyboard-teleop-openarm": "dimos.robot.manipulators.openarm.blueprints:keyboard_teleop_openarm",
     "keyboard-teleop-openarm-mock": "dimos.robot.manipulators.openarm.blueprints:keyboard_teleop_openarm_mock",
@@ -121,6 +124,7 @@ all_blueprints = {
     "xarm6-planner-only": "dimos.manipulation.blueprints:xarm6_planner_only",
     "xarm7-planner-coordinator": "dimos.manipulation.blueprints:xarm7_planner_coordinator",
     "xarm7-planner-coordinator-agent": "dimos.manipulation.blueprints:xarm7_planner_coordinator_agent",
+    "xarm7-viser-planner-coordinator": "dimos.manipulation.blueprints:xarm7_viser_planner_coordinator",
 }
 
 
@@ -166,6 +170,7 @@ all_modules = {
     "keyboard-teleop-module": "dimos.teleop.keyboard.keyboard_teleop_module.KeyboardTeleopModule",
     "local-planner": "dimos.navigation.nav_stack.modules.local_planner.local_planner.LocalPlanner",
     "manipulation-module": "dimos.manipulation.manipulation_module.ManipulationModule",
+    "manipulation-stream-recorder": "dimos.manipulation.eval.stream_recorder.ManipulationStreamRecorder",
     "map": "dimos.robot.unitree.type.map.Map",
     "marker-detection-stream-module": "dimos.perception.fiducial.marker_detection_stream_module.MarkerDetectionStreamModule",
     "marker-tf-module": "dimos.perception.fiducial.marker_tf_module.MarkerTfModule",

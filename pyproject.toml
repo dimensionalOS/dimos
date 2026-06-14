@@ -256,14 +256,25 @@ manipulation = [
     "trimesh",
     "pycollada",
 
+    # Pink task/QP inverse kinematics (differential IK backend)
+    "pin-pink>=4.2.0",
+    "qpsolvers[proxqp]>=4.12.0",
+
     # Visualization (Optional)
     "kaleido>=0.2.1",
     "plotly>=5.9.0",
     "xacro",
+    "viser[urdf]>=1.0.29",
 
     # Other
     "matplotlib>=3.7.1",
     "pyyaml>=6.0",
+]
+
+# RoboPlan native planning backend (pinocchio/HPP-FCL collision; far faster than
+# rrt_connect for high-DOF/bimanual). Install: uv pip install -e ".[manipulation-roboplan]"
+manipulation-roboplan = [
+    "roboplan @ git+https://github.com/TomCC7/roboplan.git",
 ]
 
 

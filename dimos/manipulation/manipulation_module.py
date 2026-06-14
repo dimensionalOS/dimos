@@ -29,7 +29,8 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any, TypeAlias
 
-from pydantic import Field
+import numpy as np
+from pydantic import Field, model_validator
 
 from dimos.agents.annotation import skill
 from dimos.agents.skill_result import SkillResult
@@ -37,7 +38,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.manipulation.planning.factory import create_kinematics, create_planner
+from dimos.manipulation.planning.factory import create_planning_specs, create_world
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
@@ -47,7 +48,14 @@ from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator
     JointTrajectoryGenerator,
 )
 from dimos.manipulation.skill_errors import ManipulationSkillError
+from dimos.manipulation.visualization.config import (
+    ManipulationVisualizationConfig,
+    MeshcatVisualizationConfig,
+    NoManipulationVisualizationConfig,
+)
+from dimos.manipulation.visualization.factory import create_manipulation_visualization
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -88,13 +96,30 @@ class ManipulationModuleConfig(ModuleConfig):
 
     robots: list[RobotModelConfig] = Field(default_factory=list)
     planning_timeout: float = 10.0
-    enable_viz: bool = False
-    planner_name: str = "rrt_connect"  # "rrt_connect"
+    visualization: ManipulationVisualizationConfig = Field(
+        default_factory=NoManipulationVisualizationConfig
+    )
+    world_backend: str = "drake"  # "drake" or "roboplan"
+    planner_name: str = "rrt_connect"  # "rrt_connect" or "roboplan"
     kinematics_name: str = "jacobian"  # "jacobian" or "drake_optimization"
     # Floor plane Z height (meters). When set, a box obstacle is added at startup
     # to prevent the planner from routing trajectories below this height.
     # Set to None to disable.
     floor_z: float | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _map_legacy_enable_viz(cls, data: Any) -> Any:
+        """Back-compat: ``enable_viz=True`` maps to the meshcat backend.
+
+        Existing blueprints/tests still pass ``enable_viz``; translate it to the
+        new ``visualization`` discriminated config unless one is set explicitly.
+        """
+        if isinstance(data, dict) and "enable_viz" in data:
+            enable = data.pop("enable_viz")
+            if enable and "visualization" not in data:
+                data["visualization"] = MeshcatVisualizationConfig()
+        return data
 
 
 class ManipulationModule(Module):
@@ -164,7 +189,24 @@ class ManipulationModule(Module):
             logger.warning("No robots configured, planning disabled")
             return
 
-        self._world_monitor = WorldMonitor(enable_viz=self.config.enable_viz)
+        world = create_world(
+            backend=self.config.world_backend, visualization=self.config.visualization
+        )
+        planning_specs = create_planning_specs(
+            world=world,
+            planner_name=self.config.planner_name,
+            kinematics_name=self.config.kinematics_name,
+            world_backend=self.config.world_backend,
+        )
+        self._world_monitor = planning_specs.world_monitor
+        self._planner = planning_specs.planner
+        self._kinematics = planning_specs.kinematics
+        visualization = create_manipulation_visualization(
+            self.config.visualization,
+            world=world,
+            world_monitor=self._world_monitor,
+            manipulation_module=self,
+        )
 
         for robot_config in self.config.robots:
             robot_id = self._world_monitor.add_robot(robot_config)
@@ -197,13 +239,13 @@ class ManipulationModule(Module):
         for _, (robot_id, _, _) in self._robots.items():
             self._world_monitor.start_state_monitor(robot_id)
 
-        if self.config.enable_viz:
+        self._world_monitor.set_visualization(visualization)
+        self._world_monitor.sync_visualization_scene()
+
+        if self._world_monitor.visualization is not None:
             self._world_monitor.start_visualization_thread(rate_hz=10.0)
             if url := self._world_monitor.get_visualization_url():
                 logger.info(f"Visualization: {url}")
-
-        self._planner = create_planner(name=self.config.planner_name)
-        self._kinematics = create_kinematics(name=self.config.kinematics_name)
 
         # Start TF publishing thread if any robot has tf_extra_links
         if any(c.tf_extra_links for _, c, _ in self._robots.values()):
@@ -440,10 +482,8 @@ class ManipulationModule(Module):
         """Hide the preview ghost if the world supports it."""
         if self._world_monitor is None:
             return
-        world = self._world_monitor.world
-        if hasattr(world, "hide_preview"):
-            world.hide_preview(robot_id)
-            world.publish_visualization()
+        self._world_monitor.hide_preview(robot_id)
+        self._world_monitor.publish_visualization()
 
     @rpc
     def plan_to_pose(self, pose: Pose, robot_name: RobotName | None = None) -> bool:
@@ -461,9 +501,6 @@ class ManipulationModule(Module):
         current = self._world_monitor.get_current_joint_state(robot_id)
         if current is None:
             return self._fail("No joint state")
-
-        # Convert Pose to PoseStamped for the IK solver
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
         target_pose = PoseStamped(
             frame_id="world",
@@ -485,6 +522,56 @@ class ManipulationModule(Module):
         return self._plan_path_only(robot_name, robot_id, ik.joint_state)
 
     @rpc
+    def plan_to_poses(
+        self,
+        pose_targets: dict[str, Pose],
+        robot_name: RobotName | None = None,
+    ) -> bool:
+        """Plan a coordinated motion driving multiple end-effector tips at once.
+
+        ``pose_targets`` maps tip link names (e.g. ``left_arm_link7`` /
+        ``right_arm_link7``) to target poses. Every tip is solved simultaneously via
+        multi-target IK, then one synchronized joint-space path is planned over the
+        robot's controlled joints. Requires a multi-target IK backend (Pink); use
+        preview_path() then execute() as with plan_to_pose().
+        """
+        if self._kinematics is None or (r := self._begin_planning(robot_name)) is None:
+            return False
+        robot_name, robot_id = r
+        assert self._world_monitor  # guaranteed by _begin_planning
+
+        if not pose_targets:
+            return self._fail("No pose targets supplied")
+        solve_pose_targets = getattr(self._kinematics, "solve_pose_targets", None)
+        if solve_pose_targets is None:
+            return self._fail(
+                "Active IK solver has no multi-target support (use kinematics_name='pink')"
+            )
+
+        current = self._world_monitor.get_current_joint_state(robot_id)
+        if current is None:
+            return self._fail("No joint state")
+
+        targets = {
+            tip: PoseStamped(frame_id="world", position=pose.position, orientation=pose.orientation)
+            for tip, pose in pose_targets.items()
+        }
+        ik = solve_pose_targets(
+            world=self._world_monitor.world,
+            robot_id=robot_id,
+            pose_targets=targets,
+            seed=current,
+            check_collision=True,
+        )
+        if not ik.is_success() or ik.joint_state is None:
+            return self._fail(f"Multi-target IK failed: {ik.status.name}")
+
+        logger.info(
+            f"Multi-target IK solved ({len(targets)} tips), error: {ik.position_error:.4f}m"
+        )
+        return self._plan_path_only(robot_name, robot_id, ik.joint_state)
+
+    @rpc
     def plan_to_joints(self, joints: JointState, robot_name: RobotName | None = None) -> bool:
         """Plan motion to joint config. Use preview_path() then execute().
 
@@ -499,7 +586,10 @@ class ManipulationModule(Module):
         return self._plan_path_only(robot_name, robot_id, joints)
 
     def _plan_path_only(
-        self, robot_name: RobotName, robot_id: WorldRobotID, goal: JointState
+        self,
+        robot_name: RobotName,
+        robot_id: WorldRobotID,
+        goal: JointState,
     ) -> bool:
         """Plan path from current position to goal, store result."""
         assert self._world_monitor and self._planner  # guaranteed by _begin_planning
@@ -539,15 +629,19 @@ class ManipulationModule(Module):
         return True
 
     @rpc
-    def preview_path(self, duration: float = 3.0, robot_name: RobotName | None = None) -> bool:
+    def preview_path(
+        self,
+        duration: float | None = None,
+        robot_name: RobotName | None = None,
+        target_fps: float = 30.0,
+    ) -> bool:
         """Preview the planned path in the visualizer.
 
         Args:
-            duration: Total animation duration in seconds
+            duration: Total animation duration in seconds. Uses trajectory duration if None.
             robot_name: Robot to preview (required if multiple robots configured)
+            target_fps: Nominal preview update rate. Set <= 0 to use planned waypoints directly.
         """
-        from dimos.manipulation.planning.utils.path_utils import interpolate_path
-
         if self._world_monitor is None:
             return False
 
@@ -561,9 +655,34 @@ class ManipulationModule(Module):
             logger.warning(f"No planned path to preview for {robot_name}")
             return False
 
-        # Interpolate and animate
-        interpolated = interpolate_path(planned_path, resolution=0.1)
-        self._world_monitor.world.animate_path(robot_id, interpolated, duration)
+        if duration is None:
+            trajectory = self._planned_trajectories.get(robot_name)
+            animation_duration = trajectory.duration if trajectory is not None else 3.0
+        else:
+            trajectory = self._planned_trajectories.get(robot_name)
+            animation_duration = duration
+
+        interpolated = list(planned_path)
+        if trajectory is not None and target_fps > 0 and animation_duration > 0:
+            times = np.array(
+                [point.time_from_start for point in trajectory.points], dtype=np.float64
+            )
+            positions = np.array([point.positions for point in trajectory.points], dtype=np.float64)
+            if len(times) > 1 and positions.ndim == 2 and times[-1] > times[0]:
+                frame_count = int(np.ceil(animation_duration * target_fps)) + 1
+                sample_times = np.linspace(times[0], times[-1], frame_count)
+                joint_names = trajectory.joint_names or planned_path[0].name
+                sampled_positions = np.column_stack(
+                    [
+                        np.interp(sample_times, times, positions[:, joint])
+                        for joint in range(positions.shape[1])
+                    ]
+                )
+                interpolated = [
+                    JointState(name=joint_names, position=position.tolist())
+                    for position in sampled_positions
+                ]
+        self._world_monitor.animate_path(robot_id, interpolated, animation_duration)
         return True
 
     @rpc
@@ -599,6 +718,8 @@ class ManipulationModule(Module):
         Returns:
             True if cleared
         """
+        if self._world_monitor is None:
+            return False
         robot = self._get_robot()
         if robot is None:
             return False
