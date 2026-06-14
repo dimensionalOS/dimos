@@ -32,16 +32,21 @@ Two modules compose with a PGO blueprint via ``autoconnect``:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 import math
+from pathlib import Path
+import time
 from typing import Any
 
 import numpy as np
 from reactivex.disposable import Disposable
 
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -365,7 +370,7 @@ class GraphCapture(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._keyframes: int = 0
+        self._graph: list[list[float]] = []
         self._closure_events: list[dict[str, Any]] = []
 
     @rpc
@@ -376,7 +381,21 @@ class GraphCapture(Module):
         )
 
     async def handle_pose_graph(self, value: Graph3D) -> None:
-        self._keyframes = len(value.nodes)
+        # Latest full keyframe list, with orientations, as plain floats so the
+        # host can reconstruct the corrected trajectory over RPC.
+        self._graph = [
+            [
+                node.pose.ts,
+                node.pose.position.x,
+                node.pose.position.y,
+                node.pose.position.z,
+                node.pose.orientation.x,
+                node.pose.orientation.y,
+                node.pose.orientation.z,
+                node.pose.orientation.w,
+            ]
+            for node in value.nodes
+        ]
 
     def _on_loop_closure_event(self, message: GraphDelta3D) -> None:
         self._closure_events.append(
@@ -411,8 +430,266 @@ class GraphCapture(Module):
 
     @rpc
     def keyframes(self) -> int:
-        return self._keyframes
+        return len(self._graph)
+
+    @rpc
+    def graph(self) -> list[list[float]]:
+        # Each row: [ts, x, y, z, qx, qy, qz, qw].
+        return list(self._graph)
 
     @rpc
     def closure_events(self) -> list[dict[str, Any]]:
         return list(self._closure_events)
+
+
+# --- Recording-DB (mem2.db) replay --------------------------------------------
+
+# One shared read-only store per db path.
+_recording_stores: dict[str, SqliteStore] = {}
+
+
+def recording_store(db_path: Path) -> SqliteStore:
+    key = str(db_path)
+    cached = _recording_stores.get(key)
+    if cached is None:
+        cached = SqliteStore(path=key, must_exist=True)
+        cached.start()
+        _recording_stores[key] = cached
+    return cached
+
+
+def iterate_recording_stream(
+    db_path: Path, stream_name: str, *, stride: int = 1
+) -> Iterator[tuple[float, Any]]:
+    """Yield ``(timestamp, decoded message)`` from a recorded stream."""
+    stream: Any = recording_store(db_path).stream(stream_name)
+    for index, observation in enumerate(stream):
+        if stride > 1 and index % stride:
+            continue
+        yield (float(observation.ts), observation.data)
+
+
+def recording_stream_count(db_path: Path, stream_name: str) -> int:
+    return int(recording_store(db_path).stream(stream_name).count())
+
+
+class LockstepReplayConfig(ModuleConfig):
+    db: str
+    lidar_stream: str = "fastlio_lidar"
+    odometry_stream: str = "fastlio_odometry"
+    max_scans: int | None = None
+    lidar_stride: int = 1
+    odometry_stride: int = 1
+    # Generous: real lidar submap ICP (esp. on loop candidates) can take seconds.
+    ack_timeout_sec: float = 60.0
+    warmup_resend_interval_sec: float = WARMUP_RESEND_INTERVAL_SEC
+
+
+# A lone unacked scan means its cloud was dropped on the bus (large clouds
+# fragment and can be lost under load) — skip it. Many in a row means the SUT
+# is wedged, not dropping.
+MAX_CONSECUTIVE_ACK_TIMEOUTS = 5
+
+
+class LockstepReplay(Module):
+    """Closed-loop replay of a recorded lidar + odometry pair through the SUT.
+
+    Reads ``lidar_stream`` (PointCloud2) and ``odometry_stream`` (Odometry) from
+    a mem2.db, merges them by timestamp, and replays: odometry fire-and-forget,
+    each scan paced on the SUT's corrected_odometry ack. Mirrors the jnav eval
+    LockstepReplay, adapted to the nav-stack ``registered_scan`` stream."""
+
+    config: LockstepReplayConfig
+
+    registered_scan: Out[PointCloud2]
+    odometry: Out[Odometry]
+    corrected_odometry: In[Odometry]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._ack_count: int = 0
+        self._ack_event: asyncio.Event | None = None
+        self._frames_published: int = 0
+        self._scans_skipped: int = 0
+        self._finished: bool = False
+        self._error: str | None = None
+
+    async def handle_corrected_odometry(self, value: Odometry) -> None:
+        self._ack_count += 1
+        if self._ack_event is not None:
+            self._ack_event.set()
+
+    async def main(self) -> AsyncIterator[None]:
+        self._messages = await asyncio.to_thread(self._load)
+        self._replay_task = asyncio.create_task(self._replay())
+        yield
+        self._replay_task.cancel()
+
+    def _load(self) -> list[tuple[float, Any, Any]]:
+        """Pair each scan with its nearest-in-time odometry pose.
+
+        Returns ``(timestamp, pose, cloud_payload)`` per scan. Pairing (rather
+        than a merged stream) guarantees PGO has the matching pose in hand when
+        the scan arrives, and lets the warmup resend both together."""
+        db_path = Path(self.config.db)
+        lidar = list(
+            iterate_recording_stream(
+                db_path, self.config.lidar_stream, stride=self.config.lidar_stride
+            )
+        )
+        if self.config.max_scans is not None:
+            lidar = lidar[: self.config.max_scans]
+        odom = list(
+            iterate_recording_stream(
+                db_path, self.config.odometry_stream, stride=self.config.odometry_stride
+            )
+        )
+        odom_times = np.asarray([timestamp for timestamp, _ in odom], dtype=np.float64)
+        frames: list[tuple[float, Any, Any]] = []
+        for timestamp, cloud in lidar:
+            pose = None
+            if len(odom):
+                nearest = int(np.argmin(np.abs(odom_times - timestamp)))
+                pose = odom[nearest][1].pose
+            frames.append((timestamp, pose, cloud))
+        return frames
+
+    async def _replay(self) -> None:
+        consecutive_timeouts = 0
+        try:
+            for index, (timestamp, pose, cloud_payload) in enumerate(self._messages):
+                acks_before = self._ack_count
+                self._ack_event = asyncio.Event()
+                odometry = (
+                    Odometry(ts=timestamp, frame_id="map", child_frame_id="base_link", pose=pose)
+                    if pose is not None
+                    else None
+                )
+                scan = PointCloud2.from_numpy(
+                    cloud_payload.points_f32(), frame_id="map", timestamp=timestamp
+                )
+                # Odometry first so PGO can pair the latest pose with the scan.
+                if odometry is not None:
+                    self.odometry.publish(odometry)
+                self.registered_scan.publish(scan)
+                self._frames_published += 1
+                if index == 0:
+                    await self._warmup_until_first_ack(acks_before, odometry, scan)
+                    consecutive_timeouts = 0
+                    continue
+                if await self._wait_for_ack(acks_before):
+                    consecutive_timeouts = 0
+                    continue
+                self._scans_skipped += 1
+                consecutive_timeouts += 1
+                if consecutive_timeouts >= MAX_CONSECUTIVE_ACK_TIMEOUTS:
+                    raise RuntimeError(
+                        f"{MAX_CONSECUTIVE_ACK_TIMEOUTS} scans in a row went unacked "
+                        f"(through scan {self._frames_published}) — SUT appears wedged"
+                    )
+        except Exception as exc:
+            self._error = f"{type(exc).__name__}: {exc}"
+            raise
+        finally:
+            self._finished = True
+
+    async def _warmup_until_first_ack(
+        self, acks_before: int, odometry: Odometry | None, scan: PointCloud2
+    ) -> None:
+        deadline = asyncio.get_event_loop().time() + self.config.ack_timeout_sec
+        assert self._ack_event is not None
+        while self._ack_count == acks_before:
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                raise RuntimeError(
+                    "SUT did not ack the first scan within "
+                    f"{self.config.ack_timeout_sec:.1f}s — it never came up"
+                )
+            try:
+                await asyncio.wait_for(
+                    self._ack_event.wait(),
+                    timeout=min(self.config.warmup_resend_interval_sec, remaining),
+                )
+            except asyncio.TimeoutError:
+                # Resend both — a one-shot races PGO's subscription handshake.
+                if odometry is not None:
+                    self.odometry.publish(odometry)
+                self.registered_scan.publish(scan)
+
+    async def _wait_for_ack(self, acks_before: int) -> bool:
+        assert self._ack_event is not None
+        deadline = asyncio.get_event_loop().time() + self.config.ack_timeout_sec
+        while self._ack_count == acks_before:
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                return False
+            try:
+                await asyncio.wait_for(self._ack_event.wait(), timeout=remaining)
+            except asyncio.TimeoutError:
+                continue
+        return True
+
+    @rpc
+    def is_finished(self) -> bool:
+        return self._finished
+
+    @rpc
+    def frames_published(self) -> int:
+        return self._frames_published
+
+    @rpc
+    def scans_skipped_no_ack(self) -> int:
+        return self._scans_skipped
+
+    @rpc
+    def error(self) -> str | None:
+        return self._error
+
+
+# Seconds to drain pending pose-graph / loop-closure messages after the last
+# scan is acked, before tearing the coordinator down.
+LOCKSTEP_DRAIN_SEC = 10.0
+LOCKSTEP_POLL_SEC = 0.5
+
+
+def run_pgo_graph(
+    pgo_blueprint: Blueprint,
+    db_path: Path,
+    *,
+    lidar_stream: str,
+    odometry_stream: str,
+    max_scans: int | None = None,
+    lidar_stride: int = 1,
+    odometry_stride: int = 1,
+) -> dict[str, Any]:
+    """Lockstep-replay a recording through a PGO blueprint; return its captured
+    pose graph, closure count, and replay stats.
+
+    Returns ``{"graph": [[ts,x,y,z,qx,qy,qz,qw], ...], "closures": int,
+    "keyframes": int, "scans_skipped": int, "replay_error": str | None}``."""
+    replay_blueprint = LockstepReplay.blueprint(
+        db=str(db_path),
+        lidar_stream=lidar_stream,
+        odometry_stream=odometry_stream,
+        max_scans=max_scans,
+        lidar_stride=lidar_stride,
+        odometry_stride=odometry_stride,
+    )
+    blueprint = autoconnect(replay_blueprint, pgo_blueprint, GraphCapture.blueprint())
+    coordinator = ModuleCoordinator.build(blueprint)
+    try:
+        replay = coordinator.get_instance(LockstepReplay)
+        capture = coordinator.get_instance(GraphCapture)
+        while not replay.is_finished():
+            time.sleep(LOCKSTEP_POLL_SEC)
+        replay_error = replay.error()
+        time.sleep(LOCKSTEP_DRAIN_SEC)
+        return {
+            "graph": capture.graph(),
+            "closures": capture.closures(),
+            "keyframes": capture.keyframes(),
+            "scans_skipped": replay.scans_skipped_no_ack(),
+            "replay_error": replay_error,
+        }
+    finally:
+        coordinator.stop()
