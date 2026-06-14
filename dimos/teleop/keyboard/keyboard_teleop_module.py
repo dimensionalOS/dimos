@@ -19,7 +19,7 @@ blueprints via autoconnect.
 
 Keyboard controls:
     W/S: +X/-X (forward/backward)
-    A/D: -Y/+Y (left/right)
+    A/D: +Y/-Y (left/right)
     Q/E: +Z/-Z (up/down)
     R/F: +Roll/-Roll
     T/G: +Pitch/-Pitch
@@ -45,8 +45,12 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.examples.cartesian_ik_jogger import JogState
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import Out
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 # Force X11 driver to avoid OpenGL threading issues
 os.environ["SDL_VIDEODRIVER"] = "x11"
@@ -71,6 +75,8 @@ class KeyboardTeleopConfig(ModuleConfig):
     ee_joint_id: int = 6
     task_name: str = "cartesian_ik_arm"
     home_joints: list[float] | None = None
+    joint_names: list[str] | None = None
+    initial_state_timeout: float = 5.0
 
 
 class KeyboardTeleopModule(Module):
@@ -81,6 +87,7 @@ class KeyboardTeleopModule(Module):
 
     config: KeyboardTeleopConfig
 
+    joint_state: In[JointState]
     cartesian_command: Out[PoseStamped]
 
     _stop_event: threading.Event
@@ -107,14 +114,38 @@ class KeyboardTeleopModule(Module):
             self._thread.join(DEFAULT_THREAD_JOIN_TIMEOUT)
         super().stop()
 
+    def _read_joint_positions(self, timeout: float) -> list[float] | None:
+        try:
+            msg = self.joint_state.get_next(timeout)
+        except Exception:
+            return None
+        if not msg.position:
+            return None
+
+        if joint_names := self.config.joint_names:
+            name_to_position = dict(zip(msg.name, msg.position, strict=False))
+            if any(name not in name_to_position for name in joint_names):
+                return None
+            return [float(name_to_position[name]) for name in joint_names]
+
+        if len(msg.position) < self.config.ee_joint_id:
+            return None
+        return [float(position) for position in msg.position[: self.config.ee_joint_id]]
+
     def _pygame_loop(self) -> None:
         model_path = str(self.config.model_path)
         ee_joint_id = self.config.ee_joint_id
         task_name = self.config.task_name
 
-        # Initialize pose from forward kinematics at the robot's home configuration
-        home_pose = JogState.from_fk(model_path, ee_joint_id, self.config.home_joints)
-        current_pose = home_pose.copy()
+        initial_joints = self._read_joint_positions(self.config.initial_state_timeout)
+        if initial_joints is None:
+            logger.error(
+                f"Failed to read initial joint state within "
+                f"{self.config.initial_state_timeout}s; keyboard teleop exiting"
+            )
+            self._stop_event.set()
+            return
+        current_pose = JogState.from_fk(model_path, ee_joint_id, initial_joints).copy()
 
         # Publish initial pose
         self.cartesian_command.publish(current_pose.to_pose_stamped(task_name))
@@ -137,7 +168,8 @@ class KeyboardTeleopModule(Module):
                     if event.key == pygame.K_ESCAPE:
                         self._stop_event.set()
                     elif event.key == pygame.K_SPACE:
-                        current_pose = home_pose.copy()
+                        if joints := self._read_joint_positions(timeout=0.1):
+                            current_pose = JogState.from_fk(model_path, ee_joint_id, joints).copy()
 
             keys = pygame.key.get_pressed()
 
@@ -147,9 +179,9 @@ class KeyboardTeleopModule(Module):
             if keys[pygame.K_s]:
                 current_pose.x -= LINEAR_SPEED * dt
             if keys[pygame.K_a]:
-                current_pose.y -= LINEAR_SPEED * dt
-            if keys[pygame.K_d]:
                 current_pose.y += LINEAR_SPEED * dt
+            if keys[pygame.K_d]:
+                current_pose.y -= LINEAR_SPEED * dt
             if keys[pygame.K_q]:
                 current_pose.z += LINEAR_SPEED * dt
             if keys[pygame.K_e]:
@@ -201,12 +233,12 @@ class KeyboardTeleopModule(Module):
 
             controls = [
                 ("W/S", "+X/-X (forward/back)"),
-                ("A/D", "-Y/+Y (left/right)"),
+                ("A/D", "+Y/-Y (left/right)"),
                 ("Q/E", "+Z/-Z (up/down)"),
                 ("R/F", "+Roll/-Roll"),
                 ("T/G", "+Pitch/-Pitch"),
                 ("Y/H", "+Yaw/-Yaw"),
-                ("SPACE", "Reset to home"),
+                ("SPACE", "Sync to current pose"),
                 ("ESC", "Quit"),
             ]
             for key, desc in controls:

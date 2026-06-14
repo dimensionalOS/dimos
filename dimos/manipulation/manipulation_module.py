@@ -29,6 +29,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any, TypeAlias
 
+import numpy as np
 from pydantic import Field
 
 from dimos.agents.annotation import skill
@@ -440,10 +441,8 @@ class ManipulationModule(Module):
         """Hide the preview ghost if the world supports it."""
         if self._world_monitor is None:
             return
-        world = self._world_monitor.world
-        if hasattr(world, "hide_preview"):
-            world.hide_preview(robot_id)
-            world.publish_visualization()
+        self._world_monitor.hide_preview(robot_id)
+        self._world_monitor.publish_visualization()
 
     @rpc
     def plan_to_pose(self, pose: Pose, robot_name: RobotName | None = None) -> bool:
@@ -539,15 +538,19 @@ class ManipulationModule(Module):
         return True
 
     @rpc
-    def preview_path(self, duration: float = 3.0, robot_name: RobotName | None = None) -> bool:
+    def preview_path(
+        self,
+        duration: float | None = None,
+        robot_name: RobotName | None = None,
+        target_fps: float = 30.0,
+    ) -> bool:
         """Preview the planned path in the visualizer.
 
         Args:
-            duration: Total animation duration in seconds
+            duration: Total animation duration in seconds. Uses trajectory duration if None.
             robot_name: Robot to preview (required if multiple robots configured)
+            target_fps: Nominal preview update rate. Set <= 0 to use planned waypoints directly.
         """
-        from dimos.manipulation.planning.utils.path_utils import interpolate_path
-
         if self._world_monitor is None:
             return False
 
@@ -561,9 +564,34 @@ class ManipulationModule(Module):
             logger.warning(f"No planned path to preview for {robot_name}")
             return False
 
-        # Interpolate and animate
-        interpolated = interpolate_path(planned_path, resolution=0.1)
-        self._world_monitor.world.animate_path(robot_id, interpolated, duration)
+        if duration is None:
+            trajectory = self._planned_trajectories.get(robot_name)
+            animation_duration = trajectory.duration if trajectory is not None else 3.0
+        else:
+            trajectory = self._planned_trajectories.get(robot_name)
+            animation_duration = duration
+
+        interpolated = list(planned_path)
+        if trajectory is not None and target_fps > 0 and animation_duration > 0:
+            times = np.array(
+                [point.time_from_start for point in trajectory.points], dtype=np.float64
+            )
+            positions = np.array([point.positions for point in trajectory.points], dtype=np.float64)
+            if len(times) > 1 and positions.ndim == 2 and times[-1] > times[0]:
+                frame_count = int(np.ceil(animation_duration * target_fps)) + 1
+                sample_times = np.linspace(times[0], times[-1], frame_count)
+                joint_names = trajectory.joint_names or planned_path[0].name
+                sampled_positions = np.column_stack(
+                    [
+                        np.interp(sample_times, times, positions[:, joint])
+                        for joint in range(positions.shape[1])
+                    ]
+                )
+                interpolated = [
+                    JointState(name=joint_names, position=position.tolist())
+                    for position in sampled_positions
+                ]
+        self._world_monitor.animate_path(robot_id, interpolated, animation_duration)
         return True
 
     @rpc

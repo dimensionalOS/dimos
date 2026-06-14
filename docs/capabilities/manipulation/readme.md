@@ -82,6 +82,11 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 - **ControlCoordinator** — 100Hz control loop with mock or real hardware adapters
 - **ManipulationModule** — Drake physics, Meshcat viz, RRT motion planning, obstacle management
 
+Internally, planning code depends on `WorldSpec` for world, collision, and
+kinematics behavior. Meshcat preview and publishing are exposed separately
+through `VisualizationSpec`, so non-visual planning paths do not require a
+visualization backend.
+
 ## Blueprints
 
 | Blueprint | Description |
