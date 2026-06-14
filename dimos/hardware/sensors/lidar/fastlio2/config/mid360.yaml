@@ -14,11 +14,13 @@ mapping:
     # acc_cov is the divergence guard. At the upstream default (0.1) FAST-LIO
     # odometry runs away to km/s on aggressive Go2 motion — the IMU acceleration
     # prediction dominates the IESKF and diverges. Raising acc_cov down-weights
-    # that prediction. On the ruwik2_pt3 raw pcap the threshold is sharp between
-    # 0.3 (diverges) and 0.35 (bounded); 0.5 holds with margin (reliably bounded
-    # across reps, peak ~5 m/s, matching Point-LIO). See jhist
-    # dimos-fastlio-velocity-spike.md (2026-06-13 correction).
-    acc_cov: 0.5
+    # that prediction. The divergence is stochastic (FAST-LIO is not bit-exact),
+    # so acc_cov shifts the bounded *probability* rather than being a hard switch:
+    # on the ruwik2_pt3 raw pcap, 0.3 diverges, 0.5 is borderline (bounds most
+    # runs but still diverged ~1 in 3), and 1.0 held bounded across every rep
+    # (peak ~4 m/s, matching Point-LIO). 1.0 for margin. A hard guarantee would
+    # need the velocity guardrail. See jhist dimos-fastlio-velocity-spike.md.
+    acc_cov: 1.0
     gyr_cov: 0.1
     b_acc_cov: 0.0001
     b_gyr_cov: 0.0001
