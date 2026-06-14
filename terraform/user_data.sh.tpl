@@ -32,6 +32,8 @@ cd $APP_DIR
 cat > .env << 'ENVEOF'
 CF_TELEOP_APP_ID=${cf_teleop_app_id}
 CF_TELEOP_APP_SECRET=${cf_teleop_app_secret}
+CF_TURN_KEY_ID=${cf_turn_key_id}
+CF_TURN_API_TOKEN=${cf_turn_api_token}
 COGNITO_REGION=${cognito_region}
 COGNITO_USER_POOL_ID=${cognito_user_pool_id}
 COGNITO_CLIENT_ID=${cognito_client_id}

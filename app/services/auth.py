@@ -111,6 +111,22 @@ async def get_robot_id(api_key: str | None = Security(api_key_header)) -> str:
     raise HTTPException(status_code=401, detail="Invalid robot credentials")
 
 
+async def get_operator_or_robot(
+    credentials: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+    api_key: str | None = Security(api_key_header),
+) -> dict:
+    """Accept either identity for endpoints both sides use (TURN credentials).
+
+    Robot key wins when both are present (robots never send a Bearer token).
+    """
+    if api_key:
+        robot_id = await get_robot_id(api_key)
+        return {"sub": robot_id, "role": "robot"}
+    if credentials is not None:
+        return decode_token(credentials.credentials)
+    raise HTTPException(status_code=401, detail="Not authenticated")
+
+
 def register_robot_key(api_key: str, robot_id: str) -> None:
     """Register an in-memory API key for a robot (dev bootstrap)."""
     ROBOT_API_KEYS[api_key] = robot_id

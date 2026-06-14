@@ -39,6 +39,34 @@ class CloudflareRealtime:
             "Content-Type": "application/json",
         }
 
+    async def generate_ice_servers(self, ttl: int = 7200) -> list[dict]:
+        """Mint short-lived TURN credentials from the CF TURN service.
+
+        Returns RTCPeerConnection-shaped iceServers dicts (urls + username +
+        credential), including turns:...:443?transport=tcp so UDP-blocked
+        clients can relay over TLS. Caller handles fallback to STUN-only.
+        """
+        url = (
+            f"{settings.cf_turn_base_url}/keys/"
+            f"{settings.cf_turn_key_id}/credentials/generate-ice-servers"
+        )
+        headers = {
+            "Authorization": f"Bearer {settings.cf_turn_api_token}",
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(url, headers=headers, json={"ttl": ttl}, timeout=10.0)
+        if resp.status_code not in (200, 201):
+            raise CloudflareRealtimeError(resp.status_code, resp.text)
+        servers = resp.json().get("iceServers")
+        # The endpoint returns a list; the older /credentials/generate shape
+        # is a single object — normalize both.
+        if isinstance(servers, dict):
+            servers = [servers]
+        if not servers:
+            raise CloudflareRealtimeError(resp.status_code, "no iceServers in response")
+        return servers
+
     async def create_session(self, sdp_offer: str) -> dict:
         """Create a new CF session from the offer. Returns sessionId + answer.
 

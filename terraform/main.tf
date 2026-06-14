@@ -114,6 +114,8 @@ resource "aws_instance" "teleop" {
     app_port             = var.app_port
     cf_teleop_app_id     = var.cf_teleop_app_id
     cf_teleop_app_secret = var.cf_teleop_app_secret
+    cf_turn_key_id       = var.cf_turn_key_id
+    cf_turn_api_token    = var.cf_turn_api_token
     cognito_region       = var.aws_region
     cognito_user_pool_id = aws_cognito_user_pool.teleop.id
     cognito_client_id    = aws_cognito_user_pool_client.spa.id

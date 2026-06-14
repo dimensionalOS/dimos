@@ -11,6 +11,13 @@ class Settings(BaseSettings):
     cf_teleop_app_secret: str = ""
     cf_sfu_base_url: str = "https://rtc.live.cloudflare.com/v1/apps"
 
+    # Cloudflare TURN service (same account, separate key — created in the
+    # dashboard under Realtime → TURN). Optional: unset means STUN-only,
+    # which only works for clients on UDP-open networks.
+    cf_turn_key_id: str = ""
+    cf_turn_api_token: str = ""
+    cf_turn_base_url: str = "https://rtc.live.cloudflare.com/v1/turn"
+
     # Cognito (operator auth). The broker only verifies tokens; sign-in
     # happens between the SPA and Cognito directly.
     cognito_region: str = "us-east-2"

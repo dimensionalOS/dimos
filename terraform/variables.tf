@@ -33,3 +33,15 @@ variable "cf_teleop_app_secret" {
   description = "Cloudflare Realtime SFU App Secret"
   sensitive   = true
 }
+
+variable "cf_turn_key_id" {
+  description = "Cloudflare TURN key ID (Realtime → TURN). Empty = STUN-only."
+  sensitive   = true
+  default     = ""
+}
+
+variable "cf_turn_api_token" {
+  description = "Cloudflare TURN key API token. Empty = STUN-only."
+  sensitive   = true
+  default     = ""
+}

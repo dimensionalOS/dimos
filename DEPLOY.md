@@ -15,6 +15,8 @@ Set these as GitHub repository secrets (Settings → Secrets → Actions) for CI
 |--------|-------------|
 | `CF_TELEOP_APP_ID` | Cloudflare Realtime SFU App ID |
 | `CF_TELEOP_APP_SECRET` | Cloudflare Realtime SFU App Secret |
+| `CF_TURN_KEY_ID` | Cloudflare TURN key ID ([Realtime → TURN](https://dash.cloudflare.com/?to=/:account/realtime/turn) → create key). Optional: empty = STUN-only, which fails for operators/robots on UDP-blocked networks |
+| `CF_TURN_API_TOKEN` | Cloudflare TURN key API token (shown once at key creation) |
 | — | Operator auth uses the Cognito pool created by terraform (no auth secret to manage) |
 
 Find CF credentials in the Cloudflare dashboard: [Realtime SFU](https://dash.cloudflare.com/?to=/:account/realtime/sfu) → `hosted-teleop-dev-0` app.

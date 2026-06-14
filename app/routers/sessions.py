@@ -9,9 +9,10 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from models.database import get_db
 from models.session import TeleopSession
-from services.auth import get_current_user, get_robot_id
+from services.auth import get_current_user, get_operator_or_robot, get_robot_id
 from services.cloudflare import CloudflareRealtimeError, cf_client
 from services.sdp_utils import extract_video_track
 
@@ -104,7 +105,34 @@ class LeaveRequest(BaseModel):
     reason: str = "user_initiated"
 
 
+class TurnCredentialsResponse(BaseModel):
+    ice_servers: list[dict]
+
+
+# Fallback when TURN is unconfigured (dev) or the mint fails: STUN-only,
+# which still connects clients on UDP-open networks.
 ICE_SERVERS = [{"urls": "stun:stun.cloudflare.com:3478"}]
+
+
+async def _mint_ice_servers() -> list[dict]:
+    """STUN + short-lived TURN relay credentials, STUN-only on any failure."""
+    if not settings.cf_turn_key_id or not settings.cf_turn_api_token:
+        return ICE_SERVERS
+    try:
+        return await cf_client.generate_ice_servers()
+    except Exception:
+        log.exception("TURN credential mint failed; falling back to STUN only")
+        return ICE_SERVERS
+
+
+@router.get("/turn-credentials", response_model=TurnCredentialsResponse)
+async def turn_credentials(identity: dict = Depends(get_operator_or_robot)):
+    """Short-lived ICE servers for either side of the call.
+
+    Clients fetch this BEFORE building their RTCPeerConnection — TURN must be
+    in the initial config for relay candidates to gather with the offer.
+    """
+    return TurnCredentialsResponse(ice_servers=await _mint_ice_servers())
 
 
 # ─── Robot endpoints ─────────────────────────────────────────────────
@@ -174,6 +202,8 @@ async def create_session(
         session_id=session.id,
         cf_session_id=cf_result["cf_session_id"],
         sdp_answer=cf_result["sdp_answer"],
+        # Static STUN: clients fetch minted TURN from /turn-credentials and
+        # never read this field. Minting here would be a wasted CF round-trip.
         ice_servers=ICE_SERVERS,
     )
 
@@ -296,7 +326,7 @@ async def join_session(
         cf_session_id=operator_cf_id,
         sdp_answer=cf_result["sdp_answer"],
         robot_cf_session_id=session.cf_session_id,
-        ice_servers=ICE_SERVERS,
+        ice_servers=ICE_SERVERS,  # see create_session
         role=body.role,
     )
 
