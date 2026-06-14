@@ -68,8 +68,12 @@ teleop_hosted_go2 = autoconnect(
 # CloudflareTransport("state_reliable_back", ...) the same way.
 #
 # Run:  TELEOP_API_KEY=dtk_live_... dimos run teleop-hosted-go2-transport
-#       (robot identity is derived from the key; TELEOP_ROBOT_ID optional)
 # then connect from https://teleop.dimensionalos.com (keyboard view).
+#
+# robot_id is a per-transport kwarg (rides the pickled config to the provider),
+# so running several robots off one key just means a distinct id per blueprint —
+# e.g. CloudflareTransport("cmd_unreliable", TwistStamped, robot_id="go2-a").
+# Omitted here → empty; the broker still keeps sessions distinct by session id.
 teleop_hosted_go2_transport = unitree_go2_basic.transports(
     {
         ("cmd_vel", Twist): CloudflareTransport("cmd_unreliable", TwistStamped),

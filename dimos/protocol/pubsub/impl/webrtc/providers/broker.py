@@ -31,12 +31,14 @@ bound to a blueprint's Image stream; unfed, the track simply never emits.
 The aiortc/CF quirks this inherits (MAX_BUNDLE, the id=0 throwaway channel)
 are documented in ``dimos/teleop/quest_hosted/README.md``.
 
+``robot_id`` is a per-transport label (set on ``CloudflareTransport`` /
+``BrokerConfig``) distinguishing multiple robots under one key — it lives on
+the transport, not the process, so two robots on one machine stay distinct.
+
 Env vars (fallback when config fields are unset):
     TELEOP_BROKER_URL — default https://teleop.dimensionalos.com
     TELEOP_API_KEY    — robot API key (dtk_live_*); the broker derives the
                         robot identity from it
-    TELEOP_ROBOT_ID   — optional robot identifier override (must match the
-                        key's namespaced robot id when set)
     TELEOP_ROBOT_NAME — human-readable robot name
 """
 
@@ -109,7 +111,7 @@ class BrokerProvider(AsyncProviderBase):
             or os.environ.get("TELEOP_BROKER_URL", "https://teleop.dimensionalos.com")
         ).rstrip("/")
         self._api_key = config.api_key or os.environ.get("TELEOP_API_KEY", "")
-        self._robot_id = config.robot_id or os.environ.get("TELEOP_ROBOT_ID", "")
+        self._robot_id = config.robot_id or ""
         self._robot_name = config.robot_name or os.environ.get("TELEOP_ROBOT_NAME", "robot")
         if not self._api_key:
             raise RuntimeError(
