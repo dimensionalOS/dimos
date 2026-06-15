@@ -14,25 +14,17 @@
 
 """PointLio fed by a VirtualMid360 replaying a recorded pcap (live SDK path).
 
-Configured via env vars; the two ends must agree on the addresses:
-VIRTUAL_MID360_PCAP, VIRTUAL_MID360_LIDAR_IP, VIRTUAL_MID360_HOST_IP,
-VIRTUAL_MID360_NETNS.
+Each module reads its own config from env vars (VIRTUAL_MID360_* for the sensor,
+DIMOS_POINTLIO_* for PointLio); set the lidar/host IPs so the two ends agree.
 """
-
-import os
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.livox.virtual_mid360.module import VirtualMid360
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.visualization.vis_module import vis_module
 
-_PCAP = os.environ.get("VIRTUAL_MID360_PCAP", "")
-_LIDAR_IP = os.environ.get("VIRTUAL_MID360_LIDAR_IP", "")
-_HOST_IP = os.environ.get("VIRTUAL_MID360_HOST_IP", "")
-_NETNS = os.environ.get("VIRTUAL_MID360_NETNS", "lidar")
-
 demo_virtual_mid360_pointlio = autoconnect(
-    VirtualMid360.blueprint(pcap=_PCAP, lidar_ip=_LIDAR_IP, host_ip=_HOST_IP, lidar_netns=_NETNS),
-    PointLio.blueprint(host_ip=_HOST_IP, lidar_ip=_LIDAR_IP),
+    VirtualMid360.blueprint(),
+    PointLio.blueprint(),
     vis_module("rerun"),
 ).global_config(n_workers=3, robot_model="virtual_mid360_pointlio")
