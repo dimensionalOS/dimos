@@ -105,7 +105,6 @@ class UnitreeWebRTCConnection(Resource):
 
     def connect(self) -> None:
         self.loop = asyncio.new_event_loop()
-        self.task = None
 
         async def async_connect() -> None:
             await self.conn.connect()
@@ -127,7 +126,7 @@ class UnitreeWebRTCConnection(Resource):
         # Blocks until connected; re-raises connect failures (e.g. missing AES key).
         try:
             asyncio.run_coroutine_threadsafe(async_connect(), self.loop).result()
-        except BaseException:
+        except Exception:
             self.loop.call_soon_threadsafe(self.loop.stop)
             self.thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             raise
@@ -140,9 +139,6 @@ class UnitreeWebRTCConnection(Resource):
         if self.stop_timer:
             self.stop_timer.cancel()
             self.stop_timer = None
-
-        if self.task:
-            self.task.cancel()
 
         async def async_disconnect() -> None:
             try:
@@ -431,8 +427,6 @@ class UnitreeWebRTCConnection(Resource):
             self.stop_timer.cancel()
             self.stop_timer = None
 
-        if hasattr(self, "task") and self.task:
-            self.task.cancel()
         if hasattr(self, "conn"):
 
             async def async_disconnect() -> None:
