@@ -55,15 +55,12 @@ static lcm::LCM* g_lcm = nullptr;
 static PointLio* g_point_lio = nullptr;
 
 static double get_publish_ts() {
-    return std::chrono::duration<double>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
+    return std::chrono::duration<double>( std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
 static std::string g_lidar_topic;
 static std::string g_odometry_topic;
-static std::string g_frame_id;        // required via --frame_id
-static std::string g_child_frame_id;   // required via --child_frame_id
-static float g_frequency = 10.0f;
+static std::string g_frame_id;        // required via --frame_id static std::string g_child_frame_id;   // required via --child_frame_id static float g_frequency = 10.0f;
 
 // Frame accumulator (Livox SDK raw → CustomMsg)
 static std::mutex g_pc_mutex;
@@ -172,8 +169,7 @@ static void on_point_cloud(const uint32_t /*handle*/, const uint8_t /*dev_type*/
     // Per-point intra-packet offset (matches livox_ros_driver2). Without it all
     // points share one timestamp and per-point deskew is lost. time_interval
     // unit is 0.1us, so *100 → ns.
-    const uint64_t point_interval_ns =
-        dot_num > 0 ? static_cast<uint64_t>(data->time_interval) * 100 / dot_num : 0;
+    const uint64_t point_interval_ns = dot_num > 0 ? static_cast<uint64_t>(data->time_interval) * 100 / dot_num : 0;
 
     std::lock_guard<std::mutex> lock(g_pc_mutex);
 
@@ -186,28 +182,23 @@ static void on_point_cloud(const uint32_t /*handle*/, const uint8_t /*dev_type*/
         auto* pts = reinterpret_cast<const LivoxLidarCartesianHighRawPoint*>(data->data);
         for (uint16_t point_idx = 0; point_idx < dot_num; ++point_idx) {
             custom_messages::CustomPoint cp;
-            cp.x = static_cast<double>(pts[point_idx].x) / 1000.0;   // mm → m
-            cp.y = static_cast<double>(pts[point_idx].y) / 1000.0;
+            cp.x = static_cast<double>(pts[point_idx].x) / 1000.0;   // mm → m cp.y = static_cast<double>(pts[point_idx].y) / 1000.0;
             cp.z = static_cast<double>(pts[point_idx].z) / 1000.0;
             cp.reflectivity = pts[point_idx].reflectivity;
             cp.tag = pts[point_idx].tag;
-            cp.line = 0;  // Mid-360: single line
-            cp.offset_time =
-                static_cast<uli>((ts_ns - g_frame_start_ns) + point_idx * point_interval_ns);
+            cp.line = 0;  // Mid-360: single line cp.offset_time = static_cast<uli>((ts_ns - g_frame_start_ns) + point_idx * point_interval_ns);
             g_accumulated_points.push_back(cp);
         }
     } else if (data->data_type == DATA_TYPE_CARTESIAN_LOW) {
         auto* pts = reinterpret_cast<const LivoxLidarCartesianLowRawPoint*>(data->data);
         for (uint16_t point_idx = 0; point_idx < dot_num; ++point_idx) {
             custom_messages::CustomPoint cp;
-            cp.x = static_cast<double>(pts[point_idx].x) / 100.0;   // cm → m
-            cp.y = static_cast<double>(pts[point_idx].y) / 100.0;
+            cp.x = static_cast<double>(pts[point_idx].x) / 100.0;   // cm → m cp.y = static_cast<double>(pts[point_idx].y) / 100.0;
             cp.z = static_cast<double>(pts[point_idx].z) / 100.0;
             cp.reflectivity = pts[point_idx].reflectivity;
             cp.tag = pts[point_idx].tag;
             cp.line = 0;
-            cp.offset_time =
-                static_cast<uli>((ts_ns - g_frame_start_ns) + point_idx * point_interval_ns);
+            cp.offset_time = static_cast<uli>((ts_ns - g_frame_start_ns) + point_idx * point_interval_ns);
             g_accumulated_points.push_back(cp);
         }
     }
@@ -231,24 +222,18 @@ static void on_imu_data(const uint32_t /*handle*/, const uint8_t /*dev_type*/, L
         uint64_t pkt_count = imu_pkt_count.fetch_add(1) + 1;
         if (prev != 0 && pkt_ts_ns > prev) {
             uint64_t sensor_gap_us = (pkt_ts_ns - prev) / 1000;
-            uint64_t wall_gap_us = std::chrono::duration_cast<std::chrono::microseconds>(
-                                       now_wall - last_wall).count();
+            uint64_t wall_gap_us = std::chrono::duration_cast<std::chrono::microseconds>( now_wall - last_wall).count();
             uint64_t cur_max = max_sensor_gap_us.load();
             while (sensor_gap_us > cur_max &&
                    !max_sensor_gap_us.compare_exchange_weak(cur_max, sensor_gap_us)) {}
             if (sensor_gap_us > 15000) {
                 imu_gap_count.fetch_add(1);
-                fprintf(stderr, "[imu-gap] sensor_gap=%.1fms wall_gap=%.1fms pkt#%llu\n",
-                        sensor_gap_us / 1000.0, wall_gap_us / 1000.0,
-                        static_cast<unsigned long long>(pkt_count));
+                fprintf(stderr, "[imu-gap] sensor_gap=%.1fms wall_gap=%.1fms pkt#%llu\n", sensor_gap_us / 1000.0, wall_gap_us / 1000.0, static_cast<unsigned long long>(pkt_count));
             }
         }
         last_wall = now_wall;
         if (pkt_count % 1000 == 0) {
-            fprintf(stderr, "[imu-stats] pkts=%llu gaps>15ms=%llu max_sensor_gap=%.1fms\n",
-                    static_cast<unsigned long long>(pkt_count),
-                    static_cast<unsigned long long>(imu_gap_count.load()),
-                    max_sensor_gap_us.load() / 1000.0);
+            fprintf(stderr, "[imu-stats] pkts=%llu gaps>15ms=%llu max_sensor_gap=%.1fms\n", static_cast<unsigned long long>(pkt_count), static_cast<unsigned long long>(imu_gap_count.load()), max_sensor_gap_us.load() / 1000.0);
         }
     }
 
@@ -300,8 +285,7 @@ static void on_info_change(const uint32_t handle, const LivoxLidarInfo* info, vo
     std::memcpy(ip, info->lidar_ip, 16);
 
     if (fastlio_debug) {
-        printf("[pointlio] Device connected: handle=%u type=%u sn=%s ip=%s\n",
-               handle, info->dev_type, sn, ip);
+        printf("[pointlio] Device connected: handle=%u type=%u sn=%s ip=%s\n", handle, info->dev_type, sn, ip);
     }
 
     SetLivoxLidarWorkMode(handle, kLivoxLidarNormal, nullptr, nullptr);
@@ -367,19 +351,12 @@ int main(int argc, char** argv) {
 
     if (debug) {
         printf("[pointlio] Starting Point-LIO + Livox Mid-360 native module\n");
-        printf("[pointlio] lidar topic: %s\n",
-               g_lidar_topic.empty() ? "(disabled)" : g_lidar_topic.c_str());
-        printf("[pointlio] odometry topic: %s\n",
-               g_odometry_topic.empty() ? "(disabled)" : g_odometry_topic.c_str());
+        printf("[pointlio] lidar topic: %s\n", g_lidar_topic.empty() ? "(disabled)" : g_lidar_topic.c_str());
+        printf("[pointlio] odometry topic: %s\n", g_odometry_topic.empty() ? "(disabled)" : g_odometry_topic.c_str());
         printf("[pointlio] config: %s\n", config_path.c_str());
-        printf("[pointlio] host_ip: %s  lidar_ip: %s  frequency: %.1f Hz\n",
-               host_ip.c_str(), lidar_ip.c_str(), g_frequency);
-        printf("[pointlio] pointcloud_freq: %.1f Hz  odom_freq: %.1f Hz\n",
-               pointcloud_freq, odom_freq);
-        printf("[pointlio] output cloud: raw=%d voxel_size=%.3f outlier_neighbors=%d "
-               "outlier_std=%.1f\n",
-               raw_cloud, filter_cfg.voxel_size, filter_cfg.outlier_neighbor_count,
-               filter_cfg.outlier_std_threshold);
+        printf("[pointlio] host_ip: %s  lidar_ip: %s  frequency: %.1f Hz\n", host_ip.c_str(), lidar_ip.c_str(), g_frequency);
+        printf("[pointlio] pointcloud_freq: %.1f Hz  odom_freq: %.1f Hz\n", pointcloud_freq, odom_freq);
+        printf("[pointlio] output cloud: raw=%d voxel_size=%.3f outlier_neighbors=%d " "outlier_std=%.1f\n", raw_cloud, filter_cfg.voxel_size, filter_cfg.outlier_neighbor_count, filter_cfg.outlier_std_threshold);
     }
 
     signal(SIGTERM, signal_handler);
@@ -399,15 +376,12 @@ int main(int argc, char** argv) {
 
     // Main-loop state. Body lives in `run_main_iter`, driven by the wall-paced
     // main thread.
-    auto frame_interval = std::chrono::microseconds(
-        static_cast<int64_t>(1e6 / g_frequency));
+    auto frame_interval = std::chrono::microseconds( static_cast<int64_t>(1e6 / g_frequency));
     std::optional<std::chrono::steady_clock::time_point> last_emit;
     const double process_period_ms = 1000.0 / main_freq;
 
-    auto pc_interval = std::chrono::microseconds(
-        static_cast<int64_t>(1e6 / pointcloud_freq));
-    auto odom_interval = std::chrono::microseconds(
-        static_cast<int64_t>(1e6 / odom_freq));
+    auto pc_interval = std::chrono::microseconds( static_cast<int64_t>(1e6 / pointcloud_freq));
+    auto odom_interval = std::chrono::microseconds( static_cast<int64_t>(1e6 / odom_freq));
     std::optional<std::chrono::steady_clock::time_point> last_pc_publish;
     std::optional<std::chrono::steady_clock::time_point> last_odom_publish;
 
@@ -445,8 +419,7 @@ int main(int argc, char** argv) {
             const size_t num_points = points.size();
             auto lidar_msg = boost::make_shared<custom_messages::CustomMsg>();
             lidar_msg->header.seq = 0;
-            lidar_msg->header.stamp = custom_messages::Time().fromSec(
-                static_cast<double>(frame_start) / 1e9);
+            lidar_msg->header.stamp = custom_messages::Time().fromSec( static_cast<double>(frame_start) / 1e9);
             lidar_msg->header.frame_id = "livox_frame";
             lidar_msg->timebase = frame_start;
             lidar_msg->lidar_id = 0;
@@ -466,22 +439,18 @@ int main(int argc, char** argv) {
         if (!pose.empty() && (pose[0] != 0.0 || pose[1] != 0.0 || pose[2] != 0.0)) {
             double ts = get_publish_ts();
 
-            const bool lidar_due =
-                !g_lidar_topic.empty() && now - *last_pc_publish >= pc_interval;
+            const bool lidar_due = !g_lidar_topic.empty() && now - *last_pc_publish >= pc_interval;
 
             // get_body_cloud + filter_cloud (SOR) is the loop's costliest step,
             // so build it only when a publish is due.
             if (lidar_due) {
                 auto body_cloud = point_lio.get_body_cloud();
                 if (body_cloud && !body_cloud->empty()) {
-                    auto filtered = raw_cloud ? body_cloud
-                                              : filter_cloud<PointType>(body_cloud, filter_cfg);
+                    auto filtered = raw_cloud ? body_cloud : filter_cloud<PointType>(body_cloud, filter_cfg);
                     publish_lidar(filtered, ts);
                     last_pc_publish = now;
                     if (fastlio_debug) {
-                        fprintf(stderr,
-                                "[pointlio] publish lidar: %zu points  pose=(%.3f, %.3f, %.3f)\n",
-                                filtered ? filtered->size() : 0, pose[0], pose[1], pose[2]);
+                        fprintf(stderr, "[pointlio] publish lidar: %zu points  pose=(%.3f, %.3f, %.3f)\n", filtered ? filtered->size() : 0, pose[0], pose[1], pose[2]);
                     }
                 }
             }
@@ -491,8 +460,7 @@ int main(int argc, char** argv) {
                 publish_odometry(point_lio.get_odometry(), ts);
                 last_odom_publish = now;
                 if (fastlio_debug) {
-                    fprintf(stderr, "[pointlio] publish odom: pose=(%.3f, %.3f, %.3f)\n",
-                            pose[0], pose[1], pose[2]);
+                    fprintf(stderr, "[pointlio] publish odom: pose=(%.3f, %.3f, %.3f)\n", pose[0], pose[1], pose[2]);
                 }
             }
         }
@@ -523,8 +491,7 @@ int main(int argc, char** argv) {
         auto loop_end = std::chrono::high_resolution_clock::now();
         auto elapsed_ms = std::chrono::duration<double, std::milli>(loop_end - loop_start).count();
         if (elapsed_ms < process_period_ms) {
-            std::this_thread::sleep_for(std::chrono::microseconds(
-                static_cast<int64_t>((process_period_ms - elapsed_ms) * 1000)));
+            std::this_thread::sleep_for(std::chrono::microseconds( static_cast<int64_t>((process_period_ms - elapsed_ms) * 1000)));
         }
     }
 
