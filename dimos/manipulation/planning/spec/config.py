@@ -78,13 +78,14 @@ class RobotModelConfig(ModuleConfig):
     home_joints: list[float] | None = None
     # Pre-grasp offset distance in meters (along approach direction)
     pre_grasp_offset: float = 0.10
-    # Optional grasp tool spec: (tip_link, finger_link_1, finger_link_2). When set,
-    # plan_to_pose treats target poses as fingertip-TCP targets and retargets the IK
-    # to the tip link so the FINGERS (not the wrist) land on the pose, with the
-    # gripper approach axis aligned to the pose's local +Z. For robots whose planning
-    # tip (end_effector_link) is the wrist rather than the grasp point (e.g. R1Pro,
-    # where left_arm_link7 sits ~0.2 m above the fingertips). None = tip is the TCP.
-    grasp_tcp_links: tuple[str, str, str] | None = None
+    # Optional grasp tool spec PER ARM: {arm: (tip_link, finger_link_1, finger_link_2)}.
+    # When set, grasp planning treats target poses as fingertip-TCP targets and retargets
+    # the IK to the tip link so the FINGERS (not the wrist) land on the pose, with the
+    # gripper approach axis aligned to the pose's local +Z. For robots whose planning tip
+    # is the wrist rather than the grasp point (e.g. R1Pro, where {side}_arm_link7 sits
+    # ~0.2 m above the fingertips). Keyed by arm side ("left"/"right") so a bimanual robot
+    # can grasp with either hand. None = tip is the TCP (xArm and single-tip robots).
+    grasp_tcp_links: dict[str, tuple[str, str, str]] | None = None
 
     def get_urdf_joint_name(self, coordinator_name: str) -> str:
         """Translate coordinator joint name to URDF joint name."""

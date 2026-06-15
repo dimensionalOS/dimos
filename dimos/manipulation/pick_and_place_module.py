@@ -131,8 +131,10 @@ class PickAndPlaceModule(ManipulationModule):
         # GraspGen Docker runner (lazy initialized on first generate_grasps call)
         self._graspgen: DockerRunner | None = None
 
-        # Last pick pose: stored during pick so place_back() can return the object
+        # Last pick pose + arm: stored during pick so place_back() returns the object
+        # with the same hand/orientation.
         self._last_pick_pose: Pose | None = None
+        self._last_pick_arm: str = "left"
 
         # Snapshotted detections from the last scan_objects/refresh call.
         # The live detection cache is volatile (labels change every frame),
@@ -356,6 +358,16 @@ class PickAndPlaceModule(ManipulationModule):
             offset = half_depth - inset
             return center.x + dx * offset, center.y + dy * offset
         return center.x, center.y
+
+    @staticmethod
+    def _resolve_arm(arm: str, x: float, base_xy: tuple[float, float]) -> str:
+        """Resolve 'auto'/'left'/'right' to a concrete side. 'auto' picks the nearer
+        arm: the LEFT arm for objects at/left-of the base X, the RIGHT arm otherwise.
+        (Verified by FK: with the base facing +Y, left_arm sits at world x<0, right at
+        x>0.) Single-arm robots ignore the side downstream (no per-arm tips)."""
+        if arm in ("left", "right"):
+            return arm
+        return "left" if x <= base_xy[0] else "right"
 
     @staticmethod
     def _grasp_orientation(gx: float, gy: float, xy_dist: float) -> Quaternion:
@@ -637,6 +649,7 @@ then refreshes perception obstacles.
         object_name: str,
         object_id: str | None = None,
         robot_name: str | None = None,
+        arm: str = "auto",
     ) -> SkillResult[ManipulationSkillError]:
         """Pick up an object by name using grasp planning and motion execution.
 
@@ -647,7 +660,11 @@ then refreshes perception obstacles.
             object_name: Name of the object to pick (e.g. "cup", "bottle", "can").
             object_id: Optional unique object ID from perception for precise identification.
             robot_name: Robot to use (only needed for multi-arm setups).
+            arm: Which arm to grasp with — "left", "right", or "auto" (default; picks the
+                arm nearer the object). Ignored by single-arm robots.
         """
+        if arm not in ("auto", "left", "right"):
+            return SkillResult.fail("INVALID_ARM", f"arm must be auto/left/right, got '{arm}'")
         robot = self._get_robot(robot_name)
         if robot is None:
             return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
@@ -688,14 +705,20 @@ then refreshes perception obstacles.
             offset = pre_grasp_offset if xy_dist < _FAR_REACH_XY_THRESHOLD else 0.05
             pre_grasp_pose = self._compute_pre_grasp_pose(grasp_pose, offset)
 
-            logger.info(f"Planning approach to pre-grasp (attempt {i + 1}/{max_attempts})...")
-            if not self.plan_to_pose(pre_grasp_pose, rname, grasp_tcp=True):
+            # Choose the grasping arm (nearer side for "auto"); the idle arm is held.
+            chosen = self._resolve_arm(arm, gp.x, base_xy)
+
+            logger.info(
+                f"Planning approach to pre-grasp with {chosen} arm "
+                f"(attempt {i + 1}/{max_attempts})..."
+            )
+            if not self._plan_arm_to_pose(pre_grasp_pose, chosen, rname, grasp_tcp=True):
                 logger.info(f"Grasp candidate {i + 1} approach planning failed, trying next")
                 continue  # Try next candidate
 
             # 3. Open gripper before approach
             logger.info("Opening gripper...")
-            self._set_gripper_position(0.85, rname)
+            self._set_gripper_position(0.85, rname, arm=chosen)
             time.sleep(0.5)
 
             # 4. Execute approach to pre-grasp
@@ -705,7 +728,7 @@ then refreshes perception obstacles.
 
             # 5. Move to grasp pose
             logger.info("Moving to grasp position...")
-            if not self.plan_to_pose(grasp_pose, rname, grasp_tcp=True):
+            if not self._plan_arm_to_pose(grasp_pose, chosen, rname, grasp_tcp=True):
                 return SkillResult.fail("PLANNING_FAILED", "Grasp pose planning failed")
             exec_result = self._preview_execute_wait(rname)
             if not exec_result.is_success():
@@ -713,21 +736,24 @@ then refreshes perception obstacles.
 
             # 6. Close gripper
             logger.info("Closing gripper...")
-            self._set_gripper_position(0.0, rname)
+            self._set_gripper_position(0.0, rname, arm=chosen)
             time.sleep(1.5)  # Wait for gripper to close
 
             # 7. Retract to pre-grasp
             logger.info("Retracting with object...")
-            if not self.plan_to_pose(pre_grasp_pose, rname, grasp_tcp=True):
+            if not self._plan_arm_to_pose(pre_grasp_pose, chosen, rname, grasp_tcp=True):
                 return SkillResult.fail("PLANNING_FAILED", "Retract planning failed")
             exec_result = self._preview_execute_wait(rname)
             if not exec_result.is_success():
                 return exec_result
 
-            # Store pick pose so place_back() can return with same orientation
+            # Store pick pose + arm so place_back() returns with the same hand/orientation
             self._last_pick_pose = grasp_pose
+            self._last_pick_arm = chosen
 
-            return SkillResult.ok(f"Pick complete — grasped '{object_name}' successfully")
+            return SkillResult.ok(
+                f"Pick complete — grasped '{object_name}' with the {chosen} arm"
+            )
 
         return SkillResult.fail(
             "GRASP_ATTEMPTS_EXHAUSTED",
@@ -741,6 +767,7 @@ then refreshes perception obstacles.
         y: float,
         z: float,
         robot_name: str | None = None,
+        arm: str = "auto",
     ) -> SkillResult[ManipulationSkillError]:
         """Place a held object at the specified position.
 
@@ -752,10 +779,12 @@ then refreshes perception obstacles.
             y: Target Y position in meters.
             z: Target Z position in meters.
             robot_name: Robot to use (only needed for multi-arm setups).
+            arm: Which arm places — "left"/"right", or "auto" (default; the hand that
+                picked the object). Ignored by single-arm robots.
         """
         xy_dist = (x**2 + y**2) ** 0.5
         orientation = self._grasp_orientation(x, y, xy_dist)
-        return self._place_with_orientation(x, y, z, orientation, robot_name)
+        return self._place_with_orientation(x, y, z, orientation, robot_name, arm)
 
     def _place_with_orientation(
         self,
@@ -764,13 +793,18 @@ then refreshes perception obstacles.
         z: float,
         orientation: Quaternion,
         robot_name: str | None = None,
+        arm: str = "auto",
     ) -> SkillResult[ManipulationSkillError]:
         """Internal place with explicit orientation."""
+        if arm not in ("auto", "left", "right"):
+            return SkillResult.fail("INVALID_ARM", f"arm must be auto/left/right, got '{arm}'")
         robot = self._get_robot(robot_name)
         if robot is None:
             return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
         rname, _, config, _ = robot
         pre_place_offset = config.pre_grasp_offset
+        # The object is held by the arm that picked it; "auto" places with that hand.
+        chosen = arm if arm in ("left", "right") else self._last_pick_arm
 
         # Reduce pre-place height for far targets
         xy_dist = (x**2 + y**2) ** 0.5
@@ -786,8 +820,10 @@ then refreshes perception obstacles.
             return lift
 
         # 1. Move to pre-place
-        logger.info(f"Planning approach to place position ({x:.3f}, {y:.3f}, {z:.3f})...")
-        if not self.plan_to_pose(pre_place_pose, rname, grasp_tcp=True):
+        logger.info(
+            f"Planning approach to place ({x:.3f}, {y:.3f}, {z:.3f}) with {chosen} arm..."
+        )
+        if not self._plan_arm_to_pose(pre_place_pose, chosen, rname, grasp_tcp=True):
             return SkillResult.fail("PLANNING_FAILED", "Pre-place approach planning failed")
 
         exec_result = self._preview_execute_wait(rname)
@@ -796,7 +832,7 @@ then refreshes perception obstacles.
 
         # 2. Lower to place position
         logger.info("Lowering to place position...")
-        if not self.plan_to_pose(place_pose, rname, grasp_tcp=True):
+        if not self._plan_arm_to_pose(place_pose, chosen, rname, grasp_tcp=True):
             return SkillResult.fail("PLANNING_FAILED", "Place pose planning failed")
         exec_result = self._preview_execute_wait(rname)
         if not exec_result.is_success():
@@ -804,12 +840,12 @@ then refreshes perception obstacles.
 
         # 3. Release
         logger.info("Releasing object...")
-        self._set_gripper_position(0.85, rname)
+        self._set_gripper_position(0.85, rname, arm=chosen)
         time.sleep(1.0)
 
         # 4. Retract
         logger.info("Retracting...")
-        if not self.plan_to_pose(pre_place_pose, rname, grasp_tcp=True):
+        if not self._plan_arm_to_pose(pre_place_pose, chosen, rname, grasp_tcp=True):
             return SkillResult.fail("PLANNING_FAILED", "Retract planning failed")
         exec_result = self._preview_execute_wait(rname)
         if not exec_result.is_success():
@@ -818,13 +854,16 @@ then refreshes perception obstacles.
         return SkillResult.ok(f"Place complete — object released at ({x:.3f}, {y:.3f}, {z:.3f})")
 
     @skill
-    def place_back(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
+    def place_back(
+        self, robot_name: str | None = None, arm: str = "auto"
+    ) -> SkillResult[ManipulationSkillError]:
         """Place the held object back at its original pick position.
 
         Uses the position stored from the last successful pick operation.
 
         Args:
             robot_name: Robot to use (only needed for multi-arm setups).
+            arm: Which arm — "left"/"right", or "auto" (default; the hand that picked).
         """
         if self._last_pick_pose is None:
             return SkillResult.fail(
@@ -835,7 +874,7 @@ then refreshes perception obstacles.
         p = self._last_pick_pose.position
         o = self._last_pick_pose.orientation
         logger.info(f"Placing back at original position ({p.x:.3f}, {p.y:.3f}, {p.z:.3f})...")
-        return self._place_with_orientation(p.x, p.y, p.z, o, robot_name)
+        return self._place_with_orientation(p.x, p.y, p.z, o, robot_name, arm)
 
     @skill
     def drop_on(
@@ -843,6 +882,7 @@ then refreshes perception obstacles.
         target_object_name: str,
         z_offset: float = 0.1,
         robot_name: str | None = None,
+        arm: str = "auto",
     ) -> SkillResult[ManipulationSkillError]:
         """Drop a held object on top of a detected object.
 
@@ -853,6 +893,7 @@ then refreshes perception obstacles.
             target_object_name: Name of the target object to drop onto (e.g. "cup", "bowl").
             z_offset: Height above the target object's center to release (meters).
             robot_name: Robot to use (only needed for multi-arm setups).
+            arm: Which arm — "left"/"right", or "auto" (default; the hand that picked).
         """
         pos = self._resolve_object_position(target_object_name)
         if pos is None:
@@ -865,7 +906,7 @@ then refreshes perception obstacles.
         logger.info(
             f"Dropping on '{target_object_name}' at corrected position ({x:.3f}, {y:.3f}, {z:.3f})"
         )
-        return self.place(x, y, z, robot_name)
+        return self.place(x, y, z, robot_name, arm)
 
     @skill
     def pick_and_place(
@@ -876,6 +917,7 @@ then refreshes perception obstacles.
         place_z: float,
         object_id: str | None = None,
         robot_name: str | None = None,
+        arm: str = "auto",
     ) -> SkillResult[ManipulationSkillError]:
         """Pick up an object and place it at a target location.
 
@@ -888,6 +930,8 @@ then refreshes perception obstacles.
             place_z: Target Z position to place the object (meters).
             object_id: Optional unique object ID from perception.
             robot_name: Robot to use (only needed for multi-arm setups).
+            arm: Which arm — "left"/"right", or "auto" (default; pick uses the nearer
+                arm, place uses that same hand).
         """
         logger.info(
             f"Starting pick and place: pick '{object_name}' → place at "
@@ -895,11 +939,11 @@ then refreshes perception obstacles.
         )
 
         # Pick phase
-        pick_result = self.pick(object_name, object_id, robot_name)
+        pick_result = self.pick(object_name, object_id, robot_name, arm)
         if not pick_result.is_success():
             return pick_result
 
-        # Place phase
+        # Place phase (the same hand holds the object → arm="auto" uses _last_pick_arm)
         return self.place(place_x, place_y, place_z, robot_name)
 
     @rpc

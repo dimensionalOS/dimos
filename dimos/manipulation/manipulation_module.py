@@ -166,9 +166,11 @@ class ManipulationModule(Module):
         # Init joints: captured from first joint state per robot, used by go_init
         self._init_joints: dict[RobotName, JointState] = {}
 
-        # Grasp tool frame per robot (FK-derived, lazy): for robots whose planning
+        # Grasp tool frame per (robot, arm) (FK-derived, lazy): for robots whose planning
         # tip is the wrist, retarget grasp poses to the fingertips. None = no offset.
-        self._grasp_tool: dict[WorldRobotID, tuple[np.ndarray, np.ndarray, np.ndarray] | None] = {}
+        self._grasp_tool: dict[
+            tuple[WorldRobotID, str], tuple[np.ndarray, np.ndarray, np.ndarray] | None
+        ] = {}
 
         # TF publishing thread
         self._tf_stop_event = threading.Event()
@@ -540,26 +542,29 @@ class ManipulationModule(Module):
         return np.eye(3) + k + k @ k * ((1.0 - c) / (s * s))
 
     def _grasp_tool_frame(
-        self, robot_id: WorldRobotID, config: RobotModelConfig
+        self, robot_id: WorldRobotID, config: RobotModelConfig, arm: str = "left"
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
         """FK-derived grasp tool frame (R_tip_home, approach_home_world, tip->TCP offset
-        in tip frame), or None if the robot has no ``grasp_tcp_links`` / FK is unavailable.
-        Cached per robot. The approach is measured at the home configuration so it tracks
+        in tip frame) for the given ``arm``, or None if the robot has no
+        ``grasp_tcp_links`` entry for that arm / FK is unavailable. Cached per
+        (robot, arm). The approach is measured at the home configuration so it tracks
         the robot's actual base_pose."""
-        if robot_id in self._grasp_tool:
-            return self._grasp_tool[robot_id]
+        cache_key = (robot_id, arm)
+        if cache_key in self._grasp_tool:
+            return self._grasp_tool[cache_key]
         result: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
         links = getattr(config, "grasp_tcp_links", None)
+        per_arm = links.get(arm) if isinstance(links, dict) else None
         world = self._world_monitor.world if self._world_monitor else None
         if (
-            links
+            per_arm
             and config.home_joints is not None
             and world is not None
             and hasattr(world, "get_link_pose")
             and hasattr(world, "scratch_context")
             and hasattr(world, "set_joint_state")
         ):
-            tip, f1, f2 = links
+            tip, f1, f2 = per_arm
             home = JointState(name=list(config.joint_names), position=list(config.home_joints))
             try:
                 with world.scratch_context() as ctx:
@@ -576,12 +581,12 @@ class ManipulationModule(Module):
                     approach_world = delta / norm
                     result = (r_tip, approach_world, t_local)
                     logger.info(
-                        f"Grasp tool frame for '{config.name}': fingertip is "
+                        f"Grasp tool frame for '{config.name}' ({arm}): fingertip is "
                         f"{norm:.3f}m from {tip}; grasp targets retargeted to fingertips"
                     )
             except Exception as exc:  # noqa: BLE001 - degrade to wrist targeting
-                logger.warning(f"Grasp tool frame FK failed for '{config.name}': {exc}")
-        self._grasp_tool[robot_id] = result
+                logger.warning(f"Grasp tool frame FK failed for '{config.name}' ({arm}): {exc}")
+        self._grasp_tool[cache_key] = result
         return result
 
     def _grasp_tcp_to_tip(
@@ -650,6 +655,62 @@ class ManipulationModule(Module):
         logger.info(f"IK solved, error: {ik.position_error:.4f}m")
         return self._plan_path_only(robot_name, robot_id, ik.joint_state)
 
+    def _plan_arm_to_pose(
+        self,
+        pose: Pose,
+        arm: str,
+        robot_name: RobotName | None = None,
+        grasp_tcp: bool = True,
+    ) -> bool:
+        """Plan a single-arm grasp/place motion via the multi-target ("planning groups")
+        path: drive the chosen ``arm``'s tip to ``pose`` (fingertip-TCP retargeted per arm
+        when ``grasp_tcp``) while HOLDING the idle arm's tip at its current pose and letting
+        the torso lean freely. Robots without per-arm ``grasp_tcp_links`` (e.g. xArm) fall
+        back to single-target plan_to_pose, so the shared pick/place pipeline is unchanged
+        for them."""
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return self._fail("Robot not found")
+        config = robot[2]
+        links = getattr(config, "grasp_tcp_links", None)
+        if not isinstance(links, dict) or arm not in links:
+            # Single-tip robot (or unknown arm): plan to the configured end-effector.
+            return self.plan_to_pose(pose, robot_name, grasp_tcp=grasp_tcp)
+
+        if (r := self._begin_planning(robot_name)) is None:
+            return False
+        robot_name, robot_id = r
+        assert self._world_monitor  # guaranteed by _begin_planning
+
+        active_tip = links[arm][0]
+        idle_arm = "right" if arm == "left" else "left"
+        idle_tip = links[idle_arm][0] if idle_arm in links else None
+
+        # Active arm: retarget the fingertip-TCP pose to the wrist tip the IK solves for.
+        wrist = pose
+        if grasp_tcp:
+            tool = self._grasp_tool_frame(robot_id, config, arm)
+            if tool is not None:
+                wrist = self._grasp_tcp_to_tip(pose, tool)
+        pose_targets: dict[str, Pose] = {active_tip: wrist}
+
+        # Idle arm: pin its tip at its current FK pose so it holds steady (torso free).
+        if idle_tip is not None:
+            current = self._world_monitor.get_current_joint_state(robot_id)
+            world = self._world_monitor.world
+            if current is not None and hasattr(world, "get_link_pose"):
+                try:
+                    with world.scratch_context() as ctx:
+                        world.set_joint_state(ctx, robot_id, current)
+                        m = np.asarray(world.get_link_pose(ctx, robot_id, idle_tip), dtype=float)
+                    pose_targets[idle_tip] = Pose(
+                        Vector3(*m[:3, 3]), Quaternion.from_rotation_matrix(m[:3, :3])
+                    )
+                except Exception as exc:  # noqa: BLE001 - degrade to active-arm-only
+                    logger.warning(f"Idle-arm hold FK failed ({idle_tip}): {exc}")
+
+        return self._plan_to_poses_internal(robot_name, robot_id, pose_targets)
+
     @rpc
     def plan_to_poses(
         self,
@@ -667,7 +728,18 @@ class ManipulationModule(Module):
         if self._kinematics is None or (r := self._begin_planning(robot_name)) is None:
             return False
         robot_name, robot_id = r
-        assert self._world_monitor  # guaranteed by _begin_planning
+        return self._plan_to_poses_internal(robot_name, robot_id, pose_targets)
+
+    def _plan_to_poses_internal(
+        self,
+        robot_name: RobotName,
+        robot_id: WorldRobotID,
+        pose_targets: dict[str, Pose],
+    ) -> bool:
+        """Core multi-target plan (no state-machine guard — the caller already holds it
+        via _begin_planning). Solves all tips simultaneously + plans one synchronized
+        joint-space path. Shared by the plan_to_poses RPC and _plan_arm_to_pose."""
+        assert self._world_monitor  # caller guaranteed via _begin_planning
 
         if not pose_targets:
             return self._fail("No pose targets supplied")
@@ -1111,8 +1183,12 @@ class ManipulationModule(Module):
             return None
         return str(config.gripper_hardware_id)
 
-    def _set_gripper_position(self, position: float, robot_name: RobotName | None = None) -> bool:
-        """Internal: set gripper position in meters."""
+    def _set_gripper_position(
+        self, position: float, robot_name: RobotName | None = None, arm: str = "left"
+    ) -> bool:
+        """Internal: set gripper position in meters for the given arm side. ``arm``
+        routes to the per-side gripper via the coordinator (default left == side 0; a
+        single-gripper robot ignores it)."""
         hw_id = self._get_gripper_hardware_id(robot_name)
         if hw_id is None:
             return False
@@ -1120,7 +1196,7 @@ class ManipulationModule(Module):
         if client is None:
             logger.error("No coordinator client for gripper control")
             return False
-        return bool(client.set_gripper_position(hw_id, position))
+        return bool(client.set_gripper_position(hw_id, position, side=arm))
 
     @rpc
     def get_gripper(self, robot_name: RobotName | None = None) -> float | None:
