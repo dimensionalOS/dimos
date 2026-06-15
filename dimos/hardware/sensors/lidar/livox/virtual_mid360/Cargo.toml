@@ -3,9 +3,6 @@ name = "virtual-mid360"
 version = "0.1.0"
 edition = "2021"
 
-# Fake Livox Mid-360: replays a recorded pcap over a virtual NIC and synthesizes
-# the Livox SDK2 control handshake so an unmodified live-mode pointlio ingests it
-# as if from a real sensor. Inverse of pointlio's in-process --replay_pcap.
 [[bin]]
 name = "virtual_mid360"
 path = "src/main.rs"

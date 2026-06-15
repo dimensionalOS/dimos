@@ -35,7 +35,10 @@ Usage::
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
+
+from pydantic import Field
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 
@@ -45,24 +48,21 @@ class VirtualMid360Config(NativeModuleConfig):
     executable: str = "result/bin/virtual_mid360"
     build_command: str | None = "nix build .#default"
 
-    # Recorded Mid-360 pcap (point/IMU/status UDP). Read fully into RAM.
-    pcap: str = ""
-    # Replay-speed multiplier; 1.0 = original inter-packet timing.
+    # pcap/lidar_ip/host_ip/lidar_netns default from DIMOS_MID360_* env vars so
+    # blueprints needn't restate them. pcap/lidar_ip/host_ip are required — empty
+    # makes the binary error.
+    pcap: str = Field(default_factory=lambda: os.environ.get("DIMOS_MID360_PCAP", ""))
+    # Replay speed; 1.0 = original timing.
     rate: float = 1.0
-    # Seconds to wait after start before streaming begins.
+    # Seconds to wait before streaming begins.
     delay: float = 0.0
-    # IP the fake lidar sends from (must be on this netns's veth). Network-
-    # specific, so required (no default).
-    lidar_ip: str
-    # Host IP the recorded data is delivered to (where the SDK listens). Machine-
-    # specific, so required (no default).
-    host_ip: str
-    # Network namespace the fake lidar runs inside. Deployment-specific, so
-    # required (no default).
-    lidar_netns: str
-    # Multicast group the point/IMU streams are sent to. 224.1.1.5 is the Livox
-    # default the SDK joins (a genuine Livox default), so it stays defaulted;
-    # override only to match a consumer with a different multicast_ip.
+    # IP the fake lidar sends from (on this netns's veth).
+    lidar_ip: str = Field(default_factory=lambda: os.environ.get("DIMOS_MID360_LIDAR_IP", ""))
+    # Host IP the data is delivered to (where the SDK listens).
+    host_ip: str = Field(default_factory=lambda: os.environ.get("DIMOS_MID360_HOST_IP", ""))
+    # Network namespace the fake lidar runs in.
+    lidar_netns: str = Field(default_factory=lambda: os.environ.get("DIMOS_MID360_NETNS", "lidar"))
+    # Multicast group for point/IMU. 224.1.1.5 is the Livox default the SDK joins.
     mcast_data: str = "224.1.1.5"
 
 
