@@ -80,6 +80,12 @@ _TALL_OBJECT_MIN_HEIGHT = 0.06
 # it faces +Y). Flip the sign or zero it if it over/under-corrects.
 _GRASP_RIGHT_OFFSET_M = 0.03
 
+# Ground-truth object obstacles are seeded at this fraction of their true size: the full
+# AABB + the planner's conservative arm hulls leave no collision-free pre-grasp in a
+# cluttered scene, while a shrunk box does. The objects are physical in MuJoCo, so a
+# light graze is harmless.
+_OBSTACLE_SHRINK = 0.6
+
 
 @dataclass
 class _GroundTruthDetection:
@@ -592,10 +598,13 @@ class PickAndPlaceModule(ManipulationModule):
         return dets
 
     def _seed_ground_truth_obstacles(self, detections: list[_GroundTruthDetection]) -> None:
-        """Add each ground-truth detection to the planning world as a PERCEPTION
-        obstacle so it renders in the viz (viser) and the planner is aware of it.
-        These are cleared by clear_perception_obstacles (which pick() calls before
-        the grasp), so they never block the approach."""
+        """Add each ground-truth detection to the planning world as a PERCEPTION obstacle
+        so it renders in the viz (viser) AND the path planner routes the arm AROUND it
+        (instead of sweeping through it on the way to the pre-grasp). The boxes are shrunk
+        by _OBSTACLE_SHRINK: the full AABB plus the planner's conservative arm hulls leaves
+        no collision-free pre-grasp config in a cluttered scene, while a 0.6x box does (and
+        the objects are physical in MuJoCo, so a light graze is harmless). pick() drops the
+        TARGET's box so the gripper can reach it."""
         if self._world_monitor is None:
             return
         for det in detections:
@@ -603,7 +612,11 @@ class PickAndPlaceModule(ManipulationModule):
                 name=det.name,
                 pose=Pose(det.center, Quaternion(0.0, 0.0, 0.0, 1.0)),
                 obstacle_type=ObstacleType.BOX,
-                dimensions=(float(det.size.x), float(det.size.y), float(det.size.z)),
+                dimensions=(
+                    float(det.size.x) * _OBSTACLE_SHRINK,
+                    float(det.size.y) * _OBSTACLE_SHRINK,
+                    float(det.size.z) * _OBSTACLE_SHRINK,
+                ),
                 color=(0.2, 0.7, 0.9, 0.9),
             )
             self._world_monitor.add_object_obstacle(det.object_id or det.name, obstacle)
@@ -725,13 +738,14 @@ then refreshes perception obstacles.
         )
         self._last_grasp_roll = grasp_roll
 
-        # Detected objects are COLLISION obstacles. In a cluttered scene, reaching one
-        # object makes the arm config collide with a NEIGHBOR's box (so even the cup, with
-        # its target obstacle dropped, can't be reached). Drop ALL object obstacles for the
-        # grasp; the ones still on the desk are re-seeded after the pick (see
-        # _reseed_objects) so they stay visible between picks.
+        # Drop ONLY the TARGET object's obstacle so the gripper can reach it; the others
+        # stay (shrunk, see _seed_ground_truth_obstacles) so the path routes AROUND them
+        # instead of sweeping the gripper through them on the way to the pre-grasp. Real
+        # perception still clears everything (the folded camera-over-desk pose can sit
+        # inside a detection box).
         if self.config.ground_truth_objects and self._world_monitor is not None:
-            self._world_monitor.clear_perception_obstacles()
+            if target_det is not None:
+                self._world_monitor.remove_object_obstacle(target_det.object_id or target_det.name)
         else:
             self.clear_perception_obstacles()
 
@@ -798,14 +812,14 @@ then refreshes perception obstacles.
             self._last_pick_pose = grasp_pose
             self._last_pick_arm = chosen
 
-            # Put the other objects back in the viz (the grasped one is now in the gripper).
-            self._reseed_objects(exclude=object_name)
+            # Grasped: leave the target's box dropped (it's in the gripper); the others
+            # were never removed, so the desk stays as-is in the viz.
             return SkillResult.ok(
                 f"Pick complete — grasped '{object_name}' with the {chosen} arm"
             )
 
-        # All candidates failed: put every object back (they were dropped for the approach)
-        # and clear the FAULT so the next command can plan.
+        # All candidates failed: put the target's box back (only it was dropped) and clear
+        # the FAULT so the next command can plan.
         self._reseed_objects()
         self._clear_planning_fault()
         return SkillResult.fail(

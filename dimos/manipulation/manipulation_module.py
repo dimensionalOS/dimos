@@ -782,6 +782,7 @@ class ManipulationModule(Module):
             pose_targets=targets,
             seed=current,
             check_collision=True,
+            max_attempts=10,  # retry from perturbed seeds to find a collision-free config
         )
         if not ik.is_success() or ik.joint_state is None:
             return self._fail(f"Multi-target IK failed: {ik.status.name}")
