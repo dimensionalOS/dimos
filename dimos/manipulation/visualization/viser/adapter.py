@@ -217,6 +217,16 @@ class InProcessViserAdapter:
             return None
         return self._world_monitor.get_ee_pose(robot_id, copy_joint_state(joint_state))
 
+    def get_obstacles(self) -> list[object]:
+        """World obstacles (perception detections + static seeds) for viser rendering."""
+        world = getattr(self._world_monitor, "world", None)
+        if world is None or not hasattr(world, "get_obstacles"):
+            return []
+        try:
+            return list(world.get_obstacles())
+        except Exception:
+            return []
+
     def evaluate_joint_target(self, joints: JointState, robot_name: RobotName) -> dict[str, object]:
         """Evaluate a joint target through WorldMonitor helpers, not raw WorldSpec access."""
         if isinstance(self._module, _JointTargetEvaluator):

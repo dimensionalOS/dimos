@@ -144,6 +144,57 @@ class ViserManipulationScene:
         self._handles: dict[str, object] = {}
         self._preview_visible: dict[str, bool] = {}
         self._target_tracks_current: dict[str, bool] = {}
+        self._obstacle_handles: dict[str, object] = {}
+
+    def sync_obstacles(self, obstacles: Sequence[object]) -> None:
+        """Diff-render world obstacles (boxes/meshes) by name: add new, move
+        existing, remove vanished. Called each visualization tick."""
+        from dimos.manipulation.planning.spec.models import ObstacleType
+
+        scene = getattr(self.server, "scene", None)
+        if scene is None or not hasattr(scene, "add_box"):
+            return
+        seen: set[str] = set()
+        for obs in obstacles:
+            name = getattr(obs, "name", None)
+            pose = getattr(obs, "pose", None)
+            if name is None or pose is None:
+                continue
+            seen.add(name)
+            p, q = pose.position, pose.orientation
+            position = (float(p.x), float(p.y), float(p.z))
+            wxyz = (float(q.w), float(q.x), float(q.y), float(q.z))
+            existing = self._obstacle_handles.get(name)
+            if existing is not None:
+                try:
+                    existing.position = position
+                    existing.wxyz = wxyz
+                except Exception:
+                    pass
+                continue
+            color = tuple(int(max(0.0, min(1.0, c)) * 255) for c in getattr(obs, "color", (0.2, 0.8, 0.2, 1.0))[:3])
+            node = f"/obstacles/{name}"
+            dims = tuple(float(d) for d in getattr(obs, "dimensions", ()) or ())
+            try:
+                if getattr(obs, "obstacle_type", None) == ObstacleType.BOX and len(dims) >= 3:
+                    self._obstacle_handles[name] = scene.add_box(
+                        node, color=color, dimensions=dims[:3], position=position, wxyz=wxyz
+                    )
+                elif getattr(obs, "obstacle_type", None) == ObstacleType.MESH and getattr(obs, "mesh_path", None):
+                    import trimesh
+
+                    self._obstacle_handles[name] = scene.add_mesh_trimesh(
+                        node, trimesh.load(obs.mesh_path), position=position, wxyz=wxyz
+                    )
+            except Exception:
+                pass
+        for name in list(self._obstacle_handles):
+            if name not in seen:
+                handle = self._obstacle_handles.pop(name)
+                try:
+                    handle.remove()
+                except Exception:
+                    pass
 
     def register_robot(self, robot_id: str, config: RobotModelConfig) -> None:
         self._configs_by_id[robot_id] = config

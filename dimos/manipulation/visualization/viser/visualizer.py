@@ -103,6 +103,7 @@ class ViserManipulationVisualizer:
         for _robot_name, robot_id, _config in self._adapter.robot_items():
             current = self._adapter.get_current_joint_state(_robot_name)
             self._scene.update_current_robot(str(robot_id), current)
+        self._scene.sync_obstacles(self._adapter.get_obstacles())
         if self._gui is not None:
             self._gui.refresh()
 

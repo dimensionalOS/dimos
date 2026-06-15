@@ -142,6 +142,41 @@ def r1pro_mujoco_scene_preset(
     )
 
 
+def r1pro_scene_obstacles(
+    scene_package_env: str = "DIMOS_SCENE_PACKAGE_PATH",
+) -> list[dict[str, Any]]:
+    """Static box-obstacle specs (desk + graspable objects) from the scene package,
+    for seeding the planning world so they render in viser before perception runs.
+    initial_pose is the object center and descriptor.extents the AABB size."""
+    package = _r1pro_scene_package(scene_package_env)
+    if package is None:
+        return []
+    obstacles: list[dict[str, Any]] = []
+    for entity in package.entities:
+        eid = str(entity.get("id", ""))
+        tags = entity.get("tags", [])
+        is_table = eid == "manip_table" or "table" in tags
+        if not (is_table or (eid.startswith("manip_") and not is_table)):
+            continue
+        descriptor = entity.get("descriptor", {})
+        extents = descriptor.get("extents")
+        if not extents:
+            continue
+        pose = entity.get("initial_pose", {})
+        rgba = descriptor.get("rgba") or (
+            [0.55, 0.35, 0.15, 0.7] if is_table else [0.2, 0.7, 0.9, 0.9]
+        )
+        obstacles.append(
+            {
+                "name": eid,
+                "position": [float(pose.get("x", 0.0)), float(pose.get("y", 0.0)), float(pose.get("z", 0.0))],
+                "dimensions": [float(extents[0]), float(extents[1]), float(extents[2])],
+                "color": [float(c) for c in rgba],
+            }
+        )
+    return obstacles
+
+
 def _r1pro_scene_package(env_name: str) -> ScenePackage | None:
     """Load the R1Pro sim scene from the env var or the committed default, warning
     (not raising) if it can't be loaded so import + run stay robust and the

@@ -106,6 +106,10 @@ class ManipulationModuleConfig(ModuleConfig):
     # to prevent the planner from routing trajectories below this height.
     # Set to None to disable.
     floor_z: float | None = None
+    # Static box obstacles added to the planning world at startup (e.g. the desk
+    # and its objects in a sim preview, before perception runs). Each entry:
+    # {"name": str, "position": [x,y,z], "dimensions": [w,h,d], "color": [r,g,b,a]?}.
+    static_obstacles: list[dict[str, Any]] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
@@ -229,6 +233,25 @@ class ManipulationModule(Module):
             )
             self._world_monitor.add_obstacle(floor_obs)
             logger.info(f"Floor obstacle added at z={fz:.3f}")
+
+        # Static obstacles (e.g. the desk + objects in a sim preview).
+        for spec in self.config.static_obstacles:
+            pos = spec["position"]
+            color = spec.get("color", (0.2, 0.8, 0.2, 0.9))
+            self._world_monitor.add_obstacle(
+                Obstacle(
+                    name=str(spec["name"]),
+                    pose=Pose(
+                        Vector3(float(pos[0]), float(pos[1]), float(pos[2])),
+                        Quaternion(0.0, 0.0, 0.0, 1.0),
+                    ),
+                    obstacle_type=ObstacleType.BOX,
+                    dimensions=tuple(float(d) for d in spec["dimensions"]),
+                    color=tuple(float(c) for c in color),
+                )
+            )
+        if self.config.static_obstacles:
+            logger.info(f"Added {len(self.config.static_obstacles)} static obstacle(s)")
 
         for _, (robot_id, _, _) in self._robots.items():
             self._world_monitor.start_state_monitor(robot_id)

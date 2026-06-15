@@ -40,6 +40,7 @@ from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.manipulation.sim_presets import (
     r1pro_mujoco_scene_preset,
+    r1pro_scene_obstacles,
     xarm7_mujoco_scene_preset,
 )
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -562,6 +563,9 @@ r1pro_sim_preview = autoconnect(
         planner_name="roboplan",
         kinematics_name="pink",
         visualization=_R1PRO_BIMANUAL_VIZ,
+        # Seed the desk + objects as static obstacles so they render in viser
+        # (before perception runs). Empty if no scene package is available.
+        static_obstacles=r1pro_scene_obstacles(),
     ),
     MujocoSimModule.blueprint(
         **_r1pro_sim_preset.mujoco_module_kwargs,
