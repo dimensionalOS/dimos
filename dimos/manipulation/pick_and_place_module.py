@@ -41,6 +41,8 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationModuleConfig,
 )
+from dimos.manipulation.planning.spec.enums import ObstacleType
+from dimos.manipulation.planning.spec.models import Obstacle
 from dimos.manipulation.skill_errors import ManipulationSkillError
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -555,6 +557,23 @@ class PickAndPlaceModule(ManipulationModule):
             )
         return dets
 
+    def _seed_ground_truth_obstacles(self, detections: list[_GroundTruthDetection]) -> None:
+        """Add each ground-truth detection to the planning world as a PERCEPTION
+        obstacle so it renders in the viz (viser) and the planner is aware of it.
+        These are cleared by clear_perception_obstacles (which pick() calls before
+        the grasp), so they never block the approach."""
+        if self._world_monitor is None:
+            return
+        for det in detections:
+            obstacle = Obstacle(
+                name=det.name,
+                pose=Pose(det.center, Quaternion(0.0, 0.0, 0.0, 1.0)),
+                obstacle_type=ObstacleType.BOX,
+                dimensions=(float(det.size.x), float(det.size.y), float(det.size.z)),
+                color=(0.2, 0.7, 0.9, 0.9),
+            )
+            self._world_monitor.add_object_obstacle(det.object_id or det.name, obstacle)
+
     @skill
     def scan_objects(
         self,
@@ -580,6 +599,10 @@ then refreshes perception obstacles.
             dets = self._detection_snapshot
             if not dets:
                 return SkillResult.ok("No objects in scene")
+            # Show the objects in the planning world (viser) + make the planner
+            # object-aware. They're added as PERCEPTION obstacles, so pick() drops
+            # them (clear_perception_obstacles) before the grasp approach.
+            self._seed_ground_truth_obstacles(dets)
             lines = [f"Detected {len(dets)} object(s):"]
             lines += [f"  - {d.name}: ({d.center.x:.3f}, {d.center.y:.3f}, {d.center.z:.3f})" for d in dets]
             return SkillResult.ok("\n".join(lines))

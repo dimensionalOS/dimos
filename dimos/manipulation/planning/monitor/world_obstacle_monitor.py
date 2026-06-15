@@ -490,6 +490,24 @@ class WorldObstacleMonitor:
 
             return result
 
+    def add_object_obstacle(self, object_id: str, obstacle: Obstacle) -> str:
+        """Add a single object as a PERCEPTION obstacle (tracked like a detection, so
+        clear_perception_obstacles / refresh_obstacles remove it — unlike a static
+        obstacle, which persists). Used by ground-truth scans that bypass the live
+        detection cache but still want the objects in the planning world + viz.
+        Re-adding the same object_id replaces the previous obstacle.
+
+        Returns:
+            The planning-world obstacle id.
+        """
+        with self._lock:
+            old = self._object_obstacles.pop(object_id, None)
+            if old is not None:
+                self._world.remove_obstacle(old)
+            obs_id = self._world.add_obstacle(obstacle)
+            self._object_obstacles[object_id] = obs_id
+            return obs_id
+
     def remove_object_obstacle(self, object_id: str) -> bool:
         """Remove a single object's obstacle from the planning world.
 

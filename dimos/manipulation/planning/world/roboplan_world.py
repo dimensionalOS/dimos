@@ -154,7 +154,12 @@ class RoboPlanWorld:
         """Remove an obstacle from the RoboPlan scene."""
         if obstacle_id not in self._obstacles:
             return False
-        handle = self._obstacle_handles.get(obstacle_id, obstacle_id)
+        # RoboPlan keys geometry by name and stores a None handle, so the scene API
+        # needs the name; fall back to it (the (id, id) default won't fire when the
+        # key exists with a None value).
+        handle = self._obstacle_handles.get(obstacle_id)
+        if handle is None:
+            handle = obstacle_id
         remove = self._lookup_method(self._scene, ("removeGeometry", "remove_geometry"))
         if remove is None:
             raise ValueError("RoboPlan scene does not expose obstacle removal")
@@ -168,7 +173,12 @@ class RoboPlanWorld:
         """Update an obstacle pose and invalidate collision scratch."""
         if obstacle_id not in self._obstacles:
             return False
-        handle = self._obstacle_handles.get(obstacle_id, obstacle_id)
+        # RoboPlan keys geometry by name and stores a None handle, so the scene API
+        # needs the name; fall back to it (the (id, id) default won't fire when the
+        # key exists with a None value).
+        handle = self._obstacle_handles.get(obstacle_id)
+        if handle is None:
+            handle = obstacle_id
         update = self._lookup_method(
             self._scene, ("updateGeometryPlacement", "update_geometry_placement")
         )

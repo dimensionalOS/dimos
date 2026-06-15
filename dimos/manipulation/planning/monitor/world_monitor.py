@@ -237,6 +237,13 @@ class WorldMonitor:
             return self._obstacle_monitor.refresh_obstacles(min_duration)
         return []
 
+    def add_object_obstacle(self, object_id: str, obstacle: Obstacle) -> str:
+        """Add one object as a perception obstacle (cleared by clear_perception_obstacles).
+        For ground-truth scans that don't flow through the live detection cache."""
+        if self._obstacle_monitor is not None:
+            return self._obstacle_monitor.add_object_obstacle(object_id, obstacle)
+        return ""
+
     def remove_object_obstacle(self, object_id: str) -> bool:
         """Remove a single object's obstacle from the planning world."""
         if self._obstacle_monitor is not None:
