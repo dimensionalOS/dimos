@@ -48,13 +48,7 @@ def _default_pcap_path() -> Path:
 
 
 def _stop_when_parent_dies(cmd: list[str], grace_sec: float) -> list[str]:
-    """Wrap cmd so it's reaped if this recorder dies — including via SIGKILL,
-    which it can't intercept — otherwise tcpdump would outlive its session.
-
-    The kills fall back to an unconfined AppArmor label: tcpdump's profile
-    rejects signals from a confined (e.g. vscode-labeled) sender with EPERM, so
-    a plain kill silently fails there — `sudo -n aa-exec -p unconfined` re-issues
-    it from a label tcpdump accepts (a no-op where AppArmor isn't in the way)."""
+    """complicated because of AppArmor label. Must kill with `sudo -n aa-exec -p unconfined`"""
     parent_pid = os.getpid()
     quoted = " ".join(shlex.quote(arg) for arg in cmd)
     # Resolved here so the failure echo can show real paths + the long-term fix.
@@ -111,13 +105,10 @@ class Mid360PcapRecorderConfig(ModuleConfig):
 class Mid360PcapRecorder(Module):
     config: Mid360PcapRecorderConfig
 
-    # tcpdump fails fast (EPERM, bad iface) within a few ms; pause so poll() catches it.
     _TCPDUMP_STARTUP_PROBE_SEC: float = 0.3
     # Declare the capture dead if nothing landed after this long.
     _PCAP_WATCHDOG_SEC: float = 5.0
-    # A libpcap file with zero packets is just its 24-byte global header.
     _PCAP_GLOBAL_HEADER_BYTES: int = 24
-    # How long the diagnostic sniff listens for *any* UDP source on the iface.
     _PCAP_DIAGNOSTIC_SNIFF_SEC: float = 3.0
 
     _pcap_proc: subprocess.Popen[bytes] | None = None
@@ -376,7 +367,7 @@ class Mid360PcapRecorder(Module):
         rule = f"{user} ALL=(root) NOPASSWD: {aa} -p unconfined -- {kill} *"
         banner = textwrap.dedent(f"""
             ############################################################################
-            [mid360_record] !!! tcpdump SURVIVED THE STOP — capture is ORPHANED !!!
+              !!! kill failed - mid360_record WILL EAT YOUR DISK IF YOU DONT KILL !!!
             ############################################################################
             tcpdump pid={pid} is STILL RUNNING and writing {self.config.pcap_path}.
             AppArmor's tcpdump profile rejected the kill from this (confined) process,
