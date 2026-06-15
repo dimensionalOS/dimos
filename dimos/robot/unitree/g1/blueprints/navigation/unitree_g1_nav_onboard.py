@@ -15,13 +15,15 @@
 
 from __future__ import annotations
 
+import os
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
-from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_onboard import _unitree_g1_onboard
 from dimos.robot.unitree.g1.config import G1, G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
+from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
 from dimos.robot.unitree.g1.g1_rerun import (
     g1_odometry_tf_override,
     g1_static_robot,
@@ -30,7 +32,13 @@ from dimos.visualization.vis_module import vis_module
 
 unitree_g1_nav_onboard = (
     autoconnect(
-        _unitree_g1_onboard,
+        FastLio2.blueprint(
+            host_ip=os.getenv("LIDAR_HOST_IP", "192.168.123.164"),
+            lidar_ip=os.getenv("LIDAR_IP", "192.168.123.120"),
+            mount=G1.internal_odom_offsets["mid360_link"],
+            map_freq=1.0,
+            config="default.yaml",
+        ),
         create_nav_stack(
             planner="simple",
             vehicle_height=G1.height_clearance,
@@ -57,6 +65,7 @@ unitree_g1_nav_onboard = (
             },
         ),
         MovementManager.blueprint(),
+        G1HighLevelDdsSdk.blueprint(),
         vis_module(
             viewer_backend=global_config.viewer,
             rerun_config=nav_stack_rerun_config(

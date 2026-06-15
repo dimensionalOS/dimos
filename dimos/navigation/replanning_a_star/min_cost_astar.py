@@ -68,12 +68,11 @@ def _reconstruct_path(
     start_tuple: tuple[int, int],
     goal_tuple: tuple[int, int],
 ) -> Path:
-    frame_id = costmap.frame_id
     waypoints: list[PoseStamped] = []
     while current in parents:
         world_point = costmap.grid_to_world(current)
         pose = PoseStamped(
-            frame_id=frame_id,
+            frame_id="world",
             position=[world_point.x, world_point.y, 0.0],
             orientation=Quaternion(0, 0, 0, 1),  # Identity quaternion
         )
@@ -82,7 +81,7 @@ def _reconstruct_path(
 
     start_world_point = costmap.grid_to_world(start_tuple)
     start_pose = PoseStamped(
-        frame_id=frame_id,
+        frame_id="world",
         position=[start_world_point.x, start_world_point.y, 0.0],
         orientation=Quaternion(0, 0, 0, 1),
     )
@@ -98,32 +97,31 @@ def _reconstruct_path(
         or (waypoints[-1].x - goal_point.x) ** 2 + (waypoints[-1].y - goal_point.y) ** 2 > 1e-10
     ):
         goal_pose = PoseStamped(
-            frame_id=frame_id,
+            frame_id="world",
             position=[goal_point.x, goal_point.y, 0.0],
             orientation=Quaternion(0, 0, 0, 1),
         )
         waypoints.append(goal_pose)
 
-    return Path(frame_id=frame_id, poses=waypoints)
+    return Path(frame_id="world", poses=waypoints)
 
 
 def _reconstruct_path_from_coords(
     path_coords: list[tuple[int, int]],
     costmap: OccupancyGrid,
 ) -> Path:
-    frame_id = costmap.frame_id
     waypoints: list[PoseStamped] = []
 
     for gx, gy in path_coords:
         world_point = costmap.grid_to_world((gx, gy))
         pose = PoseStamped(
-            frame_id=frame_id,
+            frame_id="world",
             position=[world_point.x, world_point.y, 0.0],
             orientation=Quaternion(0, 0, 0, 1),
         )
         waypoints.append(pose)
 
-    return Path(frame_id=frame_id, poses=waypoints)
+    return Path(frame_id="world", poses=waypoints)
 
 
 def min_cost_astar(
