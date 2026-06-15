@@ -185,6 +185,19 @@ class Blueprint:
             for b in self.blueprints
         }
         configs["g"] = (GlobalConfig | None, None)
+        transport_fields: dict[str, Any] = {}
+        seen: set[type] = set()
+        for transport in self.transport_map.values():
+            cls = getattr(transport, "_config_cls", None)
+            if cls is None or cls in seen:
+                continue
+            seen.add(cls)
+            transport_fields[_transport_config_name(cls)] = (cls | None, None)
+        if transport_fields:
+            transports_model = create_model(
+                "TransportsConfig", __config__={"extra": "forbid"}, **transport_fields
+            )
+            configs["transports"] = (transports_model | None, None)
         return create_model("BlueprintConfig", __config__={"extra": "forbid"}, **configs)  # type: ignore[call-overload,no-any-return]
 
     def transports(self, transports: dict[tuple[str, type], Any]) -> "Blueprint":
@@ -217,6 +230,17 @@ class Blueprint:
             return self.blueprints
         disabled = set(self.disabled_modules_tuple)
         return tuple(bp for bp in self.blueprints if bp.module not in disabled)
+
+
+def _transport_config_name(cls: type) -> str:
+    """Map a transport's `_config_cls` to the kebab-name used in BlueprintConfig.
+
+    `BrokerConfig` → `broker`, `CloudflareConfig` → `cloudflare`.
+    """
+    name = cls.__name__
+    if name.endswith("Config"):
+        name = name[: -len("Config")]
+    return name.lower()
 
 
 def autoconnect(*blueprints: Blueprint) -> Blueprint:

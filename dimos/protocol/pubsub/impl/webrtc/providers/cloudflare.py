@@ -22,9 +22,9 @@ two CF sessions — one publishing, one subscribing — giving a single process
 loopback pubsub through the CF edge: exactly what the integration tests and
 the pubsub benchmark need, and nothing else.
 
-Env vars (fallback when config fields are unset):
-    CF_TELEOP_APP_ID     — Cloudflare Realtime app id
-    CF_TELEOP_APP_SECRET — Cloudflare Realtime app secret
+``app_id`` / ``app_secret`` reach ``CloudflareConfig`` via the standard
+blueprint config flow (``-o transports.cloudflare.app_id=...`` or
+``TRANSPORTS__CLOUDFLARE__APP_ID=...``).
 """
 
 from __future__ import annotations
@@ -32,9 +32,7 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass
 import hashlib
-import os
 import re
 from typing import Any
 
@@ -77,9 +75,8 @@ def _dc_name(topic: str) -> str:
     return safe[:64] or "dc"
 
 
-@dataclass(frozen=True)
 class CloudflareConfig(ProviderConfig):
-    """Direct CF Realtime access. Credentials default from CF_TELEOP_* env.
+    """Direct CF Realtime access. ``app_id`` and ``app_secret`` are required.
 
     The provider is a loopback pair (its own pub + sub session), so delivery
     spans only transports sharing the provider — i.e. one process. Bridging
@@ -104,12 +101,15 @@ class CloudflareProvider(AsyncProviderBase):
             raise RuntimeError("aiortc and httpx required: pip install dimos[webrtc]")
         super().__init__()
         config = config or CloudflareConfig()
-        app_id = config.app_id or os.environ.get("CF_TELEOP_APP_ID", "")
-        self._app_secret = config.app_secret or os.environ.get("CF_TELEOP_APP_SECRET", "")
-        if not app_id or not self._app_secret:
-            raise RuntimeError("CF_TELEOP_APP_ID and CF_TELEOP_APP_SECRET required")
+        if not config.app_id or not config.app_secret:
+            raise RuntimeError(
+                "CloudflareConfig.app_id and app_secret required "
+                "(set -o transports.cloudflare.app_id=... and app_secret=..., or the "
+                "TRANSPORTS__CLOUDFLARE__APP_ID / TRANSPORTS__CLOUDFLARE__APP_SECRET env form)"
+            )
+        self._app_secret = config.app_secret
         self._config = config
-        self._base_url = f"https://rtc.live.cloudflare.com/v1/apps/{app_id}"
+        self._base_url = f"https://rtc.live.cloudflare.com/v1/apps/{config.app_id}"
 
         self._http: httpx.AsyncClient | None = None
         self._pub_pc: RTCPeerConnection | None = None

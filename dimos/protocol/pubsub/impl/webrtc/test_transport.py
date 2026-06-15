@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 import pickle
 import struct
 
@@ -63,7 +62,6 @@ class MockProvider:
         return _unsub
 
 
-@dataclass(frozen=True)
 class MockConfig(ProviderConfig):
     name: str = "default"
 
@@ -201,19 +199,85 @@ def test_provider_singleton_per_config() -> None:
     assert MockConfig(name="a").provider() is not MockConfig(name="b").provider()
 
 
+# ─── ProviderConfig (pydantic frozen) ────────────────────────────────
+
+
+def test_provider_config_is_frozen_and_hashable() -> None:
+    """The singleton cache (`_providers` dict) keys on the config, so it MUST
+    stay hashable and immutable across the dataclass→BaseModel switch."""
+    from pydantic import ValidationError as PydanticValidationError
+
+    c = MockConfig(name="x")
+    assert hash(c) == hash(MockConfig(name="x"))
+    assert hash(c) != hash(MockConfig(name="y"))
+    with pytest.raises(PydanticValidationError):
+        c.name = "mutated"  # type: ignore[misc]
+    # Unknown fields are forbidden (extra="forbid").
+    with pytest.raises(PydanticValidationError, match="bogus"):
+        MockConfig(bogus=1)  # type: ignore[call-arg]
+
+
+# ─── Blueprint config / transport-override integration ──────────────
+
+
+def test_blueprint_config_exposes_transport_fields() -> None:
+    """`Blueprint.config()` surfaces each unique `_config_cls` as a `transports.<name>` sub-model."""
+    from typing import get_args
+
+    from pydantic import ValidationError as PydanticValidationError
+
+    from dimos.core.coordination.blueprints import Blueprint
+
+    bp = Blueprint(blueprints=()).transports({("topic", FakeLCMMsg): MockTransport("topic")})
+    cfg = bp.config()
+    parsed = cfg(transports={"mock": {"name": "override"}})
+    assert parsed.transports.mock.name == "override"
+    # Sub-field name → MockConfig; extra fields and unknown namespaces rejected.
+    with pytest.raises(PydanticValidationError, match="bogus"):
+        cfg(transports={"mock": {"bogus": 1}})
+    with pytest.raises(PydanticValidationError, match="other"):
+        cfg(transports={"other": {}})
+    # Multiple transports sharing one `_config_cls` collapse to one slot.
+    bp_shared = Blueprint(blueprints=()).transports(
+        {
+            ("a", FakeLCMMsg): MockTransport("a"),
+            ("b", FakeLCMMsg): MockTransport("b"),
+        }
+    )
+    inner = next(
+        a
+        for a in get_args(bp_shared.config().model_fields["transports"].annotation)
+        if a is not type(None)
+    )
+    assert set(inner.model_fields.keys()) == {"mock"}
+
+
+def test_transport_overrides_apply_and_survive_pickle() -> None:
+    """`_apply_transport_overrides` swaps each transport's `_config`; the new
+    config must survive pickling, since workers receive transports by pickle."""
+    from dimos.core.coordination.blueprints import Blueprint
+    from dimos.core.coordination.module_coordinator import _apply_transport_overrides
+
+    transport = MockTransport("topic")
+    assert transport._config.name == "default"
+    bp = Blueprint(blueprints=()).transports({("topic", FakeLCMMsg): transport})
+
+    _apply_transport_overrides(bp, {"mock": {"name": "overridden"}})
+    assert transport._config.name == "overridden"
+    assert pickle.loads(pickle.dumps(transport))._config.name == "overridden"
+
+
 # ─── Broker credential validation ────────────────────────────────────
 
 
-def test_broker_provider_requires_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_broker_provider_requires_credentials() -> None:
     from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
     from dimos.protocol.pubsub.impl.webrtc.providers.spec import WEBRTC_AVAILABLE
 
     if not WEBRTC_AVAILABLE:
         pytest.skip("aiortc not installed")
-    monkeypatch.delenv("TELEOP_API_KEY", raising=False)
-    monkeypatch.delenv("TELEOP_ROBOT_ID", raising=False)
 
-    with pytest.raises(RuntimeError, match="TELEOP_API_KEY"):
+    with pytest.raises(RuntimeError, match="api_key required"):
         BrokerConfig(robot_id="r1")._create()
     # robot_id is optional — the broker derives it from the API key.
     assert BrokerConfig(api_key="key")._create() is not None

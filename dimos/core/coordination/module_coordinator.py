@@ -290,6 +290,8 @@ class ModuleCoordinator(Resource):
         blueprint_args = blueprint_args or {}
         if "g" in blueprint_args:
             global_config.update(**blueprint_args.pop("g"))
+        transport_overrides = blueprint_args.pop("transports", None) or {}
+        _apply_transport_overrides(blueprint, transport_overrides)
 
         _run_configurators(blueprint)
         _check_requirements(blueprint)
@@ -337,6 +339,8 @@ class ModuleCoordinator(Resource):
         blueprint_args = blueprint_args or {}
         if "g" in blueprint_args:
             self._global_config.update(**blueprint_args.pop("g"))
+        transport_overrides = blueprint_args.pop("transports", None) or {}
+        _apply_transport_overrides(blueprint, transport_overrides)
 
         # Scale worker pool.
         n_extra = int(blueprint.global_config_overrides.get("n_workers", 0))
@@ -581,6 +585,25 @@ def _get_transport_for(blueprint: Blueprint, name: str, stream_type: type) -> Pu
     transport = pLCMTransport(topic) if use_pickled else LCMTransport(topic, stream_type)
 
     return transport
+
+
+def _apply_transport_overrides(
+    blueprint: Blueprint, overrides: Mapping[str, Mapping[str, Any]]
+) -> None:
+    """Rewrite each transport's `_config` with CLI/env overrides before workers pickle them."""
+    from dimos.core.coordination.blueprints import _transport_config_name
+    from dimos.core.transport import WebRTCTransport, WebRTCVideoTransport
+
+    if not overrides:
+        return
+    for transport in blueprint.transport_map.values():
+        if not isinstance(transport, (WebRTCTransport, WebRTCVideoTransport)):
+            continue
+        sub = overrides.get(_transport_config_name(transport._config_cls))
+        if not sub:
+            continue
+        new_config = transport._config.model_copy(update=dict(sub))
+        object.__setattr__(transport, "_config", new_config)
 
 
 def _verify_no_name_conflicts(blueprint: Blueprint) -> None:

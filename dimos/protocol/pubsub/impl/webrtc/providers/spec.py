@@ -25,9 +25,10 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass
 import threading
 from typing import Any, Protocol, runtime_checkable
+
+from pydantic import BaseModel
 
 from dimos.utils.logging_config import setup_logger
 
@@ -70,9 +71,10 @@ _providers: dict[ProviderConfig, Provider] = {}
 _providers_lock = threading.Lock()
 
 
-@dataclass(frozen=True)
-class ProviderConfig:
+class ProviderConfig(BaseModel):
     """Picklable provider factory. Equal configs share one provider per process."""
+
+    model_config = {"frozen": True, "extra": "forbid"}
 
     def _create(self) -> Provider:
         raise NotImplementedError

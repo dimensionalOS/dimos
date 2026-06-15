@@ -31,13 +31,10 @@ bound to a blueprint's Image stream; unfed, the track simply never emits.
 The aiortc/CF quirks this inherits (MAX_BUNDLE, the id=0 throwaway channel)
 are documented in ``dimos/teleop/quest_hosted/README.md``.
 
-Env vars (fallback when config fields are unset):
-    TELEOP_BROKER_URL — default https://teleop.dimensionalos.com
-    TELEOP_API_KEY    — robot API key (dtk_live_*); the broker derives the
-                        robot identity from it
-    TELEOP_ROBOT_ID   — optional robot identifier override (must match the
-                        key's namespaced robot id when set)
-    TELEOP_ROBOT_NAME — human-readable robot name
+Credentials reach ``BrokerConfig`` via the standard blueprint config flow —
+either ``-o transports.broker.api_key=dtk_live_...`` on the CLI or the
+``TRANSPORTS__BROKER__API_KEY=...`` env form. The broker derives the robot
+identity from the API key; ``robot_id`` is optional.
 """
 
 from __future__ import annotations
@@ -46,8 +43,6 @@ import asyncio
 from collections import defaultdict
 from collections.abc import Callable
 import contextlib
-from dataclasses import dataclass
-import os
 from typing import TYPE_CHECKING, Any
 
 from dimos.protocol.pubsub.impl.webrtc.providers.sdp import propagate_bundle_candidates
@@ -66,14 +61,13 @@ if TYPE_CHECKING:
     import httpx
 
 
-@dataclass(frozen=True)
 class BrokerConfig(ProviderConfig):
-    """Hosted teleop broker access. Credentials default from TELEOP_* env."""
+    """Hosted teleop broker access. ``api_key`` is required; the rest defaults."""
 
-    broker_url: str | None = None
+    broker_url: str = "https://teleop.dimensionalos.com"
     api_key: str | None = None
     robot_id: str | None = None
-    robot_name: str | None = None
+    robot_name: str = "robot"
     stun_url: str = "stun:stun.cloudflare.com:3478"
     heartbeat_hz: float = 1.0
     ordered: bool = False
@@ -104,18 +98,17 @@ class BrokerProvider(AsyncProviderBase):
             raise RuntimeError("aiortc and httpx required: pip install dimos[webrtc]")
         super().__init__()
         config = config or BrokerConfig()
-        self._broker_url = (
-            config.broker_url
-            or os.environ.get("TELEOP_BROKER_URL", "https://teleop.dimensionalos.com")
-        ).rstrip("/")
-        self._api_key = config.api_key or os.environ.get("TELEOP_API_KEY", "")
-        self._robot_id = config.robot_id or os.environ.get("TELEOP_ROBOT_ID", "")
-        self._robot_name = config.robot_name or os.environ.get("TELEOP_ROBOT_NAME", "robot")
-        if not self._api_key:
+        if not config.api_key:
             raise RuntimeError(
-                "TELEOP_API_KEY or BrokerConfig.api_key required "
-                "(create one in the teleop dashboard: New Key)"
+                "BrokerConfig.api_key required "
+                "(set -o transports.broker.api_key=dtk_live_... or "
+                "TRANSPORTS__BROKER__API_KEY=dtk_live_...; "
+                "create one in the teleop dashboard: New Key)"
             )
+        self._broker_url = config.broker_url.rstrip("/")
+        self._api_key = config.api_key
+        self._robot_id = config.robot_id or ""
+        self._robot_name = config.robot_name
         self._config = config
 
         self._http: httpx.AsyncClient | None = None

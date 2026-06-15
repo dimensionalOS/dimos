@@ -67,8 +67,9 @@ teleop_hosted_go2 = autoconnect(
 # provider/PeerConnection), and robot → operator telemetry can ride
 # CloudflareTransport("state_reliable_back", ...) the same way.
 #
-# Run:  TELEOP_API_KEY=dtk_live_... dimos run teleop-hosted-go2-transport
-#       (robot identity is derived from the key; TELEOP_ROBOT_ID optional)
+# Run:  dimos run teleop-hosted-go2-transport -o transports.broker.api_key=dtk_live_...
+#       (or TRANSPORTS__BROKER__API_KEY=dtk_live_... in env; robot identity is
+#       derived from the key, override with transports.broker.robot_id if needed)
 # then connect from https://teleop.dimensionalos.com (keyboard view).
 teleop_hosted_go2_transport = unitree_go2_basic.transports(
     {
