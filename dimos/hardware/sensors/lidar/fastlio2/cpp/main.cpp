@@ -31,7 +31,6 @@
 
 #include "livox_sdk_config.hpp"
 
-#include "cloud_filter.hpp"
 #include "dimos_native_module.hpp"
 #include "timing.hpp"
 
@@ -425,10 +424,6 @@ int main(int argc, char** argv) {
     g_child_frame_id = mod.arg_required("child_frame_id");
     float pointcloud_freq = mod.arg_float("pointcloud_freq", 5.0f);
     float odom_freq = mod.arg_float("odom_freq", 50.0f);
-    CloudFilterConfig filter_cfg;
-    filter_cfg.voxel_size = mod.arg_float("voxel_size", 0.1f);
-    filter_cfg.sor_mean_k = mod.arg_int("sor_mean_k", 50);
-    filter_cfg.sor_stddev = mod.arg_float("sor_stddev", 1.0f);
 
     // Verbose logging — propagates to the FAST-LIO C++ core via the
     // `fastlio_debug` global. Default false → only real errors print.
@@ -482,8 +477,6 @@ int main(int argc, char** argv) {
                host_ip.c_str(), lidar_ip.c_str(), g_frequency);
         printf("[fastlio2] pointcloud_freq: %.1f Hz  odom_freq: %.1f Hz\n",
                pointcloud_freq, odom_freq);
-        printf("[fastlio2] voxel_size: %.3f  sor_mean_k: %d  sor_stddev: %.1f\n",
-               filter_cfg.voxel_size, filter_cfg.sor_mean_k, filter_cfg.sor_stddev);
     }
 
     // Signal handlers
@@ -528,7 +521,6 @@ int main(int argc, char** argv) {
     static timing::Section t_feed_lidar{"fast_lio.feed_lidar"};
     static timing::Section t_process{"fast_lio.process"};
     static timing::Section t_get_world_cloud{"fast_lio.get_world_cloud"};
-    static timing::Section t_filter_cloud{"filter_cloud"};
     static timing::Section t_publish_lidar{"publish_lidar"};
     static timing::Section t_publish_odom{"publish_odometry"};
 
@@ -600,15 +592,11 @@ int main(int argc, char** argv) {
                 return fast_lio.get_world_cloud();
             })();
             if (world_cloud && !world_cloud->empty()) {
-                auto filtered = ([&]() {
-                    timing::Scope s(t_filter_cloud);
-                    return filter_cloud<PointType>(world_cloud, filter_cfg);
-                })();
-
-                // Per-scan world-frame cloud at pointcloud_freq.
+                // Per-scan world-frame cloud at pointcloud_freq, published as-is
+                // (no output-cloud voxel downsampling / outlier removal).
                 if (!g_lidar_topic.empty() && now - *last_pc_publish >= pc_interval) {
                     timing::Scope s(t_publish_lidar);
-                    publish_lidar(filtered, ts);
+                    publish_lidar(world_cloud, ts);
                     last_pc_publish = now;
                 }
             }

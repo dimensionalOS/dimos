@@ -97,11 +97,6 @@ class FastLio2Config(NativeModuleConfig):
     pointcloud_freq: float = 10.0
     odom_freq: float = 30.0
 
-    # Point cloud filtering
-    voxel_size: float = 0.1
-    sor_mean_k: int = 50
-    sor_stddev: float = 1.0
-
     # FAST-LIO YAML config (relative to config/ dir, or absolute path)
     # C++ binary reads YAML directly via yaml-cpp
     config: Annotated[
