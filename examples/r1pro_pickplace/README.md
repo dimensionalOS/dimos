@@ -45,8 +45,9 @@ Use **two terminals**.
 so no extra config is needed:
 
 ```bash
-direnv exec . dimos stop                 # clear stale shared-memory from any prior run
-direnv exec . dimos run r1pro-perception-sim
+source .venv/bin/activate
+dimos stop                 # clear stale shared-memory from any prior run
+dimos run r1pro-perception-sim
 ```
 
 Wait until it logs the viser URL, then open **http://127.0.0.1:8095** in your browser.
@@ -54,7 +55,8 @@ Wait until it logs the viser URL, then open **http://127.0.0.1:8095** in your br
 **Terminal 2 — drive a pick** (home → scan → pick, then holds the object up):
 
 ```bash
-direnv exec . python examples/r1pro_pickplace/drive_pick.py cup
+source .venv/bin/activate
+python examples/r1pro_pickplace/drive_pick.py cup
 ```
 
 Swap `cup` for any object on the desk (e.g. `can`, `bottle`, `box`). Run it again to
@@ -71,14 +73,16 @@ Needs an **OpenAI API key** (the agent runs gpt-4o):
 
 ```bash
 export OPENAI_API_KEY=sk-...
-direnv exec . dimos stop
-direnv exec . dimos run r1pro-perception-sim-agent
+source .venv/bin/activate
+dimos stop
+dimos run r1pro-perception-sim-agent
 ```
 
 Open the same viser URL. Then, from a second terminal, open the agent chat:
 
 ```bash
-direnv exec . dimos humancli
+source .venv/bin/activate
+humancli
 ```
 
 Type a natural-language instruction such as *"scan the desk and pick up the cup"*.
