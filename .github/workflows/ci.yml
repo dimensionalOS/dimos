@@ -340,13 +340,11 @@ jobs:
       - name: Install minimal dimos
         run: uv sync --no-default-groups --frozen
       - name: Install Nix (with Cachix substituter)
-        # Tells Nix to query Cachix before building locally, and tells it which
-        # public key to trust for Cachix-signed derivations. install-nix.sh
-        # forwards INPUT_EXTRA_NIX_CONFIG into the daemon's nix.conf.
         env:
           INPUT_EXTRA_NIX_CONFIG: |
             extra-substituters = https://dimensionalos.cachix.org
             extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
+          INPUT_SET_AS_TRUSTED_USER: "true"
         run: bash docker/ros/install-nix.sh
       - name: Authenticate Cachix
         uses: cachix/cachix-action@v15
