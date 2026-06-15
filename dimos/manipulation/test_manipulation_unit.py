@@ -26,7 +26,9 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationState,
 )
+from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.protocols import VisualizationSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -296,6 +298,34 @@ def _make_module_with_monitor(*configs: RobotModelConfig) -> ManipulationModule:
     return module
 
 
+def _make_joint_state(positions: list[float], name: list[str] | None = None) -> JointState:
+    return JointState(name=name or [f"j{i}" for i in range(len(positions))], position=positions)
+
+
+def _make_path(*points: list[float]) -> list[JointState]:
+    return [_make_joint_state(list(point)) for point in points]
+
+
+def _make_trajectory(*points: tuple[float, list[float]]) -> JointTrajectory:
+    joint_names = [f"j{i}" for i in range(len(points[0][1]))] if points else []
+    return JointTrajectory(
+        joint_names=joint_names,
+        points=[
+            TrajectoryPoint(time_from_start=time_from_start, positions=positions)
+            for time_from_start, positions in points
+        ],
+    )
+
+
+def _make_world_monitor_with_viz(viz: object | None) -> WorldMonitor:
+    world = viz if viz is not None else object()
+    with patch(
+        "dimos.manipulation.planning.monitor.world_monitor.create_world",
+        return_value=world,
+    ):
+        return WorldMonitor(enable_viz=viz is not None)
+
+
 class TestOnJointState:
     """Test _on_joint_state routing, splitting, and init capture."""
 
@@ -406,3 +436,133 @@ class TestOnJointState:
             position=[0.1, 0.2, 0.3],
         )
         module._on_joint_state(msg)
+
+
+class TestWorldMonitorVisualization:
+    def test_visualization_routing_and_stop_all_monitors(self):
+        viz = MagicMock(spec=VisualizationSpec)
+        viz.get_visualization_url.return_value = 123
+        monitor = _make_world_monitor_with_viz(viz)
+        state_monitor = MagicMock()
+        obstacle_monitor = MagicMock()
+        monitor._state_monitors = {"robot": state_monitor}
+        monitor._obstacle_monitor = obstacle_monitor
+        monitor._viz_thread = MagicMock()
+        monitor._viz_thread.is_alive.return_value = False
+
+        assert monitor.get_visualization_url() == "123"
+        monitor.publish_visualization()
+        monitor.show_preview("robot")
+        monitor.hide_preview("robot")
+        monitor.animate_path("robot", [1, 2, 3], 4.5)
+        assert monitor.visualization is viz
+
+        monitor.stop_all_monitors()
+
+        viz.close.assert_called_once()
+        state_monitor.stop.assert_called_once()
+        obstacle_monitor.stop.assert_called_once()
+
+    def test_visualization_none_is_noop(self):
+        monitor = _make_world_monitor_with_viz(None)
+
+        assert monitor.get_visualization_url() is None
+        monitor.publish_visualization()
+        monitor.show_preview("robot")
+        monitor.hide_preview("robot")
+        monitor.animate_path("robot", [1], 1.0)
+        monitor.start_visualization_thread()
+        assert monitor._viz_thread is None
+
+
+class TestManipulationPreview:
+    def test_dismiss_preview_noop_without_monitor(self):
+        module = _make_module()
+
+        module._dismiss_preview("robot_id")
+
+    def test_dismiss_preview_routes_to_monitor(self):
+        module = _make_module()
+        module._world_monitor = MagicMock()
+
+        module._dismiss_preview("robot_id")
+
+        module._world_monitor.hide_preview.assert_called_once_with("robot_id")
+        module._world_monitor.publish_visualization.assert_called_once_with()
+
+    def test_preview_path_uses_trajectory_duration_and_interpolates(self):
+        module = _make_module()
+        module._world_monitor = MagicMock()
+        module._robots = {"arm": ("robot_id", MagicMock(), MagicMock())}
+        module._planned_paths = {"arm": _make_path([0.0], [2.0])}
+        module._planned_trajectories = {"arm": _make_trajectory((0.0, [0.0]), (2.0, [2.0]))}
+
+        assert module.preview_path(robot_name="arm", target_fps=2.0) is True
+
+        module._world_monitor.animate_path.assert_called_once()
+        robot_id, preview_path, duration = module._world_monitor.animate_path.call_args.args
+        assert robot_id == "robot_id"
+        assert duration == 2.0
+        assert [state.position for state in preview_path] == [[0.0], [0.5], [1.0], [1.5], [2.0]]
+
+    def test_preview_path_explicit_duration_overrides_and_fps_densifies(self):
+        module = _make_module()
+        module._world_monitor = MagicMock()
+        module._robots = {"arm": ("robot_id", MagicMock(), MagicMock())}
+        module._planned_paths = {"arm": _make_path([0.0], [9.0])}
+        module._planned_trajectories = {"arm": _make_trajectory((0.0, [0.0]), (9.0, [9.0]))}
+
+        assert module.preview_path(duration=1.5, robot_name="arm", target_fps=2.0) is True
+
+        module._world_monitor.animate_path.assert_called_once()
+        robot_id, preview_path, duration = module._world_monitor.animate_path.call_args.args
+        assert robot_id == "robot_id"
+        assert duration == 1.5
+        assert [state.position for state in preview_path] == [[0.0], [3.0], [6.0], [9.0]]
+
+    def test_preview_path_missing_trajectory_uses_default_duration(self):
+        module = _make_module()
+        module._world_monitor = MagicMock()
+        module._robots = {"arm": ("robot_id", MagicMock(), MagicMock())}
+        module._planned_paths = {"arm": _make_path([0.0], [1.0])}
+        module._planned_trajectories = {}
+
+        assert module.preview_path(robot_name="arm", target_fps=10.0) is True
+
+        module._world_monitor.animate_path.assert_called_once_with(
+            "robot_id", module._planned_paths["arm"], 3.0
+        )
+
+    def test_preview_path_skips_interpolation_for_nonpositive_fps_or_duration(self):
+        module = _make_module()
+        module._world_monitor = MagicMock()
+        module._robots = {"arm": ("robot_id", MagicMock(), MagicMock())}
+        module._planned_paths = {"arm": _make_path([0.0], [1.0])}
+        module._planned_trajectories = {"arm": _make_trajectory((0.0, [0.0]), (2.0, [1.0]))}
+
+        assert module.preview_path(robot_name="arm", target_fps=0.0) is True
+        assert module.preview_path(duration=0.0, robot_name="arm", target_fps=20.0) is True
+
+        assert (
+            module._world_monitor.animate_path.call_args_list[0].args[1]
+            == module._planned_paths["arm"]
+        )
+        assert (
+            module._world_monitor.animate_path.call_args_list[1].args[1]
+            == module._planned_paths["arm"]
+        )
+
+    def test_preview_path_returns_false_for_missing_inputs(self):
+        module = _make_module()
+        module._planned_paths = {"arm": _make_path([0.0], [1.0])}
+        module._robots = {"arm": ("robot_id", MagicMock(), MagicMock())}
+
+        assert module.preview_path(robot_name="arm") is False
+
+        module._world_monitor = MagicMock()
+        module._robots = {}
+        assert module.preview_path(robot_name="arm") is False
+
+        module._robots = {"arm": ("robot_id", MagicMock(), MagicMock())}
+        module._planned_paths = {"arm": []}
+        assert module.preview_path(robot_name="arm") is False

@@ -25,7 +25,7 @@ from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.hardware.sensors.camera.zed import compat as zed
-from dimos.mapping.costmapper import CostMapper, costmap_to_rerun
+from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.voxels import VoxelGridMapper
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -40,6 +40,7 @@ from dimos.msgs.std_msgs.Bool import Bool
 from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )
+from dimos.robot.unitree.g1.g1_rerun import g1_costmap
 from dimos.visualization.vis_module import vis_module
 
 
@@ -86,7 +87,7 @@ rerun_config = {
     "blueprint": _g1_rerun_blueprint,
     "visual_override": {
         "world/camera_info": _convert_camera_info,
-        "world/navigation_costmap": costmap_to_rerun,
+        "world/navigation_costmap": g1_costmap,
     },
     "static": {
         "world/tf/base_link": _static_base_link,
