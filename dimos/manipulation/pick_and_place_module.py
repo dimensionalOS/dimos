@@ -601,6 +601,16 @@ class PickAndPlaceModule(ManipulationModule):
             )
             self._world_monitor.add_object_obstacle(det.object_id or det.name, obstacle)
 
+    def _reseed_objects(self, exclude: str | None = None) -> None:
+        """Re-add the ground-truth object obstacles still on the desk (for viz between
+        picks), skipping a just-grasped object — its static ground-truth pose is stale
+        once it's in the gripper."""
+        if not self.config.ground_truth_objects or self._world_monitor is None:
+            return
+        self._seed_ground_truth_obstacles(
+            [d for d in self._detection_snapshot if d.name != exclude]
+        )
+
     @skill
     def scan_objects(
         self,
@@ -708,17 +718,13 @@ then refreshes perception obstacles.
         )
         self._last_grasp_roll = grasp_roll
 
-        # Detected objects are planning-world obstacles. The TARGET object is its own
-        # grasp's obstacle and must be dropped so the gripper can reach it. For a
-        # ground-truth scan, drop ONLY the target (the others stay visible in the viz and
-        # are avoided during the approach); the grasp center is exact, so no folded
-        # observation pose puts an arm link inside another box. Real perception still
-        # clears everything (the folded camera-over-desk pose can sit inside a detection).
+        # Detected objects are COLLISION obstacles. In a cluttered scene, reaching one
+        # object makes the arm config collide with a NEIGHBOR's box (so even the cup, with
+        # its target obstacle dropped, can't be reached). Drop ALL object obstacles for the
+        # grasp; the ones still on the desk are re-seeded after the pick (see
+        # _reseed_objects) so they stay visible between picks.
         if self.config.ground_truth_objects and self._world_monitor is not None:
-            if target_det is not None:
-                self._world_monitor.remove_object_obstacle(
-                    target_det.object_id or target_det.name
-                )
+            self._world_monitor.clear_perception_obstacles()
         else:
             self.clear_perception_obstacles()
 
@@ -785,19 +791,15 @@ then refreshes perception obstacles.
             self._last_pick_pose = grasp_pose
             self._last_pick_arm = chosen
 
+            # Put the other objects back in the viz (the grasped one is now in the gripper).
+            self._reseed_objects(exclude=object_name)
             return SkillResult.ok(
                 f"Pick complete — grasped '{object_name}' with the {chosen} arm"
             )
 
-        # The pick failed: the target was never grasped, so put its obstacle back (it was
-        # dropped to plan the approach) — otherwise the object vanishes from the viz on a
-        # failed attempt. Also clear the FAULT so the next command can plan.
-        if (
-            self.config.ground_truth_objects
-            and target_det is not None
-            and self._world_monitor is not None
-        ):
-            self._seed_ground_truth_obstacles([target_det])
+        # All candidates failed: put every object back (they were dropped for the approach)
+        # and clear the FAULT so the next command can plan.
+        self._reseed_objects()
         self._clear_planning_fault()
         return SkillResult.fail(
             "GRASP_ATTEMPTS_EXHAUSTED",
