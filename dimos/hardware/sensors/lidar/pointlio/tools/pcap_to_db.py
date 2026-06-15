@@ -23,13 +23,13 @@ SQLite database:
 * ``pointlio_odometry`` — the IESKF pose at the native odom rate.
 * ``pointlio_lidar``    — the sensor-frame point cloud at the native rate.
 
-It stands up two network namespaces joined by a veth: ``virtual_mid360`` runs in
-the ``lidar`` ns and streams the pcap; live Point-LIO + the recorder run together
-in the ``drv`` ns (one coordinator, so their LCM streams wire up normally). Since
-this creates network namespaces + veths, **it needs CAP_NET_ADMIN** — it shells
-out to ``sudo`` for those steps (so passwordless sudo, or running as root, is
-required). Replay is real time (Point-LIO is not deterministic), so two runs over
-the same pcap will differ slightly.
+By default both ends run in the host namespace with ``host_ip``/``lidar_ip``
+aliased on a dummy interface (``--alias-iface``); pass ``--lidar-ns``/``--drv-ns``
+to isolate them in separate netns + veth instead (needed to run two replays at
+once). Either way it configures interfaces/routes, so **it needs CAP_NET_ADMIN**
+and shells out to ``sudo`` for the setup. Live Point-LIO + the recorder run
+together (one coordinator, so their LCM streams wire up normally). Replay is real
+time (Point-LIO is not deterministic), so two runs over the same pcap differ.
 
 The ``--db`` is optional: with no existing db a fresh one is built from scratch
 (defaults to ``<pcap>.db`` next to the pcap). With an existing db the two streams
@@ -267,6 +267,30 @@ def _setup_netns(
         _ns(cmd)
 
 
+def _teardown_aliases(iface: str) -> None:
+    _ns(["ip", "link", "del", iface], check=False)
+
+
+def _setup_aliases(iface: str, host_ip: str, lidar_ip: str) -> None:
+    """No-netns setup: put host_ip + lidar_ip on a dummy interface in the same
+    /24 with the Livox multicast + discovery-broadcast routes. Both processes
+    then run in the host namespace; multicast loopback (on by default) delivers
+    the fake lidar's point/IMU to the local SDK. (Still iproute2/Linux — macOS
+    would need the ifconfig-alias equivalent.)"""
+    _teardown_aliases(iface)
+    steps = [
+        ["ip", "link", "add", iface, "type", "dummy"],
+        ["ip", "addr", "add", f"{host_ip}/24", "dev", iface],
+        ["ip", "addr", "add", f"{lidar_ip}/24", "dev", iface],
+        ["ip", "link", "set", iface, "up"],
+        ["ip", "link", "set", iface, "multicast", "on"],
+        ["ip", "route", "add", "224.1.1.5/32", "dev", iface],
+        ["ip", "route", "add", "255.255.255.255/32", "dev", iface],
+    ]
+    for cmd in steps:
+        _ns(cmd)
+
+
 def _resolve_vm_binary() -> str:
     """Path to the virtual_mid360 binary; build it via nix if not present."""
     env = os.environ.get("DIMOS_MID360_BIN")
@@ -314,59 +338,75 @@ def _run_outer(args: argparse.Namespace) -> int:
 
     ref_start_ts = _db_ref_start_ts(db_path)
     vm_bin = _resolve_vm_binary()
+    net = (
+        f"netns {args.drv_ns}/{args.lidar_ns}"
+        if args.lidar_ns
+        else f"aliases on {args.alias_iface}"
+    )
     print(
         f"[pcap_to_db] pcap={pcap_path.name} db={db_path.name} "
         f"({'append' if db_existed else 'new'}) rate={args.rate} "
-        f"ns={args.drv_ns}/{args.lidar_ns} ips={args.host_ip}/{args.lidar_ip}",
+        f"{net} ips={args.host_ip}/{args.lidar_ip}",
         flush=True,
     )
 
+    # netns is opt-in: with --lidar-ns the two ends get isolated namespaces (root
+    # inner); without it we alias both IPs on a dummy interface and run everything
+    # in the host ns as the normal user (so the db stays user-owned — no chown).
+    use_netns = bool(args.lidar_ns)
     vm_proc: subprocess.Popen[bytes] | None = None
     inner: subprocess.Popen[bytes] | None = None
-    # The first chown + netns setup live inside the try so the finally's
-    # ownership-restore always runs — even if _setup_netns raises (e.g. missing
-    # CAP_NET_ADMIN), the db must not be left root-owned.
+    # Setup lives inside the try so the finally always cleans up + (netns mode)
+    # restores db ownership, even if setup raises (e.g. missing CAP_NET_ADMIN).
     try:
-        # An existing db is user-owned; hand it (and its WAL sidecars) to root so
-        # the root inner can write it (SQLite WAL refuses cross-uid writes).
-        # Restored to the invoking user in the finally below.
-        if db_existed:
-            for suffix in ("", "-wal", "-shm"):
-                sidecar = Path(f"{db_path}{suffix}")
-                if sidecar.exists():
-                    _ns(["chown", "0:0", str(sidecar)], check=False)
+        if use_netns:
+            # Root inner can't write a user-owned WAL db (SQLite refuses cross-uid
+            # writes), so hand it to root; restored in the finally.
+            if db_existed:
+                for suffix in ("", "-wal", "-shm"):
+                    sidecar = Path(f"{db_path}{suffix}")
+                    if sidecar.exists():
+                        _ns(["chown", "0:0", str(sidecar)], check=False)
+            _setup_netns(
+                args.drv_ns,
+                args.lidar_ns,
+                args.veth_drv,
+                args.veth_lidar,
+                args.host_ip,
+                args.lidar_ip,
+            )
+            inner_prefix = [*_sudo(), "ip", "netns", "exec", args.drv_ns]
+            vm_prefix = [*_sudo(), "ip", "netns", "exec", args.lidar_ns]
+        else:
+            _setup_aliases(args.alias_iface, args.host_ip, args.lidar_ip)
+            inner_prefix = []
+            vm_prefix = []
 
-        _setup_netns(
-            args.drv_ns, args.lidar_ns, args.veth_drv, args.veth_lidar, args.host_ip, args.lidar_ip
+        # Recorder + live Point-LIO run together (one coordinator).
+        inner = subprocess.Popen(
+            [
+                *inner_prefix,
+                sys.executable,
+                "-m",
+                "dimos.hardware.sensors.lidar.pointlio.tools.pcap_to_db",
+                "--inner",
+                "--db",
+                str(db_path),
+                "--odom-freq",
+                str(args.odom_freq),
+                "--ref-start-ts",
+                repr(ref_start_ts),
+                "--time-offset",
+                "nan" if args.time_offset is None else repr(args.time_offset),
+                "--max-sensor-sec",
+                str(args.max_sensor_sec),
+                "--host-ip",
+                args.host_ip,
+                "--lidar-ip",
+                args.lidar_ip,
+            ],
+            cwd=os.getcwd(),
         )
-
-        # Recorder + live Point-LIO run together in the drv ns (one coordinator).
-        inner_cmd = [
-            *_sudo(),
-            "ip",
-            "netns",
-            "exec",
-            args.drv_ns,
-            sys.executable,
-            "-m",
-            "dimos.hardware.sensors.lidar.pointlio.tools.pcap_to_db",
-            "--inner",
-            "--db",
-            str(db_path),
-            "--odom-freq",
-            str(args.odom_freq),
-            "--ref-start-ts",
-            repr(ref_start_ts),
-            "--time-offset",
-            "nan" if args.time_offset is None else repr(args.time_offset),
-            "--max-sensor-sec",
-            str(args.max_sensor_sec),
-            "--host-ip",
-            args.host_ip,
-            "--lidar-ip",
-            args.lidar_ip,
-        ]
-        inner = subprocess.Popen(inner_cmd, cwd=os.getcwd())
 
         # Give Point-LIO a moment to come up before the sensor starts streaming.
         time.sleep(args.warmup_sec)
@@ -383,10 +423,7 @@ def _run_outer(args: argparse.Namespace) -> int:
                 },
             }
         ).encode()
-        vm_proc = subprocess.Popen(
-            [*_sudo(), "ip", "netns", "exec", args.lidar_ns, vm_bin],
-            stdin=subprocess.PIPE,
-        )
+        vm_proc = subprocess.Popen([*vm_prefix, vm_bin], stdin=subprocess.PIPE)
         assert vm_proc.stdin is not None
         vm_proc.stdin.write(vm_cfg)
         vm_proc.stdin.close()
@@ -394,31 +431,36 @@ def _run_outer(args: argparse.Namespace) -> int:
         # The inner exits itself once the odom stream goes stagnant (pcap drained).
         inner.wait()
     finally:
-        # Kill ONLY this run's processes — the ones living in its two (uniquely
-        # named) network namespaces — as root, since the binaries run under sudo.
-        # `ip netns pids` scopes precisely to this run, so a concurrent run in
-        # other namespaces (which the docstring promises is supported) is left
-        # alone; a name-based `pkill virtual_mid360/pointlio_native` would kill
-        # its binaries too. This also catches the netns children regardless of
-        # how sudo / ip-netns-exec session or group them.
-        for ns in (args.lidar_ns, args.drv_ns):
-            pids = _ns(["ip", "netns", "pids", ns], check=False).stdout.decode().split()
-            if pids:
-                _ns(["kill", "-9", *pids], check=False)
+        if use_netns:
+            # Kill ONLY this run's processes — those in its (uniquely named)
+            # namespaces — as root (the binaries run under sudo). `ip netns pids`
+            # scopes precisely, so a concurrent run elsewhere is untouched.
+            for ns in (args.lidar_ns, args.drv_ns):
+                pids = _ns(["ip", "netns", "pids", ns], check=False).stdout.decode().split()
+                if pids:
+                    _ns(["kill", "-9", *pids], check=False)
+        else:
+            # Alias mode: our own user-owned children — signal them directly
+            # (pointlio_native dies with its parent via PR_SET_PDEATHSIG).
+            for proc in (vm_proc, inner):
+                if proc and proc.poll() is None:
+                    proc.terminate()
         for proc in (vm_proc, inner):
             if proc and proc.poll() is None:
                 try:
                     proc.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     proc.kill()
-        _teardown(args.drv_ns, args.lidar_ns, args.veth_drv)
-        # The inner coordinator ran as root (netns entry needs it) → hand the db
-        # files back to the invoking user.
-        uid, gid = os.getuid(), os.getgid()
-        for suffix in ("", "-wal", "-shm"):
-            sidecar = Path(f"{db_path}{suffix}")
-            if sidecar.exists():
-                _ns(["chown", f"{uid}:{gid}", str(sidecar)], check=False)
+        if use_netns:
+            _teardown(args.drv_ns, args.lidar_ns, args.veth_drv)
+            # Root inner owned the db files → hand them back to the invoking user.
+            uid, gid = os.getuid(), os.getgid()
+            for suffix in ("", "-wal", "-shm"):
+                sidecar = Path(f"{db_path}{suffix}")
+                if sidecar.exists():
+                    _ns(["chown", f"{uid}:{gid}", str(sidecar)], check=False)
+        else:
+            _teardown_aliases(args.alias_iface)
 
     o_cnt, o_min, o_max = _table_stats(db_path, "pointlio_odometry")
     l_cnt = _table_stats(db_path, "pointlio_lidar")[0]
@@ -538,13 +580,19 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--warmup-sec", type=float, default=4.0, help="wait before streaming starts"
     )
-    # Namespace / addressing knobs (override to run two replays at once).
-    parser.add_argument("--drv-ns", default="drv")
-    parser.add_argument("--lidar-ns", default="lidar")
-    parser.add_argument("--veth-drv", default="veth-drv")
-    parser.add_argument("--veth-lidar", default="veth-lidar")
+    # Addressing knobs (override to run two replays at once).
     parser.add_argument("--host-ip", default="192.168.1.5")
     parser.add_argument("--lidar-ip", default="192.168.1.155")
+    # netns is opt-in. Default (empty --lidar-ns) aliases both IPs on a dummy
+    # interface and runs in the host namespace; pass --lidar-ns/--drv-ns to
+    # isolate the two ends in separate namespaces instead.
+    parser.add_argument("--drv-ns", default="")
+    parser.add_argument("--lidar-ns", default="")
+    parser.add_argument("--veth-drv", default="veth-drv")
+    parser.add_argument("--veth-lidar", default="veth-lidar")
+    parser.add_argument(
+        "--alias-iface", default="dimos-mid360", help="dummy iface for no-netns mode"
+    )
     # Internal: re-exec inside the drv netns to run the coordinator.
     parser.add_argument("--inner", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--ref-start-ts", type=float, default=-1.0, help=argparse.SUPPRESS)
