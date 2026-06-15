@@ -134,6 +134,7 @@ dependencies = [
     "lz4>=4.4.5",
     "bleak>=3.0.2",
     "cryptography>=46.0.5",
+    "dimwizard",
 ]
 
 
@@ -440,6 +441,9 @@ tests-self-hosted = [
     # Needed to compile the in-tree extensions.
     "pybind11>=2.12",
 ]
+
+[tool.uv.sources]
+dimwizard = { path = "./dimwizard", editable = true }
 
 [tool.uv]
 required-version = ">=0.9.17"
