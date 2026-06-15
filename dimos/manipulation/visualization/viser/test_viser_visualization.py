@@ -22,7 +22,10 @@ from typing import Any, cast
 import numpy as np
 
 from dimos.manipulation.planning.spec.models import PlanningSceneInfo
-from dimos.manipulation.visualization.viser import visualizer as visualizer_module
+from dimos.manipulation.visualization.viser import (
+    theme as theme_module,
+    visualizer as visualizer_module,
+)
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.animation import sampled_joint_path_frames
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
@@ -278,6 +281,34 @@ def test_dimos_theme_configures_supported_viser_chrome() -> None:
     assert server.theme_kwargs["show_share_button"] is False
     assert server.theme_kwargs["control_layout"] == "collapsible"
     assert server.theme_kwargs["control_width"] == "medium"
+
+
+def test_dimos_theme_configures_titlebar_when_supported(monkeypatch: Any) -> None:
+    class FakeThemeModule:
+        @staticmethod
+        def TitlebarImage(**kwargs: Any) -> dict[str, Any]:
+            return kwargs
+
+        @staticmethod
+        def TitlebarButton(**kwargs: Any) -> dict[str, Any]:
+            return kwargs
+
+        @staticmethod
+        def TitlebarConfig(**kwargs: Any) -> dict[str, Any]:
+            return kwargs
+
+    real_import_module = theme_module.importlib.import_module
+
+    def import_module(name: str) -> object:
+        if name == "viser.theme":
+            return FakeThemeModule
+        return real_import_module(name)
+
+    monkeypatch.setattr(theme_module.importlib, "import_module", import_module)
+    server = FakeGuiServer()
+
+    assert apply_dimos_theme(server) is True
+    assert server.theme_kwargs is not None
     titlebar_content = cast("dict[str, Any]", server.theme_kwargs["titlebar_content"])
     image = cast("dict[str, str]", titlebar_content["image"])
     assert image["image_alt"] == "Dimensional"
