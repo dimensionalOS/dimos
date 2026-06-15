@@ -57,6 +57,10 @@ class VirtualMid360Config(NativeModuleConfig):
     host_ip: str = "192.168.1.5"
     # Network namespace the fake lidar runs inside.
     lidar_netns: str = "lidar"
+    # Multicast group the point/IMU streams are sent to. 224.1.1.5 is the Livox
+    # default that the SDK joins; override only to match a consumer configured
+    # with a different multicast_ip.
+    mcast_data: str = "224.1.1.5"
 
 
 class VirtualMid360(NativeModule):
