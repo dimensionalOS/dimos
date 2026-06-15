@@ -42,9 +42,9 @@ for the privileged netns/veth bits itself::
 
     source .venv/bin/activate
     PCAP=$(python -c "from dimos.utils.data import get_data; \
-        print(get_data('ruwik2_part3/ruwik2_part3.pcap'))")
+        print(get_data('mid360_shake_stairs/mid360_shake_stairs.pcap'))")
     python -m dimos.hardware.sensors.lidar.pointlio.tools.pcap_to_db --pcap "$PCAP"
-    # -> writes ruwik2_part3.db next to the sample.
+    # -> writes mid360_shake_stairs.db next to the sample.
 
 Two simultaneous runs (e.g. alongside a fastlio replay) must use distinct
 namespaces/IPs — see --drv-ns / --lidar-ns / --host-ip / --lidar-ip.
