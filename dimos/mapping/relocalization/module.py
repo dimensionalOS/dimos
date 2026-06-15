@@ -56,7 +56,7 @@ class RelocalizationModule(Module):
     config: Config
     global_map: In[PointCloud2]
     loaded_map: Out[PointCloud2]
-    merged_map: Out[PointCloud2]
+    relocalized_map: Out[PointCloud2]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -175,7 +175,7 @@ class RelocalizationModule(Module):
         if self._premap is None:
             return
         if tf is None:
-            # self.merged_map.publish(local)
+            # self.relocalized_map.publish(local)
             # costmap fallbacks to local map, skip publishing
             return
         premap_in_world = self._premap.transform(tf)
@@ -184,8 +184,8 @@ class RelocalizationModule(Module):
             try:
                 grid.add_frame(premap_in_world)
                 grid.add_frame(local)
-                self.merged_map.publish(grid.get_global_pointcloud2())
+                self.relocalized_map.publish(grid.get_global_pointcloud2())
             finally:
                 grid.dispose()
         else:
-            self.merged_map.publish(local + premap_in_world)
+            self.relocalized_map.publish(local + premap_in_world)
