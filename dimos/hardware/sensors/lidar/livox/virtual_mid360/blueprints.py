@@ -25,18 +25,23 @@ IPs are reachable (the e2e harness runs VirtualMid360 in a `lidar` netns and
 PointLio in a `drv` netns joined by a veth carrying lidar_ip).
 """
 
+import os
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.livox.virtual_mid360.module import VirtualMid360
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.visualization.vis_module import vis_module
 
-# Set pcap to a recorded Mid-360 capture before running, e.g. the ruwik2_part3
-# LFS sample:  --VirtualMid360.pcap "$(python -c 'from dimos.utils.data import
-# get_data; print(get_data("ruwik2_part3/ruwik2_part3.pcap"))')"
-# (Resolved at run time, not import time, so registering this blueprint never
-# triggers an LFS pull.)
+# Point this at a recorded Mid-360 capture via the env var, e.g. the ruwik2_part3
+# LFS sample:
+#   VIRTUAL_MID360_PCAP="$(python -c 'from dimos.utils.data import get_data; \
+#       print(get_data("ruwik2_part3/ruwik2_part3.pcap"))')" dimos run ...
+# Read here (not get_data at import) so registering the blueprint never triggers
+# an LFS pull.
+_PCAP = os.environ.get("VIRTUAL_MID360_PCAP", "")
+
 demo_virtual_mid360_pointlio = autoconnect(
-    VirtualMid360.blueprint(pcap=""),
+    VirtualMid360.blueprint(pcap=_PCAP),
     PointLio.blueprint(),
     vis_module("rerun"),
 ).global_config(n_workers=3, robot_model="virtual_mid360_pointlio")
