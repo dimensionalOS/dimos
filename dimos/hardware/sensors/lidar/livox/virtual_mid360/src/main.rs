@@ -17,7 +17,7 @@ const SOF: u8 = 0xAA;
 const WRAPPER: usize = 24; // bytes before data[]
 const CMD_PORT: u16 = 56100;
 const DISCOVERY_PORT: u16 = 56000;
-// data plane: lidar src port -> host dst port
+// data plane: lidar source port -> host destination port
 const PORT_POINT: u16 = 56300;
 const PORT_IMU: u16 = 56400;
 const PORT_STATUS: u16 = 56200;
@@ -132,41 +132,42 @@ struct Pkt {
 }
 
 fn parse_pcap(path: &str) -> std::io::Result<Vec<Pkt>> {
-    let buf = std::fs::read(path)?;
-    if buf.len() < 24 || buf[0..4] != [0xd4, 0xc3, 0xb2, 0xa1] {
+    let buffer = std::fs::read(path)?;
+    if buffer.len() < 24 || buffer[0..4] != [0xd4, 0xc3, 0xb2, 0xa1] {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!("unsupported pcap (need classic little-endian, magic d4c3b2a1) at {path}"),
         ));
     }
     let mut out = Vec::new();
-    let mut off = 24usize;
-    while off + 16 <= buf.len() {
-        let ts_sec = u32::from_le_bytes(buf[off..off + 4].try_into().unwrap());
-        let ts_usec = u32::from_le_bytes(buf[off + 4..off + 8].try_into().unwrap());
-        let incl = u32::from_le_bytes(buf[off + 8..off + 12].try_into().unwrap()) as usize;
-        off += 16;
-        if off + incl > buf.len() {
+    let mut offset = 24usize;
+    while offset + 16 <= buffer.len() {
+        let ts_sec = u32::from_le_bytes(buffer[offset..offset + 4].try_into().unwrap());
+        let ts_usec = u32::from_le_bytes(buffer[offset + 4..offset + 8].try_into().unwrap());
+        let captured_len =
+            u32::from_le_bytes(buffer[offset + 8..offset + 12].try_into().unwrap()) as usize;
+        offset += 16;
+        if offset + captured_len > buffer.len() {
             break;
         }
-        let frame = &buf[off..off + incl];
-        off += incl;
+        let frame = &buffer[offset..offset + captured_len];
+        offset += captured_len;
         // Ethernet(14) -> IPv4 -> UDP
         if frame.len() < 14 + 20 + 8 || frame[12] != 0x08 || frame[13] != 0x00 {
             continue;
         }
-        let ihl = ((frame[14] & 0x0f) as usize) * 4;
+        let ip_header_len = ((frame[14] & 0x0f) as usize) * 4;
         if frame[14 + 9] != 17 {
             continue; // not UDP
         }
-        let udp = 14 + ihl;
-        if frame.len() < udp + 8 {
+        let udp_offset = 14 + ip_header_len;
+        if frame.len() < udp_offset + 8 {
             continue;
         }
-        let src_port = u16::from_be_bytes([frame[udp], frame[udp + 1]]);
-        let udp_len = u16::from_be_bytes([frame[udp + 4], frame[udp + 5]]) as usize;
-        let payload_start = udp + 8;
-        let payload_end = (udp + udp_len).min(frame.len());
+        let src_port = u16::from_be_bytes([frame[udp_offset], frame[udp_offset + 1]]);
+        let udp_len = u16::from_be_bytes([frame[udp_offset + 4], frame[udp_offset + 5]]) as usize;
+        let payload_start = udp_offset + 8;
+        let payload_end = (udp_offset + udp_len).min(frame.len());
         if payload_end <= payload_start {
             continue;
         }
@@ -190,32 +191,32 @@ fn ensure_interface(cfg: &Config) -> Result<Ipv4Addr, String> {
     // (or we're in the wrong namespace).
     let probe = UdpSocket::bind(SocketAddrV4::new(lidar_ip, CMD_PORT));
     if probe.is_err() {
-        let ns = &cfg.lidar_netns;
-        let lip = &cfg.lidar_ip;
-        let hip = &cfg.host_ip;
-        let mcast = &cfg.mcast_data;
+        let netns = &cfg.lidar_netns;
+        let lidar_addr = &cfg.lidar_ip;
+        let host_addr = &cfg.host_ip;
+        let mcast_group = &cfg.mcast_data;
         return Err(format!(
-            "cannot bind {lip}:{CMD_PORT} — the virtual network interface isn't set up \
-             (or this process isn't in the '{ns}' netns).\n\
+            "cannot bind {lidar_addr}:{CMD_PORT} — the virtual network interface isn't set up \
+             (or this process isn't in the '{netns}' netns).\n\
              Run this once (creates the lidar/drv veth pair), then re-run the module:\n\
-             \n  sudo ip netns add drv\n  sudo ip netns add {ns}\n  \
+             \n  sudo ip netns add drv\n  sudo ip netns add {netns}\n  \
              sudo ip link add veth-drv type veth peer name veth-lidar\n  \
              sudo ip link set veth-drv netns drv\n  \
-             sudo ip link set veth-lidar netns {ns}\n  \
-             sudo ip netns exec drv   ip addr add {hip}/24 dev veth-drv\n  \
-             sudo ip netns exec {ns} ip addr add {lip}/24 dev veth-lidar\n  \
+             sudo ip link set veth-lidar netns {netns}\n  \
+             sudo ip netns exec drv   ip addr add {host_addr}/24 dev veth-drv\n  \
+             sudo ip netns exec {netns} ip addr add {lidar_addr}/24 dev veth-lidar\n  \
              sudo ip netns exec drv   ip link set veth-drv up\n  \
-             sudo ip netns exec {ns} ip link set veth-lidar up\n  \
+             sudo ip netns exec {netns} ip link set veth-lidar up\n  \
              sudo ip netns exec drv   ip link set lo up\n  \
-             sudo ip netns exec {ns} ip link set lo up\n  \
+             sudo ip netns exec {netns} ip link set lo up\n  \
              sudo ip netns exec drv   ip link set veth-drv multicast on\n  \
-             sudo ip netns exec {ns} ip link set veth-lidar multicast on\n  \
-             sudo ip netns exec {ns} ip route add 255.255.255.255/32 dev veth-lidar\n  \
-             sudo ip netns exec {ns} ip route add {mcast}/32 dev veth-lidar  # point/IMU multicast\n  \
+             sudo ip netns exec {netns} ip link set veth-lidar multicast on\n  \
+             sudo ip netns exec {netns} ip route add 255.255.255.255/32 dev veth-lidar\n  \
+             sudo ip netns exec {netns} ip route add {mcast_group}/32 dev veth-lidar  # point/IMU multicast\n  \
              sudo ip netns exec drv   ip route add 224.0.0.0/4 dev lo  # LCM (dimos transport)\n  \
-             sudo ip netns exec {ns} ip route add 224.0.0.0/4 dev lo  # LCM (dimos transport)\n\
+             sudo ip netns exec {netns} ip route add 224.0.0.0/4 dev lo  # LCM (dimos transport)\n\
              \nThen launch this module inside the lidar netns:\n  \
-             sudo ip netns exec {ns} <run the blueprint / binary>"
+             sudo ip netns exec {netns} <run the blueprint / binary>"
         ));
     }
     Ok(lidar_ip)
@@ -286,63 +287,68 @@ impl VirtualMid360 {
 
 fn spawn_discovery(lidar_ip: Ipv4Addr, stop: Arc<AtomicBool>) {
     std::thread::spawn(move || {
-        let sock = match UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DISCOVERY_PORT)) {
+        let socket = match UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DISCOVERY_PORT))
+        {
             Ok(socket) => socket,
             Err(err) => {
                 tracing::error!("discovery bind :{DISCOVERY_PORT} failed: {err}");
                 return;
             }
         };
-        let _ = sock.set_broadcast(true);
-        sock.set_read_timeout(Some(Duration::from_millis(500))).ok();
-        let bcast = SocketAddrV4::new(Ipv4Addr::BROADCAST, DISCOVERY_PORT);
-        let mut buf = [0u8; 2048];
+        let _ = socket.set_broadcast(true);
+        socket
+            .set_read_timeout(Some(Duration::from_millis(500)))
+            .ok();
+        let broadcast_addr = SocketAddrV4::new(Ipv4Addr::BROADCAST, DISCOVERY_PORT);
+        let mut buffer = [0u8; 2048];
         while !stop.load(Ordering::Relaxed) {
-            let len = match sock.recv_from(&mut buf) {
+            let len = match socket.recv_from(&mut buffer) {
                 Ok((len, _)) => len,
                 Err(_) => continue,
             };
-            if len < WRAPPER || buf[0] != SOF {
+            if len < WRAPPER || buffer[0] != SOF {
                 continue;
             }
-            let cmd_id = u16::from_le_bytes([buf[8], buf[9]]);
-            let cmd_type = buf[10];
+            let cmd_id = u16::from_le_bytes([buffer[8], buffer[9]]);
+            let cmd_type = buffer[10];
             if cmd_id != 0x0000 || cmd_type != 0 {
                 continue;
             }
-            let seq = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
+            let seq = u32::from_le_bytes([buffer[4], buffer[5], buffer[6], buffer[7]]);
             // ACK describes the device (dev_type, serial, lidar_ip, cmd port).
             let ack = build_ack(0x0000, seq, &discovery_ack_payload(lidar_ip));
-            let _ = sock.send_to(&ack, bcast);
+            let _ = socket.send_to(&ack, broadcast_addr);
         }
     });
 }
 
 fn spawn_control(lidar_ip: Ipv4Addr, armed: Arc<AtomicBool>, stop: Arc<AtomicBool>) {
     std::thread::spawn(move || {
-        let sock = match UdpSocket::bind(SocketAddrV4::new(lidar_ip, CMD_PORT)) {
+        let socket = match UdpSocket::bind(SocketAddrV4::new(lidar_ip, CMD_PORT)) {
             Ok(socket) => socket,
             Err(err) => {
                 tracing::error!("control bind {lidar_ip}:{CMD_PORT} failed: {err}");
                 return;
             }
         };
-        sock.set_read_timeout(Some(Duration::from_millis(500))).ok();
-        let mut buf = [0u8; 2048];
+        socket
+            .set_read_timeout(Some(Duration::from_millis(500)))
+            .ok();
+        let mut buffer = [0u8; 2048];
         while !stop.load(Ordering::Relaxed) {
-            let (len, from) = match sock.recv_from(&mut buf) {
+            let (len, from) = match socket.recv_from(&mut buffer) {
                 Ok(received) => received,
                 Err(_) => continue,
             };
-            if len < WRAPPER || buf[0] != SOF {
+            if len < WRAPPER || buffer[0] != SOF {
                 continue;
             }
-            let seq = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
-            let cmd_id = u16::from_le_bytes([buf[8], buf[9]]);
+            let seq = u32::from_le_bytes([buffer[4], buffer[5], buffer[6], buffer[7]]);
+            let cmd_id = u16::from_le_bytes([buffer[8], buffer[9]]);
             // Per-cmd_id ACK data (control_ack_payload): QueryFwType echoes a
             // key-value param; the rest reply ret_code(u8)=0 (success).
             let ack = build_ack(cmd_id, seq, &control_ack_payload(cmd_id));
-            let _ = sock.send_to(&ack, from);
+            let _ = socket.send_to(&ack, from);
             tracing::info!(
                 cmd_id = format!("0x{cmd_id:04x}"),
                 seq,
@@ -417,7 +423,7 @@ fn spawn_stream(
             // The Mid-360 MULTICASTS point/IMU to mcast_data:port (the SDK joins that
             // group — confirmed via `ss -ulnp` showing 224.1.1.5:56301/56401); status
             // is unicast to the host. Sending point/IMU unicast is silently dropped.
-            let (sock, dst_ip, dst) = match pkt.src_port {
+            let (socket, dest_ip, dest_port) = match pkt.src_port {
                 PORT_POINT => (&point, mcast_data, DST_POINT),
                 PORT_IMU => (&imu, mcast_data, DST_IMU),
                 PORT_STATUS => (&status, host_ip, DST_STATUS),
@@ -433,7 +439,7 @@ fn spawn_stream(
             if matches!(pkt.src_port, PORT_POINT | PORT_IMU) {
                 rewrite_ts(&mut out, ts_shift);
             }
-            let _ = sock.send_to(&out, SocketAddrV4::new(dst_ip, dst));
+            let _ = socket.send_to(&out, SocketAddrV4::new(dest_ip, dest_port));
         }
         tracing::info!("data stream finished");
     });
