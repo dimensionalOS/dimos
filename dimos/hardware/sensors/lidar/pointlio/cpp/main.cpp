@@ -501,8 +501,11 @@ int main(int argc, char** argv) {
     }
 
     if (debug) { printf("[pointlio] Shutting down...\n"); }
-    g_point_lio = nullptr;
+    // Uninit (stops + joins the SDK callback threads) BEFORE clearing the
+    // pointers those callbacks read, so an in-flight on_imu_data/on_point_cloud
+    // can't race the assignment and dereference a null g_point_lio / g_lcm.
     LivoxLidarSdkUninit();
+    g_point_lio = nullptr;
     g_lcm = nullptr;
 
     if (debug) { printf("[pointlio] Done.\n"); }
