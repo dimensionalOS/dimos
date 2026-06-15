@@ -14,8 +14,8 @@
 
 """Unit tests for UnitreeWebRTCConnection.
 
-Pure-Python — no hardware, no network. Covers connect() error propagation and
-the aes_128_key kwarg / UNITREE_AES_128_KEY env-var precedence.
+Pure-Python — no hardware, no network. Covers connect() error propagation,
+aes_128_key forwarding, and the UNITREE_AES_128_KEY env var via GlobalConfig.
 """
 
 from typing import Any
@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from dimos.core.global_config import GlobalConfig
 from dimos.robot.unitree import connection as conn_mod
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 
@@ -75,53 +76,25 @@ def _aes_kwarg(legion: MagicMock) -> Any:
     return legion.call_args.kwargs.get("aes_128_key")
 
 
-def test_aes_key_omitted_when_neither_kwarg_nor_env(
-    stub_legion: MagicMock, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """No kwarg, no env var → key not forwarded (byte-identical to pre-key call)."""
-    monkeypatch.delenv("UNITREE_AES_128_KEY", raising=False)
+def test_aes_key_omitted_when_not_provided(stub_legion: MagicMock) -> None:
+    """No key → not forwarded (byte-identical to pre-key call)."""
     UnitreeWebRTCConnection(ip="192.168.123.161")
     assert "aes_128_key" not in stub_legion.call_args.kwargs
 
 
-def test_aes_key_from_explicit_kwarg(
-    stub_legion: MagicMock, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Explicit kwarg is forwarded verbatim."""
-    monkeypatch.delenv("UNITREE_AES_128_KEY", raising=False)
+def test_aes_key_forwarded_when_provided(stub_legion: MagicMock) -> None:
+    """A provided key is forwarded verbatim to the driver."""
     UnitreeWebRTCConnection(ip="192.168.123.161", aes_128_key="aa" * 16)
     assert _aes_kwarg(stub_legion) == "aa" * 16
 
 
-def test_aes_key_from_env_when_kwarg_none(
-    stub_legion: MagicMock, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """No kwarg → falls back to UNITREE_AES_128_KEY."""
-    monkeypatch.setenv("UNITREE_AES_128_KEY", "bb" * 16)
-    UnitreeWebRTCConnection(ip="192.168.123.161")
-    assert _aes_kwarg(stub_legion) == "bb" * 16
-
-
-def test_explicit_kwarg_beats_env(stub_legion: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Explicit kwarg wins over the env var."""
-    monkeypatch.setenv("UNITREE_AES_128_KEY", "from-env")
-    UnitreeWebRTCConnection(ip="192.168.123.161", aes_128_key="from-kwarg")
-    assert _aes_kwarg(stub_legion) == "from-kwarg"
-
-
-def test_empty_string_kwarg_falls_back_to_env_when_unset(
-    stub_legion: MagicMock, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Empty-string kwarg + unset env → nothing forwarded (falsy guard)."""
-    monkeypatch.delenv("UNITREE_AES_128_KEY", raising=False)
+def test_empty_string_key_not_forwarded(stub_legion: MagicMock) -> None:
+    """Empty-string key is falsy → not forwarded."""
     UnitreeWebRTCConnection(ip="192.168.123.161", aes_128_key="")
     assert "aes_128_key" not in stub_legion.call_args.kwargs
 
 
-def test_empty_string_kwarg_uses_env_when_set(
-    stub_legion: MagicMock, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Empty-string kwarg + set env → env value used (config "" must not block it)."""
-    monkeypatch.setenv("UNITREE_AES_128_KEY", "cc" * 16)
-    UnitreeWebRTCConnection(ip="192.168.123.161", aes_128_key="")
-    assert _aes_kwarg(stub_legion) == "cc" * 16
+def test_global_config_reads_unitree_aes_128_key_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The key enters via GlobalConfig, read from the UNITREE_AES_128_KEY env var."""
+    monkeypatch.setenv("UNITREE_AES_128_KEY", "ee" * 16)
+    assert GlobalConfig().unitree_aes_128_key == "ee" * 16

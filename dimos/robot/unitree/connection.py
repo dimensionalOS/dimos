@@ -15,7 +15,6 @@
 import asyncio
 from dataclasses import dataclass
 import functools
-import os
 import threading
 import time
 from typing import Any, TypeAlias, TypeVar
@@ -99,10 +98,7 @@ class UnitreeWebRTCConnection(Resource):
         self.mode = mode
         self.stop_timer: threading.Timer | None = None
         self.cmd_vel_timeout = 0.2
-        # Per-device AES-128 key required by G1 firmware >= 1.5.1 (data2=3 WebRTC handshake).
-        # Fetch with: unitree-fetch-aes-key --email YOU --sn <serial>
-        if not aes_128_key:
-            aes_128_key = os.environ.get("UNITREE_AES_128_KEY")
+        # Per-device AES-128 key for new Unitree firmware (data2=3 handshake); omitted when unset.
         extra: dict[str, Any] = {"aes_128_key": aes_128_key} if aes_128_key else {}
         self.conn = LegionConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip, **extra)
         self.connect()

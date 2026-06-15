@@ -23,7 +23,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from dimos.core.global_config import GlobalConfig
 from dimos.robot.unitree.go2 import connection as go2_conn
+from dimos.robot.unitree.go2.connection import ConnectionConfig
 
 
 @pytest.fixture
@@ -40,3 +42,15 @@ def test_make_connection_webrtc_forwards_aes_128_key(stub_webrtc: MagicMock) -> 
     cfg = SimpleNamespace(unitree_connection_type="webrtc")
     go2_conn.make_connection("192.168.123.161", cfg, aes_128_key="cafe" * 8)
     stub_webrtc.assert_called_once_with("192.168.123.161", aes_128_key="cafe" * 8)
+
+
+def test_connection_config_aes_key_defaults_from_global_config() -> None:
+    """ConnectionConfig.aes_128_key defaults from GlobalConfig.unitree_aes_128_key."""
+    g = GlobalConfig(robot_ip="127.0.0.1", unitree_aes_128_key="dd" * 16)
+    assert ConnectionConfig(g=g).aes_128_key == "dd" * 16
+
+
+def test_connection_config_explicit_aes_key_overrides_global() -> None:
+    """An explicit config value wins over the GlobalConfig default."""
+    g = GlobalConfig(robot_ip="127.0.0.1", unitree_aes_128_key="dd" * 16)
+    assert ConnectionConfig(g=g, aes_128_key="explicit").aes_128_key == "explicit"

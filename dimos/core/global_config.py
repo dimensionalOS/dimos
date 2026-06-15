@@ -33,6 +33,9 @@ def _get_all_numbers(s: str) -> list[float]:
 class GlobalConfig(BaseSettings):
     robot_ip: str | None = None
     robot_ips: str | None = None
+    # Per-device AES-128 key for new Unitree firmware (G1 >=1.5.1, Go2 >=1.1.15, data2=3
+    # handshake). Fetch: unitree-fetch-aes-key --email YOU --sn <serial>
+    unitree_aes_128_key: str | None = None
     xarm7_ip: str | None = None
     xarm6_ip: str | None = None
     can_port: str | None = None

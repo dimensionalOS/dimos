@@ -67,9 +67,8 @@ class Go2Mode(str, Enum):
 class ConnectionConfig(ModuleConfig):
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
     mode: Go2Mode = Go2Mode.DEFAULT
-    # Per-device AES-128 key for Go2 firmware >= 1.1.15 (data2=3 WebRTC handshake).
-    # If unset here, UnitreeWebRTCConnection falls back to the UNITREE_AES_128_KEY env var.
-    aes_128_key: str | None = None
+    # Per-device AES-128 key (Go2 fw >=1.1.15); defaults from GlobalConfig.
+    aes_128_key: str | None = Field(default_factory=lambda m: m["g"].unitree_aes_128_key)
 
 
 class Go2ConnectionProtocol(Protocol):

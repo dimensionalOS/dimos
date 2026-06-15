@@ -14,6 +14,7 @@
 
 from typing import Any
 
+from pydantic import Field
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
@@ -44,9 +45,8 @@ logger = setup_logger()
 class G1HighLevelWebRtcConfig(ModuleConfig):
     ip: str | None = None
     connection_mode: str = "ai"
-    # Per-device AES-128 key for G1 firmware >= 1.5.1 (data2=3 WebRTC handshake).
-    # If unset here, UnitreeWebRTCConnection falls back to the UNITREE_AES_128_KEY env var.
-    aes_128_key: str | None = None
+    # Per-device AES-128 key (G1 fw >=1.5.1); defaults from GlobalConfig.
+    aes_128_key: str | None = Field(default_factory=lambda m: m["g"].unitree_aes_128_key)
 
 
 class G1HighLevelWebRtc(Module, HighLevelG1Spec):
