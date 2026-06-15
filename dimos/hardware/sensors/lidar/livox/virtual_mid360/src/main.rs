@@ -33,7 +33,6 @@ struct Config {
     /// Recorded Mid-360 pcap (data plane: point/IMU/status UDP). Read fully into RAM.
     pcap: String,
     /// Replay-speed multiplier; 1.0 = original inter-packet timing, >1 = faster.
-    #[serde(default = "one")]
     #[validate(range(min = 0.01, max = 1000.0))]
     rate: f64,
     /// Seconds to wait after start before streaming begins.
@@ -58,9 +57,6 @@ struct Config {
     mcast_data: String,
 }
 
-fn one() -> f64 {
-    1.0
-}
 // 224.1.1.5 is the Livox Mid-360 default multicast_ip (a genuine Livox default,
 // unlike the lidar/host IP + netns, which are deployment-specific and required).
 fn default_mcast_data() -> String {
@@ -77,8 +73,8 @@ struct VirtualMid360 {
 // ---- CRCs (Livox SDK2: CRC16-CCITT-FALSE over header[0:18], CRC32/IEEE over data[]) ----
 fn crc16_ccitt_false(data: &[u8]) -> u16 {
     let mut crc: u16 = 0xFFFF;
-    for &b in data {
-        crc ^= (b as u16) << 8;
+    for &byte in data {
+        crc ^= (byte as u16) << 8;
         for _ in 0..8 {
             crc = if crc & 0x8000 != 0 {
                 (crc << 1) ^ 0x1021
@@ -92,8 +88,8 @@ fn crc16_ccitt_false(data: &[u8]) -> u16 {
 
 fn crc32_ieee(data: &[u8]) -> u32 {
     let mut crc: u32 = 0xFFFF_FFFF;
-    for &b in data {
-        crc ^= b as u32;
+    for &byte in data {
+        crc ^= byte as u32;
         for _ in 0..8 {
             crc = if crc & 1 != 0 {
                 (crc >> 1) ^ 0xEDB8_8320
@@ -110,22 +106,22 @@ fn crc32_ieee(data: &[u8]) -> u32 {
 /// + crc16_h@18 + data[] + crc32_d. `data` is the per-cmd ACK payload.
 fn build_ack(cmd_id: u16, seq: u32, data: &[u8]) -> Vec<u8> {
     let length = (WRAPPER + data.len()) as u16;
-    let mut f = vec![0u8; WRAPPER + data.len()];
-    f[0] = SOF;
-    f[1] = 0; // version
-    f[2..4].copy_from_slice(&length.to_le_bytes());
-    f[4..8].copy_from_slice(&seq.to_le_bytes());
-    f[8..10].copy_from_slice(&cmd_id.to_le_bytes());
-    f[10] = 1; // cmd_type = ACK
-    f[11] = 1; // sender_type = lidar
-               // f[12..18] reserved (0)
-    let crc16 = crc16_ccitt_false(&f[0..18]);
-    f[18..20].copy_from_slice(&crc16.to_le_bytes());
-    // f[20..24] = crc32 of data[]
-    f[24..].copy_from_slice(data);
+    let mut frame = vec![0u8; WRAPPER + data.len()];
+    frame[0] = SOF;
+    frame[1] = 0; // version
+    frame[2..4].copy_from_slice(&length.to_le_bytes());
+    frame[4..8].copy_from_slice(&seq.to_le_bytes());
+    frame[8..10].copy_from_slice(&cmd_id.to_le_bytes());
+    frame[10] = 1; // cmd_type = ACK
+    frame[11] = 1; // sender_type = lidar
+                   // frame[12..18] reserved (0)
+    let crc16 = crc16_ccitt_false(&frame[0..18]);
+    frame[18..20].copy_from_slice(&crc16.to_le_bytes());
+    // frame[20..24] = crc32 of data[]
+    frame[24..].copy_from_slice(data);
     let crc32 = crc32_ieee(data);
-    f[20..24].copy_from_slice(&crc32.to_le_bytes());
-    f
+    frame[20..24].copy_from_slice(&crc32.to_le_bytes());
+    frame
 }
 
 // ---- classic pcap (LE, magic d4c3b2a1) parser -> data-plane UDP packets ----
@@ -251,7 +247,7 @@ impl VirtualMid360 {
         };
 
         let packets = match parse_pcap(&cfg.pcap) {
-            Ok(p) if !p.is_empty() => Arc::new(p),
+            Ok(parsed) if !parsed.is_empty() => Arc::new(parsed),
             Ok(_) => {
                 eprintln!(
                     "[virtual_mid360] pcap '{}' has no Livox UDP data packets. \
@@ -260,9 +256,9 @@ impl VirtualMid360 {
                 );
                 std::process::exit(2);
             }
-            Err(e) => {
+            Err(err) => {
                 eprintln!(
-                    "[virtual_mid360] failed to read pcap '{}': {e}. Fix the path, then re-run.",
+                    "[virtual_mid360] failed to read pcap '{}': {err}. Fix the path, then re-run.",
                     cfg.pcap
                 );
                 std::process::exit(2);
@@ -291,9 +287,9 @@ impl VirtualMid360 {
 fn spawn_discovery(lidar_ip: Ipv4Addr, stop: Arc<AtomicBool>) {
     std::thread::spawn(move || {
         let sock = match UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DISCOVERY_PORT)) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!("discovery bind :{DISCOVERY_PORT} failed: {e}");
+            Ok(socket) => socket,
+            Err(err) => {
+                tracing::error!("discovery bind :{DISCOVERY_PORT} failed: {err}");
                 return;
             }
         };
@@ -302,11 +298,11 @@ fn spawn_discovery(lidar_ip: Ipv4Addr, stop: Arc<AtomicBool>) {
         let bcast = SocketAddrV4::new(Ipv4Addr::BROADCAST, DISCOVERY_PORT);
         let mut buf = [0u8; 2048];
         while !stop.load(Ordering::Relaxed) {
-            let n = match sock.recv_from(&mut buf) {
-                Ok((n, _)) => n,
+            let len = match sock.recv_from(&mut buf) {
+                Ok((len, _)) => len,
                 Err(_) => continue,
             };
-            if n < WRAPPER || buf[0] != SOF {
+            if len < WRAPPER || buf[0] != SOF {
                 continue;
             }
             let cmd_id = u16::from_le_bytes([buf[8], buf[9]]);
@@ -326,20 +322,20 @@ fn spawn_discovery(lidar_ip: Ipv4Addr, stop: Arc<AtomicBool>) {
 fn spawn_control(lidar_ip: Ipv4Addr, armed: Arc<AtomicBool>, stop: Arc<AtomicBool>) {
     std::thread::spawn(move || {
         let sock = match UdpSocket::bind(SocketAddrV4::new(lidar_ip, CMD_PORT)) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!("control bind {lidar_ip}:{CMD_PORT} failed: {e}");
+            Ok(socket) => socket,
+            Err(err) => {
+                tracing::error!("control bind {lidar_ip}:{CMD_PORT} failed: {err}");
                 return;
             }
         };
         sock.set_read_timeout(Some(Duration::from_millis(500))).ok();
         let mut buf = [0u8; 2048];
         while !stop.load(Ordering::Relaxed) {
-            let (n, from) = match sock.recv_from(&mut buf) {
-                Ok(x) => x,
+            let (len, from) = match sock.recv_from(&mut buf) {
+                Ok(received) => received,
                 Err(_) => continue,
             };
-            if n < WRAPPER || buf[0] != SOF {
+            if len < WRAPPER || buf[0] != SOF {
                 continue;
             }
             let seq = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
@@ -374,11 +370,15 @@ fn spawn_stream(
     stop: Arc<AtomicBool>,
 ) {
     std::thread::spawn(move || {
-        let mk = |sport: u16| -> std::io::Result<UdpSocket> {
-            UdpSocket::bind(SocketAddrV4::new(lidar_ip, sport))
+        let bind_port = |src_port: u16| -> std::io::Result<UdpSocket> {
+            UdpSocket::bind(SocketAddrV4::new(lidar_ip, src_port))
         };
-        let (point, imu, status) = match (mk(PORT_POINT), mk(PORT_IMU), mk(PORT_STATUS)) {
-            (Ok(a), Ok(b), Ok(c)) => (a, b, c),
+        let (point, imu, status) = match (
+            bind_port(PORT_POINT),
+            bind_port(PORT_IMU),
+            bind_port(PORT_STATUS),
+        ) {
+            (Ok(point_sock), Ok(imu_sock), Ok(status_sock)) => (point_sock, imu_sock, status_sock),
             _ => {
                 tracing::error!("failed to bind data-plane source ports on {lidar_ip}");
                 return;
@@ -405,34 +405,34 @@ fn spawn_stream(
             .as_nanos() as u64;
         let first_orig = packets
             .iter()
-            .find(|p| matches!(p.src_port, PORT_POINT | PORT_IMU))
-            .map(|p| read_ts_ns(&p.payload))
+            .find(|pkt| matches!(pkt.src_port, PORT_POINT | PORT_IMU))
+            .map(|pkt| read_ts_ns(&pkt.payload))
             .unwrap_or(0);
         let ts_shift = now_ns.wrapping_sub(first_orig);
 
         let t_wall0 = Instant::now();
         let mut t_cap0: Option<f64> = None;
-        for p in packets.iter() {
+        for pkt in packets.iter() {
             if stop.load(Ordering::Relaxed) {
                 break;
             }
             // The Mid-360 MULTICASTS point/IMU to mcast_data:port (the SDK joins that
             // group — confirmed via `ss -ulnp` showing 224.1.1.5:56301/56401); status
             // is unicast to the host. Sending point/IMU unicast is silently dropped.
-            let (sock, dst_ip, dst) = match p.src_port {
+            let (sock, dst_ip, dst) = match pkt.src_port {
                 PORT_POINT => (&point, mcast_data, DST_POINT),
                 PORT_IMU => (&imu, mcast_data, DST_IMU),
                 PORT_STATUS => (&status, host_ip, DST_STATUS),
                 _ => continue,
             };
-            let t0 = *t_cap0.get_or_insert(p.ts);
-            let target = (p.ts - t0) / rate;
+            let t0 = *t_cap0.get_or_insert(pkt.ts);
+            let target = (pkt.ts - t0) / rate;
             let elapsed = t_wall0.elapsed().as_secs_f64();
             if target > elapsed {
                 std::thread::sleep(Duration::from_secs_f64(target - elapsed));
             }
-            let mut out = p.payload.clone();
-            if matches!(p.src_port, PORT_POINT | PORT_IMU) {
+            let mut out = pkt.payload.clone();
+            if matches!(pkt.src_port, PORT_POINT | PORT_IMU) {
                 rewrite_ts(&mut out, ts_shift);
             }
             let _ = sock.send_to(&out, SocketAddrV4::new(dst_ip, dst));
@@ -449,17 +449,17 @@ const DEV_TYPE_MID360: u8 = 9;
 ///   ret_code:u8, dev_type:u8, sn[16], lidar_ip[4], cmd_port:u16 LE.
 /// The SDK's VerifyNetSegment requires lidar_ip on the host's /24 (192.168.1.x).
 fn discovery_ack_payload(lidar_ip: Ipv4Addr) -> Vec<u8> {
-    let mut d = Vec::with_capacity(24);
-    d.push(0); // ret_code = success
-    d.push(DEV_TYPE_MID360);
+    let mut payload = Vec::with_capacity(24);
+    payload.push(0); // ret_code = success
+    payload.push(DEV_TYPE_MID360);
     // sn[16] MUST be null-terminated within 16 bytes — the SDK treats it as a
     // C-string (strcpy), so a full-16 SN with no NUL overruns its buffer.
     let mut sn = [0u8; 16];
     sn[..10].copy_from_slice(b"FAKEMID360"); // sn[10..]=0 -> NUL-terminated
-    d.extend_from_slice(&sn);
-    d.extend_from_slice(&lidar_ip.octets());
-    d.extend_from_slice(&CMD_PORT.to_le_bytes());
-    d
+    payload.extend_from_slice(&sn);
+    payload.extend_from_slice(&lidar_ip.octets());
+    payload.extend_from_slice(&CMD_PORT.to_le_bytes());
+    payload
 }
 
 // kKeyFwType (livox_lidar_def.h ParamKeyName = 0x8010); fw_type != 0 => app
@@ -476,13 +476,13 @@ fn control_ack_payload(cmd_id: u16) -> Vec<u8> {
         //   key:u16 @0, length:u16 @2, value @4). QueryFwType expects one param
         //   keyed kKeyFwType (0x8010) with a 1-byte fw_type value (non-zero = app).
         0x0101 => {
-            let mut d = vec![0u8; 8];
-            // d[0] ret_code = 0
-            d[1..3].copy_from_slice(&1u16.to_le_bytes()); // param_num = 1
-            d[3..5].copy_from_slice(&KEY_FW_TYPE.to_le_bytes());
-            d[5..7].copy_from_slice(&1u16.to_le_bytes()); // value length = 1
-            d[7] = FW_TYPE_APP;
-            d
+            let mut payload = vec![0u8; 8];
+            // payload[0] ret_code = 0
+            payload[1..3].copy_from_slice(&1u16.to_le_bytes()); // param_num = 1
+            payload[3..5].copy_from_slice(&KEY_FW_TYPE.to_le_bytes());
+            payload[5..7].copy_from_slice(&1u16.to_le_bytes()); // value length = 1
+            payload[7] = FW_TYPE_APP;
+            payload
         }
         // Others: LivoxLidarAsyncControlResponse (packed) { ret_code:u8 @0,
         // error_key:u16 @1 } = 3 bytes. ret_code=0 (success), error_key=0.
