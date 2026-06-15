@@ -315,11 +315,52 @@ jobs:
           use_pypi: true
           version: "11.2.8"
 
+  nav-stack-natives:
+    # ⚠️ MUST NEVER RUN ON EXTERNAL PRs ⚠️
+    # This job has write access to CACHIX_AUTH_TOKEN. Any workflow change that
+    # reaches a `run:` step here could exfiltrate the token, letting an attacker
+    # push poisoned binaries to the Cachix cache — which subsequent CI runs and
+    # every dev with the substituter configured would unwittingly install. The
+    # `if:` guard below is the only thing keeping fork PRs out — DO NOT REMOVE.
+    if: |
+      github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 180
+    environment: cachix
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install minimal dimos
+        run: uv sync --no-default-groups --frozen
+      - name: Install Nix (with Cachix substituter)
+        # Tells Nix to query Cachix before building locally, and tells it which
+        # public key to trust for Cachix-signed derivations. install-nix.sh
+        # forwards INPUT_EXTRA_NIX_CONFIG into the daemon's nix.conf.
+        env:
+          INPUT_EXTRA_NIX_CONFIG: |
+            extra-substituters = https://dimensionalos.cachix.org
+            extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
+        run: bash docker/ros/install-nix.sh
+      - name: Authenticate Cachix
+        uses: cachix/cachix-action@v15
+        with:
+          name: dimensionalos
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Build nav_stack native modules
+        run: uv run bin/build-nav-stack-natives
+
   self-hosted-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
     if: |
       github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-    needs: compute-ros-pin
+    needs: [compute-ros-pin, nav-stack-natives]
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -397,30 +438,13 @@ jobs:
             echo "ROS_PYTHON_VERSION=$ROS_PYTHON_VERSION"
           } >> "$GITHUB_ENV"
       - name: Install Nix (with Cachix substituter)
-        # Tells Nix to query Cachix before building locally, and tells it which
-        # public key to trust for Cachix-signed derivations. install-nix.sh
-        # forwards INPUT_EXTRA_NIX_CONFIG into the daemon's nix.conf.
-        # Gated on `skipif_no_ros`: the native binaries we're about to build
-        # only matter for *_rosbag.py tests, which depend on ROS.
         if: contains(matrix.markers, 'skipif_no_ros')
         env:
           INPUT_EXTRA_NIX_CONFIG: |
             extra-substituters = https://dimensionalos.cachix.org
-            extra-trusted-public-keys = dimensionalos.cachix.org-1:<PUBKEY-FROM-STAGE-3>
+            extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
         run: bash docker/ros/install-nix.sh
-      - name: Authenticate Cachix
-        # Lets cachix-action push successful builds back to the cache. Reads
-        # are public; only writes need the auth token.
-        if: contains(matrix.markers, 'skipif_no_ros')
-        uses: cachix/cachix-action@v15
-        with:
-          name: dimensionalos
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-      - name: Build nav_stack native modules
-        # Each module's *_rosbag.py test pre-flights its binary's existence
-        # and pytest.skip()s if absent. Build each NativeModuleConfig's
-        # binary now so they're at result/bin/<name> by test time. The
-        # Cachix substituter installed above makes a warm cache near-instant.
+      - name: Fetch nav_stack native modules from Cachix
         if: contains(matrix.markers, 'skipif_no_ros')
         run: uv run bin/build-nav-stack-natives
       - name: Run tests
@@ -586,6 +610,7 @@ jobs:
     - md-babel
     - docs-validate
     - tests
+    - nav-stack-natives
     - self-hosted-tests
     #- self-hosted-large-tests
 
@@ -598,6 +623,7 @@ jobs:
       uses: re-actors/alls-green@release/v1
       with:
         allowed-skips: |
+          nav-stack-natives
           self-hosted-tests
           self-hosted-large-tests
         jobs: ${{ toJSON(needs) }}

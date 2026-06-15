@@ -276,5 +276,5 @@ CI pre-builds the `nav_stack` native modules and pushes the Nix store paths to t
 ```
 # ~/.config/nix/nix.conf  (single-user)  or  /etc/nix/nix.conf  (multi-user)
 extra-substituters = https://dimensionalos.cachix.org
-extra-trusted-public-keys = dimensionalos.cachix.org-1:<PUBKEY-FROM-CACHIX>
+extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
 ```

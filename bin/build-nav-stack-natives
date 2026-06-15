@@ -3,12 +3,18 @@
 
 import importlib
 from pathlib import Path
+import re
 import subprocess
 
 from dimos.core.native_module import NativeModuleConfig
 import dimos.navigation.nav_stack.modules as modules_pkg
 
 MODULES_DIR = Path(modules_pkg.__path__[0])
+# Pre-filter source files for a NativeModuleConfig subclass before importing
+# them. Lets us run with a minimal dimos install: modules that don't subclass
+# NativeModuleConfig (e.g. nav_record) may pull in heavy deps like torch at
+# top-level import, and we don't want to require those just to discover.
+_HAS_NATIVE_CONFIG = re.compile(r"^class\s+\w+\s*\(\s*NativeModuleConfig\b", re.MULTILINE)
 
 
 def discover() -> tuple[type[NativeModuleConfig], ...]:
@@ -17,6 +23,9 @@ def discover() -> tuple[type[NativeModuleConfig], ...]:
         if not pkg_dir.is_dir():
             continue
         leaf = pkg_dir.name
+        src = pkg_dir / f"{leaf}.py"
+        if not src.exists() or not _HAS_NATIVE_CONFIG.search(src.read_text()):
+            continue
         mod = importlib.import_module(f"{modules_pkg.__name__}.{leaf}.{leaf}")
         for attr in vars(mod).values():
             if (
