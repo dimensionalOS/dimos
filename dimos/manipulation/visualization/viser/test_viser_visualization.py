@@ -17,7 +17,7 @@ from __future__ import annotations
 import threading
 import time
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
 
@@ -38,6 +38,7 @@ from dimos.manipulation.visualization.viser.state import (
     TargetEvaluationWorker,
     TargetStatus,
 )
+from dimos.manipulation.visualization.viser.theme import _dimos_logo_data_url, apply_dimos_theme
 from dimos.manipulation.visualization.viser.visualizer import ViserManipulationVisualizer
 from dimos.msgs.geometry_msgs.Pose import Pose
 
@@ -72,6 +73,18 @@ class FakeJointState:
 class FakeServer:
     def __init__(self) -> None:
         self.scene = SimpleNamespace()
+
+
+class FakeGridServer(FakeServer):
+    def __init__(self) -> None:
+        super().__init__()
+        self.grids = []
+        self.scene.add_grid = self.add_grid
+
+    def add_grid(self, name, **kwargs):
+        handle = SimpleNamespace(name=name, kwargs=kwargs, visible=kwargs.get("visible"))
+        self.grids.append(handle)
+        return handle
 
 
 class FakeTransformHandle(FakeHandle):
@@ -121,16 +134,23 @@ class FakeFolder:
 
 class FakeGuiServer:
     def __init__(self) -> None:
+        self.theme_kwargs = None
         self.folders = []
         self.gui = SimpleNamespace(
             add_markdown=lambda value: SimpleNamespace(value=value),
             add_dropdown=self.add_dropdown,
             add_button=self.add_button,
+            add_checkbox=self.add_checkbox,
             add_slider=self.add_slider,
             add_folder=self.add_folder,
+            configure_theme=self.configure_theme,
         )
         self.buttons = {}
+        self.checkboxes = {}
         self.sliders = []
+
+    def configure_theme(self, **kwargs: Any) -> None:
+        self.theme_kwargs = kwargs
 
     def add_folder(self, label, **kwargs):
         handle = FakeFolder(label, kwargs)
@@ -152,6 +172,15 @@ class FakeGuiServer:
             on_click=lambda callback: setattr(handle, "click_callback", callback),
         )
         self.buttons[label] = handle
+        return handle
+
+    def add_checkbox(self, label, *, initial_value):
+        handle = SimpleNamespace(
+            label=label,
+            value=initial_value,
+            on_update=lambda callback: setattr(handle, "update_callback", callback),
+        )
+        self.checkboxes[label] = handle
         return handle
 
     def add_slider(self, label, *, min, max, step, initial_value):
@@ -212,6 +241,65 @@ def test_gui_builds_controls_in_manipulation_panel_folder() -> None:
         assert cast("Any", gui._operation_worker)._timeout_seconds is None
     finally:
         gui.close()
+
+
+def test_gui_scene_grid_checkbox_toggles_reference_grid() -> None:
+    grid_server = FakeGridServer()
+    scene = ViserManipulationScene(
+        grid_server, lambda *args, **kwargs: FakeUrdf(("joint1",)), preview_fps=10.0
+    )
+    server = FakeGuiServer()
+    adapter = make_adapter_with_robot()
+    gui = ViserPanelGui(server, adapter, ViserVisualizationConfig(), scene=scene)
+    try:
+        gui.start()
+        assert grid_server.grids
+        assert server.checkboxes["Scene grid"].value is True
+        server.checkboxes["Scene grid"].update_callback(
+            SimpleNamespace(target=SimpleNamespace(value=False))
+        )
+        assert grid_server.grids[0].visible is False
+        server.checkboxes["Scene grid"].update_callback(
+            SimpleNamespace(target=SimpleNamespace(value=True))
+        )
+        assert grid_server.grids[0].visible is True
+    finally:
+        gui.close()
+
+
+def test_dimos_theme_configures_supported_viser_chrome() -> None:
+    server = FakeGuiServer()
+
+    assert apply_dimos_theme(server) is True
+    assert server.theme_kwargs is not None
+    assert server.theme_kwargs["brand_color"] == (22, 130, 163)
+    assert server.theme_kwargs["dark_mode"] is True
+    assert server.theme_kwargs["show_logo"] is False
+    assert server.theme_kwargs["show_share_button"] is False
+    assert server.theme_kwargs["control_layout"] == "collapsible"
+    assert server.theme_kwargs["control_width"] == "medium"
+    titlebar_content = cast("dict[str, Any]", server.theme_kwargs["titlebar_content"])
+    image = cast("dict[str, str]", titlebar_content["image"])
+    assert image["image_alt"] == "Dimensional"
+    assert image["image_url_light"].startswith("data:image/svg+xml;base64,")
+
+
+def test_dimos_logo_asset_loads_as_data_url() -> None:
+    logo_url = _dimos_logo_data_url()
+
+    assert logo_url is not None
+    assert logo_url.startswith("data:image/svg+xml;base64,")
+
+
+def test_dimos_theme_is_non_blocking_when_theme_api_fails() -> None:
+    class BrokenGui:
+        @staticmethod
+        def configure_theme(**_kwargs: Any) -> None:
+            raise TypeError("theme API changed")
+
+    server = SimpleNamespace(gui=BrokenGui())
+
+    assert apply_dimos_theme(server) is False
 
 
 def test_visualizer_initializes_all_scene_robots_from_planning_scene() -> None:
@@ -310,6 +398,26 @@ def test_viser_joint_configuration_maps_names_to_urdf_order() -> None:
     scene.register_robot("robot1", cfg)
     scene.set_urdf_joints(urdf, cfg.joint_names, [1.5, 2.5])
     assert urdf.cfg == [1.5, 2.5, 0.0]
+
+
+def test_scene_adds_reference_grid_when_supported() -> None:
+    server = FakeGridServer()
+    scene = ViserManipulationScene(
+        server, lambda *args, **kwargs: FakeUrdf(("j1",)), preview_fps=10.0
+    )
+
+    assert scene.has_reference_grid() is True
+    assert len(server.grids) == 1
+    grid = server.grids[0]
+    assert grid.name == "/reference_grid"
+    assert grid.kwargs["plane"] == "xy"
+    assert grid.kwargs["infinite_grid"] is True
+    assert grid.kwargs["visible"] is True
+
+    scene.set_reference_grid_visible(False)
+    assert grid.visible is False
+    scene.set_reference_grid_visible(True)
+    assert grid.visible is True
 
 
 def test_preview_visibility_only_affects_preview_ghost_and_close_removes_handles() -> None:

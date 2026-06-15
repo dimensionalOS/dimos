@@ -21,6 +21,7 @@ from dimos.manipulation.visualization.viser.config import ViserVisualizationConf
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
 from dimos.manipulation.visualization.viser.runtime import ViserRuntime, import_viser_urdf
 from dimos.manipulation.visualization.viser.scene import ViserManipulationScene, _ViserUrdfFactory
+from dimos.manipulation.visualization.viser.theme import apply_dimos_theme
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -48,6 +49,7 @@ class ViserManipulationVisualizer:
         self.config = config or ViserVisualizationConfig()
         runtime = ViserRuntime(self.config)
         server = runtime.start()
+        apply_dimos_theme(server)
         scene: ViserManipulationScene | None = None
         gui: ViserPanelGui | None = None
         try:

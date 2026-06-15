@@ -31,6 +31,9 @@ GOAL_ROBOT_MESH_COLOR = (*GOAL_ROBOT_FEASIBLE_COLOR, GOAL_ROBOT_FEASIBLE_OPACITY
 PREVIEW_ROBOT_COLOR = (80, 180, 255)
 PREVIEW_ROBOT_OPACITY = 0.55
 PREVIEW_ROBOT_MESH_COLOR = (*PREVIEW_ROBOT_COLOR, PREVIEW_ROBOT_OPACITY)
+REFERENCE_GRID_NAME = "/reference_grid"
+REFERENCE_GRID_CELL_COLOR = (44, 54, 58)
+REFERENCE_GRID_SECTION_COLOR = (90, 145, 165)
 
 
 class _ViserUrdfFactory(Protocol):
@@ -50,6 +53,10 @@ class _SceneServer(Protocol):
 
 class _TransformScene(Protocol):
     def add_transform_controls(self, name: str, *, scale: float) -> object: ...
+
+
+class _GridScene(Protocol):
+    def add_grid(self, name: str, **kwargs: object) -> object: ...
 
 
 class _UpdateHandle(Protocol):
@@ -139,14 +146,56 @@ class ViserManipulationScene:
         self._configs_by_id: dict[str, RobotModelConfig] = {}
         self._urdfs: dict[str, object] = {}
         self._handles: dict[str, object] = {}
+        self._grid_handle: object | None = None
+        self._grid_visible = True
         self._preview_visible: dict[str, bool] = {}
         self._target_tracks_current: dict[str, bool] = {}
+        self._ensure_reference_grid()
+
+    def has_reference_grid(self) -> bool:
+        """Return whether the Viser scene accepted the optional reference grid."""
+        return self._grid_handle is not None
+
+    def set_reference_grid_visible(self, visible: bool) -> None:
+        """Show or hide the optional ground reference grid."""
+        self._grid_visible = visible
+        self._set_handle_visibility(self._grid_handle, visible)
 
     def register_robot(self, robot_id: str, config: RobotModelConfig) -> None:
         self._configs_by_id[robot_id] = config
         self._preview_visible.setdefault(robot_id, False)
         self._target_tracks_current.setdefault(robot_id, True)
         self._ensure_robot_urdfs(robot_id, config)
+
+    def _ensure_reference_grid(self) -> None:
+        try:
+            scene = cast("_SceneServer", self.server).scene
+        except AttributeError:
+            return
+        if scene is None or not hasattr(scene, "add_grid"):
+            return
+        try:
+            self._grid_handle = cast("_GridScene", scene).add_grid(
+                REFERENCE_GRID_NAME,
+                width=20.0,
+                height=20.0,
+                plane="xy",
+                cell_color=REFERENCE_GRID_CELL_COLOR,
+                cell_thickness=0.6,
+                cell_size=0.25,
+                section_color=REFERENCE_GRID_SECTION_COLOR,
+                section_thickness=1.0,
+                section_size=1.0,
+                infinite_grid=True,
+                fade_distance=40.0,
+                fade_strength=1.0,
+                fade_from="camera",
+                shadow_opacity=0.0,
+                plane_opacity=0.0,
+                visible=self._grid_visible,
+            )
+        except Exception:
+            self._grid_handle = None
 
     def ensure_target_controls(
         self, robot_id: str, on_update: Callable[[object], None]

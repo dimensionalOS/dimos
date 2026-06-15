@@ -8,7 +8,7 @@ global-exclude .DS_Store
 # *.lock, *.patch, CMakeLists.txt, Dockerfile) and .gitignore are NOT Python
 # runtime data and must stay out. Add a new extension here when code starts
 # loading a new data type — never go back to per-package globs.
-recursive-include dimos *.yaml *.yml *.json *.urdf *.html *.css *.js *.tcss
+recursive-include dimos *.yaml *.yml *.json *.urdf *.html *.css *.js *.svg *.tcss
 recursive-include dimos/rxpy_backpressure *.txt
 
 # --- Exclusions (must come after the includes above so they win) ---

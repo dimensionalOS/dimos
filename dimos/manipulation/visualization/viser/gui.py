@@ -94,6 +94,10 @@ class _ButtonGui(Protocol):
     def add_button(self, label: str, *, disabled: bool = False) -> object: ...
 
 
+class _CheckboxGui(Protocol):
+    def add_checkbox(self, label: str, *, initial_value: bool) -> object: ...
+
+
 class _SliderGui(Protocol):
     def add_slider(
         self,
@@ -225,6 +229,7 @@ class ViserPanelGui:
                 "Status", initial_value="Starting"
             )
         robots = self.adapter.list_robots()
+        self._build_scene_controls(gui)
         if hasattr(gui, "add_dropdown"):
             self._handles["robot"] = cast("_DropdownGui", gui).add_dropdown(
                 "Robot",
@@ -258,6 +263,27 @@ class ViserPanelGui:
             self._handles["clear"] = self._add_button(gui, "Clear plan")
             cast("_ClickHandle", self._handles["clear"]).on_click(lambda _: self._submit_clear())
         self._build_joint_sliders()
+
+    def _build_scene_controls(self, gui: object) -> None:
+        if (
+            self.scene is None
+            or not hasattr(gui, "add_checkbox")
+            or not hasattr(self.scene, "has_reference_grid")
+        ):
+            return
+        if not self.scene.has_reference_grid():
+            return
+        handle = cast("_CheckboxGui", gui).add_checkbox("Scene grid", initial_value=True)
+        self._handles["scene_grid"] = handle
+        if hasattr(handle, "on_update"):
+            cast("_UpdateHandle", handle).on_update(
+                lambda event: self._set_scene_grid_visible(event.target.value)
+            )
+
+    def _set_scene_grid_visible(self, visible: object) -> None:
+        if self.scene is None:
+            return
+        self.scene.set_reference_grid_visible(bool(visible))
 
     def _add_button(self, gui: object, label: str, *, disabled: bool = False) -> object:
         try:
