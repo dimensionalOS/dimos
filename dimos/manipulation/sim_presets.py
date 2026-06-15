@@ -89,6 +89,34 @@ _R1PRO_SCENE_HOME_JOINTS = (0.0,) * 18  # 4 torso + 7 left arm + 7 right arm
 _R1PRO_SCENE_YAW = math.radians(90.0)
 _R1PRO_TABLE_STANDOFF_M = 0.5
 _R1PRO_FLOOR_Z = 0.0
+# The dimos_office desk sits at ~0.65 m (sized for the tabletop xArm). The R1Pro is
+# a full-height floor robot (shoulders ~1.45 m), so reaching that low desk looks
+# awkward (deep downward reach). Raise the desk + graspable objects so the reach is
+# natural. Robot stays on the floor; the same offset is applied to the planning
+# obstacles + ground-truth detections so the sim and planner agree.
+#
+# 0.30 m puts the desk top at ~0.95 m (counter height) where the left arm grasps the
+# front objects (cup/can) robustly. NOTE: going higher (~0.5 m) puts objects near
+# shoulder height where top-down grasps become marginal/unreachable; centered-tall
+# (bottle) and far-back (box/marker/tape) objects sit at the LEFT arm's workspace
+# edge at any height and need the right arm (bimanual follow-on).
+_R1PRO_DESK_Z_OFFSET = 0.30
+
+
+def _r1pro_raised_entities(package: ScenePackage) -> list[dict[str, Any]]:
+    """Scene entities with the manipulation desk + objects (``manip_*``) raised by
+    ``_R1PRO_DESK_Z_OFFSET``. Room/floor entities are left at the floor."""
+    import copy
+
+    raised: list[dict[str, Any]] = []
+    for entity in package.entities:
+        if str(entity.get("id", "")).startswith("manip_"):
+            entity = copy.deepcopy(entity)
+            pose = dict(entity.get("initial_pose") or {})
+            pose["z"] = float(pose.get("z", 0.0)) + _R1PRO_DESK_Z_OFFSET
+            entity["initial_pose"] = pose
+        raised.append(entity)
+    return raised
 
 
 def r1pro_mujoco_scene_preset(
@@ -133,7 +161,7 @@ def r1pro_mujoco_scene_preset(
         },
         mujoco_module_kwargs={
             "scene_xml": str(package.mujoco_scene_path),
-            "scene_entities": package.entities,
+            "scene_entities": _r1pro_raised_entities(package),
             "spawn_xy": spawn_xy,
             "spawn_z": spawn_z,
             "spawn_yaw": _R1PRO_SCENE_YAW,
@@ -152,7 +180,9 @@ def r1pro_scene_obstacles(
     if package is None:
         return []
     obstacles: list[dict[str, Any]] = []
-    for entity in package.entities:
+    # Use the raised entities so the planning obstacles + ground-truth detections
+    # match the desk height the sim renders (see _r1pro_raised_entities).
+    for entity in _r1pro_raised_entities(package):
         eid = str(entity.get("id", ""))
         tags = entity.get("tags", [])
         is_table = eid == "manip_table" or "table" in tags

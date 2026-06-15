@@ -565,14 +565,11 @@ then refreshes perception obstacles.
             min_duration: Minimum time an object must be seen to be included.
             robot_name: Robot context (only needed for multi-arm setups).
         """
-        # Go to init for a clear camera view
-        init_result = self.go_init(robot_name)
-        if not init_result.is_success():
-            return init_result
-
         # Sim ground-truth: the sim knows every object pose, so use those directly
         # (YOLO is unreliable on synthetic objects). The objects are already in the
         # planning world as static obstacles; this just exposes them for pick/place.
+        # No camera view is needed, so we SKIP the go_init repositioning that would
+        # otherwise swing the arm to home+observe for nothing before the scan.
         if self.config.ground_truth_objects:
             self._detection_snapshot = self._ground_truth_detections()
             dets = self._detection_snapshot
@@ -581,6 +578,11 @@ then refreshes perception obstacles.
             lines = [f"Detected {len(dets)} object(s):"]
             lines += [f"  - {d.name}: ({d.center.x:.3f}, {d.center.y:.3f}, {d.center.z:.3f})" for d in dets]
             return SkillResult.ok("\n".join(lines))
+
+        # Real perception: move to init for a clear camera view, then refresh.
+        init_result = self.go_init(robot_name)
+        if not init_result.is_success():
+            return init_result
 
         obstacles = self.refresh_obstacles(min_duration)
 
