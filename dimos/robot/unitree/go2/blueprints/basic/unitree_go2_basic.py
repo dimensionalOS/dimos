@@ -142,5 +142,6 @@ unitree_go2_basic = (
 )
 
 __all__ = [
+    "rerun_config",
     "unitree_go2_basic",
 ]
