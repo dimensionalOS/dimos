@@ -15,7 +15,7 @@
 """Python NativeModule wrapper for the Point-LIO + Livox Mid-360 binary.
 
 Binds Livox SDK2 directly into Point-LIO for real-time LiDAR SLAM.
-Outputs registered (world-frame) point clouds and odometry with covariance.
+Outputs sensor-frame (mid360_link) point clouds and odometry with covariance.
 
 Usage::
 
@@ -55,7 +55,6 @@ from dimos.hardware.sensors.lidar.livox.ports import (
     SDK_POINT_DATA_PORT,
     SDK_PUSH_MSG_PORT,
 )
-from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -78,10 +77,6 @@ class PointLioConfig(NativeModuleConfig):
     host_ip: str = "192.168.1.5"
     lidar_ip: str = "192.168.1.155"
     frequency: float = 10.0
-
-    # Sensor mount pose — position + orientation of the sensor relative to ground.
-    # Converted to init_pose CLI arg [x, y, z, qx, qy, qz, qw] in model_post_init.
-    mount: Pose = Pose()
 
     # frame_id is the header frame for BOTH the point cloud and the odometry
     # message (the Mid-360 sensor frame). The TF published by the module is a
@@ -128,27 +123,15 @@ class PointLioConfig(NativeModuleConfig):
     # Resolved in __post_init__, passed as --config_path to the binary
     config_path: str | None = None
 
-    # init_pose is computed from mount; config is resolved to config_path
-    init_pose: list[float] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
-    cli_exclude: frozenset[str] = frozenset({"config", "mount", "odom_parent_frame_id"})
+    cli_exclude: frozenset[str] = frozenset({"config", "odom_parent_frame_id"})
 
     def model_post_init(self, __context: object) -> None:
-        """Resolve config_path and compute init_pose from mount."""
+        """Resolve the FAST-LIO YAML config to an absolute config_path."""
         super().model_post_init(__context)
         cfg = self.config
         if not cfg.is_absolute():
             cfg = _CONFIG_DIR / cfg
         self.config_path = str(cfg.resolve())
-        m = self.mount
-        self.init_pose = [
-            m.x,
-            m.y,
-            m.z,
-            m.orientation.x,
-            m.orientation.y,
-            m.orientation.z,
-            m.orientation.w,
-        ]
 
 
 class PointLio(NativeModule, perception.Lidar, perception.Odometry):

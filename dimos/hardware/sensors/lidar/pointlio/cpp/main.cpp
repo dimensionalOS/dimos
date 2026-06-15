@@ -71,42 +71,6 @@ static std::string g_frame_id;        // required via --frame_id
 static std::string g_child_frame_id;   // required via --child_frame_id
 static float g_frequency = 10.0f;
 
-// Initial pose offset (applied to all SLAM outputs)
-static double g_init_x = 0.0;
-static double g_init_y = 0.0;
-static double g_init_z = 0.0;
-static double g_init_qx = 0.0;
-static double g_init_qy = 0.0;
-static double g_init_qz = 0.0;
-static double g_init_qw = 1.0;
-
-// Hamilton product: q_out = q1 * q2
-static void quat_mul(double ax, double ay, double az, double aw,
-                     double bx, double by, double bz, double bw,
-                     double& ox, double& oy, double& oz, double& ow) {
-    ow = aw*bw - ax*bx - ay*by - az*bz;
-    ox = aw*bx + ax*bw + ay*bz - az*by;
-    oy = aw*by - ax*bz + ay*bw + az*bx;
-    oz = aw*bz + ax*by - ay*bx + az*bw;
-}
-
-// Rotate vector by quaternion: v_out = q * v * q_inv
-static void quat_rotate(double qx, double qy, double qz, double qw,
-                        double vx, double vy, double vz,
-                        double& ox, double& oy, double& oz) {
-    double tx = 2.0 * (qy*vz - qz*vy);
-    double ty = 2.0 * (qz*vx - qx*vz);
-    double tz = 2.0 * (qx*vy - qy*vx);
-    ox = vx + qw*tx + (qy*tz - qz*ty);
-    oy = vy + qw*ty + (qz*tx - qx*tz);
-    oz = vz + qw*tz + (qx*ty - qy*tx);
-}
-
-static bool has_init_pose() {
-    return g_init_x != 0.0 || g_init_y != 0.0 || g_init_z != 0.0 ||
-           g_init_qx != 0.0 || g_init_qy != 0.0 || g_init_qz != 0.0 || g_init_qw != 1.0;
-}
-
 // Frame accumulator (Livox SDK raw → CustomMsg)
 static std::mutex g_pc_mutex;
 static std::vector<custom_messages::CustomPoint> g_accumulated_points;
@@ -192,38 +156,14 @@ static void publish_odometry(const custom_messages::Odometry& odom, double times
     msg.header = make_header(g_frame_id, timestamp);
     msg.child_frame_id = g_child_frame_id;
 
-    // p_out = R_init * p_slam + t_init
-    if (has_init_pose()) {
-        double rx, ry, rz;
-        quat_rotate(g_init_qx, g_init_qy, g_init_qz, g_init_qw,
-                    odom.pose.pose.position.x,
-                    odom.pose.pose.position.y,
-                    odom.pose.pose.position.z,
-                    rx, ry, rz);
-        msg.pose.pose.position.x = rx + g_init_x;
-        msg.pose.pose.position.y = ry + g_init_y;
-        msg.pose.pose.position.z = rz + g_init_z;
-
-        double ox, oy, oz, ow;
-        quat_mul(g_init_qx, g_init_qy, g_init_qz, g_init_qw,
-                 odom.pose.pose.orientation.x,
-                 odom.pose.pose.orientation.y,
-                 odom.pose.pose.orientation.z,
-                 odom.pose.pose.orientation.w,
-                 ox, oy, oz, ow);
-        msg.pose.pose.orientation.x = ox;
-        msg.pose.pose.orientation.y = oy;
-        msg.pose.pose.orientation.z = oz;
-        msg.pose.pose.orientation.w = ow;
-    } else {
-        msg.pose.pose.position.x = odom.pose.pose.position.x;
-        msg.pose.pose.position.y = odom.pose.pose.position.y;
-        msg.pose.pose.position.z = odom.pose.pose.position.z;
-        msg.pose.pose.orientation.x = odom.pose.pose.orientation.x;
-        msg.pose.pose.orientation.y = odom.pose.pose.orientation.y;
-        msg.pose.pose.orientation.z = odom.pose.pose.orientation.z;
-        msg.pose.pose.orientation.w = odom.pose.pose.orientation.w;
-    }
+    // Pose in the SLAM/sensor frame (no mount offset applied).
+    msg.pose.pose.position.x = odom.pose.pose.position.x;
+    msg.pose.pose.position.y = odom.pose.pose.position.y;
+    msg.pose.pose.position.z = odom.pose.pose.position.z;
+    msg.pose.pose.orientation.x = odom.pose.pose.orientation.x;
+    msg.pose.pose.orientation.y = odom.pose.pose.orientation.y;
+    msg.pose.pose.orientation.z = odom.pose.pose.orientation.z;
+    msg.pose.pose.orientation.w = odom.pose.pose.orientation.w;
 
     for (int i = 0; i < 36; ++i) {
         msg.pose.covariance[i] = odom.pose.covariance[i];
@@ -455,30 +395,8 @@ int main(int argc, char** argv) {
     ports.host_imu_data   = mod.arg_int("host_imu_data_port", port_defaults.host_imu_data);
     ports.host_log_data   = mod.arg_int("host_log_data_port", port_defaults.host_log_data);
 
-    // Initial pose offset [x, y, z, qx, qy, qz, qw]
-    {
-        std::string init_str = mod.arg("init_pose", "");
-        if (!init_str.empty()) {
-            double vals[7] = {0, 0, 0, 0, 0, 0, 1};
-            int n = 0;
-            size_t pos = 0;
-            while (pos < init_str.size() && n < 7) {
-                size_t comma = init_str.find(',', pos);
-                if (comma == std::string::npos) comma = init_str.size();
-                vals[n++] = std::stod(init_str.substr(pos, comma - pos));
-                pos = comma + 1;
-            }
-            g_init_x = vals[0]; g_init_y = vals[1]; g_init_z = vals[2];
-            g_init_qx = vals[3]; g_init_qy = vals[4]; g_init_qz = vals[5]; g_init_qw = vals[6];
-        }
-    }
-
     if (debug) {
         printf("[fastlio2] Starting FAST-LIO2 + Livox Mid-360 native module\n");
-        if (has_init_pose()) {
-            printf("[fastlio2] init_pose: xyz=(%.3f, %.3f, %.3f) quat=(%.4f, %.4f, %.4f, %.4f)\n",
-                   g_init_x, g_init_y, g_init_z, g_init_qx, g_init_qy, g_init_qz, g_init_qw);
-        }
         printf("[fastlio2] lidar topic: %s\n",
                g_lidar_topic.empty() ? "(disabled)" : g_lidar_topic.c_str());
         printf("[fastlio2] odometry topic: %s\n",
