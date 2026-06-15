@@ -72,7 +72,7 @@ struct Scope {
 };
 
 // Print one line per section to stderr every FLUSH_INTERVAL, then reset.
-// Mutex serialises flushes across threads (replay feeder vs live main loop).
+// Mutex serialises flushes across threads (SDK callbacks vs main loop).
 inline void maybe_flush(std::chrono::steady_clock::time_point now) {
     if (!fastlio_debug) {
         return;

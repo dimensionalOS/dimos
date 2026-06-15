@@ -128,21 +128,6 @@ class PointLioConfig(NativeModuleConfig):
     # Resolved in __post_init__, passed as --config_path to the binary
     config_path: str | None = None
 
-    # Offline replay. When set, the C++ binary skips SDK init and feeds
-    # packets from this pcap into the same callbacks the SDK would.
-    replay_pcap: Path | None = None
-    # Replay-only: drop pcap records with sensor ts < this.
-    replay_skip_until_ns: int | None = None
-    # Live-only: path where the binary writes the first-callback wall_ns.
-    first_packet_marker: Path | None = None
-    # Drive scan boundaries + publish ts off the sensor packet timestamp
-    # for bit-reproducible offline replay.
-    deterministic_clock: bool = False
-    # Replay-only: feed point and IMU packets on two separate threads to
-    # mimic the live Livox SDK's concurrent delivery. Use with
-    # deterministic_clock=False to reproduce live thread-interleaving.
-    replay_dual_thread: bool = False
-
     # init_pose is computed from mount; config is resolved to config_path
     init_pose: list[float] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
     cli_exclude: frozenset[str] = frozenset({"config", "mount", "odom_parent_frame_id"})
@@ -174,8 +159,7 @@ class PointLio(NativeModule, perception.Lidar, perception.Odometry):
 
     @rpc
     def start(self) -> None:
-        if self.config.replay_pcap is None:
-            self._validate_network()
+        self._validate_network()
         super().start()
         self.register_disposable(
             Disposable(self.odometry.transport.subscribe(self._on_odom_for_tf, self.odometry))
