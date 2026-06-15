@@ -14,9 +14,6 @@
 
 """Python NativeModule wrapper for the Point-LIO + Livox Mid-360 binary.
 
-Binds Livox SDK2 directly into Point-LIO for real-time LiDAR SLAM.
-Outputs sensor-frame (mid360_link) point clouds and odometry with covariance.
-
 Usage::
 
     from dimos.hardware.sensors.lidar.pointlio.module import PointLio
@@ -74,25 +71,13 @@ class PointLioConfig(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/pointlio_native"
     build_command: str | None = "nix build .#pointlio_native"
-    # lidar_ip is required (network-specific); from the config or
-    # DIMOS_POINTLIO_LIDAR_IP. host_ip is optional — start() derives the local
-    # NIC on the lidar's subnet when unset (or via DIMOS_POINTLIO_HOST_IP).
     host_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_POINTLIO_HOST_IP"))
     lidar_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_POINTLIO_LIDAR_IP"))
     frequency: float = 10.0
 
-    # frame_id is the header frame for BOTH the point cloud and the odometry
-    # message (the Mid-360 sensor frame). The TF published by the module is a
-    # separate body_start_frame_id -> body_frame_id transform.
     frame_id: str = "mid360_link"
-    # TF publish frames (body_start -> body): the sensor pose expressed as the
-    # body_frame pose in the body_start frame.
     body_start_frame_id: str = FRAME_ODOM
     body_frame_id: str = "base_link"
-
-    # Point-LIO internal processing rates
-    msr_freq: float = 50.0
-    main_freq: float = 5000.0
 
     pointcloud_freq: float = 10.0
     odom_freq: float = 30.0
@@ -102,7 +87,11 @@ class PointLioConfig(NativeModuleConfig):
     sor_mean_k: int = 50
     sor_stddev: float = 1.0
 
-    # Point-LIO YAML config (relative to config/ dir, or absolute path).
+    # Point-LIO internal processing rates
+    msr_freq: float = 50.0
+    main_freq: float = 5000.0
+
+    # relative to config/ dir, or absolute path
     config: Annotated[
         Path,
         validate_as(...).transform(lambda path: path if path.is_absolute() else _CONFIG_DIR / path),
@@ -128,7 +117,6 @@ class PointLioConfig(NativeModuleConfig):
     cli_exclude: frozenset[str] = frozenset({"config", "body_start_frame_id"})
 
     def model_post_init(self, __context: object) -> None:
-        """Resolve the Point-LIO YAML config to an absolute config_path."""
         super().model_post_init(__context)
         cfg = self.config
         if not cfg.is_absolute():
