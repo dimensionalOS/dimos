@@ -115,6 +115,29 @@ def _unregister(shm: SharedMemory) -> SharedMemory:
     return shm
 
 
+def _create_shm_reclaiming(name: str, size: int) -> SharedMemory:
+    """Create a named SHM segment, reclaiming a stale one of the same name if a
+    crashed/killed prior sim left it behind. Raises a clear error if it still
+    can't be claimed (a live sim is probably running)."""
+    for last_attempt in (False, True):
+        try:
+            return SharedMemory(create=True, size=size, name=name)
+        except FileExistsError:
+            try:
+                stale = _unregister(SharedMemory(name=name))
+                stale.close()
+                stale.unlink()
+                logger.info("ManipShmSet: reclaimed stale SHM", name=name)
+            except FileNotFoundError:
+                pass
+            if last_attempt:
+                raise FileExistsError(
+                    f"SHM segment {name!r} already exists and could not be reclaimed; "
+                    "another sim instance may be running. Run `dimos stop` first."
+                ) from None
+    raise AssertionError("unreachable")
+
+
 @dataclass(frozen=True)
 class ManipShmSet:
     """Frozen set of named SharedMemory buffers for manipulator IPC."""
@@ -130,21 +153,17 @@ class ManipShmSet:
 
     @classmethod
     def create(cls, key: str) -> ManipShmSet:
-        """Create new SHM buffers with deterministic names derived from *key*"""
+        """Create new SHM buffers with deterministic names derived from *key*.
+
+        A prior sim that crashed/was killed leaves its named segments behind; we
+        reclaim (unlink) a stale segment and retry rather than dying on
+        FileExistsError. A clear error is raised only if it still can't be claimed
+        (a live instance is likely running -> `dimos stop`).
+        """
         buffers: dict[str, SharedMemory] = {}
         for buffer_name, size in _shm_sizes.items():
             name = _buffer_name(key, buffer_name)
-            try:
-                stale = _unregister(SharedMemory(name=name))
-                stale.close()
-                try:
-                    stale.unlink()
-                    logger.info("ManipShmSet: unlinked stale SHM", name=name)
-                except FileNotFoundError:
-                    pass
-            except FileNotFoundError:
-                pass
-            buffers[buffer_name] = SharedMemory(create=True, size=size, name=name)
+            buffers[buffer_name] = _create_shm_reclaiming(name, size)
         return cls(**buffers)
 
     @classmethod
