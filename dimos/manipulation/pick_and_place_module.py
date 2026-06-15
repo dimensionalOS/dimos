@@ -334,15 +334,17 @@ class PickAndPlaceModule(ManipulationModule):
 
     @staticmethod
     def _occlusion_offset(
-        center: Vector3, size: Vector3, inset: float = 0.02
+        center: Vector3, size: Vector3, inset: float = 0.02, base_xy: tuple[float, float] = (0.0, 0.0)
     ) -> tuple[float, float]:
-        """Offset a detected object center toward the robot to compensate for single-viewpoint occlusion.
-
-        Returns adjusted (x, y) shifted toward the nearest visible surface + inset.
+        """Offset a detected object center toward the robot base to compensate for
+        single-viewpoint occlusion. base_xy is the robot base in world coords (the
+        reference for 'toward the robot' — NOT the world origin, which only matches
+        the base for a robot welded at the origin).
         """
-        xy_dist = (center.x**2 + center.y**2) ** 0.5
-        if xy_dist > 1e-3:
-            dx, dy = -center.x / xy_dist, -center.y / xy_dist
+        rel_x, rel_y = center.x - base_xy[0], center.y - base_xy[1]
+        dist = (rel_x**2 + rel_y**2) ** 0.5
+        if dist > 1e-3:
+            dx, dy = -rel_x / dist, -rel_y / dist  # toward the base
             half_depth = max(size.x, size.y) / 2.0
             offset = half_depth - inset
             return center.x + dx * offset, center.y + dy * offset
@@ -373,7 +375,10 @@ class PickAndPlaceModule(ManipulationModule):
         return Quaternion.from_euler(Vector3(0.0, pitch, yaw))
 
     def _generate_grasps_for_pick(
-        self, object_name: str, object_id: str | None = None
+        self,
+        object_name: str,
+        object_id: str | None = None,
+        base_xy: tuple[float, float] = (0.0, 0.0),
     ) -> list[Pose] | None:
         """Generate a grasp pose for an object.
 
@@ -397,13 +402,16 @@ class PickAndPlaceModule(ManipulationModule):
             return None
 
         cx, cy, cz = det.center.x, det.center.y, det.center.z
-        xy_dist = (cx**2 + cy**2) ** 0.5
+        # Distances/directions are relative to the ROBOT BASE, not the world origin
+        # (they coincide only for a robot welded at the origin).
+        bx, by = base_xy
+        xy_dist = ((cx - bx) ** 2 + (cy - by) ** 2) ** 0.5
 
         # Distance-adaptive occlusion offset:
         # Near (< 0.8m): small inset — grasp shifted well toward robot (front surface)
         # Far (>= 0.8m): larger inset — less toward-robot shift (grasp closer to true center)
         inset = 0.01 if xy_dist < _FAR_OCCLUSION_XY_THRESHOLD else 0.05
-        gx, gy = self._occlusion_offset(det.center, det.size, inset=inset)
+        gx, gy = self._occlusion_offset(det.center, det.size, inset=inset, base_xy=base_xy)
 
         # For tall objects, grasp in the upper third instead of center
         # to avoid plunging deep and colliding with the object.
@@ -413,8 +421,9 @@ class PickAndPlaceModule(ManipulationModule):
         else:
             gz = cz
 
-        grasp_dist = (gx**2 + gy**2) ** 0.5
-        orientation = self._grasp_orientation(gx, gy, grasp_dist)
+        grasp_rel_x, grasp_rel_y = gx - bx, gy - by  # grasp relative to robot base
+        grasp_dist = (grasp_rel_x**2 + grasp_rel_y**2) ** 0.5
+        orientation = self._grasp_orientation(grasp_rel_x, grasp_rel_y, grasp_dist)
         pose = Pose(Vector3(gx, gy, gz), orientation)
 
         logger.info(
@@ -614,10 +623,11 @@ then refreshes perception obstacles.
             return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
         rname, _, config, _ = robot
         pre_grasp_offset = config.pre_grasp_offset
+        base_xy = (config.base_pose.position.x, config.base_pose.position.y)
 
         # 1. Generate grasps (uses already-cached detections — call scan_objects first)
         logger.info(f"Generating grasp poses for '{object_name}'...")
-        grasp_poses = self._generate_grasps_for_pick(object_name, object_id)
+        grasp_poses = self._generate_grasps_for_pick(object_name, object_id, base_xy)
         if not grasp_poses:
             return SkillResult.fail(
                 "GRASP_GENERATION_FAILED",
