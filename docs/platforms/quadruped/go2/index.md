@@ -110,8 +110,7 @@ From the command center ([localhost:7779](http://localhost:7779)):
 
 ```bash
 uv pip install 'dimos[base,unitree,sim]'
-# First sim run also downloads assets: it git-clones mujoco_menagerie and pulls a
-# ~60 MB mujoco_sim asset bundle from LFS (one-time; in addition to the replay data above).
+# First sim run also downloads ~60 MB of assets (mujoco_sim LFS + clones mujoco_menagerie).
 dimos --simulation run unitree-go2
 ```
 

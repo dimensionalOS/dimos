@@ -4,12 +4,10 @@
 # install homebrew
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 # install dependencies
-brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python
+brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python pre-commit
 
 # install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
-# NOTE: the `export` above only affects the current shell. Open a new terminal so `uv` is on
-# PATH in later sessions — the installer adds it to your shell profile (e.g. ~/.zprofile).
 ```
 
 ## Using DimOS as a library
