@@ -360,6 +360,26 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build nav_stack native modules
         run: uv run bin/build-nav-stack-natives
+      - name: Push full closures to Cachix
+        # `cachix push` and `cachix-action`'s default watch-exec both
+        # client-side --skip-signed-paths anything signed by cache.nixos.org,
+        # so the bulk of the closure never gets uploaded by them. `nix copy`
+        # against the raw HTTPS endpoint sends every path regardless of
+        # signature. With the cache's upstream pull-through removed, Cachix
+        # should now actually accept PUTs for these paths. Auth via netrc —
+        # cachix CLI's authtoken doesn't apply to nix copy's HTTP store
+        # backend.
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
+          install -m 600 /dev/stdin "$HOME/.netrc" \
+            <<< "machine dimensionalos.cachix.org login _ password $CACHIX_AUTH_TOKEN"
+          mapfile -t results < <(find dimos/navigation/nav_stack/modules \
+            -mindepth 2 -maxdepth 3 -name result -type l -exec readlink -f {} \;)
+          [ ${#results[@]} -eq 0 ] || \
+            nix copy \
+              --to "https://dimensionalos.cachix.org?compression=zstd&parallel-compression=true" \
+              "${results[@]}"
 
   self-hosted-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
