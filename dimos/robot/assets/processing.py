@@ -69,7 +69,7 @@ def render_urdf(
         logger.debug(f"Using cached rendered URDF: {rendered_urdf}")
         return rendered_urdf
 
-    if source_path.suffix in (".xacro", ".urdf.xacro"):
+    if source_path.suffix == ".xacro":
         urdf_content = _process_xacro(source_path, resolved_package_paths, resolved_xacro_args)
     else:
         urdf_content = source_path.read_text()
