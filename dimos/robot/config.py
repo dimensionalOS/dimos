@@ -21,7 +21,6 @@ automatically. Generates RobotModelConfig, HardwareComponent, and TaskConfig.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -222,15 +221,12 @@ class RobotConfig(BaseModel):
 
         return RobotModelConfig(
             name=self.name,
-            model_path=Path(os.fspath(self.model_path)),
+            model_path=self.model_path,
             base_pose=base_pose,
             joint_names=joint_names,
             end_effector_link=self.end_effector_link,
             base_link=base_link,
-            package_paths={
-                package_name: Path(os.fspath(package_path))
-                for package_name, package_path in self.package_paths.items()
-            },
+            package_paths=dict(self.package_paths),
             xacro_args=self.xacro_args,
             collision_exclusion_pairs=exclusions,
             auto_convert_meshes=self.auto_convert_meshes,
