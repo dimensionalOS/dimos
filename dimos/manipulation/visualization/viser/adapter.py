@@ -225,7 +225,6 @@ class InProcessViserAdapter:
             "status": "FEASIBLE" if collision_free else "COLLISION",
             "message": "Target is collision-free" if collision_free else "Target is in collision",
             "collision_free": collision_free,
-            "pose": self._world_monitor.get_ee_pose(robot_id, target),
             "ee_pose": self._world_monitor.get_ee_pose(robot_id, target),
             "joint_state": target,
         }

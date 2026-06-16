@@ -581,7 +581,7 @@ class ViserPanelGui:
             joint_state = result.get("joint_state")
             if isinstance(joint_state, JointState):
                 self.state.joint_target = list(joint_state.position)
-            pose = result.get("pose") or result.get("ee_pose")
+            pose = result.get("ee_pose")
             if isinstance(pose, Pose):
                 self.state.cartesian_target = pose
             self._sync_controls_from_targets()
