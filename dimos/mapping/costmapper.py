@@ -15,6 +15,7 @@
 from dataclasses import asdict
 import time
 
+import numpy as np
 from pydantic import Field
 from reactivex import combine_latest, operators as ops
 
@@ -36,6 +37,8 @@ logger = setup_logger()
 class Config(ModuleConfig):
     algo: str = "height_cost"
     config: OccupancyConfig = Field(default_factory=HeightCostConfig)
+    # for robots that cant see directly below themself
+    initial_safe_radius_meters: float = 0.0
 
 
 class CostMapper(Module):
@@ -82,5 +85,27 @@ class CostMapper(Module):
 
     # @timed()  # TODO: fix thread leak in timed decorator
     def _calculate_costmap(self, msg: PointCloud2) -> OccupancyGrid:
-        fn = OCCUPANCY_ALGOS[self.config.algo]
-        return fn(msg, **asdict(self.config.config))
+        occupancy_function = OCCUPANCY_ALGOS[self.config.algo]
+        grid = occupancy_function(msg, **asdict(self.config.config))
+        self._apply_initial_safe_radius(grid)
+        return grid
+
+    def _apply_initial_safe_radius(self, grid: OccupancyGrid) -> None:
+        radius_meters = self.config.initial_safe_radius_meters
+        if radius_meters <= 0 or grid.grid.size == 0:
+            return
+
+        resolution = grid.resolution
+        origin_x = grid.origin.position.x
+        origin_y = grid.origin.position.y
+
+        rows, columns = np.ogrid[: grid.grid.shape[0], : grid.grid.shape[1]]
+        cell_world_x = columns * resolution + origin_x
+        cell_world_y = rows * resolution + origin_y
+        distance_squared_meters = cell_world_x**2 + cell_world_y**2
+
+        # Half-cell tolerance: a cell counts as inside if any part of it overlaps
+        # the disc. Avoids floating-point boundary flakiness from radius/resolution.
+        effective_radius_meters = radius_meters + resolution * 0.5
+        safe_mask = distance_squared_meters <= effective_radius_meters**2
+        grid.grid[safe_mask] = 0

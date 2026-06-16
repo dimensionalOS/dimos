@@ -46,6 +46,23 @@ dimos run coordinator-mock
 dimos run xarm7-planner-coordinator
 ```
 
+Select a non-default IK backend with nested module config overrides:
+
+```bash
+dimos run xarm7-planner-coordinator \
+  -o manipulationmodule.kinematics.backend=pink \
+  -o manipulationmodule.kinematics.max_iterations=100 \
+  -o manipulationmodule.kinematics.dt=0.02
+```
+
+For blueprints that instantiate `PickAndPlaceModule`, use the corresponding
+module prefix:
+
+```bash
+dimos run xarm-perception-sim \
+  -o pickandplacemodule.kinematics.backend=pink
+```
+
 Then use the IPython client:
 
 ```bash
@@ -82,6 +99,11 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 - **ControlCoordinator** — 100Hz control loop with mock or real hardware adapters
 - **ManipulationModule** — Drake physics, Meshcat viz, RRT motion planning, obstacle management
 
+Internally, planning code depends on `WorldSpec` for world, collision, and
+kinematics behavior. Meshcat preview and publishing are exposed separately
+through `VisualizationSpec`, so non-visual planning paths do not require a
+visualization backend.
+
 ## Blueprints
 
 | Blueprint | Description |
@@ -95,6 +117,7 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 | `dual-xarm6-planner` | Dual XArm6 planning |
 | `xarm-perception` | XArm7 + RealSense camera for perception |
 | `xarm-perception-agent` | XArm7 perception + LLM agent |
+| `xarm-perception-sim` | XArm7 simulation perception stack |
 
 ## Supported Robots
 

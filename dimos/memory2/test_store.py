@@ -422,7 +422,8 @@ class TestStoreDelegation:
         assert results[0].data == "north"
 
 
-@pytest.mark.skipif_no_sqlite_vec
+@pytest.mark.skipif_macos
+@pytest.mark.skipif_aarch64
 class TestStandaloneComponents:
     """Verify each SQLite component works standalone with path= (no Store needed)."""
 

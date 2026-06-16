@@ -26,9 +26,10 @@ Available functions:
     joints()              Get current joint positions
     ee()                  Get end-effector pose
     state()               Get module state (IDLE, PLANNING, EXECUTING, ...)
+    ik_pose(x,y,z, seed_joints=None) Solve IK only, without path planning
     plan(joints)          Plan to joint configuration, e.g. plan([0.1]*7)
     plan_pose(x,y,z)      Plan to Cartesian pose
-    preview(duration)     Preview planned path in Meshcat
+    preview(duration=None) Preview planned path in Meshcat
     execute()             Execute planned trajectory via coordinator
     home()                Move to home position
     url()                 Get Meshcat visualization URL
@@ -49,9 +50,11 @@ from typing import Any
 
 from dimos.core.rpc_client import RPCClient
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.planning.spec.models import IKResult
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointState import JointState
 
 _client = RPCClient(None, ManipulationModule)
 
@@ -73,10 +76,74 @@ def state() -> str:
 
 def plan(target_joints: list[float], robot_name: str | None = None) -> bool:
     """Plan to joint configuration. e.g. plan([0.1]*7)"""
-    from dimos.msgs.sensor_msgs.JointState import JointState
-
     js = JointState(position=target_joints)
     return _client.plan_to_joints(js, robot_name)
+
+
+def _make_target_pose(
+    x: float,
+    y: float,
+    z: float,
+    roll: float | None = None,
+    pitch: float | None = None,
+    yaw: float | None = None,
+    robot_name: str | None = None,
+) -> Pose:
+    """Create a target pose, preserving current orientation if rpy is not given."""
+    if roll is not None or pitch is not None or yaw is not None:
+        orientation = Quaternion.from_euler(Vector3(x=roll or 0, y=pitch or 0, z=yaw or 0))
+    else:
+        # Preserve current EE orientation
+        current = _client.get_ee_pose(robot_name)
+        orientation = current.orientation if current else Quaternion(0, 0, 0, 1)
+    return Pose(position=Vector3(x=x, y=y, z=z), orientation=orientation)
+
+
+def _make_seed_joint_state(
+    seed_joints: list[float] | JointState | None,
+    robot_name: str | None,
+) -> JointState | None:
+    """Create a seed JointState for IK from explicit joints, if provided."""
+    if seed_joints is None:
+        return None
+    if isinstance(seed_joints, JointState):
+        return seed_joints
+
+    info = _client.get_robot_info(robot_name) or {}
+    joint_names = info.get("joint_names", [])
+    if len(joint_names) != len(seed_joints):
+        joint_names = []
+    return JointState(name=joint_names, position=seed_joints)
+
+
+def ik_pose(
+    x: float,
+    y: float,
+    z: float,
+    roll: float | None = None,
+    pitch: float | None = None,
+    yaw: float | None = None,
+    robot_name: str | None = None,
+    check_collision: bool = True,
+    seed_joints: list[float] | JointState | None = None,
+) -> IKResult:
+    """Solve IK for a Cartesian pose without path planning.
+
+    Args:
+        x: Target world x position.
+        y: Target world y position.
+        z: Target world z position.
+        roll: Optional target roll. Preserves current orientation if omitted.
+        pitch: Optional target pitch. Preserves current orientation if omitted.
+        yaw: Optional target yaw. Preserves current orientation if omitted.
+        robot_name: Robot to solve for when multiple robots are configured.
+        check_collision: Whether to reject IK candidates in collision.
+        seed_joints: Optional initial joint configuration for local IK. Pass either
+            a list of joint positions in robot joint order or a named JointState.
+    """
+    target = _make_target_pose(x, y, z, roll, pitch, yaw, robot_name)
+    seed = _make_seed_joint_state(seed_joints, robot_name)
+    return _client.solve_ik(target, robot_name, check_collision, seed)
 
 
 def plan_pose(
@@ -89,19 +156,17 @@ def plan_pose(
     robot_name: str | None = None,
 ) -> bool:
     """Plan to Cartesian pose. Preserves current orientation if rpy not given."""
-    if roll is not None or pitch is not None or yaw is not None:
-        orientation = Quaternion.from_euler(Vector3(x=roll or 0, y=pitch or 0, z=yaw or 0))
-    else:
-        # Preserve current EE orientation
-        current = _client.get_ee_pose(robot_name)
-        orientation = current.orientation if current else Quaternion(0, 0, 0, 1)
-    target = Pose(position=Vector3(x=x, y=y, z=z), orientation=orientation)
+    target = _make_target_pose(x, y, z, roll, pitch, yaw, robot_name)
     return _client.plan_to_pose(target, robot_name)
 
 
-def preview(duration: float = 3.0, robot_name: str | None = None) -> bool:
+def preview(
+    duration: float | None = None,
+    robot_name: str | None = None,
+    target_fps: float = 30.0,
+) -> bool:
     """Preview planned path in Meshcat."""
-    return _client.preview_path(duration, robot_name)
+    return _client.preview_path(duration, robot_name, target_fps)
 
 
 def execute(robot_name: str | None = None) -> bool:
@@ -189,4 +254,4 @@ def stop() -> None:
 if __name__ == "__main__":
     print("Manipulation RPC client ready.")
     print("Type commands() for available functions.")
-    print("Try: joints(), plan([0.1]*7), preview(), execute()")
+    print("Try: joints(), ik_pose(0.45, 0, 0.25), plan([0.1]*7), preview(), execute()")

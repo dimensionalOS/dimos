@@ -24,9 +24,16 @@ import pytest
 
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
+    ManipulationModuleConfig,
     ManipulationState,
 )
+from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
+from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.enums import IKStatus
+from dimos.manipulation.planning.spec.models import IKResult
+from dimos.manipulation.planning.spec.protocols import VisualizationSpec
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -192,6 +199,149 @@ class TestRobotSelection:
         assert result[0] == "left"
 
 
+class TestPlanningInitialization:
+    """Test planning backend configuration wiring."""
+
+    def test_kinematics_config_is_passed_to_factory(self, robot_config):
+        """ManipulationModule config selects the requested IK backend."""
+        module = _make_module()
+        kinematics = PinkKinematicsConfig(max_iterations=100, dt=0.02)
+        module.config = ManipulationModuleConfig(
+            robots=[robot_config],
+            kinematics=kinematics,
+            enable_viz=False,
+        )
+        mock_world_monitor = MagicMock(spec=WorldMonitor)
+        mock_world_monitor.add_robot.return_value = "robot_id"
+
+        with (
+            patch(
+                "dimos.manipulation.manipulation_module.WorldMonitor",
+                return_value=mock_world_monitor,
+            ),
+            patch("dimos.manipulation.manipulation_module.JointTrajectoryGenerator"),
+            patch("dimos.manipulation.manipulation_module.create_planner") as mock_planner,
+            patch("dimos.manipulation.manipulation_module.create_kinematics") as mock_kinematics,
+        ):
+            module._initialize_planning()
+
+        mock_planner.assert_called_once_with(name="rrt_connect")
+        mock_kinematics.assert_called_once_with(config=kinematics)
+
+    def test_legacy_kinematics_name_still_selects_backend(self, robot_config):
+        """The old kinematics_name field remains a compatibility shim."""
+        module = _make_module()
+        module.config = ManipulationModuleConfig(
+            robots=[robot_config],
+            kinematics_name="pink",
+            enable_viz=False,
+        )
+        mock_world_monitor = MagicMock(spec=WorldMonitor)
+        mock_world_monitor.add_robot.return_value = "robot_id"
+
+        with (
+            patch(
+                "dimos.manipulation.manipulation_module.WorldMonitor",
+                return_value=mock_world_monitor,
+            ),
+            patch("dimos.manipulation.manipulation_module.JointTrajectoryGenerator"),
+            patch("dimos.manipulation.manipulation_module.create_planner"),
+            patch("dimos.manipulation.manipulation_module.create_kinematics") as mock_kinematics,
+        ):
+            module._initialize_planning()
+
+        call_config = mock_kinematics.call_args.kwargs["config"]
+        assert isinstance(call_config, PinkKinematicsConfig)
+
+    def test_nested_kinematics_config_parses_cli_override_shape(self) -> None:
+        """Pydantic parses the nested CLI config shape used by -o overrides."""
+        config = ManipulationModuleConfig(
+            kinematics={
+                "backend": "pink",
+                "max_iterations": "100",
+                "dt": "0.02",
+                "posture_cost": "0.0",
+            }
+        )
+
+        assert isinstance(config.kinematics, PinkKinematicsConfig)
+        assert config.kinematics.max_iterations == 100
+        assert config.kinematics.dt == 0.02
+        assert config.kinematics.posture_cost == 0.0
+
+    def test_solve_ik_rpc_calls_configured_backend(self, robot_config):
+        """solve_ik returns the backend IKResult without path planning."""
+        module = _make_module()
+        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
+        module._world_monitor = MagicMock()
+        module._world_monitor.world = MagicMock()
+        current = JointState(name=robot_config.joint_names, position=[0.0, 0.0, 0.0])
+        module._world_monitor.get_current_joint_state.return_value = current
+        expected = IKResult(
+            status=IKStatus.SUCCESS,
+            joint_state=JointState(name=robot_config.joint_names, position=[0.1, 0.2, 0.3]),
+            position_error=0.0001,
+            orientation_error=0.0002,
+            iterations=3,
+            message="ok",
+        )
+        module._kinematics = MagicMock()
+        module._kinematics.solve.return_value = expected
+
+        pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
+        result = module.solve_ik(pose)
+
+        assert result is expected
+        assert module._state == ManipulationState.COMPLETED
+        assert module._planned_paths == {}
+        module._kinematics.solve.assert_called_once()
+        _, kwargs = module._kinematics.solve.call_args
+        assert kwargs["world"] is module._world_monitor.world
+        assert kwargs["robot_id"] == "robot_id"
+        assert kwargs["seed"] is current
+        assert kwargs["check_collision"] is True
+        assert kwargs["target_pose"].frame_id == "world"
+        assert kwargs["target_pose"].position.x == 0.45
+
+    def test_solve_ik_rpc_returns_failure_without_joint_state(self, robot_config):
+        """solve_ik reports a failed IKResult when no seed state is available."""
+        module = _make_module()
+        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
+        module._world_monitor = MagicMock()
+        module._world_monitor.get_current_joint_state.return_value = None
+        module._kinematics = MagicMock()
+
+        pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
+        result = module.solve_ik(pose)
+
+        assert result.status == IKStatus.NO_SOLUTION
+        assert result.message == "No joint state"
+        assert module._state == ManipulationState.IDLE
+        module._kinematics.solve.assert_not_called()
+
+    def test_solve_ik_rpc_uses_explicit_seed(self, robot_config):
+        """solve_ik initializes the backend from an explicit seed when provided."""
+        module = _make_module()
+        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
+        module._world_monitor = MagicMock()
+        module._world_monitor.world = MagicMock()
+        module._world_monitor.get_current_joint_state.return_value = JointState(
+            name=robot_config.joint_names, position=[0.0, 0.0, 0.0]
+        )
+        explicit_seed = JointState(name=robot_config.joint_names, position=[0.2, 0.1, 0.0])
+        expected = IKResult(status=IKStatus.SUCCESS, joint_state=explicit_seed)
+        module._kinematics = MagicMock()
+        module._kinematics.solve.return_value = expected
+
+        pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
+        result = module.solve_ik(pose, seed=explicit_seed)
+
+        assert result is expected
+        _, kwargs = module._kinematics.solve.call_args
+        assert kwargs["seed"] is explicit_seed
+        module._world_monitor.get_current_joint_state.assert_not_called()
+
+
 class TestJointNameTranslation:
     """Test trajectory joint name translation for coordinator."""
 
@@ -294,6 +444,34 @@ def _make_module_with_monitor(*configs: RobotModelConfig) -> ManipulationModule:
         robot_id = f"robot_{config.name}"
         module._robots[config.name] = (robot_id, config, MagicMock())
     return module
+
+
+def _make_joint_state(positions: list[float], name: list[str] | None = None) -> JointState:
+    return JointState(name=name or [f"j{i}" for i in range(len(positions))], position=positions)
+
+
+def _make_path(*points: list[float]) -> list[JointState]:
+    return [_make_joint_state(list(point)) for point in points]
+
+
+def _make_trajectory(*points: tuple[float, list[float]]) -> JointTrajectory:
+    joint_names = [f"j{i}" for i in range(len(points[0][1]))] if points else []
+    return JointTrajectory(
+        joint_names=joint_names,
+        points=[
+            TrajectoryPoint(time_from_start=time_from_start, positions=positions)
+            for time_from_start, positions in points
+        ],
+    )
+
+
+def _make_world_monitor_with_viz(viz: object | None) -> WorldMonitor:
+    world = viz if viz is not None else object()
+    with patch(
+        "dimos.manipulation.planning.monitor.world_monitor.create_world",
+        return_value=world,
+    ):
+        return WorldMonitor(enable_viz=viz is not None)
 
 
 class TestOnJointState:
@@ -406,3 +584,133 @@ class TestOnJointState:
             position=[0.1, 0.2, 0.3],
         )
         module._on_joint_state(msg)
+
+
+class TestWorldMonitorVisualization:
+    def test_visualization_routing_and_stop_all_monitors(self):
+        viz = MagicMock(spec=VisualizationSpec)
+        viz.get_visualization_url.return_value = 123
+        monitor = _make_world_monitor_with_viz(viz)
+        state_monitor = MagicMock()
+        obstacle_monitor = MagicMock()
+        monitor._state_monitors = {"robot": state_monitor}
+        monitor._obstacle_monitor = obstacle_monitor
+        monitor._viz_thread = MagicMock()
+        monitor._viz_thread.is_alive.return_value = False
+
+        assert monitor.get_visualization_url() == "123"
+        monitor.publish_visualization()
+        monitor.show_preview("robot")
+        monitor.hide_preview("robot")
+        monitor.animate_path("robot", [1, 2, 3], 4.5)
+        assert monitor.visualization is viz
+
+        monitor.stop_all_monitors()
+
+        viz.close.assert_called_once()
+        state_monitor.stop.assert_called_once()
+        obstacle_monitor.stop.assert_called_once()
+
+    def test_visualization_none_is_noop(self):
+        monitor = _make_world_monitor_with_viz(None)
+
+        assert monitor.get_visualization_url() is None
+        monitor.publish_visualization()
+        monitor.show_preview("robot")
+        monitor.hide_preview("robot")
+        monitor.animate_path("robot", [1], 1.0)
+        monitor.start_visualization_thread()
+        assert monitor._viz_thread is None
+
+
+class TestManipulationPreview:
+    def test_dismiss_preview_noop_without_monitor(self):
+        module = _make_module()
+
+        module._dismiss_preview("robot_id")
+
+    def test_dismiss_preview_routes_to_monitor(self):
+        module = _make_module()
+        module._world_monitor = MagicMock()
+
+        module._dismiss_preview("robot_id")
+
+        module._world_monitor.hide_preview.assert_called_once_with("robot_id")
+        module._world_monitor.publish_visualization.assert_called_once_with()
+
+    def test_preview_path_uses_trajectory_duration_and_interpolates(self):
+        module = _make_module()
+        module._world_monitor = MagicMock()
+        module._robots = {"arm": ("robot_id", MagicMock(), MagicMock())}
+        module._planned_paths = {"arm": _make_path([0.0], [2.0])}
+        module._planned_trajectories = {"arm": _make_trajectory((0.0, [0.0]), (2.0, [2.0]))}
+
+        assert module.preview_path(robot_name="arm", target_fps=2.0) is True
+
+        module._world_monitor.animate_path.assert_called_once()
+        robot_id, preview_path, duration = module._world_monitor.animate_path.call_args.args
+        assert robot_id == "robot_id"
+        assert duration == 2.0
+        assert [state.position for state in preview_path] == [[0.0], [0.5], [1.0], [1.5], [2.0]]
+
+    def test_preview_path_explicit_duration_overrides_and_fps_densifies(self):
+        module = _make_module()
+        module._world_monitor = MagicMock()
+        module._robots = {"arm": ("robot_id", MagicMock(), MagicMock())}
+        module._planned_paths = {"arm": _make_path([0.0], [9.0])}
+        module._planned_trajectories = {"arm": _make_trajectory((0.0, [0.0]), (9.0, [9.0]))}
+
+        assert module.preview_path(duration=1.5, robot_name="arm", target_fps=2.0) is True
+
+        module._world_monitor.animate_path.assert_called_once()
+        robot_id, preview_path, duration = module._world_monitor.animate_path.call_args.args
+        assert robot_id == "robot_id"
+        assert duration == 1.5
+        assert [state.position for state in preview_path] == [[0.0], [3.0], [6.0], [9.0]]
+
+    def test_preview_path_missing_trajectory_uses_default_duration(self):
+        module = _make_module()
+        module._world_monitor = MagicMock()
+        module._robots = {"arm": ("robot_id", MagicMock(), MagicMock())}
+        module._planned_paths = {"arm": _make_path([0.0], [1.0])}
+        module._planned_trajectories = {}
+
+        assert module.preview_path(robot_name="arm", target_fps=10.0) is True
+
+        module._world_monitor.animate_path.assert_called_once_with(
+            "robot_id", module._planned_paths["arm"], 3.0
+        )
+
+    def test_preview_path_skips_interpolation_for_nonpositive_fps_or_duration(self):
+        module = _make_module()
+        module._world_monitor = MagicMock()
+        module._robots = {"arm": ("robot_id", MagicMock(), MagicMock())}
+        module._planned_paths = {"arm": _make_path([0.0], [1.0])}
+        module._planned_trajectories = {"arm": _make_trajectory((0.0, [0.0]), (2.0, [1.0]))}
+
+        assert module.preview_path(robot_name="arm", target_fps=0.0) is True
+        assert module.preview_path(duration=0.0, robot_name="arm", target_fps=20.0) is True
+
+        assert (
+            module._world_monitor.animate_path.call_args_list[0].args[1]
+            == module._planned_paths["arm"]
+        )
+        assert (
+            module._world_monitor.animate_path.call_args_list[1].args[1]
+            == module._planned_paths["arm"]
+        )
+
+    def test_preview_path_returns_false_for_missing_inputs(self):
+        module = _make_module()
+        module._planned_paths = {"arm": _make_path([0.0], [1.0])}
+        module._robots = {"arm": ("robot_id", MagicMock(), MagicMock())}
+
+        assert module.preview_path(robot_name="arm") is False
+
+        module._world_monitor = MagicMock()
+        module._robots = {}
+        assert module.preview_path(robot_name="arm") is False
+
+        module._robots = {"arm": ("robot_id", MagicMock(), MagicMock())}
+        module._planned_paths = {"arm": []}
+        assert module.preview_path(robot_name="arm") is False
