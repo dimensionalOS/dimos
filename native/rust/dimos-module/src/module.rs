@@ -15,16 +15,24 @@ use validator::Validate;
 
 use crate::transport::Transport;
 
+/// Marker trait proving a config was checked by `#[native_config]` for a strict
+/// one-to-one mapping with the Python wrapper: every field required, no Rust-side
+/// defaults, no unknown fields. The attribute is the only blessed way to
+/// implement it.
+pub trait NativeConfig {}
+
 /// Trait required by `Module::Config`s to ensure that configurations are
 /// validated correctly.
-pub trait ModuleConfig: DeserializeOwned + Debug + Validate {}
-impl<T: DeserializeOwned + Debug + Validate> ModuleConfig for T {}
+pub trait ModuleConfig: DeserializeOwned + Debug + Validate + NativeConfig {}
+impl<T: DeserializeOwned + Debug + Validate + NativeConfig> ModuleConfig for T {}
 
 /// Default config type used by `#[derive(Module)]` when no `#[config]` field
 /// is used. Just a stand in for modules that don't use configurations.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NoConfig;
+
+impl NativeConfig for NoConfig {}
 
 impl Validate for NoConfig {
     fn validate(&self) -> Result<(), validator::ValidationErrors> {

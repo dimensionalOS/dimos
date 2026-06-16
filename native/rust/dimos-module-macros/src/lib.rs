@@ -12,6 +12,155 @@ pub fn derive_module(input: TokenStream) -> TokenStream {
     }
 }
 
+/// Defines a native-module config with a strict one-to-one mapping to the Python
+/// wrapper. The Python side owns every default and sends every field over stdin,
+/// so a config declares all fields as required, with no Rust-side defaults.
+///
+/// The attribute supplies all the boilerplate: it injects
+/// `#[derive(Debug, Deserialize, Validate)]` and `#[serde(deny_unknown_fields)]`,
+/// emits the `NativeConfig` marker impl, and rejects, at compile time, anything
+/// that would let a field be filled in by Rust:
+///
+/// - `Option<T>` fields (an absent field becomes `None`).
+/// - `#[serde(default)]` at the field or container level.
+/// - `#[serde(skip)]` / `skip_deserializing` / `flatten`.
+///
+/// ```ignore
+/// #[native_config]
+/// pub struct Config {
+///     #[validate(range(min = 0.0))]
+///     pub voxel_size: f32,
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn native_config(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as DeriveInput);
+    let maybe_err = check_native_config(&input)
+        .err()
+        .map(|e| e.to_compile_error());
+
+    // For a named/unit struct still emit the full expansion alongside any error, so
+    // a single check failure surfaces our message instead of a cascade of missing
+    // derive/impl errors. Other inputs (tuple structs, enums) stand with the error.
+    let injectable = matches!(
+        &input.data,
+        Data::Struct(s) if matches!(s.fields, Fields::Named(_) | Fields::Unit)
+    );
+    if !injectable {
+        return quote!(#input #maybe_err).into();
+    }
+
+    let name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    quote! {
+        #[derive(Debug, ::serde::Deserialize, ::validator::Validate)]
+        #[serde(deny_unknown_fields)]
+        #input
+        impl #impl_generics ::dimos_module::NativeConfig for #name #ty_generics #where_clause {}
+        #maybe_err
+    }
+    .into()
+}
+
+fn check_native_config(input: &DeriveInput) -> syn::Result<()> {
+    let fields = match &input.data {
+        Data::Struct(s) => match &s.fields {
+            Fields::Named(named) => &named.named,
+            Fields::Unit => return check_container_serde(input),
+            Fields::Unnamed(_) => {
+                return Err(syn::Error::new_spanned(
+                    input,
+                    "native_config requires a struct with named fields or a unit struct",
+                ))
+            }
+        },
+        _ => {
+            return Err(syn::Error::new_spanned(
+                input,
+                "native_config can only be applied to structs",
+            ))
+        }
+    };
+
+    check_container_serde(input)?;
+
+    for field in fields {
+        if is_option(&field.ty) {
+            return Err(syn::Error::new_spanned(
+                &field.ty,
+                "native_config forbids Option fields: an absent field would silently become None. \
+                 Make it required and let Python always send it.",
+            ));
+        }
+        check_field_serde(field)?;
+    }
+
+    Ok(())
+}
+
+/// Reject a container-level `#[serde(default)]` (the attribute injects
+/// `deny_unknown_fields` itself, so it is not required here).
+fn check_container_serde(input: &DeriveInput) -> syn::Result<()> {
+    for attr in &input.attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("default") {
+                return Err(meta.error(
+                    "native_config forbids #[serde(default)]: Python owns defaults and sends \
+                     every field. Remove the default and make every field required.",
+                ));
+            }
+            // consume an optional `= value` so unrelated serde args don't error
+            consume_optional_value(&meta);
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+/// Reject field-level `#[serde(default | skip | skip_deserializing | flatten)]`.
+fn check_field_serde(field: &Field) -> syn::Result<()> {
+    for attr in &field.attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("default") {
+                return Err(meta.error(
+                    "native_config forbids #[serde(default)]: Python owns defaults and sends \
+                     every field. Make it required.",
+                ));
+            }
+            if meta.path.is_ident("skip") || meta.path.is_ident("skip_deserializing") {
+                return Err(meta.error(
+                    "native_config forbids #[serde(skip)]: a skipped field is filled by Rust \
+                     instead of Python.",
+                ));
+            }
+            if meta.path.is_ident("flatten") {
+                return Err(meta.error(
+                    "native_config forbids #[serde(flatten)]: it bypasses deny_unknown_fields.",
+                ));
+            }
+            consume_optional_value(&meta);
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+fn consume_optional_value(meta: &syn::meta::ParseNestedMeta) {
+    if meta.input.peek(syn::Token![=]) {
+        let _ = meta.value().and_then(|v| v.parse::<syn::Expr>());
+    }
+}
+
+fn is_option(ty: &Type) -> bool {
+    matches!(ty, Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "Option"))
+}
+
 enum FieldKind {
     Input { decode: Path, handler: Ident },
     Output { encode: Path },
@@ -248,4 +397,67 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldKind> {
     }
 
     Ok(found.unwrap_or(FieldKind::State))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_native_config;
+    use syn::parse_str;
+
+    fn check(src: &str) -> syn::Result<()> {
+        check_native_config(&parse_str(src).expect("test input should parse"))
+    }
+
+    #[test]
+    fn accepts_plain_required_fields() {
+        check(r#"struct Config { a: f32, b: String, c: u32 }"#)
+            .expect("a plain required-field struct should pass");
+    }
+
+    #[test]
+    fn accepts_unit_struct() {
+        check(r#"struct NoConfig;"#).expect("a field-less struct should pass");
+    }
+
+    #[test]
+    fn accepts_validate_attrs() {
+        check(r#"struct Config { #[validate(range(min = 0))] a: i64 }"#)
+            .expect("validate attrs should pass through");
+    }
+
+    #[test]
+    fn rejects_option_field() {
+        let err =
+            check(r#"struct Config { a: Option<f32> }"#).expect_err("Option fields are forbidden");
+        assert!(err.to_string().contains("Option"), "{err}");
+    }
+
+    #[test]
+    fn rejects_field_default() {
+        check(r#"struct Config { #[serde(default)] a: f32 }"#)
+            .expect_err("field #[serde(default)] is forbidden");
+    }
+
+    #[test]
+    fn rejects_field_default_with_path() {
+        check(r#"struct Config { #[serde(default = "mk")] a: f32 }"#)
+            .expect_err("#[serde(default = ...)] is forbidden");
+    }
+
+    #[test]
+    fn rejects_container_default() {
+        check(r#"#[serde(default)] struct Config { a: f32 }"#)
+            .expect_err("container #[serde(default)] is forbidden");
+    }
+
+    #[test]
+    fn rejects_flatten_and_skip() {
+        check(r#"struct Config { #[serde(flatten)] a: Inner }"#).expect_err("flatten is forbidden");
+        check(r#"struct Config { #[serde(skip)] a: f32 }"#).expect_err("skip is forbidden");
+    }
+
+    #[test]
+    fn rejects_enum() {
+        check(r#"enum Config { A, B }"#).expect_err("enums are not valid configs");
+    }
 }
