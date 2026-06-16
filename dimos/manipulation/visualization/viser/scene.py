@@ -421,6 +421,9 @@ class ViserManipulationScene:
         return [values_by_name.get(name, 0.0) for name in allowed_names]
 
     def viser_actuated_joint_names(self, urdf: object) -> tuple[str, ...]:
+        # Depends on viser internals: ViserUrdf exposes no public accessor for its
+        # wrapped yourdfpy model, so we reach for the private `_urdf` attribute here.
+        # Keep this the single place that touches it.
         try:
             wrapped_urdf = cast("_UrdfHandle", urdf)._urdf
         except AttributeError:
@@ -473,6 +476,9 @@ class ViserManipulationScene:
                     logger.warning("Could not set Viser mesh opacity", exc_info=True)
 
     def _meshes(self, handle: object) -> Sequence[object]:
+        # Depends on viser internals: ViserUrdf exposes no public accessor for the
+        # per-link mesh handles, so we read the private `_meshes` attribute here.
+        # Keep this the single place that touches it.
         try:
             return cast("_MeshContainer", handle)._meshes
         except AttributeError:
