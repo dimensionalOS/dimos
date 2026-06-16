@@ -83,8 +83,14 @@ def build_one(cfg_cls: type[NativeModuleConfig]) -> str:
 def main() -> None:
     cfgs = discover()
     failed = 0
-    _log(f"Building {len(cfgs)} module(s) with {len(cfgs)} workers")
-    with ProcessPoolExecutor(max_workers=len(cfgs)) as ex:
+    # Cap at 3 concurrent nix builds. Cold-cache runs on GH-hosted ubuntu-latest
+    # (~7 GB RAM, ~14 GB free disk) ran the runner out of resources when all 6
+    # ran in parallel — each nix daemon peaks at ~1.5 GB during nar verify +
+    # decompress + write, and disk briefly doubles during extraction. 3 is the
+    # heuristic sweet spot: ~2× wall-clock improvement over sequential without
+    # tripping OOM.
+    _log(f"Building {len(cfgs)} module(s) with up to 3 workers")
+    with ProcessPoolExecutor(max_workers=3) as ex:
         futs = {ex.submit(build_one, c): c for c in cfgs}
         for fut in as_completed(futs):
             try:
