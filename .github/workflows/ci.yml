@@ -360,28 +360,6 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build nav_stack native modules
         run: uv run bin/build-nav-stack-natives
-      - name: Export module closures for transfer to self-hosted-tests
-        # Cachix's HTTP API rejects raw nix-copy PUTs (HTTP 405) and `cachix
-        # push` skips paths signed by cache.nixos.org — by design, Cachix
-        # holds your unique builds and refuses to mirror nixpkgs. So instead
-        # of caching, we ferry the closures as a workflow artifact: the
-        # self-hosted runner's egress to cache.nixos.org is slow, but
-        # actions/upload-artifact's blob store is much closer. `nix-store
-        # --export` produces a self-contained binary that --import
-        # registers properly with the receiving daemon's db.
-        run: |
-          mapfile -t results < <(find dimos/navigation/nav_stack/modules \
-            -mindepth 2 -maxdepth 3 -name result -type l -exec readlink -f {} \;)
-          [ ${#results[@]} -gt 0 ]
-          mapfile -t closure < <(nix-store -qR "${results[@]}" | sort -u)
-          nix-store --export "${closure[@]}" | zstd -T0 -o /tmp/nix-closure.bin.zst
-      - name: Upload closure artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: nix-closure
-          path: /tmp/nix-closure.bin.zst
-          retention-days: 1
-          compression-level: 0  # blob is already zstd-compressed
 
   self-hosted-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
@@ -471,26 +449,7 @@ jobs:
             extra-substituters = https://dimensionalos.cachix.org
             extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
         run: bash docker/ros/install-nix.sh
-      - name: Download closure artifact
-        # Pulls the nix-store --export blob produced by `nav-stack-natives`.
-        # Bypasses the slow cache.nixos.org egress from this runner.
-        if: contains(matrix.markers, 'skipif_no_ros')
-        uses: actions/download-artifact@v4
-        with:
-          name: nix-closure
-          path: /tmp
-      - name: Import closure into /nix/store
-        # ros-dev doesn't ship zstd; the closure artifact is zstd-compressed
-        # (saves ~70% vs raw), so pull in the decompressor before importing.
-        if: contains(matrix.markers, 'skipif_no_ros')
-        run: |
-          apt-get update && apt-get install -y --no-install-recommends zstd
-          zstd -d -c /tmp/nix-closure.bin.zst | nix-store --import
-          rm /tmp/nix-closure.bin.zst
       - name: Fetch nav_stack native modules from Cachix
-        # /nix/store is warm from the artifact above, so each per-module
-        # `nix build` just resolves locally and creates a result symlink —
-        # no downloads from cache.nixos.org.
         if: contains(matrix.markers, 'skipif_no_ros')
         run: uv run bin/build-nav-stack-natives
       - name: Run tests
