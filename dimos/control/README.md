@@ -205,4 +205,4 @@ JointState(
 )
 ```
 
-Subscribe via: `/coordinator/joint_state`
+Subscribe via: `/coordinator_joint_state`

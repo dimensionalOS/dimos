@@ -41,8 +41,8 @@ def test_keyboard_teleop_exits_without_publishing_when_initial_state_is_missing(
     monkeypatch.setattr(keyboard_mod, "pygame", object())
     module = KeyboardTeleopModule(initial_state_timeout=0.01)
     published = _PublishedCommands()
-    module.joint_state = _NoInitialJointState()  # type: ignore[assignment]
-    module.cartesian_command = published  # type: ignore[assignment]
+    module.coordinator_joint_state = _NoInitialJointState()  # type: ignore[assignment]
+    module.coordinator_cartesian_command = published  # type: ignore[assignment]
 
     try:
         module.start()

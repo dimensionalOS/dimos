@@ -37,9 +37,6 @@ from dimos.control.components import make_gripper_joints
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.catalog.piper import PIPER_FK_MODEL, PIPER_SIM_PATH, piper as _catalog_piper
 from dimos.robot.catalog.ufactory import (
     XARM6_FK_MODEL,
@@ -50,7 +47,6 @@ from dimos.robot.catalog.ufactory import (
     xarm7 as _catalog_xarm7,
 )
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
-from dimos.teleop.quest.quest_types import Buttons
 
 _is_sim = global_config.simulation
 
@@ -89,11 +85,6 @@ coordinator_servo_xarm6 = ControlCoordinator.blueprint(
     tasks=[
         _xarm6_cfg.to_task_config(task_type="servo", task_name="servo_arm"),
     ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("joint_command", JointState): LCMTransport("/teleop/joint_command", JointState),
-    }
 )
 
 # XArm6 velocity control - streaming velocity for joystick
@@ -102,11 +93,6 @@ coordinator_velocity_xarm6 = ControlCoordinator.blueprint(
     tasks=[
         _xarm6_cfg.to_task_config(task_type="velocity", task_name="velocity_arm"),
     ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("joint_command", JointState): LCMTransport("/joystick/joint_command", JointState),
-    }
 )
 
 # XArm6 combined (servo + velocity tasks)
@@ -116,11 +102,6 @@ coordinator_combined_xarm6 = ControlCoordinator.blueprint(
         _xarm6_cfg.to_task_config(task_type="servo", task_name="servo_arm"),
         _xarm6_cfg.to_task_config(task_type="velocity", task_name="velocity_arm"),
     ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("joint_command", JointState): LCMTransport("/control/joint_command", JointState),
-    }
 )
 
 # Mock 6-DOF arm with CartesianIK
@@ -136,13 +117,6 @@ coordinator_cartesian_ik_mock = ControlCoordinator.blueprint(
             ee_joint_id=_mock_6dof_cfg.dof,
         ),
     ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("cartesian_command", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-    }
 )
 
 # Piper arm with CartesianIK
@@ -156,13 +130,6 @@ coordinator_cartesian_ik_piper = ControlCoordinator.blueprint(
             ee_joint_id=_piper_cfg.dof,
         ),
     ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("cartesian_command", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-    }
 )
 
 # XArm7 with TeleopIK (real, or MuJoCo with --simulation)
@@ -183,14 +150,6 @@ coordinator_teleop_xarm7 = autoconnect(
         ],
     ),
     *_mujoco_if_sim(str(XARM7_SIM_PATH), _xarm7_teleop_cfg.dof),
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("cartesian_command", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
-    }
 )
 
 # XArm6 with TeleopIK (real, or MuJoCo with --simulation)
@@ -211,14 +170,6 @@ coordinator_teleop_xarm6 = autoconnect(
         ],
     ),
     *_mujoco_if_sim(str(XARM6_SIM_PATH), _xarm6_teleop_cfg.dof),
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("cartesian_command", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
-    }
 )
 
 # Piper with TeleopIK (real, or MuJoCo with --simulation)
@@ -239,14 +190,6 @@ coordinator_teleop_piper = autoconnect(
         ],
     ),
     *_mujoco_if_sim(str(PIPER_SIM_PATH), _piper_teleop_cfg.dof),
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("cartesian_command", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
-    }
 )
 
 # Dual arm teleop: XArm6 + Piper with TeleopIK (real-only)
@@ -275,14 +218,6 @@ coordinator_teleop_dual = ControlCoordinator.blueprint(
             hand="right",
         ),
     ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("cartesian_command", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
-    }
 )
 
 

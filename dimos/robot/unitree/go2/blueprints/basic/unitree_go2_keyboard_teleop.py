@@ -26,9 +26,6 @@ from __future__ import annotations
 from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 
 _go2_joints = make_twist_base_joints("go2")
@@ -56,12 +53,7 @@ unitree_go2_keyboard_teleop = (
         ),
         KeyboardTeleop.blueprint(),
     )
-    .transports(
-        {
-            ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
-            ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        }
-    )
+    .remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
     .global_config(obstacle_avoidance=True)
 )
 
