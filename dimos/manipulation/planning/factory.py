@@ -65,7 +65,7 @@ def create_world(
 
 
 def create_kinematics(
-    name: str = "jacobian",
+    name: str = "pink",
     config: ManipulationKinematicsConfig | None = None,
     **kwargs: Any,
 ) -> KinematicsSpec:

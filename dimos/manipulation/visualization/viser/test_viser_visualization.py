@@ -220,6 +220,91 @@ def make_robot_config(**overrides: Any) -> SimpleNamespace:
     return SimpleNamespace(**fields)
 
 
+class FakeManipulationModule(SimpleNamespace):
+    """Public ManipulationModule surface used by the in-process Viser adapter tests."""
+
+    def list_robots(self) -> list[str]:
+        return list(getattr(self, "_robots", {}).keys())
+
+    def robot_items(self) -> list[tuple[str, str, Any]]:
+        return [
+            (name, robot_id, config)
+            for name, (robot_id, config, _) in getattr(self, "_robots", {}).items()
+        ]
+
+    def robot_id_for_name(self, robot_name: str) -> str | None:
+        entry = getattr(self, "_robots", {}).get(robot_name)
+        return entry[0] if entry is not None else None
+
+    def robot_name_for_id(self, robot_id: str) -> str | None:
+        for robot_name, (candidate_id, _, _) in getattr(self, "_robots", {}).items():
+            if candidate_id == robot_id:
+                return robot_name
+        return None
+
+    def get_robot_config(self, robot_name: str) -> Any | None:
+        entry = getattr(self, "_robots", {}).get(robot_name)
+        return entry[1] if entry is not None else None
+
+    def get_robot_info(self, robot_name: str) -> dict[str, Any] | None:
+        config = self.get_robot_config(robot_name)
+        if config is None:
+            return None
+        init = self.get_init_joints(robot_name)
+        home_joints = config.home_joints if hasattr(config, "home_joints") else None
+        return {
+            "name": config.name,
+            "joint_names": list(config.joint_names),
+            "end_effector_link": config.end_effector_link,
+            "base_link": config.base_link,
+            "home_joints": list(home_joints) if home_joints is not None else None,
+            "init_joints": list(init.position) if init is not None else None,
+        }
+
+    def get_init_joints(self, robot_name: str) -> JointState | None:
+        return getattr(self, "_init_joints", {}).get(robot_name)
+
+    def get_planned_path(self, robot_name: str) -> list[JointState] | None:
+        return getattr(self, "_planned_paths", {}).get(robot_name)
+
+    def get_planned_trajectory_duration(self, robot_name: str) -> float | None:
+        trajectory = getattr(self, "_planned_trajectories", {}).get(robot_name)
+        return None if trajectory is None else float(trajectory.duration)
+
+    def get_state(self) -> str:
+        state = getattr(self, "_state", "IDLE")
+        return str(getattr(state, "name", state))
+
+    def get_error(self) -> str:
+        return str(getattr(self, "_error_message", ""))
+
+    def evaluate_joint_target(self, joints: JointState | None, robot_name: str) -> dict[str, Any]:
+        robot_id = self.robot_id_for_name(robot_name)
+        if robot_id is None or joints is None:
+            return {"success": False, "status": "NO_ROBOT", "joint_state": None}
+        world_monitor = getattr(self, "_world_monitor", None)
+        if world_monitor is None:
+            return {"success": False, "status": "UNAVAILABLE", "joint_state": None}
+        collision_free = world_monitor.is_state_valid(robot_id, joints)
+        return {
+            "success": True,
+            "status": "FEASIBLE" if collision_free else "COLLISION",
+            "message": "Target is collision-free" if collision_free else "Target is in collision",
+            "collision_free": collision_free,
+            "ee_pose": world_monitor.get_ee_pose(robot_id, joints),
+            "joint_state": joints,
+        }
+
+    def evaluate_pose_target(self, _pose: Pose, _robot_name: str) -> dict[str, Any]:
+        return {
+            "success": False,
+            "joint_state": None,
+            "status": "UNAVAILABLE",
+            "message": "No fake pose IK",
+            "collision_free": False,
+        }
+
+
 def make_adapter_with_robot() -> InProcessViserAdapter:
     current = FakeJointState(["j1", "j2"], position=[0.3, 0.4])
     config = make_robot_config(
@@ -229,16 +314,20 @@ def make_adapter_with_robot() -> InProcessViserAdapter:
         joint_limits_upper=[1.0, 2.0],
         home_joints=[0.0, 0.0],
     )
-    module = SimpleNamespace(
-        _robots={"arm": ("robot-1", config, None)},
-        _init_joints={"arm": FakeJointState(["j1", "j2"], position=[0.1, 0.2])},
-        _state=SimpleNamespace(name="IDLE"),
-        _error_message="",
-    )
     world_monitor = SimpleNamespace(
         get_current_joint_state=lambda _robot_id: current,
         is_state_stale=lambda _robot_id, max_age=1.0: False,
+        is_state_valid=lambda _robot_id, _joint_state: True,
         get_ee_pose=lambda _robot_id, joint_state=None: None,
+    )
+    module = FakeManipulationModule(
+        _robots={"arm": ("robot-1", config, None)},
+        _init_joints={"arm": FakeJointState(["j1", "j2"], position=[0.1, 0.2])},
+        _planned_paths={},
+        _planned_trajectories={},
+        _state=SimpleNamespace(name="IDLE"),
+        _error_message="",
+        _world_monitor=world_monitor,
     )
     return InProcessViserAdapter(
         world_monitor=cast("Any", world_monitor),
@@ -608,7 +697,7 @@ def test_sampled_joint_path_frames_interpolates_sparse_paths() -> None:
 
 def test_adapter_copies_joint_state_and_delegates_to_module() -> None:
     copied = FakeJointState(["j1"], position=[1.0], velocity=[2.0], effort=[3.0])
-    module = SimpleNamespace(
+    module = FakeManipulationModule(
         _robots={"arm": ("robot-1", SimpleNamespace(), None)},
         _planned_paths={"arm": [copied]},
         _planned_trajectories={},
@@ -625,6 +714,7 @@ def test_adapter_copies_joint_state_and_delegates_to_module() -> None:
         is_state_valid=lambda robot_id, joint_state: True,
         get_ee_pose=lambda robot_id, joint_state=None: (robot_id, joint_state),
     )
+    module._world_monitor = world_monitor
     adapter = InProcessViserAdapter(
         world_monitor=cast("Any", world_monitor), manipulation_module=cast("Any", module)
     )
@@ -659,7 +749,10 @@ def test_adapter_evaluate_joint_target_uses_world_monitor_and_copies_input() -> 
         is_state_valid=is_state_valid,
         get_ee_pose=lambda robot_id, joint_state=None: (robot_id, joint_state),
     )
-    module = SimpleNamespace(_robots={"arm": ("robot-1", SimpleNamespace(), None)})
+    module = FakeManipulationModule(
+        _robots={"arm": ("robot-1", SimpleNamespace(), None)},
+        _world_monitor=world_monitor,
+    )
     adapter = InProcessViserAdapter(
         world_monitor=cast("Any", world_monitor), manipulation_module=cast("Any", module)
     )
@@ -688,8 +781,9 @@ def test_obstacle_collision_marks_joint_target_infeasible() -> None:
             position=SimpleNamespace(x=0.0, y=0.0, z=0.0)
         ),
     )
-    module = SimpleNamespace(
-        _robots={"arm": ("robot-1", SimpleNamespace(joint_names=["j1"]), None)}
+    module = FakeManipulationModule(
+        _robots={"arm": ("robot-1", SimpleNamespace(joint_names=["j1"]), None)},
+        _world_monitor=world_monitor,
     )
     adapter = InProcessViserAdapter(
         world_monitor=cast("Any", world_monitor), manipulation_module=cast("Any", module)
@@ -818,7 +912,7 @@ def test_gui_initializes_pose_selector_to_current_ee_pose(make_panel: Any) -> No
         orientation=SimpleNamespace(w=0.9, x=0.1, y=0.2, z=0.3),
     )
     config = make_robot_config(joint_names=["j1"], home_joints=[0.0])
-    module = SimpleNamespace(
+    module = FakeManipulationModule(
         _robots={"arm": ("robot-1", config, None)}, _planned_paths={}, _planned_trajectories={}
     )
     world_monitor = SimpleNamespace(
@@ -844,7 +938,7 @@ def test_gui_preset_dropdown_and_controls_include_init_home_current_and_callback
 ) -> None:
     current = FakeJointState(["arm/j1", "arm/j2"], position=[0.25, 0.5])
     config = make_robot_config(joint_names=["j1", "j2"], home_joints=[1.0, 2.0])
-    module = SimpleNamespace(
+    module = FakeManipulationModule(
         _robots={"arm": ("robot-1", config, None)},
         _init_joints={"arm": FakeJointState(["j1", "j2"], position=[-1.0, -2.0])},
         _planned_paths={},
@@ -873,7 +967,7 @@ def test_gui_preset_dropdown_and_controls_include_init_home_current_and_callback
 def test_gui_rebuilding_joint_sliders_removes_stale_viser_handles(make_panel: Any) -> None:
     current = FakeJointState(["j1", "j2"], position=[0.0, 0.0])
     config = make_robot_config(joint_names=["j1", "j2"], home_joints=[1.0, 2.0])
-    module = SimpleNamespace(
+    module = FakeManipulationModule(
         _robots={"arm": ("robot-1", config, None)}, _planned_paths={}, _planned_trajectories={}
     )
     world_monitor = SimpleNamespace(
@@ -920,7 +1014,7 @@ def test_panel_execution_is_gated_by_default_and_refresh_updates_robot_controls(
 ) -> None:
     current = FakeJointState(["j1"], position=[1.2])
     config = make_robot_config(joint_names=["j1"], home_joints=[0.5])
-    module = SimpleNamespace(
+    module = FakeManipulationModule(
         _robots={"arm": ("robot-1", config, None)},
         _planned_paths={},
         _planned_trajectories={},
@@ -953,7 +1047,7 @@ def test_gui_moves_joint_target_immediately_and_stores_evaluated_joint_solution(
     current = FakeJointState(["j1", "j2"], position=[0.0, 0.0])
     target_pose = SimpleNamespace(position=SimpleNamespace(x=0.2, y=0.3, z=0.4))
     config = make_robot_config(joint_names=["j1", "j2"], home_joints=[0.5, 0.6])
-    module = SimpleNamespace(
+    module = FakeManipulationModule(
         _robots={"arm": ("robot-1", config, None)}, _planned_paths={}, _planned_trajectories={}
     )
     world_monitor = SimpleNamespace(
@@ -1019,10 +1113,58 @@ def test_gui_moves_joint_target_immediately_and_stores_evaluated_joint_solution(
     assert target_updates[-1] == ("robot-1", ["j1", "j2"], [0.25, 0.75])
 
 
+def test_gui_cartesian_ik_result_does_not_rewrite_active_gizmo(make_panel: Any) -> None:
+    current = FakeJointState(["j1", "j2"], position=[0.0, 0.0])
+    config = make_robot_config(joint_names=["j1", "j2"], home_joints=[0.5, 0.6])
+    module = FakeManipulationModule(
+        _robots={"arm": ("robot-1", config, None)}, _planned_paths={}, _planned_trajectories={}
+    )
+    world_monitor = SimpleNamespace(
+        get_current_joint_state=lambda robot_id: current,
+        is_state_stale=lambda robot_id, max_age=1.0: False,
+        is_state_valid=lambda robot_id, joint_state: True,
+        get_ee_pose=lambda robot_id, joint_state=None: None,
+    )
+    adapter = InProcessViserAdapter(
+        world_monitor=cast("Any", world_monitor), manipulation_module=cast("Any", module)
+    )
+    target_joint_updates = []
+    target_pose_updates = []
+    scene = SimpleNamespace(
+        has_reference_grid=lambda: False,
+        ensure_target_controls=lambda *args: None,
+        set_target_joints=lambda *args: target_joint_updates.append(args) or True,
+        set_target_pose=lambda *args: target_pose_updates.append(args),
+        set_target_visual_state=lambda *args: None,
+    )
+    gui = make_panel(
+        FakeGuiServer(), adapter, ViserVisualizationConfig(panel_enabled=True), cast("Any", scene)
+    )
+    gui.state.cartesian_target = Pose(
+        {"position": [0.1, 0.2, 0.3], "orientation": [0.0, 0.0, 0.0, 1.0]}
+    )
+    request = TargetEvaluationRequest(sequence_id=1, source="cartesian", robot_name="arm")
+    gui.state.latest_sequence_id = 1
+
+    gui._apply_target_evaluation_result(
+        request,
+        {
+            "success": True,
+            "collision_free": True,
+            "joint_state": adapter.joints_from_values(["j1", "j2"], [1.0, 2.0]),
+        },
+    )
+
+    assert gui.state.target_status == TargetStatus.FEASIBLE
+    assert [gui._joint_sliders[name].value for name in ("j1", "j2")] == [1.0, 2.0]
+    assert target_joint_updates[-1] == ("robot-1", ["j1", "j2"], [1.0, 2.0])
+    assert target_pose_updates == []
+
+
 def test_gui_collision_evaluation_marks_target_infeasible_and_colors_scene(make_panel: Any) -> None:
     current = FakeJointState(["j1"], position=[0.0])
     config = make_robot_config(joint_names=["j1"], home_joints=[0.0])
-    module = SimpleNamespace(
+    module = FakeManipulationModule(
         _robots={"arm": ("robot-1", config, None)}, _planned_paths={}, _planned_trajectories={}
     )
     world_monitor = SimpleNamespace(
@@ -1033,6 +1175,7 @@ def test_gui_collision_evaluation_marks_target_infeasible_and_colors_scene(make_
             position=SimpleNamespace(x=0.0, y=0.0, z=0.0)
         ),
     )
+    module._world_monitor = world_monitor
     adapter = InProcessViserAdapter(
         world_monitor=cast("Any", world_monitor), manipulation_module=cast("Any", module)
     )
@@ -1067,7 +1210,7 @@ def test_gui_safe_execute_requires_fresh_matching_plan_and_clear_resets_path(
     planned = [FakeJointState(["j1"], position=[1.0]), FakeJointState(["j1"], position=[2.0])]
     executed = []
     cleared = []
-    module = SimpleNamespace(
+    module = FakeManipulationModule(
         _robots={
             "arm": ("robot-1", make_robot_config(joint_names=["j1"], home_joints=[1.0]), None)
         },

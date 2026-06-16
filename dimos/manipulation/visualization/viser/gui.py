@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol, SupportsFloat, cast
+from typing import Any
 
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
@@ -42,108 +42,12 @@ logger = setup_logger()
 DEFAULT_JOINT_LIMITS = (-3.14, 3.14)
 
 
-class _GuiServer(Protocol):
-    gui: object
-
-
-class _ValueHandle(Protocol):
-    value: object
-
-
-class _DisabledHandle(Protocol):
-    disabled: bool
-
-
-class _OptionHandle(Protocol):
-    options: list[str]
-    values: list[str]
-
-
-class _SliderHandle(Protocol):
-    value: float
-
-
-class _RemovableHandle(Protocol):
-    def remove(self) -> None: ...
-
-
-class _UpdateHandle(Protocol):
-    def on_update(self, callback: object) -> object: ...
-
-
-class _ClickHandle(Protocol):
-    def on_click(self, callback: object) -> object: ...
-
-
-class _FolderHandle(Protocol):
-    def __enter__(self) -> object: ...
-    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> object: ...
-
-
-class _FolderGui(Protocol):
-    def add_folder(self, label: str, *, expand_by_default: bool = False) -> object: ...
-
-
-class _MarkdownGui(Protocol):
-    def add_markdown(self, content: str) -> object: ...
-
-
-class _TextGui(Protocol):
-    def add_text(self, label: str, *, initial_value: str) -> object: ...
-
-
-class _DropdownGui(Protocol):
-    def add_dropdown(self, label: str, *, options: list[str], initial_value: str) -> object: ...
-
-
-class _ButtonGui(Protocol):
-    def add_button(self, label: str, *, disabled: bool = False) -> object: ...
-
-
-class _CheckboxGui(Protocol):
-    def add_checkbox(self, label: str, *, initial_value: bool) -> object: ...
-
-
-class _SliderGui(Protocol):
-    def add_slider(
-        self,
-        label: str,
-        *,
-        min: float,
-        max: float,
-        step: float,
-        initial_value: float,
-    ) -> object: ...
-
-
-class _PositionLike(Protocol):
-    x: float
-    y: float
-    z: float
-
-
-class _QuaternionLike(Protocol):
-    w: float
-    x: float
-    y: float
-    z: float
-
-
-class _Indexable(Protocol):
-    def __getitem__(self, index: int) -> object: ...
-
-
-class _TransformTarget(Protocol):
-    position: object
-    wxyz: object
-
-
 class ViserPanelGui:
     """Optional operator panel with parity for the original cc/viser-vis panel."""
 
     def __init__(
         self,
-        server: object,
+        server: Any,
         adapter: InProcessViserAdapter,
         config: ViserVisualizationConfig,
         scene: ViserManipulationScene | None = None,
@@ -155,8 +59,8 @@ class ViserPanelGui:
         self.state = PanelState(runtime=PanelRuntime.STARTING)
         self._closed = False
         self._suppress_target_callbacks = False
-        self._handles: dict[str, object] = {}
-        self._joint_sliders: dict[str, _SliderHandle] = {}
+        self._handles: dict[str, Any] = {}
+        self._joint_sliders: dict[str, Any] = {}
         self._worker = TargetEvaluationWorker(
             self._handle_target_evaluation_request,
             self._apply_target_evaluation_result,
@@ -200,9 +104,9 @@ class ViserPanelGui:
         self._update_status_text()
         self._update_control_state()
 
-    def _gui(self) -> object | None:
+    def _gui(self) -> Any | None:
         try:
-            return cast("_GuiServer", self.server).gui
+            return self.server.gui
         except AttributeError:
             return None
 
@@ -213,87 +117,74 @@ class ViserPanelGui:
         folder = None
         if hasattr(gui, "add_folder"):
             try:
-                folder = cast("_FolderGui", gui).add_folder(
-                    "Manipulation Panel", expand_by_default=True
-                )
+                folder = gui.add_folder("Manipulation Panel", expand_by_default=True)
             except TypeError:
-                folder = cast("_FolderGui", gui).add_folder("Manipulation Panel")
+                folder = gui.add_folder("Manipulation Panel")
             self._handles["panel_folder"] = folder
         if folder is not None and hasattr(folder, "__enter__"):
-            with cast("_FolderHandle", folder):
+            with folder:
                 self._build_panel_controls(gui)
         else:
             self._build_panel_controls(gui)
 
-    def _build_panel_controls(self, gui: object) -> None:
+    def _build_panel_controls(self, gui: Any) -> None:
         if hasattr(gui, "add_markdown"):
-            self._handles["status"] = cast("_MarkdownGui", gui).add_markdown(
-                "Starting manipulation panel..."
-            )
+            self._handles["status"] = gui.add_markdown("Starting manipulation panel...")
         elif hasattr(gui, "add_text"):
-            self._handles["status"] = cast("_TextGui", gui).add_text(
-                "Status", initial_value="Starting"
-            )
+            self._handles["status"] = gui.add_text("Status", initial_value="Starting")
         robots = self.adapter.list_robots()
         self._build_scene_controls(gui)
         if hasattr(gui, "add_dropdown"):
-            self._handles["robot"] = cast("_DropdownGui", gui).add_dropdown(
+            self._handles["robot"] = gui.add_dropdown(
                 "Robot",
                 options=robots or [""],
                 initial_value=robots[0] if robots else "",
             )
-            cast("_UpdateHandle", self._handles["robot"]).on_update(
-                lambda event: self._select_robot(event.target.value)
+            self._on_update(
+                self._handles["robot"], lambda event: self._select_robot(event.target.value)
             )
-            self._handles["preset"] = cast("_DropdownGui", gui).add_dropdown(
+            self._handles["preset"] = gui.add_dropdown(
                 "Target Preset",
                 options=["Select preset...", "Current"],
                 initial_value="Select preset...",
             )
-            cast("_UpdateHandle", self._handles["preset"]).on_update(
-                lambda event: self._apply_preset(event.target.value)
+            self._on_update(
+                self._handles["preset"], lambda event: self._apply_preset(event.target.value)
             )
         if hasattr(gui, "add_button"):
             self._handles["plan"] = self._add_button(gui, "Plan", disabled=True)
-            cast("_ClickHandle", self._handles["plan"]).on_click(lambda _: self._submit_plan())
+            self._on_click(self._handles["plan"], lambda _: self._submit_plan())
             self._handles["preview"] = self._add_button(gui, "Preview", disabled=True)
-            cast("_ClickHandle", self._handles["preview"]).on_click(
-                lambda _: self._submit_preview()
-            )
+            self._on_click(self._handles["preview"], lambda _: self._submit_preview())
             self._handles["execute"] = self._add_button(gui, "Execute", disabled=True)
-            cast("_ClickHandle", self._handles["execute"]).on_click(
-                lambda _: self._submit_execute()
-            )
+            self._on_click(self._handles["execute"], lambda _: self._submit_execute())
             self._handles["cancel"] = self._add_button(gui, "Cancel")
-            cast("_ClickHandle", self._handles["cancel"]).on_click(lambda _: self._submit_cancel())
+            self._on_click(self._handles["cancel"], lambda _: self._submit_cancel())
             self._handles["clear"] = self._add_button(gui, "Clear plan")
-            cast("_ClickHandle", self._handles["clear"]).on_click(lambda _: self._submit_clear())
+            self._on_click(self._handles["clear"], lambda _: self._submit_clear())
         self._build_joint_sliders()
 
-    def _build_scene_controls(self, gui: object) -> None:
+    def _build_scene_controls(self, gui: Any) -> None:
         if self.scene is None or not hasattr(gui, "add_checkbox"):
             return
         if not self.scene.has_reference_grid():
             return
-        handle = cast("_CheckboxGui", gui).add_checkbox("Scene grid", initial_value=True)
+        handle = gui.add_checkbox("Scene grid", initial_value=True)
         self._handles["scene_grid"] = handle
-        if hasattr(handle, "on_update"):
-            cast("_UpdateHandle", handle).on_update(
-                lambda event: self._set_scene_grid_visible(event.target.value)
-            )
+        self._on_update(handle, lambda event: self._set_scene_grid_visible(event.target.value))
 
     def _set_scene_grid_visible(self, visible: object) -> None:
         if self.scene is None:
             return
         self.scene.set_reference_grid_visible(bool(visible))
 
-    def _add_button(self, gui: object, label: str, *, disabled: bool = False) -> object:
+    def _add_button(self, gui: Any, label: str, *, disabled: bool = False) -> Any:
         try:
-            handle = cast("_ButtonGui", gui).add_button(label, disabled=disabled)
+            handle = gui.add_button(label, disabled=disabled)
         except TypeError:
-            handle = cast("_ButtonGui", gui).add_button(label)
+            handle = gui.add_button(label)
             try:
-                cast("_DisabledHandle", handle).disabled = disabled
+                handle.disabled = disabled
             except Exception:
                 logger.warning("Could not set button '%s' disabled state", label, exc_info=True)
         return handle
@@ -353,23 +244,22 @@ class ViserPanelGui:
                 lower = joint_limits_lower[index]
             if joint_limits_upper is not None and index < len(joint_limits_upper):
                 upper = joint_limits_upper[index]
-            handle = cast("_SliderGui", gui).add_slider(
+            handle = gui.add_slider(
                 joint_name,
                 min=float(lower),
                 max=float(upper),
                 step=0.001,
                 initial_value=float(values[index] if index < len(values) else 0.0),
             )
-            if hasattr(handle, "on_update"):
-                cast("_UpdateHandle", handle).on_update(
-                    lambda _event, name=joint_name: self._on_joint_slider_update(name)
-                )
-            self._joint_sliders[joint_name] = cast("_SliderHandle", handle)
+            self._on_update(
+                handle, lambda _event, name=joint_name: self._on_joint_slider_update(name)
+            )
+            self._joint_sliders[joint_name] = handle
 
     def _clear_joint_sliders(self) -> None:
         for handle in self._joint_sliders.values():
             try:
-                cast("_RemovableHandle", handle).remove()
+                handle.remove()
             except AttributeError:
                 pass
         self._joint_sliders.clear()
@@ -395,14 +285,14 @@ class ViserPanelGui:
             if hasattr(handle, attr):
                 try:
                     if attr == "options":
-                        cast("_OptionHandle", handle).options = options
+                        handle.options = options
                     else:
-                        cast("_OptionHandle", handle).values = options
+                        handle.values = options
                 except Exception:
                     logger.warning("Could not set robot dropdown %s", attr, exc_info=True)
         if hasattr(handle, "value") and self.state.selected_robot in robots:
             try:
-                cast("_ValueHandle", handle).value = self.state.selected_robot
+                handle.value = self.state.selected_robot
             except Exception:
                 logger.warning("Could not set robot dropdown value", exc_info=True)
 
@@ -426,9 +316,9 @@ class ViserPanelGui:
             if hasattr(handle, attr):
                 try:
                     if attr == "options":
-                        cast("_OptionHandle", handle).options = options
+                        handle.options = options
                     else:
-                        cast("_OptionHandle", handle).values = options
+                        handle.values = options
                 except Exception:
                     logger.warning("Could not set preset dropdown %s", attr, exc_info=True)
 
@@ -584,14 +474,10 @@ class ViserPanelGui:
                 self.scene.set_target_joints(
                     str(robot_id), config.joint_names, self.state.joint_target
                 )
-        if self.scene is not None and self.state.cartesian_target is not None:
-            robot_id = self.adapter.robot_id_for_name(robot_name)
-            if robot_id is not None:
-                self._suppress_target_callbacks = True
-                try:
-                    self.scene.set_target_pose(str(robot_id), self.state.cartesian_target)
-                finally:
-                    self._suppress_target_callbacks = False
+        # Do not write the Cartesian target back into the active transform
+        # control here. The gizmo is the source of truth for Cartesian edits;
+        # programmatic pose writes from delayed IK results can fight fast user
+        # dragging and make the gizmo jump back.
 
     def _update_status_text(self) -> None:
         current = self.state.current_joints
@@ -743,24 +629,31 @@ class ViserPanelGui:
         self.state.error = message
         self.refresh()
 
+    def _on_update(self, handle: Any, callback: Any) -> None:
+        if hasattr(handle, "on_update"):
+            handle.on_update(callback)
+
+    def _on_click(self, handle: Any, callback: Any) -> None:
+        if hasattr(handle, "on_click"):
+            handle.on_click(callback)
+
     def _set_handle_value(self, key: str, value: str) -> None:
         handle = self._handles.get(key)
         if handle is not None and hasattr(handle, "value"):
-            cast("_ValueHandle", handle).value = value
+            handle.value = value
 
     def _set_disabled(self, key: str, disabled: bool) -> None:
         handle = self._handles.get(key)
         if handle is not None and hasattr(handle, "disabled"):
-            cast("_DisabledHandle", handle).disabled = disabled
+            handle.disabled = disabled
 
-    def _pose_from_transform_target(self, target: object) -> Pose | None:
+    def _pose_from_transform_target(self, target: Any) -> Pose | None:
         try:
-            transform = cast("_TransformTarget", target)
-            position = transform.position
+            position = target.position
         except AttributeError:
             return None
         try:
-            wxyz = transform.wxyz
+            wxyz = target.wxyz
         except AttributeError:
             wxyz = None
         xyz = self._xyz_from_value(position)
@@ -775,48 +668,42 @@ class ViserPanelGui:
         qw, qx, qy, qz = quaternion
         return Pose({"position": [px, py, pz], "orientation": [qx, qy, qz, qw]})
 
-    def _xyz_from_value(self, value: object) -> tuple[float, float, float] | None:
+    def _xyz_from_value(self, value: Any) -> tuple[float, float, float] | None:
         try:
-            point = cast("_PositionLike", value)
-            return float(point.x), float(point.y), float(point.z)
+            return float(value.x), float(value.y), float(value.z)
         except (AttributeError, TypeError, ValueError):
             pass
         try:
-            sequence = cast("_Indexable", value)
             return (
-                self._to_float(sequence[0]),
-                self._to_float(sequence[1]),
-                self._to_float(sequence[2]),
+                self._to_float(value[0]),
+                self._to_float(value[1]),
+                self._to_float(value[2]),
             )
         except (AttributeError, IndexError, TypeError, ValueError):
             return None
 
-    def _wxyz_from_value(self, value: object) -> tuple[float, float, float, float] | None:
+    def _wxyz_from_value(self, value: Any) -> tuple[float, float, float, float] | None:
         try:
-            quaternion = cast("_QuaternionLike", value)
             return (
-                float(quaternion.w),
-                float(quaternion.x),
-                float(quaternion.y),
-                float(quaternion.z),
+                float(value.w),
+                float(value.x),
+                float(value.y),
+                float(value.z),
             )
         except (AttributeError, TypeError, ValueError):
             pass
         try:
-            sequence = cast("_Indexable", value)
             return (
-                self._to_float(sequence[0]),
-                self._to_float(sequence[1]),
-                self._to_float(sequence[2]),
-                self._to_float(sequence[3]),
+                self._to_float(value[0]),
+                self._to_float(value[1]),
+                self._to_float(value[2]),
+                self._to_float(value[3]),
             )
         except (AttributeError, IndexError, TypeError, ValueError):
             return None
 
-    def _to_float(self, value: object) -> float:
-        if isinstance(value, str | int | float):
-            return float(value)
-        return float(cast("SupportsFloat", value))
+    def _to_float(self, value: Any) -> float:
+        return float(value)
 
     def _feasibility_status(
         self, result: dict[str, object], success: bool, collision_free: bool

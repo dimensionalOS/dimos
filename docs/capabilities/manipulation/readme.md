@@ -46,7 +46,7 @@ dimos run coordinator-mock
 dimos run xarm7-planner-coordinator
 ```
 
-Select a non-default IK backend with nested module config overrides:
+Pink IK is the default solver. Tune it with nested module config overrides:
 
 ```bash
 dimos run xarm7-planner-coordinator \

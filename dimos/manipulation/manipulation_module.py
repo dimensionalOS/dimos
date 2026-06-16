@@ -40,8 +40,8 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.manipulation.planning.factory import create_planning_specs, create_world
 from dimos.manipulation.planning.kinematics.config import (
-    JacobianKinematicsConfig,
     ManipulationKinematicsConfig,
+    PinkKinematicsConfig,
 )
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -108,7 +108,7 @@ class ManipulationModuleConfig(ModuleConfig):
         default_factory=NoManipulationVisualizationConfig
     )
     planner_name: str = "rrt_connect"  # "rrt_connect"
-    kinematics: ManipulationKinematicsConfig = Field(default_factory=JacobianKinematicsConfig)
+    kinematics: ManipulationKinematicsConfig = Field(default_factory=PinkKinematicsConfig)
     # Deprecated: use kinematics.backend instead.
     kinematics_name: str | None = None  # "jacobian", "drake_optimization", or "pink"
     # Floor plane Z height (meters). When set, a box obstacle is added at startup
@@ -771,6 +771,27 @@ class ManipulationModule(Module):
             else None,
         }
 
+    def robot_items(self) -> list[tuple[RobotName, WorldRobotID, RobotModelConfig]]:
+        """Return configured robots for in-process visualization adapters."""
+        return [(name, robot_id, config) for name, (robot_id, config, _) in self._robots.items()]
+
+    def robot_id_for_name(self, robot_name: RobotName) -> WorldRobotID | None:
+        """Return the planning-world robot id for a configured robot name."""
+        entry = self._robots.get(robot_name)
+        return entry[0] if entry is not None else None
+
+    def robot_name_for_id(self, robot_id: WorldRobotID) -> RobotName | None:
+        """Return the configured robot name for a planning-world robot id."""
+        for robot_name, (candidate_id, _, _) in self._robots.items():
+            if candidate_id == robot_id:
+                return robot_name
+        return None
+
+    def get_robot_config(self, robot_name: RobotName) -> RobotModelConfig | None:
+        """Return the robot model config for an in-process visualization adapter."""
+        entry = self._robots.get(robot_name)
+        return entry[1] if entry is not None else None
+
     @rpc
     def get_init_joints(self, robot_name: RobotName | None = None) -> JointState | None:
         """Get the init joint state (captured at startup or set manually).
@@ -782,6 +803,97 @@ class ManipulationModule(Module):
         if robot is None:
             return None
         return self._init_joints.get(robot[0])
+
+    def evaluate_joint_target(
+        self, joints: JointState | None, robot_name: RobotName
+    ) -> dict[str, object]:
+        """Evaluate a joint target for visualization without planning a path."""
+        robot_id = self.robot_id_for_name(robot_name)
+        if robot_id is None or self._world_monitor is None:
+            return {
+                "success": False,
+                "status": "NO_ROBOT",
+                "message": f"Unknown robot: {robot_name}",
+                "collision_free": False,
+                "ee_pose": None,
+                "joint_state": None,
+            }
+        if joints is None:
+            return {
+                "success": False,
+                "status": "NO_TARGET",
+                "message": "No joint target provided",
+                "collision_free": False,
+                "ee_pose": None,
+                "joint_state": None,
+            }
+        target = JointState(joints)
+        collision_free = self._world_monitor.is_state_valid(robot_id, target)
+        return {
+            "success": True,
+            "status": "FEASIBLE" if collision_free else "COLLISION",
+            "message": "Target is collision-free" if collision_free else "Target is in collision",
+            "collision_free": collision_free,
+            "ee_pose": self._world_monitor.get_ee_pose(robot_id, target),
+            "joint_state": target,
+        }
+
+    def evaluate_pose_target(self, pose: Pose, robot_name: RobotName) -> dict[str, object]:
+        """Evaluate a Cartesian target for visualization without planning a path."""
+        robot_id = self.robot_id_for_name(robot_name)
+        if robot_id is None:
+            return {
+                "success": False,
+                "joint_state": None,
+                "status": "UNKNOWN_ROBOT",
+                "message": f"Unknown robot: {robot_name}",
+                "collision_free": False,
+            }
+        if self._world_monitor is None or self._kinematics is None:
+            return {
+                "success": False,
+                "joint_state": None,
+                "status": "UNAVAILABLE",
+                "message": "Planning is not initialized or current state is unavailable",
+                "collision_free": False,
+            }
+        current = self._world_monitor.get_current_joint_state(robot_id)
+        if current is None:
+            return {
+                "success": False,
+                "joint_state": None,
+                "status": "UNAVAILABLE",
+                "message": "Planning is not initialized or current state is unavailable",
+                "collision_free": False,
+            }
+        ik = self._solve_ik_for_pose(robot_id, pose, current, check_collision=True)
+        joint_state = JointState(ik.joint_state) if ik.is_success() and ik.joint_state else None
+        collision_free = bool(
+            joint_state is not None and self._world_monitor.is_state_valid(robot_id, joint_state)
+        )
+        return {
+            "success": joint_state is not None and collision_free,
+            "joint_state": joint_state,
+            "status": ik.status.name,
+            "message": ik.message,
+            "position_error": ik.position_error,
+            "orientation_error": ik.orientation_error,
+            "collision_free": collision_free,
+        }
+
+    def get_planned_path(self, robot_name: RobotName) -> JointPath | None:
+        """Return a copy of the stored planned path for visualization."""
+        path = self._planned_paths.get(robot_name)
+        if path is None:
+            return None
+        return [JointState(point) for point in path]
+
+    def get_planned_trajectory_duration(self, robot_name: RobotName) -> float | None:
+        """Return the stored planned trajectory duration for visualization."""
+        trajectory = self._planned_trajectories.get(robot_name)
+        if trajectory is None:
+            return None
+        return float(trajectory.duration)
 
     @rpc
     def set_init_joints(self, joint_state: JointState, robot_name: RobotName | None = None) -> bool:

@@ -204,6 +204,12 @@ class TestRobotSelection:
 class TestPlanningInitialization:
     """Test planning backend configuration wiring."""
 
+    def test_default_kinematics_config_uses_pink(self) -> None:
+        """Pink IK is the default solver for manipulation modules."""
+        config = ManipulationModuleConfig()
+
+        assert isinstance(config.kinematics, PinkKinematicsConfig)
+
     def test_kinematics_config_is_passed_to_factory(self, robot_config):
         """ManipulationModule config selects the requested IK backend."""
         module = _make_module()
