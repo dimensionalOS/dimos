@@ -19,6 +19,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from dimos.manipulation.planning.kinematics.config import (
+    DrakeOptimizationKinematicsConfig,
+    JacobianKinematicsConfig,
+    ManipulationKinematicsConfig,
+    PinkKinematicsConfig,
+    kinematics_config_from_name,
+)
 from dimos.manipulation.visualization.config import (
     ManipulationVisualizationConfig,
     NoManipulationVisualizationConfig,
@@ -59,23 +66,29 @@ def create_world(
 
 def create_kinematics(
     name: str = "jacobian",
+    config: ManipulationKinematicsConfig | None = None,
     **kwargs: Any,
 ) -> KinematicsSpec:
-    """Create IK solver. name='jacobian'|'drake_optimization'."""
-    if name == "jacobian":
+    """Create IK solver from a backend name or typed kinematics config."""
+    if config is None:
+        config = kinematics_config_from_name(name)
+
+    if isinstance(config, JacobianKinematicsConfig):
         from dimos.manipulation.planning.kinematics.jacobian_ik import JacobianIK
 
         return JacobianIK(**kwargs)
-    elif name == "drake_optimization":
+    elif isinstance(config, DrakeOptimizationKinematicsConfig):
         from dimos.manipulation.planning.kinematics.drake_optimization_ik import (
             DrakeOptimizationIK,
         )
 
         return DrakeOptimizationIK(**kwargs)
+    elif isinstance(config, PinkKinematicsConfig):
+        from dimos.manipulation.planning.kinematics.pink_ik import PinkIK
+
+        return PinkIK(config, **kwargs)
     else:
-        raise ValueError(
-            f"Unknown kinematics solver: {name}. Available: ['jacobian', 'drake_optimization']"
-        )
+        raise TypeError(f"Unsupported kinematics config: {type(config).__name__}")
 
 
 def create_planner(
@@ -94,14 +107,18 @@ def create_planner(
 def create_planning_specs(
     world: WorldSpec,
     planner_name: str = "rrt_connect",
-    kinematics_name: str = "jacobian",
+    kinematics_name: str | None = None,
+    kinematics: ManipulationKinematicsConfig | None = None,
 ) -> PlanningSpecs:
     """Create planning specs around an already-created world."""
     from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 
+    if kinematics_name is not None:
+        kinematics = kinematics_config_from_name(kinematics_name)
+
     return PlanningSpecs(
         world_monitor=WorldMonitor(world=world),
-        kinematics=create_kinematics(name=kinematics_name),
+        kinematics=create_kinematics(config=kinematics),
         planner=create_planner(name=planner_name),
     )
 
@@ -110,7 +127,8 @@ def create_planning_stack(
     robot_config: Any,
     visualization: ManipulationVisualizationConfig | None = None,
     planner_name: str = "rrt_connect",
-    kinematics_name: str = "jacobian",
+    kinematics_name: str | None = None,
+    kinematics: ManipulationKinematicsConfig | None = None,
 ) -> tuple[WorldSpec, KinematicsSpec, PlannerSpec, str]:
     """Create complete planning stack. Returns (world, kinematics, planner, robot_id)."""
     world = create_world(visualization=visualization)
@@ -118,6 +136,7 @@ def create_planning_stack(
         world=world,
         planner_name=planner_name,
         kinematics_name=kinematics_name,
+        kinematics=kinematics,
     )
 
     robot_id = world.add_robot(robot_config)
