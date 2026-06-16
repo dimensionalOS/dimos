@@ -943,6 +943,8 @@ def test_gui_moves_joint_target_immediately_and_stores_evaluated_joint_solution(
     target_updates = []
     target_pose_updates = []
     scene = SimpleNamespace(
+        has_reference_grid=lambda: False,
+        ensure_target_controls=lambda *args: None,
         set_target_joints=lambda *args: target_updates.append(args) or True,
         set_target_pose=lambda *args: target_pose_updates.append(args),
         set_target_visual_state=lambda *args: None,
@@ -1015,6 +1017,8 @@ def test_gui_collision_evaluation_marks_target_infeasible_and_colors_scene() -> 
     )
     visual_states = []
     scene = SimpleNamespace(
+        has_reference_grid=lambda: False,
+        ensure_target_controls=lambda *args: None,
         set_target_joints=lambda *args: True,
         set_target_pose=lambda *args: None,
         set_target_visual_state=lambda *args: visual_states.append(args),

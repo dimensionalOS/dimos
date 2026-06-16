@@ -268,11 +268,7 @@ class ViserPanelGui:
         self._build_joint_sliders()
 
     def _build_scene_controls(self, gui: object) -> None:
-        if (
-            self.scene is None
-            or not hasattr(gui, "add_checkbox")
-            or not hasattr(self.scene, "has_reference_grid")
-        ):
+        if self.scene is None or not hasattr(gui, "add_checkbox"):
             return
         if not self.scene.has_reference_grid():
             return
@@ -317,11 +313,7 @@ class ViserPanelGui:
             self.state.error = adapter_error
 
     def _ensure_scene_controls(self) -> None:
-        if (
-            self.scene is None
-            or self.state.selected_robot is None
-            or not hasattr(self.scene, "ensure_target_controls")
-        ):
+        if self.scene is None or self.state.selected_robot is None:
             return
         robot_id = self.adapter.robot_id_for_name(self.state.selected_robot)
         if robot_id is None:
@@ -650,11 +642,7 @@ class ViserPanelGui:
         self._update_target_visual_state()
 
     def _update_target_visual_state(self) -> None:
-        if (
-            self.scene is None
-            or self.state.selected_robot is None
-            or not hasattr(self.scene, "set_target_visual_state")
-        ):
+        if self.scene is None or self.state.selected_robot is None:
             return
         robot_id = self.adapter.robot_id_for_name(self.state.selected_robot)
         if robot_id is None:
