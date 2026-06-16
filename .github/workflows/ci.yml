@@ -482,7 +482,7 @@ jobs:
       - name: Import closure into /nix/store
         if: contains(matrix.markers, 'skipif_no_ros')
         run: |
-          zstdcat /tmp/nix-closure.bin.zst | nix-store --import
+          zstd -d -c /tmp/nix-closure.bin.zst | nix-store --import
           rm /tmp/nix-closure.bin.zst
       - name: Fetch nav_stack native modules from Cachix
         # /nix/store is warm from the artifact above, so each per-module
