@@ -12,18 +12,8 @@ pub fn derive_module(input: TokenStream) -> TokenStream {
     }
 }
 
-/// Defines a native-module config with a strict one-to-one mapping to the Python
-/// wrapper. The Python side owns every default and sends every field over stdin,
-/// so a config declares all fields as required, with no Rust-side defaults.
-///
-/// The attribute supplies all the boilerplate: it injects
-/// `#[derive(Debug, Deserialize, Validate)]` and `#[serde(deny_unknown_fields)]`,
-/// emits the `NativeConfig` marker impl, and rejects, at compile time, anything
-/// that would let a field be filled in by Rust:
-///
-/// - `Option<T>` fields (an absent field becomes `None`).
-/// - `#[serde(default)]` at the field or container level.
-/// - `#[serde(skip)]` / `skip_deserializing` / `flatten`.
+/// Defines a native-module config: every field is required and supplied by the Python wrapper
+/// over stdin, with no Rust-side defaults.
 ///
 /// ```ignore
 /// #[native_config]
@@ -32,6 +22,16 @@ pub fn derive_module(input: TokenStream) -> TokenStream {
 ///     pub voxel_size: f32,
 /// }
 /// ```
+///
+/// Injects `#[derive(Debug, Deserialize, Validate)]` and
+/// `#[serde(deny_unknown_fields)]`, and emits `impl NativeConfig`.
+///
+/// Rejected at compile time:
+/// - `Option<T>` fields
+/// - `#[serde(default)]`, field or container
+/// - `#[serde(skip)]`, `#[serde(skip_deserializing)]`, `#[serde(flatten)]`
+///
+/// A type alias that resolves to `Option` is not detected.
 #[proc_macro_attribute]
 pub fn native_config(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
@@ -39,9 +39,7 @@ pub fn native_config(_attr: TokenStream, item: TokenStream) -> TokenStream {
         .err()
         .map(|e| e.to_compile_error());
 
-    // For a named/unit struct still emit the full expansion alongside any error, so
-    // a single check failure surfaces our message instead of a cascade of missing
-    // derive/impl errors. Other inputs (tuple structs, enums) stand with the error.
+    // Emit the expansion with any error so a failed check shows our useful message.
     let injectable = matches!(
         &input.data,
         Data::Struct(s) if matches!(s.fields, Fields::Named(_) | Fields::Unit)
@@ -98,8 +96,8 @@ fn check_native_config(input: &DeriveInput) -> syn::Result<()> {
     Ok(())
 }
 
-/// Reject a container-level `#[serde(default)]` (the attribute injects
-/// `deny_unknown_fields` itself, so it is not required here).
+/// Reject a container-level `#[serde(default)]`. The macro injects
+/// `deny_unknown_fields` itself.
 fn check_container_serde(input: &DeriveInput) -> syn::Result<()> {
     for attr in &input.attrs {
         if !attr.path().is_ident("serde") {
@@ -112,7 +110,7 @@ fn check_container_serde(input: &DeriveInput) -> syn::Result<()> {
                      every field. Remove the default and make every field required.",
                 ));
             }
-            // consume an optional `= value` so unrelated serde args don't error
+            // allow other serde args that take a `= value`
             consume_optional_value(&meta);
             Ok(())
         })?;
@@ -454,6 +452,11 @@ mod tests {
     fn rejects_flatten_and_skip() {
         check(r#"struct Config { #[serde(flatten)] a: Inner }"#).expect_err("flatten is forbidden");
         check(r#"struct Config { #[serde(skip)] a: f32 }"#).expect_err("skip is forbidden");
+    }
+
+    #[test]
+    fn rejects_tuple_struct() {
+        check(r#"struct Config(f32);"#).expect_err("tuple structs are not valid configs");
     }
 
     #[test]

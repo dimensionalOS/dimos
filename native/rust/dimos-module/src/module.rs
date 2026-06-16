@@ -15,10 +15,8 @@ use validator::Validate;
 
 use crate::transport::Transport;
 
-/// Marker trait proving a config was checked by `#[native_config]` for a strict
-/// one-to-one mapping with the Python wrapper: every field required, no Rust-side
-/// defaults, no unknown fields. The attribute is the only blessed way to
-/// implement it.
+/// Marker trait for a config checked by `#[native_config]`: every field required,
+/// no Rust-side defaults, no unknown fields. Implemented only by the macro.
 pub trait NativeConfig {}
 
 /// Trait required by `Module::Config`s to ensure that configurations are
