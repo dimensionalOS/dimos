@@ -7,3 +7,7 @@ dist/
 scenes.json
 scenes/**/apt.json
 scripts/
+
+# local dev / playground scenes
+scenes/gamemap/
+scenes/playground/
