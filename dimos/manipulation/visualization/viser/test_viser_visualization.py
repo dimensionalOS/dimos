@@ -14,12 +14,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 import threading
 import time
 from types import SimpleNamespace
 from typing import Any, cast
 
 import numpy as np
+import pytest
 
 from dimos.manipulation.planning.spec.models import PlanningSceneInfo
 from dimos.manipulation.visualization.viser import (
@@ -241,49 +243,64 @@ def make_adapter_with_robot() -> InProcessViserAdapter:
     )
 
 
+@pytest.fixture
+def make_panel() -> Iterator[Any]:
+    """Build and start a ViserPanelGui, closing it (and its worker threads) on teardown."""
+    panels: list[ViserPanelGui] = []
+
+    def _make(
+        server: Any,
+        adapter: InProcessViserAdapter,
+        config: ViserVisualizationConfig | None = None,
+        scene: Any = None,
+    ) -> ViserPanelGui:
+        gui = ViserPanelGui(
+            server, adapter, config or ViserVisualizationConfig(panel_enabled=True), scene
+        )
+        gui.start()
+        panels.append(gui)
+        return gui
+
+    yield _make
+    for gui in panels:
+        gui.close()
+
+
 def test_viser_config_enables_panel_by_default() -> None:
     assert ViserVisualizationConfig().panel_enabled is True
 
 
-def test_gui_builds_controls_in_manipulation_panel_folder() -> None:
+def test_gui_builds_controls_in_manipulation_panel_folder(make_panel: Any) -> None:
     server = FakeGuiServer()
     adapter = make_adapter_with_robot()
-    gui = ViserPanelGui(server, adapter, ViserVisualizationConfig())
-    try:
-        gui.start()
-        assert server.folders
-        assert server.folders[0].label == "Manipulation Panel"
-        assert server.folders[0].kwargs == {"expand_by_default": True}
-        assert "status" in gui._handles
-        assert "robot" in gui._handles
-        assert "plan" in gui._handles
-        assert cast("Any", gui._operation_worker)._timeout_seconds is None
-    finally:
-        gui.close()
+    gui = make_panel(server, adapter, ViserVisualizationConfig())
+    assert server.folders
+    assert server.folders[0].label == "Manipulation Panel"
+    assert server.folders[0].kwargs == {"expand_by_default": True}
+    assert "status" in gui._handles
+    assert "robot" in gui._handles
+    assert "plan" in gui._handles
+    assert cast("Any", gui._operation_worker)._timeout_seconds is None
 
 
-def test_gui_scene_grid_checkbox_toggles_reference_grid() -> None:
+def test_gui_scene_grid_checkbox_toggles_reference_grid(make_panel: Any) -> None:
     grid_server = FakeGridServer()
     scene = ViserManipulationScene(
         grid_server, lambda *args, **kwargs: FakeUrdf(("joint1",)), preview_fps=10.0
     )
     server = FakeGuiServer()
     adapter = make_adapter_with_robot()
-    gui = ViserPanelGui(server, adapter, ViserVisualizationConfig(), scene=scene)
-    try:
-        gui.start()
-        assert grid_server.grids
-        assert server.checkboxes["Scene grid"].value is True
-        server.checkboxes["Scene grid"].update_callback(
-            SimpleNamespace(target=SimpleNamespace(value=False))
-        )
-        assert grid_server.grids[0].visible is False
-        server.checkboxes["Scene grid"].update_callback(
-            SimpleNamespace(target=SimpleNamespace(value=True))
-        )
-        assert grid_server.grids[0].visible is True
-    finally:
-        gui.close()
+    make_panel(server, adapter, ViserVisualizationConfig(), scene)
+    assert grid_server.grids
+    assert server.checkboxes["Scene grid"].value is True
+    server.checkboxes["Scene grid"].update_callback(
+        SimpleNamespace(target=SimpleNamespace(value=False))
+    )
+    assert grid_server.grids[0].visible is False
+    server.checkboxes["Scene grid"].update_callback(
+        SimpleNamespace(target=SimpleNamespace(value=True))
+    )
+    assert grid_server.grids[0].visible is True
 
 
 def test_dimos_theme_configures_supported_viser_chrome() -> None:
@@ -791,7 +808,7 @@ def test_scene_target_controls_update_target_ghost_pose_and_feasibility() -> Non
     assert handle.color == (255, 40, 40)
 
 
-def test_gui_initializes_pose_selector_to_current_ee_pose() -> None:
+def test_gui_initializes_pose_selector_to_current_ee_pose(make_panel: Any) -> None:
     current = FakeJointState(["j1"], position=[0.25])
     current_pose = SimpleNamespace(
         position=SimpleNamespace(x=0.1, y=0.2, z=0.3),
@@ -812,20 +829,16 @@ def test_gui_initializes_pose_selector_to_current_ee_pose() -> None:
     scene = ViserManipulationScene(
         FakeTransformServer(), lambda *args, **kwargs: FakeViserUrdfWithMeshes(), preview_fps=10.0
     )
-    gui = ViserPanelGui(
-        FakeGuiServer(), adapter, ViserVisualizationConfig(panel_enabled=True), scene
-    )
-    gui.start()
-    try:
-        control = scene._handles["robot-1:ee_control"]
-        assert control.position == (0.1, 0.2, 0.3)
-        assert control.wxyz == (0.9, 0.1, 0.2, 0.3)
-        assert gui.state.cartesian_target is current_pose
-    finally:
-        gui.close()
+    gui = make_panel(FakeGuiServer(), adapter, ViserVisualizationConfig(panel_enabled=True), scene)
+    control = scene._handles["robot-1:ee_control"]
+    assert control.position == (0.1, 0.2, 0.3)
+    assert control.wxyz == (0.9, 0.1, 0.2, 0.3)
+    assert gui.state.cartesian_target is current_pose
 
 
-def test_gui_preset_dropdown_and_controls_include_init_home_current_and_callbacks() -> None:
+def test_gui_preset_dropdown_and_controls_include_init_home_current_and_callbacks(
+    make_panel: Any,
+) -> None:
     current = FakeJointState(["arm/j1", "arm/j2"], position=[0.25, 0.5])
     config = make_robot_config(joint_names=["j1", "j2"], home_joints=[1.0, 2.0])
     module = SimpleNamespace(
@@ -843,22 +856,18 @@ def test_gui_preset_dropdown_and_controls_include_init_home_current_and_callback
     adapter = InProcessViserAdapter(
         world_monitor=cast("Any", world_monitor), manipulation_module=cast("Any", module)
     )
-    gui = ViserPanelGui(FakeGuiServer(), adapter, ViserVisualizationConfig(panel_enabled=True))
-    gui.start()
-    try:
-        assert gui._handles["preset"].options == ["Select preset...", "Init", "Current", "Home"]
-        assert list(gui._joint_sliders) == ["j1", "j2"]
-        gui._apply_preset("Home")
-        assert [gui._joint_sliders[name].value for name in ("j1", "j2")] == [1.0, 2.0]
-        gui._apply_preset("Current")
-        assert [gui._joint_sliders[name].value for name in ("j1", "j2")] == [0.25, 0.5]
-        gui._submit_execute()
-        assert gui.state.error == "Panel execution disabled; set allow_plan_execute=True to enable"
-    finally:
-        gui.close()
+    gui = make_panel(FakeGuiServer(), adapter)
+    assert gui._handles["preset"].options == ["Select preset...", "Init", "Current", "Home"]
+    assert list(gui._joint_sliders) == ["j1", "j2"]
+    gui._apply_preset("Home")
+    assert [gui._joint_sliders[name].value for name in ("j1", "j2")] == [1.0, 2.0]
+    gui._apply_preset("Current")
+    assert [gui._joint_sliders[name].value for name in ("j1", "j2")] == [0.25, 0.5]
+    gui._submit_execute()
+    assert gui.state.error == "Panel execution disabled; set allow_plan_execute=True to enable"
 
 
-def test_gui_rebuilding_joint_sliders_removes_stale_viser_handles() -> None:
+def test_gui_rebuilding_joint_sliders_removes_stale_viser_handles(make_panel: Any) -> None:
     current = FakeJointState(["j1", "j2"], position=[0.0, 0.0])
     config = make_robot_config(joint_names=["j1", "j2"], home_joints=[1.0, 2.0])
     module = SimpleNamespace(
@@ -874,22 +883,18 @@ def test_gui_rebuilding_joint_sliders_removes_stale_viser_handles() -> None:
         world_monitor=cast("Any", world_monitor), manipulation_module=cast("Any", module)
     )
     server = FakeGuiServer()
-    gui = ViserPanelGui(server, adapter, ViserVisualizationConfig(panel_enabled=True))
-    gui.start()
-    try:
-        stale_sliders = list(server.sliders)
-        assert [slider.value for slider in stale_sliders] == [0.0, 0.0]
+    gui = make_panel(server, adapter)
+    stale_sliders = list(server.sliders)
+    assert [slider.value for slider in stale_sliders] == [0.0, 0.0]
 
-        current.position = [-0.738, -0.2826151825863572]
-        gui._build_joint_sliders()
+    current.position = [-0.738, -0.2826151825863572]
+    gui._build_joint_sliders()
 
-        assert all(slider.removed is True for slider in stale_sliders)
-        assert [gui._joint_sliders[name].value for name in ("j1", "j2")] == [
-            -0.738,
-            -0.2826151825863572,
-        ]
-    finally:
-        gui.close()
+    assert all(slider.removed is True for slider in stale_sliders)
+    assert [gui._joint_sliders[name].value for name in ("j1", "j2")] == [
+        -0.738,
+        -0.2826151825863572,
+    ]
 
 
 def test_gui_parses_numpy_transform_control_arrays() -> None:
@@ -907,7 +912,9 @@ def test_gui_parses_numpy_transform_control_arrays() -> None:
     assert list(pose.orientation) == [0.1, 0.2, 0.3, 0.5]
 
 
-def test_panel_execution_is_gated_by_default_and_refresh_updates_robot_controls() -> None:
+def test_panel_execution_is_gated_by_default_and_refresh_updates_robot_controls(
+    make_panel: Any,
+) -> None:
     current = FakeJointState(["j1"], position=[1.2])
     config = make_robot_config(joint_names=["j1"], home_joints=[0.5])
     module = SimpleNamespace(
@@ -926,22 +933,20 @@ def test_panel_execution_is_gated_by_default_and_refresh_updates_robot_controls(
         world_monitor=cast("Any", world_monitor),
         manipulation_module=cast("Any", module),
     )
-    gui = ViserPanelGui(FakeGuiServer(), adapter, ViserVisualizationConfig(panel_enabled=True))
-    gui.start()
-    try:
-        gui.refresh()
-        assert gui.state.selected_robot == "arm"
-        assert list(gui._joint_sliders) == ["j1"]
-        gui._apply_preset("Home")
-        assert gui._joint_sliders["j1"].value == 0.5
+    gui = make_panel(FakeGuiServer(), adapter)
+    gui.refresh()
+    assert gui.state.selected_robot == "arm"
+    assert list(gui._joint_sliders) == ["j1"]
+    gui._apply_preset("Home")
+    assert gui._joint_sliders["j1"].value == 0.5
 
-        gui._submit_execute()
-        assert "Panel execution disabled" in gui.state.error
-    finally:
-        gui.close()
+    gui._submit_execute()
+    assert "Panel execution disabled" in gui.state.error
 
 
-def test_gui_moves_joint_target_immediately_and_stores_evaluated_joint_solution() -> None:
+def test_gui_moves_joint_target_immediately_and_stores_evaluated_joint_solution(
+    make_panel: Any,
+) -> None:
     current = FakeJointState(["j1", "j2"], position=[0.0, 0.0])
     target_pose = SimpleNamespace(position=SimpleNamespace(x=0.2, y=0.3, z=0.4))
     config = make_robot_config(joint_names=["j1", "j2"], home_joints=[0.5, 0.6])
@@ -966,56 +971,52 @@ def test_gui_moves_joint_target_immediately_and_stores_evaluated_joint_solution(
         set_target_pose=lambda *args: target_pose_updates.append(args),
         set_target_visual_state=lambda *args: None,
     )
-    gui = ViserPanelGui(
+    gui = make_panel(
         FakeGuiServer(), adapter, ViserVisualizationConfig(panel_enabled=True), cast("Any", scene)
     )
-    gui.start()
-    try:
-        requests = []
-        gui._worker.stop()
-        object.__setattr__(
-            gui,
-            "_worker",
-            SimpleNamespace(submit=lambda request: requests.append(request), stop=lambda: None),
-        )
-        gui._joint_sliders["j1"].value = 0.25
-        gui._joint_sliders["j2"].value = 0.75
-        gui._submit_joint_target_evaluation()
-        assert target_updates[-1] == ("robot-1", ["j1", "j2"], [0.25, 0.75])
-        assert target_pose_updates[-1] == ("robot-1", target_pose)
-        assert requests[-1].source == "joints"
+    requests = []
+    gui._worker.stop()
+    object.__setattr__(
+        gui,
+        "_worker",
+        SimpleNamespace(submit=lambda request: requests.append(request), stop=lambda: None),
+    )
+    gui._joint_sliders["j1"].value = 0.25
+    gui._joint_sliders["j2"].value = 0.75
+    gui._submit_joint_target_evaluation()
+    assert target_updates[-1] == ("robot-1", ["j1", "j2"], [0.25, 0.75])
+    assert target_pose_updates[-1] == ("robot-1", target_pose)
+    assert requests[-1].source == "joints"
 
-        stale_request = TargetEvaluationRequest(sequence_id=1, source="joints", robot_name="arm")
-        fresh_request = TargetEvaluationRequest(sequence_id=2, source="joints", robot_name="arm")
-        gui.state.latest_sequence_id = 2
-        gui._apply_target_evaluation_result(
-            stale_request,
-            {
-                "success": True,
-                "collision_free": True,
-                "joint_state": adapter.joints_from_values(["j1", "j2"], [9.0, 9.0]),
-            },
-        )
-        assert gui.state.joint_target == [0.25, 0.75]
+    stale_request = TargetEvaluationRequest(sequence_id=1, source="joints", robot_name="arm")
+    fresh_request = TargetEvaluationRequest(sequence_id=2, source="joints", robot_name="arm")
+    gui.state.latest_sequence_id = 2
+    gui._apply_target_evaluation_result(
+        stale_request,
+        {
+            "success": True,
+            "collision_free": True,
+            "joint_state": adapter.joints_from_values(["j1", "j2"], [9.0, 9.0]),
+        },
+    )
+    assert gui.state.joint_target == [0.25, 0.75]
 
-        gui._apply_target_evaluation_result(
-            fresh_request,
-            {
-                "success": True,
-                "collision_free": True,
-                "joint_state": adapter.joints_from_values(["j1", "j2"], [1.0, 2.0]),
-            },
-        )
-        assert gui.state.target_status == TargetStatus.FEASIBLE
-        assert gui.state.feasibility.status == FeasibilityStatus.FEASIBLE
-        assert gui.state.joint_target == [1.0, 2.0]
-        assert [gui._joint_sliders[name].value for name in ("j1", "j2")] == [0.25, 0.75]
-        assert target_updates[-1] == ("robot-1", ["j1", "j2"], [0.25, 0.75])
-    finally:
-        gui.close()
+    gui._apply_target_evaluation_result(
+        fresh_request,
+        {
+            "success": True,
+            "collision_free": True,
+            "joint_state": adapter.joints_from_values(["j1", "j2"], [1.0, 2.0]),
+        },
+    )
+    assert gui.state.target_status == TargetStatus.FEASIBLE
+    assert gui.state.feasibility.status == FeasibilityStatus.FEASIBLE
+    assert gui.state.joint_target == [1.0, 2.0]
+    assert [gui._joint_sliders[name].value for name in ("j1", "j2")] == [0.25, 0.75]
+    assert target_updates[-1] == ("robot-1", ["j1", "j2"], [0.25, 0.75])
 
 
-def test_gui_collision_evaluation_marks_target_infeasible_and_colors_scene() -> None:
+def test_gui_collision_evaluation_marks_target_infeasible_and_colors_scene(make_panel: Any) -> None:
     current = FakeJointState(["j1"], position=[0.0])
     config = make_robot_config(joint_names=["j1"], home_joints=[0.0])
     module = SimpleNamespace(
@@ -1040,27 +1041,25 @@ def test_gui_collision_evaluation_marks_target_infeasible_and_colors_scene() -> 
         set_target_pose=lambda *args: None,
         set_target_visual_state=lambda *args: visual_states.append(args),
     )
-    gui = ViserPanelGui(
+    gui = make_panel(
         FakeGuiServer(), adapter, ViserVisualizationConfig(panel_enabled=True), cast("Any", scene)
     )
-    gui.start()
-    try:
-        request = TargetEvaluationRequest(sequence_id=1, source="joints", robot_name="arm")
-        gui.state.latest_sequence_id = 1
-        result = adapter.evaluate_joint_target(FakeJointState(["j1"], position=[1.0]), "arm")
+    request = TargetEvaluationRequest(sequence_id=1, source="joints", robot_name="arm")
+    gui.state.latest_sequence_id = 1
+    result = adapter.evaluate_joint_target(FakeJointState(["j1"], position=[1.0]), "arm")
 
-        gui._apply_target_evaluation_result(request, result)
+    gui._apply_target_evaluation_result(request, result)
 
-        assert result["status"] == "COLLISION"
-        assert gui.state.target_status == TargetStatus.INFEASIBLE
-        assert gui.state.feasibility.status == FeasibilityStatus.COLLISION
-        assert gui.state.error == "Target is in collision"
-        assert visual_states[-1] == ("robot-1", False)
-    finally:
-        gui.close()
+    assert result["status"] == "COLLISION"
+    assert gui.state.target_status == TargetStatus.INFEASIBLE
+    assert gui.state.feasibility.status == FeasibilityStatus.COLLISION
+    assert gui.state.error == "Target is in collision"
+    assert visual_states[-1] == ("robot-1", False)
 
 
-def test_gui_safe_execute_requires_fresh_matching_plan_and_clear_resets_path() -> None:
+def test_gui_safe_execute_requires_fresh_matching_plan_and_clear_resets_path(
+    make_panel: Any,
+) -> None:
     current = FakeJointState(["j1"], position=[1.0])
     planned = [FakeJointState(["j1"], position=[1.0]), FakeJointState(["j1"], position=[2.0])]
     executed = []
@@ -1086,70 +1085,62 @@ def test_gui_safe_execute_requires_fresh_matching_plan_and_clear_resets_path() -
     adapter = InProcessViserAdapter(
         world_monitor=cast("Any", world_monitor), manipulation_module=cast("Any", module)
     )
-    gui = ViserPanelGui(
+    gui = make_panel(
         FakeGuiServer(),
         adapter,
         ViserVisualizationConfig(
             panel_enabled=True, allow_plan_execute=True, current_match_tolerance=0.05
         ),
     )
-    gui.start()
-    try:
-        gui.state.target_status = TargetStatus.FEASIBLE
-        gui.state.plan_state = PanelPlanState(
-            status=PlanStatus.FRESH,
-            robot="arm",
-            start_joints_snapshot=[1.2],
-            planned_path=cast("Any", planned),
-        )
-        gui._submit_execute()
-        assert executed == []
-        assert "Cannot execute" in gui.state.error
+    gui.state.target_status = TargetStatus.FEASIBLE
+    gui.state.plan_state = PanelPlanState(
+        status=PlanStatus.FRESH,
+        robot="arm",
+        start_joints_snapshot=[1.2],
+        planned_path=cast("Any", planned),
+    )
+    gui._submit_execute()
+    assert executed == []
+    assert "Cannot execute" in gui.state.error
 
-        gui.state.action_status = ActionStatus.IDLE
-        gui.state.error = ""
-        gui.state.plan_state.start_joints_snapshot = [1.0]
-        gui._submit_execute()
-        for _ in range(20):
-            if executed:
-                break
-            time.sleep(0.01)
-        assert executed == ["arm"]
+    gui.state.action_status = ActionStatus.IDLE
+    gui.state.error = ""
+    gui.state.plan_state.start_joints_snapshot = [1.0]
+    gui._submit_execute()
+    for _ in range(20):
+        if executed:
+            break
+        time.sleep(0.01)
+    assert executed == ["arm"]
 
-        gui._submit_clear()
-        for _ in range(20):
-            if cleared:
-                break
-            time.sleep(0.01)
-        assert cleared == [True]
-        assert gui.state.plan_state.status == PlanStatus.NONE
-    finally:
-        gui.close()
+    gui._submit_clear()
+    for _ in range(20):
+        if cleared:
+            break
+        time.sleep(0.01)
+    assert cleared == [True]
+    assert gui.state.plan_state.status == PlanStatus.NONE
 
 
-def test_gui_plan_target_failure_recovers_action_state() -> None:
+def test_gui_plan_target_failure_recovers_action_state(make_panel: Any) -> None:
     adapter = make_adapter_with_robot()
-    gui = ViserPanelGui(FakeGuiServer(), adapter, ViserVisualizationConfig(panel_enabled=True))
-    gui.start()
-    try:
-        gui._operation_worker.stop()
-        object.__setattr__(
-            gui,
-            "_operation_worker",
-            SimpleNamespace(submit=lambda operation: operation(), stop=lambda timeout=2.0: None),
-        )
-        gui.state.selected_robot = "missing"
-        gui.state.target_status = TargetStatus.FEASIBLE
-        gui.state.manipulation_state = "IDLE"
+    gui = make_panel(FakeGuiServer(), adapter)
+    gui._operation_worker.stop()
+    object.__setattr__(
+        gui,
+        "_operation_worker",
+        SimpleNamespace(submit=lambda operation: operation(), stop=lambda timeout=2.0: None),
+    )
+    gui.state.selected_robot = "missing"
+    gui.state.target_status = TargetStatus.FEASIBLE
+    gui.state.manipulation_state = "IDLE"
 
-        gui._submit_plan()
+    gui._submit_plan()
 
-        assert gui.state.action_status == ActionStatus.IDLE
-        assert gui.state.plan_state.status == PlanStatus.FAILED
-        assert gui.state.error == "No robot config"
-        assert gui.state.last_result == "plan_to_joints=False"
-    finally:
-        gui.close()
+    assert gui.state.action_status == ActionStatus.IDLE
+    assert gui.state.plan_state.status == PlanStatus.FAILED
+    assert gui.state.error == "No robot config"
+    assert gui.state.last_result == "plan_to_joints=False"
 
 
 def test_operation_worker_coalesces_pending_requests() -> None:
