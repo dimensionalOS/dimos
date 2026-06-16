@@ -25,6 +25,8 @@ export class AiAvatar {
     RAPIER,
     avatarUrl = "/avatars/kai.glb",
     headless = false,
+    radius = 0.12,
+    halfHeight = 0.25,
   }) {
     this.id = id || `ai-${Math.random().toString(36).slice(2, 8)}`;
     this.scene = scene;
@@ -33,9 +35,10 @@ export class AiAvatar {
     this.avatarUrl = avatarUrl;
     this.headless = headless;
 
-    // Match the smaller player capsule so the agent fits the same gaps.
-    this.radius = 0.12;
-    this.halfHeight = 0.25;
+    // Capsule dims from the embodiment, so the avatar's feet sit on the capsule
+    // bottom (default to the small player capsule when none is given).
+    this.radius = radius ?? 0.12;
+    this.halfHeight = halfHeight ?? 0.25;
 
     // Look pitch — engine.js reads this when capturing the agent's POV.
     this.pitch = 0;

@@ -13,7 +13,7 @@ cd misc/DimSim/cli
 deno run -A --unstable-net cli.ts dev --scene apartment
 ```
 
-Both end up with a Vite-built `dist/` and a bridge on port 8090. Same scenes, same browser. Difference is just who's driving the agent.
+Both end up with a Vite-built `dist/` and a bridge on port 8090. Same scenes, same browser. The difference is just who's driving the agent.
 
 If you install the CLI globally, replace the `deno run` boilerplate with `dimsim`:
 
@@ -27,7 +27,7 @@ deno install -gAf --unstable-net --name=dimsim --config=./deno.json ./cli.ts
 1. `dimsim dev --scene warehouse`
 2. Open `misc/DimSim/scenes/warehouse/index.js` in your editor.
 3. Change `setSky({ brightness: 0.7 })` to `setSky({ brightness: 1.5 })`. Save.
-4. The browser HMR-reloads — brighter sky.
+4. The browser HMR-reloads with a brighter sky.
 
 ## 60-second loop: write an eval
 
@@ -59,7 +59,7 @@ The browser shows a green/red overlay when it finishes, and the result echoes in
 src/        engine + scene API + bridge client (browser, vite-bundled)
 cli/        dimsim CLI + bridge server (Deno)
 evals/      eval harness + rubrics + Deno client (both runtimes)
-scenes/     YOUR scenes — author here
+scenes/     YOUR scenes (author here)
 public/     static assets (default robot GLB)
 docs/       guides
 ```
@@ -77,12 +77,23 @@ docs/       guides
 | Run all evals, JUnit XML | `dimsim eval --headless --output junit > junit.xml` |
 | Direct workflow execution | `deno run -A scenes/<env>/evals/<name>.js` |
 | Build the frontend manually | `cd misc/DimSim && npm run build` |
-| Spin up a profiler | `bash scripts/profile-live.sh` |
 | Verify cmd_vel → odom round-trip | `python cli/test/dimos_integration.py` |
 
-## Common gotchas
+## Troubleshooting
 
-- **Headless slow to boot on CI** — use `--render cpu` and bump `--timeout 120000`.
+- **Scene is blank / won't load.** A `build()` error is logged in the browser console
+  as `[dimos] Initialization failed: …`. Almost always it's calling a helper you didn't add
+  to the `build({ … })` parameter list. For example, using `setSky(...)` when `setSky` isn't in the
+  params throws `ReferenceError: setSky is not defined`. Add the missing name to the params.
+- **Edited engine code but nothing changed.** The CLI only auto-builds `dist/` when it's
+  missing, not when it's stale. After editing `src/` (engine, scene API), run
+  `cd misc/DimSim && npm run build`. Editing a scene (`scenes/*/index.js`) needs no
+  build. Scenes are served from source, so just hard-refresh.
+- **Embodiment or spawn-point change didn't take effect.** These apply once at scene boot,
+  not on a plain save. Hard-refresh the tab (`Cmd/Ctrl+Shift+R`) to re-boot the scene. If it
+  still looks stuck (stale embodiment, robot in the old spot), restart the bridge
+  (`dimsim dev --scene <name>`) for a clean reset.
+- **First launch is slow.** Vite builds `dist/` on first run (~20s); later runs reuse it.
+- **Headless slow to boot on CI.** Use `--render cpu` and bump `--timeout 120000`.
 - **`unitree-go2-basic` hides lidar in Rerun** by override. Click the eye icon in the Rerun entity tree, or use `unitree-go2-spatial` / `unitree-go2-agentic` which leave it visible.
 - **Click-to-nav** in Rerun only works on nav-enabled blueprints (`unitree-go2-agentic` and friends). `unitree-go2-basic` has no nav stack.
-- **First launch is slow** — Vite builds `dist/` on first run (~20s). Subsequent runs reuse it.

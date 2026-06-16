@@ -47,32 +47,41 @@ dimos --simulation dimsim --dimsim-scene=my-room run unitree-go2-basic
 
 ## Edit a scene
 
-Open the file, edit, save. The browser HMR-reloads — no full refresh.
+Open the file, edit, save. The browser HMR-reloads, no full refresh.
 
-The whole `build()` re-runs on every save, so iteration is cheap. Try changing `setSky({ brightness: 0.8 })` to `1.5` — the sky brightens within a second.
+The whole `build()` re-runs on every save, so iteration is cheap. Try changing `setSky({ brightness: 0.8 })` to `1.5`. The sky brightens within a second.
+
+## Scene won't load / blank?
+
+Open the browser console (DevTools). A `build()` error is logged as
+`[dimos] Initialization failed: …` and stops the scene from loading. The most common cause
+is calling a helper you didn't destructure in `build({ ... })`. For example, using `setSky(...)`
+when `setSky` isn't in the parameter list throws `ReferenceError: setSky is not defined`. Add
+the missing name to the `build({ ... })` list.
 
 ## The `api` argument
 
-`build(api)` gets one argument — destructure what you need:
+`build(api)` gets one argument. Destructure what you need:
 
 | Field | What |
 |---|---|
 | `scene` | The `THREE.Scene`. `scene.add(mesh)` anything you want rendered. |
 | `THREE` | The engine's THREE module. Use this rather than re-importing. |
 | `physics.staticCollider(mesh, shape)` | Make a mesh solid (agent can't walk through, lidar hits it). `shape`: `'box'` \| `'trimesh'` \| `'sphere'`. |
-| `physics.dynamicCollider(mesh, {mass, shape})` | Mesh becomes a rigid body — falls, can be pushed. Engine syncs `mesh.position` each frame. |
+| `physics.dynamicCollider(mesh, {mass, shape})` | Mesh becomes a rigid body that falls and can be pushed. Engine syncs `mesh.position` each frame. |
 | `setSky({...})` | Atmosphere. Keys: `topColor`, `horizonColor`, `bottomColor`, `brightness`, `softness`, `sunStrength`, `sunHeight`. |
-| `setEmbodiment({...})` | Declare the agent — avatar GLB + capsule dimensions + physics mode + control params. See "Robot embodiment" below. |
-| `loadGLTF(url)` | Async GLB load — `await loadGLTF('./forklift.glb')` returns `{scene, animations, …}`. |
-| `placeOnGround(x, z)` | Returns a floor-resting `{x, y, z}` spawn point — no Y guessing. See "Placing the robot". |
-| `placeInAir(x, z, altitude)` | Like `placeOnGround`, but `altitude` metres above the floor — for drones. |
+| `setEmbodiment({...})` | Declare the agent: avatar GLB, capsule dimensions, physics mode, and control params. See "Robot embodiment" below. |
+| `loadGLTF(url)` | Async GLB load. `await loadGLTF('./forklift.glb')` returns `{scene, animations, …}`. |
+| `placeOnGround(x, z)` | Returns a floor-resting `{x, y, z}` spawn point, no Y guessing. See "Placing the robot". |
+| `placeInAir(x, z, altitude)` | Like `placeOnGround`, but `altitude` metres above the floor, for drones. |
+| `findOpenSpawn(opts?)` | Auto-pick a collision-free spawn near `opts.near` (default origin), no coords to guess. Call after your colliders. See "Placing the robot". |
 | `clearDefaultLights()` | Drop the engine's default lighting (fill lamps + image-based light) so you can light the scene yourself. See "Lighting". |
 | `enableShadows()` | Turn real shadows on (off by default). See "Lighting". |
 | `agent`, `camera`, `renderer`, `RAPIER`, `rapierWorld` | Live engine refs if you need them. |
 
 ## Robot embodiment
 
-`setEmbodiment(config)` swaps the avatar mesh **and** reconfigures the bridge's server-side physics + lidar mount — so changing `embodimentType` from `'ground'` to `'drone'` instantly switches the cmd_vel → motion mapping from differential-drive (with gravity) to 6DoF flight (no gravity, altitude clamp).
+`setEmbodiment(config)` swaps the avatar mesh and reconfigures the bridge's server-side physics + lidar mount. Changing `embodimentType` from `'ground'` to `'drone'` instantly switches the cmd_vel → motion mapping from differential-drive (with gravity) to 6DoF flight (no gravity, altitude clamp).
 
 ```js
 // ground robot (default)
@@ -104,21 +113,21 @@ The motion model decides how `cmd_vel` becomes movement. Three ship today:
 
 | `motionModel` | Behaviour | Key params |
 |---|---|---|
-| `holonomic` (default) | ground robot — drives along heading, gravity | `maxSpeed`, `turnRate`, `gravity` |
-| `flight` | drone — 6DoF, no gravity, altitude clamp | `maxSpeed`, `maxAltitude` |
-| `ackermann` | car — steers, turn rate scales with speed | `maxSpeed`, `wheelBase`, `maxSteerAngle` |
+| `holonomic` (default) | ground robot: drives along heading, gravity | `maxSpeed`, `turnRate`, `gravity` |
+| `flight` | drone: 6DoF, no gravity, altitude clamp | `maxSpeed`, `maxAltitude` |
+| `ackermann` | car: steers, turn rate scales with speed | `maxSpeed`, `wheelBase`, `maxSteerAngle` |
 
 Other fields:
 
 | Field | What |
 |---|---|
 | `avatarUrl` | URL of the GLB to render. Bridge serves `/embodiment/*` from `public/`. Defaults to the robot dog. |
-| `embodimentType` | Browser visual: `'ground'` or `'drone'`. Legacy alias — maps to `holonomic`/`flight` if `motionModel` is omitted. |
+| `embodimentType` | Browser visual: `'ground'` or `'drone'`. Legacy alias that maps to `holonomic`/`flight` if `motionModel` is omitted. |
 | `radius`, `halfHeight` | Capsule collider dimensions. Also drive lidar mount height. |
 | `gravity` | m/s². `0` for flight, `-9.81` for ground. |
 | `lidarMountHeight`, `maxStepHeight`, `groundSnapDist`, `maxSlopeAngle`, `friction` | Optional fine-tuning. |
 
-Call it once at scene-build time (anywhere in `build()`), or again later to swap mid-scene. `scenes/warehouse/index.js` declares a drone on its first line. To add a brand-new motion model (legged, tank, boat), add one function to `MOTION_MODELS` in `cli/bridge/physics.ts`.
+Call it once at scene-build time (anywhere in `build()`), or again later to swap mid-scene. `scenes/warehouse/index.js` declares a drone on its first line. To add a new motion model (legged, tank, boat), add one function to `MOTION_MODELS` in `cli/bridge/physics.ts`.
 
 ## Return value
 
@@ -132,7 +141,7 @@ If omitted, the agent spawns at `(2, 0.5, 3)`.
 
 ## Placing the robot
 
-`spawnPoint` is in Three.js world coords (Y-up) — the same coords you place meshes at.
+`spawnPoint` is in Three.js world coords (Y-up), the same coords you place meshes at.
 
 Pick `x, z`, and let `placeOnGround` resolve the height:
 
@@ -146,13 +155,24 @@ Drone? Spawn it in the air instead:
 return { spawnPoint: placeInAir(2, -5, 5) };   // hover 5 m above the floor
 ```
 
+Don't want to pick coords at all? `findOpenSpawn()` searches outward from a point
+and returns the nearest spot that's on the floor and clear of walls/props. Call
+it after your colliders:
+
+```js
+return { spawnPoint: findOpenSpawn() };               // nearest clear spot to the origin
+return { spawnPoint: findOpenSpawn({ near: { x: 5, z: -8 } }) };   // near a point you prefer
+return { spawnPoint: findOpenSpawn({ altitude: 5 }) };            // drone: clear column, hover 5 m up
+```
+
 > `placeOnGround` / `placeInAir` use the lowest surface under `x, z` as the floor.
 > For a multi-story building, pass `{ fromY }` (a Y just above the floor you want).
-> To pick a clear `x, z`, drop a marker mesh there, reload, and see where it lands.
+> `findOpenSpawn` needs the colliders to exist, so call it in the `return`, after
+> your `physics.staticCollider(...)` calls.
 
 ## Common patterns
 
-**Loops for repeated geometry.** The whole module re-runs on each save, so a loop that spawns 50 crates is fine.
+Loops for repeated geometry. The whole module re-runs on each save, so a loop that spawns 50 crates is fine.
 
 ```js
 const crateGeo = new THREE.BoxGeometry(1, 1, 1);
@@ -165,7 +185,7 @@ for (let i = 0; i < 8; i++) {
 }
 ```
 
-**GLB props.** Drop a GLB next to `index.js`, then:
+GLB props. Drop a GLB next to `index.js`, then:
 
 ```js
 const gltf = await loadGLTF('./forklift.glb');
@@ -177,12 +197,12 @@ physics.staticCollider(forklift, 'trimesh');
 
 ## Lighting
 
-The engine lights every scene by default — fill lamps **plus** an image-based light
+The engine lights every scene by default: fill lamps plus an image-based light
 (a soft environment that lights everything from all directions). Most scenes need no
-lights of their own; just `setSky(...)`.
+lights of their own, just `setSky(...)`.
 
-To light a scene yourself, call `clearDefaultLights()` first — it drops both default
-sources so you start from black — then add your own:
+To light a scene yourself, call `clearDefaultLights()` first. It drops both default
+sources so you start from black. Then add your own:
 
 ```js
 clearDefaultLights();      // removes the fill lamps + the image-based light
@@ -192,7 +212,7 @@ sun.position.set(10, 20, 10);
 scene.add(sun);
 ```
 
-> Skip `clearDefaultLights()` and your lights stack on the defaults — the scene washes
+> Skip `clearDefaultLights()` and your lights stack on the defaults, washing the scene
 > out to white. The image-based light is the main culprit, which is why this removes it too.
 
 ## Shadows
@@ -209,7 +229,7 @@ Leave `PointLight.castShadow = false` to save frame rate.
 
 ## Materials
 
-`MeshPhysicalMaterial` supports clearcoat, sheen, transmission, and iridescence — use it for anything you care about visually.
+`MeshPhysicalMaterial` supports clearcoat, sheen, transmission, and iridescence. Use it for anything you care about visually.
 
 ## Always pair `scene.add(mesh)` with a collider
 

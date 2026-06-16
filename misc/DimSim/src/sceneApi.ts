@@ -132,8 +132,9 @@ export function setEmbodiment(config: Record<string, any>): void {
 
 /** engine.js calls this right after `window.__dimosBridge = bridge`. */
 export function _flushPendingEmbodiment(): void {
-  if (!_pendingEmbodiment) return;
-  const cfg = _pendingEmbodiment;
+  // Always declare an embodiment per load (the scene's, else default ground), so a
+  // scene without setEmbodiment doesn't inherit the bridge's last one (e.g. a drone).
+  const cfg = _pendingEmbodiment ?? { embodimentType: "ground", motionModel: "holonomic" };
   _pendingEmbodiment = null;
   setEmbodiment(cfg);
 }
@@ -461,30 +462,8 @@ export function autoScale(obj: any, targetMaxDim = 50): number {
   return scaleFactor;
 }
 
-// ── Lighting & shadows ───────────────────────────────────────────────────────
-//
-// The engine boots a full "studio" environment so GLB assets are never black
-// and eval frames stay deterministic: three fill lights (ambient + hemisphere +
-// directional), a RoomEnvironment IBL, ACES tone-mapping, and shadows globally
-// OFF (renderer.shadowMap.enabled = false, autoUpdate = false).
-//
-// That means a scene starts *fully lit*, not from black — so author lighting is
-// additive and easily blows out, and `mesh.castShadow = true` is a no-op until
-// the renderer's shadow map is switched on.  These two helpers let a scene take
-// over lighting and turn real shadows on without reaching into engine internals.
-
-/**
- * Hand lighting control to the scene.  Removes BOTH default light sources:
- *   - the 3 engine fill lamps (ambient + hemisphere + directional), and
- *   - the image-based light (`scene.environment` — the RoomEnvironment that
- *     softly lights everything from all directions).
- *
- * The IBL is the big one: it's the omnidirectional fill that washes scenes out
- * when you stack your own lights on top.  After this the scene is dark until you
- * add your own lights.  (ACES tone-mapping stays — lower
- * `renderer.toneMappingExposure` if you want it darker still.)  Returns the
- * number of lamps removed.
- */
+// Remove the engine's default lamps + image-based light so the scene lights
+// itself. Returns the number of lamps removed.
 export function clearDefaultLights(): number {
   if (!scene) throw new Error("scene-api not initialized");
   const doomed: any[] = [];
@@ -499,25 +478,15 @@ export function clearDefaultLights(): number {
   return doomed.length;
 }
 
-/**
- * Turn real shadows on.  Flips the renderer's shadow map on and keeps it
- * updating every frame (so the moving agent's shadow tracks).  After calling
- * this, set `castShadow = true` on your lights and meshes that should cast, and
- * `receiveShadow = true` on the floor.  Opt-in per scene; off by default for
- * determinism.
- */
+// Turn shadows on. Then set castShadow on lights/meshes and receiveShadow on surfaces.
 export function enableShadows(): void {
   if (!renderer) throw new Error("scene-api not initialized");
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.autoUpdate = true; // moving agent → shadow must re-render
-  // Mark as force-enabled so the engine's syncShadowMapEnabled() (which only
-  // counts editor-panel lights) doesn't clobber this back to false.
-  renderer.shadowMap.__dimsimForced = true;
+  renderer.shadowMap.autoUpdate = true;
+  renderer.shadowMap.__dimsimForced = true; // stop syncShadowMapEnabled() clobbering it
 }
 
-// Raycast down at (x, z) and return the *lowest* surface Y (the floor), or null
-// if nothing is hit.  Lowest, not first, so a ceiling/roof/tabletop above the
-// floor doesn't win — see placeOnGround's doc for the reasoning and limits.
+// Lowest surface Y under (x, z), or null. Lowest so a ceiling/roof above the floor doesn't win.
 function _floorYAt(x: number, z: number, fromY: number): number | null {
   if (!scene || !THREE) throw new Error("scene-api not initialized");
   scene.updateMatrixWorld(true);
@@ -532,9 +501,7 @@ function _floorYAt(x: number, z: number, fromY: number): number | null {
   return hits.reduce((lo: number, h: any) => Math.min(lo, h.point.y), Infinity);
 }
 
-// Capsule half-extent (centre → foot) of the declared embodiment, so spawn
-// helpers auto-fit whatever robot/vehicle the scene set via setEmbodiment().
-// Falls back to the default ground-robot capsule when none is declared.
+// Capsule centre→foot offset, from the declared embodiment (else default capsule).
 function _capsuleOffset(opts: { halfHeight?: number; radius?: number }): number {
   const emb = _pendingEmbodiment ?? {};
   const halfHeight = opts.halfHeight ?? emb.halfHeight ?? 0.25;
@@ -542,25 +509,8 @@ function _capsuleOffset(opts: { halfHeight?: number; radius?: number }): number 
   return halfHeight + radius;
 }
 
-/**
- * Resolve a spawn point that sits on the floor at world (x, z).  Raycasts
- * straight down and returns `{ x, y, z }` ready to use as the `spawnPoint`
- * return value — no Y guessing.  `y` is the floor plus the agent's capsule
- * offset so it rests on the surface.  The capsule size comes from the
- * embodiment declared with `setEmbodiment(...)` (so a wide ground vehicle fits
- * automatically); override with `opts.halfHeight` / `opts.radius`.
- *
- * There is no fully general "where's the floor" — it's a guess.  This takes the
- * **lowest** surface under (x, z), which is the floor for open maps and for
- * enclosed maps with a ceiling/roof (a from-the-top raycast would wrongly land
- * on the roof).  The case it can't resolve is **multi-story** — it'd pick the
- * ground floor; pass `fromY` (a Y just above the target floor) to scope the ray
- * to one story.  It also can't tell if (x, z) is *inside* a wall — drop a debug
- * marker mesh at the spot to eye-check that.
- *
- * If nothing is hit it warns and falls back to `opts.fallbackY` (default 0.5) —
- * that warning is your signal the robot would spawn over a hole.
- */
+// Spawn point on the floor at (x, z); y = floor + capsule offset. Pass { fromY }
+// for multi-story. Warns and uses { fallbackY } (default 0.5) if there's no floor.
 export function placeOnGround(
   x: number,
   z: number,
@@ -577,15 +527,7 @@ export function placeOnGround(
   return { x, y: floorY + _capsuleOffset(opts), z };
 }
 
-/**
- * Resolve an *airborne* spawn point — for drones / aerial embodiments that
- * hover instead of resting on the floor.  Returns `{ x, y, z }` at `altitude`
- * metres above the floor under (x, z), so the drone clears the ground no matter
- * the terrain height.  Same lowest-surface floor logic (and limits) as
- * `placeOnGround`; if there's no floor it measures altitude from y=0 and warns.
- *
- *   return { spawnPoint: placeInAir(0, 0, 5) };   // hover 5 m up
- */
+// Airborne spawn point: altitude metres above the floor at (x, z), for drones.
 export function placeInAir(
   x: number,
   z: number,
@@ -600,4 +542,70 @@ export function placeInAir(
     return { x, y: altitude, z };
   }
   return { x, y: floorY + altitude, z };
+}
+
+// Auto-pick a collision-free spawn: spiral outward from opts.near (default origin),
+// return the nearest spot with floor under it and no collider overlapping the capsule.
+// Call after colliders exist. opts: near, altitude (drone hover), maxRadius (40),
+// margin (0.1), radius/halfHeight (default embodiment), step, fromY, maxSamples (800).
+export function findOpenSpawn(
+  opts: {
+    near?: { x: number; z: number };
+    altitude?: number;
+    maxRadius?: number; step?: number; margin?: number; maxSamples?: number;
+    halfHeight?: number; radius?: number; fromY?: number;
+  } = {},
+): { x: number; y: number; z: number } {
+  if (!scene || !THREE || !RAPIER || !rapierWorld) throw new Error("scene-api not initialized");
+  scene.updateMatrixWorld(true);
+
+  // index colliders into the query pipeline (safe outside the step loop)
+  try { rapierWorld.queryPipeline?.update?.(rapierWorld.colliders); } catch { /* stepped elsewhere */ }
+
+  const near = opts.near ?? { x: 0, z: 0 };
+  if (!Number.isFinite(near.x) || !Number.isFinite(near.z)) {
+    throw new Error(`findOpenSpawn: near must be { x, z } with finite numbers, got ${JSON.stringify(opts.near)} (did you write y instead of z?)`);
+  }
+  const emb = _pendingEmbodiment ?? {};
+  const halfHeight = opts.halfHeight ?? emb.halfHeight ?? 0.25;
+  const radius = opts.radius ?? emb.radius ?? 0.12;
+  const margin = opts.margin ?? 0.1;
+  const offset = halfHeight + radius;
+  const altitude = opts.altitude; // set => hover this high (drones)
+  const fromY = opts.fromY ?? 1000;
+  const maxRadius = opts.maxRadius ?? 40;
+  const step = opts.step ?? Math.max(0.5, radius + margin);
+  const maxSamples = opts.maxSamples ?? 800; // each sample is a raycast; bound the work
+
+  const shape = new RAPIER.Ball(radius + margin);
+  const rot = { x: 0, y: 0, z: 0, w: 1 };
+
+  const clearAt = (x: number, z: number): { x: number; y: number; z: number } | null => {
+    const floorY = _floorYAt(x, z, fromY);
+    if (floorY == null) return null;                 // no ground here
+    const y = floorY + (altitude != null ? altitude : offset);
+    const hit = rapierWorld.queryPipeline.intersectionWithShape(
+      rapierWorld.bodies, rapierWorld.colliders,
+      { x, y, z }, rot, shape, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+    );
+    return hit == null ? { x, y, z } : null;
+  };
+
+  // spiral outward from near; first clear + grounded hit wins. Bounded by
+  // maxSamples (each sample is a raycast) so a closed-in `near` can't hang.
+  let tried = 0;
+  const c0 = clearAt(near.x, near.z); tried++;
+  if (c0) return c0;
+  for (let r = step; r <= maxRadius && tried < maxSamples; r += step) {
+    const n = Math.min(48, Math.max(8, Math.ceil((2 * Math.PI * r) / step)));
+    for (let k = 0; k < n && tried < maxSamples; k++) {
+      const a = (2 * Math.PI * k) / n;
+      const c = clearAt(near.x + r * Math.cos(a), near.z + r * Math.sin(a)); tried++;
+      if (c) return c;
+    }
+  }
+
+  console.warn(`[findOpenSpawn] no clear spot in ${tried} samples within ${maxRadius} m of (${near.x}, ${near.z}) — using near.`);
+  const cy = _floorYAt(near.x, near.z, fromY);
+  return { x: near.x, y: (cy ?? 0) + (altitude != null ? altitude : offset), z: near.z };
 }
