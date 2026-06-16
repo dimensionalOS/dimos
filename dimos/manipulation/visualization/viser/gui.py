@@ -34,6 +34,9 @@ from dimos.manipulation.visualization.viser.state import (
 )
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 # Fallback joint-slider range (radians) when a robot config omits joint limits.
 DEFAULT_JOINT_LIMITS = (-3.14, 3.14)
@@ -292,7 +295,7 @@ class ViserPanelGui:
             try:
                 cast("_DisabledHandle", handle).disabled = disabled
             except Exception:
-                pass
+                logger.warning("Could not set button '%s' disabled state", label, exc_info=True)
         return handle
 
     def _refresh_selected_robot_state(self) -> None:
@@ -396,12 +399,12 @@ class ViserPanelGui:
                     else:
                         cast("_OptionHandle", handle).values = options
                 except Exception:
-                    pass
+                    logger.warning("Could not set robot dropdown %s", attr, exc_info=True)
         if hasattr(handle, "value") and self.state.selected_robot in robots:
             try:
                 cast("_ValueHandle", handle).value = self.state.selected_robot
             except Exception:
-                pass
+                logger.warning("Could not set robot dropdown value", exc_info=True)
 
     def _sync_preset_dropdown(self) -> None:
         handle = self._handles.get("preset")
@@ -427,7 +430,7 @@ class ViserPanelGui:
                     else:
                         cast("_OptionHandle", handle).values = options
                 except Exception:
-                    pass
+                    logger.warning("Could not set preset dropdown %s", attr, exc_info=True)
 
     def _apply_preset(self, preset: str) -> None:
         robot_name = self.state.selected_robot

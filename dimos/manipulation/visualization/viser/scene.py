@@ -22,6 +22,9 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.manipulation.visualization.viser.animation import PreviewAnimator
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 GOAL_ROBOT_FEASIBLE_COLOR = (255, 122, 0)
 GOAL_ROBOT_INFEASIBLE_COLOR = (255, 30, 30)
@@ -197,6 +200,7 @@ class ViserManipulationScene:
                 visible=self._grid_visible,
             )
         except Exception:
+            logger.warning("Could not add Viser reference grid", exc_info=True)
             self._grid_handle = None
 
     def ensure_target_controls(
@@ -334,7 +338,7 @@ class ViserManipulationScene:
                         else:
                             cast("_MaterialColorHandle", handle).material_color = color
                     except Exception:
-                        pass
+                        logger.warning("Could not set Viser handle %s", attr, exc_info=True)
 
     def close(self) -> None:
         for key in list(self._handles):
@@ -445,7 +449,7 @@ class ViserManipulationScene:
                 try:
                     cast("_VisibleHandle", candidate).visible = visible
                 except Exception:
-                    pass
+                    logger.warning("Could not set Viser handle visibility", exc_info=True)
 
     def _set_urdf_mesh_material(
         self, urdf: object | None, color: tuple[int, int, int], opacity: float
@@ -461,12 +465,12 @@ class ViserManipulationScene:
                         else:
                             cast("_MaterialColorHandle", mesh).material_color = color
                     except Exception:
-                        pass
+                        logger.warning("Could not set Viser mesh %s", attr, exc_info=True)
             if hasattr(mesh, "opacity"):
                 try:
                     cast("_OpacityHandle", mesh).opacity = opacity
                 except Exception:
-                    pass
+                    logger.warning("Could not set Viser mesh opacity", exc_info=True)
 
     def _meshes(self, handle: object) -> Sequence[object]:
         try:
