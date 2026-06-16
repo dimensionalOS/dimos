@@ -1,5 +1,10 @@
 # PimSim & G1 Reachability — System Spec
 
+> **Canonical usage doc: [`README.md`](README.md); API in code:
+> [`spec/protocols.py`](spec/protocols.py) + [`api.py`](api.py).** This file is
+> the G1-reachability deliverable spec — a separate track that consumes PimSim's
+> scene/world contracts.
+
 Status: draft for review (answers the "how does this fit the larger system"
 question on #2479). Author: Pim.
 

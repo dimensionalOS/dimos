@@ -75,12 +75,15 @@
     if (id === "toggleDrive" && driveStateLabel) {
       driveStateLabel.textContent = active ? "Enabled" : "Disabled";
     }
-    if ((id === "navClick" || id === "pointClick" || id === "spawnClick") && clickModeLabel) {
+    if (
+      (id === "navClick" || id === "pointClick" || id === "graspClick" || id === "spawnClick") &&
+      clickModeLabel
+    ) {
       if (active) {
         clickModeLabel.textContent = button.textContent.trim();
         return;
       }
-      const anyActive = ["navClick", "pointClick", "spawnClick"].some(
+      const anyActive = ["navClick", "pointClick", "graspClick", "spawnClick"].some(
         (buttonId) => document.getElementById(buttonId)?.dataset.active === "true",
       );
       if (!anyActive) clickModeLabel.textContent = "None";

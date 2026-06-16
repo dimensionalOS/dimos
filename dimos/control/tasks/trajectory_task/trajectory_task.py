@@ -46,10 +46,18 @@ class JointTrajectoryTaskConfig:
     Attributes:
         joint_names: List of joint names this task controls
         priority: Priority for arbitration (higher wins)
+        hold_on_complete: When True, the task stays active after a trajectory
+            COMPLETED, holding the final waypoint indefinitely (until reset(),
+            a new execute(), or preemption). When False (default), the task
+            goes inactive on completion and a lower-priority holder reclaims
+            the joints — e.g. a servo task snapping back to its default pose.
+            Set True for "reach and stay there" arms; leave False where a
+            holder is expected to take over.
     """
 
     joint_names: list[str]
     priority: int = 10
+    hold_on_complete: bool = False
 
 
 class JointTrajectoryTask(BaseControlTask):
@@ -88,6 +96,7 @@ class JointTrajectoryTask(BaseControlTask):
             raise ValueError(f"JointTrajectoryTask '{name}' requires at least one joint")
         self._name = name
         self._config = config
+        self._hold_on_complete = config.hold_on_complete
         self._joint_names = frozenset(config.joint_names)
         self._joint_names_list = list(config.joint_names)
 
@@ -113,8 +122,17 @@ class JointTrajectoryTask(BaseControlTask):
         )
 
     def is_active(self) -> bool:
-        """Check if task should run this tick."""
-        return self._state == TrajectoryState.EXECUTING
+        """Check if task should run this tick.
+
+        Active while EXECUTING, and — when ``hold_on_complete`` is set — also
+        while COMPLETED, so the final waypoint keeps being commanded instead of
+        a lower-priority holder reclaiming the joints.
+        """
+        if self._state == TrajectoryState.EXECUTING:
+            return True
+        if self._hold_on_complete and self._state == TrajectoryState.COMPLETED:
+            return self._trajectory is not None
+        return False
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         """Compute trajectory output for this tick.
@@ -137,11 +155,16 @@ class JointTrajectoryTask(BaseControlTask):
 
         t_elapsed = state.t_now - self._start_time
 
-        # Check completion - clamp to final position to ensure we reach goal
+        # Check completion - clamp to final position to ensure we reach goal.
+        # Log only on the EXECUTING->COMPLETED transition: with
+        # hold_on_complete this branch is re-entered every tick while holding,
+        # so an unguarded log would spam at the tick rate.
         if t_elapsed >= self._trajectory.duration:
-            self._state = TrajectoryState.COMPLETED
-            logger.info(f"Trajectory {self._name} completed after {t_elapsed:.3f}s")
-            # Return final position to hold at goal
+            if self._state == TrajectoryState.EXECUTING:
+                self._state = TrajectoryState.COMPLETED
+                logger.info(f"Trajectory {self._name} completed after {t_elapsed:.3f}s")
+            # Return final position to hold at goal (once normally; every tick
+            # while hold_on_complete keeps the task active).
             q_ref, _ = self._trajectory.sample(self._trajectory.duration)
             return JointCommandOutput(
                 joint_names=self._joint_names_list,
@@ -263,5 +286,6 @@ def create_task(cfg: Any, hardware: Any) -> JointTrajectoryTask:
         JointTrajectoryTaskConfig(
             joint_names=cfg.joint_names,
             priority=cfg.priority,
+            hold_on_complete=bool(cfg.params.get("hold_on_complete", False)),
         ),
     )

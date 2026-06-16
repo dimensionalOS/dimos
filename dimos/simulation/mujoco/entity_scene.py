@@ -26,7 +26,7 @@ freejoint (robot can push/grasp them); anything else is welded static.
 Collision: primitive shapes (box/sphere/cylinder) use the descriptor
 extents; mesh entities load the CoACD hulls cooked into the package
 (``collision_paths`` in ``scene.meta.json``, written by
-``dimos.simulation.scene_assets.entity_collision``). There is no
+``dimos.experimental.pimsim.scene.entity_collision``). There is no
 runtime decomposition — a mesh entity without cooked hulls falls back
 to its AABB box with a warning to re-cook the package.
 
@@ -227,7 +227,7 @@ def add_entities_to_spec(
         if shape == "mesh" and not hull_paths and "collision_paths" not in entity:
             logger.warning(
                 "entity %s: mesh entity has no cooked collision hulls; using AABB box "
-                "(re-cook the scene package with dimos.simulation.scene_assets.cook)",
+                "(re-cook the scene package with dimos.experimental.pimsim.scene.cook)",
                 entity_id,
             )
         if hull_paths:

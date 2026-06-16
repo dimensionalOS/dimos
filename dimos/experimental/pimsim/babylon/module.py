@@ -39,11 +39,22 @@ import uvicorn
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.experimental.pimsim.browser import STATIC_DIR, index_html
-from dimos.experimental.pimsim.config import (
+from dimos.experimental.pimsim.babylon.browser import STATIC_DIR, index_html
+from dimos.experimental.pimsim.babylon.config import (
     CoordinatorControlSpec,
     HumanoidControlSpec,
     MujocoRespawnSpec,
+)
+from dimos.experimental.pimsim.babylon.geometry import (
+    compose_scene_mesh_wxyz,
+    dimos_joint_to_mjcf,
+    media_type,
+    path_contains,
+)
+from dimos.experimental.pimsim.babylon.robot_meshes import (
+    RobotMeshes,
+    apply_state,
+    load_robot_meshes,
 )
 from dimos.experimental.pimsim.entity import (
     EntityDescriptor,
@@ -52,17 +63,6 @@ from dimos.experimental.pimsim.entity import (
     pose_from_wire,
     pose_to_wire,
     twist_to_wire,
-)
-from dimos.experimental.pimsim.geometry import (
-    compose_scene_mesh_wxyz,
-    dimos_joint_to_mjcf,
-    media_type,
-    path_contains,
-)
-from dimos.experimental.pimsim.robot_meshes import (
-    RobotMeshes,
-    apply_state,
-    load_robot_meshes,
 )
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -799,6 +799,9 @@ class BabylonSceneViewerModule(Module):
         if message_type == "entity_test_add":
             self._handle_entity_test_add(message.get("point") or [0.0, 0.0, 2.0])
             return
+        if message_type == "entity_spawn":
+            self._handle_entity_spawn(message)
+            return
         if message_type == "entity_add_wall":
             self._handle_entity_add_wall(message)
             return
@@ -1028,6 +1031,26 @@ class BabylonSceneViewerModule(Module):
             mass=8.0,
         )
         pose = Pose(x, y, z)
+        self.spawn_entity(descriptor, pose)
+
+    def _handle_entity_spawn(self, message: dict[str, Any]) -> None:
+        """Spawn an arbitrary entity from a wire descriptor + pose.
+
+        The generic WS counterpart to the ``spawn_entity`` ``@rpc`` — this is
+        what ``PimSim.add_object`` (the usage API) sends, so a script can drop
+        any mesh/primitive into the scene the same way on any backend.
+        """
+        raw_desc = message.get("descriptor")
+        raw_pose = message.get("pose")
+        if not isinstance(raw_desc, dict) or not isinstance(raw_pose, dict):
+            logger.warning("BabylonViewer: entity_spawn ignored: missing descriptor/pose")
+            return
+        try:
+            descriptor = EntityDescriptor.from_wire(raw_desc)
+            pose = pose_from_wire(raw_pose)
+        except (KeyError, TypeError, ValueError) as e:
+            logger.warning("BabylonViewer: entity_spawn ignored: bad payload: %s", e)
+            return
         self.spawn_entity(descriptor, pose)
 
     def _handle_entity_add_wall(self, message: dict[str, Any]) -> None:

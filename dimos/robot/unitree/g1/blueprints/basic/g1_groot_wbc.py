@@ -62,6 +62,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.catalog.g1 import g1_left_arm, g1_right_arm
 from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 from dimos.teleop.quest.quest_types import Buttons
 from dimos.utils.data import LfsPath
@@ -103,7 +104,7 @@ _RAYTRACE_EXECUTABLE_PATH = (
     _REPO_ROOT / "dimos/mapping/ray_tracing/rust/target/release/voxel_ray_tracing"
 )
 _SCENE_LIDAR_EXECUTABLE_PATH = (
-    _REPO_ROOT / "dimos/simulation/sensors/rust/scene_lidar/target/release/scene_lidar"
+    _REPO_ROOT / "dimos/experimental/pimsim/sensors/rust/scene_lidar/target/release/scene_lidar"
 )
 
 
@@ -160,6 +161,37 @@ def _mink_arms_config() -> TaskConfig | None:
             "synced_joints": g1_legs_waist,
         },
     )
+
+
+def _arm_trajectory_configs() -> list[TaskConfig]:
+    """Per-arm trajectory tasks so a manipulation planner can drive the arms.
+
+    A ``ManipulationModule`` executes a planned arm motion by invoking the
+    coordinator task named ``traj_<arm>`` (``move_to_pose`` / ``point_at`` /
+    ``grasp_object`` all route here). The bare WBC sim has no such task, so
+    those calls silently no-op — these add them.
+
+    Priority 30 sits above the servo holder (``servo_arms``, 10) and the mink
+    IK task (``mink_arms``, 20) so an executing plan wins the arm joints, and
+    below the WBC (``groot_wbc``, 50) which only claims legs+waist and never
+    contends for the arms. Each task is inert (``is_active() == False``) until a
+    trajectory is loaded, so the bare sim is unchanged. ``hold_on_complete``
+    keeps the arm at the planned goal afterwards instead of the servo holder
+    snapping it back to ``ARM_DEFAULT_POSE``.
+
+    Built from the same catalog entries the manipulation planner registers, so
+    task name and joint names are guaranteed to agree.
+    """
+    return [
+        TaskConfig(
+            name=entry.task_config.name,
+            type="trajectory",
+            joint_names=entry.task_config.joint_names,
+            priority=30,
+            params={"hold_on_complete": True},
+        )
+        for entry in (g1_left_arm(), g1_right_arm())
+    ]
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -357,6 +389,7 @@ def _coordinator_blueprint(selection: _BackendSelection) -> tuple[Blueprint, str
         ),
         *([selection.arm_holder] if selection.arm_holder is not None else []),
         *([mink_arms] if (mink_arms := _mink_arms_config()) is not None else []),
+        *_arm_trajectory_configs(),
     ]
 
     coordinator = ControlCoordinator.blueprint(
@@ -439,7 +472,7 @@ def _sim_support_blueprints() -> tuple[Blueprint, ...]:
 
     lidar_stack: tuple[Blueprint, ...] = ()
     if native_scene_lidar_enabled:
-        from dimos.simulation.sensors.scene_lidar import SceneLidarModule
+        from dimos.experimental.pimsim.sensors.scene_lidar import SceneLidarModule
 
         assert scene_package is not None
         lidar_stack = (
@@ -554,7 +587,7 @@ def _babylon_blueprint(viewer_mjcf_path: str | Path, cmd_vel_topic: str) -> Blue
     if not _babylon_enabled():
         return None
 
-    from dimos.experimental.pimsim.module import BabylonSceneViewerModule
+    from dimos.experimental.pimsim.babylon.module import BabylonSceneViewerModule
     from dimos.simulation.mujoco.model import get_assets
 
     kwargs: dict[str, Any] = dict(
@@ -750,7 +783,7 @@ def _splat_camera_blueprint() -> Blueprint | None:
     Off by default; opt-in with ``DIMOS_ENABLE_SPLAT_CAMERA=1``. Only fires
     when the active scene package has ``splat/scene.ply`` next to its
     metadata (e.g. ``--scene office-splat``). The macOS MLX backend lives
-    in ``dimos/visualization/viser/splat_camera.py``.
+    in ``dimos/experimental/pimsim/splat_camera.py``.
     """
     if not _env_bool("DIMOS_ENABLE_SPLAT_CAMERA", False):
         return None
@@ -759,8 +792,8 @@ def _splat_camera_blueprint() -> Blueprint | None:
         return None
     splat_ply, runtime_alignment_yaml = assets
 
+    from dimos.experimental.pimsim.sensors.splat_camera import SplatCameraModule
     from dimos.visualization.viser.camera import g1_d435_default, g1_d435_forward
-    from dimos.visualization.viser.splat_camera import SplatCameraModule
 
     # Use the C++ Metal kernel by default (~2x perf, monkey-patched to drop
     # training-divergence fog blobs that otherwise blur the foreground).
@@ -812,8 +845,8 @@ def _splat_workspace_camera_blueprint() -> Blueprint | None:
         return None
     splat_ply, runtime_alignment_yaml = assets
 
+    from dimos.experimental.pimsim.sensors.splat_camera import WorkspaceSplatCameraModule
     from dimos.visualization.viser.camera import g1_d435_default
-    from dimos.visualization.viser.splat_camera import WorkspaceSplatCameraModule
 
     os.environ.setdefault("DIMOS_MLX_RASTERIZER", "cpp")
 

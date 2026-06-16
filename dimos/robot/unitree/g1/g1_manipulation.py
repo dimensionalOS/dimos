@@ -33,15 +33,24 @@ from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
-from dimos.core.stream import In
+from dimos.core.stream import In, Out
+from dimos.experimental.pimsim.entity import EntityStateBatch
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.manipulation.pointing import solve_pointing
+from dimos.manipulation.scene_objects import ObjectPoseSource, PrivilegedObjectSource
 from dimos.msgs.geometry_msgs.Point import Point
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.transform_utils import (
+    compose_transforms,
+    invert_transform,
+    matrix_to_pose,
+    pose_to_matrix,
+)
 
 logger = setup_logger()
 
@@ -62,14 +71,30 @@ class G1ManipulationModule(PickAndPlaceModule):
     # reset-and-point cycle on the configured arm. Decoupled from MCP so
     # a human can drive pointing without going through the agent loop.
     point_goal: In[PointStamped]
+    # Interactive grasp trigger: a world-frame point (e.g. a Babylon click)
+    # resolves to the nearest scene object and the arm reaches for it. Same
+    # source-blind path as the ``grasp_object`` skill — see ``_on_grasp_goal``.
+    grasp_goal: In[PointStamped]
+    # Reactive arm IK target for the coordinator's mink_arms QP task. grasp_object
+    # publishes a pelvis-frame wrist pose here (frame_id ``mink_arms/<side>_ee``);
+    # mink servos the arm to it. Bypasses the jacobian planner — mink is a QP that
+    # always returns a best-effort solution, where the local jacobian IK fails.
+    cartesian_command: Out[PoseStamped]
 
     _latest_odom: PoseStamped | None
     _odom_lock: threading.Lock
+    _object_source: ObjectPoseSource
 
     def __init__(self, *, sim_mjcf_path: str | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._latest_odom = None
         self._odom_lock = threading.Lock()
+        # Source-blind object resolver: turns a click / object-id into the
+        # object's current world pose, which the (already source-blind) reach
+        # consumes. Phase 1 uses the privileged sim ground-truth source; the
+        # real-robot path swaps this for a perceived source behind the same
+        # ObjectPoseSource interface, leaving the grasp path unchanged.
+        self._object_source = PrivilegedObjectSource()
         # Easy-mode "ground truth" object lookup: when set, lets the
         # reach_for_sim_object skill pull body world poses straight from
         # the MJCF instead of going through perception.  Lazy-loaded.
@@ -90,6 +115,38 @@ class G1ManipulationModule(PickAndPlaceModule):
             self.register_disposable(Disposable(unsub))
         except Exception as e:
             logger.warning(f"G1ManipulationModule: point_goal subscribe failed: {e}")
+        try:
+            unsub = self.grasp_goal.subscribe(self._on_grasp_goal)
+            self.register_disposable(Disposable(unsub))
+        except Exception as e:
+            logger.warning(f"G1ManipulationModule: grasp_goal subscribe failed: {e}")
+
+    def _on_entity_states(self, msg: EntityStateBatch) -> None:
+        """Forward entity poses to the planning world *and* the object resolver.
+
+        The parent uses the batch only for collision (``sync_entity_poses``);
+        we additionally cache it so a click / ``grasp_object`` can resolve an
+        object's live world pose from the same authority-agnostic stream.
+        """
+        super()._on_entity_states(msg)
+        try:
+            self._object_source.update(msg)
+        except Exception as e:
+            logger.debug(f"object_source update failed: {e}")
+
+    def _on_grasp_goal(self, msg: PointStamped) -> None:
+        """Reach for the scene object nearest a clicked world point.
+
+        Resolves the click to an object via the source-blind resolver, then
+        servos the arm to it via mink (``grasp_object`` → ``_servo_grasp``).
+        Fire-and-hold: it publishes one ``cartesian_command`` and returns; mink
+        holds the last solution. Logged only.
+        """
+        try:
+            result = self.grasp_object(x=msg.x, y=msg.y, z=msg.z)
+            logger.info(f"grasp_goal → {result}")
+        except Exception as e:
+            logger.warning(f"grasp_goal handler failed: {e}")
 
     def _on_point_goal(self, msg: PointStamped) -> None:
         """Run point_at on the configured arm when a new goal arrives.
@@ -419,3 +476,124 @@ class G1ManipulationModule(PickAndPlaceModule):
         x, y, z = float(pos[0]), float(pos[1]), float(pos[2])
         logger.info(f"reach_for_sim_object('{body_name}') → world ({x:.3f}, {y:.3f}, {z:.3f})")
         return self.move_to_pose(x=x, y=y, z=z, robot_name=robot_name)
+
+    @rpc
+    def list_scene_objects(self) -> list[dict[str, Any]]:
+        """List the scene objects the resolver can currently reach for.
+
+        Mirror of perception's scan/look but for the source-blind object
+        resolver: returns every object known to the active ``ObjectPoseSource``
+        (privileged sim ground-truth today) with its id, kind, and current
+        world position. Pass an ``object_id`` from here to ``grasp_object``.
+        """
+        objects: list[dict[str, Any]] = []
+        for obj in self._object_source.list_objects():
+            ox, oy, oz = obj.xyz
+            objects.append(
+                {"object_id": obj.object_id, "kind": obj.object.kind, "x": ox, "y": oy, "z": oz}
+            )
+        return objects
+
+    @skill
+    def grasp_object(
+        self,
+        object_id: str | None = None,
+        x: float | None = None,
+        y: float | None = None,
+        z: float | None = None,
+        robot_name: str | None = None,
+    ) -> str:
+        """Reach for a scene object resolved from the live entity stream.
+
+        Source-blind: the object's world pose comes from whatever
+        ``ObjectPoseSource`` is wired (privileged sim ground-truth today,
+        perception on the real robot) — the reach path is identical. Specify the
+        target either by ``object_id`` (exact) or by a world point ``x, y, z``
+        (the nearest known object is chosen — the click-to-grasp case).
+
+        Reach-and-hold via the coordinator's ``mink_arms`` QP IK (reactive): the
+        object's grasp pose is published as a pelvis-frame wrist target on
+        ``cartesian_command`` and mink servos the chosen arm to it. This uses the
+        same MuJoCo-native IK that already drives the arms in the WBC, instead of
+        the manipulation planner's jacobian IK (which fails to converge on these
+        poses). Trade-off: it is reactive (no RRT collision-aware routing) — fine
+        for an unobstructed reach, and the path to swap in collision-aware
+        planning is a proper QP ``KinematicsSpec`` (cc's ``pink-ik``). The G1 hand
+        has no binary gripper, so this is reach-and-hold; finger close is later.
+
+        Args:
+            object_id: Exact id of an object in the entity stream.
+            x, y, z: World-frame point; the nearest object is selected. Used
+                when ``object_id`` is omitted.
+            robot_name: Force a specific arm (default: by which side the object
+                is on).
+        """
+        if object_id is not None:
+            obj = self._object_source.resolve(object_id)
+            if obj is None:
+                known = ", ".join(o.object_id for o in self._object_source.list_objects()) or "none"
+                return f"Error: no object '{object_id}' in scene (known: {known})"
+        elif x is not None and y is not None and z is not None:
+            obj = self._object_source.resolve(PointStamped(x=x, y=y, z=z, frame_id="map"))
+            if obj is None:
+                return f"Error: no scene object near ({x:.2f}, {y:.2f}, {z:.2f})"
+        else:
+            return "Error: provide object_id, or x/y/z of a world point to grasp near"
+
+        ox, oy, oz = obj.xyz
+        logger.info(
+            f"grasp_object → '{obj.object_id}' center ({ox:.3f}, {oy:.3f}, {oz:.3f}); "
+            f"servoing arm via mink"
+        )
+        result = self._servo_grasp(Vector3(ox, oy, oz), robot_name)
+        return f"Grasping '{obj.object_id}': {result}"
+
+    def _servo_grasp(self, target_world: Vector3, robot_name: str | None = None) -> str:
+        """Drive an arm to a world-frame point via the mink_arms QP IK task.
+
+        Transforms the point into the pelvis frame (mink solves with the floating
+        base pinned at the pelvis) using the latest ``/odom``, picks the arm by
+        which side the target is on, and commands the wrist there **keeping the
+        arm's current orientation** — mink only translates. Commanding a forced
+        approach orientation (the xArm grasp heuristic mapped into the pelvis
+        frame) makes mink contort the wrist, which is the "twisted up" failure;
+        an approach orientation + grasp-offset is a later refinement. Published on
+        ``cartesian_command`` as ``frame_id="mink_arms/<side>_ee"``; mink holds the
+        last solution, so this is fire-and-hold.
+        """
+        with self._odom_lock:
+            pelvis = self._latest_odom
+        if pelvis is None:
+            return "Error: no /odom yet — robot pose unknown"
+
+        # world → pelvis for the target point.
+        inv_pelvis = invert_transform(pose_to_matrix(pelvis))
+        tp = inv_pelvis @ np.array([target_world.x, target_world.y, target_world.z, 1.0])
+        px, py, pz = float(tp[0]), float(tp[1]), float(tp[2])
+
+        if robot_name in ("left_arm", "right_arm"):
+            side = "left" if robot_name == "left_arm" else "right"
+        else:
+            # +y is the robot's left in the pelvis frame.
+            side = "left" if py >= 0.0 else "right"
+        arm = f"{side}_arm"
+
+        # Keep the arm's current wrist orientation (world EE → pelvis frame) so
+        # mink only translates to the target instead of twisting toward a pose.
+        ee = self.get_ee_pose(arm)
+        if ee is None:
+            return f"Error: no end-effector pose for '{arm}'"
+        orientation = matrix_to_pose(compose_transforms(inv_pelvis, pose_to_matrix(ee))).orientation
+
+        command = PoseStamped(
+            frame_id=f"mink_arms/{side}_ee",
+            position=Vector3(px, py, pz),
+            orientation=orientation,
+        )
+        try:
+            self.cartesian_command.publish(command)
+        except Exception as e:
+            return f"Error: cartesian_command publish failed: {e}"
+        return (
+            f"{side} arm → pelvis-frame ({px:.3f}, {py:.3f}, {pz:.3f}) via mink (orientation held)"
+        )

@@ -25,8 +25,8 @@ import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 import trimesh
 
+from dimos.experimental.pimsim.scene.inspect import inspect_scene_asset
 from dimos.simulation.mujoco.collision_spec import CollisionSpec
-from dimos.simulation.scene_assets.inspect import inspect_scene_asset
 from dimos.simulation.scene_assets.mesh_scene import (
     SceneMeshAlignment,
     ScenePrimMesh,

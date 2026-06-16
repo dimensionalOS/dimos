@@ -20,9 +20,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from dimos.experimental.pimsim.scene.sidecar import SceneCookSidecar
 from dimos.simulation.scene_assets import plan as plan_module
 from dimos.simulation.scene_assets.mesh_scene import SceneMeshAlignment, ScenePrimMesh
-from dimos.simulation.scene_assets.sidecar import SceneCookSidecar
 from dimos.simulation.scene_assets.spec import ARTIFACT_FRAMES, ScenePackage, load_scene_package
 
 
@@ -160,7 +160,7 @@ def test_load_scene_package_tolerates_missing_objects_sidecar(tmp_path: Path) ->
 
 
 def test_extract_scene_objects_emits_per_prim_aabb() -> None:
-    from dimos.simulation.scene_assets.browser_collision import extract_scene_objects
+    from dimos.experimental.pimsim.scene.browser_collision import extract_scene_objects
 
     triangles = np.array([[0, 1, 2]], dtype=np.int32)
     prims = [

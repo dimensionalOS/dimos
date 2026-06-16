@@ -12,16 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Mesh-backed simulated RGB camera.
+"""Mesh-backed simulated RGBD camera.
 
-When the user provides ``DIMOS_SCENE_MESH_PATH`` in the GR00T sim
-blueprint, ``ViserRenderModule`` no longer loads the unrelated
-``dimos_office.ply`` splat — but downstream perception still expects
-something on ``/splat/color_image``.  This module fills that gap by
-ray-casting the same scene mesh from the robot's head-camera pose and
-producing a real colored image, so ``ObjectTracking`` /
-``TemporalMemory`` / dashboards see the actual loaded environment
-instead of a black placeholder.
+Ray-casts a scene mesh from the robot's head-camera pose to produce a real
+camera feed — **color and depth** — so downstream perception
+(``ObjectTracking`` / ``TemporalMemory`` / object registration) sees the loaded
+environment instead of a black placeholder. The depth is published in the same
+``ImageFormat.DEPTH`` (float metres, registered to the color frame) wire format
+``MujocoSimModule`` uses, so a perception module is identical whether MuJoCo or
+this mesh camera rendered the frame.
+
+Color quality is barycentric vertex-color interpolation (fine for geometry/
+spatial perception; a textured-render path is a future upgrade for detectors).
 
 Pipeline per tick:
   1. FK the robot off ``/coordinator/joint_state`` + ``/odom`` to find
@@ -105,7 +107,9 @@ class MeshCameraModule(Module):
     config: MeshCameraConfig = Field(default_factory=MeshCameraConfig)
 
     color_image: Out[Image]
+    depth_image: Out[Image]
     camera_info: Out[CameraInfo]
+    depth_camera_info: Out[CameraInfo]
     joint_state: In[JointState]
     odom: In[PoseStamped]
 
@@ -314,7 +318,10 @@ class MeshCameraModule(Module):
             if self._cam_info_msg is not None:
                 self._cam_info_msg.ts = time.time()
                 try:
+                    # Depth is registered to the color frame, so both infos are
+                    # the same intrinsics — mirrors MujocoSimModule's RGBD pair.
                     self.camera_info.publish(self._cam_info_msg)
+                    self.depth_camera_info.publish(self._cam_info_msg)
                 except Exception as e:
                     logger.debug(f"MeshCameraModule: camera_info publish failed: {e}")
             self._stop_event.wait(period)
@@ -380,6 +387,22 @@ class MeshCameraModule(Module):
                         frame_id=self.config.frame_id,
                         format=ImageFormat.RGB,
                         data=rgb,
+                    )
+                )
+
+                # Depth: project the ray hit distance onto the optical axis
+                # (Z = t_hit · dir_z, dir normalized in camera frame), float
+                # metres with misses = 0 — the same DEPTH wire format
+                # MujocoSimModule publishes, so perception treats sim cameras
+                # identically whichever backend rendered them.
+                depth_m = (t_hit * self._ray_dirs_cam[:, 2]).astype(np.float32)
+                depth_m[~hit_mask] = 0.0
+                self.depth_image.publish(
+                    Image(
+                        ts=time.time(),
+                        frame_id=self.config.frame_id,
+                        format=ImageFormat.DEPTH,
+                        data=depth_m.reshape(spec.height, spec.width),
                     )
                 )
             except Exception as e:

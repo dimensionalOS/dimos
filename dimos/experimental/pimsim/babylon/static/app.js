@@ -131,6 +131,7 @@ const lidarPointSizePx = 5.0;
 let clickMode = null;
 let navGoalMarker = null;
 let pointGoalMarker = null;
+let graspGoalMarker = null;
 let spawnMarker = null;
 let latestRootPosition = null;
 let sceneDepthEnabled = true;
@@ -526,9 +527,11 @@ function setClickMode(mode) {
   clickMode = clickMode === mode ? null : mode;
   setButtonActive("navClick", clickMode === "nav");
   setButtonActive("pointClick", clickMode === "point");
+  setButtonActive("graspClick", clickMode === "grasp");
   setButtonActive("spawnClick", clickMode === "spawn");
   if (clickMode === "nav") setStatus("click nav target");
   if (clickMode === "point") setStatus("click point target");
+  if (clickMode === "grasp") setStatus("click object to grasp");
   if (clickMode === "spawn") setStatus("click spawn point");
   if (clickMode === null) setStatus("live");
 }
@@ -549,6 +552,10 @@ const navMarkerMaterial = markerMaterial(
 const pointMarkerMaterial = markerMaterial(
   "pointGoalMaterial",
   new BABYLON.Color3(1.0, 0.18, 0.78),
+);
+const graspMarkerMaterial = markerMaterial(
+  "graspGoalMaterial",
+  new BABYLON.Color3(1.0, 0.72, 0.05),
 );
 const spawnMarkerMaterial = markerMaterial(
   "spawnMarkerMaterial",
@@ -2395,8 +2402,9 @@ function installClickPublisher() {
 
     const publishNav = clickMode === "nav" || event.shiftKey;
     const publishPoint = clickMode === "point" || event.altKey;
+    const publishGrasp = clickMode === "grasp";
     const publishSpawn = clickMode === "spawn";
-    if (!publishNav && !publishPoint && !publishSpawn) return;
+    if (!publishNav && !publishPoint && !publishGrasp && !publishSpawn) return;
 
     if (!streamRef.ready) return;
 
@@ -2429,6 +2437,42 @@ function installClickPublisher() {
       publishLcmPointStamped("/clicked_point", point);
       setClickMode(null);
       setStatus("nav target sent");
+      return;
+    }
+
+    // Grasp targets the object itself. Entity meshes are isPickable=false and
+    // sit in front of the scene geometry, so the DEFAULT pick selects the
+    // wall/floor behind the object. Pick with a predicate that matches entity
+    // meshes (the invisible per-entity collider carries the merged geometry at
+    // the live pose) so the click lands on the object — then /grasp_goal lets
+    // the planner resolve the nearest scene object and reach its grasp pose.
+    if (publishGrasp) {
+      // Walk the parent chain: an entity is either the named `entity:<id>`
+      // collider/primitive or a visible child mesh parented under it.
+      const entityIdOf = (m) => {
+        for (let n = m; n; n = n.parent) {
+          if (n.metadata && n.metadata.entityId) return n.metadata.entityId;
+          if (typeof n.name === "string" && n.name.startsWith("entity:")) {
+            return n.name.slice("entity:".length);
+          }
+        }
+        return null;
+      };
+      const hit = scene.pick(scene.pointerX, scene.pointerY, (m) => entityIdOf(m) !== null);
+      if (!hit || !hit.hit || !hit.pickedPoint) {
+        setStatus("no object here — click directly on an object to grasp");
+        return; // keep grasp mode active so the next click can retry
+      }
+      graspGoalMarker = placeMarker(
+        graspGoalMarker,
+        "graspGoalMarker",
+        hit.pickedPoint,
+        graspMarkerMaterial,
+        0.16,
+      );
+      publishLcmPointStamped("/grasp_goal", hit.pickedPoint);
+      setClickMode(null);
+      setStatus(`grasp target sent (${entityIdOf(hit.pickedMesh) || "object"})`);
       return;
     }
 
@@ -2511,6 +2555,7 @@ document.getElementById("toggleCamera").onclick = () => {
 };
 document.getElementById("navClick").onclick = () => setClickMode("nav");
 document.getElementById("pointClick").onclick = () => setClickMode("point");
+document.getElementById("graspClick").onclick = () => setClickMode("grasp");
 document.getElementById("spawnClick").onclick = () => setClickMode("spawn");
 document.getElementById("toggleDepth").onclick = () => setSceneDepthWrite(!sceneDepthEnabled);
 document.getElementById("toggleWire").onclick = () => setSceneWireframe(!sceneWireEnabled);

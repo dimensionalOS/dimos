@@ -97,7 +97,7 @@ def start_blueprint(mcp_port: int) -> Iterator[Callable[..., DimosCliCall]]:
             # Pimsim's broadcast loop only fires when a browser tab is
             # connected. The HeadlessBrowser blocks until window.__pimsimReady
             # is true, so this also acts as our readiness barrier.
-            from dimos.experimental.pimsim.headless import HeadlessBrowser
+            from dimos.experimental.pimsim.babylon.headless import HeadlessBrowser
 
             browser = HeadlessBrowser()
             browser.start()

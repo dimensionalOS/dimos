@@ -137,7 +137,7 @@ def go2_babylon_blueprint() -> Blueprint | None:
     if not _babylon_enabled():
         return None
 
-    from dimos.experimental.pimsim.module import BabylonSceneViewerModule
+    from dimos.experimental.pimsim.babylon.module import BabylonSceneViewerModule
 
     kwargs: dict[str, Any] = dict(
         mjcf_path=_viewer_mjcf_path(),
@@ -234,7 +234,7 @@ def go2_scene_lidar_blueprint() -> Blueprint | None:
     if not _env_bool("DIMOS_ENABLE_NATIVE_SCENE_LIDAR", True):
         return None
 
-    from dimos.simulation.sensors.scene_lidar import SceneLidarModule
+    from dimos.experimental.pimsim.sensors.scene_lidar import SceneLidarModule
 
     return SceneLidarModule.blueprint(
         scene_metadata_path=str(scene_package.metadata_path),

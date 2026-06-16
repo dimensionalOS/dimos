@@ -112,7 +112,7 @@ def _resolve_dimos_office() -> ScenePackage:
     if not metadata_path.exists():
         raise FileNotFoundError(
             "dimos-office scene package is not cooked yet: "
-            f"{metadata_path}. Run dimos.simulation.scene_assets.cook first."
+            f"{metadata_path}. Run dimos.experimental.pimsim.scene.cook first."
         )
 
     package = load_scene_package(metadata_path)

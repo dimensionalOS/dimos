@@ -11,7 +11,7 @@ inside `MujocoSimModule.start`.
 The lifecycle is three steps:
 
 1. **Author** — drop a `<scene>.cook.json` sidecar next to the source mesh.
-2. **Cook** — `python -m dimos.simulation.scene_assets.cook` bakes the package.
+2. **Cook** — `python -m dimos.experimental.pimsim.scene.cook` bakes the package.
 3. **Compose** — at runtime the sim module loads the wrapper, attaches the
    robot, and adds entities as first-class MuJoCo bodies.
 
@@ -158,7 +158,7 @@ rebake, or the scanned props vanish.
 ## Cooking
 
 ```bash
-python -m dimos.simulation.scene_assets.cook \
+python -m dimos.experimental.pimsim.scene.cook \
     path/to/my_scene.glb \
     --output-dir=data/scene_packages/my_scene
 ```

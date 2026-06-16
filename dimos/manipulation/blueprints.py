@@ -46,7 +46,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
-from dimos.robot.catalog.g1 import g1_left_arm
+from dimos.robot.catalog.g1 import g1_left_arm, g1_right_arm
 from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _catalog_xarm7
 from dimos.robot.unitree.g1.g1_manipulation import G1ManipulationModule
 
@@ -69,13 +69,19 @@ xarm6_planner_only = ManipulationModule.blueprint(
 
 
 # G1 single-arm planner in a cooked scene package (MuJoCo WorldSpec backend).
-# Loads the dimos-office scene + the G1 left arm into MujocoWorld, plans, and
-# serves a viser view (enable_viz). Standalone: with no /odom the pelvis sits
-# at its default pose; run alongside ``g1-groot-wbc`` for a positioned base and
-# live entity tracking off ``/entity_state_batch``. Plan via the @rpc/skills
-# (move_to_pose, reach_for_sim_object, point_at) or the viser "Set point goal".
+# Loads the dimos-office scene + the G1 left arm into MujocoWorld and plans.
+# Standalone it has no view (the mujoco WorldSpec has no standalone viewer) and
+# with no /odom the pelvis sits at its default pose; run alongside
+# ``g1-groot-wbc`` (or use ``g1-office-grasp``) for a positioned base, the
+# Babylon view, and live entity tracking off ``/entity_state_batch``. Drive it
+# via the @rpc/skills (move_to_pose, reach_for_sim_object, point_at,
+# grasp_object) or by publishing a world point on /point_goal (point_at) or
+# /grasp_goal (reach the nearest scene object).
 g1_office_planner = G1ManipulationModule.blueprint(
-    robots=[g1_left_arm(name="left_arm", backend="mujoco").robot_model_config],
+    robots=[
+        g1_left_arm(name="left_arm", backend="mujoco").robot_model_config,
+        g1_right_arm(name="right_arm", backend="mujoco").robot_model_config,
+    ],
     world_backend="mujoco",
     scene_package="dimos-office",
     planning_timeout=10.0,
@@ -85,6 +91,10 @@ g1_office_planner = G1ManipulationModule.blueprint(
         ("odom", PoseStamped): LCMTransport("/odom", PoseStamped),
         ("entity_states", EntityStateBatch): LCMTransport("/entity_state_batch", EntityStateBatch),
         ("point_goal", PointStamped): LCMTransport("/point_goal", PointStamped),
+        ("grasp_goal", PointStamped): LCMTransport("/grasp_goal", PointStamped),
+        # Reactive grasp: grasp_object publishes pelvis-frame wrist targets here
+        # for the coordinator's mink_arms QP IK task (combined g1-office-grasp).
+        ("cartesian_command", PoseStamped): LCMTransport("/g1/cartesian_command", PoseStamped),
     }
 )
 

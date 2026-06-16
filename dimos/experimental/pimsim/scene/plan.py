@@ -29,13 +29,13 @@ from typing import Any
 
 import numpy as np
 
+from dimos.experimental.pimsim.scene.sidecar import InteractableSpec, SceneCookSidecar
 from dimos.simulation.mujoco.collision_spec import CollisionSpec
 from dimos.simulation.scene_assets.mesh_scene import (
     SceneMeshAlignment,
     ScenePrimMesh,
     load_scene_prims,
 )
-from dimos.simulation.scene_assets.sidecar import InteractableSpec, SceneCookSidecar
 
 _HASH_SUFFIX_RE = re.compile(r"_[0-9a-fA-F]{6,}$")
 

@@ -273,17 +273,46 @@ class PickAndPlaceModule(ManipulationModule):
         pitch = math.pi - tilt
         return Quaternion.from_euler(Vector3(0.0, pitch, yaw))
 
+    def _grasp_pose_for_target(self, center: Vector3, size: Vector3) -> Pose:
+        """Compute a grasp pose for an object at ``center`` with bounding ``size``.
+
+        Pure geometry — no perception or entity-source dependency — so it is
+        shared by perception-driven ``pick`` (via ``_generate_grasps_for_pick``)
+        and the source-blind ``grasp_object``:
+
+        - Near objects (< 0.8m XY): small occlusion inset — grasp shifted well
+          toward the robot (front surface). Far (>= 0.8m): larger inset, closer
+          to the true center (single-view depth already overshoots).
+        - Tall objects: grasp in the upper third to avoid plunging deep.
+        - Distance-adaptive approach orientation (top-down near, tilted far).
+
+        Note: the offset/orientation are computed relative to the **origin**
+        (i.e. they assume the robot base is at the origin, as the xArm is and
+        the G1 approximately is at spawn). A moved floating base would want a
+        pelvis-relative variant.
+        """
+        cx, cy, cz = center.x, center.y, center.z
+        xy_dist = (cx**2 + cy**2) ** 0.5
+
+        inset = 0.01 if xy_dist < _FAR_OCCLUSION_XY_THRESHOLD else 0.05
+        gx, gy = self._occlusion_offset(center, size, inset=inset)
+
+        if size.z > _TALL_OBJECT_MIN_HEIGHT:
+            gz = cz + size.z * 0.2  # shift up ~20% from center (upper third)
+        else:
+            gz = cz
+
+        grasp_dist = (gx**2 + gy**2) ** 0.5
+        orientation = self._grasp_orientation(gx, gy, grasp_dist)
+        return Pose(Vector3(gx, gy, gz), orientation)
+
     def _generate_grasps_for_pick(
         self, object_name: str, object_id: str | None = None
     ) -> list[Pose] | None:
-        """Generate a grasp pose for an object.
+        """Generate a grasp pose for a *detected* object (perception path).
 
-        Near objects (< 0.6m XY): apply occlusion offset to compensate for
-        single-viewpoint depth underestimation.
-        Far objects (>= 0.6m XY): use raw detected center — depth error
-        already pushes the center too deep, offset would overshoot.
-
-        Uses distance-adaptive pitch tilt for all distances.
+        Looks the object up in the detection snapshot and delegates the grasp
+        geometry to ``_grasp_pose_for_target``.
 
         Args:
             object_name: Name of the object
@@ -297,31 +326,12 @@ class PickAndPlaceModule(ManipulationModule):
             logger.warning(f"Object '{object_name}' not found in detections")
             return None
 
-        cx, cy, cz = det.center.x, det.center.y, det.center.z
-        xy_dist = (cx**2 + cy**2) ** 0.5
-
-        # Distance-adaptive occlusion offset:
-        # Near (< 0.8m): small inset — grasp shifted well toward robot (front surface)
-        # Far (>= 0.8m): larger inset — less toward-robot shift (grasp closer to true center)
-        inset = 0.01 if xy_dist < _FAR_OCCLUSION_XY_THRESHOLD else 0.05
-        gx, gy = self._occlusion_offset(det.center, det.size, inset=inset)
-
-        # For tall objects, grasp in the upper third instead of center
-        # to avoid plunging deep and colliding with the object.
-        obj_height = det.size.z
-        if obj_height > _TALL_OBJECT_MIN_HEIGHT:
-            gz = cz + obj_height * 0.2  # shift up ~20% from center (upper third)
-        else:
-            gz = cz
-
-        grasp_dist = (gx**2 + gy**2) ** 0.5
-        orientation = self._grasp_orientation(gx, gy, grasp_dist)
-        pose = Pose(Vector3(gx, gy, gz), orientation)
-
+        pose = self._grasp_pose_for_target(det.center, det.size)
+        gp = pose.position
         logger.info(
-            f"Heuristic grasp for '{object_name}': center=({cx:.3f}, {cy:.3f}, {cz:.3f}), "
-            f"grasp=({gx:.3f}, {gy:.3f}, {gz:.3f}), xy_dist={xy_dist:.2f}m, "
-            f"inset={inset:.2f}m, "
+            f"Heuristic grasp for '{object_name}': "
+            f"center=({det.center.x:.3f}, {det.center.y:.3f}, {det.center.z:.3f}), "
+            f"grasp=({gp.x:.3f}, {gp.y:.3f}, {gp.z:.3f}), "
             f"size=({det.size.x:.3f}, {det.size.y:.3f}, {det.size.z:.3f})"
         )
         return [pose]

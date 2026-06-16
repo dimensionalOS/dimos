@@ -10,7 +10,7 @@ name = "scene_lidar"
 path = "src/main.rs"
 
 [dependencies]
-dimos-module = { path = "../../../../../native/rust/dimos-module" }
+dimos-module = { path = "../../../../../../native/rust/dimos-module" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde = { version = "1", features = ["derive"] }

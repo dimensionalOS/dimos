@@ -24,7 +24,7 @@ import subprocess
 import tempfile
 from typing import Any
 
-from dimos.simulation.scene_assets.inspect import inspect_scene_asset
+from dimos.experimental.pimsim.scene.inspect import inspect_scene_asset
 from dimos.simulation.scene_assets.spec import BrowserVisualSpec
 from dimos.utils.logging_config import setup_logger
 

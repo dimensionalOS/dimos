@@ -22,7 +22,7 @@ import shutil
 import subprocess
 import tempfile
 
-from dimos.simulation.scene_assets.plan import SceneCookPlan
+from dimos.experimental.pimsim.scene.plan import SceneCookPlan
 
 _COMMAND_TAIL_LINES = 30
 _VISUAL_PLAN_VERSION = 2
