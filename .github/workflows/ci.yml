@@ -352,10 +352,19 @@ jobs:
         # between runs (keyed on the module sources that drive the build)
         # skips that download entirely on a hit. nix-community/cache-nix-action
         # handles the /nix/store permissions and tar+zstd round-trip.
+        # `paths` is set explicitly so the cache version stays identical between
+        # this job (runs as `runner` on GH-hosted) and `self-hosted-tests` (runs
+        # as `root` inside the ros-dev container). Default would have included
+        # `~/.cache/nix`, which expands differently in the two environments and
+        # would make the restore miss with a matching key.
         uses: nix-community/cache-nix-action@v6
         with:
           primary-key: nix-store-${{ runner.os }}-${{ hashFiles('bin/build-nav-stack-natives', 'dimos/navigation/nav_stack/modules/**/*.py') }}
           restore-prefixes-first-match: nix-store-${{ runner.os }}-
+          paths: |
+            /nix/store
+            /nix/var/nix/db
+            /nix/var/nix/profiles
           gc-max-store-size-linux: 5000000000
           purge: true
           purge-prefixes: nix-store-${{ runner.os }}-
@@ -462,12 +471,18 @@ jobs:
         # On a hit, the bulk of each module's closure is already in /nix/store
         # so the build below resolves locally instead of re-downloading ~3 GB
         # from cache.nixos.org. Restore-only here — `nav-stack-natives` owns
-        # writing the cache.
+        # writing the cache. `paths` must match what `nav-stack-natives` saved
+        # with: GHA's cache version is derived from the paths, so a mismatch
+        # makes the restore miss even when the primary-key is identical.
         if: contains(matrix.markers, 'skipif_no_ros')
         uses: nix-community/cache-nix-action/restore@v6
         with:
           primary-key: nix-store-${{ runner.os }}-${{ hashFiles('bin/build-nav-stack-natives', 'dimos/navigation/nav_stack/modules/**/*.py') }}
           restore-prefixes-first-match: nix-store-${{ runner.os }}-
+          paths: |
+            /nix/store
+            /nix/var/nix/db
+            /nix/var/nix/profiles
       - name: Fetch nav_stack native modules from Cachix
         if: contains(matrix.markers, 'skipif_no_ros')
         run: uv run bin/build-nav-stack-natives
