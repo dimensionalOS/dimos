@@ -83,8 +83,7 @@ uv run dimos run xarm7-planner-coordinator \
 Blueprint example:
 
 ```python skip
-from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.manipulation.manipulation_module import ManipulationModuleConfig
+from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
 
 manipulation = ManipulationModule.blueprint(
     config=ManipulationModuleConfig(
