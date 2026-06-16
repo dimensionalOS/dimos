@@ -5,8 +5,8 @@ codecov:
 
 coverage:
   status:
-    project:
-    patch:
+    project: true
+    patch: true
 
 # Carry forward self-hosted, as these are not run on external PRs.
 flag_management:
@@ -19,6 +19,6 @@ flag_management:
       carryforward: true
 
 comment:
-  layout: "newheader, diff, flags, components, files, newfooter"
+  layout: "newheader, diff, flags, components, files"
   require_head: false
   require_base: false
