@@ -148,17 +148,7 @@ class InProcessViserAdapter:
             init_joints = self._module._init_joints
         except AttributeError:
             init_joints = {}
-        copied = copy_joint_state(init_joints.get(robot_name))
-        if copied is not None:
-            return copied
-        config = self.get_robot_config(robot_name)
-        if config is None:
-            return None
-        try:
-            positions = config.init_joints
-        except AttributeError:
-            return None
-        return self.joints_from_values(config.joint_names, positions)
+        return copy_joint_state(init_joints.get(robot_name))
 
     def get_current_joint_state(self, robot_name: RobotName) -> JointState | None:
         robot_id = self.robot_id_for_name(robot_name)

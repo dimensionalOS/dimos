@@ -827,11 +827,12 @@ def test_gui_initializes_pose_selector_to_current_ee_pose() -> None:
 
 def test_gui_preset_dropdown_and_controls_include_init_home_current_and_callbacks() -> None:
     current = FakeJointState(["arm/j1", "arm/j2"], position=[0.25, 0.5])
-    config = make_robot_config(
-        joint_names=["j1", "j2"], home_joints=[1.0, 2.0], init_joints=[-1.0, -2.0]
-    )
+    config = make_robot_config(joint_names=["j1", "j2"], home_joints=[1.0, 2.0])
     module = SimpleNamespace(
-        _robots={"arm": ("robot-1", config, None)}, _planned_paths={}, _planned_trajectories={}
+        _robots={"arm": ("robot-1", config, None)},
+        _init_joints={"arm": FakeJointState(["j1", "j2"], position=[-1.0, -2.0])},
+        _planned_paths={},
+        _planned_trajectories={},
     )
     world_monitor = SimpleNamespace(
         get_current_joint_state=lambda robot_id: current,
