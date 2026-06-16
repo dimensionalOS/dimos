@@ -75,8 +75,6 @@ class ActionStatus(str, Enum):
     FAILED = "failed"
 
 
-# Backward-compatible name used by the first Viser panel implementation/tests.
-PanelActionStatus = ActionStatus
 PreviewSource = Literal["cartesian", "joints"]
 
 
@@ -115,15 +113,6 @@ class PanelState:
     plan_state: PanelPlanState = field(default_factory=PanelPlanState)
     error: str = ""
     last_result: str = ""
-
-    @property
-    def status(self) -> ActionStatus:
-        """Compatibility alias for the previous minimal panel state."""
-        return self.action_status
-
-    @status.setter
-    def status(self, value: ActionStatus) -> None:
-        self.action_status = value
 
     def next_sequence_id(self) -> int:
         self.latest_sequence_id += 1
