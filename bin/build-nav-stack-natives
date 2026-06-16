@@ -6,11 +6,22 @@ import importlib
 from pathlib import Path
 import re
 import subprocess
+import time
 
 from dimos.core.native_module import NativeModuleConfig
 import dimos.navigation.nav_stack.modules as modules_pkg
 
 MODULES_DIR = Path(modules_pkg.__path__[0])
+# Captured at import time; forked workers inherit it so all log lines share
+# the same t=0 — makes "did parallelism actually happen?" obvious from the
+# wall-clock prefixes in the log.
+_T0 = time.monotonic()
+
+
+def _log(msg: str) -> None:
+    print(f"[{time.monotonic() - _T0:6.1f}s] {msg}", flush=True)
+
+
 # Pre-filter source files for a NativeModuleConfig subclass before importing
 # them. Lets us run with a minimal dimos install: modules that don't subclass
 # NativeModuleConfig (e.g. nav_record) may pull in heavy deps like torch at
@@ -41,6 +52,7 @@ def discover() -> tuple[type[NativeModuleConfig], ...]:
 
 
 def build_one(cfg_cls: type[NativeModuleConfig]) -> str:
+    name = cfg_cls.__name__
     cfg = cfg_cls()
     assert cfg.build_command is not None
     mod = importlib.import_module(cfg_cls.__module__)
@@ -52,8 +64,8 @@ def build_one(cfg_cls: type[NativeModuleConfig]) -> str:
     if not exe.is_absolute():
         exe = cwd / exe
     if exe.exists():
-        return f"OK:    {cfg_cls.__name__} already built at {exe}"
-    header = f"BUILD: {cfg_cls.__name__} in {cwd}: {cfg.build_command}"
+        return f"OK:    {name} already built at {exe}"
+    _log(f"START: {name} in {cwd}: {cfg.build_command}")
     proc = subprocess.run(
         cfg.build_command,
         shell=True,
@@ -64,24 +76,21 @@ def build_one(cfg_cls: type[NativeModuleConfig]) -> str:
     )
     body = (proc.stdout or "") + (proc.stderr or "")
     if proc.returncode != 0:
-        raise RuntimeError(f"{header}\n{body}\n{cfg_cls.__name__} exited {proc.returncode}")
-    return f"{header}\n{body}".rstrip()
+        raise RuntimeError(f"{name} exited {proc.returncode}\n{body}")
+    return f"DONE:  {name}\n{body}".rstrip()
 
 
 def main() -> None:
     cfgs = discover()
     failed = 0
-    # One worker per module: builds are I/O-bound (each blocks on `nix build`),
-    # so processes and threads behave the same — processes give cleaner output
-    # isolation. Per-build stdout/stderr is captured and flushed as a single
-    # block once the build completes, so logs stay readable.
+    _log(f"Building {len(cfgs)} module(s) with {len(cfgs)} workers")
     with ProcessPoolExecutor(max_workers=len(cfgs)) as ex:
         futs = {ex.submit(build_one, c): c for c in cfgs}
         for fut in as_completed(futs):
             try:
-                print(fut.result(), flush=True)
+                _log(fut.result())
             except Exception as e:
-                print(f"FAIL:  {futs[fut].__name__}: {e}", flush=True)
+                _log(f"FAIL:  {futs[fut].__name__}: {e}")
                 failed += 1
     if failed:
         raise SystemExit(f"{failed} build(s) failed")
