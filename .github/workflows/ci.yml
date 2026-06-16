@@ -361,17 +361,18 @@ jobs:
       - name: Build nav_stack native modules
         run: uv run bin/build-nav-stack-natives
       - name: Push full closures to Cachix
-        # cachix-action's default behaviour skips paths signed by other caches
-        # (i.e. anything we substituted from cache.nixos.org). That left the
-        # upstream nixpkgs deps absent from Cachix, so the self-hosted runner
-        # was still hitting cache.nixos.org's slow egress. Explicitly push the
-        # recursive closure of each module's result symlink so Cachix holds
-        # the full ~3 GB of deps too, served fast from then on.
+        # `cachix push` defaults to --skip-signed-paths, so it only uploads
+        # locally-signed outputs (~120 MiB). The bulk of each closure was
+        # substituted in from cache.nixos.org and skipped — leaving the
+        # self-hosted runner still pulling those deps from cache.nixos.org.
+        # `nix copy` doesn't filter on signature, so it ships the full closure
+        # to Cachix. Auth flows through the `cachix://` Nix store
+        # implementation registered by cachix-action.
         run: |
           mapfile -t results < <(find dimos/navigation/nav_stack/modules \
             -mindepth 2 -maxdepth 3 -name result -type l -exec readlink -f {} \;)
           [ ${#results[@]} -eq 0 ] || \
-            nix-store -qR "${results[@]}" | cachix push -j "$(nproc)" dimensionalos
+            nix copy --to "cachix://dimensionalos" "${results[@]}"
 
   self-hosted-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
