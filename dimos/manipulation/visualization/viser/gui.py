@@ -660,9 +660,6 @@ class ViserPanelGui:
             str(robot_id), self.state.feasibility.status == FeasibilityStatus.FEASIBLE
         )
 
-    def _submit_plan_to_sliders(self) -> None:
-        self._submit_plan()
-
     def _submit_plan(self) -> None:
         robot_name = self.state.selected_robot
         if robot_name is None:
