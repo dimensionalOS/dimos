@@ -346,6 +346,22 @@ jobs:
             extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
           INPUT_SET_AS_TRUSTED_USER: "true"
         run: bash docker/ros/install-nix.sh
+      - name: Cache /nix/store
+        # Cachix only holds the smartnav-* outputs; the bulk (~3 GB) of each
+        # build's closure comes from cache.nixos.org. Caching /nix/store
+        # between runs (keyed on the module sources that drive the build)
+        # skips that download entirely on a hit. nix-community/cache-nix-action
+        # handles the /nix/store permissions and tar+zstd round-trip.
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-store-${{ runner.os }}-${{ hashFiles('bin/build-nav-stack-natives', 'dimos/navigation/nav_stack/modules/**/*.py') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-
+          gc-max-store-size-linux: 5000000000
+          purge: true
+          purge-prefixes: nix-store-${{ runner.os }}-
+          purge-created: 0
+          purge-last-accessed: 604800
+          purge-primary-key: never
       - name: Authenticate Cachix
         uses: cachix/cachix-action@v15
         with:
@@ -442,6 +458,16 @@ jobs:
             extra-substituters = https://dimensionalos.cachix.org
             extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
         run: bash docker/ros/install-nix.sh
+      - name: Restore /nix/store from cache
+        # On a hit, the bulk of each module's closure is already in /nix/store
+        # so the build below resolves locally instead of re-downloading ~3 GB
+        # from cache.nixos.org. Restore-only here — `nav-stack-natives` owns
+        # writing the cache.
+        if: contains(matrix.markers, 'skipif_no_ros')
+        uses: nix-community/cache-nix-action/restore@v6
+        with:
+          primary-key: nix-store-${{ runner.os }}-${{ hashFiles('bin/build-nav-stack-natives', 'dimos/navigation/nav_stack/modules/**/*.py') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-
       - name: Fetch nav_stack native modules from Cachix
         if: contains(matrix.markers, 'skipif_no_ros')
         run: uv run bin/build-nav-stack-natives
