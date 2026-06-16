@@ -12,7 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Hosted Teleop Module — Cloudflare Realtime SFU client."""
+"""Hosted Teleop Module — Cloudflare Realtime SFU client.
+
+.. deprecated::
+    For the data planes (commands, telemetry) use ``CloudflareTransport``
+    bound directly to blueprint streams instead — see
+    ``dimos/protocol/pubsub/impl/webrtc`` and the
+    ``teleop-hosted-go2-transport`` blueprint. This module remains only for
+    video-track publishing until ``BrokerProvider`` grows media support,
+    after which it will be removed.
+"""
 
 from __future__ import annotations
 
@@ -23,6 +32,7 @@ import os
 import threading
 import time
 from typing import Any
+import warnings
 
 from aiortc import (
     RTCBundlePolicy,
@@ -45,9 +55,9 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Joy import Joy
+from dimos.protocol.pubsub.impl.webrtc.providers.sdp import propagate_bundle_candidates
+from dimos.protocol.pubsub.impl.webrtc.providers.video_track import CameraVideoTrack
 from dimos.teleop.quest.quest_types import Buttons, QuestControllerState
-from dimos.teleop.quest_hosted.sdp import propagate_bundle_candidates
-from dimos.teleop.quest_hosted.video_track import CameraVideoTrack
 from dimos.teleop.utils.stream_stats import LiveStreamStats
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.teleop.utils.video_stats import VideoStats
@@ -100,6 +110,14 @@ class HostedTeleopModule(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        warnings.warn(
+            "HostedTeleopModule is deprecated: bind CloudflareTransport to your "
+            "blueprint streams instead (cmd_unreliable / state_reliable / "
+            "state_reliable_back). It remains only for video-track publishing "
+            "until BrokerProvider supports media tracks.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
         self._is_engaged: dict[Hand, bool] = {Hand.LEFT: False, Hand.RIGHT: False}
         self._initial_poses: dict[Hand, PoseStamped | None] = {Hand.LEFT: None, Hand.RIGHT: None}

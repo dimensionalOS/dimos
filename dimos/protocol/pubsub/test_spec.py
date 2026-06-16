@@ -145,6 +145,28 @@ testdata.append(
 )
 
 
+from dimos.protocol.pubsub.impl.webrtc.test_transport import MockProvider
+from dimos.protocol.pubsub.impl.webrtc.webrtcpubsub import WebRTCPubSub
+
+
+@contextmanager
+def webrtc_context() -> Generator[WebRTCPubSub, None, None]:
+    provider = MockProvider()
+    pubsub = WebRTCPubSub(provider=provider)
+    pubsub.start()
+    yield pubsub
+    pubsub.stop()
+
+
+testdata.append(
+    (
+        webrtc_context,
+        "test_topic",
+        [b"webrtc_value1", b"webrtc_value2", b"webrtc_value3"],
+    )
+)
+
+
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
 def test_store(pubsub_context: Callable[[], Any], topic: Any, values: list[Any]) -> None:
     with pubsub_context() as x:

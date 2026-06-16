@@ -15,9 +15,11 @@
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
+import os
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import pytest
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.protocol.pubsub.benchmark.type import Case
@@ -398,5 +400,44 @@ if ROS_AVAILABLE:
         Case(
             pubsub_context=dimos_ros_reliable_pubsub_channel,
             msg_gen=dimos_ros_msggen,
+        )
+    )
+
+
+# WebRTC over the live Cloudflare Realtime SFU. Needs network + credentials,
+# so it only registers when CF_TELEOP_APP_ID/SECRET are set (CI skips it).
+try:
+    from dimos.protocol.pubsub.impl.webrtc.providers.cloudflare import (
+        CloudflareConfig,
+        CloudflareProvider,
+    )
+    from dimos.protocol.pubsub.impl.webrtc.providers.spec import WEBRTC_AVAILABLE
+    from dimos.protocol.pubsub.impl.webrtc.webrtcpubsub import WebRTCPubSub
+except ImportError:
+    WEBRTC_AVAILABLE = False
+
+if WEBRTC_AVAILABLE and os.environ.get("CF_TELEOP_APP_ID"):
+    # CF Realtime drops DataChannel messages larger than this (observed:
+    # 100% loss from 64KB up), and it matches the SCTP fragmentation unit.
+    _WEBRTC_MAX_MSG = 16 * 1024
+
+    @contextmanager
+    def webrtc_cloudflare_pubsub_channel() -> Generator[WebRTCPubSub, None, None]:
+        pubsub = WebRTCPubSub(provider=CloudflareProvider(CloudflareConfig()))
+        pubsub.start()
+        try:
+            yield pubsub
+        finally:
+            pubsub.stop()
+
+    def webrtc_msggen(size: int) -> tuple[str, bytes]:
+        if size > _WEBRTC_MAX_MSG:
+            pytest.skip(f"{size}B exceeds the SCTP/CF DataChannel message limit")
+        return ("benchmark/webrtc", make_data_bytes(size))
+
+    testcases.append(
+        Case(
+            pubsub_context=webrtc_cloudflare_pubsub_channel,
+            msg_gen=webrtc_msggen,
         )
     )
