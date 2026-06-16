@@ -453,6 +453,8 @@ mod tests {
     fn rejects_flatten_and_skip() {
         check(r#"struct Config { #[serde(flatten)] a: Inner }"#).expect_err("flatten is forbidden");
         check(r#"struct Config { #[serde(skip)] a: f32 }"#).expect_err("skip is forbidden");
+        check(r#"struct Config { #[serde(skip_deserializing)] a: f32 }"#)
+            .expect_err("skip_deserializing is forbidden");
     }
 
     #[test]
