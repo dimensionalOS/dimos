@@ -226,9 +226,7 @@ def test_sync_basic_no_shift():
     }
     sync = SyncConfig(anchor="state", rate_hz=1.0, tolerance_ms=100.0, action_shift=0)
     samples = list(
-        iter_episode_samples(
-            store, ep, streams, sync, obs_keys={"state"}, action_keys={"act"}
-        )
+        iter_episode_samples(store, ep, streams, sync, obs_keys={"state"}, action_keys={"act"})
     )
     assert len(samples) == 3
     # action equals state at the same frame
@@ -244,9 +242,7 @@ def test_sync_action_shift_next_state():
     }
     sync = SyncConfig(anchor="state", rate_hz=1.0, tolerance_ms=100.0, action_shift=1)
     samples = list(
-        iter_episode_samples(
-            store, ep, streams, sync, obs_keys={"state"}, action_keys={"act"}
-        )
+        iter_episode_samples(store, ep, streams, sync, obs_keys={"state"}, action_keys={"act"})
     )
     # 3 frames, shift 1 → 2 emitted; trailing frame dropped
     assert len(samples) == 2
