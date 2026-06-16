@@ -342,14 +342,8 @@ class ViserPanelGui:
         current = self.adapter.get_current_joint_state(self.state.selected_robot)
         values = list(current.position) if current is not None else [0.0] * len(config.joint_names)
         self._clear_joint_sliders()
-        try:
-            joint_limits_lower = config.joint_limits_lower
-        except AttributeError:
-            joint_limits_lower = None
-        try:
-            joint_limits_upper = config.joint_limits_upper
-        except AttributeError:
-            joint_limits_upper = None
+        joint_limits_lower = config.joint_limits_lower
+        joint_limits_upper = config.joint_limits_upper
         for index, joint_name in enumerate(config.joint_names):
             lower, upper = DEFAULT_JOINT_LIMITS
             if joint_limits_lower is not None and index < len(joint_limits_lower):
@@ -422,12 +416,7 @@ class ViserPanelGui:
         ):
             options.append("Init")
         options.append("Current")
-        home_joints = None
-        if config is not None:
-            try:
-                home_joints = config.home_joints
-            except AttributeError:
-                home_joints = None
+        home_joints = config.home_joints if config is not None else None
         if info.get("home_joints") is not None or home_joints is not None:
             options.append("Home")
         for attr in ("options", "values"):
@@ -454,10 +443,7 @@ class ViserPanelGui:
             init = self.adapter.get_init_joints(robot_name)
             values = list(init.position) if init is not None else []
         elif preset == "Home":
-            try:
-                values = list(config.home_joints or [])
-            except AttributeError:
-                values = []
+            values = list(config.home_joints or [])
         else:
             return
         self._set_slider_values(config.joint_names, values)

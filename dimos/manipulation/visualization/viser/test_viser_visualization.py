@@ -200,12 +200,28 @@ class FakeGuiServer:
         return handle
 
 
+def make_robot_config(**overrides: Any) -> SimpleNamespace:
+    """Build a faithful RobotModelConfig stand-in with the fields the panel reads."""
+    fields: dict[str, Any] = {
+        "name": "arm",
+        "joint_names": ["j1", "j2"],
+        "end_effector_link": "ee_link",
+        "base_link": "base_link",
+        "home_joints": None,
+        "joint_limits_lower": None,
+        "joint_limits_upper": None,
+    }
+    fields.update(overrides)
+    return SimpleNamespace(**fields)
+
+
 def make_adapter_with_robot() -> InProcessViserAdapter:
     current = FakeJointState(["j1", "j2"], position=[0.3, 0.4])
-    config = SimpleNamespace(
+    config = make_robot_config(
         name="arm",
         joint_names=["j1", "j2"],
-        joint_limits=[(-1.0, 1.0), (-2.0, 2.0)],
+        joint_limits_lower=[-1.0, -2.0],
+        joint_limits_upper=[1.0, 2.0],
         home_joints=[0.0, 0.0],
     )
     module = SimpleNamespace(
@@ -781,7 +797,7 @@ def test_gui_initializes_pose_selector_to_current_ee_pose() -> None:
         position=SimpleNamespace(x=0.1, y=0.2, z=0.3),
         orientation=SimpleNamespace(w=0.9, x=0.1, y=0.2, z=0.3),
     )
-    config = SimpleNamespace(joint_names=["j1"], home_joints=[0.0])
+    config = make_robot_config(joint_names=["j1"], home_joints=[0.0])
     module = SimpleNamespace(
         _robots={"arm": ("robot-1", config, None)}, _planned_paths={}, _planned_trajectories={}
     )
@@ -811,7 +827,7 @@ def test_gui_initializes_pose_selector_to_current_ee_pose() -> None:
 
 def test_gui_preset_dropdown_and_controls_include_init_home_current_and_callbacks() -> None:
     current = FakeJointState(["arm/j1", "arm/j2"], position=[0.25, 0.5])
-    config = SimpleNamespace(
+    config = make_robot_config(
         joint_names=["j1", "j2"], home_joints=[1.0, 2.0], init_joints=[-1.0, -2.0]
     )
     module = SimpleNamespace(
@@ -843,7 +859,7 @@ def test_gui_preset_dropdown_and_controls_include_init_home_current_and_callback
 
 def test_gui_rebuilding_joint_sliders_removes_stale_viser_handles() -> None:
     current = FakeJointState(["j1", "j2"], position=[0.0, 0.0])
-    config = SimpleNamespace(joint_names=["j1", "j2"], home_joints=[1.0, 2.0])
+    config = make_robot_config(joint_names=["j1", "j2"], home_joints=[1.0, 2.0])
     module = SimpleNamespace(
         _robots={"arm": ("robot-1", config, None)}, _planned_paths={}, _planned_trajectories={}
     )
@@ -892,7 +908,7 @@ def test_gui_parses_numpy_transform_control_arrays() -> None:
 
 def test_panel_execution_is_gated_by_default_and_refresh_updates_robot_controls() -> None:
     current = FakeJointState(["j1"], position=[1.2])
-    config = SimpleNamespace(joint_names=["j1"], home_joints=[0.5])
+    config = make_robot_config(joint_names=["j1"], home_joints=[0.5])
     module = SimpleNamespace(
         _robots={"arm": ("robot-1", config, None)},
         _planned_paths={},
@@ -927,7 +943,7 @@ def test_panel_execution_is_gated_by_default_and_refresh_updates_robot_controls(
 def test_gui_moves_joint_target_immediately_and_stores_evaluated_joint_solution() -> None:
     current = FakeJointState(["j1", "j2"], position=[0.0, 0.0])
     target_pose = SimpleNamespace(position=SimpleNamespace(x=0.2, y=0.3, z=0.4))
-    config = SimpleNamespace(joint_names=["j1", "j2"], home_joints=[0.5, 0.6])
+    config = make_robot_config(joint_names=["j1", "j2"], home_joints=[0.5, 0.6])
     module = SimpleNamespace(
         _robots={"arm": ("robot-1", config, None)}, _planned_paths={}, _planned_trajectories={}
     )
@@ -1000,7 +1016,7 @@ def test_gui_moves_joint_target_immediately_and_stores_evaluated_joint_solution(
 
 def test_gui_collision_evaluation_marks_target_infeasible_and_colors_scene() -> None:
     current = FakeJointState(["j1"], position=[0.0])
-    config = SimpleNamespace(joint_names=["j1"], home_joints=[0.0])
+    config = make_robot_config(joint_names=["j1"], home_joints=[0.0])
     module = SimpleNamespace(
         _robots={"arm": ("robot-1", config, None)}, _planned_paths={}, _planned_trajectories={}
     )
@@ -1049,7 +1065,9 @@ def test_gui_safe_execute_requires_fresh_matching_plan_and_clear_resets_path() -
     executed = []
     cleared = []
     module = SimpleNamespace(
-        _robots={"arm": ("robot-1", SimpleNamespace(joint_names=["j1"], home_joints=[1.0]), None)},
+        _robots={
+            "arm": ("robot-1", make_robot_config(joint_names=["j1"], home_joints=[1.0]), None)
+        },
         _planned_paths={"arm": planned},
         _planned_trajectories={},
         _state=SimpleNamespace(name="IDLE"),

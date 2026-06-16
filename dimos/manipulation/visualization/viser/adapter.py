@@ -129,27 +129,12 @@ class InProcessViserAdapter:
         if config is None:
             return None
         init = self.get_init_joints(robot_name)
-        try:
-            config_name = config.name
-        except AttributeError:
-            config_name = robot_name
-        try:
-            end_effector_link = config.end_effector_link
-        except AttributeError:
-            end_effector_link = None
-        try:
-            base_link = config.base_link
-        except AttributeError:
-            base_link = None
-        try:
-            home_joints = config.home_joints
-        except AttributeError:
-            home_joints = None
+        home_joints = config.home_joints
         return {
-            "name": config_name,
+            "name": config.name,
             "joint_names": list(config.joint_names),
-            "end_effector_link": end_effector_link,
-            "base_link": base_link,
+            "end_effector_link": config.end_effector_link,
+            "base_link": config.base_link,
             "home_joints": list(home_joints) if home_joints is not None else None,
             "init_joints": list(init.position) if init is not None else None,
         }
