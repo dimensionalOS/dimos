@@ -18,6 +18,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from dimos.manipulation.planning.kinematics.config import (
+    DrakeOptimizationKinematicsConfig,
+    JacobianKinematicsConfig,
+    ManipulationKinematicsConfig,
+    PinkKinematicsConfig,
+    kinematics_config_from_name,
+)
+
 if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.protocols import KinematicsSpec, PlannerSpec, WorldSpec
 
@@ -38,23 +46,29 @@ def create_world(
 
 def create_kinematics(
     name: str = "jacobian",
+    config: ManipulationKinematicsConfig | None = None,
     **kwargs: Any,
 ) -> KinematicsSpec:
-    """Create IK solver. name='jacobian'|'drake_optimization'."""
-    if name == "jacobian":
+    """Create IK solver from a backend name or typed kinematics config."""
+    if config is None:
+        config = kinematics_config_from_name(name)
+
+    if isinstance(config, JacobianKinematicsConfig):
         from dimos.manipulation.planning.kinematics.jacobian_ik import JacobianIK
 
         return JacobianIK(**kwargs)
-    elif name == "drake_optimization":
+    elif isinstance(config, DrakeOptimizationKinematicsConfig):
         from dimos.manipulation.planning.kinematics.drake_optimization_ik import (
             DrakeOptimizationIK,
         )
 
         return DrakeOptimizationIK(**kwargs)
+    elif isinstance(config, PinkKinematicsConfig):
+        from dimos.manipulation.planning.kinematics.pink_ik import PinkIK
+
+        return PinkIK(config, **kwargs)
     else:
-        raise ValueError(
-            f"Unknown kinematics solver: {name}. Available: ['jacobian', 'drake_optimization']"
-        )
+        raise TypeError(f"Unsupported kinematics config: {type(config).__name__}")
 
 
 def create_planner(
@@ -75,13 +89,14 @@ def create_planning_stack(
     enable_viz: bool = False,
     planner_name: str = "rrt_connect",
     kinematics_name: str = "jacobian",
+    kinematics: ManipulationKinematicsConfig | None = None,
 ) -> tuple[WorldSpec, KinematicsSpec, PlannerSpec, str]:
     """Create complete planning stack. Returns (world, kinematics, planner, robot_id)."""
     world = create_world(backend="drake", enable_viz=enable_viz)
-    kinematics = create_kinematics(name=kinematics_name)
+    kinematics_solver = create_kinematics(name=kinematics_name, config=kinematics)
     planner = create_planner(name=planner_name)
 
     robot_id = world.add_robot(robot_config)
     world.finalize()
 
-    return world, kinematics, planner, robot_id
+    return world, kinematics_solver, planner, robot_id

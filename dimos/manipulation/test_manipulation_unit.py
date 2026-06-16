@@ -24,11 +24,16 @@ import pytest
 
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
+    ManipulationModuleConfig,
     ManipulationState,
 )
+from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.enums import IKStatus
+from dimos.manipulation.planning.spec.models import IKResult
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -192,6 +197,149 @@ class TestRobotSelection:
         result = module._get_robot("left")
         assert result is not None
         assert result[0] == "left"
+
+
+class TestPlanningInitialization:
+    """Test planning backend configuration wiring."""
+
+    def test_kinematics_config_is_passed_to_factory(self, robot_config):
+        """ManipulationModule config selects the requested IK backend."""
+        module = _make_module()
+        kinematics = PinkKinematicsConfig(max_iterations=100, dt=0.02)
+        module.config = ManipulationModuleConfig(
+            robots=[robot_config],
+            kinematics=kinematics,
+            enable_viz=False,
+        )
+        mock_world_monitor = MagicMock(spec=WorldMonitor)
+        mock_world_monitor.add_robot.return_value = "robot_id"
+
+        with (
+            patch(
+                "dimos.manipulation.manipulation_module.WorldMonitor",
+                return_value=mock_world_monitor,
+            ),
+            patch("dimos.manipulation.manipulation_module.JointTrajectoryGenerator"),
+            patch("dimos.manipulation.manipulation_module.create_planner") as mock_planner,
+            patch("dimos.manipulation.manipulation_module.create_kinematics") as mock_kinematics,
+        ):
+            module._initialize_planning()
+
+        mock_planner.assert_called_once_with(name="rrt_connect")
+        mock_kinematics.assert_called_once_with(config=kinematics)
+
+    def test_legacy_kinematics_name_still_selects_backend(self, robot_config):
+        """The old kinematics_name field remains a compatibility shim."""
+        module = _make_module()
+        module.config = ManipulationModuleConfig(
+            robots=[robot_config],
+            kinematics_name="pink",
+            enable_viz=False,
+        )
+        mock_world_monitor = MagicMock(spec=WorldMonitor)
+        mock_world_monitor.add_robot.return_value = "robot_id"
+
+        with (
+            patch(
+                "dimos.manipulation.manipulation_module.WorldMonitor",
+                return_value=mock_world_monitor,
+            ),
+            patch("dimos.manipulation.manipulation_module.JointTrajectoryGenerator"),
+            patch("dimos.manipulation.manipulation_module.create_planner"),
+            patch("dimos.manipulation.manipulation_module.create_kinematics") as mock_kinematics,
+        ):
+            module._initialize_planning()
+
+        call_config = mock_kinematics.call_args.kwargs["config"]
+        assert isinstance(call_config, PinkKinematicsConfig)
+
+    def test_nested_kinematics_config_parses_cli_override_shape(self) -> None:
+        """Pydantic parses the nested CLI config shape used by -o overrides."""
+        config = ManipulationModuleConfig(
+            kinematics={
+                "backend": "pink",
+                "max_iterations": "100",
+                "dt": "0.02",
+                "posture_cost": "0.0",
+            }
+        )
+
+        assert isinstance(config.kinematics, PinkKinematicsConfig)
+        assert config.kinematics.max_iterations == 100
+        assert config.kinematics.dt == 0.02
+        assert config.kinematics.posture_cost == 0.0
+
+    def test_solve_ik_rpc_calls_configured_backend(self, robot_config):
+        """solve_ik returns the backend IKResult without path planning."""
+        module = _make_module()
+        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
+        module._world_monitor = MagicMock()
+        module._world_monitor.world = MagicMock()
+        current = JointState(name=robot_config.joint_names, position=[0.0, 0.0, 0.0])
+        module._world_monitor.get_current_joint_state.return_value = current
+        expected = IKResult(
+            status=IKStatus.SUCCESS,
+            joint_state=JointState(name=robot_config.joint_names, position=[0.1, 0.2, 0.3]),
+            position_error=0.0001,
+            orientation_error=0.0002,
+            iterations=3,
+            message="ok",
+        )
+        module._kinematics = MagicMock()
+        module._kinematics.solve.return_value = expected
+
+        pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
+        result = module.solve_ik(pose)
+
+        assert result is expected
+        assert module._state == ManipulationState.COMPLETED
+        assert module._planned_paths == {}
+        module._kinematics.solve.assert_called_once()
+        _, kwargs = module._kinematics.solve.call_args
+        assert kwargs["world"] is module._world_monitor.world
+        assert kwargs["robot_id"] == "robot_id"
+        assert kwargs["seed"] is current
+        assert kwargs["check_collision"] is True
+        assert kwargs["target_pose"].frame_id == "world"
+        assert kwargs["target_pose"].position.x == 0.45
+
+    def test_solve_ik_rpc_returns_failure_without_joint_state(self, robot_config):
+        """solve_ik reports a failed IKResult when no seed state is available."""
+        module = _make_module()
+        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
+        module._world_monitor = MagicMock()
+        module._world_monitor.get_current_joint_state.return_value = None
+        module._kinematics = MagicMock()
+
+        pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
+        result = module.solve_ik(pose)
+
+        assert result.status == IKStatus.NO_SOLUTION
+        assert result.message == "No joint state"
+        assert module._state == ManipulationState.IDLE
+        module._kinematics.solve.assert_not_called()
+
+    def test_solve_ik_rpc_uses_explicit_seed(self, robot_config):
+        """solve_ik initializes the backend from an explicit seed when provided."""
+        module = _make_module()
+        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
+        module._world_monitor = MagicMock()
+        module._world_monitor.world = MagicMock()
+        module._world_monitor.get_current_joint_state.return_value = JointState(
+            name=robot_config.joint_names, position=[0.0, 0.0, 0.0]
+        )
+        explicit_seed = JointState(name=robot_config.joint_names, position=[0.2, 0.1, 0.0])
+        expected = IKResult(status=IKStatus.SUCCESS, joint_state=explicit_seed)
+        module._kinematics = MagicMock()
+        module._kinematics.solve.return_value = expected
+
+        pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
+        result = module.solve_ik(pose, seed=explicit_seed)
+
+        assert result is expected
+        _, kwargs = module._kinematics.solve.call_args
+        assert kwargs["seed"] is explicit_seed
+        module._world_monitor.get_current_joint_state.assert_not_called()
 
 
 class TestJointNameTranslation:
