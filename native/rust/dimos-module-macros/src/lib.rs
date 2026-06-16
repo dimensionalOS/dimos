@@ -23,7 +23,7 @@ pub fn derive_module(input: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
-/// Injects `#[derive(Debug, Deserialize, Validate)]` and
+/// Injects `#[derive(Debug, Deserialize, Serialize, Validate)]` and
 /// `#[serde(deny_unknown_fields)]`, and emits `impl NativeConfig`.
 ///
 /// Rejected at compile time:
@@ -31,7 +31,8 @@ pub fn derive_module(input: TokenStream) -> TokenStream {
 /// - `#[serde(default)]`, field or container
 /// - `#[serde(skip)]`, `#[serde(skip_deserializing)]`, `#[serde(flatten)]`
 ///
-/// A type alias that resolves to `Option` is not detected.
+/// A type alias to `Option` is not caught here, but `run()` rejects a missing
+/// field at startup regardless of how the field is spelled.
 #[proc_macro_attribute]
 pub fn native_config(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
@@ -51,7 +52,7 @@ pub fn native_config(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     quote! {
-        #[derive(Debug, ::serde::Deserialize, ::validator::Validate)]
+        #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, ::validator::Validate)]
         #[serde(deny_unknown_fields)]
         #input
         impl #impl_generics ::dimos_module::NativeConfig for #name #ty_generics #where_clause {}

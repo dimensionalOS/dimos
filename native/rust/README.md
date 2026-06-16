@@ -61,13 +61,13 @@ async fn main() {
 
 A config struct is defined with `#[native_config]`. The attribute enforces a one-to-one mapping with the Python wrapper: every field is required and supplied by Python over stdin, with no Rust-side defaults.
 
-It injects `#[derive(Debug, Deserialize, Validate)]` and `#[serde(deny_unknown_fields)]`, emits the `NativeConfig` marker impl that `#[config]` requires, and rejects at compile time anything that would let a field be filled in by Rust:
+It injects `#[derive(Debug, Deserialize, Serialize, Validate)]` and `#[serde(deny_unknown_fields)]`, emits the `NativeConfig` marker impl that `#[config]` requires, and rejects at compile time anything that would let a field be filled in by Rust:
 
 - `Option<T>` fields
 - `#[serde(default)]`, field or container
 - `#[serde(skip)]`, `#[serde(skip_deserializing)]`, `#[serde(flatten)]`
 
-A type alias that resolves to `Option` is not detected.
+A type alias to `Option` slips past the compile-time check, but the runtime check below still rejects it.
 
 Field-level `#[validate(...)]` and a container `#[validate(schema(function = "..."))]` (from the [`validator`](https://docs.rs/validator) crate) pass through for value and cross-field validation. `run()` calls `config.validate()` after deserializing and bails with an `io::Error` on failure.
 
@@ -93,7 +93,7 @@ fn validate_health_range(cfg: &Config) -> Result<(), ValidationError> {
 }
 ```
 
-At runtime serde enforces the mapping on the Python payload: a missing or unknown field is a hard error.
+At runtime `run()` enforces the mapping on the Python payload: deserialization rejects an unknown field, and a key-set check rejects any field whose JSON key is absent, even an `Option` or a type alias to `Option` that serde would otherwise accept as `None`.
 
 Field name = port name. Ports map to topics via the stdin JSON; unmapped ports fall back to `/{port}`.
 
