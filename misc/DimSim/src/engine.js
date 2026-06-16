@@ -535,14 +535,19 @@ camera.position.set(0, 1.7, 4);
 
 // Lighting for non-splat geometry (assets/avatars).
 // Splats are mostly self-lit visually; GLB assets need strong, stable fill to avoid looking black.
+// Tagged `userData.dimsimDefault` so a scene can drop them via the scene-api
+// `clearDefaultLights()` helper and light the world itself.
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.65);
+ambientLight.userData.dimsimDefault = true;
 scene.add(ambientLight);
 
 const hemi = new THREE.HemisphereLight(0xffffff, 0x223344, 0.85);
 hemi.position.set(0, 10, 0);
+hemi.userData.dimsimDefault = true;
 scene.add(hemi);
 
 const dir = new THREE.DirectionalLight(0xffffff, 1.6);
+dir.userData.dimsimDefault = true;
 dir.position.set(8, 14, 6);
 dir.castShadow = false; // off by default; user enables via Scene Lighting panel
 dir.shadow.mapSize.width = 512;
@@ -5352,12 +5357,15 @@ function syncShadowMapEnabled() {
       if (ld._lightObj?.castShadow && ld._lightObj?.visible !== false) { anyCast = true; break; }
     }
   }
-  if (renderer.shadowMap.enabled !== anyCast) {
-    renderer.shadowMap.enabled = anyCast;
+  // A scene that called the scene-api `enableShadows()` forces shadows on even
+  // though its lights aren't registered in the editor light arrays above.
+  const want = anyCast || renderer.shadowMap.__dimsimForced === true;
+  if (renderer.shadowMap.enabled !== want) {
+    renderer.shadowMap.enabled = want;
     // When toggling shadow maps, Three.js needs to recompile materials
     scene.traverse((obj) => { if (obj.material) obj.material.needsUpdate = true; });
   }
-  if (anyCast) renderer.shadowMap.needsUpdate = true;
+  if (want) renderer.shadowMap.needsUpdate = true;
 }
 
 function renderSceneInMode(mode) {

@@ -460,3 +460,144 @@ export function autoScale(obj: any, targetMaxDim = 50): number {
   }
   return scaleFactor;
 }
+
+// ── Lighting & shadows ───────────────────────────────────────────────────────
+//
+// The engine boots a full "studio" environment so GLB assets are never black
+// and eval frames stay deterministic: three fill lights (ambient + hemisphere +
+// directional), a RoomEnvironment IBL, ACES tone-mapping, and shadows globally
+// OFF (renderer.shadowMap.enabled = false, autoUpdate = false).
+//
+// That means a scene starts *fully lit*, not from black — so author lighting is
+// additive and easily blows out, and `mesh.castShadow = true` is a no-op until
+// the renderer's shadow map is switched on.  These two helpers let a scene take
+// over lighting and turn real shadows on without reaching into engine internals.
+
+/**
+ * Hand lighting control to the scene.  Removes BOTH default light sources:
+ *   - the 3 engine fill lamps (ambient + hemisphere + directional), and
+ *   - the image-based light (`scene.environment` — the RoomEnvironment that
+ *     softly lights everything from all directions).
+ *
+ * The IBL is the big one: it's the omnidirectional fill that washes scenes out
+ * when you stack your own lights on top.  After this the scene is dark until you
+ * add your own lights.  (ACES tone-mapping stays — lower
+ * `renderer.toneMappingExposure` if you want it darker still.)  Returns the
+ * number of lamps removed.
+ */
+export function clearDefaultLights(): number {
+  if (!scene) throw new Error("scene-api not initialized");
+  const doomed: any[] = [];
+  scene.traverse((o: any) => {
+    if (o.isLight && o.userData?.dimsimDefault) doomed.push(o);
+  });
+  for (const l of doomed) {
+    try { l.parent?.remove(l); } catch { /* already gone */ }
+    try { l.dispose?.(); } catch { /* no-op */ }
+  }
+  scene.environment = null; // drop the image-based light (the main "too bright" source)
+  return doomed.length;
+}
+
+/**
+ * Turn real shadows on.  Flips the renderer's shadow map on and keeps it
+ * updating every frame (so the moving agent's shadow tracks).  After calling
+ * this, set `castShadow = true` on your lights and meshes that should cast, and
+ * `receiveShadow = true` on the floor.  Opt-in per scene; off by default for
+ * determinism.
+ */
+export function enableShadows(): void {
+  if (!renderer) throw new Error("scene-api not initialized");
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.autoUpdate = true; // moving agent → shadow must re-render
+  // Mark as force-enabled so the engine's syncShadowMapEnabled() (which only
+  // counts editor-panel lights) doesn't clobber this back to false.
+  renderer.shadowMap.__dimsimForced = true;
+}
+
+// Raycast down at (x, z) and return the *lowest* surface Y (the floor), or null
+// if nothing is hit.  Lowest, not first, so a ceiling/roof/tabletop above the
+// floor doesn't win — see placeOnGround's doc for the reasoning and limits.
+function _floorYAt(x: number, z: number, fromY: number): number | null {
+  if (!scene || !THREE) throw new Error("scene-api not initialized");
+  scene.updateMatrixWorld(true);
+  const ray = new THREE.Raycaster(
+    new THREE.Vector3(x, fromY, z),
+    new THREE.Vector3(0, -1, 0),
+  );
+  const hits = ray
+    .intersectObjects(scene.children, true)
+    .filter((h: any) => h.object?.isMesh && h.object?.visible !== false);
+  if (hits.length === 0) return null;
+  return hits.reduce((lo: number, h: any) => Math.min(lo, h.point.y), Infinity);
+}
+
+// Capsule half-extent (centre → foot) of the declared embodiment, so spawn
+// helpers auto-fit whatever robot/vehicle the scene set via setEmbodiment().
+// Falls back to the default ground-robot capsule when none is declared.
+function _capsuleOffset(opts: { halfHeight?: number; radius?: number }): number {
+  const emb = _pendingEmbodiment ?? {};
+  const halfHeight = opts.halfHeight ?? emb.halfHeight ?? 0.25;
+  const radius = opts.radius ?? emb.radius ?? 0.12;
+  return halfHeight + radius;
+}
+
+/**
+ * Resolve a spawn point that sits on the floor at world (x, z).  Raycasts
+ * straight down and returns `{ x, y, z }` ready to use as the `spawnPoint`
+ * return value — no Y guessing.  `y` is the floor plus the agent's capsule
+ * offset so it rests on the surface.  The capsule size comes from the
+ * embodiment declared with `setEmbodiment(...)` (so a wide ground vehicle fits
+ * automatically); override with `opts.halfHeight` / `opts.radius`.
+ *
+ * There is no fully general "where's the floor" — it's a guess.  This takes the
+ * **lowest** surface under (x, z), which is the floor for open maps and for
+ * enclosed maps with a ceiling/roof (a from-the-top raycast would wrongly land
+ * on the roof).  The case it can't resolve is **multi-story** — it'd pick the
+ * ground floor; pass `fromY` (a Y just above the target floor) to scope the ray
+ * to one story.  It also can't tell if (x, z) is *inside* a wall — drop a debug
+ * marker mesh at the spot to eye-check that.
+ *
+ * If nothing is hit it warns and falls back to `opts.fallbackY` (default 0.5) —
+ * that warning is your signal the robot would spawn over a hole.
+ */
+export function placeOnGround(
+  x: number,
+  z: number,
+  opts: { halfHeight?: number; radius?: number; fromY?: number; fallbackY?: number } = {},
+): { x: number; y: number; z: number } {
+  const floorY = _floorYAt(x, z, opts.fromY ?? 1000);
+  if (floorY == null) {
+    console.warn(
+      `[placeOnGround] no ground under (x=${x}, z=${z}) — robot will float/fall. ` +
+        `Pick a spot over the floor, or pass { fallbackY }.`,
+    );
+    return { x, y: opts.fallbackY ?? 0.5, z };
+  }
+  return { x, y: floorY + _capsuleOffset(opts), z };
+}
+
+/**
+ * Resolve an *airborne* spawn point — for drones / aerial embodiments that
+ * hover instead of resting on the floor.  Returns `{ x, y, z }` at `altitude`
+ * metres above the floor under (x, z), so the drone clears the ground no matter
+ * the terrain height.  Same lowest-surface floor logic (and limits) as
+ * `placeOnGround`; if there's no floor it measures altitude from y=0 and warns.
+ *
+ *   return { spawnPoint: placeInAir(0, 0, 5) };   // hover 5 m up
+ */
+export function placeInAir(
+  x: number,
+  z: number,
+  altitude: number,
+  opts: { fromY?: number } = {},
+): { x: number; y: number; z: number } {
+  const floorY = _floorYAt(x, z, opts.fromY ?? 1000);
+  if (floorY == null) {
+    console.warn(
+      `[placeInAir] no ground under (x=${x}, z=${z}) — measuring altitude from y=0.`,
+    );
+    return { x, y: altitude, z };
+  }
+  return { x, y: floorY + altitude, z };
+}
