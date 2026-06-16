@@ -31,6 +31,8 @@ GOAL_ROBOT_MESH_COLOR = (*GOAL_ROBOT_FEASIBLE_COLOR, GOAL_ROBOT_FEASIBLE_OPACITY
 PREVIEW_ROBOT_COLOR = (80, 180, 255)
 PREVIEW_ROBOT_OPACITY = 0.55
 PREVIEW_ROBOT_MESH_COLOR = (*PREVIEW_ROBOT_COLOR, PREVIEW_ROBOT_OPACITY)
+TARGET_CONTROL_FEASIBLE_COLOR = (0, 180, 255)
+TARGET_CONTROL_INFEASIBLE_COLOR = (255, 40, 40)
 REFERENCE_GRID_NAME = "/reference_grid"
 REFERENCE_GRID_CELL_COLOR = (44, 54, 58)
 REFERENCE_GRID_SECTION_COLOR = (90, 145, 165)
@@ -314,7 +316,7 @@ class ViserManipulationScene:
             pass
 
     def set_target_visual_state(self, robot_id: str, feasible: bool) -> None:
-        color = (0, 180, 255) if feasible else (255, 40, 40)
+        color = TARGET_CONTROL_FEASIBLE_COLOR if feasible else TARGET_CONTROL_INFEASIBLE_COLOR
         mesh_color = GOAL_ROBOT_FEASIBLE_COLOR if feasible else GOAL_ROBOT_INFEASIBLE_COLOR
         mesh_opacity = GOAL_ROBOT_FEASIBLE_OPACITY if feasible else GOAL_ROBOT_INFEASIBLE_OPACITY
         handles = [self._handles.get(f"{robot_id}:ee_control")]

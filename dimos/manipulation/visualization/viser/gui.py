@@ -35,6 +35,9 @@ from dimos.manipulation.visualization.viser.state import (
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.JointState import JointState
 
+# Fallback joint-slider range (radians) when a robot config omits joint limits.
+DEFAULT_JOINT_LIMITS = (-3.14, 3.14)
+
 
 class _GuiServer(Protocol):
     gui: object
@@ -356,7 +359,7 @@ class ViserPanelGui:
         except AttributeError:
             joint_limits_upper = None
         for index, joint_name in enumerate(config.joint_names):
-            lower, upper = (-3.14, 3.14)
+            lower, upper = DEFAULT_JOINT_LIMITS
             if joint_limits_lower is not None and index < len(joint_limits_lower):
                 lower = joint_limits_lower[index]
             if joint_limits_upper is not None and index < len(joint_limits_upper):
