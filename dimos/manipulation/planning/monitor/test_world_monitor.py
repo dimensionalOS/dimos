@@ -191,7 +191,11 @@ def test_create_planning_specs_wraps_existing_world(monkeypatch) -> None:
     fake_kinematics = object()
     fake_planner = object()
 
-    monkeypatch.setattr(planning_factory, "create_kinematics", lambda name: fake_kinematics)
+    monkeypatch.setattr(
+        planning_factory,
+        "create_kinematics",
+        lambda *args, **kwargs: fake_kinematics,
+    )
     monkeypatch.setattr(planning_factory, "create_planner", lambda name: fake_planner)
 
     planning_specs = planning_factory.create_planning_specs(world=fake_world)  # type: ignore[arg-type]
