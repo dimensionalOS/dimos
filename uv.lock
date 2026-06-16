@@ -1952,6 +1952,7 @@ all = [
     { name = "openai" },
     { name = "opencv-contrib-python" },
     { name = "pillow" },
+    { name = "pin-pink" },
     { name = "piper-sdk" },
     { name = "playground" },
     { name = "plotly" },
@@ -1963,6 +1964,7 @@ all = [
     { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin'" },
     { name = "python-multipart" },
     { name = "pyyaml" },
+    { name = "qpsolvers", extra = ["proxqp"] },
     { name = "reportlab" },
     { name = "rerun-sdk" },
     { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -2044,11 +2046,13 @@ manipulation = [
     { name = "drake", version = "1.49.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform != 'darwin'" },
     { name = "kaleido" },
     { name = "matplotlib" },
+    { name = "pin-pink" },
     { name = "piper-sdk" },
     { name = "plotly" },
     { name = "pycollada" },
     { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin'" },
     { name = "pyyaml" },
+    { name = "qpsolvers", extra = ["proxqp"] },
     { name = "trimesh" },
     { name = "xacro" },
     { name = "xarm-python-sdk" },
@@ -2400,6 +2404,7 @@ requires-dist = [
     { name = "opencv-python" },
     { name = "pillow", marker = "extra == 'perception'" },
     { name = "pin", specifier = ">=3.3.0" },
+    { name = "pin-pink", marker = "extra == 'manipulation'", specifier = ">=4.2.0" },
     { name = "piper-sdk", marker = "extra == 'manipulation'" },
     { name = "playground", marker = "extra == 'sim'", specifier = ">=0.0.5" },
     { name = "plotext", specifier = "==5.3.2" },
@@ -2419,6 +2424,7 @@ requires-dist = [
     { name = "python-multipart", marker = "extra == 'misc'", specifier = ">=0.0.27" },
     { name = "pyturbojpeg", specifier = "==1.8.2" },
     { name = "pyyaml", marker = "extra == 'manipulation'", specifier = ">=6.0" },
+    { name = "qpsolvers", extras = ["proxqp"], marker = "extra == 'manipulation'", specifier = ">=4.12.0" },
     { name = "reactivex" },
     { name = "reportlab", marker = "extra == 'apriltag'", specifier = ">=4.5.0" },
     { name = "rerun-sdk", specifier = "==0.32.0a1" },
@@ -4955,6 +4961,15 @@ wheels = [
 ]
 
 [[package]]
+name = "loop-rate-limiters"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c7/dc/ebbe468e7a71073879b322968a02e37594343ca2cc4b3ba65baf4db60adb/loop_rate_limiters-1.2.0.tar.gz", hash = "sha256:7187ec1f76f282ee7166d85c8e29eb13dd850422577decaf7e6bfc803173b421", size = 35581, upload-time = "2025-08-13T12:46:29.235Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e2/6d/d56be57340baf2e6f6361386f4c21b8b5e001251c64af954787f8d01ec78/loop_rate_limiters-1.2.0-py3-none-any.whl", hash = "sha256:482f720f409e05dfca8b7b63df180217afa9a51564def681853cb7370a020b74", size = 10917, upload-time = "2025-08-13T12:46:26.7Z" },
+]
+
+[[package]]
 name = "lsprotocol"
 version = "2025.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -7394,6 +7409,22 @@ wheels = [
 ]
 
 [[package]]
+name = "pin-pink"
+version = "4.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "loop-rate-limiters" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pin" },
+    { name = "qpsolvers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1a/aa/52c817dea0240f41c6b2b0e0872561a63942c1cc5f26fe367f7da60fe183/pin_pink-4.2.0.tar.gz", hash = "sha256:21ffbb4624377d74036c4c4d1d9ba252a0c912cd7a2469117e768f36179c17e1", size = 284729, upload-time = "2026-04-20T09:47:38.34Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d9/de/9c1f8e4fe703ac917fa0bb161a928704b31c5fafce90a055dcabd5674ae4/pin_pink-4.2.0-py3-none-any.whl", hash = "sha256:8c405607eb94c92540a7b28147b5d638ba1e5dbfda8ef307e3e51572e3dd4477", size = 64871, upload-time = "2026-04-20T09:47:34.899Z" },
+]
+
+[[package]]
 name = "piper-sdk"
 version = "0.6.1"
 source = { registry = "https://pypi.org/simple" }
@@ -7598,6 +7629,41 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c5/f5/65d838092fd01c44d16037953fd4c2cc851e783de9b8f02b27ec4ffd906f/protobuf-6.33.5-cp39-abi3-manylinux2014_s390x.whl", hash = "sha256:8afa18e1d6d20af15b417e728e9f60f3aa108ee76f23c3b2c07a2c3b546d3afd", size = 339411, upload-time = "2026-01-29T21:51:27.446Z" },
     { url = "https://files.pythonhosted.org/packages/9b/53/a9443aa3ca9ba8724fdfa02dd1887c1bcd8e89556b715cfbacca6b63dbec/protobuf-6.33.5-cp39-abi3-manylinux2014_x86_64.whl", hash = "sha256:cbf16ba3350fb7b889fca858fb215967792dc125b35c7976ca4818bee3521cf0", size = 323465, upload-time = "2026-01-29T21:51:28.925Z" },
     { url = "https://files.pythonhosted.org/packages/57/bf/2086963c69bdac3d7cff1cc7ff79b8ce5ea0bec6797a017e1be338a46248/protobuf-6.33.5-py3-none-any.whl", hash = "sha256:69915a973dd0f60f31a08b8318b73eab2bd6a392c79184b3612226b0a3f8ec02", size = 170687, upload-time = "2026-01-29T21:51:32.557Z" },
+]
+
+[[package]]
+name = "proxsuite"
+version = "0.7.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cmeel" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0a/5c/fee717b6fc863691dfc25e5e2f87c3a8c316af386be6cb4230475aceec95/proxsuite-0.7.3.tar.gz", hash = "sha256:d4c478e9f38c652cc8c82519c8c3cc56d8e68f0ff61519e246d6d54a165afdfc", size = 54665348, upload-time = "2026-05-11T17:43:56.559Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bf/be/06a82668102d2f66e36973b3049a4ca8858bc1fa374e4f215478c862cd4f/proxsuite-0.7.3-2-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:74d7687c949ef8da3b0d1aa5e1300f01d6b9350c2c24668905e2d8b6f29c5df8", size = 1452581, upload-time = "2026-05-12T15:20:03.219Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/37/2a3a229b7c207eb0d27fdb6bc898c464d188faa8980166ead40056702b14/proxsuite-0.7.3-2-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:b6f7640f932dbfd4cbb93db9f206fbe2d15c81d76de0e68e3f789808a3380f04", size = 607542, upload-time = "2026-05-12T15:20:04.81Z" },
+    { url = "https://files.pythonhosted.org/packages/a8/8f/18c88f9fb27cf8749fdfc29c73392604729260c7ff26952a6a6a16dd6c99/proxsuite-0.7.3-2-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:8f1ae21f012cacb0657fec453d54fe23608092d944891bca19f8de17491dfc00", size = 613807, upload-time = "2026-05-12T15:20:06.416Z" },
+    { url = "https://files.pythonhosted.org/packages/1a/fa/b759eb353e2c0fceb566404ac9082a14673ebbb1ed7ea6b444b2b4939e3d/proxsuite-0.7.3-2-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:f1c1c2ab47faa5adc82b8c0861116007f1750fe4ebd574ad49917b4edb1d380b", size = 1464683, upload-time = "2026-05-12T15:20:08.013Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/5b/414b45b07fa8c89a2e84efd0bcbab01eaaa4c25366831fae2291c040b7c4/proxsuite-0.7.3-2-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:a303788fe9e336a6d0687b1f6d1d3a9957cc5534f6f47632dd2984c037903369", size = 1453725, upload-time = "2026-05-12T15:20:09.607Z" },
+    { url = "https://files.pythonhosted.org/packages/52/d6/d8589037c6c02e4cfd9e5306a175d774d1e4ba0dc833c36ca367e691e21c/proxsuite-0.7.3-2-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:117f53782d84233ae5555642ec66b1efe35f9b1fb2ae883cfcca1dfe5383bb67", size = 607899, upload-time = "2026-05-12T15:20:11.253Z" },
+    { url = "https://files.pythonhosted.org/packages/53/6d/b5c8bb23dff6c39b4d79328559d015e2b3aea9514577b850e002ccdaf0d0/proxsuite-0.7.3-2-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:fb24d66515f160efa0172f0fcb0d1b4356b8d1d683e99e2d09b92af14da4061d", size = 614094, upload-time = "2026-05-12T15:20:12.993Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/9b/54c4586c60cad290d7e28bad73b96293b5b4f1728d5cade559a8294d41b9/proxsuite-0.7.3-2-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:cb9bead3224b2bb3bbafb8a3616f159038535fc84a8edc5dce709373925e57ef", size = 1465663, upload-time = "2026-05-12T15:20:14.262Z" },
+    { url = "https://files.pythonhosted.org/packages/fb/8d/ff0dce5f21a93b29ff77d65758cd96f33c14e2c18706dffc7775efcc333f/proxsuite-0.7.3-2-cp312-cp312-macosx_10_9_x86_64.whl", hash = "sha256:974cb00c93feac85f041639bf3bf80787a645b34c656980e654a6e8867abc577", size = 1455988, upload-time = "2026-05-12T15:20:15.708Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/8f/cdf95f4d9d44519a68cbe477558d0cda4a52a2a816226f63d1dded4b9f9d/proxsuite-0.7.3-2-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:f60e98318cc16bfb5386b52bdedd130f1a1c0943ae3199e28c5fa7507b611a99", size = 606981, upload-time = "2026-05-12T15:20:17.073Z" },
+    { url = "https://files.pythonhosted.org/packages/94/3f/e1f31018255cf54f856ef745a9477de88322bffeb0c7857692e8c260730f/proxsuite-0.7.3-2-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:49171b620a52eff0a09a9d7de9b9c3f2c1b7ee6ba90b2e900355dda11fb7643a", size = 613766, upload-time = "2026-05-12T15:20:18.422Z" },
+    { url = "https://files.pythonhosted.org/packages/10/32/c449d72f5506e9740ce60e30d3708cd15c0c24ecf022866cc847ac560e0e/proxsuite-0.7.3-2-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:456770b40c6e42d47e486ae93f3e9c7416d60ea6b3b710871703eeebd14f7374", size = 1463205, upload-time = "2026-05-12T15:20:19.971Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/91/13c06e9cba17cf8843a835024ddf5b99ac2c73a255385f8f9aecac877b4b/proxsuite-0.7.3-2-cp313-cp313-macosx_10_9_x86_64.whl", hash = "sha256:c764dfdfdd5807b4322f95ef90e476d0ca2377b3aaef92c4204c6327ced79cd5", size = 1455805, upload-time = "2026-05-12T15:20:21.806Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/10/d8b40701c164c58b8a4a006e2a8406d4e3394fa2a9a658a962a083022685/proxsuite-0.7.3-2-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:6cdf3861931a617431201615fa05a88635bc868e2a8cc236fb3b76c03d751f61", size = 606920, upload-time = "2026-05-12T15:20:23.509Z" },
+    { url = "https://files.pythonhosted.org/packages/be/bc/10aff6de0db4ea93ebdf17c1dd4b4dd464200e25069a2c2a15b605f91ecd/proxsuite-0.7.3-2-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:4dfc50a81e0b9090868e23f338699ef830acf0ac47efdfe7707f804f11f71496", size = 613384, upload-time = "2026-05-12T15:20:24.856Z" },
+    { url = "https://files.pythonhosted.org/packages/59/bf/3121815231a09f05c0df478351ab8ed571cc4349358f8a5c46c0d64b586f/proxsuite-0.7.3-2-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:a832dbe538c8d78abb7b2fb87f7197cdadde6e361dc6c4c935f74055352057a9", size = 1463000, upload-time = "2026-05-12T15:20:26.152Z" },
+    { url = "https://files.pythonhosted.org/packages/58/7a/4ee098e4e8add46b364afd683d2301351d052e06bdd92d6d74c7f0a292bd/proxsuite-0.7.3-2-cp314-cp314-macosx_10_9_x86_64.whl", hash = "sha256:e94ced71006b31522765bbd0c58b72f0377e0f48cf2dea0eeea611e4e2c565e2", size = 1455945, upload-time = "2026-05-12T15:20:27.862Z" },
+    { url = "https://files.pythonhosted.org/packages/f6/bd/df48bf8890eab7afa7152b3010130415e566950f5cd89582051e793c12ba/proxsuite-0.7.3-2-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:755aa7195de82bf1c8940ec99f381762e4ab46637d4647a4be1a6a98b169cc74", size = 607146, upload-time = "2026-05-12T15:20:29.62Z" },
+    { url = "https://files.pythonhosted.org/packages/f0/bd/4b78c766e2af3fa77832f0634ec6a0aaea90f4036d481e46f6780dcdd2f6/proxsuite-0.7.3-2-cp314-cp314-manylinux_2_28_aarch64.whl", hash = "sha256:73e9329f0477537f51bfc5b7d06890741095115a73fc7dc86952aaa463dad4ea", size = 614030, upload-time = "2026-05-12T15:20:30.964Z" },
+    { url = "https://files.pythonhosted.org/packages/d2/6d/8b6ae44aef5c6fd24ede1e43765e72cfea02a5ce85551d7baec98d6cecab/proxsuite-0.7.3-2-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:17b66a0f598014d33b79872d8657189fdcbf777fb8997063d60292df7afb79b7", size = 1463429, upload-time = "2026-05-12T15:20:32.181Z" },
 ]
 
 [[package]]
@@ -9038,6 +9104,26 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/49/0e/3f0d0d335c6b3abb9b7b723776d0b21fa7f3a6c819a0db6097059aada160/pyzmq-27.1.0-pp311-pypy311_pp73-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:53b40f8ae006f2734ee7608d59ed661419f087521edbfc2149c3932e9c14808c", size = 567747, upload-time = "2025-09-08T23:09:52.698Z" },
     { url = "https://files.pythonhosted.org/packages/a1/cf/f2b3784d536250ffd4be70e049f3b60981235d70c6e8ce7e3ef21e1adb25/pyzmq-27.1.0-pp311-pypy311_pp73-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:f605d884e7c8be8fe1aa94e0a783bf3f591b84c24e4bc4f3e7564c82ac25e271", size = 747371, upload-time = "2025-09-08T23:09:54.563Z" },
     { url = "https://files.pythonhosted.org/packages/01/1b/5dbe84eefc86f48473947e2f41711aded97eecef1231f4558f1f02713c12/pyzmq-27.1.0-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:c9f7f6e13dff2e44a6afeaf2cf54cee5929ad64afaf4d40b50f93c58fc687355", size = 544862, upload-time = "2025-09-08T23:09:56.509Z" },
+]
+
+[[package]]
+name = "qpsolvers"
+version = "4.12.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b9/35/fc1f8b033b7ba6ecede5db093741df6a3adba6059346a586550f46254315/qpsolvers-4.12.0.tar.gz", hash = "sha256:2ec9c46294ae02bdac8969352726d2c2d5ed85f00c096881b27909e4f103ca7c", size = 235173, upload-time = "2026-05-08T09:18:06.925Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/da/68/c6e6f378f79dff83584ed18acae88c1de1ea56afc5ba9a2831ad3716083d/qpsolvers-4.12.0-py3-none-any.whl", hash = "sha256:30545f3eba98655a3c9410a071c70bb016e320a8d80a0c1a854aba00963b9b7f", size = 106752, upload-time = "2026-05-08T09:18:02.366Z" },
+]
+
+[package.optional-dependencies]
+proxqp = [
+    { name = "proxsuite" },
 ]
 
 [[package]]
