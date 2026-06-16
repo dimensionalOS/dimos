@@ -111,6 +111,9 @@ unitree_go2_nav_3d = autoconnect(
         world_frame="odom",
         voxel_size=voxel_size,
         robot_height=go2_lidar_height,
+        # The surface_map / nodes / node_edges viz artifacts are suppressed in
+        # the viewer below, so don't pay to build and publish them.
+        viz_publish_hz=0.0,
     ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
     GoalRelay.blueprint(),
     BasicPathFollower.blueprint(lookahead_m=0.5, heading_gain=0.8, max_angular=0.6),

@@ -174,36 +174,54 @@ impl Worker {
     async fn run(self) {
         let mut planner = Planner::default();
         let mut last_path_at: Option<Instant> = None;
+        let mut last_viz_at: Option<Instant> = None;
         loop {
             self.wake.notified().await;
             // Coalesced: take the newest map input, dropping any intermediates.
             let update = self.pending.lock().expect("pending mutex").take();
             if let Some(update) = update {
-                self.apply_update(&mut planner, update).await;
+                self.apply_update(&mut planner, update, &mut last_viz_at)
+                    .await;
             }
             self.maybe_replan(&mut planner, &mut last_path_at).await;
         }
     }
 
-    /// Mutate the graph from a map update, then publish the graph artifacts.
-    /// The CPU-bound section runs under `block_in_place` so the runtime can
-    /// still schedule the handle loop on another thread.
-    async fn apply_update(&self, planner: &mut Planner, update: MapUpdate) {
-        let messages = tokio::task::block_in_place(|| self.ingest(planner, update));
+    /// Mutate the graph from a map update, then publish the viz artifacts at no
+    /// more than `viz_publish_hz`. The graph itself is always updated; only the
+    /// surface_map / nodes / node_edges rebuild + publish is rate-capped, since
+    /// rebuilding the whole graph every cycle is the dominant per-cycle cost and
+    /// nothing on the planning path consumes those outputs. The CPU-bound
+    /// section runs under `block_in_place` so the runtime can still schedule the
+    /// handle loop on another thread.
+    async fn apply_update(
+        &self,
+        planner: &mut Planner,
+        update: MapUpdate,
+        last_viz_at: &mut Option<Instant>,
+    ) {
+        let now = Instant::now();
+        let viz_due = self.config.viz_publish_hz > 0.0 && {
+            let viz_interval = Duration::from_secs_f32(1.0 / self.config.viz_publish_hz);
+            last_viz_at.is_none_or(|t| now.duration_since(t) >= viz_interval)
+        };
+
+        let messages = tokio::task::block_in_place(|| {
+            let updated = self.ingest(planner, update);
+            (updated && viz_due).then(|| self.build_graph_messages(planner))
+        });
+
         if let Some((surface, node_cloud, edges)) = messages {
             publish_cloud(&self.surface_map, &surface).await;
             publish_cloud(&self.nodes, &node_cloud).await;
             publish_path(&self.node_edges, &edges).await;
+            *last_viz_at = Some(now);
         }
     }
 
-    /// Pure-CPU half of `apply_update`: extract points, update the graph, and
-    /// build the artifact messages. Returns `None` if the cloud was unusable.
-    fn ingest(
-        &self,
-        planner: &mut Planner,
-        update: MapUpdate,
-    ) -> Option<(PointCloud2, PointCloud2, Path)> {
+    /// Pure-CPU graph mutation from a map update. Returns whether the graph was
+    /// updated (false if the cloud was unusable).
+    fn ingest(&self, planner: &mut Planner, update: MapUpdate) -> bool {
         match update {
             MapUpdate::Region { cloud, bounds } => {
                 let points = match extract_xyz(&cloud) {
@@ -214,7 +232,7 @@ impl Worker {
                             error = %e,
                             "Failed to extract local map points, dropped a region update.",
                         );
-                        return None;
+                        return false;
                     }
                 };
                 let bounds = RegionBounds {
@@ -242,17 +260,17 @@ impl Worker {
                             error = %e,
                             "Failed to extract lidar points, dropped a cloud.",
                         );
-                        return None;
+                        return false;
                     }
                 };
                 if points.is_empty() {
-                    return None;
+                    return false;
                 }
                 planner.update_global_map(&points, &self.config);
                 debug!(global_map_points = points.len(), "global_map processed");
             }
         }
-        Some(self.build_graph_messages(planner))
+        true
     }
 
     fn build_graph_messages(&self, planner: &Planner) -> (PointCloud2, PointCloud2, Path) {

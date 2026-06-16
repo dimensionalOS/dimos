@@ -42,6 +42,7 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     robot_radius_m: float = 0.2
     wall_penalty_weight: float = 4.0
     goal_tolerance: float = 0.3
+    viz_publish_hz: float = 2.0
 
 
 class MLSPlannerNative(NativeModule):

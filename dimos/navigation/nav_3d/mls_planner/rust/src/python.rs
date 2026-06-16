@@ -59,6 +59,8 @@ impl MLSPlanner {
             // Only the binary's replan loop reads goal_tolerance. This
             // in-process binding plans on demand and never consults it.
             goal_tolerance: 1.0,
+            // Only the binary's worker publishes viz artifacts. Unused here.
+            viz_publish_hz: 1.0,
         };
         config
             .validate()

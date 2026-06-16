@@ -46,6 +46,10 @@ pub struct Config {
     /// Ground-plane distance from goal at which the planner stops replanning.
     #[validate(range(exclusive_min = 0.0))]
     pub goal_tolerance: f32,
+    /// Rate cap for republishing the surface_map / nodes / node_edges viz
+    /// artifacts. 0 disables them entirely. The path output is unthrottled.
+    #[validate(range(min = 0.0))]
+    pub viz_publish_hz: f32,
 }
 
 fn default_robot_radius_m() -> f32 {
@@ -479,6 +483,7 @@ mod region_tests {
             robot_radius_m: 0.0,
             wall_penalty_weight: 1.0,
             goal_tolerance: 0.3,
+            viz_publish_hz: 2.0,
         }
     }
 
