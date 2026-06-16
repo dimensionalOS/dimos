@@ -21,7 +21,7 @@ const SKY    = {
   sunHeight:   0.6,
 };
 
-export default async function build({ scene, THREE, physics, setSky, setEmbodiment, loadGLTF }) {
+export default async function build({ scene, THREE, physics, setSky, setEmbodiment, loadGLTF, enableShadows }) {
   setSky(SKY);
 
   setEmbodiment({
@@ -199,10 +199,11 @@ export default async function build({ scene, THREE, physics, setSky, setEmbodime
 
     const bulb = new THREE.PointLight(0xfff2cf, 12, 14, 1.4);
     bulb.position.set(0, WALL_H - 0.8, z);
-    bulb.castShadow = false;
+    bulb.castShadow = true;
     scene.add(bulb);
   }
 
+  enableShadows();
   return {
     embodiment: null,
     spawnPoint: { x: 0, y: 1.0, z: -15 },

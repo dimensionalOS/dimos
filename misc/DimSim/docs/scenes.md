@@ -217,13 +217,22 @@ scene.add(sun);
 
 ## Shadows
 
-Shadows are off by default. Turn them on, then mark casters and receivers:
+Shadows are off by default. Turn them on, then mark what casts and what receives. A shadow only shows if the light, the caster mesh, and the receiver surface are all flagged:
 
 ```js
 enableShadows();
-sun.castShadow = true;        // a light that casts
+sun.castShadow = true;        // the light
+box.castShadow = true;        // a mesh that casts a shadow
 floor.receiveShadow = true;   // a surface that catches it
 ```
+
+A loaded GLB (map, prop) is many meshes, so flag them with a traverse. Set both so the geometry casts AND catches shadows:
+
+```js
+map.traverse((c) => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+```
+
+`receiveShadow` alone makes a mesh catch shadows but cast none, so a pillar/prop won't throw a shadow until it has `castShadow = true` too.
 
 Leave `PointLight.castShadow = false` to save frame rate.
 
