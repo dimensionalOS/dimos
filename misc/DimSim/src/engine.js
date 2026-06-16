@@ -535,8 +535,7 @@ camera.position.set(0, 1.7, 4);
 
 // Lighting for non-splat geometry (assets/avatars).
 // Splats are mostly self-lit visually; GLB assets need strong, stable fill to avoid looking black.
-// Tagged `userData.dimsimDefault` so a scene can drop them via the scene-api
-// `clearDefaultLights()` helper and light the world itself.
+// Tagged dimsimDefault so clearDefaultLights() can drop them.
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.65);
 ambientLight.userData.dimsimDefault = true;
 scene.add(ambientLight);
@@ -5357,8 +5356,7 @@ function syncShadowMapEnabled() {
       if (ld._lightObj?.castShadow && ld._lightObj?.visible !== false) { anyCast = true; break; }
     }
   }
-  // A scene that called the scene-api `enableShadows()` forces shadows on even
-  // though its lights aren't registered in the editor light arrays above.
+  // enableShadows() forces shadows on even though scene lights aren't in the arrays above.
   const want = anyCast || renderer.shadowMap.__dimsimForced === true;
   if (renderer.shadowMap.enabled !== want) {
     renderer.shadowMap.enabled = want;

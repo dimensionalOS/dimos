@@ -139,6 +139,14 @@ Eval:
 `);
 }
 
+// Flags the CLI accepts; anything else is a typo we reject (not silently ignore).
+const KNOWN_FLAGS = new Set([
+  "help", "version",
+  "scene", "port", "headless", "render", "channels", "eval", "env",
+  "output", "parallel", "connect", "timeout", "workflow",
+  "camera-fov", "image-rate", "lidar-rate", "odom-rate", "no-depth",
+]);
+
 function parseArgs(args: string[]) {
   const opts: Record<string, string | boolean> = {};
   for (let i = 0; i < args.length; i++) {
@@ -174,6 +182,15 @@ async function main() {
       console.log("unknown");
     }
     Deno.exit(0);
+  }
+
+  const unknownFlags = Object.keys(opts).filter((k) => !KNOWN_FLAGS.has(k));
+  if (unknownFlags.length > 0) {
+    console.error(
+      `[dimsim] unknown flag${unknownFlags.length > 1 ? "s" : ""}: ${unknownFlags.map((f) => `--${f}`).join(", ")}`,
+    );
+    console.error("[dimsim] run `dimsim help` for valid flags.");
+    Deno.exit(1);
   }
 
   const port = parseInt(opts.port as string) || 8090;

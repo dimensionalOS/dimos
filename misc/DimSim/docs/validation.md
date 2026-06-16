@@ -1,4 +1,4 @@
-# System Validation — Scene Recipes
+# System Validation: Scene Recipes
 
 Each item from [issue #1691](https://github.com/dimensionalOS/dimos/issues/1691) as a
 runnable DimSim scene. Full authoring reference: [scenes.md](./scenes.md).
@@ -13,12 +13,13 @@ export OPENAI_API_KEY=sk-...    # the agentic blueprint needs it
 uv run dimos --simulation dimsim --dimsim-scene=<name> run unitree-go2-agentic
 ```
 
-Headless by default. Add `--no-dimsim-headless` to watch at **localhost:8090** (free-orbit
-camera). Reload after an edit: hard-refresh the tab (headed) or restart the command
-(headless) — no rebuild.
+Headless by default. Add `--no-dimsim-headless` to watch at localhost:8090 (free-orbit
+camera). To reload after an edit, hard-refresh the tab (headed) or restart the command
+(headless). No rebuild needed.
 
 `build(api)` provides `scene`, `THREE`, `RAPIER`, `physics`, `loadGLTF`, `setSky`,
-`setEmbodiment`, `placeOnGround`, `placeInAir`, `clearDefaultLights`, `enableShadows`.
+`setEmbodiment`, `placeOnGround`, `placeInAir`, `findOpenSpawn`, `clearDefaultLights`,
+`enableShadows`.
 
 Scenes are lit (and shadow-free) by default. Call `clearDefaultLights()` to take over
 lighting, `enableShadows()` for shadows. See [scenes.md](./scenes.md).
@@ -39,8 +40,8 @@ export default async function build({ scene, physics, loadGLTF, setSky, placeOnG
 }
 ```
 
-**Observe:** the robot spawns on the map and collides with walls/floor. If it floats,
-`placeOnGround` warns — pick an `x, z` over the floor.
+Observe: the robot spawns on the map and collides with walls/floor. If it floats,
+`placeOnGround` warns. Pick an `x, z` over the floor.
 
 ---
 
@@ -55,28 +56,28 @@ scene.add(car);
 physics.staticCollider(car, "box");   // dynamicCollider(car, { shape: "box", mass: 50 }) to knock it around
 ```
 
-**Observe:** the robot is blocked by the car; LiDAR registers it.
+Observe: the robot is blocked by the car, and LiDAR registers it.
 
 ---
 
 ## 3. Editing loop
 
-Run headed (`--no-dimsim-headless`), edit `index.js` — move the car
-(`car.position.set(2, 0, 0)`) or add a light (`scene.add(new THREE.PointLight(0xff0000, 5, 10))`)
-— then hard-refresh the tab. Changes appear immediately; no rebuild.
+Run headed (`--no-dimsim-headless`), then edit `index.js`. Move the car
+(`car.position.set(2, 0, 0)`) or add a light (`scene.add(new THREE.PointLight(0xff0000, 5, 10))`),
+then hard-refresh the tab. Changes appear immediately, no rebuild.
 
 ---
 
-## 4. New embodiment — drone, car, or your own
+## 4. New embodiment: drone, car, or your own
 
 `setEmbodiment({ motionModel, ...params })` picks the motion model the server physics
 executes (`cmd_vel → /odom`):
 
 | `motionModel` | Behaviour | Key params |
 |---|---|---|
-| `holonomic` (default) | ground robot — drives along heading, gravity | `maxSpeed`, `turnRate`, `gravity` |
-| `flight` | drone — 6DoF, no gravity, altitude clamp | `maxSpeed`, `maxAltitude` |
-| `ackermann` | car — steers, can't pivot in place | `maxSpeed`, `wheelBase`, `maxSteerAngle` |
+| `holonomic` (default) | ground robot: drives along heading, gravity | `maxSpeed`, `turnRate`, `gravity` |
+| `flight` | drone: 6DoF, no gravity, altitude clamp | `maxSpeed`, `maxAltitude` |
+| `ackermann` | car: steers, can't pivot in place | `maxSpeed`, `wheelBase`, `maxSteerAngle` |
 
 ```js
 // drone — set embodimentType too so the browser visual matches the flight physics
@@ -93,7 +94,7 @@ return { spawnPoint: placeOnGround(0, 0) };
 To add a new model (legged, tank, boat), add one function to `MOTION_MODELS` in
 `cli/bridge/physics.ts`.
 
-**Observe:** the drone holds altitude; the car arcs through turns; both collide with scene
+Observe: the drone holds altitude, the car arcs through turns, and both collide with scene
 geometry.
 
 ---
