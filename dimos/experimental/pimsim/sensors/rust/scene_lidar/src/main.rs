@@ -146,6 +146,7 @@ struct SceneLidar {
     entities: Vec<Entity>,
     entity_mesh_cache: MeshCache,
     last_entity_count: usize,
+    scan_index: u64,
 }
 
 fn default_scan_model() -> String {
@@ -159,6 +160,13 @@ fn default_frame_id() -> String {
 fn default_point_rate() -> usize {
     200_000
 }
+
+// Per-scan azimuth advance for the non-repetitive sweep: TAU * golden-ratio
+// conjugate (~222.5 deg). Irrational and incommensurate with the scan pattern's
+// own golden-angle spacing, so successive scans land in the gaps rather than
+// replaying the same rays — letting the accumulating mapper fill coverage over
+// time, like a real non-repetitive Mid-360.
+const SCAN_SPIN_RADIANS: f32 = std::f32::consts::TAU * 0.618_034;
 
 impl SceneLidar {
     async fn setup(&mut self) {
@@ -193,7 +201,13 @@ impl SceneLidar {
         self.last_scan = Some(now);
 
         let base_orientation = pose_quat(&msg);
-        let sensor_orientation = base_orientation * sensor_mount_rotation(&self.config);
+        // Spin the fixed ray pattern about the sensor's up-axis by an irrational
+        // azimuth each scan so it sweeps new points over time (non-repetitive,
+        // like a real Mid-360). Carving stays intact for dynamic objects; the
+        // static map just accumulates instead of replaying one frozen scan.
+        let scan_spin = Quat::from_rotation_z(self.scan_index as f32 * SCAN_SPIN_RADIANS);
+        self.scan_index = self.scan_index.wrapping_add(1);
+        let sensor_orientation = base_orientation * sensor_mount_rotation(&self.config) * scan_spin;
         let sensor_offset = Vec3::new(
             self.config.sensor_x,
             self.config.sensor_y,
@@ -517,21 +531,26 @@ fn uniform_directions(config: &Config) -> Vec<Vec3> {
 }
 
 fn mid360_directions(config: &Config) -> Vec<Vec3> {
+    // Even, dense, band-limited coverage via a Fibonacci (golden-angle) spiral:
+    // azimuth advances by the golden angle each step while elevation sweeps the
+    // band with equal-area spacing (uniform in sin(elev)). The old approach
+    // interleaved two *independent* 1-D low-discrepancy sequences (golden ratio
+    // in az, sqrt2-1 in elev), which lattice together into Lissajous-style
+    // curves with gaps between them. A single golden-angle spiral has no such
+    // structure: it fills the band uniformly, like the Livox Mid-360's
+    // non-repetitive pattern.
     let rays_per_scan = ((config.point_rate as f32 / config.hz).round() as usize).max(1);
     let min_elev = config.elevation_min_deg.to_radians();
     let max_elev = config.elevation_max_deg.to_radians();
+    let sin_min = min_elev.sin();
+    let sin_max = max_elev.sin();
+    let golden_angle = std::f32::consts::PI * (3.0 - 5.0_f32.sqrt());
     let mut directions = Vec::with_capacity(rays_per_scan);
-
-    // Livox Mid-360 uses a non-repetitive pattern, not ring channels. This
-    // low-discrepancy pattern gives the mapper the same practical behavior:
-    // dense 360-degree coverage without horizontal/vertical scan bands.
-    const GOLDEN_RATIO_CONJUGATE: f32 = 0.618_034;
-    const SQRT2_MINUS_ONE: f32 = 0.414_213_57;
     for i in 0..rays_per_scan {
-        let t = i as f32;
-        let az = std::f32::consts::TAU * (t * GOLDEN_RATIO_CONJUGATE).fract();
-        let elev_t = (0.5 + t * SQRT2_MINUS_ONE).fract();
-        let elev = min_elev + (max_elev - min_elev) * elev_t;
+        let frac = (i as f32 + 0.5) / rays_per_scan as f32;
+        let sin_elev = sin_min + (sin_max - sin_min) * frac;
+        let elev = sin_elev.clamp(-1.0, 1.0).asin();
+        let az = (i as f32 * golden_angle).rem_euclid(std::f32::consts::TAU);
         directions.push(direction_from_az_elev(az, elev));
     }
     directions

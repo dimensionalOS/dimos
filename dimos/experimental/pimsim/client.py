@@ -62,9 +62,16 @@ class PimSimClient:
             self._ws = None
         self._goal_request.stop()
 
-    def set_agent_position(self, x: float, y: float, z: float = 0.0) -> None:
-        """Respawn the robot at ``(x, y, z)`` in world-frame metres."""
-        self._send({"type": "respawn_at", "point": [float(x), float(y), float(z)]})
+    def set_agent_position(self, x: float, y: float, z: float = 0.0, yaw: float = 0.0) -> None:
+        """Respawn the robot at ``(x, y, z)`` facing ``yaw`` (radians, +Z / CCW).
+
+        ``yaw`` is optional so callers using the bare ``SceneControl`` surface
+        (``x, y, z``) are unaffected; the browser keeps the scene's default
+        heading when no yaw is sent.
+        """
+        self._send(
+            {"type": "respawn_at", "point": [float(x), float(y), float(z)], "yaw": float(yaw)}
+        )
 
     def add_wall(
         self,

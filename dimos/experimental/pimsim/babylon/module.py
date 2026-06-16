@@ -292,7 +292,8 @@ class BabylonSceneViewerModule(Module):
         # joint_state + odom drive server-side FK (-> _make_robot_pose_payload).
         # The browser also subscribes to these on /lcm-ws for its HUD sliders
         # and (eventually) for browser-side FK. /global_map, /nav_path, and
-        # /nav_cmd_vel are consumed entirely on the browser via the bridge.
+        # /cmd_vel are consumed entirely on the browser via the bridge (the
+        # browser sim integrates /cmd_vel from any source — hardware-identical).
         self.register_disposable(Disposable(self.joint_state.subscribe(self._on_joint_state)))
         self.register_disposable(Disposable(self.odom.subscribe(self._on_odom)))
 
@@ -760,6 +761,9 @@ class BabylonSceneViewerModule(Module):
             if self._browser_physics_enabled:
                 pose = dict(self._browser_initial_pose)
                 pose.update({"x": x, "y": y, "z": z + self._browser_vehicle_height})
+                yaw = message.get("yaw")
+                if isinstance(yaw, (int, float)):
+                    pose["yaw"] = float(yaw)
                 self._broadcast_json_from_thread({"type": "sim_respawn", "pose": pose})
             return
         if message_type == "arm_joint":

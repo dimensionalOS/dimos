@@ -60,10 +60,14 @@ _GO2_LIDAR_SENSOR_YAW_DEG = 0.0
 # distributions and the mid360 pattern is dense enough for nav.
 _GO2_LIDAR_SCAN_MODEL = "mid360"
 _GO2_LIDAR_POINT_RATE = 200_000
-_GO2_LIDAR_ELEVATION_MIN_DEG = -52.0
-_GO2_LIDAR_ELEVATION_MAX_DEG = 52.0
+# Match DimSim's working lidar: short range + modest vertical FOV so every
+# return is dense. At 40 m the rays spread far wider than the map voxel (~35 cm
+# vs 5 cm) → sparse far hits → holes; DimSim caps at ~4 m with a -30/+15° FOV,
+# mapping dense near-range and filling the world as the robot moves.
+_GO2_LIDAR_ELEVATION_MIN_DEG = -30.0
+_GO2_LIDAR_ELEVATION_MAX_DEG = 15.0
 _GO2_LIDAR_MIN_RANGE_M = 0.1
-_GO2_LIDAR_MAX_RANGE_M = 40.0
+_GO2_LIDAR_MAX_RANGE_M = 6.0
 
 
 def _env_int(name: str, default: int) -> int:

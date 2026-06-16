@@ -713,8 +713,12 @@ function publishBrowserSimOdom(force = false) {
     const nanosec = Math.floor((ts - sec) * 1e9);
     const pose = new M.geometry_msgs.PoseStamped({
       header: new M.std_msgs.Header({
+        // Root frame must be "world": PimSimConnection turns /odom into the
+        // world->base_link TF (parent = this frame_id), and the agent/nav
+        // self-locate via tf.get("world", "base_link"). DimSim stamps "world"
+        // too — "map" here silently broke agent localization in pimsim.
         stamp: new M.builtin_interfaces.Time({ sec, nanosec }),
-        frame_id: "map",
+        frame_id: "world",
       }),
       pose: new M.geometry_msgs.Pose({
         position: new M.geometry_msgs.Point({
@@ -2297,7 +2301,14 @@ function subscribeLcmTopics() {
     _updateSlidersFromState(joints);
   });
 
-  lcm.subscribe("/nav_cmd_vel", M.geometry_msgs.Twist, (msg) => {
+  // The sim base is a pure /cmd_vel consumer, exactly like hardware: every
+  // velocity source — browser WASD, nav planner, rerun teleop, sim.cmd_vel() —
+  // drives it by publishing /cmd_vel, and the latest writer wins. WASD also
+  // integrates locally (sendDriveCommand) for zero-latency feel; since
+  // setBrowserPhysicsCommand just *sets* the current command (it does not
+  // accumulate), WASD's own /cmd_vel echo re-sets the identical value, so
+  // there is no double-integration.
+  lcm.subscribe("/cmd_vel", M.geometry_msgs.Twist, (msg) => {
     if (!browserPhysicsEnabled) return;
     setBrowserPhysicsCommand({
       linear: [msg.linear.x, msg.linear.y, msg.linear.z],
@@ -2515,8 +2526,10 @@ function publishLcmPointStamped(topic, point) {
     const nanosec = Math.floor((ts - sec) * 1e9);
     const stamped = new M.geometry_msgs.PointStamped({
       header: new M.std_msgs.Header({
+        // "world" to match /odom + the nav stack (see publishBrowserSimOdom);
+        // click goals (/point_goal, /clicked_point, /grasp_goal) ride this frame.
         stamp: new M.builtin_interfaces.Time({ sec, nanosec }),
-        frame_id: "map",
+        frame_id: "world",
       }),
       point: new M.geometry_msgs.Point({ x: point.x, y: point.y, z: point.z }),
     });

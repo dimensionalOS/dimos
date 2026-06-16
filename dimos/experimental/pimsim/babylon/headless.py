@@ -31,6 +31,7 @@ flag explicitly via ``args`` is the documented workaround.
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Literal
 
 from dimos.utils.logging_config import setup_logger
@@ -43,6 +44,9 @@ logger = setup_logger()
 DEFAULT_URL = "http://localhost:8091/"
 DEFAULT_VIEWPORT = (320, 240)
 READY_TIMEOUT_MS = 60_000
+# The viewer's uvicorn server binds its port only after the whole blueprint
+# boots, which lags the browser launch by seconds; poll the URL until then.
+CONNECT_TIMEOUT_MS = 120_000
 
 RenderMode = Literal["cpu", "gpu"]
 
@@ -57,11 +61,13 @@ class HeadlessBrowser:
         render: RenderMode = "cpu",
         viewport: tuple[int, int] = DEFAULT_VIEWPORT,
         ready_timeout_ms: int = READY_TIMEOUT_MS,
+        connect_timeout_ms: int = CONNECT_TIMEOUT_MS,
     ) -> None:
         self._url = url
         self._render = render
         self._viewport = viewport
         self._ready_timeout_ms = ready_timeout_ms
+        self._connect_timeout_ms = connect_timeout_ms
         self._pw: Playwright | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
@@ -94,12 +100,39 @@ class HeadlessBrowser:
             viewport={"width": self._viewport[0], "height": self._viewport[1]},
         )
         self._page = self._context.new_page()
-        self._page.goto(self._url, wait_until="load")
+        self._goto_when_server_up()
         self._page.wait_for_function(
             "window.__pimsimReady === true",
             timeout=self._ready_timeout_ms,
         )
         logger.info("pimsim headless browser ready at %s", self._url)
+
+    def _goto_when_server_up(self) -> None:
+        """Navigate to the viewer, retrying until its server is listening.
+
+        The pimsim viewer's uvicorn server binds its port only once the
+        BabylonSceneViewerModule starts, which lags the browser launch by
+        seconds while the rest of the blueprint boots. A single ``goto`` would
+        race and fail with ``ERR_CONNECTION_REFUSED``, so poll until the
+        connection is accepted or the connect deadline passes.
+        """
+        assert self._page is not None
+        deadline = time.monotonic() + self._connect_timeout_ms / 1000.0
+        attempt = 0
+        while True:
+            try:
+                self._page.goto(self._url, wait_until="load")
+                return
+            except Exception as exc:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        f"pimsim viewer did not come up at {self._url} within "
+                        f"{self._connect_timeout_ms} ms"
+                    ) from exc
+                attempt += 1
+                if attempt == 1 or attempt % 10 == 0:
+                    logger.info("waiting for pimsim viewer at %s ...", self._url)
+                self._page.wait_for_timeout(500)
 
     def stop(self) -> None:
         if self._page is not None:

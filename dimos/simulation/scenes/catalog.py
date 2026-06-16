@@ -44,6 +44,9 @@ _ALIASES = {
     "lowpoly-tdm": "lowpoly-tdm",
     "lowpoly_tdm": "lowpoly-tdm",
     "tdm": "lowpoly-tdm",
+    "apartment": "dimos-apartment",
+    "dimos-apartment": "dimos-apartment",
+    "dimos_apartment": "dimos-apartment",
 }
 _PACKAGE_DIRS = {
     DEFAULT_SCENE: "dimos_office",
@@ -51,6 +54,7 @@ _PACKAGE_DIRS = {
     "street-lite": "street_lite",
     "mall-babylon-nolights": "mall_babylon_nolights",
     "lowpoly-tdm": "lowpoly_tdm",
+    "dimos-apartment": "dimos_apartment",
 }
 
 

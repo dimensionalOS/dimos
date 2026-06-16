@@ -116,7 +116,21 @@ class PhysicsAuthority(Protocol):
     """The embodiment's base pose in the world frame."""
 
     cmd_vel: In[Twist]
-    """Mobile-base velocity command the backend integrates each tick."""
+    """The mobile-base velocity command the backend integrates each tick — the
+    authority's SOLE velocity input, identical to a real robot's base.
+
+    Every velocity *source* (browser/keyboard teleop, the nav planner's
+    ``PathFollower``, an agentic skill, ``SceneControl.cmd_vel``) drives the base
+    by publishing ``/cmd_vel``; the authority is a pure consumer and is blind to
+    which source wrote it. Arbitration is **last-writer-wins** by default — grab
+    the keyboard and you override the planner; release and the planner's stream
+    resumes. When a blueprint needs richer arbitration (teleop priority, deadman,
+    ramping), it inserts a ``MovementManager`` that fuses the sources into the
+    single ``/cmd_vel`` the authority consumes. A backend must NOT invent a
+    private per-source channel it alone reads (the Babylon viewer historically
+    integrated a ``/nav_cmd_vel`` only it subscribed to, so planner/teleop
+    commands published on ``/cmd_vel`` silently never moved the sim) — that
+    breaks source-blindness and the sim==hardware contract."""
 
     @property
     def authority_mode(self) -> AuthorityMode:

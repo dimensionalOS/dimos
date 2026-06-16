@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+
 import pytest
 
 
@@ -31,7 +33,12 @@ def test_walk_forward(
     request,
 ) -> None:
     simulator = request.node.callspec.params["sim_client"]
+    # pimsim has no scene default (dimsim gets one from --dimsim-scene). Without a
+    # scene the lidar->global_map->costmap pipeline has no geometry and the nav
+    # planner can't plan, so the agent can't execute a relative move.
+    scene_args = ["--scene", "dimos-apartment"] if simulator == "pimsim" else []
     start_blueprint(
+        *scene_args,
         "run",
         "--disable",
         "spatial-memory",
@@ -43,9 +50,20 @@ def test_walk_forward(
     lcm_spy.save_topic("/rpc/McpClient/on_system_modules/res")
     lcm_spy.wait_for_saved_topic("/rpc/McpClient/on_system_modules/res", timeout=1200.0)
 
-    origin_x, origin_y = 1, 2
-    sim_client.set_agent_position(origin_x, origin_y)
+    # Spawn + heading per backend. dimsim uses its own open default scene with
+    # +X forward. pimsim uses DimSim's canonical apartment spawn — three.js
+    # Y-up (2, 0.5, 3) -> nav (2.0, -3.0) under the package y-up alignment — but
+    # +X there looks into a door frame, so face -Y (90 deg clockwise) where the
+    # open lane is; "move forward 3 m" then drives -Y to (2.0, -6.0).
+    if simulator == "pimsim":
+        origin_x, origin_y = 2.0, -3.0
+        sim_client.set_agent_position(origin_x, origin_y, yaw=-math.pi / 2)
+        goal_x, goal_y = origin_x, origin_y - 3
+    else:
+        origin_x, origin_y = 1, 2
+        sim_client.set_agent_position(origin_x, origin_y)
+        goal_x, goal_y = origin_x + 3, origin_y
 
     human_input("move forward 3 meter")
 
-    lcm_spy.wait_until_odom_position(origin_x + 3, origin_y, threshold=0.4)
+    lcm_spy.wait_until_odom_position(goal_x, goal_y, threshold=0.4)

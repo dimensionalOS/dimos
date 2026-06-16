@@ -121,8 +121,13 @@ class LCMService(Service):
         self._thread = threading.Thread(target=self._lcm_loop)
         self._thread.daemon = True
         self._thread.start()
-        if not self._loop_running.wait(timeout=5.0):
-            raise RuntimeError("LCM handler thread failed to start within 5s")
+        # The handler thread signals _loop_running as soon as its loop is live.
+        # 5s is plenty normally, but a heavy blueprint (e.g. the agentic stack +
+        # headless browser booting together) can starve thread scheduling, so
+        # the gate is env-tunable for those loads.
+        start_timeout = float(os.getenv("DIMOS_LCM_START_TIMEOUT_S", "5.0"))
+        if not self._loop_running.wait(timeout=start_timeout):
+            raise RuntimeError(f"LCM handler thread failed to start within {start_timeout}s")
 
     def _lcm_loop(self) -> None:
         """LCM message handling loop."""
