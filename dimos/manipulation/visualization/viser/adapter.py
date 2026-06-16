@@ -120,27 +120,12 @@ class InProcessViserAdapter:
         if config is None:
             return None
         init = self.get_init_joints(robot_name)
-        try:
-            config_name = config.name
-        except AttributeError:
-            config_name = robot_name
-        try:
-            end_effector_link = config.end_effector_link
-        except AttributeError:
-            end_effector_link = None
-        try:
-            base_link = config.base_link
-        except AttributeError:
-            base_link = None
-        try:
-            home_joints = config.home_joints
-        except AttributeError:
-            home_joints = None
+        home_joints = config.home_joints
         return {
-            "name": config_name,
+            "name": config.name,
             "joint_names": list(config.joint_names),
-            "end_effector_link": end_effector_link,
-            "base_link": base_link,
+            "end_effector_link": config.end_effector_link,
+            "base_link": config.base_link,
             "home_joints": list(home_joints) if home_joints is not None else None,
             "init_joints": list(init.position) if init is not None else None,
         }
@@ -154,17 +139,7 @@ class InProcessViserAdapter:
             init_joints = self._module._init_joints
         except AttributeError:
             init_joints = {}
-        copied = copy_joint_state(init_joints.get(robot_name))
-        if copied is not None:
-            return copied
-        config = self.get_robot_config(robot_name)
-        if config is None:
-            return None
-        try:
-            positions = config.init_joints
-        except AttributeError:
-            return None
-        return self.joints_from_values(config.joint_names, positions)
+        return copy_joint_state(init_joints.get(robot_name))
 
     def get_current_joint_state(self, robot_name: RobotName) -> JointState | None:
         robot_id = self.robot_id_for_name(robot_name)
@@ -216,7 +191,6 @@ class InProcessViserAdapter:
             "status": "FEASIBLE" if collision_free else "COLLISION",
             "message": "Target is collision-free" if collision_free else "Target is in collision",
             "collision_free": collision_free,
-            "pose": self._world_monitor.get_ee_pose(robot_id, target),
             "ee_pose": self._world_monitor.get_ee_pose(robot_id, target),
             "joint_state": target,
         }

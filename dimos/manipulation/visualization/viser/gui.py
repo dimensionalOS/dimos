@@ -34,6 +34,12 @@ from dimos.manipulation.visualization.viser.state import (
 )
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
+
+# Fallback joint-slider range (radians) when a robot config omits joint limits.
+DEFAULT_JOINT_LIMITS = (-3.14, 3.14)
 
 
 class _GuiServer(Protocol):
@@ -265,11 +271,7 @@ class ViserPanelGui:
         self._build_joint_sliders()
 
     def _build_scene_controls(self, gui: object) -> None:
-        if (
-            self.scene is None
-            or not hasattr(gui, "add_checkbox")
-            or not hasattr(self.scene, "has_reference_grid")
-        ):
+        if self.scene is None or not hasattr(gui, "add_checkbox"):
             return
         if not self.scene.has_reference_grid():
             return
@@ -293,7 +295,7 @@ class ViserPanelGui:
             try:
                 cast("_DisabledHandle", handle).disabled = disabled
             except Exception:
-                pass
+                logger.warning("Could not set button '%s' disabled state", label, exc_info=True)
         return handle
 
     def _refresh_selected_robot_state(self) -> None:
@@ -314,11 +316,7 @@ class ViserPanelGui:
             self.state.error = adapter_error
 
     def _ensure_scene_controls(self) -> None:
-        if (
-            self.scene is None
-            or self.state.selected_robot is None
-            or not hasattr(self.scene, "ensure_target_controls")
-        ):
+        if self.scene is None or self.state.selected_robot is None:
             return
         robot_id = self.adapter.robot_id_for_name(self.state.selected_robot)
         if robot_id is None:
@@ -347,16 +345,10 @@ class ViserPanelGui:
         current = self.adapter.get_current_joint_state(self.state.selected_robot)
         values = list(current.position) if current is not None else [0.0] * len(config.joint_names)
         self._clear_joint_sliders()
-        try:
-            joint_limits_lower = config.joint_limits_lower
-        except AttributeError:
-            joint_limits_lower = None
-        try:
-            joint_limits_upper = config.joint_limits_upper
-        except AttributeError:
-            joint_limits_upper = None
+        joint_limits_lower = config.joint_limits_lower
+        joint_limits_upper = config.joint_limits_upper
         for index, joint_name in enumerate(config.joint_names):
-            lower, upper = (-3.14, 3.14)
+            lower, upper = DEFAULT_JOINT_LIMITS
             if joint_limits_lower is not None and index < len(joint_limits_lower):
                 lower = joint_limits_lower[index]
             if joint_limits_upper is not None and index < len(joint_limits_upper):
@@ -407,12 +399,12 @@ class ViserPanelGui:
                     else:
                         cast("_OptionHandle", handle).values = options
                 except Exception:
-                    pass
+                    logger.warning("Could not set robot dropdown %s", attr, exc_info=True)
         if hasattr(handle, "value") and self.state.selected_robot in robots:
             try:
                 cast("_ValueHandle", handle).value = self.state.selected_robot
             except Exception:
-                pass
+                logger.warning("Could not set robot dropdown value", exc_info=True)
 
     def _sync_preset_dropdown(self) -> None:
         handle = self._handles.get("preset")
@@ -427,12 +419,7 @@ class ViserPanelGui:
         ):
             options.append("Init")
         options.append("Current")
-        home_joints = None
-        if config is not None:
-            try:
-                home_joints = config.home_joints
-            except AttributeError:
-                home_joints = None
+        home_joints = config.home_joints if config is not None else None
         if info.get("home_joints") is not None or home_joints is not None:
             options.append("Home")
         for attr in ("options", "values"):
@@ -443,7 +430,7 @@ class ViserPanelGui:
                     else:
                         cast("_OptionHandle", handle).values = options
                 except Exception:
-                    pass
+                    logger.warning("Could not set preset dropdown %s", attr, exc_info=True)
 
     def _apply_preset(self, preset: str) -> None:
         robot_name = self.state.selected_robot
@@ -459,10 +446,7 @@ class ViserPanelGui:
             init = self.adapter.get_init_joints(robot_name)
             values = list(init.position) if init is not None else []
         elif preset == "Home":
-            try:
-                values = list(config.home_joints or [])
-            except AttributeError:
-                values = []
+            values = list(config.home_joints or [])
         else:
             return
         self._set_slider_values(config.joint_names, values)
@@ -581,7 +565,7 @@ class ViserPanelGui:
             joint_state = result.get("joint_state")
             if isinstance(joint_state, JointState):
                 self.state.joint_target = list(joint_state.position)
-            pose = result.get("pose") or result.get("ee_pose")
+            pose = result.get("ee_pose")
             if isinstance(pose, Pose):
                 self.state.cartesian_target = pose
             self._sync_controls_from_targets()
@@ -647,11 +631,7 @@ class ViserPanelGui:
         self._update_target_visual_state()
 
     def _update_target_visual_state(self) -> None:
-        if (
-            self.scene is None
-            or self.state.selected_robot is None
-            or not hasattr(self.scene, "set_target_visual_state")
-        ):
+        if self.scene is None or self.state.selected_robot is None:
             return
         robot_id = self.adapter.robot_id_for_name(self.state.selected_robot)
         if robot_id is None:
@@ -659,9 +639,6 @@ class ViserPanelGui:
         self.scene.set_target_visual_state(
             str(robot_id), self.state.feasibility.status == FeasibilityStatus.FEASIBLE
         )
-
-    def _submit_plan_to_sliders(self) -> None:
-        self._submit_plan()
 
     def _submit_plan(self) -> None:
         robot_name = self.state.selected_robot

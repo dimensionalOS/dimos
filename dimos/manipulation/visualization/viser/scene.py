@@ -22,6 +22,9 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.manipulation.visualization.viser.animation import PreviewAnimator
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 GOAL_ROBOT_FEASIBLE_COLOR = (255, 122, 0)
 GOAL_ROBOT_INFEASIBLE_COLOR = (255, 30, 30)
@@ -31,6 +34,8 @@ GOAL_ROBOT_MESH_COLOR = (*GOAL_ROBOT_FEASIBLE_COLOR, GOAL_ROBOT_FEASIBLE_OPACITY
 PREVIEW_ROBOT_COLOR = (80, 180, 255)
 PREVIEW_ROBOT_OPACITY = 0.55
 PREVIEW_ROBOT_MESH_COLOR = (*PREVIEW_ROBOT_COLOR, PREVIEW_ROBOT_OPACITY)
+TARGET_CONTROL_FEASIBLE_COLOR = (0, 180, 255)
+TARGET_CONTROL_INFEASIBLE_COLOR = (255, 40, 40)
 REFERENCE_GRID_NAME = "/reference_grid"
 REFERENCE_GRID_CELL_COLOR = (44, 54, 58)
 REFERENCE_GRID_SECTION_COLOR = (90, 145, 165)
@@ -195,6 +200,7 @@ class ViserManipulationScene:
                 visible=self._grid_visible,
             )
         except Exception:
+            logger.warning("Could not add Viser reference grid", exc_info=True)
             self._grid_handle = None
 
     def ensure_target_controls(
@@ -314,7 +320,7 @@ class ViserManipulationScene:
             pass
 
     def set_target_visual_state(self, robot_id: str, feasible: bool) -> None:
-        color = (0, 180, 255) if feasible else (255, 40, 40)
+        color = TARGET_CONTROL_FEASIBLE_COLOR if feasible else TARGET_CONTROL_INFEASIBLE_COLOR
         mesh_color = GOAL_ROBOT_FEASIBLE_COLOR if feasible else GOAL_ROBOT_INFEASIBLE_COLOR
         mesh_opacity = GOAL_ROBOT_FEASIBLE_OPACITY if feasible else GOAL_ROBOT_INFEASIBLE_OPACITY
         handles = [self._handles.get(f"{robot_id}:ee_control")]
@@ -332,7 +338,7 @@ class ViserManipulationScene:
                         else:
                             cast("_MaterialColorHandle", handle).material_color = color
                     except Exception:
-                        pass
+                        logger.warning("Could not set Viser handle %s", attr, exc_info=True)
 
     def close(self) -> None:
         for key in list(self._handles):
@@ -415,6 +421,9 @@ class ViserManipulationScene:
         return [values_by_name.get(name, 0.0) for name in allowed_names]
 
     def viser_actuated_joint_names(self, urdf: object) -> tuple[str, ...]:
+        # Depends on viser internals: ViserUrdf exposes no public accessor for its
+        # wrapped yourdfpy model, so we reach for the private `_urdf` attribute here.
+        # Keep this the single place that touches it.
         try:
             wrapped_urdf = cast("_UrdfHandle", urdf)._urdf
         except AttributeError:
@@ -443,7 +452,7 @@ class ViserManipulationScene:
                 try:
                     cast("_VisibleHandle", candidate).visible = visible
                 except Exception:
-                    pass
+                    logger.warning("Could not set Viser handle visibility", exc_info=True)
 
     def _set_urdf_mesh_material(
         self, urdf: object | None, color: tuple[int, int, int], opacity: float
@@ -459,14 +468,17 @@ class ViserManipulationScene:
                         else:
                             cast("_MaterialColorHandle", mesh).material_color = color
                     except Exception:
-                        pass
+                        logger.warning("Could not set Viser mesh %s", attr, exc_info=True)
             if hasattr(mesh, "opacity"):
                 try:
                     cast("_OpacityHandle", mesh).opacity = opacity
                 except Exception:
-                    pass
+                    logger.warning("Could not set Viser mesh opacity", exc_info=True)
 
     def _meshes(self, handle: object) -> Sequence[object]:
+        # Depends on viser internals: ViserUrdf exposes no public accessor for the
+        # per-link mesh handles, so we read the private `_meshes` attribute here.
+        # Keep this the single place that touches it.
         try:
             return cast("_MeshContainer", handle)._meshes
         except AttributeError:

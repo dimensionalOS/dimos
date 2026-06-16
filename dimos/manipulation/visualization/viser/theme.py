@@ -98,8 +98,8 @@ def _dimos_titlebar_content() -> object | None:
             ),
             image=image,
         )
-    except Exception:
-        logger.debug("Skipping Viser titlebar content; theme API unavailable", exc_info=True)
+    except (ImportError, AttributeError, TypeError):
+        logger.warning("Skipping Viser titlebar content; theme API unavailable", exc_info=True)
         return None
 
 
@@ -107,7 +107,7 @@ def _dimos_logo_data_url() -> str | None:
     try:
         logo = DIMOS_LOGO_PATH.read_bytes()
     except OSError:
-        logger.debug("Skipping DimOS Viser logo; asset unavailable", exc_info=True)
+        logger.warning("Skipping DimOS Viser logo; asset unavailable", exc_info=True)
         return None
     encoded = base64.b64encode(logo).decode("ascii")
     return f"data:image/svg+xml;base64,{encoded}"
@@ -116,7 +116,7 @@ def _dimos_logo_data_url() -> str | None:
 def _configure_theme(configure_theme: Callable[..., object], kwargs: dict[str, object]) -> bool:
     try:
         configure_theme(**kwargs)
-    except Exception:
-        logger.debug("Skipping DimOS Viser theme; theme API unavailable", exc_info=True)
+    except (TypeError, AttributeError):
+        logger.warning("Skipping DimOS Viser theme; theme API unavailable", exc_info=True)
         return False
     return True
