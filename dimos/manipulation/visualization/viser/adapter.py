@@ -62,16 +62,7 @@ class _ErrorProvider(Protocol):
 
 def copy_joint_state(joint_state: JointState | None) -> JointState | None:
     """Make a local copy of a JointState-like message for rendering."""
-    if joint_state is None:
-        return None
-    return JointState(
-        {
-            "name": list(joint_state.name),
-            "position": list(joint_state.position),
-            "velocity": list(joint_state.velocity),
-            "effort": list(joint_state.effort),
-        }
-    )
+    return None if joint_state is None else JointState(joint_state)
 
 
 class InProcessViserAdapter:

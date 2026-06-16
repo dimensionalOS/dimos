@@ -44,6 +44,7 @@ from dimos.manipulation.visualization.viser.state import (
 from dimos.manipulation.visualization.viser.theme import _dimos_logo_data_url, apply_dimos_theme
 from dimos.manipulation.visualization.viser.visualizer import ViserManipulationVisualizer
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.sensor_msgs.JointState import JointState
 
 
 class FakeHandle:
@@ -65,8 +66,10 @@ class FakeUrdf:
         self.cfg = list(cfg)
 
 
-class FakeJointState:
+class FakeJointState(JointState):
     def __init__(self, name, position=None, velocity=None, effort=None) -> None:
+        self.ts = 0.0
+        self.frame_id = ""
         self.name = list(name)
         self.position = list(position or [])
         self.velocity = list(velocity or [])
