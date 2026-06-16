@@ -361,18 +361,24 @@ jobs:
       - name: Build nav_stack native modules
         run: uv run bin/build-nav-stack-natives
       - name: Push full closures to Cachix
-        # `cachix push` defaults to --skip-signed-paths, so it only uploads
+        # `cachix push` defaults to --skip-signed-paths, so it only uploaded
         # locally-signed outputs (~120 MiB). The bulk of each closure was
         # substituted in from cache.nixos.org and skipped — leaving the
         # self-hosted runner still pulling those deps from cache.nixos.org.
-        # `nix copy` doesn't filter on signature, so it ships the full closure
-        # to Cachix. Auth flows through the `cachix://` Nix store
-        # implementation registered by cachix-action.
+        # `nix copy` against the raw HTTPS URL doesn't filter on signature
+        # and ships the full closure. Auth via netrc — cachix CLI's authtoken
+        # doesn't apply to nix copy's HTTP store backend.
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
         run: |
+          install -m 600 /dev/stdin "$HOME/.netrc" \
+            <<< "machine dimensionalos.cachix.org login _ password $CACHIX_AUTH_TOKEN"
           mapfile -t results < <(find dimos/navigation/nav_stack/modules \
             -mindepth 2 -maxdepth 3 -name result -type l -exec readlink -f {} \;)
           [ ${#results[@]} -eq 0 ] || \
-            nix copy --to "cachix://dimensionalos" "${results[@]}"
+            nix copy \
+              --to "https://dimensionalos.cachix.org?compression=zstd&parallel-compression=true" \
+              "${results[@]}"
 
   self-hosted-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
