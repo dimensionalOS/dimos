@@ -62,6 +62,10 @@
     <div id="app"></div>
     <canvas id="canvas"></canvas>
 
+    <!-- LiveKit client SDK (UMD global `LivekitClient`) for livekit-transport
+         robots; the cloudflare path uses the browser's native WebRTC and
+         doesn't need it. -->
+    <script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.min.js"></script>
     <script type="module" src="js/main.js"></script>
 </body>
 </html>

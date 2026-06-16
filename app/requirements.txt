@@ -7,3 +7,4 @@ python-jose[cryptography]==3.4.0
 sqlalchemy==2.0.41
 aiosqlite==0.21.0
 python-multipart==0.0.20
+livekit-api>=0.8.0

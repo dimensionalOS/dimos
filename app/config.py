@@ -18,6 +18,16 @@ class Settings(BaseSettings):
     cf_turn_api_token: str = ""
     cf_turn_base_url: str = "https://rtc.live.cloudflare.com/v1/turn"
 
+    # LiveKit (alternative backend to Cloudflare, selected per session by the
+    # `transport` field). The URL is what robot/operator dial; the API
+    # key/secret mint room-scoped JWTs server-side and never reach clients.
+    # Optional: unset → LiveKit sessions are refused with a 503, Cloudflare
+    # (the default backend) is unaffected.
+    livekit_url: str = ""  # wss://<host> (self-hosted) or LiveKit Cloud project URL
+    livekit_api_key: str = ""
+    livekit_api_secret: str = ""
+    livekit_token_ttl_sec: int = 3600  # JWT lifetime; clients reconnect within it
+
     # Cognito (operator auth). The broker only verifies tokens; sign-in
     # happens between the SPA and Cognito directly.
     cognito_region: str = "us-east-2"
@@ -50,6 +60,10 @@ class Settings(BaseSettings):
     @property
     def cf_api_url(self) -> str:
         return f"{self.cf_sfu_base_url}/{self.cf_teleop_app_id}"
+
+    @property
+    def livekit_configured(self) -> bool:
+        return bool(self.livekit_url and self.livekit_api_key and self.livekit_api_secret)
 
     @property
     def cognito_issuer(self) -> str:

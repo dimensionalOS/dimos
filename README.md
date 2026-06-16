@@ -71,3 +71,6 @@ See `docs/api.md` for the full API spec.
 | `COGNITO_USER_POOL_ID` | Cognito user pool (terraform output `cognito_user_pool_id`) |
 | `COGNITO_CLIENT_ID` | Cognito SPA app client (terraform output `cognito_client_id`) |
 | `DATABASE_URL` | SQLite or Postgres connection string |
+| `LIVEKIT_URL` | LiveKit server URL (`wss://…`) — alternative backend, optional |
+| `LIVEKIT_API_KEY` | LiveKit API key (mints room JWTs server-side) |
+| `LIVEKIT_API_SECRET` | LiveKit API secret |

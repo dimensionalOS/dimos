@@ -35,6 +35,7 @@ export async function disconnect() {
         else v.style.display = 'none';
     }
     if (state.pc) { try { state.pc.close(); } catch (_) {} state.pc = null; }
+    if (state.room) { try { state.room.disconnect(); } catch (_) {} state.room = null; }
     state.clockOffsetMs = 0;
     state.bestRttMs = Infinity;
     state.liveStats.video = null;

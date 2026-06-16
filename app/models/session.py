@@ -20,7 +20,13 @@ class TeleopSession(Base):
     # Tenant boundary: the API key's owner. Visibility/auth filter on this.
     owner_id: Mapped[str | None] = Column(String, nullable=True, index=True)
     state: Mapped[str] = Column(String, default="idle")  # idle | active | disconnected
+    # Backend for this session: "cloudflare" (default) | "livekit". Set at
+    # create_session and drives every transport-specific branch downstream.
+    transport: Mapped[str] = Column(String, nullable=False, default="cloudflare")
     cf_session_id: Mapped[str] = Column(String, nullable=True)
+
+    # LiveKit room the robot + operator both join (null for cloudflare rows).
+    livekit_room: Mapped[str | None] = Column(String, nullable=True)
 
     # Video the robot offered (sendonly m=video), extracted from its SDP at
     # create_session. The actual CF publish (/tracks/new) happens in

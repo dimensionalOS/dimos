@@ -12,8 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from models.database import get_db
 from models.session import TeleopSession
+from services import livekit
 from services.auth import get_current_user, get_operator_or_robot, get_robot_owner
 from services.cloudflare import CloudflareRealtimeError, cf_client
+from services.livekit import LiveKitError
 from services.sdp_utils import extract_video_track
 
 log = logging.getLogger(__name__)
@@ -42,7 +44,10 @@ class CreateSessionRequest(BaseModel):
     # When provided it must match (guards against misconfigured robots).
     robot_id: str | None = None
     robot_name: str
-    sdp_offer: str
+    transport: str = "cloudflare"  # "cloudflare" | "livekit"
+    # Required for cloudflare (broker relays it to CF); unused for livekit,
+    # which does its own SDP negotiation directly with the LiveKit server.
+    sdp_offer: str | None = None
 
 
 class CreateSessionResponse(BaseModel):
@@ -52,9 +57,21 @@ class CreateSessionResponse(BaseModel):
     ice_servers: list[dict]
 
 
+class LiveKitSessionResponse(BaseModel):
+    """Robot create / operator join response for the LiveKit backend."""
+
+    session_id: str
+    transport: str = "livekit"
+    url: str
+    token: str
+    room: str
+    role: str | None = None  # set on operator join, omitted on robot create
+
+
 class JoinSessionRequest(BaseModel):
     role: str = "operator"  # operator | viewer
-    sdp_offer: str
+    # Required for cloudflare; unused for livekit (see CreateSessionRequest).
+    sdp_offer: str | None = None
 
 
 class JoinSessionResponse(BaseModel):
@@ -95,6 +112,7 @@ class SessionInfo(BaseModel):
     robot_id: str
     robot_name: str
     state: str
+    transport: str = "cloudflare"  # so the operator app picks the right client
     operator_id: str | None
     rtt_ms: float | None
     packet_loss_pct: float | None
@@ -138,13 +156,62 @@ async def turn_credentials(identity: dict = Depends(get_operator_or_robot)):
 # ─── Robot endpoints ─────────────────────────────────────────────────
 
 
-@router.post("", response_model=CreateSessionResponse, status_code=201)
+async def _create_livekit_session(
+    body: CreateSessionRequest,
+    owner_id: str,
+    robot_id: str,
+    db: AsyncSession,
+) -> LiveKitSessionResponse:
+    """Robot create for the LiveKit backend: persist the row, name a per-session
+    room, mint the robot's publish token. No SDP/CF round-trip."""
+    if not settings.livekit_configured:
+        raise HTTPException(status_code=503, detail="LiveKit backend not configured")
+
+    session = TeleopSession(
+        robot_id=robot_id,
+        owner_id=owner_id,
+        robot_name=body.robot_name,
+        state="idle",
+        transport="livekit",
+    )
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+
+    room = livekit.room_name(session.id)
+    session.livekit_room = room
+    await db.commit()
+
+    try:
+        token = livekit.mint_token(
+            identity=f"robot-{session.id}",
+            name=body.robot_name,
+            room=room,
+            can_publish=True,
+        )
+    except LiveKitError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    return LiveKitSessionResponse(
+        session_id=session.id,
+        url=settings.livekit_url,
+        token=token,
+        room=room,
+    )
+
+
+@router.post(
+    "",
+    response_model=CreateSessionResponse | LiveKitSessionResponse,
+    status_code=201,
+)
 async def create_session(
     body: CreateSessionRequest,
     owner_id: str = Depends(get_robot_owner),
     db: AsyncSession = Depends(get_db),
 ):
-    """Robot registers itself. Creates Cloudflare SFU session.
+    """Robot registers itself. Creates a backend session (Cloudflare SFU or
+    LiveKit room, per ``body.transport``).
 
     owner_id (the API key's owner) is the tenant boundary. robot_id is a
     robot-supplied label distinguishing multiple robots under one key; empty
@@ -155,7 +222,7 @@ async def create_session(
 
     # Same robot reconnecting → close its stale session. Scoped to (owner,
     # robot_id) so one robot can't disconnect another's; skipped for unnamed
-    # robots (would collapse distinct ones).
+    # robots (would collapse distinct ones). Transport-agnostic.
     if robot_id:
         existing = await db.execute(
             select(TeleopSession).where(
@@ -166,6 +233,14 @@ async def create_session(
         )
         for old in existing.scalars():
             old.state = "disconnected"
+
+    if body.transport == "livekit":
+        return await _create_livekit_session(body, owner_id, robot_id, db)
+
+    if body.transport != "cloudflare":
+        raise HTTPException(status_code=400, detail=f"Unknown transport: {body.transport!r}")
+    if not body.sdp_offer:
+        raise HTTPException(status_code=422, detail="sdp_offer required for cloudflare transport")
 
     # Record the robot's sendonly m=video (mid + trackName) from the offer. The
     # actual publish happens later via /tracks/new in bridge_datachannel — CF
@@ -229,6 +304,11 @@ async def heartbeat(
     session.last_heartbeat = datetime.now(timezone.utc)
     await db.commit()
 
+    # LiveKit robots learn operator presence from room events directly, so there
+    # are no SCTP ids to surface — heartbeat is metrics/liveness only.
+    if session.transport == "livekit":
+        return {"ack": True}
+
     chan_ids = _robot_channel_ids.get(session_id, {})
     return {
         "ack": True,
@@ -279,6 +359,7 @@ async def list_sessions(
             robot_id=s.robot_id,
             robot_name=s.robot_name,
             state=s.state,
+            transport=s.transport,
             operator_id=s.operator_id,
             rtt_ms=s.rtt_ms,
             packet_loss_pct=s.packet_loss_pct,
@@ -288,7 +369,10 @@ async def list_sessions(
     ]
 
 
-@router.post("/{session_id}/join", response_model=JoinSessionResponse)
+@router.post(
+    "/{session_id}/join",
+    response_model=JoinSessionResponse | LiveKitSessionResponse,
+)
 async def join_session(
     session_id: str,
     body: JoinSessionRequest,
@@ -302,13 +386,40 @@ async def join_session(
 
     user_id = user["sub"]
 
-    # Enforce single operator
+    # Enforce single operator (transport-agnostic — lives in the broker, not CF).
     if body.role == "operator":
         if session.operator_id and session.operator_id != user_id:
             raise HTTPException(
                 status_code=409,
                 detail=f"Session already has operator: {session.operator_id}",
             )
+
+    if session.transport == "livekit":
+        if not settings.livekit_configured:
+            raise HTTPException(status_code=503, detail="LiveKit backend not configured")
+        if body.role == "operator":
+            session.operator_id = user_id
+            session.state = "active"
+            await db.commit()
+        try:
+            token = livekit.mint_token(
+                identity=f"op-{user_id}",
+                name=user_id,
+                room=session.livekit_room,
+                can_publish=False,  # operator drives via data; no media uplink
+            )
+        except LiveKitError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+        return LiveKitSessionResponse(
+            session_id=session.id,
+            url=settings.livekit_url,
+            token=token,
+            room=session.livekit_room,
+            role=body.role,
+        )
+
+    if not body.sdp_offer:
+        raise HTTPException(status_code=422, detail="sdp_offer required for cloudflare transport")
 
     # Join datachannels-clean (no video track here). Video is pulled after the
     # bridge, once the operator PC is connected — see bridge_datachannel.
@@ -419,6 +530,8 @@ async def bridge_datachannel(
     session = await db.get(TeleopSession, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if session.transport != "cloudflare":
+        raise HTTPException(status_code=409, detail="bridge-datachannel is cloudflare-only")
     if session.operator_id != user["sub"]:
         raise HTTPException(status_code=403, detail="Not the bound operator")
     if not session.operator_cf_session_id or not session.cf_session_id:
@@ -542,6 +655,8 @@ async def renegotiate_answer(
     session = await db.get(TeleopSession, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if session.transport != "cloudflare":
+        raise HTTPException(status_code=409, detail="renegotiate-answer is cloudflare-only")
     if session.operator_id != user["sub"]:
         raise HTTPException(status_code=403, detail="Not the bound operator")
     if not session.operator_cf_session_id:
@@ -597,6 +712,7 @@ async def session_status(
         robot_id=session.robot_id,
         robot_name=session.robot_name,
         state=session.state,
+        transport=session.transport,
         operator_id=session.operator_id,
         rtt_ms=session.rtt_ms,
         packet_loss_pct=session.packet_loss_pct,

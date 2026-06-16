@@ -266,7 +266,7 @@ export function stopVideoStats() {
     state.videoStatsPrev = null;
 }
 
-function handleStateMessage(data) {
+export function handleStateMessage(data) {
     let msg;
     try { msg = JSON.parse(data); } catch (_) { return; }
     if (msg.type === 'pong') applyPong(msg);

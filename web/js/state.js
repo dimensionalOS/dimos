@@ -9,6 +9,7 @@ export const state = {
 
     // WebRTC + WebXR
     pc: null,
+    room: null,          // LiveKit Room (livekit transport only; null for cloudflare)
     cmdChannel: null,
     stateChannel: null,
     stateBackChannel: null,

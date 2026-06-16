@@ -179,7 +179,7 @@ async function loadRobots() {
                         ${s.rtt_ms ? `<span class="text-gray-500 text-xs ml-2">${Math.round(s.rtt_ms)}ms</span>` : ''}
                     </div>
                 </div>
-                <button data-id="${s.session_id}" data-name="${escHtml(s.robot_name)}"
+                <button data-id="${s.session_id}" data-name="${escHtml(s.robot_name)}" data-transport="${escHtml(s.transport || 'cloudflare')}"
                     class="connect-btn px-4 py-2 bg-dim-500 hover:bg-dim-600 text-bg-950 text-sm rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     ${s.state === 'active' ? 'disabled' : ''}>
                     ${s.state === 'active' ? 'Busy' : 'Connect'}
@@ -189,7 +189,7 @@ async function loadRobots() {
         const handler = state.xrSupported ? connectToRobot : connectKeyboard;
         listEl.querySelectorAll('.connect-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
-                handler(e.target.dataset.id, e.target.dataset.name);
+                handler(e.target.dataset.id, e.target.dataset.name, e.target.dataset.transport);
             });
         });
     } catch (err) {
