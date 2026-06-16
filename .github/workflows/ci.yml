@@ -480,8 +480,11 @@ jobs:
           name: nix-closure
           path: /tmp
       - name: Import closure into /nix/store
+        # ros-dev doesn't ship zstd; the closure artifact is zstd-compressed
+        # (saves ~70% vs raw), so pull in the decompressor before importing.
         if: contains(matrix.markers, 'skipif_no_ros')
         run: |
+          apt-get update && apt-get install -y --no-install-recommends zstd
           zstd -d -c /tmp/nix-closure.bin.zst | nix-store --import
           rm /tmp/nix-closure.bin.zst
       - name: Fetch nav_stack native modules from Cachix
