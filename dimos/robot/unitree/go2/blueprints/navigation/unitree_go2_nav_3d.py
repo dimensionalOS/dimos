@@ -91,7 +91,10 @@ _nav_rerun_config = {
 
 unitree_go2_nav_3d = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=_nav_rerun_config),
-    GO2Connection.blueprint(lidar=False, camera=False).remappings(
+    # motion_mode="mcf" selects the AI/sport controller that walks up and down
+    # stairs. With it, obstacle_avoidance is turned off below, matching the app
+    # recipe for stair traversal.
+    GO2Connection.blueprint(lidar=False, camera=False, motion_mode="mcf").remappings(
         [
             (GO2Connection, "lidar", "lidar_l1"),
             (GO2Connection, "odom", "odom_go2"),
@@ -123,6 +126,6 @@ unitree_go2_nav_3d = autoconnect(
     GoalRelay.blueprint(),
     BasicPathFollower.blueprint(lookahead_m=0.5, heading_gain=0.8, max_angular=0.6),
     MovementManager.blueprint(),
-).global_config(n_workers=10, robot_model="unitree_go2", obstacle_avoidance=True)
+).global_config(n_workers=10, robot_model="unitree_go2", obstacle_avoidance=False)
 
 __all__ = ["unitree_go2_nav_3d"]

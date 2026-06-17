@@ -69,6 +69,9 @@ class ConnectionConfig(ModuleConfig):
     mode: Go2Mode = Go2Mode.DEFAULT
     lidar: bool = True
     camera: bool = True
+    # Top-level motion controller: "mcf" is the AI/sport mode that traverses
+    # terrain (stairs); "normal" is basic. None leaves the current mode as-is.
+    motion_mode: str | None = None
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -84,6 +87,7 @@ class Go2ConnectionProtocol(Protocol):
     def liedown(self) -> bool: ...
     def balance_stand(self) -> bool: ...
     def set_obstacle_avoidance(self, enabled: bool = True) -> None: ...
+    def set_motion_mode(self, name: str) -> None: ...
     def enable_rage_mode(self) -> bool: ...
     def publish_request(self, topic: str, data: dict) -> dict: ...  # type: ignore[type-arg]
 
@@ -173,6 +177,9 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
     def set_obstacle_avoidance(self, enabled: bool = True) -> None:
         pass
 
+    def set_motion_mode(self, name: str) -> None:
+        pass
+
     def enable_rage_mode(self) -> bool:
         return True
 
@@ -255,6 +262,11 @@ class GO2Connection(Module, Camera, Pointcloud):
                 daemon=True,
             )
             self._camera_info_thread.start()
+
+        # Select the terrain-capable controller (mcf) before standing, so the
+        # robot can walk up and down stairs under our velocity commands.
+        if self.config.motion_mode:
+            self.connection.set_motion_mode(self.config.motion_mode)
 
         self.standup()
         time.sleep(3)
