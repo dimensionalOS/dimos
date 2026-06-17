@@ -24,8 +24,6 @@ from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.global_config import global_config
-from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.catalog.piper import piper as _catalog_piper
 from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _catalog_xarm7
 
@@ -39,10 +37,6 @@ coordinator_dual_mock = ControlCoordinator.blueprint(
         _mock_left.to_task_config(task_name="traj_left"),
         _mock_right.to_task_config(task_name="traj_right"),
     ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 # Dual XArm (XArm7 left, XArm6 right)
@@ -57,10 +51,6 @@ coordinator_dual_xarm = ControlCoordinator.blueprint(
         _xarm7_left.to_task_config(task_name="traj_left"),
         _xarm6_right.to_task_config(task_name="traj_right"),
     ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 # Dual arm (XArm6 + Piper)
@@ -77,10 +67,6 @@ coordinator_piper_xarm = ControlCoordinator.blueprint(
         _xarm6_dual.to_task_config(task_name="traj_xarm"),
         _piper_dual.to_task_config(task_name="traj_piper"),
     ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 
