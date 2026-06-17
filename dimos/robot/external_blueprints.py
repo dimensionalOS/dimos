@@ -20,12 +20,13 @@ import importlib.metadata as importlib_metadata
 import re
 from typing import Any
 
+from packaging.utils import canonicalize_name
+
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.module import is_module_type
 
 ENTRY_POINT_GROUP = "dimos.blueprints"
 LOCAL_BLUEPRINT_NAME_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
-_DISTRIBUTION_SEPARATOR_PATTERN = re.compile(r"[-_.]+")
 
 
 class ExternalBlueprintError(ValueError):
@@ -48,22 +49,6 @@ class InvalidExternalBlueprintRequestNameError(ExternalBlueprintError):
             f"Invalid external blueprint local name {local_name!r}. "
             "External local blueprint names must be lowercase kebab-case "
             "and match ^[a-z0-9]+(-[a-z0-9]+)*$."
-        )
-
-
-class AmbiguousExternalBlueprintNamespaceError(ExternalBlueprintError):
-    def __init__(self, namespace: str, distribution_names: Iterable[str]) -> None:
-        names = sorted(set(distribution_names))
-        super().__init__(
-            f"Ambiguous external blueprint namespace {namespace!r}; "
-            f"multiple installed distributions normalize to it: {', '.join(names)}."
-        )
-
-
-class AmbiguousExternalBlueprintNameError(ExternalBlueprintError):
-    def __init__(self, name: str) -> None:
-        super().__init__(
-            f"Ambiguous external blueprint name {name!r}; multiple entry points match it."
         )
 
 
@@ -131,13 +116,12 @@ class InvalidExternalBlueprintEntry:
 class _ExternalBlueprintCollection:
     entries_by_namespace: dict[str, list[ExternalBlueprintEntry]]
     invalid_entries_by_namespace: dict[str, list[InvalidExternalBlueprintEntry]]
-    ambiguous_distribution_names_by_namespace: dict[str, set[str]]
 
 
 def canonicalize_distribution_namespace(distribution_name: str) -> str:
     """Normalize a Python distribution name for use as an external blueprint namespace."""
 
-    return _DISTRIBUTION_SEPARATOR_PATTERN.sub("-", distribution_name).lower()
+    return str(canonicalize_name(distribution_name))
 
 
 def is_valid_external_local_blueprint_name(name: str) -> bool:
@@ -179,10 +163,6 @@ def resolve_external_blueprint_by_name(name: str) -> Blueprint:
 
     collection = _collect_external_blueprints()
     namespace_entries = collection.entries_by_namespace
-    if namespace in collection.ambiguous_distribution_names_by_namespace:
-        raise AmbiguousExternalBlueprintNamespaceError(
-            namespace, collection.ambiguous_distribution_names_by_namespace[namespace]
-        )
     if namespace not in namespace_entries:
         invalid_entries = collection.invalid_entries_by_namespace.get(namespace)
         if invalid_entries:
@@ -198,8 +178,6 @@ def resolve_external_blueprint_by_name(name: str) -> Blueprint:
         raise ExternalBlueprintLocalNameNotFoundError(
             namespace, local_name, (entry.local_name for entry in entries)
         )
-    if len(matches) > 1:
-        raise AmbiguousExternalBlueprintNameError(name)
 
     entry = matches[0]
     try:
@@ -221,55 +199,36 @@ def _target_to_blueprint(name: str, target: Any) -> Blueprint:
 def _collect_external_blueprints() -> _ExternalBlueprintCollection:
     entries_by_namespace: dict[str, list[ExternalBlueprintEntry]] = {}
     invalid_entries_by_namespace: dict[str, list[InvalidExternalBlueprintEntry]] = {}
-    valid_distribution_names_by_namespace: dict[str, set[str]] = {}
 
-    for distribution in importlib_metadata.distributions():
+    for entry_point in importlib_metadata.entry_points(group=ENTRY_POINT_GROUP):
+        distribution = getattr(entry_point, "dist", None)
         distribution_name = _distribution_name(distribution)
         if distribution_name is None:
             continue
 
         namespace = canonicalize_distribution_namespace(distribution_name)
-        external_entry_points = [
-            entry_point
-            for entry_point in getattr(distribution, "entry_points", ())
-            if getattr(entry_point, "group", None) == ENTRY_POINT_GROUP
-        ]
-        if not external_entry_points:
-            continue
-
-        for entry_point in external_entry_points:
-            local_name = str(getattr(entry_point, "name", ""))
-            if not is_valid_external_local_blueprint_name(local_name):
-                invalid_entries_by_namespace.setdefault(namespace, []).append(
-                    InvalidExternalBlueprintEntry(
-                        namespace=namespace,
-                        local_name=local_name,
-                        distribution_name=distribution_name,
-                    )
-                )
-                continue
-            valid_distribution_names_by_namespace.setdefault(namespace, set()).add(
-                distribution_name
-            )
-            entries_by_namespace.setdefault(namespace, []).append(
-                ExternalBlueprintEntry(
+        local_name = str(getattr(entry_point, "name", ""))
+        if not is_valid_external_local_blueprint_name(local_name):
+            invalid_entries_by_namespace.setdefault(namespace, []).append(
+                InvalidExternalBlueprintEntry(
                     namespace=namespace,
                     local_name=local_name,
                     distribution_name=distribution_name,
-                    entry_point=entry_point,
                 )
             )
-
-    ambiguous_distribution_names_by_namespace: dict[str, set[str]] = {}
-    for namespace, distribution_names in valid_distribution_names_by_namespace.items():
-        if len(distribution_names) > 1 and namespace in entries_by_namespace:
-            ambiguous_distribution_names_by_namespace[namespace] = distribution_names
-            entries_by_namespace.pop(namespace, None)
+            continue
+        entries_by_namespace.setdefault(namespace, []).append(
+            ExternalBlueprintEntry(
+                namespace=namespace,
+                local_name=local_name,
+                distribution_name=distribution_name,
+                entry_point=entry_point,
+            )
+        )
 
     return _ExternalBlueprintCollection(
         entries_by_namespace=entries_by_namespace,
         invalid_entries_by_namespace=invalid_entries_by_namespace,
-        ambiguous_distribution_names_by_namespace=ambiguous_distribution_names_by_namespace,
     )
 
 

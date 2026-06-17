@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import pytest
@@ -36,6 +36,7 @@ class FakeEntryPoint:
     target: Any = None
     error: Exception | None = None
     group: str = external.ENTRY_POINT_GROUP
+    dist: Any = None
 
     def load(self) -> Any:
         if self.error is not None:
@@ -54,10 +55,20 @@ class FakeDistribution:
 
 
 def patch_distributions(monkeypatch: pytest.MonkeyPatch, *distributions: FakeDistribution) -> None:
+    entry_points = [
+        replace(entry_point, dist=distribution)
+        for distribution in distributions
+        for entry_point in distribution.entry_points
+    ]
+
     monkeypatch.setattr(
         external.importlib_metadata,
-        "distributions",
-        lambda: list(distributions),
+        "entry_points",
+        lambda *, group=None: [
+            entry_point
+            for entry_point in entry_points
+            if group is None or entry_point.group == group
+        ],
     )
 
 
@@ -230,7 +241,7 @@ def test_invalid_external_metadata_does_not_block_unrelated_valid_package(
     assert blueprint.blueprints[0].module is ExternalTestModule
 
 
-def test_all_invalid_distribution_does_not_create_namespace_ambiguity(
+def test_all_invalid_colliding_distribution_does_not_block_valid_package(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     patch_distributions(
@@ -248,7 +259,9 @@ def test_all_invalid_distribution_does_not_create_namespace_ambiguity(
     assert blueprint.blueprints[0].module is ExternalTestModule
 
 
-def test_ambiguous_canonical_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_colliding_external_namespace_uses_matching_valid_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     patch_distributions(
         monkeypatch,
         FakeDistribution(
@@ -259,14 +272,15 @@ def test_ambiguous_canonical_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
         ),
     )
 
-    with pytest.raises(external.AmbiguousExternalBlueprintNamespaceError):
-        external.resolve_external_blueprint_by_name("my-test-stack.demo")
+    blueprint = external.resolve_external_blueprint_by_name("my-test-stack.demo")
+
+    assert isinstance(blueprint, Blueprint)
 
 
 def test_bare_names_never_search_external_entry_points(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         external.importlib_metadata,
-        "distributions",
+        "entry_points",
         lambda: (_ for _ in ()).throw(AssertionError("bare lookup searched external metadata")),
     )
 
