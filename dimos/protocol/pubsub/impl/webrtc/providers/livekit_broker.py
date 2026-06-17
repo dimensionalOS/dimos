@@ -124,7 +124,7 @@ class _VideoPublisher:
         self._room: rtc.Room | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._source: rtc.VideoSource | None = None
-        self._publish_task: asyncio.Task | None = None
+        self._publish_task: asyncio.Task[None] | None = None
 
     def bind(self, room: rtc.Room, loop: asyncio.AbstractEventLoop) -> None:
         self._room = room
