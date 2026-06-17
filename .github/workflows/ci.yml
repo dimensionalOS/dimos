@@ -333,6 +333,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+      - name: Free runner disk space
+        # ubuntu-latest ships with ~25 GB of preinstalled tooling we don't
+        # use (Android SDK, .NET, Haskell toolchain, CodeQL caches) and only
+        # ~14 GB free out of the box. The 6 nav_stack closures total ~12 GB
+        # in /nix/store and briefly double during nar extraction, which
+        # pushed us close to the wall. Reclaim ~20 GB before doing anything
+        # nix-related so neither parallel downloads nor cold builds run the
+        # disk out.
+        run: |
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL
+          df -h /
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
@@ -346,6 +361,20 @@ jobs:
             extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
           INPUT_SET_AS_TRUSTED_USER: "true"
         run: bash docker/ros/install-nix.sh
+      - name: Cache Nix fetcher + eval cache
+        # ~/.cache/nix holds the flake fetcher cache (the github tarballs of
+        # each `nix build github:…` ref) and the eval cache (compiled flake
+        # outputs). ~/.local/state/nix holds profile/gcroot bookkeeping.
+        # Restoring these skips the ~20s/module evaluation cost, which is
+        # paid every cold run otherwise. /nix/store is intentionally NOT
+        # cached here — that's the slow heavy part that Cachix handles.
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/nix
+            ~/.local/state/nix
+          key: nix-fetcher-build-${{ runner.os }}-${{ hashFiles('bin/build-nav-stack-natives', 'dimos/navigation/nav_stack/modules/**/*.py') }}
+          restore-keys: nix-fetcher-build-${{ runner.os }}-
       - name: Authenticate Cachix
         # `cachix-action`'s default behaviour wraps the rest of the job in
         # `cachix watch-store`, which pushes every store path that appears
@@ -449,6 +478,19 @@ jobs:
             extra-substituters = https://dimensionalos.cachix.org
             extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
         run: bash docker/ros/install-nix.sh
+      - name: Cache Nix fetcher + eval cache
+        # Same idea as nav-stack-natives: cache the per-module evaluation
+        # state so the cold ~20s/module evaluation cost is paid once, not on
+        # every run. Different key prefix from nav-stack-natives so the two
+        # jobs don't fight over the same cache key.
+        if: contains(matrix.markers, 'skipif_no_ros')
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/nix
+            ~/.local/state/nix
+          key: nix-fetcher-tests-${{ runner.os }}-${{ hashFiles('bin/build-nav-stack-natives', 'dimos/navigation/nav_stack/modules/**/*.py') }}
+          restore-keys: nix-fetcher-tests-${{ runner.os }}-
       - name: Fetch nav_stack native modules from Cachix
         if: contains(matrix.markers, 'skipif_no_ros')
         run: uv run bin/build-nav-stack-natives
