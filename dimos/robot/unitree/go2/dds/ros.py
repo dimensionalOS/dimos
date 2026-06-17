@@ -45,6 +45,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.go2.dds import cdr
 from dimos.robot.unitree.go2.dds.msgs.CompressedVideo import CompressedVideo
+from dimos.robot.unitree.go2.dds.msgs.HeightMap import HeightMap
 
 
 # Shared wire specs (Header/Time) reused by the per-message layouts below.
@@ -281,3 +282,36 @@ def decode_compressed_video(buf: bytes) -> CompressedVideo:
     """Decode the CDR envelope only — the encoded packet is left for H264Decoder."""
     w: _CVideoWire = cdr.decode(buf, _CVideoWire)[0]
     return CompressedVideo(data=w.data, format=w.format, frame_id=w.frame_id)
+
+
+# unitree_go/HeightMap (rt/utlidar/height_map_array)
+@dataclass
+class _HeightMapWire:
+    stamp: float
+    frame_id: str
+    resolution: float
+    width: int
+    height: int
+    origin: np.ndarray  # f32[2]
+    data: np.ndarray  # f32[]
+
+    __cdr_fields__ = [
+        ("stamp", "f64"),
+        ("frame_id", "string"),
+        ("resolution", "f32"),
+        ("width", "u32"),
+        ("height", "u32"),
+        ("origin", ("array", "f32", 2)),
+        ("data", ("seq", "f32")),
+    ]
+
+
+def decode_height_map(buf: bytes) -> HeightMap:
+    w: _HeightMapWire = cdr.decode(buf, _HeightMapWire)[0]
+    return HeightMap(
+        resolution=w.resolution,
+        origin=w.origin,
+        data=w.data.reshape(w.height, w.width),
+        frame_id=w.frame_id,
+        ts=w.stamp,
+    )

@@ -38,6 +38,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.go2.dds import cdr, ros
 from dimos.robot.unitree.go2.dds.msgs.CompressedVideo import CompressedVideo
 from dimos.robot.unitree.go2.dds.msgs.ControlEvent import ControlEvent
+from dimos.robot.unitree.go2.dds.msgs.HeightMap import HeightMap
 from dimos.robot.unitree.go2.dds.msgs.LowCmd import LowCmd
 from dimos.robot.unitree.go2.dds.msgs.LowState import LowState
 from dimos.robot.unitree.go2.dds.msgs.SportModeState import SportModeState
@@ -109,6 +110,8 @@ class JsonCodec:
 # Go2 channel topic -> codec. The default registry (only platform we have today).
 GO2_CODECS: dict[str, DdsCodec] = {
     "rt/utlidar/cloud": FnCodec(PointCloud2, ros.decode_pointcloud2),
+    "rt/utlidar/cloud_deskewed": FnCodec(PointCloud2, ros.decode_pointcloud2),
+    "rt/utlidar/height_map_array": FnCodec(HeightMap, ros.decode_height_map),
     "rt/utlidar/imu": FnCodec(Imu, ros.decode_imu),
     "rt/utlidar/robot_odom": FnCodec(Odometry, ros.decode_odometry),
     "rt/frontvideo": FnCodec(Image, ros.decode_compressed_image),
