@@ -44,6 +44,7 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.go2.dds import cdr
+from dimos.robot.unitree.go2.dds.msgs.CompressedVideo import CompressedVideo
 
 
 # Shared wire specs (Header/Time) reused by the per-message layouts below.
@@ -257,3 +258,26 @@ def decode_compressed_image(buf: bytes) -> Image | None:
     if bgr is None:
         return None
     return Image.from_numpy(bgr, ImageFormat.BGR, w.header.frame_id, _ts(w.header))
+
+
+# foxglove_msgs/CompressedVideo (field order differs from CompressedImage:
+# timestamp, frame_id, data, format).
+@dataclass
+class _CVideoWire:
+    stamp: _Time
+    frame_id: str
+    data: np.ndarray  # u8[]
+    format: str
+
+    __cdr_fields__ = [
+        ("stamp", _Time),
+        ("frame_id", "string"),
+        ("data", ("seq", "u8")),
+        ("format", "string"),
+    ]
+
+
+def decode_compressed_video(buf: bytes) -> CompressedVideo:
+    """Decode the CDR envelope only — the encoded packet is left for H264Decoder."""
+    w: _CVideoWire = cdr.decode(buf, _CVideoWire)[0]
+    return CompressedVideo(data=w.data, format=w.format, frame_id=w.frame_id)

@@ -1,7 +1,7 @@
 Dataset Validation
 
 ```sh
-dimos map summary recording_go2_mid360_2026-05-29_4-45pm-PST.db
+dimos mem summary recording_go2_mid360_2026-05-29_4-45pm-PST.db
 
 Stream("color_image"): 11141 items, 2026-05-29 23:32:57 — 2026-05-29 23:45:57 (780.1s)
 Stream("fastlio_lidar"): 7240 items, 2026-05-29 23:32:56 — 2026-05-29 23:45:57 (781.7s)

@@ -149,16 +149,26 @@ class McapStore(Store):
             summary = make_reader(f).get_summary()
         self._stream_topic: dict[str, str] = {}  # stream name -> topic
         self._available: dict[str, int] = {}  # stream name -> message count
+        # Channels in the file we can't decode (no codec), kept for reporting so
+        # undecodable data isn't silently hidden — see :meth:`uncodec_channels`.
+        self._uncodec: dict[str, tuple[int, str | None]] = {}  # topic -> (count, schema)
         if summary is not None and summary.statistics is not None:
             for cid, ch in summary.channels.items():
+                count = summary.statistics.channel_message_counts.get(cid, 0)
                 if ch.topic not in self._codecs:
+                    sch = summary.schemas.get(ch.schema_id)
+                    self._uncodec[ch.topic] = (count, sch.name if sch else None)
                     continue
                 name = name_of.get(ch.topic) or _slug(ch.topic)
                 self._stream_topic[name] = ch.topic
-                self._available[name] = summary.statistics.channel_message_counts.get(cid, 0)
+                self._available[name] = count
 
     def list_streams(self) -> list[str]:
         return sorted(set(self._available) | set(self._streams))
+
+    def uncodec_channels(self) -> dict[str, tuple[int, str | None]]:
+        """Topics present in the file with no registered codec: topic -> (count, schema)."""
+        return dict(self._uncodec)
 
     def _create_backend(
         self, name: str, payload_type: type | None = None, **config: Any

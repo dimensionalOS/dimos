@@ -36,7 +36,9 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.go2.dds import cdr, ros
+from dimos.robot.unitree.go2.dds.msgs.CompressedVideo import CompressedVideo
 from dimos.robot.unitree.go2.dds.msgs.ControlEvent import ControlEvent
+from dimos.robot.unitree.go2.dds.msgs.LowCmd import LowCmd
 from dimos.robot.unitree.go2.dds.msgs.LowState import LowState
 from dimos.robot.unitree.go2.dds.msgs.SportModeState import SportModeState
 from dimos.robot.unitree.go2.dds.msgs.Telemetry import Telemetry
@@ -110,7 +112,9 @@ GO2_CODECS: dict[str, DdsCodec] = {
     "rt/utlidar/imu": FnCodec(Imu, ros.decode_imu),
     "rt/utlidar/robot_odom": FnCodec(Odometry, ros.decode_odometry),
     "rt/frontvideo": FnCodec(Image, ros.decode_compressed_image),
+    "rt/frontvideo/h264": FnCodec(CompressedVideo, ros.decode_compressed_video),
     "rt/lowstate": CdrStructCodec(LowState),
+    "rt/lowcmd": CdrStructCodec(LowCmd),
     "rt/sportmodestate": CdrStructCodec(SportModeState),
     "telemetry": JsonCodec(Telemetry),
     "control_log": JsonCodec(ControlEvent),

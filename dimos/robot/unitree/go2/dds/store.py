@@ -40,7 +40,9 @@ STREAMS: dict[str, str] = {
     "imu": "rt/utlidar/imu",
     "odom": "rt/utlidar/robot_odom",
     "color_image": "rt/frontvideo",
+    "color_image_h264": "rt/frontvideo/h264",
     "lowstate": "rt/lowstate",
+    "lowcmd": "rt/lowcmd",
     "sportmodestate": "rt/sportmodestate",
 }
 
