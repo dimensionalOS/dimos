@@ -23,13 +23,20 @@ import sys
 import threading
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
+from dimos.core.coordination.blueprints import transport_config_name
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.worker_manager import WorkerManager
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.resource import Resource
-from dimos.core.transport import LCMTransport, PubSubTransport, pLCMTransport
+from dimos.core.transport import (
+    LCMTransport,
+    PubSubTransport,
+    WebRTCTransport,
+    WebRTCVideoTransport,
+    pLCMTransport,
+)
 from dimos.spec.utils import is_spec, spec_annotation_compliance, spec_structural_compliance
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
@@ -591,15 +598,12 @@ def _apply_transport_overrides(
     blueprint: Blueprint, overrides: Mapping[str, Mapping[str, Any]]
 ) -> None:
     """Rewrite each transport's `_config` with CLI/env overrides before workers pickle them."""
-    from dimos.core.coordination.blueprints import _transport_config_name
-    from dimos.core.transport import WebRTCTransport, WebRTCVideoTransport
-
     if not overrides:
         return
     for transport in blueprint.transport_map.values():
         if not isinstance(transport, (WebRTCTransport, WebRTCVideoTransport)):
             continue
-        sub = overrides.get(_transport_config_name(transport._config_cls))
+        sub = overrides.get(transport_config_name(transport._config_cls))
         if not sub:
             continue
         new_config = transport._config.model_copy(update=dict(sub))

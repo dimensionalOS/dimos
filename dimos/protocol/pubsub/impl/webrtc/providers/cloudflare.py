@@ -63,8 +63,8 @@ else:
 # a high fixed id stays clear of them.
 _PLACEHOLDER_DC_ID = 100
 # CF Realtime drops DataChannel messages larger than this (observed: 100% loss
-# from 64KB up in the pubsub benchmark).
-_MAX_MSG_SIZE = 16 * 1024
+# from 64KB up in the pubsub benchmark); also matches the SCTP fragmentation unit.
+MAX_MSG_SIZE = 16 * 1024
 
 
 def _dc_name(topic: str) -> str:
@@ -292,8 +292,8 @@ class CloudflareProvider(AsyncProviderBase):
             self.start()
         if isinstance(data, (bytearray, memoryview)):
             data = bytes(data)
-        if len(data) > _MAX_MSG_SIZE:
-            logger.warning("WebRTC msg on %r exceeds %d bytes", topic, _MAX_MSG_SIZE)
+        if len(data) > MAX_MSG_SIZE:
+            logger.warning("WebRTC msg on %r exceeds %d bytes", topic, MAX_MSG_SIZE)
         with self._lock:
             ch = self._pub_channels.get(topic)
         if ch is None:
@@ -320,4 +320,4 @@ class CloudflareProvider(AsyncProviderBase):
         return _unsub
 
 
-__all__ = ["CloudflareConfig", "CloudflareProvider"]
+__all__ = ["MAX_MSG_SIZE", "CloudflareConfig", "CloudflareProvider"]

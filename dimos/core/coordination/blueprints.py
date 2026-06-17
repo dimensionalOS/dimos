@@ -192,7 +192,7 @@ class Blueprint:
             if cls is None or cls in seen:
                 continue
             seen.add(cls)
-            transport_fields[_transport_config_name(cls)] = (cls | None, None)
+            transport_fields[transport_config_name(cls)] = (cls | None, None)
         if transport_fields:
             transports_model = create_model(
                 "TransportsConfig", __config__={"extra": "forbid"}, **transport_fields
@@ -232,7 +232,7 @@ class Blueprint:
         return tuple(bp for bp in self.blueprints if bp.module not in disabled)
 
 
-def _transport_config_name(cls: type) -> str:
+def transport_config_name(cls: type) -> str:
     """Map a transport's `_config_cls` to the kebab-name used in BlueprintConfig.
 
     `BrokerConfig` → `broker`, `CloudflareConfig` → `cloudflare`.
