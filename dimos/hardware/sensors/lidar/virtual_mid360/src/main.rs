@@ -4,14 +4,12 @@
 // binds lidar_ip and sends UDP, so it works wherever the host_ip/lidar_ip are
 // reachable — IPs aliased on an interface (host ns, incl. macOS lo0) or a netns.
 
-use dimos_module::{run, LcmTransport, Module};
-use serde::{Deserialize, Serialize};
+use dimos_module::{native_config, run, LcmTransport, Module};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use validator::Validate;
 
 // ---- Livox SDK2 control wire format (SdkPacket) ----
 const SOF: u8 = 0xAA;
@@ -28,8 +26,11 @@ const DST_STATUS: u16 = 56201;
 // cmd_id whose ACK means the host finished configuring -> start streaming
 const CMD_WORKMODE: u16 = 0x0100;
 
-#[derive(Debug, Deserialize, Serialize, Validate)]
-#[serde(deny_unknown_fields)]
+// native_config: every field required + supplied by the Python wrapper over
+// stdin (no Rust-side serde defaults / Option). VirtualMid360Config sends all of
+// these, so each is unconditionally present. Injects the
+// Deserialize/Serialize/Validate derives + deny_unknown_fields + impl NativeConfig.
+#[native_config]
 struct Config {
     /// Recorded Mid-360 pcap (point/IMU/status UDP). Read fully into RAM.
     pcap: String,
@@ -37,29 +38,20 @@ struct Config {
     #[validate(range(min = 0.01, max = 1000.0))]
     rate: f64,
     /// Seconds to wait before streaming begins.
-    #[serde(default)]
     #[validate(range(min = 0.0, max = 3600.0))]
     delay: f64,
-    /// IP the fake lidar sends from. Required.
+    /// IP the fake lidar sends from.
     lidar_ip: String,
-    /// Host IP the data is delivered to (where the SDK listens). Required.
+    /// Host IP the data is delivered to (where the SDK listens).
     host_ip: String,
-    /// Network namespace the fake lidar runs in. Optional — empty/omitted means
-    /// the host namespace (the IPs are aliased onto an interface instead, which
-    /// is the default and the only option on macOS). Accepted for wire-config
+    /// Network namespace the fake lidar runs in. Accepted for wire-config
     /// compatibility but not acted on: the process is *placed* in the netns by
     /// the launcher (`ip netns exec`), so the binary itself stays agnostic.
-    #[serde(default)]
     #[allow(dead_code)]
     lidar_netns: String,
     /// Multicast group for point/IMU. 224.1.1.5 is the Livox default the SDK
     /// joins; override only to match a differently-configured consumer.
-    #[serde(default = "default_mcast_data")]
     mcast_data: String,
-}
-
-fn default_mcast_data() -> String {
-    "224.1.1.5".into()
 }
 
 #[derive(Module)]
