@@ -230,6 +230,24 @@ def test_invalid_external_metadata_does_not_block_unrelated_valid_package(
     assert blueprint.blueprints[0].module is ExternalTestModule
 
 
+def test_all_invalid_distribution_does_not_create_namespace_ambiguity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    patch_distributions(
+        monkeypatch,
+        FakeDistribution("my_robot.stack", (FakeEntryPoint("Go2", "invalid_stack.demo:go2"),)),
+        FakeDistribution(
+            "My-Test-Stack",
+            (FakeEntryPoint("demo", "external_stack.demo:ExternalTestModule", ExternalTestModule),),
+        ),
+    )
+
+    assert external.list_external_blueprint_names() == ["my-test-stack.demo"]
+    blueprint = external.resolve_external_blueprint_by_name("my-test-stack.demo")
+
+    assert blueprint.blueprints[0].module is ExternalTestModule
+
+
 def test_ambiguous_canonical_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
     patch_distributions(
         monkeypatch,

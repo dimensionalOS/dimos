@@ -221,7 +221,7 @@ def _target_to_blueprint(name: str, target: Any) -> Blueprint:
 def _collect_external_blueprints() -> _ExternalBlueprintCollection:
     entries_by_namespace: dict[str, list[ExternalBlueprintEntry]] = {}
     invalid_entries_by_namespace: dict[str, list[InvalidExternalBlueprintEntry]] = {}
-    distribution_names_by_namespace: dict[str, set[str]] = {}
+    valid_distribution_names_by_namespace: dict[str, set[str]] = {}
 
     for distribution in importlib_metadata.distributions():
         distribution_name = _distribution_name(distribution)
@@ -237,7 +237,6 @@ def _collect_external_blueprints() -> _ExternalBlueprintCollection:
         if not external_entry_points:
             continue
 
-        distribution_names_by_namespace.setdefault(namespace, set()).add(distribution_name)
         for entry_point in external_entry_points:
             local_name = str(getattr(entry_point, "name", ""))
             if not is_valid_external_local_blueprint_name(local_name):
@@ -249,6 +248,9 @@ def _collect_external_blueprints() -> _ExternalBlueprintCollection:
                     )
                 )
                 continue
+            valid_distribution_names_by_namespace.setdefault(namespace, set()).add(
+                distribution_name
+            )
             entries_by_namespace.setdefault(namespace, []).append(
                 ExternalBlueprintEntry(
                     namespace=namespace,
@@ -259,7 +261,7 @@ def _collect_external_blueprints() -> _ExternalBlueprintCollection:
             )
 
     ambiguous_distribution_names_by_namespace: dict[str, set[str]] = {}
-    for namespace, distribution_names in distribution_names_by_namespace.items():
+    for namespace, distribution_names in valid_distribution_names_by_namespace.items():
         if len(distribution_names) > 1 and namespace in entries_by_namespace:
             ambiguous_distribution_names_by_namespace[namespace] = distribution_names
             entries_by_namespace.pop(namespace, None)
