@@ -18,7 +18,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 import importlib.metadata as importlib_metadata
 import re
-from typing import Any, cast
+from typing import Any
 
 from packaging.utils import canonicalize_name
 
@@ -201,7 +201,9 @@ def _collect_external_blueprints() -> _ExternalBlueprintCollection:
     invalid_entries_by_namespace: dict[str, list[InvalidExternalBlueprintEntry]] = {}
 
     for entry_point in importlib_metadata.entry_points(group=ENTRY_POINT_GROUP):
-        distribution = cast("importlib_metadata.Distribution", entry_point.dist)
+        distribution = entry_point.dist
+        if distribution is None:
+            continue
         distribution_name = distribution.metadata["Name"]
         namespace = canonicalize_distribution_namespace(distribution_name)
         local_name = entry_point.name
