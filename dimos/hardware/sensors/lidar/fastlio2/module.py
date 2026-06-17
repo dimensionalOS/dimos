@@ -20,10 +20,12 @@ registered (world-frame) point clouds and odometry with covariance.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import time
 from typing import TYPE_CHECKING, Annotated
 
+from pydantic import Field
 from pydantic.experimental.pipeline import validate_as
 from reactivex.disposable import Disposable
 
@@ -58,9 +60,11 @@ class FastLio2Config(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/fastlio2_native"
     build_command: str | None = "nix build .#fastlio2_native"
-    # Livox SDK hardware config
-    host_ip: str = "192.168.1.5"
-    lidar_ip: str = "192.168.1.155"
+    # Livox SDK hardware config. lidar_ip required; host_ip optional (auto-derived
+    # from lidar_ip's subnet). Both fall back to DIMOS_FASTLIO_LIDAR_IP /
+    # DIMOS_FASTLIO_HOST_IP.
+    host_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_FASTLIO_HOST_IP"))
+    lidar_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_FASTLIO_LIDAR_IP"))
     frequency: float = 10.0
 
     # "odom" frame: FastLio2 gives smooth continuous odometry; PGO publishes the
@@ -149,11 +153,15 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry):
         super().stop()
 
     def _validate_network(self) -> None:
-        # Auto-derive host_ip from a local NIC on the lidar's subnet (shared with
-        # the Mid360 driver / Point-LIO) when the configured value isn't local.
-        self.config.host_ip = resolve_host_ip(
-            self.config.lidar_ip, self.config.host_ip, label="FastLio2"
-        )
+        lidar_ip = self.config.lidar_ip
+        if not lidar_ip:
+            raise RuntimeError(
+                "FastLio2: lidar_ip not set — it's network-specific. Set it in the config "
+                "or via the DIMOS_FASTLIO_LIDAR_IP env var."
+            )
+        # host_ip optional: derive the local NIC on lidar_ip's /24 when unset or
+        # not one of our IPs (shared with the Mid360 driver).
+        self.config.host_ip = resolve_host_ip(lidar_ip, self.config.host_ip, label="FastLio2")
 
 
 # Verify protocol port compliance (mypy will flag missing ports)
