@@ -230,7 +230,7 @@ class LiveKitBrokerProvider(AsyncProviderBase):
 
         self._room = rtc.Room()
 
-        @self._room.on("data_received")
+        @self._room.on("data_received")  # type: ignore[untyped-decorator]
         def _on_data(packet: Any) -> None:
             self._dispatch(packet)
 

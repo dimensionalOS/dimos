@@ -539,6 +539,8 @@ module = [
     "faster_whisper",
     "geometry_msgs.*",
     "lazy_loader",
+    "livekit",
+    "livekit.*",
     "mcap",
     "mcap.*",
     "mujoco",
