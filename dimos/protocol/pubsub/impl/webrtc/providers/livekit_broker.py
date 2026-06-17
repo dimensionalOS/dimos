@@ -307,9 +307,7 @@ class LiveKitBrokerProvider(AsyncProviderBase):
         with self._lock:
             if not self._started or self._loop is None or self._room is None:
                 return
-            coro = self._room.local_participant.publish_data(
-                data, reliable=reliable, topic=topic
-            )
+            coro = self._room.local_participant.publish_data(data, reliable=reliable, topic=topic)
             asyncio.run_coroutine_threadsafe(coro, self._loop)
 
     def set_video_frame(self, img: Image) -> None:
