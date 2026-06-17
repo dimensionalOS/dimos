@@ -389,6 +389,37 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build nav_stack native modules
         run: uv run bin/build-nav-stack-natives
+      - name: Diagnose Nix cache locations
+        # TEMP: figures out where Nix actually writes its fetcher/eval caches
+        # in this install (daemon-mode on ubuntu-latest). The cache step above
+        # warned that `~/.cache/nix` and `~/.local/state/nix` don't exist at
+        # post time, so something here is non-standard. Once we know the
+        # actual paths, point actions/cache at them and drop this step.
+        if: always()
+        run: |
+          echo "=== whoami / HOME ==="
+          whoami; echo "HOME=$HOME"
+          echo
+          echo "=== runner ~/.cache ==="
+          ls -la ~/.cache/ 2>&1 || true
+          echo
+          echo "=== runner ~/.local/state ==="
+          ls -la ~/.local/state/ 2>&1 || true
+          echo
+          echo "=== root /root (sudo) ==="
+          sudo ls -la /root/ 2>&1 || true
+          echo
+          echo "=== root /root/.cache (sudo) ==="
+          sudo ls -la /root/.cache/ 2>&1 || true
+          echo
+          echo "=== root /root/.local/state (sudo) ==="
+          sudo ls -la /root/.local/state/ 2>&1 || true
+          echo
+          echo "=== find nix-related dirs anywhere reachable ==="
+          sudo find / -maxdepth 5 -type d \
+            \( -name nix -o -name fetcher-cache-v\* -o -name eval-cache-v\* \) \
+            -not -path '/nix/store/*' -not -path '/proc/*' -not -path '/sys/*' \
+            2>/dev/null | head -40
 
   self-hosted-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
