@@ -29,7 +29,13 @@ from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.resource import Resource
-from dimos.core.transport import LCMTransport, PubSubTransport, pLCMTransport
+from dimos.core.transport import (
+    LCMTransport,
+    PubSubTransport,
+    WebRTCTransport,
+    WebRTCVideoTransport,
+    pLCMTransport,
+)
 from dimos.spec.utils import is_spec, spec_annotation_compliance, spec_structural_compliance
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
@@ -592,7 +598,6 @@ def _apply_transport_overrides(
 ) -> None:
     """Rewrite each transport's `_config` with CLI/env overrides before workers pickle them."""
     from dimos.core.coordination.blueprints import _transport_config_name
-    from dimos.core.transport import WebRTCTransport, WebRTCVideoTransport
 
     if not overrides:
         return
