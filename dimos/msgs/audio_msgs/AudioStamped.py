@@ -14,11 +14,15 @@
 
 """Python overlay for audio messages, mirroring ROS audio_common AudioStamped.
 
-LCM wire type: foxglove_msgs.RawAudio (already in dimos_lcm).
+LCM wire type: foxglove_msgs.RawAudio — reused as a temporary stand-in because
+it is the only audio type currently mirrored in dimos_lcm.  This is NOT an
+endorsement of the foxglove schema; a native type that carries a full
+std_msgs.Header is pending a team decision.
 
 Differences from ROS audio_common:
-  - Wire type uses builtin_interfaces.Time (not std_msgs.Header), so frame_id
-    and seq are NOT preserved through lcm_encode/lcm_decode.
+  - Wire type carries only a builtin_interfaces.Time timestamp; it has no
+    frame_id field, so frame_id is lost on encode (not a design choice — there
+    is simply nowhere to put it in the RawAudio schema).
   - Wire type has a single 'format' string; we encode it as
     "{coding_format}/{sample_format}" (e.g. "pcm/S16LE").
   - AudioInfo and AudioData are not separate LCM sub-types; they are plain
@@ -41,7 +45,8 @@ class AudioStamped(Timestamped):
     """Stamped audio chunk with PCM payload.
 
     Carries one frame of raw PCM audio together with a std_msgs.Header and
-    audio metadata.  Serialises to/from foxglove_msgs.RawAudio on the wire.
+    audio metadata.  Serialises to/from foxglove_msgs.RawAudio on the wire
+    (temporary stand-in — see module docstring).
     """
 
     msg_name = "foxglove_msgs.RawAudio"  # wire type used for LCM
@@ -119,8 +124,8 @@ class AudioStamped(Timestamped):
     def lcm_encode(self) -> bytes:
         """Encode to foxglove_msgs.RawAudio wire bytes.
 
-        NOTE: frame_id and seq from self.header are NOT preserved (the wire
-        type only carries a bare timestamp, not a full std_msgs.Header).
+        NOTE: frame_id from self.header is not preserved — RawAudio carries
+        only a builtin_interfaces.Time timestamp and has no frame_id field.
         """
         msg = RawAudio()
         sec = int(self.ts)
