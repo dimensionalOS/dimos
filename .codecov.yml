@@ -5,7 +5,11 @@ codecov:
 
 coverage:
   status:
-    project: true
+    project:
+      default:
+        # Project coverage includes indirect and carried-forward coverage. Allow
+        # small global drift while keeping patch coverage strict below.
+        threshold: 1%
     patch: true
 
 # Carry forward self-hosted, as these are not run on external PRs.
