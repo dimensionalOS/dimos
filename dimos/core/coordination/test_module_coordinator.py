@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from types import MappingProxyType
-from typing import Protocol
+from typing import Any, Protocol
 
 import pytest
 
@@ -92,6 +92,10 @@ class SourceModule(Module):
 
 class TargetModule(Module):
     remapped_data: In[Data1]
+
+
+class ExternalNameLoadModule(Module):
+    pass
 
 
 # ModuleRef / RPC tests
@@ -790,3 +794,22 @@ def test_list_module_names(dynamic_coordinator) -> None:
     dynamic_coordinator.load_module(ModuleA)
     dynamic_coordinator.load_module(ModuleC)
     assert set(dynamic_coordinator.list_module_names()) == {"ModuleA", "ModuleC"}
+
+
+def test_load_blueprint_by_name_uses_shared_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
+    import dimos.robot.get_all_blueprints as resolver
+
+    expected_blueprint = ExternalNameLoadModule.blueprint()
+    loaded_blueprints: list[Any] = []
+
+    def fake_get_by_name(name: str):  # type: ignore[no-untyped-def]
+        assert name == "my-test-stack.demo"
+        return expected_blueprint
+
+    coordinator = object.__new__(ModuleCoordinator)
+    coordinator.load_blueprint = loaded_blueprints.append  # type: ignore[method-assign]
+    monkeypatch.setattr(resolver, "get_by_name", fake_get_by_name)
+
+    coordinator.load_blueprint_by_name("my-test-stack.demo")
+
+    assert loaded_blueprints == [expected_blueprint]

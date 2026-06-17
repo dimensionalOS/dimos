@@ -9,4 +9,5 @@ This mostly to track when conventions change (with regard to codebase updates) b
 - To customize the way rerun renders something, right now we use a `rerun_config` dict. This will (hopefully) change very soon to be a per-module config instead of a per-blueprint config
 - Similar to the `rerun_config` the `rrb` (rerun blueprint) is defined at a blueprint level right now, but ideally would be a per-module contribution with only a per-blueprint override of the layout.
 - No `__init__.py` files
-- Helper blueprints (like `_with_vis`) that should not be used on their own need to start with an underscore to avoid being picked up by the all_blueprints.py code generation step
+- Helper blueprints (like `_with_vis`) that should not be used on their own need to start with an underscore to avoid being picked up by the in-repo `all_blueprints.py` code generation step
+- Built-in runnable blueprints are registered through the generated in-repo `all_blueprints.py`; externally packaged blueprints are discovered through installed Python package entry points in the `dimos.blueprints` group instead.

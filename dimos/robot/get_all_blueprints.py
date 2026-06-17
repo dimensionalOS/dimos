@@ -21,6 +21,11 @@ import typer
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.robot.all_blueprints import all_blueprints, all_modules
+from dimos.robot.external_blueprints import (
+    ExternalBlueprintError,
+    is_namespaced_blueprint_name,
+    resolve_external_blueprint_by_name,
+)
 
 all_names = sorted(set(all_blueprints.keys()) | set(all_modules.keys()))
 
@@ -61,6 +66,8 @@ def get_by_name(name: str) -> Blueprint:
         return get_blueprint_by_name(name)
     elif name in all_modules:
         return get_module_by_name(name)
+    elif is_namespaced_blueprint_name(name):
+        return resolve_external_blueprint_by_name(name)
     else:
         _raise_unknown(name, all_names)
 
@@ -75,11 +82,21 @@ def _fail_or_exit(name: str, candidates: list[str]) -> NoReturn:
     sys.exit(1)
 
 
+def _exit_with_error(message: str) -> NoReturn:
+    typer.echo(typer.style(message, fg=typer.colors.RED), err=True)
+    sys.exit(1)
+
+
 def get_by_name_or_exit(name: str) -> Blueprint:
     if name in all_blueprints:
         return get_blueprint_by_name(name)
     elif name in all_modules:
         return get_module_by_name(name)
+    elif is_namespaced_blueprint_name(name):
+        try:
+            return resolve_external_blueprint_by_name(name)
+        except ExternalBlueprintError as exc:
+            _exit_with_error(str(exc))
     else:
         _fail_or_exit(name, all_names)
 
