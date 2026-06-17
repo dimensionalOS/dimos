@@ -106,7 +106,7 @@ unitree_go2_nav_3d = autoconnect(
         map_freq=-1.0,
     ).remappings([(FastLio2, "global_map", "global_map_fastlio")]),
     RayTracingVoxelMap.blueprint(
-        voxel_size=voxel_size, emit_every=2, global_emit_every=150, max_health=5
+        voxel_size=voxel_size, emit_every=2, global_emit_every=50, max_health=5
     ),
     # global_map is remapped off so the planner runs purely on the
     # incremental local_map + region_bounds pair.
@@ -122,7 +122,7 @@ unitree_go2_nav_3d = autoconnect(
         viz_publish_hz=0.0,
     ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
     GoalRelay.blueprint(),
-    BasicPathFollower.blueprint(lookahead_m=0.5, heading_gain=0.8, max_angular=0.6),
+    BasicPathFollower.blueprint(speed=0.5, heading_gain=0.8, max_angular=0.6),
     MovementManager.blueprint(),
 ).global_config(n_workers=10, robot_model="unitree_go2", obstacle_avoidance=False)
 

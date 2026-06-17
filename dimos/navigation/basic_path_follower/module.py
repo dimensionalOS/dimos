@@ -42,9 +42,17 @@ class BasicPathFollowerConfig(ModuleConfig):
     speed: float = 0.5
     control_frequency: float = 10.0
     goal_tolerance: float = 0.3
-    lookahead_m: float = 0.6
+    # Lookahead grows with speed (time_s * speed) within these bounds, so the
+    # robot tracks tightly when slow and stays stable when fast.
+    lookahead_time_s: float = 1.5
+    min_lookahead_m: float = 0.4
+    max_lookahead_m: float = 1.5
     heading_gain: float = 1.5
     max_angular: float = 1.0
+
+
+def lookahead_distance(speed: float, time_s: float, lo: float, hi: float) -> float:
+    return min(hi, max(lo, time_s * speed))
 
 
 class BasicPathFollower(Module):
@@ -208,11 +216,16 @@ class BasicPathFollower(Module):
         if len(waypoints) == 1:
             return np.asarray(waypoints[0])
 
-        # Project onto the path, then march lookahead_m along it and interpolate.
-        # Returning an actual waypoint would let the target jump to a distant
-        # vertex and cut the corner.
+        # Project onto the path, then march the lookahead along it and
+        # interpolate. Returning an actual waypoint would let the target jump to
+        # a distant vertex and cut the corner.
         seg_idx, start = self._project_onto_path(waypoints, position)
-        remaining = self.config.lookahead_m
+        remaining = lookahead_distance(
+            self.config.speed,
+            self.config.lookahead_time_s,
+            self.config.min_lookahead_m,
+            self.config.max_lookahead_m,
+        )
         for i in range(seg_idx, len(waypoints) - 1):
             end = waypoints[i + 1]
             seg = end - start
