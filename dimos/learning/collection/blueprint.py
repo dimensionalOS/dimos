@@ -21,8 +21,9 @@ shutdown. DataPrep reads that DB afterwards.
 
 from __future__ import annotations
 
-from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.transport import LCMTransport
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.global_config import global_config
+from dimos.core.transport import LCMTransport, pLCMTransport
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.learning.collection.episode_monitor import (
     EpisodeMonitorModule,
@@ -40,12 +41,21 @@ from dimos.teleop.quest.quest_types import Buttons
 _DEFAULT_BUTTON_MAP = {"start": "A", "save": "B", "discard": "X"}
 
 
+def _camera_if_real() -> tuple[Blueprint, ...]:
+    """Real RealSense only off-sim. In `--simulation` the teleop coordinator's
+    MujocoSimModule already publishes color_image on /camera/color_image, so a
+    real camera would be redundant (and fail with no device connected)."""
+    if global_config.simulation:
+        return ()
+    return (RealSenseCamera.blueprint(enable_pointcloud=False),)
+
+
 # Transports inline per blueprint so each recording config is self-contained.
 # joint_state is declared explicitly (not left to autoconnect) so it keeps
 # recording if the recorder moves to its own process.
 learning_collect_quest_xarm7 = autoconnect(
     teleop_quest_xarm7,
-    RealSenseCamera.blueprint(enable_pointcloud=False),
+    *_camera_if_real(),
     EpisodeMonitorModule.blueprint(button_map=_DEFAULT_BUTTON_MAP),
     CollectionRecorder.blueprint(),
 ).transports(
@@ -53,14 +63,14 @@ learning_collect_quest_xarm7 = autoconnect(
         ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
         ("color_image", Image): LCMTransport("/camera/color_image", Image),
         ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("status", EpisodeStatus): LCMTransport("/learning/episode_status", EpisodeStatus),
+        ("status", EpisodeStatus): pLCMTransport("/learning/episode_status"),
     }
 )
 
 
 learning_collect_quest_piper = autoconnect(
     teleop_quest_piper,
-    RealSenseCamera.blueprint(enable_pointcloud=False),
+    *_camera_if_real(),
     EpisodeMonitorModule.blueprint(button_map=_DEFAULT_BUTTON_MAP),
     CollectionRecorder.blueprint(),
 ).transports(
@@ -68,7 +78,7 @@ learning_collect_quest_piper = autoconnect(
         ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
         ("color_image", Image): LCMTransport("/camera/color_image", Image),
         ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("status", EpisodeStatus): LCMTransport("/learning/episode_status", EpisodeStatus),
+        ("status", EpisodeStatus): pLCMTransport("/learning/episode_status"),
     }
 )
 
