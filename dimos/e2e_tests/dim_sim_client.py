@@ -13,11 +13,18 @@
 # limitations under the License.
 
 from dimos.core.transport import LCMTransport
+from dimos.experimental.pimsim.spec.protocols import SceneControl
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.simulation.dimsim.scene_client import SceneClient
 
 
-class DimSimClient:
+class DimSimClient(SceneControl):
+    """DimSim's implementation of the shared ``SceneControl`` contract.
+
+    Declared explicitly so the type checker holds DimSim and PimSim to the
+    same scene-control surface the parametrized e2e tests depend on.
+    """
+
     _client: SceneClient | None = None
 
     def __init__(self) -> None:

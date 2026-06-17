@@ -29,6 +29,7 @@ from websockets.exceptions import WebSocketException
 from websockets.sync.client import ClientConnection, connect
 
 from dimos.core.transport import LCMTransport
+from dimos.experimental.pimsim.spec.protocols import SceneControl
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.utils.logging_config import setup_logger
 
@@ -40,8 +41,13 @@ DEFAULT_WALL_HEIGHT = 1.5
 DEFAULT_WALL_THICKNESS = 0.1
 
 
-class PimSimClient:
-    """Mirror of ``DimSimClient`` against pimsim's WebSocket surface."""
+class PimSimClient(SceneControl):
+    """Mirror of ``DimSimClient`` against pimsim's WebSocket surface.
+
+    Explicitly declares ``SceneControl`` so the type checker verifies this
+    client keeps the backend-agnostic scene-control contract the e2e tests
+    parametrize over (``test_spec_conformance`` also asserts it at runtime).
+    """
 
     def __init__(self, url: str = DEFAULT_URL) -> None:
         self._url = url
