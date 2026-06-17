@@ -483,51 +483,22 @@ jobs:
         # state so the cold ~20s/module evaluation cost is paid once, not on
         # every run. Different key prefix from nav-stack-natives so the two
         # jobs don't fight over the same cache key.
+        # Inside the ros-dev container, GH Actions reassigns HOME to
+        # /github/home, but install-nix.sh's single-user-mode install
+        # (the container has no systemd, so it takes that branch) leaves
+        # Nix writing its caches to root's actual home, /root/.cache/nix.
+        # ~ would resolve to /github/home and miss it entirely.
         if: contains(matrix.markers, 'skipif_no_ros')
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cache/nix
-            ~/.local/state/nix
+            /root/.cache/nix
+            /root/.local/state/nix
           key: nix-fetcher-tests-${{ runner.os }}-${{ hashFiles('bin/build-nav-stack-natives', 'dimos/navigation/nav_stack/modules/**/*.py') }}
           restore-keys: nix-fetcher-tests-${{ runner.os }}-
       - name: Fetch nav_stack native modules from Cachix
         if: contains(matrix.markers, 'skipif_no_ros')
         run: uv run bin/build-nav-stack-natives
-      - name: Diagnose Nix cache locations
-        # TEMP: figures out where Nix actually writes its fetcher/eval caches
-        # inside the ros-dev container (single-user mode, no systemd in the
-        # container so install-nix.sh falls into that branch). The cache step
-        # above warned that `~/.cache/nix` and `~/.local/state/nix` don't
-        # exist at post time. Once we know the actual paths, point
-        # actions/cache at them and drop this step.
-        if: always() && contains(matrix.markers, 'skipif_no_ros')
-        run: |
-          echo "=== whoami / HOME ==="
-          whoami; echo "HOME=$HOME"
-          echo
-          echo "=== ~/.cache ==="
-          ls -la ~/.cache/ 2>&1 || true
-          echo
-          echo "=== ~/.local/state ==="
-          ls -la ~/.local/state/ 2>&1 || true
-          echo
-          echo "=== /root/.cache ==="
-          ls -la /root/.cache/ 2>&1 || true
-          echo
-          echo "=== /root/.local/state ==="
-          ls -la /root/.local/state/ 2>&1 || true
-          echo
-          echo "=== /github/home (GH-actions container HOME) ==="
-          ls -la /github/home/ 2>&1 || true
-          ls -la /github/home/.cache/ 2>&1 || true
-          ls -la /github/home/.local/state/ 2>&1 || true
-          echo
-          echo "=== find nix-related cache dirs anywhere reachable ==="
-          find / -maxdepth 5 -type d \
-            \( -name nix -o -name 'fetcher-cache-v*' -o -name 'eval-cache-v*' \) \
-            -not -path '/nix/store/*' -not -path '/proc/*' -not -path '/sys/*' \
-            2>/dev/null | head -40
       - name: Run tests
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not (tool or mujoco)'
       - name: Re-run the failing tests with maximum verbosity
