@@ -42,6 +42,15 @@ class InvalidExternalBlueprintNameError(ExternalBlueprintError):
         )
 
 
+class InvalidExternalBlueprintRequestNameError(ExternalBlueprintError):
+    def __init__(self, local_name: str) -> None:
+        super().__init__(
+            f"Invalid external blueprint local name {local_name!r}. "
+            "External local blueprint names must be lowercase kebab-case "
+            "and match ^[a-z0-9]+(-[a-z0-9]+)*$."
+        )
+
+
 class AmbiguousExternalBlueprintNamespaceError(ExternalBlueprintError):
     def __init__(self, namespace: str, distribution_names: Iterable[str]) -> None:
         names = sorted(set(distribution_names))
@@ -111,6 +120,20 @@ class ExternalBlueprintEntry:
         return str(getattr(self.entry_point, "value", "<unknown>"))
 
 
+@dataclass(frozen=True)
+class InvalidExternalBlueprintEntry:
+    namespace: str
+    local_name: str
+    distribution_name: str
+
+
+@dataclass(frozen=True)
+class _ExternalBlueprintCollection:
+    entries_by_namespace: dict[str, list[ExternalBlueprintEntry]]
+    invalid_entries_by_namespace: dict[str, list[InvalidExternalBlueprintEntry]]
+    ambiguous_distribution_names_by_namespace: dict[str, set[str]]
+
+
 def canonicalize_distribution_namespace(distribution_name: str) -> str:
     """Normalize a Python distribution name for use as an external blueprint namespace."""
 
@@ -138,7 +161,7 @@ def list_external_blueprint_names() -> list[str]:
 def list_external_blueprints() -> list[ExternalBlueprintEntry]:
     """List external blueprint entry point metadata without loading targets."""
 
-    namespace_entries = _collect_external_blueprints()
+    namespace_entries = _collect_external_blueprints().entries_by_namespace
     return sorted(
         (entry for entries in namespace_entries.values() for entry in entries),
         key=lambda entry: entry.qualified_name,
@@ -152,10 +175,21 @@ def resolve_external_blueprint_by_name(name: str) -> Blueprint:
     if not sep:
         raise ExternalBlueprintNamespaceNotFoundError(name, [])
     if not is_valid_external_local_blueprint_name(local_name):
-        raise InvalidExternalBlueprintNameError(local_name, namespace)
+        raise InvalidExternalBlueprintRequestNameError(local_name)
 
-    namespace_entries = _collect_external_blueprints()
+    collection = _collect_external_blueprints()
+    namespace_entries = collection.entries_by_namespace
+    if namespace in collection.ambiguous_distribution_names_by_namespace:
+        raise AmbiguousExternalBlueprintNamespaceError(
+            namespace, collection.ambiguous_distribution_names_by_namespace[namespace]
+        )
     if namespace not in namespace_entries:
+        invalid_entries = collection.invalid_entries_by_namespace.get(namespace)
+        if invalid_entries:
+            invalid_entry = invalid_entries[0]
+            raise InvalidExternalBlueprintNameError(
+                invalid_entry.local_name, invalid_entry.distribution_name
+            )
         raise ExternalBlueprintNamespaceNotFoundError(namespace, namespace_entries.keys())
 
     entries = namespace_entries[namespace]
@@ -184,8 +218,9 @@ def _target_to_blueprint(name: str, target: Any) -> Blueprint:
     raise InvalidExternalBlueprintTargetError(name, target)
 
 
-def _collect_external_blueprints() -> dict[str, list[ExternalBlueprintEntry]]:
+def _collect_external_blueprints() -> _ExternalBlueprintCollection:
     entries_by_namespace: dict[str, list[ExternalBlueprintEntry]] = {}
+    invalid_entries_by_namespace: dict[str, list[InvalidExternalBlueprintEntry]] = {}
     distribution_names_by_namespace: dict[str, set[str]] = {}
 
     for distribution in importlib_metadata.distributions():
@@ -206,7 +241,14 @@ def _collect_external_blueprints() -> dict[str, list[ExternalBlueprintEntry]]:
         for entry_point in external_entry_points:
             local_name = str(getattr(entry_point, "name", ""))
             if not is_valid_external_local_blueprint_name(local_name):
-                raise InvalidExternalBlueprintNameError(local_name, distribution_name)
+                invalid_entries_by_namespace.setdefault(namespace, []).append(
+                    InvalidExternalBlueprintEntry(
+                        namespace=namespace,
+                        local_name=local_name,
+                        distribution_name=distribution_name,
+                    )
+                )
+                continue
             entries_by_namespace.setdefault(namespace, []).append(
                 ExternalBlueprintEntry(
                     namespace=namespace,
@@ -216,11 +258,17 @@ def _collect_external_blueprints() -> dict[str, list[ExternalBlueprintEntry]]:
                 )
             )
 
+    ambiguous_distribution_names_by_namespace: dict[str, set[str]] = {}
     for namespace, distribution_names in distribution_names_by_namespace.items():
         if len(distribution_names) > 1 and namespace in entries_by_namespace:
-            raise AmbiguousExternalBlueprintNamespaceError(namespace, distribution_names)
+            ambiguous_distribution_names_by_namespace[namespace] = distribution_names
+            entries_by_namespace.pop(namespace, None)
 
-    return entries_by_namespace
+    return _ExternalBlueprintCollection(
+        entries_by_namespace=entries_by_namespace,
+        invalid_entries_by_namespace=invalid_entries_by_namespace,
+        ambiguous_distribution_names_by_namespace=ambiguous_distribution_names_by_namespace,
+    )
 
 
 def _distribution_name(distribution: Any) -> str | None:

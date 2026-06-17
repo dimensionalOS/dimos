@@ -14,7 +14,6 @@
 
 import difflib
 import re
-import sys
 from typing import NoReturn
 
 import typer
@@ -79,12 +78,12 @@ def _fail_or_exit(name: str, candidates: list[str]) -> NoReturn:
         typer.echo("Did you mean one of these?", err=True)
         for s in suggestions:
             typer.echo(f"  {s}", err=True)
-    sys.exit(1)
+    raise typer.Exit(1)
 
 
 def _exit_with_error(message: str) -> NoReturn:
     typer.echo(typer.style(message, fg=typer.colors.RED), err=True)
-    sys.exit(1)
+    raise typer.Exit(1)
 
 
 def get_by_name_or_exit(name: str) -> Blueprint:

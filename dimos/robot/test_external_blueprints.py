@@ -189,8 +189,45 @@ def test_invalid_external_metadata_name(monkeypatch: pytest.MonkeyPatch) -> None
         FakeDistribution("My-Test-Stack", (FakeEntryPoint("Go2", "external_stack.demo:go2"),)),
     )
 
+    assert external.list_external_blueprint_names() == []
     with pytest.raises(external.InvalidExternalBlueprintNameError):
-        external.list_external_blueprints()
+        external.resolve_external_blueprint_by_name("my-test-stack.demo")
+
+
+def test_invalid_requested_external_local_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    patch_distributions(
+        monkeypatch,
+        FakeDistribution(
+            "My-Test-Stack",
+            (FakeEntryPoint("demo", "external_stack.demo:ExternalTestModule", ExternalTestModule),),
+        ),
+    )
+
+    with pytest.raises(external.InvalidExternalBlueprintRequestNameError) as exc_info:
+        external.resolve_external_blueprint_by_name("my-test-stack.Go2")
+
+    message = str(exc_info.value)
+    assert "Invalid external blueprint local name 'Go2'" in message
+    assert "entry point name" not in message
+    assert "distribution" not in message
+
+
+def test_invalid_external_metadata_does_not_block_unrelated_valid_package(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    patch_distributions(
+        monkeypatch,
+        FakeDistribution("Broken-Stack", (FakeEntryPoint("BadName", "broken_stack.demo:demo"),)),
+        FakeDistribution(
+            "My-Test-Stack",
+            (FakeEntryPoint("demo", "external_stack.demo:ExternalTestModule", ExternalTestModule),),
+        ),
+    )
+
+    assert external.list_external_blueprint_names() == ["my-test-stack.demo"]
+    blueprint = external.resolve_external_blueprint_by_name("my-test-stack.demo")
+
+    assert blueprint.blueprints[0].module is ExternalTestModule
 
 
 def test_ambiguous_canonical_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
