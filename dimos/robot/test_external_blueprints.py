@@ -48,10 +48,15 @@ class FakeEntryPoint:
 class FakeDistribution:
     name: str
     entry_points: tuple[FakeEntryPoint, ...]
+    metadata_name: str | None = None
 
     @property
     def metadata(self) -> dict[str, str]:
-        return {"Name": self.name}
+        if self.metadata_name is None:
+            return {"Name": self.name}
+        if self.metadata_name == "":
+            return {}
+        return {"Name": self.metadata_name}
 
 
 def patch_distributions(monkeypatch: pytest.MonkeyPatch, *distributions: FakeDistribution) -> None:
@@ -149,14 +154,14 @@ def test_rejects_unsupported_external_targets(monkeypatch: pytest.MonkeyPatch, t
         ),
     )
 
-    with pytest.raises(external.InvalidExternalBlueprintTargetError):
+    with pytest.raises(external.ExternalBlueprintError):
         external.resolve_external_blueprint_by_name("my-test-stack.demo")
 
 
 def test_unknown_external_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
     patch_distributions(monkeypatch, FakeDistribution("My-Test-Stack", ()))
 
-    with pytest.raises(external.ExternalBlueprintNamespaceNotFoundError):
+    with pytest.raises(external.ExternalBlueprintError):
         external.resolve_external_blueprint_by_name("missing-stack.demo")
 
 
@@ -171,7 +176,7 @@ def test_unknown_external_namespace_lists_available_namespaces(
         ),
     )
 
-    with pytest.raises(external.ExternalBlueprintNamespaceNotFoundError) as exc_info:
+    with pytest.raises(external.ExternalBlueprintError) as exc_info:
         external.resolve_external_blueprint_by_name("missing-stack.demo")
 
     assert "Available external namespaces: my-test-stack" in str(exc_info.value)
@@ -182,7 +187,7 @@ def test_resolve_external_name_requires_namespace_separator(
 ) -> None:
     patch_distributions(monkeypatch)
 
-    with pytest.raises(external.ExternalBlueprintNamespaceNotFoundError):
+    with pytest.raises(external.ExternalBlueprintError):
         external.resolve_external_blueprint_by_name("my-test-stack")
 
 
@@ -199,12 +204,12 @@ def test_namespace_exists_but_local_name_missing(monkeypatch: pytest.MonkeyPatch
         ),
     )
 
-    with pytest.raises(external.ExternalBlueprintLocalNameNotFoundError):
+    with pytest.raises(external.ExternalBlueprintError):
         external.resolve_external_blueprint_by_name("my-test-stack.arm")
 
 
-def test_local_name_missing_without_available_names() -> None:
-    error = external.ExternalBlueprintLocalNameNotFoundError("my-test-stack", "demo", [])
+def test_local_name_missing_message_omits_empty_available_names() -> None:
+    error = external._external_blueprint_local_name_not_found_error("my-test-stack", "arm", [])
 
     assert "Available local blueprints" not in str(error)
 
@@ -222,7 +227,7 @@ def test_entry_point_load_failure(monkeypatch: pytest.MonkeyPatch) -> None:
         ),
     )
 
-    with pytest.raises(external.ExternalBlueprintLoadError, match="ImportError: boom"):
+    with pytest.raises(external.ExternalBlueprintError, match="ImportError: boom"):
         external.resolve_external_blueprint_by_name("my-test-stack.demo")
 
 
@@ -233,7 +238,7 @@ def test_invalid_external_metadata_name(monkeypatch: pytest.MonkeyPatch) -> None
     )
 
     assert external.list_external_blueprint_names() == []
-    with pytest.raises(external.InvalidExternalBlueprintNameError):
+    with pytest.raises(external.ExternalBlueprintError):
         external.resolve_external_blueprint_by_name("my-test-stack.demo")
 
 
@@ -246,7 +251,7 @@ def test_invalid_requested_external_local_name(monkeypatch: pytest.MonkeyPatch) 
         ),
     )
 
-    with pytest.raises(external.InvalidExternalBlueprintRequestNameError) as exc_info:
+    with pytest.raises(external.ExternalBlueprintError) as exc_info:
         external.resolve_external_blueprint_by_name("my-test-stack.Go2")
 
     message = str(exc_info.value)
@@ -280,6 +285,21 @@ def test_entry_points_without_distribution_are_ignored(monkeypatch: pytest.Monke
         lambda *, group=None: [
             FakeEntryPoint("demo", "external_stack.demo:ExternalTestModule", ExternalTestModule)
         ],
+    )
+
+    assert external.list_external_blueprint_names() == []
+
+
+def test_entry_points_without_distribution_name_are_ignored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    patch_distributions(
+        monkeypatch,
+        FakeDistribution(
+            "My-Test-Stack",
+            (FakeEntryPoint("demo", "external_stack.demo:ExternalTestModule", ExternalTestModule),),
+            metadata_name="",
+        ),
     )
 
     assert external.list_external_blueprint_names() == []

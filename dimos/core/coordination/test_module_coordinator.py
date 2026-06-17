@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from types import MappingProxyType
-from typing import Any, Protocol
+from typing import Protocol
 
 import pytest
 
@@ -39,6 +39,7 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.Image import Image
+import dimos.robot.get_all_blueprints as resolver
 from dimos.spec.utils import Spec
 
 # Disable Rerun for tests (prevents viewer spawn and gRPC flush errors)
@@ -796,20 +797,19 @@ def test_list_module_names(dynamic_coordinator) -> None:
     assert set(dynamic_coordinator.list_module_names()) == {"ModuleA", "ModuleC"}
 
 
-def test_load_blueprint_by_name_uses_shared_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
-    import dimos.robot.get_all_blueprints as resolver
-
+def test_load_blueprint_by_name_uses_shared_resolver(
+    monkeypatch: pytest.MonkeyPatch, mocker
+) -> None:
     expected_blueprint = ExternalNameLoadModule.blueprint()
-    loaded_blueprints: list[Any] = []
 
-    def fake_get_by_name(name: str):  # type: ignore[no-untyped-def]
+    def fake_get_by_name(name: str):
         assert name == "my-test-stack.demo"
         return expected_blueprint
 
-    coordinator = object.__new__(ModuleCoordinator)
-    coordinator.load_blueprint = loaded_blueprints.append  # type: ignore[method-assign]
+    coordinator = ModuleCoordinator()
+    load_blueprint = mocker.patch.object(ModuleCoordinator, "load_blueprint")
     monkeypatch.setattr(resolver, "get_by_name", fake_get_by_name)
 
     coordinator.load_blueprint_by_name("my-test-stack.demo")
 
-    assert loaded_blueprints == [expected_blueprint]
+    load_blueprint.assert_called_once_with(expected_blueprint)

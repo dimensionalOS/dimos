@@ -18,7 +18,6 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 import importlib.metadata as importlib_metadata
 import re
-from typing import Any
 
 from packaging.utils import canonicalize_name
 
@@ -33,60 +32,59 @@ class ExternalBlueprintError(ValueError):
     """Base class for external blueprint discovery and resolution errors."""
 
 
-class InvalidExternalBlueprintNameError(ExternalBlueprintError):
-    def __init__(self, local_name: str, distribution_name: str) -> None:
-        super().__init__(
-            "Invalid external blueprint entry point name "
-            f"{local_name!r} in distribution {distribution_name!r}. "
-            "External local blueprint names must be lowercase kebab-case "
-            "and match ^[a-z0-9]+(-[a-z0-9]+)*$."
-        )
+def _invalid_external_blueprint_name_error(
+    local_name: str, distribution_name: str
+) -> ExternalBlueprintError:
+    return ExternalBlueprintError(
+        "Invalid external blueprint entry point name "
+        f"{local_name!r} in distribution {distribution_name!r}. "
+        "External local blueprint names must be lowercase kebab-case "
+        "and match ^[a-z0-9]+(-[a-z0-9]+)*$."
+    )
 
 
-class InvalidExternalBlueprintRequestNameError(ExternalBlueprintError):
-    def __init__(self, local_name: str) -> None:
-        super().__init__(
-            f"Invalid external blueprint local name {local_name!r}. "
-            "External local blueprint names must be lowercase kebab-case "
-            "and match ^[a-z0-9]+(-[a-z0-9]+)*$."
-        )
+def _invalid_external_blueprint_request_name_error(local_name: str) -> ExternalBlueprintError:
+    return ExternalBlueprintError(
+        f"Invalid external blueprint local name {local_name!r}. "
+        "External local blueprint names must be lowercase kebab-case "
+        "and match ^[a-z0-9]+(-[a-z0-9]+)*$."
+    )
 
 
-class ExternalBlueprintNamespaceNotFoundError(ExternalBlueprintError):
-    def __init__(self, namespace: str, available_namespaces: Iterable[str]) -> None:
-        msg = f"External blueprint namespace {namespace!r} was not discovered."
-        available = sorted(set(available_namespaces))
-        if available:
-            msg += f" Available external namespaces: {', '.join(available)}."
-        super().__init__(msg)
+def _external_blueprint_namespace_not_found_error(
+    namespace: str, available_namespaces: Iterable[str]
+) -> ExternalBlueprintError:
+    msg = f"External blueprint namespace {namespace!r} was not discovered."
+    available = sorted(set(available_namespaces))
+    if available:
+        msg += f" Available external namespaces: {', '.join(available)}."
+    return ExternalBlueprintError(msg)
 
 
-class ExternalBlueprintLocalNameNotFoundError(ExternalBlueprintError):
-    def __init__(
-        self, namespace: str, local_name: str, available_local_names: Iterable[str]
-    ) -> None:
-        msg = f"External blueprint namespace {namespace!r} has no local blueprint {local_name!r}."
-        available = sorted(set(available_local_names))
-        if available:
-            msg += f" Available local blueprints: {', '.join(available)}."
-        super().__init__(msg)
+def _external_blueprint_local_name_not_found_error(
+    namespace: str, local_name: str, available_local_names: Iterable[str]
+) -> ExternalBlueprintError:
+    msg = f"External blueprint namespace {namespace!r} has no local blueprint {local_name!r}."
+    available = sorted(set(available_local_names))
+    if available:
+        msg += f" Available local blueprints: {', '.join(available)}."
+    return ExternalBlueprintError(msg)
 
 
-class ExternalBlueprintLoadError(ExternalBlueprintError):
-    def __init__(self, name: str, target: str, cause: Exception) -> None:
-        super().__init__(
-            f"Failed to load external blueprint {name!r} from entry point {target!r}: "
-            f"{type(cause).__name__}: {cause}"
-        )
+def _external_blueprint_load_error(
+    name: str, target: str, cause: Exception
+) -> ExternalBlueprintError:
+    return ExternalBlueprintError(
+        f"Failed to load external blueprint {name!r} from entry point {target!r}: "
+        f"{type(cause).__name__}: {cause}"
+    )
 
 
-class InvalidExternalBlueprintTargetError(ExternalBlueprintError):
-    def __init__(self, name: str, target: Any) -> None:
-        super().__init__(
-            f"External blueprint {name!r} loaded unsupported target {target!r}. "
-            "Entry point targets must be a Blueprint object or a DimOS Module class. "
-            "Factory functions are not supported."
-        )
+def _invalid_external_blueprint_target_error(name: str, target: object) -> ExternalBlueprintError:
+    return ExternalBlueprintError(
+        f"External blueprint {name!r} loaded unsupported target {target!r}. "
+        "Entry point targets must be a Blueprint object or a DimOS Module class."
+    )
 
 
 @dataclass(frozen=True)
@@ -157,9 +155,9 @@ def resolve_external_blueprint_by_name(name: str) -> Blueprint:
 
     namespace, sep, local_name = name.partition(".")
     if not sep:
-        raise ExternalBlueprintNamespaceNotFoundError(name, [])
+        raise _external_blueprint_namespace_not_found_error(name, [])
     if not is_valid_external_local_blueprint_name(local_name):
-        raise InvalidExternalBlueprintRequestNameError(local_name)
+        raise _invalid_external_blueprint_request_name_error(local_name)
 
     collection = _collect_external_blueprints()
     namespace_entries = collection.entries_by_namespace
@@ -167,15 +165,15 @@ def resolve_external_blueprint_by_name(name: str) -> Blueprint:
         invalid_entries = collection.invalid_entries_by_namespace.get(namespace)
         if invalid_entries:
             invalid_entry = invalid_entries[0]
-            raise InvalidExternalBlueprintNameError(
+            raise _invalid_external_blueprint_name_error(
                 invalid_entry.local_name, invalid_entry.distribution_name
             )
-        raise ExternalBlueprintNamespaceNotFoundError(namespace, namespace_entries.keys())
+        raise _external_blueprint_namespace_not_found_error(namespace, namespace_entries.keys())
 
     entries = namespace_entries[namespace]
     matches = [entry for entry in entries if entry.local_name == local_name]
     if not matches:
-        raise ExternalBlueprintLocalNameNotFoundError(
+        raise _external_blueprint_local_name_not_found_error(
             namespace, local_name, (entry.local_name for entry in entries)
         )
 
@@ -183,17 +181,17 @@ def resolve_external_blueprint_by_name(name: str) -> Blueprint:
     try:
         target = entry.entry_point.load()
     except Exception as exc:
-        raise ExternalBlueprintLoadError(entry.qualified_name, entry.target, exc) from exc
+        raise _external_blueprint_load_error(entry.qualified_name, entry.target, exc) from exc
 
     return _target_to_blueprint(entry.qualified_name, target)
 
 
-def _target_to_blueprint(name: str, target: Any) -> Blueprint:
+def _target_to_blueprint(name: str, target: object) -> Blueprint:
     if isinstance(target, Blueprint):
         return target
     if is_module_type(target):
-        return target.blueprint()  # type: ignore[no-any-return]
-    raise InvalidExternalBlueprintTargetError(name, target)
+        return target.blueprint()
+    raise _invalid_external_blueprint_target_error(name, target)
 
 
 def _collect_external_blueprints() -> _ExternalBlueprintCollection:
@@ -204,7 +202,9 @@ def _collect_external_blueprints() -> _ExternalBlueprintCollection:
         distribution = entry_point.dist
         if distribution is None:
             continue
-        distribution_name = distribution.metadata["Name"]
+        distribution_name = distribution.metadata.get("Name")
+        if not distribution_name:
+            continue
         namespace = canonicalize_distribution_namespace(distribution_name)
         local_name = entry_point.name
         if not is_valid_external_local_blueprint_name(local_name):

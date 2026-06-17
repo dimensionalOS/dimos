@@ -192,10 +192,10 @@ def test_list_blueprints_reports_external_discovery_errors(
 
 def test_run_reports_external_resolution_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     def raise_error(name: str):
-        raise external.ExternalBlueprintLoadError(
-            name,
-            "my_test_stack.missing:demo_blueprint",
-            ModuleNotFoundError("No module named 'my_test_stack.missing'"),
+        raise external.ExternalBlueprintError(
+            "Failed to load external blueprint "
+            f"{name!r} from entry point 'my_test_stack.missing:demo_blueprint': "
+            "ModuleNotFoundError: No module named 'my_test_stack.missing'"
         )
 
     monkeypatch.setattr(

@@ -120,10 +120,6 @@ Entry point targets may be either:
 - a DimOS `Module` class, such as `KeyboardTeleop`, which DimOS converts with
   `.blueprint()`.
 
-Factory functions are not supported in v1. If an entry point target is a function or
-another unsupported object, `dimos run` fails with an invalid external blueprint target
-error.
-
 `dimos list` includes external names from package metadata without importing the target
 modules. `dimos run my-robot-stack.go2` imports only the requested entry point target.
 
