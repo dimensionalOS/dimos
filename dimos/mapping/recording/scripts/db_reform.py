@@ -25,7 +25,7 @@ The base stream is assumed to be an odometry-type stream whose stored pose is th
 base frame in the world. Only pose metadata (the `pose_*` columns + the rtree
 point index) is touched. Point-pose streams only for now (lidar clouds later).
 
-    uv run python dimos/mapping/recording/utils/db_reform.py REC.db ROBOT.urdf \
+    uv run python dimos/mapping/recording/scripts/db_reform.py REC.db ROBOT.urdf \
         --base_frame fastlio_odometry:base_link \
         --downstream_frame color_image:camera_optical
 """

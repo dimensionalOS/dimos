@@ -23,7 +23,7 @@ Everything timestamped before the first `fastlio_odometry` sample is dropped:
 The db edit is in place; deleting rows doesn't shrink the file (SQLite reuses
 free pages) but the dropped prefix is tiny.
 
-    uv run python dimos/mapping/recording/utils/trunc.py REC/mem2.db [REC/main.rrd]
+    uv run python dimos/mapping/recording/scripts/trunc.py REC/mem2.db [REC/main.rrd]
 """
 
 from __future__ import annotations

@@ -20,7 +20,7 @@ first_timestamp + seconds] into a fresh `short.db` (schema-faithful: data,
 from it. Copies only the in-window rows (never the whole db), so it stays small
 and works even when the source is huge / the disk is nearly full.
 
-    uv run python dimos/mapping/recording/utils/short.py REC_DIR [--seconds 30]
+    uv run python dimos/mapping/recording/scripts/short.py REC_DIR [--seconds 30]
 """
 
 from __future__ import annotations
@@ -29,8 +29,8 @@ import argparse
 from pathlib import Path
 import sqlite3
 
+from dimos.mapping.recording.scripts.trunc import first_fastlio_ts, rebuild_rrd
 from dimos.mapping.recording.utils import stream_names
-from dimos.mapping.recording.utils.trunc import first_fastlio_ts, rebuild_rrd
 
 DB_NAME = "mem2_orig.db"
 SHORT_DB = "short.db"

@@ -30,7 +30,7 @@ then on that copy:
 then rebuilds the recording's `main.rrd`. World frame = the FAST-LIO odom frame
 (mid360 at t0); FAST-LIO reports `world -> mid360` directly as the odom value.
 
-    uv run python dimos/mapping/recording/utils/reframe_go2.py REC_DIR
+    uv run python dimos/mapping/recording/scripts/reframe_go2.py REC_DIR
 """
 
 from __future__ import annotations
@@ -44,9 +44,9 @@ import sqlite3
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from dimos.mapping.recording.utils.db_reform import _nearest, parse_urdf_graph, transform_between
-from dimos.mapping.recording.utils.short import rename_go2_streams
-from dimos.mapping.recording.utils.trunc import first_fastlio_ts, rebuild_rrd, truncate_db
+from dimos.mapping.recording.scripts.db_reform import _nearest, parse_urdf_graph, transform_between
+from dimos.mapping.recording.scripts.short import rename_go2_streams
+from dimos.mapping.recording.scripts.trunc import first_fastlio_ts, rebuild_rrd, truncate_db
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion

@@ -18,7 +18,7 @@ Runs the exact gates from `apriltags.py` over a recording's color stream, crops
 each detected tag, labels it with its metrics + verdict (kept, or the first gate
 that rejected it), and writes a self-contained HTML gallery grouped by verdict.
 
-    uv run python dimos/mapping/recording/utils/demo_apriltag_gallery.py REC_DIR_OR_DB \
+    uv run python dimos/mapping/recording/scripts/demo_apriltag_gallery.py REC_DIR_OR_DB \
         --out /tmp/apriltag_gallery.html --stride 3 --per-category 16
 """
 
