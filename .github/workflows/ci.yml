@@ -408,16 +408,19 @@ jobs:
             # GitHub Actions only honours `container:` on Linux runners.
             container:
               image: ghcr.io/dimensionalos/ros-dev@${{ needs.compute-ros-pin.outputs.digest }}
-              # Persist /nix on the self-hosted runner's filesystem so the
-              # ~3 GB module closures survive between jobs. First job after
-              # a runner is provisioned populates this; subsequent jobs find
-              # everything already in /nix/store and skip the Cachix
-              # download. Make sure the host path exists on the runner:
-              # `sudo mkdir -p /var/cache/dimos-nix && sudo chmod 755 …`.
-              # /root/.cache is the eval/fetcher cache home (see the
-              # diagnostic earlier) — also persisted for the same reason.
+              # Persist Nix state on the self-hosted runner's filesystem so
+              # the ~3 GB module closures survive between jobs. First job
+              # after a runner is provisioned populates these; subsequent
+              # jobs find everything already there and skip the Cachix
+              # download. Three mounts are needed:
+              #   /nix          — store + var/nix/db
+              #   /etc/nix      — nix.conf (substituters, experimental-features)
+              #   /root/.cache  — eval/fetcher cache home
+              # On a fresh runner, ensure the host paths exist:
+              # `sudo mkdir -p /var/cache/dimos-{nix,etc-nix,root-cache}`
               volumes:
                 - /var/cache/dimos-nix:/nix
+                - /var/cache/dimos-etc-nix:/etc/nix
                 - /var/cache/dimos-root-cache:/root/.cache
             markers: "self_hosted or skipif_no_ros"
             experimental: false
