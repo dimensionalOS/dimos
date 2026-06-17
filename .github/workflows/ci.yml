@@ -496,6 +496,21 @@ jobs:
             /root/.local/state/nix
           key: nix-fetcher-tests-${{ runner.os }}-${{ hashFiles('bin/build-nav-stack-natives', 'dimos/navigation/nav_stack/modules/**/*.py') }}
           restore-keys: nix-fetcher-tests-${{ runner.os }}-
+      - name: Cache /nix/store
+        # Skips re-downloading the ~3 GB of module closures from Cachix on
+        # every run. With this restored, each per-module `nix build` finds
+        # its closure already in /nix/store and just creates the result/
+        # symlink — no substitution at all. /nix/var/nix/db is the daemon's
+        # registry of which paths exist; without it Nix won't recognise the
+        # restored store contents.
+        if: contains(matrix.markers, 'skipif_no_ros')
+        uses: actions/cache@v4
+        with:
+          path: |
+            /nix/store
+            /nix/var/nix/db
+          key: nix-store-tests-${{ runner.os }}-${{ hashFiles('bin/build-nav-stack-natives', 'dimos/navigation/nav_stack/modules/**/*.py') }}
+          restore-keys: nix-store-tests-${{ runner.os }}-
       - name: Fetch nav_stack native modules from Cachix
         if: contains(matrix.markers, 'skipif_no_ros')
         run: uv run bin/build-nav-stack-natives
