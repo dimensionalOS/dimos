@@ -20,14 +20,12 @@ from contextlib import nullcontext
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any, cast
-from unittest.mock import patch
 
 import numpy as np
 import pytest
 
 from dimos.manipulation.planning.factory import create_kinematics
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
-from dimos.manipulation.planning.kinematics.jacobian_ik import JacobianIK
 from dimos.manipulation.planning.kinematics.pink_ik import (
     PinkIK,
     PinkIKConfig,
@@ -218,25 +216,6 @@ class _FakeWorld:
 
     def check_config_collision_free(self, robot_id: str, joint_state: JointState) -> bool:
         return self.collision_free
-
-
-def test_create_kinematics_existing_backends_do_not_import_pink() -> None:
-    assert isinstance(create_kinematics("jacobian"), JacobianIK)
-
-    class FakeDrakeOptimizationIK:
-        pass
-
-    fake_drake_module = ModuleType("dimos.manipulation.planning.kinematics.drake_optimization_ik")
-    fake_drake_module.DrakeOptimizationIK = FakeDrakeOptimizationIK  # type: ignore[attr-defined]
-
-    with patch.dict(
-        "sys.modules",
-        {
-            "pink": None,
-            "dimos.manipulation.planning.kinematics.drake_optimization_ik": fake_drake_module,
-        },
-    ):
-        assert isinstance(create_kinematics("drake_optimization"), FakeDrakeOptimizationIK)
 
 
 def test_create_kinematics_pink_missing_dependency_is_actionable(

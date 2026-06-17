@@ -24,7 +24,6 @@ Subclass PickAndPlaceModule (pick_and_place_module.py) adds perception integrati
 
 from __future__ import annotations
 
-from contextlib import suppress
 from enum import Enum
 import threading
 import time
@@ -161,22 +160,17 @@ class ManipulationModule(Module):
     @rpc
     def start(self) -> None:
         """Start the manipulation module."""
-        try:
-            super().start()
+        super().start()
 
-            # Initialize planning stack
-            self._initialize_planning()
+        # Initialize planning stack
+        self._initialize_planning()
 
-            # Subscribe to joint state via port
-            if self.joint_state is not None:
-                self.joint_state.subscribe(self._on_joint_state)
-                logger.info("Subscribed to joint_state port")
+        # Subscribe to joint state via port
+        if self.joint_state is not None:
+            self.joint_state.subscribe(self._on_joint_state)
+            logger.info("Subscribed to joint_state port")
 
-            logger.info("ManipulationModule started")
-        except Exception:
-            with suppress(Exception):
-                self.stop()
-            raise
+        logger.info("ManipulationModule started")
 
     def _initialize_planning(self) -> None:
         """Initialize world, planner, and trajectory generator."""
