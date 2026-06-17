@@ -14,17 +14,18 @@
 
 """
 Usage:
-    # snippet that normally diverges
-    PCAP_PATH="$(python -c "from dimos.utils.data import get_data; print(get_data('ruwik2_part3/ruwik2_part3.pcap'))")"
+    # fetch a sample Mid-360 capture (the get_data arg is the dir/file inside the
+    # LFS archive, NOT the archive name)
+    PCAP_PATH="$(python -c "from dimos.utils.data import get_data; print(get_data('mid360_shake_stairs/mid360_shake_stairs.pcap'))")"
 
-    # gen .db from pcap with your config
-    python -m dimos.hardware.sensors.lidar.pointlio.tools.pcap_to_db \
-        --config your_pointlio_conf.yaml \
+    # gen .db from pcap with your config (defaults to <pcap>.db next to the pcap)
+    python -m dimos.hardware.sensors.lidar.pointlio.scripts.pcap_to_db \
+        --config dimos/hardware/sensors/lidar/pointlio/config/default.yaml \
         --pcap "$PCAP_PATH"
 
     # add to existing .db
     DB="mem2.db"
-    python -m dimos.hardware.sensors.lidar.pointlio.tools.pcap_to_db --db "$DB"  --pcap "$PCAP_PATH"
+    python -m dimos.hardware.sensors.lidar.pointlio.scripts.pcap_to_db --db "$DB"  --pcap "$PCAP_PATH"
 
     # generate map
     dimos map summary "$DB"
@@ -35,8 +36,8 @@ Usage:
     dimos map global "${DB%.db}_posed.db" --lidar pointlio_lidar
 
 One coordinator runs three autoconnected modules: a ``VirtualMid360`` replays the
-pcap over the Livox wire (and aliases the host/lidar IPs onto a dummy interface
-itself — needs CAP_NET_ADMIN/sudo, Linux only), an unmodified live ``PointLio``
+pcap over the Livox wire (aliasing the host/lidar IPs onto a dummy interface on
+Linux, or lo0 on macOS — needs CAP_NET_ADMIN/sudo), an unmodified live ``PointLio``
 consumes it as real hardware, and a ``PointlioRecorder`` appends PointLio's
 odometry/lidar into the db. This script just wires them and stops once the pcap
 has drained. Replay is real time (Point-LIO is not deterministic), so runs differ.
@@ -123,18 +124,26 @@ def _build_blueprint(args: argparse.Namespace, db_path: Path, config_path: str) 
     ).global_config(n_workers=4, robot_model="mid360_pointlio_pcap_to_db")
 
 
-def _poll_until_drained(db_path: Path, odom_stream: str, max_sensor_sec: float) -> bool:
-    """Block until the pcap drains (odom stream goes stagnant) or a cap is hit;
-    False if Point-LIO never produced odometry within the startup timeout."""
-    last_max = 0.0
+def _poll_until_drained(
+    db_path: Path, odom_stream: str, lidar_stream: str, max_sensor_sec: float
+) -> bool:
+    """Block until the pcap drains or a cap is hit; False if Point-LIO never
+    produced odometry within the startup timeout.
+
+    Drain is detected on the *lidar* stream's latest timestamp going flat: lidar
+    is input-driven, so it stops advancing the moment the pcap is exhausted. The
+    odometry stream can't be used for this — Point-LIO keeps publishing odometry
+    (dead-reckoning) at odom_freq after input stops, with ever-advancing
+    timestamps, so its stream never looks stagnant and the run would hang."""
+    last_lidar_max = 0.0
     first_max: float | None = None
     stagnant_since: float | None = None
     start_time = time.time()
     while True:
         time.sleep(_POLL_SEC)
-        cnt, min_ts, max_ts = _odom_stats(db_path, odom_stream)
-        if cnt == 0:
-            # Stagnation timeout only arms once the first row exists, so bound the
+        odom_cnt, odom_min, odom_max = _odom_stats(db_path, odom_stream)
+        if odom_cnt == 0:
+            # Stagnation timeout only arms once odometry exists, so bound the
             # no-output wait separately or a dead binary would hang forever.
             if time.time() - start_time > _STARTUP_TIMEOUT_SEC:
                 print(
@@ -146,17 +155,18 @@ def _poll_until_drained(db_path: Path, odom_stream: str, max_sensor_sec: float) 
                 return False
             continue
         if first_max is None:
-            first_max = min_ts
-        if max_sensor_sec > 0 and (max_ts - first_max) >= max_sensor_sec:
+            first_max = odom_min
+        if max_sensor_sec > 0 and (odom_max - first_max) >= max_sensor_sec:
             print(f"[pcap_to_db] reached --max-sensor-sec={max_sensor_sec:.1f}s", flush=True)
             return True
-        if max_ts == last_max:
+        _, _, lidar_max = _odom_stats(db_path, lidar_stream)
+        if lidar_max == last_lidar_max:
             if stagnant_since is None:
                 stagnant_since = time.time()
             elif time.time() - stagnant_since > _STAGNANT_SEC:
                 return True
         else:
-            last_max = max_ts
+            last_lidar_max = lidar_max
             stagnant_since = None
 
 
@@ -188,7 +198,9 @@ def _run(args: argparse.Namespace) -> int:
     coord = None
     try:
         coord = ModuleCoordinator.build(_build_blueprint(args, db_path, config_path))
-        drained = _poll_until_drained(db_path, args.odom_stream_name, args.max_sensor_sec)
+        drained = _poll_until_drained(
+            db_path, args.odom_stream_name, args.lidar_stream_name, args.max_sensor_sec
+        )
     finally:
         if coord is not None:
             coord.stop()
