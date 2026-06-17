@@ -72,7 +72,7 @@ class HostedArmTeleopModule(HostedTeleopModule):
             left=left.trigger if left is not None else 0.0,
             right=right.trigger if right is not None else 0.0,
         )
-        self.buttons.publish(buttons)
+        self.teleop_buttons.publish(buttons)
 
 
 class HostedTwistTeleopConfig(HostedTeleopConfig):

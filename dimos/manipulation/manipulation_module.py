@@ -123,7 +123,7 @@ class ManipulationModule(Module):
     config: ManipulationModuleConfig
 
     # Input: Joint state from coordinator (for world sync)
-    joint_state: In[JointState]
+    coordinator_joint_state: In[JointState]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -166,9 +166,9 @@ class ManipulationModule(Module):
         self._initialize_planning()
 
         # Subscribe to joint state via port
-        if self.joint_state is not None:
-            self.joint_state.subscribe(self._on_joint_state)
-            logger.info("Subscribed to joint_state port")
+        if self.coordinator_joint_state is not None:
+            self.coordinator_joint_state.subscribe(self._on_joint_state)
+            logger.info("Subscribed to coordinator_joint_state port")
 
         logger.info("ManipulationModule started")
 

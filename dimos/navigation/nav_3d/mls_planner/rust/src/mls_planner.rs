@@ -4,9 +4,8 @@
 //! Config and the owned-state Planner that builds and queries the MLS graph.
 
 use ahash::AHashSet;
+use dimos_module::native_config;
 use rayon::prelude::*;
-use serde::Deserialize;
-use validator::Validate;
 
 use crate::adjacency::{build_surface_cells, build_surface_lookup, rebuild_edges_around, CellId};
 use crate::edges::{build_node_edges, build_node_edges_region, PlannerGraph};
@@ -17,8 +16,7 @@ use crate::surfaces::{
 };
 use crate::voxel::{voxelize, VoxelKey};
 
-#[derive(Debug, Deserialize, Validate)]
-#[serde(deny_unknown_fields)]
+#[native_config]
 pub struct Config {
     pub world_frame: String,
     #[validate(range(exclusive_min = 0.0))]
@@ -36,21 +34,11 @@ pub struct Config {
     #[validate(range(min = 0.0))]
     pub node_step_threshold_m: f32,
     /// Hard clearance floor: cells closer than this to a wall are impassable.
-    #[serde(default = "default_robot_radius_m")]
     #[validate(range(min = 0.0))]
     pub robot_radius_m: f32,
     /// Strength of the soft wall penalty at the radius, decaying with distance.
-    #[serde(default = "default_wall_penalty_weight")]
     #[validate(range(min = 0.0))]
     pub wall_penalty_weight: f32,
-}
-
-fn default_robot_radius_m() -> f32 {
-    0.2
-}
-
-fn default_wall_penalty_weight() -> f32 {
-    4.0
 }
 
 /// Cylindrical region the planner re-derives from a local map slice.

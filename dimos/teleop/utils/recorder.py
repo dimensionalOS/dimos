@@ -61,7 +61,7 @@ class TeleopRecorder(Recorder):
 
     left_controller_output: In[PoseStamped]
     right_controller_output: In[PoseStamped]
-    buttons: In[Buttons]
+    teleop_buttons: In[Buttons]
     cmd_vel_stamped: In[TwistStamped]
     video_stats: In[VideoStats]
     config: TeleopRecorderConfig

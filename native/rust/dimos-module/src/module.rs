@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt::Debug;
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -10,21 +10,27 @@ use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 use serde::de::DeserializeOwned;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use validator::Validate;
 
 use crate::transport::Transport;
 
+/// Marker trait for a config checked by `#[native_config]`: every field required,
+/// no Rust-side defaults, no unknown fields. Implemented only by the macro.
+pub trait NativeConfig {}
+
 /// Trait required by `Module::Config`s to ensure that configurations are
 /// validated correctly.
-pub trait ModuleConfig: DeserializeOwned + Debug + Validate {}
-impl<T: DeserializeOwned + Debug + Validate> ModuleConfig for T {}
+pub trait ModuleConfig: DeserializeOwned + Serialize + Debug + Validate + NativeConfig {}
+impl<T: DeserializeOwned + Serialize + Debug + Validate + NativeConfig> ModuleConfig for T {}
 
 /// Default config type used by `#[derive(Module)]` when no `#[config]` field
 /// is used. Just a stand in for modules that don't use configurations.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NoConfig;
+
+impl NativeConfig for NoConfig {}
 
 impl Validate for NoConfig {
     fn validate(&self) -> Result<(), validator::ValidationErrors> {
@@ -115,7 +121,9 @@ impl<T> Output<T> {
 
 /// Parse a JSON config line as written by the Python NativeModule coordinator.
 /// Returns `(topics, config)`. Extracted so it can be unit-tested without stdin.
-fn parse_config_json<C: DeserializeOwned>(line: &str) -> io::Result<(HashMap<String, String>, C)> {
+fn parse_config_json<C: DeserializeOwned + Serialize>(
+    line: &str,
+) -> io::Result<(HashMap<String, String>, C)> {
     let json: serde_json::Value = serde_json::from_str(line.trim())
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
@@ -128,20 +136,50 @@ fn parse_config_json<C: DeserializeOwned>(line: &str) -> io::Result<(HashMap<Str
         }
     }
 
-    let config: C = match json.get("config") {
-        None => return Err(io::Error::new(
+    let config_value = json.get("config").ok_or_else(|| {
+        io::Error::new(
             io::ErrorKind::InvalidData,
             "missing 'config' field in stdin JSON — coordinator must always send a config object",
-        )),
-        Some(v) => serde_json::from_value(v.clone()).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("failed to deserialize config: {e}"),
-            )
-        })?,
-    };
+        )
+    })?;
+
+    let config: C = serde_json::from_value(config_value.clone()).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("failed to deserialize config: {e}"),
+        )
+    })?;
+
+    enforce_one_to_one(config_value, &config)?;
 
     Ok((topics, config))
+}
+
+fn object_keys(value: &serde_json::Value) -> BTreeSet<String> {
+    value
+        .as_object()
+        .map(|m| m.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
+fn enforce_one_to_one<C: Serialize>(provided: &serde_json::Value, config: &C) -> io::Result<()> {
+    let expected_value = serde_json::to_value(config).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("failed to re-serialize config: {e}"),
+        )
+    })?;
+    let provided_keys = object_keys(provided);
+    let expected_keys = object_keys(&expected_value);
+    if provided_keys == expected_keys {
+        return Ok(());
+    }
+    let missing: Vec<&String> = expected_keys.difference(&provided_keys).collect();
+    let unexpected: Vec<&String> = provided_keys.difference(&expected_keys).collect();
+    Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("config keys do not match struct fields: missing {missing:?}, unexpected {unexpected:?}"),
+    ))
 }
 
 fn with_field(field: &str, message: String) -> String {
@@ -465,7 +503,7 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Deserialize, Default, PartialEq)]
+    #[derive(Debug, Deserialize, Serialize, Default, PartialEq)]
     #[serde(deny_unknown_fields)]
     struct TestConfig {
         value: i64,
@@ -548,6 +586,45 @@ mod tests {
         let json = r#"{"topics": {}, "config": {"value": 1, "name": "x", "unexpected": true}}"#;
         let result = parse_config_json::<TestConfig>(json);
         assert!(result.is_err());
+    }
+
+    // one-to-one key check: serde alone would accept a missing Option field as None.
+
+    #[derive(Debug, Deserialize, Serialize)]
+    #[serde(deny_unknown_fields)]
+    struct OptionalConfig {
+        required: i64,
+        maybe: Option<i64>,
+    }
+
+    type MaybeI = Option<i64>;
+
+    #[derive(Debug, Deserialize, Serialize)]
+    #[serde(deny_unknown_fields)]
+    struct AliasedConfig {
+        required: i64,
+        maybe: MaybeI,
+    }
+
+    #[test]
+    fn missing_optional_field_is_rejected() {
+        let json = r#"{"config": {"required": 1}}"#;
+        let err = parse_config_json::<OptionalConfig>(json)
+            .expect_err("a missing Option field must be rejected, not defaulted to None");
+        assert!(err.to_string().contains("maybe"), "{err}");
+    }
+
+    #[test]
+    fn missing_aliased_option_field_is_rejected() {
+        let json = r#"{"config": {"required": 1}}"#;
+        assert!(parse_config_json::<AliasedConfig>(json).is_err());
+    }
+
+    #[test]
+    fn optional_field_sent_explicitly_succeeds() {
+        let json = r#"{"config": {"required": 1, "maybe": null}}"#;
+        let (_topics, config) = parse_config_json::<OptionalConfig>(json).unwrap();
+        assert_eq!(config.maybe, None);
     }
 
     // validate_config
