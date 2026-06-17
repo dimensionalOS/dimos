@@ -114,13 +114,13 @@ unitree_go2_nav_3d = autoconnect(
         world_frame="odom",
         voxel_size=voxel_size,
         robot_height=go2_lidar_height,
-        # Hard wall clearance radius
+        # Hard wall clearance radius and node-placement wall buffer, lowered so
+        # nodes can sit on the narrow stair treads.
         robot_radius_m=0.2,
-        # Soft push toward the open centerline, decaying with wall distance.
-        # Never blocks a corridor, so safe to raise well above the 4.0 default.
+        node_wall_buffer_m=0.15,
+        # Max step the planner will connect across (robot step height).
+        node_step_threshold_m=0.25,
         wall_penalty_weight=8.0,
-        # The surface_map / nodes / node_edges viz artifacts are suppressed in
-        # the viewer below, so don't pay to build and publish them.
         viz_publish_hz=0.0,
     ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
     GoalRelay.blueprint(),
