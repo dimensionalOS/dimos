@@ -408,6 +408,17 @@ jobs:
             # GitHub Actions only honours `container:` on Linux runners.
             container:
               image: ghcr.io/dimensionalos/ros-dev@${{ needs.compute-ros-pin.outputs.digest }}
+              # Persist /nix on the self-hosted runner's filesystem so the
+              # ~3 GB module closures survive between jobs. First job after
+              # a runner is provisioned populates this; subsequent jobs find
+              # everything already in /nix/store and skip the Cachix
+              # download. Make sure the host path exists on the runner:
+              # `sudo mkdir -p /var/cache/dimos-nix && sudo chmod 755 …`.
+              # /root/.cache is the eval/fetcher cache home (see the
+              # diagnostic earlier) — also persisted for the same reason.
+              volumes:
+                - /var/cache/dimos-nix:/nix
+                - /var/cache/dimos-root-cache:/root/.cache
             markers: "self_hosted or skipif_no_ros"
             experimental: false
           - os: macOS
@@ -472,45 +483,22 @@ jobs:
             echo "ROS_PYTHON_VERSION=$ROS_PYTHON_VERSION"
           } >> "$GITHUB_ENV"
       - name: Install Nix (with Cachix substituter)
+        # /nix is bind-mounted from the self-hosted runner's host filesystem
+        # (see this job's matrix container.volumes). On warm runs Nix is
+        # already installed; install-nix.sh's `type -p nix` check will exit
+        # early, but only if the profile bin is on PATH — prepend it before
+        # calling. If /nix is empty (first job on a fresh runner), nix isn't
+        # on PATH and the install proceeds normally. Either way we re-export
+        # the profile bin to $GITHUB_PATH so downstream steps see it.
         if: contains(matrix.markers, 'skipif_no_ros')
         env:
           INPUT_EXTRA_NIX_CONFIG: |
             extra-substituters = https://dimensionalos.cachix.org
             extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
-        run: bash docker/ros/install-nix.sh
-      - name: Cache Nix fetcher + eval cache
-        # Same idea as nav-stack-natives: cache the per-module evaluation
-        # state so the cold ~20s/module evaluation cost is paid once, not on
-        # every run. Different key prefix from nav-stack-natives so the two
-        # jobs don't fight over the same cache key.
-        # Inside the ros-dev container, GH Actions reassigns HOME to
-        # /github/home, but install-nix.sh's single-user-mode install
-        # (the container has no systemd, so it takes that branch) leaves
-        # Nix writing its caches to root's actual home, /root/.cache/nix.
-        # ~ would resolve to /github/home and miss it entirely.
-        if: contains(matrix.markers, 'skipif_no_ros')
-        uses: actions/cache@v4
-        with:
-          path: |
-            /root/.cache/nix
-            /root/.local/state/nix
-          key: nix-fetcher-tests-${{ runner.os }}-${{ hashFiles('bin/build-nav-stack-natives', 'dimos/navigation/nav_stack/modules/**/*.py') }}
-          restore-keys: nix-fetcher-tests-${{ runner.os }}-
-      - name: Cache /nix/store
-        # Skips re-downloading the ~3 GB of module closures from Cachix on
-        # every run. With this restored, each per-module `nix build` finds
-        # its closure already in /nix/store and just creates the result/
-        # symlink — no substitution at all. /nix/var/nix/db is the daemon's
-        # registry of which paths exist; without it Nix won't recognise the
-        # restored store contents.
-        if: contains(matrix.markers, 'skipif_no_ros')
-        uses: actions/cache@v4
-        with:
-          path: |
-            /nix/store
-            /nix/var/nix/db
-          key: nix-store-tests-${{ runner.os }}-${{ hashFiles('bin/build-nav-stack-natives', 'dimos/navigation/nav_stack/modules/**/*.py') }}
-          restore-keys: nix-store-tests-${{ runner.os }}-
+        run: |
+          export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+          bash docker/ros/install-nix.sh
+          echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
       - name: Fetch nav_stack native modules from Cachix
         if: contains(matrix.markers, 'skipif_no_ros')
         run: uv run bin/build-nav-stack-natives
