@@ -23,6 +23,7 @@ import sys
 import threading
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
+from dimos.core.coordination.blueprints import transport_config_name
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.worker_manager import WorkerManager
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
@@ -597,14 +598,12 @@ def _apply_transport_overrides(
     blueprint: Blueprint, overrides: Mapping[str, Mapping[str, Any]]
 ) -> None:
     """Rewrite each transport's `_config` with CLI/env overrides before workers pickle them."""
-    from dimos.core.coordination.blueprints import _transport_config_name
-
     if not overrides:
         return
     for transport in blueprint.transport_map.values():
         if not isinstance(transport, (WebRTCTransport, WebRTCVideoTransport)):
             continue
-        sub = overrides.get(_transport_config_name(transport._config_cls))
+        sub = overrides.get(transport_config_name(transport._config_cls))
         if not sub:
             continue
         new_config = transport._config.model_copy(update=dict(sub))
