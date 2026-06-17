@@ -160,6 +160,32 @@ def test_unknown_external_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
         external.resolve_external_blueprint_by_name("missing-stack.demo")
 
 
+def test_unknown_external_namespace_lists_available_namespaces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    patch_distributions(
+        monkeypatch,
+        FakeDistribution(
+            "My-Test-Stack",
+            (FakeEntryPoint("demo", "external_stack.demo:ExternalTestModule", ExternalTestModule),),
+        ),
+    )
+
+    with pytest.raises(external.ExternalBlueprintNamespaceNotFoundError) as exc_info:
+        external.resolve_external_blueprint_by_name("missing-stack.demo")
+
+    assert "Available external namespaces: my-test-stack" in str(exc_info.value)
+
+
+def test_resolve_external_name_requires_namespace_separator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    patch_distributions(monkeypatch)
+
+    with pytest.raises(external.ExternalBlueprintNamespaceNotFoundError):
+        external.resolve_external_blueprint_by_name("my-test-stack")
+
+
 def test_namespace_exists_but_local_name_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     patch_distributions(
         monkeypatch,
@@ -175,6 +201,12 @@ def test_namespace_exists_but_local_name_missing(monkeypatch: pytest.MonkeyPatch
 
     with pytest.raises(external.ExternalBlueprintLocalNameNotFoundError):
         external.resolve_external_blueprint_by_name("my-test-stack.arm")
+
+
+def test_local_name_missing_without_available_names() -> None:
+    error = external.ExternalBlueprintLocalNameNotFoundError("my-test-stack", "demo", [])
+
+    assert "Available local blueprints" not in str(error)
 
 
 def test_entry_point_load_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -239,6 +271,18 @@ def test_invalid_external_metadata_does_not_block_unrelated_valid_package(
     blueprint = external.resolve_external_blueprint_by_name("my-test-stack.demo")
 
     assert blueprint.blueprints[0].module is ExternalTestModule
+
+
+def test_entry_points_without_distribution_are_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        external.importlib_metadata,
+        "entry_points",
+        lambda *, group=None: [
+            FakeEntryPoint("demo", "external_stack.demo:ExternalTestModule", ExternalTestModule)
+        ],
+    )
+
+    assert external.list_external_blueprint_names() == []
 
 
 def test_all_invalid_colliding_distribution_does_not_block_valid_package(

@@ -208,3 +208,10 @@ def test_run_reports_external_resolution_errors(monkeypatch: pytest.MonkeyPatch)
     assert result.exit_code == 1
     assert "Failed to load external blueprint 'my-test-stack.demo'" in result.output
     assert "my_test_stack.missing:demo_blueprint" in result.output
+
+
+def test_run_reports_unknown_bare_blueprint() -> None:
+    result = CliRunner().invoke(main, ["run", "missing-bare-blueprint"])
+
+    assert result.exit_code == 1
+    assert "Unknown blueprint or module: missing-bare-blueprint" in result.output
