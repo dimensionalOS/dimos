@@ -17,6 +17,7 @@
 
 all_blueprints = {
     "alfred-nav": "dimos.robot.diy.alfred.blueprints.alfred_nav:alfred_nav",
+    "audio-speech-loopback": "dimos.hardware.sensors.audio.module:audio_speech_loopback",
     "coordinator-basic": "dimos.control.blueprints.basic:coordinator_basic",
     "coordinator-cartesian-ik-mock": "dimos.control.blueprints.teleop:coordinator_cartesian_ik_mock",
     "coordinator-cartesian-ik-piper": "dimos.control.blueprints.teleop:coordinator_cartesian_ik_piper",
@@ -45,6 +46,7 @@ all_blueprints = {
     "coordinator-xarm7": "dimos.control.blueprints.basic:coordinator_xarm7",
     "demo-agent": "dimos.agents.demo_agent:demo_agent",
     "demo-agent-camera": "dimos.agents.demo_agent:demo_agent_camera",
+    "demo-audio": "dimos.hardware.sensors.audio.module:demo_audio",
     "demo-camera": "dimos.hardware.sensors.camera.module:demo_camera",
     "demo-capabilities": "dimos.agents.demos.demo_capabilities:demo_capabilities",
     "demo-error-on-name-conflicts": "dimos.robot.unitree.demo_error_on_name_conflicts:demo_error_on_name_conflicts",
@@ -133,6 +135,7 @@ all_blueprints = {
 all_modules = {
     "alfred-high-level": "dimos.robot.diy.alfred.effector_high_level.AlfredHighLevel",
     "arm-teleop-module": "dimos.teleop.quest.quest_extensions.ArmTeleopModule",
+    "audio-module": "dimos.hardware.sensors.audio.module.AudioModule",
     "b-box-navigation-module": "dimos.navigation.bbox_navigation.BBoxNavigationModule",
     "b1-connection-module": "dimos.robot.unitree.b1.connection.B1ConnectionModule",
     "camera-module": "dimos.hardware.sensors.camera.module.CameraModule",
