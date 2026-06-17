@@ -61,6 +61,7 @@ class MovementManager(Module):
     way_point: Out[PointStamped]
     cmd_vel: Out[Twist]
     stop_movement: Out[Bool]
+    cancel_goal: Out[Bool]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -99,6 +100,7 @@ class MovementManager(Module):
 
     def _cancel_goal(self) -> None:
         self.stop_movement.publish(Bool(data=True))
+        self.cancel_goal.publish(Bool(data=True))
         # NOTE: this NaN goal is more of a safety fallback.
         # It can be REALLY bad if a robot is supposed to stop moving but wont
         # we should probably think a more robust/strict requirement on planners

@@ -62,7 +62,7 @@ class TestTerrainAnalysisRosbag:
         assert len(ref_tmaps) > 0, "No reference terrain maps in fixture"
 
         lcm = lcmlib.LCM()
-        terrain_collector = LcmCollector(topic=TERRAIN_OUT_LCM, msg_type=PointCloud2)
+        terrain_collector = LcmCollector(topic=TERRAIN_OUT_LCM, message_type=PointCloud2)
         terrain_collector.start(lcm)
 
         stop_event = threading.Event()

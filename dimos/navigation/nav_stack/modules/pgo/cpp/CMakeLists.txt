@@ -24,6 +24,7 @@ add_definitions(-DUSE_PCL)
 add_executable(pgo
   main.cpp
   simple_pgo.cpp
+  scan_context.cpp
   commons.cpp
 )
 

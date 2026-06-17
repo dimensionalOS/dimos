@@ -1,0 +1,15 @@
+{
+  "scans_played": 3012,
+  "groundtruth_queries_with_loop": 975,
+  "groundtruth_total_loop_pairs": 9315,
+  "detected_loop_edges": 277,
+  "loop_closure_events": 277,
+  "true_positive": 269,
+  "false_positive": 8,
+  "false_negative": 706,
+  "precision": 0.9711191335740073,
+  "recall": 0.27589743589743587,
+  "f1": 0.42971246006389774,
+  "wallclock_seconds": 346.6664684030693,
+  "sequence_id": 2
+}

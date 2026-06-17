@@ -67,6 +67,7 @@ def _reconstruct_path(
     costmap: OccupancyGrid,
     start_tuple: tuple[int, int],
     goal_tuple: tuple[int, int],
+    frame_id: str,
 ) -> Path:
     frame_id = costmap.frame_id
     waypoints: list[PoseStamped] = []
@@ -110,6 +111,7 @@ def _reconstruct_path(
 def _reconstruct_path_from_coords(
     path_coords: list[tuple[int, int]],
     costmap: OccupancyGrid,
+    frame_id: str,
 ) -> Path:
     frame_id = costmap.frame_id
     waypoints: list[PoseStamped] = []
@@ -133,6 +135,7 @@ def min_cost_astar(
     cost_threshold: int = 100,
     unknown_penalty: float = 0.8,
     use_cpp: bool = True,
+    frame_id: str = "world",
 ) -> Path | None:
     start_vector = costmap.world_to_grid(start)
     goal_vector = costmap.world_to_grid(goal)
@@ -156,7 +159,7 @@ def min_cost_astar(
             )
             if not path_coords:
                 return None
-            return _reconstruct_path_from_coords(path_coords, costmap)
+            return _reconstruct_path_from_coords(path_coords, costmap, frame_id)
         else:
             logger.warning(
                 "C++ A* module could not be imported (%s). Using Python.",
@@ -185,7 +188,7 @@ def min_cost_astar(
             continue
 
         if current == goal_tuple:
-            return _reconstruct_path(parents, current, costmap, start_tuple, goal_tuple)
+            return _reconstruct_path(parents, current, costmap, start_tuple, goal_tuple, frame_id)
 
         closed_set.add(current)
 

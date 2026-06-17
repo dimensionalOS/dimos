@@ -204,7 +204,6 @@ class NavigationSkillContainer(Module):
                 logger.info("Waiting for goal result")
                 time.sleep(1.0)
                 if not self._navigation.is_goal_reached():
-                    logger.info(f"Goal cancelled, tracking '{query}' failed")
                     self._object_tracking.stop_track()
                     return None
                 else:

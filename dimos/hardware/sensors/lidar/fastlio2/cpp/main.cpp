@@ -510,6 +510,11 @@ int main(int argc, char** argv) {
 
     if (debug) printf("[fastlio2] SDK started, waiting for device...\n");
 
+    // NativeModule.start() in Python reads stderr for this marker and only
+    // returns once it sees it.
+    fprintf(stderr, "[DIMOS_NATIVE_READY]\n");
+    fflush(stderr);
+
     // Main loop
     auto frame_interval = std::chrono::microseconds(
         static_cast<int64_t>(1e6 / g_frequency));

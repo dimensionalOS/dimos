@@ -204,6 +204,10 @@ class NativeModule(Module):
 
     @rpc
     def build(self) -> None:
+        # Heavy one-time work (cargo/cmake/nix builds, LFS) belongs in build(),
+        # not start(). Running it in start() blocks Popen and lets upstream
+        # publishers pump messages before the subprocess's LCM subscriptions
+        # are live, which causes flaky data loss in tests.
         super().build()
         self._maybe_build()
 

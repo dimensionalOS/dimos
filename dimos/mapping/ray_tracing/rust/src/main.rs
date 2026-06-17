@@ -1,5 +1,17 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
+//
+// Native Rust voxel-map module with raycast clearing.
+//
+// Inputs (LCM topics, set by the dimos NativeModule coordinator):
+//   * `lidar`    : sensor_msgs::PointCloud2  (world frame)
+//   * `odometry` : nav_msgs::Odometry        (world frame)
+//
+// Outputs:
+//   * `global_map` : nav_msgs::DynamicCloud  (world frame, sparse voxel keys)
+//   * `local_map`  : sensor_msgs::PointCloud2 (world frame, cylinder around robot)
+
+mod dynamic_cloud;
 
 use std::time::Duration;
 
@@ -12,6 +24,8 @@ use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
 
+use dynamic_cloud::DynamicCloud;
+
 #[derive(Module)]
 struct RayTracingVoxelMap {
     #[input(decode = PointCloud2::decode, handler = on_lidar)]
@@ -20,8 +34,8 @@ struct RayTracingVoxelMap {
     #[input(decode = Odometry::decode, handler = on_odometry)]
     odometry: Input<Odometry>,
 
-    #[output(encode = PointCloud2::encode)]
-    global_map: Output<PointCloud2>,
+    #[output(encode = encode_dynamic_cloud)]
+    global_map: Output<DynamicCloud>,
 
     #[output(encode = PointCloud2::encode)]
     local_map: Output<PointCloud2>,
@@ -89,7 +103,14 @@ impl RayTracingVoxelMap {
             z_max,
         };
 
-        let (global_cloud, local_cloud) = build_pointclouds(
+        let global_cloud = build_global_cloud(
+            &self.map,
+            &live,
+            voxel_size,
+            &msg.header.frame_id,
+            msg.header.stamp.clone(),
+        );
+        let local_cloud = build_local_cloud(
             &self.map,
             &live,
             voxel_size,
@@ -97,6 +118,7 @@ impl RayTracingVoxelMap {
             &msg.header.frame_id,
             msg.header.stamp,
         );
+
         if let Err(e) = self.global_map.publish(&global_cloud).await {
             error_throttled!(
                 Duration::from_secs(1),
@@ -112,6 +134,17 @@ impl RayTracingVoxelMap {
             );
         }
     }
+}
+
+fn encode_dynamic_cloud(msg: &DynamicCloud) -> Vec<u8> {
+    msg.encode()
+        .expect("DynamicCloud::encode: frame_id exceeds 65535 bytes")
+}
+
+fn stamp_to_nanos(stamp: &Time) -> u64 {
+    (stamp.sec as i64 as u64)
+        .wrapping_mul(1_000_000_000)
+        .wrapping_add(stamp.nsec.max(0) as u64)
 }
 
 struct ExtractError(&'static str);
@@ -180,18 +213,60 @@ fn read_f32_le(buf: &[u8], off: usize) -> f32 {
     f32::from_le_bytes(bytes)
 }
 
-fn build_pointclouds(
+/// Sparse voxel-key cloud of the full global map. Includes every healthy
+/// voxel (health > 0) plus any voxel hit this scan (live), even if still
+/// uncertain. `quantity` carries per-voxel health; the event log is empty
+/// because this map has no per-voxel timestamps to report.
+fn build_global_cloud(
+    map: &VoxelMap,
+    live: &AHashSet<VoxelKey>,
+    voxel_size: f32,
+    frame_id: &str,
+    stamp: Time,
+) -> DynamicCloud {
+    let mut voxels = Vec::with_capacity(map.voxels.len() + live.len());
+    let mut quantity = Vec::with_capacity(map.voxels.len() + live.len());
+
+    // healthy voxels
+    for (&key, &health) in &map.voxels {
+        if health > 0 {
+            voxels.push(key);
+            quantity.push(health as u32);
+        }
+    }
+    // live voxels that aren't already healthy
+    for &key in live {
+        if matches!(map.voxels.get(&key), Some(h) if *h > 0) {
+            continue;
+        }
+        voxels.push(key);
+        let health = map.voxels.get(&key).copied().unwrap_or(0);
+        quantity.push(health.max(0) as u32);
+    }
+
+    DynamicCloud {
+        timestamp_nanos: stamp_to_nanos(&stamp),
+        voxel_size,
+        frame_id: frame_id.to_string(),
+        voxels,
+        quantity,
+        event_indices: Vec::new(),
+        event_timestamps: Vec::new(),
+    }
+}
+
+/// Dense XYZ point cloud of the voxels inside the cylinder around the robot,
+/// always including this scan's live voxels.
+fn build_local_cloud(
     map: &VoxelMap,
     live: &AHashSet<VoxelKey>,
     voxel_size: f32,
     cylinder: &LocalBounds,
     frame_id: &str,
     stamp: Time,
-) -> (PointCloud2, PointCloud2) {
+) -> PointCloud2 {
     let half = voxel_size * 0.5;
-    let mut global_data = Vec::with_capacity((map.voxels.len() + live.len()) * 16);
     let mut local_data = Vec::with_capacity(live.len() * 2 * 16);
-    let mut global_n: i32 = 0;
     let mut local_n: i32 = 0;
 
     let write_point = |data: &mut Vec<u8>, n: &mut i32, x: f32, y: f32, z: f32| {
@@ -202,15 +277,14 @@ fn build_pointclouds(
         *n += 1;
     };
 
-    // add healthy voxels to global, and local if necessary
+    // healthy voxels within the cylinder
     for (x, y, z) in iter_global_points(map, voxel_size) {
-        write_point(&mut global_data, &mut global_n, x, y, z);
         if cylinder.contains(x, y, z) {
             write_point(&mut local_data, &mut local_n, x, y, z);
         }
     }
 
-    // add live voxels to both if they aren't already there
+    // live voxels that aren't already healthy
     for &(kx, ky, kz) in live {
         if matches!(map.voxels.get(&(kx, ky, kz)), Some(c) if c.health > 0) {
             continue;
@@ -218,7 +292,6 @@ fn build_pointclouds(
         let x = kx as f32 * voxel_size + half;
         let y = ky as f32 * voxel_size + half;
         let z = kz as f32 * voxel_size + half;
-        write_point(&mut global_data, &mut global_n, x, y, z);
         write_point(&mut local_data, &mut local_n, x, y, z);
     }
 
@@ -235,22 +308,7 @@ fn build_pointclouds(
         make_field("intensity", 12),
     ];
 
-    let global_cloud = PointCloud2 {
-        header: Header {
-            seq: 0,
-            stamp: stamp.clone(),
-            frame_id: frame_id.into(),
-        },
-        height: 1,
-        width: global_n,
-        fields: fields.clone(),
-        is_bigendian: false,
-        point_step: 16,
-        row_step: 16 * global_n,
-        data: global_data,
-        is_dense: true,
-    };
-    let local_cloud = PointCloud2 {
+    PointCloud2 {
         header: Header {
             seq: 0,
             stamp,
@@ -264,9 +322,7 @@ fn build_pointclouds(
         row_step: 16 * local_n,
         data: local_data,
         is_dense: true,
-    };
-
-    (global_cloud, local_cloud)
+    }
 }
 
 #[tokio::main]
@@ -304,6 +360,15 @@ mod tests {
     }
 
     #[test]
+    fn global_map_includes_healthy_voxel() {
+        let mut map = VoxelMap::default();
+        map.voxels.insert((0, 0, 0), 1);
+        let live: AHashSet<VoxelKey> = AHashSet::new();
+        let global = build_global_cloud(&map, &live, 1.0, "world", Time::default());
+        assert!(global.voxels.contains(&(0, 0, 0)));
+    }
+
+    #[test]
     fn local_map_includes_voxel_inside_cylinder() {
         let mut map = VoxelMap::default();
         map.voxels.insert((0, 0, 0), Voxel::with_health(1));
@@ -315,9 +380,7 @@ mod tests {
             z_min: 0.0,
             z_max: 1.0,
         };
-        let (global, local) =
-            build_pointclouds(&map, &live, 1.0, &cylinder, "world", Time::default());
-        assert!(cloud_points(&global).contains(&voxel_center(0, 0, 0)));
+        let local = build_local_cloud(&map, &live, 1.0, &cylinder, "world", Time::default());
         assert!(cloud_points(&local).contains(&voxel_center(0, 0, 0)));
     }
 
@@ -333,9 +396,9 @@ mod tests {
             z_min: -10.0,
             z_max: 10.0,
         };
-        let (global, local) =
-            build_pointclouds(&map, &live, 1.0, &cylinder, "world", Time::default());
-        assert!(cloud_points(&global).contains(&voxel_center(5, 0, 0)));
+        let global = build_global_cloud(&map, &live, 1.0, "world", Time::default());
+        let local = build_local_cloud(&map, &live, 1.0, &cylinder, "world", Time::default());
+        assert!(global.voxels.contains(&(5, 0, 0)));
         assert!(!cloud_points(&local).contains(&voxel_center(5, 0, 0)));
         assert_eq!(local.width, 0);
     }
@@ -352,15 +415,15 @@ mod tests {
             z_min: 0.0,
             z_max: 1.0,
         };
-        let (global, local) =
-            build_pointclouds(&map, &live, 1.0, &cylinder, "world", Time::default());
-        assert!(cloud_points(&global).contains(&voxel_center(0, 0, 5)));
+        let global = build_global_cloud(&map, &live, 1.0, "world", Time::default());
+        let local = build_local_cloud(&map, &live, 1.0, &cylinder, "world", Time::default());
+        assert!(global.voxels.contains(&(0, 0, 5)));
         assert!(!cloud_points(&local).contains(&voxel_center(0, 0, 5)));
         assert_eq!(local.width, 0);
     }
 
     #[test]
-    fn local_map_always_includes_live_voxels() {
+    fn maps_always_include_live_voxels() {
         let map = VoxelMap::default();
         let mut live: AHashSet<VoxelKey> = AHashSet::new();
         live.insert((10, 10, 10));
@@ -371,9 +434,9 @@ mod tests {
             z_min: 0.0,
             z_max: 0.0,
         };
-        let (global, local) =
-            build_pointclouds(&map, &live, 1.0, &cylinder, "world", Time::default());
-        assert!(cloud_points(&global).contains(&voxel_center(10, 10, 10)));
+        let global = build_global_cloud(&map, &live, 1.0, "world", Time::default());
+        let local = build_local_cloud(&map, &live, 1.0, &cylinder, "world", Time::default());
+        assert!(global.voxels.contains(&(10, 10, 10)));
         assert!(cloud_points(&local).contains(&voxel_center(10, 10, 10)));
     }
 }

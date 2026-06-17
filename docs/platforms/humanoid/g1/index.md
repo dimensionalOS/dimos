@@ -44,8 +44,9 @@ Recommended to setup [tailscale](https://tailscale.com/tailscale-ssh) to avoid n
 SSH into the robot, then:
 
 ```bash
+export CYCLONEDDS_HOME="$HOME/cyclonedds/install"
 # pick the "developer" setup
-bash <(curl -fsSL https://pub-4767fdd15e6a41b6b2ce2558d71ec8d9.r2.dev/install.sh)
+DIM_BRANCH=main bash <(curl -fsSL https://pub-4767fdd15e6a41b6b2ce2558d71ec8d9.r2.dev/install.sh)
 ```
 
 #### Notes
@@ -79,6 +80,8 @@ Note: this button combination may vary based on the model of the G1
 In the ssh terminal `ssh -L 3030:localhost:3030 unitree@192.168.123.164`
 
 ```sh skip
+# confirm nix is installed
+which nix || sh <(curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install)
 source .venv/bin/activate
 uv run dimos --rerun-host 0.0.0.0 run unitree-g1-nav-onboard
 # should print out something like:

@@ -33,19 +33,19 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 
 _RUST_DIR = Path(__file__).parent / "rust"
-_EXAMPLES = _RUST_DIR / "target" / "release"
+_BINS = _RUST_DIR / "result" / "bin"
 
 
 class PingConfig(NativeModuleConfig):
-    executable: str = str(_EXAMPLES / "native_ping")
-    build_command: str = "cargo build --release"
+    executable: str = str(_BINS / "native_ping")
+    build_command: str = "nix build .#default --no-write-lock-file"
     cwd: str = str(_RUST_DIR)
     stdin_config: bool = True
 
 
 class PongConfig(NativeModuleConfig):
-    executable: str = str(_EXAMPLES / "native_pong")
-    build_command: str = "cargo build --release"
+    executable: str = str(_BINS / "native_pong")
+    build_command: str = "nix build .#default --no-write-lock-file"
     cwd: str = str(_RUST_DIR)
     stdin_config: bool = True
     sample_config: int = 42

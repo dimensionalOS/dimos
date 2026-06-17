@@ -257,6 +257,7 @@ manipulation = [
 
     # Hardware SDKs
     "piper-sdk",
+    "pyrealsense2; sys_platform != 'darwin' and platform_machine != 'aarch64'",
     "pyrealsense2-extended; sys_platform != 'darwin'",
     "xarm-python-sdk>=1.17.0",
     "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
@@ -296,7 +297,9 @@ psql = [
 sim = [
     # Simulation
     "mujoco>=3.3.4",
-    "playground>=0.0.5",
+    # 0.1.0+ pulls warp-lang>=1.11; aarch64 wheels need glibc 2.34 (Ubuntu 24+). Jetson is 22.04.
+    "playground==0.0.5; platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "playground>=0.0.5; platform_machine != 'aarch64' or sys_platform != 'linux'",
     "pygame>=2.6.1",
 ]
 
