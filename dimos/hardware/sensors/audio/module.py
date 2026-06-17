@@ -33,6 +33,7 @@ import numpy as np
 from pydantic import Field
 
 from dimos.agents.annotation import skill
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
@@ -203,3 +204,6 @@ class AudioModule(Module):
         done.wait(timeout=seconds + 2.0)
         unsub()
         return b"".join(buf)
+
+
+demo_audio = autoconnect(AudioModule.blueprint())
