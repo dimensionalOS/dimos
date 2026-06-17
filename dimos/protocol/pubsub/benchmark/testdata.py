@@ -408,6 +408,7 @@ if ROS_AVAILABLE:
 # so it only registers when CF_TELEOP_APP_ID/SECRET are set (CI skips it).
 try:
     from dimos.protocol.pubsub.impl.webrtc.providers.cloudflare import (
+        MAX_MSG_SIZE,
         CloudflareConfig,
         CloudflareProvider,
     )
@@ -417,9 +418,6 @@ except ImportError:
     WEBRTC_AVAILABLE = False
 
 if WEBRTC_AVAILABLE and os.environ.get("CF_TELEOP_APP_ID"):
-    # CF Realtime drops DataChannel messages larger than this (observed:
-    # 100% loss from 64KB up), and it matches the SCTP fragmentation unit.
-    _WEBRTC_MAX_MSG = 16 * 1024
 
     @contextmanager
     def webrtc_cloudflare_pubsub_channel() -> Generator[WebRTCPubSub, None, None]:
@@ -431,7 +429,7 @@ if WEBRTC_AVAILABLE and os.environ.get("CF_TELEOP_APP_ID"):
             pubsub.stop()
 
     def webrtc_msggen(size: int) -> tuple[str, bytes]:
-        if size > _WEBRTC_MAX_MSG:
+        if size > MAX_MSG_SIZE:
             pytest.skip(f"{size}B exceeds the SCTP/CF DataChannel message limit")
         return ("benchmark/webrtc", make_data_bytes(size))
 
