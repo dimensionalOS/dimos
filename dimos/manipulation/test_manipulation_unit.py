@@ -202,6 +202,23 @@ class TestRobotSelection:
 class TestPlanningInitialization:
     """Test planning backend configuration wiring."""
 
+    def test_start_cleans_up_module_threads_when_planning_initialization_fails(self):
+        """A start-time backend import failure must not leak Module/RPC threads."""
+        module = ManipulationModule(robots=[], enable_viz=False)
+
+        with (
+            patch.object(
+                ManipulationModule,
+                "_initialize_planning",
+                side_effect=ImportError("Drake is not installed"),
+            ),
+            pytest.raises(ImportError, match="Drake is not installed"),
+        ):
+            module.start()
+
+        assert module._loop_thread is None
+        assert module._loop is None
+
     def test_kinematics_config_is_passed_to_factory(self, robot_config):
         """ManipulationModule config selects the requested IK backend."""
         module = _make_module()

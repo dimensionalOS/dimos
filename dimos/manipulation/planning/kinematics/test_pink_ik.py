@@ -223,11 +223,20 @@ class _FakeWorld:
 def test_create_kinematics_existing_backends_do_not_import_pink() -> None:
     assert isinstance(create_kinematics("jacobian"), JacobianIK)
 
-    with patch.dict("sys.modules", {"pink": None}):
-        try:
-            create_kinematics("drake_optimization")
-        except ImportError as exc:
-            assert "Drake" in str(exc)
+    class FakeDrakeOptimizationIK:
+        pass
+
+    fake_drake_module = ModuleType("dimos.manipulation.planning.kinematics.drake_optimization_ik")
+    fake_drake_module.DrakeOptimizationIK = FakeDrakeOptimizationIK  # type: ignore[attr-defined]
+
+    with patch.dict(
+        "sys.modules",
+        {
+            "pink": None,
+            "dimos.manipulation.planning.kinematics.drake_optimization_ik": fake_drake_module,
+        },
+    ):
+        assert isinstance(create_kinematics("drake_optimization"), FakeDrakeOptimizationIK)
 
 
 def test_create_kinematics_pink_missing_dependency_is_actionable(
