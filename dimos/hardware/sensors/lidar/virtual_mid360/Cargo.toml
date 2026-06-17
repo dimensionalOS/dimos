@@ -11,5 +11,6 @@ path = "src/main.rs"
 dimos-module = { path = "../../../../../native/rust/dimos-module" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "sync"] }
 serde = { version = "1", features = ["derive"] }
+socket2 = "0.5"
 tracing = "0.1"
 validator = { version = "0.20", features = ["derive"] }

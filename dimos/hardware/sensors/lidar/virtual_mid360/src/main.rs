@@ -6,6 +6,7 @@
 
 use dimos_module::{run, LcmTransport, Module};
 use serde::Deserialize;
+use socket2::{Domain, Protocol, Socket, Type};
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -269,8 +270,8 @@ impl VirtualMid360 {
         let rate = cfg.rate;
         let delay = cfg.delay;
 
-        // discovery responder (:56000) — answers the 0x0000 broadcast
-        spawn_discovery(lidar_ip, stop.clone());
+        // discovery responder (:56000) — proactively announces + answers 0x0000
+        spawn_discovery(lidar_ip, host_ip, stop.clone());
         // control responder (:56100) — per-cmd ACKs; arms streaming on 0x0100
         spawn_control(lidar_ip, armed.clone(), stop.clone());
         // data streamer — point/IMU/status paced at `rate`, timestamps shifted to now
@@ -281,39 +282,57 @@ impl VirtualMid360 {
     }
 }
 
-fn spawn_discovery(lidar_ip: Ipv4Addr, stop: Arc<AtomicBool>) {
+/// UDP socket bound with SO_REUSEADDR so it can share a port with the consumer
+/// SDK's own sockets when both run in one network namespace — macOS (and Linux
+/// alias mode) have no netns to separate the two endpoints.
+fn reuse_bind(addr: SocketAddrV4) -> std::io::Result<UdpSocket> {
+    let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+    socket.set_reuse_address(true)?;
+    let bind_addr: std::net::SocketAddr = addr.into();
+    socket.bind(&bind_addr.into())?;
+    Ok(socket.into())
+}
+
+fn spawn_discovery(lidar_ip: Ipv4Addr, host_ip: Ipv4Addr, stop: Arc<AtomicBool>) {
     std::thread::spawn(move || {
-        let socket = match UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DISCOVERY_PORT))
-        {
+        // Bind the lidar's detection port (not INADDR_ANY): SO_REUSEADDR + a
+        // specific source IP lets this coexist with the consumer SDK's own
+        // :56000 sockets in a shared namespace, and makes our packets arrive
+        // *from* lidar_ip:56000 (which is how the SDK identifies the device).
+        let socket = match reuse_bind(SocketAddrV4::new(lidar_ip, DISCOVERY_PORT)) {
             Ok(socket) => socket,
             Err(err) => {
-                tracing::error!("discovery bind :{DISCOVERY_PORT} failed: {err}");
+                tracing::error!("discovery bind {lidar_ip}:{DISCOVERY_PORT} failed: {err}");
                 return;
             }
         };
-        let _ = socket.set_broadcast(true);
         socket
-            .set_read_timeout(Some(Duration::from_millis(500)))
+            .set_read_timeout(Some(Duration::from_millis(200)))
             .ok();
-        let broadcast_addr = SocketAddrV4::new(Ipv4Addr::BROADCAST, DISCOVERY_PORT);
+        // The SDK solicits lidars by broadcasting to 255.255.255.255, which macOS
+        // refuses to send — so it can never reach us. Instead we *proactively*
+        // unicast the search-ACK to the host's detection port; the SDK accepts an
+        // unsolicited detection response (it matches no request seq — none is
+        // required for cmd 0x0000) and registers the device. Harmless on Linux,
+        // where the broadcast path also works.
+        let host_detect = SocketAddrV4::new(host_ip, DISCOVERY_PORT);
+        let announce = build_ack(0x0000, 0, &discovery_ack_payload(lidar_ip));
         let mut buffer = [0u8; 2048];
         while !stop.load(Ordering::Relaxed) {
-            let len = match socket.recv_from(&mut buffer) {
-                Ok((len, _)) => len,
-                Err(_) => continue,
-            };
-            if len < WRAPPER || buffer[0] != SOF {
-                continue;
+            let _ = socket.send_to(&announce, host_detect);
+            // Also answer a real broadcast solicitation if one arrives, echoing
+            // its seq (the original live/netns path).
+            if let Ok((len, _)) = socket.recv_from(&mut buffer) {
+                if len >= WRAPPER
+                    && buffer[0] == SOF
+                    && u16::from_le_bytes([buffer[8], buffer[9]]) == 0x0000
+                    && buffer[10] == 0
+                {
+                    let seq = u32::from_le_bytes([buffer[4], buffer[5], buffer[6], buffer[7]]);
+                    let ack = build_ack(0x0000, seq, &discovery_ack_payload(lidar_ip));
+                    let _ = socket.send_to(&ack, host_detect);
+                }
             }
-            let cmd_id = u16::from_le_bytes([buffer[8], buffer[9]]);
-            let cmd_type = buffer[10];
-            if cmd_id != 0x0000 || cmd_type != 0 {
-                continue;
-            }
-            let seq = u32::from_le_bytes([buffer[4], buffer[5], buffer[6], buffer[7]]);
-            // ACK describes the device (dev_type, serial, lidar_ip, cmd port).
-            let ack = build_ack(0x0000, seq, &discovery_ack_payload(lidar_ip));
-            let _ = socket.send_to(&ack, broadcast_addr);
         }
     });
 }
