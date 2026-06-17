@@ -118,6 +118,16 @@ if ! ( cd "$WORKTREE" && claude -p "$fix_prompt" \
   exit 1
 fi
 
+# The fix agent should only ADD commits, but an LLM can leave the tree dirty: a half-finished
+# rebase/merge/cherry-pick, a stash-pop conflict, or plain uncommitted edits. Only its commits are
+# wanted, so abort any in-progress operation and discard everything uncommitted. This also keeps the
+# tree clean for filter-branch below (which refuses to run on a dirty tree) and for the push.
+git -C "$WORKTREE" rebase --abort      2>/dev/null || true
+git -C "$WORKTREE" merge --abort       2>/dev/null || true
+git -C "$WORKTREE" cherry-pick --abort 2>/dev/null || true
+git -C "$WORKTREE" reset --hard        2>/dev/null || true
+git -C "$WORKTREE" clean -fd           2>/dev/null || true
+
 n_commits="$(git -C "$WORKTREE" rev-list --count "$BASE_SHA"..HEAD)"
 if [[ "$n_commits" -eq 0 ]]; then
   log ">> fix agent made no commits; nothing to PR."
