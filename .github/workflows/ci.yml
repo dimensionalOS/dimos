@@ -412,15 +412,12 @@ jobs:
               # the ~3 GB module closures survive between jobs. First job
               # after a runner is provisioned populates these; subsequent
               # jobs find everything already there and skip the Cachix
-              # download. Three mounts are needed:
-              #   /nix          — store + var/nix/db
-              #   /etc/nix      — nix.conf (substituters, experimental-features)
-              #   /root/.cache  — eval/fetcher cache home
+              # download. /etc/nix isn't mounted — the Install Nix step
+              # rewrites nix.conf every run so warm and cold behave the same.
               # On a fresh runner, ensure the host paths exist:
-              # `sudo mkdir -p /var/cache/dimos-{nix,etc-nix,root-cache}`
+              # `sudo mkdir -p /var/cache/dimos-nix /var/cache/dimos-root-cache`
               volumes:
                 - /var/cache/dimos-nix:/nix
-                - /var/cache/dimos-etc-nix:/etc/nix
                 - /var/cache/dimos-root-cache:/root/.cache
             markers: "self_hosted or skipif_no_ros"
             experimental: false
@@ -491,8 +488,12 @@ jobs:
         # already installed; install-nix.sh's `type -p nix` check will exit
         # early, but only if the profile bin is on PATH — prepend it before
         # calling. If /nix is empty (first job on a fresh runner), nix isn't
-        # on PATH and the install proceeds normally. Either way we re-export
-        # the profile bin to $GITHUB_PATH so downstream steps see it.
+        # on PATH and the install proceeds normally. After install-nix.sh,
+        # we unconditionally (re-)write /etc/nix/nix.conf: on warm runs
+        # install-nix.sh exited before it would have written the config,
+        # which leaves `experimental-features = nix-command flakes` absent
+        # and the build dying with "experimental Nix feature 'nix-command'
+        # is disabled". Writing it here keeps cold and warm runs identical.
         if: contains(matrix.markers, 'skipif_no_ros')
         env:
           INPUT_EXTRA_NIX_CONFIG: |
@@ -501,6 +502,15 @@ jobs:
         run: |
           export PATH="/nix/var/nix/profiles/default/bin:$PATH"
           bash docker/ros/install-nix.sh
+          sudo mkdir -p /etc/nix
+          sudo tee /etc/nix/nix.conf > /dev/null <<'EOF'
+          experimental-features = nix-command flakes
+          extra-substituters = https://dimensionalos.cachix.org
+          extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
+          always-allow-substitutes = true
+          build-users-group =
+          max-jobs = auto
+          EOF
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
       - name: Fetch nav_stack native modules from Cachix
         if: contains(matrix.markers, 'skipif_no_ros')
