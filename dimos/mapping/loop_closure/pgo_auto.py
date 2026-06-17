@@ -56,12 +56,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, Unpack
+from typing import TYPE_CHECKING, Any, TypedDict, TypeVar
 
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 import open3d.core as o3c  # type: ignore[import-untyped]
 from scipy.spatial.transform import Rotation
+from typing_extensions import Unpack  # typing.Unpack is 3.11+
 
 from dimos.memory2.store.memory import MemoryStore
 from dimos.memory2.stream import Stream

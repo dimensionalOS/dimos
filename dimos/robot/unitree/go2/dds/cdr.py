@@ -94,7 +94,7 @@ class Cursor:
     def prim_array(self, code: str, n: int) -> np.ndarray:
         _, sz, dt = _PRIM[code]
         self.align(sz)
-        a = np.frombuffer(self.b, dt, n, self.p).copy()
+        a: np.ndarray = np.frombuffer(self.b, dt, n, self.p).copy()
         self.p += sz * n
         return a
 

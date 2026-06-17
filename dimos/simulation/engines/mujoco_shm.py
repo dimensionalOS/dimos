@@ -283,7 +283,8 @@ class ManipShmWriter:
             return None
         self._last_kp_cmd_seq = seq
         arr = self._array(self.shm.kp_t, MAX_JOINTS, np.float64)
-        return arr[:num_joints].copy()
+        result: NDArray[np.float64] = arr[:num_joints].copy()
+        return result
 
     def read_kd_command(self, num_joints: int) -> NDArray[np.float64] | None:
         seq = self._get_seq(SEQ_KD_CMD)
@@ -291,7 +292,8 @@ class ManipShmWriter:
             return None
         self._last_kd_cmd_seq = seq
         arr = self._array(self.shm.kd_t, MAX_JOINTS, np.float64)
-        return arr[:num_joints].copy()
+        result: NDArray[np.float64] = arr[:num_joints].copy()
+        return result
 
     def read_tau_command(self, num_joints: int) -> NDArray[np.float64] | None:
         """Per-joint feedforward torque if a new command landed since last call."""
@@ -300,7 +302,8 @@ class ManipShmWriter:
             return None
         self._last_tau_cmd_seq = seq
         arr = self._array(self.shm.tau_t, MAX_JOINTS, np.float64)
-        return arr[:num_joints].copy()
+        result: NDArray[np.float64] = arr[:num_joints].copy()
+        return result
 
     def signal_ready(self, num_joints: int) -> None:
         ctrl = self._control()
