@@ -18,7 +18,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 import importlib.metadata as importlib_metadata
 import re
-from typing import Any
+from typing import Any, cast
 
 from packaging.utils import canonicalize_name
 
@@ -94,7 +94,7 @@ class ExternalBlueprintEntry:
     namespace: str
     local_name: str
     distribution_name: str
-    entry_point: Any
+    entry_point: importlib_metadata.EntryPoint
 
     @property
     def qualified_name(self) -> str:
@@ -102,7 +102,7 @@ class ExternalBlueprintEntry:
 
     @property
     def target(self) -> str:
-        return str(getattr(self.entry_point, "value", "<unknown>"))
+        return self.entry_point.value
 
 
 @dataclass(frozen=True)
@@ -201,13 +201,10 @@ def _collect_external_blueprints() -> _ExternalBlueprintCollection:
     invalid_entries_by_namespace: dict[str, list[InvalidExternalBlueprintEntry]] = {}
 
     for entry_point in importlib_metadata.entry_points(group=ENTRY_POINT_GROUP):
-        distribution = getattr(entry_point, "dist", None)
-        distribution_name = _distribution_name(distribution)
-        if distribution_name is None:
-            continue
-
+        distribution = cast("importlib_metadata.Distribution", entry_point.dist)
+        distribution_name = distribution.metadata["Name"]
         namespace = canonicalize_distribution_namespace(distribution_name)
-        local_name = str(getattr(entry_point, "name", ""))
+        local_name = entry_point.name
         if not is_valid_external_local_blueprint_name(local_name):
             invalid_entries_by_namespace.setdefault(namespace, []).append(
                 InvalidExternalBlueprintEntry(
@@ -230,15 +227,3 @@ def _collect_external_blueprints() -> _ExternalBlueprintCollection:
         entries_by_namespace=entries_by_namespace,
         invalid_entries_by_namespace=invalid_entries_by_namespace,
     )
-
-
-def _distribution_name(distribution: Any) -> str | None:
-    metadata = getattr(distribution, "metadata", None)
-    if metadata is not None:
-        name = metadata.get("Name")
-        if name:
-            return str(name)
-    name = getattr(distribution, "name", None)
-    if name:
-        return str(name)
-    return None
