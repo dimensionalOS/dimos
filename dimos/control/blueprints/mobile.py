@@ -122,14 +122,6 @@ coordinator_flowbase_nav = (
         FastLio2.blueprint(
             host_ip=os.getenv("LIDAR_HOST_IP", "192.168.1.5"),
             lidar_ip=os.getenv("LIDAR_IP", "192.168.1.189"),
-            # nav tuning (was config/default.yaml): tighter covariance, live
-            # extrinsic calibration, shorter range, 0.5 m IESKF voxel.
-            acc_cov=0.01,
-            gyr_cov=0.01,
-            det_range=60.0,
-            extrinsic_est_en=True,
-            filter_size_surf=0.5,
-            filter_size_map=0.5,
         ),
         create_nav_stack(
             planner="simple",
