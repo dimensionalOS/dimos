@@ -2,15 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use ahash::{AHashMap, AHashSet};
+use dimos_module::native_config;
 use nalgebra::{Matrix3, Vector3};
-use serde::Deserialize;
-use validator::{Validate, ValidationError};
+use validator::ValidationError;
 
 pub type VoxelKey = (i32, i32, i32);
 pub type VoxelHealth = i32;
 
-#[derive(Debug, Deserialize, Validate)]
-#[serde(deny_unknown_fields)]
+#[native_config]
 #[validate(schema(function = "validate_health_range"))]
 pub struct Config {
     #[validate(range(exclusive_min = 0.0))]

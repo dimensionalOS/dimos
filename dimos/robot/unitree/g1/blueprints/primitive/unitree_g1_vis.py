@@ -20,10 +20,9 @@ from typing import Any
 import rerun as rr
 
 from dimos.core.global_config import global_config
-from dimos.mapping.costmapper import costmap_to_rerun
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.nav_stack.main import nav_stack_rerun_config
-from dimos.robot.unitree.g1.g1_rerun import g1_odometry_tf_override, g1_static_robot
+from dimos.robot.unitree.g1.g1_rerun import g1_costmap, g1_odometry_tf_override, g1_static_robot
 from dimos.visualization.vis_module import vis_module
 
 _PATH_Z_LIFT = 0.3
@@ -49,7 +48,7 @@ unitree_g1_vis = vis_module(
                 "world/lidar": None,
                 "world/local_map": None,
                 "world/global_map_fastlio": None,
-                "world/global_costmap": costmap_to_rerun,
+                "world/global_costmap": g1_costmap,
                 "world/path": _g1_path_colors,
             },
             "static": {"world/tf/robot": g1_static_robot},

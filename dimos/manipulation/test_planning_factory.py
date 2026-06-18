@@ -30,6 +30,7 @@ from dimos.manipulation.planning.factory import (
     create_world,
     validate_backend_combination,
 )
+from dimos.manipulation.planning.kinematics.config import JacobianKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -126,7 +127,7 @@ def test_create_planning_stack_wires_selected_components(robot_config):
 
     assert result == (world, kinematics, planner, "robot-id")
     mock_world.assert_called_once_with(backend="drake", enable_viz=True)
-    mock_kinematics.assert_called_once_with(name="jacobian")
+    mock_kinematics.assert_called_once_with(config=JacobianKinematicsConfig())
     mock_planner.assert_called_once_with(name="rrt_connect", world=world, world_backend="drake")
     world.add_robot.assert_called_once_with(robot_config)
     world.finalize.assert_called_once()
@@ -189,6 +190,6 @@ def test_start_uses_configured_planner_and_kinematics(monkeypatch, robot_config)
     create_planner_mock.assert_called_once_with(
         name="rrt_connect", world=world_monitor.world, world_backend="drake"
     )
-    create_kinematics_mock.assert_called_once_with(name="jacobian")
+    create_kinematics_mock.assert_called_once_with(config=JacobianKinematicsConfig())
     assert module._planner is planner
     assert module._kinematics is kinematics

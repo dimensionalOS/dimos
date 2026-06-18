@@ -245,7 +245,6 @@ _coordinator = ControlCoordinator.blueprint(
     ],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
         ("joint_command", JointState): LCMTransport("/g1/joint_command", JointState),
         ("twist_command", Twist): LCMTransport("/g1/cmd_vel", Twist),
         ("tele_cmd_vel", Twist): LCMTransport("/g1/cmd_vel", Twist),

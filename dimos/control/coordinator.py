@@ -142,20 +142,20 @@ class ControlCoordinator(Module):
     config: ControlCoordinatorConfig
 
     # Output: Aggregated joint state for external consumers
-    joint_state: Out[JointState]
+    coordinator_joint_state: Out[JointState]
 
     # Input: Streaming joint commands for real-time control
     joint_command: In[JointState]
 
     # Input: Streaming cartesian commands for CartesianIKTask
     # Uses frame_id as task name for routing
-    cartesian_command: In[PoseStamped]
+    coordinator_cartesian_command: In[PoseStamped]
 
     # Input: Streaming twist commands for velocity-commanded platforms
     twist_command: In[Twist]
 
     # Input: Teleop buttons for engage/disengage signaling
-    buttons: In[Buttons]
+    teleop_buttons: In[Buttons]
 
     # Arming and dry-run are one-shot RPCs, not streams.
 
@@ -621,7 +621,9 @@ class ControlCoordinator(Module):
             self._setup_from_config()
 
         # Create and start tick loop
-        publish_cb = self.joint_state.publish if self.config.publish_joint_state else None
+        publish_cb = (
+            self.coordinator_joint_state.publish if self.config.publish_joint_state else None
+        )
         self._tick_loop = TickLoop(
             tick_rate=self.config.tick_rate,
             hardware=self._hardware,
@@ -652,7 +654,7 @@ class ControlCoordinator(Module):
         has_cartesian_ik = any(t.type in ("cartesian_ik", "teleop_ik") for t in self.config.tasks)
         if has_cartesian_ik:
             try:
-                self._cartesian_command_unsub = self.cartesian_command.subscribe(
+                self._cartesian_command_unsub = self.coordinator_cartesian_command.subscribe(
                     self._on_cartesian_command
                 )
                 logger.info("Subscribed to cartesian_command for CartesianIK/TeleopIK tasks")
@@ -682,7 +684,7 @@ class ControlCoordinator(Module):
         # Subscribe to buttons if any teleop_ik tasks configured (engage/disengage)
         has_teleop_ik = any(t.type == "teleop_ik" for t in self.config.tasks)
         if has_teleop_ik:
-            self._buttons_unsub = self.buttons.subscribe(self._on_buttons)
+            self._buttons_unsub = self.teleop_buttons.subscribe(self._on_buttons)
             logger.info("Subscribed to buttons for engage/disengage")
 
         # Arming + dry-run are RPC-only; no stream subscription here.

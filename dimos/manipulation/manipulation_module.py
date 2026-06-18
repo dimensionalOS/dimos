@@ -43,10 +43,21 @@ from dimos.manipulation.planning.factory import (
     create_planner,
     validate_backend_combination,
 )
+from dimos.manipulation.planning.kinematics.config import (
+    JacobianKinematicsConfig,
+    ManipulationKinematicsConfig,
+    kinematics_config_from_name,
+)
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.enums import ObstacleType
-from dimos.manipulation.planning.spec.models import JointPath, Obstacle, RobotName, WorldRobotID
+from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType
+from dimos.manipulation.planning.spec.models import (
+    IKResult,
+    JointPath,
+    Obstacle,
+    RobotName,
+    WorldRobotID,
+)
 from dimos.manipulation.planning.spec.protocols import KinematicsSpec, PlannerSpec
 from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
     JointTrajectoryGenerator,
@@ -96,7 +107,9 @@ class ManipulationModuleConfig(ModuleConfig):
     enable_viz: bool = False
     world_backend: str = "drake"  # "drake" or "roboplan"
     planner_name: str = "rrt_connect"  # "rrt_connect"
-    kinematics_name: str = "jacobian"  # "jacobian" or "drake_optimization"
+    kinematics: ManipulationKinematicsConfig = Field(default_factory=JacobianKinematicsConfig)
+    # Deprecated: use kinematics.backend instead.
+    kinematics_name: str | None = None  # "jacobian", "drake_optimization", or "pink"
     # Floor plane Z height (meters). When set, a box obstacle is added at startup
     # to prevent the planner from routing trajectories below this height.
     # Set to None to disable.
@@ -115,7 +128,7 @@ class ManipulationModule(Module):
     config: ManipulationModuleConfig
 
     # Input: Joint state from coordinator (for world sync)
-    joint_state: In[JointState]
+    coordinator_joint_state: In[JointState]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -158,9 +171,9 @@ class ManipulationModule(Module):
         self._initialize_planning()
 
         # Subscribe to joint state via port
-        if self.joint_state is not None:
-            self.joint_state.subscribe(self._on_joint_state)
-            logger.info("Subscribed to joint_state port")
+        if self.coordinator_joint_state is not None:
+            self.coordinator_joint_state.subscribe(self._on_joint_state)
+            logger.info("Subscribed to coordinator_joint_state port")
 
         logger.info("ManipulationModule started")
 
@@ -170,10 +183,14 @@ class ManipulationModule(Module):
             logger.warning("No robots configured, planning disabled")
             return
 
+        kinematics_config = self.config.kinematics
+        if self.config.kinematics_name is not None:
+            kinematics_config = kinematics_config_from_name(self.config.kinematics_name)
+
         validate_backend_combination(
             world_backend=self.config.world_backend,
             planner_name=self.config.planner_name,
-            kinematics_name=self.config.kinematics_name,
+            kinematics_name=kinematics_config.backend,
         )
 
         self._world_monitor = WorldMonitor(
@@ -222,7 +239,7 @@ class ManipulationModule(Module):
             world=self._world_monitor.world,
             world_backend=self.config.world_backend,
         )
-        self._kinematics = create_kinematics(name=self.config.kinematics_name)
+        self._kinematics = create_kinematics(config=kinematics_config)
 
         # Start TF publishing thread if any robot has tf_extra_links
         if any(c.tf_extra_links for _, c, _ in self._robots.values()):
@@ -462,6 +479,75 @@ class ManipulationModule(Module):
         self._world_monitor.hide_preview(robot_id)
         self._world_monitor.publish_visualization()
 
+    def _solve_ik_for_pose(
+        self,
+        robot_id: WorldRobotID,
+        pose: Pose,
+        seed: JointState,
+        check_collision: bool,
+    ) -> IKResult:
+        """Run the configured kinematics backend for a world-frame pose."""
+        assert self._world_monitor and self._kinematics
+
+        # Convert Pose to PoseStamped for the IK solver
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+
+        target_pose = PoseStamped(
+            frame_id="world",
+            position=pose.position,
+            orientation=pose.orientation,
+        )
+
+        return self._kinematics.solve(
+            world=self._world_monitor.world,
+            robot_id=robot_id,
+            target_pose=target_pose,
+            seed=seed,
+            check_collision=check_collision,
+        )
+
+    @rpc
+    def solve_ik(
+        self,
+        pose: Pose,
+        robot_name: RobotName | None = None,
+        check_collision: bool = True,
+        seed: JointState | None = None,
+    ) -> IKResult:
+        """Solve IK for a pose without planning a joint path.
+
+        Args:
+            pose: Target end-effector pose
+            robot_name: Robot to solve for (required if multiple robots configured)
+            check_collision: Whether to reject IK candidates in collision
+            seed: Optional joint state to initialize local IK. Uses current state when omitted.
+        """
+        if self._kinematics is None or self._world_monitor is None:
+            return IKResult(status=IKStatus.NO_SOLUTION, message="Planning not initialized")
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return IKResult(status=IKStatus.NO_SOLUTION, message="Robot not found")
+
+        with self._lock:
+            if self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED):
+                return IKResult(
+                    status=IKStatus.NO_SOLUTION,
+                    message=f"Cannot solve IK while state is {self._state.name}",
+                )
+            self._state = ManipulationState.PLANNING
+
+        _, robot_id, _, _ = robot
+        seed_state = seed or self._world_monitor.get_current_joint_state(robot_id)
+        if seed_state is None:
+            self._state = ManipulationState.IDLE
+            return IKResult(status=IKStatus.NO_SOLUTION, message="No joint state")
+
+        result = self._solve_ik_for_pose(robot_id, pose, seed_state, check_collision)
+        self._state = ManipulationState.COMPLETED if result.is_success() else ManipulationState.IDLE
+        if result.is_success():
+            logger.info(f"IK solved, error: {result.position_error:.4f}m")
+        return result
+
     @rpc
     def plan_to_pose(self, pose: Pose, robot_name: RobotName | None = None) -> bool:
         """Plan motion to pose. Use preview_path() then execute().
@@ -479,22 +565,7 @@ class ManipulationModule(Module):
         if current is None:
             return self._fail("No joint state")
 
-        # Convert Pose to PoseStamped for the IK solver
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-
-        target_pose = PoseStamped(
-            frame_id="world",
-            position=pose.position,
-            orientation=pose.orientation,
-        )
-
-        ik = self._kinematics.solve(
-            world=self._world_monitor.world,
-            robot_id=robot_id,
-            target_pose=target_pose,
-            seed=current,
-            check_collision=True,
-        )
+        ik = self._solve_ik_for_pose(robot_id, pose, current, check_collision=True)
         if not ik.is_success() or ik.joint_state is None:
             return self._fail(f"IK failed: {ik.status.name}")
 
