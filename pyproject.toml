@@ -527,6 +527,8 @@ module = [
     "annotation_protocol",
     "a750_control",
     "a750_control.*",
+    "booster_rpc",
+    "booster_rpc.*",
     "cyclonedds",
     "cyclonedds.*",
     "dimos_lcm.*",

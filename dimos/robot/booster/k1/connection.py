@@ -25,7 +25,7 @@ from threading import Event, Lock, Thread
 import time
 from typing import Any
 
-from booster_rpc import (  # type: ignore[import-untyped]
+from booster_rpc import (  # type: ignore[import-not-found]
     BoosterConnection,
     RobotMode,
     RpcApiId,
@@ -199,7 +199,7 @@ class BoosterRPCConnection:
         logger.info("K1 mode -> WALKING")
         time.sleep(3)
         with self._lock:
-            return self._conn.get_mode() == RobotMode.WALKING
+            return bool(self._conn.get_mode() == RobotMode.WALKING)
 
     def sit(self) -> bool:
         with self._lock:
