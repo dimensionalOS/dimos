@@ -108,11 +108,7 @@ def launch_setup(context, *args, **kwargs):
         name="joint_state_publisher",
         output="screen",
         parameters=[
-            {
-                "source_list": [
-                    f"{prefix.perform(context)}{hw_ns.perform(context)}/joint_states"
-                ]
-            }
+            {"source_list": [f"{prefix.perform(context)}{hw_ns.perform(context)}/joint_states"]}
         ],
     )
 

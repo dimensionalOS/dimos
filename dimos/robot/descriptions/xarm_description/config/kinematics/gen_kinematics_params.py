@@ -68,9 +68,7 @@ if __name__ == "__main__":
         ouput_dir = os.path.join(os.path.dirname(__file__), "user")
         if not os.path.exists(ouput_dir):
             os.makedirs(ouput_dir)
-        output_file = os.path.join(
-            ouput_dir, f"{robot_name}_kinematics_{kinematics_suffix}.yaml"
-        )
+        output_file = os.path.join(ouput_dir, f"{robot_name}_kinematics_{kinematics_suffix}.yaml")
         params = struct.unpack("<42f", recv_data[11:])
         kinematics = {}
         data = {"kinematics": kinematics}
