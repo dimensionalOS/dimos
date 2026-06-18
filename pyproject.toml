@@ -403,6 +403,8 @@ tests = [
     "python-can>=4",
     "langchain-chroma>=1,<2",
     "unitree-webrtc-connect>=2.1.2",
+    "booster-rpc>=0.0.10",
+    "websockets>=12.0",  # booster-rpc.stream_video imports websockets but doesn't declare it
 
     {include-group = "project-deps"},
 ]

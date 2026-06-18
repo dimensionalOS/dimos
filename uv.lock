@@ -2340,6 +2340,7 @@ project-deps = [
     { name = "xacro" },
 ]
 tests = [
+    { name = "booster-rpc" },
     { name = "coverage" },
     { name = "dimos", extra = ["apriltag", "cpu", "drone", "mapping", "psql", "visualization", "web"] },
     { name = "gdown" },
@@ -2379,9 +2380,11 @@ tests = [
     { name = "ultralytics" },
     { name = "unitree-webrtc-connect" },
     { name = "watchdog" },
+    { name = "websockets" },
     { name = "xacro" },
 ]
 tests-self-hosted = [
+    { name = "booster-rpc" },
     { name = "coverage" },
     { name = "dimos", extra = ["agents", "apriltag", "cpu", "drone", "manipulation", "mapping", "misc", "perception", "psql", "sim", "unitree", "visualization", "web"] },
     { name = "gdown" },
@@ -2423,6 +2426,7 @@ tests-self-hosted = [
     { name = "ultralytics" },
     { name = "unitree-webrtc-connect" },
     { name = "watchdog" },
+    { name = "websockets" },
     { name = "xacro" },
 ]
 
@@ -2619,6 +2623,7 @@ project-deps = [
     { name = "xacro" },
 ]
 tests = [
+    { name = "booster-rpc", specifier = ">=0.0.10" },
     { name = "coverage", specifier = ">=7.0" },
     { name = "dimos", extras = ["apriltag", "mapping", "psql", "drone", "cpu"] },
     { name = "dimos", extras = ["web", "visualization"] },
@@ -2659,9 +2664,11 @@ tests = [
     { name = "ultralytics", specifier = ">=8.3.70" },
     { name = "unitree-webrtc-connect", specifier = ">=2.1.2" },
     { name = "watchdog", specifier = ">=3.0.0" },
+    { name = "websockets", specifier = ">=12.0" },
     { name = "xacro" },
 ]
 tests-self-hosted = [
+    { name = "booster-rpc", specifier = ">=0.0.10" },
     { name = "coverage", specifier = ">=7.0" },
     { name = "dimos", extras = ["agents", "perception", "manipulation", "sim", "unitree", "misc"] },
     { name = "dimos", extras = ["apriltag", "mapping", "psql", "drone", "cpu"] },
@@ -2705,6 +2712,7 @@ tests-self-hosted = [
     { name = "ultralytics", specifier = ">=8.3.70" },
     { name = "unitree-webrtc-connect", specifier = ">=2.1.2" },
     { name = "watchdog", specifier = ">=3.0.0" },
+    { name = "websockets", specifier = ">=12.0" },
     { name = "xacro" },
 ]
 
