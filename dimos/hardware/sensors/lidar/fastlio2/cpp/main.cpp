@@ -403,8 +403,7 @@ int main(int argc, char** argv) {
     g_fastlio = &fast_lio;
     if (debug) printf("[fastlio2] FAST-LIO initialized.\n");
 
-    // Main-loop state. The body lives in `run_main_iter` below, driven by the
-    // wall-clock-paced main thread.
+    // Main-loop rate-limit state (consumed by the loop below).
     auto frame_interval = std::chrono::microseconds(
         static_cast<int64_t>(1e6 / g_frequency));
     const double process_period_ms = 1000.0 / main_freq;
@@ -419,7 +418,25 @@ int main(int argc, char** argv) {
     auto last_pc_publish = last_emit;
     auto last_odom_publish = last_emit;
 
-    auto run_main_iter = [&](std::chrono::steady_clock::time_point now) {
+    // The Livox SDK opens UDP sockets and dispatches via its own callback
+    // threads; the main loop below consumes what's queued.
+    if (!livox_common::init_livox_sdk(host_ip, lidar_ip, ports, debug)) {
+        return 1;
+    }
+    SetLivoxLidarPointCloudCallBack(on_point_cloud, nullptr);
+    SetLivoxLidarImuDataCallback(on_imu_data, nullptr);
+    SetLivoxLidarInfoChangeCallback(on_info_change, nullptr);
+    if (!LivoxLidarSdkStart()) {
+        fprintf(stderr, "Error: LivoxLidarSdkStart failed\n");
+        LivoxLidarSdkUninit();
+        return 1;
+    }
+    if (debug) printf("[fastlio2] SDK started, waiting for device...\n");
+
+    while (g_running.load()) {
+        auto loop_start = std::chrono::high_resolution_clock::now();
+        auto now = std::chrono::steady_clock::now();
+
         // At frame rate, drain accumulated raw points into a CustomMsg and feed
         // FAST-LIO. Hold g_pc_mutex across the rate-limit check + swap so a
         // callback can't slip a packet in between the decision and the swap.
@@ -427,14 +444,13 @@ int main(int argc, char** argv) {
         uint64_t frame_start = 0;
         {
             std::lock_guard<std::mutex> lock(g_pc_mutex);
-            auto check_now = now;
-            if (check_now - last_emit >= frame_interval) {
+            if (now - last_emit >= frame_interval) {
                 if (!g_accumulated_points.empty()) {
                     points.swap(g_accumulated_points);
                     frame_start = g_frame_start_ns;
                     g_frame_has_timestamp = false;
                 }
-                last_emit = check_now;
+                last_emit = now;
             }
         }
         if (!points.empty()) {
@@ -478,26 +494,6 @@ int main(int argc, char** argv) {
                 last_odom_publish = now;
             }
         }
-    };
-
-    // The Livox SDK opens UDP sockets and dispatches via its own callback
-    // threads; the main thread drives run_main_iter, consuming what's queued.
-    if (!livox_common::init_livox_sdk(host_ip, lidar_ip, ports, debug)) {
-        return 1;
-    }
-    SetLivoxLidarPointCloudCallBack(on_point_cloud, nullptr);
-    SetLivoxLidarImuDataCallback(on_imu_data, nullptr);
-    SetLivoxLidarInfoChangeCallback(on_info_change, nullptr);
-    if (!LivoxLidarSdkStart()) {
-        fprintf(stderr, "Error: LivoxLidarSdkStart failed\n");
-        LivoxLidarSdkUninit();
-        return 1;
-    }
-    if (debug) printf("[fastlio2] SDK started, waiting for device...\n");
-
-    while (g_running.load()) {
-        auto loop_start = std::chrono::high_resolution_clock::now();
-        run_main_iter(std::chrono::steady_clock::now());
 
         // Drain LCM messages.
         lcm.handleTimeout(0);
