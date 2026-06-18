@@ -79,7 +79,7 @@ class BoosterRPCConnection:
     """
 
     cmd_vel_timeout = 0.5  # dead-man: send zero if no new command within this window (s)
-    send_hz = 30.0         # command rate to the robot — kept under the ~58/sec move ceiling
+    send_hz = 30.0  # command rate to the robot — kept under the ~58/sec move ceiling
 
     def __init__(self, ip: str) -> None:
         self._conn = BoosterConnection(ip=ip)

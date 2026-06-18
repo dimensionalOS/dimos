@@ -83,6 +83,6 @@ booster_k1_basic = autoconnect(
 ).global_config(n_workers=4, robot_model="booster_k1")
 
 __all__ = [
-    "rerun_config",
     "booster_k1_basic",
+    "rerun_config",
 ]
