@@ -4,8 +4,9 @@
 // FAST-LIO2 + Livox Mid-360 native module for dimos NativeModule framework.
 //
 // Binds Livox SDK2 directly into FAST-LIO-NON-ROS: SDK callbacks feed
-// CustomMsg/Imu to FastLio, which performs EKF-LOAM SLAM.  Registered
-// (world-frame) point clouds and odometry are published on LCM.
+// CustomMsg/Imu to FastLio, which performs EKF-LOAM SLAM.  Sensor/body-frame
+// point clouds and odometry are published on LCM (consumers register the cloud
+// via the odometry pose).
 //
 // Usage:
 //   ./fastlio2_native \
@@ -89,7 +90,7 @@ static uint64_t get_timestamp_ns(const LivoxLidarEthernetPacket* pkt) {
 using dimos::time_from_seconds;
 using dimos::make_header;
 
-// Publish lidar (world-frame point cloud)
+// Publish lidar (sensor/body-frame point cloud)
 
 static void publish_lidar(PointCloudXYZI::Ptr cloud, double timestamp,
                           const std::string& topic = "") {
@@ -99,7 +100,8 @@ static void publish_lidar(PointCloudXYZI::Ptr cloud, double timestamp,
     int num_points = static_cast<int>(cloud->size());
 
     sensor_msgs::PointCloud2 pc;
-    pc.header = make_header(g_frame_id, timestamp);
+    // Cloud is in the sensor/body frame (the odometry child frame), not world.
+    pc.header = make_header(g_child_frame_id, timestamp);
     pc.height = 1;
     pc.width = num_points;
     pc.is_bigendian = 0;
@@ -440,11 +442,12 @@ int main(int argc, char** argv) {
         auto pose = fast_lio.get_pose();
         if (!pose.empty() && (pose[0] != 0.0 || pose[1] != 0.0 || pose[2] != 0.0)) {
             double ts = get_publish_ts();
-            auto world_cloud = fast_lio.get_world_cloud();
-            if (world_cloud && !world_cloud->empty()) {
-                // World-frame cloud at pointcloud_freq, published as-is (no downsampling).
+            auto body_cloud = fast_lio.get_body_cloud();
+            if (body_cloud && !body_cloud->empty()) {
+                // Sensor/body-frame cloud at pointcloud_freq, published as-is (no
+                // downsampling). Consumers register it via the odometry pose.
                 if (!g_lidar_topic.empty() && now - *last_pc_publish >= pc_interval) {
-                    publish_lidar(world_cloud, ts);
+                    publish_lidar(body_cloud, ts);
                     last_pc_publish = now;
                 }
             }

@@ -66,6 +66,18 @@
 
         livox-common = ../../common;
 
+        # Patch the pinned FAST-LIO source to add get_body_cloud() (returns the
+        # undistorted scan in the LiDAR/sensor frame) so the module can publish
+        # sensor-frame clouds instead of world-registered ones.
+        fastlioSrc = pkgs.stdenv.mkDerivation {
+          name = "fast-lio-src-patched";
+          src = fast-lio;
+          patches = [ ./fast-lio-body-cloud.patch ];
+          dontConfigure = true;
+          dontBuild = true;
+          installPhase = "cp -r . $out";
+        };
+
         fastlio2_native = pkgs.stdenv.mkDerivation {
           pname = "fastlio2_native";
           version = "0.2.0";
@@ -87,7 +99,7 @@
           cmakeFlags = [
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
             "-DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM=${dimos-lcm}"
-            "-DFASTLIO_DIR=${fast-lio}"
+            "-DFASTLIO_DIR=${fastlioSrc}"
             "-DLIVOX_COMMON_DIR=${livox-common}"
           ];
         };

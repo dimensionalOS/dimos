@@ -1,0 +1,30 @@
+diff --git a/src/fast_lio.hpp b/src/fast_lio.hpp
+index a835e26..9237e50 100644
+--- a/src/fast_lio.hpp
++++ b/src/fast_lio.hpp
+@@ -16,6 +16,7 @@ public:
+     std::vector<double> get_pose();
+     const custom_messages::Odometry& get_odometry() const { return *odom_result; }
+     PointCloudXYZI::Ptr get_world_cloud() const { return laser_mapping->get_world_cloud(); }
++    PointCloudXYZI::Ptr get_body_cloud() const { return laser_mapping->get_body_cloud(); }
+     void write_to_file(const std::vector<double> &pose);
+     void write_to_file(const double &time);
+ private:
+diff --git a/src/laserMapping.hpp b/src/laserMapping.hpp
+index 561dae0..254c6c5 100644
+--- a/src/laserMapping.hpp
++++ b/src/laserMapping.hpp
+@@ -81,6 +81,13 @@ public:
+         return cloud;
+     }
+ 
++    /** Return the full undistorted scan in the LiDAR/sensor frame (no world
++     *  registration). */
++    PointCloudXYZI::Ptr get_body_cloud() const {
++        if (!feats_undistort || feats_undistort->empty()) return nullptr;
++        return PointCloudXYZI::Ptr(new PointCloudXYZI(*feats_undistort));
++    }
++
+ private:
+     void pointBodyToWorld_ikfom(PointType const * const pi, PointType * const po, state_ikfom &s);
+     void pointBodyToWorld(PointType const * const pi, PointType * const po);

@@ -65,6 +65,20 @@ _STARTUP_TIMEOUT_SEC = 60.0
 # Extra seconds past the pcap's own duration before auto-stopping, when no
 # explicit --max-sensor-sec is given.
 _DRAIN_MARGIN_SEC = 4.0
+# Max |Δts| to match a lidar frame to an odometry pose when aggregating the .rrd.
+_POSE_MATCH_TOL = 0.1
+
+
+def _quat_to_rot(qx: float, qy: float, qz: float, qw: float) -> Any:
+    import numpy as np
+
+    return np.array(
+        [
+            [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
+            [2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)],
+            [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)],
+        ]
+    )
 
 
 def _pcap_sensor_span(pcap_path: Path) -> float:
@@ -109,13 +123,12 @@ def _odom_stats(db_path: Path, table: str) -> tuple[int, float, float]:
 
 
 def _write_rrd(db_path: Path, odom_stream: str, lidar_stream: str, voxel: float) -> Path | None:
-    """Aggregate the recorded lidar plus the pose path into a ``.rrd`` next to the
-    db, for a quick look.
+    """Aggregate the recorded lidar (registered into world via the nearest
+    odometry pose) plus the pose path into a ``.rrd`` next to the db.
 
-    FastLio2 already publishes its cloud registered into the world frame, so each
-    frame is aggregated as-is (no per-frame pose transform) then voxel-deduped.
-    Best-effort: any failure is non-fatal to the recording. Returns the .rrd path,
-    or None."""
+    FastLio2 publishes its cloud in the sensor/body frame, so each frame is
+    transformed to world by its pose here, then voxel-deduped. Best-effort: any
+    failure is non-fatal to the recording. Returns the .rrd path, or None."""
     import numpy as np
     import rerun as rr
 
@@ -129,6 +142,7 @@ def _write_rrd(db_path: Path, odom_stream: str, lidar_stream: str, voxel: float)
         odom = list(store.stream(odom_stream, Odometry).order_by("ts"))
         if not odom:
             return None
+        ots = np.array([o.ts for o in odom])
         opos = np.array(
             [
                 [
@@ -139,14 +153,29 @@ def _write_rrd(db_path: Path, odom_stream: str, lidar_stream: str, voxel: float)
                 for o in odom
             ]
         )
+        oquat = np.array(
+            [
+                [
+                    o.data.pose.pose.orientation.x,
+                    o.data.pose.pose.orientation.y,
+                    o.data.pose.pose.orientation.z,
+                    o.data.pose.pose.orientation.w,
+                ]
+                for o in odom
+            ]
+        )
         chunks: list[Any] = []
         for lid in store.stream(lidar_stream, PointCloud2).order_by("ts"):
+            j = int(np.argmin(np.abs(ots - lid.ts)))
+            if abs(ots[j] - lid.ts) > _POSE_MATCH_TOL:
+                continue
             pts = np.asarray(lid.data.as_numpy()[0])[:, :3].astype(np.float64)
             if pts.shape[0] == 0:
                 continue
+            world = pts @ _quat_to_rot(*oquat[j]).T + opos[j]
             # Per-frame voxel-dedup to bound memory before the global merge.
-            _, idx = np.unique(np.floor(pts / voxel).astype(np.int64), axis=0, return_index=True)
-            chunks.append(pts[idx])
+            _, idx = np.unique(np.floor(world / voxel).astype(np.int64), axis=0, return_index=True)
+            chunks.append(world[idx])
         if not chunks:
             return None
         allpts = np.concatenate(chunks)

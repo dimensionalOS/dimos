@@ -104,7 +104,12 @@ class TfRecorder(Recorder):
         tf_stream = self.store.stream("tf", TFMessage)
 
         def on_tf(msg: TFMessage, _topic: object) -> None:
-            for transform in msg.transforms:
-                tf_stream.append(TFMessage(transform), ts=transform.ts, pose=None)
+            try:
+                for transform in msg.transforms:
+                    tf_stream.append(TFMessage(transform), ts=transform.ts, pose=None)
+            except Exception:
+                # A late LCM callback during teardown can hit an already-closed
+                # store; tf is a best-effort quick-look stream, so drop it.
+                pass
 
         self.register_disposable(Disposable(self.tf.pubsub.subscribe(topic, on_tf)))
