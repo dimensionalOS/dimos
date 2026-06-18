@@ -25,21 +25,17 @@ Usage::
         SomeConsumer.blueprint(),
     )).loop()
 
-Point-LIO tuning lives directly on ``PointLioConfig`` (no YAML files). On
-``start()`` the fields are rendered to a throwaway YAML that the C++ binary reads
-via ``--config_path``.
+Point-LIO tuning lives directly on ``PointLioConfig`` and is passed to the C++
+binary as plain CLI args (no YAML).
 """
 
 from __future__ import annotations
 
 import os
-from pathlib import Path
-import tempfile
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field
 from reactivex.disposable import Disposable
-import yaml
 
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
@@ -65,72 +61,14 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.nav_stack.frames import FRAME_ODOM
 from dimos.spec import perception
 
-# Point-LIO encodes these as ints/codes; expose human-readable names and translate.
-# LID_TYPE enum (Point-LIO src/preprocess.h). 1 = AVIA selects the Livox branch
+# Human-readable enums; the C++ binary (main.cpp) maps these strings to
+# Point-LIO's int codes.
+# LID_TYPE enum (Point-LIO src/preprocess.h). avia = 1 selects the Livox branch
 # the Mid-360 emits.
 LidarType = Literal["avia", "velodyne", "ouster", "hesai", "unilidar"]
-_LIDAR_TYPE_CODE = {"avia": 1, "velodyne": 2, "ouster": 3, "hesai": 4, "unilidar": 5}
-
 TimestampUnit = Literal["second", "millisecond", "microsecond", "nanosecond"]
-_TIMESTAMP_UNIT_CODE = {"second": 0, "millisecond": 1, "microsecond": 2, "nanosecond": 3}
-
 # iVox local-map neighbour stencil.
 IvoxNearbyType = Literal["center", "nearby6", "nearby18", "nearby26"]
-_IVOX_NEARBY_CODE = {"center": 0, "nearby6": 6, "nearby18": 18, "nearby26": 26}
-
-# Field name -> Point-LIO YAML (section, key). Only these fields are rendered into
-# the generated config; everything else on PointLioConfig is module plumbing.
-_YAML_LAYOUT: dict[str, tuple[str, str]] = {
-    "con_frame": ("common", "con_frame"),
-    "con_frame_num": ("common", "con_frame_num"),
-    "cut_frame": ("common", "cut_frame"),
-    "cut_frame_time_interval": ("common", "cut_frame_time_interval"),
-    "time_lag_imu_to_lidar": ("common", "time_lag_imu_to_lidar"),
-    "lidar_type": ("preprocess", "lidar_type"),
-    "scan_line": ("preprocess", "scan_line"),
-    "scan_rate": ("preprocess", "scan_rate"),
-    "timestamp_unit": ("preprocess", "timestamp_unit"),
-    "blind": ("preprocess", "blind"),
-    "point_filter_num": ("preprocess", "point_filter_num"),
-    "use_imu_as_input": ("mapping", "use_imu_as_input"),
-    "prop_at_freq_of_imu": ("mapping", "prop_at_freq_of_imu"),
-    "check_satu": ("mapping", "check_satu"),
-    "init_map_size": ("mapping", "init_map_size"),
-    "space_down_sample": ("mapping", "space_down_sample"),
-    "satu_acc": ("mapping", "satu_acc"),
-    "satu_gyro": ("mapping", "satu_gyro"),
-    "acc_norm": ("mapping", "acc_norm"),
-    "plane_thr": ("mapping", "plane_thr"),
-    "filter_size_surf": ("mapping", "filter_size_surf"),
-    "filter_size_map": ("mapping", "filter_size_map"),
-    "ivox_grid_resolution": ("mapping", "ivox_grid_resolution"),
-    "ivox_nearby_type": ("mapping", "ivox_nearby_type"),
-    "cube_side_length": ("mapping", "cube_side_length"),
-    "det_range": ("mapping", "det_range"),
-    "fov_degree": ("mapping", "fov_degree"),
-    "imu_en": ("mapping", "imu_en"),
-    "start_in_aggressive_motion": ("mapping", "start_in_aggressive_motion"),
-    "extrinsic_est_en": ("mapping", "extrinsic_est_en"),
-    "imu_time_inte": ("mapping", "imu_time_inte"),
-    "lidar_meas_cov": ("mapping", "lidar_meas_cov"),
-    "acc_cov_input": ("mapping", "acc_cov_input"),
-    "vel_cov": ("mapping", "vel_cov"),
-    "gyr_cov_input": ("mapping", "gyr_cov_input"),
-    "gyr_cov_output": ("mapping", "gyr_cov_output"),
-    "acc_cov_output": ("mapping", "acc_cov_output"),
-    "b_gyr_cov": ("mapping", "b_gyr_cov"),
-    "b_acc_cov": ("mapping", "b_acc_cov"),
-    "imu_meas_acc_cov": ("mapping", "imu_meas_acc_cov"),
-    "imu_meas_omg_cov": ("mapping", "imu_meas_omg_cov"),
-    "match_s": ("mapping", "match_s"),
-    "gravity_align": ("mapping", "gravity_align"),
-    "gravity": ("mapping", "gravity"),
-    "gravity_init": ("mapping", "gravity_init"),
-    "extrinsic_t": ("mapping", "extrinsic_T"),
-    "extrinsic_r": ("mapping", "extrinsic_R"),
-    "publish_odometry_without_downsample": ("odometry", "publish_odometry_without_downsample"),
-    "odom_only": ("odometry", "odom_only"),
-}
 
 
 class PointLioConfig(NativeModuleConfig):
@@ -158,7 +96,7 @@ class PointLioConfig(NativeModuleConfig):
 
     debug: bool = False
 
-    # Point-LIO tuning, rendered to the generated YAML (see _YAML_LAYOUT).
+    # Point-LIO tuning, passed to the binary as plain CLI args (read in main.cpp).
     # common
     con_frame: bool = False
     con_frame_num: int = 1
@@ -227,22 +165,9 @@ class PointLioConfig(NativeModuleConfig):
     host_imu_data_port: int = SDK_HOST_IMU_DATA_PORT
     host_log_data_port: int = SDK_HOST_LOG_DATA_PORT
 
-    # Set in start() to the generated YAML; passed as --config_path to the binary.
-    config_path: str | None = None
-
-    # Point-LIO tuning fields feed the generated YAML, not CLI args.
-    cli_exclude: frozenset[str] = frozenset({"body_start_frame_id", *_YAML_LAYOUT})
-
-    def render_config_yaml(self) -> str:
-        """Render the Point-LIO tuning fields to YAML text the C++ binary reads."""
-        doc: dict[str, dict[str, Any]] = {}
-        for field, (section, key) in _YAML_LAYOUT.items():
-            doc.setdefault(section, {})[key] = getattr(self, field)
-        # Enum-like strings -> Point-LIO int codes.
-        doc["preprocess"]["lidar_type"] = _LIDAR_TYPE_CODE[self.lidar_type]
-        doc["preprocess"]["timestamp_unit"] = _TIMESTAMP_UNIT_CODE[self.timestamp_unit]
-        doc["mapping"]["ivox_nearby_type"] = _IVOX_NEARBY_CODE[self.ivox_nearby_type]
-        return yaml.safe_dump(doc, sort_keys=False, default_flow_style=False)
+    # body_start_frame_id anchors the published TF in Python only; it's not a
+    # binary arg. Everything else (tuning included) renders to a CLI arg.
+    cli_exclude: frozenset[str] = frozenset({"body_start_frame_id"})
 
 
 class PointLio(NativeModule, perception.Lidar, perception.Odometry):
@@ -251,24 +176,13 @@ class PointLio(NativeModule, perception.Lidar, perception.Odometry):
     lidar: Out[PointCloud2]
     odometry: Out[Odometry]
 
-    _config_file: str | None = None
-
     @rpc
     def start(self) -> None:
         self._validate_network()
-        self._write_config()
         super().start()
         self.register_disposable(
             Disposable(self.odometry.transport.subscribe(self._on_odom_for_tf, self.odometry))
         )
-
-    def _write_config(self) -> None:
-        """Render the config fields to a temp YAML and point the binary at it."""
-        fd, path = tempfile.mkstemp(prefix="pointlio_", suffix=".yaml")
-        with os.fdopen(fd, "w") as f:
-            f.write(self.config.render_config_yaml())
-        self._config_file = path
-        self.config.config_path = path
 
     def _on_odom_for_tf(self, msg: Odometry) -> None:
         self.tf.publish(
@@ -295,9 +209,6 @@ class PointLio(NativeModule, perception.Lidar, perception.Odometry):
     @rpc
     def stop(self) -> None:
         super().stop()
-        if self._config_file is not None:
-            Path(self._config_file).unlink(missing_ok=True)
-            self._config_file = None
 
     def _validate_network(self) -> None:
         lidar_ip = self.config.lidar_ip
