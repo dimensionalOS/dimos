@@ -13,27 +13,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Booster K1 ControlCoordinator — basic blueprint + coordinator via LCM transport adapter.
+"""Booster K1 ControlCoordinator: basic blueprint + coordinator via the LCM transport adapter.
 
-Like unitree_go2_coordinator, a holonomic twist base (vx, vy, wz) is driven through
-ControlCoordinator's velocity task and the `transport_lcm` adapter, which republishes
-the base velocity on /booster_k1/cmd_vel for the connection to consume. The K1 has no
-odometry, so (unlike the Go2) there is no odom wiring.
-
-This builds on `booster_k1_basic` (not bare K1Connection), so it carries the rerun
-viewer + camera. Both viewer-side WASD surfaces (the dimos-viewer hovering overlay via
-RerunWebSocketServer, and the Dashboard via WebsocketVisModule) are remapped from their
-dead-end `tele_cmd_vel` onto `/cmd_vel`, which the coordinator's twist_command consumes.
-So you can drive the bot through the coordinator straight from the rerun window, and
-watch the camera, in one launch. Layer KeyboardTeleop on top for a pygame window too —
-see booster_k1_coordinator_keyboard_teleop.
+Like unitree_go2_coordinator, a twist base (vx, vy, wz) is driven through the
+ControlCoordinator velocity task and the `transport_lcm` adapter (which republishes base
+velocity on /booster_k1/cmd_vel). The K1 reports no odometry, so there is no odom wiring.
+Built on `booster_k1_basic`, so it carries the rerun viewer + camera; the viewer-side WASD
+surfaces (tele_cmd_vel) are remapped onto /cmd_vel to feed the coordinator's twist_command.
+Add KeyboardTeleop for a pygame window (booster_k1_coordinator_keyboard_teleop).
 
 Control path:
-    hovering WASD / Dashboard / pygame -> /cmd_vel -> Coordinator.twist_command
-        -> velocity task -> transport_lcm adapter -> /booster_k1/cmd_vel -> K1Connection.move()
+    WASD -> /cmd_vel -> Coordinator.twist_command -> velocity task
+        -> transport_lcm adapter -> /booster_k1/cmd_vel -> K1Connection.move()
 
 Usage:
-    dimos --robot-ip <ip> --viewer rerun --rerun-open native run booster-k1-coordinator
+    dimos --robot-ip <ip> --viewer rerun run booster-k1-coordinator
 """
 
 from __future__ import annotations
