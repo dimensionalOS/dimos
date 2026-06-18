@@ -25,20 +25,13 @@ from datetime import datetime
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.transport import LCMTransport, pLCMTransport
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.learning.collection.episode_monitor import (
-    EpisodeMonitorModule,
-    EpisodeStatus,
-)
+from dimos.learning.collection.episode_monitor import EpisodeMonitorModule
 from dimos.learning.collection.recorder import CollectionRecorder
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.teleop.quest.blueprints import (
     teleop_quest_piper,
     teleop_quest_xarm7,
 )
-from dimos.teleop.quest.quest_types import Buttons
 
 
 def _session_db(robot: str) -> str:
@@ -55,21 +48,14 @@ def _camera_if_real() -> tuple[Blueprint, ...]:
     return (RealSenseCamera.blueprint(enable_pointcloud=False),)
 
 
-# Transports inline per blueprint so each recording config is self-contained.
-# joint_state is declared explicitly (not left to autoconnect) so it keeps
-# recording if the recorder moves to its own process.
+# buttons / color_image / joint_state / status are left to autoconnect — each
+# name is unique across the composed blueprint, so it resolves to a stable
+# /<name> topic shared by producer and recorder.
 learning_collect_quest_xarm7 = autoconnect(
     teleop_quest_xarm7,
     *_camera_if_real(),
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
     CollectionRecorder.blueprint(db_path=_session_db("xarm7")),
-).transports(
-    {
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
-        ("color_image", Image): LCMTransport("/camera/color_image", Image),
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("status", EpisodeStatus): pLCMTransport("/learning/episode_status"),
-    }
 )
 
 
@@ -78,13 +64,6 @@ learning_collect_quest_piper = autoconnect(
     *_camera_if_real(),
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
     CollectionRecorder.blueprint(db_path=_session_db("piper")),
-).transports(
-    {
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
-        ("color_image", Image): LCMTransport("/camera/color_image", Image),
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("status", EpisodeStatus): pLCMTransport("/learning/episode_status"),
-    }
 )
 
 
