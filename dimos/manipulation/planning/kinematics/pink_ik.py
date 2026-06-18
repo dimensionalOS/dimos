@@ -26,6 +26,11 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
+from dimos.manipulation.planning.planning_group_utils import (
+    filter_joint_state_to_selected_joints,
+    matching_resolved_joint_name,
+    planning_group_id_from_selector,
+)
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus
 from dimos.manipulation.planning.spec.models import (
@@ -185,8 +190,12 @@ class PinkIK:
         if not pose_targets:
             return _failure(IKStatus.NO_SOLUTION, "At least one pose target is required")
 
-        pose_group_ids = tuple(_selector_id(group) for group in pose_targets.keys())
-        auxiliary_group_ids = tuple(_selector_id(group) for group in auxiliary_groups)
+        pose_group_ids = tuple(
+            planning_group_id_from_selector(group) for group in pose_targets.keys()
+        )
+        auxiliary_group_ids = tuple(
+            planning_group_id_from_selector(group) for group in auxiliary_groups
+        )
         selected_group_ids = pose_group_ids + auxiliary_group_ids
         try:
             resolved_groups = world.resolve_planning_groups(selected_group_ids)
@@ -259,7 +268,7 @@ class PinkIK:
                 selected_joint_names.extend(group.joint_names)
                 selected_local_names.extend(group.local_joint_names)
             try:
-                result.joint_state = _filter_and_resolve_joint_state(
+                result.joint_state = filter_joint_state_to_selected_joints(
                     result.joint_state,
                     selected_joint_names,
                     selected_local_names,
@@ -553,7 +562,7 @@ def _seed_positions_for_mapping(seed: JointState, mapping: _JointMapping) -> NDA
             elif model_name in positions_by_name:
                 values.append(float(positions_by_name[model_name]))
             elif (
-                resolved_name := _matching_resolved_name(positions_by_name, dimos_name)
+                resolved_name := matching_resolved_joint_name(positions_by_name, dimos_name)
             ) is not None:
                 values.append(float(positions_by_name[resolved_name]))
             else:
@@ -565,42 +574,6 @@ def _seed_positions_for_mapping(seed: JointState, mapping: _JointMapping) -> NDA
             f"Seed has {len(seed.position)} positions for {len(mapping.dimos_joint_names)} joints"
         )
     return np.array(seed.position, dtype=np.float64)
-
-
-def _selector_id(selector: PlanningGroupID | PlanningGroupDescriptor) -> PlanningGroupID:
-    if isinstance(selector, PlanningGroupDescriptor):
-        return selector.id
-    return selector
-
-
-def _matching_resolved_name(
-    positions_by_name: Mapping[str, float], local_joint_name: str
-) -> str | None:
-    suffix = f"/{local_joint_name}"
-    matches = [name for name in positions_by_name if name.endswith(suffix)]
-    if len(matches) == 1:
-        return matches[0]
-    return None
-
-
-def _filter_and_resolve_joint_state(
-    joint_state: JointState,
-    resolved_joint_names: list[str],
-    local_joint_names: list[str],
-) -> JointState:
-    if len(resolved_joint_names) != len(local_joint_names):
-        raise ValueError("Resolved and local selected joint lists must have the same length")
-
-    positions_by_name = dict(zip(joint_state.name, joint_state.position, strict=True))
-    selected_positions: list[float] = []
-    for resolved_name, local_name in zip(resolved_joint_names, local_joint_names, strict=True):
-        if resolved_name in positions_by_name:
-            selected_positions.append(float(positions_by_name[resolved_name]))
-        elif local_name in positions_by_name:
-            selected_positions.append(float(positions_by_name[local_name]))
-        else:
-            raise ValueError(f"IK result is missing selected joint '{resolved_name}'")
-    return JointState({"name": resolved_joint_names, "position": selected_positions})
 
 
 def _matrix_to_se3(pinocchio: ModuleType, matrix: NDArray[np.float64]) -> Any:

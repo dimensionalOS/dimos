@@ -28,6 +28,7 @@ from collections.abc import Mapping, Sequence
 from enum import Enum
 import threading
 import time
+import traceback
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 import numpy as np
@@ -46,7 +47,7 @@ from dimos.manipulation.planning.kinematics.config import (
     kinematics_config_from_name,
 )
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
-from dimos.manipulation.planning.names import to_resolved_joint_name
+from dimos.manipulation.planning.planning_identifiers import make_resolved_joint_name
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType
 from dimos.manipulation.planning.spec.models import (
@@ -66,7 +67,9 @@ from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator
 )
 from dimos.manipulation.skill_errors import ManipulationSkillError
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -318,14 +321,10 @@ class ManipulationModule(Module):
 
         except Exception as e:
             logger.error(f"Exception in _on_joint_state: {e}")
-            import traceback
-
             logger.error(traceback.format_exc())
 
     def _tf_publish_loop(self) -> None:
         """Publish TF transforms at 10Hz for EE and extra links."""
-        from dimos.msgs.geometry_msgs.Transform import Transform
-
         period = 0.1  # 10Hz
         while not self._tf_stop_event.is_set():
             try:
@@ -576,7 +575,7 @@ class ManipulationModule(Module):
         """
         robot_id, config, _ = self._robots[robot_name]
         resolved_joint_names = [
-            to_resolved_joint_name(robot_name, joint) for joint in config.joint_names
+            make_resolved_joint_name(robot_name, joint) for joint in config.joint_names
         ]
         current_by_name: dict[str, float] = {}
         if self._world_monitor is not None:
@@ -728,9 +727,6 @@ class ManipulationModule(Module):
         """Run the configured kinematics backend for a world-frame pose."""
         assert self._world_monitor and self._kinematics
 
-        # Convert Pose to PoseStamped for the IK solver
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-
         target_pose = PoseStamped(
             frame_id="world",
             position=pose.position,
@@ -804,9 +800,6 @@ class ManipulationModule(Module):
         if current is None:
             return self._fail("No joint state")
 
-        # Convert Pose to PoseStamped for the IK solver
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-
         target_pose = PoseStamped(
             frame_id="world",
             position=pose.position,
@@ -853,8 +846,6 @@ class ManipulationModule(Module):
                 logger.warning(f"Cannot plan: state is {self._state.name}")
                 return False
             self._state = ManipulationState.PLANNING
-
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
         stamped_targets = {
             self._normalize_group_selector(group): PoseStamped(
@@ -1419,9 +1410,6 @@ class ManipulationModule(Module):
         if obstacle_type == ObstacleType.MESH and not mesh_path:
             logger.warning("mesh_path required for mesh obstacles")
             return ""
-
-        # Import PoseStamped here to avoid circular imports
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
         obstacle = Obstacle(
             name=name,

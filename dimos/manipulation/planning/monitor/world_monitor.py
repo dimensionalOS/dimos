@@ -26,6 +26,7 @@ from dimos.manipulation.planning.monitor.robot_state_monitor import RobotStateMo
 from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
@@ -358,19 +359,11 @@ class WorldMonitor:
     def get_ee_pose(
         self, robot_id: WorldRobotID, joint_state: JointState | None = None
     ) -> PoseStamped:
-        """Get end-effector pose. Uses current state if joint_state is None.
-
-        Deprecated: use get_group_pose() with an explicit planning group ID.
-        """
-        with self._world.scratch_context() as ctx:
-            # If no state provided, fetch current from state monitor
-            if joint_state is None:
-                joint_state = self.get_current_joint_state(robot_id)
-
-            if joint_state is not None:
-                self._world.set_joint_state(ctx, robot_id, joint_state)
-
-            return self._world.get_ee_pose(ctx, robot_id)
+        """Get end-effector pose for the robot's unique pose-targetable group."""
+        return self.get_group_pose(
+            self._unique_pose_group_id_for_robot(robot_id),
+            joint_state=joint_state,
+        )
 
     def get_group_pose(
         self, group_id: PlanningGroupID, joint_state: JointState | None = None
@@ -395,8 +388,6 @@ class WorldMonitor:
             link_name: Name of the link in the URDF
             joint_state: Joint state to use (uses current if None)
         """
-        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-
         with self._world.scratch_context() as ctx:
             if joint_state is None:
                 joint_state = self.get_current_joint_state(robot_id)
@@ -418,13 +409,11 @@ class WorldMonitor:
             )
 
     def get_jacobian(self, robot_id: WorldRobotID, joint_state: JointState) -> NDArray[np.float64]:
-        """Get robot-scoped 6xN Jacobian matrix.
-
-        Deprecated: use get_group_jacobian() with an explicit planning group ID.
-        """
-        with self._world.scratch_context() as ctx:
-            self._world.set_joint_state(ctx, robot_id, joint_state)
-            return self._world.get_jacobian(ctx, robot_id)
+        """Get 6xN Jacobian for the robot's unique pose-targetable group."""
+        return self.get_group_jacobian(
+            self._unique_pose_group_id_for_robot(robot_id),
+            joint_state=joint_state,
+        )
 
     def get_group_jacobian(
         self, group_id: PlanningGroupID, joint_state: JointState
@@ -434,6 +423,20 @@ class WorldMonitor:
         with self._world.scratch_context() as ctx:
             self._world.set_joint_state(ctx, group.robot_id, joint_state)
             return self._world.get_group_jacobian(ctx, group_id)
+
+    def _unique_pose_group_id_for_robot(self, robot_id: WorldRobotID) -> PlanningGroupID:
+        robot_name = self._world.get_robot_config(robot_id).name
+        pose_group_ids = [
+            group.id
+            for group in self._world.list_planning_groups()
+            if group.robot_name == robot_name and group.has_pose_target
+        ]
+        if len(pose_group_ids) != 1:
+            raise ValueError(
+                f"Robot '{robot_name}' has {len(pose_group_ids)} pose-targetable planning groups; "
+                "call get_group_pose/get_group_jacobian with an explicit planning group ID"
+            )
+        return pose_group_ids[0]
 
     # Lifecycle
 

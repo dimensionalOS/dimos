@@ -22,7 +22,6 @@ style used by the navigation stack.
 from __future__ import annotations
 
 from collections.abc import Callable
-import importlib.util
 import time
 from typing import Any
 
@@ -40,10 +39,6 @@ pytestmark = [pytest.mark.self_hosted_large]
 
 JOINT_STATE_TOPIC = "/coordinator/joint_state#sensor_msgs.JointState"
 BLUEPRINT = "openarm-mock-planner-coordinator"
-
-
-def _drake_available() -> bool:
-    return importlib.util.find_spec("pydrake") is not None
 
 
 def _wait_for_robot_info(
@@ -150,7 +145,6 @@ def _start_openarm_mock_planner(
     lcm_spy.wait_for_saved_topic(JOINT_STATE_TOPIC, timeout=120.0)
 
 
-@pytest.mark.skipif(not _drake_available(), reason="Drake not installed")
 def test_single_arm_plans_and_executes_through_control_coordinator(
     lcm_spy: LcmSpy,
     start_blueprint: Callable[..., DimosCliCall],
@@ -180,7 +174,6 @@ def test_single_arm_plans_and_executes_through_control_coordinator(
         client.stop_rpc_client()
 
 
-@pytest.mark.skipif(not _drake_available(), reason="Drake not installed")
 def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
     lcm_spy: LcmSpy,
     start_blueprint: Callable[..., DimosCliCall],

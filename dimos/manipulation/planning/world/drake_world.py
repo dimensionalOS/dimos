@@ -25,12 +25,12 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.manipulation.planning.names import (
-    split_planning_group_id,
-    strip_resolved_joint_name,
-    to_planning_group_id,
-    to_resolved_joint_name,
-    to_resolved_joint_names,
+from dimos.manipulation.planning.planning_identifiers import (
+    local_joint_name_from_resolved,
+    make_planning_group_id,
+    make_resolved_joint_name,
+    make_resolved_joint_names,
+    parse_planning_group_id,
 )
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
@@ -356,10 +356,12 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             for group in config.planning_groups:
                 descriptors.append(
                     PlanningGroupDescriptor(
-                        id=to_planning_group_id(config.name, group.name),
+                        id=make_planning_group_id(config.name, group.name),
                         robot_name=config.name,
                         group_name=group.name,
-                        joint_names=tuple(to_resolved_joint_names(config.name, group.joint_names)),
+                        joint_names=tuple(
+                            make_resolved_joint_names(config.name, group.joint_names)
+                        ),
                         local_joint_names=group.joint_names,
                         base_link=group.base_link,
                         tip_link=group.tip_link,
@@ -376,7 +378,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         seen_joints: dict[str, PlanningGroupID] = {}
 
         for group_id in group_ids:
-            robot_name, group_name = split_planning_group_id(group_id)
+            robot_name, group_name = parse_planning_group_id(group_id)
             robot_data = self._get_robot_data_by_name(robot_name)
             group = next(
                 (
@@ -390,7 +392,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                 raise KeyError(f"Unknown planning group ID: {group_id}")
 
             resolved_joint_names = tuple(
-                to_resolved_joint_name(robot_name, local_name) for local_name in group.joint_names
+                make_resolved_joint_name(robot_name, local_name) for local_name in group.joint_names
             )
             for joint_name in resolved_joint_names:
                 previous_group_id = seen_joints.get(joint_name)
@@ -956,7 +958,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
     def _state_name_to_local(self, config: RobotModelConfig, joint_name: str) -> str:
         try:
-            return strip_resolved_joint_name(config.name, joint_name)
+            return local_joint_name_from_resolved(config.name, joint_name)
         except ValueError:
             return config.get_urdf_joint_name(joint_name)
 
@@ -979,7 +981,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
         positions = [float(full_positions[idx]) for idx in robot_data.joint_indices]
         return JointState(
-            name=to_resolved_joint_names(robot_data.config.name, robot_data.config.joint_names),
+            name=make_resolved_joint_names(robot_data.config.name, robot_data.config.joint_names),
             position=positions,
         )
 

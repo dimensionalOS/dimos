@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Name helpers for planning/model/coordinator boundary layers."""
+"""Planning group and resolved-joint identifier helpers."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from dimos.manipulation.planning.spec.models import (
 )
 
 
-def to_planning_group_id(robot_name: RobotName, group_name: str) -> PlanningGroupID:
+def make_planning_group_id(robot_name: RobotName, group_name: str) -> PlanningGroupID:
     """Build a public planning group ID."""
     if not robot_name or "/" in robot_name:
         raise ValueError(f"Invalid robot name for planning group ID: {robot_name!r}")
@@ -33,7 +33,7 @@ def to_planning_group_id(robot_name: RobotName, group_name: str) -> PlanningGrou
     return f"{robot_name}/{group_name}"
 
 
-def split_planning_group_id(group_id: PlanningGroupID) -> tuple[RobotName, str]:
+def parse_planning_group_id(group_id: PlanningGroupID) -> tuple[RobotName, str]:
     """Split and validate a planning group ID."""
     parts = group_id.split("/", maxsplit=1)
     if len(parts) != 2 or not parts[0] or not parts[1] or "/" in parts[1]:
@@ -43,7 +43,7 @@ def split_planning_group_id(group_id: PlanningGroupID) -> tuple[RobotName, str]:
     return parts[0], parts[1]
 
 
-def to_resolved_joint_name(
+def make_resolved_joint_name(
     robot_name: RobotName,
     local_joint_name: LocalModelJointName,
 ) -> ResolvedJointName:
@@ -55,15 +55,15 @@ def to_resolved_joint_name(
     return f"{robot_name}/{local_joint_name}"
 
 
-def to_resolved_joint_names(
+def make_resolved_joint_names(
     robot_name: RobotName,
     local_joint_names: list[LocalModelJointName] | tuple[LocalModelJointName, ...],
 ) -> list[ResolvedJointName]:
     """Convert local model joint names to public resolved joint names."""
-    return [to_resolved_joint_name(robot_name, name) for name in local_joint_names]
+    return [make_resolved_joint_name(robot_name, name) for name in local_joint_names]
 
 
-def strip_resolved_joint_name(
+def local_joint_name_from_resolved(
     robot_name: RobotName,
     resolved_joint_name: ResolvedJointName,
 ) -> LocalModelJointName:
@@ -80,9 +80,9 @@ def strip_resolved_joint_name(
 
 
 __all__ = [
-    "split_planning_group_id",
-    "strip_resolved_joint_name",
-    "to_planning_group_id",
-    "to_resolved_joint_name",
-    "to_resolved_joint_names",
+    "local_joint_name_from_resolved",
+    "make_planning_group_id",
+    "make_resolved_joint_name",
+    "make_resolved_joint_names",
+    "parse_planning_group_id",
 ]

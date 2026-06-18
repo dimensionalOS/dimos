@@ -81,25 +81,37 @@ class _SuccessfulIK(JacobianIK):
         )
 
 
-def test_solve_pose_targets_filters_result_to_target_and_auxiliary_joints() -> None:
+def test_solve_pose_targets_filters_result_to_single_group_joints() -> None:
     world = _IKWorld(
         {
             "arm/arm": _group("arm/arm", ("arm/joint1", "arm/joint2")),
-            "arm/gripper": _group("arm/gripper", ("arm/gripper",), tip_link=None),
         }
     )
 
     result = _SuccessfulIK().solve_pose_targets(
         world=cast("WorldSpec", world),
         pose_targets={"arm/arm": _pose()},
-        auxiliary_groups=["arm/gripper"],
         seed=_joint_state(["arm/joint1", "arm/joint2", "arm/gripper"], [0.0, 0.0, 0.0]),
     )
 
     assert result.status == IKStatus.SUCCESS
     assert result.joint_state is not None
-    assert result.joint_state.name == ["arm/joint1", "arm/joint2", "arm/gripper"]
-    assert result.joint_state.position == [0.1, 0.2, 0.3]
+    assert result.joint_state.name == ["arm/joint1", "arm/joint2"]
+    assert result.joint_state.position == [0.1, 0.2]
+
+
+def test_solve_pose_targets_rejects_auxiliary_groups() -> None:
+    world = _IKWorld({"arm/arm": _group("arm/arm", ("arm/joint1", "arm/joint2"))})
+
+    result = _SuccessfulIK().solve_pose_targets(
+        world=cast("WorldSpec", world),
+        pose_targets={"arm/arm": _pose()},
+        auxiliary_groups=["arm/gripper"],
+        seed=_joint_state(["arm/joint1", "arm/joint2"], [0.0, 0.0]),
+    )
+
+    assert result.status == IKStatus.NO_SOLUTION
+    assert "no auxiliary planning groups" in result.message
 
 
 def test_solve_pose_targets_rejects_group_without_pose_target_frame() -> None:
