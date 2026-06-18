@@ -21,7 +21,7 @@ export interface QosProfile {
     rate?: number
 }
 
-export interface TsClientConfig {
+export interface DimosWsConfig {
     host: string
     port: number
     wsPath?: string
@@ -38,8 +38,8 @@ export interface TsClientConfig {
 export type DecodeFn = (payload: Uint8Array) => unknown
 
 export interface ConnectOptions {
-    tsClient: TsClientConfig
-    /** Provide to receive raw LCM binary frames (no JSON). Omit for JSON. */
+    dimosWs: DimosWsConfig
+    /** Decode binary frames (e.g. the `decode` export of @dimos/msgs). Omit to receive raw bytes. */
     decode?: DecodeFn
 }
 
@@ -59,6 +59,10 @@ export class Dimos {
     static connect(options: ConnectOptions): Promise<Dimos>
     peek(stream: string, options?: { timeoutMs?: number }): Promise<unknown>
     subscribe(stream: string, callback: StreamCallback): () => void
+    /** Subscribe to every incoming message, including streams not known ahead of time. */
+    subscribeAll(callback: StreamCallback): () => void
+    /** Set/replace QoS for a stream (or glob) at runtime. */
+    setQos(stream: string, profile: QosProfile): void
     stream(stream: string): AsyncGenerator<StreamMessage>
     close(): void
 }

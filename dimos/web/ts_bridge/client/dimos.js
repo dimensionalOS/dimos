@@ -26,7 +26,7 @@
  * @property {number} [depth]
  * @property {number} [rate] - max messages/sec
  *
- * @typedef {object} TsClientConfig
+ * @typedef {object} DimosWsConfig
  * @property {string} host
  * @property {number} port
  * @property {string} [wsPath]
@@ -55,6 +55,7 @@ export class Dimos {
     #socket
     #decode
     #subscribers = new Map()
+    #allSubscribers = new Set()
     #queues = new Set()
     #pending = new Map()
 
@@ -73,14 +74,14 @@ export class Dimos {
     }
 
     /**
-     * Attach to a running ts_bridge.
-     * @param {{ tsClient: TsClientConfig, decode?: DecodeFn }} options
+     * Attach to a running dimos websocket bridge.
+     * @param {{ dimosWs: DimosWsConfig, decode?: DecodeFn }} options
      * @returns {Promise<Dimos>}
      */
     static async connect(options) {
-        const { tsClient, decode } = options
-        const wsPath = tsClient.wsPath ?? "/ws"
-        const url = `ws://${tsClient.host}:${tsClient.port}${wsPath}`
+        const { dimosWs, decode } = options
+        const wsPath = dimosWs.wsPath ?? "/ws"
+        const url = `ws://${dimosWs.host}:${dimosWs.port}${wsPath}`
         const socket = new WebSocket(url)
         socket.binaryType = "arraybuffer"
 
@@ -109,11 +110,10 @@ export class Dimos {
         socket.send(
             JSON.stringify({
                 type: "hello",
-                encoding: decode ? "binary" : "json",
-                whitelist: tsClient.whitelist ?? [],
-                blacklist: tsClient.blacklist ?? [],
-                rateLimit: tsClient.rateLimit ?? {},
-                qos: tsClient.qos ?? {},
+                whitelist: dimosWs.whitelist ?? [],
+                blacklist: dimosWs.blacklist ?? [],
+                rateLimit: dimosWs.rateLimit ?? {},
+                qos: dimosWs.qos ?? {},
             }),
         )
 
@@ -122,18 +122,24 @@ export class Dimos {
     }
 
     /**
-     * Wait for the next message on a stream (the peek_stream analog). Returns JSON.
+     * Resolve with the next message on a stream, or null after timeoutMs.
+     * (Only streams your subscription/QoS allow; transient_local makes it instant.)
      * @param {string} stream
      * @param {{ timeoutMs?: number }} [options]
      * @returns {Promise<unknown>}
      */
-    async peek(stream, options = {}) {
-        const result = await this.#request({
-            type: "peek",
-            stream,
-            timeoutMs: options.timeoutMs ?? 1000,
+    peek(stream, options = {}) {
+        return new Promise((resolve) => {
+            const unsub = this.subscribe(stream, (message) => {
+                clearTimeout(timer)
+                unsub()
+                resolve(message.data)
+            })
+            const timer = setTimeout(() => {
+                unsub()
+                resolve(null)
+            }, options.timeoutMs ?? 1000)
         })
-        return result.data
     }
 
     /**
@@ -150,6 +156,28 @@ export class Dimos {
         }
         set.add(callback)
         return () => set.delete(callback)
+    }
+
+    /**
+     * Subscribe to every incoming message, including streams not known ahead of
+     * time. The callback's `message.stream` says which stream it came from.
+     * (You still only receive streams your subscription/QoS allow — connect with
+     * no whitelist to see everything the bridge exposes.)
+     * @param {StreamCallback} callback
+     * @returns {() => void}
+     */
+    subscribeAll(callback) {
+        this.#allSubscribers.add(callback)
+        return () => this.#allSubscribers.delete(callback)
+    }
+
+    /**
+     * Set/replace QoS for a stream (or glob) at runtime.
+     * @param {string} stream
+     * @param {QosProfile} profile
+     */
+    setQos(stream, profile) {
+        this.#socket.send(JSON.stringify({ type: "set_qos", qos: { [stream]: profile } }))
     }
 
     /**
@@ -209,13 +237,15 @@ export class Dimos {
 
     #dispatch(message) {
         this.#subscribers.get(message.stream)?.forEach((callback) => callback(message))
+        this.#allSubscribers.forEach((callback) => callback(message))
         for (const entry of this.#queues) {
             if (entry.stream === message.stream) entry.push(message)
         }
     }
 
     #onMessage(event) {
-        // Binary frame: uint16 name length, name, LCM payload (decode via @dimos/msgs).
+        // Data plane: a binary frame — uint16 name length, name, encoded payload.
+        // The bridge forwards the bus's wire bytes; we decode with the matching codec.
         if (event.data instanceof ArrayBuffer) {
             const view = new DataView(event.data)
             const nameLen = view.getUint16(0, false)
@@ -226,13 +256,9 @@ export class Dimos {
             return
         }
 
+        // Control plane: JSON (ready handled in connect, rpc_result here).
         const message = JSON.parse(event.data)
-        if (message.type === "msg") {
-            this.#dispatch({ stream: message.stream, data: message.data, ts: message.ts })
-        } else if (message.type === "peek_result") {
-            this.#pending.get(message.id)?.resolve({ data: message.data })
-            this.#pending.delete(message.id)
-        } else if (message.type === "rpc_result") {
+        if (message.type === "rpc_result") {
             const pending = this.#pending.get(message.id)
             this.#pending.delete(message.id)
             if (message.error) {

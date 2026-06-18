@@ -14,9 +14,10 @@
 import asyncio
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
-from functools import partial
+from functools import partial, wraps
 import inspect
 import json
+from pathlib import Path
 import sys
 import threading
 from typing import (
@@ -44,6 +45,7 @@ from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.protocol.tf.tf import LCMTF, TFSpec
+from dimos.spec.utils import Spec
 from dimos.utils import colors
 from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
@@ -848,3 +850,62 @@ def _log_task_exception(task: asyncio.Task[Any]) -> None:
         f"Unhandled exception in async task {name!r}: {type(exc).__name__}: {exc}",
         exc_info=exc,
     )
+
+
+class WebHostSpec(Spec, Protocol):
+    """A module that hosts web bundles (implemented by the ts_bridge)."""
+
+    @rpc
+    def web_register(self, name: str, files: dict[str, bytes]) -> None: ...
+
+
+WebModuleT = TypeVar("WebModuleT", bound=Module)
+WebInit = Callable[[Any], dict[str, "str | Path"]]
+
+
+def web_init(method: WebInit) -> WebInit:
+    """Mark the method that returns a module's web bundle (``{route: file}``).
+
+    Use together with `@web_module`. `index.html` is served at the bundle root
+    (`/<ClassName>`), `icon` is served as the favicon (any image format), and any
+    other entry at `/<ClassName>/<route>`.
+    """
+    method.__web_init__ = True  # type: ignore[attr-defined]
+    return method
+
+
+def web_module(cls: type[WebModuleT]) -> type[WebModuleT]:
+    """Class decorator: let a Module serve a static frontend, no server of its own.
+
+    Finds the `@web_init` method and, at `start()`, hands its bundle to the web
+    host (the ts_bridge) which serves it under `/<ClassName>`. The host reference
+    (`WebHostSpec`) is injected at build time. Pages load the client with
+    `import { Dimos } from "/dimos.js"` and connect same-origin.
+    """
+    if not (isinstance(cls, type) and issubclass(cls, Module)):
+        raise TypeError("@web_module can only decorate a Module subclass")
+    init_name = next(
+        (name for name in dir(cls) if getattr(getattr(cls, name, None), "__web_init__", False)),
+        None,
+    )
+    if init_name is None:
+        raise TypeError(f"@web_module {cls.__name__} needs a method marked with @web_init")
+
+    annotations = cls.__dict__.get("__annotations__")
+    if annotations is None:
+        annotations = {}
+        cls.__annotations__ = annotations
+    annotations["_web_host"] = WebHostSpec  # injected by the blueprint at build time
+
+    inner_start = cls.start
+
+    @rpc
+    @wraps(inner_start)
+    def start(self: Module) -> None:
+        inner_start(self)
+        bundle = getattr(self, init_name)()
+        files = {route: Path(path).read_bytes() for route, path in bundle.items()}
+        self._web_host.web_register(type(self).__name__, files)  # type: ignore[attr-defined]
+
+    cls.start = start  # type: ignore[assignment]
+    return cls

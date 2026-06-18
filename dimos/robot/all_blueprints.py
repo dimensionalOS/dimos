@@ -147,6 +147,7 @@ all_modules = {
     "desk-static-tf-module": "dimos.perception.fiducial.blueprints.desk_marker_tf.DeskStaticTfModule",
     "detection2-d-module": "dimos.perception.detection.module2D.Detection2DModule",
     "detection3-d-module": "dimos.perception.detection.module3D.Detection3DModule",
+    "dimos-websocket": "dimos.web.ts_bridge.ts_bridge_module.DimosWebsocket",
     "drone-camera-module": "dimos.robot.drone.camera_module.DroneCameraModule",
     "drone-connection-module": "dimos.robot.drone.connection_module.DroneConnectionModule",
     "drone-tracking-module": "dimos.robot.drone.drone_tracking_module.DroneTrackingModule",
