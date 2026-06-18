@@ -297,6 +297,76 @@ static void signal_handler(int /*sig*/) {
 
 // Main
 
+// One iteration of the main loop: drain accumulated points into a CustomMsg,
+// run a FAST-LIO step, and publish results (rate-limited by the bookmarks).
+static void run_main_iter(std::chrono::steady_clock::time_point now,
+                          FastLio& fast_lio,
+                          std::chrono::steady_clock::time_point& last_emit,
+                          std::chrono::steady_clock::time_point& last_pc_publish,
+                          std::chrono::steady_clock::time_point& last_odom_publish,
+                          std::chrono::microseconds frame_interval,
+                          std::chrono::microseconds pc_interval,
+                          std::chrono::microseconds odom_interval,
+                          bool scan_publish_en, bool dense_publish_en) {
+    // At frame rate, drain accumulated raw points into a CustomMsg and feed
+    // FAST-LIO. Hold g_pc_mutex across the rate-limit check + swap so a
+    // callback can't slip a packet in between the decision and the swap.
+    std::vector<custom_messages::CustomPoint> points;
+    uint64_t frame_start = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_pc_mutex);
+        if (now - last_emit >= frame_interval) {
+            if (!g_accumulated_points.empty()) {
+                points.swap(g_accumulated_points);
+                frame_start = g_frame_start_ns;
+                g_frame_has_timestamp = false;
+            }
+            last_emit = now;
+        }
+    }
+    if (!points.empty()) {
+        // Build CustomMsg
+        auto lidar_msg = boost::make_shared<custom_messages::CustomMsg>();
+        lidar_msg->header.seq = 0;
+        lidar_msg->header.stamp = custom_messages::Time().fromSec(
+            static_cast<double>(frame_start) / 1e9);
+        lidar_msg->header.frame_id = "livox_frame";
+        lidar_msg->timebase = frame_start;
+        lidar_msg->lidar_id = 0;
+        for (int i = 0; i < 3; i++) lidar_msg->rsvd[i] = 0;
+        lidar_msg->point_num = static_cast<uli>(points.size());
+        lidar_msg->points = std::move(points);
+        fast_lio.feed_lidar(lidar_msg);
+    }
+
+    // Run one FAST-LIO IESKF step. Cheap when the IMU/lidar queues
+    // are empty; the heavy work happens after a feed_lidar above.
+    fast_lio.process();
+
+    // Check for new SLAM results and publish (rate-limited).
+    auto pose = fast_lio.get_pose();
+    if (!pose.empty() && (pose[0] != 0.0 || pose[1] != 0.0 || pose[2] != 0.0)) {
+        double ts = get_publish_ts();
+        if (scan_publish_en && !g_lidar_topic.empty()
+                && now - last_pc_publish >= pc_interval) {
+            // Sensor/body-frame cloud; register downstream via the odom pose.
+            // dense_publish_en false -> FAST-LIO's IESKF-downsampled scan.
+            auto cloud = dense_publish_en ? fast_lio.get_body_cloud()
+                                          : fast_lio.get_body_cloud_down();
+            if (cloud && !cloud->empty()) {
+                publish_lidar(cloud, ts, g_child_frame_id);
+            }
+            last_pc_publish = now;
+        }
+
+        // Pose + covariance, rate-limited to odom_freq.
+        if (!g_odometry_topic.empty() && now - last_odom_publish >= odom_interval) {
+            publish_odometry(fast_lio.get_odometry(), ts);
+            last_odom_publish = now;
+        }
+    }
+}
+
 int main(int argc, char** argv) {
     dimos::NativeModule mod(argc, argv);
 
@@ -436,64 +506,9 @@ int main(int argc, char** argv) {
     while (g_running.load()) {
         auto loop_start = std::chrono::high_resolution_clock::now();
         auto now = std::chrono::steady_clock::now();
-
-        // At frame rate, drain accumulated raw points into a CustomMsg and feed
-        // FAST-LIO. Hold g_pc_mutex across the rate-limit check + swap so a
-        // callback can't slip a packet in between the decision and the swap.
-        std::vector<custom_messages::CustomPoint> points;
-        uint64_t frame_start = 0;
-        {
-            std::lock_guard<std::mutex> lock(g_pc_mutex);
-            if (now - last_emit >= frame_interval) {
-                if (!g_accumulated_points.empty()) {
-                    points.swap(g_accumulated_points);
-                    frame_start = g_frame_start_ns;
-                    g_frame_has_timestamp = false;
-                }
-                last_emit = now;
-            }
-        }
-        if (!points.empty()) {
-            // Build CustomMsg
-            auto lidar_msg = boost::make_shared<custom_messages::CustomMsg>();
-            lidar_msg->header.seq = 0;
-            lidar_msg->header.stamp = custom_messages::Time().fromSec(
-                static_cast<double>(frame_start) / 1e9);
-            lidar_msg->header.frame_id = "livox_frame";
-            lidar_msg->timebase = frame_start;
-            lidar_msg->lidar_id = 0;
-            for (int i = 0; i < 3; i++) lidar_msg->rsvd[i] = 0;
-            lidar_msg->point_num = static_cast<uli>(points.size());
-            lidar_msg->points = std::move(points);
-            fast_lio.feed_lidar(lidar_msg);
-        }
-
-        // Run one FAST-LIO IESKF step. Cheap when the IMU/lidar queues
-        // are empty; the heavy work happens after a feed_lidar above.
-        fast_lio.process();
-
-        // Check for new SLAM results and publish (rate-limited).
-        auto pose = fast_lio.get_pose();
-        if (!pose.empty() && (pose[0] != 0.0 || pose[1] != 0.0 || pose[2] != 0.0)) {
-            double ts = get_publish_ts();
-            if (scan_publish_en && !g_lidar_topic.empty()
-                    && now - last_pc_publish >= pc_interval) {
-                // Sensor/body-frame cloud; register downstream via the odom pose.
-                // dense_publish_en false -> FAST-LIO's IESKF-downsampled scan.
-                auto cloud = dense_publish_en ? fast_lio.get_body_cloud()
-                                              : fast_lio.get_body_cloud_down();
-                if (cloud && !cloud->empty()) {
-                    publish_lidar(cloud, ts, g_child_frame_id);
-                }
-                last_pc_publish = now;
-            }
-
-            // Pose + covariance, rate-limited to odom_freq.
-            if (!g_odometry_topic.empty() && now - last_odom_publish >= odom_interval) {
-                publish_odometry(fast_lio.get_odometry(), ts);
-                last_odom_publish = now;
-            }
-        }
+        run_main_iter(now, fast_lio, last_emit, last_pc_publish, last_odom_publish,
+                      frame_interval, pc_interval, odom_interval,
+                      scan_publish_en, dense_publish_en);
 
         // Drain LCM messages.
         lcm.handleTimeout(0);
