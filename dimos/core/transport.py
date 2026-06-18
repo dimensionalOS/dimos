@@ -18,6 +18,7 @@ import threading
 from typing import (
     TYPE_CHECKING,
     Any,
+    Self,
     TypeVar,
 )
 
@@ -43,7 +44,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
 T = TypeVar("T")
 
@@ -364,6 +365,7 @@ class WebRTCTransport(PubSubTransport[M]):
     """
 
     _config_cls: type[ProviderConfig]
+    _config: ProviderConfig
     _started: bool = False
 
     def __init__(
@@ -386,6 +388,10 @@ class WebRTCTransport(PubSubTransport[M]):
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
         return (_rebuild_webrtc_transport, (type(self), self.topic, self._msg_type, self._config))
+
+    def with_config_overrides(self, overrides: Mapping[str, Any]) -> Self:
+        new_config = self._config.model_copy(update=dict(overrides))
+        return type(self)(self.topic, self._msg_type, config=new_config)
 
     def broadcast(self, _: Out[M] | None, msg: M) -> None:
         if not self._started:
@@ -462,6 +468,7 @@ class WebRTCVideoTransport(Transport[Any]):
     """
 
     _config_cls: type[ProviderConfig]
+    _config: ProviderConfig
 
     def __init__(self, *, config: ProviderConfig | None = None, **config_kwargs: Any) -> None:
         self._config = config or self._config_cls(**config_kwargs)
@@ -489,6 +496,9 @@ class WebRTCVideoTransport(Transport[Any]):
             type(self).__name__,
         )
         return lambda: None
+
+    def with_config_overrides(self, overrides: Mapping[str, Any]) -> Self:
+        return type(self)(config=self._config.model_copy(update=dict(overrides)))
 
 
 class CloudflareVideoTransport(WebRTCVideoTransport):

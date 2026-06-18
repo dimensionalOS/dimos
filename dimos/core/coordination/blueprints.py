@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase, is_module_type
 from dimos.core.stream import In, Out
-from dimos.core.transport import PubSubTransport, WebRTCTransport, WebRTCVideoTransport
+from dimos.core.transport import PubSubTransport
 from dimos.spec.utils import Spec, is_spec
 from dimos.utils.logging_config import setup_logger
 
@@ -188,10 +188,8 @@ class Blueprint:
         transport_fields: dict[str, Any] = {}
         seen: set[type] = set()
         for transport in self.transport_map.values():
-            if not isinstance(transport, (WebRTCTransport, WebRTCVideoTransport)):
-                continue
             cls = transport._config_cls
-            if cls in seen:
+            if cls is None or cls in seen:
                 continue
             seen.add(cls)
             transport_fields[transport_config_name(cls)] = (cls | None, None)

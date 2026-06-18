@@ -19,9 +19,11 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Generic,
+    Self,
     TypeVar,
 )
 
+from pydantic import BaseModel
 import reactivex as rx
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
@@ -33,7 +35,7 @@ import dimos.utils.reactive as reactive
 from dimos.utils.reactive import backpressure
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from reactivex.observable import Observable
 
@@ -80,6 +82,11 @@ class State(enum.Enum):
 
 
 class Transport(Resource, ObservableMixin[T]):
+    # Transports that expose a pydantic config override surface set this to the
+    # config class; the blueprint config flow picks them up automatically. None
+    # means "no overridable config" (LCM/SHM transports).
+    _config_cls: type[BaseModel] | None = None
+
     # used by local Output
     def broadcast(self, selfstream: Out[T], value: T) -> None:
         raise NotImplementedError
@@ -92,6 +99,13 @@ class Transport(Resource, ObservableMixin[T]):
 
     def publish(self, msg: T) -> None:
         self.broadcast(None, msg)  # type: ignore[arg-type]
+
+    def with_config_overrides(self, overrides: Mapping[str, Any]) -> Self:
+        """Return a new instance with `overrides` merged into the current config.
+
+        Default: NotImplementedError. Override when `_config_cls` is set.
+        """
+        raise NotImplementedError
 
 
 class Stream(Generic[T]):

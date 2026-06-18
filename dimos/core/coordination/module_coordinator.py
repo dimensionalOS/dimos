@@ -35,8 +35,6 @@ from dimos.core.resource import Resource
 from dimos.core.transport import (
     LCMTransport,
     PubSubTransport,
-    WebRTCTransport,
-    WebRTCVideoTransport,
     pLCMTransport,
 )
 from dimos.spec.utils import is_spec, spec_annotation_compliance, spec_structural_compliance
@@ -604,16 +602,12 @@ def _apply_transport_overrides(
         return blueprint
     new_map = dict(blueprint.transport_map)
     for key, transport in new_map.items():
-        if not isinstance(transport, (WebRTCTransport, WebRTCVideoTransport)):
+        if transport._config_cls is None:
             continue
         sub = overrides.get(transport_config_name(transport._config_cls))
         if not sub:
             continue
-        new_config = transport._config.model_copy(update=dict(sub))
-        if isinstance(transport, WebRTCTransport):
-            new_map[key] = type(transport)(transport.topic, transport._msg_type, config=new_config)
-        else:
-            new_map[key] = type(transport)(config=new_config)
+        new_map[key] = transport.with_config_overrides(sub)
     return replace(blueprint, transport_map=MappingProxyType(new_map))
 
 
