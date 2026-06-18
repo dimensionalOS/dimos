@@ -255,8 +255,6 @@ class OnExisting(str, enum.Enum):
     OVERWRITE = "overwrite"
     ERROR = "error"
     BACKUP = "backup"
-    # Leave the db untouched; subclasses replace only their own streams in
-    # ``_prepare_streams``.
     APPEND = "append"
 
 
@@ -268,6 +266,11 @@ class RecorderConfig(MemoryModuleConfig):
     db_path: str | Path = "recording.db"
     # Also record the live tf stream (under "tf") alongside the In ports.
     record_tf: bool = True
+    # Rename recorded streams: {port_name: db_stream_name}. Conceptually this is
+    # what the wiring layer's .remappings() expresses, but there's no easy way to
+    # read the active remappings from inside the module (AFAIK), so this config
+    # arg does the per-stream rename directly.
+    stream_remapping: dict[str, str] = Field(default_factory=dict)
 
 
 PoseSetter = Callable[[Any], "Pose | None"]
@@ -383,8 +386,9 @@ class Recorder(MemoryModule):
         self.register_disposable(Disposable(input_topic.subscribe(on_msg)))
 
     def _stream_name(self, port_name: str) -> str:
-        """db stream/table name to record *port_name* under. Override to rename."""
-        return port_name
+        """db stream/table name to record *port_name* under. Renamed via
+        ``config.stream_remapping``; override for fancier mapping."""
+        return self.config.stream_remapping.get(port_name, port_name)
 
     def _prepare_streams(self) -> None:
         """Hook run after the on_existing check, before ports are wired. Override
