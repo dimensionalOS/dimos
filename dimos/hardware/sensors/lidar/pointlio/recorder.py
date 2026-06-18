@@ -44,12 +44,6 @@ class PointlioRecorder(Recorder):
 
     _last_odom_pose: Pose | None = None
 
-    def _prepare_streams(self) -> None:
-        # Replace our own streams (keep anything else in the db).
-        for name in self.inputs:
-            if name in self.store.list_streams():
-                self.store.delete_stream(name)
-
     @pose_setter_for("pointlio_odometry")
     def _odom_pose(self, msg: Odometry) -> Pose | None:
         pose = getattr(msg, "pose", None)
