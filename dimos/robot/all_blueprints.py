@@ -136,6 +136,7 @@ all_modules = {
     "camera-module": "dimos.hardware.sensors.camera.module.CameraModule",
     "cartesian-motion-controller": "dimos.manipulation.control.servo_control.cartesian_motion_controller.CartesianMotionController",
     "click-start-goal-router": "dimos.navigation.nav_stack.modules.click_start_goal_router.click_start_goal_router.ClickStartGoalRouter",
+    "collection-recorder": "dimos.learning.collection.recorder.CollectionRecorder",
     "control-coordinator": "dimos.control.coordinator.ControlCoordinator",
     "cost-mapper": "dimos.mapping.costmapper.CostMapper",
     "demo-calculator-skill": "dimos.agents.skills.demo_calculator_skill.DemoCalculatorSkill",
