@@ -19,12 +19,18 @@ from __future__ import annotations
 from collections.abc import Callable
 import pickle
 import struct
+from typing import get_args
 
+from pydantic import ValidationError
 import pytest
 
+from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.module_coordinator import _apply_transport_overrides
 from dimos.core.transport import WebRTCTransport
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.protocol.pubsub.impl.webrtc.providers.spec import ProviderConfig
+from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
+from dimos.protocol.pubsub.impl.webrtc.providers.spec import WEBRTC_AVAILABLE, ProviderConfig
+from dimos.protocol.pubsub.impl.webrtc.webrtcpubsub import WebRTCPubSub
 
 # ─── Mock provider ───────────────────────────────────────────────────
 
@@ -203,17 +209,14 @@ def test_provider_singleton_per_config() -> None:
 
 
 def test_provider_config_is_frozen_and_hashable() -> None:
-    """The singleton cache (`_providers` dict) keys on the config, so it MUST
-    stay hashable and immutable across the dataclass→BaseModel switch."""
-    from pydantic import ValidationError as PydanticValidationError
-
+    """ProviderConfig must be hashable and frozen — the `_providers` singleton keys on it."""
     c = MockConfig(name="x")
     assert hash(c) == hash(MockConfig(name="x"))
     assert hash(c) != hash(MockConfig(name="y"))
-    with pytest.raises(PydanticValidationError):
+    with pytest.raises(ValidationError):
         c.name = "mutated"  # type: ignore[misc]
     # Unknown fields are forbidden (extra="forbid").
-    with pytest.raises(PydanticValidationError, match="bogus"):
+    with pytest.raises(ValidationError, match="bogus"):
         MockConfig(bogus=1)  # type: ignore[call-arg]
 
 
@@ -221,21 +224,15 @@ def test_provider_config_is_frozen_and_hashable() -> None:
 
 
 def test_blueprint_config_exposes_transport_fields() -> None:
-    """`Blueprint.config()` surfaces each unique `_config_cls` as a `transports.<name>` sub-model."""
-    from typing import get_args
-
-    from pydantic import ValidationError as PydanticValidationError
-
-    from dimos.core.coordination.blueprints import Blueprint
-
+    """Each unique `_config_cls` becomes a `transports.<name>` sub-model on the schema."""
     bp = Blueprint(blueprints=()).transports({("topic", FakeLCMMsg): MockTransport("topic")})
     cfg = bp.config()
     parsed = cfg(transports={"mock": {"name": "override"}})
     assert parsed.transports.mock.name == "override"
     # Sub-field name → MockConfig; extra fields and unknown namespaces rejected.
-    with pytest.raises(PydanticValidationError, match="bogus"):
+    with pytest.raises(ValidationError, match="bogus"):
         cfg(transports={"mock": {"bogus": 1}})
-    with pytest.raises(PydanticValidationError, match="other"):
+    with pytest.raises(ValidationError, match="other"):
         cfg(transports={"other": {}})
     # Multiple transports sharing one `_config_cls` collapse to one slot.
     bp_shared = Blueprint(blueprints=()).transports(
@@ -252,28 +249,28 @@ def test_blueprint_config_exposes_transport_fields() -> None:
     assert set(inner.model_fields.keys()) == {"mock"}
 
 
-def test_transport_overrides_apply_and_survive_pickle() -> None:
-    """`_apply_transport_overrides` swaps each transport's `_config`; the new
-    config must survive pickling, since workers receive transports by pickle."""
-    from dimos.core.coordination.blueprints import Blueprint
-    from dimos.core.coordination.module_coordinator import _apply_transport_overrides
+def test_transport_overrides_rebuild_blueprint() -> None:
+    """Overrides return a new blueprint with rebuilt transports — originals untouched, pickle-safe."""
+    original = MockTransport("topic")
+    bp = Blueprint(blueprints=()).transports({("topic", FakeLCMMsg): original})
 
-    transport = MockTransport("topic")
-    assert transport._config.name == "default"
-    bp = Blueprint(blueprints=()).transports({("topic", FakeLCMMsg): transport})
+    new_bp = _apply_transport_overrides(bp, {"mock": {"name": "overridden"}})
+    new_transport = new_bp.transport_map[("topic", FakeLCMMsg)]
 
-    _apply_transport_overrides(bp, {"mock": {"name": "overridden"}})
-    assert transport._config.name == "overridden"
-    assert pickle.loads(pickle.dumps(transport))._config.name == "overridden"
+    # Fresh instance with the override; the original is untouched.
+    assert new_transport is not original
+    assert new_transport._config.name == "overridden"
+    assert original._config.name == "default"
+    assert pickle.loads(pickle.dumps(new_transport))._config.name == "overridden"
+
+    # No override → blueprint passes through unchanged (same identity).
+    assert _apply_transport_overrides(bp, {}) is bp
 
 
 # ─── Broker credential validation ────────────────────────────────────
 
 
 def test_broker_provider_requires_credentials() -> None:
-    from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
-    from dimos.protocol.pubsub.impl.webrtc.providers.spec import WEBRTC_AVAILABLE
-
     if not WEBRTC_AVAILABLE:
         pytest.skip("aiortc not installed")
 
@@ -288,8 +285,6 @@ def test_broker_provider_requires_credentials() -> None:
 
 def test_subscribe_all_fires_once_per_message() -> None:
     """N subscriptions on one topic must not duplicate subscribe_all delivery."""
-    from dimos.protocol.pubsub.impl.webrtc.webrtcpubsub import WebRTCPubSub
-
     ps = WebRTCPubSub(provider=MockProvider())
     ps.subscribe("t", lambda data, t: None)
     ps.subscribe("t", lambda data, t: None)

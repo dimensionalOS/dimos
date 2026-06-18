@@ -16,11 +16,13 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Mapping, MutableMapping
+from dataclasses import replace
 import importlib
 import inspect
 import shutil
 import sys
 import threading
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from dimos.core.coordination.blueprints import transport_config_name
@@ -298,7 +300,7 @@ class ModuleCoordinator(Resource):
         if "g" in blueprint_args:
             global_config.update(**blueprint_args.pop("g"))
         transport_overrides = blueprint_args.pop("transports", None) or {}
-        _apply_transport_overrides(blueprint, transport_overrides)
+        blueprint = _apply_transport_overrides(blueprint, transport_overrides)
 
         _run_configurators(blueprint)
         _check_requirements(blueprint)
@@ -347,7 +349,7 @@ class ModuleCoordinator(Resource):
         if "g" in blueprint_args:
             self._global_config.update(**blueprint_args.pop("g"))
         transport_overrides = blueprint_args.pop("transports", None) or {}
-        _apply_transport_overrides(blueprint, transport_overrides)
+        blueprint = _apply_transport_overrides(blueprint, transport_overrides)
 
         # Scale worker pool.
         n_extra = int(blueprint.global_config_overrides.get("n_workers", 0))
@@ -596,18 +598,23 @@ def _get_transport_for(blueprint: Blueprint, name: str, stream_type: type) -> Pu
 
 def _apply_transport_overrides(
     blueprint: Blueprint, overrides: Mapping[str, Mapping[str, Any]]
-) -> None:
-    """Rewrite each transport's `_config` with CLI/env overrides before workers pickle them."""
+) -> Blueprint:
+    """Return a blueprint whose WebRTC transports carry CLI/env-merged configs."""
     if not overrides:
-        return
-    for transport in blueprint.transport_map.values():
+        return blueprint
+    new_map = dict(blueprint.transport_map)
+    for key, transport in new_map.items():
         if not isinstance(transport, (WebRTCTransport, WebRTCVideoTransport)):
             continue
         sub = overrides.get(transport_config_name(transport._config_cls))
         if not sub:
             continue
         new_config = transport._config.model_copy(update=dict(sub))
-        object.__setattr__(transport, "_config", new_config)
+        if isinstance(transport, WebRTCTransport):
+            new_map[key] = type(transport)(transport.topic, transport._msg_type, config=new_config)
+        else:
+            new_map[key] = type(transport)(config=new_config)
+    return replace(blueprint, transport_map=MappingProxyType(new_map))
 
 
 def _verify_no_name_conflicts(blueprint: Blueprint) -> None:
