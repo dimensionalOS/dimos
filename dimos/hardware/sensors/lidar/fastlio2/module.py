@@ -97,8 +97,8 @@ class FastLio2Config(NativeModuleConfig):
     timestamp_unit: TimestampUnit = "microsecond"  # velodyne/ouster time field unit
     blind: float = 0.5  # spherical min range (m)
     # mapping
-    # acc_cov down-weights the IMU accel prediction; upstream 0.1 lets Go2 odom
-    # diverge to km/s, 1.0 holds bounded. See jhist dimos-fastlio-velocity-spike.md.
+    # acc_cov down-weights the IMU accel prediction. 0.01 is high trust (fine for
+    # drones); 1.0 is low trust (good for robot dogs that go up/down stairs).
     acc_cov: float = 1.0
     gyr_cov: float = 0.1
     b_acc_cov: float = 0.0001
