@@ -16,7 +16,7 @@
 
 Scope: the K1 over booster-rpc exposes a camera (JPEG over WebSocket) and base
 velocity control (+ stand/sit mode changes). It has no world-frame odometry or
-lidar, so this connection implements only the `Camera` spec — no `odom`/`lidar`/
+lidar, so this connection implements only the `Camera` spec: no `odom`/`lidar`/
 `pointcloud` ports, and therefore no mapping/navigation tier.
 """
 
@@ -55,31 +55,21 @@ from dimos.utils.reactive import backpressure
 logger = setup_logger()
 
 
-# --- Step 5: configuration ---------------------------------------------------
 class ConnectionConfig(ModuleConfig):
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
 
 
-# --- Step 3: connection backend (keep all booster-rpc protocol details out of the Module) ---
 class BoosterRPCConnection:
-    """Low-level wrapper around booster-rpc.
+    """Low-level wrapper around booster-rpc; the Module never touches the SDK directly.
 
-    Owns the gRPC connection, a background asyncio loop for the WebSocket video
-    stream, and a fixed-rate command sender. The Module talks only to this class,
-    never to booster-rpc directly.
-
-    booster-rpc's ``move`` is a *synchronous* request/response gRPC call (~9-35 ms
-    each → a ceiling of ~58 moves/sec on this firmware). Calling it directly from a
-    high-rate publisher (e.g. the 100 Hz ControlCoordinator) overruns that ceiling
-    and backs up. So ``move()`` here is non-blocking — it just records the latest
-    command — and a single background thread (`_sender_loop`) issues the actual
-    gRPC call at `send_hz`, always sending the *latest* value (stale commands are
-    dropped, never queued). This is the request/response analogue of the Go2's
-    fire-and-forget WebRTC `move`.
+    booster-rpc's ``move`` is a synchronous gRPC call (~58/sec ceiling), so calling it
+    from a high-rate publisher (the 100 Hz coordinator) backs up. ``move()`` is therefore
+    non-blocking: it records the latest command, and ``_sender_loop`` issues the actual
+    gRPC call at ``send_hz``, always sending the latest value (stale commands dropped).
     """
 
     cmd_vel_timeout = 0.5  # dead-man: send zero if no new command within this window (s)
-    send_hz = 30.0  # command rate to the robot — kept under the ~58/sec move ceiling
+    send_hz = 30.0  # command rate to the robot, kept under the ~58/sec move ceiling
 
     def __init__(self, ip: str) -> None:
         self._conn = BoosterConnection(ip=ip)
@@ -143,10 +133,8 @@ class BoosterRPCConnection:
         return backpressure(subject)
 
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
-        # Non-blocking: record the latest command; `_sender_loop` does the actual
-        # gRPC send at `send_hz`. Standard DimOS Twist (SI, robot body frame):
-        # linear.x forward, linear.y left (m/s), angular.z yaw CCW (rad/s) — the
-        # same (vx, vy, vyaw) convention booster-rpc uses.
+        # Non-blocking: record the latest command; `_sender_loop` sends it at `send_hz`.
+        # DimOS Twist (SI, body frame: +x fwd, +y left, +z yaw CCW) maps to booster (vx, vy, vyaw).
         now = time.monotonic()
         with self._cmd_lock:
             self._latest = (twist.linear.x, twist.linear.y, twist.angular.z)
@@ -179,8 +167,8 @@ class BoosterRPCConnection:
             with self._lock:
                 self._conn.move(vx, vy, vyaw)
         except Exception as e:
-            # The robot rejects moves when it isn't in a locomotion mode (e.g. it
-            # left WALKING) — "Failed to move: code = 100". Log and keep going.
+            # The robot rejects moves when not in a locomotion mode (e.g. left
+            # WALKING): "Failed to move: code = 100". Log and keep going.
             logger.warning("K1 move failed: %s: %s", type(e).__name__, e)
 
     def standup(self) -> bool:
@@ -208,11 +196,8 @@ class BoosterRPCConnection:
         return True
 
 
-# --- Step 4: backend factory (real-only for now; no K1 sim/replay yet) -------
 def make_connection(ip: str, cfg: GlobalConfig) -> BoosterRPCConnection:
-    # The Booster K1 has no simulation or replay backend yet, so this always
-    # returns the real hardware connection. Add sim/replay branches here (keyed
-    # off cfg) when they exist.
+    # Real hardware only; add sim/replay branches (keyed off cfg) here when they exist.
     return BoosterRPCConnection(ip)
 
 
@@ -234,9 +219,8 @@ def _camera_info_static() -> CameraInfo:
     )
 
 
-# --- Step 1: the connection Module -------------------------------------------
 class K1Connection(Module, Camera):
-    """Booster K1 humanoid — exposes camera + velocity control as DimOS streams/RPCs."""
+    """Booster K1 humanoid: exposes camera + velocity control as DimOS streams/RPCs."""
 
     dedicated_worker = True
 
@@ -276,7 +260,7 @@ class K1Connection(Module, Camera):
         self.register_disposable(self.hw.camera_stream().subscribe(on_image))
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
 
-        # Camera intrinsics are static — republish on a timer so late subscribers get them.
+        # Camera intrinsics are static, so republish on a timer for late subscribers.
         self._camera_info_thread = Thread(target=self._publish_camera_info, daemon=True)
         self._camera_info_thread.start()
 
@@ -297,7 +281,6 @@ class K1Connection(Module, Camera):
             self.camera_info.publish(self.camera_info_static)
             self._stop_event.wait(1.0)
 
-    # --- control verbs (callable across the graph / by the CLI) ---
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
         """Send a base velocity command to the robot."""
@@ -313,7 +296,6 @@ class K1Connection(Module, Camera):
         """Make the robot lie down."""
         return self.hw.sit()
 
-    # --- agent-callable skills ---
     @skill
     def walk(self, x: float, y: float = 0.0, yaw: float = 0.0, duration: float = 0.0) -> str:
         """Move the robot using direct velocity commands. Choose duration from the user's distance.
@@ -329,7 +311,7 @@ class K1Connection(Module, Camera):
             return "Failed to move."
         if duration > 0:
             return f"Moved at velocity=({x}, {y}, {yaw}) for {duration}s then stopped."
-        return f"Moving at velocity=({x}, {y}, {yaw}) continuously — send a stop command to halt."
+        return f"Moving at velocity=({x}, {y}, {yaw}) continuously; send a stop command to halt."
 
     @skill
     def stand(self) -> str:
