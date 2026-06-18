@@ -311,6 +311,8 @@ def iter_episode_samples(
                 skip = True
                 break
             arr = resolve_field(msg, ref)
+            if arr.ndim < 3:
+                arr = arr.astype(np.float32, copy=False)
             if key in action_keys:
                 act_dict[key] = arr
             elif key in obs_keys:

@@ -111,7 +111,6 @@ def write(samples: Iterator[Sample], output: OutputConfig) -> Path:
 
     current_episode_id: str | None = None
     current_episode_index = -1
-    current_episode_start_ts: float | None = None
     current_frames: list[dict[str, Any]] = []
     current_video_writers: dict[str, Any] = {}
     global_index = 0
@@ -149,16 +148,17 @@ def write(samples: Iterator[Sample], output: OutputConfig) -> Path:
             "index": [f["index"] for f in current_frames],
             "task_index": [f["task_index"] for f in current_frames],
         }
+        f32_list = pa.list_(pa.float32())
         single_state = len(state_keys) == 1
         for k in state_keys:
             name = _feature_name(
                 "observation", k, is_image=False, single_action=False, single_state=single_state
             )
-            cols[name] = [f["obs"][k].tolist() for f in current_frames]
+            cols[name] = pa.array([f["obs"][k].tolist() for f in current_frames], type=f32_list)
         single_action = len(action_keys) == 1
         for k in action_keys:
             name = _feature_name("action", k, is_image=False, single_action=single_action)
-            cols[name] = [f["act"][k].tolist() for f in current_frames]
+            cols[name] = pa.array([f["act"][k].tolist() for f in current_frames], type=f32_list)
         # Video columns intentionally omitted: lerobot's hf_features schema
         # skips dtype="video" and reads frames from MP4 at __getitem__ time.
 
@@ -179,9 +179,6 @@ def write(samples: Iterator[Sample], output: OutputConfig) -> Path:
             _flush_episode()
             current_episode_id = sample.episode_id
             current_episode_index += 1
-            # Episode-relative timestamps so they fit float32 with sub-ms
-            # precision; lerobot's check_timestamps_sync compares against 1/fps.
-            current_episode_start_ts = float(sample.ts)
             label = default_task_label
             if label not in tasks_index:
                 tasks_index[label] = len(tasks_index)
@@ -227,7 +224,7 @@ def write(samples: Iterator[Sample], output: OutputConfig) -> Path:
                 bgr = cv2.cvtColor(a, cv2.COLOR_RGB2BGR) if a.shape[-1] == 3 else a
                 current_video_writers[k].write(bgr)
 
-        rel_ts = float(sample.ts) - (current_episode_start_ts or 0.0)
+        rel_ts = frame_index / fps
         current_frames.append(
             {
                 "timestamp": rel_ts,
@@ -310,8 +307,14 @@ def write(samples: Iterator[Sample], output: OutputConfig) -> Path:
     with open(root / META_DIR / "tasks.jsonl", "w") as f:
         for task, idx in tasks_index.items():
             f.write(json.dumps({"task_index": idx, "task": task}) + "\n")
+    final_stats = stats.finalize()
+    for name, entry in final_stats.items():
+        if feature_dtypes.get(name) == "video":
+            for k in ("mean", "std", "min", "max"):
+                if entry.get(k) is not None:
+                    entry[k] = [[[c]] for c in entry[k]]
     with open(root / META_DIR / "stats.json", "w") as f:
-        json.dump(stats.finalize(), f, indent=2)
+        json.dump(final_stats, f, indent=2)
 
     return root
 
