@@ -52,7 +52,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_ODOM, FRAME_SENSOR
+from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_ODOM
 from dimos.spec import perception
 
 # Human-readable enums; the C++ binary maps these strings to FAST-LIO's int codes.
@@ -77,7 +77,7 @@ class FastLio2Config(NativeModuleConfig):
     # transformed into the body frame).
     frame_id: str = FRAME_ODOM
     child_frame_id: str = FRAME_BODY
-    sensor_frame_id: str = FRAME_SENSOR
+    sensor_frame_id: str = "mid360_link"
 
     # FAST-LIO internal processing rates
     msr_freq: float = 50.0
