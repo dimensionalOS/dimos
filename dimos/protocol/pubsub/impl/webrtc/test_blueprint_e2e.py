@@ -82,7 +82,7 @@ def test_blueprint_stream_over_cloudflare() -> None:
     # is the broker's job.
     blueprint = autoconnect(TwistSource.blueprint(), TwistSink.blueprint()).transports(
         {
-            ("cmd_webrtc", TwistStamped): WebRTCTransport(
+            ("cmd_webrtc", TwistStamped): WebRTCTransport.spec(
                 "cmd_webrtc", TwistStamped, config=CloudflareConfig()
             )
         }

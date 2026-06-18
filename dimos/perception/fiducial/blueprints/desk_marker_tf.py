@@ -159,7 +159,7 @@ desk_marker_tf = autoconnect(
     ),
 ).transports(
     {
-        ("detections", MarkerDetectionStreamModule): LCMTransport(
+        ("detections", MarkerDetectionStreamModule): LCMTransport.spec(
             "/marker_detection/detections",
             Detection3DArray,
         ),

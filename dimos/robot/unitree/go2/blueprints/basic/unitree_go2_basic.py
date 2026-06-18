@@ -18,7 +18,7 @@ import platform
 from typing import Any
 
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import TransportSpec, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import pSHMTransport
 from dimos.mapping.costmapper import costmap_to_rerun
@@ -29,8 +29,8 @@ from dimos.visualization.vis_module import vis_module
 # Mac has some issue with high bandwidth UDP, so we use pSHMTransport for color_image
 # actually we can use pSHMTransport for all platforms, and for all streams
 # TODO need a global transport toggle on blueprints/global config
-_mac_transports: dict[tuple[str, type], pSHMTransport[Image]] = {
-    ("color_image", Image): pSHMTransport(
+_mac_transports: dict[tuple[str, type], TransportSpec] = {
+    ("color_image", Image): pSHMTransport.spec(
         "color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
     ),
 }

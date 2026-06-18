@@ -66,39 +66,45 @@ unitree_g1_detection = (
     .transports(
         {
             # Detection 3D module outputs
-            ("detections", Detection3DModule): LCMTransport(
+            ("detections", Detection3DModule): LCMTransport.spec(
                 "/detector3d/detections", Detection2DArray
             ),
-            ("detected_pointcloud_0", Detection3DModule): LCMTransport(
+            ("detected_pointcloud_0", Detection3DModule): LCMTransport.spec(
                 "/detector3d/pointcloud/0", PointCloud2
             ),
-            ("detected_pointcloud_1", Detection3DModule): LCMTransport(
+            ("detected_pointcloud_1", Detection3DModule): LCMTransport.spec(
                 "/detector3d/pointcloud/1", PointCloud2
             ),
-            ("detected_pointcloud_2", Detection3DModule): LCMTransport(
+            ("detected_pointcloud_2", Detection3DModule): LCMTransport.spec(
                 "/detector3d/pointcloud/2", PointCloud2
             ),
-            ("detected_image_0", Detection3DModule): LCMTransport("/detector3d/image/0", Image),
-            ("detected_image_1", Detection3DModule): LCMTransport("/detector3d/image/1", Image),
-            ("detected_image_2", Detection3DModule): LCMTransport("/detector3d/image/2", Image),
+            ("detected_image_0", Detection3DModule): LCMTransport.spec(
+                "/detector3d/image/0", Image
+            ),
+            ("detected_image_1", Detection3DModule): LCMTransport.spec(
+                "/detector3d/image/1", Image
+            ),
+            ("detected_image_2", Detection3DModule): LCMTransport.spec(
+                "/detector3d/image/2", Image
+            ),
             # Detection DB module outputs
-            ("detections", ObjectDBModule): LCMTransport(
+            ("detections", ObjectDBModule): LCMTransport.spec(
                 "/detectorDB/detections", Detection2DArray
             ),
-            ("detected_pointcloud_0", ObjectDBModule): LCMTransport(
+            ("detected_pointcloud_0", ObjectDBModule): LCMTransport.spec(
                 "/detectorDB/pointcloud/0", PointCloud2
             ),
-            ("detected_pointcloud_1", ObjectDBModule): LCMTransport(
+            ("detected_pointcloud_1", ObjectDBModule): LCMTransport.spec(
                 "/detectorDB/pointcloud/1", PointCloud2
             ),
-            ("detected_pointcloud_2", ObjectDBModule): LCMTransport(
+            ("detected_pointcloud_2", ObjectDBModule): LCMTransport.spec(
                 "/detectorDB/pointcloud/2", PointCloud2
             ),
-            ("detected_image_0", ObjectDBModule): LCMTransport("/detectorDB/image/0", Image),
-            ("detected_image_1", ObjectDBModule): LCMTransport("/detectorDB/image/1", Image),
-            ("detected_image_2", ObjectDBModule): LCMTransport("/detectorDB/image/2", Image),
+            ("detected_image_0", ObjectDBModule): LCMTransport.spec("/detectorDB/image/0", Image),
+            ("detected_image_1", ObjectDBModule): LCMTransport.spec("/detectorDB/image/1", Image),
+            ("detected_image_2", ObjectDBModule): LCMTransport.spec("/detectorDB/image/2", Image),
             # Person tracker outputs
-            ("target", PersonTracker): LCMTransport("/person_tracker/target", PoseStamped),
+            ("target", PersonTracker): LCMTransport.spec("/person_tracker/target", PoseStamped),
         }
     )
 )

@@ -19,7 +19,6 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Generic,
-    Self,
     TypeVar,
 )
 
@@ -35,7 +34,7 @@ import dimos.utils.reactive as reactive
 from dimos.utils.reactive import backpressure
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable
 
     from reactivex.observable import Observable
 
@@ -99,13 +98,6 @@ class Transport(Resource, ObservableMixin[T]):
 
     def publish(self, msg: T) -> None:
         self.broadcast(None, msg)  # type: ignore[arg-type]
-
-    def with_config_overrides(self, overrides: Mapping[str, Any]) -> Self:
-        """Return a new instance with `overrides` merged into the current config.
-
-        Default: NotImplementedError. Override when `_config_cls` is set.
-        """
-        raise NotImplementedError
 
 
 class Stream(Generic[T]):

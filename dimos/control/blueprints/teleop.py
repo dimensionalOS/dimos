@@ -91,8 +91,8 @@ coordinator_servo_xarm6 = ControlCoordinator.blueprint(
     ],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("joint_command", JointState): LCMTransport("/teleop/joint_command", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
+        ("joint_command", JointState): LCMTransport.spec("/teleop/joint_command", JointState),
     }
 )
 
@@ -104,8 +104,8 @@ coordinator_velocity_xarm6 = ControlCoordinator.blueprint(
     ],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("joint_command", JointState): LCMTransport("/joystick/joint_command", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
+        ("joint_command", JointState): LCMTransport.spec("/joystick/joint_command", JointState),
     }
 )
 
@@ -118,8 +118,8 @@ coordinator_combined_xarm6 = ControlCoordinator.blueprint(
     ],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("joint_command", JointState): LCMTransport("/control/joint_command", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
+        ("joint_command", JointState): LCMTransport.spec("/control/joint_command", JointState),
     }
 )
 
@@ -138,8 +138,8 @@ coordinator_cartesian_ik_mock = ControlCoordinator.blueprint(
     ],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("cartesian_command", PoseStamped): LCMTransport(
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
+        ("cartesian_command", PoseStamped): LCMTransport.spec(
             "/coordinator/cartesian_command", PoseStamped
         ),
     }
@@ -158,8 +158,8 @@ coordinator_cartesian_ik_piper = ControlCoordinator.blueprint(
     ],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("cartesian_command", PoseStamped): LCMTransport(
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
+        ("cartesian_command", PoseStamped): LCMTransport.spec(
             "/coordinator/cartesian_command", PoseStamped
         ),
     }
@@ -185,11 +185,11 @@ coordinator_teleop_xarm7 = autoconnect(
     *_mujoco_if_sim(str(XARM7_SIM_PATH), _xarm7_teleop_cfg.dof),
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("cartesian_command", PoseStamped): LCMTransport(
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
+        ("cartesian_command", PoseStamped): LCMTransport.spec(
             "/coordinator/cartesian_command", PoseStamped
         ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
+        ("buttons", Buttons): LCMTransport.spec("/teleop/buttons", Buttons),
     }
 )
 
@@ -213,11 +213,11 @@ coordinator_teleop_xarm6 = autoconnect(
     *_mujoco_if_sim(str(XARM6_SIM_PATH), _xarm6_teleop_cfg.dof),
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("cartesian_command", PoseStamped): LCMTransport(
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
+        ("cartesian_command", PoseStamped): LCMTransport.spec(
             "/coordinator/cartesian_command", PoseStamped
         ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
+        ("buttons", Buttons): LCMTransport.spec("/teleop/buttons", Buttons),
     }
 )
 
@@ -241,11 +241,11 @@ coordinator_teleop_piper = autoconnect(
     *_mujoco_if_sim(str(PIPER_SIM_PATH), _piper_teleop_cfg.dof),
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("cartesian_command", PoseStamped): LCMTransport(
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
+        ("cartesian_command", PoseStamped): LCMTransport.spec(
             "/coordinator/cartesian_command", PoseStamped
         ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
+        ("buttons", Buttons): LCMTransport.spec("/teleop/buttons", Buttons),
     }
 )
 
@@ -277,11 +277,11 @@ coordinator_teleop_dual = ControlCoordinator.blueprint(
     ],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("cartesian_command", PoseStamped): LCMTransport(
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
+        ("cartesian_command", PoseStamped): LCMTransport.spec(
             "/coordinator/cartesian_command", PoseStamped
         ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
+        ("buttons", Buttons): LCMTransport.spec("/teleop/buttons", Buttons),
     }
 )
 

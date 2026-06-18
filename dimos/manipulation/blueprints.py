@@ -58,7 +58,7 @@ xarm6_planner_only = ManipulationModule.blueprint(
     enable_viz=True,
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/xarm/joint_states", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/xarm/joint_states", JointState),
     }
 )
 
@@ -87,7 +87,7 @@ dual_xarm6_planner = ManipulationModule.blueprint(
     enable_viz=True,
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
     }
 )
 
@@ -116,7 +116,7 @@ xarm7_planner_coordinator = autoconnect(
     ),
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
     }
 )
 
@@ -199,7 +199,7 @@ xarm_perception = (
     )
     .transports(
         {
-            ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+            ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
         }
     )
     .global_config(n_workers=4)
@@ -325,7 +325,7 @@ xarm_perception_sim = autoconnect(
     RerunBridgeModule.blueprint(),
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
     }
 )
 

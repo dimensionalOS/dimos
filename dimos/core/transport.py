@@ -18,7 +18,6 @@ import threading
 from typing import (
     TYPE_CHECKING,
     Any,
-    Self,
     TypeVar,
 )
 
@@ -44,7 +43,9 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable
+
+    from dimos.core.coordination.blueprints import TransportSpec
 
 T = TypeVar("T")
 
@@ -74,6 +75,13 @@ class PubSubTransport(Transport[T]):
 
     def __init__(self, topic: Any) -> None:
         self.topic = topic
+
+    @classmethod
+    def spec(cls, *args: Any, **kwargs: Any) -> TransportSpec:
+        """Defer construction: capture ctor args for the coordinator to build later."""
+        from dimos.core.coordination.blueprints import TransportSpec
+
+        return TransportSpec(cls, args, kwargs)
 
     def __str__(self) -> str:
         return (
@@ -389,10 +397,6 @@ class WebRTCTransport(PubSubTransport[M]):
     def __reduce__(self):  # type: ignore[no-untyped-def]
         return (_rebuild_webrtc_transport, (type(self), self.topic, self._msg_type, self._config))
 
-    def with_config_overrides(self, overrides: Mapping[str, Any]) -> Self:
-        new_config = self._config.model_copy(update=dict(overrides))
-        return type(self)(self.topic, self._msg_type, config=new_config)
-
     def broadcast(self, _: Out[M] | None, msg: M) -> None:
         if not self._started:
             self.start()
@@ -444,8 +448,8 @@ class CloudflareTransport(WebRTCTransport[M]):
     Blueprint usage::
 
         unitree_go2_hosted = unitree_go2_basic.transports({
-            ("cmd_vel", Twist): CloudflareTransport("cmd_unreliable", TwistStamped),
-            ("color_image", Image): CloudflareVideoTransport(),
+            ("cmd_vel", Twist): CloudflareTransport.spec("cmd_unreliable", TwistStamped),
+            ("color_image", Image): CloudflareVideoTransport.spec(),
         })
     """
 
@@ -473,6 +477,13 @@ class WebRTCVideoTransport(Transport[Any]):
     def __init__(self, *, config: ProviderConfig | None = None, **config_kwargs: Any) -> None:
         self._config = config or self._config_cls(**config_kwargs)
 
+    @classmethod
+    def spec(cls, *args: Any, **kwargs: Any) -> TransportSpec:
+        """Defer construction: capture ctor args for the coordinator to build later."""
+        from dimos.core.coordination.blueprints import TransportSpec
+
+        return TransportSpec(cls, args, kwargs)
+
     def start(self) -> None:
         pass  # provider starts lazily on first broadcast
 
@@ -496,9 +507,6 @@ class WebRTCVideoTransport(Transport[Any]):
             type(self).__name__,
         )
         return lambda: None
-
-    def with_config_overrides(self, overrides: Mapping[str, Any]) -> Self:
-        return type(self)(config=self._config.model_copy(update=dict(overrides)))
 
 
 class CloudflareVideoTransport(WebRTCVideoTransport):

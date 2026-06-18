@@ -58,8 +58,8 @@ unitree_go2_keyboard_teleop = (
     )
     .transports(
         {
-            ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
-            ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+            ("twist_command", Twist): LCMTransport.spec("/cmd_vel", Twist),
+            ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
         }
     )
     .global_config(obstacle_avoidance=True)
