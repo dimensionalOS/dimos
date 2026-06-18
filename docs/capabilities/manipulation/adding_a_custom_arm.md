@@ -448,8 +448,6 @@ from pathlib import Path
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
-from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs import JointState
 
 
 # YourArm (6-DOF) — real hardware
@@ -475,10 +473,6 @@ coordinator_yourarm = ControlCoordinator.blueprint(
             priority=10,                              # Higher priority wins arbitration
         ),
     ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 
@@ -580,6 +574,8 @@ yourarm_planner = manipulation_module(
         ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
     }
 )
+# The `.transports(...)` override subscribes the planner to the coordinator's
+# published joint-state topic.
 ```
 
 ### Key config fields

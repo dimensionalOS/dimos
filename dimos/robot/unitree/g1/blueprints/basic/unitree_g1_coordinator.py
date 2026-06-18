@@ -69,7 +69,6 @@ unitree_g1_coordinator = (
             ("motor_command", MotorCommandArray): LCMTransport(
                 "/g1/motor_command", MotorCommandArray
             ),
-            ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
             ("joint_command", JointState): LCMTransport("/g1/joint_command", JointState),
         }
     )

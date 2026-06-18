@@ -58,7 +58,7 @@ xarm6_planner_only = ManipulationModule.blueprint(
     visualization={"backend": "meshcat"},
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/xarm/joint_states", JointState),
+        ("coordinator_joint_state", JointState): LCMTransport("/xarm/joint_states", JointState),
     }
 )
 
@@ -114,10 +114,6 @@ xarm7_planner_coordinator = autoconnect(
         hardware=[_xarm7_cfg.to_hardware_component()],
         tasks=[_xarm7_cfg.to_task_config()],
     ),
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 
@@ -323,10 +319,6 @@ xarm_perception_sim = autoconnect(
         tasks=[_xarm7_sim_cfg.to_task_config()],
     ),
     RerunBridgeModule.blueprint(),
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 

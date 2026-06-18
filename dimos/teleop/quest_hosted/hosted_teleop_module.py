@@ -90,7 +90,7 @@ class HostedTeleopModule(Module):
 
     left_controller_output: Out[PoseStamped]
     right_controller_output: Out[PoseStamped]
-    buttons: Out[Buttons]
+    teleop_buttons: Out[Buttons]
     # cmd_vel actuation port is on the mobile-base subclass; this stays generic.
     cmd_vel_stamped: Out[TwistStamped]
     # Operator-side video health, sampled in the browser via getStats() and
@@ -632,4 +632,4 @@ class HostedTeleopModule(Module):
         right: QuestControllerState | None,
     ) -> None:
         buttons = Buttons.from_controllers(left, right)
-        self.buttons.publish(buttons)
+        self.teleop_buttons.publish(buttons)

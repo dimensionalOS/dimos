@@ -114,7 +114,7 @@ def module(xarm7_config):
         planning_timeout=10.0,
         visualization={"backend": "none"},
     )
-    mod.joint_state = None
+    mod.coordinator_joint_state = None
     mod.objects = None
     mod.start()
     yield mod

@@ -64,7 +64,7 @@ WAYLAND_DISPLAY=wayland-0 XDG_SESSION_TYPE=wayland \
 ```
 
 All three use the `flowbase` adapter against `172.6.2.20:11323` and
-publish/subscribe on LCM `/cmd_vel` + `/coordinator/joint_state`.
+publish/subscribe on LCM `/cmd_vel` + `/coordinator_joint_state`.
 
 ### Blueprint notes
 
