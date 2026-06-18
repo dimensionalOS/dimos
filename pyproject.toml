@@ -248,6 +248,12 @@ unitree-dds = [
     "mcap>=1.2.0",  # decode Go2 DDS mcap recordings (go2 dds store)
 ]
 
+booster = [
+    "dimos[base]",
+    "booster-rpc>=0.0.10",
+    "websockets>=12.0",  # booster-rpc.stream_video imports websockets but doesn't declare it
+]
+
 manipulation = [
     # Planning (Drake)
     "drake==1.45.0; sys_platform == 'darwin' and platform_machine != 'aarch64'",
