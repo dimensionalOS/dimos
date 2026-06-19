@@ -67,21 +67,21 @@ class VampWorld(WorldSpec):
         self.config = config
         self._vamp_module, self._robot_module = load_vamp_robot_module(config.artifact)
         self._environment = self._vamp_module.Environment()
-        self._robots: dict[WorldRobotID, RobotModelConfig] = {}
+        self._robot_id: WorldRobotID | None = None
+        self._robot_config: RobotModelConfig | None = None
         self._live_joint_state: JointState | None = None
         self._obstacles: dict[str, Obstacle] = {}
-        self._robot_counter = 0
         self._finalized = False
 
     def add_robot(self, config: RobotModelConfig) -> WorldRobotID:
         """Add a robot to the VAMP world."""
         if self._finalized:
             raise RuntimeError("Cannot add robot after world is finalized")
-        if self._robots:
+        if self._robot_config is not None:
             raise ValueError("VAMP world currently supports one robot per world")
-        self._robot_counter += 1
-        robot_id = f"robot_{self._robot_counter}"
-        self._robots[robot_id] = config
+        robot_id = "robot_1"
+        self._robot_id = robot_id
+        self._robot_config = config
         home_positions = config.home_joints or [0.0] * len(config.joint_names)
         self._live_joint_state = JointState(
             name=config.joint_names,
@@ -91,17 +91,22 @@ class VampWorld(WorldSpec):
 
     def get_robot_ids(self) -> list[WorldRobotID]:
         """Get all robot IDs."""
-        return list(self._robots)
+        if self._robot_id is None:
+            return []
+        return [self._robot_id]
 
     def get_robot_config(self, robot_id: WorldRobotID) -> RobotModelConfig:
         """Get robot configuration."""
-        return self._robots[robot_id]
+        self._assert_robot_id(robot_id)
+        if self._robot_config is None:
+            raise RuntimeError("VAMP world has no robot config")
+        return self._robot_config
 
     def get_joint_limits(
         self, robot_id: WorldRobotID
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         """Get joint limits from config or conservative defaults."""
-        config = self._robots[robot_id]
+        config = self.get_robot_config(robot_id)
         if config.joint_limits_lower is not None and config.joint_limits_upper is not None:
             return (
                 np.array(config.joint_limits_lower, dtype=np.float64),
@@ -224,7 +229,7 @@ class VampWorld(WorldSpec):
         self, ctx: _VampContext, robot_id: WorldRobotID, link_name: str
     ) -> NDArray[np.float64]:
         """Return EE pose only when the requested link is the configured EE link."""
-        config = self._robots[robot_id]
+        config = self.get_robot_config(robot_id)
         if link_name != config.end_effector_link:
             raise UnsupportedWorldCapabilityError("vamp", f"link pose for '{link_name}'")
         joint_state = ctx.joint_state
@@ -246,7 +251,7 @@ class VampWorld(WorldSpec):
         start_time = time.time()
         if not self.is_finalized:
             return _failure(PlanningStatus.NO_SOLUTION, "World must be finalized before planning")
-        if robot_id not in self.get_robot_ids():
+        if robot_id != self._robot_id:
             return _failure(PlanningStatus.NO_SOLUTION, f"Robot '{robot_id}' not found")
 
         if not self.check_config_collision_free(robot_id, start):
@@ -307,7 +312,7 @@ class VampWorld(WorldSpec):
         self, robot_id: WorldRobotID, joint_state: JointState
     ) -> JointState:
         """Return a joint state truncated to VAMP's configured robot joint order."""
-        config = self._robots[robot_id]
+        config = self.get_robot_config(robot_id)
         positions = list(joint_state.position[: len(config.joint_names)])
         names = list(joint_state.name[: len(positions)]) if joint_state.name else config.joint_names
         return JointState(name=names, position=positions)
@@ -318,7 +323,7 @@ class VampWorld(WorldSpec):
         return self._robot_module.__name__.split(".")[-1]
 
     def _assert_robot_id(self, robot_id: WorldRobotID) -> None:
-        if robot_id not in self._robots:
+        if robot_id != self._robot_id:
             raise KeyError(robot_id)
 
     def _require_live_joint_state(self) -> JointState:

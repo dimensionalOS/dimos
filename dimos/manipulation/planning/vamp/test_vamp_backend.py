@@ -344,6 +344,20 @@ def test_vamp_world_validity_fk_and_unsupported_jacobian(fake_vamp_modules) -> N
             world.get_jacobian(ctx, robot_id)
 
 
+def test_vamp_world_accepts_one_robot(fake_vamp_modules) -> None:
+    """VAMP world exposes WorldSpec robot APIs through a single robot slot."""
+    world = VampWorld(VampWorldConfig())
+    config = robot_config()
+
+    robot_id = world.add_robot(config)
+
+    assert robot_id == "robot_1"
+    assert world.get_robot_ids() == ["robot_1"]
+    assert world.get_robot_config(robot_id) is config
+    with pytest.raises(ValueError, match="one robot"):
+        world.add_robot(robot_config())
+
+
 def test_vamp_planner_dispatches_algorithm_simplifies_and_validates(fake_vamp_modules) -> None:
     """VAMP planner uses configured algorithm and VAMP-native path utilities."""
     vamp_module, robot_module = fake_vamp_modules
