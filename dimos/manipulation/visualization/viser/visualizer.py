@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from typing import TYPE_CHECKING, cast
 
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
@@ -43,20 +44,35 @@ class ViserManipulationVisualizer:
         self,
         *,
         world_monitor: WorldMonitor,
-        manipulation_module: ManipulationModule | None,
+        manipulation_module: ManipulationModule,
         config: ViserVisualizationConfig | None = None,
     ) -> None:
+        if manipulation_module is None:
+            raise ValueError("viser visualization requires a manipulation_module")
+        self._world_monitor = world_monitor
+        self._manipulation_module = manipulation_module
         self.config = config or ViserVisualizationConfig()
+        self._runtime: ViserRuntime | None = None
+        self._server: object | None = None
+        self._viser_urdf: object | None = None
+        self._adapter: InProcessViserAdapter | None = None
+        self._scene: ViserManipulationScene | None = None
+        self._gui: ViserPanelGui | None = None
+        self._closed = False
+
+    def _ensure_started(self) -> None:
+        if self._closed or self._runtime is not None:
+            return
         runtime = ViserRuntime(self.config)
-        server = runtime.start()
-        apply_dimos_theme(server)
         scene: ViserManipulationScene | None = None
         gui: ViserPanelGui | None = None
         try:
+            server = runtime.start()
+            apply_dimos_theme(server)
             viser_urdf = import_viser_urdf()
             adapter = InProcessViserAdapter(
-                world_monitor=world_monitor,
-                manipulation_module=manipulation_module,
+                world_monitor=self._world_monitor,
+                manipulation_module=self._manipulation_module,
             )
             scene = ViserManipulationScene(
                 server,
@@ -72,10 +88,20 @@ class ViserManipulationVisualizer:
                 gui.start()
         except Exception:
             if gui is not None:
-                gui.close()
+                with suppress(Exception):
+                    gui.close()
             if scene is not None:
-                scene.close()
-            runtime.close()
+                with suppress(Exception):
+                    scene.close()
+            with suppress(Exception):
+                runtime.close()
+            self._runtime = None
+            self._server = None
+            self._viser_urdf = None
+            self._adapter = None
+            self._scene = None
+            self._gui = None
+            self._closed = True
             raise
         self._runtime = runtime
         self._server = server
@@ -90,17 +116,23 @@ class ViserManipulationVisualizer:
         """Initialize Viser robot visuals from planning-scene metadata."""
         if self._closed:
             return
+        self._ensure_started()
+        if self._scene is None:
+            return
         for robot_id, config in scene.robots.items():
             self._scene.register_robot(str(robot_id), config)
         if self._gui is not None:
             self._gui.refresh()
 
     def get_visualization_url(self) -> str | None:
-        return self._runtime.url
+        return None if self._runtime is None else self._runtime.url
 
     def publish_visualization(self, ctx: object | None = None) -> None:
         """Update current robot render state. ctx is accepted for protocol compatibility."""
         if self._closed:
+            return
+        self._ensure_started()
+        if self._adapter is None or self._scene is None:
             return
         for _robot_name, robot_id, _config in self._adapter.robot_items():
             current = self._adapter.get_current_joint_state(_robot_name)
@@ -110,10 +142,16 @@ class ViserManipulationVisualizer:
 
     def show_preview(self, robot_id: WorldRobotID) -> None:
         if not self._closed:
+            self._ensure_started()
+            if self._scene is None:
+                return
             self._scene.show_preview(str(robot_id))
 
     def hide_preview(self, robot_id: WorldRobotID) -> None:
         if not self._closed:
+            self._ensure_started()
+            if self._scene is None:
+                return
             self._scene.hide_preview(str(robot_id))
 
     def animate_path(
@@ -124,6 +162,9 @@ class ViserManipulationVisualizer:
     ) -> None:
         if self._closed:
             return
+        self._ensure_started()
+        if self._scene is None:
+            return
         self._scene.animate_path(str(robot_id), list(path), duration)
 
     def close(self) -> None:
@@ -133,6 +174,14 @@ class ViserManipulationVisualizer:
         try:
             if self._gui is not None:
                 self._gui.close()
-            self._scene.close()
+            if self._scene is not None:
+                self._scene.close()
         finally:
-            self._runtime.close()
+            if self._runtime is not None:
+                self._runtime.close()
+            self._runtime = None
+            self._server = None
+            self._viser_urdf = None
+            self._adapter = None
+            self._scene = None
+            self._gui = None

@@ -40,45 +40,33 @@ class InProcessViserAdapter:
         self,
         *,
         world_monitor: WorldMonitor,
-        manipulation_module: ManipulationModule | None,
+        manipulation_module: ManipulationModule,
     ) -> None:
+        if manipulation_module is None:
+            raise ValueError("viser adapter requires a manipulation_module")
         self._world_monitor = world_monitor
         self._module = manipulation_module
 
     def list_robots(self) -> list[RobotName]:
-        if self._module is None:
-            return []
         return list(self._module.list_robots())
 
     def robot_items(self) -> list[tuple[RobotName, WorldRobotID, RobotModelConfig]]:
-        if self._module is None:
-            return []
         return self._module.robot_items()
 
     def robot_id_for_name(self, robot_name: RobotName) -> WorldRobotID | None:
-        if self._module is None:
-            return None
         return self._module.robot_id_for_name(robot_name)
 
     def robot_name_for_id(self, robot_id: WorldRobotID) -> RobotName | None:
-        if self._module is None:
-            return None
         return self._module.robot_name_for_id(robot_id)
 
     def get_robot_config(self, robot_name: RobotName) -> RobotModelConfig | None:
-        if self._module is None:
-            return None
         return self._module.get_robot_config(robot_name)
 
     def get_robot_info(self, robot_name: RobotName) -> dict[str, object] | None:
-        if self._module is None:
-            return None
         info = self._module.get_robot_info(robot_name)
         return None if info is None else dict(info)
 
     def get_init_joints(self, robot_name: RobotName) -> JointState | None:
-        if self._module is None:
-            return None
         return copy_joint_state(self._module.get_init_joints(robot_name))
 
     def get_current_joint_state(self, robot_name: RobotName) -> JointState | None:
@@ -101,15 +89,6 @@ class InProcessViserAdapter:
 
     def evaluate_joint_target(self, joints: JointState, robot_name: RobotName) -> dict[str, object]:
         """Evaluate a joint target through WorldMonitor helpers, not raw WorldSpec access."""
-        if self._module is None:
-            return {
-                "success": False,
-                "status": "NO_ROBOT",
-                "message": f"Unknown robot: {robot_name}",
-                "collision_free": False,
-                "ee_pose": None,
-                "joint_state": None,
-            }
         result = dict(self._module.evaluate_joint_target(copy_joint_state(joints), robot_name))
         joint_state = result.get("joint_state")
         result["joint_state"] = copy_joint_state(
@@ -119,14 +98,6 @@ class InProcessViserAdapter:
 
     def evaluate_pose_target(self, pose: Pose, robot_name: RobotName) -> dict[str, object]:
         """Evaluate a Cartesian target through module/WorldMonitor helper boundaries."""
-        if self._module is None:
-            return {
-                "success": False,
-                "joint_state": None,
-                "status": "UNKNOWN_ROBOT",
-                "message": f"Unknown robot: {robot_name}",
-                "collision_free": False,
-            }
         result = dict(self._module.evaluate_pose_target(pose, robot_name))
         joint_state = result.get("joint_state")
         result["joint_state"] = copy_joint_state(
@@ -135,8 +106,6 @@ class InProcessViserAdapter:
         return result
 
     def get_planned_path(self, robot_name: RobotName) -> JointPath | None:
-        if self._module is None:
-            return None
         path = self._module.get_planned_path(robot_name)
         if path is None:
             return None
@@ -144,37 +113,31 @@ class InProcessViserAdapter:
         return [point for point in copied if point is not None]
 
     def get_planned_trajectory_duration(self, robot_name: RobotName) -> float | None:
-        if self._module is None:
-            return None
         return self._module.get_planned_trajectory_duration(robot_name)
 
     def get_module_state(self) -> str:
-        if self._module is None:
-            return "DISCONNECTED"
         return str(self._module.get_state())
 
     def get_error(self) -> str:
-        if self._module is None:
-            return ""
         return self._module.get_error()
 
     def plan_to_pose(self, pose: Pose, robot_name: RobotName | None = None) -> bool:
-        return False if self._module is None else self._module.plan_to_pose(pose, robot_name)
+        return self._module.plan_to_pose(pose, robot_name)
 
     def plan_to_joints(self, joints: JointState, robot_name: RobotName | None = None) -> bool:
-        return False if self._module is None else self._module.plan_to_joints(joints, robot_name)
+        return self._module.plan_to_joints(joints, robot_name)
 
     def preview_path(self, robot_name: RobotName | None = None) -> bool:
-        return False if self._module is None else self._module.preview_path(robot_name=robot_name)
+        return self._module.preview_path(robot_name=robot_name)
 
     def execute(self, robot_name: RobotName | None = None) -> bool:
-        return False if self._module is None else self._module.execute(robot_name)
+        return self._module.execute(robot_name)
 
     def cancel(self) -> bool:
-        return False if self._module is None else self._module.cancel()
+        return self._module.cancel()
 
     def clear_planned_path(self) -> bool:
-        return False if self._module is None else self._module.clear_planned_path()
+        return self._module.clear_planned_path()
 
     @staticmethod
     def joints_from_values(joint_names: Sequence[str], values: Sequence[float]) -> JointState:

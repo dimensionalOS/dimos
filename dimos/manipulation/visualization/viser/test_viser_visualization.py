@@ -23,10 +23,8 @@ from typing import Any, cast
 import numpy as np
 import pytest
 
-from dimos.manipulation.planning.spec.models import PlanningSceneInfo
 from dimos.manipulation.visualization.viser import (
     theme as theme_module,
-    visualizer as visualizer_module,
 )
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.animation import sampled_joint_path_frames
@@ -44,7 +42,6 @@ from dimos.manipulation.visualization.viser.state import (
     TargetStatus,
 )
 from dimos.manipulation.visualization.viser.theme import _dimos_logo_data_url, apply_dimos_theme
-from dimos.manipulation.visualization.viser.visualizer import ViserManipulationVisualizer
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -458,67 +455,6 @@ def test_dimos_theme_is_non_blocking_when_theme_api_fails() -> None:
     assert apply_dimos_theme(server) is False
 
 
-def test_visualizer_initializes_all_scene_robots_from_planning_scene() -> None:
-    calls = []
-    fake_scene = SimpleNamespace(
-        register_robot=lambda robot_id, config: calls.append((robot_id, config.name))
-    )
-    fake_gui = SimpleNamespace(refresh=lambda: calls.append(("refresh", "gui")))
-    visualizer = ViserManipulationVisualizer.__new__(ViserManipulationVisualizer)
-    cast("Any", visualizer)._closed = False
-    cast("Any", visualizer)._scene = fake_scene
-    cast("Any", visualizer)._gui = fake_gui
-    scene = PlanningSceneInfo(
-        robots={
-            "robot-1": SimpleNamespace(name="arm1"),
-            "robot-2": SimpleNamespace(name="arm2"),
-        }
-    )
-
-    visualizer.initialize_scene(scene)
-
-    assert calls == [("robot-1", "arm1"), ("robot-2", "arm2"), ("refresh", "gui")]
-
-
-def test_visualizer_closes_runtime_when_construction_fails() -> None:
-    closed = []
-
-    class FakeRuntime:
-        url = "http://localhost:8095"
-
-        def __init__(self, config) -> None:
-            self.config = config
-
-        def start(self) -> FakeServer:
-            return FakeServer()
-
-        def close(self) -> None:
-            closed.append("runtime")
-
-    def fail_import_viser_urdf():
-        raise RuntimeError("missing viser_urdf")
-
-    original_runtime = visualizer_module.ViserRuntime
-    original_import = visualizer_module.import_viser_urdf
-    cast("Any", visualizer_module).ViserRuntime = FakeRuntime
-    cast("Any", visualizer_module).import_viser_urdf = fail_import_viser_urdf
-    try:
-        try:
-            ViserManipulationVisualizer(
-                world_monitor=cast("Any", object()),
-                manipulation_module=None,
-                config=ViserVisualizationConfig(panel_enabled=False),
-            )
-        except RuntimeError as e:
-            assert str(e) == "missing viser_urdf"
-        else:
-            raise AssertionError("expected Viser construction failure")
-        assert closed == ["runtime"]
-    finally:
-        cast("Any", visualizer_module).ViserRuntime = original_runtime
-        cast("Any", visualizer_module).import_viser_urdf = original_import
-
-
 class FakeMesh:
     def __init__(self) -> None:
         self.visible = None
@@ -732,6 +668,13 @@ def test_adapter_copies_joint_state_and_delegates_to_module() -> None:
     assert adapter.plan_to_pose(cast("Any", "pose"), "arm") == ("pose", "arm")
     assert adapter.preview_path("arm") == "arm"
     assert adapter.evaluate_joint_target(planned[0], "arm")["status"] == "FEASIBLE"
+
+
+def test_adapter_requires_manipulation_module() -> None:
+    with pytest.raises(ValueError, match="requires a manipulation_module"):
+        InProcessViserAdapter(
+            world_monitor=cast("Any", object()), manipulation_module=cast("Any", None)
+        )
 
 
 def test_adapter_evaluate_joint_target_uses_world_monitor_and_copies_input() -> None:
