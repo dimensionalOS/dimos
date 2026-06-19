@@ -70,6 +70,7 @@ class MockProvider:
 
 class MockConfig(ProviderConfig):
     name: str = "default"
+    count: int = 0
 
     def _create(self) -> MockProvider:
         return MockProvider()
@@ -271,6 +272,13 @@ def test_materialize_uses_resolved_config() -> None:
     transport = _materialize_transports(bp, {"mock": {"name": "resolved"}})[("topic", FakeLCMMsg)]
 
     assert transport._config == MockConfig(name="resolved")
+
+
+def test_transport_overrides_coerce_string_values() -> None:
+    """CLI/env overrides arrive as raw strings; non-str fields must coerce, not pass through."""
+    bp = Blueprint(blueprints=()).transports({("topic", FakeLCMMsg): MockTransport("topic")})
+    new_bp = _apply_transport_overrides(bp, {"mock": {"count": "5"}})
+    assert new_bp.transport_map[("topic", FakeLCMMsg)]._config.count == 5
 
 
 # ─── Broker credential validation ────────────────────────────────────
