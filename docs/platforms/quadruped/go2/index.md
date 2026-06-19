@@ -39,6 +39,11 @@ Opens the command center at [localhost:7779](http://localhost:7779) with Rerun 3
 
 Use `dimos go2tool` to provision wifi and find the robot's IP. Skip if the robot is already on your network and you know its IP.
 
+macOS caveat: BLE provisioning can fail when direct Python execution cannot get
+usable Bluetooth authorization from the terminal. The default `auto` BLE backend
+uses a LaunchServices-opened helper for finite scans and provisioning on macOS.
+See [Go2 wifi provisioning](/docs/coding-agents/go2-wifi-provisioning.md).
+
 1. Power on the Go2 — it advertises over BLE immediately.
 
 2. Provision wifi (one-time per network):
@@ -52,10 +57,20 @@ dimos go2tool discover
 configure wifi
 
 ```bash
-dimos go2tool connect-wifi --ssid <wifi> --password <password>
+dimos go2tool setup --ssid <wifi>
 ```
 
-Scans BLE and connects to the only robot it finds, or prompts you to pick if there are several.
+For interactive use, omit `--password`; the password prompt uses hidden input.
+For automation, `--password <password>` is supported. `setup` configures wifi,
+finds the robot on LAN, and prints the IP to use with DimOS.
+
+If several Go2s may be nearby, pass one selector from `discover` output:
+
+```bash
+dimos go2tool setup --ssid <wifi> --serial <serial>
+dimos go2tool setup --ssid <wifi> --name <ble-name>
+dimos go2tool setup --ssid <wifi> --mac <ble-address>
+```
 
 3. Find the robot's IP:
 
@@ -63,7 +78,9 @@ Scans BLE and connects to the only robot it finds, or prompts you to pick if the
 dimos go2tool discover
 ```
 
-Prints `SOURCE NAME IP MAC SERIAL` for every robot it sees over BLE and LAN. Export the IP:
+Prints `SOURCE NAME IP MAC SERIAL` for every robot it sees over BLE and LAN.
+If you used `setup`, this IP is also printed as `export ROBOT_IP=<ip>`. Export
+the IP:
 
 ```bash
 export ROBOT_IP=<discovered_ip>

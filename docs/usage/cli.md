@@ -193,6 +193,52 @@ Print resolved GlobalConfig values and their sources.
 dimos show-config
 ```
 
+### `dimos go2tool`
+
+Provision and verify Unitree Go2 network setup.
+
+```bash
+dimos go2tool discover
+dimos go2tool connect-wifi --ssid <wifi>
+dimos go2tool setup --ssid <wifi>
+dimos go2tool setup --ssid <wifi> --serial <serial>
+dimos go2tool verify --robot-ip <robot-ip>
+```
+
+| Command | Description |
+|---------|-------------|
+| `discover` | Show Go2 robots discovered over BLE and LAN. |
+| `connect-wifi` | Send wifi credentials to a Go2 over BLE. Omit `--password` to use the hidden prompt. |
+| `setup` | Provision wifi, rediscover the robot on LAN, and verify `:9991/con_notify`. |
+| `verify` | POST to `http://<robot-ip>:9991/con_notify` without sending movement commands. |
+
+`setup` options:
+
+| Option | Description |
+|--------|-------------|
+| `--ssid <wifi>` | Target wifi SSID. Required. |
+| `--password <password>` | Target wifi password. If omitted, prompts with hidden input. |
+| `--country <code>` | Two-letter country code. Default: `US`. |
+| `--serial <serial>` | Select a specific robot by serial. |
+| `--name <ble-name>` | Select a specific robot by BLE name, for example `Go2_49073`. |
+| `--mac <ble-address>` | Select/provision a specific BLE address and skip BLE scan. |
+| `--timeout <seconds>` | BLE scan/connect timeout. Default: `5.0`. |
+| `--retries <count>` | Provisioning attempts. Default: `3`. |
+| `--lan-timeout <seconds>` | Timeout for each LAN discovery attempt. Default: `2.0`. |
+| `--rediscovery-attempts <count>` | LAN rediscovery attempts after provisioning. Default: `5`. |
+| `--rediscovery-delay <seconds>` | Delay between LAN rediscovery attempts. Default: `2.0`. |
+| `--verify-timeout <seconds>` | HTTP verification timeout. Default: `1.0`. |
+| `--ble-backend {auto,helper,direct}` | BLE backend. Default: `auto`. |
+| `--ble-helper <path>` | macOS BLE helper `.app` path. Can also use `DIMOS_GO2_BLE_HELPER`. |
+
+When several Go2s may be visible, pass exactly one selector to `connect-wifi`
+or `setup`: `--serial <serial>`, `--name <ble-name>`, or `--mac <ble-address>`.
+Use values from `dimos go2tool discover`.
+
+BLE commands support `--ble-backend {auto,helper,direct}` and `--ble-helper`.
+On macOS, `auto` uses the LaunchServices helper for finite BLE scans and
+provisioning; set `DIMOS_GO2_BLE_HELPER` to point at a custom helper `.app`.
+
 ---
 
 ## Agent & MCP Commands
