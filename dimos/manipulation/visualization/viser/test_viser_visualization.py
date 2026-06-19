@@ -1275,12 +1275,17 @@ def test_gui_safe_execute_requires_fresh_matching_plan_and_clear_resets_path(
 
 def test_gui_plan_target_failure_recovers_action_state(
     make_panel: Callable[..., ViserPanelGui],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     adapter = make_adapter_with_robot()
     gui = make_panel(FakeGuiServer(), adapter)
     gui._operation_worker.stop()
-    gui._operation_worker = SimpleNamespace(
-        submit=lambda operation, **_kwargs: operation(), stop=lambda timeout=2.0: None
+    monkeypatch.setattr(
+        gui,
+        "_operation_worker",
+        SimpleNamespace(
+            submit=lambda operation, **_kwargs: operation(), stop=lambda timeout=2.0: None
+        ),
     )
     gui.state.selected_robot = "missing"
     gui.state.target_status = TargetStatus.FEASIBLE
@@ -1292,6 +1297,42 @@ def test_gui_plan_target_failure_recovers_action_state(
     assert gui.state.plan_state.status == PlanStatus.FAILED
     assert gui.state.error == "No robot config"
     assert gui.state.last_result == "plan_to_joints=False"
+
+
+def test_gui_resets_fault_before_replanning(
+    make_panel: Callable[..., ViserPanelGui],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+    adapter = make_adapter_with_robot()
+    gui = make_panel(FakeGuiServer(), adapter)
+    gui._operation_worker.stop()
+    monkeypatch.setattr(
+        gui,
+        "_operation_worker",
+        SimpleNamespace(
+            submit=lambda operation, **_kwargs: operation(), stop=lambda timeout=2.0: None
+        ),
+    )
+
+    def reset() -> bool:
+        calls.append("reset")
+        return True
+
+    def plan_to_joints(_joints: JointState, _robot_name: str | None = None) -> bool:
+        calls.append("plan")
+        return True
+
+    monkeypatch.setattr(adapter, "reset", reset)
+    monkeypatch.setattr(adapter, "plan_to_joints", plan_to_joints)
+    gui.state.target_status = TargetStatus.FEASIBLE
+    gui.state.manipulation_state = "FAULT"
+
+    gui._submit_plan()
+
+    assert calls == ["reset", "plan"]
+    assert gui.state.plan_state.status == PlanStatus.FRESH
+    assert gui.state.last_result == "plan_to_joints=True"
 
 
 def test_operation_worker_coalesces_pending_requests() -> None:

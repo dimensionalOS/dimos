@@ -143,6 +143,9 @@ class InProcessViserAdapter:
     def get_error(self) -> str:
         return self._module.get_error()
 
+    def reset(self) -> bool:
+        return self._module.reset().is_success()
+
     def plan_to_pose(self, pose: Pose, robot_name: RobotName | None = None) -> bool:
         return self._module.plan_to_pose(pose, robot_name)
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import TypeAlias
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
@@ -68,7 +69,7 @@ REFERENCE_GRID_NAME = "/reference_grid"
 REFERENCE_GRID_CELL_COLOR = (44, 54, 58)
 REFERENCE_GRID_SECTION_COLOR = (90, 145, 165)
 
-SceneHandle = ViserUrdf | TransformControlsHandle | GridHandle | MeshHandle
+SceneHandle: TypeAlias = ViserUrdf | TransformControlsHandle | GridHandle | MeshHandle
 
 
 class ViserManipulationScene:
@@ -239,7 +240,7 @@ class ViserManipulationScene:
         color = TARGET_CONTROL_FEASIBLE_COLOR if feasible else TARGET_CONTROL_INFEASIBLE_COLOR
         mesh_color = GOAL_ROBOT_FEASIBLE_COLOR if feasible else GOAL_ROBOT_INFEASIBLE_COLOR
         mesh_opacity = GOAL_ROBOT_FEASIBLE_OPACITY if feasible else GOAL_ROBOT_INFEASIBLE_OPACITY
-        handles = [self._handles.get(f"{robot_id}:ee_control")]
+        handles: list[SceneHandle | None] = [self._handles.get(f"{robot_id}:ee_control")]
         target = self._urdfs.get(f"{robot_id}:target")
         handles.append(target)
         self._set_urdf_mesh_material(target, mesh_color, mesh_opacity)

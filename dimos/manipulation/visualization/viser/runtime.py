@@ -32,6 +32,8 @@ except ModuleNotFoundError as e:
         raise
     raise ModuleNotFoundError(VISER_INSTALL_HINT) from e
 
+__all__ = ["VISER_INSTALL_HINT", "VISER_URDF_INSTALL_HINT", "ViserRuntime", "ViserServer"]
+
 
 class ViserRuntime:
     """Owns the Viser server lifecycle."""

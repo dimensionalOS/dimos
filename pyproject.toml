@@ -564,6 +564,8 @@ module = [
     "turbojpeg",
     "ultralytics.*",
     "unitree_sdk2py.*",
+    "viser",
+    "viser.*",
     "unitree_webrtc_connect.*",
     "websocket",
     "xarm.*",
@@ -615,6 +617,7 @@ ignore = [
     "dimos/dashboard/dimos.rbl",
     "dimos/web/dimos_interface/themes.json",
     "dimos/manipulation/manipulation_module.py",
+    "dimos/manipulation/visualization/viser/test_viser_visualization.py",
     "dimos/navigation/nav_stack/modules/*/main.cpp",
     "dimos/navigation/nav_stack/common/*.hpp",
 ]

@@ -15,8 +15,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import TypeAlias
 
-from dimos.manipulation.visualization.types import TargetEvaluation
+from dimos.manipulation.visualization.types import RobotInfo, TargetEvaluation
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.runtime import VISER_INSTALL_HINT
@@ -57,7 +58,7 @@ except ModuleNotFoundError as e:
         raise
     raise ModuleNotFoundError(VISER_INSTALL_HINT) from e
 
-PanelHandle = (
+PanelHandle: TypeAlias = (
     GuiFolderHandle
     | GuiMarkdownHandle
     | GuiDropdownHandle[str]
@@ -212,9 +213,9 @@ class ViserPanelGui:
         robot_id = self.adapter.robot_id_for_name(self.state.selected_robot)
         if robot_id is None:
             return
-        self._handles["ee_control"] = self.scene.ensure_target_controls(
-            str(robot_id), self._on_transform_update
-        )
+        ee_control = self.scene.ensure_target_controls(str(robot_id), self._on_transform_update)
+        if ee_control is not None:
+            self._handles["ee_control"] = ee_control
         if (
             self.state.target_status == TargetStatus.EMPTY
             and self.state.current_ee_pose is not None
@@ -251,7 +252,11 @@ class ViserPanelGui:
                 step=0.001,
                 initial_value=float(values[index] if index < len(values) else 0.0),
             )
-            handle.on_update(lambda _event, name=joint_name: self._on_joint_slider_update(name))
+
+            def on_update(_event: object, name: str = joint_name) -> None:
+                self._on_joint_slider_update(name)
+
+            handle.on_update(on_update)
             self._joint_sliders[joint_name] = handle
 
     def _clear_joint_sliders(self) -> None:
@@ -282,15 +287,12 @@ class ViserPanelGui:
         for attr in ("options", "values"):
             if hasattr(handle, attr):
                 try:
-                    if attr == "options":
-                        handle.options = options
-                    else:
-                        handle.values = options
+                    self._set_optional_handle_attr(handle, attr, options)
                 except Exception:
                     logger.warning("Could not set robot dropdown %s", attr, exc_info=True)
         if hasattr(handle, "value") and self.state.selected_robot in robots:
             try:
-                handle.value = self.state.selected_robot
+                self._set_optional_handle_attr(handle, "value", self.state.selected_robot)
             except Exception:
                 logger.warning("Could not set robot dropdown value", exc_info=True)
 
@@ -298,25 +300,21 @@ class ViserPanelGui:
         handle = self._handles.get("preset")
         if handle is None or self.state.selected_robot is None:
             return
-        info = self.adapter.get_robot_info(self.state.selected_robot) or {}
+        info: RobotInfo | None = self.adapter.get_robot_info(self.state.selected_robot)
         config = self.adapter.get_robot_config(self.state.selected_robot)
         options = ["Select preset..."]
-        if (
-            info.get("init_joints") is not None
-            or self.adapter.get_init_joints(self.state.selected_robot) is not None
-        ):
+        if (info is not None and info["init_joints"] is not None) or self.adapter.get_init_joints(
+            self.state.selected_robot
+        ) is not None:
             options.append("Init")
         options.append("Current")
         home_joints = config.home_joints if config is not None else None
-        if info.get("home_joints") is not None or home_joints is not None:
+        if (info is not None and info["home_joints"] is not None) or home_joints is not None:
             options.append("Home")
         for attr in ("options", "values"):
             if hasattr(handle, attr):
                 try:
-                    if attr == "options":
-                        handle.options = options
-                    else:
-                        handle.values = options
+                    self._set_optional_handle_attr(handle, attr, options)
                 except Exception:
                     logger.warning("Could not set preset dropdown %s", attr, exc_info=True)
 
@@ -540,6 +538,10 @@ class ViserPanelGui:
                 return
             self.state.action_status = ActionStatus.RUNNING
             self.state.plan_state.status = PlanStatus.PLANNING
+            if self.state.manipulation_state == "FAULT" and not self.adapter.reset():
+                self.state.plan_state.status = PlanStatus.FAILED
+                self._finish_operation("reset=False", clear_error=False, operation_id=operation_id)
+                return
             target = self._target_from_sliders(robot_name)
             if target is None:
                 self.state.plan_state.status = PlanStatus.FAILED
@@ -695,12 +697,16 @@ class ViserPanelGui:
     def _set_handle_value(self, key: str, value: str) -> None:
         handle = self._handles.get(key)
         if isinstance(handle, GuiMarkdownHandle):
-            handle.value = value
+            self._set_optional_handle_attr(handle, "value", value)
 
     def _set_disabled(self, key: str, disabled: bool) -> None:
         handle = self._handles.get(key)
         if isinstance(handle, GuiButtonHandle):
-            handle.disabled = disabled
+            self._set_optional_handle_attr(handle, "disabled", disabled)
+
+    @staticmethod
+    def _set_optional_handle_attr(handle: object, attr: str, value: object) -> None:
+        setattr(handle, attr, value)
 
     def _pose_from_transform_target(self, target: TransformControlsHandle) -> Pose | None:
         try:
@@ -711,13 +717,13 @@ class ViserPanelGui:
             wxyz = target.wxyz
         except AttributeError:
             wxyz = None
-        xyz = self._xyz_from_value(position)
+        xyz = self._xyz_from_value(list(position))
         if xyz is None:
             return None
         px, py, pz = xyz
         if wxyz is None:
             return Pose({"position": [px, py, pz], "orientation": [0.0, 0.0, 0.0, 1.0]})
-        quaternion = self._wxyz_from_value(wxyz)
+        quaternion = self._wxyz_from_value(list(wxyz))
         if quaternion is None:
             return None
         qw, qx, qy, qz = quaternion

@@ -133,7 +133,7 @@ class PanelState:
             and self.selected_robot is not None
             and self.action_status == ActionStatus.IDLE
             and self.target_status == TargetStatus.FEASIBLE
-            and self.manipulation_state in {"IDLE", "COMPLETED"}
+            and self.manipulation_state in {"IDLE", "COMPLETED", "FAULT"}
             and self.plan_state.status != PlanStatus.PLANNING
         )
 

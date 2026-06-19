@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import pytest
 
+pytest.importorskip("viser", reason="Viser optional dependency is not installed")
+
 from dimos.manipulation.visualization.types import TargetEvaluation
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
