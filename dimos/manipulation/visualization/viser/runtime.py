@@ -18,12 +18,8 @@ import webbrowser
 
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 
-VISER_INSTALL_HINT = (
-    "Viser manipulation visualization requires Viser. Install it with: uv sync --extra manipulation"
-)
-VISER_URDF_INSTALL_HINT = (
-    "Viser URDF support requires yourdfpy. Install it with: uv sync --extra manipulation"
-)
+VISER_INSTALL_HINT = "Viser manipulation visualization requires Viser with URDF support. Install it with: uv sync --extra manipulation"
+VISER_URDF_INSTALL_HINT = VISER_INSTALL_HINT
 
 try:
     from viser import ViserServer

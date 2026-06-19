@@ -97,7 +97,7 @@ class FakeOperationSubmitWorker(OperationWorker):
 
 class FakeOperationAdapter(InProcessViserAdapter):
     def __init__(self) -> None:
-        pass
+        self.cancel_calls = 0
 
     def list_robots(self) -> list[str]:
         return []
@@ -122,6 +122,10 @@ class FakeOperationAdapter(InProcessViserAdapter):
 
     def is_state_stale(self, robot_name: str, max_age: float = 1.0) -> bool:
         return False
+
+    def cancel(self) -> bool:
+        self.cancel_calls += 1
+        return True
 
 
 def test_operation_worker_uses_per_operation_timeout() -> None:
@@ -197,6 +201,26 @@ def test_gui_only_preview_submits_timeout_override(monkeypatch: pytest.MonkeyPat
 
     assert "timeout_seconds" not in submissions[0]
     assert submissions[1]["timeout_seconds"] == 0.25
+
+
+def test_gui_cancel_bypasses_operation_worker(monkeypatch: pytest.MonkeyPatch) -> None:
+    submissions: list[Callable[[], None]] = []
+    adapter = FakeOperationAdapter()
+    gui = ViserPanelGui(
+        EmptyServer(),
+        adapter,
+        ViserVisualizationConfig(),
+    )
+    gui._operation_worker.stop()
+    monkeypatch.setattr(gui, "_operation_worker", FakeOperationSubmitWorker(submissions))
+    gui.state.action_status = ActionStatus.PREVIEWING
+
+    gui._submit_cancel()
+
+    assert submissions == []
+    assert adapter.cancel_calls == 1
+    assert gui.state.action_status == ActionStatus.IDLE
+    assert gui.state.last_result == "cancel=True"
 
 
 @pytest.mark.parametrize(

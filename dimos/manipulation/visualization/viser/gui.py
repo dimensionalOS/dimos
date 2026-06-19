@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import TypeAlias
 
 from dimos.manipulation.visualization.types import RobotInfo, TargetEvaluation
@@ -624,20 +623,15 @@ class ViserPanelGui:
 
     def _submit_cancel(self) -> None:
         operation_id = self._next_operation_id()
-
-        def operation() -> None:
-            if not self._operation_is_current(operation_id):
-                return
-            self.state.action_status = ActionStatus.CANCELLING
+        if not self._operation_is_current(operation_id):
+            return
+        self.state.action_status = ActionStatus.CANCELLING
+        try:
             ok = self.adapter.cancel()
-            if not self._operation_is_current(operation_id):
-                return
-            self.state.action_status = ActionStatus.IDLE
-            self._finish_operation(f"cancel={ok}", operation_id=operation_id)
-
-        self._operation_worker.submit(
-            operation, on_error=lambda message: self._set_operation_error(message, operation_id)
-        )
+        except Exception as e:
+            self._set_operation_error(str(e), operation_id)
+            return
+        self._finish_operation(f"cancel={ok}", operation_id=operation_id)
 
     def _submit_clear(self) -> None:
         operation_id = self._next_operation_id()
@@ -709,46 +703,9 @@ class ViserPanelGui:
         setattr(handle, attr, value)
 
     def _pose_from_transform_target(self, target: TransformControlsHandle) -> Pose | None:
-        try:
-            position = target.position
-        except AttributeError:
-            return None
-        try:
-            wxyz = target.wxyz
-        except AttributeError:
-            wxyz = None
-        xyz = self._xyz_from_value(list(position))
-        if xyz is None:
-            return None
-        px, py, pz = xyz
-        if wxyz is None:
-            return Pose({"position": [px, py, pz], "orientation": [0.0, 0.0, 0.0, 1.0]})
-        quaternion = self._wxyz_from_value(list(wxyz))
-        if quaternion is None:
-            return None
-        qw, qx, qy, qz = quaternion
+        px, py, pz = (float(value) for value in target.position)
+        qw, qx, qy, qz = (float(value) for value in target.wxyz)
         return Pose({"position": [px, py, pz], "orientation": [qx, qy, qz, qw]})
-
-    def _xyz_from_value(self, value: Sequence[float]) -> tuple[float, float, float] | None:
-        try:
-            return (
-                float(value[0]),
-                float(value[1]),
-                float(value[2]),
-            )
-        except (AttributeError, IndexError, TypeError, ValueError):
-            return None
-
-    def _wxyz_from_value(self, value: Sequence[float]) -> tuple[float, float, float, float] | None:
-        try:
-            return (
-                float(value[0]),
-                float(value[1]),
-                float(value[2]),
-                float(value[3]),
-            )
-        except (AttributeError, IndexError, TypeError, ValueError):
-            return None
 
     def _feasibility_status(
         self, result: TargetEvaluation, success: bool, collision_free: bool

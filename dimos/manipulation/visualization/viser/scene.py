@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TypeAlias
+from typing import Protocol, TypeAlias, cast
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
@@ -70,6 +70,10 @@ REFERENCE_GRID_CELL_COLOR = (44, 54, 58)
 REFERENCE_GRID_SECTION_COLOR = (90, 145, 165)
 
 SceneHandle: TypeAlias = ViserUrdf | TransformControlsHandle | GridHandle | MeshHandle
+
+
+class _ColorHandle(Protocol):
+    color: tuple[int, int, int]
 
 
 class ViserManipulationScene:
@@ -218,41 +222,27 @@ class ViserManipulationScene:
         handle = self._handles.get(f"{robot_id}:ee_control")
         if handle is None or pose is None:
             return
-        try:
-            handle.position = (
-                float(pose.position.x),
-                float(pose.position.y),
-                float(pose.position.z),
-            )
-        except (AttributeError, TypeError):
-            pass
-        try:
-            handle.wxyz = (
-                float(pose.orientation.w),
-                float(pose.orientation.x),
-                float(pose.orientation.y),
-                float(pose.orientation.z),
-            )
-        except (AttributeError, TypeError):
-            pass
+        handle.position = (
+            float(pose.position.x),
+            float(pose.position.y),
+            float(pose.position.z),
+        )
+        handle.wxyz = (
+            float(pose.orientation.w),
+            float(pose.orientation.x),
+            float(pose.orientation.y),
+            float(pose.orientation.z),
+        )
 
     def set_target_visual_state(self, robot_id: str, feasible: bool) -> None:
         color = TARGET_CONTROL_FEASIBLE_COLOR if feasible else TARGET_CONTROL_INFEASIBLE_COLOR
         mesh_color = GOAL_ROBOT_FEASIBLE_COLOR if feasible else GOAL_ROBOT_INFEASIBLE_COLOR
         mesh_opacity = GOAL_ROBOT_FEASIBLE_OPACITY if feasible else GOAL_ROBOT_INFEASIBLE_OPACITY
-        handles: list[SceneHandle | None] = [self._handles.get(f"{robot_id}:ee_control")]
+        handle = self._handles.get(f"{robot_id}:ee_control")
+        if handle is not None:
+            cast("_ColorHandle", handle).color = color
         target = self._urdfs.get(f"{robot_id}:target")
-        handles.append(target)
         self._set_urdf_mesh_material(target, mesh_color, mesh_opacity)
-        for handle in handles:
-            if handle is None:
-                continue
-            for attr in ("color", "material_color"):
-                if hasattr(handle, attr):
-                    try:
-                        setattr(handle, attr, color)
-                    except Exception:
-                        logger.warning("Could not set Viser handle %s", attr, exc_info=True)
 
     def close(self) -> None:
         for key in list(self._handles):
@@ -361,12 +351,10 @@ class ViserManipulationScene:
     def _set_handle_visibility(self, handle: SceneHandle | None, visible: bool) -> None:
         if handle is None:
             return
-        for candidate in (handle, *self._meshes(handle)):
-            if hasattr(candidate, "visible"):
-                try:
-                    candidate.visible = visible
-                except Exception:
-                    logger.warning("Could not set Viser handle visibility", exc_info=True)
+        if not isinstance(handle, ViserUrdf):
+            handle.visible = visible
+        for mesh in self._meshes(handle):
+            mesh.visible = visible
 
     def _set_urdf_mesh_material(
         self, urdf: ViserUrdf | None, color: tuple[int, int, int], opacity: float
@@ -374,17 +362,8 @@ class ViserManipulationScene:
         if urdf is None:
             return
         for mesh in self._meshes(urdf):
-            for attr in ("color", "material_color"):
-                if hasattr(mesh, attr):
-                    try:
-                        setattr(mesh, attr, color)
-                    except Exception:
-                        logger.warning("Could not set Viser mesh %s", attr, exc_info=True)
-            if hasattr(mesh, "opacity"):
-                try:
-                    mesh.opacity = opacity
-                except Exception:
-                    logger.warning("Could not set Viser mesh opacity", exc_info=True)
+            mesh.color = color
+            mesh.opacity = opacity
 
     def _meshes(self, handle: SceneHandle) -> tuple[MeshHandle, ...]:
         # Depends on viser internals: ViserUrdf exposes no public accessor for the
