@@ -23,6 +23,8 @@ from types import ModuleType, SimpleNamespace, TracebackType
 import numpy as np
 import pytest
 
+pytest.importorskip("viser", reason="Viser optional dependency is not installed")
+
 from dimos.manipulation.visualization.types import RobotInfo, TargetEvaluation
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.animation import sampled_joint_path_frames
