@@ -331,16 +331,7 @@ class ViserManipulationScene:
         # Depends on viser internals: ViserUrdf exposes no public accessor for its
         # wrapped yourdfpy model, so we reach for the private `_urdf` attribute here.
         # Keep this the single place that touches it.
-        wrapped_urdf = getattr(urdf, "_urdf", None)
-        if wrapped_urdf is None:
-            return ()
-        actuated_joint_names = getattr(wrapped_urdf, "actuated_joint_names", None)
-        if actuated_joint_names is not None:
-            return tuple(str(name) for name in actuated_joint_names)
-        joint_map = getattr(wrapped_urdf, "joint_map", None)
-        if joint_map is not None:
-            return tuple(str(name) for name in joint_map)
-        return ()
+        return tuple(str(name) for name in urdf._urdf.actuated_joint_names)
 
     def _set_preview_visibility(self, robot_id: str, visible: bool) -> None:
         self._set_handle_visibility(self._urdfs.get(f"{robot_id}:preview"), visible)
