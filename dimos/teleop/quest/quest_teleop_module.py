@@ -89,7 +89,7 @@ class QuestTeleopModule(Module):
     Outputs:
         - left_controller_output: PoseStamped (output pose for left hand)
         - right_controller_output: PoseStamped (output pose for right hand)
-        - buttons: Buttons (button states for both controllers)
+        - teleop_buttons: Buttons (button states for both controllers)
     """
 
     config: QuestTeleopConfig
@@ -97,7 +97,7 @@ class QuestTeleopModule(Module):
     # Outputs: delta poses for each controller
     left_controller_output: Out[PoseStamped]
     right_controller_output: Out[PoseStamped]
-    buttons: Out[Buttons]
+    teleop_buttons: Out[Buttons]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -392,4 +392,4 @@ class QuestTeleopModule(Module):
         keep analog values, add extra streams).
         """
         buttons = Buttons.from_controllers(left, right)
-        self.buttons.publish(buttons)
+        self.teleop_buttons.publish(buttons)
