@@ -32,7 +32,6 @@ body:
     attributes:
       label: Logs or screenshots
       description: Paste relevant logs, tracebacks, screenshots, or videos.
-      render: shell
     validations:
       required: false
   - type: textarea
