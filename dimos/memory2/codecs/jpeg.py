@@ -36,4 +36,9 @@ class JpegCodec:
     def decode(self, data: bytes) -> Image:
         from dimos.msgs.sensor_msgs.Image import Image
 
+        # Some recordings include a 1-byte format tag before the LCM envelope
+        # (b'J' for JPEG-encoded Image). Strip it on read so old + new sessions
+        # both decode cleanly.
+        if data and data[0:1] == b"J":
+            data = data[1:]
         return Image.lcm_jpeg_decode(data)

@@ -203,6 +203,40 @@ def make_humanoid_joints(hardware_id: HardwareId) -> list[JointName]:
     return [f"{hardware_id}/{j}" for j in _HUMANOID_29DOF_JOINTS]
 
 
+# Index order matches Unitree's canonical LowCmd_.motor_cmd[0..11] layout:
+# FR_hip=0, FR_thigh=1, FR_calf=2, FL_hip=3, FL_thigh=4, FL_calf=5,
+# RR_hip=6, RR_thigh=7, RR_calf=8, RL_hip=9, RL_thigh=10, RL_calf=11.
+_QUADRUPED_12DOF_JOINTS = [
+    "FR_hip",
+    "FR_thigh",
+    "FR_calf",
+    "FL_hip",
+    "FL_thigh",
+    "FL_calf",
+    "RR_hip",
+    "RR_thigh",
+    "RR_calf",
+    "RL_hip",
+    "RL_thigh",
+    "RL_calf",
+]
+
+
+def make_quadruped_joints(hardware_id: HardwareId) -> list[JointName]:
+    """Create joint names for a 12-DOF Unitree-layout quadruped.
+
+    Order matches Unitree's LowCmd_.motor_cmd[0..11] indexing (FR, FL, RR, RL,
+    each hip→thigh→calf)
+
+    Args:
+        hardware_id: The hardware identifier (e.g., "go2")
+
+    Returns:
+        List of 12 joint names like ["go2/FR_hip", ..., "go2/RL_calf"]
+    """
+    return [f"{hardware_id}/{j}" for j in _QUADRUPED_12DOF_JOINTS]
+
+
 __all__ = [
     "TWIST_SUFFIX_MAP",
     "HardwareComponent",
@@ -214,6 +248,7 @@ __all__ = [
     "make_gripper_joints",
     "make_humanoid_joints",
     "make_joints",
+    "make_quadruped_joints",
     "make_twist_base_joints",
     "split_joint_name",
 ]

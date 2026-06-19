@@ -195,6 +195,53 @@ class ArmTeleopModule(QuestTeleopModule):
         self.teleop_buttons.publish(buttons)
 
 
+class JoystickTwistTeleopConfig(ArmTeleopConfig):
+    """Configuration for `JoystickTwistTeleopModule`."""
+
+    linear_speed: float = 0.5
+    angular_speed: float = 0.8
+    deadzone: float = 0.1
+
+
+class JoystickTwistTeleopModule(ArmTeleopModule):
+    """ArmTeleop + an extra Twist outlet driven by both thumbsticks.
+
+    Mapping (all deadzoned, scaled by linear_speed / angular_speed):
+        left thumbstick Y  -> linear.x  (forward / back)
+        left thumbstick X  -> linear.y  (strafe)
+        right thumbstick X -> angular.z (yaw)
+    """
+
+    config: JoystickTwistTeleopConfig
+    cmd_vel: Out[Twist]
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
+
+    def _deadzone(self, v: float) -> float:
+        return 0.0 if abs(v) < self.config.deadzone else v
+
+    def _on_joy_bytes(self, data: bytes) -> None:
+        super()._on_joy_bytes(data)
+        with self._lock:
+            left = self._controllers.get(Hand.LEFT)
+            right = self._controllers.get(Hand.RIGHT)
+        twist = Twist()
+        twist.linear = Vector3(0.0, 0.0, 0.0)
+        twist.angular = Vector3(0.0, 0.0, 0.0)
+        if left is not None:
+            twist.linear.x = -self._deadzone(left.thumbstick.y) * self.config.linear_speed
+            twist.linear.y = -self._deadzone(left.thumbstick.x) * self.config.linear_speed
+        if right is not None:
+            twist.angular.z = -self._deadzone(right.thumbstick.x) * self.config.angular_speed
+        self.cmd_vel.publish(twist)
+
+
 class VideoArmTeleopConfig(ArmTeleopConfig):
     """Configuration for VideoArmTeleopModule."""
 

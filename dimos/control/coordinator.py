@@ -650,7 +650,7 @@ class ControlCoordinator(Module):
                     "Use task_invoke RPC or set transport via blueprint."
                 )
 
-        # Subscribe to cartesian commands if any cartesian_ik tasks configured
+        # Subscribe to cartesian commands if any task type consumes PoseStamped.
         has_cartesian_ik = any(t.type in ("cartesian_ik", "teleop_ik") for t in self.config.tasks)
         if has_cartesian_ik:
             try:

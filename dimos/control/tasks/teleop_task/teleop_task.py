@@ -67,7 +67,10 @@ class TeleopIKTaskConfig:
         priority: Priority for arbitration (higher wins)
         timeout: If no command received for this many seconds, go inactive (0 = never)
         max_joint_delta_deg: Maximum allowed joint change per tick (safety limit)
-        hand: "left" or "right" — which controller's primary button to listen to
+        hand: "left" or "right" — which controller's primary button engages
+            the task. None = engagement gated upstream (stream-driven only).
+        translation_only: If True, ignore controller rotation; EE orientation
+            stays at the engage-time snapshot.
         gripper_joint: Optional joint name for the gripper (e.g. "arm/gripper").
         gripper_open_pos: Gripper position (adapter units) at trigger value 0.0 (no press).
         gripper_closed_pos: Gripper position (adapter units) at trigger value 1.0 (full press).
@@ -80,6 +83,7 @@ class TeleopIKTaskConfig:
     timeout: float = 0.5
     max_joint_delta_deg: float = 5.0  # ~500°/s at 100Hz
     hand: Literal["left", "right"] | None = None
+    translation_only: bool = False
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
     gripper_closed_pos: float = 0.0
@@ -127,8 +131,11 @@ class TeleopIKTask(BaseControlTask):
             raise ValueError(f"TeleopIKTask '{name}' requires at least one joint")
         if not config.model_path:
             raise ValueError(f"TeleopIKTask '{name}' requires model_path for IK solver")
-        if config.hand not in ("left", "right"):
-            raise ValueError(f"TeleopIKTask '{name}' requires hand='left' or 'right'")
+        if config.hand is not None and config.hand not in ("left", "right"):
+            raise ValueError(
+                f"TeleopIKTask '{name}' hand must be 'left', 'right', or None "
+                f"(stream-only mode); got {config.hand!r}"
+            )
 
         self._name = name
         self._config = config
@@ -227,12 +234,16 @@ class TeleopIKTask(BaseControlTask):
             with self._lock:
                 self._initial_ee_pose = initial_pose
 
-        # Apply delta to initial pose: target = initial + delta
+        # target = initial + delta; translation_only freezes rotation at engage time.
         with self._lock:
             if self._initial_ee_pose is None:
                 return None
+            if self._config.translation_only:
+                target_rotation = self._initial_ee_pose.rotation
+            else:
+                target_rotation = delta_se3.rotation @ self._initial_ee_pose.rotation
             target_pose = pinocchio.SE3(
-                delta_se3.rotation @ self._initial_ee_pose.rotation,
+                target_rotation,
                 self._initial_ee_pose.translation + delta_se3.translation,
             )
 
@@ -295,7 +306,12 @@ class TeleopIKTask(BaseControlTask):
             logger.warning(f"TeleopIKTask {self._name} preempted by {by_task} on joints {joints}")
 
     def on_buttons(self, msg: Buttons) -> bool:
-        """Press-and-hold engage: hold primary button to track, release to stop."""
+        """Press-and-hold engage: hold primary button to track, release to stop.
+
+        No-op when `hand is None` (engagement gated upstream).
+        """
+        if self._config.hand is None:
+            return True
         is_left = self._config.hand == "left"
         primary = msg.left_primary if is_left else msg.right_primary
 
@@ -364,6 +380,9 @@ class TeleopIKTaskParams(BaseConfig):
     model_path: str | Path
     ee_joint_id: int = 6
     hand: Literal["left", "right"] | None = None
+    translation_only: bool = False
+    timeout: float = 0.5
+    max_joint_delta_deg: float = 5.0
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
     gripper_closed_pos: float = 0.0
@@ -378,7 +397,10 @@ def create_task(cfg: Any, hardware: Any) -> TeleopIKTask:
             model_path=params.model_path,
             ee_joint_id=params.ee_joint_id,
             priority=cfg.priority,
+            timeout=params.timeout,
+            max_joint_delta_deg=params.max_joint_delta_deg,
             hand=params.hand,
+            translation_only=params.translation_only,
             gripper_joint=params.gripper_joint,
             gripper_open_pos=params.gripper_open_pos,
             gripper_closed_pos=params.gripper_closed_pos,
