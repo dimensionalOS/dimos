@@ -120,7 +120,7 @@ manipulation = ManipulationModule.blueprint(
 Viser support is included in the `manipulation` extra:
 
 ```bash
-uv sync --extra manipulation
+uv sync --extra manipulation --inexact
 ```
 
 The Viser panel uses existing manipulation planning, preview, execute, cancel, and clear-plan

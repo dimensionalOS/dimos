@@ -14,20 +14,32 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from contextlib import AbstractContextManager, nullcontext
+from pathlib import Path
 from unittest.mock import MagicMock
 
+import numpy as np
+from numpy.typing import NDArray
 from pydantic import ValidationError
+import pytest
 
 from dimos.manipulation.manipulation_module import ManipulationModuleConfig
-from dimos.manipulation.planning.spec.models import PlanningSceneInfo
-from dimos.manipulation.planning.spec.protocols import VisualizationSpec, WorldSpec
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.models import (
+    JointPath,
+    Obstacle,
+    PlanningSceneInfo,
+    WorldRobotID,
+)
+from dimos.manipulation.planning.spec.protocols import VisualizationSpec
 from dimos.manipulation.visualization.config import (
     MeshcatVisualizationConfig,
     NoManipulationVisualizationConfig,
 )
 from dimos.manipulation.visualization.factory import create_manipulation_visualization
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.JointState import JointState
 
 
 class FakeVisualization:
@@ -37,92 +49,112 @@ class FakeVisualization:
     def get_visualization_url(self) -> str | None:
         return None
 
-    def publish_visualization(self, ctx=None) -> None:
+    def publish_visualization(self, ctx: object | None = None) -> None:
         return None
 
-    def show_preview(self, robot_id) -> None:
+    def show_preview(self, robot_id: WorldRobotID) -> None:
         return None
 
-    def hide_preview(self, robot_id) -> None:
+    def hide_preview(self, robot_id: WorldRobotID) -> None:
         return None
 
-    def animate_path(self, robot_id, path, duration: float = 3.0) -> None:
+    def animate_path(self, robot_id: WorldRobotID, path: JointPath, duration: float = 3.0) -> None:
         return None
 
     def close(self) -> None:
         return None
 
 
-class FakeWorld(FakeVisualization):
-    def add_robot(self, config):
+class FakeWorld:
+    def add_robot(self, config: RobotModelConfig) -> WorldRobotID:
         return "robot-1"
 
-    def get_robot_ids(self):
+    def get_robot_ids(self) -> list[WorldRobotID]:
         return []
 
-    def get_robot_config(self, robot_id):
-        return None
+    def get_robot_config(self, robot_id: WorldRobotID) -> RobotModelConfig:
+        return RobotModelConfig(
+            name="fake",
+            model_path=Path("fake.urdf"),
+            base_pose=PoseStamped(),
+            joint_names=[],
+            end_effector_link="ee_link",
+        )
 
-    def get_joint_limits(self, robot_id):
-        return ([], [])
+    def get_joint_limits(
+        self, robot_id: WorldRobotID
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        return (np.array([], dtype=np.float64), np.array([], dtype=np.float64))
 
-    def add_obstacle(self, obstacle):
+    def add_obstacle(self, obstacle: Obstacle) -> str:
         return "obstacle-1"
 
-    def remove_obstacle(self, obstacle_id):
+    def remove_obstacle(self, obstacle_id: str) -> bool:
         return True
 
-    def update_obstacle_pose(self, obstacle_id, pose):
+    def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
         return True
 
     def clear_obstacles(self) -> None:
         return None
 
-    def get_obstacles(self):
+    def get_obstacles(self) -> list[Obstacle]:
         return []
 
     def finalize(self) -> None:
         return None
 
     @property
-    def is_finalized(self):
+    def is_finalized(self) -> bool:
         return True
 
-    def get_live_context(self):
+    def get_live_context(self) -> object:
         return None
 
-    def scratch_context(self):
-        return cast("Any", self)
+    def scratch_context(self) -> AbstractContextManager[object | None]:
+        return nullcontext(None)
 
-    def sync_from_joint_state(self, robot_id, joint_state) -> None:
+    def sync_from_joint_state(self, robot_id: WorldRobotID, joint_state: JointState) -> None:
         return None
 
-    def set_joint_state(self, ctx, robot_id, joint_state) -> None:
+    def set_joint_state(self, ctx: object, robot_id: WorldRobotID, joint_state: JointState) -> None:
         return None
 
-    def get_joint_state(self, ctx, robot_id):
-        return None
+    def get_joint_state(self, ctx: object, robot_id: WorldRobotID) -> JointState:
+        return JointState({})
 
-    def is_collision_free(self, ctx, robot_id):
+    def is_collision_free(self, ctx: object, robot_id: WorldRobotID) -> bool:
         return True
 
-    def get_min_distance(self, ctx, robot_id):
+    def get_min_distance(self, ctx: object, robot_id: WorldRobotID) -> float:
         return 0.0
 
-    def check_config_collision_free(self, robot_id, joint_state):
+    def check_config_collision_free(self, robot_id: WorldRobotID, joint_state: JointState) -> bool:
         return True
 
-    def check_edge_collision_free(self, robot_id, start, end, step_size: float = 0.05):
+    def check_edge_collision_free(
+        self,
+        robot_id: WorldRobotID,
+        start: JointState,
+        end: JointState,
+        step_size: float = 0.05,
+    ) -> bool:
         return True
 
-    def get_ee_pose(self, ctx, robot_id):
-        return None
+    def get_ee_pose(self, ctx: object, robot_id: WorldRobotID) -> PoseStamped:
+        return PoseStamped()
 
-    def get_link_pose(self, ctx, robot_id, link_name):
-        return []
+    def get_link_pose(
+        self, ctx: object, robot_id: WorldRobotID, link_name: str
+    ) -> NDArray[np.float64]:
+        return np.eye(4, dtype=np.float64)
 
-    def get_jacobian(self, ctx, robot_id):
-        return []
+    def get_jacobian(self, ctx: object, robot_id: WorldRobotID) -> NDArray[np.float64]:
+        return np.zeros((6, 0), dtype=np.float64)
+
+
+class FakeVisualizationWorld(FakeWorld, FakeVisualization):
+    pass
 
 
 def test_config_defaults_to_no_visualization() -> None:
@@ -173,13 +205,13 @@ def test_create_visualization_none_returns_none() -> None:
 
 
 def test_create_visualization_meshcat_accepts_structural_world() -> None:
-    fake_world = FakeWorld()
+    fake_world = FakeVisualizationWorld()
     assert isinstance(fake_world, VisualizationSpec)
     world_monitor = MagicMock()
     assert (
         create_manipulation_visualization(
             MeshcatVisualizationConfig(),
-            world=cast("WorldSpec", fake_world),
+            world=fake_world,
             world_monitor=world_monitor,
         )
         is fake_world
@@ -187,13 +219,12 @@ def test_create_visualization_meshcat_accepts_structural_world() -> None:
 
 
 def test_create_visualization_meshcat_rejects_non_visualization_world() -> None:
-    try:
-        world_monitor = MagicMock()
+    fake_world = FakeWorld()
+    assert not isinstance(fake_world, VisualizationSpec)
+    world_monitor = MagicMock()
+    with pytest.raises(ValueError, match="implements VisualizationSpec"):
         create_manipulation_visualization(
             MeshcatVisualizationConfig(),
-            world=cast("WorldSpec", object()),
+            world=fake_world,
             world_monitor=world_monitor,
         )
-        raise AssertionError("expected ValueError")
-    except ValueError as exc:
-        assert "implements VisualizationSpec" in str(exc)

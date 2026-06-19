@@ -569,13 +569,10 @@ yourarm_planner = manipulation_module(
     robots=[_make_yourarm_config("arm", joint_prefix="arm_", coordinator_task="traj_arm")],
     planning_timeout=10.0,
     visualization={"backend": "meshcat"},
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
-# The `.transports(...)` override subscribes the planner to the coordinator's
-# published joint-state topic.
+# The planner's `coordinator_joint_state` input auto-connects to the
+# ControlCoordinator's output on the default `/coordinator_joint_state`
+# topic, so no `.transports(...)` override is needed.
 ```
 
 ### Key config fields
