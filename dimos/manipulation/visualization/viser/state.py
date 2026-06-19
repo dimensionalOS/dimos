@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
+import logging
 import queue
 import threading
 from typing import Literal
@@ -24,6 +25,8 @@ from typing import Literal
 from dimos.manipulation.visualization.types import RobotInfo, TargetEvaluation
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.JointState import JointState
+
+logger = logging.getLogger(__name__)
 
 
 class FeasibilityStatus(str, Enum):
