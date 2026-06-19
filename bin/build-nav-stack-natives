@@ -40,9 +40,12 @@ def _log(msg: str) -> None:
     print(f"[{time.monotonic() - _T0:6.1f}s] {msg}", flush=True)
 
 
+_HAS_NATIVE_CONFIG = re.compile(r"^class\s+\w+\s*\(\s*NativeModuleConfig\b", re.MULTILINE)
 _BUILD_CMD = re.compile(
     r'build_command:\s*str\s*\|\s*None\s*=\s*\(?\s*"([^"]+)"',
 )
+_BUILD_CMD_NONE = re.compile(r"build_command:\s*str\s*\|\s*None\s*=\s*None\b")
+_BUILD_CMD_ANY = re.compile(r"^\s+build_command:", re.MULTILINE)
 _EXECUTABLE = re.compile(r'executable:\s*str\s*=\s*"([^"]+)"')
 _CWD_PARENT_SUBDIR = re.compile(
     r'cwd:\s*str\s*\|\s*None\s*=\s*str\(\s*Path\(__file__\)\.resolve\(\)\.parent\s*/\s*"([^"]+)"\s*\)'
@@ -51,11 +54,39 @@ _CWD_PARENT = re.compile(
     r"cwd:\s*str\s*\|\s*None\s*=\s*str\(\s*Path\(__file__\)\.resolve\(\)\.parent\s*\)"
 )
 _CWD_LITERAL = re.compile(r'cwd:\s*str\s*\|\s*None\s*=\s*"([^"]+)"')
+_CWD_NONE = re.compile(r"cwd:\s*str\s*\|\s*None\s*=\s*None\b")
+_CWD_ANY = re.compile(r"^\s+cwd:", re.MULTILINE)
+
+
+class _ConfigParseError(Exception):
+    pass
+
+
+def _resolve_cwd(text: str, pkg_dir: Path) -> Path:
+    if (sub := _CWD_PARENT_SUBDIR.search(text)) is not None:
+        return pkg_dir / sub.group(1)
+    if _CWD_PARENT.search(text):
+        return pkg_dir
+    if (lit := _CWD_LITERAL.search(text)) is not None:
+        literal = lit.group(1)
+        return pkg_dir if literal == "." else pkg_dir / literal
+    # No literal pattern matched. An explicit `= None` (or no override at all)
+    # is fine — falls back to the module's source dir, matching NativeModule's
+    # own init logic.
+    if _CWD_NONE.search(text) or not _CWD_ANY.search(text):
+        return pkg_dir
+    raise _ConfigParseError("cwd is set in an unrecognised form")
 
 
 def discover() -> list[tuple[str, str, Path, Path]]:
-    """Return (name, build_command, cwd, expected_exe) for each native module."""
+    """Return (name, build_command, cwd, expected_exe) for each native module.
+
+    Raises SystemExit if a file declares a NativeModuleConfig subclass with
+    fields that don't match the patterns we support — better to fail loudly
+    than silently skip a module the test suite was relying on.
+    """
     found: list[tuple[str, str, Path, Path]] = []
+    problems: list[str] = []
     for pkg_dir in sorted(MODULES_DIR.iterdir()):
         if not pkg_dir.is_dir():
             continue
@@ -63,25 +94,38 @@ def discover() -> list[tuple[str, str, Path, Path]]:
         if not src.exists():
             continue
         text = src.read_text()
-        bc = _BUILD_CMD.search(text)
-        exe_m = _EXECUTABLE.search(text)
-        if not bc or not exe_m:
+        if not _HAS_NATIVE_CONFIG.search(text):
             continue
-        cmd = bc.group(1)
-        exe_rel = exe_m.group(1)
-        if (sub := _CWD_PARENT_SUBDIR.search(text)) is not None:
-            cwd = pkg_dir / sub.group(1)
-        elif _CWD_PARENT.search(text):
-            cwd = pkg_dir
-        elif (lit := _CWD_LITERAL.search(text)) is not None:
-            literal = lit.group(1)
-            cwd = pkg_dir if literal == "." else pkg_dir / literal
-        else:
-            cwd = pkg_dir
-        exe = Path(exe_rel)
+        rel = src.relative_to(REPO_ROOT)
+        bc = _BUILD_CMD.search(text)
+        if not bc:
+            # Either no build_command override (skip silently — module doesn't
+            # need building) or an unparseable one (loud failure).
+            if _BUILD_CMD_ANY.search(text) and not _BUILD_CMD_NONE.search(text):
+                problems.append(
+                    f"{rel}: NativeModuleConfig subclass declares build_command in "
+                    "an unrecognised form — refactor to a string literal or update "
+                    "bin/build-nav-stack-natives's regexes."
+                )
+            continue
+        exe_m = _EXECUTABLE.search(text)
+        if not exe_m:
+            problems.append(
+                f"{rel}: NativeModuleConfig declares build_command but no "
+                'parseable `executable: str = "…"` literal.'
+            )
+            continue
+        try:
+            cwd = _resolve_cwd(text, pkg_dir)
+        except _ConfigParseError as e:
+            problems.append(f"{rel}: {e}")
+            continue
+        exe = Path(exe_m.group(1))
         if not exe.is_absolute():
             exe = cwd / exe
-        found.append((pkg_dir.name, cmd, cwd, exe))
+        found.append((pkg_dir.name, bc.group(1), cwd, exe))
+    if problems:
+        raise SystemExit("\n".join(problems))
     return found
 
 
