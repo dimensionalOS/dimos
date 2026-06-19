@@ -95,6 +95,17 @@ class FakeOperationSubmitWorker(OperationWorker):
         self.submissions.append(operation)
 
 
+class FakeRestartableOperationWorker(FakeOperationSubmitWorker):
+    def __init__(
+        self, submissions: list[Callable[[], None]], stop_calls: list[float | None]
+    ) -> None:
+        super().__init__(submissions)
+        self.stop_calls = stop_calls
+
+    def stop(self, timeout: float | None = 2.0) -> None:
+        self.stop_calls.append(timeout)
+
+
 class FakeOperationAdapter(InProcessViserAdapter):
     def __init__(self) -> None:
         self.cancel_calls = 0
@@ -125,6 +136,9 @@ class FakeOperationAdapter(InProcessViserAdapter):
 
     def cancel(self) -> bool:
         self.cancel_calls += 1
+        return True
+
+    def plan_to_joints(self, joints: JointState, robot_name: str | None = None) -> bool:
         return True
 
 
@@ -205,6 +219,7 @@ def test_gui_only_preview_submits_timeout_override(monkeypatch: pytest.MonkeyPat
 
 def test_gui_cancel_bypasses_operation_worker(monkeypatch: pytest.MonkeyPatch) -> None:
     submissions: list[Callable[[], None]] = []
+    stop_calls: list[float | None] = []
     adapter = FakeOperationAdapter()
     gui = ViserPanelGui(
         EmptyServer(),
@@ -212,14 +227,48 @@ def test_gui_cancel_bypasses_operation_worker(monkeypatch: pytest.MonkeyPatch) -
         ViserVisualizationConfig(),
     )
     gui._operation_worker.stop()
-    monkeypatch.setattr(gui, "_operation_worker", FakeOperationSubmitWorker(submissions))
+    monkeypatch.setattr(
+        gui, "_operation_worker", FakeRestartableOperationWorker(submissions, stop_calls)
+    )
     gui.state.action_status = ActionStatus.PREVIEWING
 
     gui._submit_cancel()
+    gui.close()
+
+    assert submissions == []
+    assert stop_calls == [0.0]
+    assert adapter.cancel_calls == 1
+    assert gui.state.action_status == ActionStatus.IDLE
+    assert gui.state.last_result == "cancel=True"
+
+
+def test_gui_cancelled_planning_clears_active_plan_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    submissions: list[Callable[[], None]] = []
+    stop_calls: list[float | None] = []
+    adapter = FakeOperationAdapter()
+    gui = ViserPanelGui(
+        EmptyServer(),
+        adapter,
+        ViserVisualizationConfig(),
+    )
+    gui._operation_worker.stop()
+    monkeypatch.setattr(
+        gui, "_operation_worker", FakeRestartableOperationWorker(submissions, stop_calls)
+    )
+    stale_operation_id = gui._next_operation_id()
+    gui.state.action_status = ActionStatus.RUNNING
+    gui.state.plan_state.status = PlanStatus.PLANNING
+    assert gui.state.plan_state.status == PlanStatus.PLANNING
+
+    gui._submit_cancel()
+    gui._finish_operation("plan_to_joints=True", operation_id=stale_operation_id)
+    gui.close()
 
     assert submissions == []
     assert adapter.cancel_calls == 1
+    assert stop_calls == [0.0]
     assert gui.state.action_status == ActionStatus.IDLE
+    assert gui.state.plan_state.status == PlanStatus.FAILED
     assert gui.state.last_result == "cancel=True"
 
 

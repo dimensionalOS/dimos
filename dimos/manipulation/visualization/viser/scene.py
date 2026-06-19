@@ -247,6 +247,11 @@ class ViserManipulationScene:
     def close(self) -> None:
         for key in list(self._handles):
             self._remove_handle(key)
+        if self._grid_handle is not None:
+            self._remove_scene_handle(self._grid_handle)
+            self._grid_handle = None
+        for urdf in self._urdfs.values():
+            self._remove_scene_handle(urdf)
         self._urdfs.clear()
         self._configs_by_id.clear()
         self._preview_visible.clear()
@@ -367,6 +372,10 @@ class ViserManipulationScene:
         handle = self._handles.pop(key, None)
         if handle is None:
             return
+        self._remove_scene_handle(handle)
+
+    @staticmethod
+    def _remove_scene_handle(handle: object) -> None:
         remove = getattr(handle, "remove", None)
         if callable(remove):
             remove()

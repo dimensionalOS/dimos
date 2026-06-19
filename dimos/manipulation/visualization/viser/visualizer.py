@@ -128,10 +128,14 @@ class ViserManipulationVisualizer:
         self._ensure_started()
         if self._scene is None:
             return
-        for robot_id, config in scene.robots.items():
-            self._scene.register_robot(str(robot_id), config)
-        if self._gui is not None:
-            self._gui.refresh()
+        try:
+            for robot_id, config in scene.robots.items():
+                self._scene.register_robot(str(robot_id), config)
+            if self._gui is not None:
+                self._gui.refresh()
+        except Exception:
+            self.close()
+            raise
 
     def get_visualization_url(self) -> str | None:
         return None if self._runtime is None else self._runtime.url
@@ -180,16 +184,28 @@ class ViserManipulationVisualizer:
         if self._closed:
             return
         self._closed = True
+        errors: list[BaseException] = []
         try:
             if self._gui is not None:
-                self._gui.close()
+                try:
+                    self._gui.close()
+                except Exception as e:
+                    errors.append(e)
             if self._scene is not None:
-                self._scene.close()
+                try:
+                    self._scene.close()
+                except Exception as e:
+                    errors.append(e)
         finally:
             if self._runtime is not None:
-                self._runtime.close()
+                try:
+                    self._runtime.close()
+                except Exception as e:
+                    errors.append(e)
             self._runtime = None
             self._server = None
             self._adapter = None
             self._scene = None
             self._gui = None
+        if errors:
+            raise errors[0]

@@ -271,6 +271,74 @@ def test_visualizer_closes_runtime_when_scene_creation_fails(
     assert visualizer.get_visualization_url() is None
 
 
+def test_visualizer_close_is_best_effort_when_gui_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed = []
+
+    class FakeRuntime:
+        url = "http://localhost:8095"
+
+        def __init__(self, config: ViserVisualizationConfig) -> None:
+            self.config = config
+
+        def start(self) -> FakeServer:
+            return FakeServer()
+
+        def close(self) -> None:
+            closed.append("runtime")
+
+    class FakeScene:
+        def __init__(
+            self,
+            server: FakeServer,
+            viser_urdf: type[FakeViserUrdf],
+            *,
+            preview_fps: float,
+        ) -> None:
+            pass
+
+        def close(self) -> None:
+            closed.append("scene")
+
+    class FailingGui:
+        def __init__(
+            self,
+            server: FakeServer,
+            adapter: InProcessViserAdapter,
+            config: ViserVisualizationConfig,
+            scene: FakeScene,
+        ) -> None:
+            pass
+
+        def start(self) -> None:
+            pass
+
+        def refresh(self) -> None:
+            pass
+
+        def close(self) -> None:
+            closed.append("gui")
+            raise RuntimeError("gui close failed")
+
+    monkeypatch.setattr(visualizer_module, "ViserRuntime", FakeRuntime)
+    monkeypatch.setattr(visualizer_module, "ViserUrdf", FakeViserUrdf)
+    monkeypatch.setattr(visualizer_module, "ViserManipulationScene", FakeScene)
+    monkeypatch.setattr(visualizer_module, "ViserPanelGui", FailingGui)
+    visualizer = ViserManipulationVisualizer(
+        world_monitor=FakeDependency(),
+        manipulation_module=FakeDependency(),
+        config=ViserVisualizationConfig(panel_enabled=True),
+    )
+    visualizer.initialize_scene(PlanningSceneInfo(robots={}))
+
+    with pytest.raises(RuntimeError, match="gui close failed"):
+        visualizer.close()
+
+    assert closed == ["gui", "scene", "runtime"]
+    assert visualizer.get_visualization_url() is None
+
+
 def test_runtime_starts_once_opens_browser_and_closes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

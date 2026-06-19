@@ -95,6 +95,10 @@ class NamedState:
 @dataclass
 class GuiMarkdownHandle:
     value: str
+    removed: bool = False
+
+    def remove(self) -> None:
+        self.removed = True
 
 
 @dataclass
@@ -103,9 +107,13 @@ class GuiDropdownHandle:
     options: list[str]
     value: str
     update_callback: GuiCallback | None = None
+    removed: bool = False
 
     def on_update(self, callback: GuiCallback) -> None:
         self.update_callback = callback
+
+    def remove(self) -> None:
+        self.removed = True
 
 
 @dataclass
@@ -113,9 +121,13 @@ class GuiButtonHandle:
     label: str
     disabled: bool = False
     click_callback: GuiCallback | None = None
+    removed: bool = False
 
     def on_click(self, callback: GuiCallback) -> None:
         self.click_callback = callback
+
+    def remove(self) -> None:
+        self.removed = True
 
 
 @dataclass
@@ -123,9 +135,13 @@ class GuiCheckboxHandle:
     label: str
     value: bool
     update_callback: GuiCallback | None = None
+    removed: bool = False
 
     def on_update(self, callback: GuiCallback) -> None:
         self.update_callback = callback
+
+    def remove(self) -> None:
+        self.removed = True
 
 
 @dataclass
@@ -147,8 +163,10 @@ class GuiSliderHandle:
 
 class FakeHandle:
     def __init__(self) -> None:
-        self.visible = None
+        self.visible: object | None = None
         self.removed = False
+        self.name = ""
+        self.kwargs: dict[str, float | bool] = {}
 
     def remove(self) -> None:
         self.removed = True
@@ -159,9 +177,13 @@ class FakeUrdf:
         self._urdf = SimpleNamespace(actuated_joint_names=names)
         self._meshes = []
         self.cfg = None
+        self.removed = False
 
     def update_cfg(self, cfg: Sequence[float]) -> None:
         self.cfg = list(cfg)
+
+    def remove(self) -> None:
+        self.removed = True
 
 
 class FakeJointState(JointState):
@@ -198,8 +220,11 @@ class FakeGridServer(FakeServer):
         self.grids = []
         self.scene.add_grid = self.add_grid
 
-    def add_grid(self, name: str, **kwargs: float | bool) -> SimpleNamespace:
-        handle = SimpleNamespace(name=name, kwargs=kwargs, visible=kwargs.get("visible"))
+    def add_grid(self, name: str, **kwargs: float | bool) -> FakeHandle:
+        handle = FakeHandle()
+        handle.name = name
+        handle.kwargs = kwargs
+        handle.visible = kwargs.get("visible")
         self.grids.append(handle)
         return handle
 
@@ -239,6 +264,7 @@ class FakeFolder:
         self.kwargs = kwargs
         self.entered = False
         self.exited = False
+        self.removed = False
 
     def __enter__(self) -> FakeFolder:
         self.entered = True
@@ -252,6 +278,9 @@ class FakeFolder:
     ) -> bool:
         self.exited = True
         return False
+
+    def remove(self) -> None:
+        self.removed = True
 
 
 class FakeGuiServer:
@@ -502,6 +531,62 @@ def test_gui_scene_grid_checkbox_toggles_reference_grid(
     assert grid_server.grids[0].visible is True
 
 
+def test_gui_close_removes_handles_and_late_callbacks_are_noops(
+    make_panel: Callable[..., ViserPanelGui],
+) -> None:
+    server = FakeGuiServer()
+    grid_server = FakeGridServer()
+    scene = ViserManipulationScene(
+        grid_server, lambda *args, **kwargs: FakeUrdf(("joint1",)), preview_fps=10.0
+    )
+    adapter = make_adapter_with_robot()
+    gui = make_panel(server, adapter, ViserVisualizationConfig(), scene)
+    robot_dropdown = gui._handles["robot"]
+    plan_button = server.buttons["Plan"]
+    grid = grid_server.grids[0]
+    handles = list(gui._handles.values())
+
+    gui.close()
+    if isinstance(robot_dropdown, GuiDropdownHandle) and robot_dropdown.update_callback is not None:
+        robot_dropdown.update_callback(SimpleNamespace(target=SimpleNamespace(value="arm")))
+    if plan_button.click_callback is not None:
+        plan_button.click_callback(SimpleNamespace())
+    gui._set_scene_grid_visible(False)
+
+    assert all(getattr(handle, "removed", False) for handle in handles)
+    assert gui._handles == {}
+    assert grid.visible is True
+
+
+def test_gui_ignores_target_evaluation_after_close(
+    make_panel: Callable[..., ViserPanelGui],
+) -> None:
+    adapter = make_adapter_with_robot()
+    gui = make_panel(FakeGuiServer(), adapter)
+    gui.state.selected_robot = "arm"
+    sequence_id = gui.state.next_sequence_id()
+    request = TargetEvaluationRequest(
+        sequence_id=sequence_id,
+        source="joints",
+        robot_name="arm",
+        joints=FakeJointState(["j1", "j2"], position=[0.1, 0.2]),
+    )
+    gui.close()
+
+    gui._apply_target_evaluation_result(
+        request,
+        {
+            "success": True,
+            "collision_free": True,
+            "status": "FEASIBLE",
+            "joint_state": FakeJointState(["j1", "j2"], position=[0.8, 0.9]),
+        },
+    )
+
+    assert gui.state.target_status == TargetStatus.CHECKING
+    assert gui.state.joint_target is None
+
+
 def test_dimos_theme_configures_supported_viser_chrome() -> None:
     server = FakeGuiServer()
 
@@ -747,6 +832,26 @@ def test_scene_target_helpers_handle_missing_robot_and_pose() -> None:
 
     assert handle is not None
     assert handle.position == (0.0, 0.0, 0.0)
+
+
+def test_scene_close_removes_grid_transform_and_urdf_handles() -> None:
+    server = FakeGridServer()
+    current = FakeUrdf(("joint1",))
+    target = FakeUrdf(("joint1",))
+    scene = ViserManipulationScene(
+        server, lambda *args, **kwargs: FakeUrdf(("joint1",)), preview_fps=10.0
+    )
+    handle = scene.ensure_target_controls("robot1", lambda _target: None)
+    scene._urdfs["robot1:current"] = current
+    scene._urdfs["robot1:target"] = target
+
+    scene.close()
+
+    assert handle is not None and handle.removed is True
+    assert current.removed is True
+    assert target.removed is True
+    assert server.grids[0].removed is True
+    assert scene.has_reference_grid() is False
 
 
 def test_sampled_joint_path_frames_preserves_dense_trajectory_samples() -> None:

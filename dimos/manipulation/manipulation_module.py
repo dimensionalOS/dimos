@@ -139,6 +139,7 @@ class ManipulationModule(Module):
         self._state = ManipulationState.IDLE
         self._lock = threading.Lock()
         self._error_message = ""
+        self._planning_epoch = 0
 
         # Planning components (initialized in start())
         self._world_monitor: WorldMonitor | None = None
@@ -383,7 +384,12 @@ class ManipulationModule(Module):
 
     @rpc
     def cancel(self) -> bool:
-        """Cancel current motion."""
+        """Cancel current motion or invalidate an in-progress plan."""
+        if self._state == ManipulationState.PLANNING:
+            self._planning_epoch += 1
+            self._state = ManipulationState.IDLE
+            logger.info("Planning cancelled")
+            return True
         if self._state != ManipulationState.EXECUTING:
             return False
         self._state = ManipulationState.IDLE
@@ -403,6 +409,8 @@ class ManipulationModule(Module):
                 "INVALID_STATE",
                 "Cannot reset while executing — cancel the motion first",
             )
+        if self._state == ManipulationState.PLANNING:
+            self._planning_epoch += 1
         self._state = ManipulationState.IDLE
         self._error_message = ""
         return SkillResult.ok("Reset to IDLE — ready for new commands")
@@ -462,6 +470,7 @@ class ManipulationModule(Module):
             if self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED):
                 logger.warning(f"Cannot plan: state is {self._state.name}")
                 return None
+            self._planning_epoch += 1
             self._state = ManipulationState.PLANNING
         return robot[0], robot[1]
 
@@ -559,6 +568,7 @@ class ManipulationModule(Module):
         if self._kinematics is None or (r := self._begin_planning(robot_name)) is None:
             return False
         robot_name, robot_id = r
+        planning_epoch = self._planning_epoch
         assert self._world_monitor  # guaranteed by _begin_planning
 
         current = self._world_monitor.get_current_joint_state(robot_id)
@@ -570,7 +580,7 @@ class ManipulationModule(Module):
             return self._fail(f"IK failed: {ik.status.name}")
 
         logger.info(f"IK solved, error: {ik.position_error:.4f}m")
-        return self._plan_path_only(robot_name, robot_id, ik.joint_state)
+        return self._plan_path_only(robot_name, robot_id, ik.joint_state, planning_epoch)
 
     @rpc
     def plan_to_joints(self, joints: JointState, robot_name: RobotName | None = None) -> bool:
@@ -583,14 +593,16 @@ class ManipulationModule(Module):
         if (r := self._begin_planning(robot_name)) is None:
             return False
         robot_name, robot_id = r
+        planning_epoch = self._planning_epoch
         logger.info(f"Planning to joints for {robot_name}: {[f'{j:.3f}' for j in joints.position]}")
-        return self._plan_path_only(robot_name, robot_id, joints)
+        return self._plan_path_only(robot_name, robot_id, joints, planning_epoch)
 
     def _plan_path_only(
         self,
         robot_name: RobotName,
         robot_id: WorldRobotID,
         goal: JointState,
+        planning_epoch: int,
     ) -> bool:
         """Plan path from current position to goal, store result."""
         assert self._world_monitor and self._planner  # guaranteed by _begin_planning
@@ -614,6 +626,9 @@ class ManipulationModule(Module):
             goal=goal,
             timeout=self.config.planning_timeout,
         )
+        if self._state != ManipulationState.PLANNING or planning_epoch != self._planning_epoch:
+            logger.info("Discarding cancelled planning result")
+            return False
         if not result.is_success():
             return self._fail(f"Planning failed: {result.status.name}")
 

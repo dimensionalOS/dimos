@@ -146,9 +146,11 @@ class PanelState:
         )
 
     def can_cancel(self) -> bool:
-        return self.action_status in {ActionStatus.PREVIEWING, ActionStatus.EXECUTING} or (
-            self.manipulation_state == "EXECUTING"
-        )
+        return self.action_status in {
+            ActionStatus.RUNNING,
+            ActionStatus.PREVIEWING,
+            ActionStatus.EXECUTING,
+        } or (self.manipulation_state == "EXECUTING")
 
     def can_execute(
         self,

@@ -99,6 +99,7 @@ class _ManipulationModuleHarness(ManipulationModule):
         self._state = ManipulationState.IDLE
         self._lock = threading.Lock()
         self._error_message = ""
+        self._planning_epoch = 0
         self._robots = {}
         self._planned_paths = {}
         self._planned_trajectories = {}
@@ -117,12 +118,17 @@ def _make_module() -> ManipulationModule:
 class TestStateMachine:
     """Test state transitions."""
 
-    def test_cancel_only_during_execution(self):
-        """Cancel only works in EXECUTING state."""
+    def test_cancel_interrupts_active_work(self):
+        """Cancel works for executing motion and in-progress planning."""
         module = _make_module()
 
         module._state = ManipulationState.IDLE
         assert module.cancel() is False
+
+        module._state = ManipulationState.PLANNING
+        assert module.cancel() is True
+        assert module._state == ManipulationState.IDLE
+        assert module._planning_epoch == 1
 
         module._state = ManipulationState.EXECUTING
         assert module.cancel() is True

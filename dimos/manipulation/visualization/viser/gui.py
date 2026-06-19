@@ -97,9 +97,13 @@ class ViserPanelGui:
         self._operation_worker = OperationWorker(self._set_error)
 
     def start(self) -> None:
-        self._worker.start()
-        self._operation_worker.start()
+        if self._closed:
+            raise RuntimeError("Cannot restart a closed ViserPanelGui")
+        if self.state.runtime == PanelRuntime.RUNNING:
+            return
         try:
+            self._worker.start()
+            self._operation_worker.start()
             self.state.runtime = PanelRuntime.RUNNING
             self._build()
             self.refresh()
@@ -109,15 +113,20 @@ class ViserPanelGui:
             raise
 
     def close(self) -> None:
+        if self._closed:
+            return
         self._closed = True
         self.state.runtime = PanelRuntime.STOPPING
         self._worker.stop()
         self._operation_worker.stop(timeout=2.0)
         self._clear_joint_sliders()
+        self._remove_panel_handles()
         self._handles.clear()
         self.state.runtime = PanelRuntime.STOPPED
 
     def refresh(self) -> None:
+        if self._closed:
+            return
         robots = self.adapter.list_robots()
         self.state.backend_status = (
             BackendConnectionStatus.READY if robots else BackendConnectionStatus.WAITING_FOR_ROBOT
@@ -185,6 +194,8 @@ class ViserPanelGui:
         handle.on_update(lambda event: self._set_scene_grid_visible(event.target.value))
 
     def _set_scene_grid_visible(self, visible: bool) -> None:
+        if self._closed:
+            return
         if self.scene is None:
             return
         self.scene.set_reference_grid_visible(bool(visible))
@@ -266,7 +277,16 @@ class ViserPanelGui:
                 pass
         self._joint_sliders.clear()
 
+    def _remove_panel_handles(self) -> None:
+        for key, handle in list(self._handles.items()):
+            remove = getattr(handle, "remove", None)
+            if callable(remove):
+                remove()
+            self._handles.pop(key, None)
+
     def _select_robot(self, robot_name: str) -> None:
+        if self._closed:
+            return
         if (robot_name or None) == self.state.selected_robot:
             self.refresh()
             return
@@ -318,6 +338,8 @@ class ViserPanelGui:
                     logger.warning("Could not set preset dropdown %s", attr, exc_info=True)
 
     def _apply_preset(self, preset: str) -> None:
+        if self._closed:
+            return
         robot_name = self.state.selected_robot
         if robot_name is None:
             return
@@ -362,11 +384,15 @@ class ViserPanelGui:
         return self.adapter.joints_from_values(config.joint_names, values)
 
     def _on_joint_slider_update(self, _joint_name: str) -> None:
+        if self._closed:
+            return
         if self._suppress_target_callbacks:
             return
         self._submit_joint_target_evaluation()
 
     def _on_transform_update(self, target: TransformControlsHandle) -> None:
+        if self._closed:
+            return
         if self._suppress_target_callbacks or self.state.selected_robot is None:
             return
         pose = self._pose_from_transform_target(target)
@@ -432,6 +458,8 @@ class ViserPanelGui:
     def _apply_target_evaluation_result(
         self, request: TargetEvaluationRequest, result: TargetEvaluation
     ) -> None:
+        if self._closed:
+            return
         if request.sequence_id != self.state.latest_sequence_id:
             return
         collision_free = bool(result.get("collision_free", False))
@@ -522,6 +550,8 @@ class ViserPanelGui:
         )
 
     def _submit_plan(self) -> None:
+        if self._closed:
+            return
         robot_name = self.state.selected_robot
         if robot_name is None:
             return
@@ -568,6 +598,8 @@ class ViserPanelGui:
         )
 
     def _submit_preview(self) -> None:
+        if self._closed:
+            return
         robot_name = self.state.selected_robot
         if robot_name is None:
             return
@@ -590,6 +622,8 @@ class ViserPanelGui:
         )
 
     def _submit_execute(self) -> None:
+        if self._closed:
+            return
         robot_name = self.state.selected_robot
         if robot_name is None:
             return
@@ -622,10 +656,15 @@ class ViserPanelGui:
         )
 
     def _submit_cancel(self) -> None:
+        if self._closed:
+            return
+        cancelled_action = self.state.action_status
         operation_id = self._next_operation_id()
         if not self._operation_is_current(operation_id):
             return
         self.state.action_status = ActionStatus.CANCELLING
+        self._mark_cancelled_plan_state(cancelled_action)
+        self._restart_operation_worker()
         try:
             ok = self.adapter.cancel()
         except Exception as e:
@@ -633,7 +672,23 @@ class ViserPanelGui:
             return
         self._finish_operation(f"cancel={ok}", operation_id=operation_id)
 
+    def _mark_cancelled_plan_state(self, cancelled_action: ActionStatus) -> None:
+        if self.state.plan_state.status == PlanStatus.PLANNING:
+            self.state.plan_state.status = PlanStatus.FAILED
+        elif (
+            cancelled_action == ActionStatus.EXECUTING
+            or self.state.plan_state.status == PlanStatus.EXECUTING
+        ):
+            self.state.plan_state.status = PlanStatus.STALE
+
+    def _restart_operation_worker(self) -> None:
+        self._operation_worker.stop(timeout=0.0)
+        self._operation_worker = OperationWorker(self._set_error)
+        self._operation_worker.start()
+
     def _submit_clear(self) -> None:
+        if self._closed:
+            return
         operation_id = self._next_operation_id()
 
         def operation() -> None:
