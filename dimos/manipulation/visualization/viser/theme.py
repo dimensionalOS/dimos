@@ -15,15 +15,24 @@
 from __future__ import annotations
 
 import base64
-from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
 
+from dimos.manipulation.visualization.viser.runtime import VISER_INSTALL_HINT
 from dimos.utils.logging_config import setup_logger
 
-if TYPE_CHECKING:
-    import viser
+try:
+    from viser import ViserServer
+except ModuleNotFoundError as e:
+    if e.name != "viser":
+        raise
+    raise ModuleNotFoundError(VISER_INSTALL_HINT) from e
+
+try:
     from viser.theme import TitlebarConfig
+except ModuleNotFoundError as e:
+    if e.name != "viser":
+        raise
+    raise ModuleNotFoundError(VISER_INSTALL_HINT) from e
 
 DIMOS_THEME_TITLE = "DimOS Manipulation"
 DIMOS_THEME_URL = "https://github.com/dimensionalOS/dimos"
@@ -33,33 +42,12 @@ DIMOS_LOGO_PATH = Path(__file__).with_name("assets") / "dimensional-logo.svg"
 logger = setup_logger()
 
 
-def apply_dimos_theme(server: viser.ViserServer) -> bool:
+def apply_dimos_theme(server: ViserServer) -> bool:
     """Apply the default DimOS Viser theme without blocking visualization startup."""
-    try:
-        configure_theme = server.gui.configure_theme
-    except AttributeError:
-        return False
-    if not callable(configure_theme):
-        return False
-
-    kwargs: dict[str, Any] = {
-        "control_layout": "collapsible",
-        "control_width": "medium",
-        "dark_mode": True,
-        "show_logo": False,
-        "show_share_button": False,
-        "brand_color": DIMOS_BRAND_COLOR,
-    }
     titlebar_content = _dimos_titlebar_content()
-    if titlebar_content is not None:
-        kwargs["titlebar_content"] = titlebar_content
-
-    if _configure_theme(configure_theme, kwargs):
+    if _configure_theme(server, titlebar_content):
         return True
-    if "titlebar_content" in kwargs:
-        kwargs.pop("titlebar_content")
-        return _configure_theme(configure_theme, kwargs)
-    return False
+    return titlebar_content is not None and _configure_theme(server, None)
 
 
 def _dimos_titlebar_content() -> TitlebarConfig | None:
@@ -94,9 +82,17 @@ def _dimos_logo_data_url() -> str:
     return f"data:image/svg+xml;base64,{encoded}"
 
 
-def _configure_theme(configure_theme: Callable[..., object], kwargs: dict[str, Any]) -> bool:
+def _configure_theme(server: ViserServer, titlebar_content: TitlebarConfig | None) -> bool:
     try:
-        configure_theme(**kwargs)
+        server.gui.configure_theme(
+            titlebar_content=titlebar_content,
+            control_layout="collapsible",
+            control_width="medium",
+            dark_mode=True,
+            show_logo=False,
+            show_share_button=False,
+            brand_color=DIMOS_BRAND_COLOR,
+        )
     except (TypeError, AttributeError):
         logger.warning("Skipping DimOS Viser theme; theme API unavailable", exc_info=True)
         return False

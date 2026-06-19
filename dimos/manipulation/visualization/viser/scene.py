@@ -24,11 +24,18 @@ from dimos.manipulation.visualization.viser.runtime import (
     VISER_INSTALL_HINT,
     VISER_URDF_INSTALL_HINT,
 )
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
 try:
-    from viser import ViserServer
+    from viser import (
+        GridHandle,
+        MeshHandle,
+        TransformControlsEvent,
+        TransformControlsHandle,
+        ViserServer,
+    )
 except ModuleNotFoundError as e:
     if e.name != "viser":
         raise
@@ -61,17 +68,7 @@ REFERENCE_GRID_NAME = "/reference_grid"
 REFERENCE_GRID_CELL_COLOR = (44, 54, 58)
 REFERENCE_GRID_SECTION_COLOR = (90, 145, 165)
 
-
-def _get_attr(obj: object, attr: str) -> object:
-    return getattr(obj, attr)
-
-
-def _set_attr(obj: object, attr: str, value: object) -> None:
-    setattr(obj, attr, value)
-
-
-def _float_attr(obj: object, attr: str) -> float:
-    return float(getattr(obj, attr))
+SceneHandle = ViserUrdf | TransformControlsHandle | GridHandle | MeshHandle
 
 
 class ViserManipulationScene:
@@ -84,9 +81,9 @@ class ViserManipulationScene:
         self.viser_urdf = viser_urdf
         self.preview_fps = preview_fps
         self._configs_by_id: dict[str, RobotModelConfig] = {}
-        self._urdfs: dict[str, object] = {}
-        self._handles: dict[str, object] = {}
-        self._grid_handle: object | None = None
+        self._urdfs: dict[str, ViserUrdf] = {}
+        self._handles: dict[str, TransformControlsHandle] = {}
+        self._grid_handle: GridHandle | None = None
         self._grid_visible = True
         self._preview_visible: dict[str, bool] = {}
         self._target_tracks_current: dict[str, bool] = {}
@@ -137,27 +134,19 @@ class ViserManipulationScene:
             self._grid_handle = None
 
     def ensure_target_controls(
-        self, robot_id: str, on_update: Callable[[object], None]
-    ) -> object | None:
+        self, robot_id: str, on_update: Callable[[TransformControlsHandle], None]
+    ) -> TransformControlsHandle | None:
         handle_key = f"{robot_id}:ee_control"
         if handle_key in self._handles:
             return self._handles[handle_key]
-        try:
-            scene = self.server.scene
-        except AttributeError:
-            return None
-        add_transform_controls = getattr(scene, "add_transform_controls", None)
-        if not callable(add_transform_controls):
-            return None
-        handle = add_transform_controls(f"/targets/{robot_id}/ee_control", scale=0.25)
-        on_update_handle = getattr(handle, "on_update", None)
-        if callable(on_update_handle):
+        handle = self.server.scene.add_transform_controls(
+            f"/targets/{robot_id}/ee_control", scale=0.25
+        )
 
-            def dispatch(event: object) -> None:
-                target = getattr(event, "target", handle)
-                on_update(target)
+        def dispatch(event: TransformControlsEvent) -> None:
+            on_update(event.target)
 
-            on_update_handle(dispatch)
+        handle.on_update(dispatch)
         self._handles[handle_key] = handle
         return handle
 
@@ -224,34 +213,24 @@ class ViserManipulationScene:
         ghost = self._urdfs.get(f"{robot_id}:preview")
         self.set_urdf_joints(ghost, joint_names, joints)
 
-    def set_target_pose(self, robot_id: str, pose: object | None) -> None:
+    def set_target_pose(self, robot_id: str, pose: Pose | None) -> None:
         handle = self._handles.get(f"{robot_id}:ee_control")
         if handle is None or pose is None:
             return
         try:
-            position = _get_attr(pose, "position")
-            _set_attr(
-                handle,
-                "position",
-                (
-                    _float_attr(position, "x"),
-                    _float_attr(position, "y"),
-                    _float_attr(position, "z"),
-                ),
+            handle.position = (
+                float(pose.position.x),
+                float(pose.position.y),
+                float(pose.position.z),
             )
         except (AttributeError, TypeError):
             pass
         try:
-            orientation = _get_attr(pose, "orientation")
-            _set_attr(
-                handle,
-                "wxyz",
-                (
-                    _float_attr(orientation, "w"),
-                    _float_attr(orientation, "x"),
-                    _float_attr(orientation, "y"),
-                    _float_attr(orientation, "z"),
-                ),
+            handle.wxyz = (
+                float(pose.orientation.w),
+                float(pose.orientation.x),
+                float(pose.orientation.y),
+                float(pose.orientation.z),
             )
         except (AttributeError, TypeError):
             pass
@@ -270,7 +249,7 @@ class ViserManipulationScene:
             for attr in ("color", "material_color"):
                 if hasattr(handle, attr):
                     try:
-                        _set_attr(handle, attr, color)
+                        setattr(handle, attr, color)
                     except Exception:
                         logger.warning("Could not set Viser handle %s", attr, exc_info=True)
 
@@ -330,7 +309,7 @@ class ViserManipulationScene:
         )
 
     def set_urdf_joints(
-        self, urdf: object | None, joint_names: Sequence[str], joints: Sequence[float]
+        self, urdf: ViserUrdf | None, joint_names: Sequence[str], joints: Sequence[float]
     ) -> None:
         if urdf is None:
             return
@@ -346,7 +325,7 @@ class ViserManipulationScene:
             update_configuration(cfg)
 
     def viser_joint_configuration(
-        self, urdf: object, joint_names: Sequence[str], joints: Sequence[float]
+        self, urdf: ViserUrdf, joint_names: Sequence[str], joints: Sequence[float]
     ) -> list[float]:
         allowed_names = list(self.viser_actuated_joint_names(urdf))
         if not allowed_names:
@@ -357,7 +336,7 @@ class ViserManipulationScene:
             values_by_name[name.rsplit("/", 1)[-1]] = float(value)
         return [values_by_name.get(name, 0.0) for name in allowed_names]
 
-    def viser_actuated_joint_names(self, urdf: object) -> tuple[str, ...]:
+    def viser_actuated_joint_names(self, urdf: ViserUrdf) -> tuple[str, ...]:
         # Depends on viser internals: ViserUrdf exposes no public accessor for its
         # wrapped yourdfpy model, so we reach for the private `_urdf` attribute here.
         # Keep this the single place that touches it.
@@ -378,18 +357,18 @@ class ViserManipulationScene:
     def _set_target_visibility(self, robot_id: str, visible: bool) -> None:
         self._set_handle_visibility(self._urdfs.get(f"{robot_id}:target"), visible)
 
-    def _set_handle_visibility(self, handle: object | None, visible: bool) -> None:
+    def _set_handle_visibility(self, handle: SceneHandle | None, visible: bool) -> None:
         if handle is None:
             return
         for candidate in (handle, *self._meshes(handle)):
             if hasattr(candidate, "visible"):
                 try:
-                    _set_attr(candidate, "visible", visible)
+                    candidate.visible = visible
                 except Exception:
                     logger.warning("Could not set Viser handle visibility", exc_info=True)
 
     def _set_urdf_mesh_material(
-        self, urdf: object | None, color: tuple[int, int, int], opacity: float
+        self, urdf: ViserUrdf | None, color: tuple[int, int, int], opacity: float
     ) -> None:
         if urdf is None:
             return
@@ -397,16 +376,16 @@ class ViserManipulationScene:
             for attr in ("color", "material_color"):
                 if hasattr(mesh, attr):
                     try:
-                        _set_attr(mesh, attr, color)
+                        setattr(mesh, attr, color)
                     except Exception:
                         logger.warning("Could not set Viser mesh %s", attr, exc_info=True)
             if hasattr(mesh, "opacity"):
                 try:
-                    _set_attr(mesh, "opacity", opacity)
+                    mesh.opacity = opacity
                 except Exception:
                     logger.warning("Could not set Viser mesh opacity", exc_info=True)
 
-    def _meshes(self, handle: object) -> Sequence[object]:
+    def _meshes(self, handle: SceneHandle) -> tuple[MeshHandle, ...]:
         # Depends on viser internals: ViserUrdf exposes no public accessor for the
         # per-link mesh handles, so we read the private `_meshes` attribute here.
         # Keep this the single place that touches it.

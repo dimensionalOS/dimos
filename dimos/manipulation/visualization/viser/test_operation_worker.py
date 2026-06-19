@@ -14,11 +14,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 import threading
-from types import SimpleNamespace
 
 import pytest
 
+from dimos.manipulation.visualization.types import RobotInfo
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
@@ -28,8 +30,67 @@ from dimos.manipulation.visualization.viser.state import (
     OperationWorker,
     PanelRuntime,
     PlanStatus,
+    TargetEvaluationWorker,
     TargetStatus,
 )
+from dimos.msgs.sensor_msgs.JointState import JointState
+
+
+class EmptyServer:
+    pass
+
+
+@dataclass
+class FakeStopOperationWorker(OperationWorker):
+    stop_calls: list[float | None]
+
+    def __init__(self, stop_calls: list[float | None]) -> None:
+        self.stop_calls = stop_calls
+
+    def stop(self, timeout: float | None = 2.0) -> None:
+        self.stop_calls.append(timeout)
+
+
+@dataclass
+class FakeStopEvaluationWorker(TargetEvaluationWorker):
+    stop_calls: list[float | None]
+
+    def __init__(self, stop_calls: list[float | None]) -> None:
+        self.stop_calls = stop_calls
+
+    def stop(self, timeout: float | None = 2.0) -> None:
+        self.stop_calls.append(timeout)
+
+
+class FakeTimeoutSubmitWorker(OperationWorker):
+    def __init__(self, submissions: list[dict[str, float]]) -> None:
+        self.submissions = submissions
+
+    def submit(
+        self,
+        operation: Callable[[], None],
+        *,
+        timeout_seconds: float | None = None,
+        on_error: Callable[[str], None] | None = None,
+    ) -> None:
+        kwargs = {}
+        if timeout_seconds is not None:
+            kwargs["timeout_seconds"] = timeout_seconds
+        self.submissions.append(kwargs)
+
+
+class FakeOperationSubmitWorker(OperationWorker):
+    def __init__(self, submissions: list[Callable[[], None]]) -> None:
+        self.submissions = submissions
+
+    def submit(
+        self,
+        operation: Callable[[], None],
+        *,
+        timeout_seconds: float | None = None,
+        on_error: Callable[[str], None] | None = None,
+    ) -> None:
+        self.submissions.append(operation)
 
 
 class FakeOperationAdapter(InProcessViserAdapter):
@@ -42,13 +103,13 @@ class FakeOperationAdapter(InProcessViserAdapter):
     def get_module_state(self) -> str:
         return "IDLE"
 
-    def get_robot_info(self, robot_name: str) -> dict[str, object] | None:
-        return {}
+    def get_robot_info(self, robot_name: str) -> RobotInfo | None:
+        return None
 
     def get_current_joint_state(self, robot_name: str) -> None:
         return None
 
-    def get_ee_pose(self, robot_name: str, joint_state: object | None = None) -> None:
+    def get_ee_pose(self, robot_name: str, joint_state: JointState | None = None) -> None:
         return None
 
     def get_error(self) -> str:
@@ -99,16 +160,12 @@ def test_operation_worker_uses_operation_error_callback_on_timeout() -> None:
 def test_gui_close_uses_bounded_operation_worker_stop() -> None:
     stop_timeouts: list[float | None] = []
     gui = ViserPanelGui(
-        SimpleNamespace(),
+        EmptyServer(),
         FakeOperationAdapter(),
         ViserVisualizationConfig(),
     )
-    object.__setattr__(
-        gui,
-        "_operation_worker",
-        SimpleNamespace(stop=lambda timeout: stop_timeouts.append(timeout)),
-    )
-    object.__setattr__(gui, "_worker", SimpleNamespace(stop=lambda timeout=2.0: None))
+    gui._operation_worker = FakeStopOperationWorker(stop_timeouts)
+    gui._worker = FakeStopEvaluationWorker([])
 
     gui.close()
 
@@ -116,17 +173,13 @@ def test_gui_close_uses_bounded_operation_worker_stop() -> None:
 
 
 def test_gui_only_preview_submits_timeout_override() -> None:
-    submissions: list[dict[str, object]] = []
+    submissions: list[dict[str, float]] = []
     gui = ViserPanelGui(
-        SimpleNamespace(),
+        EmptyServer(),
         FakeOperationAdapter(),
         ViserVisualizationConfig(preview_request_timeout=0.25),
     )
-    object.__setattr__(
-        gui,
-        "_operation_worker",
-        SimpleNamespace(submit=lambda _operation, **kwargs: submissions.append(kwargs)),
-    )
+    gui._operation_worker = FakeTimeoutSubmitWorker(submissions)
     gui.state.runtime = PanelRuntime.RUNNING
     gui.state.backend_status = BackendConnectionStatus.READY
     gui.state.selected_robot = "arm"
@@ -150,17 +203,13 @@ def test_gui_only_preview_submits_timeout_override() -> None:
     ],
 )
 def test_gui_guard_errors_keep_action_idle(submit: str, expected_error: str) -> None:
-    submissions: list[object] = []
+    submissions: list[Callable[[], None]] = []
     gui = ViserPanelGui(
-        SimpleNamespace(),
+        EmptyServer(),
         FakeOperationAdapter(),
         ViserVisualizationConfig(),
     )
-    object.__setattr__(
-        gui,
-        "_operation_worker",
-        SimpleNamespace(submit=lambda operation, **_kwargs: submissions.append(operation)),
-    )
+    gui._operation_worker = FakeOperationSubmitWorker(submissions)
     gui.state.runtime = PanelRuntime.RUNNING
     gui.state.backend_status = BackendConnectionStatus.READY
     gui.state.selected_robot = "arm"
@@ -175,7 +224,7 @@ def test_gui_guard_errors_keep_action_idle(submit: str, expected_error: str) -> 
 
 def test_gui_ignores_stale_timed_out_operation_finish() -> None:
     gui = ViserPanelGui(
-        SimpleNamespace(),
+        EmptyServer(),
         FakeOperationAdapter(),
         ViserVisualizationConfig(),
     )

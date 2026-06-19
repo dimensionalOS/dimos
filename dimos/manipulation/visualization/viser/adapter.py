@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from dimos.manipulation.visualization.types import TargetEvaluation
+from dimos.manipulation.visualization.types import RobotInfo, TargetEvaluation
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 if TYPE_CHECKING:
@@ -61,9 +61,30 @@ class InProcessViserAdapter:
     def get_robot_config(self, robot_name: RobotName) -> RobotModelConfig | None:
         return self._module.get_robot_config(robot_name)
 
-    def get_robot_info(self, robot_name: RobotName) -> dict[str, object] | None:
+    def get_robot_info(self, robot_name: RobotName) -> RobotInfo | None:
         info = self._module.get_robot_info(robot_name)
-        return None if info is None else dict(info)
+        if info is None:
+            return None
+        return {
+            "name": str(info["name"]),
+            "world_robot_id": str(info["world_robot_id"]),
+            "joint_names": [str(name) for name in info["joint_names"]],
+            "end_effector_link": str(info["end_effector_link"]),
+            "base_link": str(info["base_link"]),
+            "max_velocity": float(info["max_velocity"]),
+            "max_acceleration": float(info["max_acceleration"]),
+            "has_joint_name_mapping": bool(info["has_joint_name_mapping"]),
+            "coordinator_task_name": None
+            if info["coordinator_task_name"] is None
+            else str(info["coordinator_task_name"]),
+            "home_joints": None
+            if info["home_joints"] is None
+            else [float(value) for value in info["home_joints"]],
+            "pre_grasp_offset": float(info["pre_grasp_offset"]),
+            "init_joints": None
+            if info["init_joints"] is None
+            else [float(value) for value in info["init_joints"]],
+        }
 
     def get_init_joints(self, robot_name: RobotName) -> JointState | None:
         return copy_joint_state(self._module.get_init_joints(robot_name))

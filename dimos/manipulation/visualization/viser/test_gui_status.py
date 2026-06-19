@@ -14,14 +14,22 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
-
 import pytest
 
 from dimos.manipulation.visualization.types import TargetEvaluation
+from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
 from dimos.manipulation.visualization.viser.state import FeasibilityStatus
+
+
+class StatusOnlyServer:
+    pass
+
+
+class StatusOnlyAdapter(InProcessViserAdapter):
+    def __init__(self) -> None:
+        pass
 
 
 @pytest.mark.parametrize(
@@ -45,8 +53,8 @@ def test_gui_feasibility_status_uses_exact_status_mapping(
     expected: FeasibilityStatus,
 ) -> None:
     gui = ViserPanelGui(
-        cast("Any", object()),
-        cast("Any", object()),
+        StatusOnlyServer(),
+        StatusOnlyAdapter(),
         ViserVisualizationConfig(),
     )
 

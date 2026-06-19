@@ -80,7 +80,7 @@ class PreviewAnimator:
 
     def __init__(
         self,
-        set_joints: Callable[[Sequence[float]], object],
+        set_joints: Callable[[Sequence[float]], None],
         *,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:

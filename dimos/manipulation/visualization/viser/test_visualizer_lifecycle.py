@@ -16,16 +16,24 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
 
 import pytest
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import PlanningSceneInfo
 from dimos.manipulation.visualization.viser import visualizer as visualizer_module
+from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.visualizer import ViserManipulationVisualizer
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+
+
+class FakeDependency:
+    pass
+
+
+class FakeViserUrdf:
+    pass
 
 
 class FakeServer:
@@ -44,14 +52,14 @@ def fake_robot_config(name: str) -> RobotModelConfig:
 
 
 def test_visualizer_construction_is_lazy(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fail_runtime(_config: ViserVisualizationConfig) -> object:
+    def fail_runtime(_config: ViserVisualizationConfig) -> FakeServer:
         raise AssertionError("runtime should not start during construction")
 
     monkeypatch.setattr(visualizer_module, "ViserRuntime", fail_runtime)
 
     visualizer = ViserManipulationVisualizer(
-        world_monitor=cast("Any", object()),
-        manipulation_module=cast("Any", object()),
+        world_monitor=FakeDependency(),
+        manipulation_module=FakeDependency(),
         config=ViserVisualizationConfig(panel_enabled=False),
     )
 
@@ -78,17 +86,29 @@ def test_visualizer_initializes_all_scene_robots_from_planning_scene(
             calls.append(("close", "runtime"))
 
     class FakeScene:
-        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+        def __init__(
+            self,
+            server: FakeServer,
+            viser_urdf: type[FakeViserUrdf],
+            *,
+            preview_fps: float,
+        ) -> None:
             calls.append(("create", "scene"))
 
-        def register_robot(self, robot_id: str, config: Any) -> None:
+        def register_robot(self, robot_id: str, config: RobotModelConfig) -> None:
             calls.append((robot_id, config.name))
 
         def close(self) -> None:
             calls.append(("close", "scene"))
 
     class FakeGui:
-        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+        def __init__(
+            self,
+            server: FakeServer,
+            adapter: InProcessViserAdapter,
+            config: ViserVisualizationConfig,
+            scene: FakeScene,
+        ) -> None:
             calls.append(("create", "gui"))
 
         def start(self) -> None:
@@ -101,12 +121,12 @@ def test_visualizer_initializes_all_scene_robots_from_planning_scene(
             calls.append(("close", "gui"))
 
     monkeypatch.setattr(visualizer_module, "ViserRuntime", FakeRuntime)
-    monkeypatch.setattr(visualizer_module, "ViserUrdf", object)
+    monkeypatch.setattr(visualizer_module, "ViserUrdf", FakeViserUrdf)
     monkeypatch.setattr(visualizer_module, "ViserManipulationScene", FakeScene)
     monkeypatch.setattr(visualizer_module, "ViserPanelGui", FakeGui)
     visualizer = ViserManipulationVisualizer(
-        world_monitor=cast("Any", object()),
-        manipulation_module=cast("Any", object()),
+        world_monitor=FakeDependency(),
+        manipulation_module=FakeDependency(),
         config=ViserVisualizationConfig(panel_enabled=True),
     )
     scene = PlanningSceneInfo(
@@ -147,14 +167,26 @@ def test_visualizer_closes_partial_startup_when_gui_start_fails(
             closed.append("runtime")
 
     class FakeScene:
-        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+        def __init__(
+            self,
+            server: FakeServer,
+            viser_urdf: type[FakeViserUrdf],
+            *,
+            preview_fps: float,
+        ) -> None:
             pass
 
         def close(self) -> None:
             closed.append("scene")
 
     class FakeGui:
-        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+        def __init__(
+            self,
+            server: FakeServer,
+            adapter: InProcessViserAdapter,
+            config: ViserVisualizationConfig,
+            scene: FakeScene,
+        ) -> None:
             pass
 
         def start(self) -> None:
@@ -164,12 +196,12 @@ def test_visualizer_closes_partial_startup_when_gui_start_fails(
             closed.append("gui")
 
     monkeypatch.setattr(visualizer_module, "ViserRuntime", FakeRuntime)
-    monkeypatch.setattr(visualizer_module, "ViserUrdf", object)
+    monkeypatch.setattr(visualizer_module, "ViserUrdf", FakeViserUrdf)
     monkeypatch.setattr(visualizer_module, "ViserManipulationScene", FakeScene)
     monkeypatch.setattr(visualizer_module, "ViserPanelGui", FakeGui)
     visualizer = ViserManipulationVisualizer(
-        world_monitor=cast("Any", object()),
-        manipulation_module=cast("Any", object()),
+        world_monitor=FakeDependency(),
+        manipulation_module=FakeDependency(),
         config=ViserVisualizationConfig(panel_enabled=True),
     )
 
@@ -198,15 +230,21 @@ def test_visualizer_closes_runtime_when_scene_creation_fails(
             closed.append("runtime")
 
     class FailingScene:
-        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+        def __init__(
+            self,
+            server: FakeServer,
+            viser_urdf: type[FakeViserUrdf],
+            *,
+            preview_fps: float,
+        ) -> None:
             raise RuntimeError("scene failed")
 
     monkeypatch.setattr(visualizer_module, "ViserRuntime", FakeRuntime)
-    monkeypatch.setattr(visualizer_module, "ViserUrdf", object)
+    monkeypatch.setattr(visualizer_module, "ViserUrdf", FakeViserUrdf)
     monkeypatch.setattr(visualizer_module, "ViserManipulationScene", FailingScene)
     visualizer = ViserManipulationVisualizer(
-        world_monitor=cast("Any", object()),
-        manipulation_module=cast("Any", object()),
+        world_monitor=FakeDependency(),
+        manipulation_module=FakeDependency(),
         config=ViserVisualizationConfig(panel_enabled=False),
     )
 

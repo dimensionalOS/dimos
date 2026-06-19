@@ -14,11 +14,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from collections.abc import Sequence
 
 from dimos.manipulation.visualization.types import TargetEvaluation
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
+from dimos.manipulation.visualization.viser.runtime import VISER_INSTALL_HINT
 from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
 from dimos.manipulation.visualization.viser.state import (
     ActionStatus,
@@ -39,8 +40,31 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-if TYPE_CHECKING:
-    import viser
+try:
+    from viser import (
+        GuiApi,
+        GuiButtonHandle,
+        GuiCheckboxHandle,
+        GuiDropdownHandle,
+        GuiFolderHandle,
+        GuiMarkdownHandle,
+        GuiSliderHandle,
+        TransformControlsHandle,
+        ViserServer,
+    )
+except ModuleNotFoundError as e:
+    if e.name != "viser":
+        raise
+    raise ModuleNotFoundError(VISER_INSTALL_HINT) from e
+
+PanelHandle = (
+    GuiFolderHandle
+    | GuiMarkdownHandle
+    | GuiDropdownHandle[str]
+    | GuiButtonHandle
+    | GuiCheckboxHandle
+    | TransformControlsHandle
+)
 
 # Fallback joint-slider range (radians) when a robot config omits joint limits.
 DEFAULT_JOINT_LIMITS = (-3.14, 3.14)
@@ -51,7 +75,7 @@ class ViserPanelGui:
 
     def __init__(
         self,
-        server: viser.ViserServer,
+        server: ViserServer,
         adapter: InProcessViserAdapter,
         config: ViserVisualizationConfig,
         scene: ViserManipulationScene | None = None,
@@ -64,8 +88,8 @@ class ViserPanelGui:
         self._closed = False
         self._operation_sequence_id = 0
         self._suppress_target_callbacks = False
-        self._handles: dict[str, Any] = {}
-        self._joint_sliders: dict[str, Any] = {}
+        self._handles: dict[str, PanelHandle] = {}
+        self._joint_sliders: dict[str, GuiSliderHandle[float]] = {}
         self._worker = TargetEvaluationWorker(
             self._handle_target_evaluation_request,
             self._apply_target_evaluation_result,
@@ -116,48 +140,51 @@ class ViserPanelGui:
         with folder:
             self._build_panel_controls(gui)
 
-    def _build_panel_controls(self, gui: Any) -> None:
+    def _build_panel_controls(self, gui: GuiApi) -> None:
         self._handles["status"] = gui.add_markdown("Starting manipulation panel...")
         robots = self.adapter.list_robots()
         self._build_scene_controls(gui)
-        self._handles["robot"] = gui.add_dropdown(
+        robot_dropdown = gui.add_dropdown(
             "Robot",
             options=robots or [""],
             initial_value=robots[0] if robots else "",
         )
-        self._on_update(
-            self._handles["robot"], lambda event: self._select_robot(event.target.value)
-        )
-        self._handles["preset"] = gui.add_dropdown(
+        robot_dropdown.on_update(lambda event: self._select_robot(event.target.value))
+        self._handles["robot"] = robot_dropdown
+        preset_dropdown = gui.add_dropdown(
             "Target Preset",
             options=["Select preset...", "Current"],
             initial_value="Select preset...",
         )
-        self._on_update(
-            self._handles["preset"], lambda event: self._apply_preset(event.target.value)
-        )
-        self._handles["plan"] = gui.add_button("Plan", disabled=True)
-        self._on_click(self._handles["plan"], lambda _: self._submit_plan())
-        self._handles["preview"] = gui.add_button("Preview", disabled=True)
-        self._on_click(self._handles["preview"], lambda _: self._submit_preview())
-        self._handles["execute"] = gui.add_button("Execute", disabled=True)
-        self._on_click(self._handles["execute"], lambda _: self._submit_execute())
-        self._handles["cancel"] = gui.add_button("Cancel")
-        self._on_click(self._handles["cancel"], lambda _: self._submit_cancel())
-        self._handles["clear"] = gui.add_button("Clear plan")
-        self._on_click(self._handles["clear"], lambda _: self._submit_clear())
+        preset_dropdown.on_update(lambda event: self._apply_preset(event.target.value))
+        self._handles["preset"] = preset_dropdown
+        plan_button = gui.add_button("Plan", disabled=True)
+        plan_button.on_click(lambda _: self._submit_plan())
+        self._handles["plan"] = plan_button
+        preview_button = gui.add_button("Preview", disabled=True)
+        preview_button.on_click(lambda _: self._submit_preview())
+        self._handles["preview"] = preview_button
+        execute_button = gui.add_button("Execute", disabled=True)
+        execute_button.on_click(lambda _: self._submit_execute())
+        self._handles["execute"] = execute_button
+        cancel_button = gui.add_button("Cancel")
+        cancel_button.on_click(lambda _: self._submit_cancel())
+        self._handles["cancel"] = cancel_button
+        clear_button = gui.add_button("Clear plan")
+        clear_button.on_click(lambda _: self._submit_clear())
+        self._handles["clear"] = clear_button
         self._build_joint_sliders()
 
-    def _build_scene_controls(self, gui: Any) -> None:
+    def _build_scene_controls(self, gui: GuiApi) -> None:
         if self.scene is None:
             return
         if not self.scene.has_reference_grid():
             return
         handle = gui.add_checkbox("Scene grid", initial_value=True)
         self._handles["scene_grid"] = handle
-        self._on_update(handle, lambda event: self._set_scene_grid_visible(event.target.value))
+        handle.on_update(lambda event: self._set_scene_grid_visible(event.target.value))
 
-    def _set_scene_grid_visible(self, visible: object) -> None:
+    def _set_scene_grid_visible(self, visible: bool) -> None:
         if self.scene is None:
             return
         self.scene.set_reference_grid_visible(bool(visible))
@@ -224,9 +251,7 @@ class ViserPanelGui:
                 step=0.001,
                 initial_value=float(values[index] if index < len(values) else 0.0),
             )
-            self._on_update(
-                handle, lambda _event, name=joint_name: self._on_joint_slider_update(name)
-            )
+            handle.on_update(lambda _event, name=joint_name: self._on_joint_slider_update(name))
             self._joint_sliders[joint_name] = handle
 
     def _clear_joint_sliders(self) -> None:
@@ -344,7 +369,7 @@ class ViserPanelGui:
             return
         self._submit_joint_target_evaluation()
 
-    def _on_transform_update(self, target: object) -> None:
+    def _on_transform_update(self, target: TransformControlsHandle) -> None:
         if self._suppress_target_callbacks or self.state.selected_robot is None:
             return
         pose = self._pose_from_transform_target(target)
@@ -667,25 +692,17 @@ class ViserPanelGui:
         self.state.error = message
         self.refresh()
 
-    def _on_update(self, handle: Any, callback: Any) -> None:
-        if hasattr(handle, "on_update"):
-            handle.on_update(callback)
-
-    def _on_click(self, handle: Any, callback: Any) -> None:
-        if hasattr(handle, "on_click"):
-            handle.on_click(callback)
-
     def _set_handle_value(self, key: str, value: str) -> None:
         handle = self._handles.get(key)
-        if handle is not None and hasattr(handle, "value"):
+        if isinstance(handle, GuiMarkdownHandle):
             handle.value = value
 
     def _set_disabled(self, key: str, disabled: bool) -> None:
         handle = self._handles.get(key)
-        if handle is not None and hasattr(handle, "disabled"):
+        if isinstance(handle, GuiButtonHandle):
             handle.disabled = disabled
 
-    def _pose_from_transform_target(self, target: Any) -> Pose | None:
+    def _pose_from_transform_target(self, target: TransformControlsHandle) -> Pose | None:
         try:
             position = target.position
         except AttributeError:
@@ -706,11 +723,7 @@ class ViserPanelGui:
         qw, qx, qy, qz = quaternion
         return Pose({"position": [px, py, pz], "orientation": [qx, qy, qz, qw]})
 
-    def _xyz_from_value(self, value: Any) -> tuple[float, float, float] | None:
-        try:
-            return float(value.x), float(value.y), float(value.z)
-        except (AttributeError, TypeError, ValueError):
-            pass
+    def _xyz_from_value(self, value: Sequence[float]) -> tuple[float, float, float] | None:
         try:
             return (
                 float(value[0]),
@@ -720,16 +733,7 @@ class ViserPanelGui:
         except (AttributeError, IndexError, TypeError, ValueError):
             return None
 
-    def _wxyz_from_value(self, value: Any) -> tuple[float, float, float, float] | None:
-        try:
-            return (
-                float(value.w),
-                float(value.x),
-                float(value.y),
-                float(value.z),
-            )
-        except (AttributeError, TypeError, ValueError):
-            pass
+    def _wxyz_from_value(self, value: Sequence[float]) -> tuple[float, float, float, float] | None:
         try:
             return (
                 float(value[0]),

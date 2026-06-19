@@ -21,7 +21,7 @@ import queue
 import threading
 from typing import Literal
 
-from dimos.manipulation.visualization.types import TargetEvaluation
+from dimos.manipulation.visualization.types import RobotInfo, TargetEvaluation
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -104,7 +104,7 @@ class PanelState:
     target_status: TargetStatus = TargetStatus.EMPTY
     action_status: ActionStatus = ActionStatus.IDLE
     manipulation_state: str = "DISCONNECTED"
-    robot_info: dict[str, object] | None = None
+    robot_info: RobotInfo | None = None
     current_joints: list[float] | None = None
     current_ee_pose: Pose | None = None
     cartesian_target: Pose | None = None
@@ -292,7 +292,7 @@ class OperationWorker:
 
     def submit(
         self,
-        operation: Callable[[], object],
+        operation: Callable[[], None],
         *,
         timeout_seconds: float | None = None,
         on_error: Callable[[str], None] | None = None,
@@ -354,6 +354,6 @@ class OperationWorker:
 
 @dataclass(frozen=True)
 class OperationRequest:
-    operation: Callable[[], object]
+    operation: Callable[[], None]
     timeout_seconds: float | None
     on_error: Callable[[str], None]

@@ -20,7 +20,11 @@ from typing import TYPE_CHECKING
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
-from dimos.manipulation.visualization.viser.runtime import VISER_URDF_INSTALL_HINT, ViserRuntime
+from dimos.manipulation.visualization.viser.runtime import (
+    VISER_URDF_INSTALL_HINT,
+    ViserRuntime,
+    ViserServer,
+)
 from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
 from dimos.manipulation.visualization.viser.theme import apply_dimos_theme
 from dimos.utils.logging_config import setup_logger
@@ -62,7 +66,7 @@ class ViserManipulationVisualizer:
         self._manipulation_module = manipulation_module
         self.config = config or ViserVisualizationConfig()
         self._runtime: ViserRuntime | None = None
-        self._server: object | None = None
+        self._server: ViserServer | None = None
         self._adapter: InProcessViserAdapter | None = None
         self._scene: ViserManipulationScene | None = None
         self._gui: ViserPanelGui | None = None
@@ -132,7 +136,7 @@ class ViserManipulationVisualizer:
     def get_visualization_url(self) -> str | None:
         return None if self._runtime is None else self._runtime.url
 
-    def publish_visualization(self, ctx: object | None = None) -> None:
+    def publish_visualization(self, ctx: None = None) -> None:
         """Update current robot render state. ctx is accepted for protocol compatibility."""
         if self._closed:
             return
