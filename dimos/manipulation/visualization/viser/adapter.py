@@ -15,8 +15,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+from dimos.manipulation.visualization.types import TargetEvaluation
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 if TYPE_CHECKING:
@@ -87,18 +88,21 @@ class InProcessViserAdapter:
             return None
         return self._world_monitor.get_ee_pose(robot_id, copy_joint_state(joint_state))
 
-    def evaluate_joint_target(self, joints: JointState, robot_name: RobotName) -> dict[str, object]:
+    def evaluate_joint_target(self, joints: JointState, robot_name: RobotName) -> TargetEvaluation:
         """Evaluate a joint target through WorldMonitor helpers, not raw WorldSpec access."""
-        result = dict(self._module.evaluate_joint_target(copy_joint_state(joints), robot_name))
+        result = cast(
+            "TargetEvaluation",
+            dict(self._module.evaluate_joint_target(copy_joint_state(joints), robot_name)),
+        )
         joint_state = result.get("joint_state")
         result["joint_state"] = copy_joint_state(
             joint_state if isinstance(joint_state, JointState) else None
         )
         return result
 
-    def evaluate_pose_target(self, pose: Pose, robot_name: RobotName) -> dict[str, object]:
+    def evaluate_pose_target(self, pose: Pose, robot_name: RobotName) -> TargetEvaluation:
         """Evaluate a Cartesian target through module/WorldMonitor helper boundaries."""
-        result = dict(self._module.evaluate_pose_target(pose, robot_name))
+        result = cast("TargetEvaluation", dict(self._module.evaluate_pose_target(pose, robot_name)))
         joint_state = result.get("joint_state")
         result["joint_state"] = copy_joint_state(
             joint_state if isinstance(joint_state, JointState) else None

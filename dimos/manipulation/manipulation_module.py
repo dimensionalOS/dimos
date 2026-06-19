@@ -63,6 +63,7 @@ from dimos.manipulation.visualization.config import (
     NoManipulationVisualizationConfig,
 )
 from dimos.manipulation.visualization.factory import create_manipulation_visualization
+from dimos.manipulation.visualization.types import TargetEvaluation
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -806,7 +807,7 @@ class ManipulationModule(Module):
 
     def evaluate_joint_target(
         self, joints: JointState | None, robot_name: RobotName
-    ) -> dict[str, object]:
+    ) -> TargetEvaluation:
         """Evaluate a joint target for visualization without planning a path."""
         robot_id = self.robot_id_for_name(robot_name)
         if robot_id is None or self._world_monitor is None:
@@ -838,7 +839,7 @@ class ManipulationModule(Module):
             "joint_state": target,
         }
 
-    def evaluate_pose_target(self, pose: Pose, robot_name: RobotName) -> dict[str, object]:
+    def evaluate_pose_target(self, pose: Pose, robot_name: RobotName) -> TargetEvaluation:
         """Evaluate a Cartesian target for visualization without planning a path."""
         robot_id = self.robot_id_for_name(robot_name)
         if robot_id is None:

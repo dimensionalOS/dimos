@@ -24,6 +24,7 @@ from typing import Any, cast
 import numpy as np
 import pytest
 
+from dimos.manipulation.visualization.types import TargetEvaluation
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.animation import sampled_joint_path_frames
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
@@ -278,7 +279,7 @@ class FakeManipulationModule(SimpleNamespace):
     def get_error(self) -> str:
         return str(getattr(self, "_error_message", ""))
 
-    def evaluate_joint_target(self, joints: JointState | None, robot_name: str) -> dict[str, Any]:
+    def evaluate_joint_target(self, joints: JointState | None, robot_name: str) -> TargetEvaluation:
         robot_id = self.robot_id_for_name(robot_name)
         if robot_id is None or joints is None:
             return {"success": False, "status": "NO_ROBOT", "joint_state": None}
@@ -295,7 +296,7 @@ class FakeManipulationModule(SimpleNamespace):
             "joint_state": joints,
         }
 
-    def evaluate_pose_target(self, _pose: Pose, _robot_name: str) -> dict[str, Any]:
+    def evaluate_pose_target(self, _pose: Pose, _robot_name: str) -> TargetEvaluation:
         return {
             "success": False,
             "joint_state": None,

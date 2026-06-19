@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from dimos.manipulation.visualization.types import TargetEvaluation
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
@@ -396,7 +397,7 @@ class ViserPanelGui:
 
     def _handle_target_evaluation_request(
         self, request: TargetEvaluationRequest
-    ) -> dict[str, object]:
+    ) -> TargetEvaluation:
         if request.source == "cartesian":
             if request.pose is None:
                 return {"success": False, "status": "INVALID", "message": "No pose target"}
@@ -406,7 +407,7 @@ class ViserPanelGui:
         return self.adapter.evaluate_joint_target(request.joints, request.robot_name)
 
     def _apply_target_evaluation_result(
-        self, request: TargetEvaluationRequest, result: dict[str, object]
+        self, request: TargetEvaluationRequest, result: TargetEvaluation
     ) -> None:
         if request.sequence_id != self.state.latest_sequence_id:
             return
@@ -674,13 +675,13 @@ class ViserPanelGui:
             return None
 
     def _feasibility_status(
-        self, result: dict[str, object], success: bool, collision_free: bool
+        self, result: TargetEvaluation, success: bool, collision_free: bool
     ) -> FeasibilityStatus:
         status = str(result.get("status", "")).upper()
         if success and collision_free:
             return FeasibilityStatus.FEASIBLE
-        if "COLLISION" in status:
+        if status in {"COLLISION", "COLLISION_AT_START", "COLLISION_AT_GOAL"}:
             return FeasibilityStatus.COLLISION
-        if "IK" in status:
+        if status in {"NO_SOLUTION", "SINGULARITY", "JOINT_LIMITS", "TIMEOUT"}:
             return FeasibilityStatus.IK_FAILED
         return FeasibilityStatus.INVALID

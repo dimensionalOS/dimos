@@ -21,6 +21,7 @@ import queue
 import threading
 from typing import Literal
 
+from dimos.manipulation.visualization.types import TargetEvaluation
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -212,8 +213,8 @@ class TargetEvaluationWorker:
 
     def __init__(
         self,
-        handler: Callable[[TargetEvaluationRequest], dict[str, object]],
-        apply_result: Callable[[TargetEvaluationRequest, dict[str, object]], None],
+        handler: Callable[[TargetEvaluationRequest], TargetEvaluation],
+        apply_result: Callable[[TargetEvaluationRequest, TargetEvaluation], None],
     ) -> None:
         self._handler = handler
         self._apply_result = apply_result
