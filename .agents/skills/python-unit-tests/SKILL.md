@@ -90,7 +90,6 @@ Do not run mypy for test-only edits. Run `uv run mypy` when production source ty
 
 ## Final self-check
 
-Before stopping, summon Paul: assume he will review every changed test and comment on each avoidable mistake.
 
 - Is the test next to the code it tests?
 - Does it prove behavior with real assertions?
