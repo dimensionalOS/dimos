@@ -1,11 +1,11 @@
 ---
-name: dimos-unit-testing
-description: DimOS unit tests: Use when writing, fixing, or reviewing pytest tests, fixtures, mocks, or test PR feedback.
+name: python-unit-tests
+description: Python unit tests: Use when writing, fixing, or reviewing pytest tests, fixtures, mocks, or test PR feedback.
 ---
 
-# DimOS Unit Testing
+# Python Unit Tests
 
-Use this skill before adding, changing, or reviewing DimOS Python tests. The goal is **hermetic** tests: behavior-focused, deterministic, isolated, and cheap to run.
+Use this skill before adding, changing, or reviewing Python unit tests. The goal is **hermetic** tests: behavior-focused, deterministic, isolated, and cheap to run.
 
 Consult these only when the branch needs more context:
 
