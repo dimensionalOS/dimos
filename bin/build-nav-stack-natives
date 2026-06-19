@@ -24,7 +24,6 @@ to a NativeModuleConfig.
 """
 
 from concurrent.futures import ProcessPoolExecutor, as_completed
-import os
 from pathlib import Path
 import re
 import subprocess
@@ -152,14 +151,12 @@ def build_one(entry: tuple[str, str, Path, Path]) -> str:
 def main() -> None:
     entries = discover()
     failed = 0
-    # One worker per logical CPU. The original cap of 2 was working around
-    # GH-hosted ubuntu-latest's ~14 GB free disk being eaten by 6 concurrent
-    # nar extractions; the `free-disk-space` step in CI now reclaims ~25 GB
-    # before this runs, so disk is no longer the binding constraint and we
-    # can scale with cores.
-    workers = os.cpu_count() or 2
-    _log(f"Building {len(entries)} module(s) with up to {workers} workers")
-    with ProcessPoolExecutor(max_workers=workers) as ex:
+    # Cap at 3 concurrent nix builds. ubuntu-latest now has 4 logical CPUs and
+    # ~25 GB free disk (after the `free-disk-space` step), but at 4 workers
+    # the runner still OOMs on the parallel nar extractions. 3 is the empirical
+    # sweet spot — most of the parallelism win, no resource deaths.
+    _log(f"Building {len(entries)} module(s) with up to 3 workers")
+    with ProcessPoolExecutor(max_workers=3) as ex:
         futs = {ex.submit(build_one, e): e for e in entries}
         for fut in as_completed(futs):
             try:

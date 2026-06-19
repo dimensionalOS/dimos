@@ -324,7 +324,7 @@ jobs:
     # `if:` guard below is the only thing keeping fork PRs out — DO NOT REMOVE.
     if: |
       github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-    timeout-minutes: 180
+    timeout-minutes: 300
     environment: cachix
     runs-on: ubuntu-latest
     permissions:
