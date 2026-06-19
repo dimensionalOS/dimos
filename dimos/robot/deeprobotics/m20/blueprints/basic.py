@@ -84,7 +84,7 @@ m20_onboard = autoconnect(
     vis_module(
         viewer_backend=global_config.viewer,
         rerun_config={
-            "max_hz": {"world/grid_map_3d": 1},
+            "max_hz": {"world/grid_map_3d": 1, "world/aligned_points": 1},
         },
     ),
 ).global_config(n_workers=2)
