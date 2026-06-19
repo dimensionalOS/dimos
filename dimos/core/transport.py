@@ -390,8 +390,8 @@ class WebRTCTransport(PubSubTransport[M]):
         return (_rebuild_webrtc_transport, (type(self), self.topic, self._msg_type, self._config))
 
     def with_config_overrides(self, overrides: Mapping[str, Any]) -> Self:
-        new_config = self._config.model_copy(update=dict(overrides))
-        return type(self)(self.topic, self._msg_type, config=new_config)
+        merged = {**self._config.model_dump(), **dict(overrides)}
+        return type(self)(self.topic, self._msg_type, config=self._config_cls(**merged))
 
     def broadcast(self, _: Out[M] | None, msg: M) -> None:
         if not self._started:
@@ -498,7 +498,8 @@ class WebRTCVideoTransport(Transport[Any]):
         return lambda: None
 
     def with_config_overrides(self, overrides: Mapping[str, Any]) -> Self:
-        return type(self)(config=self._config.model_copy(update=dict(overrides)))
+        merged = {**self._config.model_dump(), **dict(overrides)}
+        return type(self)(config=self._config_cls(**merged))
 
 
 class CloudflareVideoTransport(WebRTCVideoTransport):
