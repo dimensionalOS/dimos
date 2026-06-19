@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import GlobalConfig
 from dimos.robot.unitree import connection as conn_mod
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
@@ -47,18 +48,27 @@ def test_connect_failure_propagates_to_caller(monkeypatch: pytest.MonkeyPatch) -
         UnitreeWebRTCConnection(ip="10.0.0.99")
 
 
-def test_connect_success_completes_setup(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Happy path: constructor returns after the setup sequence ran."""
+@pytest.fixture
+def built_connection(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """A live UnitreeWebRTCConnection over a stubbed driver, torn down (loop
+    stopped, thread joined) unconditionally so a failed assert can't leak it."""
     driver = _stub_driver()
     monkeypatch.setattr(conn_mod, "LegionConnection", MagicMock(return_value=driver))
 
     conn = UnitreeWebRTCConnection(ip="10.0.0.99")
+    try:
+        yield conn, driver
+    finally:
+        conn.loop.call_soon_threadsafe(conn.loop.stop)
+        conn.thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+
+
+def test_connect_success_completes_setup(built_connection: Any) -> None:
+    """Happy path: constructor returns after the setup sequence ran."""
+    _conn, driver = built_connection
 
     driver.connect.assert_awaited_once()
     driver.datachannel.pub_sub.publish_request_new.assert_awaited_once()
-
-    conn.loop.call_soon_threadsafe(conn.loop.stop)
-    conn.thread.join(timeout=5)
 
 
 @pytest.fixture

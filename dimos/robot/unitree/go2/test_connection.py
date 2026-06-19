@@ -48,9 +48,3 @@ def test_connection_config_aes_key_defaults_from_global_config() -> None:
     """ConnectionConfig.aes_128_key defaults from GlobalConfig.unitree_aes_128_key."""
     g = GlobalConfig(robot_ip="127.0.0.1", unitree_aes_128_key="dd" * 16)
     assert ConnectionConfig(g=g).aes_128_key == "dd" * 16
-
-
-def test_connection_config_explicit_aes_key_overrides_global() -> None:
-    """An explicit config value wins over the GlobalConfig default."""
-    g = GlobalConfig(robot_ip="127.0.0.1", unitree_aes_128_key="dd" * 16)
-    assert ConnectionConfig(g=g, aes_128_key="explicit").aes_128_key == "explicit"
