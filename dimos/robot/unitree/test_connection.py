@@ -86,10 +86,10 @@ def _aes_kwarg(legion: MagicMock) -> Any:
     return legion.call_args.kwargs.get("aes_128_key")
 
 
-def test_aes_key_omitted_when_not_provided(stub_legion: MagicMock) -> None:
-    """No key → not forwarded (byte-identical to pre-key call)."""
+def test_no_key_forwards_falsy(stub_legion: MagicMock) -> None:
+    """No key → a falsy value reaches the driver, which treats it as no key."""
     UnitreeWebRTCConnection(ip="192.168.123.161")
-    assert "aes_128_key" not in stub_legion.call_args.kwargs
+    assert not _aes_kwarg(stub_legion)
 
 
 def test_aes_key_forwarded_when_provided(stub_legion: MagicMock) -> None:
@@ -98,10 +98,10 @@ def test_aes_key_forwarded_when_provided(stub_legion: MagicMock) -> None:
     assert _aes_kwarg(stub_legion) == "aa" * 16
 
 
-def test_empty_string_key_not_forwarded(stub_legion: MagicMock) -> None:
-    """Empty-string key is falsy → not forwarded."""
+def test_empty_string_key_forwarded_as_falsy(stub_legion: MagicMock) -> None:
+    """Empty-string key stays falsy → the driver treats it as no key."""
     UnitreeWebRTCConnection(ip="192.168.123.161", aes_128_key="")
-    assert "aes_128_key" not in stub_legion.call_args.kwargs
+    assert not _aes_kwarg(stub_legion)
 
 
 def test_global_config_reads_unitree_aes_128_key_env(monkeypatch: pytest.MonkeyPatch) -> None:
