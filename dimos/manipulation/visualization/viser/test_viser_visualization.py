@@ -29,10 +29,6 @@ from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.animation import sampled_joint_path_frames
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
-from dimos.manipulation.visualization.viser.runtime import (
-    VISER_URDF_INSTALL_HINT,
-    import_viser_urdf,
-)
 from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
 from dimos.manipulation.visualization.viser.state import (
     ActionStatus,
@@ -445,40 +441,6 @@ def test_dimos_theme_is_non_blocking_when_theme_api_fails() -> None:
     assert apply_dimos_theme(server) is False
 
 
-def test_import_viser_urdf_uses_install_hint_when_export_missing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fake_viser = ModuleType("viser")
-    fake_viser.__path__ = []
-    fake_extras = ModuleType("viser.extras")
-    monkeypatch.setitem(sys.modules, "viser", fake_viser)
-    monkeypatch.setitem(sys.modules, "viser.extras", fake_extras)
-
-    with pytest.raises(ModuleNotFoundError, match="Viser URDF support") as exc_info:
-        import_viser_urdf()
-
-    assert str(exc_info.value) == VISER_URDF_INSTALL_HINT
-
-
-def test_import_viser_urdf_reraises_unrelated_import_errors(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fake_viser = ModuleType("viser")
-    fake_viser.__path__ = []
-
-    class BrokenExtras(ModuleType):
-        def __getattr__(self, name: str) -> object:
-            if name == "ViserUrdf":
-                raise ImportError("cannot import unrelated optional backend")
-            raise AttributeError(name)
-
-    monkeypatch.setitem(sys.modules, "viser", fake_viser)
-    monkeypatch.setitem(sys.modules, "viser.extras", BrokenExtras("viser.extras"))
-
-    with pytest.raises(ImportError, match="unrelated optional backend"):
-        import_viser_urdf()
-
-
 class FakeMesh:
     def __init__(self) -> None:
         self.visible = None
@@ -692,13 +654,6 @@ def test_adapter_copies_joint_state_and_delegates_to_module() -> None:
     assert adapter.plan_to_pose(cast("Any", "pose"), "arm") == ("pose", "arm")
     assert adapter.preview_path("arm") == "arm"
     assert adapter.evaluate_joint_target(planned[0], "arm")["status"] == "FEASIBLE"
-
-
-def test_adapter_requires_manipulation_module() -> None:
-    with pytest.raises(ValueError, match="requires a manipulation_module"):
-        InProcessViserAdapter(
-            world_monitor=cast("Any", object()), manipulation_module=cast("Any", None)
-        )
 
 
 def test_adapter_evaluate_joint_target_uses_world_monitor_and_copies_input() -> None:

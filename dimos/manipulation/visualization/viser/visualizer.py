@@ -15,15 +15,26 @@
 from __future__ import annotations
 
 from contextlib import suppress
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
-from dimos.manipulation.visualization.viser.runtime import ViserRuntime, import_viser_urdf
-from dimos.manipulation.visualization.viser.scene import ViserManipulationScene, _ViserUrdfFactory
+from dimos.manipulation.visualization.viser.runtime import VISER_URDF_INSTALL_HINT, ViserRuntime
+from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
 from dimos.manipulation.visualization.viser.theme import apply_dimos_theme
 from dimos.utils.logging_config import setup_logger
+
+try:
+    from viser.extras import ViserUrdf
+except ModuleNotFoundError as e:
+    if e.name not in {"viser", "viser.extras", "yourdfpy"}:
+        raise
+    raise ModuleNotFoundError(VISER_URDF_INSTALL_HINT) from e
+except ImportError as e:
+    if "ViserUrdf" not in str(e):
+        raise
+    raise ModuleNotFoundError(VISER_URDF_INSTALL_HINT) from e
 
 if TYPE_CHECKING:
     from dimos.manipulation.manipulation_module import ManipulationModule
@@ -47,14 +58,11 @@ class ViserManipulationVisualizer:
         manipulation_module: ManipulationModule,
         config: ViserVisualizationConfig | None = None,
     ) -> None:
-        if manipulation_module is None:
-            raise ValueError("viser visualization requires a manipulation_module")
         self._world_monitor = world_monitor
         self._manipulation_module = manipulation_module
         self.config = config or ViserVisualizationConfig()
         self._runtime: ViserRuntime | None = None
         self._server: object | None = None
-        self._viser_urdf: object | None = None
         self._adapter: InProcessViserAdapter | None = None
         self._scene: ViserManipulationScene | None = None
         self._gui: ViserPanelGui | None = None
@@ -69,14 +77,13 @@ class ViserManipulationVisualizer:
         try:
             server = runtime.start()
             apply_dimos_theme(server)
-            viser_urdf = import_viser_urdf()
             adapter = InProcessViserAdapter(
                 world_monitor=self._world_monitor,
                 manipulation_module=self._manipulation_module,
             )
             scene = ViserManipulationScene(
                 server,
-                cast("_ViserUrdfFactory", viser_urdf),
+                ViserUrdf,
                 preview_fps=self.config.preview_fps,
             )
             gui = (
@@ -97,7 +104,6 @@ class ViserManipulationVisualizer:
                 runtime.close()
             self._runtime = None
             self._server = None
-            self._viser_urdf = None
             self._adapter = None
             self._scene = None
             self._gui = None
@@ -105,7 +111,6 @@ class ViserManipulationVisualizer:
             raise
         self._runtime = runtime
         self._server = server
-        self._viser_urdf = viser_urdf
         self._adapter = adapter
         self._scene = scene
         self._gui = gui
@@ -181,7 +186,6 @@ class ViserManipulationVisualizer:
                 self._runtime.close()
             self._runtime = None
             self._server = None
-            self._viser_urdf = None
             self._adapter = None
             self._scene = None
             self._gui = None

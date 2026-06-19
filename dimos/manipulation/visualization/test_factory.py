@@ -198,7 +198,10 @@ def test_config_meshcat_requires_world_visualization() -> None:
 def test_create_visualization_none_returns_none() -> None:
     assert (
         create_manipulation_visualization(
-            NoManipulationVisualizationConfig(), world=MagicMock(), world_monitor=MagicMock()
+            NoManipulationVisualizationConfig(),
+            world=MagicMock(),
+            world_monitor=MagicMock(),
+            manipulation_module=MagicMock(),
         )
         is None
     )
@@ -213,6 +216,7 @@ def test_create_visualization_meshcat_accepts_structural_world() -> None:
             MeshcatVisualizationConfig(),
             world=fake_world,
             world_monitor=world_monitor,
+            manipulation_module=MagicMock(),
         )
         is fake_world
     )
@@ -227,13 +231,5 @@ def test_create_visualization_meshcat_rejects_non_visualization_world() -> None:
             MeshcatVisualizationConfig(),
             world=fake_world,
             world_monitor=world_monitor,
-        )
-
-
-def test_create_visualization_viser_requires_manipulation_module() -> None:
-    with pytest.raises(ValueError, match="requires a manipulation_module"):
-        create_manipulation_visualization(
-            ViserVisualizationConfig(),
-            world=FakeWorld(),
-            world_monitor=MagicMock(),
+            manipulation_module=MagicMock(),
         )

@@ -101,7 +101,7 @@ def test_visualizer_initializes_all_scene_robots_from_planning_scene(
             calls.append(("close", "gui"))
 
     monkeypatch.setattr(visualizer_module, "ViserRuntime", FakeRuntime)
-    monkeypatch.setattr(visualizer_module, "import_viser_urdf", lambda: object())
+    monkeypatch.setattr(visualizer_module, "ViserUrdf", object)
     monkeypatch.setattr(visualizer_module, "ViserManipulationScene", FakeScene)
     monkeypatch.setattr(visualizer_module, "ViserPanelGui", FakeGui)
     visualizer = ViserManipulationVisualizer(
@@ -164,7 +164,7 @@ def test_visualizer_closes_partial_startup_when_gui_start_fails(
             closed.append("gui")
 
     monkeypatch.setattr(visualizer_module, "ViserRuntime", FakeRuntime)
-    monkeypatch.setattr(visualizer_module, "import_viser_urdf", lambda: object())
+    monkeypatch.setattr(visualizer_module, "ViserUrdf", object)
     monkeypatch.setattr(visualizer_module, "ViserManipulationScene", FakeScene)
     monkeypatch.setattr(visualizer_module, "ViserPanelGui", FakeGui)
     visualizer = ViserManipulationVisualizer(
@@ -180,7 +180,7 @@ def test_visualizer_closes_partial_startup_when_gui_start_fails(
     assert visualizer.get_visualization_url() is None
 
 
-def test_visualizer_closes_runtime_when_urdf_import_fails(
+def test_visualizer_closes_runtime_when_scene_creation_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     closed = []
@@ -197,18 +197,20 @@ def test_visualizer_closes_runtime_when_urdf_import_fails(
         def close(self) -> None:
             closed.append("runtime")
 
-    def fail_import_viser_urdf() -> object:
-        raise RuntimeError("missing viser_urdf")
+    class FailingScene:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("scene failed")
 
     monkeypatch.setattr(visualizer_module, "ViserRuntime", FakeRuntime)
-    monkeypatch.setattr(visualizer_module, "import_viser_urdf", fail_import_viser_urdf)
+    monkeypatch.setattr(visualizer_module, "ViserUrdf", object)
+    monkeypatch.setattr(visualizer_module, "ViserManipulationScene", FailingScene)
     visualizer = ViserManipulationVisualizer(
         world_monitor=cast("Any", object()),
         manipulation_module=cast("Any", object()),
         config=ViserVisualizationConfig(panel_enabled=False),
     )
 
-    with pytest.raises(RuntimeError, match="missing viser_urdf"):
+    with pytest.raises(RuntimeError, match="scene failed"):
         visualizer.initialize_scene(PlanningSceneInfo(robots={}))
 
     assert closed == ["runtime"]

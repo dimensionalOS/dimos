@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from dimos.manipulation.visualization.types import TargetEvaluation
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -43,8 +43,6 @@ class InProcessViserAdapter:
         world_monitor: WorldMonitor,
         manipulation_module: ManipulationModule,
     ) -> None:
-        if manipulation_module is None:
-            raise ValueError("viser adapter requires a manipulation_module")
         self._world_monitor = world_monitor
         self._module = manipulation_module
 
@@ -90,10 +88,9 @@ class InProcessViserAdapter:
 
     def evaluate_joint_target(self, joints: JointState, robot_name: RobotName) -> TargetEvaluation:
         """Evaluate a joint target through WorldMonitor helpers, not raw WorldSpec access."""
-        result = cast(
-            "TargetEvaluation",
-            dict(self._module.evaluate_joint_target(copy_joint_state(joints), robot_name)),
-        )
+        result: TargetEvaluation = {
+            **self._module.evaluate_joint_target(copy_joint_state(joints), robot_name)
+        }
         joint_state = result.get("joint_state")
         result["joint_state"] = copy_joint_state(
             joint_state if isinstance(joint_state, JointState) else None
@@ -102,7 +99,7 @@ class InProcessViserAdapter:
 
     def evaluate_pose_target(self, pose: Pose, robot_name: RobotName) -> TargetEvaluation:
         """Evaluate a Cartesian target through module/WorldMonitor helper boundaries."""
-        result = cast("TargetEvaluation", dict(self._module.evaluate_pose_target(pose, robot_name)))
+        result: TargetEvaluation = {**self._module.evaluate_pose_target(pose, robot_name)}
         joint_state = result.get("joint_state")
         result["joint_state"] = copy_joint_state(
             joint_state if isinstance(joint_state, JointState) else None

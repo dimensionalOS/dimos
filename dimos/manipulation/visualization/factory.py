@@ -37,7 +37,7 @@ def create_manipulation_visualization(
     *,
     world: WorldSpec,
     world_monitor: WorldMonitor,
-    manipulation_module: ManipulationModule | None = None,
+    manipulation_module: ManipulationModule,
 ) -> VisualizationSpec | None:
     """Create an optional manipulation visualization backend."""
     if isinstance(config, NoManipulationVisualizationConfig):
@@ -49,8 +49,6 @@ def create_manipulation_visualization(
         raise ValueError("meshcat visualization requires a world that implements VisualizationSpec")
 
     if isinstance(config, ViserVisualizationConfig):
-        if manipulation_module is None:
-            raise ValueError("viser visualization requires a manipulation_module")
         from dimos.manipulation.visualization.viser.visualizer import (
             ViserManipulationVisualizer,
         )
