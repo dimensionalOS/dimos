@@ -53,3 +53,18 @@ export async function connectKeyboard(sessionId, robotName, transport) {
         setTimeout(() => navigate('dashboard'), 3000);
     }
 }
+
+// Go2 cockpit view. Same transport/drive path as connectKeyboard — the go2
+// view starts the keyboard loop itself on render, so we don't start it here.
+export async function connectGo2(sessionId, robotName, transport) {
+    state.activeRobot = { session_id: sessionId, robot_name: robotName, transport: transport || 'cloudflare' };
+    try {
+        navigate('go2');  // renderGo2() runs startKeyboardLoop()
+        await setupTransport(sessionId, transport);
+        setStatus(`Connected — ${robotName}`);
+    } catch (e) {
+        console.error(e);
+        setStatus(`Connection failed: ${e.message}`);
+        setTimeout(() => navigate('dashboard'), 3000);
+    }
+}

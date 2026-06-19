@@ -56,6 +56,41 @@
             background: #b0e1f0; border-color: #8fcfe2;
             color: #121313;  /* dark text on pale cyan (white is unreadable) */
         }
+
+        /* ── Go2 cockpit (views/go2.js) ─────────────────────────────── */
+        .cmd-btn {
+            display:flex; flex-direction:column; align-items:flex-start; gap:2px;
+            width:100%; padding:12px 14px; border-radius:8px;
+            background:#121313; border:1px solid #2a2a2a; color:#d1d5db;
+            font-size:.875rem; text-align:left; cursor:pointer;
+            transition: background .12s, border-color .12s, opacity .12s, transform .06s;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .cmd-btn:hover:not(:disabled):not([data-status="pending"]) { border-color:#6db8cf; background:#171a1a; }
+        .cmd-btn:active:not(:disabled) { transform: translateY(1px); }
+        .cmd-btn[data-status="pending"] { opacity:.6; cursor:wait; border-color:#3d6a7a; }
+        .cmd-btn[data-status="done"]    { background:#b0e1f0; border-color:#8fcfe2; color:#0d0e0e; }
+        .cmd-btn[data-status="error"]   { background:#4a1d1d; border-color:#d97777; color:#f3b4b4; }
+        .cmd-btn:disabled { opacity:.3; cursor:not-allowed; }
+        .cmd-btn.is-active { border-color:#b0e1f0; box-shadow: inset 0 0 0 1px #3d6a7a; }
+
+        .estop {
+            width:100%; padding:18px; border-radius:10px; cursor:pointer;
+            background:#7a1f1f; border:2px solid #d97777; color:#fff;
+            font-weight:700; letter-spacing:.15em; font-size:1rem;
+            transition: background .1s, transform .06s;
+        }
+        .estop:hover { background:#992626; }
+        .estop:active { transform: translateY(1px); }
+        .estop.latched { background:#d97777; color:#0d0e0e; border-color:#fff; animation: estopPulse 1s infinite; }
+        @keyframes estopPulse { 0%,100%{ box-shadow:0 0 0 0 rgba(217,119,119,.6);} 50%{ box-shadow:0 0 0 8px rgba(217,119,119,0);} }
+
+        .pill { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; font-size:.7rem; }
+        .pill .dot { width:8px; height:8px; border-radius:999px; }
+        .pill-good { background:rgba(176,225,240,.1); color:#b0e1f0; }   .pill-good .dot{ background:#b0e1f0; }
+        .pill-warn { background:rgba(234,179,8,.12); color:#eab308; }    .pill-warn .dot{ background:#eab308; }
+        .pill-bad  { background:rgba(217,119,119,.14); color:#f3b4b4; }  .pill-bad  .dot{ background:#d97777; }
+        .blocked-banner { background:rgba(217,119,119,.12); border:1px solid #7a1f1f; color:#f3b4b4; }
     </style>
 </head>
 <body class="bg-bg-900 text-white min-h-screen">

@@ -1,7 +1,7 @@
 // Dashboard: API key management + available robots list.
 
 import { api, brokerOrigin, logout } from '../api.js';
-import { connectKeyboard, connectToRobot } from '../connect.js';
+import { connectGo2, connectToRobot } from '../connect.js';
 import { escHtml, state, timeAgo, xrDetection } from '../state.js';
 
 export async function renderDashboard(c) {
@@ -186,7 +186,8 @@ async function loadRobots() {
                 </button>
             </div>
         `).join('');
-        const handler = state.xrSupported ? connectToRobot : connectKeyboard;
+        // Desktop → Go2 cockpit (working teleop + cockpit layout); VR → headset.
+        const handler = state.xrSupported ? connectToRobot : connectGo2;
         listEl.querySelectorAll('.connect-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 handler(e.target.dataset.id, e.target.dataset.name, e.target.dataset.transport);
