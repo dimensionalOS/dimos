@@ -111,7 +111,8 @@ unitree_go2_nav_3d = autoconnect(
         voxel_size=voxel_size,
         emit_every=2,
         global_emit_every=50,
-        max_health=5,
+        max_health=10,
+        graze_cos=0.85,
         registered_clouds=False,
     ),
     # global_map is remapped off so the planner runs purely on the
