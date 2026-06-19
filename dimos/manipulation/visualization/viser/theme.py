@@ -17,11 +17,12 @@ from __future__ import annotations
 import base64
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    import viser
     from viser.theme import TitlebarConfig
 
 DIMOS_THEME_TITLE = "DimOS Manipulation"
@@ -32,15 +33,7 @@ DIMOS_LOGO_PATH = Path(__file__).with_name("assets") / "dimensional-logo.svg"
 logger = setup_logger()
 
 
-class _ThemeGui(Protocol):
-    configure_theme: Callable[..., object]
-
-
-class _GuiServer(Protocol):
-    gui: _ThemeGui
-
-
-def apply_dimos_theme(server: _GuiServer) -> bool:
+def apply_dimos_theme(server: viser.ViserServer) -> bool:
     """Apply the default DimOS Viser theme without blocking visualization startup."""
     try:
         configure_theme = server.gui.configure_theme
