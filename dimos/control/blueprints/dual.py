@@ -41,7 +41,7 @@ coordinator_dual_mock = ControlCoordinator.blueprint(
     ],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
     }
 )
 
@@ -59,7 +59,7 @@ coordinator_dual_xarm = ControlCoordinator.blueprint(
     ],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
     }
 )
 
@@ -79,7 +79,7 @@ coordinator_piper_xarm = ControlCoordinator.blueprint(
     ],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
     }
 )
 

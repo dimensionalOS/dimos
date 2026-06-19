@@ -46,9 +46,13 @@ teleop_quest_rerun = autoconnect(
     vis_module("rerun"),
 ).transports(
     {
-        ("left_controller_output", PoseStamped): LCMTransport("/teleop/left_delta", PoseStamped),
-        ("right_controller_output", PoseStamped): LCMTransport("/teleop/right_delta", PoseStamped),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
+        ("left_controller_output", PoseStamped): LCMTransport.spec(
+            "/teleop/left_delta", PoseStamped
+        ),
+        ("right_controller_output", PoseStamped): LCMTransport.spec(
+            "/teleop/right_delta", PoseStamped
+        ),
+        ("buttons", Buttons): LCMTransport.spec("/teleop/buttons", Buttons),
     }
 )
 
@@ -59,10 +63,10 @@ teleop_quest_xarm7 = autoconnect(
     coordinator_teleop_xarm7,
 ).transports(
     {
-        ("right_controller_output", PoseStamped): LCMTransport(
+        ("right_controller_output", PoseStamped): LCMTransport.spec(
             "/coordinator/cartesian_command", PoseStamped
         ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
+        ("buttons", Buttons): LCMTransport.spec("/teleop/buttons", Buttons),
     }
 )
 
@@ -73,11 +77,11 @@ teleop_quest_xarm7_video = autoconnect(
     coordinator_teleop_xarm7,
 ).transports(
     {
-        ("right_controller_output", PoseStamped): LCMTransport(
+        ("right_controller_output", PoseStamped): LCMTransport.spec(
             "/coordinator/cartesian_command", PoseStamped
         ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
-        ("color_image", Image): LCMTransport("/teleop/color_image", Image),
+        ("buttons", Buttons): LCMTransport.spec("/teleop/buttons", Buttons),
+        ("color_image", Image): LCMTransport.spec("/teleop/color_image", Image),
     }
 )
 
@@ -88,10 +92,10 @@ teleop_quest_piper = autoconnect(
     coordinator_teleop_piper,
 ).transports(
     {
-        ("left_controller_output", PoseStamped): LCMTransport(
+        ("left_controller_output", PoseStamped): LCMTransport.spec(
             "/coordinator/cartesian_command", PoseStamped
         ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
+        ("buttons", Buttons): LCMTransport.spec("/teleop/buttons", Buttons),
     }
 )
 
@@ -102,10 +106,10 @@ teleop_quest_xarm6 = autoconnect(
     coordinator_teleop_xarm6,
 ).transports(
     {
-        ("right_controller_output", PoseStamped): LCMTransport(
+        ("right_controller_output", PoseStamped): LCMTransport.spec(
             "/coordinator/cartesian_command", PoseStamped
         ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
+        ("buttons", Buttons): LCMTransport.spec("/teleop/buttons", Buttons),
     }
 )
 
@@ -116,13 +120,13 @@ teleop_quest_dual = autoconnect(
     coordinator_teleop_dual,
 ).transports(
     {
-        ("right_controller_output", PoseStamped): LCMTransport(
+        ("right_controller_output", PoseStamped): LCMTransport.spec(
             "/coordinator/cartesian_command", PoseStamped
         ),
-        ("left_controller_output", PoseStamped): LCMTransport(
+        ("left_controller_output", PoseStamped): LCMTransport.spec(
             "/coordinator/cartesian_command", PoseStamped
         ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
+        ("buttons", Buttons): LCMTransport.spec("/teleop/buttons", Buttons),
     }
 )
 
@@ -135,8 +139,8 @@ teleop_quest_go2 = (
     )
     .transports(
         {
-            ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
-            ("color_image", Image): pSHMTransport(
+            ("cmd_vel", Twist): LCMTransport.spec("/cmd_vel", Twist),
+            ("color_image", Image): pSHMTransport.spec(
                 "color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
             ),
         }

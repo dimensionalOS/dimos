@@ -65,10 +65,10 @@ keyboard_teleop_a750 = autoconnect(
     ),
 ).transports(
     {
-        ("cartesian_command", PoseStamped): LCMTransport(
+        ("cartesian_command", PoseStamped): LCMTransport.spec(
             "/coordinator/cartesian_command", PoseStamped
         ),
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
     }
 )
 

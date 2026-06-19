@@ -41,7 +41,7 @@ coordinator_openarm_mock = ControlCoordinator.blueprint(
     ],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
     }
 )
 
@@ -77,7 +77,7 @@ coordinator_openarm_left = ControlCoordinator.blueprint(
     tasks=[_left_hw.to_task_config()],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
     }
 )
 
@@ -86,7 +86,7 @@ coordinator_openarm_right = ControlCoordinator.blueprint(
     tasks=[_right_hw.to_task_config()],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
     }
 )
 
@@ -99,7 +99,7 @@ coordinator_openarm_bimanual = ControlCoordinator.blueprint(
     ],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
     }
 )
 
@@ -121,7 +121,7 @@ openarm_mock_planner_coordinator = autoconnect(
     ),
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
     }
 )
 
@@ -141,7 +141,7 @@ openarm_planner_coordinator = autoconnect(
     ),
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
     }
 )
 
@@ -171,10 +171,10 @@ keyboard_teleop_openarm_mock = autoconnect(
     ),
 ).transports(
     {
-        ("cartesian_command", PoseStamped): LCMTransport(
+        ("cartesian_command", PoseStamped): LCMTransport.spec(
             "/coordinator/cartesian_command", PoseStamped
         ),
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
     }
 )
 
@@ -200,10 +200,10 @@ keyboard_teleop_openarm = autoconnect(
     ),
 ).transports(
     {
-        ("cartesian_command", PoseStamped): LCMTransport(
+        ("cartesian_command", PoseStamped): LCMTransport.spec(
             "/coordinator/cartesian_command", PoseStamped
         ),
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
     }
 )
 

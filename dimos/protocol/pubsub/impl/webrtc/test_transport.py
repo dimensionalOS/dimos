@@ -25,7 +25,7 @@ from pydantic import ValidationError
 import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.core.coordination.module_coordinator import _apply_transport_overrides
+from dimos.core.coordination.module_coordinator import _materialize_transports
 from dimos.core.transport import WebRTCTransport
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
@@ -226,7 +226,7 @@ def test_provider_config_is_frozen_and_hashable() -> None:
 
 def test_blueprint_config_exposes_transport_fields() -> None:
     """Each unique `_config_cls` becomes a `transports.<name>` sub-model on the schema."""
-    bp = Blueprint(blueprints=()).transports({("topic", FakeLCMMsg): MockTransport("topic")})
+    bp = Blueprint(blueprints=()).transports({("topic", FakeLCMMsg): MockTransport.spec("topic")})
     cfg = bp.config()
     parsed = cfg(transports={"mock": {"name": "override"}})
     assert parsed.transports.mock.name == "override"
@@ -238,8 +238,8 @@ def test_blueprint_config_exposes_transport_fields() -> None:
     # Multiple transports sharing one `_config_cls` collapse to one slot.
     bp_shared = Blueprint(blueprints=()).transports(
         {
-            ("a", FakeLCMMsg): MockTransport("a"),
-            ("b", FakeLCMMsg): MockTransport("b"),
+            ("a", FakeLCMMsg): MockTransport.spec("a"),
+            ("b", FakeLCMMsg): MockTransport.spec("b"),
         }
     )
     inner = next(
@@ -250,22 +250,28 @@ def test_blueprint_config_exposes_transport_fields() -> None:
     assert set(inner.model_fields.keys()) == {"mock"}
 
 
-def test_transport_overrides_rebuild_blueprint() -> None:
-    """Overrides return a new blueprint with rebuilt transports — originals untouched, pickle-safe."""
-    original = MockTransport("topic")
-    bp = Blueprint(blueprints=()).transports({("topic", FakeLCMMsg): original})
+def test_transport_overrides_apply_and_survive_pickle() -> None:
+    """Materialization builds each transport with its resolved config; pickle-safe."""
+    bp = Blueprint(blueprints=()).transports({("topic", FakeLCMMsg): MockTransport.spec("topic")})
 
-    new_bp = _apply_transport_overrides(bp, {"mock": {"name": "overridden"}})
-    new_transport = new_bp.transport_map[("topic", FakeLCMMsg)]
+    transport = _materialize_transports(bp, {"mock": {"name": "overridden"}})[("topic", FakeLCMMsg)]
 
-    # Fresh instance with the override; the original is untouched.
-    assert new_transport is not original
-    assert new_transport._config.name == "overridden"
-    assert original._config.name == "default"
-    assert pickle.loads(pickle.dumps(new_transport))._config.name == "overridden"
+    assert transport._config.name == "overridden"
+    assert pickle.loads(pickle.dumps(transport))._config.name == "overridden"
 
-    # No override → blueprint passes through unchanged (same identity).
-    assert _apply_transport_overrides(bp, {}) is bp
+    # No override → config built from the spec's defaults.
+    default = _materialize_transports(bp, {})[("topic", FakeLCMMsg)]
+    assert default._config.name == "default"
+
+
+def test_materialize_uses_resolved_config() -> None:
+    """The config reaching the transport is built straight from the overrides,
+    not a default instance that is later mutated."""
+    bp = Blueprint(blueprints=()).transports({("topic", FakeLCMMsg): MockTransport.spec("topic")})
+
+    transport = _materialize_transports(bp, {"mock": {"name": "resolved"}})[("topic", FakeLCMMsg)]
+
+    assert transport._config == MockConfig(name="resolved")
 
 
 def test_transport_overrides_coerce_string_values() -> None:

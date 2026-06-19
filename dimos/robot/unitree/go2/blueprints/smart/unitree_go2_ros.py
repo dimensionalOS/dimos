@@ -21,10 +21,10 @@ from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 
 unitree_go2_ros = unitree_go2.transports(
     {
-        ("lidar", PointCloud2): ROSTransport("lidar", PointCloud2),
-        ("global_map", PointCloud2): ROSTransport("global_map", PointCloud2),
-        ("odom", PoseStamped): ROSTransport("odom", PoseStamped),
-        ("color_image", Image): ROSTransport("color_image", Image),
+        ("lidar", PointCloud2): ROSTransport.spec("lidar", PointCloud2),
+        ("global_map", PointCloud2): ROSTransport.spec("global_map", PointCloud2),
+        ("odom", PoseStamped): ROSTransport.spec("odom", PoseStamped),
+        ("color_image", Image): ROSTransport.spec("color_image", Image),
     }
 )
 

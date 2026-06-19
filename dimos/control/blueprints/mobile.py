@@ -91,8 +91,8 @@ coordinator_mock_twist_base = ControlCoordinator.blueprint(
     ],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
+        ("twist_command", Twist): LCMTransport.spec("/cmd_vel", Twist),
     }
 )
 
@@ -109,8 +109,8 @@ coordinator_flowbase = ControlCoordinator.blueprint(
     ],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
+        ("twist_command", Twist): LCMTransport.spec("/cmd_vel", Twist),
     }
 )
 
@@ -130,8 +130,8 @@ coordinator_flowbase_keyboard_teleop = autoconnect(
     KeyboardTeleop.blueprint(),
 ).transports(
     {
-        ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("twist_command", Twist): LCMTransport.spec("/cmd_vel", Twist),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
     }
 )
 
@@ -209,8 +209,8 @@ coordinator_flowbase_nav = (
         {
             # MovementManager.cmd_vel publishes to LCM /cmd_vel by default; the
             # coordinator's twist_command listens on the same topic.
-            ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
-            ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+            ("twist_command", Twist): LCMTransport.spec("/cmd_vel", Twist),
+            ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
         }
     )
     .global_config(n_workers=8)
@@ -233,8 +233,8 @@ coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
     ],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
+        ("twist_command", Twist): LCMTransport.spec("/cmd_vel", Twist),
     }
 )
 

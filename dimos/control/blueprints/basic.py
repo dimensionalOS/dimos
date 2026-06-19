@@ -58,7 +58,7 @@ coordinator_basic = ControlCoordinator.blueprint(
     joint_state_frame_id="coordinator",
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
     }
 )
 
@@ -70,7 +70,7 @@ coordinator_mock = ControlCoordinator.blueprint(
     tasks=[_mock_cfg.to_task_config()],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
     }
 )
 
@@ -89,7 +89,7 @@ coordinator_xarm7 = autoconnect(
     *_mujoco_if_sim(str(XARM7_SIM_PATH), _xarm7_cfg.dof),
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
     }
 )
 
@@ -108,7 +108,7 @@ coordinator_xarm6 = autoconnect(
     *_mujoco_if_sim(str(XARM6_SIM_PATH), _xarm6_cfg.dof),
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
     }
 )
 
@@ -127,7 +127,7 @@ coordinator_piper = autoconnect(
     *_mujoco_if_sim(str(PIPER_SIM_PATH), _piper_cfg.dof),
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
     }
 )
 
