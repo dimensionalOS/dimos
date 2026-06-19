@@ -336,14 +336,10 @@ jobs:
       - name: Free runner disk space
         uses: BRAINSia/free-disk-space@v2.1.3
         with:
+          android: false
           docker-images: false
+          large-packages: false
           mandb: false
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-      - name: Install minimal dimos
-        run: uv sync --no-default-groups --frozen
       - name: Install Nix (with Cachix substituter)
         env:
           INPUT_EXTRA_NIX_CONFIG: |
@@ -378,7 +374,7 @@ jobs:
           name: dimensionalos
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build nav_stack native modules
-        run: uv run bin/build-nav-stack-natives
+        run: bin/build-nav-stack-natives
 
   self-hosted-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
@@ -504,7 +500,7 @@ jobs:
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
       - name: Fetch nav_stack native modules from Cachix
         if: contains(matrix.markers, 'skipif_no_ros')
-        run: uv run bin/build-nav-stack-natives
+        run: bin/build-nav-stack-natives
       - name: Run tests
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not (tool or mujoco)'
       - name: Re-run the failing tests with maximum verbosity
