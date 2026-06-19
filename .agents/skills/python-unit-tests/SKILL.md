@@ -90,7 +90,6 @@ Do not run mypy for test-only edits. Run `uv run mypy` when production source ty
 
 ## Final self-check
 
-
 - Is the test next to the code it tests?
 - Does it prove behavior with real assertions?
 - Are imports at the top?
