@@ -99,8 +99,7 @@ class UnitreeWebRTCConnection(Resource):
         self.stop_timer: threading.Timer | None = None
         self.cmd_vel_timeout = 0.2
         # Per-device AES-128 key for new Unitree firmware (data2=3 handshake); omitted when unset.
-        extra: dict[str, Any] = {"aes_128_key": aes_128_key} if aes_128_key else {}
-        self.conn = LegionConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip, **extra)
+        self.conn = LegionConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip, aes_128_key=aes_128_key)
         self.connect()
 
     def connect(self) -> None:
