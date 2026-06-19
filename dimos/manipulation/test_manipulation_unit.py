@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import threading
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from pytest_mock import MockerFixture
@@ -94,22 +94,24 @@ def simple_trajectory():
     )
 
 
-def _make_module():
-    """Create a ManipulationModule instance with mocked __init__."""
-    with patch.object(ManipulationModule, "__init__", lambda self: None):
-        module = ManipulationModule.__new__(ManipulationModule)
-        module._state = ManipulationState.IDLE
-        module._lock = threading.Lock()
-        module._error_message = ""
-        module._robots = {}
-        module._planned_paths = {}
-        module._planned_trajectories = {}
-        module._world_monitor = None
-        module._planner = None
-        module._kinematics = None
-        module._coordinator_client = None
-        module.config = MagicMock(planning_timeout=10.0)
-        return module
+class _ManipulationModuleHarness(ManipulationModule):
+    def __init__(self) -> None:
+        self._state = ManipulationState.IDLE
+        self._lock = threading.Lock()
+        self._error_message = ""
+        self._robots = {}
+        self._planned_paths = {}
+        self._planned_trajectories = {}
+        self._world_monitor = None
+        self._planner = None
+        self._kinematics = None
+        self._coordinator_client = None
+        self.config = MagicMock(planning_timeout=10.0)
+
+
+def _make_module() -> ManipulationModule:
+    """Create a lightweight ManipulationModule harness for behavior tests."""
+    return _ManipulationModuleHarness()
 
 
 class TestStateMachine:

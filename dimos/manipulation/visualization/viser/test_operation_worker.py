@@ -157,29 +157,32 @@ def test_operation_worker_uses_operation_error_callback_on_timeout() -> None:
     assert operation_errors == ["Operation timed out after 0.0s"]
 
 
-def test_gui_close_uses_bounded_operation_worker_stop() -> None:
+def test_gui_close_uses_bounded_operation_worker_stop(monkeypatch: pytest.MonkeyPatch) -> None:
     stop_timeouts: list[float | None] = []
     gui = ViserPanelGui(
         EmptyServer(),
         FakeOperationAdapter(),
         ViserVisualizationConfig(),
     )
-    gui._operation_worker = FakeStopOperationWorker(stop_timeouts)
-    gui._worker = FakeStopEvaluationWorker([])
+    gui._operation_worker.stop()
+    gui._worker.stop()
+    monkeypatch.setattr(gui, "_operation_worker", FakeStopOperationWorker(stop_timeouts))
+    monkeypatch.setattr(gui, "_worker", FakeStopEvaluationWorker([]))
 
     gui.close()
 
     assert stop_timeouts == [2.0]
 
 
-def test_gui_only_preview_submits_timeout_override() -> None:
+def test_gui_only_preview_submits_timeout_override(monkeypatch: pytest.MonkeyPatch) -> None:
     submissions: list[dict[str, float]] = []
     gui = ViserPanelGui(
         EmptyServer(),
         FakeOperationAdapter(),
         ViserVisualizationConfig(preview_request_timeout=0.25),
     )
-    gui._operation_worker = FakeTimeoutSubmitWorker(submissions)
+    gui._operation_worker.stop()
+    monkeypatch.setattr(gui, "_operation_worker", FakeTimeoutSubmitWorker(submissions))
     gui.state.runtime = PanelRuntime.RUNNING
     gui.state.backend_status = BackendConnectionStatus.READY
     gui.state.selected_robot = "arm"
@@ -202,14 +205,17 @@ def test_gui_only_preview_submits_timeout_override() -> None:
         ("_submit_execute", "Panel execution disabled; set allow_plan_execute=True to enable"),
     ],
 )
-def test_gui_guard_errors_keep_action_idle(submit: str, expected_error: str) -> None:
+def test_gui_guard_errors_keep_action_idle(
+    submit: str, expected_error: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     submissions: list[Callable[[], None]] = []
     gui = ViserPanelGui(
         EmptyServer(),
         FakeOperationAdapter(),
         ViserVisualizationConfig(),
     )
-    gui._operation_worker = FakeOperationSubmitWorker(submissions)
+    gui._operation_worker.stop()
+    monkeypatch.setattr(gui, "_operation_worker", FakeOperationSubmitWorker(submissions))
     gui.state.runtime = PanelRuntime.RUNNING
     gui.state.backend_status = BackendConnectionStatus.READY
     gui.state.selected_robot = "arm"

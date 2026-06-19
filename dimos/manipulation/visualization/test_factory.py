@@ -165,11 +165,8 @@ def test_config_defaults_to_no_visualization() -> None:
 
 
 def test_config_rejects_unknown_visualization_backend() -> None:
-    try:
+    with pytest.raises(ValidationError, match="visualization"):
         ManipulationModuleConfig(visualization={"backend": "bad"})
-        raise AssertionError("expected ValidationError")
-    except ValidationError as exc:
-        assert "visualization" in str(exc)
 
 
 def test_config_validates_viser_visualization() -> None:

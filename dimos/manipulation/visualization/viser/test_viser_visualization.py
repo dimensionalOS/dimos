@@ -18,7 +18,6 @@ from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 import sys
 import threading
-import time
 from types import ModuleType, SimpleNamespace, TracebackType
 
 import numpy as np
@@ -1212,7 +1211,7 @@ def test_gui_collision_evaluation_marks_target_infeasible_and_colors_scene(
 
 
 def test_gui_safe_execute_requires_fresh_matching_plan_and_clear_resets_path(
-    make_panel: Callable[..., ViserPanelGui],
+    make_panel: Callable[..., ViserPanelGui], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     current = FakeJointState(["j1"], position=[1.0])
     planned = [FakeJointState(["j1"], position=[1.0]), FakeJointState(["j1"], position=[2.0])]
@@ -1244,6 +1243,14 @@ def test_gui_safe_execute_requires_fresh_matching_plan_and_clear_resets_path(
             panel_enabled=True, allow_plan_execute=True, current_match_tolerance=0.05
         ),
     )
+    gui._operation_worker.stop()
+    monkeypatch.setattr(
+        gui,
+        "_operation_worker",
+        SimpleNamespace(
+            submit=lambda operation, **_kwargs: operation(), stop=lambda timeout=2.0: None
+        ),
+    )
     gui.state.target_status = TargetStatus.FEASIBLE
     gui.state.plan_state = PanelPlanState(
         status=PlanStatus.FRESH,
@@ -1259,17 +1266,9 @@ def test_gui_safe_execute_requires_fresh_matching_plan_and_clear_resets_path(
     gui.state.error = ""
     gui.state.plan_state.start_joints_snapshot = [1.0]
     gui._submit_execute()
-    for _ in range(20):
-        if executed:
-            break
-        time.sleep(0.01)
     assert executed == ["arm"]
 
     gui._submit_clear()
-    for _ in range(20):
-        if cleared:
-            break
-        time.sleep(0.01)
     assert cleared == [True]
     assert gui.state.plan_state.status == PlanStatus.NONE
 
@@ -1315,6 +1314,7 @@ def test_operation_worker_stop_can_wait_for_in_flight_operation() -> None:
     started = threading.Event()
     release = threading.Event()
     finished = threading.Event()
+    stopped = threading.Event()
 
     def operation() -> None:
         started.set()
@@ -1325,13 +1325,15 @@ def test_operation_worker_stop_can_wait_for_in_flight_operation() -> None:
     worker.submit(operation)
     assert started.wait(timeout=1.0)
 
-    releaser = threading.Thread(
-        target=lambda: (time.sleep(0.05), release.set()),
-        name="ReleaseViserOperationTest",
+    stopper = threading.Thread(
+        target=lambda: (worker.stop(timeout=None), stopped.set()),
+        name="StopViserOperationTest",
     )
-    releaser.start()
-    worker.stop(timeout=None)
-    releaser.join(timeout=1.0)
+    stopper.start()
+    assert not stopped.wait(timeout=0.05)
+    release.set()
+    assert stopped.wait(timeout=1.0)
+    stopper.join(timeout=1.0)
 
     assert finished.is_set()
     assert worker._thread is None
@@ -1351,9 +1353,17 @@ def test_target_evaluation_worker_coalesces_pending_requests() -> None:
 
 def test_operation_worker_reports_timeout() -> None:
     errors = []
+    release = threading.Event()
+    finished = threading.Event()
     worker = OperationWorker(errors.append, timeout_seconds=0.01)
-    worker.submit(lambda: time.sleep(0.1), timeout_seconds=0.01)
+
+    def operation() -> None:
+        release.wait(timeout=1.0)
+        finished.set()
+
+    worker.submit(operation, timeout_seconds=0.01)
     worker._run_operation(worker._requests.get_nowait())
+    release.set()
 
     assert errors == ["Operation timed out after 0.0s"]
-    time.sleep(0.12)
+    assert finished.wait(timeout=1.0)
