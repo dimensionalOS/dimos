@@ -68,10 +68,9 @@ class SyncConfig(BaseConfig):
     anchor: str
     rate_hz: float
     tolerance_ms: float
-    strategy: Literal["nearest", "interp"] = "nearest"
-    # Action = state this many frames ahead (default 1 = next-state BC). Set 0
-    # for action==state. Use 0 for ACT — actions stay flat (one per frame) and
-    # ACT builds its own chunk at train time via delta_timestamps.
+    # TODO: add "interp" — do it per-stream (lerp low-dim vectors, force nearest
+    # for ndim>=3 images, can't blend frames). Only "nearest" is wired today.
+    strategy: Literal["nearest"] = "nearest"
     action_shift: int = 1
 
 
@@ -287,22 +286,15 @@ def iter_episode_samples(
         ts_list, msg_list = cached[key]
         if not ts_list:
             return None
+        # Nearest is i (first sample ≥ t) or i-1 (last sample < t).
         i = bisect.bisect_left(ts_list, t)
-        candidates: list[int] = []
-        if i < len(ts_list):
-            candidates.append(i)
-        if i > 0:
-            candidates.append(i - 1)
-        best: int | None = None
-        best_dt = float("inf")
-        for c in candidates:
-            dt = abs(ts_list[c] - t)
-            if dt < best_dt:
-                best = c
-                best_dt = dt
-        if best is None or best_dt > tolerance_s:
-            return None
-        return msg_list[best]
+        if i == 0:
+            best = 0
+        elif i == len(ts_list):
+            best = i - 1
+        else:
+            best = i if (ts_list[i] - t) < (t - ts_list[i - 1]) else i - 1
+        return msg_list[best] if abs(ts_list[best] - t) <= tolerance_s else None
 
     def _build_frames() -> Iterator[Sample]:
         for t in targets:
