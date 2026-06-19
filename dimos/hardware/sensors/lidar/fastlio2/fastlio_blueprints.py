@@ -12,20 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.stream import In
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.voxels import VoxelGridMapper
+from dimos.memory2.module import Recorder, RecorderConfig
+from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.visualization.vis_module import vis_module
 
 voxel_size = 0.05
+
+
+class FastlioMemoryConfig(RecorderConfig):
+    db_path: str | Path = "recording_fastlio.db"
+
+
+class FastlioMemory(Recorder):
+    lidar: In[PointCloud2]
+    odometry: In[Odometry]
+    config: FastlioMemoryConfig
 
 
 mid360_fastlio = autoconnect(
     FastLio2.blueprint(voxel_size=voxel_size, map_voxel_size=voxel_size, map_freq=-1),
     vis_module("rerun"),
 ).global_config(n_workers=2, robot_model="mid360_fastlio2")
+
+mid360_fastlio_memory = autoconnect(mid360_fastlio, FastlioMemory.blueprint()).global_config(
+    n_workers=2, robot_model="mid360_fastlio2"
+)
 
 mid360_fastlio_voxels = autoconnect(
     FastLio2.blueprint(),
