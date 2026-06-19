@@ -238,7 +238,7 @@ perception = [
 
 unitree = [
     "dimos[base,mapping]",
-    "unitree-webrtc-connect-leshy>=2.0.7",
+    "unitree-webrtc-connect>=2.1.2",
 ]
 
 unitree-dds = [
@@ -396,7 +396,7 @@ tests = [
     "pygame>=2.6.1",
     "python-can>=4",
     "langchain-chroma>=1,<2",
-    "unitree-webrtc-connect-leshy>=2.0.7",
+    "unitree-webrtc-connect>=2.1.2",
 
     {include-group = "project-deps"},
 ]
