@@ -293,8 +293,6 @@ class ManipulationModule(Module):
             if self._world_monitor is None:
                 return
 
-            if not msg.name:
-                raise ValueError("Aggregate joint states must include global joint names")
             assert_global_joint_names(msg.name)
 
             # Build name → index map once for the whole message
