@@ -60,6 +60,8 @@ def primary_pose_planning_group_id_for_robot(
     robot_name: RobotName,
 ) -> PlanningGroupID | None:
     """Return the first pose-targetable group ID for compatibility paths."""
+    # TODO: Replace this compatibility selection with either one TF publication per
+    # pose-targetable planning group or backend-level whole-robot TF publishing.
     for group in groups:
         if group.robot_name == robot_name and group.has_pose_target:
             return group.id
