@@ -30,20 +30,24 @@ from dimos.manipulation.planning.world.config import (
     VampArtifactConfig,
 )
 
+_vamp_import_error: ImportError | None
+_vamp_module: VampModuleProtocol | None
+_VAMP_OFFICIAL_ROBOT_MODULES: dict[str, VampRobotModuleProtocol]
+
 try:
-    import vamp as _imported_vamp
-    import vamp.baxter as _vamp_baxter
-    import vamp.fetch as _vamp_fetch
-    import vamp.panda as _vamp_panda
-    import vamp.sphere as _vamp_sphere
-    import vamp.ur5 as _vamp_ur5
+    import vamp as _imported_vamp  # type: ignore[import-not-found]
+    import vamp.baxter as _vamp_baxter  # type: ignore[import-not-found]
+    import vamp.fetch as _vamp_fetch  # type: ignore[import-not-found]
+    import vamp.panda as _vamp_panda  # type: ignore[import-not-found]
+    import vamp.sphere as _vamp_sphere  # type: ignore[import-not-found]
+    import vamp.ur5 as _vamp_ur5  # type: ignore[import-not-found]
 except ImportError as exc:
-    _vamp_import_error: ImportError | None = exc
+    _vamp_import_error = exc
     _vamp_module = None
-    _VAMP_OFFICIAL_ROBOT_MODULES: dict[str, VampRobotModuleProtocol] = {}
+    _VAMP_OFFICIAL_ROBOT_MODULES = {}
 else:
     _vamp_import_error = None
-    _vamp_module: VampModuleProtocol | None = cast("VampModuleProtocol", _imported_vamp)
+    _vamp_module = cast("VampModuleProtocol", _imported_vamp)
     _VAMP_OFFICIAL_ROBOT_MODULES = {
         "baxter": cast("VampRobotModuleProtocol", _vamp_baxter),
         "fetch": cast("VampRobotModuleProtocol", _vamp_fetch),
