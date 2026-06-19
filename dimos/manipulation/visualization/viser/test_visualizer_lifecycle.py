@@ -23,11 +23,16 @@ pytest.importorskip("viser", reason="Viser optional dependency is not installed"
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import PlanningSceneInfo
-from dimos.manipulation.visualization.viser import visualizer as visualizer_module
+from dimos.manipulation.visualization.viser import (
+    runtime as runtime_module,
+    visualizer as visualizer_module,
+)
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
+from dimos.manipulation.visualization.viser.runtime import ViserRuntime
 from dimos.manipulation.visualization.viser.visualizer import ViserManipulationVisualizer
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.JointState import JointState
 
 
 class FakeDependency:
@@ -41,6 +46,15 @@ class FakeViserUrdf:
 class FakeServer:
     def __init__(self) -> None:
         self.scene = SimpleNamespace()
+
+
+class FakeRuntimeServer(FakeServer):
+    def __init__(self) -> None:
+        super().__init__()
+        self.stopped = False
+
+    def stop(self) -> None:
+        self.stopped = True
 
 
 def fake_robot_config(name: str) -> RobotModelConfig:
@@ -255,3 +269,112 @@ def test_visualizer_closes_runtime_when_scene_creation_fails(
 
     assert closed == ["runtime"]
     assert visualizer.get_visualization_url() is None
+
+
+def test_runtime_starts_once_opens_browser_and_closes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    servers: list[FakeRuntimeServer] = []
+    opened_urls: list[str] = []
+
+    def fake_server(*, host: str, port: int) -> FakeRuntimeServer:
+        assert host == "127.0.0.1"
+        assert port == 8123
+        server = FakeRuntimeServer()
+        servers.append(server)
+        return server
+
+    monkeypatch.setattr(runtime_module, "ViserServer", fake_server)
+    monkeypatch.setattr(runtime_module.webbrowser, "open_new_tab", opened_urls.append)
+    runtime = ViserRuntime(ViserVisualizationConfig(host="127.0.0.1", port=8123, open_browser=True))
+
+    first = runtime.start()
+    second = runtime.start()
+
+    assert first is second
+    assert runtime.url == "http://127.0.0.1:8123"
+    assert opened_urls == ["http://127.0.0.1:8123"]
+    runtime.close()
+    assert runtime.url is None
+    assert servers[0].stopped is True
+    runtime.close()
+
+
+def test_visualizer_publish_preview_and_close_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str]] = []
+    current = JointState({"name": ["joint1"], "position": [0.5]})
+
+    class FakeRuntime:
+        url = "http://localhost:8095"
+
+        def __init__(self, config: ViserVisualizationConfig) -> None:
+            self.config = config
+
+        def start(self) -> FakeServer:
+            calls.append(("runtime", "start"))
+            return FakeServer()
+
+        def close(self) -> None:
+            calls.append(("runtime", "close"))
+
+    class FakeScene:
+        def __init__(
+            self,
+            server: FakeServer,
+            viser_urdf: type[FakeViserUrdf],
+            *,
+            preview_fps: float,
+        ) -> None:
+            calls.append(("scene", "create"))
+
+        def update_current_robot(self, robot_id: str, joint_state: JointState | None) -> None:
+            assert joint_state == current
+            calls.append(("update", robot_id))
+
+        def show_preview(self, robot_id: str) -> None:
+            calls.append(("show", robot_id))
+
+        def hide_preview(self, robot_id: str) -> None:
+            calls.append(("hide", robot_id))
+
+        def animate_path(self, robot_id: str, path: list[JointState], duration: float) -> None:
+            assert path == [current]
+            assert duration == 1.5
+            calls.append(("animate", robot_id))
+
+        def close(self) -> None:
+            calls.append(("scene", "close"))
+
+    world_monitor = SimpleNamespace(get_current_joint_state=lambda _robot_id: current)
+    manipulation_module = SimpleNamespace(
+        robot_items=lambda: [("arm", "robot-1", fake_robot_config("arm"))],
+        robot_id_for_name=lambda robot_name: "robot-1" if robot_name == "arm" else None,
+    )
+    monkeypatch.setattr(visualizer_module, "ViserRuntime", FakeRuntime)
+    monkeypatch.setattr(visualizer_module, "ViserUrdf", FakeViserUrdf)
+    monkeypatch.setattr(visualizer_module, "ViserManipulationScene", FakeScene)
+    visualizer = ViserManipulationVisualizer(
+        world_monitor=world_monitor,
+        manipulation_module=manipulation_module,
+        config=ViserVisualizationConfig(panel_enabled=False),
+    )
+
+    visualizer.publish_visualization()
+    visualizer.show_preview("robot-1")
+    visualizer.hide_preview("robot-1")
+    visualizer.animate_path("robot-1", [current], duration=1.5)
+    visualizer.close()
+    visualizer.publish_visualization()
+
+    assert calls == [
+        ("runtime", "start"),
+        ("scene", "create"),
+        ("update", "robot-1"),
+        ("show", "robot-1"),
+        ("hide", "robot-1"),
+        ("animate", "robot-1"),
+        ("scene", "close"),
+        ("runtime", "close"),
+    ]

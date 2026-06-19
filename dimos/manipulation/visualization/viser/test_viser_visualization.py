@@ -27,7 +27,11 @@ pytest.importorskip("viser", reason="Viser optional dependency is not installed"
 
 from dimos.manipulation.visualization.types import RobotInfo, TargetEvaluation
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
-from dimos.manipulation.visualization.viser.animation import sampled_joint_path_frames
+from dimos.manipulation.visualization.viser.animation import (
+    PreviewAnimator,
+    interpolate_joint_path,
+    sampled_joint_path_frames,
+)
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
 from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
@@ -549,6 +553,32 @@ def test_dimos_theme_is_non_blocking_when_theme_api_fails() -> None:
     assert apply_dimos_theme(server) is False
 
 
+def test_dimos_theme_retries_without_titlebar_when_titlebar_content_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_viser = ModuleType("viser")
+    fake_theme = ModuleType("viser.theme")
+    fake_theme.TitlebarImage = lambda **kwargs: kwargs
+    fake_theme.TitlebarButton = lambda **kwargs: kwargs
+    fake_theme.TitlebarConfig = lambda **kwargs: kwargs
+    monkeypatch.setitem(sys.modules, "viser", fake_viser)
+    monkeypatch.setitem(sys.modules, "viser.theme", fake_theme)
+    titlebar_values: list[ThemeValue] = []
+
+    class FallbackGui:
+        @staticmethod
+        def configure_theme(**kwargs: ThemeValue) -> None:
+            titlebar_values.append(kwargs["titlebar_content"])
+            if kwargs["titlebar_content"] is not None:
+                raise TypeError("titlebar unsupported")
+
+    server = SimpleNamespace(gui=FallbackGui())
+
+    assert apply_dimos_theme(server) is True
+    assert titlebar_values[0] is not None
+    assert titlebar_values[1] is None
+
+
 class FakeMesh:
     def __init__(self) -> None:
         self.visible = None
@@ -703,6 +733,22 @@ def test_preview_animation_uses_separate_colored_ghost_and_hides_after_playback(
     assert all(mesh.visible is True for mesh in target._meshes)
 
 
+def test_scene_target_helpers_handle_missing_robot_and_pose() -> None:
+    server = FakeTransformServer()
+    scene = ViserManipulationScene(
+        server, lambda *args, **kwargs: FakeUrdf(("joint1",)), preview_fps=10.0
+    )
+
+    assert scene.animate_path("missing", [], duration=0.0) is False
+    assert scene.set_target_joints("missing", ["joint1"], [1.0]) is False
+    scene.set_target_pose("missing", Pose())
+    handle = scene.ensure_target_controls("robot1", lambda _target: None)
+    scene.set_target_pose("robot1", None)
+
+    assert handle is not None
+    assert handle.position == (0.0, 0.0, 0.0)
+
+
 def test_sampled_joint_path_frames_preserves_dense_trajectory_samples() -> None:
     dense_path = [FakeJointState(["j1"], position=[float(index)]) for index in range(32)]
 
@@ -720,6 +766,32 @@ def test_sampled_joint_path_frames_interpolates_sparse_paths() -> None:
     frames = sampled_joint_path_frames(sparse_path, duration=1.0, fps=4.0)
 
     assert frames == [[0.0], [0.25], [0.5], [0.75], [1.0]]
+
+
+def test_joint_path_frame_edge_cases_and_empty_animation() -> None:
+    empty_position = FakeJointState(["j1"], position=[])
+    single = FakeJointState(["j1"], position=[0.7])
+    start = FakeJointState(["j1"], position=[0.0])
+    middle = FakeJointState(["j1"], position=[1.0])
+    mismatched_final = FakeJointState(["j1", "j2"], position=[2.0, 3.0])
+    set_calls: list[list[float]] = []
+    sleep_calls: list[float] = []
+
+    assert interpolate_joint_path([empty_position], duration=1.0, fps=10.0) == []
+    assert interpolate_joint_path([single], duration=1.0, fps=10.0) == [[0.7]]
+    assert interpolate_joint_path([start, middle, mismatched_final], duration=1.0, fps=2.0) == [
+        [0.0],
+        [2.0, 3.0],
+    ]
+    assert sampled_joint_path_frames([empty_position], duration=1.0, fps=10.0) == []
+    assert (
+        PreviewAnimator(set_calls.append, sleep=sleep_calls.append).animate(
+            [empty_position], duration=1.0, fps=10.0
+        )
+        is False
+    )
+    assert set_calls == []
+    assert sleep_calls == []
 
 
 def test_adapter_copies_joint_state_and_delegates_to_module() -> None:
