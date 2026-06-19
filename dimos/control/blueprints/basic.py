@@ -31,8 +31,6 @@ from __future__ import annotations
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.catalog.piper import PIPER_SIM_PATH, piper as _catalog_piper
 from dimos.robot.catalog.ufactory import (
     XARM6_SIM_PATH,
@@ -56,10 +54,6 @@ coordinator_basic = ControlCoordinator.blueprint(
     tick_rate=100.0,
     publish_joint_state=True,
     joint_state_frame_id="coordinator",
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 # Mock 7-DOF arm (for testing)
@@ -68,10 +62,6 @@ _mock_cfg = _catalog_xarm7(name="arm")
 coordinator_mock = ControlCoordinator.blueprint(
     hardware=[_mock_cfg.to_hardware_component()],
     tasks=[_mock_cfg.to_task_config()],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 # XArm7 (real, or MuJoCo with --simulation)
@@ -87,10 +77,6 @@ coordinator_xarm7 = autoconnect(
         tasks=[_xarm7_cfg.to_task_config()],
     ),
     *_mujoco_if_sim(str(XARM7_SIM_PATH), _xarm7_cfg.dof),
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 # XArm6 (real, or MuJoCo with --simulation)
@@ -106,10 +92,6 @@ coordinator_xarm6 = autoconnect(
         tasks=[_xarm6_cfg.to_task_config(task_name="traj_xarm")],
     ),
     *_mujoco_if_sim(str(XARM6_SIM_PATH), _xarm6_cfg.dof),
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 # Piper 6-DOF (CAN bus, or MuJoCo with --simulation)
@@ -125,10 +107,6 @@ coordinator_piper = autoconnect(
         tasks=[_piper_cfg.to_task_config(task_name="traj_piper")],
     ),
     *_mujoco_if_sim(str(PIPER_SIM_PATH), _piper_cfg.dof),
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 

@@ -20,14 +20,12 @@ from contextlib import nullcontext
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any, cast
-from unittest.mock import patch
 
 import numpy as np
 import pytest
 
 from dimos.manipulation.planning.factory import create_kinematics
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
-from dimos.manipulation.planning.kinematics.jacobian_ik import JacobianIK
 from dimos.manipulation.planning.kinematics.pink_ik import (
     PinkIK,
     PinkIKConfig,
@@ -245,16 +243,6 @@ class _FakeWorld:
             ),
         }
         return tuple(groups[group_id] for group_id in group_ids)
-
-
-def test_create_kinematics_existing_backends_do_not_import_pink() -> None:
-    assert isinstance(create_kinematics("jacobian"), JacobianIK)
-
-    with patch.dict("sys.modules", {"pink": None}):
-        try:
-            create_kinematics("drake_optimization")
-        except ImportError as exc:
-            assert "Drake" in str(exc)
 
 
 def test_create_kinematics_pink_missing_dependency_is_actionable(

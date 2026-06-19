@@ -62,7 +62,7 @@ xarm6_planner_only = ManipulationModule.blueprint(
     enable_viz=True,
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/xarm/joint_states", JointState),
+        ("coordinator_joint_state", JointState): LCMTransport("/xarm/joint_states", JointState),
     }
 )
 
@@ -89,10 +89,6 @@ dual_xarm6_planner = ManipulationModule.blueprint(
     ],
     planning_timeout=10.0,
     enable_viz=True,
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 
@@ -118,10 +114,6 @@ xarm7_planner_coordinator = autoconnect(
         hardware=[_xarm7_cfg.to_hardware_component()],
         tasks=[_xarm7_cfg.to_task_config()],
     ),
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 
@@ -224,34 +216,26 @@ _xarm7_perception_cfg = _catalog_xarm7(
     tf_extra_links=["link7"],
 )
 
-xarm_perception = (
-    autoconnect(
-        PickAndPlaceModule.blueprint(
-            robots=[_xarm7_perception_cfg.to_robot_model_config()],
-            planning_timeout=10.0,
-            enable_viz=True,
-            floor_z=-0.02,
-        ),
-        RealSenseCamera.blueprint(
-            base_frame_id="link7",
-            base_transform=_XARM_PERCEPTION_CAMERA_TRANSFORM,
-        ),
-        ObjectSceneRegistrationModule.blueprint(
-            target_frame="world",
-            distance_threshold=0.08,
-            min_detections_for_permanent=3,
-            max_distance=1.0,
-            use_aabb=True,
-            max_obstacle_width=0.06,
-        ),
-    )
-    .transports(
-        {
-            ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        }
-    )
-    .global_config(n_workers=4)
-)
+xarm_perception = autoconnect(
+    PickAndPlaceModule.blueprint(
+        robots=[_xarm7_perception_cfg.to_robot_model_config()],
+        planning_timeout=10.0,
+        enable_viz=True,
+        floor_z=-0.02,
+    ),
+    RealSenseCamera.blueprint(
+        base_frame_id="link7",
+        base_transform=_XARM_PERCEPTION_CAMERA_TRANSFORM,
+    ),
+    ObjectSceneRegistrationModule.blueprint(
+        target_frame="world",
+        distance_threshold=0.08,
+        min_detections_for_permanent=3,
+        max_distance=1.0,
+        use_aabb=True,
+        max_obstacle_width=0.06,
+    ),
+).global_config(n_workers=4)
 
 
 # XArm7 perception + LLM agent for agentic manipulation.
@@ -371,10 +355,6 @@ xarm_perception_sim = autoconnect(
         tasks=[_xarm7_sim_cfg.to_task_config()],
     ),
     RerunBridgeModule.blueprint(),
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 
