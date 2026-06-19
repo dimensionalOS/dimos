@@ -361,21 +361,6 @@ jobs:
             extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
           INPUT_SET_AS_TRUSTED_USER: "true"
         run: bash docker/ros/install-nix.sh
-      - name: Runner specs (GitHub-hosted)
-        # One-off probe to compare GitHub-hosted vs the self-hosted runner.
-        # Cheap (~3s); the matching step in self-hosted-tests writes to the
-        # same /nix filesystem so the dd numbers are directly comparable.
-        run: |
-          set +e  # diagnostics only — never fail the build
-          echo "::group::CPU"; nproc; lscpu 2>/dev/null || grep -E 'model name|cpu MHz' /proc/cpuinfo | sort -u; echo "::endgroup::"
-          echo "::group::Memory"; free -h 2>/dev/null; echo "::endgroup::"
-          echo "::group::Disk space"; df -h / /nix 2>/dev/null; echo "::endgroup::"
-          echo "::group::Nix config"; { nix config show 2>/dev/null || nix show-config 2>/dev/null; } | grep -E '^(cores|max-jobs|substituters|system|builders) '; echo "::endgroup::"
-          echo "::group::Disk write (1 GiB)"
-          t=$(mktemp -p /nix 2>/dev/null) || t=$(mktemp)
-          dd if=/dev/zero of="$t" bs=1M count=1024 oflag=direct 2>&1 || dd if=/dev/zero of="$t" bs=1M count=1024 conv=fdatasync 2>&1
-          rm -f "$t"
-          echo "::endgroup::"
       - name: Cache Nix fetcher + eval cache
         # ~/.cache/nix holds the flake fetcher cache (the github tarballs of
         # each `nix build github:…` ref) and the eval cache (compiled flake
@@ -527,22 +512,6 @@ jobs:
           max-jobs = auto
           EOF
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
-      - name: Runner specs (self-hosted)
-        # Mirror of the GitHub-hosted probe in nav-stack-natives. Writes to
-        # /nix (the bind-mounted host disk) so the dd throughput reflects the
-        # filesystem NAR extraction actually hits.
-        if: contains(matrix.markers, 'skipif_no_ros')
-        run: |
-          set +e  # diagnostics only — never fail the build
-          echo "::group::CPU"; nproc; lscpu 2>/dev/null || grep -E 'model name|cpu MHz' /proc/cpuinfo | sort -u; echo "::endgroup::"
-          echo "::group::Memory"; free -h 2>/dev/null; echo "::endgroup::"
-          echo "::group::Disk space"; df -h / /nix 2>/dev/null; echo "::endgroup::"
-          echo "::group::Nix config"; { nix config show 2>/dev/null || nix show-config 2>/dev/null; } | grep -E '^(cores|max-jobs|substituters|system|builders) '; echo "::endgroup::"
-          echo "::group::Disk write (1 GiB)"
-          t=$(mktemp -p /nix 2>/dev/null) || t=$(mktemp)
-          dd if=/dev/zero of="$t" bs=1M count=1024 oflag=direct 2>&1 || dd if=/dev/zero of="$t" bs=1M count=1024 conv=fdatasync 2>&1
-          rm -f "$t"
-          echo "::endgroup::"
       - name: Fetch nav_stack native modules from Cachix
         if: contains(matrix.markers, 'skipif_no_ros')
         run: uv run bin/build-nav-stack-natives
