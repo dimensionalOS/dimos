@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
@@ -38,6 +38,9 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+if TYPE_CHECKING:
+    import viser
+
 # Fallback joint-slider range (radians) when a robot config omits joint limits.
 DEFAULT_JOINT_LIMITS = (-3.14, 3.14)
 
@@ -47,7 +50,7 @@ class ViserPanelGui:
 
     def __init__(
         self,
-        server: Any,
+        server: viser.ViserServer,
         adapter: InProcessViserAdapter,
         config: ViserVisualizationConfig,
         scene: ViserManipulationScene | None = None,
@@ -104,68 +107,47 @@ class ViserPanelGui:
         self._update_status_text()
         self._update_control_state()
 
-    def _gui(self) -> Any | None:
-        try:
-            return self.server.gui
-        except AttributeError:
-            return None
-
     def _build(self) -> None:
-        gui = self._gui()
-        if gui is None:
-            return
-        folder = None
-        if hasattr(gui, "add_folder"):
-            try:
-                folder = gui.add_folder("Manipulation Panel", expand_by_default=True)
-            except TypeError:
-                folder = gui.add_folder("Manipulation Panel")
-            self._handles["panel_folder"] = folder
-        if folder is not None and hasattr(folder, "__enter__"):
-            with folder:
-                self._build_panel_controls(gui)
-        else:
+        gui = self.server.gui
+        folder = gui.add_folder("Manipulation Panel", expand_by_default=True)
+        self._handles["panel_folder"] = folder
+        with folder:
             self._build_panel_controls(gui)
 
     def _build_panel_controls(self, gui: Any) -> None:
-        if hasattr(gui, "add_markdown"):
-            self._handles["status"] = gui.add_markdown("Starting manipulation panel...")
-        elif hasattr(gui, "add_text"):
-            self._handles["status"] = gui.add_text("Status", initial_value="Starting")
+        self._handles["status"] = gui.add_markdown("Starting manipulation panel...")
         robots = self.adapter.list_robots()
         self._build_scene_controls(gui)
-        if hasattr(gui, "add_dropdown"):
-            self._handles["robot"] = gui.add_dropdown(
-                "Robot",
-                options=robots or [""],
-                initial_value=robots[0] if robots else "",
-            )
-            self._on_update(
-                self._handles["robot"], lambda event: self._select_robot(event.target.value)
-            )
-            self._handles["preset"] = gui.add_dropdown(
-                "Target Preset",
-                options=["Select preset...", "Current"],
-                initial_value="Select preset...",
-            )
-            self._on_update(
-                self._handles["preset"], lambda event: self._apply_preset(event.target.value)
-            )
-        if hasattr(gui, "add_button"):
-            self._handles["plan"] = self._add_button(gui, "Plan", disabled=True)
-            self._on_click(self._handles["plan"], lambda _: self._submit_plan())
-            self._handles["preview"] = self._add_button(gui, "Preview", disabled=True)
-            self._on_click(self._handles["preview"], lambda _: self._submit_preview())
-            self._handles["execute"] = self._add_button(gui, "Execute", disabled=True)
-            self._on_click(self._handles["execute"], lambda _: self._submit_execute())
-            self._handles["cancel"] = self._add_button(gui, "Cancel")
-            self._on_click(self._handles["cancel"], lambda _: self._submit_cancel())
-            self._handles["clear"] = self._add_button(gui, "Clear plan")
-            self._on_click(self._handles["clear"], lambda _: self._submit_clear())
+        self._handles["robot"] = gui.add_dropdown(
+            "Robot",
+            options=robots or [""],
+            initial_value=robots[0] if robots else "",
+        )
+        self._on_update(
+            self._handles["robot"], lambda event: self._select_robot(event.target.value)
+        )
+        self._handles["preset"] = gui.add_dropdown(
+            "Target Preset",
+            options=["Select preset...", "Current"],
+            initial_value="Select preset...",
+        )
+        self._on_update(
+            self._handles["preset"], lambda event: self._apply_preset(event.target.value)
+        )
+        self._handles["plan"] = gui.add_button("Plan", disabled=True)
+        self._on_click(self._handles["plan"], lambda _: self._submit_plan())
+        self._handles["preview"] = gui.add_button("Preview", disabled=True)
+        self._on_click(self._handles["preview"], lambda _: self._submit_preview())
+        self._handles["execute"] = gui.add_button("Execute", disabled=True)
+        self._on_click(self._handles["execute"], lambda _: self._submit_execute())
+        self._handles["cancel"] = gui.add_button("Cancel")
+        self._on_click(self._handles["cancel"], lambda _: self._submit_cancel())
+        self._handles["clear"] = gui.add_button("Clear plan")
+        self._on_click(self._handles["clear"], lambda _: self._submit_clear())
         self._build_joint_sliders()
 
     def _build_scene_controls(self, gui: Any) -> None:
-        if self.scene is None or not hasattr(gui, "add_checkbox"):
+        if self.scene is None:
             return
         if not self.scene.has_reference_grid():
             return
@@ -177,17 +159,6 @@ class ViserPanelGui:
         if self.scene is None:
             return
         self.scene.set_reference_grid_visible(bool(visible))
-
-    def _add_button(self, gui: Any, label: str, *, disabled: bool = False) -> Any:
-        try:
-            handle = gui.add_button(label, disabled=disabled)
-        except TypeError:
-            handle = gui.add_button(label)
-            try:
-                handle.disabled = disabled
-            except Exception:
-                logger.warning("Could not set button '%s' disabled state", label, exc_info=True)
-        return handle
 
     def _refresh_selected_robot_state(self) -> None:
         robot_name = self.state.selected_robot
@@ -227,9 +198,9 @@ class ViserPanelGui:
                 self._suppress_target_callbacks = False
 
     def _build_joint_sliders(self) -> None:
-        gui = self._gui()
-        if gui is None or not hasattr(gui, "add_slider") or self.state.selected_robot is None:
+        if self.state.selected_robot is None:
             return
+        gui = self.server.gui
         config = self.adapter.get_robot_config(self.state.selected_robot)
         if config is None:
             return
@@ -675,9 +646,9 @@ class ViserPanelGui:
             pass
         try:
             return (
-                self._to_float(value[0]),
-                self._to_float(value[1]),
-                self._to_float(value[2]),
+                float(value[0]),
+                float(value[1]),
+                float(value[2]),
             )
         except (AttributeError, IndexError, TypeError, ValueError):
             return None
@@ -694,16 +665,13 @@ class ViserPanelGui:
             pass
         try:
             return (
-                self._to_float(value[0]),
-                self._to_float(value[1]),
-                self._to_float(value[2]),
-                self._to_float(value[3]),
+                float(value[0]),
+                float(value[1]),
+                float(value[2]),
+                float(value[3]),
             )
         except (AttributeError, IndexError, TypeError, ValueError):
             return None
-
-    def _to_float(self, value: Any) -> float:
-        return float(value)
 
     def _feasibility_status(
         self, result: dict[str, object], success: bool, collision_free: bool

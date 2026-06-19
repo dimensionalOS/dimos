@@ -14,12 +14,14 @@
 
 from __future__ import annotations
 
-import importlib
-from types import ModuleType
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 import webbrowser
 
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
+
+if TYPE_CHECKING:
+    import viser
+    from viser.extras import ViserUrdf as ViserUrdfType
 
 VISER_INSTALL_HINT = (
     "Viser manipulation visualization requires Viser. Install it with: uv sync --extra manipulation"
@@ -29,36 +31,34 @@ VISER_URDF_INSTALL_HINT = (
 )
 
 
-class _ViserModule(Protocol):
-    def ViserServer(self, *, host: str, port: int) -> object: ...
-
-
-class _ViserExtrasModule(Protocol):
-    ViserUrdf: object
-
-
 class _Stoppable(Protocol):
     def stop(self) -> None: ...
 
 
-def import_viser() -> ModuleType:
+def import_viser() -> type[viser.ViserServer]:
     """Import Viser with a feature-specific install hint."""
     try:
-        return importlib.import_module("viser")
+        from viser import ViserServer
     except ModuleNotFoundError as e:
+        if e.name != "viser":
+            raise
         raise ModuleNotFoundError(VISER_INSTALL_HINT) from e
+    return ViserServer
 
 
-def import_viser_urdf() -> object:
+def import_viser_urdf() -> type[ViserUrdfType]:
     """Import ViserUrdf with a feature-specific install hint."""
     try:
-        viser_extras = importlib.import_module("viser.extras")
-    except (ImportError, ModuleNotFoundError) as e:
+        from viser.extras import ViserUrdf
+    except ModuleNotFoundError as e:
+        if e.name not in {"viser", "viser.extras", "yourdfpy"}:
+            raise
         raise ModuleNotFoundError(VISER_URDF_INSTALL_HINT) from e
-    try:
-        return cast("_ViserExtrasModule", viser_extras).ViserUrdf
-    except AttributeError as e:
+    except ImportError as e:
+        if "ViserUrdf" not in str(e):
+            raise
         raise ModuleNotFoundError(VISER_URDF_INSTALL_HINT) from e
+    return ViserUrdf
 
 
 class ViserRuntime:
@@ -66,7 +66,7 @@ class ViserRuntime:
 
     def __init__(self, config: ViserVisualizationConfig) -> None:
         self.config = config
-        self.server: object | None = None
+        self.server: viser.ViserServer | None = None
 
     @property
     def url(self) -> str | None:
@@ -74,10 +74,10 @@ class ViserRuntime:
             return None
         return f"http://{self.config.host}:{self.config.port}"
 
-    def start(self) -> object:
+    def start(self) -> viser.ViserServer:
         if self.server is None:
-            viser = cast("_ViserModule", import_viser())
-            self.server = viser.ViserServer(host=self.config.host, port=self.config.port)
+            ViserServer = import_viser()
+            self.server = ViserServer(host=self.config.host, port=self.config.port)
             if self.config.open_browser and self.url:
                 webbrowser.open_new_tab(self.url)
         return self.server
