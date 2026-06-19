@@ -131,5 +131,3 @@ class ControlTaskRegistry:
 
 
 control_task_registry = ControlTaskRegistry()
-
-__all__ = ["ControlTaskRegistry", "TaskFactory", "control_task_registry"]

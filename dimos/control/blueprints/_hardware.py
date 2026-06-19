@@ -207,21 +207,3 @@ def mock_twist_base(hw_id: str = "base") -> HardwareComponent:
         joints=make_twist_base_joints(hw_id),
         adapter_type="mock_twist_base",
     )
-
-
-__all__ = [
-    "A750_FK_MODEL",
-    "PIPER_FK_MODEL",
-    "PIPER_SIM_PATH",
-    "XARM6_FK_MODEL",
-    "XARM6_SIM_PATH",
-    "XARM7_FK_MODEL",
-    "XARM7_SIM_PATH",
-    "a750",
-    "manipulator",
-    "mock_arm",
-    "mock_twist_base",
-    "piper",
-    "xarm6",
-    "xarm7",
-]

@@ -287,15 +287,3 @@ keyboard_teleop_openarm = autoconnect(
         visualization={"backend": "meshcat"},
     ),
 )
-
-
-__all__ = [
-    "coordinator_openarm_bimanual",
-    "coordinator_openarm_left",
-    "coordinator_openarm_mock",
-    "coordinator_openarm_right",
-    "keyboard_teleop_openarm",
-    "keyboard_teleop_openarm_mock",
-    "openarm_mock_planner_coordinator",
-    "openarm_planner_coordinator",
-]

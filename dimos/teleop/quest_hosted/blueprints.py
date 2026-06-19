@@ -67,11 +67,3 @@ class HostedTeleopRecorder(TeleopRecorder):
     """
 
     config: HostedTeleopRecorderConfig
-
-
-__all__ = [
-    "HostedTeleopRecorder",
-    "HostedTeleopRecorderConfig",
-    "teleop_hosted_go2",
-    "teleop_hosted_xarm7",
-]

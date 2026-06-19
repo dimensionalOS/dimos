@@ -106,5 +106,3 @@ keyboard_teleop_piper = autoconnect(
         visualization={"backend": "meshcat"},
     ),
 )
-
-__all__ = ["keyboard_teleop_piper"]

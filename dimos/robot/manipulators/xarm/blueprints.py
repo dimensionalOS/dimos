@@ -159,5 +159,3 @@ keyboard_teleop_xarm7 = autoconnect(
         visualization={"backend": "meshcat"},
     ),
 )
-
-__all__ = ["keyboard_teleop_xarm6", "keyboard_teleop_xarm7"]

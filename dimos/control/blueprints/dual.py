@@ -92,10 +92,3 @@ coordinator_piper_xarm = ControlCoordinator.blueprint(
         ),
     ],
 )
-
-
-__all__ = [
-    "coordinator_dual_mock",
-    "coordinator_dual_xarm",
-    "coordinator_piper_xarm",
-]

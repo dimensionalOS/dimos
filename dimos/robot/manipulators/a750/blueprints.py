@@ -117,5 +117,3 @@ keyboard_teleop_a750 = autoconnect(
         visualization={"backend": "meshcat"},
     ),
 )
-
-__all__ = ["keyboard_teleop_a750"]

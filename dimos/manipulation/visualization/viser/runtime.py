@@ -22,13 +22,11 @@ VISER_INSTALL_HINT = "Viser manipulation visualization requires Viser with URDF 
 VISER_URDF_INSTALL_HINT = VISER_INSTALL_HINT
 
 try:
-    from viser import ViserServer
+    from viser import ViserServer as ViserServer
 except ModuleNotFoundError as e:
     if e.name != "viser":
         raise
     raise ModuleNotFoundError(VISER_INSTALL_HINT) from e
-
-__all__ = ["VISER_INSTALL_HINT", "VISER_URDF_INSTALL_HINT", "ViserRuntime", "ViserServer"]
 
 
 class ViserRuntime:

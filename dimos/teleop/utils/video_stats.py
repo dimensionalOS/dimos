@@ -201,6 +201,3 @@ class VideoStats(Timestamped):
             and self.frames_dropped == other.frames_dropped
             and self.freezes == other.freezes
         )
-
-
-__all__ = ["VideoStats"]

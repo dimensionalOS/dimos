@@ -261,5 +261,3 @@ _coordinator = ControlCoordinator.blueprint(
 unitree_g1_groot_wbc = autoconnect(_backend, _coordinator, _viewer()).global_config(
     robot_model="unitree_g1"
 )
-
-__all__ = ["unitree_g1_groot_wbc"]

@@ -414,15 +414,3 @@ xarm_perception_sim_agent = autoconnect(
     McpServer.blueprint(),
     McpClient.blueprint(system_prompt=_MANIPULATION_AGENT_SYSTEM_PROMPT),
 )
-
-
-__all__ = [
-    "dual_xarm6_planner",
-    "xarm6_planner_only",
-    "xarm7_planner_coordinator",
-    "xarm7_planner_coordinator_agent",
-    "xarm_perception",
-    "xarm_perception_agent",
-    "xarm_perception_sim",
-    "xarm_perception_sim_agent",
-]

@@ -88,6 +88,3 @@ class TeleopRecorder(Recorder):
                 generate_report(db_path)
             except Exception:
                 logger.exception("generate_report failed for %s", db_path)
-
-
-__all__ = ["TeleopRecorder", "TeleopRecorderConfig"]

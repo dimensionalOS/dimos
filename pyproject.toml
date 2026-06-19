@@ -475,6 +475,8 @@ ignore = [
 "dimos/models/Detic/*" = ["ALL"]
 # Naming needs to match the actual libraries.
 "stubs/*.pyi" = ["N801", "N802", "N803", "N815", "N816", "N818"]
+# Polyfill module: re-exports ROS message types (with a dimos_lcm fallback).
+"dimos/types/ros_polyfill.py" = ["F401"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["dimos"]
