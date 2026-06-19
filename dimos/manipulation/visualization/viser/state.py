@@ -258,8 +258,11 @@ class TargetEvaluationWorker:
                     request = self._requests.get_nowait()
                 except queue.Empty:
                     break
-            result = self._handler(request)
-            self._apply_result(request, result)
+            try:
+                result = self._handler(request)
+                self._apply_result(request, result)
+            except Exception:
+                logger.warning("Target evaluation worker caught unhandled exception", exc_info=True)
 
 
 class OperationWorker:
