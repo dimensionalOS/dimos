@@ -172,11 +172,17 @@ class BoosterRPCConnection:
             logger.warning("K1 move failed: %s: %s", type(e).__name__, e)
 
     def standup(self) -> bool:
-        """Arm the robot for walking: DAMPING -> PREPARE -> WALKING."""
+        """Arm the robot for walking (DAMPING -> PREPARE -> WALKING); no-op if already WALKING.
+
+        Refuses modes outside {WALKING, DAMPING, PREPARE} rather than forcing an unsafe transition.
+        """
         with self._lock:
             mode = self._conn.get_mode()
         if mode == RobotMode.WALKING:
             return True
+        if mode not in (RobotMode.DAMPING, RobotMode.PREPARE):
+            logger.warning("K1 standup: unexpected mode %s; not forcing WALKING", mode)
+            return False
         if mode == RobotMode.DAMPING:
             with self._lock:
                 self._conn.change_mode(RobotMode.PREPARE)
@@ -261,6 +267,10 @@ class K1Connection(Module, Camera):
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
 
         # Camera intrinsics are static, so republish on a timer for late subscribers.
+        logger.warning(
+            "K1 camera intrinsics are placeholders; 3D projection/perception will be "
+            "inaccurate until replaced with a measured calibration."
+        )
         self._camera_info_thread = Thread(target=self._publish_camera_info, daemon=True)
         self._camera_info_thread.start()
 
@@ -298,20 +308,22 @@ class K1Connection(Module, Camera):
 
     @skill
     def walk(self, x: float, y: float = 0.0, yaw: float = 0.0, duration: float = 0.0) -> str:
-        """Move the robot using direct velocity commands. Choose duration from the user's distance.
+        """Walk at the given velocity for `duration` seconds, then stop (blocks until stopped).
+
+        A positive `duration` is required; pick it from the distance and speed.
 
         Args:
             x: Forward velocity (m/s)
             y: Left/right velocity (m/s)
             yaw: Rotational velocity (rad/s)
-            duration: How long to move (seconds); 0 = continuous until the next command
+            duration: How long to move (seconds); must be > 0
         """
+        if duration <= 0:
+            return "Specify a positive duration (seconds); compute it from the distance and speed."
         twist = Twist(linear=Vector3(x, y, 0.0), angular=Vector3(0.0, 0.0, yaw))
         if not self.move(twist, duration=duration):
             return "Failed to move."
-        if duration > 0:
-            return f"Moved at velocity=({x}, {y}, {yaw}) for {duration}s then stopped."
-        return f"Moving at velocity=({x}, {y}, {yaw}) continuously; send a stop command to halt."
+        return f"Moved at velocity=({x}, {y}, {yaw}) for {duration}s then stopped."
 
     @skill
     def stand(self) -> str:

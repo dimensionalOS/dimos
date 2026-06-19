@@ -29,6 +29,8 @@ import pytest
 # booster_rpc is an optional extra; skip cleanly if it isn't installed.
 pytest.importorskip("booster_rpc")
 
+from booster_rpc import RobotMode
+
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.booster.k1.connection import BoosterRPCConnection
@@ -119,3 +121,15 @@ class TestSenderLoop:
         time.sleep(0.1)
         _stop_sender(conn)
         assert _sent(conn) == []  # no command -> never active -> nothing sent
+
+
+class TestStandup:
+    def test_returns_true_when_already_walking(self, conn):
+        conn._conn.get_mode.return_value = RobotMode.WALKING
+        assert conn.standup() is True
+        conn._conn.change_mode.assert_not_called()  # no transition needed
+
+    def test_refuses_unexpected_mode(self, conn):
+        conn._conn.get_mode.return_value = RobotMode.CUSTOM
+        assert conn.standup() is False
+        conn._conn.change_mode.assert_not_called()  # refuses rather than forcing WALKING
