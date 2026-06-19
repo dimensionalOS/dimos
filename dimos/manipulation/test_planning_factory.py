@@ -18,11 +18,11 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
-from unittest.mock import MagicMock, patch
 
 import pytest
+from pytest_mock import MockerFixture
 
-from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
+from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.factory import (
     create_kinematics,
     create_planner,
@@ -57,8 +57,8 @@ def test_create_world_unknown_backend():
 
 
 def test_factory_selects_expected_implementations():
-    assert create_planner(name="rrt_connect") is not None
-    assert create_kinematics(name="jacobian") is not None
+    assert type(create_planner(name="rrt_connect")).__name__ == "RRTConnectPlanner"
+    assert type(create_kinematics(name="jacobian")).__name__ == "JacobianIK"
 
 
 def test_default_planner_path_does_not_import_roboplan(monkeypatch):
@@ -85,45 +85,48 @@ def test_validate_backend_combination_rejects_invalid_combinations():
         validate_backend_combination(world_backend="roboplan", kinematics_name="drake_optimization")
 
 
-def test_create_planner_uses_roboplan_world_as_native_planner():
-    world = MagicMock()
-    world.plan_joint_path = MagicMock()
+def test_create_planner_uses_roboplan_world_as_native_planner(mocker: MockerFixture):
+    world = mocker.MagicMock()
+    world.plan_joint_path = mocker.MagicMock()
 
     assert create_planner(name="roboplan", world=world, world_backend="roboplan") is world
 
 
-def test_create_planner_rejects_roboplan_without_roboplan_world():
+def test_create_planner_rejects_roboplan_without_roboplan_world(mocker: MockerFixture):
     with pytest.raises(
         ValueError, match='planner_name="roboplan" requires world_backend="roboplan"'
     ):
-        create_planner(name="roboplan", world=MagicMock(), world_backend="drake")
+        create_planner(name="roboplan", world=mocker.MagicMock(), world_backend="drake")
 
 
-def test_create_planning_stack_wires_selected_components(robot_config):
-    world = MagicMock()
+def test_create_planning_stack_wires_selected_components(
+    mocker: MockerFixture, robot_config: RobotModelConfig
+):
+    world = mocker.MagicMock()
     world.add_robot.return_value = "robot-id"
 
-    kinematics = MagicMock(name="kinematics")
-    planner = MagicMock(name="planner")
+    kinematics = mocker.MagicMock(name="kinematics")
+    planner = mocker.MagicMock(name="planner")
 
-    with (
-        patch("dimos.manipulation.planning.factory.create_world", return_value=world) as mock_world,
-        patch(
-            "dimos.manipulation.planning.factory.create_kinematics",
-            return_value=kinematics,
-        ) as mock_kinematics,
-        patch(
-            "dimos.manipulation.planning.factory.create_planner",
-            return_value=planner,
-        ) as mock_planner,
-    ):
-        result = create_planning_stack(
-            robot_config,
-            enable_viz=True,
-            world_backend="drake",
-            planner_name="rrt_connect",
-            kinematics_name="jacobian",
-        )
+    mock_world = mocker.patch(
+        "dimos.manipulation.planning.factory.create_world", return_value=world
+    )
+    mock_kinematics = mocker.patch(
+        "dimos.manipulation.planning.factory.create_kinematics",
+        return_value=kinematics,
+    )
+    mock_planner = mocker.patch(
+        "dimos.manipulation.planning.factory.create_planner",
+        return_value=planner,
+    )
+
+    result = create_planning_stack(
+        robot_config,
+        enable_viz=True,
+        world_backend="drake",
+        planner_name="rrt_connect",
+        kinematics_name="jacobian",
+    )
 
     assert result == (world, kinematics, planner, "robot-id")
     mock_world.assert_called_once_with(backend="drake", enable_viz=True)
@@ -133,63 +136,59 @@ def test_create_planning_stack_wires_selected_components(robot_config):
     world.finalize.assert_called_once()
 
 
-def test_start_with_no_robots_skips_planning(monkeypatch):
-    module = ManipulationModule.__new__(ManipulationModule)
-    module.config = ManipulationModuleConfig(robots=[], enable_viz=False)
-    module._robots = {}
-    module._world_monitor = None
+def test_start_with_no_robots_skips_planning(mocker: MockerFixture):
+    module = ManipulationModule(robots=[], enable_viz=False)
+    try:
+        world_monitor_cls = mocker.patch(
+            "dimos.manipulation.manipulation_module.WorldMonitor",
+            return_value=mocker.MagicMock(),
+        )
+        create_planner_mock = mocker.patch("dimos.manipulation.manipulation_module.create_planner")
+        create_kinematics_mock = mocker.patch(
+            "dimos.manipulation.manipulation_module.create_kinematics"
+        )
 
-    world_monitor = MagicMock()
-    monkeypatch.setattr(
-        "dimos.manipulation.manipulation_module.WorldMonitor", MagicMock(return_value=world_monitor)
-    )
-    create_planner_mock = MagicMock()
-    create_kinematics_mock = MagicMock()
-    monkeypatch.setattr(
-        "dimos.manipulation.manipulation_module.create_planner", create_planner_mock
-    )
-    monkeypatch.setattr(
-        "dimos.manipulation.manipulation_module.create_kinematics", create_kinematics_mock
-    )
+        module._initialize_planning()
 
-    module._initialize_planning()
-
-    assert module._robots == {}
-    assert module._world_monitor is None
-    create_planner_mock.assert_not_called()
-    create_kinematics_mock.assert_not_called()
+        assert module._robots == {}
+        assert module._world_monitor is None
+        world_monitor_cls.assert_not_called()
+        create_planner_mock.assert_not_called()
+        create_kinematics_mock.assert_not_called()
+    finally:
+        module.stop()
 
 
-def test_start_uses_configured_planner_and_kinematics(monkeypatch, robot_config):
-    module = ManipulationModule.__new__(ManipulationModule)
-    module.config = ManipulationModuleConfig(robots=[robot_config], enable_viz=False)
-    module._robots = {}
-    module._world_monitor = None
-    module._tf_stop_event = MagicMock()
+def test_start_uses_configured_planner_and_kinematics(
+    mocker: MockerFixture, robot_config: RobotModelConfig
+):
+    module = ManipulationModule(robots=[robot_config], enable_viz=False)
+    try:
+        world_monitor = mocker.MagicMock()
+        world_monitor.add_robot.return_value = "robot-id"
+        world_monitor.world = mocker.MagicMock(name="world")
+        world_monitor_cls = mocker.patch(
+            "dimos.manipulation.manipulation_module.WorldMonitor", return_value=world_monitor
+        )
 
-    world_monitor = MagicMock()
-    world_monitor.add_robot.return_value = "robot-id"
-    world_monitor.world = MagicMock(name="world")
-    world_monitor_cls = MagicMock(return_value=world_monitor)
-    monkeypatch.setattr("dimos.manipulation.manipulation_module.WorldMonitor", world_monitor_cls)
+        planner = mocker.MagicMock(name="planner")
+        kinematics = mocker.MagicMock(name="kinematics")
+        create_planner_mock = mocker.patch(
+            "dimos.manipulation.manipulation_module.create_planner", return_value=planner
+        )
+        create_kinematics_mock = mocker.patch(
+            "dimos.manipulation.manipulation_module.create_kinematics", return_value=kinematics
+        )
 
-    planner = MagicMock(name="planner")
-    kinematics = MagicMock(name="kinematics")
-    create_planner_mock = MagicMock(return_value=planner)
-    create_kinematics_mock = MagicMock(return_value=kinematics)
-    monkeypatch.setattr(
-        "dimos.manipulation.manipulation_module.create_planner", create_planner_mock
-    )
-    monkeypatch.setattr(
-        "dimos.manipulation.manipulation_module.create_kinematics", create_kinematics_mock
-    )
+        module._initialize_planning()
 
-    module._initialize_planning()
-
-    world_monitor_cls.assert_called_once_with(backend="drake", enable_viz=False)
-    create_planner_mock.assert_called_once_with(
-        name="rrt_connect", world=world_monitor.world, world_backend="drake"
-    )
-    create_kinematics_mock.assert_called_once_with(config=JacobianKinematicsConfig())
-    assert module._planner is planner
-    assert module._kinematics is kinematics
+        world_monitor_cls.assert_called_once_with(backend="drake", enable_viz=False)
+        create_planner_mock.assert_called_once_with(
+            name="rrt_connect", world=world_monitor.world, world_backend="drake"
+        )
+        create_kinematics_mock.assert_called_once_with(config=JacobianKinematicsConfig())
+        assert module._planner is planner
+        assert module._kinematics is kinematics
+        assert module._robots["arm"][0] == "robot-id"
+    finally:
+        module.stop()
