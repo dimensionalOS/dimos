@@ -333,7 +333,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+      - name: Check if modules already pushed for this config
+        id: marker
+        uses: actions/cache@v4
+        with:
+          path: /tmp/nav-stack-natives-marker
+          key: nav-stack-natives-${{ hashFiles('bin/build-nav-stack-natives', 'dimos/navigation/nav_stack/modules/**') }}
       - name: Free runner disk space
+        if: steps.marker.outputs.cache-hit != 'true'
         uses: BRAINSia/free-disk-space@v2.1.3
         with:
           android: false
@@ -341,6 +348,7 @@ jobs:
           large-packages: false
           mandb: false
       - name: Install Nix (with Cachix substituter)
+        if: steps.marker.outputs.cache-hit != 'true'
         env:
           INPUT_EXTRA_NIX_CONFIG: |
             extra-substituters = https://dimensionalos.cachix.org
@@ -354,6 +362,7 @@ jobs:
         # Restoring these skips the ~20s/module evaluation cost, which is
         # paid every cold run otherwise. /nix/store is intentionally NOT
         # cached here — that's the slow heavy part that Cachix handles.
+        if: steps.marker.outputs.cache-hit != 'true'
         uses: actions/cache@v4
         with:
           path: |
@@ -369,12 +378,20 @@ jobs:
         # cache.nixos.org's (40), Nix queries Cachix first for every path on
         # subsequent runs (in this job and in self-hosted-tests), avoiding the
         # slow cache.nixos.org egress on the self-hosted runner.
+        if: steps.marker.outputs.cache-hit != 'true'
         uses: cachix/cachix-action@v15
         with:
           name: dimensionalos
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build nav_stack native modules
+        if: steps.marker.outputs.cache-hit != 'true'
         run: bin/build-nav-stack-natives
+      - name: Write marker
+        # Touch the marker file so the actions/cache post-step has something
+        # to save. Next run with the same hash will cache-hit and skip the
+        # whole build chain.
+        if: steps.marker.outputs.cache-hit != 'true'
+        run: install -D /dev/null /tmp/nav-stack-natives-marker/ok
 
   self-hosted-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
