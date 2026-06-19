@@ -342,11 +342,6 @@ jobs:
       - name: Free runner disk space
         if: steps.marker.outputs.cache-hit != 'true'
         uses: BRAINSia/free-disk-space@v2.1.3
-        with:
-          android: false
-          docker-images: false
-          large-packages: false
-          mandb: false
       - name: Install Nix (with Cachix substituter)
         if: steps.marker.outputs.cache-hit != 'true'
         env:

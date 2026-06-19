@@ -24,6 +24,7 @@ to a NativeModuleConfig.
 """
 
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -151,12 +152,14 @@ def build_one(entry: tuple[str, str, Path, Path]) -> str:
 def main() -> None:
     entries = discover()
     failed = 0
-    # Cap at 2 concurrent nix builds. Cold-cache runs on GH-hosted ubuntu-latest
-    # (~7 GB RAM, ~14 GB free disk) ran the runner out of resources when more
-    # ran in parallel — each nix daemon peaks at ~1.5 GB during nar verify +
-    # decompress + write, and disk briefly doubles during extraction.
-    _log(f"Building {len(entries)} module(s) with up to 2 workers")
-    with ProcessPoolExecutor(max_workers=2) as ex:
+    # One worker per logical CPU. The original cap of 2 was working around
+    # GH-hosted ubuntu-latest's ~14 GB free disk being eaten by 6 concurrent
+    # nar extractions; the `free-disk-space` step in CI now reclaims ~25 GB
+    # before this runs, so disk is no longer the binding constraint and we
+    # can scale with cores.
+    workers = os.cpu_count() or 2
+    _log(f"Building {len(entries)} module(s) with up to {workers} workers")
+    with ProcessPoolExecutor(max_workers=workers) as ex:
         futs = {ex.submit(build_one, e): e for e in entries}
         for fut in as_completed(futs):
             try:
