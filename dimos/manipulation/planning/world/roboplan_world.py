@@ -21,18 +21,26 @@ the optional dependency installed.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 import tempfile
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 
 import numpy as np
-import roboplan.core as roboplan_core
-import roboplan.rrt as roboplan_rrt
+
+try:
+    import roboplan.core as roboplan_core
+    import roboplan.rrt as roboplan_rrt
+except ImportError as exc:
+    raise ImportError(
+        "RoboPlanWorld requires the optional roboplan dependency. "
+        "Install the manipulation-roboplan extra before selecting the roboplan backend."
+    ) from exc
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
@@ -50,6 +58,8 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 logger = setup_logger()
+
+RoboPlanSceneFactory: TypeAlias = Callable[[str, Path | str, Path | str, list[str]], object]
 
 
 @dataclass
@@ -74,8 +84,7 @@ class RoboPlanWorld:
     """WorldSpec implementation backed by RoboPlan scene and collision queries."""
 
     def __init__(self, enable_viz: bool = False, **_: Any) -> None:
-        self._core = roboplan_core
-        self._scene: Any | None = None
+        self._scene: object | None = None
         self._enable_viz = enable_viz
         if enable_viz:
             logger.warning("RoboPlanWorld does not currently provide manipulation visualization")
@@ -425,20 +434,21 @@ class RoboPlanWorld:
 
     # Internals
 
-    def _create_scene(self, config: RobotModelConfig) -> Any:
-        scene_cls = getattr(self._core, "Scene", None)
+    def _create_scene(self, config: RobotModelConfig) -> object:
+        scene_cls = getattr(roboplan_core, "Scene", None)
         if scene_cls is None:
-            scene_module = getattr(self._core, "scene", None)
+            scene_module = getattr(roboplan_core, "scene", None)
             scene_cls = getattr(scene_module, "Scene", None)
         if scene_cls is None:
             raise ValueError("roboplan.core does not expose Scene")
         urdf_path = self._prepare_robot_urdf(config)
         srdf_path = self._prepare_robot_srdf(config, urdf_path)
         package_paths = [str(path) for path in config.package_paths.values()]
+        scene_factory = cast("RoboPlanSceneFactory", scene_cls)
         try:
-            scene = scene_cls(config.name, urdf_path, srdf_path, package_paths)
+            scene = scene_factory(config.name, urdf_path, srdf_path, package_paths)
         except TypeError:
-            scene = scene_cls(config.name, str(urdf_path), str(srdf_path), package_paths)
+            scene = scene_factory(config.name, str(urdf_path), str(srdf_path), package_paths)
         self._apply_collision_exclusions(scene, config, urdf_path)
         return scene
 
@@ -547,12 +557,12 @@ class RoboPlanWorld:
             method = getattr(self._scene, name, None)
             if method is None:
                 continue
-            try:
-                result = method(config.joint_names)
-            except TypeError:
-                result = method(model_handle, config.joint_names)
-            lower, upper = result
-            return np.asarray(lower, dtype=np.float64), np.asarray(upper, dtype=np.float64)
+            for args in ((config.joint_names,), (model_handle, config.joint_names)):
+                try:
+                    lower, upper = method(*args)
+                    return np.asarray(lower, dtype=np.float64), np.asarray(upper, dtype=np.float64)
+                except TypeError:
+                    continue
         limits = self._lookup_method(
             self._scene, ("getPositionLimitVectors", "get_position_limit_vectors")
         )
@@ -616,7 +626,7 @@ class RoboPlanWorld:
 
     def _create_collision_context(self) -> Any:
         self._require_scene()
-        collision_context_cls = getattr(self._core, "CollisionContext", None)
+        collision_context_cls = getattr(roboplan_core, "CollisionContext", None)
         if collision_context_cls is None:
             return None
         return collision_context_cls(self._scene)
@@ -660,7 +670,7 @@ class RoboPlanWorld:
 
     def _lookup_path_collision_checker(self) -> Any:
         return self._lookup_method(
-            self._core,
+            roboplan_core,
             ("hasCollisionsAlongPath", "has_collisions_along_path"),
         )
 
@@ -757,19 +767,19 @@ class RoboPlanWorld:
 
     def _make_geometry(self, names: tuple[str, ...], geometry_args: tuple[Any, ...]) -> Any:
         if any("Box" in name for name in names):
-            box = getattr(self._core, "Box", None)
+            box = getattr(roboplan_core, "Box", None)
             return box(*geometry_args) if box is not None else geometry_args
         if any("Sphere" in name for name in names):
-            sphere = getattr(self._core, "Sphere", None)
+            sphere = getattr(roboplan_core, "Sphere", None)
             return sphere(*geometry_args) if sphere is not None else geometry_args
         if any("Cylinder" in name for name in names):
-            cylinder = getattr(self._core, "Cylinder", None)
+            cylinder = getattr(roboplan_core, "Cylinder", None)
             if cylinder is None:
                 return geometry_args
             radius, length = geometry_args
             return cylinder(radius, length)
         if any("Mesh" in name for name in names):
-            mesh = getattr(self._core, "Mesh", None)
+            mesh = getattr(roboplan_core, "Mesh", None)
             return mesh(str(geometry_args[0])) if mesh is not None else geometry_args
         return geometry_args
 
@@ -814,7 +824,7 @@ class RoboPlanWorld:
         return self._extract_native_path(result)
 
     def _to_native_joint_configuration(self, robot_id: WorldRobotID, q: NDArray[np.float64]) -> Any:
-        joint_config_cls = getattr(self._core, "JointConfiguration", None)
+        joint_config_cls = getattr(roboplan_core, "JointConfiguration", None)
         if joint_config_cls is None:
             raise ValueError("roboplan.core does not expose JointConfiguration")
         robot = self._get_robot(robot_id)

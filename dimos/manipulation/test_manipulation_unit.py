@@ -225,7 +225,11 @@ class TestPlanningInitialization:
         ):
             module._initialize_planning()
 
-        mock_planner.assert_called_once_with(name="rrt_connect")
+        mock_planner.assert_called_once_with(
+            name="rrt_connect",
+            world=mock_world_monitor.world,
+            world_backend="drake",
+        )
         mock_kinematics.assert_called_once_with(config=kinematics)
 
     def test_legacy_kinematics_name_still_selects_backend(self, robot_config):
