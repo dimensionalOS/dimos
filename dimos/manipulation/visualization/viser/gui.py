@@ -504,7 +504,9 @@ class ViserPanelGui:
         if robot_name is None:
             return
         if not self.state.can_plan():
-            self._set_error("Cannot plan until target is feasible and manipulation is idle")
+            self._set_recoverable_error(
+                "Cannot plan until target is feasible and manipulation is idle"
+            )
             return
         operation_id = self._next_operation_id()
 
@@ -544,7 +546,7 @@ class ViserPanelGui:
         if robot_name is None:
             return
         if not self.state.can_preview():
-            self._set_error("No fresh plan to preview")
+            self._set_recoverable_error("No fresh plan to preview")
             return
         operation_id = self._next_operation_id()
 
@@ -566,10 +568,12 @@ class ViserPanelGui:
         if robot_name is None:
             return
         if not self.config.allow_plan_execute:
-            self._set_error("Panel execution disabled; set allow_plan_execute=True to enable")
+            self._set_recoverable_error(
+                "Panel execution disabled; set allow_plan_execute=True to enable"
+            )
             return
         if not self.state.can_execute(self.config.current_match_tolerance):
-            self._set_error(
+            self._set_recoverable_error(
                 "Cannot execute: require feasible fresh plan and matching current joints"
             )
             return
@@ -649,6 +653,12 @@ class ViserPanelGui:
         if self._operation_is_current(operation_id):
             self._operation_sequence_id += 1
             self._set_error(message)
+
+    def _set_recoverable_error(self, message: str) -> None:
+        if self._closed:
+            return
+        self.state.error = message
+        self.refresh()
 
     def _set_error(self, message: str) -> None:
         if self._closed:

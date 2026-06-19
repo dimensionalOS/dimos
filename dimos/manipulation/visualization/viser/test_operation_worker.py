@@ -17,6 +17,8 @@ from __future__ import annotations
 import threading
 from types import SimpleNamespace
 
+import pytest
+
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
@@ -39,6 +41,24 @@ class FakeOperationAdapter(InProcessViserAdapter):
 
     def get_module_state(self) -> str:
         return "IDLE"
+
+    def get_robot_info(self, robot_name: str) -> dict[str, object] | None:
+        return {}
+
+    def get_current_joint_state(self, robot_name: str) -> None:
+        return None
+
+    def get_ee_pose(self, robot_name: str, joint_state: object | None = None) -> None:
+        return None
+
+    def get_error(self) -> str:
+        return ""
+
+    def get_robot_config(self, robot_name: str) -> None:
+        return None
+
+    def is_state_stale(self, robot_name: str, max_age: float = 1.0) -> bool:
+        return False
 
 
 def test_operation_worker_uses_per_operation_timeout() -> None:
@@ -119,6 +139,38 @@ def test_gui_only_preview_submits_timeout_override() -> None:
 
     assert "timeout_seconds" not in submissions[0]
     assert submissions[1]["timeout_seconds"] == 0.25
+
+
+@pytest.mark.parametrize(
+    ("submit", "expected_error"),
+    [
+        ("_submit_plan", "Cannot plan until target is feasible and manipulation is idle"),
+        ("_submit_preview", "No fresh plan to preview"),
+        ("_submit_execute", "Panel execution disabled; set allow_plan_execute=True to enable"),
+    ],
+)
+def test_gui_guard_errors_keep_action_idle(submit: str, expected_error: str) -> None:
+    submissions: list[object] = []
+    gui = ViserPanelGui(
+        SimpleNamespace(),
+        FakeOperationAdapter(),
+        ViserVisualizationConfig(),
+    )
+    object.__setattr__(
+        gui,
+        "_operation_worker",
+        SimpleNamespace(submit=lambda operation, **_kwargs: submissions.append(operation)),
+    )
+    gui.state.runtime = PanelRuntime.RUNNING
+    gui.state.backend_status = BackendConnectionStatus.READY
+    gui.state.selected_robot = "arm"
+    gui.state.action_status = ActionStatus.IDLE
+
+    getattr(gui, submit)()
+
+    assert gui.state.action_status == ActionStatus.IDLE
+    assert gui.state.error == expected_error
+    assert submissions == []
 
 
 def test_gui_ignores_stale_timed_out_operation_finish() -> None:
