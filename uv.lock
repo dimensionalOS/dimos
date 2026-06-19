@@ -2288,6 +2288,7 @@ tests = [
     { name = "transformers", extra = ["torch"] },
     { name = "ultralytics" },
     { name = "unitree-webrtc-connect-leshy" },
+    { name = "viser", extra = ["urdf"] },
     { name = "watchdog" },
     { name = "xacro" },
 ]
@@ -2332,6 +2333,7 @@ tests-self-hosted = [
     { name = "transformers", extra = ["torch"] },
     { name = "ultralytics" },
     { name = "unitree-webrtc-connect-leshy" },
+    { name = "viser", extra = ["urdf"] },
     { name = "watchdog" },
     { name = "xacro" },
 ]
@@ -2566,6 +2568,7 @@ tests = [
     { name = "transformers", extras = ["torch"], specifier = "==4.53.3" },
     { name = "ultralytics", specifier = ">=8.3.70" },
     { name = "unitree-webrtc-connect-leshy", specifier = ">=2.0.7" },
+    { name = "viser", extras = ["urdf"], specifier = ">=1.0.29" },
     { name = "watchdog", specifier = ">=3.0.0" },
     { name = "xacro" },
 ]
@@ -2612,6 +2615,7 @@ tests-self-hosted = [
     { name = "transformers", extras = ["torch"], specifier = "==4.53.3" },
     { name = "ultralytics", specifier = ">=8.3.70" },
     { name = "unitree-webrtc-connect-leshy", specifier = ">=2.0.7" },
+    { name = "viser", extras = ["urdf"], specifier = ">=1.0.29" },
     { name = "watchdog", specifier = ">=3.0.0" },
     { name = "xacro" },
 ]
