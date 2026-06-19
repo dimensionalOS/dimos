@@ -399,7 +399,7 @@ tests = [
     "python-can>=4",
     "langchain-chroma>=1,<2",
     "unitree-webrtc-connect-leshy>=2.0.7",
-    "viser[urdf]>=1.0.29",
+    "viser[urdf]>=1.0.29; sys_platform != 'linux' or platform_machine != 'aarch64'",
 
     {include-group = "project-deps"},
 ]
