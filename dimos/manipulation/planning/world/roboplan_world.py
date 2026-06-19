@@ -21,13 +21,12 @@ the optional dependency installed.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 import tempfile
 import time
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 
@@ -59,8 +58,6 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-RoboPlanSceneFactory: TypeAlias = Callable[[str, Path | str, Path | str, list[str]], object]
-
 
 @dataclass
 class _RoboPlanRobotData:
@@ -84,7 +81,7 @@ class RoboPlanWorld:
     """WorldSpec implementation backed by RoboPlan scene and collision queries."""
 
     def __init__(self, enable_viz: bool = False, **_: Any) -> None:
-        self._scene: object | None = None
+        self._scene: Any | None = None
         self._enable_viz = enable_viz
         if enable_viz:
             logger.warning("RoboPlanWorld does not currently provide manipulation visualization")
@@ -161,10 +158,8 @@ class RoboPlanWorld:
         if obstacle_id not in self._obstacles:
             return False
         handle = self._obstacle_handles.get(obstacle_id, obstacle_id)
-        remove = self._lookup_method(self._scene, ("removeGeometry", "remove_geometry"))
-        if remove is None:
-            raise ValueError("RoboPlan scene does not expose obstacle removal")
-        remove(handle)
+        scene = self._require_scene()
+        scene.removeGeometry(handle)
         del self._obstacles[obstacle_id]
         self._obstacle_handles.pop(obstacle_id, None)
         self._bump_geometry_revision()
@@ -175,19 +170,8 @@ class RoboPlanWorld:
         if obstacle_id not in self._obstacles:
             return False
         handle = self._obstacle_handles.get(obstacle_id, obstacle_id)
-        update = self._lookup_method(
-            self._scene, ("updateGeometryPlacement", "update_geometry_placement")
-        )
-        if update is None:
-            raise ValueError("RoboPlan scene does not expose obstacle pose updates")
-        for args in ((handle, "world", pose_to_matrix(pose)), (handle, pose_to_matrix(pose))):
-            try:
-                update(*args)
-                break
-            except TypeError:
-                continue
-        else:
-            raise ValueError("RoboPlan obstacle update signature is unsupported")
+        scene = self._require_scene()
+        scene.updateGeometryPlacement(handle, pose_to_matrix(pose))
         obstacle = self._obstacles[obstacle_id]
         self._obstacles[obstacle_id] = Obstacle(
             name=obstacle.name,
@@ -213,10 +197,8 @@ class RoboPlanWorld:
 
     def finalize(self) -> None:
         """Finalize the RoboPlan scene for collision queries."""
-        self._require_scene()
-        finalize = self._lookup_method(self._scene, ("finalize", "Finalize"))
-        if finalize is not None:
-            finalize()
+        scene = self._require_scene()
+        scene.finalize()
         self._finalized = True
         self._live_context.collision_context = self._create_collision_context()
         self._live_context.geometry_revision = self._geometry_revision
@@ -306,26 +288,7 @@ class RoboPlanWorld:
         q_start = self._joint_state_to_q(robot_id, start)
         q_end = self._joint_state_to_q(robot_id, end)
         with self.scratch_context() as ctx:
-            path_check = self._lookup_path_collision_checker()
-            if path_check is not None:
-                return not bool(
-                    self._call_path_collision_checker(
-                        path_check, ctx, robot_id, q_start, q_end, step_size
-                    )
-                )
-
-            # Safe fallback: explicit interpolation using RoboPlan config collision queries.
-            dist = float(np.linalg.norm(q_end - q_start))
-            if dist < 1e-8:
-                ctx.q_by_robot[robot_id] = q_start
-                return self.is_collision_free(ctx, robot_id)
-            n_steps = max(2, int(np.ceil(dist / step_size)) + 1)
-            for i in range(n_steps):
-                t = i / (n_steps - 1)
-                ctx.q_by_robot[robot_id] = q_start + t * (q_end - q_start)
-                if not self.is_collision_free(ctx, robot_id):
-                    return False
-            return True
+            return not self._call_path_collision_checker(ctx, robot_id, q_start, q_end, step_size)
 
     # Forward Kinematics
 
@@ -352,13 +315,8 @@ class RoboPlanWorld:
         q = ctx.q_by_robot.get(robot_id)
         if q is None:
             raise KeyError(f"Robot '{robot_id}' not found in context")
-        fk = self._lookup_method(self._scene, ("forwardKinematics", "forward_kinematics"))
-        if fk is None:
-            raise NotImplementedError("RoboPlan scene does not expose forward kinematics")
-        try:
-            result = fk(self._to_scene_q(robot_id, q), link_name, "")
-        except TypeError:
-            result = fk(self._to_scene_q(robot_id, q), link_name)
+        scene = self._require_scene()
+        result = scene.forwardKinematics(self._to_scene_q(robot_id, q), link_name, "")
         return np.asarray(result, dtype=np.float64)
 
     def get_jacobian(self, ctx: RoboPlanContext, robot_id: WorldRobotID) -> NDArray[np.float64]:
@@ -367,13 +325,10 @@ class RoboPlanWorld:
         q = ctx.q_by_robot.get(robot_id)
         if q is None:
             raise KeyError(f"Robot '{robot_id}' not found in context")
-        jac = self._lookup_method(self._scene, ("computeFrameJacobian", "compute_frame_jacobian"))
-        if jac is None:
-            raise NotImplementedError("RoboPlan scene does not expose frame Jacobian")
-        try:
-            result = jac(self._to_scene_q(robot_id, q), robot.config.end_effector_link, True)
-        except TypeError:
-            result = jac(self._to_scene_q(robot_id, q), robot.config.end_effector_link)
+        scene = self._require_scene()
+        result = scene.computeFrameJacobian(
+            self._to_scene_q(robot_id, q), robot.config.end_effector_link, True
+        )
         arr = np.asarray(result, dtype=np.float64)
         if arr.shape[0] != 6:
             raise ValueError(f"Unexpected RoboPlan Jacobian shape: {arr.shape}; expected 6 x n")
@@ -434,21 +389,11 @@ class RoboPlanWorld:
 
     # Internals
 
-    def _create_scene(self, config: RobotModelConfig) -> object:
-        scene_cls = getattr(roboplan_core, "Scene", None)
-        if scene_cls is None:
-            scene_module = getattr(roboplan_core, "scene", None)
-            scene_cls = getattr(scene_module, "Scene", None)
-        if scene_cls is None:
-            raise ValueError("roboplan.core does not expose Scene")
+    def _create_scene(self, config: RobotModelConfig) -> Any:
         urdf_path = self._prepare_robot_urdf(config)
         srdf_path = self._prepare_robot_srdf(config, urdf_path)
         package_paths = [str(path) for path in config.package_paths.values()]
-        scene_factory = cast("RoboPlanSceneFactory", scene_cls)
-        try:
-            scene = scene_factory(config.name, urdf_path, srdf_path, package_paths)
-        except TypeError:
-            scene = scene_factory(config.name, str(urdf_path), str(srdf_path), package_paths)
+        scene = roboplan_core.Scene(config.name, str(urdf_path), str(srdf_path), package_paths)
         self._apply_collision_exclusions(scene, config, urdf_path)
         return scene
 
@@ -519,16 +464,15 @@ class RoboPlanWorld:
     def _apply_collision_exclusions(
         self, scene: Any, config: RobotModelConfig, urdf_path: Path
     ) -> None:
-        set_collisions = self._lookup_method(scene, ("setCollisions", "set_collisions"))
-        if set_collisions is None:
-            return
         for link1, link2 in self._collision_exclusion_pairs(config, urdf_path):
             try:
-                set_collisions(link1, link2, False)
+                scene.setCollisions(link1, link2, False)
             except RuntimeError:
                 logger.debug(
                     f"RoboPlan did not accept collision exclusion pair: {link1} <-> {link2}"
                 )
+            except AttributeError:
+                return
 
     def _extract_joint_limits(
         self, config: RobotModelConfig, model_handle: Any
@@ -553,28 +497,10 @@ class RoboPlanWorld:
     def _query_scene_joint_limits(
         self, config: RobotModelConfig, model_handle: Any
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
-        for name in ("getJointLimits", "get_joint_limits"):
-            method = getattr(self._scene, name, None)
-            if method is None:
-                continue
-            for args in ((config.joint_names,), (model_handle, config.joint_names)):
-                try:
-                    lower, upper = method(*args)
-                    return np.asarray(lower, dtype=np.float64), np.asarray(upper, dtype=np.float64)
-                except TypeError:
-                    continue
-        limits = self._lookup_method(
-            self._scene, ("getPositionLimitVectors", "get_position_limit_vectors")
-        )
-        if limits is not None:
-            limit_arg_options: list[tuple[Any, ...]] = [(config.name, False), (config.name,), ()]
-            for args in limit_arg_options:
-                try:
-                    lower, upper = limits(*args)
-                    return np.asarray(lower, dtype=np.float64), np.asarray(upper, dtype=np.float64)
-                except TypeError:
-                    continue
-        return None
+        _ = model_handle
+        scene = self._require_scene()
+        lower, upper = scene.getPositionLimitVectors(config.name, False)
+        return np.asarray(lower, dtype=np.float64), np.asarray(upper, dtype=np.float64)
 
     def _get_robot(self, robot_id: WorldRobotID) -> _RoboPlanRobotData:
         if robot_id not in self._robots:
@@ -604,32 +530,22 @@ class RoboPlanWorld:
         if not self._finalized:
             raise RuntimeError("World must be finalized first")
 
-    def _require_scene(self) -> None:
+    def _require_scene(self) -> Any:
         if self._scene is None:
             raise RuntimeError("RoboPlan scene is not initialized; add a robot first")
+        return self._scene
 
     def _to_scene_q(self, robot_id: WorldRobotID, q: NDArray[np.float64]) -> NDArray[np.float64]:
         """Expand DimOS group positions to RoboPlan's full scene vector when available."""
-        self._require_scene()
+        scene = self._require_scene()
         robot = self._get_robot(robot_id)
         if len(q) != len(robot.config.joint_names):
             return q
-        to_full = self._lookup_method(
-            self._scene, ("toFullJointPositions", "to_full_joint_positions")
-        )
-        if to_full is None:
-            return q
-        try:
-            return np.asarray(to_full(robot.config.name, q), dtype=np.float64)
-        except TypeError:
-            return q
+        return np.asarray(scene.toFullJointPositions(robot.config.name, q), dtype=np.float64)
 
     def _create_collision_context(self) -> Any:
         self._require_scene()
-        collision_context_cls = getattr(roboplan_core, "CollisionContext", None)
-        if collision_context_cls is None:
-            return None
-        return collision_context_cls(self._scene)
+        return None
 
     def _refresh_context_if_needed(self, ctx: RoboPlanContext) -> None:
         if ctx.geometry_revision == self._geometry_revision:
@@ -645,143 +561,53 @@ class RoboPlanWorld:
     def _has_collisions(
         self, robot_id: WorldRobotID, q: NDArray[np.float64], ctx: RoboPlanContext
     ) -> bool:
-        self._require_scene()
+        scene = self._require_scene()
+        _ = ctx
         scene_q = self._to_scene_q(robot_id, q)
-        for target, names in (
-            (ctx.collision_context, ("hasCollisions", "has_collisions")),
-            (self._scene, ("hasCollisions", "has_collisions")),
-        ):
-            if target is None:
-                continue
-            method = self._lookup_method(target, names)
-            if method is None:
-                continue
-            args_options: tuple[tuple[Any, ...], ...] = (
-                (scene_q,),
-                (self._scene, scene_q),
-                (self._scene, target, scene_q),
-            )
-            for args in args_options:
-                try:
-                    return bool(method(*args))
-                except TypeError:
-                    continue
-        raise ValueError("RoboPlan collision checking is unavailable from installed bindings")
-
-    def _lookup_path_collision_checker(self) -> Any:
-        return self._lookup_method(
-            roboplan_core,
-            ("hasCollisionsAlongPath", "has_collisions_along_path"),
-        )
+        return bool(scene.hasCollisions(scene_q))
 
     def _call_path_collision_checker(
         self,
-        path_check: Any,
         ctx: RoboPlanContext,
         robot_id: WorldRobotID,
         q_start: NDArray[np.float64],
         q_end: NDArray[np.float64],
         step_size: float,
     ) -> bool:
-        self._require_scene()
+        scene = self._require_scene()
         scene_q_start = self._to_scene_q(robot_id, q_start)
         scene_q_end = self._to_scene_q(robot_id, q_end)
-        for args in (
-            (
-                self._scene,
-                ctx.collision_context,
+        return bool(
+            roboplan_core.hasCollisionsAlongPath(
+                scene,
                 scene_q_start,
                 scene_q_end,
                 step_size,
                 False,
                 True,
-            ),
-            (self._scene, ctx.collision_context, scene_q_start, scene_q_end, step_size),
-            (self._scene, scene_q_start, scene_q_end, step_size, False, True),
-            (self._scene, scene_q_start, scene_q_end, step_size),
-        ):
-            try:
-                return bool(path_check(*args))
-            except TypeError:
-                continue
-        raise ValueError("RoboPlan path collision checker signature is unsupported")
+            )
+        )
 
     def _add_obstacle_to_scene(self, obstacle: Obstacle, obstacle_id: str) -> Any:
-        self._require_scene()
+        scene = self._require_scene()
         matrix = pose_to_matrix(obstacle.pose)
         if obstacle.obstacle_type == ObstacleType.BOX:
             self._require_dimensions(obstacle, 3)
-            return self._call_first_obstacle_method(
-                ("addBoxGeometry", "add_box_geometry"), obstacle_id, obstacle.dimensions, matrix
-            )
+            width, height, depth = obstacle.dimensions
+            return scene.addBoxGeometry(obstacle_id, width, height, depth, matrix)
         if obstacle.obstacle_type == ObstacleType.SPHERE:
             self._require_dimensions(obstacle, 1)
-            return self._call_first_obstacle_method(
-                ("addSphereGeometry", "add_sphere_geometry"),
-                obstacle_id,
-                obstacle.dimensions,
-                matrix,
-            )
+            (radius,) = obstacle.dimensions
+            return scene.addSphereGeometry(obstacle_id, radius, matrix)
         if obstacle.obstacle_type == ObstacleType.CYLINDER:
             self._require_dimensions(obstacle, 2)
-            return self._call_first_obstacle_method(
-                ("addCylinderGeometry", "add_cylinder_geometry"),
-                obstacle_id,
-                obstacle.dimensions,
-                matrix,
-            )
+            radius, length = obstacle.dimensions
+            return scene.addCylinderGeometry(obstacle_id, radius, length, matrix)
         if obstacle.obstacle_type == ObstacleType.MESH:
             if not obstacle.mesh_path:
                 raise ValueError("MESH obstacle requires mesh_path")
-            return self._call_first_obstacle_method(
-                ("addMeshGeometry", "add_mesh_geometry", "addGeometry", "add_geometry"),
-                obstacle_id,
-                (obstacle.mesh_path,),
-                matrix,
-            )
+            return scene.addMeshGeometry(obstacle_id, obstacle.mesh_path, matrix)
         raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
-
-    def _call_first_obstacle_method(
-        self,
-        names: tuple[str, ...],
-        obstacle_id: str,
-        geometry_args: tuple[Any, ...],
-        matrix: NDArray[np.float64],
-    ) -> Any:
-        method = self._lookup_method(self._scene, names)
-        if method is None:
-            raise ValueError(f"RoboPlan scene does not support obstacle method(s): {names}")
-        color = np.asarray([1.0, 0.6, 0.2, 1.0], dtype=np.float64)
-        geometry = self._make_geometry(names, geometry_args)
-        for args in (
-            (obstacle_id, "world", geometry, matrix, color),
-            (obstacle_id, *geometry_args, matrix),
-            (obstacle_id, geometry_args, matrix),
-            (*geometry_args, matrix, obstacle_id),
-        ):
-            try:
-                return method(*args)
-            except TypeError:
-                continue
-        raise ValueError(f"RoboPlan obstacle method signature is unsupported: {names}")
-
-    def _make_geometry(self, names: tuple[str, ...], geometry_args: tuple[Any, ...]) -> Any:
-        if any("Box" in name for name in names):
-            box = getattr(roboplan_core, "Box", None)
-            return box(*geometry_args) if box is not None else geometry_args
-        if any("Sphere" in name for name in names):
-            sphere = getattr(roboplan_core, "Sphere", None)
-            return sphere(*geometry_args) if sphere is not None else geometry_args
-        if any("Cylinder" in name for name in names):
-            cylinder = getattr(roboplan_core, "Cylinder", None)
-            if cylinder is None:
-                return geometry_args
-            radius, length = geometry_args
-            return cylinder(radius, length)
-        if any("Mesh" in name for name in names):
-            mesh = getattr(roboplan_core, "Mesh", None)
-            return mesh(str(geometry_args[0])) if mesh is not None else geometry_args
-        return geometry_args
 
     def _require_dimensions(self, obstacle: Obstacle, n_dims: int) -> None:
         if len(obstacle.dimensions) != n_dims:
@@ -797,25 +623,13 @@ class RoboPlanWorld:
         q_goal: NDArray[np.float64],
         timeout: float,
     ) -> list[NDArray[np.float64]]:
-        rrt_module = roboplan_rrt
-        options_cls = getattr(rrt_module, "RRTOptions", None)
-        options = options_cls() if options_cls is not None else None
-        if options is not None:
-            robot = self._get_robot(robot_id)
-            for attr, value in (
-                ("group_name", robot.config.name),
-                ("timeout", timeout),
-                ("max_time", timeout),
-                ("max_planning_time", timeout),
-                ("collision_check_use_bisection", False),
-            ):
-                if hasattr(options, attr):
-                    setattr(options, attr, value)
-        rrt_cls = getattr(rrt_module, "RRT", None)
-        if rrt_cls is None:
-            raise ValueError("roboplan.rrt does not expose RRT")
-        self._require_scene()
-        planner = rrt_cls(self._scene, options) if options is not None else rrt_cls(self._scene)
+        scene = self._require_scene()
+        robot = self._get_robot(robot_id)
+        options = roboplan_rrt.RRTOptions()
+        options.group_name = robot.config.name
+        options.max_planning_time = timeout
+        options.collision_check_use_bisection = False
+        planner = roboplan_rrt.RRT(scene, options)
         start_config = self._to_native_joint_configuration(robot_id, q_start)
         goal_config = self._to_native_joint_configuration(robot_id, q_goal)
         result = planner.plan(start_config, goal_config)
@@ -824,27 +638,14 @@ class RoboPlanWorld:
         return self._extract_native_path(result)
 
     def _to_native_joint_configuration(self, robot_id: WorldRobotID, q: NDArray[np.float64]) -> Any:
-        joint_config_cls = getattr(roboplan_core, "JointConfiguration", None)
-        if joint_config_cls is None:
-            raise ValueError("roboplan.core does not expose JointConfiguration")
         robot = self._get_robot(robot_id)
-        return joint_config_cls(robot.config.joint_names, np.asarray(q, dtype=np.float64))
+        return roboplan_core.JointConfiguration(
+            robot.config.joint_names, np.asarray(q, dtype=np.float64)
+        )
 
     def _extract_native_path(self, result: Any) -> list[NDArray[np.float64]]:
         if result is None:
             raise ValueError("RoboPlan RRT returned no path")
         if isinstance(result, (list, tuple)):
             return [np.asarray(q, dtype=np.float64) for q in result]
-        for attr in ("positions", "path", "joint_path", "waypoints"):
-            value = getattr(result, attr, None)
-            if value is not None:
-                return [np.asarray(q, dtype=np.float64) for q in value]
-        raise ValueError("RoboPlan RRT result does not expose a path")
-
-    @staticmethod
-    def _lookup_method(target: Any, names: tuple[str, ...]) -> Any:
-        for name in names:
-            method = getattr(target, name, None)
-            if method is not None:
-                return method
-        return None
+        return [np.asarray(q, dtype=np.float64) for q in result.positions]

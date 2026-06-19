@@ -143,7 +143,6 @@ def _install_fake_roboplan(monkeypatch: pytest.MonkeyPatch) -> None:
 
     def has_collisions_along_path(
         scene: FakeScene,
-        collision_context: FakeCollisionContext,
         q_start: np.ndarray,
         q_end: np.ndarray,
         max_step_size: float,
@@ -152,7 +151,7 @@ def _install_fake_roboplan(monkeypatch: pytest.MonkeyPatch) -> None:
     ) -> bool:
         _ = (scene, max_step_size, bisection, check_endpoints)
         for t in np.linspace(0.0, 1.0, 5):
-            if collision_context.hasCollisions(q_start + t * (q_end - q_start)):
+            if scene.hasCollisions(q_start + t * (q_end - q_start)):
                 return True
         return False
 
@@ -286,7 +285,7 @@ def test_obstacle_mutation_invalidates_collision_context(
     world, _ = _make_world(fake_roboplan, robot_config)
     world.finalize()
     live = world.get_live_context()
-    original_context = live.collision_context
+    original_revision = live.geometry_revision
 
     obstacle = Obstacle(
         name="box",
@@ -295,7 +294,7 @@ def test_obstacle_mutation_invalidates_collision_context(
         dimensions=(0.1, 0.2, 0.3),
     )
     assert world.add_obstacle(obstacle) == "box"
-    assert world.get_live_context().collision_context is not original_context
+    assert world.get_live_context().geometry_revision == original_revision + 1
     assert world.update_obstacle_pose(
         "box",
         PoseStamped(position=Vector3(1, 0, 0), orientation=Quaternion()),  # type: ignore[call-arg]
@@ -318,19 +317,9 @@ def test_collision_config_and_edge_checks(
     assert not world.check_edge_collision_free(robot_id, safe, colliding, step_size=0.05)
 
 
-def test_collision_check_falls_back_to_scene_after_context_signature_mismatch(
-    fake_roboplan: None, robot_config: RobotModelConfig, monkeypatch: pytest.MonkeyPatch
+def test_collision_check_uses_scene_queries(
+    fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
-    class UnsupportedCollisionContext:
-        def __init__(self, scene: FakeScene) -> None:
-            self.scene = scene
-
-        def hasCollisions(self, *_: Any) -> bool:
-            raise TypeError("unsupported collision-context signature")
-
-    monkeypatch.setattr(
-        sys.modules["roboplan.core"], "CollisionContext", UnsupportedCollisionContext
-    )
     world, robot_id = _make_world(fake_roboplan, robot_config)
     world.finalize()
 
