@@ -62,6 +62,7 @@ class ViserPanelGui:
         self.scene = scene
         self.state = PanelState(runtime=PanelRuntime.STARTING)
         self._closed = False
+        self._operation_sequence_id = 0
         self._suppress_target_callbacks = False
         self._handles: dict[str, Any] = {}
         self._joint_sliders: dict[str, Any] = {}
@@ -87,7 +88,7 @@ class ViserPanelGui:
         self._closed = True
         self.state.runtime = PanelRuntime.STOPPING
         self._worker.stop()
-        self._operation_worker.stop(timeout=None)
+        self._operation_worker.stop(timeout=2.0)
         self._clear_joint_sliders()
         self._handles.clear()
         self.state.runtime = PanelRuntime.STOPPED
@@ -505,16 +506,23 @@ class ViserPanelGui:
         if not self.state.can_plan():
             self._set_error("Cannot plan until target is feasible and manipulation is idle")
             return
+        operation_id = self._next_operation_id()
 
         def operation() -> None:
+            if not self._operation_is_current(operation_id):
+                return
             self.state.action_status = ActionStatus.RUNNING
             self.state.plan_state.status = PlanStatus.PLANNING
             target = self._target_from_sliders(robot_name)
             if target is None:
                 self.state.plan_state.status = PlanStatus.FAILED
-                self._finish_operation("plan_to_joints=False", clear_error=False)
+                self._finish_operation(
+                    "plan_to_joints=False", clear_error=False, operation_id=operation_id
+                )
                 return
             ok = self.adapter.plan_to_joints(target, robot_name)
+            if not self._operation_is_current(operation_id):
+                return
             if ok:
                 path = self.adapter.get_planned_path(robot_name)
                 self.state.plan_state.status = PlanStatus.FRESH
@@ -525,9 +533,11 @@ class ViserPanelGui:
                 self.state.plan_state.planned_path = path
             else:
                 self.state.plan_state.status = PlanStatus.FAILED
-            self._finish_operation(f"plan_to_joints={ok}")
+            self._finish_operation(f"plan_to_joints={ok}", operation_id=operation_id)
 
-        self._operation_worker.submit(operation)
+        self._operation_worker.submit(
+            operation, on_error=lambda message: self._set_operation_error(message, operation_id)
+        )
 
     def _submit_preview(self) -> None:
         robot_name = self.state.selected_robot
@@ -536,13 +546,20 @@ class ViserPanelGui:
         if not self.state.can_preview():
             self._set_error("No fresh plan to preview")
             return
+        operation_id = self._next_operation_id()
 
         def operation() -> None:
+            if not self._operation_is_current(operation_id):
+                return
             self.state.action_status = ActionStatus.PREVIEWING
             ok = self.adapter.preview_path(robot_name)
-            self._finish_operation(f"preview={ok}")
+            self._finish_operation(f"preview={ok}", operation_id=operation_id)
 
-        self._operation_worker.submit(operation)
+        self._operation_worker.submit(
+            operation,
+            timeout_seconds=self.config.preview_request_timeout,
+            on_error=lambda message: self._set_operation_error(message, operation_id),
+        )
 
     def _submit_execute(self) -> None:
         robot_name = self.state.selected_robot
@@ -556,43 +573,82 @@ class ViserPanelGui:
                 "Cannot execute: require feasible fresh plan and matching current joints"
             )
             return
+        operation_id = self._next_operation_id()
 
         def operation() -> None:
+            if not self._operation_is_current(operation_id):
+                return
             self.state.action_status = ActionStatus.EXECUTING
             self.state.plan_state.status = PlanStatus.EXECUTING
             ok = self.adapter.execute(robot_name)
+            if not self._operation_is_current(operation_id):
+                return
             if not ok:
                 self.state.plan_state.status = PlanStatus.FAILED
-            self._finish_operation(f"execute={ok}")
+            self._finish_operation(f"execute={ok}", operation_id=operation_id)
 
-        self._operation_worker.submit(operation)
+        self._operation_worker.submit(
+            operation, on_error=lambda message: self._set_operation_error(message, operation_id)
+        )
 
     def _submit_cancel(self) -> None:
+        operation_id = self._next_operation_id()
+
         def operation() -> None:
+            if not self._operation_is_current(operation_id):
+                return
             self.state.action_status = ActionStatus.CANCELLING
             ok = self.adapter.cancel()
+            if not self._operation_is_current(operation_id):
+                return
             self.state.action_status = ActionStatus.IDLE
-            self._finish_operation(f"cancel={ok}")
+            self._finish_operation(f"cancel={ok}", operation_id=operation_id)
 
-        self._operation_worker.submit(operation)
+        self._operation_worker.submit(
+            operation, on_error=lambda message: self._set_operation_error(message, operation_id)
+        )
 
     def _submit_clear(self) -> None:
+        operation_id = self._next_operation_id()
+
         def operation() -> None:
+            if not self._operation_is_current(operation_id):
+                return
             self.state.action_status = ActionStatus.CLEARING_PLAN
             ok = self.adapter.clear_planned_path()
+            if not self._operation_is_current(operation_id):
+                return
             self.state.plan_state = PanelPlanState()
-            self._finish_operation(f"clear={ok}")
+            self._finish_operation(f"clear={ok}", operation_id=operation_id)
 
-        self._operation_worker.submit(operation)
+        self._operation_worker.submit(
+            operation, on_error=lambda message: self._set_operation_error(message, operation_id)
+        )
 
-    def _finish_operation(self, result: str, *, clear_error: bool = True) -> None:
-        if self._closed:
+    def _next_operation_id(self) -> int:
+        self._operation_sequence_id += 1
+        return self._operation_sequence_id
+
+    def _operation_is_current(self, operation_id: int) -> bool:
+        return not self._closed and operation_id == self._operation_sequence_id
+
+    def _finish_operation(
+        self, result: str, *, clear_error: bool = True, operation_id: int | None = None
+    ) -> None:
+        if self._closed or (
+            operation_id is not None and not self._operation_is_current(operation_id)
+        ):
             return
         self.state.action_status = ActionStatus.IDLE
         if clear_error:
             self.state.error = ""
         self.state.last_result = result
         self.refresh()
+
+    def _set_operation_error(self, message: str, operation_id: int) -> None:
+        if self._operation_is_current(operation_id):
+            self._operation_sequence_id += 1
+            self._set_error(message)
 
     def _set_error(self, message: str) -> None:
         if self._closed:

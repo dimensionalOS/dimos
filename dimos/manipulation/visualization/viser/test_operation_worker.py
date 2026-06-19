@@ -1,0 +1,137 @@
+# Copyright 2025-2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from __future__ import annotations
+
+import threading
+from types import SimpleNamespace
+
+from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
+from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
+from dimos.manipulation.visualization.viser.gui import ViserPanelGui
+from dimos.manipulation.visualization.viser.state import (
+    ActionStatus,
+    BackendConnectionStatus,
+    OperationWorker,
+    PanelRuntime,
+    PlanStatus,
+    TargetStatus,
+)
+
+
+class FakeOperationAdapter(InProcessViserAdapter):
+    def __init__(self) -> None:
+        pass
+
+    def list_robots(self) -> list[str]:
+        return []
+
+    def get_module_state(self) -> str:
+        return "IDLE"
+
+
+def test_operation_worker_uses_per_operation_timeout() -> None:
+    errors: list[str] = []
+    worker = OperationWorker(errors.append, timeout_seconds=1.0)
+    worker.submit(lambda: None, timeout_seconds=0.25)
+
+    request = worker._requests.get_nowait()
+
+    assert worker._operation_timeout(request) == 0.25
+
+
+def test_operation_worker_uses_operation_error_callback_on_timeout() -> None:
+    default_errors: list[str] = []
+    operation_errors: list[str] = []
+    release = threading.Event()
+    finished = threading.Event()
+    worker = OperationWorker(default_errors.append)
+
+    def operation() -> None:
+        release.wait(timeout=1.0)
+        finished.set()
+
+    worker.submit(
+        operation,
+        timeout_seconds=0.001,
+        on_error=operation_errors.append,
+    )
+
+    worker._run_operation(worker._requests.get_nowait())
+    release.set()
+    assert finished.wait(timeout=1.0)
+
+    assert default_errors == []
+    assert operation_errors == ["Operation timed out after 0.0s"]
+
+
+def test_gui_close_uses_bounded_operation_worker_stop() -> None:
+    stop_timeouts: list[float | None] = []
+    gui = ViserPanelGui(
+        SimpleNamespace(),
+        FakeOperationAdapter(),
+        ViserVisualizationConfig(),
+    )
+    object.__setattr__(
+        gui,
+        "_operation_worker",
+        SimpleNamespace(stop=lambda timeout: stop_timeouts.append(timeout)),
+    )
+    object.__setattr__(gui, "_worker", SimpleNamespace(stop=lambda timeout=2.0: None))
+
+    gui.close()
+
+    assert stop_timeouts == [2.0]
+
+
+def test_gui_only_preview_submits_timeout_override() -> None:
+    submissions: list[dict[str, object]] = []
+    gui = ViserPanelGui(
+        SimpleNamespace(),
+        FakeOperationAdapter(),
+        ViserVisualizationConfig(preview_request_timeout=0.25),
+    )
+    object.__setattr__(
+        gui,
+        "_operation_worker",
+        SimpleNamespace(submit=lambda _operation, **kwargs: submissions.append(kwargs)),
+    )
+    gui.state.runtime = PanelRuntime.RUNNING
+    gui.state.backend_status = BackendConnectionStatus.READY
+    gui.state.selected_robot = "arm"
+    gui.state.target_status = TargetStatus.FEASIBLE
+    gui.state.manipulation_state = "IDLE"
+
+    gui._submit_plan()
+    gui.state.plan_state.status = PlanStatus.FRESH
+    gui._submit_preview()
+
+    assert "timeout_seconds" not in submissions[0]
+    assert submissions[1]["timeout_seconds"] == 0.25
+
+
+def test_gui_ignores_stale_timed_out_operation_finish() -> None:
+    gui = ViserPanelGui(
+        SimpleNamespace(),
+        FakeOperationAdapter(),
+        ViserVisualizationConfig(),
+    )
+    old_operation_id = gui._next_operation_id()
+    gui._set_operation_error("Operation timed out after 5.0s", old_operation_id)
+    gui.state.action_status = ActionStatus.FAILED
+
+    gui._finish_operation("preview=True", operation_id=old_operation_id)
+
+    assert gui.state.action_status == ActionStatus.FAILED
+    assert gui.state.error == "Operation timed out after 5.0s"

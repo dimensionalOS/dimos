@@ -1242,7 +1242,9 @@ def test_gui_plan_target_failure_recovers_action_state(make_panel: Any) -> None:
     object.__setattr__(
         gui,
         "_operation_worker",
-        SimpleNamespace(submit=lambda operation: operation(), stop=lambda timeout=2.0: None),
+        SimpleNamespace(
+            submit=lambda operation, **_kwargs: operation(), stop=lambda timeout=2.0: None
+        ),
     )
     gui.state.selected_robot = "missing"
     gui.state.target_status = TargetStatus.FEASIBLE
@@ -1264,7 +1266,7 @@ def test_operation_worker_coalesces_pending_requests() -> None:
     worker.submit(lambda: calls.append("new"))
 
     operation = worker._requests.get_nowait()
-    operation()
+    operation.operation()
 
     assert calls == ["new"]
     assert errors == []
@@ -1313,7 +1315,8 @@ def test_target_evaluation_worker_coalesces_pending_requests() -> None:
 def test_operation_worker_reports_timeout() -> None:
     errors = []
     worker = OperationWorker(errors.append, timeout_seconds=0.01)
-    worker._run_operation(lambda: time.sleep(0.1))
+    worker.submit(lambda: time.sleep(0.1), timeout_seconds=0.01)
+    worker._run_operation(worker._requests.get_nowait())
 
     assert errors == ["Operation timed out after 0.0s"]
     time.sleep(0.12)

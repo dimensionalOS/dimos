@@ -268,11 +268,11 @@ class OperationWorker:
     def __init__(
         self,
         on_error: Callable[[str], None],
-        timeout_seconds: float | Callable[[], float] | None = None,
+        timeout_seconds: float | None = None,
     ) -> None:
         self._on_error = on_error
         self._timeout_seconds = timeout_seconds
-        self._requests: queue.Queue[Callable[[], object]] = queue.Queue(maxsize=1)
+        self._requests: queue.Queue[OperationRequest] = queue.Queue(maxsize=1)
         self._submit_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -290,30 +290,41 @@ class OperationWorker:
         if self._thread is not None and not self._thread.is_alive():
             self._thread = None
 
-    def submit(self, operation: Callable[[], object]) -> None:
+    def submit(
+        self,
+        operation: Callable[[], object],
+        *,
+        timeout_seconds: float | None = None,
+        on_error: Callable[[str], None] | None = None,
+    ) -> None:
+        request = OperationRequest(
+            operation=operation,
+            timeout_seconds=timeout_seconds,
+            on_error=on_error or self._on_error,
+        )
         with self._submit_lock:
             while True:
                 try:
                     self._requests.get_nowait()
                 except queue.Empty:
                     break
-            self._requests.put_nowait(operation)
+            self._requests.put_nowait(request)
 
     def _run(self) -> None:
         while not self._stop_event.is_set():
             try:
-                operation = self._requests.get(timeout=0.1)
+                request = self._requests.get(timeout=0.1)
             except queue.Empty:
                 continue
             try:
-                self._run_operation(operation)
+                self._run_operation(request)
             except Exception as e:
-                self._on_error(str(e))
+                request.on_error(str(e))
 
-    def _run_operation(self, operation: Callable[[], object]) -> None:
-        timeout = self._operation_timeout()
+    def _run_operation(self, request: OperationRequest) -> None:
+        timeout = self._operation_timeout(request)
         if timeout is None:
-            operation()
+            request.operation()
             return
 
         error: Exception | None = None
@@ -321,7 +332,7 @@ class OperationWorker:
         def run() -> None:
             nonlocal error
             try:
-                operation()
+                request.operation()
             except Exception as e:
                 error = e
 
@@ -329,14 +340,20 @@ class OperationWorker:
         thread.start()
         thread.join(timeout=max(timeout, 0.0))
         if thread.is_alive():
-            self._on_error(f"Operation timed out after {timeout:.1f}s")
+            request.on_error(f"Operation timed out after {timeout:.1f}s")
             return
         if error is not None:
             raise error
 
-    def _operation_timeout(self) -> float | None:
-        if self._timeout_seconds is None:
-            return None
-        if callable(self._timeout_seconds):
-            return float(self._timeout_seconds())
-        return float(self._timeout_seconds)
+    def _operation_timeout(self, request: OperationRequest) -> float | None:
+        timeout = request.timeout_seconds
+        if timeout is None:
+            timeout = self._timeout_seconds
+        return None if timeout is None else float(timeout)
+
+
+@dataclass(frozen=True)
+class OperationRequest:
+    operation: Callable[[], object]
+    timeout_seconds: float | None
+    on_error: Callable[[str], None]
