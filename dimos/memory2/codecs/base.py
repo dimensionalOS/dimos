@@ -75,6 +75,11 @@ def codec_from_id(codec_id_str: str, payload_module: str) -> Codec[Any]:
 
 
 def _class_to_id(codec: Any) -> str:
+    explicit_id = getattr(codec, "CODEC_ID", None)
+    if explicit_id is not None:
+        if not isinstance(explicit_id, str):
+            raise TypeError(f"Codec CODEC_ID must be str, got {type(explicit_id).__name__}")
+        return explicit_id
     name = type(codec).__name__
     if name.endswith("Codec"):
         return name[:-5].lower()
@@ -101,6 +106,10 @@ def _make_one(name: str, payload_module: str, inner: Codec[Any] | None = None) -
         from dimos.memory2.codecs.jpeg import JpegCodec
 
         return JpegCodec()
+    if name == "h264":
+        from dimos.memory2.video.h264 import H264ImageCodec
+
+        return H264ImageCodec()
     if name == "lcm":
         from dimos.memory2.codecs.lcm import LcmCodec
 

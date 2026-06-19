@@ -223,13 +223,13 @@ class PointCloud2(Timestamped):
             PointCloud2 instance with colored points
         """
         # Get color as RGB numpy array
-        color_data = color_image.to_rgb().data
+        color_data = color_image.to_rgb().require_raw("PointCloud2.from_rgbd color")
         if hasattr(color_data, "get"):  # CuPy array
             color_data = color_data.get()
         color_data = np.ascontiguousarray(color_data)
 
         # Get depth numpy array
-        depth_data = depth_image.data
+        depth_data = depth_image.require_raw("PointCloud2.from_rgbd depth")
         if hasattr(depth_data, "get"):  # CuPy array
             depth_data = depth_data.get()
 

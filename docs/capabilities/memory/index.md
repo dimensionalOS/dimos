@@ -206,3 +206,75 @@ plot_mosaic(matches.map(lambda obs: obs.data).to_list(), "assets/grid.png")
 ```
 
 ![output](assets/grid.png)
+
+## H.264 image storage
+
+memory2 stores `Image` streams with the default JPEG image codec unless a stream
+opts into H.264. Use H.264 storage for high-rate camera streams when disk usage
+matters and frame-to-frame compression is worth the dependency cost.
+
+```python skip
+from dimos.memory2.store.sqlite import SqliteStore
+from dimos.msgs.sensor_msgs.Image import Image
+
+store = SqliteStore(path="robot_video.db")
+color = store.stream(
+    "color_image",
+    Image,
+    codec="h264",
+)
+```
+
+Recorder modules that need H.264 storage should create their target stream with
+the same codec override:
+
+```python skip
+from dimos.core.stream import In
+from dimos.memory2.module import Recorder
+from dimos.msgs.sensor_msgs.Image import Image
+
+class H264Recorder(Recorder):
+    color_image: In[Image]
+
+    def start(self) -> None:
+        stream = self.store.stream("color_image", Image, codec="h264")
+        self._port_to_stream("color_image", self.color_image, stream)
+```
+
+H.264 storage keeps the normal memory2 shape: one observation row per source
+frame. The blob for that observation stores one encoded `Image` whose data is a
+complete H.264 Annex B access unit, not individual RTP fragments. H.264 frame
+metadata lives in `Image.codec_metadata`.
+
+Metadata queries do not decode pixels. You can inspect timestamps, poses, tags,
+frame ids, `Image.encoding`, and H.264 codec metadata without paying decode
+cost. Accessing `obs.data` returns an encoded `Image` for H.264 streams. Use an
+explicit H.264 decode session to convert replayed encoded images to raw pixel
+images; that decoder suppresses deltas until the first keyframe at or after the
+replay start point.
+
+H.264 storage currently supports uint8 RGB, BGR, and grayscale images. It raises
+an explicit error for depth images, 16-bit images, alpha formats, and other
+unsupported pixel layouts. The default `store.stream("color_image", Image)` path
+continues to use JPEG.
+
+### Synthetic H.264 QA blueprint
+
+The `demo-h264-video-e2e` blueprint exercises both live H.264 LCM transport and
+H.264 memory2 storage without a robot or physical camera:
+
+```bash skip
+dimos run demo-h264-video-e2e --daemon
+dimos log -f
+```
+
+The blueprint publishes deterministic synthetic RGB frames, records them to
+`h264_video_e2e.db`, and runs a probe that logs decoded-frame count, dimensions,
+timestamp monotonicity, frame id stability, and validation failures. Use it after
+codec or storage changes to inspect:
+
+- logs from the source, recorder, and probe;
+- memory2 metadata queries that do not touch `obs.data`;
+- lazy `obs.data` decode after a valid keyframe, with best-effort suppression of undecodable deltas;
+- replay of the recorded stream; and
+- sequence-gap behavior, if you inject packet loss in the transport tests.

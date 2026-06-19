@@ -162,6 +162,38 @@ class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
         self._started = False
 
 
+class H264LcmTransport(LCMTransport):  # type: ignore[type-arg]
+    def __init__(
+        self,
+        topic: str,
+        type: type,
+        config: Any | None = None,
+        decode_images: bool = True,
+        **kwargs: Any,
+    ) -> None:  # type: ignore[no-untyped-def]
+        from dimos.protocol.pubsub.impl.h264_lcm import H264LCM
+        from dimos.protocol.video.h264 import H264Config
+
+        self.config = config or H264Config()
+        self.decode_images = decode_images
+        self.lcm = H264LCM(config=self.config, decode_images=decode_images, **kwargs)  # type: ignore[assignment]
+        super().__init__(topic, type)
+
+    def __reduce__(self):  # type: ignore[no-untyped-def]
+        return (
+            H264LcmTransport,
+            (self.topic.topic, self.topic.lcm_type, self.config, self.decode_images),
+        )
+
+    def start(self) -> None:
+        self.lcm.start()
+        self._started = True
+
+    def stop(self) -> None:
+        self.lcm.stop()
+        self._started = False
+
+
 class pSHMTransport(PubSubTransport[T]):
     _started: bool = False
 

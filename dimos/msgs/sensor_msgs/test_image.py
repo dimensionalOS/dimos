@@ -69,6 +69,18 @@ def test_opencv_conversion(img: Image) -> None:
     assert decoded_img == img
 
 
+def test_eager_image_compatibility() -> None:
+    data = np.ones((2, 3, 3), dtype=np.uint8)
+    img = Image(data=data, format=ImageFormat.BGR, frame_id="cam", ts=11.0)
+
+    assert img.data is data
+    assert img.height == 2
+    assert img.width == 3
+    assert img.channels == 3
+    assert img.shape == (2, 3, 3)
+    assert img.dtype == np.dtype(np.uint8)
+
+
 @pytest.mark.tool
 def test_sharpness_stream() -> None:
     get_data("unitree_office_walk")  # Preload data for testing

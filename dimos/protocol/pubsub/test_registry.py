@@ -17,6 +17,7 @@ from __future__ import annotations
 import pytest
 
 from dimos.core.transport import (
+    H264LcmTransport,
     JpegLcmTransport,
     JpegShmTransport,
     LCMTransport,
@@ -35,7 +36,15 @@ from dimos.protocol.pubsub.registry import (
 
 def test_supported_protos_includes_known_set() -> None:
     """Registry exposes the canonical proto names."""
-    assert set(supported_protos()) >= {"lcm", "jpeg_lcm", "plcm", "pshm", "shm", "jpeg_shm"}
+    assert set(supported_protos()) >= {
+        "lcm",
+        "jpeg_lcm",
+        "h264_lcm",
+        "plcm",
+        "pshm",
+        "shm",
+        "jpeg_shm",
+    }
 
 
 @pytest.mark.parametrize(
@@ -43,6 +52,7 @@ def test_supported_protos_includes_known_set() -> None:
     [
         ("lcm:/color_image", ("lcm", "/color_image", None)),
         ("jpeg_lcm:/color_image", ("jpeg_lcm", "/color_image", None)),
+        ("h264_lcm:/color_image", ("h264_lcm", "/color_image", None)),
         ("pshm:color_image", ("pshm", "color_image", None)),
         ("shm:foo/bar", ("shm", "foo/bar", None)),
         (
@@ -52,6 +62,10 @@ def test_supported_protos_includes_known_set() -> None:
         (
             "jpeg_lcm:/color_image#sensor_msgs.Image",
             ("jpeg_lcm", "/color_image", "sensor_msgs.Image"),
+        ),
+        (
+            "h264_lcm:/color_image#sensor_msgs.Image",
+            ("h264_lcm", "/color_image", "sensor_msgs.Image"),
         ),
     ],
 )
@@ -90,6 +104,11 @@ def test_make_pubsub_transport_lcm_uses_LCMTransport() -> None:
 def test_make_pubsub_transport_jpeg_lcm_uses_JpegLcmTransport() -> None:
     t = make_pubsub_transport("jpeg_lcm:/color_image", msg_type=Image)
     assert isinstance(t, JpegLcmTransport)
+
+
+def test_make_pubsub_transport_h264_lcm_uses_H264LcmTransport() -> None:
+    t = make_pubsub_transport("h264_lcm:/color_image", msg_type=Image)
+    assert isinstance(t, H264LcmTransport)
 
 
 def test_make_pubsub_transport_plcm_uses_pLCMTransport() -> None:
