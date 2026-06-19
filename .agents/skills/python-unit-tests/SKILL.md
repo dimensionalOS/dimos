@@ -1,6 +1,6 @@
 ---
 name: python-unit-tests
-description: Python unit tests: Use when writing, fixing, or reviewing pytest tests, fixtures, mocks, or test PR feedback.
+description: Use when writing, fixing, or reviewing Python pytest unit tests, fixtures, mocks, or test PR feedback.
 ---
 
 # Python Unit Tests
