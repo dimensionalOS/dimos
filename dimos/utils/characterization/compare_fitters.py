@@ -24,6 +24,7 @@ emits a markdown report + overlay PNGs and a one-line verdict.
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
 from pathlib import Path
 import re
@@ -328,6 +329,43 @@ def _plot_overlay(comp: Comparison, png_path: Path) -> bool:
     return True
 
 
+def main() -> None:
+    """CLI: velocity-domain vs pose-domain on one recording -> report + table.
+
+    Example::
+
+        python -m dimos.utils.characterization.compare_fitters \\
+            data/characterization/go2/go2_recording_default_2026-06-19_astro.db
+    """
+    parser = argparse.ArgumentParser(
+        description="Compare the velocity-domain (savgol+differentiate+fit) and "
+        "pose-domain (output-error) FOPDT fits on the SAME recording."
+    )
+    parser.add_argument("db", help="recording .db to run both fitters on")
+    parser.add_argument("--label", default=None, help="report label (default: db stem)")
+    parser.add_argument(
+        "--out", default="data/characterization/comparison", help="report output dir"
+    )
+    args = parser.parse_args()
+
+    label = args.label or Path(args.db).stem
+    comp = compare_recording(args.db, label=label, noise_std=None)
+    report = write_report([comp], args.out)
+
+    print(f"\n{'axis':4s} {'method':16s} {'K':>8s} {'tau(s)':>8s} {'L(s)':>8s} {'r2':>7s}")
+    for axis in _AXES:
+        a = comp.axes[axis]
+        print(
+            f"{axis:4s} {'velocity-domain':16s} {a.vel_k:8.3f} {a.vel_tau:8.3f} "
+            f"{a.vel_l:8.3f} {a.vel_r2:7.3f}"
+        )
+        print(
+            f"{axis:4s} {'pose-domain':16s} {a.pose_k:8.3f} {a.pose_tau:8.3f} "
+            f"{a.pose_l:8.3f} {a.pose_r2:7.3f}"
+        )
+    print(f"\nreport + overlay PNG: {report.parent}")
+
+
 __all__ = [
     "AxisComparison",
     "Comparison",
@@ -335,3 +373,7 @@ __all__ = [
     "velocity_domain_fit",
     "write_report",
 ]
+
+
+if __name__ == "__main__":
+    main()
