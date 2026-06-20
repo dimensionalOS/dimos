@@ -223,11 +223,13 @@ class AudioModule(Module):
 class SpeakerConfig(ModuleConfig):
     device: int | None = Field(default=None)
     queue_max_chunks: int = 256
+    playing_idle_ms: int = 300
 
 
 class SpeakerModule(Module):
     config: SpeakerConfig
     audio: In[AudioStamped]
+    speaker_playing: Out[bool]
 
     _queue: queue.Queue[AudioStamped] | None = None
     _running: threading.Event | None = None
@@ -243,6 +245,7 @@ class SpeakerModule(Module):
         self._queue = queue.Queue(maxsize=self.config.queue_max_chunks)
         self._running = threading.Event()
         self._running.set()
+        self.speaker_playing.publish(False)
         self._writer_thread = threading.Thread(target=self._writer_loop, daemon=True)
         self._writer_thread.start()
         yield
@@ -273,6 +276,7 @@ class SpeakerModule(Module):
         self._stream_rate = None
         self._stream_channels = None
         self._stream_dtype = None
+        self.speaker_playing.publish(False)
 
     @rpc
     def start(self) -> None:
@@ -304,6 +308,9 @@ class SpeakerModule(Module):
         q = self._queue
         if running is None or q is None:
             return
+        is_playing = False
+        last_write_at = 0.0
+        idle_timeout_s = max(0.0, float(self.config.playing_idle_ms) / 1000.0)
 
         try:
             import sounddevice as sd  # type: ignore[import-untyped]
@@ -320,6 +327,9 @@ class SpeakerModule(Module):
             try:
                 msg = q.get(timeout=0.25)
             except queue.Empty:
+                if is_playing and (time.monotonic() - last_write_at) >= idle_timeout_s:
+                    self.speaker_playing.publish(False)
+                    is_playing = False
                 continue
 
             if msg.coding_format != "pcm":
@@ -382,8 +392,14 @@ class SpeakerModule(Module):
                 if self._stream is not None:
                     try:
                         self._stream.write(data)
+                        last_write_at = time.monotonic()
+                        if not is_playing:
+                            self.speaker_playing.publish(True)
+                            is_playing = True
                     except Exception:
                         logger.exception("SpeakerModule failed to write audio")
+        if is_playing:
+            self.speaker_playing.publish(False)
 
 
 class SpeechToTextConfig(ModuleConfig):
@@ -394,30 +410,34 @@ class SpeechToTextConfig(ModuleConfig):
     language: str = "en"
     fp16: bool = False
     segment_seconds: float = 3.0
+    flush_buffer_after_segment: bool = True
     queue_max_segments: int = 8
     whisper_cpp_command: str | None = Field(default=None)
     whisper_cpp_model_path: str | None = Field(default=None)
     faster_whisper_download_root: str | None = Field(default=None)
     drop_during_tts: bool = True
-    tts_guard_seconds: float = 0.35
+    tts_guard_seconds: float = 0.8
     vad_enabled: bool = True
     vad_threshold_db: float = -42.0
     vad_hangover_ms: int = 350
+    vad_flush_on_silence: bool = True
+    vad_flush_min_seconds: float = 0.8
     aec_enabled: bool = True
-    aec_strength: float = 0.85
-    aec_reference_window_s: float = 6.0
-    aec_correlation_threshold: float = 0.45
+    aec_strength: float = 0.92
+    aec_reference_window_s: float = 8.0
+    aec_correlation_threshold: float = 0.30
     dedupe_enabled: bool = True
-    dedupe_window_s: float = 8.0
+    dedupe_window_s: float = 15.0
     self_tts_guard_enabled: bool = True
-    self_tts_guard_window_s: float = 8.0
-    self_tts_similarity_threshold: float = 0.88
+    self_tts_guard_window_s: float = 15.0
+    self_tts_similarity_threshold: float = 0.82
 
 
 class SpeechToTextModule(Module):
     config: SpeechToTextConfig
     audio: In[AudioStamped]
     tts_active: In[bool]
+    speaker_playing: In[bool]
     recent_tts_text: In[str]
     tts_reference_audio: In[AudioStamped]
     text: Out[str]
@@ -429,7 +449,8 @@ class SpeechToTextModule(Module):
     _buf: np.ndarray | None = None
     _buf_rate: int | None = None
     _state_lock: threading.Lock = threading.Lock()
-    _tts_playing: bool = False
+    _tts_active_signal: bool = False
+    _speaker_playing_signal: bool = False
     _tts_guard_until: float = 0.0
     _vad_open_until: float = 0.0
     _aec_ref_buf: np.ndarray | None = None
@@ -444,7 +465,8 @@ class SpeechToTextModule(Module):
         self._unsubs = []
         self._buf = np.zeros((0,), dtype=np.float32)
         self._buf_rate = None
-        self._tts_playing = False
+        self._tts_active_signal = False
+        self._speaker_playing_signal = False
         self._tts_guard_until = 0.0
         self._vad_open_until = 0.0
         self._aec_ref_buf = np.zeros((0,), dtype=np.float32)
@@ -481,6 +503,7 @@ class SpeechToTextModule(Module):
         self._unsubs = [
             self.audio.subscribe(self._on_audio),
             self.tts_active.subscribe(self._on_tts_active),
+            self.speaker_playing.subscribe(self._on_speaker_playing),
             self.recent_tts_text.subscribe(self._on_recent_tts_text),
             self.tts_reference_audio.subscribe(self._on_tts_reference_audio),
         ]
@@ -508,16 +531,35 @@ class SpeechToTextModule(Module):
         if self._buf is not None:
             self._buf = np.zeros((0,), dtype=np.float32)
 
+    def _clear_segment_queue(self) -> None:
+        q = self._segment_queue
+        if q is None:
+            return
+        while True:
+            try:
+                _ = q.get_nowait()
+            except queue.Empty:
+                break
+
+    def _drop_live_audio_state(self) -> None:
+        self._reset_live_buffer()
+        self._clear_segment_queue()
+        with self._state_lock:
+            self._vad_open_until = 0.0
+
     def _on_tts_active(self, active: bool) -> None:
         with self._state_lock:
             now = time.monotonic()
-            self._tts_playing = bool(active)
-            if active:
-                self._tts_guard_until = max(self._tts_guard_until, now + self.config.tts_guard_seconds)
-            else:
-                self._tts_guard_until = max(self._tts_guard_until, now + self.config.tts_guard_seconds)
-        if active:
-            self._reset_live_buffer()
+            self._tts_active_signal = bool(active)
+            self._tts_guard_until = max(self._tts_guard_until, now + self.config.tts_guard_seconds)
+        self._drop_live_audio_state()
+
+    def _on_speaker_playing(self, active: bool) -> None:
+        with self._state_lock:
+            now = time.monotonic()
+            self._speaker_playing_signal = bool(active)
+            self._tts_guard_until = max(self._tts_guard_until, now + self.config.tts_guard_seconds)
+        self._drop_live_audio_state()
 
     def _on_recent_tts_text(self, text: str) -> None:
         normalized = _normalize_text(text)
@@ -560,7 +602,7 @@ class SpeechToTextModule(Module):
     def _is_tts_guard_active(self) -> bool:
         with self._state_lock:
             now = time.monotonic()
-            return self._tts_playing or now < self._tts_guard_until
+            return self._tts_active_signal or self._speaker_playing_signal or now < self._tts_guard_until
 
     def _passes_vad(self, x: np.ndarray) -> bool:
         if not self.config.vad_enabled:
@@ -626,6 +668,32 @@ class SpeechToTextModule(Module):
         ts, previous = last
         return previous == normalized_text and (time.monotonic() - ts) <= float(self.config.dedupe_window_s)
 
+    def _enqueue_segment(self, segment: np.ndarray, rate: int) -> bool:
+        q = self._segment_queue
+        if q is None:
+            return False
+        try:
+            q.put_nowait((segment, rate))
+            return True
+        except queue.Full:
+            try:
+                _ = q.get_nowait()
+            except queue.Empty:
+                return False
+            try:
+                q.put_nowait((segment, rate))
+                return True
+            except queue.Full:
+                return False
+
+    def _flush_partial_segment_on_silence(self) -> bool:
+        if not self.config.vad_flush_on_silence or self._buf is None or self._buf_rate is None:
+            return False
+        min_samples = max(1, int(float(self.config.vad_flush_min_seconds) * self._buf_rate))
+        if self._buf.shape[0] < min_samples:
+            return False
+        return self._enqueue_segment(self._buf.copy(), self._buf_rate)
+
     def _on_audio(self, msg: AudioStamped) -> None:
         x = self._decode_audio(msg)
         if x is None:
@@ -633,13 +701,14 @@ class SpeechToTextModule(Module):
 
         if self._buf is None:
             return
-
+        # Where STT mutes
         if self.config.drop_during_tts and self._is_tts_guard_active():
             self._reset_live_buffer()
             return
 
         x = self._apply_aec(x, msg.sample_rate)
         if not self._passes_vad(x):
+            _ = self._flush_partial_segment_on_silence()
             self._reset_live_buffer()
             return
 
@@ -655,23 +724,22 @@ class SpeechToTextModule(Module):
             return
         target_samples = max(1, int(self.config.segment_seconds * rate))
 
+        # Prefer waiting for VAD to close the utterance. The fixed duration acts
+        # as a safety cap for uninterrupted speech so the live buffer cannot grow
+        # forever if silence never arrives.
+        if self._buf.shape[0] < target_samples:
+            return
+        if self.config.flush_buffer_after_segment:
+            if self._enqueue_segment(self._buf.copy(), rate):
+                self._buf = np.zeros((0,), dtype=np.float32)
+            return
+
         while self._buf.shape[0] >= target_samples:
             segment = self._buf[:target_samples]
-            self._buf = self._buf[target_samples:]
-            q = self._segment_queue
-            if q is None:
-                return
-            try:
-                q.put_nowait((segment, rate))
-            except queue.Full:
-                try:
-                    _ = q.get_nowait()
-                except queue.Empty:
-                    break
-                try:
-                    q.put_nowait((segment, rate))
-                except queue.Full:
-                    break
+            remaining = self._buf[target_samples:]
+            if not self._enqueue_segment(segment, rate):
+                break
+            self._buf = remaining
 
     def _worker_loop(self) -> None:
         running = self._running
@@ -776,6 +844,9 @@ class SpeechToTextModule(Module):
             if text:
                 normalized = _normalize_text(text)
                 if not normalized:
+                    continue
+                if _is_bad_transcript(text=text, normalized_text=normalized):
+                    logger.info(f"SpeechToTextModule: dropped bad transcript: {normalized}")
                     continue
                 if self._is_consecutive_duplicate(normalized):
                     logger.info(f"SpeechToTextModule: dropped duplicate text: {normalized}")
@@ -1238,6 +1309,25 @@ def _normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
+def _is_bad_transcript(*, text: str, normalized_text: str) -> bool:
+    stripped = text.strip()
+    if not stripped or not normalized_text:
+        return True
+
+    # Whisper-style non-speech captions should not be spoken back into the loop.
+    if (stripped.startswith("[") and stripped.endswith("]")) or (
+        stripped.startswith("(") and stripped.endswith(")")
+    ):
+        return True
+
+    return normalized_text in {
+        "blank_audio",
+        "music_playing",
+        "applause",
+        "laughter",
+    }
+
+
 def _pitch_shift_block(y: np.ndarray, sample_rate: int, semitones: float) -> np.ndarray:
     if semitones == 0.0:
         return y
@@ -1578,6 +1668,8 @@ audio_speech_loopback = autoconnect(
         (SpeechToTextModule, "audio", "mic_audio"),
         (TextToSpeechModule, "tts_active", "tts_active_signal"),
         (SpeechToTextModule, "tts_active", "tts_active_signal"),
+        (SpeakerModule, "speaker_playing", "speaker_playing_signal"),
+        (SpeechToTextModule, "speaker_playing", "speaker_playing_signal"),
         (TextToSpeechModule, "spoken_text", "recent_tts_text"),
         (SpeechToTextModule, "recent_tts_text", "recent_tts_text"),
         (TextToSpeechModule, "tts_reference_audio", "tts_reference_audio"),
