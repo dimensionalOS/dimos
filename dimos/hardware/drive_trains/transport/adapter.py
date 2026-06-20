@@ -23,7 +23,7 @@ from functools import partial
 import threading
 from typing import TYPE_CHECKING, Any
 
-from dimos.core.transport import LCMTransport, ROSTransport
+from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -147,13 +147,11 @@ class TransportTwistAdapter:
             self._latest_odom = [msg.x, msg.y, msg.yaw]
 
 
-_LCM_TRANSPORT_FACTORY = partial(TransportTwistAdapter, transport_cls=LCMTransport)
-_ROS_TRANSPORT_FACTORY = partial(TransportTwistAdapter, transport_cls=ROSTransport)
-
-
 def register(registry: TwistBaseAdapterRegistry) -> None:
-    registry.register("transport_lcm", _LCM_TRANSPORT_FACTORY)
-    registry.register("transport_ros", _ROS_TRANSPORT_FACTORY)
+    from dimos.core.transport import ROSTransport
+
+    registry.register("transport_lcm", partial(TransportTwistAdapter, transport_cls=LCMTransport))
+    registry.register("transport_ros", partial(TransportTwistAdapter, transport_cls=ROSTransport))
 
 
 __all__ = ["TransportTwistAdapter"]

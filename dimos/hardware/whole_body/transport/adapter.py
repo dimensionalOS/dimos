@@ -24,7 +24,7 @@ from functools import partial
 import threading
 from typing import TYPE_CHECKING, Any
 
-from dimos.core.transport import LCMTransport, ROSTransport
+from dimos.core.transport import LCMTransport
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -182,14 +182,18 @@ class TransportWholeBodyAdapter:
             )
 
 
-_LCM_TRANSPORT_FACTORY = partial(TransportWholeBodyAdapter, transport_cls=LCMTransport)
-_ROS_TRANSPORT_FACTORY = partial(TransportWholeBodyAdapter, transport_cls=ROSTransport)
-
-
 def register(registry: WholeBodyAdapterRegistry) -> None:
     """Auto-discovered by ``whole_body_adapter_registry.discover()``."""
-    registry.register("transport_lcm", _LCM_TRANSPORT_FACTORY)
-    registry.register("transport_ros", _ROS_TRANSPORT_FACTORY)
+    from dimos.core.transport import ROSTransport
+
+    registry.register(
+        "transport_lcm",
+        partial(TransportWholeBodyAdapter, transport_cls=LCMTransport),
+    )
+    registry.register(
+        "transport_ros",
+        partial(TransportWholeBodyAdapter, transport_cls=ROSTransport),
+    )
 
 
 __all__ = ["TransportWholeBodyAdapter"]
