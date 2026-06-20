@@ -37,6 +37,9 @@ _OPENARM_MODEL_PATH = _OPENARM_PKG / "urdf/robot/openarm_v10_bimanual.urdf"
 _OPENARM_LEFT_MODEL = _OPENARM_PKG / "urdf/robot/openarm_v10_left.urdf"
 _OPENARM_RIGHT_MODEL = _OPENARM_PKG / "urdf/robot/openarm_v10_right.urdf"
 
+# Public per-side and single-arm URDF paths used by blueprints/adapters.
+OPENARM_V10_LEFT_MODEL = _OPENARM_LEFT_MODEL
+OPENARM_V10_RIGHT_MODEL = _OPENARM_RIGHT_MODEL
 # Pre-expanded single-arm URDF for Pinocchio FK (keyboard teleop, IK, etc.)
 OPENARM_V10_FK_MODEL = _OPENARM_PKG / "urdf/robot/openarm_v10_single.urdf"
 
@@ -117,4 +120,10 @@ def openarm_single(
     return RobotConfig(**defaults)
 
 
-__all__ = ["OPENARM_V10_FK_MODEL", "openarm_arm", "openarm_single"]
+__all__ = [
+    "OPENARM_V10_FK_MODEL",
+    "OPENARM_V10_LEFT_MODEL",
+    "OPENARM_V10_RIGHT_MODEL",
+    "openarm_arm",
+    "openarm_single",
+]

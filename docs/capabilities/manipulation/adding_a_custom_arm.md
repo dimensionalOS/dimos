@@ -45,12 +45,13 @@ Create a new directory for your arm under `dimos/hardware/manipulators/`:
 ```
 dimos/hardware/manipulators/
 ├── spec.py              # ManipulatorAdapter Protocol (don't modify)
-├── registry.py          # Auto-discovery registry (don't modify)
+├── registry.py          # Manifest-based adapter registry (don't modify)
 ├── mock/
 ├── xarm/
 ├── piper/
 └── yourarm/             # ← New directory
     ├── __init__.py
+    ├── __registry__.py
     └── adapter.py
 ```
 
@@ -76,13 +77,9 @@ DimOS Units: angles=radians, distance=meters, velocity=rad/s
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
 
 # Import your vendor SDK
 from yourarm_sdk import YourArmSDK
-
-if TYPE_CHECKING:
-    from dimos.hardware.manipulators.registry import AdapterRegistry
 
 from dimos.hardware.manipulators.spec import (
     ControlMode,
@@ -343,13 +340,6 @@ class YourArmAdapter:
         """Read F/T sensor data [fx, fy, fz, tx, ty, tz]. None if no sensor."""
         return None
 
-
-# ── Registry hook (required for auto-discovery) ───────────────────
-def register(registry: AdapterRegistry) -> None:
-    """Register this adapter with the registry."""
-    registry.register("yourarm", YourArmAdapter)
-
-
 __all__ = ["YourArmAdapter"]
 ```
 
@@ -389,15 +379,27 @@ from dimos.hardware.manipulators.yourarm.adapter import YourArmAdapter
 __all__ = ["YourArmAdapter"]
 ```
 
+### `__registry__.py`
+
+Create a lightweight manifest next to `adapter.py`:
+
+```python skip
+ADAPTER_FACTORIES = {
+    "yourarm": "dimos.hardware.manipulators.yourarm.adapter:YourArmAdapter",
+}
+
+__all__ = ["ADAPTER_FACTORIES"]
+```
+
 ### How auto-discovery works
 
-The `AdapterRegistry` in `dimos/hardware/manipulators/registry.py` automatically discovers your adapter at import time:
+The `AdapterRegistry` in `dimos/hardware/manipulators/registry.py` automatically discovers your adapter metadata at import time:
 
 1. It iterates over all subpackages under `dimos/hardware/manipulators/`
-2. For each subpackage, it tries to import `<subpackage>.adapter`
-3. If that module has a `register()` function, it calls it
+2. For each subpackage, it imports `<subpackage>.__registry__`
+3. It reads `ADAPTER_FACTORIES` entries such as `"yourarm": "dimos.hardware.manipulators.yourarm.adapter:YourArmAdapter"`
 
-This means **no manual registration is needed** — just having the `register()` function in your `adapter.py` is sufficient.
+This means **no central registry edit is needed**. The adapter implementation module is imported lazily only when the adapter is selected through `adapter_registry.create("yourarm", ...)`, so unrelated adapter listing does not import your vendor SDK.
 
 You can verify discovery works:
 
@@ -691,7 +693,8 @@ adapter.disconnect()
 Files to create:
 
 - [ ] `dimos/hardware/manipulators/yourarm/__init__.py`
-- [ ] `dimos/hardware/manipulators/yourarm/adapter.py` (implements Protocol + `register()`)
+- [ ] `dimos/hardware/manipulators/yourarm/__registry__.py` (maps adapter key to implementation path)
+- [ ] `dimos/hardware/manipulators/yourarm/adapter.py` (implements Protocol)
 - [ ] `dimos/robot/yourarm/__init__.py`
 - [ ] `dimos/robot/yourarm/blueprints.py` (coordinator + planning blueprints)
 
@@ -702,5 +705,6 @@ Files to modify:
 Verification:
 
 - [ ] `adapter_registry.available()` includes `"yourarm"`
+- [ ] `adapter_registry.create("yourarm", address="192.168.1.100", dof=6)` returns your adapter
 - [ ] `pytest dimos/robot/test_all_blueprints_generation.py` passes (regenerates `all_blueprints.py`)
 - [ ] `dimos run coordinator-yourarm` starts successfully

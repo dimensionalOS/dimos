@@ -16,11 +16,15 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator
+from dimos.control.components import HardwareComponent, HardwareType
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.transport import LCMTransport
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.catalog.openarm import (
     OPENARM_V10_FK_MODEL,
+    OPENARM_V10_RIGHT_MODEL,
     openarm_arm as _openarm,
     openarm_single as _openarm_single,
 )
@@ -51,7 +55,10 @@ RIGHT_CAN = "can0"
 # replaced / factory-reset).
 AUTO_SET_MIT_MODE = True
 
+# gravity_comp and canfd are already True by default on OpenArmRSAdapter, so
+# the blueprint only overrides the gravity model path.
 _ADAPTER_KWARGS = {"auto_set_mit_mode": AUTO_SET_MIT_MODE}
+_OPENARM_RS_ADAPTER_KWARGS = {"gravity_model_path": OPENARM_V10_RIGHT_MODEL}
 _left_hw = _openarm(
     side="left",
     address=LEFT_CAN,
@@ -64,6 +71,18 @@ _right_hw = _openarm(
     adapter_type="openarm",
     adapter_kwargs=_ADAPTER_KWARGS,
 )
+_openarm_rs_hw = _openarm(
+    side="right",
+    name="arm",
+    adapter_type="openarm_rs",
+    address=RIGHT_CAN,
+    adapter_kwargs=_OPENARM_RS_ADAPTER_KWARGS,
+)
+
+OPENARM_DUAL_WHOLE_BODY_JOINTS = [
+    *[f"openarm/openarm_left_joint{i}" for i in range(1, 8)],
+    *[f"openarm/openarm_right_joint{i}" for i in range(1, 8)],
+]
 
 coordinator_openarm_left = ControlCoordinator.blueprint(
     hardware=[_left_hw.to_hardware_component()],
@@ -82,6 +101,54 @@ coordinator_openarm_bimanual = ControlCoordinator.blueprint(
         _left_hw.to_task_config(),
         _right_hw.to_task_config(),
     ],
+)
+
+coordinator_openarm_rs = ControlCoordinator.blueprint(
+    hardware=[_openarm_rs_hw.to_hardware_component()],
+    tasks=[_openarm_rs_hw.to_task_config()],
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+    }
+)
+
+openarm_dual_whole_body = ControlCoordinator.blueprint(
+    hardware=[
+        HardwareComponent(
+            hardware_id="openarm",
+            hardware_type=HardwareType.WHOLE_BODY,
+            joints=OPENARM_DUAL_WHOLE_BODY_JOINTS,
+            adapter_type="openarm_dual",
+            adapter_kwargs={
+                "left_address": LEFT_CAN,
+                "right_address": RIGHT_CAN,
+                "gravity_comp": True,
+            },
+        )
+    ],
+    tasks=[
+        TaskConfig(
+            name="traj_openarm",
+            type="trajectory",
+            joint_names=OPENARM_DUAL_WHOLE_BODY_JOINTS,
+        )
+    ],
+)
+
+openarm_rs_planner_coordinator = autoconnect(
+    ManipulationModule.blueprint(
+        robots=[_openarm_rs_hw.to_robot_model_config()],
+        planning_timeout=10.0,
+        enable_viz=True,
+    ),
+    ControlCoordinator.blueprint(
+        hardware=[_openarm_rs_hw.to_hardware_component()],
+        tasks=[_openarm_rs_hw.to_task_config()],
+    ),
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+    }
 )
 
 
@@ -172,8 +239,11 @@ __all__ = [
     "coordinator_openarm_left",
     "coordinator_openarm_mock",
     "coordinator_openarm_right",
+    "coordinator_openarm_rs",
     "keyboard_teleop_openarm",
     "keyboard_teleop_openarm_mock",
+    "openarm_dual_whole_body",
     "openarm_mock_planner_coordinator",
     "openarm_planner_coordinator",
+    "openarm_rs_planner_coordinator",
 ]

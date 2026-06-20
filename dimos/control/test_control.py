@@ -18,15 +18,17 @@ from __future__ import annotations
 
 import threading
 import time
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.components import HardwareComponent, HardwareType, TaskName, make_joints
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.task import (
     ControlMode,
+    ControlTask,
     CoordinatorState,
     JointCommandOutput,
     JointStateSnapshot,
@@ -469,7 +471,7 @@ class TestTickLoop:
         )
         hw = ConnectedHardware(mock_adapter, component)
         hardware = {"arm": hw}
-        tasks: dict = {}
+        tasks: dict[TaskName, ControlTask] = {}
         joint_to_hardware = {f"arm/joint{i + 1}": "arm" for i in range(6)}
 
         tick_loop = TickLoop(
@@ -512,7 +514,7 @@ class TestTickLoop:
             mode=ControlMode.POSITION,
         )
 
-        tasks = {"test_task": mock_task}
+        tasks: dict[TaskName, ControlTask] = {"test_task": cast("ControlTask", mock_task)}
         joint_to_hardware = {f"arm/joint{i + 1}": "arm" for i in range(6)}
 
         tick_loop = TickLoop(
@@ -546,7 +548,7 @@ class TestIntegration:
             priority=10,
         )
         traj_task = JointTrajectoryTask(name="traj_arm", config=config)
-        tasks = {"traj_arm": traj_task}
+        tasks: dict[TaskName, ControlTask] = {"traj_arm": traj_task}
 
         joint_to_hardware = {f"arm/joint{i + 1}": "arm" for i in range(6)}
 

@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Adapter registry with auto-discovery.
+"""Adapter registry with lazy auto-discovery.
 
-Automatically discovers and registers manipulator adapters from subpackages.
-Each adapter provides a `register()` function in its adapter.py module.
+Automatically discovers manipulator adapters from lightweight subpackage
+``__registry__.py`` manifests. Adapter implementation modules are imported
+only when their adapter key is selected via :meth:`AdapterRegistry.create`.
 
 Usage:
     from dimos.hardware.manipulators.registry import adapter_registry
@@ -31,28 +32,43 @@ Usage:
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 import importlib
-from typing import TYPE_CHECKING, Any
-
-from dimos.utils.logging_config import setup_logger
+from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from dimos.hardware.manipulators.spec import ManipulatorAdapter
 
-logger = setup_logger()
+AdapterFactory = Callable[..., "ManipulatorAdapter"]
 
 
 class AdapterRegistry:
-    """Registry for manipulator adapters with auto-discovery."""
+    """Registry for manipulator adapters with lazy auto-discovery."""
 
     def __init__(self) -> None:
-        self._adapters: dict[str, type[ManipulatorAdapter]] = {}
+        self._adapter_paths: dict[str, str] = {}
+        self._adapters: dict[str, AdapterFactory] = {}
 
-    def register(self, name: str, cls: type[ManipulatorAdapter]) -> None:
-        """Register an adapter class."""
+    def register(self, name: str, cls: AdapterFactory) -> None:
+        """Register an already-imported adapter factory."""
         self._adapters[name.lower()] = cls
 
-    def create(self, name: str, **kwargs: Any) -> ManipulatorAdapter:
+    def register_path(self, name: str, factory_path: str) -> None:
+        """Register a lazy adapter factory import path."""
+        if ":" not in factory_path:
+            raise ValueError(f"Invalid adapter factory path: {factory_path!r}")
+        module_name, attr = factory_path.split(":", maxsplit=1)
+        if not module_name or not attr:
+            raise ValueError(f"Invalid adapter factory path: {factory_path!r}")
+
+        key = name.lower()
+        existing = self._adapter_paths.get(key)
+        if existing is not None and existing != factory_path:
+            raise ValueError(f"Duplicate adapter {key!r}: {existing!r} vs {factory_path!r}")
+        self._adapter_paths[key] = factory_path
+
+    def create(self, name: str, **kwargs: object) -> ManipulatorAdapter:
         """Create an adapter instance by name.
 
         Args:
@@ -66,40 +82,69 @@ class AdapterRegistry:
             KeyError: If adapter name is not found
         """
         key = name.lower()
-        if key not in self._adapters:
+        if key not in self._adapters and key not in self._adapter_paths:
             raise KeyError(f"Unknown adapter: {name}. Available: {self.available()}")
 
-        return self._adapters[key](**kwargs)
+        return self._resolve_adapter(key)(**kwargs)
 
     def available(self) -> list[str]:
         """List available adapter names."""
-        return sorted(self._adapters.keys())
+        return sorted(set(self._adapter_paths) | set(self._adapters))
 
     def discover(self) -> None:
-        """Discover and register adapters from subpackages.
+        """Discover and register adapter manifests from subpackages.
 
-        Scans for subdirectories containing an adapter.py module.
+        Scans for subdirectories containing a ``__registry__.py`` manifest.
         Can be called multiple times to pick up newly added adapters.
         """
-        from pathlib import Path
+        import dimos.hardware.manipulators as pkg
 
-        pkg_dir = Path(__file__).parent
-        for child in sorted(pkg_dir.iterdir()):
-            if not child.is_dir() or child.name.startswith(("_", ".")):
-                continue
-            if not (child / "adapter.py").exists():
-                continue
-            try:
-                module = importlib.import_module(
-                    f"dimos.hardware.manipulators.{child.name}.adapter"
-                )
-                if hasattr(module, "register"):
-                    module.register(self)
-            except ImportError as e:
-                logger.debug(f"Skipping adapter {child.name}: {e}")
+        for root in pkg.__path__:
+            for child in sorted(Path(root).iterdir()):
+                if not child.is_dir() or child.name.startswith(("_", ".")):
+                    continue
+                if not (child / "__registry__.py").exists():
+                    continue
+
+                module_name = f"dimos.hardware.manipulators.{child.name}.__registry__"
+                module = importlib.import_module(module_name)
+                adapter_factories_obj = getattr(module, "ADAPTER_FACTORIES", None)
+                if not isinstance(adapter_factories_obj, Mapping):
+                    raise TypeError(f"{module_name} must define ADAPTER_FACTORIES")
+                adapter_factories = cast("Mapping[object, object]", adapter_factories_obj)
+                for name, factory_path in adapter_factories.items():
+                    if not isinstance(name, str) or not isinstance(factory_path, str):
+                        raise TypeError(
+                            f"{module_name}.ADAPTER_FACTORIES must map strings to strings"
+                        )
+                    self.register_path(name, factory_path)
+
+    def _resolve_adapter(self, key: str) -> AdapterFactory:
+        if key in self._adapters:
+            return self._adapters[key]
+        factory_path = self._adapter_paths[key]
+        module_name, attr = factory_path.split(":", maxsplit=1)
+        try:
+            module = importlib.import_module(module_name)
+        except ModuleNotFoundError as exc:
+            if exc.name is not None and module_name.startswith(exc.name):
+                raise ImportError(
+                    f"Adapter {key!r} is registered to missing module {module_name!r}"
+                ) from exc
+            raise
+        try:
+            factory = cast("AdapterFactory", getattr(module, attr))
+        except AttributeError as exc:
+            raise ImportError(
+                f"Adapter {key!r} is registered to missing factory {factory_path!r}"
+            ) from exc
+        if not callable(factory):
+            raise TypeError(f"Adapter factory {factory_path!r} is not callable")
+        self._adapters[key] = factory
+        return factory
 
 
 adapter_registry = AdapterRegistry()
 adapter_registry.discover()
 
-__all__ = ["AdapterRegistry", "adapter_registry"]
+__all__ = ["AdapterFactory", "AdapterRegistry", "adapter_registry"]
