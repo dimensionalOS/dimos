@@ -38,7 +38,9 @@ from dimos.utils.benchmarking.tuning import Provenance, derive_config, git_sha
 from dimos.utils.characterization.modeling.pose_fopdt import (
     PoseFopdtParams,
     estimate_deadtime,
+    fit_pose_fopdt,
     fit_pose_fopdt_multi,
+    pose_step_response,
 )
 from dimos.utils.characterization.recording_io import (
     Recording,
@@ -195,6 +197,105 @@ def fit_recording_pose_domain(
     return PoseDomainFit(plant=plant, axes=axes, per_amplitude=per_amplitude)
 
 
+def _write_pose_plots(
+    recording: Recording,
+    fit: PoseDomainFit,
+    out_dir: Path,
+    stem: str,
+    *,
+    tau_bounds: tuple[float, float],
+    l_bounds: tuple[float, float],
+) -> list[Path]:
+    """Pose-domain diagnostic PNGs: per-step measured-vs-model overlay
+    (``_steps.png``) and a per-amplitude K/tau envelope (``_envelope.png``)."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    by_axis: dict[str, list[StepSpan]] = {a: [] for a in _AXES}
+    for span in segment_steps(recording):
+        by_axis[span.axis].append(span)
+    written: list[Path] = []
+
+    active = {a: spans for a, spans in by_axis.items() if spans}
+    if active:
+        ncols = max(len(spans) for spans in active.values())
+        nrows = len(active)
+        fig, axes = plt.subplots(nrows, ncols, figsize=(4 * ncols, 3 * nrows), squeeze=False)
+        for row, (axis, spans) in enumerate(active.items()):
+            axis_fit = fit.axes[axis]
+            for col in range(ncols):
+                ax = axes[row][col]
+                if col >= len(spans):
+                    ax.axis("off")
+                    continue
+                span = spans[col]
+                t_rel, p_meas = step_pose_channel(recording, span)
+                if t_rel.size < 4:
+                    ax.axis("off")
+                    continue
+                ax.plot(t_rel, p_meas, "k.", ms=4, label="measured")
+                if np.isfinite(axis_fit.K):
+                    model = float(p_meas[0]) + pose_step_response(
+                        t_rel, axis_fit.K, axis_fit.tau, axis_fit.L, span.amplitude
+                    )
+                    ax.plot(t_rel, model, "-", lw=2, color="tab:green", label="pose-domain")
+                ax.set_title(
+                    f"{axis} @ {span.amplitude:g}  (r²={axis_fit.r_squared:.3f})", fontsize=9
+                )
+                if row == nrows - 1:
+                    ax.set_xlabel("t since cmd (s)")
+                if col == 0:
+                    ax.set_ylabel("pose channel")
+                if row == 0 and col == 0:
+                    ax.legend(fontsize=7)
+        fig.suptitle(f"{stem} — measured pose vs pose-domain fit")
+        fig.tight_layout()
+        steps_path = out_dir / f"{stem}_steps.png"
+        fig.savefig(steps_path, dpi=110)
+        plt.close(fig)
+        written.append(steps_path)
+
+    fig, axes = plt.subplots(2, len(_AXES), figsize=(4 * len(_AXES), 6), squeeze=False)
+    for col, axis in enumerate(_AXES):
+        axis_fit = fit.axes[axis]
+        amps, ks, taus = [], [], []
+        for span in by_axis[axis]:
+            t_rel, p_meas = step_pose_channel(recording, span)
+            if t_rel.size < 4:
+                continue
+            single = fit_pose_fopdt(
+                t_rel, p_meas, span.amplitude, axis_fit.L, tau_bounds=tau_bounds, l_bounds=l_bounds
+            )
+            if single.converged:
+                amps.append(abs(span.amplitude))
+                ks.append(single.K)
+                taus.append(single.tau)
+        axes[0][col].plot(amps, ks, "o-", color="tab:blue")
+        axes[1][col].plot(amps, taus, "o-", color="tab:orange")
+        if np.isfinite(axis_fit.K):
+            axes[0][col].axhline(
+                axis_fit.K, ls="--", color="gray", label=f"joint K={axis_fit.K:.2f}"
+            )
+        if np.isfinite(axis_fit.tau):
+            axes[1][col].axhline(
+                axis_fit.tau, ls="--", color="gray", label=f"joint τ={axis_fit.tau:.2f}"
+            )
+        axes[0][col].set_title(f"{axis}: K vs amp", fontsize=9)
+        axes[0][col].legend(fontsize=7)
+        axes[1][col].set_title(f"{axis}: tau vs amp", fontsize=9)
+        axes[1][col].set_xlabel("commanded amplitude")
+        axes[1][col].legend(fontsize=7)
+    fig.suptitle(f"{stem} — per-amplitude envelope")
+    fig.tight_layout()
+    env_path = out_dir / f"{stem}_envelope.png"
+    fig.savefig(env_path, dpi=110)
+    plt.close(fig)
+    written.append(env_path)
+    return written
+
+
 def reprocess(
     db_path: str | Path,
     *,
@@ -208,6 +309,7 @@ def reprocess(
     l_by_axis: dict[str, float] | None = None,
     tau_bounds: tuple[float, float] = (0.03, 0.6),
     l_bounds: tuple[float, float] = (0.05, 0.30),
+    plots: bool = True,
 ) -> Path:
     """Re-fit ``db_path`` with the pose-domain method and write a TuningConfig.
 
@@ -268,6 +370,9 @@ def reprocess(
         for axis, f in fit.axes.items()
     }
     (out_dir / f"{stem}_quality.json").write_text(json.dumps(quality, indent=2))
+
+    if plots:
+        _write_pose_plots(recording, fit, out_dir, stem, tau_bounds=tau_bounds, l_bounds=l_bounds)
     return artifact_path
 
 
@@ -301,6 +406,7 @@ def main() -> None:
         action="store_true",
         help="skip deadtime profiling; use --l-vx/--l-vy/--l-wz (or nominal) instead",
     )
+    parser.add_argument("--no-plots", action="store_true", help="skip the _steps/_envelope PNGs")
     parser.add_argument("--l-vx", type=float, default=None, help="fixed deadtime L for vx (s)")
     parser.add_argument("--l-vy", type=float, default=None, help="fixed deadtime L for vy (s)")
     parser.add_argument("--l-wz", type=float, default=None, help="fixed deadtime L for wz (s)")
@@ -337,6 +443,7 @@ def main() -> None:
         l_by_axis=l_by_axis,
         tau_bounds=(args.tau_min, args.tau_max),
         l_bounds=(args.l_min, args.l_max),
+        plots=not args.no_plots,
     )
     quality = json.loads((artifact.parent / f"{artifact.stem}_quality.json").read_text())
     print(f"\nartifact: {artifact}")
