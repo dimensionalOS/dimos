@@ -116,7 +116,16 @@ def test_basic_deployment(dimos) -> None:
     robot.start()
     nav.start()
 
-    time.sleep(1)
+    # Messages flow end-to-end at ~10 Hz, but under heavy parallel load
+    # (e.g. `pytest -n auto`) the publisher and LCM transport threads get
+    # starved, so the count after a fixed 1s window is unreliable. Poll up to a
+    # generous deadline instead — this still verifies the pipeline delivers, it
+    # just doesn't assume a wall-clock throughput.
+    deadline = time.perf_counter() + 15
+    while time.perf_counter() < deadline:
+        if robot.mov_msg_count >= 8 and nav.odom_msg_count >= 8 and nav.lidar_msg_count >= 8:
+            break
+        time.sleep(0.1)
 
     assert robot.mov_msg_count >= 8
     assert nav.odom_msg_count >= 8
