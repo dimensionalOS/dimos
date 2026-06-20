@@ -382,6 +382,14 @@ def synthesize_recording(
     measurement = measurement if measurement is not None else MeasurementModel()
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    # Write a FRESH recording each call -- appending to an existing db collides on
+    # the per-stream UNIQUE ts. Clear the db and its WAL/SHM sidecars first.
+    for stale in (
+        db_path,
+        db_path.with_suffix(db_path.suffix + "-wal"),
+        db_path.with_suffix(db_path.suffix + "-shm"),
+    ):
+        stale.unlink(missing_ok=True)
     rng = np.random.default_rng(seed)
 
     t_cmd, cmds, onsets = _command_timeline(segments, command_rate_hz)
