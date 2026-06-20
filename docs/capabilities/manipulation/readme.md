@@ -114,26 +114,15 @@ request. For example, `planner_name=roboplan` requires
 `world_backend=roboplan`, and `kinematics_name=drake_optimization` requires
 `world_backend=drake`.
 
-Install RoboPlan together with the default manipulation dependencies:
+Install the manipulation dependencies:
 
 ```bash
-uv sync --extra manipulation-roboplan --inexact
+uv sync --extra manipulation --inexact
 ```
 
-The RoboPlan manipulation extra includes the default `manipulation` dependencies
-and installs `roboplan-dimos` from PyPI.
+The `manipulation` extra includes RoboPlan via `roboplan-dimos` from PyPI.
 The `--inexact` flag preserves other extras already installed in your current
 environment.
-
-RoboPlan builds C++ bindings locally. Install system build prerequisites before
-syncing the extra; for example, on Ubuntu:
-
-```bash
-sudo apt-get install libeigen3-dev
-```
-
-If CMake reports another missing package, install the matching development
-package or expose its CMake package directory through `CMAKE_PREFIX_PATH`.
 
 Safety behavior for unsupported RoboPlan features:
 

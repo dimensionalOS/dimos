@@ -38,7 +38,7 @@ try:
 except ImportError as exc:
     raise ImportError(
         "RoboPlanWorld requires the optional roboplan dependency. "
-        "Install the manipulation-roboplan extra before selecting the roboplan backend."
+        "Install the manipulation extra before selecting the roboplan backend."
     ) from exc
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
