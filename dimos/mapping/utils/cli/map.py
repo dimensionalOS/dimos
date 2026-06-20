@@ -24,7 +24,7 @@ import rerun as rr
 import rerun.blueprint as rrb
 import typer
 
-# Heavy dimos imports (mapping/memory2 → torch, transformers, open3d, sklearn) are
+# Heavy dimos imports (mapping/memory2 → torch, transformers, open3d) are
 # deferred into the function bodies below so that `dimos --help` — which imports this
 # module just to register the `map` subcommand — stays fast. See test_cli_startup.py.
 if TYPE_CHECKING:
