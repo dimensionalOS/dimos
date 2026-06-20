@@ -80,7 +80,15 @@ export GOOGLE_MAPS_API_KEY=...  # For GoogleMapsSkillContainer
 RosettaDrone is an Android app that bridges DJI SDK to MAVLink protocol. Without it, the drone cannot communicate with DimOS.
 
 ### Option 1: Pre-built APK
-1. Download latest release: https://github.com/RosettaDrone/rosettadrone/releases
+
+> **Heads up:** the maintained [`RosettaDrone/rosettadrone`](https://github.com/RosettaDrone/rosettadrone)
+> repo has **no GitHub releases**, so there is no official pre-built APK. The only pre-built APK
+> available is a **2018 build** from the original `diux-dev` project; it targets a legacy DJI Mobile
+> SDK and may fail to register with current DJI accounts/firmware. Treat it as a quick test only —
+> for a working current build, use [Option 2: Build from Source](#option-2-build-from-source).
+
+1. Download the legacy APK (older DJI SDK, use at your own risk):
+   <https://github.com/diux-dev/rosettadrone/releases/download/v0.5/Rosetta.Drone.v0.5.apk>
 2. Install on Android device connected to DJI controller
 3. Configure in app:
    - MAVLink Target IP: Your computer's IP
