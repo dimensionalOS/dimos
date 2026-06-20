@@ -37,6 +37,7 @@ if TYPE_CHECKING:
         Obstacle,
         PlanningGroupID,
         PlanningResult,
+        PlanningSceneInfo,
         WorldRobotID,
     )
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -188,9 +189,13 @@ class VisualizationSpec(Protocol):
     Visualization backends expose inspection and preview behavior without being part of
     the world/collision/kinematics contract.
 
-    Implementations:
-        - DrakeWorld: Uses Drake Meshcat for visualization.
+    Implementations may render, ignore, or map semantic events to their native
+    visualization affordances.
     """
+
+    def initialize_scene(self, scene: PlanningSceneInfo) -> None:
+        """Receive stable planning-scene metadata after world startup."""
+        ...
 
     def get_visualization_url(self) -> str | None:
         """Get visualization URL if enabled."""

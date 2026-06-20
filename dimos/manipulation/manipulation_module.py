@@ -39,16 +39,15 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.manipulation.planning.factory import create_kinematics, create_planner
+from dimos.manipulation.planning.factory import create_planning_specs, create_world
 from dimos.manipulation.planning.groups import (
     PlanningGroup,
     joint_target_to_global_names,
     planning_group_id_from_selector,
 )
 from dimos.manipulation.planning.kinematics.config import (
-    JacobianKinematicsConfig,
     ManipulationKinematicsConfig,
-    kinematics_config_from_name,
+    PinkKinematicsConfig,
 )
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.planning_identifiers import (
@@ -72,6 +71,12 @@ from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator
     JointTrajectoryGenerator,
 )
 from dimos.manipulation.skill_errors import ManipulationSkillError
+from dimos.manipulation.visualization.config import (
+    ManipulationVisualizationConfig,
+    NoManipulationVisualizationConfig,
+)
+from dimos.manipulation.visualization.factory import create_manipulation_visualization
+from dimos.manipulation.visualization.types import TargetEvaluation
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -109,9 +114,11 @@ class ManipulationModuleConfig(ModuleConfig):
 
     robots: list[RobotModelConfig] = Field(default_factory=list)
     planning_timeout: float = 10.0
-    enable_viz: bool = False
+    visualization: ManipulationVisualizationConfig = Field(
+        default_factory=NoManipulationVisualizationConfig
+    )
     planner_name: str = "rrt_connect"  # "rrt_connect"
-    kinematics: ManipulationKinematicsConfig = Field(default_factory=JacobianKinematicsConfig)
+    kinematics: ManipulationKinematicsConfig = Field(default_factory=PinkKinematicsConfig)
     # Deprecated: use kinematics.backend instead.
     kinematics_name: str | None = None  # "jacobian", "drake_optimization", or "pink"
     # Floor plane Z height (meters). When set, a box obstacle is added at startup
@@ -141,6 +148,7 @@ class ManipulationModule(Module):
         self._state = ManipulationState.IDLE
         self._lock = threading.Lock()
         self._error_message = ""
+        self._planning_epoch = 0
 
         # Planning components (initialized in start())
         self._world_monitor: WorldMonitor | None = None
@@ -186,7 +194,22 @@ class ManipulationModule(Module):
             logger.warning("No robots configured, planning disabled")
             return
 
-        self._world_monitor = WorldMonitor(enable_viz=self.config.enable_viz)
+        world = create_world(visualization=self.config.visualization)
+        planning_specs = create_planning_specs(
+            world=world,
+            planner_name=self.config.planner_name,
+            kinematics_name=self.config.kinematics_name,
+            kinematics=self.config.kinematics,
+        )
+        self._world_monitor = planning_specs.world_monitor
+        self._planner = planning_specs.planner
+        self._kinematics = planning_specs.kinematics
+        visualization = create_manipulation_visualization(
+            self.config.visualization,
+            world=world,
+            world_monitor=self._world_monitor,
+            manipulation_module=self,
+        )
 
         for robot_config in self.config.robots:
             robot_id = self._world_monitor.add_robot(robot_config)
@@ -219,16 +242,13 @@ class ManipulationModule(Module):
         for _, (robot_id, _, _) in self._robots.items():
             self._world_monitor.start_state_monitor(robot_id)
 
-        if self.config.enable_viz:
+        self._world_monitor.set_visualization(visualization)
+        self._world_monitor.sync_visualization_scene()
+
+        if self._world_monitor.visualization is not None:
             self._world_monitor.start_visualization_thread(rate_hz=10.0)
             if url := self._world_monitor.get_visualization_url():
                 logger.info(f"Visualization: {url}")
-
-        self._planner = create_planner(name=self.config.planner_name)
-        kinematics_config = self.config.kinematics
-        if self.config.kinematics_name is not None:
-            kinematics_config = kinematics_config_from_name(self.config.kinematics_name)
-        self._kinematics = create_kinematics(config=kinematics_config)
 
         # Start TF publishing thread if any robot has tf_extra_links
         if any(c.tf_extra_links for _, c, _ in self._robots.values()):
@@ -387,7 +407,12 @@ class ManipulationModule(Module):
 
     @rpc
     def cancel(self) -> bool:
-        """Cancel current motion."""
+        """Cancel current motion or invalidate an in-progress plan."""
+        if self._state == ManipulationState.PLANNING:
+            self._planning_epoch += 1
+            self._state = ManipulationState.IDLE
+            logger.info("Planning cancelled")
+            return True
         if self._state != ManipulationState.EXECUTING:
             return False
         self._state = ManipulationState.IDLE
@@ -407,6 +432,8 @@ class ManipulationModule(Module):
                 "INVALID_STATE",
                 "Cannot reset while executing — cancel the motion first",
             )
+        if self._state == ManipulationState.PLANNING:
+            self._planning_epoch += 1
         self._state = ManipulationState.IDLE
         self._error_message = ""
         return SkillResult.ok("Reset to IDLE — ready for new commands")
@@ -466,6 +493,7 @@ class ManipulationModule(Module):
             if self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED):
                 logger.warning(f"Cannot plan: state is {self._state.name}")
                 return None
+            self._planning_epoch += 1
             self._state = ManipulationState.PLANNING
         return tuple(group_ids)
 
@@ -693,7 +721,6 @@ class ManipulationModule(Module):
         robot = self._get_robot(robot_name)
         if robot is None:
             return False
-
         selected_robot_name, _, _, _ = robot
         group_id = self._default_group_id_for_robot(selected_robot_name)
         if group_id is None:
@@ -822,7 +849,7 @@ class ManipulationModule(Module):
         if robot_name is not None and robot_name not in self._affected_robot_names(plan):
             logger.error("Generated plan does not affect robot '%s'", robot_name)
             return False
-        animation_duration = duration if duration is not None else 3.0
+        animation_duration = duration if duration is not None else 1.0
         self._world_monitor.animate_plan(plan, animation_duration)
         return True
 
@@ -915,6 +942,27 @@ class ManipulationModule(Module):
             else None,
         }
 
+    def robot_items(self) -> list[tuple[RobotName, WorldRobotID, RobotModelConfig]]:
+        """Return configured robots for in-process visualization adapters."""
+        return [(name, robot_id, config) for name, (robot_id, config, _) in self._robots.items()]
+
+    def robot_id_for_name(self, robot_name: RobotName) -> WorldRobotID | None:
+        """Return the planning-world robot id for a configured robot name."""
+        entry = self._robots.get(robot_name)
+        return entry[0] if entry is not None else None
+
+    def robot_name_for_id(self, robot_id: WorldRobotID) -> RobotName | None:
+        """Return the configured robot name for a planning-world robot id."""
+        for robot_name, (candidate_id, _, _) in self._robots.items():
+            if candidate_id == robot_id:
+                return robot_name
+        return None
+
+    def get_robot_config(self, robot_name: RobotName) -> RobotModelConfig | None:
+        """Return the robot model config for an in-process visualization adapter."""
+        entry = self._robots.get(robot_name)
+        return entry[1] if entry is not None else None
+
     @rpc
     def get_init_joints(self, robot_name: RobotName | None = None) -> JointState | None:
         """Get the init joint state (captured at startup or set manually).
@@ -926,6 +974,83 @@ class ManipulationModule(Module):
         if robot is None:
             return None
         return self._init_joints.get(robot[0])
+
+    def evaluate_joint_target(
+        self, joints: JointState | None, robot_name: RobotName
+    ) -> TargetEvaluation:
+        """Evaluate a joint target for visualization without planning a path."""
+        robot_id = self.robot_id_for_name(robot_name)
+        if robot_id is None or self._world_monitor is None:
+            return {
+                "success": False,
+                "status": "NO_ROBOT",
+                "message": f"Unknown robot: {robot_name}",
+                "collision_free": False,
+                "ee_pose": None,
+                "joint_state": None,
+            }
+        if joints is None:
+            return {
+                "success": False,
+                "status": "NO_TARGET",
+                "message": "No joint target provided",
+                "collision_free": False,
+                "ee_pose": None,
+                "joint_state": None,
+            }
+        target = JointState(joints)
+        collision_free = self._world_monitor.is_state_valid(robot_id, target)
+        return {
+            "success": True,
+            "status": "FEASIBLE" if collision_free else "COLLISION",
+            "message": "Target is collision-free" if collision_free else "Target is in collision",
+            "collision_free": collision_free,
+            "ee_pose": self._world_monitor.get_ee_pose(robot_id, target),
+            "joint_state": target,
+        }
+
+    def evaluate_pose_target(self, pose: Pose, robot_name: RobotName) -> TargetEvaluation:
+        """Evaluate a Cartesian target for visualization without planning a path."""
+        robot_id = self.robot_id_for_name(robot_name)
+        if robot_id is None:
+            return {
+                "success": False,
+                "joint_state": None,
+                "status": "UNKNOWN_ROBOT",
+                "message": f"Unknown robot: {robot_name}",
+                "collision_free": False,
+            }
+        if self._world_monitor is None or self._kinematics is None:
+            return {
+                "success": False,
+                "joint_state": None,
+                "status": "UNAVAILABLE",
+                "message": "Planning is not initialized or current state is unavailable",
+                "collision_free": False,
+            }
+        current = self._world_monitor.get_current_joint_state(robot_id)
+        if current is None:
+            return {
+                "success": False,
+                "joint_state": None,
+                "status": "UNAVAILABLE",
+                "message": "Planning is not initialized or current state is unavailable",
+                "collision_free": False,
+            }
+        ik = self._solve_ik_for_pose(robot_id, pose, current, check_collision=True)
+        joint_state = JointState(ik.joint_state) if ik.is_success() and ik.joint_state else None
+        collision_free = bool(
+            joint_state is not None and self._world_monitor.is_state_valid(robot_id, joint_state)
+        )
+        return {
+            "success": joint_state is not None and collision_free,
+            "joint_state": joint_state,
+            "status": ik.status.name,
+            "message": ik.message,
+            "position_error": ik.position_error,
+            "orientation_error": ik.orientation_error,
+            "collision_free": collision_free,
+        }
 
     @rpc
     def set_init_joints(self, joint_state: JointState, robot_name: RobotName | None = None) -> bool:

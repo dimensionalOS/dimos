@@ -18,9 +18,10 @@ from __future__ import annotations
 
 from pathlib import Path
 import threading
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
@@ -35,6 +36,7 @@ from dimos.manipulation.planning.spec.enums import IKStatus, PlanningStatus
 from dimos.manipulation.planning.spec.models import (
     GeneratedPlan,
     IKResult,
+    PlanningSceneInfo,
 )
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -92,31 +94,40 @@ def simple_trajectory():
     )
 
 
-def _make_module():
-    """Create a ManipulationModule instance with mocked __init__."""
-    with patch.object(ManipulationModule, "__init__", lambda self: None):
-        module = ManipulationModule.__new__(ManipulationModule)
-        module._state = ManipulationState.IDLE
-        module._lock = threading.Lock()
-        module._error_message = ""
-        module._robots = {}
-        module._world_monitor = None
-        module._planner = None
-        module._kinematics = None
-        module._coordinator_client = None
-        module._last_plan = None
-        return module
+class _ManipulationModuleHarness(ManipulationModule):
+    def __init__(self) -> None:
+        self._state = ManipulationState.IDLE
+        self._lock = threading.Lock()
+        self._error_message = ""
+        self._planning_epoch = 0
+        self._robots = {}
+        self._world_monitor = None
+        self._planner = None
+        self._kinematics = None
+        self._coordinator_client = None
+        self._last_plan = None
+        self.config = MagicMock(planning_timeout=10.0)
+
+
+def _make_module() -> ManipulationModule:
+    """Create a lightweight ManipulationModule harness for behavior tests."""
+    return _ManipulationModuleHarness()
 
 
 class TestStateMachine:
     """Test state transitions."""
 
-    def test_cancel_only_during_execution(self):
-        """Cancel only works in EXECUTING state."""
+    def test_cancel_interrupts_active_work(self):
+        """Cancel works for executing motion and in-progress planning."""
         module = _make_module()
 
         module._state = ManipulationState.IDLE
         assert module.cancel() is False
+
+        module._state = ManipulationState.PLANNING
+        assert module.cancel() is True
+        assert module._state == ManipulationState.IDLE
+        assert module._planning_epoch == 1
 
         module._state = ManipulationState.EXECUTING
         assert module.cancel() is True
@@ -198,59 +209,80 @@ class TestRobotSelection:
         assert result[0] == "left"
 
 
+class PlanningInitializationHarness:
+    def __init__(self, mocker: MockerFixture) -> None:
+        self.mock_world = MagicMock()
+        self.mock_world_monitor = MagicMock(spec=WorldMonitor)
+        self.mock_world_monitor.add_robot.return_value = "robot_id"
+        self.planning_specs = MagicMock(
+            world_monitor=self.mock_world_monitor,
+            planner=MagicMock(),
+            kinematics=MagicMock(),
+        )
+        self.mock_planning_specs = mocker.patch(
+            "dimos.manipulation.manipulation_module.create_planning_specs",
+            return_value=self.planning_specs,
+        )
+        mocker.patch(
+            "dimos.manipulation.manipulation_module.create_world",
+            return_value=self.mock_world,
+        )
+        mocker.patch("dimos.manipulation.manipulation_module.create_manipulation_visualization")
+        mocker.patch("dimos.manipulation.manipulation_module.JointTrajectoryGenerator")
+
+
+@pytest.fixture
+def planning_initialization(mocker: MockerFixture) -> PlanningInitializationHarness:
+    return PlanningInitializationHarness(mocker)
+
+
 class TestPlanningInitialization:
     """Test planning backend configuration wiring."""
 
-    def test_kinematics_config_is_passed_to_factory(self, robot_config):
+    def test_default_kinematics_config_uses_pink(self) -> None:
+        """Pink IK is the default solver for manipulation modules."""
+        config = ManipulationModuleConfig()
+
+        assert isinstance(config.kinematics, PinkKinematicsConfig)
+
+    def test_kinematics_config_is_passed_to_factory(
+        self, robot_config, planning_initialization: PlanningInitializationHarness
+    ):
         """ManipulationModule config selects the requested IK backend."""
         module = _make_module()
         kinematics = PinkKinematicsConfig(max_iterations=100, dt=0.02)
         module.config = ManipulationModuleConfig(
             robots=[robot_config],
             kinematics=kinematics,
-            enable_viz=False,
         )
-        mock_world_monitor = MagicMock(spec=WorldMonitor)
-        mock_world_monitor.add_robot.return_value = "robot_id"
 
-        with (
-            patch(
-                "dimos.manipulation.manipulation_module.WorldMonitor",
-                return_value=mock_world_monitor,
-            ),
-            patch("dimos.manipulation.manipulation_module.JointTrajectoryGenerator"),
-            patch("dimos.manipulation.manipulation_module.create_planner") as mock_planner,
-            patch("dimos.manipulation.manipulation_module.create_kinematics") as mock_kinematics,
-        ):
-            module._initialize_planning()
+        module._initialize_planning()
 
-        mock_planner.assert_called_once_with(name="rrt_connect")
-        mock_kinematics.assert_called_once_with(config=kinematics)
+        planning_initialization.mock_planning_specs.assert_called_once_with(
+            world=planning_initialization.mock_world,
+            planner_name="rrt_connect",
+            kinematics_name=None,
+            kinematics=kinematics,
+        )
 
-    def test_legacy_kinematics_name_still_selects_backend(self, robot_config):
+    def test_legacy_kinematics_name_still_selects_backend(
+        self, robot_config, planning_initialization: PlanningInitializationHarness
+    ):
         """The old kinematics_name field remains a compatibility shim."""
         module = _make_module()
         module.config = ManipulationModuleConfig(
             robots=[robot_config],
             kinematics_name="pink",
-            enable_viz=False,
         )
-        mock_world_monitor = MagicMock(spec=WorldMonitor)
-        mock_world_monitor.add_robot.return_value = "robot_id"
 
-        with (
-            patch(
-                "dimos.manipulation.manipulation_module.WorldMonitor",
-                return_value=mock_world_monitor,
-            ),
-            patch("dimos.manipulation.manipulation_module.JointTrajectoryGenerator"),
-            patch("dimos.manipulation.manipulation_module.create_planner"),
-            patch("dimos.manipulation.manipulation_module.create_kinematics") as mock_kinematics,
-        ):
-            module._initialize_planning()
+        module._initialize_planning()
 
-        call_config = mock_kinematics.call_args.kwargs["config"]
-        assert isinstance(call_config, PinkKinematicsConfig)
+        planning_initialization.mock_planning_specs.assert_called_once_with(
+            world=planning_initialization.mock_world,
+            planner_name="rrt_connect",
+            kinematics_name="pink",
+            kinematics=module.config.kinematics,
+        )
 
     def test_nested_kinematics_config_parses_cli_override_shape(self) -> None:
         """Pydantic parses the nested CLI config shape used by -o overrides."""
@@ -553,13 +585,42 @@ def _trajectory_generator() -> MagicMock:
     return generator
 
 
-def _make_world_monitor_with_viz(viz: object | None) -> WorldMonitor:
-    world = viz if viz is not None else object()
-    with patch(
-        "dimos.manipulation.planning.monitor.world_monitor.create_world",
-        return_value=world,
-    ):
-        return WorldMonitor(enable_viz=viz is not None)
+def _make_world_monitor_with_viz(viz: VisualizationSpec | None) -> WorldMonitor:
+    world = MagicMock()
+    return WorldMonitor(
+        world=world,
+        visualization=viz,
+    )
+
+
+class FakeVisualization:
+    def __init__(self) -> None:
+        self.close_count = 0
+        self.published = False
+        self.preview_shown: list[tuple[str, ...]] = []
+        self.preview_hidden: list[tuple[str, ...]] = []
+        self.animations: list[tuple[GeneratedPlan, float]] = []
+
+    def initialize_scene(self, scene: PlanningSceneInfo) -> None:
+        pass
+
+    def get_visualization_url(self) -> str | None:
+        return "123"
+
+    def publish_visualization(self, ctx: object | None = None) -> None:
+        self.published = True
+
+    def show_preview(self, group_ids: Sequence[str]) -> None:
+        self.preview_shown.append(tuple(group_ids))
+
+    def hide_preview(self, group_ids: Sequence[str]) -> None:
+        self.preview_hidden.append(tuple(group_ids))
+
+    def animate_plan(self, plan: GeneratedPlan, duration: float = 3.0) -> None:
+        self.animations.append((plan, duration))
+
+    def close(self) -> None:
+        self.close_count += 1
 
 
 class TestOnJointState:
@@ -675,8 +736,7 @@ class TestOnJointState:
 
 class TestWorldMonitorVisualization:
     def test_visualization_routing_and_stop_all_monitors(self):
-        viz = MagicMock(spec=VisualizationSpec)
-        viz.get_visualization_url.return_value = 123
+        viz = FakeVisualization()
         monitor = _make_world_monitor_with_viz(viz)
         state_monitor = MagicMock()
         obstacle_monitor = MagicMock()
@@ -697,14 +757,14 @@ class TestWorldMonitorVisualization:
         monitor.hide_preview(group_ids)
         monitor.animate_plan(plan, 4.5)
         assert monitor.visualization is viz
-
-        viz.show_preview.assert_called_once_with(group_ids)
-        viz.hide_preview.assert_called_once_with(group_ids)
-        viz.animate_plan.assert_called_once_with(plan, 4.5)
+        assert viz.published is True
+        assert viz.preview_shown == [group_ids]
+        assert viz.preview_hidden == [group_ids]
+        assert viz.animations == [(plan, 4.5)]
 
         monitor.stop_all_monitors()
 
-        viz.close.assert_called_once()
+        assert viz.close_count == 1
         state_monitor.stop.assert_called_once()
         obstacle_monitor.stop.assert_called_once()
 
@@ -741,7 +801,7 @@ class TestManipulationPreview:
         module._world_monitor.hide_preview.assert_called_once_with(group_ids)
         module._world_monitor.publish_visualization.assert_called_once_with()
 
-    def test_preview_plan_uses_last_plan_with_default_duration(self):
+    def test_preview_plan_uses_safe_default_duration(self):
         module = _make_module()
         module._world_monitor = MagicMock()
         module._last_plan = GeneratedPlan(
@@ -752,7 +812,7 @@ class TestManipulationPreview:
 
         assert module.preview_plan() is True
 
-        module._world_monitor.animate_plan.assert_called_once_with(module._last_plan, 3.0)
+        module._world_monitor.animate_plan.assert_called_once_with(module._last_plan, 1.0)
 
     def test_preview_plan_explicit_duration_overrides_default(self):
         module = _make_module()
@@ -781,7 +841,7 @@ class TestManipulationPreview:
 
         assert module.preview_plan(robot_name="arm") is True
 
-        module._world_monitor.animate_plan.assert_called_once_with(module._last_plan, 3.0)
+        module._world_monitor.animate_plan.assert_called_once_with(module._last_plan, 1.0)
 
     def test_preview_plan_rejects_unaffected_robot_filter(self):
         module = _make_module()
@@ -946,7 +1006,7 @@ class TestGeneratedPlanProjection:
 
         assert module.preview_plan(robot_name="left") is True
 
-        module._world_monitor.animate_plan.assert_called_once_with(module._last_plan, 3.0)
+        module._world_monitor.animate_plan.assert_called_once_with(module._last_plan, 1.0)
 
     def test_has_and_clear_planned_path_use_last_plan(self):
         module = _make_module()

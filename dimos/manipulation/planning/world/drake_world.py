@@ -899,7 +899,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
         positions = [float(full_positions[idx]) for idx in robot_data.joint_indices]
         return JointState(
-            name=make_global_joint_names(robot_data.config.name, robot_data.config.joint_names),
+            name=list(robot_data.config.joint_names),
             position=positions,
         )
 
@@ -1128,6 +1128,10 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         return np.vstack([jacobian_group[3:6, :], jacobian_group[0:3, :]])
 
     # Visualization
+
+    def initialize_scene(self, scene: PlanningSceneInfo) -> None:
+        """Embedded Meshcat observes the Drake world directly; no extra sync needed."""
+        return None
 
     def get_visualization_url(self) -> str | None:
         """Get visualization URL if enabled."""
