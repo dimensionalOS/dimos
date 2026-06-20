@@ -26,10 +26,7 @@ Usage:
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.transport import LCMTransport
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.catalog.ufactory import (
     XARM6_FK_MODEL,
     XARM7_FK_MODEL,
@@ -74,15 +71,8 @@ keyboard_teleop_xarm6 = autoconnect(
     ),
     ManipulationModule.blueprint(
         robots=[_xarm6_cfg.to_robot_model_config()],
-        enable_viz=True,
+        visualization={"backend": "meshcat"},
     ),
-).transports(
-    {
-        ("cartesian_command", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 # XArm7 mock sim + keyboard teleop + Drake visualization
@@ -108,15 +98,8 @@ keyboard_teleop_xarm7 = autoconnect(
     ),
     ManipulationModule.blueprint(
         robots=[_xarm7_cfg.to_robot_model_config()],
-        enable_viz=True,
+        visualization={"backend": "meshcat"},
     ),
-).transports(
-    {
-        ("cartesian_command", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 __all__ = ["keyboard_teleop_xarm6", "keyboard_teleop_xarm7"]

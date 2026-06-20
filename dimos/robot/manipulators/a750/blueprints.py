@@ -25,10 +25,7 @@ Usage:
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.transport import LCMTransport
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.catalog.a750 import A750_FK_MODEL, a750 as _catalog_a750
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
@@ -61,15 +58,8 @@ keyboard_teleop_a750 = autoconnect(
     ),
     ManipulationModule.blueprint(
         robots=[_a750_cfg.to_robot_model_config()],
-        enable_viz=True,
+        visualization={"backend": "meshcat"},
     ),
-).transports(
-    {
-        ("cartesian_command", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 __all__ = ["keyboard_teleop_a750"]

@@ -34,14 +34,12 @@ from dimos.agents.mcp.mcp_server import McpServer
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _catalog_xarm7
 
@@ -55,11 +53,7 @@ _xarm6_planner_cfg = _catalog_xarm6(
 xarm6_planner_only = ManipulationModule.blueprint(
     robots=[_xarm6_planner_cfg.to_robot_model_config()],
     planning_timeout=10.0,
-    enable_viz=True,
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/xarm/joint_states", JointState),
-    }
+    visualization={"backend": "meshcat"},
 )
 
 
@@ -84,11 +78,7 @@ dual_xarm6_planner = ManipulationModule.blueprint(
         _right_arm_cfg.to_robot_model_config(),
     ],
     planning_timeout=10.0,
-    enable_viz=True,
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
+    visualization={"backend": "meshcat"},
 )
 
 
@@ -105,7 +95,7 @@ xarm7_planner_coordinator = autoconnect(
     ManipulationModule.blueprint(
         robots=[_xarm7_cfg.to_robot_model_config()],
         planning_timeout=10.0,
-        enable_viz=True,
+        visualization={"backend": "meshcat"},
     ),
     ControlCoordinator.blueprint(
         tick_rate=100.0,
@@ -114,10 +104,6 @@ xarm7_planner_coordinator = autoconnect(
         hardware=[_xarm7_cfg.to_hardware_component()],
         tasks=[_xarm7_cfg.to_task_config()],
     ),
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 
@@ -176,34 +162,26 @@ _xarm7_perception_cfg = _catalog_xarm7(
     tf_extra_links=["link7"],
 )
 
-xarm_perception = (
-    autoconnect(
-        PickAndPlaceModule.blueprint(
-            robots=[_xarm7_perception_cfg.to_robot_model_config()],
-            planning_timeout=10.0,
-            enable_viz=True,
-            floor_z=-0.02,
-        ),
-        RealSenseCamera.blueprint(
-            base_frame_id="link7",
-            base_transform=_XARM_PERCEPTION_CAMERA_TRANSFORM,
-        ),
-        ObjectSceneRegistrationModule.blueprint(
-            target_frame="world",
-            distance_threshold=0.08,
-            min_detections_for_permanent=3,
-            max_distance=1.0,
-            use_aabb=True,
-            max_obstacle_width=0.06,
-        ),
-    )
-    .transports(
-        {
-            ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        }
-    )
-    .global_config(n_workers=4)
-)
+xarm_perception = autoconnect(
+    PickAndPlaceModule.blueprint(
+        robots=[_xarm7_perception_cfg.to_robot_model_config()],
+        planning_timeout=10.0,
+        visualization={"backend": "meshcat"},
+        floor_z=-0.02,
+    ),
+    RealSenseCamera.blueprint(
+        base_frame_id="link7",
+        base_transform=_XARM_PERCEPTION_CAMERA_TRANSFORM,
+    ),
+    ObjectSceneRegistrationModule.blueprint(
+        target_frame="world",
+        distance_threshold=0.08,
+        min_detections_for_permanent=3,
+        max_distance=1.0,
+        use_aabb=True,
+        max_obstacle_width=0.06,
+    ),
+).global_config(n_workers=4)
 
 
 # XArm7 perception + LLM agent for agentic manipulation.
@@ -305,7 +283,7 @@ xarm_perception_sim = autoconnect(
     PickAndPlaceModule.blueprint(
         robots=[_xarm7_sim_cfg.to_robot_model_config()],
         planning_timeout=10.0,
-        enable_viz=True,
+        visualization={"backend": "meshcat"},
     ),
     MujocoSimModule.blueprint(
         address=str(XARM7_SIM_PATH),
@@ -323,10 +301,6 @@ xarm_perception_sim = autoconnect(
         tasks=[_xarm7_sim_cfg.to_task_config()],
     ),
     RerunBridgeModule.blueprint(),
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 

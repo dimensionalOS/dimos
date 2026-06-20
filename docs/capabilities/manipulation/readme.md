@@ -1,6 +1,6 @@
 # Manipulation
 
-Motion planning and teleoperation for robotic manipulators. Uses Drake for physics simulation and Meshcat for 3D visualization.
+Motion planning and teleoperation for robotic manipulators. Uses Drake for physics simulation and optional Meshcat or Viser planning visualization.
 
 ## Quick Start
 
@@ -46,6 +46,23 @@ dimos run coordinator-mock
 dimos run xarm7-planner-coordinator
 ```
 
+Pink IK is the default solver. Tune it with nested module config overrides:
+
+```bash
+dimos run xarm7-planner-coordinator \
+  -o manipulationmodule.kinematics.backend=pink \
+  -o manipulationmodule.kinematics.max_iterations=100 \
+  -o manipulationmodule.kinematics.dt=0.02
+```
+
+For blueprints that instantiate `PickAndPlaceModule`, use the corresponding
+module prefix:
+
+```bash
+dimos run xarm-perception-sim \
+  -o pickandplacemodule.kinematics.backend=pink
+```
+
 Then use the IPython client:
 
 ```bash
@@ -58,6 +75,68 @@ plan([0.1] * 7)         # Plan to target
 preview()               # Preview in Meshcat
 execute()               # Execute via coordinator
 ```
+
+### Planning Visualization
+
+Manipulation visualization is configured on `ManipulationModuleConfig.visualization`.
+It is independent from the global Rerun stream viewer in `docs/usage/visualization.md`.
+
+Backend choices:
+
+- `meshcat`: embedded Drake/Meshcat visualizer. The planning world must be created with
+  embedded visualization enabled, so this is selected through the visualization config.
+- `viser`: in-process Viser visualizer. It renders current robot state, target controls,
+  transient preview ghosts, planned path previews, and optional panel controls.
+- `none`: no manipulation planning visualization.
+
+CLI example:
+
+```bash
+uv run dimos run xarm7-planner-coordinator \
+  -o manipulationmodule.visualization.backend=viser \
+  -o manipulationmodule.visualization.allow_plan_execute=true
+```
+
+Blueprint example:
+
+```python skip
+from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
+
+manipulation = ManipulationModule.blueprint(
+    config=ManipulationModuleConfig(
+        robots=[...],
+        visualization={
+            "backend": "viser",
+            "host": "127.0.0.1",
+            "port": 8095,
+            "open_browser": True,
+            "panel_enabled": True,  # default; set False for scene-only Viser
+            "allow_plan_execute": False,  # keep panel execution blocked by default
+        },
+    )
+)
+```
+
+Viser support is included in the `manipulation` extra:
+
+```bash
+uv sync --extra manipulation --inexact
+```
+
+The Viser panel uses existing manipulation planning, preview, execute, cancel, and clear-plan
+RPC methods through a small in-process adapter. GUI callbacks enqueue operations instead of
+touching `WorldSpec`, IK, planner objects, or live Drake contexts directly. Rendering copies
+mutable joint state/path containers at the read boundary, then updates the Viser scene after
+manipulation/world accessors have returned.
+
+External manipulation visualizers are initialized from a backend-neutral planning-scene snapshot
+after the planning world has added its robots. This snapshot maps world robot IDs to
+`RobotModelConfig` metadata so Viser can prepare current, target, and transient preview robot
+visuals without `WorldMonitor` depending on Viser-specific hooks. Embedded Meshcat visualization
+does not need extra setup because it observes the Drake world directly.
+
+Panel execution is opt-in. Leave `allow_plan_execute=False` unless the operator intentionally
+wants the browser panel to call the existing manipulation execution path.
 
 ### Perception + Agent
 
@@ -100,6 +179,7 @@ visualization backend.
 | `dual-xarm6-planner` | Dual XArm6 planning |
 | `xarm-perception` | XArm7 + RealSense camera for perception |
 | `xarm-perception-agent` | XArm7 perception + LLM agent |
+| `xarm-perception-sim` | XArm7 simulation perception stack |
 
 ## Supported Robots
 

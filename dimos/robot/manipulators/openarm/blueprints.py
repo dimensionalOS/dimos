@@ -18,10 +18,7 @@ from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.transport import LCMTransport
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.catalog.openarm import (
     OPENARM_V10_FK_MODEL,
     openarm_arm as _openarm,
@@ -39,10 +36,6 @@ coordinator_openarm_mock = ControlCoordinator.blueprint(
         _mock_left.to_task_config(),
         _mock_right.to_task_config(),
     ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 # ── Single-arm hardware blueprints (first real bring-up targets) ───────
@@ -75,19 +68,11 @@ _right_hw = _openarm(
 coordinator_openarm_left = ControlCoordinator.blueprint(
     hardware=[_left_hw.to_hardware_component()],
     tasks=[_left_hw.to_task_config()],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 coordinator_openarm_right = ControlCoordinator.blueprint(
     hardware=[_right_hw.to_hardware_component()],
     tasks=[_right_hw.to_task_config()],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 # ── Bimanual hardware blueprint ────────────────────────────────────────
@@ -97,10 +82,6 @@ coordinator_openarm_bimanual = ControlCoordinator.blueprint(
         _left_hw.to_task_config(),
         _right_hw.to_task_config(),
     ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 
@@ -110,7 +91,7 @@ openarm_mock_planner_coordinator = autoconnect(
     ManipulationModule.blueprint(
         robots=[_mock_left.to_robot_model_config(), _mock_right.to_robot_model_config()],
         planning_timeout=10.0,
-        enable_viz=True,
+        visualization={"backend": "meshcat"},
     ),
     ControlCoordinator.blueprint(
         hardware=[_mock_left.to_hardware_component(), _mock_right.to_hardware_component()],
@@ -119,10 +100,6 @@ openarm_mock_planner_coordinator = autoconnect(
             _mock_right.to_task_config(),
         ],
     ),
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 # ── Planner + coordinator (real hw): plan & execute on both arms ────────
@@ -130,7 +107,7 @@ openarm_planner_coordinator = autoconnect(
     ManipulationModule.blueprint(
         robots=[_left_hw.to_robot_model_config(), _right_hw.to_robot_model_config()],
         planning_timeout=10.0,
-        enable_viz=True,
+        visualization={"backend": "meshcat"},
     ),
     ControlCoordinator.blueprint(
         hardware=[_left_hw.to_hardware_component(), _right_hw.to_hardware_component()],
@@ -139,10 +116,6 @@ openarm_planner_coordinator = autoconnect(
             _right_hw.to_task_config(),
         ],
     ),
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 
@@ -167,15 +140,8 @@ keyboard_teleop_openarm_mock = autoconnect(
     ),
     ManipulationModule.blueprint(
         robots=[_teleop_cfg.to_robot_model_config()],
-        enable_viz=True,
+        visualization={"backend": "meshcat"},
     ),
-).transports(
-    {
-        ("cartesian_command", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 # ── Keyboard teleop (single arm, real hw on can0) ───────────────────────
@@ -196,15 +162,8 @@ keyboard_teleop_openarm = autoconnect(
     ),
     ManipulationModule.blueprint(
         robots=[_teleop_hw_cfg.to_robot_model_config()],
-        enable_viz=True,
+        visualization={"backend": "meshcat"},
     ),
-).transports(
-    {
-        ("cartesian_command", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 

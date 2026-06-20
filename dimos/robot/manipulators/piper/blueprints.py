@@ -25,10 +25,7 @@ Usage:
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.transport import LCMTransport
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.catalog.piper import PIPER_FK_MODEL, piper as _catalog_piper
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
@@ -57,15 +54,8 @@ keyboard_teleop_piper = autoconnect(
     ),
     ManipulationModule.blueprint(
         robots=[_piper_cfg.to_robot_model_config()],
-        enable_viz=True,
+        visualization={"backend": "meshcat"},
     ),
-).transports(
-    {
-        ("cartesian_command", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 __all__ = ["keyboard_teleop_piper"]
