@@ -28,6 +28,7 @@ Quick start:
 """
 
 import math
+from pathlib import Path
 from typing import Any
 
 from dimos.agents.mcp.mcp_client import McpClient
@@ -69,7 +70,7 @@ XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
 ]
 
 _XARM_MODEL_PATH = LfsPath("xarm_description") / "urdf/xarm_device.urdf.xacro"
-_XARM_PACKAGE_PATHS = {"xarm_description": LfsPath("xarm_description")}
+_XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": LfsPath("xarm_description")}
 
 
 def _base_pose(x: float = 0.0, y: float = 0.0, z: float = 0.0) -> PoseStamped:

@@ -23,6 +23,7 @@ Usage:
 """
 
 import math
+from pathlib import Path
 
 from dimos.control.blueprints._hardware import A750_FK_MODEL, a750
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
@@ -59,7 +60,7 @@ A750_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
 
 _A750_MODEL_PATH = LfsPath("a750_description") / "urdf/a750_rev1.urdf"
 _A750_HOME_JOINTS = [0.0, 0.0, -math.radians(90), 0.0, 0.0, 0.0]
-_A750_PACKAGE_PATHS = {
+_A750_PACKAGE_PATHS: dict[str, Path] = {
     "a750_description": LfsPath("a750_description"),
     "a750_gazebo": LfsPath("a750_description"),
 }

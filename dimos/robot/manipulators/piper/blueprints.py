@@ -22,6 +22,8 @@ Usage:
     dimos run keyboard-teleop-piper
 """
 
+from pathlib import Path
+
 from dimos.control.blueprints._hardware import PIPER_FK_MODEL, manipulator
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
@@ -42,7 +44,7 @@ PIPER_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
 ]
 
 _PIPER_MODEL_PATH = LfsPath("piper_description") / "urdf/piper_description.xacro"
-_PIPER_PACKAGE_PATHS = {
+_PIPER_PACKAGE_PATHS: dict[str, Path] = {
     "piper_description": LfsPath("piper_description"),
     "piper_gazebo": LfsPath("piper_description"),
 }

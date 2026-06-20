@@ -23,6 +23,8 @@ Usage:
     dimos run keyboard-teleop-xarm7
 """
 
+from pathlib import Path
+
 from dimos.control.blueprints._hardware import XARM6_FK_MODEL, XARM7_FK_MODEL, manipulator
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
@@ -36,7 +38,7 @@ from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 from dimos.utils.data import LfsPath
 
 _XARM_MODEL_PATH = LfsPath("xarm_description") / "urdf/xarm_device.urdf.xacro"
-_XARM_PACKAGE_PATHS = {"xarm_description": LfsPath("xarm_description")}
+_XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": LfsPath("xarm_description")}
 
 
 def _xarm_model_config(dof: int) -> RobotModelConfig:

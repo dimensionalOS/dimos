@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from dimos.control.components import HardwareComponent, HardwareType
@@ -38,6 +39,7 @@ _OPENARM_PKG = LfsPath("openarm_description")
 _OPENARM_LEFT_MODEL = _OPENARM_PKG / "urdf/robot/openarm_v10_left.urdf"
 _OPENARM_RIGHT_MODEL = _OPENARM_PKG / "urdf/robot/openarm_v10_right.urdf"
 OPENARM_V10_FK_MODEL = _OPENARM_PKG / "urdf/robot/openarm_v10_single.urdf"
+_OPENARM_PACKAGE_PATHS: dict[str, Path] = {"openarm_description": _OPENARM_PKG}
 
 
 def _base_pose() -> PoseStamped:
@@ -89,7 +91,7 @@ def _openarm_model_config(side: str, name: str | None = None) -> RobotModelConfi
         joint_names=_openarm_joints(side),
         end_effector_link=f"openarm_{side}_link7",
         base_link="openarm_body_link0",
-        package_paths={"openarm_description": _OPENARM_PKG},
+        package_paths=_OPENARM_PACKAGE_PATHS,
         collision_exclusion_pairs=OPENARM_COLLISION_EXCLUSIONS,
         auto_convert_meshes=True,
         max_velocity=0.5,
@@ -129,7 +131,7 @@ def _openarm_single_model_config() -> RobotModelConfig:
         joint_names=_openarm_joints("left"),
         end_effector_link="openarm_left_link7",
         base_link="openarm_body_link0",
-        package_paths={"openarm_description": _OPENARM_PKG},
+        package_paths=_OPENARM_PACKAGE_PATHS,
         auto_convert_meshes=True,
         max_velocity=0.5,
         max_acceleration=1.0,
