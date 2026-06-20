@@ -200,19 +200,3 @@ Choose the hardware type that matches the protocol your adapter implements:
 - `BASE`: velocity-commanded platforms that consume twist-like virtual joints.
 - `WHOLE_BODY`: joint-level whole-body motor IO.
 
-## Duplicate registration policy
-
-Registration is deterministic:
-
-- registering the same hardware type, adapter name, and same factory object again is idempotent;
-- registering the same hardware type and adapter name with a different factory raises an error;
-- registering the same task type and same factory path again is idempotent;
-- registering the same task type with a different factory path raises an error.
-
-Use stable top-level classes or functions for hardware factories. Fresh wrappers, lambdas, or `functools.partial(...)` objects created on each call are different objects and are not treated as the same factory.
-
-## Boundaries
-
-This registration API handles only the ControlCoordinator layer. It does not make the external package discoverable by `dimos run` on its own. External blueprint discovery, package auto-discovery, entry points, richer diagnostics, and robot package templates are separate work.
-
-Low-level registry singletons such as `adapter_registry`, `twist_base_adapter_registry`, and `whole_body_adapter_registry` remain internal implementation details for DimOS itself. External robot packages should import from `dimos.control.extensions`.
