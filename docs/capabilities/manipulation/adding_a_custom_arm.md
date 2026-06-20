@@ -2,6 +2,8 @@
 
 This guide walks through integrating a new robot arm with DimOS, from writing the hardware adapter to creating blueprints for planning and control.
 
+If you are packaging an arm outside the DimOS repository, start with [External Robot Packages](/docs/capabilities/external_robot_packages.md). That guide shows how to register adapters and control tasks from an installed package without placing files under `dimos/hardware/` or `dimos/robot/`.
+
 ## Architecture Overview
 
 DimOS uses a **Protocol-based adapter pattern** — no base class inheritance required. Your adapter wraps the vendor SDK and exposes a standard interface that the rest of the system consumes:
@@ -40,7 +42,7 @@ DimOS uses a **Protocol-based adapter pattern** — no base class inheritance re
 
 ## Step 1: Create the Adapter
 
-Create a new directory for your arm under `dimos/hardware/manipulators/`:
+For in-repo DimOS integrations, create a new directory for your arm under `dimos/hardware/manipulators/`:
 
 ```
 dimos/hardware/manipulators/
@@ -397,7 +399,7 @@ The `AdapterRegistry` in `dimos/hardware/manipulators/registry.py` automatically
 2. For each subpackage, it tries to import `<subpackage>.adapter`
 3. If that module has a `register()` function, it calls it
 
-This means **no manual registration is needed** — just having the `register()` function in your `adapter.py` is sufficient.
+This means **no manual registration is needed for in-repo adapters** — just having the `register()` function in your `adapter.py` is sufficient. External packages should instead use `register_hardware_adapter(...)` from [External Robot Packages](/docs/capabilities/external_robot_packages.md).
 
 You can verify discovery works:
 
@@ -597,7 +599,7 @@ yourarm_planner = manipulation_module(
 
 ## Step 5: Register Blueprints
 
-The blueprint registry in `dimos/robot/all_blueprints.py` is **auto-generated** by scanning the codebase for blueprint declarations. After adding your blueprints:
+For in-repo integrations, the blueprint registry in `dimos/robot/all_blueprints.py` is **auto-generated** by scanning the codebase for blueprint declarations. After adding your blueprints:
 
 1. Run the generation test to update the registry:
    ```bash

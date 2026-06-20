@@ -78,9 +78,8 @@ class ControlTaskRegistry:
 
     def register_path(self, name: str, factory_path: str) -> None:
         """Register a lazy task factory import path."""
-        if ":" not in factory_path:
-            raise ValueError(f"Invalid task factory path: {factory_path!r}")
-        key = name.lower()
+        key = _normalize_task_name(name)
+        _validate_factory_path(factory_path)
         existing = self._factory_paths.get(key)
         if existing is not None and existing != factory_path:
             raise ValueError(f"Duplicate task type {key!r}: {existing!r} vs {factory_path!r}")
@@ -128,6 +127,19 @@ class ControlTaskRegistry:
             raise TypeError(f"Task factory {factory_path!r} is not callable")
         self._factories[key] = factory
         return factory
+
+
+def _normalize_task_name(name: str) -> str:
+    key = name.strip().lower()
+    if not key:
+        raise ValueError("Task type must be non-empty")
+    return key
+
+
+def _validate_factory_path(factory_path: str) -> None:
+    module_name, separator, attr = factory_path.partition(":")
+    if not factory_path.strip() or separator != ":" or not module_name or not attr:
+        raise ValueError(f"Invalid task factory path: {factory_path!r}")
 
 
 control_task_registry = ControlTaskRegistry()

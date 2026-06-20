@@ -50,9 +50,15 @@ class TwistBaseAdapterRegistry:
         self._adapters: dict[str, type[TwistBaseAdapter] | Callable[..., TwistBaseAdapter]] = {}
 
     def register(
-        self, name: str, cls: type[TwistBaseAdapter] | Callable[..., TwistBaseAdapter]
+        self, name: str, factory: type[TwistBaseAdapter] | Callable[..., TwistBaseAdapter]
     ) -> None:
-        self._adapters[name.lower()] = cls
+        key = _normalize_adapter_name(name)
+        existing = self._adapters.get(key)
+        if existing is factory:
+            return
+        if existing is not None:
+            raise ValueError(f"Duplicate twist base adapter {key!r}")
+        self._adapters[key] = factory
 
     def create(self, name: str, **kwargs: Any) -> TwistBaseAdapter:
         """Create an adapter instance by name.
@@ -95,6 +101,13 @@ class TwistBaseAdapterRegistry:
                     module.register(self)
             except ImportError as e:
                 logger.warning(f"Skipping twist base adapter {entry}: {e}")
+
+
+def _normalize_adapter_name(name: str) -> str:
+    key = name.strip().lower()
+    if not key:
+        raise ValueError("Adapter name must be non-empty")
+    return key
 
 
 twist_base_adapter_registry = TwistBaseAdapterRegistry()

@@ -57,7 +57,13 @@ class WholeBodyAdapterRegistry:
 
     def register(self, name: str, cls: Callable[..., WholeBodyAdapter]) -> None:
         """Register an adapter factory (class or callable)."""
-        self._adapters[name.lower()] = cls
+        key = _normalize_adapter_name(name)
+        existing = self._adapters.get(key)
+        if existing is cls:
+            return
+        if existing is not None:
+            raise ValueError(f"Duplicate whole-body adapter {key!r}")
+        self._adapters[key] = cls
 
     def create(self, name: str, **kwargs: Any) -> WholeBodyAdapter:
         """Create an adapter instance by name."""
@@ -98,6 +104,13 @@ class WholeBodyAdapterRegistry:
                 continue
             if hasattr(mod, "register"):
                 mod.register(self)
+
+
+def _normalize_adapter_name(name: str) -> str:
+    key = name.strip().lower()
+    if not key:
+        raise ValueError("Adapter name must be non-empty")
+    return key
 
 
 whole_body_adapter_registry = WholeBodyAdapterRegistry()
