@@ -14,18 +14,18 @@ Requires: pip install lerobot[feetech]
 from __future__ import annotations
 
 import json
-import logging
+from pathlib import Path
 import threading
 import time
-from pathlib import Path
 from typing import Any
 
 import cv2
 import numpy as np
 
 from dimos.robot.xlerobot.config import XLeRobotConfig
+from dimos.utils.logging_config import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 try:
     from lerobot.motors import Motor, MotorCalibration, MotorNormMode
@@ -39,7 +39,7 @@ except ImportError:
 def _degps_to_raw(degps: float) -> int:
     """Convert degrees/sec to Feetech raw velocity ticks."""
     steps_per_deg = 4096.0 / 360.0
-    raw = int(round(degps * steps_per_deg))
+    raw = round(degps * steps_per_deg)
     return max(-0x8000, min(0x7FFF, raw))
 
 
@@ -96,6 +96,12 @@ class XLeRobotDriver:
         self._camera: cv2.VideoCapture | None = None
         self._latest_frame: np.ndarray | None = None
         self._frame_lock = threading.Lock()
+
+        # Serial buses are not re-entrant: the sensor thread, cmd_vel callback,
+        # and skill/RPC calls all share them, so every bus read/write is
+        # serialized through this lock. Reentrant so high-level ops (e.g.
+        # disconnect -> stop_base) can nest without deadlocking.
+        self._io_lock = threading.RLock()
 
         # Kinematics matrices (omni base)
         angles = np.radians(np.array([240, 0, 120]) - 90)
@@ -174,18 +180,20 @@ class XLeRobotDriver:
         logger.info("Connecting XLeRobot...")
         handshake = self._config.strict_handshake
 
-        if self._bus1 is not None:
-            logger.info(f"Connecting bus 1 on {self._config.port_bus1}")
-            self._bus1.connect(handshake=handshake)
+        with self._io_lock:
+            if self._bus1 is not None:
+                logger.info(f"Connecting bus 1 on {self._config.port_bus1}")
+                self._bus1.connect(handshake=handshake)
 
-        logger.info(f"Connecting bus 2 on {self._config.port_bus2}")
-        self._bus2.connect(handshake=handshake)
+            logger.info(f"Connecting bus 2 on {self._config.port_bus2}")
+            self._bus2.connect(handshake=handshake)
 
-        if not handshake:
-            self._prune_missing_motors()
+            if not handshake:
+                self._prune_missing_motors()
 
-        self._load_calibration()
-        self._configure_motors()
+            self._load_calibration()
+            self._configure_motors()
+
         self._open_camera()
 
         self._connected = True
@@ -290,8 +298,6 @@ class XLeRobotDriver:
             logger.warning(f"Camera {self._config.camera_index} failed to open — vision disabled")
             self._camera = None
 
-    # ---- Base movement ----
-
     def _body_to_wheel_raw(self, x: float, y: float, theta_deg: float) -> dict[str, int]:
         """Convert body-frame velocity to per-wheel raw commands."""
         theta_rad = np.radians(theta_deg)
@@ -305,11 +311,18 @@ class XLeRobotDriver:
 
         return {
             name: _degps_to_raw(deg)
-            for name, deg in zip(self._wheel_names, wheel_degps)
+            for name, deg in zip(self._wheel_names, wheel_degps, strict=True)
         }
 
     def _wheel_raw_to_body(self, raw: dict[str, int]) -> dict[str, float]:
-        """Convert wheel feedback back to body-frame velocities."""
+        """Convert wheel feedback back to body-frame velocities.
+
+        The omni-base forward kinematics require all three wheels; if any were
+        pruned (missing motor with strict_handshake=False) the 3x3 inverse can't
+        be applied, so report zero velocity rather than crashing the caller.
+        """
+        if len(self._wheel_names) != 3:
+            return {"x_vel": 0.0, "y_vel": 0.0, "theta_vel": 0.0}
         wheel_degps = np.array([_raw_to_degps(raw[n]) for n in self._wheel_names])
         wheel_linear = np.radians(wheel_degps) * self._config.wheel_radius
         body = self._kin_matrix_inv.dot(wheel_linear)
@@ -323,29 +336,30 @@ class XLeRobotDriver:
             y: lateral m/s (positive = left)
             theta: rotation deg/s (positive = ccw)
         """
-        if not self._wheel_names:
-            logger.warning("No wheel motors available — ignoring move command")
+        # Omni IK maps a body twist onto all three wheels; with any wheel
+        # pruned the mapping is ambiguous, so skip rather than drive blindly.
+        if len(self._wheel_names) != 3:
+            logger.warning("Need all 3 wheel motors to drive base — ignoring move command")
             return
         cmds = self._body_to_wheel_raw(x, y, theta)
-        cmds = {k: v for k, v in cmds.items() if k in self._wheel_names}
-        if cmds:
+        with self._io_lock:
             self._bus2.sync_write("Goal_Velocity", cmds)
 
     def stop_base(self) -> None:
         if not self._wheel_names:
             return
-        self._bus2.sync_write(
-            "Goal_Velocity", dict.fromkeys(self._wheel_names, 0), num_retry=5
-        )
+        with self._io_lock:
+            self._bus2.sync_write(
+                "Goal_Velocity", dict.fromkeys(self._wheel_names, 0), num_retry=5
+            )
 
     def read_wheel_velocities(self) -> dict[str, float]:
         """Read current body-frame velocities from wheel encoders."""
-        if not self._base_motors:
+        if len(self._wheel_names) != 3:
             return {"x_vel": 0.0, "y_vel": 0.0, "theta_vel": 0.0}
-        raw = self._bus2.sync_read("Present_Velocity", self._base_motors)
+        with self._io_lock:
+            raw = self._bus2.sync_read("Present_Velocity", self._base_motors)
         return self._wheel_raw_to_body(raw)
-
-    # ---- Arm control ----
 
     def move_arm(self, arm: str, positions: dict[str, float]) -> None:
         """Set arm joint position targets.
@@ -361,13 +375,15 @@ class XLeRobotDriver:
             if self._config.max_relative_target is not None:
                 goal = self._clamp_arm_positions(self._bus1, goal, self._left_arm_motors)
             if goal:
-                self._bus1.sync_write("Goal_Position", goal)
+                with self._io_lock:
+                    self._bus1.sync_write("Goal_Position", goal)
         elif arm == "right":
             goal = {k: v for k, v in positions.items() if k in self._right_arm_motors}
             if self._config.max_relative_target is not None:
                 goal = self._clamp_arm_positions(self._bus2, goal, self._right_arm_motors)
             if goal:
-                self._bus2.sync_write("Goal_Position", goal)
+                with self._io_lock:
+                    self._bus2.sync_write("Goal_Position", goal)
         else:
             raise ValueError(f"Unknown arm '{arm}', expected 'left' or 'right'")
 
@@ -375,7 +391,8 @@ class XLeRobotDriver:
         self, bus: FeetechMotorsBus, goal: dict[str, float], motor_names: list[str]
     ) -> dict[str, float]:
         """Clamp goal positions to be within max_relative_target of current."""
-        present = bus.sync_read("Present_Position", [m for m in motor_names if m in goal])
+        with self._io_lock:
+            present = bus.sync_read("Present_Position", [m for m in motor_names if m in goal])
         max_delta = self._config.max_relative_target
         assert max_delta is not None
         clamped = {}
@@ -402,7 +419,8 @@ class XLeRobotDriver:
         goal = {"head_motor_1": pan, "head_motor_2": tilt}
         if self._config.max_relative_target is not None:
             goal = self._clamp_arm_positions(self._bus1, goal, self._head_motors)
-        self._bus1.sync_write("Goal_Position", goal)
+        with self._io_lock:
+            self._bus1.sync_write("Goal_Position", goal)
 
     def open_gripper(self, arm: str) -> None:
         """Open the gripper on the specified arm (100 = fully open)."""
@@ -416,9 +434,11 @@ class XLeRobotDriver:
         if arm == "left":
             if self._bus1 is None:
                 raise RuntimeError("Bus 1 not initialized — arms disabled")
-            self._bus1.sync_write("Goal_Position", {"left_arm_gripper": value})
+            with self._io_lock:
+                self._bus1.sync_write("Goal_Position", {"left_arm_gripper": value})
         elif arm == "right":
-            self._bus2.sync_write("Goal_Position", {"right_arm_gripper": value})
+            with self._io_lock:
+                self._bus2.sync_write("Goal_Position", {"right_arm_gripper": value})
         else:
             raise ValueError(f"Unknown arm '{arm}', expected 'left' or 'right'")
 
@@ -429,24 +449,24 @@ class XLeRobotDriver:
             Dict mapping joint name -> position value (14 entries max).
         """
         positions: dict[str, float] = {}
-        if self._bus1 is not None and self._left_arm_motors:
-            positions.update(self._bus1.sync_read("Present_Position", self._left_arm_motors))
-        if self._bus1 is not None and self._head_motors:
-            positions.update(self._bus1.sync_read("Present_Position", self._head_motors))
-        if self._right_arm_motors:
-            positions.update(self._bus2.sync_read("Present_Position", self._right_arm_motors))
+        with self._io_lock:
+            if self._bus1 is not None and self._left_arm_motors:
+                positions.update(self._bus1.sync_read("Present_Position", self._left_arm_motors))
+            if self._bus1 is not None and self._head_motors:
+                positions.update(self._bus1.sync_read("Present_Position", self._head_motors))
+            if self._right_arm_motors:
+                positions.update(self._bus2.sync_read("Present_Position", self._right_arm_motors))
         return positions
 
     def home_arms(self) -> None:
         """Move all arm and head joints to zero position."""
-        if self._bus1 is not None:
-            zeros_bus1 = dict.fromkeys(self._left_arm_motors + self._head_motors, 0.0)
-            self._bus1.sync_write("Goal_Position", zeros_bus1)
-        if self._right_arm_motors:
-            zeros_bus2 = dict.fromkeys(self._right_arm_motors, 0.0)
-            self._bus2.sync_write("Goal_Position", zeros_bus2)
-
-    # ---- Full observation (mirrors XLerobot.get_observation) ----
+        with self._io_lock:
+            if self._bus1 is not None:
+                zeros_bus1 = dict.fromkeys(self._left_arm_motors + self._head_motors, 0.0)
+                self._bus1.sync_write("Goal_Position", zeros_bus1)
+            if self._right_arm_motors:
+                zeros_bus2 = dict.fromkeys(self._right_arm_motors, 0.0)
+                self._bus2.sync_write("Goal_Position", zeros_bus2)
 
     def get_observation(self) -> dict[str, Any]:
         """Read all 17 state features + camera frame.
@@ -455,20 +475,20 @@ class XLeRobotDriver:
         """
         obs: dict[str, Any] = {}
 
-        if self._bus1 is not None and self._left_arm_motors:
-            left_pos = self._bus1.sync_read("Present_Position", self._left_arm_motors)
-            obs.update({f"{k}.pos": v for k, v in left_pos.items()})
+        with self._io_lock:
+            if self._bus1 is not None and self._left_arm_motors:
+                left_pos = self._bus1.sync_read("Present_Position", self._left_arm_motors)
+                obs.update({f"{k}.pos": v for k, v in left_pos.items()})
 
-        if self._bus1 is not None and self._head_motors:
-            head_pos = self._bus1.sync_read("Present_Position", self._head_motors)
-            obs.update({f"{k}.pos": v for k, v in head_pos.items()})
+            if self._bus1 is not None and self._head_motors:
+                head_pos = self._bus1.sync_read("Present_Position", self._head_motors)
+                obs.update({f"{k}.pos": v for k, v in head_pos.items()})
 
-        if self._right_arm_motors:
-            right_pos = self._bus2.sync_read("Present_Position", self._right_arm_motors)
-            obs.update({f"{k}.pos": v for k, v in right_pos.items()})
+            if self._right_arm_motors:
+                right_pos = self._bus2.sync_read("Present_Position", self._right_arm_motors)
+                obs.update({f"{k}.pos": v for k, v in right_pos.items()})
 
-        wheel_vel = self._bus2.sync_read("Present_Velocity", self._base_motors)
-        body_vel = self._wheel_raw_to_body(wheel_vel)
+        body_vel = self.read_wheel_velocities()
         obs["x.vel"] = body_vel["x_vel"]
         obs["y.vel"] = body_vel["y_vel"]
         obs["theta.vel"] = body_vel["theta_vel"]
@@ -497,24 +517,23 @@ class XLeRobotDriver:
             if head and self._bus1 is not None:
                 head = self._clamp_arm_positions(self._bus1, head, self._head_motors)
 
-        if left_arm and self._bus1 is not None:
-            self._bus1.sync_write("Goal_Position", left_arm)
-        if head and self._bus1 is not None:
-            self._bus1.sync_write("Goal_Position", head)
-        if right_arm:
-            self._bus2.sync_write("Goal_Position", right_arm)
+        with self._io_lock:
+            if left_arm and self._bus1 is not None:
+                self._bus1.sync_write("Goal_Position", left_arm)
+            if head and self._bus1 is not None:
+                self._bus1.sync_write("Goal_Position", head)
+            if right_arm:
+                self._bus2.sync_write("Goal_Position", right_arm)
 
-        if base_vel:
-            wheel_cmds = self._body_to_wheel_raw(
-                base_vel.get("x.vel", 0.0),
-                base_vel.get("y.vel", 0.0),
-                base_vel.get("theta.vel", 0.0),
-            )
-            self._bus2.sync_write("Goal_Velocity", wheel_cmds)
+            if base_vel and len(self._wheel_names) == 3:
+                wheel_cmds = self._body_to_wheel_raw(
+                    base_vel.get("x.vel", 0.0),
+                    base_vel.get("y.vel", 0.0),
+                    base_vel.get("theta.vel", 0.0),
+                )
+                self._bus2.sync_write("Goal_Velocity", wheel_cmds)
 
         return action
-
-    # ---- Camera ----
 
     def read_camera(self) -> np.ndarray | None:
         """Capture a single camera frame (BGR numpy array)."""
@@ -532,21 +551,20 @@ class XLeRobotDriver:
         with self._frame_lock:
             return self._latest_frame
 
-    # ---- Lifecycle ----
-
     def disconnect(self) -> None:
         if not self._connected:
             return
 
         self.stop_base()
 
-        if self._config.enable_arms or self._config.enable_head:
-            if self._bus1 is not None:
-                self.home_arms()
-                time.sleep(0.5)
-                self._bus1.disconnect(self._config.disable_torque_on_disconnect)
+        with self._io_lock:
+            if self._config.enable_arms or self._config.enable_head:
+                if self._bus1 is not None:
+                    self.home_arms()
+                    time.sleep(0.5)
+                    self._bus1.disconnect(self._config.disable_torque_on_disconnect)
 
-        self._bus2.disconnect(self._config.disable_torque_on_disconnect)
+            self._bus2.disconnect(self._config.disable_torque_on_disconnect)
 
         if self._camera is not None:
             self._camera.release()

@@ -33,13 +33,13 @@ The calibration procedure:
 
 import argparse
 import json
-import logging
+from pathlib import Path
 import platform
 import sys
-from pathlib import Path
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-logger = logging.getLogger(__name__)
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 try:
     from lerobot.motors import Motor, MotorCalibration, MotorNormMode
@@ -201,33 +201,34 @@ def main() -> None:
     print("Connecting bus 2...")
     bus2.connect()
 
-    print("\n--- Calibrating Bus 1 (left arm + head) ---")
-    cal1 = calibrate_bus1(bus1, left_arm, head)
+    try:
+        print("\n--- Calibrating Bus 1 (left arm + head) ---")
+        cal1 = calibrate_bus1(bus1, left_arm, head)
 
-    print("\n--- Calibrating Bus 2 (right arm + wheels) ---")
-    cal2 = calibrate_bus2(bus2, right_arm, base)
+        print("\n--- Calibrating Bus 2 (right arm + wheels) ---")
+        cal2 = calibrate_bus2(bus2, right_arm, base)
 
-    combined = {**cal1, **cal2}
+        combined = {**cal1, **cal2}
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    serializable = {}
-    for name, mc in combined.items():
-        serializable[name] = {
-            "id": mc.id,
-            "drive_mode": mc.drive_mode,
-            "homing_offset": mc.homing_offset,
-            "range_min": mc.range_min,
-            "range_max": mc.range_max,
-        }
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        serializable = {}
+        for name, mc in combined.items():
+            serializable[name] = {
+                "id": mc.id,
+                "drive_mode": mc.drive_mode,
+                "homing_offset": mc.homing_offset,
+                "range_min": mc.range_min,
+                "range_max": mc.range_max,
+            }
 
-    with open(output_path, "w") as f:
-        json.dump(serializable, f, indent=2)
+        with open(output_path, "w") as f:
+            json.dump(serializable, f, indent=2)
 
-    print(f"\nCalibration saved to {output_path}")
-    print("You can now start DimOS with: dimos run xlerobot-basic")
-
-    bus1.disconnect(True)
-    bus2.disconnect(True)
+        print(f"\nCalibration saved to {output_path}")
+        print("You can now start DimOS with: dimos run xlerobot-basic")
+    finally:
+        bus1.disconnect(True)
+        bus2.disconnect(True)
     print("Done.")
 
 

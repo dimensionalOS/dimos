@@ -12,13 +12,11 @@ Exposes the XLeRobot as a DimOS Module with:
 from __future__ import annotations
 
 import json
-import logging
 import math
 import threading
 import time
 from typing import Any
 
-import numpy as np
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
@@ -31,13 +29,13 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.xlerobot.config import XLeRobotConfig
 from dimos.robot.xlerobot.connection import XLeRobotDriver
-from dimos.spec.perception import Camera
+from dimos.utils.logging_config import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 
 class XLeRobotConnection(Module):
@@ -122,12 +120,7 @@ class XLeRobotConnection(Module):
         assert self._driver is not None
         frame = self._driver.read_camera()
         if frame is not None:
-            img = Image(
-                data=frame,
-                height=frame.shape[0],
-                width=frame.shape[1],
-                encoding="bgr8",
-            )
+            img = Image.from_numpy(frame, format=ImageFormat.BGR, frame_id="head_camera")
             self._latest_image = img
             self.color_image.publish(img)
 
@@ -204,10 +197,8 @@ class XLeRobotConnection(Module):
         if self._recording:
             self._record_data.append({
                 "ts": js.ts,
-                "joint_positions": dict(zip(names, pos_values)),
+                "joint_positions": dict(zip(names, pos_values, strict=True)),
             })
-
-    # ---- Skills (exposed to MCP / agent) ----
 
     @skill
     def observe(self) -> Image | None:
@@ -356,8 +347,6 @@ class XLeRobotConnection(Module):
             return "Arms and head moved to home position"
         except Exception as e:
             return f"Failed to home arms: {e}"
-
-    # ---- @rpc methods ----
 
     @rpc
     def record(self, name: str) -> str:

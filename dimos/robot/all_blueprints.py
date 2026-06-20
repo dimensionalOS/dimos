@@ -127,6 +127,8 @@ all_blueprints = {
     "xarm6-planner-only": "dimos.manipulation.blueprints:xarm6_planner_only",
     "xarm7-planner-coordinator": "dimos.manipulation.blueprints:xarm7_planner_coordinator",
     "xarm7-planner-coordinator-agent": "dimos.manipulation.blueprints:xarm7_planner_coordinator_agent",
+    "xlerobot-agentic": "dimos.robot.xlerobot.blueprints.agentic.xlerobot_agentic:xlerobot_agentic",
+    "xlerobot-basic": "dimos.robot.xlerobot.blueprints.basic.xlerobot_basic:xlerobot_basic",
 }
 
 
@@ -239,5 +241,6 @@ all_modules = {
     "wavefront-frontier-explorer": "dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector.WavefrontFrontierExplorer",
     "web-input": "dimos.agents.web_human_input.WebInput",
     "websocket-vis-module": "dimos.web.websocket_vis.websocket_vis_module.WebsocketVisModule",
+    "x-le-robot-connection": "dimos.robot.xlerobot.xlerobot_module.XLeRobotConnection",
     "zed-camera": "dimos.hardware.sensors.camera.zed.camera.ZEDCamera",
 }
