@@ -247,6 +247,33 @@ def _floor_candidate_amplitudes(
         amp += step
 
 
+# Spacing used only when the discovered floor lands at/above the predefined
+# sweep top, so the floor-anchored ladder still spans a usable range.
+_FLOOR_ANCHORED_MIN_STEP = 0.1
+
+
+def _floor_anchored_sweep(profile: RobotPlantProfile, channel: str, floor: float) -> list[float]:
+    """Dynamics-sweep amplitudes anchored at the discovered ``floor``.
+
+    The floor probe finds the smallest commanded amplitude that produces real
+    motion; the sweep then climbs from there to the predefined top, keeping the
+    same number of points. Starting at the floor (rather than a fixed ladder that
+    can sit *below* it) guarantees every sweep step actually moves the robot --
+    the failure that left vy under-excited when its floor (~0.25) exceeded the
+    first static sweep amplitude (0.2).
+    """
+    static = sorted(profile.si_amplitudes.get(channel, []))
+    if not static:
+        return []
+    n = len(static)
+    top = max(static[-1], floor)
+    if top <= floor + _FLOOR_CAP_EPS:
+        top = floor + (n - 1) * _FLOOR_ANCHORED_MIN_STEP
+    if n == 1:
+        return [float(floor)]
+    return [float(a) for a in np.linspace(floor, top, n)]
+
+
 def _envelope_from_channel_results(
     floor_probe: list[dict],
     sweep_fits: list[dict],
@@ -359,7 +386,10 @@ def _fit_selftest(
                 break
 
         per_amplitude[channel] = []
-        for amp in profile.si_amplitudes[channel]:
+        floor, _ = _floor_from_probe(
+            floor_results[channel], [r["amp"] for r in floor_results[channel]]
+        )
+        for amp in _floor_anchored_sweep(profile, channel, floor):
             fit_and_record(channel, amp, "sweep")
         for amp in profile.ceiling_probe_amplitudes.get(channel, []):
             fit_and_record(channel, amp, "ceiling_probe")
@@ -952,8 +982,12 @@ def _fit_hw(
                 if passed:
                     break
 
-            print(f"\n=== [{channel}] sweep ===")
-            for amp in profile.si_amplitudes[channel]:
+            floor, _ = _floor_from_probe(
+                floor_results[channel], [r["amp"] for r in floor_results[channel]]
+            )
+            sweep_amps = _floor_anchored_sweep(profile, channel, floor)
+            print(f"\n=== [{channel}] sweep (floor={floor:.3f} -> {sweep_amps}) ===")
+            for amp in sweep_amps:
                 r = run_one_step(channel, amp, "SWEEP")
                 if r["action"] != "ok":
                     continue

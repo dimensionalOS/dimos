@@ -223,9 +223,10 @@ class TwistBasePlantSim:
 #
 # This is the Go2 profile's sim ground truth (self-test recovers it; the
 # sim adapter / DERIVE fallback use it). It keeps its GO2_ name because
-# it is genuinely Go2-measured data. vy is a placeholder copy of vx —
-# the Go2 does not strafe in the default gait (so vy is not excited on
-# hardware) and the sim FOPDT has no independent lateral model.
+# it is genuinely Go2-measured data. vy is a placeholder copy of vx until
+# vy is characterized on hardware — the Go2 DOES strafe (it just needs a
+# higher floor amplitude than vx to start), so vy is now excited in the
+# sweep; this sim FOPDT just has no measured lateral model yet.
 
 GO2_VX_RISE = FopdtChannelParams(K=0.922, tau=0.395, L=0.065)
 GO2_WZ_RISE = FopdtChannelParams(K=2.453, tau=0.596, L=0.052)
