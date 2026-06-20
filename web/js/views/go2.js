@@ -10,6 +10,7 @@
 // Preview with no broker:  window._teleopDev.previewGo2()
 
 import { disconnect } from '../disconnect.js';
+import { hudDetailLines, hudSummaryLine, statsHealth, transportLabel } from '../hud.js';
 import { escHtml, state } from '../state.js';
 import { startKeyboardLoop, stopKeyboardLoop } from './keyboard.js';
 
@@ -135,13 +136,14 @@ export function renderGo2(c) {
                     <span id="batt-pct" class="text-sm font-semibold text-dim-400">—%</span>
                 </section>
 
-                <!-- Telemetry -->
+                <!-- Telemetry: summary always; click to expand full detail. -->
                 <section class="bg-bg-950 border border-[#2a2a2a] rounded-xl p-4 shrink-0">
-                    <div class="flex items-center justify-between mb-3">
-                        <span class="term-caps text-xs text-gray-500">Telemetry</span>
-                        <span id="hud-health" class="pill pill-good"><span class="dot"></span><span>Cloudflare</span></span>
-                    </div>
-                    <pre id="hud-panel" class="text-xs text-gray-400 leading-relaxed">—</pre>
+                    <button id="hud-toggle" class="w-full flex items-center justify-between mb-2">
+                        <span class="term-caps text-xs text-gray-500">Telemetry <span id="hud-caret" class="text-gray-600">▸</span></span>
+                        <span id="hud-health" class="pill pill-good"><span class="dot"></span><span id="hud-transport">Cloudflare</span></span>
+                    </button>
+                    <pre id="hud-summary" class="text-xs text-dim-400 leading-relaxed">—</pre>
+                    <pre id="hud-detail" class="hidden text-xs text-gray-400 leading-relaxed mt-2 pt-2 border-t border-[#2a2a2a]">—</pre>
                 </section>
 
                 <!-- Posture -->
@@ -187,9 +189,16 @@ export function renderGo2(c) {
     startKeyboardLoop();
 }
 
-// ── interaction (placeholder — no robot calls yet) ──────────────────
+// ── interaction ──────────────────────────────────────────────────────
 function wireGo2() {
     document.getElementById('disconnectBtn').onclick = disconnect;
+
+    // Telemetry expand/collapse — summary always, full detail on click.
+    document.getElementById('hud-toggle').addEventListener('click', () => {
+        const detail = document.getElementById('hud-detail');
+        const open = detail.classList.toggle('hidden');
+        document.getElementById('hud-caret').textContent = open ? '▸' : '▾';
+    });
 
     // Camera tabs: render toggles, wire selection.
     const tabs = document.getElementById('cam-tabs');
@@ -375,20 +384,31 @@ function renderBattery() {
     pct.style.color = p > 40 ? '#c4e7f3' : p > 15 ? '#eab308' : '#f3b4b4';
 }
 
-// Telemetry tick — for now reuses state.liveStats if present (real HUD data),
-// else shows placeholder. Battery SOC is placeholder until robot_telemetry
-// carries bms_state.soc.
+// Telemetry tick (1Hz): samples the operator's own send rate (cmdHz), then
+// renders the summary + full detail from the shared hud.js formatters, drives
+// the health pill, and updates battery. Reuses hud.js so the cockpit and the
+// keyboard HUD stay in sync.
+let _lastHudSample = 0;
 function startTick() {
     stopTick();
+    _lastHudSample = performance.now();
     tickTimer = setInterval(() => {
-        const v = state.liveStats?.video;
-        const c = state.liveStats?.cmd;
-        const rtt = state.liveStats?.rttMs;
-        document.getElementById('hud-panel').textContent = [
-            `Video  ${v ? (v.fps ?? 0).toFixed(0) : '—'}fps  ${v ? ((v.kbps ?? 0) / 1000).toFixed(1) : '—'}mbps`,
-            `Cmd    ${c ? `lat ${(c.latency_ms ?? 0).toFixed(0)}ms  loss ${(c.loss_pct ?? 0).toFixed(1)}%` : '—'}`,
-            `Clock  RTT ${rtt != null ? rtt.toFixed(0) : '—'}ms`,
-        ].join('\n');
+        // Sample command send rate (cmdSendCount incremented in the drive loop).
+        const now = performance.now();
+        const dt = (now - _lastHudSample) / 1000;
+        if (dt > 0) state.liveStats.cmdHz = state.cmdSendCount / dt;
+        state.cmdSendCount = 0;
+        _lastHudSample = now;
+
+        // Summary always; detail rendered (hidden until expanded).
+        document.getElementById('hud-summary').textContent = hudSummaryLine();
+        document.getElementById('hud-detail').textContent = hudDetailLines().join('\n');
+
+        // Health pill (good/warn/bad) + transport label.
+        const pill = document.getElementById('hud-health');
+        pill.className = 'pill pill-' + statsHealth();
+        document.getElementById('hud-transport').textContent = transportLabel();
+
         renderBattery();
     }, 1000);
 }

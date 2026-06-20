@@ -20,7 +20,6 @@ else navigate('auth');
 
 // DevTools-only preview hook — no broker required.
 window._teleopDev = {
-    state,  // inspect live state from the console: _teleopDev.state.liveStats.soc
     previewKeyboard() {
         state.cmdChannel = { readyState: 'open', send: () => {} };
         state.activeRobot = { session_id: 'preview', robot_name: 'Preview Bot' };

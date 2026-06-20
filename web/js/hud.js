@@ -43,18 +43,25 @@ export function hudSummaryLine() {
 export function hudDetailLines() {
     const v = state.liveStats.video || {};
     const c = state.liveStats.cmd;
+    const sentHz = state.liveStats.cmdHz ?? 0;  // operator's own send rate
     // Command-plane health the robot measured from arriving twists;
-    // '—' until robot_telemetry arrives.
+    // '—' until robot_telemetry arrives. recvHz (robot rate_hz) vs sentHz shows
+    // throttle/loss on the wire; reorder = out-of-order frames.
     const cmdLine = c
         ? `lat ${(c.latency_ms ?? 0).toFixed(0)}ms  jit ${(c.jitter_ms ?? 0).toFixed(0)}ms  ` +
-          `loss ${c.loss_pct != null ? c.loss_pct.toFixed(1) : '—'}%  ${(c.rate_hz ?? 0).toFixed(0)}Hz`
+          `loss ${c.loss_pct != null ? c.loss_pct.toFixed(1) : '—'}%`
         : '—';
+    const rateLine = c
+        ? `sent ${sentHz.toFixed(0)}Hz → recv ${(c.rate_hz ?? 0).toFixed(0)}Hz  ` +
+          `reorder ${c.reorder ?? 0}`
+        : `sent ${sentHz.toFixed(0)}Hz`;
     return [
         `Link   ${transportLabel()}`,
         `Video  ${(v.fps ?? 0).toFixed(0)}fps  ${(((v.kbps ?? 0) / 1000)).toFixed(1)}mbps  ${v.width ?? '—'}x${v.height ?? '—'}`,
         `       loss ${(v.loss_pct ?? 0).toFixed(1)}%  jbuf ${(v.jitter_buffer_ms ?? 0).toFixed(0)}ms`,
         `       decode ${(v.decode_ms ?? 0).toFixed(0)}ms  freezes ${v.freezes ?? 0}`,
         `Cmd    ${cmdLine}`,
+        `       ${rateLine}`,
         `Clock  RTT ${state.liveStats.rttMs != null ? state.liveStats.rttMs.toFixed(0) : '—'}ms`,
     ];
 }

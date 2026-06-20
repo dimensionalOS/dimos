@@ -157,6 +157,7 @@ export function startKeyboardLoop() {
             }),
         });
         state.cmdChannel.send(twist.encode());
+        state.cmdSendCount++;  // for cmdHz (operator send rate); sampled once/sec
         const out = document.getElementById('twist-readout');
         if (out) out.textContent =
             `linear.x  = ${t.linear_x.toFixed(2)}\n` +
