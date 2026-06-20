@@ -80,13 +80,11 @@ export const CLOCK_SYNC_DRIFT_INTERVAL_MS = 30000;  // post-burst drift cadence
 export const VIDEO_STATS_INTERVAL_MS = 1000;
 
 // Probed once at boot; awaited by loadRobots() to pick the right Connect handler.
+// immersive-vr only: headsets (Quest) support it, phones don't
 export const xrDetection = (async () => {
     if (!navigator.xr) return false;
-    const ar = await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
-    if (ar) { state.xrSupported = true; return true; }
-    const vr = await navigator.xr.isSessionSupported('immersive-vr').catch(() => false);
-    state.xrSupported = vr;
-    return vr;
+    state.xrSupported = await navigator.xr.isSessionSupported('immersive-vr').catch(() => false);
+    return state.xrSupported;
 })();
 
 export function escHtml(s) {
