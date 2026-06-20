@@ -48,6 +48,7 @@ dimos-viewer = false
 dimos-lcm = false
 lcm-dimos-fork = false
 pyrealsense2-extended = false
+roboplan-dimos = false
 
 [manifest]
 overrides = [
@@ -2063,12 +2064,14 @@ manipulation-roboplan = [
     { name = "drake", version = "1.49.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform != 'darwin'" },
     { name = "kaleido" },
     { name = "matplotlib" },
+    { name = "pin-pink" },
     { name = "piper-sdk" },
     { name = "plotly" },
     { name = "pycollada" },
     { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin'" },
     { name = "pyyaml" },
-    { name = "roboplan" },
+    { name = "qpsolvers", extra = ["proxqp"] },
+    { name = "roboplan-dimos" },
     { name = "trimesh" },
     { name = "xacro" },
     { name = "xarm-python-sdk" },
@@ -2446,7 +2449,7 @@ requires-dist = [
     { name = "reportlab", marker = "extra == 'apriltag'", specifier = ">=4.5.0" },
     { name = "rerun-sdk", specifier = "==0.32.0a1" },
     { name = "rerun-sdk", marker = "extra == 'visualization'", specifier = "==0.32.0a1" },
-    { name = "roboplan", marker = "extra == 'manipulation-roboplan'", git = "https://github.com/TomCC7/roboplan.git" },
+    { name = "roboplan-dimos", marker = "extra == 'manipulation-roboplan'", specifier = ">=0.4.0" },
     { name = "scikit-learn", marker = "extra == 'misc'" },
     { name = "scipy", specifier = ">=1.15.1" },
     { name = "sentence-transformers", marker = "extra == 'misc'" },
@@ -9418,14 +9421,21 @@ wheels = [
 ]
 
 [[package]]
-name = "roboplan"
+name = "roboplan-dimos"
 version = "0.4.0"
-source = { git = "https://github.com/TomCC7/roboplan.git#d9094cbb3ce9e7221e1b03e60c9e2ce3098a1225" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "matplotlib" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pin" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/22/12/b03a104da580e8051825eb3b5268764079240e2468cf32eb977ed604c720/roboplan_dimos-0.4.0.tar.gz", hash = "sha256:384acbd717b59aabc7b840ae73665a2f943d0907b5aaa9278396e1537c381894", size = 43662828, upload-time = "2026-06-20T02:57:26.577Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b4/92/5d40de4fb229541becac63638419e974f0b872cfd77706034493ee272b46/roboplan_dimos-0.4.0-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:8900044347a76f1aab22f1f905447455c0be566cdf121d63a6ec207b0d205eec", size = 43339062, upload-time = "2026-06-20T02:57:09.252Z" },
+    { url = "https://files.pythonhosted.org/packages/33/a2/f84399291ae3dfd6fc11213654aa91222bcd071cca6225cc30af35a33360/roboplan_dimos-0.4.0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:8be535f427ac443d74a9d826e28468087ceef58bf42a1829b6e767dc15cd3abc", size = 43337110, upload-time = "2026-06-20T02:57:13.304Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/e4/180d2378fa2cc5ded8bf612b0ae8ac612f3581974400bd24b32b6fc49f6e/roboplan_dimos-0.4.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:8c6a7edc7b7b4a65d0c91dfc9e863c7870d2317c75ac20d0a394376666010d86", size = 43306881, upload-time = "2026-06-20T02:57:17.436Z" },
+    { url = "https://files.pythonhosted.org/packages/c0/f3/1f49cd337e37d6227eec21558f968ddd03680fcfef165c7824a82ff26e45/roboplan_dimos-0.4.0-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:b4c46d3b80d0840ec4976377ddcc5d8c05403d82dfd4d8ed42739dd2d2760afb", size = 43306903, upload-time = "2026-06-20T02:57:21.95Z" },
 ]
 
 [[package]]

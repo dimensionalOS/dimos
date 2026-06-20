@@ -121,10 +121,9 @@ uv sync --extra manipulation-roboplan --inexact
 ```
 
 The RoboPlan manipulation extra includes the default `manipulation` dependencies
-and uses the root package from `git+https://github.com/TomCC7/roboplan.git`.
+and installs `roboplan-dimos` from PyPI.
 The `--inexact` flag preserves other extras already installed in your current
-environment. PyPI package publication and commit pinning are separate follow-up
-work.
+environment.
 
 RoboPlan builds C++ bindings locally. Install system build prerequisites before
 syncing the extra; for example, on Ubuntu:
