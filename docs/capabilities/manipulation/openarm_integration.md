@@ -40,9 +40,8 @@ dimos/hardware/manipulators/openarm/
 ├── test_driver.py     # 13 unit tests (virtual CAN loopback, no hardware)
 └── test_adapter.py    # 11 unit tests (virtual CAN + mock state frames)
 
-dimos/robot/catalog/openarm.py     # openarm_arm() and openarm_single() config factories
 dimos/robot/manipulators/openarm/
-├── blueprints.py      # coordinator-*, planner-*, keyboard-teleop-* blueprints
+├── blueprints.py      # coordinator-*, planner-*, keyboard-teleop-* blueprints and model config
 └── scripts/           # bring-up + diagnostic scripts (run manually by humans)
     ├── openarm_can_up.sh         # bring SocketCAN interfaces up (needs sudo)
     ├── openarm_can_probe.py      # enumerate & read state from all 8 motors
@@ -336,7 +335,7 @@ Persistent across power cycles.
 
 - **`ip link ... fd on` → `Operation not supported`.** gs_usb firmware doesn't support CAN-FD. Use classical CAN @ 1 Mbit (our bringup script's default).
 - **Motors reply to probes but commands do nothing.** CTRL_MODE is not MIT. The adapter now writes MIT on connect, but if you disabled that and motors got reset, run `openarm_set_mit_mode.py`.
-- **`COLLISION_AT_START` during planning.** `link5` and `link7` collision meshes overlap by 3 mm at every configuration. Handled by `OPENARM_COLLISION_EXCLUSIONS` in the catalog. If you see it anyway, the exclusion pairs may not be getting applied — check that the collision filter log line appears during world build.
+- **`COLLISION_AT_START` during planning.** `link5` and `link7` collision meshes overlap by 3 mm at every configuration. Handled by `OPENARM_COLLISION_EXCLUSIONS` in the OpenArm blueprint module. If you see it anyway, the exclusion pairs may not be getting applied — check that the collision filter log line appears during world build.
 - **`INVALID_START` during planning.** Hardware encoder noise pushed a joint 1 mrad past a URDF limit. Joint4 used to be exactly `lower=0.0` which tripped this — it's now `-0.01` to give breathing room. If you see it on a different joint, widen that limit by ~10 mrad.
 - **"Transmit buffer full" (ENOBUFS) at 100 Hz.** Kernel TX queue too small. The bringup script sets `txqueuelen 1000`; the driver also retries on ENOBUFS. If you still see the error, check `ip -details link show canX | grep qlen`.
 - **Arms swap sides.** USB enumeration order flipped. Swap `LEFT_CAN` / `RIGHT_CAN` in [blueprints.py](/dimos/robot/manipulators/openarm/blueprints.py).
@@ -350,7 +349,7 @@ Persistent across power cycles.
 - **Gravity compensation on by default.** Eliminates steady-state position error without needing high kp. Needs Pinocchio + the per-side URDFs.
 - **One adapter per CAN bus, keyed by `address`.** Matches the Piper adapter pattern. Bimanual = two adapters with different `address` values.
 - **Per-side URDFs for Drake planning.** Loading the full 14-DOF bimanual URDF twice (once per robot instance) creates phantom-arm collisions with the "other" arm frozen at zero. The per-side URDFs keep only one arm's links + the torso, avoiding the phantom collisions while matching the bimanual kinematics exactly.
-- **URDF stays in-tree (`data/openarm_description/`) for now.** Can migrate to LFS later — only the path constant in the catalog changes.
+- **URDF stays in-tree (`data/openarm_description/`) for now.** Can migrate to LFS later — only the path constants in the OpenArm blueprint module change.
 - **CAN bringup stays manual (`sudo`).** Auto-bringup from `connect()` would need sudo-in-a-library or a systemd unit; the explicit script is clearer and testable. For production, add a oneshot systemd unit that runs the script at boot.
 
 ---
