@@ -126,6 +126,19 @@ def test_register_hardware_adapter_supports_all_hardware_types() -> None:
     assert whole_body_adapter_registry._adapters["ext_whole_body"] is whole_body_factory
 
 
+def test_hardware_adapter_create_uses_same_normalization_as_register() -> None:
+    class PaddedAdapter:
+        pass
+
+    register_hardware_adapter(HardwareType.MANIPULATOR, "  Padded_Manipulator  ", PaddedAdapter)
+    register_hardware_adapter(HardwareType.BASE, "  Padded_Base  ", PaddedAdapter)
+    register_hardware_adapter(HardwareType.WHOLE_BODY, "  Padded_Whole_Body  ", PaddedAdapter)
+
+    assert isinstance(adapter_registry.create("  padded_manipulator  "), PaddedAdapter)
+    assert isinstance(twist_base_adapter_registry.create("  padded_base  "), PaddedAdapter)
+    assert isinstance(whole_body_adapter_registry.create("  padded_whole_body  "), PaddedAdapter)
+
+
 @pytest.mark.parametrize(
     ("hardware_type", "registry_name"),
     [
@@ -167,6 +180,24 @@ def test_register_control_task_registers_lazy_path_without_importing_target(mock
 
     assert control_task_registry._factory_paths["external_task"] == "external_pkg.tasks:make_task"
     import_module.assert_not_called()
+
+
+def test_control_task_create_uses_same_normalization_as_register(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module_name = "external_padded_task_module"
+    module = ModuleType(module_name)
+    module.__dict__["make_task"] = ExternalControlTask
+    monkeypatch.setitem(sys.modules, module_name, module)
+
+    control_task_registry.register_path("  External_Padded_Task  ", f"{module_name}:make_task")
+
+    task = control_task_registry.create(
+        "  external_padded_task  ",
+        TaskConfig(name="external_padded_task", type="external_padded_task"),
+    )
+
+    assert isinstance(task, ExternalControlTask)
 
 
 @pytest.mark.parametrize(
@@ -220,7 +251,7 @@ def test_control_coordinator_resolves_external_task_from_lazy_registry_without_m
     module_name = "external_control_extension_task_module"
     task_type = "external_task_no_manifest"
     module = ModuleType(module_name)
-    module.make_task = ExternalControlTask
+    module.__dict__["make_task"] = ExternalControlTask
     monkeypatch.setitem(sys.modules, module_name, module)
     register_control_task(task_type, f"{module_name}:make_task")
     coordinator = ControlCoordinator(

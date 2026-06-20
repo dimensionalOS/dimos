@@ -35,6 +35,7 @@ import importlib
 import os
 from typing import TYPE_CHECKING, Any
 
+from dimos.hardware.registry_utils import normalize_adapter_name
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -52,7 +53,7 @@ class TwistBaseAdapterRegistry:
     def register(
         self, name: str, factory: type[TwistBaseAdapter] | Callable[..., TwistBaseAdapter]
     ) -> None:
-        key = _normalize_adapter_name(name)
+        key = normalize_adapter_name(name)
         existing = self._adapters.get(key)
         if existing is factory:
             return
@@ -73,7 +74,7 @@ class TwistBaseAdapterRegistry:
         Raises:
             KeyError: If adapter name is not found
         """
-        key = name.lower()
+        key = normalize_adapter_name(name)
         if key not in self._adapters:
             raise KeyError(f"Unknown twist base adapter: {name}. Available: {self.available()}")
 
@@ -101,13 +102,6 @@ class TwistBaseAdapterRegistry:
                     module.register(self)
             except ImportError as e:
                 logger.warning(f"Skipping twist base adapter {entry}: {e}")
-
-
-def _normalize_adapter_name(name: str) -> str:
-    key = name.strip().lower()
-    if not key:
-        raise ValueError("Adapter name must be non-empty")
-    return key
 
 
 twist_base_adapter_registry = TwistBaseAdapterRegistry()

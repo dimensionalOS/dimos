@@ -38,6 +38,7 @@ import importlib
 import os
 from typing import TYPE_CHECKING, Any
 
+from dimos.hardware.registry_utils import normalize_adapter_name
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -57,7 +58,7 @@ class WholeBodyAdapterRegistry:
 
     def register(self, name: str, cls: Callable[..., WholeBodyAdapter]) -> None:
         """Register an adapter factory (class or callable)."""
-        key = _normalize_adapter_name(name)
+        key = normalize_adapter_name(name)
         existing = self._adapters.get(key)
         if existing is cls:
             return
@@ -67,7 +68,7 @@ class WholeBodyAdapterRegistry:
 
     def create(self, name: str, **kwargs: Any) -> WholeBodyAdapter:
         """Create an adapter instance by name."""
-        key = name.lower()
+        key = normalize_adapter_name(name)
         if key not in self._adapters:
             raise KeyError(f"Unknown whole-body adapter: {name}. Available: {self.available()}")
         return self._adapters[key](**kwargs)
@@ -104,13 +105,6 @@ class WholeBodyAdapterRegistry:
                 continue
             if hasattr(mod, "register"):
                 mod.register(self)
-
-
-def _normalize_adapter_name(name: str) -> str:
-    key = name.strip().lower()
-    if not key:
-        raise ValueError("Adapter name must be non-empty")
-    return key
 
 
 whole_body_adapter_registry = WholeBodyAdapterRegistry()

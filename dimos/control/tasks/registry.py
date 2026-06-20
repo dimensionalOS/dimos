@@ -33,6 +33,8 @@ import importlib
 import os
 from typing import TYPE_CHECKING, cast
 
+from dimos.control.tasks.registry_utils import normalize_task_name, validate_task_factory_path
+
 if TYPE_CHECKING:
     from dimos.control.coordinator import TaskConfig
     from dimos.control.hardware_interface import ConnectedHardware, ConnectedWholeBody
@@ -78,8 +80,8 @@ class ControlTaskRegistry:
 
     def register_path(self, name: str, factory_path: str) -> None:
         """Register a lazy task factory import path."""
-        key = _normalize_task_name(name)
-        _validate_factory_path(factory_path)
+        key = normalize_task_name(name)
+        validate_task_factory_path(factory_path)
         existing = self._factory_paths.get(key)
         if existing is not None and existing != factory_path:
             raise ValueError(f"Duplicate task type {key!r}: {existing!r} vs {factory_path!r}")
@@ -102,7 +104,7 @@ class ControlTaskRegistry:
                 adapter resolve it from their typed params; pass ``None``
                 only if no task in this registry needs hardware.
         """
-        key = name.lower()
+        key = normalize_task_name(name)
         factory = self._resolve_factory(key)
         return factory(cfg=cfg, hardware=hardware or {})
 
@@ -127,19 +129,6 @@ class ControlTaskRegistry:
             raise TypeError(f"Task factory {factory_path!r} is not callable")
         self._factories[key] = factory
         return factory
-
-
-def _normalize_task_name(name: str) -> str:
-    key = name.strip().lower()
-    if not key:
-        raise ValueError("Task type must be non-empty")
-    return key
-
-
-def _validate_factory_path(factory_path: str) -> None:
-    module_name, separator, attr = factory_path.partition(":")
-    if not factory_path.strip() or separator != ":" or not module_name or not attr:
-        raise ValueError(f"Invalid task factory path: {factory_path!r}")
 
 
 control_task_registry = ControlTaskRegistry()

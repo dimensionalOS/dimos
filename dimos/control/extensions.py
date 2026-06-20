@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, cast
 
 from dimos.control.components import HardwareType
 from dimos.control.tasks.registry import control_task_registry
+from dimos.control.tasks.registry_utils import normalize_task_name, validate_task_factory_path
+from dimos.hardware.registry_utils import normalize_adapter_name
 
 if TYPE_CHECKING:
     from dimos.hardware.drive_trains.spec import TwistBaseAdapter
@@ -40,7 +42,7 @@ def register_hardware_adapter(
     factory object is idempotent; registering a different factory for an
     existing name raises from the target registry.
     """
-    adapter_name = _normalize_name(adapter_type, label="Hardware adapter type")
+    adapter_name = normalize_adapter_name(adapter_type)
     if not callable(factory):
         raise TypeError("Hardware adapter factory must be callable")
 
@@ -76,22 +78,9 @@ def register_control_task(task_type: str, factory_path: str) -> None:
     resolved later by the control task registry when a coordinator creates a
     matching ``TaskConfig``.
     """
-    task_name = _normalize_name(task_type, label="Control task type")
-    _validate_factory_path(factory_path)
+    task_name = normalize_task_name(task_type)
+    validate_task_factory_path(factory_path, label="control task factory path")
     control_task_registry.register_path(task_name, factory_path)
-
-
-def _normalize_name(name: str, *, label: str) -> str:
-    normalized = name.strip().lower()
-    if not normalized:
-        raise ValueError(f"{label} must be non-empty")
-    return normalized
-
-
-def _validate_factory_path(factory_path: str) -> None:
-    module_name, separator, attr = factory_path.partition(":")
-    if not factory_path.strip() or separator != ":" or not module_name or not attr:
-        raise ValueError(f"Invalid control task factory path: {factory_path!r}")
 
 
 __all__ = ["register_control_task", "register_hardware_adapter"]
