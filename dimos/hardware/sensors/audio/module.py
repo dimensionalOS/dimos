@@ -57,6 +57,22 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
+def _unsubscribe_safely(unsub: Callable[[], None] | None, *, label: str) -> None:
+    if unsub is None:
+        return
+    try:
+        unsub()
+    except Exception:
+        logger.exception(f"{label} failed to unsubscribe")
+
+
+def _unsubscribe_many_safely(unsubs: list[Callable[[], None]] | None, *, label: str) -> None:
+    if unsubs is None:
+        return
+    for unsub in unsubs:
+        _unsubscribe_safely(unsub, label=label)
+
+
 class AudioConfig(ModuleConfig):
     sample_rate: int = 16000
     channels: int = 1
@@ -155,7 +171,7 @@ class AudioModule(Module):
             channels=self.config.channels,
             sample_format=self.config.sample_format,
             coding_format="pcm",
-            ts=time.monotonic(),
+            ts=time.time(),
         )
         self.audio.publish(msg)
 
@@ -184,7 +200,7 @@ class AudioModule(Module):
                 channels=self.config.channels,
                 sample_format=self.config.sample_format,
                 coding_format="pcm",
-                ts=time.monotonic(),
+                ts=time.time(),
             )
             self.audio.publish(msg)
 
@@ -250,10 +266,7 @@ class SpeakerModule(Module):
         self._writer_thread.start()
         yield
         if self._unsub is not None:
-            try:
-                self._unsub()
-            except Exception:
-                logger.exception("SpeakerModule failed to unsubscribe")
+            _unsubscribe_safely(self._unsub, label="SpeakerModule")
             self._unsub = None
         if self._running is not None:
             self._running.clear()
@@ -280,6 +293,8 @@ class SpeakerModule(Module):
 
     @rpc
     def start(self) -> None:
+        _unsubscribe_safely(self._unsub, label="SpeakerModule")
+        self._unsub = None
         super().start()
         self._unsub = self.audio.subscribe(self._on_audio)
 
@@ -477,11 +492,7 @@ class SpeechToTextModule(Module):
         self._thread.start()
         yield
         if self._unsubs is not None:
-            for unsub in self._unsubs:
-                try:
-                    unsub()
-                except Exception:
-                    logger.exception("SpeechToTextModule failed to unsubscribe")
+            _unsubscribe_many_safely(self._unsubs, label="SpeechToTextModule")
             self._unsubs = None
         if self._running is not None:
             self._running.clear()
@@ -499,6 +510,8 @@ class SpeechToTextModule(Module):
 
     @rpc
     def start(self) -> None:
+        _unsubscribe_many_safely(self._unsubs, label="SpeechToTextModule")
+        self._unsubs = None
         super().start()
         self._unsubs = [
             self.audio.subscribe(self._on_audio),
@@ -992,10 +1005,7 @@ class TextToSpeechModule(Module):
         self._thread.start()
         yield
         if self._unsub is not None:
-            try:
-                self._unsub()
-            except Exception:
-                logger.exception("TextToSpeechModule failed to unsubscribe")
+            _unsubscribe_safely(self._unsub, label="TextToSpeechModule")
             self._unsub = None
         if self._running is not None:
             self._running.clear()
@@ -1007,6 +1017,8 @@ class TextToSpeechModule(Module):
 
     @rpc
     def start(self) -> None:
+        _unsubscribe_safely(self._unsub, label="TextToSpeechModule")
+        self._unsub = None
         super().start()
         self._unsub = self.text.subscribe(self._on_text)
 
@@ -1159,7 +1171,7 @@ class TextToSpeechModule(Module):
                             channels=1,
                             sample_format="S16LE",
                             coding_format="pcm",
-                            ts=time.monotonic(),
+                            ts=time.time(),
                         )
                         self.tts_reference_audio.publish(msg_out)
                         self.audio.publish(msg_out)
@@ -1227,7 +1239,7 @@ class TextToSpeechModule(Module):
                         channels=1,
                         sample_format="S16LE",
                         coding_format="pcm",
-                        ts=time.monotonic(),
+                        ts=time.time(),
                     )
                     self.tts_reference_audio.publish(msg_out)
                     self.audio.publish(msg_out)
@@ -1554,10 +1566,7 @@ class FunVoiceEffectsModule(Module):
         self._thread.start()
         yield
         if self._unsub is not None:
-            try:
-                self._unsub()
-            except Exception:
-                logger.exception("FunVoiceEffectsModule failed to unsubscribe")
+            _unsubscribe_safely(self._unsub, label="FunVoiceEffectsModule")
             self._unsub = None
         if self._running is not None:
             self._running.clear()
@@ -1569,6 +1578,8 @@ class FunVoiceEffectsModule(Module):
 
     @rpc
     def start(self) -> None:
+        _unsubscribe_safely(self._unsub, label="FunVoiceEffectsModule")
+        self._unsub = None
         super().start()
         self._unsub = self.audio_in.subscribe(self._on_audio)
 
@@ -1651,7 +1662,7 @@ class FunVoiceEffectsModule(Module):
                     channels=1,
                     sample_format="S16LE",
                     coding_format="pcm",
-                    ts=time.monotonic(),
+                    ts=time.time(),
                 )
             )
 
