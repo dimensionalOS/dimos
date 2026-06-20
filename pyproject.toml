@@ -322,6 +322,10 @@ drone = [
     "pymavlink"
 ]
 
+xlerobot = [
+    "lerobot[feetech]",
+]
+
 dds = [
     "cyclonedds>=0.10.5",
 ]
@@ -337,7 +341,7 @@ apriltag = [
 ]
 
 all = [
-    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,psql,sim,unitree,visualization,web]",
+    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,psql,sim,unitree,visualization,web,xlerobot]",
 ]
 
 [dependency-groups]
