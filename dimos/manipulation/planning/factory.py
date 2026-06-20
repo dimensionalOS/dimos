@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from dimos.manipulation.planning.kinematics.config import (
@@ -25,9 +26,27 @@ from dimos.manipulation.planning.kinematics.config import (
     PinkKinematicsConfig,
     kinematics_config_from_name,
 )
+from dimos.manipulation.visualization.config import (
+    ManipulationVisualizationConfig,
+    NoManipulationVisualizationConfig,
+)
 
 if TYPE_CHECKING:
-    from dimos.manipulation.planning.spec.protocols import KinematicsSpec, PlannerSpec, WorldSpec
+    from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
+    from dimos.manipulation.planning.spec.protocols import (
+        KinematicsSpec,
+        PlannerSpec,
+        WorldSpec,
+    )
+
+
+@dataclass(frozen=True)
+class PlanningSpecs:
+    """Concrete planning specs created from configuration."""
+
+    world_monitor: WorldMonitor
+    kinematics: KinematicsSpec
+    planner: PlannerSpec
 
 
 SUPPORTED_WORLD_BACKENDS = ("drake", "roboplan")
@@ -61,10 +80,13 @@ def validate_backend_combination(
 
 def create_world(
     backend: str = "drake",
-    enable_viz: bool = False,
+    visualization: ManipulationVisualizationConfig | None = None,
     **kwargs: Any,
 ) -> WorldSpec:
-    """Create a world instance. backend='drake'|'roboplan', enable_viz for supported backends."""
+    """Create a world instance for the selected planning backend."""
+    visualization = visualization or NoManipulationVisualizationConfig()
+    enable_viz = visualization.requires_world_visualization
+
     if backend == "drake":
         from dimos.manipulation.planning.world.drake_world import DrakeWorld
 
@@ -78,7 +100,7 @@ def create_world(
 
 
 def create_kinematics(
-    name: str = "jacobian",
+    name: str = "pink",
     config: ManipulationKinematicsConfig | None = None,
     **kwargs: Any,
 ) -> KinematicsSpec:
@@ -129,29 +151,53 @@ def create_planner(
     raise ValueError(f"Unknown planner: {name}. Available: {list(SUPPORTED_PLANNERS)}")
 
 
-def create_planning_stack(
-    robot_config: Any,
-    enable_viz: bool = False,
+def create_planning_specs(
+    world: WorldSpec,
     world_backend: str = "drake",
     planner_name: str = "rrt_connect",
-    kinematics_name: str = "jacobian",
+    kinematics_name: str | None = None,
     kinematics: ManipulationKinematicsConfig | None = None,
-) -> tuple[WorldSpec, KinematicsSpec, PlannerSpec, str]:
-    """Create complete planning stack. Returns (world, kinematics, planner, robot_id)."""
-    kinematics_config = kinematics
-    if kinematics_config is None:
-        kinematics_config = kinematics_config_from_name(kinematics_name)
+) -> PlanningSpecs:
+    """Create planning specs around an already-created world."""
+    from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
+
+    if kinematics_name is not None:
+        kinematics = kinematics_config_from_name(kinematics_name)
+    if kinematics is None:
+        kinematics = kinematics_config_from_name("pink")
 
     validate_backend_combination(
         world_backend=world_backend,
         planner_name=planner_name,
-        kinematics_name=kinematics_config.backend,
+        kinematics_name=kinematics.backend,
     )
-    world = create_world(backend=world_backend, enable_viz=enable_viz)
-    kinematics_solver = create_kinematics(config=kinematics_config)
-    planner = create_planner(name=planner_name, world=world, world_backend=world_backend)
+
+    return PlanningSpecs(
+        world_monitor=WorldMonitor(world=world),
+        kinematics=create_kinematics(config=kinematics),
+        planner=create_planner(name=planner_name, world=world, world_backend=world_backend),
+    )
+
+
+def create_planning_stack(
+    robot_config: Any,
+    world_backend: str = "drake",
+    visualization: ManipulationVisualizationConfig | None = None,
+    planner_name: str = "rrt_connect",
+    kinematics_name: str | None = None,
+    kinematics: ManipulationKinematicsConfig | None = None,
+) -> tuple[WorldSpec, KinematicsSpec, PlannerSpec, str]:
+    """Create complete planning stack. Returns (world, kinematics, planner, robot_id)."""
+    world = create_world(backend=world_backend, visualization=visualization)
+    planning_specs = create_planning_specs(
+        world=world,
+        world_backend=world_backend,
+        planner_name=planner_name,
+        kinematics_name=kinematics_name,
+        kinematics=kinematics,
+    )
 
     robot_id = world.add_robot(robot_config)
     world.finalize()
 
-    return world, kinematics_solver, planner, robot_id
+    return world, planning_specs.kinematics, planning_specs.planner, robot_id

@@ -568,7 +568,7 @@ Add this to your `dimos/robot/yourarm/blueprints.py` alongside the coordinator b
 yourarm_planner = manipulation_module(
     robots=[_make_yourarm_config("arm", joint_prefix="arm_", coordinator_task="traj_arm")],
     planning_timeout=10.0,
-    enable_viz=True,
+    visualization={"backend": "meshcat"},
 )
 # The planner's `coordinator_joint_state` input auto-connects to the
 # ControlCoordinator's output on the default `/coordinator_joint_state`

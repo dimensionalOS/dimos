@@ -91,7 +91,7 @@ openarm_mock_planner_coordinator = autoconnect(
     ManipulationModule.blueprint(
         robots=[_mock_left.to_robot_model_config(), _mock_right.to_robot_model_config()],
         planning_timeout=10.0,
-        enable_viz=True,
+        visualization={"backend": "meshcat"},
     ),
     ControlCoordinator.blueprint(
         hardware=[_mock_left.to_hardware_component(), _mock_right.to_hardware_component()],
@@ -107,7 +107,7 @@ openarm_planner_coordinator = autoconnect(
     ManipulationModule.blueprint(
         robots=[_left_hw.to_robot_model_config(), _right_hw.to_robot_model_config()],
         planning_timeout=10.0,
-        enable_viz=True,
+        visualization={"backend": "meshcat"},
     ),
     ControlCoordinator.blueprint(
         hardware=[_left_hw.to_hardware_component(), _right_hw.to_hardware_component()],
@@ -140,7 +140,7 @@ keyboard_teleop_openarm_mock = autoconnect(
     ),
     ManipulationModule.blueprint(
         robots=[_teleop_cfg.to_robot_model_config()],
-        enable_viz=True,
+        visualization={"backend": "meshcat"},
     ),
 )
 
@@ -162,7 +162,7 @@ keyboard_teleop_openarm = autoconnect(
     ),
     ManipulationModule.blueprint(
         robots=[_teleop_hw_cfg.to_robot_model_config()],
-        enable_viz=True,
+        visualization={"backend": "meshcat"},
     ),
 )
 

@@ -54,7 +54,7 @@ keyboard_teleop_piper = autoconnect(
     ),
     ManipulationModule.blueprint(
         robots=[_piper_cfg.to_robot_model_config()],
-        enable_viz=True,
+        visualization={"backend": "meshcat"},
     ),
 )
 
