@@ -59,16 +59,12 @@ class FakeJointPath:
 class FakeScene:
     def __init__(self, *args: Any) -> None:
         self.constructor_args = args
-        self.finalized = False
         self.models: list[tuple[str, str, dict[str, str]]] = []
         self.geometry: dict[str, np.ndarray] = {}
 
     def addRobotModel(self, path: str, name: str, package_paths: dict[str, str]) -> str:
         self.models.append((path, name, package_paths))
         return name
-
-    def finalize(self) -> None:
-        self.finalized = True
 
     def hasCollisions(self, q: np.ndarray) -> bool:
         return bool(np.any(np.asarray(q) > 0.9))

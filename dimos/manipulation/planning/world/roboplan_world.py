@@ -196,9 +196,12 @@ class RoboPlanWorld:
     # Lifecycle
 
     def finalize(self) -> None:
-        """Finalize the RoboPlan scene for collision queries."""
-        scene = self._require_scene()
-        scene.finalize()
+        """Mark the RoboPlan scene ready for DimOS planning queries.
+
+        RoboPlan Python bindings construct a query-ready Scene directly; v0.4.0
+        exposes no Scene.finalize() lifecycle method.
+        """
+        self._require_scene()
         self._finalized = True
         self._live_context.collision_context = self._create_collision_context()
         self._live_context.geometry_revision = self._geometry_revision
