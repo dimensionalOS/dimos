@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 
+from dimos.control.blueprints._hardware import mock_arm
 from dimos.control.components import (
     HardwareComponent,
     HardwareType,
@@ -194,12 +195,7 @@ coordinator_flowbase_nav = (
 
 
 # Mock arm (7-DOF) + mock holonomic base (3-DOF)
-_mock_arm_hw = HardwareComponent(
-    hardware_id="arm",
-    hardware_type=HardwareType.MANIPULATOR,
-    joints=[f"arm/joint{i}" for i in range(1, 8)],
-    adapter_type="mock",
-)
+_mock_arm_hw = mock_arm("arm", 7)
 
 coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
     hardware=[_mock_arm_hw, _mock_twist_base()],

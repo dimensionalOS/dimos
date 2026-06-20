@@ -40,8 +40,36 @@ from dimos.utils.data import LfsPath
 _XARM_MODEL_PATH = LfsPath("xarm_description") / "urdf/xarm_device.urdf.xacro"
 _XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": LfsPath("xarm_description")}
 
+XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
+    ("right_inner_knuckle", "right_outer_knuckle"),
+    ("left_inner_knuckle", "left_outer_knuckle"),
+    ("right_inner_knuckle", "right_finger"),
+    ("left_inner_knuckle", "left_finger"),
+    ("left_finger", "right_finger"),
+    ("left_outer_knuckle", "right_outer_knuckle"),
+    ("left_inner_knuckle", "right_inner_knuckle"),
+    ("left_outer_knuckle", "right_finger"),
+    ("right_outer_knuckle", "left_finger"),
+    ("xarm_gripper_base_link", "left_inner_knuckle"),
+    ("xarm_gripper_base_link", "right_inner_knuckle"),
+    ("xarm_gripper_base_link", "left_finger"),
+    ("xarm_gripper_base_link", "right_finger"),
+    ("link6", "xarm_gripper_base_link"),
+    ("link6", "left_outer_knuckle"),
+    ("link6", "right_outer_knuckle"),
+]
 
-def _xarm_model_config(dof: int) -> RobotModelConfig:
+
+def _xarm_model_config(dof: int, *, add_gripper: bool = False) -> RobotModelConfig:
+    xacro_args = {
+        "dof": str(dof),
+        "limited": "true",
+        "attach_xyz": "0.0 0.0 0.0",
+        "attach_rpy": "0 0.0 0",
+    }
+    if add_gripper:
+        xacro_args["add_gripper"] = "true"
+
     return RobotModelConfig(
         name="arm",
         model_path=_XARM_MODEL_PATH,
@@ -50,18 +78,15 @@ def _xarm_model_config(dof: int) -> RobotModelConfig:
             orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
         ),
         joint_names=[f"joint{i}" for i in range(1, dof + 1)],
-        end_effector_link=f"link{dof}",
+        end_effector_link="link_tcp" if add_gripper else f"link{dof}",
         base_link="link_base",
         package_paths=_XARM_PACKAGE_PATHS,
-        xacro_args={
-            "dof": str(dof),
-            "limited": "true",
-            "attach_xyz": "0.0 0.0 0.0",
-            "attach_rpy": "0 0.0 0",
-        },
+        xacro_args=xacro_args,
         auto_convert_meshes=True,
+        collision_exclusion_pairs=(XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else []),
         joint_name_mapping={f"arm/joint{i}": f"joint{i}" for i in range(1, dof + 1)},
         coordinator_task_name="traj_arm",
+        gripper_hardware_id="arm" if add_gripper else None,
         home_joints=[0.0] * dof,
     )
 
