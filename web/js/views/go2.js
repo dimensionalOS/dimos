@@ -14,24 +14,24 @@ import { escHtml, state } from '../state.js';
 import { startKeyboardLoop, stopKeyboardLoop } from './keyboard.js';
 
 // Command catalog — labels only; SPORT_CMD ids live robot-side.
+// StandReady = standup + balance_stand (drive-ready); they always go together,
+// so there's no separate Stand Up / Balance.
 const POSTURE = [
-    { name: 'StandUp', label: 'Stand Up' },
-    { name: 'StandDown', label: 'Sit / Down' },
-    { name: 'BalanceStand', label: 'Balance' },
+    { name: 'StandReady', label: 'Stand / Drive-ready' },
+    { name: 'StandDown', label: 'Sit' },
     { name: 'RecoveryStand', label: 'Recovery' },
 ];
 // Only commands verified working on the robot's firmware (probe_commands.py).
 // Stretch/Pose/gaits excluded — they 3203/3202 on >=V1.1.6.
+// Damp (Relax) removed from here — it's now the E-STOP action.
 const ACTIONS = [
     { name: 'Hello', label: 'Hello 👋' },
-    { name: 'Sit', label: 'Sit' },
-    { name: 'Damp', label: 'Relax' },
 ];
 
 // Local UI state. Posture/estop still placeholder; battery is wired to real
 // telemetry. (Body-height shelved — firmware 3203.)
 const ui = {
-    posture: 'StandUp',
+    posture: 'StandReady',  // robot auto-stands+balances on blueprint start
     estopped: false,
     nonce: 0,                 // monotonic command id for ack matching
     pending: new Map(),       // nonce -> {el, timer}
@@ -176,12 +176,18 @@ function wireGo2() {
         b.addEventListener('click', () => sendCommand(b.dataset.cmd, b)));
 
     document.getElementById('estop').addEventListener('click', () => {
-        ui.estopped = true; // TODO send {type:'estop'} on state_reliable
+        ui.estopped = true;
+        // E-STOP = Damp: robot goes limp immediately. Send on state_reliable
+        // (reliable plane). Fire-and-forget — don't gate the latch on an ack.
+        if (state.stateChannel && state.stateChannel.readyState === 'open') {
+            state.stateChannel.send(JSON.stringify({ type: 'sport_cmd', name: 'Damp', nonce: ++ui.nonce }));
+        }
         document.querySelectorAll('.cmd-btn').forEach((b) => (b.dataset.status = 'idle'));
+        ui.posture = 'Damp';
         refreshControls();
     });
     document.getElementById('rearm').addEventListener('click', () => {
-        ui.estopped = false; // TODO real two-step re-arm
+        ui.estopped = false;  // re-arm; operator must Stand/Drive-ready to resume
         refreshControls();
     });
 
@@ -203,8 +209,10 @@ function resolveAck(nonce, ok) {
     clearTimeout(p.timer);
     ui.pending.delete(nonce);
     const btn = p.el;
-    // Track posture optimistically on a confirmed posture command.
-    if (ok && p.name && POSTURE.some((x) => x.name === p.name)) ui.posture = p.name;
+    // Track posture optimistically on a confirmed posture command. StandReady
+    // is an action (stand+balance), not a latched state — map it to standing.
+    const POSTURE_STATE = { StandReady: 'StandReady', StandDown: 'StandDown', RecoveryStand: 'RecoveryStand', Sit: 'Sit' };
+    if (ok && POSTURE_STATE[p.name]) ui.posture = POSTURE_STATE[p.name];
     btn.dataset.status = ok ? 'done' : 'error';
     setTimeout(() => {
         btn.dataset.status = 'idle';
@@ -235,7 +243,10 @@ function refreshControls() {
     document.querySelectorAll('.cmd-btn').forEach((b) => {
         const active = b.dataset.cmd === ui.posture;
         b.classList.toggle('is-active', active);
-        b.disabled = !!reason || (active && b.dataset.status === 'idle');
+        // Disable the active posture so you can't re-fire it — EXCEPT StandReady,
+        // which you may want to re-press to re-arm drive after sitting.
+        const lockActive = active && b.dataset.cmd !== 'StandReady';
+        b.disabled = !!reason || (lockActive && b.dataset.status === 'idle');
     });
 
     document.getElementById('estop').classList.toggle('latched', ui.estopped);
@@ -246,7 +257,7 @@ function refreshControls() {
     kb.querySelector('.dot').nextSibling.textContent = ui.estopped ? 'KEYBOARD OFF' : 'KEYBOARD LIVE';
 
     document.getElementById('posture-chip').textContent =
-        ({ StandUp: 'STANDING', StandDown: 'SITTING', BalanceStand: 'BALANCE', RecoveryStand: 'RECOVERY' }[ui.posture]) ||
+        ({ StandReady: 'STANDING', StandDown: 'SITTING', RecoveryStand: 'RECOVERY', Damp: 'STOPPED' }[ui.posture]) ||
         ui.posture;
 
     renderBattery();
