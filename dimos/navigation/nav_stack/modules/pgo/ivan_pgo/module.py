@@ -32,7 +32,7 @@ import threading
 import time
 from typing import Any
 
-import gtsam  # type: ignore[import-untyped]
+import gtsam  # type: ignore[import-not-found,import-untyped]
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 import open3d.core as o3c  # type: ignore[import-untyped]

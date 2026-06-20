@@ -149,7 +149,7 @@ class PGO(Module, LoopClosure):
             self._latest_odom = msg
 
     def _on_scan(self, cloud: PointCloud2) -> None:
-        import gtsam  # type: ignore[import-untyped]
+        import gtsam  # type: ignore[import-not-found,import-untyped]
 
         with self._odom_lock:
             odom = self._latest_odom
