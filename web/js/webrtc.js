@@ -144,7 +144,7 @@ export async function setupWebRTC(sessionId) {
             startVideoStats(state.stateChannel);
         };
         // Fallback for old brokers w/o state_back_channel_id (no-op on new ones).
-        state.stateChannel.onmessage = (e) => { console.log('[rx state_reliable]', e.data); handleStateMessage(e.data); };
+        state.stateChannel.onmessage = (e) => handleStateMessage(e.data);
         state.stateChannel.onerror = (e) => console.warn('[state-channel] error', e);
         state.stateChannel.onclose = () => console.info('[state-channel] closed');
     }
@@ -156,7 +156,7 @@ export async function setupWebRTC(sessionId) {
             id: bridge.state_back_channel_id,
             ordered: true,
         });
-        state.stateBackChannel.onmessage = (e) => { console.log('[rx state_back]', e.data); handleStateMessage(e.data); };
+        state.stateBackChannel.onmessage = (e) => handleStateMessage(e.data);
         state.stateBackChannel.onerror = (e) => console.warn('[state-back-channel] error', e);
         state.stateBackChannel.onclose = () => console.info('[state-back-channel] closed');
     }
@@ -267,12 +267,17 @@ export function stopVideoStats() {
 }
 
 export function handleStateMessage(data) {
+    // Messages arrive as a string (pong, sent as str) OR an ArrayBuffer
+    // (robot_telemetry/cmd_ack, published as bytes → CF delivers binary).
+    // Decode binary to text before parsing, else JSON.parse throws and the
+    // message is silently dropped — which is why battery never showed.
+    if (data instanceof ArrayBuffer) {
+        data = new TextDecoder().decode(data);
+    } else if (ArrayBuffer.isView(data)) {
+        data = new TextDecoder().decode(data.buffer);
+    }
     let msg;
     try { msg = JSON.parse(data); } catch (_) { return; }
-    // TEMP diagnostic: log non-pong back-channel messages so we can see whether
-    // robot_telemetry (battery) actually reaches the browser. Remove once battery
-    // is confirmed working.
-    if (msg.type !== 'pong') console.log('[state-msg]', msg.type, msg);
     if (msg.type === 'pong') applyPong(msg);
     // Robot-measured command-plane health (latency/jitter/loss) — what
     // actually arrived, which the operator can't see from its send side.
