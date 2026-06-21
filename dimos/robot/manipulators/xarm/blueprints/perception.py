@@ -59,5 +59,3 @@ xarm_perception = autoconnect(
         max_obstacle_width=0.06,
     ),
 ).global_config(n_workers=4)
-
-__all__ = ["xarm_perception"]

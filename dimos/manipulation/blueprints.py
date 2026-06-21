@@ -18,25 +18,16 @@ Robot-owned manipulation blueprints now live under ``dimos.robot.manipulators``.
 """
 
 from dimos.robot.manipulators.xarm.blueprints.agentic import (
-    xarm7_planner_coordinator_agent,
-    xarm_perception_agent,
-    xarm_perception_sim_agent,
+    xarm7_planner_coordinator_agent as xarm7_planner_coordinator_agent,
+    xarm_perception_agent as xarm_perception_agent,
+    xarm_perception_sim_agent as xarm_perception_sim_agent,
 )
 from dimos.robot.manipulators.xarm.blueprints.basic import (
-    dual_xarm6_planner,
-    xarm6_planner_only,
-    xarm7_planner_coordinator,
+    dual_xarm6_planner as dual_xarm6_planner,
+    xarm6_planner_only as xarm6_planner_only,
+    xarm7_planner_coordinator as xarm7_planner_coordinator,
 )
-from dimos.robot.manipulators.xarm.blueprints.perception import xarm_perception
-from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_perception_sim
-
-__all__ = [
-    "dual_xarm6_planner",
-    "xarm6_planner_only",
-    "xarm7_planner_coordinator",
-    "xarm7_planner_coordinator_agent",
-    "xarm_perception",
-    "xarm_perception_agent",
-    "xarm_perception_sim",
-    "xarm_perception_sim_agent",
-]
+from dimos.robot.manipulators.xarm.blueprints.perception import xarm_perception as xarm_perception
+from dimos.robot.manipulators.xarm.blueprints.simulation import (
+    xarm_perception_sim as xarm_perception_sim,
+)

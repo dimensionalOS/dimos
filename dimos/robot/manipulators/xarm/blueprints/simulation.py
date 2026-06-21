@@ -70,5 +70,3 @@ xarm_perception_sim = autoconnect(
     ),
     RerunBridgeModule.blueprint(),
 )
-
-__all__ = ["xarm_perception_sim"]

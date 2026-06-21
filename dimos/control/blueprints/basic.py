@@ -31,10 +31,10 @@ from __future__ import annotations
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
-from dimos.robot.manipulators.piper.blueprints.basic import coordinator_piper
+from dimos.robot.manipulators.piper.blueprints.basic import coordinator_piper as coordinator_piper
 from dimos.robot.manipulators.xarm.blueprints.basic import (
-    coordinator_xarm6,
-    coordinator_xarm7,
+    coordinator_xarm6 as coordinator_xarm6,
+    coordinator_xarm7 as coordinator_xarm7,
 )
 
 # Minimal blueprint (no hardware, no tasks)
@@ -63,11 +63,3 @@ coordinator_mock = ControlCoordinator.blueprint(
         )
     ],
 )
-
-__all__ = [
-    "coordinator_basic",
-    "coordinator_mock",
-    "coordinator_piper",
-    "coordinator_xarm6",
-    "coordinator_xarm7",
-]

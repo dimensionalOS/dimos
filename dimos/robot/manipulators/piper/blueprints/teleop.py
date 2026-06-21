@@ -92,9 +92,3 @@ coordinator_cartesian_ik_piper = ControlCoordinator.blueprint(
     hardware=[_piper_cartesian_hw],
     tasks=[cartesian_ik_task(_piper_cartesian_hw, model_path=PIPER_FK_MODEL, ee_joint_id=6)],
 )
-
-__all__ = [
-    "coordinator_cartesian_ik_piper",
-    "coordinator_teleop_piper",
-    "keyboard_teleop_piper",
-]

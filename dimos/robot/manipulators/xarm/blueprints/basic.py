@@ -81,11 +81,3 @@ coordinator_xarm6 = autoconnect(
     ),
     *mujoco_if_sim(XARM6_SIM_PATH, len(_coordinator_xarm6_hw.joints)),
 )
-
-__all__ = [
-    "coordinator_xarm6",
-    "coordinator_xarm7",
-    "dual_xarm6_planner",
-    "xarm6_planner_only",
-    "xarm7_planner_coordinator",
-]

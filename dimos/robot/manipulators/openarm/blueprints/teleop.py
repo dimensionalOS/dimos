@@ -69,8 +69,3 @@ keyboard_teleop_openarm = autoconnect(
         visualization={"backend": "meshcat"},
     ),
 )
-
-__all__ = [
-    "keyboard_teleop_openarm",
-    "keyboard_teleop_openarm_mock",
-]

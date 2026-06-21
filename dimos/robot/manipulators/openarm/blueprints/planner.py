@@ -58,8 +58,3 @@ openarm_planner_coordinator = autoconnect(
         ],
     ),
 )
-
-__all__ = [
-    "openarm_mock_planner_coordinator",
-    "openarm_planner_coordinator",
-]

@@ -72,15 +72,3 @@ coordinator_openarm_bimanual = ControlCoordinator.blueprint(
         openarm_task(right_hw),
     ],
 )
-
-__all__ = [
-    "coordinator_openarm_bimanual",
-    "coordinator_openarm_left",
-    "coordinator_openarm_mock",
-    "coordinator_openarm_right",
-    "left_hw",
-    "mock_left",
-    "mock_right",
-    "openarm_task",
-    "right_hw",
-]

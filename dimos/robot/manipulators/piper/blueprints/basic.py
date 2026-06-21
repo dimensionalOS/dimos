@@ -37,5 +37,3 @@ coordinator_piper = autoconnect(
     ),
     *mujoco_if_sim(PIPER_SIM_PATH, len(_piper_hw.joints)),
 )
-
-__all__ = ["coordinator_piper"]

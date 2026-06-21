@@ -43,8 +43,8 @@ from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.robot.manipulators.piper.blueprints.teleop import (
-    coordinator_cartesian_ik_piper,
-    coordinator_teleop_piper,
+    coordinator_cartesian_ik_piper as coordinator_cartesian_ik_piper,
+    coordinator_teleop_piper as coordinator_teleop_piper,
 )
 from dimos.robot.manipulators.piper.config import (
     PIPER_FK_MODEL,
@@ -229,16 +229,3 @@ coordinator_teleop_dual = ControlCoordinator.blueprint(
         ),
     ],
 )
-
-
-__all__ = [
-    "coordinator_cartesian_ik_mock",
-    "coordinator_cartesian_ik_piper",
-    "coordinator_combined_xarm6",
-    "coordinator_servo_xarm6",
-    "coordinator_teleop_dual",
-    "coordinator_teleop_piper",
-    "coordinator_teleop_xarm6",
-    "coordinator_teleop_xarm7",
-    "coordinator_velocity_xarm6",
-]
