@@ -61,7 +61,7 @@ def _setup_ament_index(package_paths: dict[str, Path]) -> None:
     resource_dir.mkdir(parents=True, exist_ok=True)
 
     for pkg_name, pkg_path in package_paths.items():
-        resolved = Path(pkg_path).resolve()
+        resolved = Path(os.fspath(pkg_path)).resolve()
         if _ament_registered.get(pkg_name) == resolved:
             continue
 
@@ -95,7 +95,7 @@ def _patch_xacro_find(package_paths: dict[str, Path]) -> Iterator[None]:
     def custom_find(resolved: str, a: str, args: list[str], context: dict[str, str]) -> str:
         pkg_name = args[0] if args else ""
         if pkg_name in package_paths:
-            pkg_path = str(Path(package_paths[pkg_name]).resolve())
+            pkg_path = str(Path(os.fspath(package_paths[pkg_name])).resolve())
             return resolved.replace(f"$({a})", pkg_path)
         return str(original_find(resolved, a, args, context))
 

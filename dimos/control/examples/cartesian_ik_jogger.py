@@ -162,11 +162,10 @@ def clamp(value: float, min_val: float, max_val: float) -> float:
 
 
 def _get_piper_model_path() -> str:
-    """Get path to Piper MJCF model."""
-    from dimos.utils.data import get_data
+    """Get path to Piper FK model."""
+    from dimos.control.blueprints._hardware import PIPER_FK_MODEL
 
-    piper_path = get_data("piper_description")
-    return str(piper_path / "mujoco_model" / "piper_no_gripper_description.xml")
+    return str(PIPER_FK_MODEL)
 
 
 def run_jogger_ui(model_path: str | None = None, ee_joint_id: int = 6) -> None:

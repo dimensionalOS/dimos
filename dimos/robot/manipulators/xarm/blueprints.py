@@ -34,11 +34,13 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
-from dimos.utils.data import LfsPath
 
-_XARM_MODEL_PATH = LfsPath("xarm_description") / "urdf/xarm_device.urdf.xacro"
-_XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": LfsPath("xarm_description")}
+XARM_ROS2_REPO = "https://github.com/xArm-Developer/xarm_ros2"
+_XARM_REPO = RobotDescriptionSource(url=XARM_ROS2_REPO, ref="humble")
+_XARM_MODEL_PATH = _XARM_REPO / "xarm_description" / "urdf" / "xarm_device.urdf.xacro"
+_XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": _XARM_REPO / "xarm_description"}
 
 XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("right_inner_knuckle", "right_outer_knuckle"),

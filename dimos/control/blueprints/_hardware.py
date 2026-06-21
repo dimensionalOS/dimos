@@ -23,9 +23,13 @@ from dimos.control.components import (
     make_twist_base_joints,
 )
 from dimos.core.global_config import global_config
+from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.utils.data import LfsPath
 
-PIPER_FK_MODEL = LfsPath("piper_description/mujoco_model/piper_no_gripper_description.xml")
+PIPER_DESCRIPTION_REPO = "https://github.com/agilexrobotics/agx_arm_urdf"
+_PIPER_REPO = RobotDescriptionSource(url=PIPER_DESCRIPTION_REPO, ref="main")
+
+PIPER_FK_MODEL = _PIPER_REPO / "piper" / "urdf" / "piper_description.urdf"
 XARM6_FK_MODEL = LfsPath("xarm_description/urdf/xarm6/xarm6.urdf")
 XARM7_FK_MODEL = LfsPath("xarm_description/urdf/xarm7/xarm7.urdf")
 A750_FK_MODEL = LfsPath("a750_description/urdf/a750_rev1_no_gripper.urdf")

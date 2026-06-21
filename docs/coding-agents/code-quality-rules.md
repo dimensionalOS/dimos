@@ -16,7 +16,7 @@ Rules dimos code is expected to follow. They address recurring issues found in c
 * Specify only what differs from defaults. Don't restate defaults like `tick_rate=100.0`, `publish_joint_state=True`, or default topics (`/cmd_vel`, `/odom`).
 * `.transports({...})` applies to all matching modules, so define a remap once, not twice across sub-blueprints.
 * No lambdas -- they can't be pickled to worker processes. Use named functions.
-* Do no work at import time: no subprocesses, viewers, model parsing, or network. In particular don't call `get_data(...)` (it blocks import until the download finishes) -- use `LfsPath` (resolved at access time) or build the config in `start`/`build`. Any process you start must be managed (shut down when not needed).
+* Do no work at import time: no subprocesses, viewers, model parsing, or network. In particular don't call `get_data(...)` (it blocks import until the download finishes) -- use lazy path adapters such as `RobotDescriptionSource` paths for upstream robot descriptions or `LfsPath` for intentionally vendored assets, or build the config in `start`/`build`. Any process you start must be managed (shut down when not needed).
 * Blueprint files define blueprints, not modules/classes.
 * Helper blueprints not meant to run alone must start with `_` (the `all_blueprints.py` generator skips them); demo/non-shared ones get a `demo_` prefix (hidden from `dimos list`).
 

@@ -33,8 +33,8 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
-from dimos.utils.data import LfsPath
 
 A750_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("base_link", "link1"),
@@ -58,11 +58,12 @@ A750_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("link6", "right_finger_link"),
 ]
 
-_A750_MODEL_PATH = LfsPath("a750_description") / "urdf/a750_rev1.urdf"
+A750_DESCRIPTION_REPO = "https://github.com/adob/a750_description"
+_A750_REPO = RobotDescriptionSource(url=A750_DESCRIPTION_REPO, ref="master")
+_A750_MODEL_PATH = _A750_REPO / "urdf" / "a750_rev1.urdf"
 _A750_HOME_JOINTS = [0.0, 0.0, -math.radians(90), 0.0, 0.0, 0.0]
 _A750_PACKAGE_PATHS: dict[str, Path] = {
-    "a750_description": LfsPath("a750_description"),
-    "a750_gazebo": LfsPath("a750_description"),
+    "a750_description": _A750_REPO / ".",
 }
 
 

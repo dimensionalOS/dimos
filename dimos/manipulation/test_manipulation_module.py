@@ -26,6 +26,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from dimos.manipulation.blueprints import _XARM_MODEL_PATH, _XARM_PACKAGE_PATHS
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationState,
@@ -36,7 +37,6 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.utils.data import get_data
 
 pytestmark = pytest.mark.self_hosted
 
@@ -47,8 +47,7 @@ def _drake_available() -> bool:
 
 def _xarm_urdf_available() -> bool:
     try:
-        desc_path = get_data("xarm_description")
-        model_path = desc_path / "urdf/xarm_device.urdf.xacro"
+        model_path = _XARM_MODEL_PATH
         return model_path.exists()
     except Exception:
         return False
@@ -56,15 +55,14 @@ def _xarm_urdf_available() -> bool:
 
 def _get_xarm7_config() -> RobotModelConfig:
     """Create XArm7 robot config for testing."""
-    desc_path = get_data("xarm_description")
     return RobotModelConfig(
         name="test_arm",
-        model_path=desc_path / "urdf/xarm_device.urdf.xacro",
+        model_path=_XARM_MODEL_PATH,
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
         end_effector_link="link7",
         base_link="link_base",
-        package_paths={"xarm_description": desc_path},
+        package_paths=_XARM_PACKAGE_PATHS,
         xacro_args={"dof": "7", "limited": "true"},
         auto_convert_meshes=True,
         max_velocity=1.0,

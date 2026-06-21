@@ -86,13 +86,12 @@ class CartesianIKTask(BaseControlTask):
     outputs JointCommandOutput and participates in joint-level arbitration.
 
     Example:
-        >>> from dimos.utils.data import get_data
-        >>> piper_path = get_data("piper_description")
+        >>> from dimos.control.blueprints._hardware import PIPER_FK_MODEL
         >>> task = CartesianIKTask(
         ...     name="cartesian_arm",
         ...     config=CartesianIKTaskConfig(
         ...         joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"],
-        ...         model_path=piper_path / "mujoco_model" / "piper_no_gripper_description.xml",
+        ...         model_path=PIPER_FK_MODEL,
         ...         ee_joint_id=6,
         ...         priority=10,
         ...         timeout=0.5,

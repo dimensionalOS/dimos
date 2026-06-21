@@ -46,8 +46,8 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
-from dimos.utils.data import LfsPath
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
@@ -69,8 +69,10 @@ XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("link6", "right_outer_knuckle"),
 ]
 
-_XARM_MODEL_PATH = LfsPath("xarm_description") / "urdf/xarm_device.urdf.xacro"
-_XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": LfsPath("xarm_description")}
+XARM_ROS2_REPO = "https://github.com/xArm-Developer/xarm_ros2"
+_XARM_REPO = RobotDescriptionSource(url=XARM_ROS2_REPO, ref="humble")
+_XARM_MODEL_PATH = _XARM_REPO / "xarm_description" / "urdf" / "xarm_device.urdf.xacro"
+_XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": _XARM_REPO / "xarm_description"}
 
 
 def _base_pose(x: float = 0.0, y: float = 0.0, z: float = 0.0) -> PoseStamped:

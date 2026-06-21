@@ -33,8 +33,8 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
-from dimos.utils.data import LfsPath
 
 PIPER_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("gripper_base", "link7"),
@@ -43,10 +43,13 @@ PIPER_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("link6", "gripper_base"),
 ]
 
-_PIPER_MODEL_PATH = LfsPath("piper_description") / "urdf/piper_description.xacro"
+PIPER_DESCRIPTION_REPO = "https://github.com/agilexrobotics/agx_arm_urdf"
+_PIPER_REPO = RobotDescriptionSource(url=PIPER_DESCRIPTION_REPO, ref="main")
+_PIPER_MODEL_PATH = _PIPER_REPO / "piper" / "urdf" / "piper_with_gripper_description.xacro"
 _PIPER_PACKAGE_PATHS: dict[str, Path] = {
-    "piper_description": LfsPath("piper_description"),
-    "piper_gazebo": LfsPath("piper_description"),
+    # Upstream URIs are package://agx_arm_description/agx_arm_urdf/..., so the
+    # package root is the parent of the preserved agx_arm_urdf checkout folder.
+    "agx_arm_description": _PIPER_REPO.parent,
 }
 
 

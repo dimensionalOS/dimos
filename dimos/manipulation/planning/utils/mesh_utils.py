@@ -35,9 +35,9 @@ import hashlib
 from pathlib import Path
 import re
 import shutil
-import tempfile
 from typing import TYPE_CHECKING
 
+from dimos.robot.assets.processing import DERIVED_ASSET_CACHE_ROOT, render_urdf
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -46,8 +46,8 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-# Cache directory for processed URDFs
-_CACHE_DIR = Path(tempfile.gettempdir()) / "dimos_urdf_cache"
+# Cache directory for Drake-specific URDFs derived from rendered robot assets.
+_CACHE_DIR = DERIVED_ASSET_CACHE_ROOT / "drake_urdfs"
 
 
 def prepare_urdf_for_drake(
@@ -72,32 +72,30 @@ def prepare_urdf_for_drake(
     Returns:
         Path to the prepared URDF file (may be cached)
     """
-    urdf_path = Path(urdf_path)
     package_paths = package_paths or {}
     xacro_args = xacro_args or {}
+    rendered_urdf = render_urdf(
+        urdf_path,
+        package_paths,
+        xacro_args,
+        package_uri_mode="absolute",
+    )
 
-    # Generate cache key
-    cache_key = _generate_cache_key(urdf_path, package_paths, xacro_args, convert_meshes)
-    cache_path = _CACHE_DIR / cache_key / urdf_path.stem
+    # Generate cache key for Drake-specific processing.
+    cache_key = _generate_cache_key(rendered_urdf, convert_meshes)
+    cache_path = _CACHE_DIR / cache_key / rendered_urdf.stem
     cache_path.mkdir(parents=True, exist_ok=True)
-    cached_urdf = cache_path / f"{urdf_path.stem}.urdf"
+    cached_urdf = cache_path / f"{rendered_urdf.stem}.urdf"
 
     # Check cache
     if cached_urdf.exists():
         logger.debug(f"Using cached URDF: {cached_urdf}")
         return str(cached_urdf)
 
-    # Process xacro if needed
-    if urdf_path.suffix in (".xacro", ".urdf.xacro"):
-        urdf_content = _process_xacro(urdf_path, package_paths, xacro_args)
-    else:
-        urdf_content = urdf_path.read_text()
+    urdf_content = rendered_urdf.read_text()
 
     # Strip transmission blocks (Drake doesn't need them, and they can cause issues)
     urdf_content = _strip_transmission_blocks(urdf_content)
-
-    # Resolve package:// URIs
-    urdf_content = _resolve_package_uris(urdf_content, package_paths, cache_path)
 
     # Convert meshes if requested
     if convert_meshes:
@@ -112,11 +110,9 @@ def prepare_urdf_for_drake(
 
 def _generate_cache_key(
     urdf_path: Path,
-    package_paths: dict[str, Path],
-    xacro_args: dict[str, str],
     convert_meshes: bool,
 ) -> str:
-    """Generate a cache key for the URDF configuration.
+    """Generate a cache key for Drake-specific URDF processing.
 
     Includes a version number to invalidate cache when processing logic changes.
     """
@@ -125,27 +121,9 @@ def _generate_cache_key(
 
     # Version number to invalidate cache when processing logic changes
     # Increment this when adding new processing steps (e.g., stripping transmission blocks)
-    processing_version = "v2"
-
-    key_data = f"{processing_version}:{urdf_path}:{mtime}:{sorted(package_paths.items())}:{sorted(xacro_args.items())}:{convert_meshes}"
+    processing_version = "drake-urdf-v1"
+    key_data = f"{processing_version}:{urdf_path}:{mtime}:{convert_meshes}"
     return hashlib.md5(key_data.encode()).hexdigest()[:16]
-
-
-def _process_xacro(
-    xacro_path: Path,
-    package_paths: dict[str, Path],
-    xacro_args: dict[str, str],
-) -> str:
-    """Process xacro file to URDF."""
-    try:
-        from dimos.utils.ament_prefix import process_xacro
-    except ImportError:
-        raise ImportError(
-            "xacro is required for processing .xacro files. "
-            "Install the manipulation extra: pip install dimos[manipulation]"
-        )
-
-    return process_xacro(xacro_path, package_paths, xacro_args)
 
 
 def _strip_transmission_blocks(urdf_content: str) -> str:
@@ -173,36 +151,6 @@ def _strip_transmission_blocks(urdf_content: str) -> str:
     result = re.sub(gazebo_pattern, "", result, flags=re.DOTALL | re.MULTILINE)
 
     return result
-
-
-def _resolve_package_uris(
-    urdf_content: str,
-    package_paths: dict[str, Path],
-    output_dir: Path,
-) -> str:
-    """Resolve package:// URIs to filesystem paths."""
-    # Pattern for package:// URIs (handles both single and double quotes)
-    # Note: Use triple quotes so \s is correctly interpreted as whitespace, not literal 's'
-    pattern = r"""package://([^/]+)/(.+?)(["'<>\s])"""
-
-    def replace_uri(match: re.Match[str]) -> str:
-        pkg_name = match.group(1)
-        rel_path = match.group(2)
-        suffix = match.group(3)
-
-        if pkg_name in package_paths:
-            # Ensure absolute path for proper resolution
-            pkg_path = Path(package_paths[pkg_name]).resolve()
-            full_path = pkg_path / rel_path
-            if full_path.exists():
-                return f"{full_path}{suffix}"
-            else:
-                logger.warning(f"File not found: {full_path}")
-
-        # Return original if not found
-        return match.group(0)
-
-    return re.sub(pattern, replace_uri, urdf_content)
 
 
 def _convert_meshes(urdf_content: str, output_dir: Path) -> str:

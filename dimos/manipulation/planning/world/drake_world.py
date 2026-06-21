@@ -261,7 +261,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             # Register package paths (not applicable to MJCF)
             if config.package_paths:
                 for pkg_name, pkg_path in config.package_paths.items():
-                    self._parser.package_map().Add(pkg_name, Path(pkg_path))
+                    self._parser.package_map().Add(pkg_name, pkg_path)
             else:
                 self._parser.package_map().Add(
                     f"{config.name}_description", prepared_path_obj.parent
