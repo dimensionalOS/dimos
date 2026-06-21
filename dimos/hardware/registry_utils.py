@@ -23,6 +23,3 @@ def normalize_adapter_name(name: str) -> str:
     if not key:
         raise ValueError("Adapter name must be non-empty")
     return key
-
-
-__all__ = ["normalize_adapter_name"]

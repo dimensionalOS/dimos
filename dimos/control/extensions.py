@@ -81,6 +81,3 @@ def register_control_task(task_type: str, factory_path: str) -> None:
     task_name = normalize_task_name(task_type)
     validate_task_factory_path(factory_path, label="control task factory path")
     control_task_registry.register_path(task_name, factory_path)
-
-
-__all__ = ["register_control_task", "register_hardware_adapter"]

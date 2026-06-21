@@ -34,6 +34,3 @@ def validate_task_factory_path(
     module_name, separator, attr = factory_path.partition(":")
     if not factory_path.strip() or separator != ":" or not module_name or not attr:
         raise ValueError(f"Invalid {label}: {factory_path!r}")
-
-
-__all__ = ["normalize_task_name", "validate_task_factory_path"]
