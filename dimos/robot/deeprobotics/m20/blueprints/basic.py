@@ -23,6 +23,7 @@ teleop or nav source into the manager's inputs to drive.
 from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.deeprobotics.m20.connection import M20Connection
 from dimos.robot.deeprobotics.m20.tf import M20TF
@@ -62,6 +63,8 @@ rerun = autoconnect(
         max_hz={
             "world/color_image": 0,
             "world/color_image_rear": 0,
+            "world/global_map": 1.0,
+            "world/local_map": 2.0,
         },
     ),
     RerunWebSocketServer.blueprint(),
@@ -69,10 +72,37 @@ rerun = autoconnect(
 )
 
 
+voxel_size = 0.1
+
+# Andrew's raycasting voxel mapper. The M20's SLAM already emits clouds in the
+# global (map) frame on ``slam_aligned_points`` -- they are NOT sensor-frame --
+# so ``registered_clouds=True`` leaves them as-is; ``slam_odom`` only supplies
+# the ray origins for clearing. Outputs land on ``global_map`` / ``local_map``,
+# which the rerun bridge shows under ``world/`` in the 3D view.
+ray_tracer = RayTracingVoxelMap.blueprint(
+    voxel_size=voxel_size,
+    emit_every=2,
+    global_emit_every=50,
+    registered_clouds=True,
+).remappings(
+    [
+        (RayTracingVoxelMap, "lidar", "slam_aligned_points"),
+        (RayTracingVoxelMap, "odometry", "slam_odom"),
+    ]
+)
+
+
 m20 = autoconnect(
     rerun,
     M20TF.blueprint(),
 ).global_config(n_workers=3)
+
+# m20 + the raycasting global/local voxel map built from the SLAM clouds.
+m20_nav = autoconnect(
+    rerun,
+    M20TF.blueprint(),
+    ray_tracer,
+).global_config(n_workers=4)
 
 m20_api = autoconnect(
     m20,
