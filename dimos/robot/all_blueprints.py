@@ -68,6 +68,7 @@ all_blueprints = {
     "m20": "dimos.robot.deeprobotics.m20.blueprints.basic:m20",
     "m20-api": "dimos.robot.deeprobotics.m20.blueprints.basic:m20_api",
     "m20-nav": "dimos.robot.deeprobotics.m20.blueprints.basic:m20_nav",
+    "m20-nav-3d": "dimos.robot.deeprobotics.m20.blueprints.basic:m20_nav_3d",
     "m20-dds-rerun": "dimos.robot.deeprobotics.m20.dds.blueprints:m20_dds_rerun",
     "mid360": "dimos.hardware.sensors.lidar.livox.livox_blueprints:mid360",
     "mid360-fastlio": "dimos.hardware.sensors.lidar.fastlio2.fastlio_blueprints:mid360_fastlio",

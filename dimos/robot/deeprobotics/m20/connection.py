@@ -326,12 +326,21 @@ class M20Connection(Module, VideoSource):
 
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
 
-        # self._video_threads = [
-        #    threading.Thread(
-        #        target=self._stream_camera, args=cam, daemon=True, name=f"m20-{cam[2]}"
-        #    )
-        #    for cam in cameras
-        # ]
+        ip = self.config.ip
+        cameras = (
+            (self.config.rtsp_url or f"rtsp://{ip}:8554/video1", self.color_image, "m20_front"),
+            (
+                self.config.rtsp_url_rear or f"rtsp://{ip}:8554/video2",
+                self.color_image_rear,
+                "m20_rear",
+            ),
+        )
+        self._video_threads = [
+            threading.Thread(
+                target=self._stream_camera, args=cam, daemon=True, name=f"m20-{cam[2]}"
+            )
+            for cam in cameras
+        ]
         # for t in self._video_threads:
         #    t.start()
 

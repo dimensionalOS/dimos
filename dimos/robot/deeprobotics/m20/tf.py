@@ -55,12 +55,12 @@ _CAMERA_INFO = CameraInfo.from_intrinsics(
 class M20TF(Module):
     """Publish the M20 TF tree and front-camera CameraInfo."""
 
-    slam_odom: In[Odometry]
+    odometry: In[Odometry]
     camera_info: Out[CameraInfo]
 
     def start(self) -> None:
         super().start()
-        self.register_disposable(self.slam_odom.subscribe(self._publish_tf))
+        self.register_disposable(self.odometry.subscribe(self._publish_tf))
         self._stop = Event()
         self._camera_info_thread = Thread(
             target=self._publish_camera_info, name="m20-camera-info", daemon=True

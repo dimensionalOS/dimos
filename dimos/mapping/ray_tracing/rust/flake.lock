@@ -3,11 +3,11 @@
     "dimos-repo": {
       "flake": false,
       "locked": {
-        "lastModified": 1781823023,
-        "narHash": "sha256-YkqAYJlqFI52p1ZfM0G29+85eSykkIgXU7xs7oqgopo=",
-        "ref": "refs/heads/andrew/feat/kronk-nav-3",
-        "rev": "8ef1d416ddf141e354902ab86cedcd748220e0e9",
-        "revCount": 882,
+        "lastModified": 1782035438,
+        "narHash": "sha256-cLfoz3EA+AWzeEgzeWWA5iKCaNLwJB6qvesexSXWFqY=",
+        "ref": "refs/heads/feat/ivan/m20",
+        "rev": "aab8855a820568ee76bcedae11829e36dd74b9e2",
+        "revCount": 905,
         "type": "git",
         "url": "file:../../../.."
       },

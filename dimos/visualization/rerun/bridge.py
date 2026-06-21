@@ -45,7 +45,6 @@ from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
 from dimos.protocol.service.lcmservice import autoconf
@@ -188,7 +187,8 @@ def _default_pubsubs(config: Any = None) -> list[SubscribeAllCapable[Any, Any]]:
         iface = getattr(config, "zenoh_iface", None)
         if iface:
             zkwargs["multicast_iface"] = iface
-        return [Zenoh(**zkwargs), LCM()]
+        return [LCM()]
+        # return [Zenoh(**zkwargs), LCM()]
     return [LCM()]
 
 
