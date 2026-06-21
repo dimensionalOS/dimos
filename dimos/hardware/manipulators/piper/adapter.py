@@ -495,6 +495,3 @@ class PiperAdapter(ManipulatorAdapter):
 def register(registry: AdapterRegistry) -> None:
     """Register this adapter with the registry."""
     registry.register("piper", PiperAdapter)
-
-
-__all__ = ["PiperAdapter"]

@@ -102,3 +102,6 @@ recording*.db
 
 # openspec
 /openspec/changes/archive/
+
+# Deepwork local progress state
+.slim/deepwork/

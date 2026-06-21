@@ -87,8 +87,8 @@ class KeyboardTeleopModule(Module):
 
     config: KeyboardTeleopConfig
 
-    joint_state: In[JointState]
-    cartesian_command: Out[PoseStamped]
+    coordinator_joint_state: In[JointState]
+    coordinator_cartesian_command: Out[PoseStamped]
 
     _stop_event: threading.Event
     _thread: threading.Thread | None = None
@@ -116,7 +116,7 @@ class KeyboardTeleopModule(Module):
 
     def _read_joint_positions(self, timeout: float) -> list[float] | None:
         try:
-            msg = self.joint_state.get_next(timeout)
+            msg = self.coordinator_joint_state.get_next(timeout)
         except Exception:
             return None
         if not msg.position:
@@ -148,7 +148,7 @@ class KeyboardTeleopModule(Module):
         current_pose = JogState.from_fk(model_path, ee_joint_id, initial_joints).copy()
 
         # Publish initial pose
-        self.cartesian_command.publish(current_pose.to_pose_stamped(task_name))
+        self.coordinator_cartesian_command.publish(current_pose.to_pose_stamped(task_name))
 
         pygame.init()
         screen = pygame.display.set_mode((600, 400), pygame.SWSURFACE)
@@ -207,7 +207,7 @@ class KeyboardTeleopModule(Module):
             current_pose.z = _clamp(current_pose.z, *Z_LIMITS)
 
             # Publish
-            self.cartesian_command.publish(current_pose.to_pose_stamped(task_name))
+            self.coordinator_cartesian_command.publish(current_pose.to_pose_stamped(task_name))
 
             # Draw UI
             screen.fill((30, 30, 30))

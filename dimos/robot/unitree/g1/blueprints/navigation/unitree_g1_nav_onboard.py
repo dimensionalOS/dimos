@@ -80,6 +80,3 @@ unitree_g1_nav_onboard = (
     )
     .global_config(n_workers=12, robot_model="unitree_g1")
 )
-
-
-__all__ = ["unitree_g1_nav_onboard"]

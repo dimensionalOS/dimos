@@ -22,70 +22,73 @@ Usage:
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator
+from dimos.control.blueprints._hardware import manipulator, mock_arm
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.global_config import global_config
-from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.catalog.piper import piper as _catalog_piper
-from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _catalog_xarm7
 
 # Dual mock arms (7-DOF left, 6-DOF right)
-_mock_left = _catalog_xarm7(name="left_arm")
-_mock_right = _catalog_xarm6(name="right_arm", add_gripper=False)
+_mock_left = mock_arm("left_arm", 7)
+_mock_right = mock_arm("right_arm", 6)
 
 coordinator_dual_mock = ControlCoordinator.blueprint(
-    hardware=[_mock_left.to_hardware_component(), _mock_right.to_hardware_component()],
+    hardware=[_mock_left, _mock_right],
     tasks=[
-        _mock_left.to_task_config(task_name="traj_left"),
-        _mock_right.to_task_config(task_name="traj_right"),
+        TaskConfig(name="traj_left", type="trajectory", joint_names=_mock_left.joints, priority=10),
+        TaskConfig(
+            name="traj_right", type="trajectory", joint_names=_mock_right.joints, priority=10
+        ),
     ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 # Dual XArm (XArm7 left, XArm6 right)
-_xarm7_left = _catalog_xarm7(name="left_arm", adapter_type="xarm", address=global_config.xarm7_ip)
-_xarm6_right = _catalog_xarm6(
-    name="right_arm", adapter_type="xarm", address=global_config.xarm6_ip, add_gripper=False
+_xarm7_left = manipulator(
+    "left_arm",
+    7,
+    adapter_type="xarm",
+    address=global_config.xarm7_ip,
+)
+_xarm6_right = manipulator(
+    "right_arm",
+    6,
+    adapter_type="xarm",
+    address=global_config.xarm6_ip,
 )
 
 coordinator_dual_xarm = ControlCoordinator.blueprint(
-    hardware=[_xarm7_left.to_hardware_component(), _xarm6_right.to_hardware_component()],
+    hardware=[_xarm7_left, _xarm6_right],
     tasks=[
-        _xarm7_left.to_task_config(task_name="traj_left"),
-        _xarm6_right.to_task_config(task_name="traj_right"),
+        TaskConfig(
+            name="traj_left", type="trajectory", joint_names=_xarm7_left.joints, priority=10
+        ),
+        TaskConfig(
+            name="traj_right", type="trajectory", joint_names=_xarm6_right.joints, priority=10
+        ),
     ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 # Dual arm (XArm6 + Piper)
-_xarm6_dual = _catalog_xarm6(
-    name="xarm_arm", adapter_type="xarm", address=global_config.xarm6_ip, add_gripper=False
+_xarm6_dual = manipulator(
+    "xarm_arm",
+    6,
+    adapter_type="xarm",
+    address=global_config.xarm6_ip,
 )
-_piper_dual = _catalog_piper(
-    name="piper_arm", adapter_type="piper", address=global_config.can_port or "can0"
+_piper_dual = manipulator(
+    "piper_arm",
+    6,
+    adapter_type="piper",
+    address=global_config.can_port or "can0",
+    gripper=True,
 )
 
 coordinator_piper_xarm = ControlCoordinator.blueprint(
-    hardware=[_xarm6_dual.to_hardware_component(), _piper_dual.to_hardware_component()],
+    hardware=[_xarm6_dual, _piper_dual],
     tasks=[
-        _xarm6_dual.to_task_config(task_name="traj_xarm"),
-        _piper_dual.to_task_config(task_name="traj_piper"),
+        TaskConfig(
+            name="traj_xarm", type="trajectory", joint_names=_xarm6_dual.joints, priority=10
+        ),
+        TaskConfig(
+            name="traj_piper", type="trajectory", joint_names=_piper_dual.joints, priority=10
+        ),
     ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
-
-
-__all__ = [
-    "coordinator_dual_mock",
-    "coordinator_dual_xarm",
-    "coordinator_piper_xarm",
-]

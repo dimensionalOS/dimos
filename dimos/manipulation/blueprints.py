@@ -28,96 +28,179 @@ Quick start:
 """
 
 import math
+from pathlib import Path
+from typing import Any
 
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
-from dimos.control.coordinator import ControlCoordinator
+from dimos.control.blueprints._hardware import XARM7_SIM_PATH, manipulator
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
-from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _catalog_xarm7
+from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
+from dimos.utils.data import LfsPath
+from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-# Single XArm6 planner (standalone, no coordinator)
-_xarm6_planner_cfg = _catalog_xarm6(
-    name="arm",
-    adapter_type="xarm" if global_config.xarm6_ip else "mock",
-    address=global_config.xarm6_ip,
-)
+XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
+    ("right_inner_knuckle", "right_outer_knuckle"),
+    ("left_inner_knuckle", "left_outer_knuckle"),
+    ("right_inner_knuckle", "right_finger"),
+    ("left_inner_knuckle", "left_finger"),
+    ("left_finger", "right_finger"),
+    ("left_outer_knuckle", "right_outer_knuckle"),
+    ("left_inner_knuckle", "right_inner_knuckle"),
+    ("left_outer_knuckle", "right_finger"),
+    ("right_outer_knuckle", "left_finger"),
+    ("xarm_gripper_base_link", "left_inner_knuckle"),
+    ("xarm_gripper_base_link", "right_inner_knuckle"),
+    ("xarm_gripper_base_link", "left_finger"),
+    ("xarm_gripper_base_link", "right_finger"),
+    ("link6", "xarm_gripper_base_link"),
+    ("link6", "left_outer_knuckle"),
+    ("link6", "right_outer_knuckle"),
+]
+
+_XARM_MODEL_PATH = LfsPath("xarm_description") / "urdf/xarm_device.urdf.xacro"
+_XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": LfsPath("xarm_description")}
+
+
+def _base_pose(x: float = 0.0, y: float = 0.0, z: float = 0.0) -> PoseStamped:
+    return PoseStamped(
+        position=Vector3(x=x, y=y, z=z),
+        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+    )
+
+
+def _coordinator_joint_mapping(
+    name: str,
+    dof: int,
+    *,
+    joint_prefix: str | None = None,
+) -> dict[str, str]:
+    prefix = f"{name}/" if joint_prefix is None else joint_prefix
+    if not prefix:
+        return {}
+    return {f"{prefix}joint{i}": f"joint{i}" for i in range(1, dof + 1)}
+
+
+def _make_xarm_model_config(
+    name: str,
+    dof: int,
+    *,
+    add_gripper: bool = True,
+    x_offset: float = 0.0,
+    y_offset: float = 0.0,
+    z_offset: float = 0.0,
+    pitch: float = 0.0,
+    joint_prefix: str | None = None,
+    coordinator_task_name: str | None = None,
+    tf_extra_links: list[str] | None = None,
+    home_joints: list[float] | None = None,
+    pre_grasp_offset: float = 0.10,
+) -> RobotModelConfig:
+    xacro_args = {
+        "dof": str(dof),
+        "limited": "true",
+        "attach_xyz": f"{x_offset} {y_offset} {z_offset}",
+        "attach_rpy": f"0 {pitch} 0",
+    }
+    if add_gripper:
+        xacro_args["add_gripper"] = "true"
+
+    return RobotModelConfig(
+        name=name,
+        model_path=_XARM_MODEL_PATH,
+        base_pose=_base_pose(x_offset, y_offset, z_offset),
+        joint_names=[f"joint{i}" for i in range(1, dof + 1)],
+        end_effector_link="link_tcp" if add_gripper else f"link{dof}",
+        base_link="link_base",
+        package_paths=_XARM_PACKAGE_PATHS,
+        xacro_args=xacro_args,
+        auto_convert_meshes=True,
+        collision_exclusion_pairs=(XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else []),
+        joint_name_mapping=_coordinator_joint_mapping(
+            name,
+            dof,
+            joint_prefix=joint_prefix,
+        ),
+        coordinator_task_name=coordinator_task_name or f"traj_{name}",
+        gripper_hardware_id=name if add_gripper else None,
+        tf_extra_links=tf_extra_links or [],
+        home_joints=home_joints or [0.0] * dof,
+        pre_grasp_offset=pre_grasp_offset,
+    )
+
+
+def _make_xarm6_model_config(
+    name: str = "arm",
+    **kwargs: Any,
+) -> RobotModelConfig:
+    return _make_xarm_model_config(name, 6, **kwargs)
+
+
+def _make_xarm7_model_config(
+    name: str = "arm",
+    **kwargs: Any,
+) -> RobotModelConfig:
+    return _make_xarm_model_config(name, 7, **kwargs)
+
 
 xarm6_planner_only = ManipulationModule.blueprint(
-    robots=[_xarm6_planner_cfg.to_robot_model_config()],
+    robots=[_make_xarm6_model_config(name="arm")],
     planning_timeout=10.0,
-    enable_viz=True,
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/xarm/joint_states", JointState),
-    }
+    visualization={"backend": "meshcat"},
 )
 
-
-# Dual XArm6 planner with coordinator integration
-# Usage: Start with coordinator_dual_mock, then plan/execute via RPC
-_left_arm_cfg = _catalog_xarm6(
-    name="left_arm",
-    adapter_type="xarm" if global_config.xarm6_ip else "mock",
-    address=global_config.xarm6_ip,
-    y_offset=0.5,
-)
-_right_arm_cfg = _catalog_xarm6(
-    name="right_arm",
-    adapter_type="xarm" if global_config.xarm6_ip else "mock",
-    address=global_config.xarm6_ip,
-    y_offset=-0.5,
-)
 
 dual_xarm6_planner = ManipulationModule.blueprint(
     robots=[
-        _left_arm_cfg.to_robot_model_config(),
-        _right_arm_cfg.to_robot_model_config(),
+        _make_xarm6_model_config(name="left_arm", y_offset=0.5),
+        _make_xarm6_model_config(name="right_arm", y_offset=-0.5),
     ],
     planning_timeout=10.0,
-    enable_viz=True,
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
+    visualization={"backend": "meshcat"},
 )
 
 
 # Single XArm7 planner + coordinator (uses real hardware when XARM7_IP is set)
 # Usage: XARM7_IP=<ip> dimos run xarm7-planner-coordinator
-_xarm7_cfg = _catalog_xarm7(
-    name="arm",
+_xarm7_hw = manipulator(
+    "arm",
+    7,
     adapter_type="xarm" if global_config.xarm7_ip else "mock",
     address=global_config.xarm7_ip,
-    add_gripper=True,
+    gripper=True,
 )
 
 xarm7_planner_coordinator = autoconnect(
     ManipulationModule.blueprint(
-        robots=[_xarm7_cfg.to_robot_model_config()],
+        robots=[_make_xarm7_model_config(name="arm", add_gripper=True)],
         planning_timeout=10.0,
-        enable_viz=True,
+        visualization={"backend": "meshcat"},
     ),
     ControlCoordinator.blueprint(
         tick_rate=100.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
-        hardware=[_xarm7_cfg.to_hardware_component()],
-        tasks=[_xarm7_cfg.to_task_config()],
+        hardware=[_xarm7_hw],
+        tasks=[
+            TaskConfig(
+                name="traj_arm",
+                type="trajectory",
+                joint_names=_xarm7_hw.joints,
+                priority=10,
+            ),
+        ],
     ),
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 
@@ -167,43 +250,33 @@ _XARM_PERCEPTION_CAMERA_TRANSFORM = Transform(
     rotation=Quaternion(0.70513398, 0.00535696, 0.70897578, -0.01052180),  # xyzw
 )
 
-_xarm7_perception_cfg = _catalog_xarm7(
-    name="arm",
-    adapter_type="xarm" if global_config.xarm7_ip else "mock",
-    address=global_config.xarm7_ip,
-    pitch=math.radians(45),
-    add_gripper=True,
-    tf_extra_links=["link7"],
-)
-
-xarm_perception = (
-    autoconnect(
-        PickAndPlaceModule.blueprint(
-            robots=[_xarm7_perception_cfg.to_robot_model_config()],
-            planning_timeout=10.0,
-            enable_viz=True,
-            floor_z=-0.02,
-        ),
-        RealSenseCamera.blueprint(
-            base_frame_id="link7",
-            base_transform=_XARM_PERCEPTION_CAMERA_TRANSFORM,
-        ),
-        ObjectSceneRegistrationModule.blueprint(
-            target_frame="world",
-            distance_threshold=0.08,
-            min_detections_for_permanent=3,
-            max_distance=1.0,
-            use_aabb=True,
-            max_obstacle_width=0.06,
-        ),
-    )
-    .transports(
-        {
-            ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        }
-    )
-    .global_config(n_workers=4)
-)
+xarm_perception = autoconnect(
+    PickAndPlaceModule.blueprint(
+        robots=[
+            _make_xarm7_model_config(
+                name="arm",
+                add_gripper=True,
+                pitch=math.radians(45),
+                tf_extra_links=["link7"],
+            )
+        ],
+        planning_timeout=10.0,
+        visualization={"backend": "meshcat"},
+        floor_z=-0.02,
+    ),
+    RealSenseCamera.blueprint(
+        base_frame_id="link7",
+        base_transform=_XARM_PERCEPTION_CAMERA_TRANSFORM,
+    ),
+    ObjectSceneRegistrationModule.blueprint(
+        target_frame="world",
+        distance_threshold=0.08,
+        min_detections_for_permanent=3,
+        max_distance=1.0,
+        use_aabb=True,
+        max_obstacle_width=0.06,
+    ),
+).global_config(n_workers=4)
 
 
 # XArm7 perception + LLM agent for agentic manipulation.
@@ -285,27 +358,30 @@ xarm_perception_agent = autoconnect(
 # Sim perception: MujocoSimModule owns the MujocoEngine and publishes both
 # camera streams and joint state via shared memory.
 # ShmMujocoAdapter attaches to the same SHM buffers by MJCF path.
-
-from dimos.robot.catalog.ufactory import XARM7_SIM_PATH
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
-from dimos.visualization.rerun.bridge import RerunBridgeModule
-
-_xarm7_sim_cfg = _catalog_xarm7(
-    name="arm",
+_xarm7_sim_home = [0.0, 0.0, 0.0, 0.0, 0.0, -0.7, 0.0]
+_xarm7_sim_hw = manipulator(
+    "arm",
+    7,
     adapter_type="sim_mujoco",
     address=str(XARM7_SIM_PATH),
-    add_gripper=True,
-    pitch=math.radians(45),
-    tf_extra_links=["link7"],
-    home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, -0.7, 0.0],
-    pre_grasp_offset=0.05,
+    gripper=True,
+    home_joints=_xarm7_sim_home,
 )
 
 xarm_perception_sim = autoconnect(
     PickAndPlaceModule.blueprint(
-        robots=[_xarm7_sim_cfg.to_robot_model_config()],
+        robots=[
+            _make_xarm7_model_config(
+                name="arm",
+                add_gripper=True,
+                pitch=math.radians(45),
+                tf_extra_links=["link7"],
+                home_joints=_xarm7_sim_home,
+                pre_grasp_offset=0.05,
+            )
+        ],
         planning_timeout=10.0,
-        enable_viz=True,
+        visualization={"backend": "meshcat"},
     ),
     MujocoSimModule.blueprint(
         address=str(XARM7_SIM_PATH),
@@ -319,14 +395,17 @@ xarm_perception_sim = autoconnect(
         tick_rate=100.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
-        hardware=[_xarm7_sim_cfg.to_hardware_component()],
-        tasks=[_xarm7_sim_cfg.to_task_config()],
+        hardware=[_xarm7_sim_hw],
+        tasks=[
+            TaskConfig(
+                name="traj_arm",
+                type="trajectory",
+                joint_names=_xarm7_sim_hw.joints,
+                priority=10,
+            ),
+        ],
     ),
     RerunBridgeModule.blueprint(),
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 
@@ -335,15 +414,3 @@ xarm_perception_sim_agent = autoconnect(
     McpServer.blueprint(),
     McpClient.blueprint(system_prompt=_MANIPULATION_AGENT_SYSTEM_PROMPT),
 )
-
-
-__all__ = [
-    "dual_xarm6_planner",
-    "xarm6_planner_only",
-    "xarm7_planner_coordinator",
-    "xarm7_planner_coordinator_agent",
-    "xarm_perception",
-    "xarm_perception_agent",
-    "xarm_perception_sim",
-    "xarm_perception_sim_agent",
-]

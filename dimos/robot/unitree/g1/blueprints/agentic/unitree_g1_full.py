@@ -25,5 +25,3 @@ unitree_g1_full = autoconnect(
     _agentic_skills,
     KeyboardTeleop.blueprint(),
 )
-
-__all__ = ["unitree_g1_full"]

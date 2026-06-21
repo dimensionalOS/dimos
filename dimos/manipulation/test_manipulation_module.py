@@ -112,9 +112,9 @@ def module(xarm7_config):
     mod = ManipulationModule(
         robots=[xarm7_config],
         planning_timeout=10.0,
-        enable_viz=False,
+        visualization={"backend": "none"},
     )
-    mod.joint_state = None
+    mod.coordinator_joint_state = None
     mod.objects = None
     mod.start()
     yield mod

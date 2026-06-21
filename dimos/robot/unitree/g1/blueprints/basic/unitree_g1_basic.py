@@ -25,5 +25,3 @@ unitree_g1_basic = autoconnect(
     unitree_g1_primitive_no_nav,
     G1Connection.blueprint(),
 )
-
-__all__ = ["unitree_g1_basic"]

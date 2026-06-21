@@ -37,7 +37,6 @@ from dimos.teleop.quest.quest_extensions import (
     Go2TeleopModule,
     VideoArmTeleopModule,
 )
-from dimos.teleop.quest.quest_types import Buttons
 from dimos.visualization.vis_module import vis_module
 
 # Arm teleop with press-and-hold engage (has rerun viz)
@@ -48,7 +47,6 @@ teleop_quest_rerun = autoconnect(
     {
         ("left_controller_output", PoseStamped): LCMTransport("/teleop/left_delta", PoseStamped),
         ("right_controller_output", PoseStamped): LCMTransport("/teleop/right_delta", PoseStamped),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
     }
 )
 
@@ -57,28 +55,23 @@ teleop_quest_rerun = autoconnect(
 teleop_quest_xarm7 = autoconnect(
     ArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
     coordinator_teleop_xarm7,
-).transports(
-    {
-        ("right_controller_output", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
-    }
-)
+).remappings([(ArmTeleopModule, "right_controller_output", "coordinator_cartesian_command")])
 
 
 # XArm7 teleop + camera streaming into the Quest scene as a panel.
-teleop_quest_xarm7_video = autoconnect(
-    VideoArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
-    coordinator_teleop_xarm7,
-).transports(
-    {
-        ("right_controller_output", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
-        ("color_image", Image): LCMTransport("/teleop/color_image", Image),
-    }
+teleop_quest_xarm7_video = (
+    autoconnect(
+        VideoArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
+        coordinator_teleop_xarm7,
+    )
+    .remappings(
+        [(VideoArmTeleopModule, "right_controller_output", "coordinator_cartesian_command")]
+    )
+    .transports(
+        {
+            ("color_image", Image): LCMTransport("/teleop/color_image", Image),
+        }
+    )
 )
 
 
@@ -86,44 +79,25 @@ teleop_quest_xarm7_video = autoconnect(
 teleop_quest_piper = autoconnect(
     ArmTeleopModule.blueprint(task_names={"left": "teleop_piper"}),
     coordinator_teleop_piper,
-).transports(
-    {
-        ("left_controller_output", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
-    }
-)
+).remappings([(ArmTeleopModule, "left_controller_output", "coordinator_cartesian_command")])
 
 
 # XArm6 teleop (sim with --simulation, real otherwise): right controller -> xarm6
 teleop_quest_xarm6 = autoconnect(
     ArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
     coordinator_teleop_xarm6,
-).transports(
-    {
-        ("right_controller_output", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
-    }
-)
+).remappings([(ArmTeleopModule, "right_controller_output", "coordinator_cartesian_command")])
 
 
 # Dual arm teleop: right -> piper, left -> xarm6 (TeleopIK, real-only)
 teleop_quest_dual = autoconnect(
     ArmTeleopModule.blueprint(task_names={"right": "teleop_piper", "left": "teleop_xarm"}),
     coordinator_teleop_dual,
-).transports(
-    {
-        ("right_controller_output", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("left_controller_output", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
-    }
+).remappings(
+    [
+        (ArmTeleopModule, "right_controller_output", "coordinator_cartesian_command"),
+        (ArmTeleopModule, "left_controller_output", "coordinator_cartesian_command"),
+    ]
 )
 
 
@@ -143,14 +117,3 @@ teleop_quest_go2 = (
     )
     .global_config(robot_model="unitree_go2")
 )
-
-
-__all__ = [
-    "teleop_quest_dual",
-    "teleop_quest_go2",
-    "teleop_quest_piper",
-    "teleop_quest_rerun",
-    "teleop_quest_xarm6",
-    "teleop_quest_xarm7",
-    "teleop_quest_xarm7_video",
-]
