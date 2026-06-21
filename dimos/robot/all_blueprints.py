@@ -236,7 +236,6 @@ all_modules = {
     "simple-planner": "dimos.navigation.nav_stack.modules.simple_planner.simple_planner.SimplePlanner",
     "spatial-memory": "dimos.perception.spatial_perception.SpatialMemory",
     "speak-skill": "dimos.agents.skills.speak_skill.SpeakSkill",
-    "speed-warner": "dimos.hardware.sensors.lidar.fastlio2.speed_warner.SpeedWarner",
     "tare-planner": "dimos.navigation.nav_stack.modules.tare_planner.tare_planner.TarePlanner",
     "teleop-recorder": "dimos.teleop.utils.recorder.TeleopRecorder",
     "temporal-memory": "dimos.perception.experimental.temporal_memory.temporal_memory.TemporalMemory",
