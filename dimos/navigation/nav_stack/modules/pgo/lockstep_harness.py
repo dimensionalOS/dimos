@@ -485,19 +485,16 @@ class LockstepReplayConfig(ModuleConfig):
     warmup_resend_interval_sec: float = WARMUP_RESEND_INTERVAL_SEC
 
 
-# A lone unacked scan means its cloud was dropped on the bus (large clouds
-# fragment and can be lost under load) — skip it. Many in a row means the SUT
-# is wedged, not dropping.
 MAX_CONSECUTIVE_ACK_TIMEOUTS = 5
 
 
 class LockstepReplay(Module):
-    """Closed-loop replay of a recorded lidar + odometry pair through the SUT.
-
+    """
     Reads ``lidar_stream`` (PointCloud2) and ``odometry_stream`` (Odometry) from
     a mem2.db, merges them by timestamp, and replays: odometry fire-and-forget,
     each scan paced on the SUT's corrected_odometry ack. Mirrors the jnav eval
-    LockstepReplay, adapted to the nav-stack ``registered_scan`` stream."""
+    LockstepReplay, adapted to the nav-stack ``registered_scan`` stream.
+    """
 
     config: LockstepReplayConfig
 
