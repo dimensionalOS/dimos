@@ -25,5 +25,3 @@ unitree_go2_agentic = autoconnect(
     McpClient.blueprint(),
     _common_agentic,
 )
-
-__all__ = ["unitree_go2_agentic"]

@@ -23,5 +23,3 @@ unitree_go2_spatial = autoconnect(
     SpatialMemory.blueprint(),
     PerceiveLoopSkill.blueprint(),
 ).global_config(n_workers=8)
-
-__all__ = ["unitree_go2_spatial"]

@@ -120,7 +120,7 @@ def topic_send(topic: str, message_expr: str) -> None:
     for module_name in modules_to_import:
         try:
             module = importlib.import_module(module_name)
-            for name in getattr(module, "__all__", dir(module)):
+            for name in dir(module):
                 if not name.startswith("_"):
                     obj = getattr(module, name, None)
                     if obj is not None:

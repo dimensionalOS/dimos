@@ -109,5 +109,3 @@ class WholeBodyAdapterRegistry:
 
 whole_body_adapter_registry = WholeBodyAdapterRegistry()
 whole_body_adapter_registry.discover()
-
-__all__ = ["WholeBodyAdapterRegistry", "whole_body_adapter_registry"]

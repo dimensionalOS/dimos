@@ -117,14 +117,3 @@ teleop_quest_go2 = (
     )
     .global_config(robot_model="unitree_go2")
 )
-
-
-__all__ = [
-    "teleop_quest_dual",
-    "teleop_quest_go2",
-    "teleop_quest_piper",
-    "teleop_quest_rerun",
-    "teleop_quest_xarm6",
-    "teleop_quest_xarm7",
-    "teleop_quest_xarm7_video",
-]

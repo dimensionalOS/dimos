@@ -45,6 +45,3 @@ def propagate_bundle_candidates(sdp: str) -> str:
         else:
             out.append(s)
     return "".join(out)
-
-
-__all__ = ["propagate_bundle_candidates"]

@@ -22,44 +22,98 @@ Usage:
     dimos run keyboard-teleop-a750
 """
 
-from dimos.control.coordinator import ControlCoordinator
+import math
+from pathlib import Path
+
+from dimos.control.blueprints._hardware import A750_FK_MODEL, a750
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.robot.catalog.a750 import A750_FK_MODEL, a750 as _catalog_a750
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
+from dimos.utils.data import LfsPath
 
-_a750_cfg = _catalog_a750(
-    name="arm",
-    adapter_type="a750" if global_config.device_path else "mock",
-    device_path=global_config.device_path or "/dev/ttyACM0",
-)
+A750_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
+    ("base_link", "link1"),
+    ("base_link", "link2"),
+    ("left_finger_link", "link3"),
+    ("left_finger_link", "link4"),
+    ("left_finger_link", "link5"),
+    ("left_finger_link", "link6"),
+    ("left_finger_link", "right_finger_link"),
+    ("link1", "link2"),
+    ("link2", "link3"),
+    ("link2", "link4"),
+    ("link3", "link4"),
+    ("link3", "link5"),
+    ("link3", "right_finger_link"),
+    ("link4", "link5"),
+    ("link4", "link6"),
+    ("link4", "right_finger_link"),
+    ("link5", "link6"),
+    ("link5", "right_finger_link"),
+    ("link6", "right_finger_link"),
+]
 
-# Piper 6-DOF mock sim + keyboard teleop + Drake visualization
+_A750_MODEL_PATH = LfsPath("a750_description") / "urdf/a750_rev1.urdf"
+_A750_HOME_JOINTS = [0.0, 0.0, -math.radians(90), 0.0, 0.0, 0.0]
+_A750_PACKAGE_PATHS: dict[str, Path] = {
+    "a750_description": LfsPath("a750_description"),
+    "a750_gazebo": LfsPath("a750_description"),
+}
+
+
+def _a750_model_config() -> RobotModelConfig:
+    return RobotModelConfig(
+        name="arm",
+        model_path=_A750_MODEL_PATH,
+        base_pose=PoseStamped(
+            position=Vector3(x=0.0, y=0.0, z=0.0),
+            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        ),
+        joint_names=[f"joint{i}" for i in range(1, 7)],
+        end_effector_link="gripper_base",
+        base_link="base_link",
+        package_paths=_A750_PACKAGE_PATHS,
+        auto_convert_meshes=True,
+        collision_exclusion_pairs=A750_GRIPPER_COLLISION_EXCLUSIONS,
+        joint_name_mapping={f"arm/joint{i}": f"joint{i}" for i in range(1, 7)},
+        coordinator_task_name="traj_arm",
+        gripper_hardware_id="arm",
+        home_joints=_A750_HOME_JOINTS,
+    )
+
+
+_a750_hw = a750("arm", mock_without_address=True)
+
+# A-750 6-DOF mock sim + keyboard teleop + Drake visualization
 keyboard_teleop_a750 = autoconnect(
     KeyboardTeleopModule.blueprint(
         model_path=A750_FK_MODEL,
-        ee_joint_id=_a750_cfg.dof,
-        home_joints=_a750_cfg.home_joints,
+        ee_joint_id=6,
+        home_joints=_A750_HOME_JOINTS,
+        joint_names=_a750_hw.joints,
     ),
     ControlCoordinator.blueprint(
         tick_rate=100.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
-        hardware=[_a750_cfg.to_hardware_component()],
+        hardware=[_a750_hw],
         tasks=[
-            _a750_cfg.to_task_config(
-                task_type="cartesian_ik",
-                task_name="cartesian_ik_arm",
-                model_path=A750_FK_MODEL,
-                ee_joint_id=_a750_cfg.dof,
+            TaskConfig(
+                name="cartesian_ik_arm",
+                type="cartesian_ik",
+                joint_names=_a750_hw.joints,
+                priority=10,
+                params={"model_path": A750_FK_MODEL, "ee_joint_id": 6},
             ),
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[_a750_cfg.to_robot_model_config()],
+        robots=[_a750_model_config()],
         visualization={"backend": "meshcat"},
     ),
 )
-
-__all__ = ["keyboard_teleop_a750"]

@@ -766,6 +766,3 @@ class MujocoSimModule(
             self.pointcloud.publish(pcd)
         except Exception as exc:
             logger.error("Pointcloud generation error", error=str(exc))
-
-
-__all__ = ["MujocoSimModule", "MujocoSimModuleConfig"]

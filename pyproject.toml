@@ -115,6 +115,7 @@ dependencies = [
     # CLI
     "pydantic-settings>=2.11.0,<3",
     "textual==3.7.1",
+    "textual-serve>=1.1.1,<2",
     "terminaltexteffects==0.12.2",
     "typer>=0.19.2,<1",
     "plotext==5.3.2",
@@ -475,6 +476,8 @@ ignore = [
 "dimos/models/Detic/*" = ["ALL"]
 # Naming needs to match the actual libraries.
 "stubs/*.pyi" = ["N801", "N802", "N803", "N815", "N816", "N818"]
+# Polyfill module: re-exports ROS message types (with a dimos_lcm fallback).
+"dimos/types/ros_polyfill.py" = ["F401"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["dimos"]

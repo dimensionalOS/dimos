@@ -115,6 +115,3 @@ path_planner_eval = autoconnect(
         }
     ),
 )
-
-
-__all__ = ["path_planner_eval"]

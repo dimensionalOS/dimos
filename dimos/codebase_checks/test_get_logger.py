@@ -116,7 +116,7 @@ def test_no_get_logger():
             "",
             "If the usage is legitimate (e.g. standalone script, logging "
             "infrastructure, or third-party logger suppression), add it to the "
-            "WHITELIST in dimos/project/test_get_logger.py.",
+            "WHITELIST in dimos/codebase_checks/test_get_logger.py.",
             "",
         ]
         for path, lineno, text in violations:

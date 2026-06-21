@@ -115,5 +115,3 @@ class AdapterRegistry:
 
 adapter_registry = AdapterRegistry()
 adapter_registry.discover()
-
-__all__ = ["AdapterRegistry", "adapter_registry"]
