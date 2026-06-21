@@ -199,4 +199,3 @@ Choose the hardware type that matches the protocol your adapter implements:
 - `MANIPULATOR`: arm-style joint, Cartesian, and gripper IO.
 - `BASE`: velocity-commanded platforms that consume twist-like virtual joints.
 - `WHOLE_BODY`: joint-level whole-body motor IO.
-
