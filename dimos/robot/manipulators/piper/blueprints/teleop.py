@@ -58,6 +58,16 @@ keyboard_teleop_piper = autoconnect(
     ),
 )
 
+_piper_mock_cartesian_hw = make_piper_hardware(
+    "arm",
+    gripper=False,
+)
+
+coordinator_cartesian_ik_mock = ControlCoordinator.blueprint(
+    hardware=[_piper_mock_cartesian_hw],
+    tasks=[cartesian_ik_task(_piper_mock_cartesian_hw, model_path=PIPER_FK_MODEL, ee_joint_id=6)],
+)
+
 _piper_teleop_hw = piper_hardware("arm")
 
 coordinator_teleop_piper = autoconnect(

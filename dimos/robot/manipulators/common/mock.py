@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
-from dimos.robot.manipulators.piper.config import PIPER_FK_MODEL
 
 _mock_hw = HardwareComponent(
     hardware_id="arm",
@@ -36,26 +35,6 @@ coordinator_mock = ControlCoordinator.blueprint(
             joint_names=_mock_hw.joints,
             priority=10,
         )
-    ],
-)
-
-_mock_6dof_hw = HardwareComponent(
-    hardware_id="arm",
-    hardware_type=HardwareType.MANIPULATOR,
-    joints=make_joints("arm", 6),
-    adapter_type="mock",
-)
-
-coordinator_cartesian_ik_mock = ControlCoordinator.blueprint(
-    hardware=[_mock_6dof_hw],
-    tasks=[
-        TaskConfig(
-            name="cartesian_ik_arm",
-            type="cartesian_ik",
-            joint_names=_mock_6dof_hw.joints,
-            priority=10,
-            params={"model_path": PIPER_FK_MODEL, "ee_joint_id": 6},
-        ),
     ],
 )
 

@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
@@ -27,7 +26,6 @@ from dimos.robot.manipulators.xarm.config import (
     XARM7_SIM_PATH,
     make_xarm6_model_config,
     make_xarm7_model_config,
-    make_xarm_hardware,
     xarm6_hardware,
     xarm7_hardware,
 )
@@ -70,32 +68,15 @@ coordinator_xarm7 = autoconnect(
 _coordinator_xarm6_hw = xarm6_hardware("arm", gripper=True)
 
 coordinator_xarm6 = autoconnect(
-    ControlCoordinator.blueprint(
+    coordinator(
         hardware=[_coordinator_xarm6_hw],
-        tasks=[
-            TaskConfig(
-                name="traj_xarm",
-                type="trajectory",
-                joint_names=_coordinator_xarm6_hw.joints,
-                priority=10,
-            )
-        ],
+        tasks=[trajectory_task(_coordinator_xarm6_hw)],
     ),
     *mujoco_if_sim(XARM6_SIM_PATH, len(_coordinator_xarm6_hw.joints)),
 )
 
-_xarm7_left = make_xarm_hardware(
-    "left_arm",
-    7,
-    adapter_type="xarm",
-    address=global_config.xarm7_ip,
-)
-_xarm6_right = make_xarm_hardware(
-    "right_arm",
-    6,
-    adapter_type="xarm",
-    address=global_config.xarm6_ip,
-)
+_xarm7_left = xarm7_hardware("left_arm")
+_xarm6_right = xarm6_hardware("right_arm")
 
 coordinator_dual_xarm = ControlCoordinator.blueprint(
     hardware=[_xarm7_left, _xarm6_right],

@@ -56,7 +56,7 @@ _xarm6_teleop_hw = make_xarm_hardware(
 _piper_teleop_hw = make_piper_hardware(
     "piper_arm",
     adapter_type="piper",
-    address=global_config.can_port,
+    address=global_config.can_port or "can0",
     gripper=True,
 )
 

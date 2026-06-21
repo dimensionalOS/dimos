@@ -18,7 +18,7 @@
 all_blueprints = {
     "alfred-nav": "dimos.robot.diy.alfred.blueprints.alfred_nav:alfred_nav",
     "coordinator-basic": "dimos.control.blueprints.basic:coordinator_basic",
-    "coordinator-cartesian-ik-mock": "dimos.robot.manipulators.common.mock:coordinator_cartesian_ik_mock",
+    "coordinator-cartesian-ik-mock": "dimos.robot.manipulators.piper.blueprints.teleop:coordinator_cartesian_ik_mock",
     "coordinator-cartesian-ik-piper": "dimos.robot.manipulators.piper.blueprints.teleop:coordinator_cartesian_ik_piper",
     "coordinator-combined-xarm6": "dimos.robot.manipulators.xarm.blueprints.teleop:coordinator_combined_xarm6",
     "coordinator-dual-mock": "dimos.robot.manipulators.common.mock:coordinator_dual_mock",
