@@ -14,7 +14,8 @@
 
 """Single-arm coordinator blueprints with trajectory control.
 
-Each arm blueprint switches between real hardware and MuJoCo via `--simulation`.
+Robot-specific coordinator blueprints are owned by their robot packages and
+re-exported here for compatibility.
 
 Usage:
     dimos run coordinator-mock                    # Mock 7-DOF arm
@@ -28,28 +29,13 @@ Usage:
 
 from __future__ import annotations
 
-from dimos.control.blueprints._hardware import (
-    PIPER_SIM_PATH,
-    XARM6_SIM_PATH,
-    XARM7_SIM_PATH,
-    mock_arm,
-    piper,
-    xarm6,
-    xarm7,
-)
+from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
-from dimos.core.global_config import global_config
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
-
-_is_sim = global_config.simulation
-
-
-def _mujoco_if_sim(sim_path: str, dof: int) -> tuple[Blueprint, ...]:
-    if not _is_sim:
-        return ()
-    return (MujocoSimModule.blueprint(address=sim_path, headless=False, dof=dof),)
-
+from dimos.robot.manipulators.piper.blueprints.basic import coordinator_piper
+from dimos.robot.manipulators.xarm.blueprints.basic import (
+    coordinator_xarm6,
+    coordinator_xarm7,
+)
 
 # Minimal blueprint (no hardware, no tasks)
 coordinator_basic = ControlCoordinator.blueprint(
@@ -59,7 +45,12 @@ coordinator_basic = ControlCoordinator.blueprint(
 )
 
 # Mock 7-DOF arm (for testing)
-_mock_hw = mock_arm("arm", 7)
+_mock_hw = HardwareComponent(
+    hardware_id="arm",
+    hardware_type=HardwareType.MANIPULATOR,
+    joints=make_joints("arm", 7),
+    adapter_type="mock",
+)
 
 coordinator_mock = ControlCoordinator.blueprint(
     hardware=[_mock_hw],
@@ -73,56 +64,10 @@ coordinator_mock = ControlCoordinator.blueprint(
     ],
 )
 
-# XArm7 (real, or MuJoCo with --simulation)
-_xarm7_hw = xarm7("arm")
-
-coordinator_xarm7 = autoconnect(
-    ControlCoordinator.blueprint(
-        hardware=[_xarm7_hw],
-        tasks=[
-            TaskConfig(
-                name="traj_arm",
-                type="trajectory",
-                joint_names=_xarm7_hw.joints,
-                priority=10,
-            )
-        ],
-    ),
-    *_mujoco_if_sim(str(XARM7_SIM_PATH), len(_xarm7_hw.joints)),
-)
-
-# XArm6 (real, or MuJoCo with --simulation)
-_xarm6_hw = xarm6("arm", gripper=True)
-
-coordinator_xarm6 = autoconnect(
-    ControlCoordinator.blueprint(
-        hardware=[_xarm6_hw],
-        tasks=[
-            TaskConfig(
-                name="traj_xarm",
-                type="trajectory",
-                joint_names=_xarm6_hw.joints,
-                priority=10,
-            )
-        ],
-    ),
-    *_mujoco_if_sim(str(XARM6_SIM_PATH), len(_xarm6_hw.joints)),
-)
-
-# Piper 6-DOF (CAN bus, or MuJoCo with --simulation)
-_piper_hw = piper("arm")
-
-coordinator_piper = autoconnect(
-    ControlCoordinator.blueprint(
-        hardware=[_piper_hw],
-        tasks=[
-            TaskConfig(
-                name="traj_piper",
-                type="trajectory",
-                joint_names=_piper_hw.joints,
-                priority=10,
-            )
-        ],
-    ),
-    *_mujoco_if_sim(str(PIPER_SIM_PATH), len(_piper_hw.joints)),
-)
+__all__ = [
+    "coordinator_basic",
+    "coordinator_mock",
+    "coordinator_piper",
+    "coordinator_xarm6",
+    "coordinator_xarm7",
+]

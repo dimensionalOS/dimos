@@ -22,13 +22,25 @@ Usage:
 
 from __future__ import annotations
 
-from dimos.control.blueprints._hardware import manipulator, mock_arm
+from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.global_config import global_config
+from dimos.robot.manipulators.piper.config import make_piper_hardware
+from dimos.robot.manipulators.xarm.config import make_xarm_hardware
 
 # Dual mock arms (7-DOF left, 6-DOF right)
-_mock_left = mock_arm("left_arm", 7)
-_mock_right = mock_arm("right_arm", 6)
+_mock_left = HardwareComponent(
+    hardware_id="left_arm",
+    hardware_type=HardwareType.MANIPULATOR,
+    joints=make_joints("left_arm", 7),
+    adapter_type="mock",
+)
+_mock_right = HardwareComponent(
+    hardware_id="right_arm",
+    hardware_type=HardwareType.MANIPULATOR,
+    joints=make_joints("right_arm", 6),
+    adapter_type="mock",
+)
 
 coordinator_dual_mock = ControlCoordinator.blueprint(
     hardware=[_mock_left, _mock_right],
@@ -41,13 +53,13 @@ coordinator_dual_mock = ControlCoordinator.blueprint(
 )
 
 # Dual XArm (XArm7 left, XArm6 right)
-_xarm7_left = manipulator(
+_xarm7_left = make_xarm_hardware(
     "left_arm",
     7,
     adapter_type="xarm",
     address=global_config.xarm7_ip,
 )
-_xarm6_right = manipulator(
+_xarm6_right = make_xarm_hardware(
     "right_arm",
     6,
     adapter_type="xarm",
@@ -67,15 +79,14 @@ coordinator_dual_xarm = ControlCoordinator.blueprint(
 )
 
 # Dual arm (XArm6 + Piper)
-_xarm6_dual = manipulator(
+_xarm6_dual = make_xarm_hardware(
     "xarm_arm",
     6,
     adapter_type="xarm",
     address=global_config.xarm6_ip,
 )
-_piper_dual = manipulator(
+_piper_dual = make_piper_hardware(
     "piper_arm",
-    6,
     adapter_type="piper",
     address=global_config.can_port or "can0",
     gripper=True,
