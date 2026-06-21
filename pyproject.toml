@@ -115,6 +115,7 @@ dependencies = [
     # CLI
     "pydantic-settings>=2.11.0,<3",
     "textual==3.7.1",
+    "textual-serve>=1.1.1,<2",
     "terminaltexteffects==0.12.2",
     "typer>=0.19.2,<1",
     "plotext==5.3.2",
