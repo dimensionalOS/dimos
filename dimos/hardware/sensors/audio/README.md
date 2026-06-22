@@ -131,15 +131,12 @@ carries a `std_msgs.Header`, `sample_rate`, `channels`, `sample_format` (e.g. `S
 
 1. **`memory2` not connected** -- *the original endpoint of Issue #1932.* Audio is currently
    "hear and forget": STT text / clips are never persisted. **This is the largest open item.**
-2. ~~**Agent not connected**~~ -- **Done (2026-06-22).** `AgentTextModule` is wired between STT and
-   TTS. The pipeline is now mic -> STT -> LLM agent -> TTS. Needs end-to-end validation on
-   macOS before robot bring-up.
-3. **Not validated on real robot (Go2 Pro / Jetson).** macOS -> Jetson has real gaps: audio
+2. **Not validated on real robot (Go2 Pro / Jetson).** macOS -> Jetson has real gaps: audio
    device enumeration, TTS provider (`macos-say` is unavailable off macOS -> use `openai`/`pyttsx3`),
    and Whisper backend (needs an ARM-friendly backend, e.g. `whisper.cpp`).
-4. **`FunVoiceEffectsModule` is smoke-tested only** -- the DSP chain runs and logs VU, but
+3. **`FunVoiceEffectsModule` is smoke-tested only** -- the DSP chain runs and logs VU, but
    parameter ranges and stability across sample rates are not characterised.
-5. **`RawAudio` stand-in** -- decide whether to add a native `Header`-bearing LCM audio type
+4. **`RawAudio` stand-in** -- decide whether to add a native `Header`-bearing LCM audio type
    before multi-source / cross-machine audio is needed.
 
 ---
