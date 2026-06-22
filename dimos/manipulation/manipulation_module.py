@@ -849,7 +849,7 @@ class ManipulationModule(Module):
         auxiliary_groups: Sequence[PlanningGroupID | PlanningGroup] = (),
     ) -> bool:
         """Plan to one or more group pose targets with optional auxiliary groups."""
-        if self._world_monitor is None or self._kinematics is None:
+        if self._world_monitor is None or self._kinematics is None or self._planner is None:
             return False
         if not pose_targets:
             logger.error("At least one pose target is required")

@@ -193,6 +193,19 @@ class TestStateMachine:
         assert module._state == ManipulationState.IDLE
         assert module._error_message == ""
 
+    def test_plan_to_pose_targets_requires_planner_before_planning(self):
+        """Pose-target planning requires both IK and path planner backends."""
+        module = _make_module()
+        module._world_monitor = MagicMock()
+        module._kinematics = MagicMock()
+        module._planner = None
+
+        pose = Pose(position=Vector3(), orientation=Quaternion())
+
+        assert module.plan_to_pose_targets({"test_arm/manipulator": pose}) is False
+        assert module._state == ManipulationState.IDLE
+        assert module._error_message == ""
+
 
 class TestRobotSelection:
     """Test robot selection logic."""
