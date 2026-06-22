@@ -852,7 +852,8 @@ class ManipulationModule(Module):
         if self._world_monitor is None or self._kinematics is None:
             return False
         if not pose_targets:
-            return self._fail("At least one pose target is required")
+            logger.error("At least one pose target is required")
+            return False
 
         stamped_targets = {
             planning_group_id_from_selector(group): PoseStamped(
@@ -909,7 +910,8 @@ class ManipulationModule(Module):
         if self._world_monitor is None or self._planner is None:
             return False
         if not joint_targets:
-            return self._fail("At least one joint target is required")
+            logger.error("At least one joint target is required")
+            return False
 
         group_ids = tuple(
             dict.fromkeys(planning_group_id_from_selector(group) for group in joint_targets)

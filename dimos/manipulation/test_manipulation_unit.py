@@ -178,6 +178,21 @@ class TestStateMachine:
         module._state = ManipulationState.EXECUTING
         assert module._begin_planning() is False
 
+    def test_empty_plan_targets_do_not_fault_before_planning(self):
+        """Pre-flight validation errors do not corrupt the planning state machine."""
+        module = _make_module()
+        module._world_monitor = MagicMock()
+        module._kinematics = MagicMock()
+        module._planner = MagicMock()
+
+        assert module.plan_to_pose_targets({}) is False
+        assert module._state == ManipulationState.IDLE
+        assert module._error_message == ""
+
+        assert module.plan_to_joint_targets({}) is False
+        assert module._state == ManipulationState.IDLE
+        assert module._error_message == ""
+
 
 class TestRobotSelection:
     """Test robot selection logic."""

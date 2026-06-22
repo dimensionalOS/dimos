@@ -893,11 +893,6 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             raise KeyError(f"Robot '{robot_id}' not found")
 
         robot_data = self._robots[robot_id]
-        if robot_data.ee_frame is None:
-            raise ValueError(
-                f"Robot '{robot_id}' has no robot-scoped end-effector link; "
-                "use get_group_ee_pose() with an explicit planning group ID"
-            )
         plant_ctx = self._diagram.GetSubsystemContext(self._plant, ctx)
         full_positions = self._plant.GetPositions(plant_ctx)
 
@@ -1018,7 +1013,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         if robot_data.ee_frame is None:
             raise ValueError(
                 f"Robot '{robot_id}' has no robot-scoped end-effector link; "
-                "use get_group_jacobian() with an explicit planning group ID"
+                "use get_group_ee_pose() with an explicit planning group ID"
             )
         plant_ctx = self._diagram.GetSubsystemContext(self._plant, ctx)
 
