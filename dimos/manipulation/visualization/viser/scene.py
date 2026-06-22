@@ -16,16 +16,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from pathlib import Path
-import time
 from typing import Protocol, TypeAlias, cast
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
-from dimos.manipulation.visualization.viser.animation import (
-    GroupPreviewAnimation,
-    PreviewTrack,
-    sampled_joint_path_frames,
-)
+from dimos.manipulation.visualization.viser.animation import PreviewAnimator
 from dimos.manipulation.visualization.viser.runtime import (
     VISER_INSTALL_HINT,
     VISER_URDF_INSTALL_HINT,
@@ -36,7 +31,6 @@ from dimos.utils.logging_config import setup_logger
 
 try:
     from viser import (
-        FrameHandle,
         GridHandle,
         MeshHandle,
         TransformControlsEvent,
@@ -75,7 +69,7 @@ REFERENCE_GRID_NAME = "/reference_grid"
 REFERENCE_GRID_CELL_COLOR = (44, 54, 58)
 REFERENCE_GRID_SECTION_COLOR = (90, 145, 165)
 
-SceneHandle: TypeAlias = ViserUrdf | TransformControlsHandle | GridHandle | MeshHandle | FrameHandle
+SceneHandle: TypeAlias = ViserUrdf | TransformControlsHandle | GridHandle | MeshHandle
 
 
 class _ColorHandle(Protocol):
@@ -94,11 +88,9 @@ class ViserManipulationScene:
         self._configs_by_id: dict[str, RobotModelConfig] = {}
         self._urdfs: dict[str, ViserUrdf] = {}
         self._handles: dict[str, TransformControlsHandle] = {}
-        self._root_frames: dict[str, FrameHandle] = {}
         self._grid_handle: GridHandle | None = None
         self._grid_visible = True
         self._preview_visible: dict[str, bool] = {}
-        self._target_active: dict[str, bool] = {}
         self._target_tracks_current: dict[str, bool] = {}
         self._ensure_reference_grid()
 
@@ -114,16 +106,8 @@ class ViserManipulationScene:
     def register_robot(self, robot_id: str, config: RobotModelConfig) -> None:
         self._configs_by_id[robot_id] = config
         self._preview_visible.setdefault(robot_id, False)
-        self._target_active.setdefault(robot_id, False)
         self._target_tracks_current.setdefault(robot_id, True)
         self._ensure_robot_urdfs(robot_id, config)
-
-    def set_target_active(self, robot_id: str, active: bool) -> None:
-        """Show target ghost only when at least one group on the robot is active."""
-        self._target_active[robot_id] = active
-        if not active:
-            self._target_tracks_current[robot_id] = True
-        self._set_target_visibility(robot_id, active)
 
     def _ensure_reference_grid(self) -> None:
         try:
@@ -171,9 +155,6 @@ class ViserManipulationScene:
         self._handles[handle_key] = handle
         return handle
 
-    def remove_target_controls(self, robot_id: str) -> None:
-        self._remove_handle(f"{robot_id}:ee_control")
-
     def update_current_robot(self, robot_id: str, joint_state: JointState | None) -> None:
         config = self._configs_by_id.get(robot_id)
         if config is None or joint_state is None:
@@ -183,7 +164,7 @@ class ViserManipulationScene:
         self.set_urdf_joints(current, config.joint_names, joint_state.position)
         if self._target_tracks_current.get(robot_id, True):
             self._set_target_joints(robot_id, config.joint_names, joint_state.position)
-            self._set_target_visibility(robot_id, self._target_active.get(robot_id, False))
+            self._set_target_visibility(robot_id, True)
 
     def show_preview(self, robot_id: str) -> None:
         """Show the transient preview-animation ghost.
@@ -202,63 +183,13 @@ class ViserManipulationScene:
         config = self._configs_by_id.get(robot_id)
         if config is None:
             return False
-        preview = GroupPreviewAnimation(
-            group_ids=(),
-            tracks=(
-                PreviewTrack(
-                    robot_id=robot_id,
-                    group_ids=(),
-                    joint_names=tuple(config.joint_names),
-                    path=tuple(path),
-                ),
-            ),
-        )
-        return self.animate_preview(preview, duration)
-
-    def animate_preview(self, preview: GroupPreviewAnimation, duration: float) -> bool:
-        """Animate all preview tracks with one shared group-native frame clock."""
-        if not preview.tracks:
-            return False
-        frames_by_robot: dict[str, list[list[float]]] = {}
-        joint_names_by_robot: dict[str, tuple[str, ...]] = {}
-        for track in preview.tracks:
-            if track.robot_id not in self._configs_by_id:
-                return False
-            frames = sampled_joint_path_frames(track.path, duration, self.preview_fps)
-            if not frames:
-                return False
-            frames_by_robot[track.robot_id] = frames
-            joint_names_by_robot[track.robot_id] = track.joint_names
-
-        frame_count = max(len(frames) for frames in frames_by_robot.values())
-        if frame_count <= 0:
-            return False
-        step_delay = duration / max(frame_count - 1, 1) if duration > 0.0 else 0.0
-
-        robot_ids = tuple(frames_by_robot)
-        for robot_id in robot_ids:
-            self.show_preview(robot_id)
+        self.show_preview(robot_id)
         try:
-            for frame_index in range(frame_count):
-                for robot_id in robot_ids:
-                    frames = frames_by_robot[robot_id]
-                    joints = self._frame_at_shared_index(frames, frame_index, frame_count)
-                    self._set_preview_ghost_joints(robot_id, joint_names_by_robot[robot_id], joints)
-                if frame_index < frame_count - 1:
-                    time.sleep(step_delay)
-            return True
+            return PreviewAnimator(
+                lambda joints: self._set_preview_ghost_joints(robot_id, config.joint_names, joints)
+            ).animate(path, duration, self.preview_fps)
         finally:
-            for robot_id in robot_ids:
-                self.hide_preview(robot_id)
-
-    @staticmethod
-    def _frame_at_shared_index(
-        frames: Sequence[list[float]], frame_index: int, frame_count: int
-    ) -> list[float]:
-        if frame_count <= 1 or len(frames) == 1:
-            return frames[-1]
-        source_index = round(frame_index * (len(frames) - 1) / (frame_count - 1))
-        return frames[source_index]
+            self.hide_preview(robot_id)
 
     def set_target_joints(
         self, robot_id: str, joint_names: Sequence[str], joints: Sequence[float]
@@ -266,7 +197,6 @@ class ViserManipulationScene:
         target = self._urdfs.get(f"{robot_id}:target")
         if target is None:
             return False
-        self._target_active[robot_id] = True
         self._target_tracks_current[robot_id] = False
         self._set_target_joints(robot_id, joint_names, joints)
         self._set_target_visibility(robot_id, True)
@@ -322,13 +252,9 @@ class ViserManipulationScene:
             self._grid_handle = None
         for urdf in self._urdfs.values():
             self._remove_scene_handle(urdf)
-        for frame in self._root_frames.values():
-            self._remove_scene_handle(frame)
         self._urdfs.clear()
-        self._root_frames.clear()
         self._configs_by_id.clear()
         self._preview_visible.clear()
-        self._target_active.clear()
         self._target_tracks_current.clear()
 
     def _ensure_robot_urdfs(self, robot_id: str, config: RobotModelConfig) -> None:
@@ -338,7 +264,11 @@ class ViserManipulationScene:
             key = f"{robot_id}:{kind}"
             if key in self._urdfs:
                 continue
-            root_node_name = self._urdf_root_node_name(robot_id, kind, config)
+            root_node_name = {
+                "current": f"/robots/{robot_id}/current",
+                "target": f"/targets/{robot_id}/target",
+                "preview": f"/previews/{robot_id}/ghost",
+            }[kind]
             mesh_color_override = {
                 "current": None,
                 "target": GOAL_ROBOT_MESH_COLOR,
@@ -354,9 +284,7 @@ class ViserManipulationScene:
                 self._set_urdf_mesh_material(
                     self._urdfs[key], GOAL_ROBOT_FEASIBLE_COLOR, GOAL_ROBOT_FEASIBLE_OPACITY
                 )
-                self._set_handle_visibility(
-                    self._urdfs[key], self._target_active.get(robot_id, False)
-                )
+                self._set_handle_visibility(self._urdfs[key], True)
             elif kind == "preview":
                 self._set_urdf_mesh_material(
                     self._urdfs[key], PREVIEW_ROBOT_COLOR, PREVIEW_ROBOT_OPACITY
@@ -373,64 +301,6 @@ class ViserManipulationScene:
                 package_paths=package_paths,
                 xacro_args={str(key): str(value) for key, value in config.xacro_args.items()},
                 convert_meshes=bool(config.auto_convert_meshes),
-                strip_world_joint_child_link=str(config.base_link)
-                if bool(getattr(config, "strip_model_world_joint", False))
-                else None,
-            )
-        )
-
-    def _urdf_root_node_name(self, robot_id: str, kind: str, config: RobotModelConfig) -> str:
-        root_node_name = {
-            "current": f"/robots/{robot_id}/current",
-            "target": f"/targets/{robot_id}/target",
-            "preview": f"/previews/{robot_id}/ghost",
-        }[kind]
-        if not self._has_non_identity_base_pose(config):
-            return root_node_name
-        self._ensure_base_pose_frame(robot_id, kind, config)
-        return f"{root_node_name}/base_pose/urdf"
-
-    def _ensure_base_pose_frame(self, robot_id: str, kind: str, config: RobotModelConfig) -> None:
-        key = f"{robot_id}:{kind}:base_pose"
-        if key in self._root_frames:
-            return
-        pose = config.base_pose
-        frame_name = {
-            "current": f"/robots/{robot_id}/current/base_pose",
-            "target": f"/targets/{robot_id}/target/base_pose",
-            "preview": f"/previews/{robot_id}/ghost/base_pose",
-        }[kind]
-        self._root_frames[key] = self.server.scene.add_frame(
-            frame_name,
-            show_axes=False,
-            position=(
-                float(pose.position.x),
-                float(pose.position.y),
-                float(pose.position.z),
-            ),
-            wxyz=(
-                float(pose.orientation.w),
-                float(pose.orientation.x),
-                float(pose.orientation.y),
-                float(pose.orientation.z),
-            ),
-        )
-
-    @staticmethod
-    def _has_non_identity_base_pose(config: RobotModelConfig) -> bool:
-        pose = getattr(config, "base_pose", None)
-        if pose is None:
-            return False
-        return any(
-            abs(value) > 1e-12
-            for value in (
-                float(pose.position.x),
-                float(pose.position.y),
-                float(pose.position.z),
-                float(pose.orientation.x),
-                float(pose.orientation.y),
-                float(pose.orientation.z),
-                float(pose.orientation.w) - 1.0,
             )
         )
 

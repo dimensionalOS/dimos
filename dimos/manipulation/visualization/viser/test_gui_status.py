@@ -18,28 +18,46 @@ import pytest
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
-from dimos.manipulation.visualization.viser.panel_backend import feasibility_status
+from dimos.manipulation.visualization.types import TargetEvaluation
+from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
+from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
+from dimos.manipulation.visualization.viser.gui import ViserPanelGui
 from dimos.manipulation.visualization.viser.state import FeasibilityStatus
 
 
+class StatusOnlyServer:
+    pass
+
+
+class StatusOnlyAdapter(InProcessViserAdapter):
+    def __init__(self) -> None:
+        pass
+
+
 @pytest.mark.parametrize(
-    ("status", "success", "collision_free", "expected"),
+    ("result", "success", "collision_free", "expected"),
     [
-        ("FEASIBLE", True, True, FeasibilityStatus.FEASIBLE),
-        ("COLLISION", False, False, FeasibilityStatus.COLLISION),
-        ("COLLISION_AT_START", False, False, FeasibilityStatus.COLLISION),
-        ("COLLISION_AT_GOAL", False, False, FeasibilityStatus.COLLISION),
-        ("NO_SOLUTION", False, False, FeasibilityStatus.IK_FAILED),
-        ("SINGULARITY", False, False, FeasibilityStatus.IK_FAILED),
-        ("JOINT_LIMITS", False, False, FeasibilityStatus.IK_FAILED),
-        ("TIMEOUT", False, False, FeasibilityStatus.IK_FAILED),
-        ("IK_SUCCEEDED", False, False, FeasibilityStatus.INVALID),
+        ({"status": "FEASIBLE"}, True, True, FeasibilityStatus.FEASIBLE),
+        ({"status": "COLLISION"}, False, False, FeasibilityStatus.COLLISION),
+        ({"status": "COLLISION_AT_START"}, False, False, FeasibilityStatus.COLLISION),
+        ({"status": "COLLISION_AT_GOAL"}, False, False, FeasibilityStatus.COLLISION),
+        ({"status": "NO_SOLUTION"}, False, False, FeasibilityStatus.IK_FAILED),
+        ({"status": "SINGULARITY"}, False, False, FeasibilityStatus.IK_FAILED),
+        ({"status": "JOINT_LIMITS"}, False, False, FeasibilityStatus.IK_FAILED),
+        ({"status": "TIMEOUT"}, False, False, FeasibilityStatus.IK_FAILED),
+        ({"status": "IK_SUCCEEDED"}, False, False, FeasibilityStatus.INVALID),
     ],
 )
 def test_gui_feasibility_status_uses_exact_status_mapping(
-    status: str,
+    result: TargetEvaluation,
     success: bool,
     collision_free: bool,
     expected: FeasibilityStatus,
 ) -> None:
-    assert feasibility_status(status, success, collision_free) == expected
+    gui = ViserPanelGui(
+        StatusOnlyServer(),
+        StatusOnlyAdapter(),
+        ViserVisualizationConfig(),
+    )
+
+    assert gui._feasibility_status(result, success, collision_free) == expected

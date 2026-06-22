@@ -15,29 +15,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
 import time
 
-from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.msgs.sensor_msgs.JointState import JointState
-
-
-@dataclass(frozen=True)
-class PreviewTrack:
-    """One render track owned by one or more planning groups."""
-
-    robot_id: str
-    group_ids: tuple[PlanningGroupID, ...]
-    joint_names: tuple[str, ...]
-    path: tuple[JointState, ...]
-
-
-@dataclass(frozen=True)
-class GroupPreviewAnimation:
-    """Group-native preview transaction for a generated plan."""
-
-    group_ids: tuple[PlanningGroupID, ...]
-    tracks: tuple[PreviewTrack, ...]
 
 
 def interpolate_joint_path(
@@ -77,10 +57,10 @@ def sampled_joint_path_frames(
 ) -> list[list[float]]:
     """Return animation frames while preserving already sampled trajectories.
 
-    ViserManipulationVisualizer.animate_plan() projects GeneratedPlan waypoints into robot-local
-    preview paths. If a path arrives already sampled near the target display rate, Viser should
-    play those samples directly instead of re-interpolating by waypoint index. Sparse direct scene
-    callers still get local interpolation as a fallback.
+    ManipulationModule.preview_path() owns trajectory-aware interpolation because it has access
+    to JointTrajectory waypoint timing. If a path arrives already sampled near the target display
+    rate, Viser should play those samples directly instead of re-interpolating by waypoint index.
+    Sparse direct VisualizationSpec callers still get local interpolation as a fallback.
     """
     waypoints = [list(waypoint.position) for waypoint in path if waypoint.position]
     if not waypoints:
@@ -112,8 +92,7 @@ class PreviewAnimator:
         if not frames:
             return False
         step_delay = duration / max(len(frames) - 1, 1) if duration > 0.0 else 0.0
-        for index, joints in enumerate(frames):
+        for joints in frames:
             self._set_joints(joints)
-            if index < len(frames) - 1:
-                self._sleep(step_delay)
+            self._sleep(step_delay)
         return True
