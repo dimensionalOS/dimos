@@ -172,12 +172,15 @@ def _robot_config() -> RobotModelConfig:
     )
 
 
+class _TestPinkIK(PinkIK):
+    def __init__(self, converge: bool = True) -> None:
+        self.config = PinkIKConfig(max_iterations=3)
+        self._modules = _fake_modules(converge=converge)
+        self._robot_contexts = {}
+
+
 def _pink_ik(converge: bool = True) -> PinkIK:
-    ik = PinkIK.__new__(PinkIK)
-    ik.config = PinkIKConfig(max_iterations=3)
-    ik._modules = _fake_modules(converge=converge)
-    ik._robot_contexts = {}
-    return ik
+    return _TestPinkIK(converge=converge)
 
 
 def _context() -> _PinkRobotContext:

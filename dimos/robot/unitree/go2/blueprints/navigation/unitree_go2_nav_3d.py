@@ -132,5 +132,3 @@ unitree_go2_nav_3d = autoconnect(
     BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6),
     MovementManager.blueprint(),
 ).global_config(n_workers=10, robot_model="unitree_go2", obstacle_avoidance=False)
-
-__all__ = ["unitree_go2_nav_3d"]

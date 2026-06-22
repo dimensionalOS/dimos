@@ -81,7 +81,3 @@ drone_basic = autoconnect(
     ),
     DroneCameraModule.blueprint(camera_intrinsics=[1000.0, 1000.0, 960.0, 540.0]),
 )
-
-__all__ = [
-    "drone_basic",
-]

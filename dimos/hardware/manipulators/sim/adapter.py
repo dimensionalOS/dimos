@@ -247,6 +247,3 @@ class ShmMujocoAdapter:
 def register(registry: AdapterRegistry) -> None:
     """Register this adapter with the registry."""
     registry.register("sim_mujoco", ShmMujocoAdapter)
-
-
-__all__ = ["ShmMujocoAdapter"]

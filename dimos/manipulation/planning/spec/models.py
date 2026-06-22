@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeAlias
 
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
+    from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -41,6 +43,18 @@ WorldRobotID: TypeAlias = str
 
 JointPath: TypeAlias = "list[JointState]"
 """List of joint states forming a path (each waypoint has names + positions)"""
+
+
+@dataclass(frozen=True)
+class PlanningSceneInfo:
+    """Stable planning-scene metadata for external collaborators.
+
+    This snapshot intentionally carries setup metadata only. It must not expose
+    backend handles, mutable world contexts, GUI state, or execution state.
+    """
+
+    robots: Mapping[WorldRobotID, RobotModelConfig]
+    """Robot model configurations keyed by world robot ID."""
 
 
 Jacobian: TypeAlias = "NDArray[np.float64]"

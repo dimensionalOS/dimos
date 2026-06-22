@@ -94,19 +94,19 @@ class SerializableVideoFrame:
 class UnitreeWebRTCConnection(Resource):
     _SPORT_API_ID_RAGEMODE: int = 2059
 
-    def __init__(self, ip: str, mode: str = "ai") -> None:
+    def __init__(self, ip: str, mode: str = "ai", aes_128_key: str | None = None) -> None:
         self.ip = ip
         self.mode = mode
         self.stop_timer: threading.Timer | None = None
         self.cmd_vel_timeout = 0.2
-        self.conn = LegionConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
+        # Per-device AES-128 key for new Unitree firmware (data2=3 handshake); omitted when unset.
+        self.conn = LegionConnection(
+            WebRTCConnectionMethod.LocalSTA, ip=self.ip, aes_128_key=aes_128_key
+        )
         self.connect()
 
     def connect(self) -> None:
         self.loop = asyncio.new_event_loop()
-        self.task = None
-        self.connected_event = asyncio.Event()
-        self.connection_ready = threading.Event()
 
         async def async_connect() -> None:
             await self.conn.connect()
@@ -118,21 +118,20 @@ class UnitreeWebRTCConnection(Resource):
                 RTC_TOPIC["MOTION_SWITCHER"], {"api_id": 1002, "parameter": {"name": self.mode}}
             )
 
-            self.connected_event.set()
-            self.connection_ready.set()
-
-            while True:
-                await asyncio.sleep(1)
-
         def start_background_loop() -> None:
             asyncio.set_event_loop(self.loop)
-            self.task = self.loop.create_task(async_connect())
             self.loop.run_forever()
 
-        self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(target=start_background_loop, daemon=True)
         self.thread.start()
-        self.connection_ready.wait()
+
+        # Blocks until connected; re-raises connect failures (e.g. missing AES key).
+        try:
+            asyncio.run_coroutine_threadsafe(async_connect(), self.loop).result()
+        except Exception:
+            self.loop.call_soon_threadsafe(self.loop.stop)
+            self.thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            raise
 
     def start(self) -> None:
         pass
@@ -142,9 +141,6 @@ class UnitreeWebRTCConnection(Resource):
         if self.stop_timer:
             self.stop_timer.cancel()
             self.stop_timer = None
-
-        if self.task:
-            self.task.cancel()
 
         async def async_disconnect() -> None:
             try:
@@ -457,8 +453,6 @@ class UnitreeWebRTCConnection(Resource):
             self.stop_timer.cancel()
             self.stop_timer = None
 
-        if hasattr(self, "task") and self.task:
-            self.task.cancel()
         if hasattr(self, "conn"):
 
             async def async_disconnect() -> None:

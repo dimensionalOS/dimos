@@ -254,7 +254,7 @@ def _poll_until_drained(
     odometry stream can't be used for this — Point-LIO keeps publishing odometry
     (dead-reckoning) at odom_freq after input stops, with ever-advancing
     timestamps, so its stream never looks stagnant and the run would hang."""
-    last_lidar_max = 0.0
+    last_lidar_max: float | None = None
     first_max: float | None = None
     stagnant_since: float | None = None
     start_time = time.time()
@@ -279,6 +279,8 @@ def _poll_until_drained(
             print(f"[pcap_to_db] reached --max-sensor-sec={max_sensor_sec:.1f}s", flush=True)
             return True
         _, _, lidar_max = _odom_stats(db_path, lidar_stream)
+        if lidar_max <= 0.0:
+            continue
         if lidar_max == last_lidar_max:
             if stagnant_since is None:
                 stagnant_since = time.time()

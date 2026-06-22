@@ -250,13 +250,6 @@ class JointTrajectoryTask(BaseControlTask):
         return min(1.0, t_elapsed / self._trajectory.duration)
 
 
-__all__ = [
-    "JointTrajectoryTask",
-    "JointTrajectoryTaskConfig",
-    "TrajectoryState",
-]
-
-
 def create_task(cfg: Any, hardware: Any) -> JointTrajectoryTask:
     return JointTrajectoryTask(
         cfg.name,

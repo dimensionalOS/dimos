@@ -324,12 +324,6 @@ class CartesianIKTask(BaseControlTask):
         return self._ik.forward_kinematics(joint_positions)
 
 
-__all__ = [
-    "CartesianIKTask",
-    "CartesianIKTaskConfig",
-]
-
-
 class CartesianIKTaskParams(BaseConfig):
     model_path: str | Path
     ee_joint_id: int = 6

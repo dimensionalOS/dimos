@@ -295,6 +295,3 @@ class A750Adapter:
 def register(registry: AdapterRegistry) -> None:
     """Register this adapter with the registry."""
     registry.register("a750", A750Adapter)
-
-
-__all__ = ["A750Adapter"]

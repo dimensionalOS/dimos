@@ -28,7 +28,10 @@ except ImportError:
     HAS_ZED_SDK = False
 
 if HAS_ZED_SDK:
-    from dimos.hardware.sensors.camera.zed.camera import ZEDCamera, ZEDModule
+    from dimos.hardware.sensors.camera.zed.camera import (
+        ZEDCamera as ZEDCamera,
+        ZEDModule as ZEDModule,
+    )
 else:
     # Provide stub classes when SDK is not available
     _ZED_ERR = (
@@ -51,10 +54,3 @@ else:
 # Set up camera calibration provider (always available)
 CALIBRATION_DIR = Path(__file__).parent
 CameraInfo = CalibrationProvider(CALIBRATION_DIR)
-
-__all__ = [
-    "HAS_ZED_SDK",
-    "CameraInfo",
-    "ZEDCamera",
-    "ZEDModule",
-]
