@@ -6,7 +6,7 @@
 //! Uses a "slot map" to store cells. When inserting, either expand the map
 //! or reuse a freed location marked with a tombstone.
 
-use ahash::AHashMap;
+use ahash::{AHashMap, AHashSet};
 use rayon::prelude::*;
 
 use crate::voxel::VoxelKey;
@@ -21,9 +21,20 @@ pub const NO_CELL: CellId = u32::MAX;
 const TOMBSTONE: VoxelKey = (i32::MIN, i32::MIN, i32::MIN);
 const NEIGHBORS_4: [(i32, i32); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
 
+/// Vertical extent of a `dz`-cell change in meters, the step-penalty input.
+#[inline]
+pub fn rise(dz: i32, voxel_size: f32) -> f32 {
+    dz.unsigned_abs() as f32 * voxel_size
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Edge {
     pub dest: CellId,
+    /// Geometric cost, set at build time and never mutated.
+    pub base_cost: f32,
+    /// Vertical change of the edge in meters, for the step penalty.
+    pub rise: f32,
+    /// base_cost scaled by the wall penalty plus the step penalty.
     pub cost: f32,
 }
 
@@ -114,9 +125,19 @@ impl SurfaceCells {
         &self.edges[id as usize]
     }
 
+    #[inline]
+    pub fn edges_mut(&mut self, id: CellId) -> &mut [Edge] {
+        &mut self.edges[id as usize]
+    }
+
     #[cfg(test)]
     pub fn add_edge(&mut self, src: CellId, dest: CellId, cost: f32) {
-        self.edges[src as usize].push(Edge { dest, cost });
+        self.edges[src as usize].push(Edge {
+            dest,
+            base_cost: cost,
+            rise: 0.0,
+            cost,
+        });
     }
 
     /// Iterate live cells: (id, outgoing edges).
@@ -209,10 +230,73 @@ pub fn build_surface_cells(
                         .get(&(ix + dx, iy + dy, nz))
                         .expect("neighbor cell exists in lookup");
                     let cost = ((dx * dx + dy * dy + dz * dz) as f32).sqrt() * voxel_size;
-                    local.push(Edge { dest, cost });
+                    local.push(Edge {
+                        dest,
+                        base_cost: cost,
+                        rise: rise(dz, voxel_size),
+                        cost,
+                    });
                 }
             }
         });
+}
+
+/// Recompute outgoing edges for the seed cells and their surface neighbors,
+/// matching build_surface_cells. Call after an incremental insert or remove so
+/// the affected region matches a full rebuild.
+pub fn rebuild_edges_around(
+    cells: &mut SurfaceCells,
+    surface_lookup: &SurfaceLookup,
+    seeds: &[VoxelKey],
+    voxel_size: f32,
+    step_threshold_cells: i32,
+) {
+    let mut affected: AHashSet<CellId> = AHashSet::new();
+    for &(ix, iy, iz) in seeds {
+        if let Some(id) = cells.id((ix, iy, iz)) {
+            affected.insert(id);
+        }
+        for (dx, dy) in NEIGHBORS_4 {
+            let Some(nzs) = surface_lookup.get(&(ix + dx, iy + dy)) else {
+                continue;
+            };
+            for &nz in nzs {
+                if (nz - iz).abs() > step_threshold_cells {
+                    continue;
+                }
+                if let Some(id) = cells.id((ix + dx, iy + dy, nz)) {
+                    affected.insert(id);
+                }
+            }
+        }
+    }
+
+    for id in affected {
+        let (ix, iy, iz) = cells.coord(id);
+        let mut edges: Vec<Edge> = Vec::new();
+        for (dx, dy) in NEIGHBORS_4 {
+            let Some(nzs) = surface_lookup.get(&(ix + dx, iy + dy)) else {
+                continue;
+            };
+            for &nz in nzs {
+                let dz = nz - iz;
+                if dz.abs() > step_threshold_cells {
+                    continue;
+                }
+                let dest = cells
+                    .id((ix + dx, iy + dy, nz))
+                    .expect("neighbor cell exists in lookup");
+                let cost = ((dx * dx + dy * dy + dz * dz) as f32).sqrt() * voxel_size;
+                edges.push(Edge {
+                    dest,
+                    base_cost: cost,
+                    rise: rise(dz, voxel_size),
+                    cost,
+                });
+            }
+        }
+        cells.edges[id as usize] = edges;
+    }
 }
 
 #[cfg(test)]

@@ -505,6 +505,7 @@ module = [
     "cyclonedds",
     "cyclonedds.*",
     "dimos_lcm.*",
+    "dimos_mls_planner",
     "dimos_voxel_ray_tracing",
     "etils",
     "faster_whisper",

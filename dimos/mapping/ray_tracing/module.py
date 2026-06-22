@@ -44,12 +44,13 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     # Bounds for the health of voxels. Positive health means voxel is occupied.
     min_health: int = -2
     max_health: int = 1
-    # Spare a clearing miss when |ray dot surface normal| is below this.
+    # Don't clear a miss when abs of ray dot normal is below this, clear it when above.
+    # Higher clears only on direct hits, lower clears on slight grazes too.
     graze_cos: float = 0.7
     # Only spare a voxel whose neighborhood was hit within this many frames.
+    # A stale voxel can be cleared, even if it's a grazing hit. Large disables it.
     recency_window: int = 15
-    # Integrate every frame, publish the local map and region bounds every
-    # Nth frame. Zero disables them.
+    # Publish the accumulated local map and region bounds every Nth frame. Zero disables them.
     emit_every: int = 1
     # Publish the global map every Nth frame. Zero disables it.
     global_emit_every: int = 1
@@ -59,12 +60,7 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
-    """Rust voxel-map module with raycast clearing of dynamic objects.
-
-    region_bounds describes the cylinder local_map covers, packed into a
-    PoseStamped. Position holds the center. Orientation holds radius, z_min,
-    z_max, and zero. It shares the local_map stamp.
-    """
+    """Rust voxel-map module with raycast clearing of dynamic objects."""
 
     config: RayTracingVoxelMapConfig
 
@@ -75,6 +71,5 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
     region_bounds: Out[PoseStamped]
 
 
-# Verify protocol port compliance (mypy will flag missing ports)
 if TYPE_CHECKING:
     RayTracingVoxelMap()
