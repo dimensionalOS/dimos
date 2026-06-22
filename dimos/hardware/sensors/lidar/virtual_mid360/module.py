@@ -57,8 +57,6 @@ class VirtualMid360Config(NativeModuleConfig):
     cwd: str | None = "."
     executable: str = "result/bin/virtual_mid360"
     build_command: str | None = "nix build .#default"
-    # Binds fixed Livox UDP ports — reap an orphaned prior replay holding them.
-    reap_orphans_on_start: bool = True
     # The rust binary reads its config as a JSON object on stdin (required).
     stdin_config: bool = True
     # Keep the Python-only NIC knobs out of the CLI args mirrored to the binary.

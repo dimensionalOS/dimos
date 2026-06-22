@@ -67,8 +67,6 @@ class PointLioConfig(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/pointlio_native"
     build_command: str | None = "nix build .#pointlio_native"
-    # Binds fixed host-side Livox SDK ports — reap an orphaned prior instance.
-    reap_orphans_on_start: bool = True
     # lidar_ip required; host_ip optional (auto-derived from lidar_ip's subnet).
     # Both fall back to DIMOS_POINTLIO_LIDAR_IP / DIMOS_POINTLIO_HOST_IP.
     host_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_POINTLIO_HOST_IP"))
