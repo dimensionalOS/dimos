@@ -151,4 +151,4 @@ carries a `std_msgs.Header`, `sample_rate`, `channels`, `sample_format` (e.g. `S
 
 ## 8. Contact
 
-Questions: Zhuoran Guo -- [add WeChat / email]
+Questions: Zhuoran Guo -- zhuoran122623@gmail.com
