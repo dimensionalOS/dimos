@@ -413,8 +413,7 @@ jobs:
   self-hosted-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
     if: |
-      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
-      contains(fromJSON('["success", "skipped"]'), needs.cmu-nav-natives.result)
+      github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     needs: [compute-ros-pin, cmu-nav-natives]
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
