@@ -380,6 +380,11 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build nav_stack native modules
         if: steps.marker.outputs.cache-hit != 'true'
+        # GH-hosted ubuntu-latest has 4 cores but OOMs when all 4 nix daemons
+        # extract nars at once. 3 is the empirical limit. self-hosted-tests
+        # leaves BUILD_WORKERS unset and falls through to os.cpu_count().
+        env:
+          BUILD_WORKERS: "2"
         run: bin/build-nav-stack-natives
       - name: Write marker
         # Touch the marker file so the actions/cache post-step has something

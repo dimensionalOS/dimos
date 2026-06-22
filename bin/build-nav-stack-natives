@@ -24,6 +24,7 @@ to a NativeModuleConfig.
 """
 
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -151,12 +152,15 @@ def build_one(entry: tuple[str, str, Path, Path]) -> str:
 def main() -> None:
     entries = discover()
     failed = 0
-    # Cap at 3 concurrent nix builds. ubuntu-latest now has 4 logical CPUs and
-    # ~25 GB free disk (after the `free-disk-space` step), but at 4 workers
-    # the runner still OOMs on the parallel nar extractions. 3 is the empirical
-    # sweet spot — most of the parallelism win, no resource deaths.
-    _log(f"Building {len(entries)} module(s) with up to 3 workers")
-    with ProcessPoolExecutor(max_workers=3) as ex:
+    # Worker count is controlled by the BUILD_WORKERS env var so each caller
+    # can pick what its runner can handle. The GH-hosted ubuntu-latest job
+    # exports BUILD_WORKERS=3 — 4 logical CPUs but at 4 workers the parallel
+    # nar extractions OOM the runner. The self-hosted job lets it fall back
+    # to nproc, which has more RAM and IO bandwidth to spare. Default of 2 if
+    # nothing's set and cpu_count returns None for any reason.
+    workers = int(os.environ.get("BUILD_WORKERS") or os.cpu_count() or 2)
+    _log(f"Building {len(entries)} module(s) with up to {workers} workers")
+    with ProcessPoolExecutor(max_workers=workers) as ex:
         futs = {ex.submit(build_one, e): e for e in entries}
         for fut in as_completed(futs):
             try:
