@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared fixtures for rosbag-based nav_stack module validation tests.
+"""Shared fixtures for rosbag-based cmu_nav module validation tests.
 
 Loads recorded data from the OG ROS navigation autonomy stack and provides
 helpers for feeding it to DimOS native modules via LCM at original timing,

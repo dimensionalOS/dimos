@@ -29,7 +29,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.nav_stack.frames import FRAME_MAP
+from dimos.navigation.cmu_nav.frames import FRAME_MAP
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

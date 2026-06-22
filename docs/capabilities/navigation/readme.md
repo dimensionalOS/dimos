@@ -2,9 +2,9 @@
 
 Note: in the future these will be merged into one system.
 
-## Nav Stack
+## Cmu Nav Stack
 
-- [Nav Stack](/docs/capabilities/navigation/nav_stack.md) — modular navigation stack with terrain analysis, local/global planning, PGO, and exploration
+- [Nav Stack](/docs/capabilities/navigation/cmu_nav.md) — modular navigation stack with terrain analysis, local/global planning, PGO, and exploration
 
 ## Simple Nav
 

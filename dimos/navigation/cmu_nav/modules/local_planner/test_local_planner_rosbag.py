@@ -26,7 +26,7 @@ import pytest
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.nav_msgs.Path import Path as NavPath
-from dimos.navigation.nav_stack.tests.rosbag_fixtures import (
+from dimos.navigation.cmu_nav.tests.rosbag_fixtures import (
     LcmCollector,
     NativeProcessRunner,
     feed_at_original_timing,
