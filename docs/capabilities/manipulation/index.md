@@ -1,5 +1,6 @@
-# Manipulation
-
+---
+title: "Manipulation"
+---
 Motion planning and teleoperation for robotic manipulators. Uses Drake for physics simulation and optional Meshcat or Viser planning visualization.
 
 ## Quick Start

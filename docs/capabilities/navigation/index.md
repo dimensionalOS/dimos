@@ -1,5 +1,6 @@
-# Navigation
-
+---
+title: "Navigation"
+---
 Note: in the future these will be merged into one system.
 
 ## Cmu Nav Stack

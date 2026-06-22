@@ -1,5 +1,6 @@
-# OpenArm Integration
-
+---
+title: "OpenArm Integration"
+---
 Guide for running the **OpenArm** — an open-source bimanual 7-DOF research arm built from Damiao DM-J quasi-direct-drive motors — under the dimos manipulation + control stack.
 
 **If you're standing in front of the hardware and just want to run it, skip to [Quick start](#quick-start).**
