@@ -76,6 +76,15 @@ class _JointMapping:
     dimos_joint_names: list[str]
     model_joint_names: list[str]
     idx_q: list[int]
+    idx_q_array: NDArray[np.int64]
+
+
+@dataclass
+class _PinkRobotModelContext:
+    model: Any
+    mapping: _JointMapping
+    neutral_q: NDArray[np.float64]
+    frame_ids: dict[str, int]
 
 
 @dataclass
@@ -85,6 +94,7 @@ class _PinkRobotContext:
     frame_id: int
     frame_name: str
     mapping: _JointMapping
+    neutral_q: NDArray[np.float64] | None = None
 
 
 class _CurrentStateRequiredError(ValueError):
@@ -115,7 +125,7 @@ class PinkIK:
         config_values.update(overrides)
         self.config = PinkKinematicsConfig(**config_values)
         _check_optional_dependencies(self.config.solver)
-        self._robot_contexts: dict[str, _PinkRobotContext] = {}
+        self._robot_model_contexts: dict[tuple[object, ...], _PinkRobotModelContext] = {}
 
     def solve(
         self,
@@ -182,22 +192,30 @@ class PinkIK:
         for robot_name, groups in groups_by_robot.items():
             robot_id = robot_ids_by_name[robot_name]
             robot_pose_groups = pose_groups_by_robot.get(robot_name, [])
-            if robot_pose_groups:
+            robot_pose_targets = {group: pose_targets[group] for group in robot_pose_groups}
+            config = world.get_robot_config(robot_id)
+            seed_for_robot = _seed_for_robot_with_world_fallback(world, robot_id, seed)
+            if robot_pose_targets:
+                lower_limits, upper_limits = world.get_joint_limits(robot_id)
                 result = self._solve_pose_targets_for_robot(
                     world=world,
                     robot_id=robot_id,
-                    pose_targets={group: pose_targets[group] for group in robot_pose_groups},
-                    seed=_seed_for_robot_with_world_fallback(world, robot_id, seed),
+                    pose_targets=robot_pose_targets,
+                    seed=seed_for_robot,
                     position_tolerance=position_tolerance,
                     orientation_tolerance=orientation_tolerance,
                     max_attempts=max_attempts,
+                    config=config,
+                    lower_limits=lower_limits,
+                    upper_limits=upper_limits,
+                    target_models=self._targets_in_model_frame(config, robot_pose_targets),
                 )
                 if not result.is_success() or result.joint_state is None:
                     return result
             else:
                 result = IKResult(
                     status=IKStatus.SUCCESS,
-                    joint_state=_seed_for_robot_with_world_fallback(world, robot_id, seed),
+                    joint_state=seed_for_robot,
                     message="Auxiliary group retained seed state",
                 )
             joint_state = result.joint_state
@@ -243,22 +261,26 @@ class PinkIK:
         position_tolerance: float,
         orientation_tolerance: float,
         max_attempts: int,
+        config: RobotModelConfig | None = None,
+        lower_limits: NDArray[np.float64] | None = None,
+        upper_limits: NDArray[np.float64] | None = None,
+        target_models: Mapping[PlanningGroup, NDArray[np.float64]] | None = None,
     ) -> IKResult:
         """Solve one robot's one-or-more frame targets."""
         try:
             contexts = [
-                self._get_robot_context(world, robot_id, group.tip_link)
+                self._get_robot_context(world, robot_id, group.tip_link, config)
                 for group in pose_targets
                 if group.tip_link is not None
             ]
         except (FileNotFoundError, ImportError, ValueError) as exc:
             return _failure(IKStatus.NO_SOLUTION, f"Pink IK model setup failed: {exc}")
 
-        config = world.get_robot_config(robot_id)
-        lower_limits, upper_limits = world.get_joint_limits(robot_id)
-        target_models = [
-            self._target_in_model_frame(config, pose) for pose in pose_targets.values()
-        ]
+        config = config or world.get_robot_config(robot_id)
+        if lower_limits is None or upper_limits is None:
+            lower_limits, upper_limits = world.get_joint_limits(robot_id)
+        target_models_by_group = target_models or self._targets_in_model_frame(config, pose_targets)
+        target_model_list = [target_models_by_group[group] for group in pose_targets]
         fallback_result: IKResult | None = None
 
         for attempt in range(max_attempts):
@@ -267,7 +289,7 @@ class PinkIK:
                 if len(contexts) == 1:
                     result = self._solve_single(
                         robot_context=contexts[0],
-                        target_model=target_models[0],
+                        target_model=target_model_list[0],
                         seed_q=q0,
                         lower_limits=lower_limits,
                         upper_limits=upper_limits,
@@ -277,7 +299,7 @@ class PinkIK:
                 else:
                     result = self._solve_multi_frame(
                         robot_contexts=contexts,
-                        target_models=target_models,
+                        target_models=target_model_list,
                         seed_q=q0,
                         lower_limits=lower_limits,
                         upper_limits=upper_limits,
@@ -309,74 +331,14 @@ class PinkIK:
         position_tolerance: float,
         orientation_tolerance: float,
     ) -> IKResult:
-        assert pink is not None
-        assert pinocchio is not None
-        configuration = pink.Configuration(robot_context.model, robot_context.data, seed_q.copy())
-        target_se3 = _matrix_to_se3(pinocchio, target_model)
-
-        frame_task = pink.tasks.FrameTask(
-            robot_context.frame_name,
-            position_cost=self.config.position_cost,
-            orientation_cost=self.config.orientation_cost,
-            lm_damping=self.config.lm_damping,
-            gain=self.config.gain,
-        )
-        frame_task.set_target(target_se3)
-        tasks: list[Any] = [frame_task]
-
-        if self.config.posture_cost > 0.0:
-            posture_task = pink.tasks.PostureTask(cost=self.config.posture_cost)
-            posture_task.set_target_from_configuration(configuration)
-            tasks.append(posture_task)
-
-        final_position_error = float("inf")
-        final_orientation_error = float("inf")
-
-        for iteration in range(self.config.max_iterations):
-            current_pose = self._current_frame_matrix(robot_context, configuration.q)
-            final_position_error, final_orientation_error = compute_pose_error(
-                current_pose, target_model
-            )
-            if (
-                final_position_error <= position_tolerance
-                and final_orientation_error <= orientation_tolerance
-            ):
-                return _success(
-                    robot_context.mapping.dimos_joint_names,
-                    self._q_to_dimos_positions(robot_context, configuration.q),
-                    final_position_error,
-                    final_orientation_error,
-                    iteration + 1,
-                )
-
-            velocity = pink.solve_ik(
-                configuration,
-                tasks,
-                self.config.dt,
-                solver=self.config.solver,
-                damping=self.config.damping,
-                safety_break=self.config.safety_break,
-            )
-            configuration.integrate_inplace(velocity, self.config.dt)
-
-            joint_positions = self._q_to_dimos_positions(robot_context, configuration.q)
-            if not _within_limits(joint_positions, lower_limits, upper_limits):
-                return IKResult(
-                    status=IKStatus.JOINT_LIMITS,
-                    joint_state=None,
-                    position_error=final_position_error,
-                    orientation_error=final_orientation_error,
-                    iterations=iteration + 1,
-                    message="Pink IK candidate violates DimOS joint limits",
-                )
-
-        return IKResult(
-            status=IKStatus.NO_SOLUTION,
-            joint_state=None,
-            position_error=final_position_error,
-            orientation_error=final_orientation_error,
-            iterations=self.config.max_iterations,
-            message="Pink IK did not converge within the iteration budget",
+        return self._solve_frame_targets(
+            robot_contexts=[robot_context],
+            target_models=[target_model],
+            seed_q=seed_q,
+            lower_limits=lower_limits,
+            upper_limits=upper_limits,
+            position_tolerance=position_tolerance,
+            orientation_tolerance=orientation_tolerance,
         )
 
     def _solve_multi_frame(
@@ -390,6 +352,27 @@ class PinkIK:
         orientation_tolerance: float,
     ) -> IKResult:
         """Solve multiple frame tasks for one robot model."""
+        return self._solve_frame_targets(
+            robot_contexts=robot_contexts,
+            target_models=target_models,
+            seed_q=seed_q,
+            lower_limits=lower_limits,
+            upper_limits=upper_limits,
+            position_tolerance=position_tolerance,
+            orientation_tolerance=orientation_tolerance,
+        )
+
+    def _solve_frame_targets(
+        self,
+        robot_contexts: Sequence[_PinkRobotContext],
+        target_models: Sequence[NDArray[np.float64]],
+        seed_q: NDArray[np.float64],
+        lower_limits: NDArray[np.float64],
+        upper_limits: NDArray[np.float64],
+        position_tolerance: float,
+        orientation_tolerance: float,
+    ) -> IKResult:
+        """Solve one robot model against one or more frame targets."""
         assert pink is not None
         assert pinocchio is not None
         primary_context = robot_contexts[0]
@@ -419,8 +402,8 @@ class PinkIK:
         for iteration in range(self.config.max_iterations):
             position_errors: list[float] = []
             orientation_errors: list[float] = []
-            for context, target_model in zip(robot_contexts, target_models, strict=True):
-                current_pose = self._current_frame_matrix(context, configuration.q)
+            current_poses = self._current_frame_matrices(robot_contexts, configuration.q)
+            for current_pose, target_model in zip(current_poses, target_models, strict=True):
                 position_error, orientation_error = compute_pose_error(current_pose, target_model)
                 position_errors.append(position_error)
                 orientation_errors.append(orientation_error)
@@ -469,26 +452,43 @@ class PinkIK:
         )
 
     def _get_robot_context(
-        self, world: WorldSpec, robot_id: WorldRobotID, frame_name: str | None = None
+        self,
+        world: WorldSpec,
+        robot_id: WorldRobotID,
+        frame_name: str | None = None,
+        config: RobotModelConfig | None = None,
     ) -> _PinkRobotContext:
-        config = world.get_robot_config(robot_id)
+        config = config or world.get_robot_config(robot_id)
         target_frame = frame_name or config.end_effector_link
         if target_frame is None:
             raise ValueError(f"Robot '{robot_id}' has no end-effector frame configured")
-        cache_key = f"{robot_id}:{target_frame}"
-        if (
-            cache_key not in self._robot_contexts
-            and frame_name is None
-            and str(robot_id) in self._robot_contexts
-        ):
-            return self._robot_contexts[str(robot_id)]
-        if cache_key not in self._robot_contexts:
-            self._robot_contexts[cache_key] = self._build_robot_context(config, target_frame)
-        return self._robot_contexts[cache_key]
+        model_context = self._get_robot_model_context(robot_id, config)
+        frame_id = self._frame_id_for_model_context(model_context, target_frame)
+        return _PinkRobotContext(
+            model=model_context.model,
+            data=model_context.model.createData(),
+            frame_id=frame_id,
+            frame_name=target_frame,
+            mapping=model_context.mapping,
+            neutral_q=model_context.neutral_q,
+        )
 
-    def _build_robot_context(
-        self, config: RobotModelConfig, frame_name: str | None = None
-    ) -> _PinkRobotContext:
+    def _get_robot_model_context(
+        self, robot_id: WorldRobotID, config: RobotModelConfig
+    ) -> _PinkRobotModelContext:
+        cache_key = _robot_model_cache_key(robot_id, config)
+        if cache_key not in self._robot_model_contexts:
+            self._robot_model_contexts[cache_key] = self._build_robot_model_context(config)
+        return self._robot_model_contexts[cache_key]
+
+    def _frame_id_for_model_context(
+        self, model_context: _PinkRobotModelContext, frame_name: str
+    ) -> int:
+        if frame_name not in model_context.frame_ids:
+            model_context.frame_ids[frame_name] = _get_frame_id(model_context.model, frame_name)
+        return model_context.frame_ids[frame_name]
+
+    def _build_robot_model_context(self, config: RobotModelConfig) -> _PinkRobotModelContext:
         assert pinocchio is not None
         model_path = Path(config.model_path).resolve()
         if not model_path.exists():
@@ -508,19 +508,13 @@ class PinkIK:
             )
             model = pinocchio.buildModelFromUrdf(str(prepared_path))
         model = _lock_uncontrolled_model_joints(pinocchio, model, config)
-
-        data = model.createData()
-        target_frame = frame_name or config.end_effector_link
-        if target_frame is None:
-            raise ValueError("Robot model has no end-effector frame configured")
-        frame_id = _get_frame_id(model, target_frame)
         mapping = _build_joint_mapping(model, config)
-        return _PinkRobotContext(
+        neutral_q = np.asarray(pinocchio.neutral(model), dtype=np.float64)
+        return _PinkRobotModelContext(
             model=model,
-            data=data,
-            frame_id=frame_id,
-            frame_name=target_frame,
             mapping=mapping,
+            neutral_q=neutral_q,
+            frame_ids={},
         )
 
     def _initial_q(
@@ -532,42 +526,58 @@ class PinkIK:
         attempt: int,
     ) -> NDArray[np.float64]:
         assert pinocchio is not None
-        neutral = pinocchio.neutral(context.model)
-        q = np.array(neutral, dtype=np.float64)
+        neutral = context.neutral_q
+        if neutral is None:
+            neutral = np.asarray(pinocchio.neutral(context.model), dtype=np.float64)
+        q = np.array(neutral, dtype=np.float64, copy=True)
 
         if attempt == 0:
             positions = _seed_positions_for_mapping(seed, context.mapping)
         else:
             positions = np.random.uniform(lower_limits, upper_limits)
 
-        for value, idx_q in zip(positions, context.mapping.idx_q, strict=True):
-            q[idx_q] = value
+        q[context.mapping.idx_q_array] = positions
         return q
 
     def _q_to_dimos_positions(
         self, context: _PinkRobotContext, q: NDArray[np.float64]
     ) -> NDArray[np.float64]:
-        return np.array([q[idx_q] for idx_q in context.mapping.idx_q], dtype=np.float64)
+        return np.asarray(q[context.mapping.idx_q_array], dtype=np.float64)
 
-    def _current_frame_matrix(
-        self, context: _PinkRobotContext, q: NDArray[np.float64]
-    ) -> NDArray[np.float64]:
+    def _current_frame_matrices(
+        self, contexts: Sequence[_PinkRobotContext], q: NDArray[np.float64]
+    ) -> list[NDArray[np.float64]]:
         assert pinocchio is not None
-        pinocchio.forwardKinematics(context.model, context.data, q)
-        pinocchio.updateFramePlacements(context.model, context.data)
-        placement = context.data.oMf[context.frame_id]
-        matrix: NDArray[np.float64] = np.eye(4)
-        matrix[:3, :3] = np.asarray(placement.rotation, dtype=np.float64)
-        matrix[:3, 3] = np.asarray(placement.translation, dtype=np.float64)
-        return matrix
+        primary_context = contexts[0]
+        pinocchio.forwardKinematics(primary_context.model, primary_context.data, q)
+        pinocchio.updateFramePlacements(primary_context.model, primary_context.data)
+        return [
+            _placement_to_matrix(primary_context.data.oMf[context.frame_id]) for context in contexts
+        ]
 
     def _target_in_model_frame(
         self, config: RobotModelConfig, target_pose: PoseStamped
     ) -> NDArray[np.float64]:
+        base_world_inverse = np.linalg.inv(pose_to_matrix(config.base_pose))
+        return self._target_in_model_frame_with_base_inverse(target_pose, base_world_inverse)
+
+    def _targets_in_model_frame(
+        self,
+        config: RobotModelConfig,
+        pose_targets: Mapping[PlanningGroup, PoseStamped],
+    ) -> dict[PlanningGroup, NDArray[np.float64]]:
+        base_world_inverse = np.linalg.inv(pose_to_matrix(config.base_pose))
+        return {
+            group: self._target_in_model_frame_with_base_inverse(pose, base_world_inverse)
+            for group, pose in pose_targets.items()
+        }
+
+    def _target_in_model_frame_with_base_inverse(
+        self, target_pose: PoseStamped, base_world_inverse: NDArray[np.float64]
+    ) -> NDArray[np.float64]:
         target_world = pose_to_matrix(target_pose)
-        base_world = pose_to_matrix(config.base_pose)
         target_model: NDArray[np.float64] = np.asarray(
-            np.linalg.inv(base_world) @ target_world, dtype=np.float64
+            base_world_inverse @ target_world, dtype=np.float64
         )
         return target_model
 
@@ -610,7 +620,28 @@ def _build_joint_mapping(model: Any, config: RobotModelConfig) -> _JointMapping:
         dimos_joint_names=list(config.joint_names),
         model_joint_names=model_joint_names,
         idx_q=idx_q,
+        idx_q_array=np.asarray(idx_q, dtype=np.int64),
     )
+
+
+def _robot_model_cache_key(robot_id: WorldRobotID, config: RobotModelConfig) -> tuple[object, ...]:
+    return (
+        str(robot_id),
+        str(Path(config.model_path).resolve()),
+        tuple(config.joint_names),
+        config.base_link,
+        tuple(sorted((name, str(path.resolve())) for name, path in config.package_paths.items())),
+        tuple(sorted(config.xacro_args.items())),
+        config.auto_convert_meshes,
+        config.strip_model_world_joint,
+    )
+
+
+def _placement_to_matrix(placement: Any) -> NDArray[np.float64]:
+    matrix: NDArray[np.float64] = np.eye(4)
+    matrix[:3, :3] = np.asarray(placement.rotation, dtype=np.float64)
+    matrix[:3, 3] = np.asarray(placement.translation, dtype=np.float64)
+    return matrix
 
 
 def _lock_uncontrolled_model_joints(pinocchio: Any, model: Any, config: RobotModelConfig) -> Any:
