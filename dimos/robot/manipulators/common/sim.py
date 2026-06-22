@@ -1,4 +1,4 @@
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,18 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Basic control coordinator blueprint.
-
-Usage:
-    dimos run coordinator-basic
-"""
+"""Simulation helpers for manipulator blueprints."""
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator
+from pathlib import Path
 
-coordinator_basic = ControlCoordinator.blueprint(
-    tick_rate=100.0,
-    publish_joint_state=True,
-    joint_state_frame_id="coordinator",
-)
+from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.global_config import global_config
+
+
+def mujoco_if_sim(sim_path: str | Path, dof: int) -> tuple[Blueprint, ...]:
+    if not global_config.simulation:
+        return ()
+
+    from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
+
+    return (MujocoSimModule.blueprint(address=str(sim_path), headless=False, dof=dof),)
