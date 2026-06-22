@@ -35,8 +35,8 @@ from dimos.control.components import (
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
+from dimos.navigation.cmu_nav.main import cmu_nav_rerun_config, create_cmu_nav
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
 from dimos.robot.unitree.g1.config import G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -123,7 +123,7 @@ coordinator_flowbase_nav = (
             host_ip=os.getenv("LIDAR_HOST_IP", "192.168.1.5"),
             lidar_ip=os.getenv("LIDAR_IP", "192.168.1.189"),
         ),
-        create_nav_stack(
+        create_cmu_nav(
             planner="simple",
             vehicle_height=0.5,  # FlowBase platform clearance — tune if needed
             max_speed=0.8,  # conservative starting point
@@ -165,7 +165,7 @@ coordinator_flowbase_nav = (
             ],
         ),
         RerunBridgeModule.blueprint(
-            **nav_stack_rerun_config({"memory_limit": "1GB"}, vis_throttle=0.5),
+            **cmu_nav_rerun_config({"memory_limit": "1GB"}, vis_throttle=0.5),
             rerun_open="native",
         ),
         RerunWebSocketServer.blueprint(),

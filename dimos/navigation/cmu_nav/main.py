@@ -22,14 +22,14 @@ import numpy as np
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.module import ModuleBase
-from dimos.navigation.nav_stack.modules.far_planner.far_planner import FarPlanner
-from dimos.navigation.nav_stack.modules.local_planner.local_planner import LocalPlanner
-from dimos.navigation.nav_stack.modules.path_follower.path_follower import PathFollower
-from dimos.navigation.nav_stack.modules.pgo.pgo import PGO
-from dimos.navigation.nav_stack.modules.simple_planner.simple_planner import SimplePlanner
-from dimos.navigation.nav_stack.modules.tare_planner.tare_planner import TarePlanner
-from dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis import TerrainAnalysis
-from dimos.navigation.nav_stack.modules.terrain_map_ext.terrain_map_ext import TerrainMapExt
+from dimos.navigation.cmu_nav.modules.far_planner.far_planner import FarPlanner
+from dimos.navigation.cmu_nav.modules.local_planner.local_planner import LocalPlanner
+from dimos.navigation.cmu_nav.modules.path_follower.path_follower import PathFollower
+from dimos.navigation.cmu_nav.modules.pgo.pgo import PGO
+from dimos.navigation.cmu_nav.modules.simple_planner.simple_planner import SimplePlanner
+from dimos.navigation.cmu_nav.modules.tare_planner.tare_planner import TarePlanner
+from dimos.navigation.cmu_nav.modules.terrain_analysis.terrain_analysis import TerrainAnalysis
+from dimos.navigation.cmu_nav.modules.terrain_map_ext.terrain_map_ext import TerrainMapExt
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
@@ -37,7 +37,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-def create_nav_stack(
+def create_cmu_nav(
     *,
     use_tare: bool = False,
     use_terrain_map_ext: bool = True,
@@ -173,7 +173,7 @@ def create_nav_stack(
     record_remappings: list[tuple[type[ModuleBase], str, str | type[ModuleBase] | type[Spec]]] = []
     if record:
         # Lazy: breaks on G1 onboard (linux-aarch64 TLS allocation failure)
-        from dimos.navigation.nav_stack.modules.nav_record.nav_record import NavRecord
+        from dimos.navigation.cmu_nav.modules.nav_record.nav_record import NavRecord
 
         modules.append(NavRecord.blueprint(**(nav_record or {})))
         record_remappings.append((NavRecord, "global_map", "global_map_pgo"))
@@ -191,7 +191,7 @@ def create_nav_stack(
     return autoconnect(*modules).remappings(remappings)
 
 
-def nav_stack_rerun_config(
+def cmu_nav_rerun_config(
     user_config: dict[str, Any] | None = None,
     *,
     agentic_debug: bool = False,
