@@ -17,6 +17,8 @@ from __future__ import annotations
 from collections import deque
 from datetime import datetime, timedelta
 import json
+import os
+import sys
 import textwrap
 import threading
 from typing import TYPE_CHECKING, Any
@@ -655,13 +657,7 @@ Tool calls are displayed in cyan with ▶ prefix"""
 
 
 def main() -> None:
-    """Main entry point for the human CLI."""
-    import sys
-
     if len(sys.argv) > 1 and sys.argv[1] == "web":
-        # Support for textual-serve web mode
-        import os
-
         from textual_serve.server import Server  # type: ignore[import-not-found]
 
         server = Server(f"python {os.path.abspath(__file__)}")

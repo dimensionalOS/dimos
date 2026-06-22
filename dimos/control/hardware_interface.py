@@ -445,10 +445,3 @@ class ConnectedWholeBody(ConnectedHardware):
             self._last_commanded[name] = states[i].q
         self._initialized = True
         return True
-
-
-__all__ = [
-    "ConnectedHardware",
-    "ConnectedTwistBase",
-    "ConnectedWholeBody",
-]

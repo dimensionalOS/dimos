@@ -70,5 +70,3 @@ unitree_go2_coordinator = (
     )
     .global_config(obstacle_avoidance=False)
 )
-
-__all__ = ["unitree_go2_coordinator"]

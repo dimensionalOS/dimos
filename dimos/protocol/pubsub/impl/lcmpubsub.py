@@ -27,7 +27,7 @@ from dimos.protocol.pubsub.encoders import (
 )
 from dimos.protocol.pubsub.patterns import Glob
 from dimos.protocol.pubsub.spec import AllPubSub
-from dimos.protocol.service.lcmservice import LCMService, autoconf
+from dimos.protocol.service.lcmservice import LCMService
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -146,14 +146,3 @@ class PickleLCM(
     PickleEncoderMixin,  # type: ignore[type-arg]
     LCMPubSubBase,
 ): ...
-
-
-__all__ = [
-    "LCM",
-    "Glob",
-    "LCMEncoderMixin",
-    "LCMPubSubBase",
-    "PickleLCM",
-    "Topic",
-    "autoconf",
-]

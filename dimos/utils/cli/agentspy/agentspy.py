@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
+import os
+import sys
 import time
 from typing import Any, Union
 
@@ -219,12 +221,7 @@ class AgentSpyApp(App):  # type: ignore[type-arg]
 
 
 def main() -> None:
-    """Main entry point for agentspy."""
-    import sys
-
     if len(sys.argv) > 1 and sys.argv[1] == "web":
-        import os
-
         from textual_serve.server import Server  # type: ignore[import-not-found]
 
         server = Server(f"python {os.path.abspath(__file__)}")

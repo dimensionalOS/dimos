@@ -21,7 +21,7 @@ Usage:
     # gen .db from pcap (defaults to <pcap>.db next to the pcap)
     python -m dimos.hardware.sensors.lidar.fastlio2.tools.pcap_to_db --pcap "$PCAP_PATH"
 
-    # override FastLio2Config tuning via direct flags (or a --config YAML doc)
+    # override FastLio2Config tuning via direct flags
     python -m dimos.hardware.sensors.lidar.fastlio2.tools.pcap_to_db \
         --pcap "$PCAP_PATH" --acc-cov 0.5 --filter-size-surf 0.3 --lidar-type livox
 
@@ -65,7 +65,7 @@ _STARTUP_TIMEOUT_SEC = 60.0
 # Extra seconds past the pcap's own duration before auto-stopping, when no
 # explicit --max-sensor-sec is given.
 _DRAIN_MARGIN_SEC = 4.0
-# FastLio2Config fields exposed as direct CLI flags (merged into --config).
+# FastLio2Config fields exposed as direct CLI flags.
 _TUNING_FIELDS = (
     "acc_cov",
     "gyr_cov",
@@ -279,7 +279,7 @@ def _poll_until_drained(
     odometry stream can't be used for this — FAST-LIO keeps publishing odometry
     (dead-reckoning) at odom_freq after input stops, with ever-advancing
     timestamps, so its stream never looks stagnant and the run would hang."""
-    last_lidar_max = 0.0
+    last_lidar_max: float | None = None
     first_max: float | None = None
     stagnant_since: float | None = None
     start_time = time.time()
@@ -304,6 +304,8 @@ def _poll_until_drained(
             print(f"[pcap_to_db] reached --max-sensor-sec={max_sensor_sec:.1f}s", flush=True)
             return True
         _, _, lidar_max = _odom_stats(db_path, lidar_stream)
+        if lidar_max <= 0.0:
+            continue
         if lidar_max == last_lidar_max:
             if stagnant_since is None:
                 stagnant_since = time.time()
@@ -338,21 +340,6 @@ def _resolve_db_path(args: argparse.Namespace, pcap_path: Path) -> Path:
     return db_path
 
 
-def _load_overrides(config: str) -> dict[str, Any]:
-    """Load a YAML/JSON doc of FastLio2Config field overrides, e.g. {acc_cov: 0.1}."""
-    if not config:
-        return {}
-    import yaml
-
-    path = Path(config).expanduser().resolve()
-    if not path.exists():
-        raise FileNotFoundError(f"--config not found: {path}")
-    data = yaml.safe_load(path.read_text()) or {}
-    if not isinstance(data, dict):
-        raise ValueError(f"--config must be a mapping of FastLio2Config fields, got {type(data)}")
-    return data
-
-
 def _run(args: argparse.Namespace) -> int:
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
 
@@ -372,9 +359,9 @@ def _run(args: argparse.Namespace) -> int:
     args.pcap_path = pcap_path
     db_path = _resolve_db_path(args, pcap_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    overrides = _load_overrides(args.config)
-    # Direct --tuning flags override the --config doc.
-    overrides.update({f: getattr(args, f) for f in _TUNING_FIELDS if getattr(args, f) is not None})
+    overrides = {
+        field: getattr(args, field) for field in _TUNING_FIELDS if getattr(args, field) is not None
+    }
 
     # Default the stop bound to the pcap's own duration: FAST-LIO keeps
     # dead-reckoning (publishing at full rate) after the pcap drains, so the
@@ -459,12 +446,7 @@ def main(argv: list[str]) -> int:
         default=4.0,
         help="seconds the fake lidar waits before streaming (lets FAST-LIO come up first)",
     )
-    parser.add_argument(
-        "--config",
-        default="",
-        help="YAML/JSON doc of FastLio2Config field overrides (e.g. {acc_cov: 0.1})",
-    )
-    # FastLio2Config tuning as direct flags; these take precedence over --config.
+    # FastLio2Config tuning as direct flags.
     tuning = parser.add_argument_group("FastLio2 tuning")
     tuning.add_argument("--acc-cov", type=float, help="IMU accel covariance")
     tuning.add_argument("--gyr-cov", type=float, help="IMU gyro covariance")

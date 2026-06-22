@@ -108,6 +108,3 @@ class MockTwistBaseAdapter:
 def register(registry: TwistBaseAdapterRegistry) -> None:
     """Register this adapter with the registry."""
     registry.register("mock_twist_base", MockTwistBaseAdapter)
-
-
-__all__ = ["MockTwistBaseAdapter"]

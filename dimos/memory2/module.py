@@ -261,6 +261,7 @@ class OnExisting(str, enum.Enum):
 class RecorderConfig(MemoryModuleConfig):
     on_existing: OnExisting = OnExisting.BACKUP
     backup_keep_last: int = Field(default=10, ge=0)
+    root_frame: str = "world"
     default_frame_id: str = "base_link"
     tf_tolerance: float = 0.5
     db_path: str | Path = "recording.db"
@@ -409,7 +410,7 @@ class Recorder(MemoryModule):
             return cast("Pose | None", setter(msg))
         frame_id = getattr(msg, "frame_id", None) or self.config.default_frame_id
         transform = self.tf.get(
-            "world", frame_id, time_point=ts, time_tolerance=self.config.tf_tolerance
+            self.config.root_frame, frame_id, time_point=ts, time_tolerance=self.config.tf_tolerance
         )
         return transform.to_pose() if transform is not None else None
 

@@ -29,6 +29,7 @@ import os
 from dimos.control.components import (
     HardwareComponent,
     HardwareType,
+    make_joints,
     make_twist_base_joints,
 )
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
@@ -36,7 +37,6 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
-from dimos.robot.catalog.ufactory import xarm7 as _catalog_xarm7
 from dimos.robot.unitree.g1.config import G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -186,12 +186,22 @@ coordinator_flowbase_nav = (
 
 
 # Mock arm (7-DOF) + mock holonomic base (3-DOF)
-_mock_arm_cfg = _catalog_xarm7(name="arm")
+_mock_arm_hw = HardwareComponent(
+    hardware_id="arm",
+    hardware_type=HardwareType.MANIPULATOR,
+    joints=make_joints("arm", 7),
+    adapter_type="mock",
+)
 
 coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
-    hardware=[_mock_arm_cfg.to_hardware_component(), _mock_twist_base()],
+    hardware=[_mock_arm_hw, _mock_twist_base()],
     tasks=[
-        _mock_arm_cfg.to_task_config(task_name="traj_arm"),
+        TaskConfig(
+            name="traj_arm",
+            type="trajectory",
+            joint_names=_mock_arm_hw.joints,
+            priority=10,
+        ),
         TaskConfig(
             name="vel_base",
             type="velocity",
@@ -200,12 +210,3 @@ coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
         ),
     ],
 ).remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
-
-
-__all__ = [
-    "coordinator_flowbase",
-    "coordinator_flowbase_keyboard_teleop",
-    "coordinator_flowbase_nav",
-    "coordinator_mobile_manip_mock",
-    "coordinator_mock_twist_base",
-]

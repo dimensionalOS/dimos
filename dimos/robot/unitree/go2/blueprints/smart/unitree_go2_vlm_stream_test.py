@@ -23,5 +23,3 @@ unitree_go2_vlm_stream_test = autoconnect(
     VLMAgent.blueprint(),
     VlmStreamTester.blueprint(),
 )
-
-__all__ = ["unitree_go2_vlm_stream_test"]

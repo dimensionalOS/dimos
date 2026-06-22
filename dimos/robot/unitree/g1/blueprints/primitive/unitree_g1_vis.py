@@ -56,5 +56,3 @@ unitree_g1_vis = vis_module(
         vis_throttle=0.5,
     ),
 )
-
-__all__ = ["unitree_g1_vis"]
