@@ -315,6 +315,32 @@ jobs:
           use_pypi: true
           version: "11.2.8"
 
+  cmu-nav-natives-marker:
+    # Check whether the modules-for-this-config marker cache
+    # already exists. Used to skip cmu-nav-natives without using the cachix environment.
+    if: |
+      github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+    outputs:
+      cache-hit: ${{ steps.marker.outputs.cache-hit }}
+    steps:
+      - name: Checkout files used for cache key
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            bin/build-cmu-nav-natives
+            dimos/navigation/cmu_nav/modules
+          sparse-checkout-cone-mode: false
+      - name: Look up marker cache
+        id: marker
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/cmu-nav-natives-marker
+          key: cmu-nav-natives-${{ hashFiles('bin/build-cmu-nav-natives', 'dimos/navigation/cmu_nav/modules/**') }}
+          lookup-only: true
+
   cmu-nav-natives:
     # ⚠️ MUST NEVER RUN ON EXTERNAL PRs ⚠️
     # This job has write access to CACHIX_AUTH_TOKEN. Any workflow change that
@@ -323,7 +349,9 @@ jobs:
     # every dev with the substituter configured would unwittingly install. The
     # `if:` guard below is the only thing keeping fork PRs out — DO NOT REMOVE.
     if: |
-      github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      needs.cmu-nav-natives-marker.outputs.cache-hit != 'true'
+    needs: cmu-nav-natives-marker
     timeout-minutes: 300
     environment: cachix
     runs-on: ubuntu-latest
@@ -333,25 +361,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-      - name: Check if modules already pushed for this config
-        id: marker
-        uses: actions/cache@v4
-        with:
-          path: /tmp/cmu-nav-natives-marker
-          key: cmu-nav-natives-${{ hashFiles('bin/build-cmu-nav-natives', 'dimos/navigation/cmu_nav/modules/**') }}
       - name: Free runner disk space
-        if: steps.marker.outputs.cache-hit != 'true'
         uses: BRAINSia/free-disk-space@v2.1.3
       - name: Install uv
-        if: steps.marker.outputs.cache-hit != 'true'
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
       - name: Install minimal dimos for module discovery
-        if: steps.marker.outputs.cache-hit != 'true'
         run: uv sync --no-default-groups --frozen
       - name: Install Nix (with Cachix substituter)
-        if: steps.marker.outputs.cache-hit != 'true'
         env:
           INPUT_EXTRA_NIX_CONFIG: |
             extra-substituters = https://dimensionalos.cachix.org
@@ -365,7 +383,6 @@ jobs:
         # Restoring these skips the ~20s/module evaluation cost, which is
         # paid every cold run otherwise. /nix/store is intentionally NOT
         # cached here — that's the slow heavy part that Cachix handles.
-        if: steps.marker.outputs.cache-hit != 'true'
         uses: actions/cache@v4
         with:
           path: |
@@ -374,26 +391,30 @@ jobs:
           key: nix-fetcher-build-${{ runner.os }}-${{ hashFiles('bin/build-cmu-nav-natives', 'dimos/navigation/cmu_nav/modules/**/*.py') }}
           restore-keys: nix-fetcher-build-${{ runner.os }}-
       - name: Authenticate Cachix
-        if: steps.marker.outputs.cache-hit != 'true'
         uses: cachix/cachix-action@v15
         with:
           name: dimensionalos
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build cmu_nav native modules
-        if: steps.marker.outputs.cache-hit != 'true'
         env:
           BUILD_WORKERS: "2"
         run: uv run bin/build-cmu-nav-natives
-      - name: Write marker
-        # Touch the marker file so the actions/cache post-step has something to save.
-        # Next run with the same hash will cache-hit and skip the whole build chain.
-        if: steps.marker.outputs.cache-hit != 'true'
+      - name: Write marker file
         run: install -D /dev/null /tmp/cmu-nav-natives-marker/ok
+      - name: Save marker cache
+        # Done as a final step (rather than via actions/cache's post-step) so
+        # a build failure doesn't poison the cache with a marker for a config
+        # we never actually pushed.
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/cmu-nav-natives-marker
+          key: cmu-nav-natives-${{ hashFiles('bin/build-cmu-nav-natives', 'dimos/navigation/cmu_nav/modules/**') }}
 
   self-hosted-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
     if: |
-      github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      contains(fromJSON('["success", "skipped"]'), needs.cmu-nav-natives.result)
     needs: [compute-ros-pin, cmu-nav-natives]
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
