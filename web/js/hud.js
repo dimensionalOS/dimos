@@ -17,9 +17,8 @@ export function statsHealth() {
     const fps = v.fps ?? 0;
     const rtt = state.liveStats.rttMs ?? Infinity;
     const cmdLat = c ? (c.latency_ms ?? 0) : 0;
-    const cmdLoss = c ? (c.loss_pct ?? 0) : 0;
-    if (fps < 8 || rtt > 200 || cmdLat > 200 || cmdLoss > 5) return 'bad';
-    if (fps < 18 || rtt > 100 || (v.loss_pct ?? 0) > 3 || cmdLat > 100 || cmdLoss > 1) return 'warn';
+    if (fps < 8 || rtt > 200 || cmdLat > 200) return 'bad';
+    if (fps < 18 || rtt > 100 || (v.loss_pct ?? 0) > 3 || cmdLat > 100) return 'warn';
     return 'good';
 }
 export function healthColor() {
@@ -44,17 +43,11 @@ export function hudDetailLines() {
     const v = state.liveStats.video || {};
     const c = state.liveStats.cmd;
     const sentHz = state.liveStats.cmdHz ?? 0;  // operator's own send rate
-    // Command-plane health the robot measured from arriving twists;
-    // '—' until robot_telemetry arrives. recvHz (robot rate_hz) vs sentHz shows
-    // throttle/loss on the wire; reorder = out-of-order frames.
     const cmdLine = c
-        ? `lat ${(c.latency_ms ?? 0).toFixed(0)}ms  jit ${(c.jitter_ms ?? 0).toFixed(0)}ms  ` +
-          `loss ${c.loss_pct != null ? c.loss_pct.toFixed(1) : '—'}%`
+        ? `lat ${(c.latency_ms ?? 0).toFixed(0)}ms  jit ${(c.jitter_ms ?? 0).toFixed(0)}ms`
         : '—';
-    const rateLine = c
-        ? `sent ${sentHz.toFixed(0)}Hz → recv ${(c.rate_hz ?? 0).toFixed(0)}Hz  ` +
-          `reorder ${c.reorder ?? 0}`
-        : `sent ${sentHz.toFixed(0)}Hz`;
+    const rateLine = `sent ${sentHz.toFixed(0)}Hz` +
+        (c ? ` → recv ${(c.rate_hz ?? 0).toFixed(0)}Hz` : '');
     return [
         `Link   ${transportLabel()}`,
         `Video  ${(v.fps ?? 0).toFixed(0)}fps  ${(((v.kbps ?? 0) / 1000)).toFixed(1)}mbps  ${v.width ?? '—'}x${v.height ?? '—'}`,

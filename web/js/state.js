@@ -44,7 +44,7 @@ export const state = {
         rttMs: null,        // best clock-sync RTT (ms)
         offsetMs: 0,
         cmdHz: 0,           // command-send rate (twists for kb, poses for VR)
-        cmd: null,          // robot-measured: {latency_ms, jitter_ms, loss_pct, rate_hz}
+        cmd: null,          // robot-measured: {latency_ms, jitter_ms, rate_hz, throughput_bps}
         soc: null,          // robot battery state-of-charge (%), from robot_telemetry
     },
     onCmdAck: null,         // optional view hook: (msg) => void for {type:cmd_ack,nonce,ok}
