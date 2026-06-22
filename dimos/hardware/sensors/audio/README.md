@@ -47,6 +47,19 @@ pip install sounddevice numpy
 # openai TTS additionally needs: pip install openai soundfile
 # grant microphone permission on first real run
 
+# Environment (example; keep secrets local and do not commit real keys)
+export OPENAI_API_KEY="<your-openai-api-key>"
+export SPEECHTOTEXTMODULE__BACKEND_PREFERENCE="whisper.cpp"
+export SPEECHTOTEXTMODULE__WHISPER_CPP_MODEL_PATH="/absolute/path/to/dimos/dimos/models/ggml-small.en.bin"
+export SPEECHTOTEXTMODULE__LANGUAGE="en"
+export TEXTTOSPEECHMODULE__PROVIDER="openai"
+export TEXTTOSPEECHMODULE__API_KEY="$OPENAI_API_KEY"
+export SPEECHTOTEXTMODULE__DROP_DURING_TTS="true"
+export SPEECHTOTEXTMODULE__TTS_GUARD_SECONDS="0.8"
+export SPEECHTOTEXTMODULE__VAD_ENABLED="true"
+export SPEECHTOTEXTMODULE__VAD_FLUSH_ON_SILENCE="true"
+export FUNVOICEEFFECTSMODULE__ENABLED="false"
+
 # Validate AudioModule in isolation (LCM round-trip + live capture-rate check)
 python examples/audio/validate_audio_module.py            # synthetic (default, no mic)
 python examples/audio/validate_audio_module.py --real-mic # real microphone
