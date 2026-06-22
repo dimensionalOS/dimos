@@ -17,12 +17,9 @@
 from pathlib import Path
 
 from dimos.constants import STATE_DIR
-from dimos.control.blueprints.teleop import coordinator_teleop_xarm7
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.robot.manipulators.xarm.blueprints.teleop import coordinator_teleop_xarm7
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
-from dimos.teleop.quest.quest_types import Buttons
 from dimos.teleop.quest_hosted.hosted_extensions import (
     HostedArmTeleopModule,
     HostedTwistTeleopModule,
@@ -36,13 +33,8 @@ teleop_hosted_xarm7 = (
         HostedArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
         coordinator_teleop_xarm7,
     )
-    .transports(
-        {
-            ("right_controller_output", PoseStamped): LCMTransport(
-                "/coordinator/cartesian_command", PoseStamped
-            ),
-            ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
-        }
+    .remappings(
+        [(HostedArmTeleopModule, "right_controller_output", "coordinator_cartesian_command")]
     )
     .global_config(rerun_open="none")
 )
@@ -75,11 +67,3 @@ class HostedTeleopRecorder(TeleopRecorder):
     """
 
     config: HostedTeleopRecorderConfig
-
-
-__all__ = [
-    "HostedTeleopRecorder",
-    "HostedTeleopRecorderConfig",
-    "teleop_hosted_go2",
-    "teleop_hosted_xarm7",
-]

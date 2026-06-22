@@ -23,5 +23,3 @@ _perception_and_memory = autoconnect(
     SpatialMemory.blueprint(),
     ObjectTracking.blueprint(frame_id="camera_link"),
 )
-
-__all__ = ["_perception_and_memory"]

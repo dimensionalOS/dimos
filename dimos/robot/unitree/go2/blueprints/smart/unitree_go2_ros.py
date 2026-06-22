@@ -27,5 +27,3 @@ unitree_go2_ros = unitree_go2.transports(
         ("color_image", Image): ROSTransport("color_image", Image),
     }
 )
-
-__all__ = ["unitree_go2_ros"]

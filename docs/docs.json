@@ -113,7 +113,7 @@
           {
             "group": "Navigation",
             "pages": [
-              "capabilities/navigation/nav_stack",
+              "capabilities/navigation/cmu_nav",
               {
                 "group": "Native",
                 "pages": [

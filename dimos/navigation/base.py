@@ -68,6 +68,3 @@ class NavigationInterface(ABC):
             True if goal was cancelled, False if no goal was active
         """
         pass
-
-
-__all__ = ["NavigationInterface", "NavigationState"]

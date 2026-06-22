@@ -108,6 +108,3 @@ class CameraVideoTrack(VideoStreamTrack):
         frame.pts = pts
         frame.time_base = VIDEO_TIME_BASE
         return frame
-
-
-__all__ = ["CameraVideoTrack"]
