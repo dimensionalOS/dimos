@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Planning-group and global-joint identifier helpers."""
+"""String grammar helpers for public manipulation identifiers."""
 
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ def make_global_joint_name(
 
 def make_global_joint_names(
     robot_name: RobotName,
-    local_joint_names: list[LocalModelJointName] | tuple[LocalModelJointName, ...],
+    local_joint_names: Sequence[LocalModelJointName],
 ) -> list[GlobalJointName]:
     """Convert local model joint names to public global joint names."""
     return [make_global_joint_name(robot_name, name) for name in local_joint_names]
@@ -84,6 +84,28 @@ def is_global_joint_name(name: str) -> bool:
     """Return whether name has the exact global joint-name shape."""
     parts = name.split("/")
     return len(parts) == 2 and bool(parts[0]) and bool(parts[1])
+
+
+def parse_global_joint_name(
+    global_joint_name: GlobalJointName,
+) -> tuple[RobotName, LocalModelJointName]:
+    """Split and validate a global joint name."""
+    parts = global_joint_name.split("/", maxsplit=1)
+    if len(parts) != 2:
+        raise ValueError(
+            f"Invalid global joint name {global_joint_name!r}; "
+            "expected '{robot_name}/{local_joint_name}'"
+        )
+    robot_name, local_name = parts
+    try:
+        assert_valid_robot_name(robot_name)
+        assert_valid_local_joint_name(local_name)
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid global joint name {global_joint_name!r}; "
+            "expected '{robot_name}/{local_joint_name}'"
+        ) from exc
+    return robot_name, local_name
 
 
 def assert_global_joint_names(names: Sequence[GlobalJointName]) -> None:
@@ -99,14 +121,9 @@ def local_joint_name_from_global(
 ) -> LocalModelJointName:
     """Validate and strip a global joint name for backend internals."""
     assert_valid_robot_name(robot_name)
-    prefix = f"{robot_name}/"
-    if not global_joint_name.startswith(prefix):
+    parsed_robot_name, local_name = parse_global_joint_name(global_joint_name)
+    if parsed_robot_name != robot_name:
         raise ValueError(
             f"Global joint name {global_joint_name!r} does not belong to robot {robot_name!r}"
         )
-    local_name = global_joint_name[len(prefix) :]
-    try:
-        assert_valid_local_joint_name(local_name)
-    except ValueError as exc:
-        raise ValueError(f"Invalid global joint name: {global_joint_name!r}") from exc
     return local_name

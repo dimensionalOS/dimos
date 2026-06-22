@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import pytest
 
+from dimos.manipulation.planning.groups.joints import joint_target_to_global_names
 from dimos.manipulation.planning.groups.models import PlanningGroup
-from dimos.manipulation.planning.groups.utils import joint_target_to_global_names
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 

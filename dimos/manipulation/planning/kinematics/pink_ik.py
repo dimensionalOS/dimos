@@ -24,9 +24,9 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from dimos.manipulation.planning.groups.identifiers import make_global_joint_name
+from dimos.manipulation.planning.groups.joints import matching_global_joint_name
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
-from dimos.manipulation.planning.groups.utils import matching_global_joint_name
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus

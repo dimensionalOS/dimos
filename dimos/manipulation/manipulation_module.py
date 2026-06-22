@@ -45,12 +45,12 @@ from dimos.manipulation.planning.groups.identifiers import (
     assert_local_joint_names,
     make_global_joint_names,
 )
-from dimos.manipulation.planning.groups.models import PlanningGroup
-from dimos.manipulation.planning.groups.utils import (
+from dimos.manipulation.planning.groups.joints import (
     filter_joint_state_to_selected_joints,
     joint_target_to_global_names,
     planning_group_id_from_selector,
 )
+from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.kinematics.config import (
     ManipulationKinematicsConfig,
     PinkKinematicsConfig,

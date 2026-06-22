@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared helpers for planning-group selectors and joint-state projection."""
+"""Planning-group joint target and joint-state helpers."""
 
 from collections.abc import Mapping, Sequence
 

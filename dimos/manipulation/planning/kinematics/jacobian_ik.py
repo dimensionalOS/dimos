@@ -30,8 +30,8 @@ import warnings
 
 import numpy as np
 
+from dimos.manipulation.planning.groups.joints import filter_joint_state_to_selected_joints
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
-from dimos.manipulation.planning.groups.utils import filter_joint_state_to_selected_joints
 from dimos.manipulation.planning.spec.enums import IKStatus
 from dimos.manipulation.planning.spec.models import (
     IKResult,
