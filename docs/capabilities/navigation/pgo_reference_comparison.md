@@ -140,7 +140,7 @@ decisively on both tag agreement and voxel tightness.
 
 ## KITTI (official odometry error)
 
-Scored with the official KITTI translational (%) / rotational (deg/m) error (lower = better); see [kitti_comparison.md](kitti_comparison.md).
+Scored with the official KITTI translational (%) / rotational (deg/m) error (lower = better); see the `kitti_comparison.md` produced alongside the eval results.
 
 ## Conclusion
 

@@ -54,7 +54,7 @@ sharpens edges. 1543 keyframes, 157 loop closures.
 
 ## Detailed reference tables
 
-[reference_comparison.md](./reference_comparison.md) holds the full benchmark — tagged real
+[reference_comparison.md](/docs/capabilities/navigation/pgo_reference_comparison.md) holds the full benchmark — tagged real
 recordings, tagless hk_village (voxel-only), artificial-drift robustness, and KITTI — with
 china_office1 added as the flagship clean tag entry.
 
