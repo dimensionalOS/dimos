@@ -11,12 +11,24 @@ being planned.
 | Planning group | A named serial chain of controllable robot joints. |
 | Planning group ID | Stable API ID in the form `{robot_name}/{group_name}`. |
 | Global joint name | Boundary-level joint name in the form `{robot_name}/{local_joint_name}`. |
+| Local joint name | The joint name as it appears in the robot model. |
 | Generated plan | Minimal planning artifact containing selected group IDs and one synchronized global-joint path. |
 | Auxiliary group | A group selected for a pose request without receiving its own pose target. |
 
 Local URDF/SRDF joint names stay inside robot-scoped APIs, model parsing, and
-backend internals. Flat planning states and generated plan paths require global
-joint names so two robots can safely have the same local joint names.
+backend internals. Group-scoped APIs, generated plans, preview, execution, and
+coordinator boundaries use global joint names so two robots can safely have the
+same local joint names.
+
+`PlanningGroup` descriptors returned by `list_planning_groups()` include both
+namespaces:
+
+- `id`: public `{robot_name}/{group_name}` selector;
+- `joint_names`: selected global joint names in group order;
+- `local_joint_names`: selected local model joint names in group order;
+- `base_link` / `tip_link`: model links for group kinematics. `tip_link=None`
+  means the group can participate as an auxiliary group but cannot receive a
+  pose target.
 
 ## Planning group sources
 
@@ -64,20 +76,33 @@ name is always `manipulator`.
 ## Planning APIs
 
 Planning APIs select groups explicitly. Descriptors returned by
-`WorldSpec.list_planning_groups()` can be passed where a group ID is accepted;
-the API normalizes them back to IDs and re-resolves current world state.
+`ManipulationModule.list_planning_groups()` can be passed anywhere a group ID is
+accepted; the module normalizes descriptors back to IDs and re-resolves current
+world state.
 
 ```python skip
-# Joint-space planning for one group.
+# Discover groups. Each item is a PlanningGroup dataclass.
+groups = manip.list_planning_groups()
+arm = groups[0]
+
+# Joint-space planning for one group. Named targets may use global names...
 manip.plan_to_joint_targets({
-    "left_arm/manipulator": JointState(
+    arm.id: JointState(
+        name=["left_arm/joint1", "left_arm/joint2"],
+        position=[0.2, -0.1],
+    )
+})
+
+# ...or local model names, but not a mix of both namespaces.
+manip.plan_to_joint_targets({
+    arm: JointState(
         name=["joint1", "joint2"],
         position=[0.2, -0.1],
     )
 })
 
 # Pose planning for an arm while a torso/waist group participates as free DOFs.
-manip.plan_to_poses(
+manip.plan_to_pose_targets(
     {"robot/arm": target_pose},
     auxiliary_groups=["robot/torso"],
 )
@@ -87,24 +112,63 @@ manip.preview_plan(plan)
 manip.execute_plan(plan)
 ```
 
-For robot-scoped joint-space planning, unnamed vectors are interpreted in robot
-model joint order. If names are provided, they must be local model joint names:
-no global names, missing joints, extra joints, or partial joint sets.
+### Pose targets
+
+`plan_to_pose_targets()` accepts `Mapping[PlanningGroupID | PlanningGroup,
+Pose]`. It wraps each `Pose` in the world frame before calling the group-scoped
+IK path. Every key in `pose_targets` must refer to a pose-targetable group
+(`tip_link` is not `None`). `auxiliary_groups` may include non-pose-targeted
+groups whose joints should stay in the solve as free DOFs.
+
+`inverse_kinematics()` is the lower-level RPC. It accepts stamped poses keyed by
+group ID plus optional auxiliary group IDs and returns an `IKResult` without
+running collision filtering or planning.
+
+The compatibility wrapper `plan_to_pose(pose, robot_name=None)` still exists. It
+selects the default pose-targetable group for the robot, then delegates to
+`plan_to_pose_targets()`.
+
+### Joint targets
+
+`plan_to_joint_targets()` accepts `Mapping[PlanningGroupID | PlanningGroup,
+JointState]`.
+
+For a group-scoped joint target:
+
+- an unnamed vector is interpreted in that group's joint order;
+- named targets may use all-global names or all-local names;
+- global and local names must not be mixed in one target;
+- named targets must provide exactly the group's selected joints, with no
+  missing or extra joints.
+
+The compatibility wrapper `plan_to_joints(joints, robot_name=None)` still exists.
+It selects the robot's default group, then delegates to
+`plan_to_joint_targets()`.
+
+Robot-scoped state helpers such as `set_init_joints()` still use local model
+joint names. When unnamed, those vectors are interpreted in full robot model
+joint order.
 
 ## Generated plans and execution
 
 A `GeneratedPlan` stores:
 
 - selected planning group IDs;
-- a single synchronized path of `JointState` waypoints keyed by global joint
-  names;
+- a single synchronized path of `JointState` waypoints keyed by selected global
+  joint names;
 - status, timing, path length, iteration count, and message metadata.
 
-Preview and execution project this path lazily. Preview sends projected joint
-paths to the world monitor. Execution splits the path by affected trajectory
-task, orders each trajectory by the robot's configured local joint order, writes
-global joint names at the coordinator boundary, and invokes each trajectory
-controller. Controllers remain planning-group agnostic.
+Preview and execution project this path lazily. `preview_plan(plan=None,
+duration=None, robot_name=None)` defaults to `_last_plan`; `robot_name` is only a
+filter that rejects plans which do not affect the requested robot. Preview sends
+the generated global-joint path to the world monitor for animation.
+
+`execute_plan(plan=None)` also defaults to `_last_plan`. It infers affected
+robots from the selected groups, projects each waypoint back into each robot's
+full local model joint order, fills unselected robot joints from current state,
+then writes a coordinator `JointTrajectory` using global joint names. The
+trajectory is dispatched to each robot's configured `coordinator_task_name`.
+Controllers remain planning-group agnostic.
 
 Multi-task dispatch is not atomic in this change: if one trajectory task accepts
 and a later task rejects, DimOS reports the rejection but does not roll back the
@@ -120,4 +184,7 @@ New planning logic should use model/SRDF structure and planning group base/tip
 links instead.
 
 Robot placement should be encoded in URDF/xacro/MJCF. `joint_names` remains
-supported and should describe the ordered controllable local model joint set.
+supported and should describe the ordered controllable local model joint set, not
+a planning group. `joint_name_mapping` can map external/coordinator joint names
+back to local model joint names for adapters that publish scoped hardware names.
+`coordinator_task_name` identifies the trajectory task used by `execute_plan()`.
