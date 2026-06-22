@@ -90,11 +90,14 @@ def write(samples: Iterator[Sample], output: OutputConfig) -> Path:
             ep.create_dataset("timestamp", data=np.asarray(buf_ts, dtype=np.float32))
             for k, frames in buf_obs.items():
                 arr = np.stack(frames, axis=0)
+                # arr is time-stacked (T, …); an image is therefore ndim >= 3
+                # here (2D grayscale → (T, H, W)), low-dim → (T, D).
+                is_image = arr.ndim >= 3
                 ep.create_dataset(
                     f"observation/{k}",
                     data=arr,
-                    compression="gzip" if arr.ndim >= 3 else None,
-                    compression_opts=4 if arr.ndim >= 3 else None,
+                    compression="gzip" if is_image else None,
+                    compression_opts=4 if is_image else None,
                 )
             for k, frames in buf_act.items():
                 ep.create_dataset(f"action/{k}", data=np.stack(frames, axis=0))

@@ -150,6 +150,17 @@ def resolve_field(msg: Any, ref: StreamField) -> np.ndarray:
     return np.asarray(value)
 
 
+def is_image_array(arr: np.ndarray) -> bool:
+    """True for image-like *per-frame* arrays: 2D grayscale (H, W) or ≥3D
+    (H, W, C). Low-dim features (proprio, actions) are 1D vectors.
+
+    Single source of truth for the obs-vs-image split. Note: format writers that
+    key off *time-stacked* arrays (shape (T, …)) test ``ndim >= 3`` directly —
+    the extra leading time axis shifts this bound by one.
+    """
+    return arr.ndim >= 2
+
+
 def extract_episodes(store: SqliteStore, cfg: EpisodeExtractor) -> list[Episode]:
     """Walk recorded events into Episodes per the configured strategy.
 
@@ -313,7 +324,7 @@ def iter_episode_samples(
                     skip = True
                     break
                 arr = resolve_field(msg, ref)
-                if arr.ndim < 3:
+                if not is_image_array(arr):
                     arr = arr.astype(np.float32, copy=False)
                 if key in action_keys:
                     act_dict[key] = arr

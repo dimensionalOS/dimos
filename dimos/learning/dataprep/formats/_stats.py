@@ -27,6 +27,8 @@ from typing import Any
 
 import numpy as np
 
+from dimos.learning.dataprep.core import is_image_array
+
 
 @dataclass
 class FeatureAggregator:
@@ -55,7 +57,7 @@ class StreamingStats:
 
     def update(self, name: str, value: np.ndarray) -> None:
         a = np.asarray(value)
-        is_image = a.ndim >= 3
+        is_image = is_image_array(a)
         agg = self.aggs.setdefault(
             name,
             FeatureAggregator(is_image=is_image, shape=tuple(a.shape), dtype=str(a.dtype)),
@@ -65,11 +67,13 @@ class StreamingStats:
             agg.image_seen += 1
             if (agg.image_seen - 1) % self.image_subsample != 0:
                 return
-            v = (
-                a.astype(np.float32).mean(axis=(0, 1))
-                if a.ndim == 3
-                else a.astype(np.float32).reshape(-1)
-            )
+            # Reduce spatial dims to a per-channel summary so stats stay small.
+            if a.ndim == 2:  # grayscale (H, W) → single channel
+                v = a.astype(np.float32).mean().reshape(1)
+            elif a.ndim == 3:  # (H, W, C) → per-channel
+                v = a.astype(np.float32).mean(axis=(0, 1))
+            else:  # higher-dim image stacks → flatten
+                v = a.astype(np.float32).reshape(-1)
         else:
             v = a.astype(np.float64)
 

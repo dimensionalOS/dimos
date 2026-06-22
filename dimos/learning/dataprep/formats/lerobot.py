@@ -45,7 +45,7 @@ from typing import Any
 
 import numpy as np
 
-from dimos.learning.dataprep.core import OutputConfig, Sample
+from dimos.learning.dataprep.core import OutputConfig, Sample, is_image_array
 from dimos.learning.dataprep.formats._stats import StreamingStats
 from dimos.utils.logging_config import setup_logger
 
@@ -253,11 +253,13 @@ def write(samples: Iterator[Sample], output: OutputConfig) -> Path:
                     tasks_index[cur_task] = len(tasks_index)
 
             # Schema discovery + stats (global + per-episode).
-            n_low_dim_obs = sum(1 for v in sample.observation.values() if np.asarray(v).ndim < 3)
+            n_low_dim_obs = sum(
+                1 for v in sample.observation.values() if not is_image_array(np.asarray(v))
+            )
             single_state = n_low_dim_obs == 1
             for k, arr in sample.observation.items():
                 a = np.asarray(arr)
-                is_image = a.ndim >= 3
+                is_image = is_image_array(a)
                 name = _feature_name("observation", k, is_image, False, single_state=single_state)
                 if name not in feature_shapes:
                     feature_shapes[name] = tuple(a.shape)
@@ -284,10 +286,15 @@ def write(samples: Iterator[Sample], output: OutputConfig) -> Path:
             # Append image frames to the per-camera MP4 (RGB→BGR; cv2 is BGR-native).
             for k, arr in sample.observation.items():
                 a = np.asarray(arr)
-                if a.ndim >= 3:
+                if is_image_array(a):
                     if k not in video_writers:
                         video_writers[k] = _open_video(k, a)
-                    bgr = cv2.cvtColor(a, cv2.COLOR_RGB2BGR) if a.shape[-1] == 3 else a
+                    if a.ndim == 2:  # grayscale → 3-channel BGR for the MP4
+                        bgr = cv2.cvtColor(a, cv2.COLOR_GRAY2BGR)
+                    elif a.shape[-1] == 3:  # RGB → BGR (cv2 is BGR-native)
+                        bgr = cv2.cvtColor(a, cv2.COLOR_RGB2BGR)
+                    else:
+                        bgr = a
                     video_writers[k].write(bgr)
                     video_cum_frames[k] = video_cum_frames.get(k, 0) + 1
 
@@ -302,7 +309,7 @@ def write(samples: Iterator[Sample], output: OutputConfig) -> Path:
                     "obs": {
                         k: np.asarray(v)
                         for k, v in sample.observation.items()
-                        if np.asarray(v).ndim < 3
+                        if not is_image_array(np.asarray(v))
                     },
                     "act": {k: np.asarray(v) for k, v in sample.action.items()},
                 }
