@@ -2,7 +2,7 @@
 
 ```sh skip
 sudo apt-get update
-sudo apt-get install -y curl g++ portaudio19-dev git-lfs libturbojpeg python3-dev pre-commit
+sudo apt-get install -y curl g++ portaudio19-dev git-lfs libturbojpeg libgl1 libegl1 python3-dev pre-commit
 
 # install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"

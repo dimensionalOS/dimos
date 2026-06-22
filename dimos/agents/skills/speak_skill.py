@@ -15,12 +15,13 @@
 import threading
 import time
 
+from pydantic import Field
 from reactivex import Subject
 
 from dimos.agents.annotation import skill
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.stream.audio.node_output import SounddeviceAudioOutput
 from dimos.stream.audio.tts.node_openai import OpenAITTSNode, Voice
 from dimos.utils.logging_config import setup_logger
@@ -28,7 +29,13 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
+class SpeakSkillConfig(ModuleConfig):
+    model_config = {"validate_default": True, "arbitrary_types_allowed": True, "extra": "forbid"}
+    openai_api_key: str = Field(default_factory=lambda m: m["g"].openai_api_key)
+
+
 class SpeakSkill(Module):
+    config: SpeakSkillConfig
     _tts_node: OpenAITTSNode | None = None
     _audio_output: SounddeviceAudioOutput | None = None
     _audio_lock: threading.Lock = threading.Lock()

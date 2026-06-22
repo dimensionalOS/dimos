@@ -72,6 +72,7 @@ class GlobalConfig(BaseSettings):
     listen_host: str = "127.0.0.1"
     dimsim_scene: str = "apt"
     dimsim_port: int = 8090
+    openai_api_key: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",
