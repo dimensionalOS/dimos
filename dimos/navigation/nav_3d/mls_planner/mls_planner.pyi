@@ -23,18 +23,42 @@ class MLSPlanner:
         *,
         voxel_size: float,
         robot_height: float,
-        surface_dilation_passes: int = 3,
-        surface_erosion_passes: int = 3,
+        surface_closing_radius: float = 0.15,
         node_spacing_m: float = 1.0,
-        node_wall_buffer_m: float = 0.3,
-        node_step_threshold_m: float = 0.25,
+        wall_clearance_m: float = 0.3,
+        wall_buffer_m: float = 0.75,
+        wall_buffer_weight: float = 100.0,
+        step_threshold_m: float = 0.25,
+        step_penalty_weight: float = 4.0,
     ) -> None: ...
     def update_global_map(self, points: NDArray[np.float32]) -> None:
         """Voxelize the map and rebuild surfaces, nodes, and edges. Shape (N, 3) float32."""
         ...
 
+    def update_region(
+        self,
+        points: NDArray[np.float32],
+        origin: tuple[float, float],
+        radius: float,
+        z_min: float,
+        z_max: float,
+    ) -> None:
+        """Replace the cylindrical region with a local map slice and rebuild.
+
+        Points are (N, 3) float32.
+        """
+        ...
+
     def surface_map(self) -> NDArray[np.float32]:
         """Standable surface cells as (M, 3) float32 centers."""
+        ...
+
+    def surface_clearance_map(self) -> NDArray[np.float32]:
+        """Surface cells as (M, 4) float32 rows of [x, y, z, clearance].
+
+        Clearance is the horizontal distance to the nearest untraversable edge.
+        Unreached cells report +inf.
+        """
         ...
 
     def nodes(self) -> NDArray[np.float32]:
@@ -51,6 +75,14 @@ class MLSPlanner:
         goal: tuple[float, float, float],
     ) -> NDArray[np.float32] | None:
         """Plan a path between start and goal. Returns (W, 3) float32, or None if unreachable."""
+        ...
+
+    def voxel_count(self) -> int:
+        """Number of occupied voxels in the current map."""
+        ...
+
+    def voxel_map(self) -> NDArray[np.float32]:
+        """Accumulated occupied voxel centers as (N, 3) float32, for visualization."""
         ...
 
     def clear(self) -> None:
