@@ -120,14 +120,7 @@ VOXEL_MAX_SCANS = 300
 # Bump to invalidate every cached cell (scoring/replay semantics changed).
 EVAL_VERSION = 1
 
-# Each eval runs on its own LCM multicast port so a concurrent dimos instance
-# on the same machine (e.g. a live robot stack on another clone) can't inject
-# its own odometry/scans into the replay. Cross-talk silently corrupts results:
-# a live odom message stamped with wall-clock time poisons PGO's monotonic
-# out-of-order guard and every replayed scan gets dropped. LCM's udpm default
-# ttl is 0 (loopback only), so the port alone isolates without leaking to the
-# LAN; note a literal "?ttl=0" query string hangs the worker transport setup,
-# so we deliberately omit it.
+# Each eval runs on its own LCM multicast port so a concurrent dimos instance can't inject into the replay.
 _EVAL_LCM_GROUP = "239.255.76.67"
 _EVAL_LCM_BASE_PORT = 7800
 _EVAL_LCM_PORT_SPAN = 100
@@ -136,11 +129,7 @@ _EVAL_LCM_PORT_SPAN = 100
 def isolate_lcm() -> None:
     if os.environ.get("LCM_DEFAULT_URL"):
         return
-    # The forkserver workers snapshot the environment when the pool spawns, and
-    # setting LCM_DEFAULT_URL here (in main) lands too late for them — the host
-    # and workers end up on different ports and module startup deadlocks. So
-    # re-exec with the var already in the environment; the recursive call then
-    # short-circuits above. eval_all.py sets it pre-launch and skips this path.
+    # Re-exec with LCM_DEFAULT_URL set so forkserver workers inherit the same port.
     port = _EVAL_LCM_BASE_PORT + os.getpid() % _EVAL_LCM_PORT_SPAN
     os.environ["LCM_DEFAULT_URL"] = f"udpm://{_EVAL_LCM_GROUP}:{port}"
     os.execv(sys.executable, [sys.executable, *sys.argv])
@@ -826,6 +815,14 @@ def evaluate(
         "raw_agreement": _report_dict(raw_report),
         "corrected_agreement": _report_dict(corrected_report),
         "voxel_agreement": voxel,
+        "corrected_trajectory": [
+            {
+                "ts": node[0],
+                "position": [node[1], node[2], node[3]],
+                "orientation": [node[4], node[5], node[6], node[7]],
+            }
+            for node in graph
+        ],
         "rrd": str(rrd_path) if with_rrd else None,
         "evaluated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }

@@ -21,13 +21,19 @@ The tags are the whole trick. Drift accumulates, but a tag you saw at minute 1 a
 
 The scripts live in `dimos/navigation/nav_stack/modules/pgo/scripts/`.
 
-**1. Detect the tags.** Run the camera frames through detection with *no* filtering — every detection, every frame, with its quality numbers attached.
+**1. Detect the tags.** Run the camera frames through detection and write both the raw and the gated tag streams in one step:
 
 ```
-python dimos/navigation/nav_stack/modules/pgo/scripts/detect_tags.py --rec=PATH
+python dimos/navigation/nav_stack/modules/pgo/scripts/add_april.py --rec=PATH
 ```
 
-Writes `raw_april_tags`. Leaving it unfiltered matters: you tune the quality gates later in postprocessing without re-running detection, which is the slow part.
+`add_april.py` writes `raw_april_tags` (every detection, unfiltered, with its quality numbers attached — this is what postprocessing reads), the gated/clustered `april_tags` stream, and an `april_tags` section in the recording's `summary.json` (see below). Leaving `raw_april_tags` unfiltered matters: you tune the quality gates later without re-running detection, which is the slow part. (`detect_tags.py` writes just the raw stream if that's all you want; `--dynamic 17` keeps a moving tag in raw but drops it from the gated stream.)
+
+Inspect what was found without rebuilding anything — per tag, raw count and revisit count, flagging any tag never revisited (your fast check for whether a recording even has loop constraints):
+
+```
+python dimos/navigation/nav_stack/modules/pgo/scripts/add_april.py --rec=PATH --summary
+```
 
 **2. Solve.** Two stages, one command:
 
@@ -48,12 +54,21 @@ python dimos/navigation/nav_stack/modules/pgo/scripts/make_rrd.py --rec=PATH
 
 Raw cloud in red, every `gt_*` version in its own color, tag landmarks marked. Add another correction method and it shows up automatically — good for comparing approaches side by side.
 
+## What `add_april.py` records in `summary.json`
+
+It merges an `april_tags` section into the recording's `summary.json` (other keys preserved; it never touches `camera_intrinsics.json`):
+
+- `filter_parameters` — the exact gate thresholds used, marker size, dictionary, and any dynamic tags excluded.
+- `result` — `all_unfiltered_tag_ids`, and per tag the raw detection count, filtered visits, and revisit count, plus the list of tags never revisited.
+
+So the gates and the outcome are auditable after the fact. `--summary` recomputes just the `result` from the existing streams (read-only).
+
 ## Knobs worth knowing
 
 - `--no-icp` — tag PGO only, skip the ICP stage.
 - `--no-lcm` / `--no-rrd` — skip the cloud export / the viewer.
 - `--out=NAME` — output prefix, if you want to keep several corrections in one db.
-- Tag quality gates (sharpness, reprojection error, distance, view angle, motion blur) live near the top of `post_process.py`. They're relaxed by default to keep more sightings. Tighten them if a bad tag pose is yanking the map around.
+- Tag quality gates (sharpness, reprojection error, distance, view angle, motion blur) are single-sourced in `eval_utils/apriltags.py` (the `DEFAULT_*` constants); `post_process.py` and the eval both import them. They're relaxed by default to keep more sightings. Tighten them there if a bad tag pose is yanking the map around.
 
 ## When it won't help
 

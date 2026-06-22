@@ -44,17 +44,18 @@ from scipy.spatial.transform import Rotation
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 
-DEFAULT_MAX_DISTANCE_M = 1.0
-DEFAULT_MAX_VIEW_ANGLE_DEG = 45.0
+# Per-glimpse gates — the single source of truth (post_process.py imports these).
+DEFAULT_MAX_DISTANCE_M = 1.5
+DEFAULT_MAX_VIEW_ANGLE_DEG = 65.0
 DEFAULT_CLUSTER_GAP_SEC = 5.0
 DEFAULT_ROTATION_WEIGHT_M_PER_RAD = 0.5
 # A blurry tag still solves a pose; these reject the bad glimpses up front.
-DEFAULT_MIN_SHARPNESS = 60.0  # Laplacian variance over the tag ROI
-DEFAULT_MAX_REPROJ_PX = 2.0  # RMS solvePnP corner reprojection error
-DEFAULT_MIN_TAG_PX = 24.0  # tag side length in pixels (sqrt of quad area)
-DEFAULT_MAX_LINEAR_SPEED_MPS = 0.5
-DEFAULT_MAX_ANGULAR_SPEED_DPS = 50.0
-DEFAULT_MIN_OBSERVATIONS = 3  # clusters thinner than this are unreliable
+DEFAULT_MIN_SHARPNESS = 25.0  # Laplacian variance over the tag ROI
+DEFAULT_MAX_REPROJ_PX = 3.5  # RMS solvePnP corner reprojection error
+DEFAULT_MIN_TAG_PX = 12.0  # tag side length in pixels (sqrt of quad area)
+DEFAULT_MAX_LINEAR_SPEED_MPS = 1.5
+DEFAULT_MAX_ANGULAR_SPEED_DPS = 150.0
+DEFAULT_MIN_OBSERVATIONS = 2  # clusters thinner than this are unreliable
 DEFAULT_HUBER_DELTA_M = 0.05  # residual past which a sample is down-weighted
 _HUBER_ITERATIONS = 5
 
@@ -278,31 +279,16 @@ def robust_cluster_pose(
     }
 
 
-def detect_apriltags(
+def detect_raw_detections(
     store: Any,
     intrinsics: np.ndarray,
     distortion: np.ndarray,
+    *,
     image_stream: str = "color_image",
-    stream_name: str = "april_tags",
     marker_length: float = 0.10,
     dictionary: str = "DICT_APRILTAG_36h11",
-    *,
-    max_distance_m: float = DEFAULT_MAX_DISTANCE_M,
-    max_view_angle_deg: float = DEFAULT_MAX_VIEW_ANGLE_DEG,
-    cluster_gap_sec: float = DEFAULT_CLUSTER_GAP_SEC,
-    rotation_weight_m_per_rad: float = DEFAULT_ROTATION_WEIGHT_M_PER_RAD,
-    min_sharpness: float = DEFAULT_MIN_SHARPNESS,
-    max_reproj_px: float = DEFAULT_MAX_REPROJ_PX,
-    min_tag_px: float = DEFAULT_MIN_TAG_PX,
-    max_linear_speed_mps: float = DEFAULT_MAX_LINEAR_SPEED_MPS,
-    max_angular_speed_dps: float = DEFAULT_MAX_ANGULAR_SPEED_DPS,
-    min_observations: int = DEFAULT_MIN_OBSERVATIONS,
-    huber_delta_m: float = DEFAULT_HUBER_DELTA_M,
-) -> list[Detection]:
-    """Detect tags in `image_stream`, reject bad glimpses (blur, PnP misfit, small/
-    far/oblique views, fast motion), cluster same-id detections by time, drop thin
-    clusters, and (re)write the `april_tags` stream from one Huber-refined medoid
-    representative per cluster. Returns that list of representatives."""
+) -> tuple[list[Detection], bool, int]:
+    """Every valid-PnP tag detection over `image_stream`, unfiltered, with gate diagnostics."""
     detector = make_detector(dictionary)
     raw_detections: list[Detection] = []
     images = store.stream(image_stream, Image).to_list()
@@ -348,8 +334,25 @@ def detect_apriltags(
                     "speed": speed_by_ts.get(float(image_obs.ts)),
                 }
             )
+    return raw_detections, speed_available, len(images)
 
-    # Per-glimpse gates; count rejections per reason so thresholds are tunable.
+
+def gate_detections(
+    raw_detections: list[Detection],
+    *,
+    max_distance_m: float = DEFAULT_MAX_DISTANCE_M,
+    max_view_angle_deg: float = DEFAULT_MAX_VIEW_ANGLE_DEG,
+    cluster_gap_sec: float = DEFAULT_CLUSTER_GAP_SEC,
+    rotation_weight_m_per_rad: float = DEFAULT_ROTATION_WEIGHT_M_PER_RAD,
+    min_sharpness: float = DEFAULT_MIN_SHARPNESS,
+    max_reproj_px: float = DEFAULT_MAX_REPROJ_PX,
+    min_tag_px: float = DEFAULT_MIN_TAG_PX,
+    max_linear_speed_mps: float = DEFAULT_MAX_LINEAR_SPEED_MPS,
+    max_angular_speed_dps: float = DEFAULT_MAX_ANGULAR_SPEED_DPS,
+    min_observations: int = DEFAULT_MIN_OBSERVATIONS,
+    huber_delta_m: float = DEFAULT_HUBER_DELTA_M,
+) -> tuple[list[Detection], dict[str, int], int]:
+    """Gate + time-cluster raw detections into one Huber-refined medoid per cluster."""
     rejected: dict[str, int] = defaultdict(int)
     kept: list[Detection] = []
     for detection in raw_detections:
@@ -377,7 +380,6 @@ def detect_apriltags(
             continue
         kept.append(detection)
 
-    # One Huber-refined representative per time-clustered group; drop thin clusters.
     detections: list[Detection] = []
     thin_clusters = 0
     for cluster in cluster_by_time(kept, cluster_gap_sec):
@@ -391,33 +393,197 @@ def detect_apriltags(
             }
         )
     detections.sort(key=lambda detection: detection["ts"])
+    return detections, dict(rejected), thin_clusters
 
+
+def _write_tag_stream(
+    store: Any, stream_name: str, detections: list[Detection], *, diagnostics: bool
+) -> None:
+    """(Re)write a PoseStamped tag stream, with gate diagnostics when `diagnostics`."""
     if stream_name in store.list_streams():
         store.delete_stream(stream_name)
-    april_tag_stream = store.stream(stream_name, PoseStamped)
+    stream = store.stream(stream_name, PoseStamped)
     for detection in detections:
-        tag_in_camera = detection["t_cam_marker"]
-        pose_stamped = PoseStamped(
-            ts=detection["ts"], position=tag_in_camera[:3], orientation=tag_in_camera[3:]
-        )
-        april_tag_stream.append(
-            pose_stamped,
+        pose = detection["t_cam_marker"]
+        tags: dict[str, Any] = {"marker_id": detection["marker_id"]}
+        if diagnostics:
+            speed = detection.get("speed")
+            tags.update(
+                {
+                    "sharpness": float(detection["sharpness"]),
+                    "reproj_px": float(detection["reproj_px"]),
+                    "tag_px": float(detection["tag_px"]),
+                    "lin_speed": float(speed[0]) if speed else -1.0,
+                    "ang_speed": float(speed[1]) if speed else -1.0,
+                }
+            )
+        stream.append(
+            PoseStamped(ts=detection["ts"], position=pose[:3], orientation=pose[3:]),
             ts=detection["ts"],
-            pose=tuple(tag_in_camera),
-            tags={"marker_id": detection["marker_id"]},
+            pose=tuple(pose),
+            tags=tags,
         )
 
+
+def write_april_streams(
+    store: Any,
+    raw_detections: list[Detection],
+    filtered_detections: list[Detection],
+    *,
+    raw_stream: str = "raw_april_tags",
+    filtered_stream: str = "april_tags",
+) -> None:
+    """Persist the unfiltered `raw_april_tags` and the gated `april_tags` streams."""
+    _write_tag_stream(store, raw_stream, raw_detections, diagnostics=True)
+    _write_tag_stream(store, filtered_stream, filtered_detections, diagnostics=False)
+
+
+def _print_tag_summary(
+    stream_name: str,
+    n_raw: int,
+    detections: list[Detection],
+    rejected: dict[str, int],
+    thin_clusters: int,
+    speed_available: bool,
+    n_images: int,
+) -> None:
+    in_spec = n_raw - sum(rejected.values())
     found_ids = sorted({detection["marker_id"] for detection in detections})
     gate_summary = ", ".join(f"{reason}={count}" for reason, count in sorted(rejected.items()))
     if not speed_available:
         gate_summary += (", " if gate_summary else "") + "motion-gate-off(no poses)"
     print(
-        f"   april_tags: {len(raw_detections)} raw -> {len(kept)} in-spec "
+        f"   {stream_name}: {n_raw} raw -> {in_spec} in-spec "
         f"-> {len(detections)} clusters (dropped {thin_clusters} thin), "
-        f"markers {found_ids} (over {len(images)} images)"
+        f"markers {found_ids} (over {n_images} images)"
     )
     if gate_summary:
-        print(f"   april_tags rejected: {gate_summary}")
+        print(f"   {stream_name} rejected: {gate_summary}")
+
+
+def gate_params() -> dict[str, Any]:
+    """The current AprilTag gate thresholds, for recording in a sidecar."""
+    return {
+        "max_distance_m": DEFAULT_MAX_DISTANCE_M,
+        "max_view_angle_deg": DEFAULT_MAX_VIEW_ANGLE_DEG,
+        "min_sharpness": DEFAULT_MIN_SHARPNESS,
+        "max_reproj_px": DEFAULT_MAX_REPROJ_PX,
+        "min_tag_px": DEFAULT_MIN_TAG_PX,
+        "max_linear_speed_mps": DEFAULT_MAX_LINEAR_SPEED_MPS,
+        "max_angular_speed_dps": DEFAULT_MAX_ANGULAR_SPEED_DPS,
+        "min_observations": DEFAULT_MIN_OBSERVATIONS,
+        "cluster_gap_sec": DEFAULT_CLUSTER_GAP_SEC,
+        "huber_delta_m": DEFAULT_HUBER_DELTA_M,
+        "rotation_weight_m_per_rad": DEFAULT_ROTATION_WEIGHT_M_PER_RAD,
+    }
+
+
+def ensure_april_streams(
+    store: Any,
+    intrinsics: np.ndarray,
+    distortion: np.ndarray,
+    *,
+    image_stream: str = "color_image",
+    marker_length: float = 0.10,
+    dictionary: str = "DICT_APRILTAG_36h11",
+    raw_stream: str = "raw_april_tags",
+    filtered_stream: str = "april_tags",
+    exclude_tags: Iterable[int] = (),
+    force: bool = False,
+) -> list[Detection]:
+    """Ensure both tag streams exist (`raw_april_tags`, `april_tags`); force=True rewrites.
+
+    `exclude_tags` are kept in raw but dropped from filtered. Returns the filtered reps."""
+    existing = set(store.list_streams())
+    if not force and raw_stream in existing and filtered_stream in existing:
+        return []
+    raw_detections, speed_available, n_images = detect_raw_detections(
+        store,
+        intrinsics,
+        distortion,
+        image_stream=image_stream,
+        marker_length=marker_length,
+        dictionary=dictionary,
+    )
+    detections, rejected, thin_clusters = gate_detections(raw_detections)
+    excluded = set(exclude_tags)
+    if excluded:
+        detections = [d for d in detections if d["marker_id"] not in excluded]
+    write_april_streams(
+        store, raw_detections, detections, raw_stream=raw_stream, filtered_stream=filtered_stream
+    )
+    print(f"   {raw_stream}: {len(raw_detections)} detections (unfiltered)")
+    if excluded:
+        print(f"   excluded dynamic tags from {filtered_stream}: {sorted(excluded)}")
+    _print_tag_summary(
+        filtered_stream,
+        len(raw_detections),
+        detections,
+        rejected,
+        thin_clusters,
+        speed_available,
+        n_images,
+    )
+    return detections
+
+
+def detect_apriltags(
+    store: Any,
+    intrinsics: np.ndarray,
+    distortion: np.ndarray,
+    image_stream: str = "color_image",
+    stream_name: str = "april_tags",
+    marker_length: float = 0.10,
+    dictionary: str = "DICT_APRILTAG_36h11",
+    *,
+    max_distance_m: float = DEFAULT_MAX_DISTANCE_M,
+    max_view_angle_deg: float = DEFAULT_MAX_VIEW_ANGLE_DEG,
+    cluster_gap_sec: float = DEFAULT_CLUSTER_GAP_SEC,
+    rotation_weight_m_per_rad: float = DEFAULT_ROTATION_WEIGHT_M_PER_RAD,
+    min_sharpness: float = DEFAULT_MIN_SHARPNESS,
+    max_reproj_px: float = DEFAULT_MAX_REPROJ_PX,
+    min_tag_px: float = DEFAULT_MIN_TAG_PX,
+    max_linear_speed_mps: float = DEFAULT_MAX_LINEAR_SPEED_MPS,
+    max_angular_speed_dps: float = DEFAULT_MAX_ANGULAR_SPEED_DPS,
+    min_observations: int = DEFAULT_MIN_OBSERVATIONS,
+    huber_delta_m: float = DEFAULT_HUBER_DELTA_M,
+) -> list[Detection]:
+    """Detect tags in `image_stream`, reject bad glimpses (blur, PnP misfit, small/
+    far/oblique views, fast motion), cluster same-id detections by time, drop thin
+    clusters, and (re)write the `april_tags` stream from one Huber-refined medoid
+    representative per cluster. Returns that list of representatives."""
+    raw_detections, speed_available, n_images = detect_raw_detections(
+        store,
+        intrinsics,
+        distortion,
+        image_stream=image_stream,
+        marker_length=marker_length,
+        dictionary=dictionary,
+    )
+    detections, rejected, thin_clusters = gate_detections(
+        raw_detections,
+        max_distance_m=max_distance_m,
+        max_view_angle_deg=max_view_angle_deg,
+        cluster_gap_sec=cluster_gap_sec,
+        rotation_weight_m_per_rad=rotation_weight_m_per_rad,
+        min_sharpness=min_sharpness,
+        max_reproj_px=max_reproj_px,
+        min_tag_px=min_tag_px,
+        max_linear_speed_mps=max_linear_speed_mps,
+        max_angular_speed_dps=max_angular_speed_dps,
+        min_observations=min_observations,
+        huber_delta_m=huber_delta_m,
+    )
+    _write_tag_stream(store, stream_name, detections, diagnostics=False)
+    _print_tag_summary(
+        stream_name,
+        len(raw_detections),
+        detections,
+        rejected,
+        thin_clusters,
+        speed_available,
+        n_images,
+    )
     return detections
 
 

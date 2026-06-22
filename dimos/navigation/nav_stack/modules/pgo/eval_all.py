@@ -54,10 +54,7 @@ EVAL_PY = PGO_DIR / "eval.py"
 RESULTS_DIR = PGO_DIR / "eval_results"
 TABLE_PATH = RESULTS_DIR / "comparison.md"
 
-# Each cell subprocess runs on its own LCM multicast port so a concurrent dimos
-# instance on the same machine can't inject odometry/scans into the replay (see
-# isolate_lcm in eval.py). Set pre-launch here so the forkserver workers inherit
-# it; the port is per-driver-process so parallel drivers don't collide.
+# Each cell subprocess runs on its own LCM multicast port (see isolate_lcm in eval.py); set pre-launch so workers inherit it.
 _LCM_GROUP = "239.255.76.67"
 _LCM_BASE_PORT = 7800
 _LCM_PORT_SPAN = 100

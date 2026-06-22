@@ -55,6 +55,15 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.nav_stack.modules.pgo.eval_utils import recording_db as rdb
+from dimos.navigation.nav_stack.modules.pgo.eval_utils.apriltags import (
+    DEFAULT_MAX_ANGULAR_SPEED_DPS,
+    DEFAULT_MAX_DISTANCE_M,
+    DEFAULT_MAX_LINEAR_SPEED_MPS,
+    DEFAULT_MAX_REPROJ_PX,
+    DEFAULT_MAX_VIEW_ANGLE_DEG,
+    DEFAULT_MIN_SHARPNESS,
+    DEFAULT_MIN_TAG_PX,
+)
 
 VISIT_GAP_S = 30.0
 WHAT = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else "both"
@@ -76,17 +85,15 @@ LCM_VOXEL = float(arg("--lcm-voxel", "0.05"))  # voxel size for the aggregated .
 LCM_OUTLIER_NN = 20  # statistical outlier removal: neighbor count
 LCM_OUTLIER_STD = 2.0  # ...and std-ratio threshold (lower = more aggressive)
 
-# RELAXED gates (vs the strict eval defaults 60 / 2.0 / 1.0 / 45 / 0.5)
-# Loosened to keep more of each tag's raw viewings as constraints (esp. tag 5 / blurry tag 3),
-# while still rejecting genuinely bad PnP poses. Speed == -1 means "unknown" and always passes.
+# Per-glimpse gates (speed == -1 means "unknown" and always passes).
 GATE = dict(
-    min_sharpness=25.0,
-    max_reproj_px=3.5,
-    min_tag_px=12.0,
-    max_distance_m=1.5,
-    max_view_angle_deg=65.0,
-    max_lin_speed=1.5,
-    max_ang_speed=150.0,
+    min_sharpness=DEFAULT_MIN_SHARPNESS,
+    max_reproj_px=DEFAULT_MAX_REPROJ_PX,
+    min_tag_px=DEFAULT_MIN_TAG_PX,
+    max_distance_m=DEFAULT_MAX_DISTANCE_M,
+    max_view_angle_deg=DEFAULT_MAX_VIEW_ANGLE_DEG,
+    max_lin_speed=DEFAULT_MAX_LINEAR_SPEED_MPS,
+    max_ang_speed=DEFAULT_MAX_ANGULAR_SPEED_DPS,
 )
 
 if not REC_ARG:
