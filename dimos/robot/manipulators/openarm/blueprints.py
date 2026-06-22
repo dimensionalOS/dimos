@@ -22,11 +22,13 @@ from typing import Any
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.transport import LCMTransport
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 from dimos.utils.data import LfsPath
 
@@ -66,15 +68,22 @@ def _openarm_hardware(
     adapter_type: str = "mock",
     address: str | None = None,
     adapter_kwargs: dict[str, Any] | None = None,
+    scoped_joints: bool = False,
 ) -> HardwareComponent:
     _validate_side(side)
+    resolved_name = name or f"{side}_arm"
+    local_joints = _openarm_joints(side)
     kwargs = {"side": side}
     if adapter_kwargs:
         kwargs.update(adapter_kwargs)
     return HardwareComponent(
-        hardware_id=name or f"{side}_arm",
+        hardware_id=resolved_name,
         hardware_type=HardwareType.MANIPULATOR,
-        joints=_openarm_joints(side),
+        joints=(
+            [f"{resolved_name}/{joint}" for joint in local_joints]
+            if scoped_joints
+            else local_joints
+        ),
         adapter_type=adapter_type,
         address=address,
         adapter_kwargs=kwargs,
@@ -143,6 +152,8 @@ def _openarm_single_model_config() -> RobotModelConfig:
 # Mock bimanual: no hardware, great for verifying wiring.
 _mock_left = _openarm_hardware(side="left")
 _mock_right = _openarm_hardware(side="right")
+_mock_planner_left = _openarm_hardware(side="left", scoped_joints=True)
+_mock_planner_right = _openarm_hardware(side="right", scoped_joints=True)
 
 coordinator_openarm_mock = ControlCoordinator.blueprint(
     hardware=[_mock_left, _mock_right],
@@ -175,6 +186,20 @@ _right_hw = _openarm_hardware(
     adapter_type="openarm",
     adapter_kwargs=_ADAPTER_KWARGS,
 )
+_planner_left_hw = _openarm_hardware(
+    side="left",
+    address=LEFT_CAN,
+    adapter_type="openarm",
+    adapter_kwargs=_ADAPTER_KWARGS,
+    scoped_joints=True,
+)
+_planner_right_hw = _openarm_hardware(
+    side="right",
+    address=RIGHT_CAN,
+    adapter_type="openarm",
+    adapter_kwargs=_ADAPTER_KWARGS,
+    scoped_joints=True,
+)
 
 coordinator_openarm_left = ControlCoordinator.blueprint(
     hardware=[_left_hw],
@@ -206,12 +231,18 @@ openarm_mock_planner_coordinator = autoconnect(
         visualization={"backend": "meshcat"},
     ),
     ControlCoordinator.blueprint(
-        hardware=[_mock_left, _mock_right],
+        hardware=[_mock_planner_left, _mock_planner_right],
         tasks=[
-            _openarm_task(_mock_left),
-            _openarm_task(_mock_right),
+            _openarm_task(_mock_planner_left),
+            _openarm_task(_mock_planner_right),
         ],
     ),
+).transports(
+    {
+        ("coordinator_joint_state", JointState): LCMTransport(
+            "/coordinator/joint_state", JointState
+        ),
+    }
 )
 
 # Planner + coordinator (real hw): plan and execute on both arms.
@@ -225,12 +256,18 @@ openarm_planner_coordinator = autoconnect(
         visualization={"backend": "meshcat"},
     ),
     ControlCoordinator.blueprint(
-        hardware=[_left_hw, _right_hw],
+        hardware=[_planner_left_hw, _planner_right_hw],
         tasks=[
-            _openarm_task(_left_hw),
-            _openarm_task(_right_hw),
+            _openarm_task(_planner_left_hw),
+            _openarm_task(_planner_right_hw),
         ],
     ),
+).transports(
+    {
+        ("coordinator_joint_state", JointState): LCMTransport(
+            "/coordinator/joint_state", JointState
+        ),
+    }
 )
 
 

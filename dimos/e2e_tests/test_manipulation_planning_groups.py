@@ -32,6 +32,7 @@ from dimos.core.rpc_client import RPCClient
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.e2e_tests.lcm_spy import LcmSpy
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
 
@@ -126,7 +127,10 @@ def _prepare_for_planning(client: RPCClient, robot_names: tuple[str, ...]) -> No
 def _planning_group_id(info: dict[str, Any]) -> str:
     groups = info["planning_groups"]
     assert len(groups) == 1
-    group_id = groups[0]["id"]
+    group = groups[0]
+    if isinstance(group, PlanningGroup):
+        return group.id
+    group_id = group["id"]
     assert isinstance(group_id, str)
     return group_id
 
@@ -166,7 +170,7 @@ def test_single_arm_plans_and_executes_through_control_coordinator(
         planned = client.plan_to_joint_targets({left_id: _offset_target(client, "left_arm", 0.02)})
         assert planned, client.get_error()
         assert client.has_planned_path()
-        assert client.execute_plan(robot_name="left_arm")
+        assert client.execute_plan()
 
         _wait_for_trajectory_completion(client, "left_arm")
     finally:
