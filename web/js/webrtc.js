@@ -63,6 +63,21 @@ export async function setupWebRTC(sessionId) {
         v.play?.().catch(() => {});  // immersive: no user-gesture; nudge autoplay
     };
 
+    // ICE candidate-level diagnostics: which candidate types actually gather,
+    // and which TURN/STUN allocations error. A relay leg that never appears (or
+    // errors) is why non-trickle gather stalls to the GATHER_TIMEOUT cap.
+    pc.onicecandidate = (e) => {
+        if (!e.candidate) { console.info('[ice] candidate gathering done (null candidate)'); return; }
+        const c = e.candidate;
+        console.info(`[ice] cand type=${c.type} proto=${c.protocol} ` +
+            `${c.relatedAddress ? `via ${c.relatedAddress} ` : ''}@ ${performance.now().toFixed(0)}ms`);
+    };
+    pc.onicecandidateerror = (e) => {
+        // 701 = TURN/STUN server unreachable; 401 = bad creds; 300/600 = misc.
+        console.warn(`[ice] cand ERROR code=${e.errorCode} ${e.errorText || ''} ` +
+            `url=${e.url || ''} host=${e.address || ''}:${e.port || ''}`);
+    };
+
     const iceFailed = new Promise((_, reject) => {
         pc.oniceconnectionstatechange = () => {
             if (pc.iceConnectionState === 'failed' ||

@@ -25,10 +25,10 @@ const POSTURE = [
 // Robot actions. Hello/Stretch verified working; Pounce/Jump are acrobatic and
 // UNVERIFIED on this firmware (may no-op) — and the robot leaps, so clear space.
 const ACTIONS = [
-    { name: 'Hello', label: 'Shake Hand 🤝' },
-    { name: 'Stretch', label: 'Stretch 🧎' },
-    { name: 'FrontPounce', label: 'Pounce 🐅' },
-    { name: 'FrontJump', label: 'Jump Forward ⬆️' },
+    { name: 'Hello', label: 'Shake Hand' },
+    { name: 'Stretch', label: 'Stretch' },
+    { name: 'FrontPounce', label: 'Pounce' },
+    { name: 'FrontJump', label: 'Jump Forward' },
 ];
 
 // Speed bar. Normal/High = browser-side velocity scale (lin m/s-ish, ang).
