@@ -128,6 +128,14 @@ class NativeModuleConfig(ModuleConfig):
     # Enable this to read from stdin instead of cli args
     stdin_config: bool = False
 
+    # Opt in (for modules that bind fixed ports) to killing an orphaned prior
+    # instance of THIS binary before launching. A crash/Ctrl-C that skipped
+    # graceful stop (no run-id watchdog, e.g. running a tool script directly)
+    # leaves the old process reparented to init, still holding its ports, so the
+    # new one can't bind. Only ppid==1 (truly orphaned) copies of this exact
+    # executable are reaped, so a live concurrent run is never touched.
+    reap_orphans_on_start: bool = False
+
     cli_exclude: frozenset[str] = frozenset()
     cli_name_override: dict[str, str] = Field(default_factory=dict)
 
@@ -217,6 +225,8 @@ class NativeModule(Module):
                 pid=self._process.pid,
             )
             return
+
+        self._reap_orphans()
 
         topics = self._collect_topics()
 
@@ -319,6 +329,33 @@ class NativeModule(Module):
             self._process = None
 
         super().stop()
+
+    def _reap_orphans(self) -> None:
+        """Kill any orphaned prior instance of this binary holding its ports.
+
+        Gated on ``reap_orphans_on_start`` (opt-in, for fixed-port modules).
+        Best-effort: a reap failure must never block a start. See
+        :func:`reap_orphaned_executables` for the (ppid==1) matching rule.
+        """
+        if not self.config.reap_orphans_on_start:
+            return
+        from dimos.core.coordination.process_lifecycle import reap_orphaned_executables
+
+        try:
+            reaped = reap_orphaned_executables(self.config.executable)
+        except Exception as exc:
+            logger.warning(
+                "Orphan reap failed (continuing to start)",
+                module=self._module_label,
+                error=str(exc),
+            )
+            return
+        if reaped:
+            logger.warning(
+                "Reaped orphaned native process(es) before start",
+                module=self._module_label,
+                pids=reaped,
+            )
 
     def _watch_process(self) -> None:
         proc = self._process

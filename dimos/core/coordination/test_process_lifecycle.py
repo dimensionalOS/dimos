@@ -27,6 +27,7 @@ from pytest_mock import MockerFixture
 from dimos.core.coordination.process_lifecycle import (
     DIMOS_RUN_ID_ENV,
     kill_run_processes,
+    reap_orphaned_executables,
     spawn_watchdog,
     wait_for_pid_exit,
 )
@@ -147,6 +148,76 @@ def test_kill_run_processes_tolerates_psutil_errors(mocker: MockerFixture, run_i
     mocker.patch("psutil.process_iter", return_value=[bad])
 
     assert kill_run_processes(run_id) == 0
+
+
+def _fake_proc(mocker: MockerFixture, pid: int, ppid: int, exe: str):
+    proc = mocker.MagicMock(spec=psutil.Process)
+    proc.info = {"pid": pid, "ppid": ppid}
+    proc.pid = pid
+    proc.exe.return_value = exe
+    return proc
+
+
+def test_reap_orphaned_executables_kills_only_orphans_of_target(
+    mocker: MockerFixture, tmp_path
+) -> None:
+    target = str(tmp_path / "bin" / "mybin")
+    orphan = _fake_proc(mocker, 111, 1, target)  # ppid==1 + exe match -> reaped
+    live = _fake_proc(mocker, 222, os.getpid(), target)  # live parent -> spared
+    wrong_exe = _fake_proc(mocker, 333, 1, str(tmp_path / "other"))  # orphan, wrong exe -> spared
+    myself = _fake_proc(mocker, os.getpid(), 1, target)  # current process -> never killed
+    mocker.patch("psutil.process_iter", return_value=[orphan, live, wrong_exe, myself])
+    mocker.patch("psutil.wait_procs", return_value=([], []))
+
+    reaped = reap_orphaned_executables(target)
+
+    assert reaped == [111]
+    orphan.terminate.assert_called_once()
+    live.terminate.assert_not_called()
+    wrong_exe.terminate.assert_not_called()
+    myself.terminate.assert_not_called()
+
+
+def test_reap_orphaned_executables_resolves_symlinked_executable(
+    mocker: MockerFixture, tmp_path
+) -> None:
+    # The config path is a symlink (e.g. nix `result/bin/...`); the running
+    # process's exe() reports the resolved real path. They must still match.
+    real = tmp_path / "real_bin"
+    real.write_text("")
+    link = tmp_path / "result_bin"
+    link.symlink_to(real)
+    orphan = _fake_proc(mocker, 111, 1, str(real))  # reports the resolved path
+    mocker.patch("psutil.process_iter", return_value=[orphan])
+    mocker.patch("psutil.wait_procs", return_value=([], []))
+
+    assert reap_orphaned_executables(str(link)) == [111]
+    orphan.terminate.assert_called_once()
+
+
+def test_reap_orphaned_executables_escalates_to_sigkill(mocker: MockerFixture, tmp_path) -> None:
+    target = str(tmp_path / "stubborn")
+    orphan = _fake_proc(mocker, 111, 1, target)
+    mocker.patch("psutil.process_iter", return_value=[orphan])
+    # First wait reports it still alive -> kill() then a final wait.
+    mocker.patch("psutil.wait_procs", side_effect=[([], [orphan]), ([orphan], [])])
+
+    assert reap_orphaned_executables(target) == [111]
+    orphan.terminate.assert_called_once()
+    orphan.kill.assert_called_once()
+
+
+def test_reap_orphaned_executables_tolerates_psutil_errors(mocker: MockerFixture, tmp_path) -> None:
+    bad = mocker.MagicMock(spec=psutil.Process)
+    bad.info = {"pid": 99999999, "ppid": 1}
+    bad.exe.side_effect = psutil.AccessDenied(pid=99999999)
+    mocker.patch("psutil.process_iter", return_value=[bad])
+
+    assert reap_orphaned_executables(str(tmp_path / "bin")) == []
+
+
+def test_reap_orphaned_executables_no_match_returns_empty(tmp_path) -> None:
+    assert reap_orphaned_executables(str(tmp_path / "nonexistent")) == []
 
 
 def test_wait_for_pid_exit_returns_when_pid_gone():

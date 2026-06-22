@@ -95,6 +95,52 @@ def kill_run_processes(
     return len(targets)
 
 
+def reap_orphaned_executables(
+    executable: str | os.PathLike[str],
+    *,
+    term_timeout: float = 2.0,
+    kill_timeout: float = 1.0,
+) -> list[int]:
+    """Kill orphaned processes running ``executable`` and return their pids.
+
+    A native subprocess whose parent died abruptly (a Ctrl-C'd or crashed run
+    that skipped graceful stop, with no run-id watchdog to sweep it) gets
+    reparented to init/launchd and keeps holding its ports — blocking the next
+    run's bind. This reaps those strays, matching the *resolved* executable path
+    AND ``ppid == 1`` so a live concurrent run of the same binary (whose parent
+    is still alive) is never touched.
+    """
+    target = os.path.realpath(executable)
+    me = os.getpid()
+    victims: list[psutil.Process] = []
+    for proc in psutil.process_iter(attrs=["pid", "ppid"]):
+        if proc.info["pid"] == me or proc.info["ppid"] != 1:
+            continue
+        try:
+            if os.path.realpath(proc.exe()) != target:
+                continue
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, OSError):
+            continue
+        victims.append(proc)
+    if not victims:
+        return []
+
+    pids = [proc.pid for proc in victims]
+    for proc in victims:
+        try:
+            proc.terminate()
+        except psutil.NoSuchProcess:
+            pass
+    _, alive = psutil.wait_procs(victims, timeout=term_timeout)
+    for proc in alive:
+        try:
+            proc.kill()
+        except psutil.NoSuchProcess:
+            pass
+    psutil.wait_procs(alive, timeout=kill_timeout)
+    return pids
+
+
 def spawn_watchdog(
     run_id: str,
     log_dir: str | os.PathLike[str] | None = None,
