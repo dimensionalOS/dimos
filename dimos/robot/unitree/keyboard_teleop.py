@@ -25,7 +25,6 @@ from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.robot.unitree.go2.connection_spec import GO2ConnectionSpec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -51,8 +50,6 @@ class KeyboardTeleop(Module):
     """Pygame-based keyboard control. Outputs Twist on cmd_vel."""
 
     cmd_vel: Out[Twist]
-
-    _go2: GO2ConnectionSpec | None = None
 
     _stop_event: threading.Event
     _keys_held: set[int] | None = None
@@ -108,18 +105,6 @@ class KeyboardTeleop(Module):
 
         super().stop()
 
-    def _call_go2_pose(self, action: str) -> None:
-        if self._go2 is None:
-            logger.warning(f"{action} ignored: no Go2 connection wired into teleop")
-            return
-        try:
-            if action == "liedown":
-                self._go2.liedown()
-            else:
-                self._go2.standup()
-        except Exception as error:
-            logger.error(f"{action} command failed: {error}")
-
     def _pygame_loop(self) -> None:
         if self._keys_held is None:
             raise RuntimeError("_keys_held not initialized")
@@ -148,10 +133,6 @@ class KeyboardTeleop(Module):
                     elif event.key == pygame.K_ESCAPE:
                         # ESC quits
                         self._stop_event.set()
-                    elif event.key == pygame.K_z:
-                        self._call_go2_pose("liedown")
-                    elif event.key == pygame.K_x:
-                        self._call_go2_pose("standup")
 
                 elif event.type == pygame.KEYUP:
                     self._keys_held.discard(event.key)
@@ -251,7 +232,6 @@ class KeyboardTeleop(Module):
         help_texts = [
             "WS: Move | AD: Turn | QE: Strafe",
             "Shift: Boost | Ctrl: Slow",
-            "Z: Lie Down | X: Stand Up",
             "Space: E-Stop | ESC: Quit",
         ]
         for text in help_texts:

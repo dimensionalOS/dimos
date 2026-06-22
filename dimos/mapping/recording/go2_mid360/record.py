@@ -92,9 +92,8 @@ unitree_go2_record = autoconnect(
         ]
     ),
     Go2Recorder.blueprint(),
-    # Pygame keyboard teleop (WASD + Q/E, Z=lie down, X=stand). Its cmd_vel
-    # feeds MovementManager's tele_cmd_vel; sit/stand are handled internally
-    # via the auto-wired GO2ConnectionSpec.
+    # Pygame keyboard teleop (WASD drive + Q/E strafe). Its cmd_vel feeds
+    # MovementManager's tele_cmd_vel.
     KeyboardTeleop.blueprint(linear_speed=0.3, angular_speed=0.6).remappings(
         [
             (KeyboardTeleop, "cmd_vel", "tele_cmd_vel"),
