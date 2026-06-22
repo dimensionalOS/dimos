@@ -30,7 +30,6 @@
     "format": "lerobot",
     "path": "data/datasets/session",
     "metadata": {
-      "fps": 14,
       "robot": "xarm7",
       "default_task_label": "pick_and_place"
     }

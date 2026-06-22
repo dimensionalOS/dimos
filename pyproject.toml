@@ -571,6 +571,10 @@ follow_imports = "skip"
 module = ["transformers", "transformers.*"]
 follow_imports = "skip"
 
+[[tool.mypy.overrides]]
+module = ["pyarrow", "pyarrow.*"]
+follow_imports = "skip"
+
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
 env = [

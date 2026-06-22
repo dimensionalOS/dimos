@@ -72,7 +72,7 @@ def _events(monitor: EpisodeMonitorModule) -> list[EpisodeStatus]:
     return [call.args[0] for call in monitor.status.publish.call_args_list]  # type: ignore[attr-defined]
 
 
-def _press(monitor: EpisodeMonitorModule, alias: str, ts: float) -> None:
+def _press(monitor: EpisodeMonitorModule, alias: str) -> None:
     """Rising edge: release-then-press the given Quest button alias."""
     attr = BUTTON_ALIASES[alias]
     released = Buttons()
@@ -84,8 +84,8 @@ def _press(monitor: EpisodeMonitorModule, alias: str, ts: float) -> None:
 
 def test_toggle_starts_then_saves(make_monitor: Callable[..., EpisodeMonitorModule]) -> None:
     m = make_monitor()  # default map: toggle=B, discard=Y
-    _press(m, "B", ts=1.0)  # idle → recording
-    _press(m, "B", ts=2.0)  # recording → idle (saved)
+    _press(m, "B")  # idle → recording
+    _press(m, "B")  # recording → idle (saved)
 
     events = _events(m)
     assert [e.last_event for e in events] == ["start", "save"]
@@ -98,8 +98,8 @@ def test_discard_does_not_count_as_saved(
     make_monitor: Callable[..., EpisodeMonitorModule],
 ) -> None:
     m = make_monitor()
-    _press(m, "B", ts=1.0)  # start
-    _press(m, "Y", ts=2.0)  # discard
+    _press(m, "B")  # start
+    _press(m, "Y")  # discard
 
     last = _events(m)[-1]
     assert last.state == "idle"
@@ -113,7 +113,7 @@ def test_start_while_recording_autocommits_previous(
     # toggle (start), then an explicit start via keyboard while still recording:
     # the in-progress episode auto-commits (matches the offline extractor).
     m = make_monitor(keyboard_map={"start": "r"})
-    _press(m, "B", ts=1.0)  # recording
+    _press(m, "B")  # recording
     m._on_keyboard(KeyPress(key="r", ts=2.0))  # start again → auto-commit prior
 
     last = _events(m)[-1]
@@ -139,12 +139,12 @@ def test_published_status_is_internally_consistent(
     # Every published event's counters/state must match the event it carries —
     # the snapshot is taken under the same lock as the mutation.
     m = make_monitor()
-    _press(m, "B", 1.0)  # start
-    _press(m, "B", 2.0)  # save  (1)
-    _press(m, "B", 3.0)  # start
-    _press(m, "B", 4.0)  # save  (2)
-    _press(m, "B", 5.0)  # start
-    _press(m, "Y", 6.0)  # discard (1)
+    _press(m, "B")  # start
+    _press(m, "B")  # save  (1)
+    _press(m, "B")  # start
+    _press(m, "B")  # save  (2)
+    _press(m, "B")  # start
+    _press(m, "Y")  # discard (1)
 
     events = _events(m)
     for e in events:
@@ -158,8 +158,8 @@ def test_published_status_is_internally_consistent(
 
 def test_reset_counters(make_monitor: Callable[..., EpisodeMonitorModule]) -> None:
     m = make_monitor()
-    _press(m, "B", 1.0)
-    _press(m, "B", 2.0)
+    _press(m, "B")
+    _press(m, "B")
     status = m.reset_counters()
     assert status.episodes_saved == 0
     assert status.episodes_discarded == 0
