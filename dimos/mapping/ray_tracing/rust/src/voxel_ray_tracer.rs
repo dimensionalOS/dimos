@@ -34,8 +34,7 @@ pub struct Config {
     /// Only spare a voxel whose neighborhood was hit within this many frames.
     /// A stale voxel can be cleared, even if it's a grazing hit. Large disables it.
     pub recency_window: u32,
-    /// Integrate every frame, publish the local map and region bounds every
-    /// Nth frame. Zero disables them.
+    /// Publish the accumulated local map and region bounds every Nth frame. Zero disables them.
     #[validate(range(min = 0))]
     pub emit_every: u32,
     /// Publish the global map every Nth frame. Zero disables it.
@@ -353,10 +352,9 @@ impl LocalBounds {
     }
 }
 
-/// The local region a batch of frames observed, as (cx, cy, radius, z_min,
-/// z_max). A cylinder centered on the mean origin, sized to a percentile of
-/// the point distances so a stray far hit cannot inflate it. Points must be
-/// finite. An empty batch yields a zero-radius region at the mean origin.
+/// A cylinder (cx, cy, radius, z_min, z_max) on the mean origin, sized to a
+/// percentile of the point distances so a stray far hit cannot inflate it.
+/// Points must be finite. An empty batch yields a zero-radius region.
 pub fn batch_local_bounds(
     points: &[(f32, f32, f32)],
     origins: &[(f32, f32, f32)],

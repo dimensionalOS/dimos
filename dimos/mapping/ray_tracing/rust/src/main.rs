@@ -28,7 +28,9 @@ struct RayTracingVoxelMap {
     #[output(encode = PointCloud2::encode)]
     local_map: Output<PointCloud2>,
 
-    // Region the local_map covers, packed into a PoseStamped. Position holds
+    // Full region of the local_map, represented as a PoseStamped. We need
+    // this to update the planner artifacts because local_map only includes
+    // points that exist (not points that have been removed) Position holds
     // the cylinder center and orientation holds radius, z_min, z_max, zero.
     // Stamped identically to local_map so consumers can pair them.
     #[output(encode = PoseStamped::encode)]
