@@ -1,4 +1,4 @@
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,18 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Basic control coordinator blueprint.
-
-Usage:
-    dimos run coordinator-basic
-"""
+"""Shared control naming conventions for manipulator blueprints."""
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator
+from typing import TypeAlias
 
-coordinator_basic = ControlCoordinator.blueprint(
-    tick_rate=100.0,
-    publish_joint_state=True,
-    joint_state_frame_id="coordinator",
-)
+FrameId: TypeAlias = str
+TaskName: TypeAlias = str
+
+COORDINATOR_FRAME_ID: FrameId = "coordinator"
+CARTESIAN_IK_TASK_NAME: TaskName = "cartesian_ik_arm"
+DEFAULT_TRAJECTORY_TASK_NAME: TaskName = "traj_arm"
+
+
+def trajectory_task_name(hardware_id: str) -> TaskName:
+    return f"traj_{hardware_id}"

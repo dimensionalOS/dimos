@@ -17,8 +17,8 @@
 from pathlib import Path
 
 from dimos.constants import STATE_DIR
-from dimos.control.blueprints.teleop import coordinator_teleop_xarm7
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.robot.manipulators.xarm.blueprints.teleop import coordinator_teleop_xarm7
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 from dimos.teleop.quest_hosted.hosted_extensions import (
     HostedArmTeleopModule,

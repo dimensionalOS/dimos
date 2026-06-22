@@ -43,6 +43,9 @@ class RobotModelConfig(ModuleConfig):
             stripped when strip_model_world_joint is true.
         joint_names: Ordered list of controllable joints in the local model
             namespace. This is not a planning group.
+        joint_name_mapping: Optional mapping from external/coordinator joint
+            names to local model joint names for hardware adapters that publish
+            scoped joint names.
         end_effector_link: Compatibility robot-scoped end-effector link used by
             legacy helpers. New pose-targeted planning should use planning
             group target frames instead.
@@ -70,6 +73,7 @@ class RobotModelConfig(ModuleConfig):
     base_pose: PoseStamped = Field(default_factory=PoseStamped)
     strip_model_world_joint: bool = False
     joint_names: list[str]
+    joint_name_mapping: dict[str, str] = Field(default_factory=dict)
     end_effector_link: str | None = None
     base_link: str = "base_link"
     planning_groups: list[PlanningGroupDefinition] = Field(default_factory=list)

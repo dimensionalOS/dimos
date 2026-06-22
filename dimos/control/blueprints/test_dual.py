@@ -14,23 +14,16 @@
 
 """Tests for dual-arm control blueprints."""
 
-import pytest
-
-from dimos.control.blueprints.dual import coordinator_dual_xarm
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.manipulation.planning.groups.identifiers import make_global_joint_names
+from dimos.robot.manipulators.xarm.blueprints.basic import coordinator_dual_xarm
 
 
-def _dual_xarm6_planner_coordinator() -> Blueprint:
-    try:
-        from dimos.manipulation.blueprints import dual_xarm6_planner_coordinator
-    except RuntimeError as exc:
-        if "Failed to pull LFS file" in str(exc):
-            pytest.skip(f"xArm LFS data unavailable: {exc}")
-        raise
-    return dual_xarm6_planner_coordinator
+def _dual_xarm6_planner() -> Blueprint:
+    from dimos.robot.manipulators.xarm.blueprints.basic import dual_xarm6_planner
+
+    return dual_xarm6_planner
 
 
 def _coordinator_task_names(blueprint) -> list[str]:
@@ -53,32 +46,29 @@ def _manipulation_visualization(blueprint):
     return atom.kwargs["visualization"]
 
 
-def test_dual_xarm6_integrated_blueprint_has_planner_and_coordinator() -> None:
-    dual_xarm6_planner_coordinator = _dual_xarm6_planner_coordinator()
-    modules = [atom.module for atom in dual_xarm6_planner_coordinator.blueprints]
+def test_dual_xarm6_planner_blueprint_has_planner() -> None:
+    dual_xarm6_planner = _dual_xarm6_planner()
+    modules = [atom.module for atom in dual_xarm6_planner.blueprints]
 
     assert ManipulationModule in modules
-    assert ControlCoordinator in modules
 
 
-def test_dual_xarm6_integrated_blueprint_uses_viser_for_execution_ui() -> None:
-    dual_xarm6_planner_coordinator = _dual_xarm6_planner_coordinator()
-    visualization = _manipulation_visualization(dual_xarm6_planner_coordinator)
+def test_dual_xarm6_planner_uses_meshcat_visualization() -> None:
+    dual_xarm6_planner = _dual_xarm6_planner()
+    visualization = _manipulation_visualization(dual_xarm6_planner)
 
-    assert visualization == {"backend": "viser", "allow_plan_execute": True}
+    assert visualization == {"backend": "meshcat"}
 
 
-def test_dual_xarm6_integrated_tasks_match_planner_robots() -> None:
-    dual_xarm6_planner_coordinator = _dual_xarm6_planner_coordinator()
-    tasks_by_name = {task.name: task for task in _coordinator_tasks(dual_xarm6_planner_coordinator)}
+def test_dual_xarm6_planner_robots_use_global_joint_mapping() -> None:
+    dual_xarm6_planner = _dual_xarm6_planner()
 
-    for robot in _manipulation_robots(dual_xarm6_planner_coordinator):
-        task = tasks_by_name[robot.coordinator_task_name]
-        assert task.joint_names == make_global_joint_names(robot.name, robot.joint_names)
+    for robot in _manipulation_robots(dual_xarm6_planner):
+        assert robot.coordinator_task_name == f"traj_{robot.name}"
 
 
 def test_dual_coordinator_xarm_task_names_match_manipulation_robot_defaults() -> None:
     assert _coordinator_task_names(coordinator_dual_xarm) == [
-        "traj_left_arm",
-        "traj_right_arm",
+        "traj_left",
+        "traj_right",
     ]

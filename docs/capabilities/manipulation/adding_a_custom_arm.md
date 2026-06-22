@@ -643,7 +643,7 @@ def test_write_positions(mock_adapter):
 ### Integration test with coordinator
 
 ```python skip
-from dimos.control.blueprints.basic import coordinator_mock
+from dimos.robot.manipulators.common.mock import coordinator_mock
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 
 # Build and start coordinator with mock hardware
