@@ -23,6 +23,7 @@ All five modules and both blueprints live in a single file:
 |---|---|---|---|
 | `AudioModule` | Mic capture -> `AudioStamped` (one msg per `frame_ms` chunk). Real path via `sounddevice`/PortAudio; `synthetic=True` sine-tone fallback needs no mic. | done | macOS, real mic + synthetic (50 Hz / 20 ms / 16 kHz mono) |
 | `SpeechToTextModule` | VAD + AEC + segmentation + Whisper transcription, with multi-layer self-echo suppression. 3-backend fallback: `whisper.cpp` -> `faster-whisper` -> `openai-whisper`. | works | macOS loopback |
+| `AgentTextModule` | **[AGENT-WIRE]** Routes STT text through a LangChain chat LLM (default `gpt-4o-mini`) and publishes the reply. Keeps a rolling conversation history (default 20 turns). Daemon thread + bounded queue so LLM latency never blocks capture/STT. | wired, untested | — |
 | `TextToSpeechModule` | Text -> speech. 3 providers: `openai` (default), `macos-say`, `pyttsx3`. Resamples to a common rate, chunks to frames, emits `tts_active` / `spoken_text` / `tts_reference_audio`. | works | macOS |
 | `FunVoiceEffectsModule` | Real-time DSP chain: noise gate -> phase-vocoder pitch shift -> ring-mod ("robotize") -> bitcrush -> echo, via overlap-add STFT framing. | smoke-tested only | not fully validated - first thing to harden |
 | `SpeakerModule` | Plays `AudioStamped` to the output device; (re)opens the stream on format change; emits `speaker_playing` for barge-in. | works | macOS |
@@ -73,6 +74,10 @@ synthesis, DSP) runs on daemon threads behind bounded queues with drop-oldest ba
 ```text
 AudioModule.audio ─┬─────────────────────────────► SpeechToTextModule.audio
  (mic_audio)       │                                        │ text (speech_text)
+                   │                                        ▼
+                   │                              AgentTextModule        [AGENT-WIRE]
+                   │                      (gpt-4o-mini, rolling history)
+                   │                                        │ text_out (agent_response)
                    │                                        ▼
                    │                                TextToSpeechModule
                    │   tts_active ◄──── tts_active_signal ───┤
@@ -126,9 +131,9 @@ carries a `std_msgs.Header`, `sample_rate`, `channels`, `sample_format` (e.g. `S
 
 1. **`memory2` not connected** -- *the original endpoint of Issue #1932.* Audio is currently
    "hear and forget": STT text / clips are never persisted. **This is the largest open item.**
-2. **Agent not connected** -- the loop is mic -> STT -> TTS (an echo/effects toy), not yet
-   STT -> agent reasoning -> TTS. Wiring the agent is what turns it from a parrot into something
-   that can actually take spoken commands.
+2. ~~**Agent not connected**~~ -- **Done (2026-06-22).** `AgentTextModule` is wired between STT and
+   TTS. The pipeline is now mic -> STT -> LLM agent -> TTS. Needs end-to-end validation on
+   macOS before robot bring-up.
 3. **Not validated on real robot (Go2 Pro / Jetson).** macOS -> Jetson has real gaps: audio
    device enumeration, TTS provider (`macos-say` is unavailable off macOS -> use `openai`/`pyttsx3`),
    and Whisper backend (needs an ARM-friendly backend, e.g. `whisper.cpp`).
@@ -141,10 +146,11 @@ carries a `std_msgs.Header`, `sample_rate`, `channels`, `sample_format` (e.g. `S
 
 ## 7. Suggested Next Steps
 
-1. **On-robot bring-up (Go2 Pro):** device enumeration, switch TTS to `openai`/`pyttsx3`,
-   tune AEC/VAD thresholds in a real acoustic environment.
+1. **Validate agent wiring end-to-end on macOS** (`dimos run audio-speech-loopback`): confirm
+   spoken input reaches the LLM and the reply is spoken back correctly.
 2. **Connect `memory2`:** persist STT text (and optionally clips) -- the actual intent of #1932.
-3. **Connect the agent:** `STT.text -> agent -> TTS.text`, so spoken language drives behaviour.
+3. **On-robot bring-up (Go2 Pro):** device enumeration, switch TTS to `openai`/`pyttsx3`,
+   tune AEC/VAD thresholds in a real acoustic environment.
 4. **Harden `FunVoiceEffects`** and resolve the `RawAudio` vs. native-`Header` type question.
 
 ---

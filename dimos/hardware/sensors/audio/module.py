@@ -967,6 +967,151 @@ class SpeechToTextModule(Module):
                         pass
 
 
+# [AGENT-WIRE] AgentTextConfig + AgentTextModule — sits between STT and TTS
+class AgentTextConfig(ModuleConfig):  # [AGENT-WIRE]
+    model: str = "gpt-4o-mini"  # [AGENT-WIRE]
+    system_prompt: str = (  # [AGENT-WIRE]
+        "You are Daneel, an AI agent created by Dimensional to control a Unitree Go2 "  # [AGENT-WIRE]
+        "quadruped robot. The user speaks to you; you reply in one or two concise "  # [AGENT-WIRE]
+        "sentences. Prioritise safety above all else."  # [AGENT-WIRE]
+    )  # [AGENT-WIRE]
+    api_key: str | None = Field(default=None)  # [AGENT-WIRE] falls back to OPENAI_API_KEY env var
+    queue_max_texts: int = 16  # [AGENT-WIRE]
+    history_max_turns: int = 20  # [AGENT-WIRE] pairs of human+AI messages kept in context
+
+
+class AgentTextModule(Module):  # [AGENT-WIRE]
+    """Routes transcribed speech through a chat LLM and publishes the reply.
+
+    text_in  ← raw STT transcript from SpeechToTextModule
+    text_out → agent reply forwarded to TextToSpeechModule
+
+    Keeps a bounded rolling conversation history (history_max_turns pairs).
+    Uses the same daemon-thread + bounded-queue pattern as the other audio modules
+    so LLM latency never blocks the capture/STT pipeline.
+    """  # [AGENT-WIRE]
+
+    config: AgentTextConfig  # [AGENT-WIRE]
+    text_in: In[str]  # [AGENT-WIRE]
+    text_out: Out[str]  # [AGENT-WIRE]
+
+    _queue: queue.Queue[str] | None = None  # [AGENT-WIRE]
+    _running: threading.Event | None = None  # [AGENT-WIRE]
+    _thread: threading.Thread | None = None  # [AGENT-WIRE]
+    _unsub: Callable[[], None] | None = None  # [AGENT-WIRE]
+
+    async def main(self) -> None:  # type: ignore[override]  # [AGENT-WIRE]
+        self._queue = queue.Queue(maxsize=self.config.queue_max_texts)  # [AGENT-WIRE]
+        self._running = threading.Event()  # [AGENT-WIRE]
+        self._running.set()  # [AGENT-WIRE]
+        self._thread = threading.Thread(target=self._worker_loop, daemon=True)  # [AGENT-WIRE]
+        self._thread.start()  # [AGENT-WIRE]
+        yield  # [AGENT-WIRE]
+        if self._unsub is not None:  # [AGENT-WIRE]
+            _unsubscribe_safely(self._unsub, label="AgentTextModule")  # [AGENT-WIRE]
+            self._unsub = None  # [AGENT-WIRE]
+        if self._running is not None:  # [AGENT-WIRE]
+            self._running.clear()  # [AGENT-WIRE]
+        if self._thread is not None:  # [AGENT-WIRE]
+            self._thread.join(timeout=5.0)  # [AGENT-WIRE] longer timeout; LLM call may be in-flight
+            self._thread = None  # [AGENT-WIRE]
+        self._queue = None  # [AGENT-WIRE]
+        self._running = None  # [AGENT-WIRE]
+
+    @rpc  # [AGENT-WIRE]
+    def start(self) -> None:  # [AGENT-WIRE]
+        _unsubscribe_safely(self._unsub, label="AgentTextModule")  # [AGENT-WIRE]
+        self._unsub = None  # [AGENT-WIRE]
+        super().start()  # [AGENT-WIRE]
+        self._unsub = self.text_in.subscribe(self._on_text)  # [AGENT-WIRE]
+
+    @rpc  # [AGENT-WIRE]
+    def stop(self) -> None:  # [AGENT-WIRE]
+        super().stop()  # [AGENT-WIRE]
+
+    def _on_text(self, text: str) -> None:  # [AGENT-WIRE]
+        if not text.strip():  # [AGENT-WIRE]
+            return  # [AGENT-WIRE]
+        q = self._queue  # [AGENT-WIRE]
+        if q is None:  # [AGENT-WIRE]
+            return  # [AGENT-WIRE]
+        try:  # [AGENT-WIRE]
+            q.put_nowait(text)  # [AGENT-WIRE]
+        except queue.Full:  # [AGENT-WIRE]
+            try:  # [AGENT-WIRE]
+                _ = q.get_nowait()  # [AGENT-WIRE] drop oldest if queue full
+            except queue.Empty:  # [AGENT-WIRE]
+                return  # [AGENT-WIRE]
+            try:  # [AGENT-WIRE]
+                q.put_nowait(text)  # [AGENT-WIRE]
+            except queue.Full:  # [AGENT-WIRE]
+                return  # [AGENT-WIRE]
+
+    def _worker_loop(self) -> None:  # [AGENT-WIRE]
+        running = self._running  # [AGENT-WIRE]
+        q = self._queue  # [AGENT-WIRE]
+        if running is None or q is None:  # [AGENT-WIRE]
+            return  # [AGENT-WIRE]
+
+        try:  # [AGENT-WIRE]
+            from langchain.chat_models import init_chat_model  # [AGENT-WIRE]
+            from langchain_core.messages import AIMessage, HumanMessage, SystemMessage  # [AGENT-WIRE]
+
+            api_key = self.config.api_key or os.environ.get("OPENAI_API_KEY")  # [AGENT-WIRE]
+            if not api_key:  # [AGENT-WIRE]
+                logger.warning(  # [AGENT-WIRE]
+                    "AgentTextModule: OPENAI_API_KEY not set and api_key not configured; "  # [AGENT-WIRE]
+                    "LLM calls will fail unless the model provider reads the key another way"  # [AGENT-WIRE]
+                )  # [AGENT-WIRE]
+            llm_kwargs = {"openai_api_key": api_key} if api_key else {}  # [AGENT-WIRE]
+            llm = init_chat_model(self.config.model, **llm_kwargs)  # [AGENT-WIRE]
+        except Exception:  # [AGENT-WIRE]
+            logger.exception("AgentTextModule: failed to initialise LLM; dropping all text")  # [AGENT-WIRE]
+            while running.is_set():  # [AGENT-WIRE]
+                try:  # [AGENT-WIRE]
+                    _ = q.get(timeout=0.25)  # [AGENT-WIRE]
+                except queue.Empty:  # [AGENT-WIRE]
+                    continue  # [AGENT-WIRE]
+            return  # [AGENT-WIRE]
+
+        system_message = SystemMessage(self.config.system_prompt)  # [AGENT-WIRE]
+        history: list = []  # [AGENT-WIRE] alternating HumanMessage / AIMessage
+        max_history_msgs = max(2, int(self.config.history_max_turns) * 2)  # [AGENT-WIRE]
+        logger.info(f"AgentTextModule: ready (model={self.config.model})")  # [AGENT-WIRE]
+
+        while running.is_set():  # [AGENT-WIRE]
+            try:  # [AGENT-WIRE]
+                text = q.get(timeout=0.25)  # [AGENT-WIRE]
+            except queue.Empty:  # [AGENT-WIRE]
+                continue  # [AGENT-WIRE]
+
+            preview = text if len(text) <= 120 else (text[:120] + "…")  # [AGENT-WIRE]
+            logger.info(f"AgentTextModule: invoking LLM with: {preview}")  # [AGENT-WIRE]
+
+            from langchain_core.messages import HumanMessage  # [AGENT-WIRE]
+
+            human_msg = HumanMessage(content=text)  # [AGENT-WIRE]
+            messages = [system_message, *history, human_msg]  # [AGENT-WIRE]
+            try:  # [AGENT-WIRE]
+                response = llm.invoke(messages)  # [AGENT-WIRE]
+            except Exception:  # [AGENT-WIRE]
+                logger.exception("AgentTextModule: LLM invocation failed")  # [AGENT-WIRE]
+                continue  # [AGENT-WIRE]
+
+            reply = str(response.content).strip()  # [AGENT-WIRE]
+            if not reply:  # [AGENT-WIRE]
+                continue  # [AGENT-WIRE]
+
+            history.extend([human_msg, response])  # [AGENT-WIRE]
+            if len(history) > max_history_msgs:  # [AGENT-WIRE]
+                history = history[-max_history_msgs:]  # [AGENT-WIRE] trim oldest turns
+
+            preview_reply = reply if len(reply) <= 120 else (reply[:120] + "…")  # [AGENT-WIRE]
+            logger.info(f"AgentTextModule: reply: {preview_reply}")  # [AGENT-WIRE]
+            self.text_out.publish(reply)  # [AGENT-WIRE]
+# [AGENT-WIRE] end AgentTextModule
+
+
 class TextToSpeechConfig(ModuleConfig):
     provider: Literal["openai", "macos-say", "pyttsx3"] = "openai"
     voice: str = "echo"
@@ -1667,9 +1812,10 @@ class FunVoiceEffectsModule(Module):
             )
 
 
-audio_speech_loopback = autoconnect(
+audio_speech_loopback = autoconnect(  # [AGENT-WIRE] AgentTextModule added to pipeline
     AudioModule.blueprint(),
     SpeechToTextModule.blueprint(),
+    AgentTextModule.blueprint(),  # [AGENT-WIRE] inserted between STT and TTS
     TextToSpeechModule.blueprint(),
     FunVoiceEffectsModule.blueprint(),
     SpeakerModule.blueprint(),
@@ -1685,8 +1831,12 @@ audio_speech_loopback = autoconnect(
         (SpeechToTextModule, "recent_tts_text", "recent_tts_text"),
         (TextToSpeechModule, "tts_reference_audio", "tts_reference_audio"),
         (SpeechToTextModule, "tts_reference_audio", "tts_reference_audio"),
-        (SpeechToTextModule, "text", "speech_text"),
-        (TextToSpeechModule, "text", "speech_text"),
+        # [AGENT-WIRE] STT → agent (was STT → TTS directly via "speech_text")
+        (SpeechToTextModule, "text", "speech_text"),  # [AGENT-WIRE]
+        (AgentTextModule, "text_in", "speech_text"),  # [AGENT-WIRE]
+        # [AGENT-WIRE] agent → TTS (new channel "agent_response")
+        (AgentTextModule, "text_out", "agent_response"),  # [AGENT-WIRE]
+        (TextToSpeechModule, "text", "agent_response"),  # [AGENT-WIRE] was "speech_text"
         (TextToSpeechModule, "audio", "tts_audio_raw"),
         (FunVoiceEffectsModule, "audio_in", "tts_audio_raw"),
         (FunVoiceEffectsModule, "audio_out", "tts_audio"),
