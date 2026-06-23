@@ -304,6 +304,33 @@ class ControlTask(Protocol):
         ...
 
 
+@runtime_checkable
+class ReferenceTransformTask(ControlTask, Protocol):
+    """Control task that can transform an upstream joint command reference.
+
+    A reference transform can still be registered as a normal coordinator-facing
+    ``ControlTask``. When used inside a composed task, the outer task owns the
+    coordinator claim and calls ``compute_from_reference()`` synchronously after
+    a source task has produced a reference command.
+    """
+
+    def compute_from_reference(
+        self,
+        state: CoordinatorState,
+        reference: JointCommandOutput,
+    ) -> JointCommandOutput | None:
+        """Transform an upstream command reference into a new command.
+
+        Args:
+            state: Current coordinator state for this tick.
+            reference: Upstream command from the source task or prior transform.
+
+        Returns:
+            Transformed command, or None to suppress output for this tick.
+        """
+        ...
+
+
 class BaseControlTask(ControlTask):
     """Base class with no-op defaults for optional listener methods.
 

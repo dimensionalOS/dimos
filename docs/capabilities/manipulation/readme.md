@@ -76,6 +76,84 @@ preview()               # Preview in Meshcat
 execute()               # Execute via coordinator
 ```
 
+### Rigid vs compliant joint trajectories
+
+Manipulator coordinator stacks can execute either rigid joint trajectories or
+compliant joint trajectories:
+
+- `trajectory` keeps the existing rigid behavior: the trajectory sampler emits
+  the final `SERVO_POSITION` command directly.
+- `compliant_trajectory` keeps the same nominal trajectory interface, then runs
+  an internal joint-compliance stage before the final coordinator command.
+
+The compliant task is still one coordinator-facing task. It does not create a
+coordinator-level task graph, and the trajectory and compliance stages do not
+compete for the same joints during arbitration.
+
+Version 1 is position-servo only. It reads joint position feedback and uses
+effort feedback only when explicitly enabled in task params; joint velocity
+feedback is not part of the v1 compliance law. This is deliberate: some arm
+adapters expose placeholder zero effort values, so zero torque readings are not
+treated as reliable contact data by default. The generic manipulator route also
+does not require torque output.
+
+Compliance behavior is bounded by per-joint virtual mass, damping, stiffness,
+maximum offset, and maximum offset velocity. If required joint position state is
+missing, the transform suppresses output instead of inventing offsets. If `dt`
+is invalid, it safely passes the nominal reference through for that tick. Offset
+and saturation diagnostics are available from the compliant task for tests and
+debugging.
+
+Blueprint helpers can select the behavior explicitly:
+
+```python skip
+from dimos.robot.manipulators.common.blueprints import (
+    compliant_trajectory_task,
+    trajectory_task,
+)
+
+rigid = trajectory_task(arm_hw)
+
+compliant = compliant_trajectory_task(
+    arm_hw,
+    params={
+        "stiffness": 20.0,
+        "damping": 6.0,
+        "max_offset": 0.1,
+        "max_offset_velocity": 0.4,
+        "use_effort_feedback": False,
+    },
+)
+```
+
+#### MuJoCo verification
+
+Use the dedicated xArm7 obstacle scene as the canonical manipulator simulation
+entry point for compliant trajectory checks:
+
+```bash
+uv run dimos --simulation run xarm7-compliant-obstacle-sim
+```
+
+The scene places a fixed wall near the robot's forward workspace and registers a
+`compliant_trajectory` task named `traj_arm`. For a free-space smoke check, run a
+trajectory that stays in front of the wall; for contact tuning, run a trajectory
+whose nominal target reaches behind the translucent marker. Expected pass/fail
+observations:
+
+- Free space: compliant offsets stay near zero and the final joint error remains
+  comparable to the rigid trajectory.
+- Rigid contact or obstruction: compliant offset grows only within configured
+  limits, saturation is observable in diagnostics, and the command does not keep
+  integrating through the bound.
+- Placeholder effort feedback: leave `use_effort_feedback=False` unless the
+  adapter is known to expose reliable effort readings for the scenario.
+
+Rigid table/obstacle and soft-contact demos should compare joint-space metrics
+such as peak effort, tracking error, offset, and saturation time. These demos are
+useful for tuning, but deterministic unit tests remain the source of truth for
+safe invalid-`dt`, missing-state, and saturation behavior.
+
 ### Planning Visualization
 
 Manipulation visualization is configured on `ManipulationModuleConfig.visualization`.

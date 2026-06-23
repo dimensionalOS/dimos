@@ -47,6 +47,23 @@ def trajectory_task(
     )
 
 
+def compliant_trajectory_task(
+    hardware: HardwareComponent,
+    *,
+    name: str | None = None,
+    priority: int = 10,
+    params: dict[str, Any] | None = None,
+) -> TaskConfig:
+    """Create a compliant joint trajectory task config for a manipulator."""
+    return TaskConfig(
+        name=name or trajectory_task_name(hardware.hardware_id),
+        type="compliant_trajectory",
+        joint_names=hardware.joints,
+        priority=priority,
+        params=params or {},
+    )
+
+
 def cartesian_ik_task(
     hardware: HardwareComponent,
     *,

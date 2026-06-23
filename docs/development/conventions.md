@@ -10,3 +10,4 @@ This mostly to track when conventions change (with regard to codebase updates) b
 - Similar to the `rerun_config` the `rrb` (rerun blueprint) is defined at a blueprint level right now, but ideally would be a per-module contribution with only a per-blueprint override of the layout.
 - No `__init__.py` files
 - Helper blueprints (like `_with_vis`) that should not be used on their own need to start with an underscore to avoid being picked up by the all_blueprints.py code generation step
+- Control tasks exposed to `ControlCoordinator` should keep the simple contract `claim()`, `is_active()`, and `compute() -> JointCommandOutput | None`. If a controller needs internal stages, use a composed task that still emits one final command; do not add coordinator-level task graphs unless multiple runtime-composable controllers justify the extra scheduling and safety semantics.

@@ -21,11 +21,16 @@ import math
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
-from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
+from dimos.robot.manipulators.common.blueprints import (
+    compliant_trajectory_task,
+    coordinator,
+    trajectory_task,
+)
 from dimos.robot.manipulators.xarm.config import (
     XARM7_SIM_PATH,
     make_xarm7_model_config,
     make_xarm_hardware,
+    xarm7_compliance_obstacle_scene_path,
 )
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -67,6 +72,45 @@ xarm_perception_sim = autoconnect(
     coordinator(
         hardware=[_xarm7_sim_hw],
         tasks=[trajectory_task(_xarm7_sim_hw)],
+    ),
+    RerunBridgeModule.blueprint(),
+)
+
+_xarm7_compliance_obstacle_scene = xarm7_compliance_obstacle_scene_path()
+
+_xarm7_compliance_obstacle_hw = make_xarm_hardware(
+    "arm",
+    7,
+    adapter_type="sim_mujoco",
+    address=str(_xarm7_compliance_obstacle_scene),
+    gripper=False,
+    home_joints=XARM7_SIM_HOME,
+)
+
+xarm7_compliant_obstacle_sim = autoconnect(
+    MujocoSimModule.blueprint(
+        address=str(_xarm7_compliance_obstacle_scene),
+        headless=False,
+        dof=7,
+        camera_name="wrist_camera",
+        base_frame_id="link7",
+    ),
+    coordinator(
+        hardware=[_xarm7_compliance_obstacle_hw],
+        tasks=[
+            compliant_trajectory_task(
+                _xarm7_compliance_obstacle_hw,
+                params={
+                    "mass": 0.7,
+                    "damping": 6.0,
+                    "stiffness": 18.0,
+                    "max_offset": 0.12,
+                    "max_offset_velocity": 0.35,
+                    "deadband": 0.005,
+                    "use_effort_feedback": False,
+                },
+            )
+        ],
     ),
     RerunBridgeModule.blueprint(),
 )

@@ -19,6 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.core.global_config import global_config
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -54,6 +55,24 @@ XARM6_FK_MODEL = LfsPath("xarm_description/urdf/xarm6/xarm6.urdf")
 XARM7_FK_MODEL = LfsPath("xarm_description/urdf/xarm7/xarm7.urdf")
 XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
 XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
+XARM7_COMPLIANCE_OBSTACLE_SIM_PATH = DIMOS_PROJECT_ROOT / "data/xarm7/compliance_obstacle_scene.xml"
+XARM7_COMPLIANCE_OBSTACLE_TEMPLATE_PATH = (
+    DIMOS_PROJECT_ROOT / "dimos/robot/manipulators/xarm/mujoco/compliance_obstacle_scene.xml"
+)
+
+
+def xarm7_compliance_obstacle_scene_path() -> Path:
+    """Return the local xArm7 obstacle scene, ensuring included LFS assets exist."""
+    # The obstacle scene includes ``xarm7.xml`` from the xArm7 LFS asset. Resolve the base scene
+    # first so a fresh checkout downloads/extracts the xArm7 LFS asset directory.
+    Path(str(XARM7_SIM_PATH)).exists()
+    scene_xml = XARM7_COMPLIANCE_OBSTACLE_TEMPLATE_PATH.read_text()
+    if (
+        not XARM7_COMPLIANCE_OBSTACLE_SIM_PATH.exists()
+        or XARM7_COMPLIANCE_OBSTACLE_SIM_PATH.read_text() != scene_xml
+    ):
+        XARM7_COMPLIANCE_OBSTACLE_SIM_PATH.write_text(scene_xml)
+    return XARM7_COMPLIANCE_OBSTACLE_SIM_PATH
 
 
 def _adapter_kwargs(home_joints: list[float] | None = None) -> dict[str, object]:
