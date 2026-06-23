@@ -24,7 +24,7 @@ from pathlib import Path
 import sys
 import time
 import types
-from typing import TYPE_CHECKING, Any, Union, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Literal, Union, cast, get_args, get_origin
 
 import click
 from dotenv import load_dotenv
@@ -691,7 +691,9 @@ main.add_typer(dataprep_app, name="dataprep")
 def dataprep_build(
     source: Path | None = typer.Option(None, "--source", "-s", help="Recording .db to read"),
     output: Path | None = typer.Option(None, "--output", help="Dataset output directory"),
-    output_format: str = typer.Option(None, "--format", "-f", help="Output format: lerobot | hdf5"),
+    output_format: Literal["lerobot", "hdf5"] | None = typer.Option(
+        None, "--format", "-f", help="Output format"
+    ),
     config_path: Path | None = typer.Option(
         None, "--config", "-c", help="JSON DataPrepConfig (needed for obs/action stream maps)"
     ),
@@ -707,8 +709,8 @@ def dataprep_inspect(
     dataset: Path | None = typer.Argument(
         None, help="Built dataset: a .hdf5 file or a lerobot directory"
     ),
-    output_format: str = typer.Option(
-        None, "--format", "-f", help="lerobot | hdf5 (auto-detected from the path if omitted)"
+    output_format: Literal["lerobot", "hdf5"] | None = typer.Option(
+        None, "--format", "-f", help="Auto-detected from the path if omitted"
     ),
 ) -> None:
     """Summarize a built dataset: features, shapes, episode/frame counts, uniformity."""

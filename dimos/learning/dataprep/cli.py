@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal
 
 import typer
 
@@ -39,7 +39,7 @@ def _load_config(
     config_path: Path | None,
     source: Path | None,
     output: Path | None,
-    output_format: str | None,
+    output_format: Literal["lerobot", "hdf5"] | None,
 ) -> DataPrepConfig:
     """Build a DataPrepConfig from an optional JSON file + flag overrides."""
     from dimos.learning.dataprep.core import DataPrepConfig, OutputConfig
@@ -53,13 +53,8 @@ def _load_config(
     if source is not None:
         updates["source"] = str(source)
     if output is not None or output_format is not None:
-        fmt = (
-            cast("Literal['lerobot', 'hdf5']", output_format)
-            if output_format
-            else cfg.output.format
-        )
         updates["output"] = OutputConfig(
-            format=fmt,
+            format=output_format or cfg.output.format,
             path=output or cfg.output.path,
             metadata=cfg.output.metadata,
         )
@@ -70,7 +65,7 @@ def build(
     config_path: Path | None,
     source: Path | None,
     output: Path | None,
-    output_format: str | None,
+    output_format: Literal["lerobot", "hdf5"] | None,
 ) -> None:
     from dimos.learning.dataprep.build import run_dataprep
 
@@ -96,7 +91,7 @@ def build(
     typer.echo(f"✓ wrote dataset to {path}")
 
 
-def inspect(dataset: Path | None, output_format: str | None) -> None:
+def inspect(dataset: Path | None, output_format: Literal["lerobot", "hdf5"] | None) -> None:
     from dimos.learning.dataprep.build import inspect_dataset
 
     if dataset is None:
