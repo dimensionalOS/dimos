@@ -200,17 +200,24 @@ fn select_entry(
 
     let mut entry_node = NO_NODE;
     let mut best_score = f32::INFINITY;
-    for node in &plg.nodes {
-        let Some(&connect) = connect_dist.get(&node.cell_id) else {
+    // Scan the bounded reachable set, not every node. Tie-break by cell id for
+    // deterministic order.
+    for (&cell, &connect) in &connect_dist {
+        if !node_cells.contains(&cell) {
             continue;
-        };
-        let Some(&ctg) = cost_to_go.get(&node.cell_id) else {
+        }
+        let Some(&ctg) = cost_to_go.get(&cell) else {
             continue;
         };
         let score = connect + ctg;
-        if score < best_score {
+        let better = match score.partial_cmp(&best_score) {
+            Some(std::cmp::Ordering::Less) => true,
+            Some(std::cmp::Ordering::Equal) => cell < entry_node,
+            _ => false,
+        };
+        if better {
             best_score = score;
-            entry_node = node.cell_id;
+            entry_node = cell;
         }
     }
 

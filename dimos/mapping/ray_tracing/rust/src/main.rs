@@ -28,11 +28,8 @@ struct RayTracingVoxelMap {
     #[output(encode = PointCloud2::encode)]
     local_map: Output<PointCloud2>,
 
-    // Full region of the local_map, represented as a PoseStamped. We need
-    // this to update the planner artifacts because local_map only includes
-    // points that exist (not points that have been removed) Position holds
-    // the cylinder center and orientation holds radius, z_min, z_max, zero.
-    // Stamped identically to local_map so consumers can pair them.
+    // Cylinder bounds of the local map. Position holds the center, orientation
+    // holds radius, z_min, z_max. Stamped like local_map so consumers pair them.
     #[output(encode = PoseStamped::encode)]
     region_bounds: Output<PoseStamped>,
 
@@ -105,7 +102,7 @@ impl RayTracingVoxelMap {
         }
 
         self.frame_count += 1;
-        let local_due = self.frame_count.is_multiple_of(self.config.emit_every);
+        let local_due = emit_due(self.frame_count, self.config.emit_every);
 
         let cylinder = if local_due {
             let margin = self.config.shadow_depth + voxel_size;
@@ -156,11 +153,8 @@ impl RayTracingVoxelMap {
             None
         };
 
-        let global_due = self
-            .frame_count
-            .is_multiple_of(self.config.global_emit_every);
+        let global_due = emit_due(self.frame_count, self.config.global_emit_every);
 
-        // build and publish the clouds
         let stamp = msg.header.stamp;
         if let Some(cyl) = &cylinder {
             if global_due {
@@ -178,6 +172,11 @@ impl RayTracingVoxelMap {
             publish_cloud(&self.global_map, &global).await;
         }
     }
+}
+
+/// Whether the Nth-frame output fires this frame. Zero disables it.
+fn emit_due(frame_count: u32, every: u32) -> bool {
+    every != 0 && frame_count.is_multiple_of(every)
 }
 
 struct ExtractError(&'static str);
@@ -420,6 +419,19 @@ mod tests {
             (ky as f32 + 0.5).to_bits(),
             (kz as f32 + 0.5).to_bits(),
         )
+    }
+
+    #[test]
+    fn emit_due_fires_every_nth_frame_and_zero_disables() {
+        assert!(emit_due(1, 1));
+        assert!(emit_due(2, 1));
+        assert!(!emit_due(1, 2));
+        assert!(emit_due(2, 2));
+        assert!(!emit_due(5, 3));
+        assert!(emit_due(6, 3));
+        for n in 1..10 {
+            assert!(!emit_due(n, 0));
+        }
     }
 
     #[test]

@@ -54,8 +54,7 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     emit_every: int = 1
     # Publish the global map every Nth frame. Zero disables it.
     global_emit_every: int = 1
-    # Size the local region to this percentile of batch point distances,
-    # so a stray far hit cannot inflate the region the planner recomputes.
+    # Size the local region to this percentile of batch point distances.
     region_percentile: float = 95.0
 
 
