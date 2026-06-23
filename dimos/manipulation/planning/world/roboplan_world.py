@@ -172,15 +172,7 @@ class RoboPlanWorld:
         handle = self._obstacle_handles.get(obstacle_id, obstacle_id)
         scene = self._require_scene()
         scene.updateGeometryPlacement(handle, pose_to_matrix(pose))
-        obstacle = self._obstacles[obstacle_id]
-        self._obstacles[obstacle_id] = Obstacle(
-            name=obstacle.name,
-            obstacle_type=obstacle.obstacle_type,
-            pose=pose,
-            dimensions=obstacle.dimensions,
-            color=obstacle.color,
-            mesh_path=obstacle.mesh_path,
-        )
+    self._obstacles[obstacle_id] = replace(self._obstacles[obstacle_id], pose=pose)
         self._bump_geometry_revision()
         return True
 
