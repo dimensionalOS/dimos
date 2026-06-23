@@ -13,7 +13,6 @@ Main steps:
 
 ```bash
 dimos --robot-ip {YOUR_ROBOT_IP} run unitree-go2-memory
-dimos --robot-ip 192.168.2.152 run unitree-go2-memory
 ```
 
 
@@ -55,10 +54,10 @@ When a bare file name is given, the tool searches in:
 Examples:
 
 ```bash
-dimos map go2_hongkong_office --export
-dimos map ./go2_hongkong_office.db --export
-dimos map data/go2_hongkong_office.db --export
-dimos map /abs/path/to/scan.db --export
+dimos map global go2_hongkong_office --export
+dimos map global ./go2_hongkong_office.db --export
+dimos map global data/go2_hongkong_office.db --export
+dimos map global /abs/path/to/scan.db --export
 ```
 
 Sample log:
