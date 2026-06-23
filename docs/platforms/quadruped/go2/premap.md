@@ -1,10 +1,10 @@
-# Relocalization
+# Creating a Map
 
-This walkthrough shows the pre-map capabilities, including how to record,
-export a premap from a mem2 `.db`, and run the robot with relocalization
-enabled. You can also navigate to a place the robot hasn't visited during
-this run, as long as it's part of the global map.
-
+Main steps:
+1. `dimos run unitree-go2-memory` to create a .db file
+2. Auto-clean the .db file into a usable map
+3. Load the map back (replay)
+4. Load the map into the Go2 (live)
 
 ![relocalize on the live go2 and nav_to a point in the premap](assets/reloc_and_nav_to.webp)
 
@@ -27,9 +27,9 @@ from the repo root so the bare-name lookup finds this file. In the next
 steps `{DB_NAME}` refers to the stem of your recording - `recording_go2`
 if you kept the default.
 
-## 2. Export the premap
+## 2. Auto-clean the .db, convert into a Map
 
-Convert the recording to a relocalization premap (`.pc2.lcm`):
+To create the map file (`.pc2.lcm`):
 
 ```bash
 # default name from step 1:
