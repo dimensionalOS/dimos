@@ -341,15 +341,17 @@ class UnitreeWebRTCConnection(Resource):
                 {"api_id": self._SPORT_API_ID_RAGEMODE, "parameter": {"data": enable}},
             )
         )
+        if not rage_ok:
+            return False
+
         if enable:
             time.sleep(2.0)  # let FsmRageMode transition settle
-        joystick_ok = bool(
+        return bool(
             self.publish_request(
                 RTC_TOPIC["SPORT_MOD"],
                 {"api_id": SPORT_CMD["SwitchJoystick"], "parameter": {"data": enable}},
             )
         )
-        return rage_ok and joystick_ok
 
     def liedown(self) -> bool:
         return bool(
