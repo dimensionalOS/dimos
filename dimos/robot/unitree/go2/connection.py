@@ -20,6 +20,7 @@ import time
 from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import Field
+from reactivex import empty
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 import rerun.blueprint as rrb
@@ -193,6 +194,11 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
     def video_stream(self) -> Observable[Image]:
         return self.replay.streams.color_image.observable()
 
+    @simple_mcache
+    def lowstate_stream(self) -> Observable:  # type: ignore[type-arg]
+        # Replay datasets carry no low-level state (battery/IMU) — emit nothing.
+        return empty()
+
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
         return True
 
@@ -253,6 +259,7 @@ class GO2Connection(Module, Camera, Pointcloud):
         self.register_disposable(self.connection.lidar_stream().subscribe(self.lidar.publish))
         self.register_disposable(self.connection.odom_stream().subscribe(self._publish_tf))
         self.register_disposable(self.connection.video_stream().subscribe(onimage))
+        self.register_disposable(self.connection.lowstate_stream().subscribe(self._on_lowstate))
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
 
         self._camera_info_thread = Thread(
@@ -348,6 +355,20 @@ class GO2Connection(Module, Camera, Pointcloud):
         result = self.connection.set_rage_mode(enable)
         logger.info("Rage Mode %s", "enabled" if enable else "disabled")
         return result
+
+    def _on_lowstate(self, msg: Any) -> None:
+        """Cache battery SOC from the lowstate push stream (bms_state.soc, %)."""
+        try:
+            self._latest_soc = int(msg["data"]["bms_state"]["soc"])
+        except (KeyError, TypeError, ValueError):
+            if not getattr(self, "_soc_parse_warned", False):
+                self._soc_parse_warned = True
+                logger.warning("lowstate: could not read bms_state.soc — battery unavailable")
+
+    @rpc
+    def get_battery_soc(self) -> int | None:
+        """Latest battery state-of-charge (0-100%), or None until first lowstate."""
+        return getattr(self, "_latest_soc", None)
 
     @rpc
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
