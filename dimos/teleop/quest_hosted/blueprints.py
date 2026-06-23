@@ -19,7 +19,13 @@ from pathlib import Path
 from dimos.constants import STATE_DIR
 from dimos.control.blueprints.teleop import coordinator_teleop_xarm7
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.transport import CloudflareTransport, CloudflareVideoTransport, LCMTransport
+from dimos.core.transport import (
+    CloudflareTransport,
+    CloudflareVideoTransport,
+    LCMTransport,
+    LiveKitTransport,
+    LiveKitVideoTransport,
+)
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
@@ -79,6 +85,20 @@ teleop_hosted_go2_transport = unitree_go2_basic.transports(
 ).global_config(viewer="none")
 
 
+# Same transport-swap as above, over the hosted broker's LiveKit backend instead
+# of Cloudflare. The robot picks the backend purely by which transport class the
+# blueprint wires; the broker mints a LiveKit room+token from the same dtk_live_*
+# key (see dimensional-teleop docs/livekit-spec.md).
+#
+# Run:  TELEOP_API_KEY=dtk_live_... dimos run teleop-hosted-go2-livekit
+teleop_hosted_go2_livekit = unitree_go2_basic.transports(
+    {
+        ("cmd_vel", Twist): LiveKitTransport("cmd_unreliable", TwistStamped),
+        ("color_image", Image): LiveKitVideoTransport(),
+    }
+).global_config(viewer="none")
+
+
 HOSTED_RECORDINGS_DIR = STATE_DIR / "hosted_teleop" / "recordings"
 
 
@@ -104,6 +124,7 @@ __all__ = [
     "HostedTeleopRecorder",
     "HostedTeleopRecorderConfig",
     "teleop_hosted_go2",
+    "teleop_hosted_go2_livekit",
     "teleop_hosted_go2_transport",
     "teleop_hosted_xarm7",
 ]

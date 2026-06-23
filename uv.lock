@@ -2040,6 +2040,10 @@ dds = [
 drone = [
     { name = "pymavlink" },
 ]
+livekit = [
+    { name = "httpx" },
+    { name = "livekit" },
+]
 manipulation = [
     { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "drake", version = "1.45.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform == 'darwin'" },
@@ -2371,6 +2375,7 @@ requires-dist = [
     { name = "gdown", marker = "extra == 'misc'", specifier = ">=5.2.2" },
     { name = "googlemaps", marker = "extra == 'misc'", specifier = ">=4.10.0" },
     { name = "gtsam-extended", marker = "extra == 'mapping'", specifier = ">=4.3a1.post1" },
+    { name = "httpx", marker = "extra == 'livekit'", specifier = ">=0.27.0" },
     { name = "httpx", marker = "extra == 'webrtc'", specifier = ">=0.27.0" },
     { name = "hydra-core", marker = "extra == 'perception'", specifier = ">=1.3.0" },
     { name = "ipykernel", marker = "extra == 'misc'" },
@@ -2386,6 +2391,7 @@ requires-dist = [
     { name = "lap", marker = "extra == 'perception'", specifier = ">=0.5.12" },
     { name = "lark", marker = "extra == 'misc'" },
     { name = "lazy-loader" },
+    { name = "livekit", marker = "extra == 'livekit'", specifier = ">=1.0.0" },
     { name = "llvmlite", specifier = ">=0.42.0" },
     { name = "lz4", specifier = ">=4.4.5" },
     { name = "matplotlib", marker = "extra == 'manipulation'", specifier = ">=3.7.1" },
@@ -2463,7 +2469,7 @@ requires-dist = [
     { name = "xformers", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = ">=0.0.20" },
     { name = "yapf", marker = "extra == 'misc'", specifier = "==0.40.2" },
 ]
-provides-extras = ["misc", "visualization", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "psql", "sim", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "all"]
+provides-extras = ["misc", "visualization", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "psql", "sim", "mapping", "drone", "dds", "webrtc", "livekit", "base", "apriltag", "all"]
 
 [package.metadata.requires-dev]
 autofix = [{ name = "ruff", specifier = "==0.14.3" }]
@@ -4923,6 +4929,26 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/2a/ae/bb56c6828e4797ba5a4821eec7c43b8bf40f69cda4d4f5f8c8a2810ec96a/linkify-it-py-2.0.3.tar.gz", hash = "sha256:68cda27e162e9215c17d786649d1da0021a451bdc436ef9e0fa0ba5234b9b048", size = 27946, upload-time = "2024-02-04T14:48:04.179Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/04/1e/b832de447dee8b582cac175871d2f6c3d5077cc56d5575cadba1fd1cccfa/linkify_it_py-2.0.3-py3-none-any.whl", hash = "sha256:6bcbc417b0ac14323382aef5c5192c0075bf8a9d6b41820a2b66371eac6b6d79", size = 19820, upload-time = "2024-02-04T14:48:02.496Z" },
+]
+
+[[package]]
+name = "livekit"
+version = "1.1.10"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiofiles" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "protobuf" },
+    { name = "types-protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/53/11/a8f7af0d9a0a1e705c98a16942f8ec70865a8a08280e3ad53a3026388d36/livekit-1.1.10.tar.gz", hash = "sha256:202101c49a1fbc1d771d5dfb884c77f42c01dafc411d12224b992fac78a843cb", size = 355789, upload-time = "2026-06-04T20:23:19.723Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d0/b0/51b2dc800ff2201da35ea87be1e25d370f4973e214e96ddf09563cd977a8/livekit-1.1.10-py3-none-macosx_10_15_x86_64.whl", hash = "sha256:495b23988673bf6571fd0faaf621416e973fa1d302b1acccd479e0461cac924d", size = 10103039, upload-time = "2026-06-04T20:23:09.411Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/7b/d7e1af04915402f55d6aa2d063273d053f9da0799ea9ec0a691fc96003cf/livekit-1.1.10-py3-none-macosx_11_0_arm64.whl", hash = "sha256:7bd85dda5c8b11458b3447cbb02630af7bb267d424c65c89d2e6d736905147d1", size = 8933264, upload-time = "2026-06-04T20:23:11.527Z" },
+    { url = "https://files.pythonhosted.org/packages/86/78/5ee7513df2ef124e5f75659bbe477253dd214a3089003e34644a37f80462/livekit-1.1.10-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:b05299fa0a4c98d8d57f0013367adad70a84dd5fc9c46e4a7f3df5352c81b6c1", size = 9938610, upload-time = "2026-06-04T20:23:13.495Z" },
+    { url = "https://files.pythonhosted.org/packages/86/86/16364e82b7363ad43e6651e46dfccf88f18fe46897c2123fe4badbf1f067/livekit-1.1.10-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:29f58fe30dc181c45b0a9c929beaacacde0b2253fa6e597547508d5269e9012b", size = 11321977, upload-time = "2026-06-04T20:23:15.632Z" },
+    { url = "https://files.pythonhosted.org/packages/80/ca/f50036fffbff113f8de6bd05194dc6df0a5f2028f058dcf69073f774a464/livekit-1.1.10-py3-none-win_amd64.whl", hash = "sha256:13ac0c8498e0e5bc41292526966fd6ad86baa66e1915778b128cf7e953b107fc", size = 10675561, upload-time = "2026-06-04T20:23:17.857Z" },
 ]
 
 [[package]]
@@ -10721,6 +10747,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/fd/07/b822e1b307d40e263e8253d2384cf98c51aa2368cc7ba9a07e523a1d964b/typer-0.23.1.tar.gz", hash = "sha256:2070374e4d31c83e7b61362fd859aa683576432fd5b026b060ad6b4cd3b86134", size = 120047, upload-time = "2026-02-13T10:04:30.984Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d5/91/9b286ab899c008c2cb05e8be99814807e7fbbd33f0c0c960470826e5ac82/typer-0.23.1-py3-none-any.whl", hash = "sha256:3291ad0d3c701cbf522012faccfbb29352ff16ad262db2139e6b01f15781f14e", size = 56813, upload-time = "2026-02-13T10:04:32.008Z" },
+]
+
+[[package]]
+name = "types-protobuf"
+version = "7.34.1.20260518"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/29/59/e2b13b499d15e6720150c4b1a8d91e31fcacf716b432397475b3151ff7e4/types_protobuf-7.34.1.20260518.tar.gz", hash = "sha256:28cfaded25889cb83ebfb63cfb0a43628f0b6f3785767bec17287dc6468795f2", size = 68936, upload-time = "2026-05-18T06:01:47.332Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2a/1f/ec5caf72c2e3b688ca3927e0979a04ddad19e1afc4bf1c199bd743e0f419/types_protobuf-7.34.1.20260518-py3-none-any.whl", hash = "sha256:a0a5337413347166439c0e07cbc26c6164d091401c6f01b1dfd8cdb966c4dd8f", size = 85992, upload-time = "2026-05-18T06:01:45.696Z" },
 ]
 
 [[package]]

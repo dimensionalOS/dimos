@@ -36,6 +36,7 @@ from dimos.protocol.pubsub.impl.lcmpubsub import LCM, PickleLCM, Topic as LCMTop
 from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic
 from dimos.protocol.pubsub.impl.shmpubsub import BytesSharedMemory, PickleSharedMemory
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
+from dimos.protocol.pubsub.impl.webrtc.providers.livekit_broker import LiveKitBrokerConfig
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import ProviderConfig
 from dimos.protocol.pubsub.impl.webrtc.webrtcpubsub import WebRTCPubSub
 from dimos.utils.logging_config import setup_logger
@@ -456,6 +457,21 @@ class CloudflareTransport(WebRTCTransport[M]):
     _config_cls = BrokerConfig
 
 
+class LiveKitTransport(WebRTCTransport[M]):
+    """WebRTC DataChannels via the hosted teleop broker + LiveKit SFU.
+
+    Drop-in alternative to :class:`CloudflareTransport`; config kwargs flow into
+    :class:`LiveKitBrokerConfig` (unset fields fall back to ``TELEOP_*`` env).
+
+        unitree_go2_livekit = unitree_go2_basic.transports({
+            ("cmd_vel", Twist): LiveKitTransport("cmd_unreliable", TwistStamped),
+            ("color_image", Image): LiveKitVideoTransport(),
+        })
+    """
+
+    _config_cls = LiveKitBrokerConfig
+
+
 class WebRTCVideoTransport(Transport[Any]):
     """Robot camera → remote viewer as a WebRTC video track (provider-agnostic).
 
@@ -513,6 +529,12 @@ class CloudflareVideoTransport(WebRTCVideoTransport):
     """Camera → teleop web client via the hosted broker (see WebRTCVideoTransport)."""
 
     _config_cls = BrokerConfig
+
+
+class LiveKitVideoTransport(WebRTCVideoTransport):
+    """Camera → teleop web client via the hosted broker + LiveKit (see WebRTCVideoTransport)."""
+
+    _config_cls = LiveKitBrokerConfig
 
 
 class ZenohTransport(PubSubTransport[T]): ...

@@ -73,6 +73,7 @@ all_blueprints = {
     "openarm-planner-coordinator": "dimos.robot.manipulators.openarm.blueprints:openarm_planner_coordinator",
     "path-planner-eval": "dimos.navigation.nav_3d.evaluator.blueprints:path_planner_eval",
     "teleop-hosted-go2": "dimos.teleop.quest_hosted.blueprints:teleop_hosted_go2",
+    "teleop-hosted-go2-livekit": "dimos.teleop.quest_hosted.blueprints:teleop_hosted_go2_livekit",
     "teleop-hosted-go2-transport": "dimos.teleop.quest_hosted.blueprints:teleop_hosted_go2_transport",
     "teleop-hosted-xarm7": "dimos.teleop.quest_hosted.blueprints:teleop_hosted_xarm7",
     "teleop-phone": "dimos.teleop.phone.blueprints:teleop_phone",

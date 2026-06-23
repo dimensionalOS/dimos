@@ -329,6 +329,12 @@ webrtc = [
     "httpx>=0.27.0",
 ]
 
+livekit = [
+    # WebRTC pubsub over the hosted broker's LiveKit backend (robot rtc client).
+    "livekit>=1.0.0",
+    "httpx>=0.27.0",
+]
+
 base = [
     "dimos[agents,web,perception,visualization]",
 ]
@@ -533,6 +539,8 @@ module = [
     "faster_whisper",
     "geometry_msgs.*",
     "lazy_loader",
+    "livekit",
+    "livekit.*",
     "mcap",
     "mcap.*",
     "mujoco",
