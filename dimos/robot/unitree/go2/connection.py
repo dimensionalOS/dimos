@@ -365,9 +365,13 @@ class GO2Connection(Module, Camera, Pointcloud):
                 self._soc_parse_warned = True
                 logger.warning("lowstate: could not read bms_state.soc — battery unavailable")
 
-    @rpc
+    @skill
     def get_battery_soc(self) -> int | None:
-        """Latest battery state-of-charge (0-100%), or None until first lowstate."""
+        """Returns the robot's battery state-of-charge as a percentage (0-100).
+
+        Use this skill to answer battery / power / charge questions. Returns
+        None if no low-level state has been received yet.
+        """
         return getattr(self, "_latest_soc", None)
 
     @rpc
