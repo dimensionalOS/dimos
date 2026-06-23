@@ -45,7 +45,7 @@ from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.protocol.tf.tf import LCMTF, TFSpec
-from dimos.spec.utils import Spec
+from dimos.spec.web import WebHostSpec
 from dimos.utils import colors
 from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
@@ -850,13 +850,6 @@ def _log_task_exception(task: asyncio.Task[Any]) -> None:
         f"Unhandled exception in async task {name!r}: {type(exc).__name__}: {exc}",
         exc_info=exc,
     )
-
-
-class WebHostSpec(Spec, Protocol):
-    """A module that hosts web bundles (implemented by the ts_bridge)."""
-
-    @rpc
-    def web_register(self, name: str, files: dict[str, bytes]) -> None: ...
 
 
 WebModuleT = TypeVar("WebModuleT", bound=Module)

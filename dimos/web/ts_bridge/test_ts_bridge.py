@@ -17,9 +17,10 @@ from typing import Any
 
 import pytest
 
-from dimos.core.module import Module, WebHostSpec, web_init, web_module
+from dimos.core.module import Module, web_init, web_module
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.spec.web import WebHostSpec
 from dimos.web.ts_bridge.ts_bridge_module import (
     ClientSubscription,
     DimosWebsocket,
