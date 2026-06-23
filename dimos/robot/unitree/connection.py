@@ -162,7 +162,7 @@ class UnitreeWebRTCConnection(Resource):
             self.thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
     def _publish_move(self, vx: float, vy: float, vyaw: float) -> None:
-        """Publish one SPORT ``Move`` (api_id 1008) velocity command. """
+        """Publish one SPORT ``Move`` (api_id 1008) velocity command."""
         self._move_seq += 1
         payload = {
             "header": {
@@ -186,8 +186,8 @@ class UnitreeWebRTCConnection(Resource):
         """Send a velocity command to the robot.
 
         ``twist`` is a body-frame velocity (x forward, y left, z yaw CCW) in real
-        m/s & rad/s, sent via the calibrated SPORT ``Move`` API. 
-        
+        m/s & rad/s, sent via the calibrated SPORT ``Move`` API.
+
         Returns True if the command was sent successfully.
         """
         x, y, yaw = twist.linear.x, twist.linear.y, twist.angular.z
