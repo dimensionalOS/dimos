@@ -177,6 +177,9 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
     def set_obstacle_avoidance(self, enabled: bool = True) -> None:
         pass
 
+    def set_rage_mode(self, enable: bool) -> bool:
+        return True
+
     @simple_mcache
     def lidar_stream(self) -> Observable[PointCloud2]:
         return self.replay.streams.lidar.observable()
@@ -338,7 +341,8 @@ class GO2Connection(Module, Camera, Pointcloud):
     @rpc
     def set_rage_mode(self, enable: bool) -> bool:
         """Toggle Rage Mode on/off (~2.5 m/s envelope when on).
-        Ensures BalanceStand precondition regardless of current FSM state.
+        On the WebRTC backend this re-establishes the BalanceStand
+        precondition before toggling; sim backends are no-ops.
         """
         result = self.connection.set_rage_mode(enable)
         logger.info("Rage Mode %s", "enabled" if enable else "disabled")

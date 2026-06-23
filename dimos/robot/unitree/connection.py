@@ -323,10 +323,8 @@ class UnitreeWebRTCConnection(Resource):
     def set_rage_mode(self, enable: bool) -> bool:
         """Toggle Rage Mode (api 2059) over WebRTC, both directions.
 
-        Mirrors the DDS adapter recipe: BalanceStand → 2059 {data:enable} →
-        on enable, settle + SwitchJoystick(True); on disable, SwitchJoystick(False)
-        to return to the normal velocity envelope. After enable, normal move()
-        twists drive at the ~2.5 m/s rage envelope.
+        BalanceStand → 2059 {data:enable} → SwitchJoystick(enable). When on,
+        normal move() twists drive at the ~2.5 m/s rage envelope.
         """
         # Re-establish BalanceStand before toggling (notes: always BalanceStand
         # before flipping Rage).
