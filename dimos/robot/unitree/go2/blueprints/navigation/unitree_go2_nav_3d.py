@@ -94,7 +94,7 @@ unitree_go2_nav_3d = autoconnect(
     PointLio.blueprint(body_frame_id="body"),
     RayTracingVoxelMap.blueprint(
         voxel_size=voxel_size,
-        emit_every=2,
+        emit_every=1,
         global_emit_every=50,
         max_health=10,
         graze_cos=0.85,
