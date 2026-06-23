@@ -703,10 +703,7 @@ jobs:
     - name: Decide whether the needed jobs succeeded or failed
       uses: re-actors/alls-green@release/v1
       with:
-        allowed-skips: |
-          cmu-nav-natives
-          self-hosted-tests
-          self-hosted-large-tests
+        allowed-skips: cmu-nav-natives, self-hosted-tests, self-hosted-large-tests
         jobs: ${{ toJSON(needs) }}
     - name: Trigger Codecov notifications
       uses: codecov/codecov-action@v6
