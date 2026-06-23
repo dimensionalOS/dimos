@@ -94,7 +94,7 @@ class DimSimConnection:
     def set_obstacle_avoidance(self, enabled: bool = True) -> None:
         pass
 
-    def enable_rage_mode(self) -> bool:
+    def set_rage_mode(self, enable: bool) -> bool:
         return True
 
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
