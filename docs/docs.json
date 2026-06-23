@@ -131,6 +131,7 @@
           {
             "group": "Navigation",
             "pages": [
+              "capabilities/navigation/index",
               "capabilities/navigation/cmu_nav",
               {
                 "group": "Native",
