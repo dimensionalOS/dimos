@@ -343,7 +343,7 @@ impl Worker {
     }
 }
 
-/// True when start is within `tol` of goal in the ground plane.
+/// True if within tolerance of the goal on the ground plane.
 fn is_at_goal(start: Xyz, goal: Xyz, tol: f32) -> bool {
     (start.0 - goal.0).hypot(start.1 - goal.1) < tol
 }

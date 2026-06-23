@@ -9,8 +9,7 @@ use validator::Validate;
 
 use crate::edges::edges_to_segments;
 use crate::mls_planner::{Config, Planner, RegionBounds};
-use crate::voxel::surface_point_xyz;
-use crate::voxel::VoxelKey;
+use crate::voxel::{surface_point_xyz, VoxelKey};
 
 #[pyclass]
 pub struct MLSPlanner {
