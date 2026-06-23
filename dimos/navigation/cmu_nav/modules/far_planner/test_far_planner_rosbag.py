@@ -26,7 +26,7 @@ import pytest
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.navigation.nav_stack.tests.rosbag_fixtures import (
+from dimos.navigation.cmu_nav.tests.rosbag_fixtures import (
     LcmCollector,
     NativeProcessRunner,
     feed_at_original_timing,

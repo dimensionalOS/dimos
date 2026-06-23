@@ -18,7 +18,7 @@ from collections.abc import Callable
 
 import pytest
 
-from dimos.navigation.nav_stack.modules.simple_planner.simple_planner import (
+from dimos.navigation.cmu_nav.modules.simple_planner.simple_planner import (
     Costmap,
     SimplePlanner,
     StuckState,

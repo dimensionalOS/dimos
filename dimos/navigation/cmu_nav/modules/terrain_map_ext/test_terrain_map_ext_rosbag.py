@@ -28,7 +28,7 @@ import numpy as np
 import pytest
 from scipy.spatial import cKDTree
 
-from dimos.navigation.nav_stack.modules.terrain_map_ext.terrain_map_ext import (
+from dimos.navigation.cmu_nav.modules.terrain_map_ext.terrain_map_ext import (
     PLANAR_VOXEL_HALF_WIDTH,
     PLANAR_VOXEL_NUM,
     PLANAR_VOXEL_WIDTH,
@@ -39,7 +39,7 @@ from dimos.navigation.nav_stack.modules.terrain_map_ext.terrain_map_ext import (
     TerrainMapExtConfig,
     _voxel_index,
 )
-from dimos.navigation.nav_stack.tests.rosbag_fixtures import load_rosbag_window
+from dimos.navigation.cmu_nav.tests.rosbag_fixtures import load_rosbag_window
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

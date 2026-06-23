@@ -36,7 +36,7 @@ from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_MAP, FRAME_SENSOR
+from dimos.navigation.cmu_nav.frames import FRAME_BODY, FRAME_MAP, FRAME_SENSOR
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

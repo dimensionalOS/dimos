@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared infrastructure for nav_stack cross-wall planning E2E tests.
+"""Shared infrastructure for cmu_nav cross-wall planning E2E tests.
 
 The full stack drives the robot via /clicked_point (PointStamped) goals and
 we verify reach by polling odometry — a different goal-mechanism than the

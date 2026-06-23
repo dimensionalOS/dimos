@@ -52,7 +52,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_ODOM
+from dimos.navigation.cmu_nav.frames import FRAME_BODY, FRAME_ODOM
 from dimos.spec import perception
 
 # Human-readable enums; the C++ binary maps these strings to FAST-LIO's int codes.
