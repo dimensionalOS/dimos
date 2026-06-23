@@ -22,7 +22,7 @@ the optional dependency installed.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 import tempfile
 import time
@@ -70,11 +70,9 @@ class _RoboPlanRobotData:
 
 @dataclass
 class RoboPlanContext:
-    """DimOS context wrapper with per-context RoboPlan collision scratch."""
+    """DimOS context wrapper for RoboPlan world state."""
 
     q_by_robot: dict[WorldRobotID, NDArray[np.float64]] = field(default_factory=dict)
-    collision_context: Any = None
-    geometry_revision: int = 0
 
 
 class RoboPlanWorld:
@@ -91,8 +89,7 @@ class RoboPlanWorld:
         self._obstacle_handles: dict[str, Any] = {}
         self._robot_counter = 0
         self._finalized = False
-        self._geometry_revision = 0
-        self._live_context = RoboPlanContext(geometry_revision=self._geometry_revision)
+        self._live_context = RoboPlanContext()
         self._srdf_tempdirs: list[tempfile.TemporaryDirectory[str]] = []
 
     # Robot Management
@@ -150,7 +147,6 @@ class RoboPlanWorld:
         handle = self._add_obstacle_to_scene(obstacle, obstacle_id)
         self._obstacles[obstacle_id] = obstacle
         self._obstacle_handles[obstacle_id] = handle
-        self._bump_geometry_revision()
         return obstacle_id
 
     def remove_obstacle(self, obstacle_id: str) -> bool:
@@ -162,7 +158,6 @@ class RoboPlanWorld:
         scene.removeGeometry(handle)
         del self._obstacles[obstacle_id]
         self._obstacle_handles.pop(obstacle_id, None)
-        self._bump_geometry_revision()
         return True
 
     def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
@@ -172,8 +167,7 @@ class RoboPlanWorld:
         handle = self._obstacle_handles.get(obstacle_id, obstacle_id)
         scene = self._require_scene()
         scene.updateGeometryPlacement(handle, pose_to_matrix(pose))
-    self._obstacles[obstacle_id] = replace(self._obstacles[obstacle_id], pose=pose)
-        self._bump_geometry_revision()
+        self._obstacles[obstacle_id] = replace(self._obstacles[obstacle_id], pose=pose)
         return True
 
     def clear_obstacles(self) -> None:
@@ -195,8 +189,6 @@ class RoboPlanWorld:
         """
         self._require_scene()
         self._finalized = True
-        self._live_context.collision_context = self._create_collision_context()
-        self._live_context.geometry_revision = self._geometry_revision
 
     @property
     def is_finalized(self) -> bool:
@@ -208,7 +200,6 @@ class RoboPlanWorld:
     def get_live_context(self) -> RoboPlanContext:
         """Get the live context that mirrors robot state."""
         self._require_finalized()
-        self._refresh_context_if_needed(self._live_context)
         return self._live_context
 
     @contextmanager
@@ -216,11 +207,7 @@ class RoboPlanWorld:
         """Create a per-consumer context with independent collision scratch."""
         self._require_finalized()
         ctx = RoboPlanContext(
-            q_by_robot={
-                robot_id: q.copy() for robot_id, q in self._live_context.q_by_robot.items()
-            },
-            collision_context=self._create_collision_context(),
-            geometry_revision=self._geometry_revision,
+            q_by_robot={robot_id: q.copy() for robot_id, q in self._live_context.q_by_robot.items()}
         )
         yield ctx
 
@@ -252,7 +239,6 @@ class RoboPlanWorld:
     def is_collision_free(self, ctx: RoboPlanContext, robot_id: WorldRobotID) -> bool:
         """Check if the robot configuration in a context is collision-free."""
         self._require_finalized()
-        self._refresh_context_if_needed(ctx)
         q = ctx.q_by_robot.get(robot_id)
         if q is None:
             raise KeyError(f"Robot '{robot_id}' not found in context")
@@ -537,21 +523,6 @@ class RoboPlanWorld:
         if len(q) != len(robot.config.joint_names):
             return q
         return np.asarray(scene.toFullJointPositions(robot.config.name, q), dtype=np.float64)
-
-    def _create_collision_context(self) -> Any:
-        self._require_scene()
-        return None
-
-    def _refresh_context_if_needed(self, ctx: RoboPlanContext) -> None:
-        if ctx.geometry_revision == self._geometry_revision:
-            return
-        ctx.collision_context = self._create_collision_context()
-        ctx.geometry_revision = self._geometry_revision
-
-    def _bump_geometry_revision(self) -> None:
-        self._geometry_revision += 1
-        self._live_context.collision_context = None
-        self._live_context.geometry_revision = -1
 
     def _has_collisions(
         self, robot_id: WorldRobotID, q: NDArray[np.float64], ctx: RoboPlanContext

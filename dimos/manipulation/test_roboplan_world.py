@@ -32,14 +32,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
-
-
-class FakeCollisionContext:
-    def __init__(self, scene: FakeScene) -> None:
-        self.scene = scene
-
-    def hasCollisions(self, q: np.ndarray) -> bool:
-        return self.scene.hasCollisions(q)
+from dimos.utils.transform_utils import pose_to_matrix
 
 
 class FakeJointConfiguration:
@@ -134,7 +127,6 @@ def _install_fake_roboplan(monkeypatch: pytest.MonkeyPatch) -> None:
     roboplan_pkg.__path__ = []  # type: ignore[attr-defined]
     core = ModuleType("roboplan.core")
     core.Scene = FakeScene  # type: ignore[attr-defined]
-    core.CollisionContext = FakeCollisionContext  # type: ignore[attr-defined]
     core.JointConfiguration = FakeJointConfiguration  # type: ignore[attr-defined]
 
     def has_collisions_along_path(
@@ -275,13 +267,11 @@ def test_joint_name_mapping_is_applied_to_input_states(
     assert live_round_trip.position == [0.2, 0.3]
 
 
-def test_obstacle_mutation_invalidates_collision_context(
+def test_obstacle_mutation_updates_scene_and_stored_pose(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     world, _ = _make_world(fake_roboplan, robot_config)
     world.finalize()
-    live = world.get_live_context()
-    original_revision = live.geometry_revision
 
     obstacle = Obstacle(
         name="box",
@@ -290,11 +280,14 @@ def test_obstacle_mutation_invalidates_collision_context(
         dimensions=(0.1, 0.2, 0.3),
     )
     assert world.add_obstacle(obstacle) == "box"
-    assert world.get_live_context().geometry_revision == original_revision + 1
+    assert "box" in world._scene.geometry
+    updated_pose = PoseStamped(position=Vector3(1, 0, 0), orientation=Quaternion())  # type: ignore[call-arg]
     assert world.update_obstacle_pose(
         "box",
-        PoseStamped(position=Vector3(1, 0, 0), orientation=Quaternion()),  # type: ignore[call-arg]
+        updated_pose,
     )
+    assert world.get_obstacles()[0].pose is updated_pose
+    np.testing.assert_allclose(world._scene.geometry["box"], pose_to_matrix(updated_pose))
     assert world.remove_obstacle("box")
     assert world.get_obstacles() == []
 
