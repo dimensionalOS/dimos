@@ -18,6 +18,31 @@ pub struct MLSPlanner {
     planner: Planner,
 }
 
+/// Extract a (N, 3) float32 numpy array into xyz tuples, dropping any row with
+/// a non-finite coordinate.
+fn extract_points(points: &Bound<'_, PyAny>) -> PyResult<Vec<(f32, f32, f32)>> {
+    let points: PyReadonlyArray2<'_, f32> = points
+        .extract()
+        .map_err(|_| PyValueError::new_err("points must be a (N, 3) float32 numpy array"))?;
+    let shape = points.shape();
+    if shape[1] != 3 {
+        return Err(PyValueError::new_err(format!(
+            "points must be (N, 3) float32, got shape {:?}",
+            shape
+        )));
+    }
+    let arr = points.as_array();
+    let n = shape[0];
+    Ok((0..n)
+        .filter_map(|i| {
+            let x = arr[[i, 0]];
+            let y = arr[[i, 1]];
+            let z = arr[[i, 2]];
+            (x.is_finite() && y.is_finite() && z.is_finite()).then_some((x, y, z))
+        })
+        .collect())
+}
+
 #[pymethods]
 impl MLSPlanner {
     #[new]
@@ -72,27 +97,7 @@ impl MLSPlanner {
     }
 
     fn update_global_map(&mut self, py: Python<'_>, points: &Bound<'_, PyAny>) -> PyResult<()> {
-        let points: PyReadonlyArray2<'_, f32> = points
-            .extract()
-            .map_err(|_| PyValueError::new_err("points must be a (N, 3) float32 numpy array"))?;
-        let shape = points.shape();
-        if shape[1] != 3 {
-            return Err(PyValueError::new_err(format!(
-                "points must be (N, 3) float32, got shape {:?}",
-                shape
-            )));
-        }
-        let arr = points.as_array();
-        let n = shape[0];
-        let pts: Vec<(f32, f32, f32)> = (0..n)
-            .filter_map(|i| {
-                let x = arr[[i, 0]];
-                let y = arr[[i, 1]];
-                let z = arr[[i, 2]];
-                (x.is_finite() && y.is_finite() && z.is_finite()).then_some((x, y, z))
-            })
-            .collect();
-
+        let pts = extract_points(points)?;
         let config = &self.config;
         let planner = &mut self.planner;
         py.allow_threads(move || planner.update_global_map(&pts, config));
@@ -109,27 +114,7 @@ impl MLSPlanner {
         z_min: f32,
         z_max: f32,
     ) -> PyResult<()> {
-        let points: PyReadonlyArray2<'_, f32> = points
-            .extract()
-            .map_err(|_| PyValueError::new_err("points must be a (N, 3) float32 numpy array"))?;
-        let shape = points.shape();
-        if shape[1] != 3 {
-            return Err(PyValueError::new_err(format!(
-                "points must be (N, 3) float32, got shape {:?}",
-                shape
-            )));
-        }
-        let arr = points.as_array();
-        let n = shape[0];
-        let pts: Vec<(f32, f32, f32)> = (0..n)
-            .filter_map(|i| {
-                let x = arr[[i, 0]];
-                let y = arr[[i, 1]];
-                let z = arr[[i, 2]];
-                (x.is_finite() && y.is_finite() && z.is_finite()).then_some((x, y, z))
-            })
-            .collect();
-
+        let pts = extract_points(points)?;
         let bounds = RegionBounds {
             origin_x: origin.0,
             origin_y: origin.1,

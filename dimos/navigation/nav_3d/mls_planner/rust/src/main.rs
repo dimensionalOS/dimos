@@ -35,7 +35,7 @@ enum MapUpdate {
 }
 
 #[derive(Module)]
-#[module(setup = spawn_worker)]
+#[module(setup = spawn_worker, teardown = stop_worker)]
 struct MlsPlanner {
     #[input(decode = PointCloud2::decode, handler = on_global_map)]
     global_map: Input<PointCloud2>,
@@ -78,6 +78,9 @@ struct MlsPlanner {
     latest_start: Shared<Xyz>,
     active_goal: Shared<Xyz>,
     wake: Arc<Notify>,
+
+    // Handle to the background worker, aborted on teardown.
+    worker: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl MlsPlanner {
@@ -94,7 +97,14 @@ impl MlsPlanner {
             node_edges: self.node_edges.clone(),
             path: self.path.clone(),
         };
-        tokio::spawn(worker.run());
+        self.worker = Some(tokio::spawn(worker.run()));
+    }
+
+    /// Abort the background worker on teardown.
+    async fn stop_worker(&mut self) {
+        if let Some(handle) = self.worker.take() {
+            handle.abort();
+        }
     }
 
     async fn on_global_map(&mut self, msg: PointCloud2) {
@@ -114,10 +124,7 @@ impl MlsPlanner {
     /// Hand a local map and its stamp-matching bounds to the worker once both
     /// are in hand.
     fn try_pair(&mut self) {
-        let (Some(bounds_msg), Some(cloud)) = (&self.pending_bounds, &self.pending_local) else {
-            return;
-        };
-        if !same_stamp(&bounds_msg.header.stamp, &cloud.header.stamp) {
+        if !stamps_paired(self.pending_bounds.as_ref(), self.pending_local.as_ref()) {
             return;
         }
         let bounds = self.pending_bounds.take().expect("checked above");
@@ -139,15 +146,27 @@ impl MlsPlanner {
             Some((p.x as f32, p.y as f32, p.z as f32));
     }
 
-    /// Set the active goal, or clear it when the goal is non-finite, which is
-    /// the cancel signal. Wake the worker so a new click replans right away.
+    /// Set or cancel the active goal from a click, then wake the worker.
     async fn on_goal_pose(&mut self, msg: PoseStamped) {
-        let p = &msg.pose.position;
-        let goal = (p.x as f32, p.y as f32, p.z as f32);
-        *self.active_goal.lock().expect("goal mutex") =
-            (goal.0.is_finite() && goal.1.is_finite() && goal.2.is_finite()).then_some(goal);
+        *self.active_goal.lock().expect("goal mutex") = goal_position(&msg.pose.position);
         self.wake.notify_one();
     }
+}
+
+/// True when bounds and a local cloud are both present with matching stamps,
+/// so they form one paired region update.
+fn stamps_paired(bounds: Option<&PoseStamped>, cloud: Option<&PointCloud2>) -> bool {
+    match (bounds, cloud) {
+        (Some(b), Some(c)) => same_stamp(&b.header.stamp, &c.header.stamp),
+        _ => false,
+    }
+}
+
+/// The goal position, or None when any coordinate is non-finite, which is the
+/// cancel signal.
+fn goal_position(p: &Point) -> Option<Xyz> {
+    let goal = (p.x as f32, p.y as f32, p.z as f32);
+    (goal.0.is_finite() && goal.1.is_finite() && goal.2.is_finite()).then_some(goal)
 }
 
 /// Owns the planner graph and does every map mutation, graph publish, and
@@ -543,5 +562,53 @@ mod tests {
         assert!(same_stamp(&a, &Time { sec: 5, nsec: 7 }));
         assert!(!same_stamp(&a, &Time { sec: 5, nsec: 8 }));
         assert!(!same_stamp(&a, &Time { sec: 6, nsec: 7 }));
+    }
+
+    fn stamped(stamp: Time) -> Header {
+        Header {
+            stamp,
+            ..Default::default()
+        }
+    }
+
+    fn bounds_at(stamp: Time) -> PoseStamped {
+        PoseStamped {
+            header: stamped(stamp),
+            ..Default::default()
+        }
+    }
+
+    fn cloud_at(stamp: Time) -> PointCloud2 {
+        PointCloud2 {
+            header: stamped(stamp),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn stamps_paired_only_when_both_present_and_stamps_match() {
+        let s = Time { sec: 2, nsec: 3 };
+        let b = bounds_at(s.clone());
+        let c = cloud_at(s);
+        assert!(stamps_paired(Some(&b), Some(&c)));
+
+        let other = cloud_at(Time { sec: 2, nsec: 4 });
+        assert!(!stamps_paired(Some(&b), Some(&other)));
+
+        assert!(!stamps_paired(Some(&b), None));
+        assert!(!stamps_paired(None, Some(&c)));
+        assert!(!stamps_paired(None, None));
+    }
+
+    fn point(x: f64, y: f64, z: f64) -> Point {
+        Point { x, y, z }
+    }
+
+    #[test]
+    fn goal_position_passes_finite_and_cancels_on_non_finite() {
+        assert_eq!(goal_position(&point(1.0, 2.0, 3.0)), Some((1.0, 2.0, 3.0)));
+        assert_eq!(goal_position(&point(f64::NAN, 0.0, 0.0)), None);
+        assert_eq!(goal_position(&point(0.0, f64::INFINITY, 0.0)), None);
+        assert_eq!(goal_position(&point(0.0, 0.0, f64::NEG_INFINITY)), None);
     }
 }
