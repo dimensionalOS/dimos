@@ -33,10 +33,10 @@ To create the map file (`.pc2.lcm`):
 
 ```bash
 # default name from step 1:
-dimos map recording_go2 --export
+dimos map global recording_go2 --export
 
 # renamed:
-dimos map {DB_NAME} --export
+dimos map global {DB_NAME} --export
 ```
 
 `--export` implies `--pgo` (runs pose graph optimization) and writes
