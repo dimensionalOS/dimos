@@ -480,8 +480,32 @@ class RoboPlanWorld:
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
         _ = model_handle
         scene = self._require_scene()
+        joint_order = self._query_scene_joint_order(scene, config)
+        if joint_order is None:
+            return None
         lower, upper = scene.getPositionLimitVectors(config.name, False)
-        return np.asarray(lower, dtype=np.float64), np.asarray(upper, dtype=np.float64)
+        lower_array = np.asarray(lower, dtype=np.float64)
+        upper_array = np.asarray(upper, dtype=np.float64)
+        if len(joint_order) != len(lower_array) or len(joint_order) != len(upper_array):
+            raise ValueError(
+                "RoboPlan joint limit order length does not match returned limit vectors"
+            )
+        if len(set(joint_order)) != len(joint_order):
+            raise ValueError("RoboPlan returned duplicate joint names for joint limits")
+        if set(joint_order) != set(config.joint_names):
+            raise ValueError(
+                "RoboPlan joint limit names do not match configured joint_names: "
+                f"RoboPlan={joint_order}, configured={config.joint_names}"
+            )
+        order_indices = [joint_order.index(joint_name) for joint_name in config.joint_names]
+        return lower_array[order_indices], upper_array[order_indices]
+
+    def _query_scene_joint_order(self, scene: Any, config: RobotModelConfig) -> list[str] | None:
+        try:
+            group_info = scene.getJointGroupInfo(config.name)
+        except AttributeError:
+            return None
+        return list(group_info.joint_names)
 
     def _get_robot(self, robot_id: WorldRobotID) -> _RoboPlanRobotData:
         if robot_id not in self._robots:

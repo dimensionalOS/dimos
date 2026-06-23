@@ -20,7 +20,7 @@ import importlib
 from pathlib import Path
 import sys
 from types import ModuleType
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 import pytest
@@ -49,7 +49,16 @@ class FakeJointPath:
         self.positions = positions
 
 
+class FakeJointGroupInfo:
+    def __init__(self, joint_names: list[str]) -> None:
+        self.joint_names = joint_names
+
+
 class FakeScene:
+    joint_group_joint_names: ClassVar[list[str]] = ["joint1", "joint2"]
+    position_limits_lower: ClassVar[list[float]] = [-1.0, -2.0]
+    position_limits_upper: ClassVar[list[float]] = [1.0, 2.0]
+
     def __init__(self, *args: Any) -> None:
         self.constructor_args = args
         self.models: list[tuple[str, str, dict[str, str]]] = []
@@ -66,7 +75,11 @@ class FakeScene:
         self, group_name: str = "", collapsed: bool = False
     ) -> tuple[np.ndarray, np.ndarray]:
         _ = (group_name, collapsed)
-        return np.asarray([-1.0, -2.0]), np.asarray([1.0, 2.0])
+        return np.asarray(self.position_limits_lower), np.asarray(self.position_limits_upper)
+
+    def getJointGroupInfo(self, name: str) -> FakeJointGroupInfo:
+        _ = name
+        return FakeJointGroupInfo(self.joint_group_joint_names)
 
     def toFullJointPositions(self, group_name: str, q: np.ndarray) -> np.ndarray:
         _ = group_name
@@ -229,6 +242,35 @@ def test_robot_registration_finalization_and_joint_limits(
 
     world.finalize()
     assert world.is_finalized
+
+
+def test_scene_joint_limits_are_reordered_to_configured_joint_order(
+    fake_roboplan: None, robot_config: RobotModelConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = robot_config.model_copy(
+        update={"joint_limits_lower": None, "joint_limits_upper": None}
+    )
+    monkeypatch.setattr(FakeScene, "joint_group_joint_names", ["joint2", "joint1"])
+    monkeypatch.setattr(FakeScene, "position_limits_lower", [-2.0, -1.0])
+    monkeypatch.setattr(FakeScene, "position_limits_upper", [2.0, 1.0])
+
+    world, robot_id = _make_world(fake_roboplan, config)
+
+    lower, upper = world.get_joint_limits(robot_id)
+    np.testing.assert_allclose(lower, [-1.0, -2.0])
+    np.testing.assert_allclose(upper, [1.0, 2.0])
+
+
+def test_scene_joint_limits_validate_joint_names(
+    fake_roboplan: None, robot_config: RobotModelConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = robot_config.model_copy(
+        update={"joint_limits_lower": None, "joint_limits_upper": None}
+    )
+    monkeypatch.setattr(FakeScene, "joint_group_joint_names", ["joint2", "extra_joint"])
+
+    with pytest.raises(ValueError, match="joint limit names do not match"):
+        _make_world(fake_roboplan, config)
 
 
 def test_context_cloning_and_joint_state_round_trip(
