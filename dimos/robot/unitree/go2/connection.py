@@ -50,6 +50,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.utils.decorators.decorators import cached_property, simple_mcache
 
 if sys.version_info < (3, 13):
@@ -225,6 +226,7 @@ class GO2Connection(Module, Camera, Pointcloud):
     camera_info_static: CameraInfo = _camera_info_static()
     _camera_info_thread: Thread | None = None
     _latest_video_frame: Image | None = None
+    _latest_lowstate: LowStateMsg | None = None
 
     @classmethod
     def rerun_views(cls):  # type: ignore[no-untyped-def]
@@ -356,14 +358,9 @@ class GO2Connection(Module, Camera, Pointcloud):
         logger.info("Rage Mode %s", "enabled" if enable else "disabled")
         return result
 
-    def _on_lowstate(self, msg: Any) -> None:
-        """Cache battery SOC from the lowstate push stream (bms_state.soc, %)."""
-        try:
-            self._latest_soc = int(msg["data"]["bms_state"]["soc"])
-        except (KeyError, TypeError, ValueError):
-            if not getattr(self, "_soc_parse_warned", False):
-                self._soc_parse_warned = True
-                logger.warning("lowstate: could not read bms_state.soc — battery unavailable")
+    def _on_lowstate(self, msg: LowStateMsg) -> None:
+        """Cache the latest low-level state push (battery, IMU, motors, etc.)."""
+        self._latest_lowstate = msg
 
     @skill
     def get_battery_soc(self) -> int | None:
@@ -372,7 +369,10 @@ class GO2Connection(Module, Camera, Pointcloud):
         Use this skill to answer battery / power / charge questions. Returns
         None if no low-level state has been received yet.
         """
-        return getattr(self, "_latest_soc", None)
+        try:
+            return int(self._latest_lowstate["data"]["bms_state"]["soc"])  # type: ignore[index]
+        except (KeyError, TypeError, ValueError):
+            return None
 
     @rpc
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
