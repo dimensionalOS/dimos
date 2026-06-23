@@ -49,7 +49,10 @@ from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.types.timestamped import Timestamped
 from dimos.utils.decorators.decorators import simple_mcache
+from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure, callback_to_observable
+
+logger = setup_logger()
 
 VideoMessage: TypeAlias = NDArray[np.uint8]  # Shape: (height, width, 3)
 
@@ -328,7 +331,8 @@ class UnitreeWebRTCConnection(Resource):
         """
         # Re-establish BalanceStand before toggling (notes: always BalanceStand
         # before flipping Rage).
-        self.balance_stand()
+        if not self.balance_stand():
+            logger.warning("balance_stand() failed before rage toggle — proceeding")
         time.sleep(0.3)
 
         rage_ok = bool(
