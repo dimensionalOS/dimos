@@ -29,7 +29,7 @@ from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_con
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.visualization.vis_module import vis_module
 
-voxel_size = 0.1
+voxel_size = 0.08
 # Height of the head-mounted lidar above the ground while standing.
 go2_lidar_height = 0.5
 
@@ -108,7 +108,7 @@ unitree_go2_nav_3d = autoconnect(
         wall_clearance_m=0.2,
         wall_buffer_m=0.75,
         wall_buffer_weight=100.0,
-        step_threshold_m=0.25,
+        step_threshold_m=0.16,
         step_penalty_weight=1.0,
         viz_publish_hz=0.0,
     ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
