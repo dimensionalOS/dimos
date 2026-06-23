@@ -79,6 +79,10 @@ class DimSimConnection:
     def video_stream(self) -> Observable[Image]:
         return Subject()
 
+    @functools.cache
+    def lowstate_stream(self) -> Observable[Any]:
+        return Subject()
+
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
         return True
 
