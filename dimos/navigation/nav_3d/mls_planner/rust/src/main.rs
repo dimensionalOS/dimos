@@ -303,15 +303,20 @@ impl Worker {
     /// Replan from the latest start to the active goal. This gates and does the
     /// IO. The planning itself lives in Planner::plan.
     async fn maybe_replan(&self, planner: &mut Planner, last_path_at: &mut Option<Instant>) {
-        let start = *self.latest_start.lock().expect("start mutex");
-        let goal = *self.active_goal.lock().expect("goal mutex");
-        let (Some(start), Some(goal)) = (start, goal) else {
+        let Some(start) = *self.latest_start.lock().expect("start mutex") else {
             return;
         };
-        if is_at_goal(start, goal, self.config.goal_tolerance) {
-            *self.active_goal.lock().expect("goal mutex") = None;
-            return;
-        }
+        let goal = {
+            let mut guard = self.active_goal.lock().expect("goal mutex");
+            let Some(goal) = *guard else {
+                return;
+            };
+            if is_at_goal(start, goal, self.config.goal_tolerance) {
+                *guard = None;
+                return;
+            }
+            goal
+        };
 
         let plan_start = Instant::now();
         let waypoints = tokio::task::block_in_place(|| planner.plan(start, goal, &self.config));
