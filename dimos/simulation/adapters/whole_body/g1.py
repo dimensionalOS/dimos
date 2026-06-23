@@ -192,6 +192,3 @@ class SimMujocoG1WholeBodyAdapter:
 def register(registry: WholeBodyAdapterRegistry) -> None:
     """Register with the whole-body adapter registry."""
     registry.register("sim_mujoco_g1", SimMujocoG1WholeBodyAdapter)
-
-
-__all__ = ["SimMujocoG1WholeBodyAdapter"]

@@ -131,15 +131,13 @@
           {
             "group": "Navigation",
             "pages": [
-              "capabilities/navigation/readme",
-              "capabilities/navigation/nav_stack",
-              "capabilities/navigation/native/index"
-            ]
-          },
-          {
-            "group": "Perception",
-            "pages": [
-              "capabilities/perception/readme"
+              "capabilities/navigation/cmu_nav",
+              {
+                "group": "Native",
+                "pages": [
+                  "capabilities/navigation/native/index"
+                ]
+              }
             ]
           },
           {

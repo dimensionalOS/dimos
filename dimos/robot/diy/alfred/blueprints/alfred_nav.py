@@ -20,9 +20,9 @@ from typing import Any
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
+from dimos.navigation.cmu_nav.main import cmu_nav_rerun_config, create_cmu_nav
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
-from dimos.robot.diy.alfred.config import ALFRED, LOCAL_PLANNER_PRECOMPUTED_PATHS
+from dimos.robot.diy.alfred.config import LOCAL_PLANNER_PRECOMPUTED_PATHS
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
 from dimos.visualization.vis_module import vis_module
 
@@ -54,17 +54,14 @@ alfred_nav = (
         FastLio2.blueprint(
             host_ip=os.getenv("LIDAR_HOST_IP", "192.168.1.5"),
             lidar_ip=os.getenv("LIDAR_IP", "192.168.1.189"),
-            mount=ALFRED.internal_odom_offsets["mid360_link"],
-            map_freq=1.0,
-            config="default.yaml",
         ),
-        create_nav_stack(**nav_config),
+        create_cmu_nav(**nav_config),
         MovementManager.blueprint(),
         AlfredHighLevel.blueprint(),
         vis_module(
             global_config.viewer,
             rerun_config={
-                **nav_stack_rerun_config({"memory_limit": "1GB"}, vis_throttle=0.5),
+                **cmu_nav_rerun_config({"memory_limit": "1GB"}, vis_throttle=0.5),
                 "rerun_open": "native",
             },
         ),
@@ -73,7 +70,6 @@ alfred_nav = (
         [
             # nav stack needs "registered_scan"
             (FastLio2, "lidar", "registered_scan"),
-            (FastLio2, "global_map", "global_map_fastlio"),
             # SimplePlanner / FarPlanner owns way_point — disconnect MovementManager's
             (MovementManager, "way_point", "_mgr_way_point_unused"),
         ]

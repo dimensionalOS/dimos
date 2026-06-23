@@ -73,6 +73,3 @@ unitree_g1_coordinator = (
         }
     )
 )
-
-
-__all__ = ["unitree_g1_coordinator"]
