@@ -689,10 +689,10 @@ main.add_typer(dataprep_app, name="dataprep")
 
 @dataprep_app.command("build")
 def dataprep_build(
-    source: Path = typer.Option(None, "--source", "-s", help="Recording .db to read"),
-    output: Path = typer.Option(None, "--output", help="Dataset output directory"),
+    source: Path | None = typer.Option(None, "--source", "-s", help="Recording .db to read"),
+    output: Path | None = typer.Option(None, "--output", help="Dataset output directory"),
     output_format: str = typer.Option(None, "--format", "-f", help="Output format: lerobot | hdf5"),
-    config_path: Path = typer.Option(
+    config_path: Path | None = typer.Option(
         None, "--config", "-c", help="JSON DataPrepConfig (needed for obs/action stream maps)"
     ),
 ) -> None:
@@ -704,7 +704,9 @@ def dataprep_build(
 
 @dataprep_app.command("inspect")
 def dataprep_inspect(
-    dataset: Path = typer.Argument(None, help="Built dataset: a .hdf5 file or a lerobot directory"),
+    dataset: Path | None = typer.Argument(
+        None, help="Built dataset: a .hdf5 file or a lerobot directory"
+    ),
     output_format: str = typer.Option(
         None, "--format", "-f", help="lerobot | hdf5 (auto-detected from the path if omitted)"
     ),
