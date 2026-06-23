@@ -112,6 +112,9 @@ pub struct Planner {
     graph: PlannerGraph,
     voxel_map: AHashSet<VoxelKey>,
     by_col: ColumnIz,
+    // Last successful path with the goal it served, for safe truncation when a
+    // later replan finds no full path.
+    last_path: Option<((f32, f32, f32), Vec<VoxelKey>)>,
 }
 
 impl Planner {
@@ -406,7 +409,35 @@ impl Planner {
         if self.graph.nodes.is_empty() {
             return None;
         }
-        planner::plan(&self.graph, start, goal, config)
+        planner::plan(&self.graph, start, goal, config).map(|(wp, _)| wp)
+    }
+
+    /// Plan to the goal, or follow the cached path as far as it is still safe.
+    /// Returns the waypoints, empty when nothing ahead is traversable (stop).
+    pub fn plan_or_truncate(
+        &mut self,
+        start: (f32, f32, f32),
+        goal: (f32, f32, f32),
+        config: &Config,
+    ) -> Vec<(f32, f32, f32)> {
+        if !self.graph.nodes.is_empty() {
+            if let Some((waypoints, cells)) = planner::plan(&self.graph, start, goal, config) {
+                self.last_path = Some((goal, cells));
+                return waypoints;
+            }
+        }
+        match &self.last_path {
+            Some((cached_goal, cells)) if *cached_goal == goal => {
+                let safe = planner::truncate_to_safe(&self.graph, cells, start, config);
+                tracing::warn!(
+                    ?goal,
+                    safe_waypoints = safe.len(),
+                    "no full path to goal, validating and following the cached path only while safe"
+                );
+                safe
+            }
+            _ => Vec::new(),
+        }
     }
 
     pub fn graph(&self) -> &PlannerGraph {

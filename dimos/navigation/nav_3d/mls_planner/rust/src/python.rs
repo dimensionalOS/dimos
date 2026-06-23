@@ -205,7 +205,7 @@ impl MLSPlanner {
             .into_pyarray(py)
     }
 
-    /// Returns `(W, 3)` float32 waypoints or `None` if no path exists.
+    /// Returns `(W, 3)` float32 waypoints or `None` if no full path exists.
     fn plan<'py>(
         &self,
         py: Python<'py>,

@@ -22,6 +22,10 @@ const SNAP_SEARCH_RADIUS_M: f32 = 1.5;
 /// Max snap candidates tried when connecting the start.
 const MAX_SNAP_ATTEMPTS: usize = 64;
 
+/// World-frame waypoints paired with the string-pulled cell path that produced
+/// them. The cell path is cached for later safe truncation.
+type PlannedPath = (Vec<(f32, f32, f32)>, Vec<VoxelKey>);
+
 /// Surface cells near the pose, nearest first in xy.
 pub fn snap_candidates(
     surface_lookup: &SurfaceLookup,
@@ -84,14 +88,14 @@ fn best_iz_in_column(
 }
 
 /// Plan path from start pose to goal pose using the node graph.
-/// Returns none if either of the poses can't be snapped to surface or if
-/// there is no valid path.
+/// Returns the waypoints and the string-pulled cell path, or none if either
+/// pose can't be snapped to surface or there is no valid path.
 pub fn plan(
     plg: &PlannerGraph,
     start_pose: (f32, f32, f32),
     goal_pose: (f32, f32, f32),
     config: &Config,
-) -> Option<Vec<(f32, f32, f32)>> {
+) -> Option<PlannedPath> {
     let voxel_size = config.voxel_size;
     let z_tolerance_m = config.robot_height;
     let start_candidates =
@@ -180,9 +184,52 @@ pub fn plan(
     };
     let cells = assemble_cells(plg, &node_seq, &lead_in, &goal_segment);
     let cells = string_pull(plg, &cells, step_cells, &wall_cost);
-    Some(cells_to_waypoints(
-        plg, &cells, start_pose, goal_pose, voxel_size,
-    ))
+    let waypoints = cells_to_waypoints(plg, &cells, start_pose, goal_pose, voxel_size);
+    let path_cells: Vec<VoxelKey> = cells.iter().map(|&id| plg.cells.coord(id)).collect();
+    Some((waypoints, path_cells))
+}
+
+/// Re-validate a cached cell path against the current surface, returning the
+/// waypoints up to the first segment no longer traversable from the robot.
+/// Empty when nothing ahead is safe, which the follower reads as a stop.
+pub fn truncate_to_safe(
+    plg: &PlannerGraph,
+    cached: &[VoxelKey],
+    start_pose: (f32, f32, f32),
+    config: &Config,
+) -> Vec<(f32, f32, f32)> {
+    if cached.is_empty() {
+        return Vec::new();
+    }
+    let voxel_size = config.voxel_size;
+    let step_cells = (config.step_threshold_m / voxel_size).floor() as i32;
+    let wall_cost = WallCost {
+        clearance_m: config.wall_clearance_m,
+        buffer_m: config.wall_buffer_m,
+        buffer_weight: config.wall_buffer_weight,
+        voxel_size,
+    };
+
+    // The cached path runs start -> goal. Validate from its start toward the
+    // goal and keep the contiguous prefix that is still traversable.
+    let mut safe_end = 0usize;
+    for j in 0..cached.len() - 1 {
+        if segment_metrics(plg, cached[j], cached[j + 1], step_cells, &wall_cost).is_some() {
+            safe_end = j + 1;
+        } else {
+            break;
+        }
+    }
+    if safe_end == 0 {
+        return Vec::new();
+    }
+
+    let mut waypoints = Vec::with_capacity(safe_end + 2);
+    waypoints.push(start_pose);
+    for &(ix, iy, iz) in &cached[..=safe_end] {
+        waypoints.push(surface_point_xyz(ix, iy, iz, voxel_size));
+    }
+    waypoints
 }
 
 /// Pick the entry node by connect cost plus cost-to-go, with its on-surface
@@ -654,7 +701,62 @@ mod tests {
             goal_tolerance: 0.3,
             viz_publish_hz: 2.0,
         };
-        plan(plg, start, goal, &config)
+        plan(plg, start, goal, &config).map(|(wp, _)| wp)
+    }
+
+    fn surface_graph(cells: &[VoxelKey]) -> PlannerGraph {
+        let mut plg = PlannerGraph::new();
+        build_surface_lookup(cells, &mut plg.surface_lookup);
+        build_surface_cells(&mut plg.cells, &plg.surface_lookup, VOXEL, 2);
+        plg
+    }
+
+    fn truncate_config() -> Config {
+        Config {
+            world_frame: "world".into(),
+            voxel_size: VOXEL,
+            robot_height: Z_TOL,
+            surface_closing_radius: 0.0,
+            node_spacing_m: 1.0,
+            wall_clearance_m: 0.2,
+            wall_buffer_m: 0.5,
+            wall_buffer_weight: 4.0,
+            step_threshold_m: 0.25,
+            step_penalty_weight: 4.0,
+            goal_tolerance: 0.3,
+            viz_publish_hz: 2.0,
+        }
+    }
+
+    #[test]
+    fn truncate_validates_from_start_and_cuts_at_break() {
+        let cfg = truncate_config();
+        // Cached path runs start (x=0) -> goal (x=9) along the strip.
+        let cached: Vec<VoxelKey> = (0..10).map(|x| (x, 0, 0)).collect();
+        let start = surface_point_xyz(0, 0, 0, VOXEL);
+
+        // Intact surface: the entire cached path is still traversable.
+        let full = truncate_to_safe(&surface_graph(&cached), &cached, start, &cfg);
+        assert_eq!(
+            full.len(),
+            cached.len() + 1,
+            "start pose + every cached cell"
+        );
+
+        // Surface gone at x=5: validate from the start, cut before the gap, and
+        // keep the start-side prefix (cells 0..=4).
+        let gap: Vec<VoxelKey> = (0..10).filter(|&x| x != 5).map(|x| (x, 0, 0)).collect();
+        let cut = truncate_to_safe(&surface_graph(&gap), &cached, start, &cfg);
+        assert_eq!(cut.len(), 6, "start pose + cells 0..=4");
+        assert_eq!(*cut.last().unwrap(), surface_point_xyz(4, 0, 0, VOXEL));
+
+        // Surface gone at x=1: the first step is blocked, so nothing ahead is
+        // safe and the result is empty (a stop).
+        let early: Vec<VoxelKey> = (0..10).filter(|&x| x != 1).map(|x| (x, 0, 0)).collect();
+        assert!(
+            truncate_to_safe(&surface_graph(&early), &cached, start, &cfg).is_empty(),
+            "first step blocked -> empty (stop)"
+        );
     }
 
     #[test]

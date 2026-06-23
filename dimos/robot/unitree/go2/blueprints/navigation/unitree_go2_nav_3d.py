@@ -39,8 +39,8 @@ def _render_global_map(msg: Any) -> Any:
 
 
 def _render_path(msg: Any) -> Any:
-    # The planner clears its plan with an empty path on every start-pose change.
-    # Logging those would blank the line. Drop them so the last path stays shown.
+    # The planner emits an empty path when it finds no route to the goal.
+    # Logging those would blank the line, so drop them and keep the last path.
     if len(msg.poses) == 0:
         return None
     return msg

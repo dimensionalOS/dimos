@@ -101,9 +101,12 @@ class BasicPathFollower(Module):
             self._current_odom = msg.to_pose_stamped()
 
     def _on_path(self, path: Path) -> None:
-        # An empty path is the planner clearing its plan, not a stop. Keep the
-        # last path.
+        # The planner owns path safety: it sends the route as far as it is safe,
+        # or an empty path when nothing ahead is traversable. Follow what we get.
         if len(path.poses) == 0:
+            with self._lock:
+                self._waypoints = None
+            self.nav_cmd_vel.publish(Twist())
             return
         waypoints = np.array([[p.position.x, p.position.y] for p in path.poses])
         with self._lock:

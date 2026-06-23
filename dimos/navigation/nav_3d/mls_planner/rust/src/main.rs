@@ -319,15 +319,13 @@ impl Worker {
         };
 
         let plan_start = Instant::now();
-        let waypoints = tokio::task::block_in_place(|| planner.plan(start, goal, &self.config));
-        let waypoints = match waypoints {
-            Some(wp) => wp,
-            None => {
-                tracing::warn!(?start, ?goal, "no path between start and goal");
-                publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
-                return;
-            }
-        };
+        let waypoints =
+            tokio::task::block_in_place(|| planner.plan_or_truncate(start, goal, &self.config));
+        if waypoints.is_empty() {
+            // No full path and nothing safe ahead on the cached path: stop.
+            publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
+            return;
+        }
         let plan_ms = plan_start.elapsed().as_secs_f64() * 1e3;
         let produced = Instant::now();
         let since_last_ms = last_path_at.map_or(-1.0, |t| (produced - t).as_secs_f64() * 1e3);
