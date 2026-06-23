@@ -349,6 +349,7 @@ jobs:
     # every dev with the substituter configured would unwittingly install. The
     # `if:` guard below is the only thing keeping fork PRs out — DO NOT REMOVE.
     if: |
+      !cancelled() &&
       (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
       needs.cmu-nav-natives-marker.outputs.cache-hit != 'true'
     needs: cmu-nav-natives-marker
@@ -413,7 +414,9 @@ jobs:
   self-hosted-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
     if: |
-      github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+      !cancelled() &&
+      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      contains(fromJSON('["success", "skipped"]'), needs.cmu-nav-natives.result)
     needs: [compute-ros-pin, cmu-nav-natives]
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
