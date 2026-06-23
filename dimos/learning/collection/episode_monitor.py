@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel
 from reactivex.disposable import Disposable
@@ -38,13 +38,20 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+# A button/keyboard press requests one of these; `toggle` resolves to
+# `start`/`save` based on the current state, so it never reaches the output.
+EpisodeCommand: TypeAlias = Literal["start", "save", "discard", "toggle"]
+# What gets published as `EpisodeStatus.last_event` (`init` on boot).
+EpisodeEvent: TypeAlias = Literal["start", "save", "discard", "init"]
+RecordingState: TypeAlias = Literal["idle", "recording"]
+
 
 class EpisodeStatus(BaseModel):
     ts: float
-    state: Literal["idle", "recording"]
+    state: RecordingState
     episodes_saved: int
     episodes_discarded: int
-    last_event: Literal["start", "save", "discard", "init"] = "init"
+    last_event: EpisodeEvent = "init"
     task_label: str | None = None
 
 
@@ -56,11 +63,11 @@ class KeyPress(BaseModel):
 
 
 class EpisodeMonitorModuleConfig(ModuleConfig):
-    button_map: dict[Literal["start", "save", "discard", "toggle"], str] = {
+    button_map: dict[EpisodeCommand, str] = {
         "toggle": "B",
         "discard": "Y",
     }
-    keyboard_map: dict[Literal["start", "save", "discard", "toggle"], str] = {}
+    keyboard_map: dict[EpisodeCommand, str] = {}
     default_task_label: str | None = None
 
 
@@ -75,10 +82,10 @@ class EpisodeMonitorModule(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._state: Literal["idle", "recording"] = "idle"
+        self._state: RecordingState = "idle"
         self._saved: int = 0
         self._discarded: int = 0
-        self._last_event: Literal["start", "save", "discard", "init"] = "init"
+        self._last_event: EpisodeEvent = "init"
         self._prev_bits: dict[str, bool] = {}  # rising-edge detection for buttons
         self._lock = threading.Lock()
 
@@ -115,7 +122,7 @@ class EpisodeMonitorModule(Module):
         ts = time.time()
         # Edge-detect under the lock (it shares `_prev_bits` with reset_counters),
         # then fire transitions outside it — `_transition` takes the same lock.
-        fired: list[Literal["start", "save", "discard", "toggle"]] = []
+        fired: list[EpisodeCommand] = []
         with self._lock:
             for event_name, alias_or_attr in self.config.button_map.items():
                 attr = BUTTON_ALIASES.get(alias_or_attr, alias_or_attr)
@@ -137,7 +144,7 @@ class EpisodeMonitorModule(Module):
                 self._transition(event_name, msg.ts)
                 break
 
-    def _transition(self, event: Literal["start", "save", "discard", "toggle"], ts: float) -> None:
+    def _transition(self, event: EpisodeCommand, ts: float) -> None:
         """State-machine transition. Publishes EpisodeStatus on every change.
 
         ``toggle`` resolves to ``start`` when idle and ``save`` when recording,
@@ -164,9 +171,7 @@ class EpisodeMonitorModule(Module):
             status = self._snapshot(event, ts)
         self._emit(status)
 
-    def _snapshot(
-        self, last_event: Literal["start", "save", "discard", "init"], ts: float
-    ) -> EpisodeStatus:
+    def _snapshot(self, last_event: EpisodeEvent, ts: float) -> EpisodeStatus:
         """Build a status from current state. Caller must hold `self._lock`."""
         self._last_event = last_event
         return EpisodeStatus(
