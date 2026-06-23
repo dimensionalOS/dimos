@@ -1,10 +1,7 @@
-use dimos_module::{run, Input, LcmTransport, Module, Output};
+use dimos_module::{native_config, run, Input, LcmTransport, Module, Output};
 use lcm_msgs::geometry_msgs::{Twist, Vector3};
-use serde::Deserialize;
-use validator::Validate;
 
-#[derive(Debug, Deserialize, Default, Validate)]
-#[serde(deny_unknown_fields)]
+#[native_config]
 struct PongConfig {
     #[validate(range(min = 0, max = 1000))]
     sample_config: i64,

@@ -67,6 +67,8 @@ class Go2Mode(str, Enum):
 class ConnectionConfig(ModuleConfig):
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
     mode: Go2Mode = Go2Mode.DEFAULT
+    # Per-device AES-128 key (Go2 fw >=1.1.15); defaults from GlobalConfig.
+    aes_128_key: str | None = Field(default_factory=lambda m: m["g"].unitree_aes_128_key)
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -111,7 +113,11 @@ BASE_TO_OPTICAL: Transform = Transform(
 )
 
 
-def make_connection(ip: str | None, cfg: GlobalConfig) -> Go2ConnectionProtocol:
+def make_connection(
+    ip: str | None,
+    cfg: GlobalConfig,
+    aes_128_key: str | None = None,
+) -> Go2ConnectionProtocol:
     connection_type = cfg.unitree_connection_type.lower()
 
     if ip in ("fake", "mock", "replay") or connection_type == "replay":
@@ -127,7 +133,7 @@ def make_connection(ip: str | None, cfg: GlobalConfig) -> Go2ConnectionProtocol:
         return DimSimConnection(cfg)
     elif connection_type == "webrtc":
         assert ip is not None, "IP address must be provided"
-        return UnitreeWebRTCConnection(ip)
+        return UnitreeWebRTCConnection(ip, aes_128_key=aes_128_key)
     else:
         raise ValueError(f"Unknown simulator {cfg.simulation!r}. Choose from: mujoco, dimsim")
 
@@ -225,7 +231,9 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self.connection = make_connection(self.config.ip, self.config.g)
+        self.connection = make_connection(
+            self.config.ip, self.config.g, aes_128_key=self.config.aes_128_key
+        )
 
         if hasattr(self.connection, "camera_info_static"):
             self.camera_info_static = self.connection.camera_info_static

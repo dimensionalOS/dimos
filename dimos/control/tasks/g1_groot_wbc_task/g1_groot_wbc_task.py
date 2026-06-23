@@ -734,18 +734,6 @@ class G1GrootWBCTask(BaseControlTask):
         return np.array([gx, gy, gz], dtype=np.float32)
 
 
-__all__ = [
-    "ARM_DEFAULT_POSE",
-    "G1_GROOT_KD",
-    "G1_GROOT_KP",
-    "G1GrootWBCTask",
-    "G1GrootWBCTaskConfig",
-    "g1_arms",
-    "g1_joints",
-    "g1_legs_waist",
-]
-
-
 class G1GrootWBCTaskParams(BaseConfig):
     model_path: str | Path
     hardware_id: str

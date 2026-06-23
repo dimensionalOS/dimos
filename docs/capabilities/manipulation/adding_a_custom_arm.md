@@ -348,9 +348,6 @@ class YourArmAdapter:
 def register(registry: AdapterRegistry) -> None:
     """Register this adapter with the registry."""
     registry.register("yourarm", YourArmAdapter)
-
-
-__all__ = ["YourArmAdapter"]
 ```
 
 ### Key implementation notes
@@ -371,23 +368,6 @@ __all__ = ["YourArmAdapter"]
   ```
 
 ## Step 2: Create Package Files
-
-### \_\_init\_\_.py
-
-```python skip
-"""YourArm manipulator hardware adapter.
-
-Usage:
-    >>> from dimos.hardware.manipulators.yourarm import YourArmAdapter
-    >>> adapter = YourArmAdapter(address="192.168.1.100", dof=6)
-    >>> adapter.connect()
-    >>> positions = adapter.read_joint_positions()
-"""
-
-from dimos.hardware.manipulators.yourarm.adapter import YourArmAdapter
-
-__all__ = ["YourArmAdapter"]
-```
 
 ### How auto-discovery works
 
@@ -448,8 +428,6 @@ from pathlib import Path
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
-from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs import JointState
 
 
 # YourArm (6-DOF) — real hardware
@@ -475,10 +453,6 @@ coordinator_yourarm = ControlCoordinator.blueprint(
             priority=10,                              # Higher priority wins arbitration
         ),
     ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 
@@ -574,12 +548,11 @@ Add this to your `dimos/robot/yourarm/blueprints.py` alongside the coordinator b
 yourarm_planner = manipulation_module(
     robots=[_make_yourarm_config("arm", joint_prefix="arm_", coordinator_task="traj_arm")],
     planning_timeout=10.0,
-    enable_viz=True,
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
+    visualization={"backend": "meshcat"},
 )
+# The planner's `coordinator_joint_state` input auto-connects to the
+# ControlCoordinator's output on the default `/coordinator_joint_state`
+# topic, so no `.transports(...)` override is needed.
 ```
 
 ### Key config fields
@@ -657,7 +630,7 @@ def test_write_positions(mock_adapter):
 ### Integration test with coordinator
 
 ```python skip
-from dimos.control.blueprints.basic import coordinator_mock
+from dimos.robot.manipulators.common.mock import coordinator_mock
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 
 # Build and start coordinator with mock hardware

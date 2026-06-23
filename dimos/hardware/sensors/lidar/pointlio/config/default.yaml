@@ -1,0 +1,69 @@
+# Point-LIO config. Mid-360-specific values to retune for a different sensor:
+# preprocess.lidar_type (Livox), blind/scan_line, mapping.extrinsic_T/R (Mid-360
+# IMU->lidar mount), det_range, fov_degree.
+common:
+    con_frame: false
+    con_frame_num: 1
+    cut_frame: false
+    cut_frame_time_interval: 0.1
+    time_lag_imu_to_lidar: 0.0
+
+preprocess:
+    # LID_TYPE enum (Point-LIO src/preprocess.h):
+    #   1 = AVIA (Livox), 2 = VELO16, 3 = OUST64, 4 = HESAIxt32, 5 = UNILIDAR
+    # 1 selects the Livox branch (preprocess.cpp avia_handler), which expects the
+    # Livox CustomMsg point layout the Mid-360 emits:
+    #   https://github.com/Livox-SDK/livox_ros_driver2/blob/master/msg/CustomMsg.msg
+    lidar_type: 1
+    scan_line: 4
+    scan_rate: 10
+    timestamp_unit: 3        # 3 = nanosecond
+    blind: 0.5
+    # Pre-KF input decimation: keep every Nth raw point. 1 = keep all (disable).
+    point_filter_num: 3
+
+mapping:
+    use_imu_as_input: false  # false = IMU-as-output model (Point-LIO's robust path)
+    prop_at_freq_of_imu: true
+    check_satu: true
+    init_map_size: 10
+    # Pre-KF voxel downsample of each scan before the filter. false = feed the
+    # full scan (disable). Leaf size is filter_size_surf below.
+    space_down_sample: true
+    satu_acc: 3.0            # g; accel >= this is treated as saturated (residual zeroed) to bound velocity
+    satu_gyro: 35.0
+    acc_norm: 1.0           # IMU accel unit: g
+    plane_thr: 0.1
+    filter_size_surf: 0.2   # pre-KF scan downsample leaf size (m), used iff space_down_sample
+    filter_size_map: 0.5
+    ivox_grid_resolution: 2.0   # iVox local-map grid (m)
+    ivox_nearby_type: 6         # NEARBY6
+    cube_side_length: 1000.0
+    det_range: 100.0
+    fov_degree: 360.0
+    imu_en: true
+    start_in_aggressive_motion: false
+    extrinsic_est_en: false
+    imu_time_inte: 0.005
+    lidar_meas_cov: 0.01
+    acc_cov_input: 0.1
+    vel_cov: 20.0
+    gyr_cov_input: 0.01
+    gyr_cov_output: 1000.0
+    acc_cov_output: 500.0
+    b_gyr_cov: 0.0001
+    b_acc_cov: 0.0001
+    imu_meas_acc_cov: 0.01
+    imu_meas_omg_cov: 0.01
+    match_s: 81.0
+    gravity_align: true
+    gravity: [0.0, 0.0, -9.810]
+    gravity_init: [0.0, 0.0, -9.810]
+    extrinsic_T: [-0.011, -0.02329, 0.04412]   # Mid-360 IMU->lidar offset (m)
+    extrinsic_R: [1.0, 0.0, 0.0,
+                  0.0, 1.0, 0.0,
+                  0.0, 0.0, 1.0]
+
+odometry:
+    publish_odometry_without_downsample: false
+    odom_only: false

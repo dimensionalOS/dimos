@@ -13,9 +13,9 @@
 # limitations under the License.
 
 try:
-    from geometry_msgs.msg import Vector3
+    from geometry_msgs.msg import Vector3 as Vector3
 except ImportError:
-    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3 as Vector3
 
 try:
     from geometry_msgs.msg import (
@@ -35,14 +35,3 @@ except ImportError:
     )
     from dimos_lcm.nav_msgs import OccupancyGrid, Odometry
     from dimos_lcm.std_msgs import Header
-
-__all__ = [
-    "Header",
-    "OccupancyGrid",
-    "Odometry",
-    "Point",
-    "Pose",
-    "Quaternion",
-    "Twist",
-    "Vector3",
-]

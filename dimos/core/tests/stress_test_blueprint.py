@@ -25,5 +25,3 @@ demo_mcp_stress_test = autoconnect(
     StressTestModule.blueprint(),
     McpServer.blueprint(),
 )
-
-__all__ = ["demo_mcp_stress_test"]

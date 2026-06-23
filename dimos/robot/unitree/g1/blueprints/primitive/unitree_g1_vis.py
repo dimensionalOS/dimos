@@ -21,7 +21,7 @@ import rerun as rr
 
 from dimos.core.global_config import global_config
 from dimos.msgs.nav_msgs.Path import Path
-from dimos.navigation.nav_stack.main import nav_stack_rerun_config
+from dimos.navigation.cmu_nav.main import cmu_nav_rerun_config
 from dimos.robot.unitree.g1.g1_rerun import g1_costmap, g1_odometry_tf_override, g1_static_robot
 from dimos.visualization.vis_module import vis_module
 
@@ -41,13 +41,12 @@ def _g1_path_colors(path: Path) -> Any:
 
 unitree_g1_vis = vis_module(
     viewer_backend=global_config.viewer,
-    rerun_config=nav_stack_rerun_config(
+    rerun_config=cmu_nav_rerun_config(
         {
             "visual_override": {
                 "world/odometry": g1_odometry_tf_override,
                 "world/lidar": None,
                 "world/local_map": None,
-                "world/global_map_fastlio": None,
                 "world/global_costmap": g1_costmap,
                 "world/path": _g1_path_colors,
             },
@@ -57,5 +56,3 @@ unitree_g1_vis = vis_module(
         vis_throttle=0.5,
     ),
 )
-
-__all__ = ["unitree_g1_vis"]

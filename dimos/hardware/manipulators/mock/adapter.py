@@ -227,6 +227,3 @@ class MockAdapter:
 def register(registry: AdapterRegistry) -> None:
     """Register this adapter with the registry."""
     registry.register("mock", MockAdapter)
-
-
-__all__ = ["MockAdapter"]

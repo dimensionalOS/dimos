@@ -23,7 +23,7 @@ voxel_size = 0.05
 
 
 mid360_fastlio = autoconnect(
-    FastLio2.blueprint(voxel_size=voxel_size, map_voxel_size=voxel_size, map_freq=-1),
+    FastLio2.blueprint(),
     vis_module("rerun"),
 ).global_config(n_workers=2, robot_model="mid360_fastlio2")
 
@@ -41,7 +41,7 @@ mid360_fastlio_voxels = autoconnect(
 ).global_config(n_workers=3, robot_model="mid360_fastlio2_voxels")
 
 mid360_fastlio_voxels_native = autoconnect(
-    FastLio2.blueprint(voxel_size=voxel_size, map_voxel_size=voxel_size, map_freq=3.0),
+    FastLio2.blueprint(),
     vis_module(
         "rerun",
         rerun_config={
@@ -54,7 +54,7 @@ mid360_fastlio_voxels_native = autoconnect(
 
 
 mid360_fastlio_ray_trace = autoconnect(
-    FastLio2.blueprint(voxel_size=voxel_size, map_voxel_size=voxel_size, map_freq=-1),
+    FastLio2.blueprint(),
     RayTracingVoxelMap.blueprint(voxel_size=voxel_size),
     vis_module(
         "rerun",

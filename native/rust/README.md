@@ -3,17 +3,15 @@
 Two crates:
 
 - **`dimos-module`**: runtime. `Module` trait, `Builder`, `Input`/`Output`, `Transport`/`LcmTransport`, `run()`.
-- **`dimos-module-macros`**: `#[derive(Module)]` proc-macro.
+- **`dimos-module-macros`**: `#[derive(Module)]` and `#[native_config]` proc-macros.
 
 ## Writing a module
 
 ```rust
-use dimos_module::{run, Input, LcmTransport, Module, Output};
+use dimos_module::{native_config, run, Input, LcmTransport, Module, Output};
 use lcm_msgs::geometry_msgs::Twist;
-use serde::Deserialize;
-use validator::Validate;
 
-#[derive(Debug, Deserialize, Default, Validate)]
+#[native_config]
 struct MyConfig {
     #[validate(range(min = 0.0))]
     threshold: f64,
@@ -56,17 +54,28 @@ async fn main() {
 - `#[module(setup = fn, teardown = fn)]`: on the struct. Both optional. Names methods on `Self`. `setup` runs once before the input dispatch loop starts (use it to spawn background tasks or initialize resources); `teardown` runs once after the loop exits (use it for cleanup).
 - `#[input(decode = fn, handler = fn)]`: on a field of type `Input<T>`. `decode` is required; `handler` defaults to `handle_<field_name>`.
 - `#[output(encode = fn)]`: on a field of type `Output<T>`. `encode` is required.
-- `#[config]`: on one field. The type must derive `Deserialize + Debug + Validate` (from the [`validator`](https://docs.rs/validator) crate). At most one per struct. If absent, `Config` defaults to `dimos_module::NoConfig`.
+- `#[config]`: on one field. The type must be defined with `#[native_config]` (see [Config](#config)). At most one per struct. If absent, `Config` defaults to `dimos_module::NoConfig`.
 - Unattributed fields are initialized via `Default::default()` and treated as module state.
 
-## Config validation
+## Config
 
-`run()` calls `config.validate()` after deserializing and bails with an `io::Error` on failure. Use `#[validate(schema(function = "..."))]` on the struct for cross-field invariants.
+A config struct is defined with `#[native_config]`. The attribute enforces a one-to-one mapping with the Python wrapper: every field is required and supplied by Python over stdin, with no Rust-side defaults.
+
+It injects `#[derive(Debug, Deserialize, Serialize, Validate)]` and `#[serde(deny_unknown_fields)]`, emits the `NativeConfig` marker impl that `#[config]` requires, and rejects at compile time anything that would let a field be filled in by Rust:
+
+- `Option<T>` fields
+- `#[serde(default)]`, field or container
+- `#[serde(skip)]`, `#[serde(skip_deserializing)]`, `#[serde(flatten)]`
+
+A type alias to `Option` slips past the compile-time check, but the runtime check below still rejects it.
+
+Field-level `#[validate(...)]` and a container `#[validate(schema(function = "..."))]` (from the [`validator`](https://docs.rs/validator) crate) pass through for value and cross-field validation. `run()` calls `config.validate()` after deserializing and bails with an `io::Error` on failure.
 
 ```rust
-use validator::{Validate, ValidationError};
+use dimos_module::native_config;
+use validator::ValidationError;
 
-#[derive(Debug, Deserialize, Validate)]
+#[native_config]
 #[validate(schema(function = "validate_health_range"))]
 struct Config {
     #[validate(range(exclusive_min = 0.0))]
@@ -83,6 +92,8 @@ fn validate_health_range(cfg: &Config) -> Result<(), ValidationError> {
     Ok(())
 }
 ```
+
+At runtime `run()` enforces the mapping on the Python payload: deserialization rejects an unknown field, and a key-set check rejects any field whose JSON key is absent, even an `Option` or a type alias to `Option` that serde would otherwise accept as `None`.
 
 Field name = port name. Ports map to topics via the stdin JSON; unmapped ports fall back to `/{port}`.
 

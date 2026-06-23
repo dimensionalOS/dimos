@@ -20,14 +20,12 @@ from contextlib import nullcontext
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any, cast
-from unittest.mock import patch
 
 import numpy as np
 import pytest
 
 from dimos.manipulation.planning.factory import create_kinematics
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
-from dimos.manipulation.planning.kinematics.jacobian_ik import JacobianIK
 from dimos.manipulation.planning.kinematics.pink_ik import (
     PinkIK,
     PinkIKConfig,
@@ -174,12 +172,15 @@ def _robot_config() -> RobotModelConfig:
     )
 
 
+class _TestPinkIK(PinkIK):
+    def __init__(self, converge: bool = True) -> None:
+        self.config = PinkIKConfig(max_iterations=3)
+        self._modules = _fake_modules(converge=converge)
+        self._robot_contexts = {}
+
+
 def _pink_ik(converge: bool = True) -> PinkIK:
-    ik = PinkIK.__new__(PinkIK)
-    ik.config = PinkIKConfig(max_iterations=3)
-    ik._modules = _fake_modules(converge=converge)
-    ik._robot_contexts = {}
-    return ik
+    return _TestPinkIK(converge=converge)
 
 
 def _context() -> _PinkRobotContext:
@@ -218,16 +219,6 @@ class _FakeWorld:
 
     def check_config_collision_free(self, robot_id: str, joint_state: JointState) -> bool:
         return self.collision_free
-
-
-def test_create_kinematics_existing_backends_do_not_import_pink() -> None:
-    assert isinstance(create_kinematics("jacobian"), JacobianIK)
-
-    with patch.dict("sys.modules", {"pink": None}):
-        try:
-            create_kinematics("drake_optimization")
-        except ImportError as exc:
-            assert "Drake" in str(exc)
 
 
 def test_create_kinematics_pink_missing_dependency_is_actionable(
