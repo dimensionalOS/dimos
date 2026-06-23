@@ -13,7 +13,9 @@ Main steps:
 
 ```bash
 dimos --robot-ip {YOUR_ROBOT_IP} run unitree-go2-memory
+dimos --robot-ip 192.168.2.152 run unitree-go2-memory
 ```
+
 
 If `DIMOS_ROBOT_IP` is set in your environment (or `.env`), you can drop
 the `--robot-ip` flag:
