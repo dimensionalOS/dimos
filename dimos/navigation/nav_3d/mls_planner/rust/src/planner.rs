@@ -190,7 +190,7 @@ pub fn plan(
 }
 
 /// Re-validate a cached cell path against the current surface, returning the
-/// waypoints up to the first segment no longer traversable from the robot.
+/// route ahead of the robot up to the first segment no longer traversable.
 /// Empty when nothing ahead is safe, which the follower reads as a stop.
 pub fn truncate_to_safe(
     plg: &PlannerGraph,
@@ -198,7 +198,7 @@ pub fn truncate_to_safe(
     start_pose: (f32, f32, f32),
     config: &Config,
 ) -> Vec<(f32, f32, f32)> {
-    if cached.is_empty() {
+    if cached.len() < 2 {
         return Vec::new();
     }
     let voxel_size = config.voxel_size;
@@ -210,26 +210,66 @@ pub fn truncate_to_safe(
         voxel_size,
     };
 
-    // The cached path runs start -> goal. Validate from its start toward the
-    // goal and keep the contiguous prefix that is still traversable.
-    let mut safe_end = 0usize;
-    for j in 0..cached.len() - 1 {
+    // The cached path runs start -> goal, but its head is the stale original
+    // start. Resume from where the robot sits on it so the follower is pulled
+    // forward toward the goal, never back to that start. Validate each segment
+    // ahead and keep the contiguous traversable run.
+    let resume = resume_segment(cached, start_pose, voxel_size);
+    let mut safe_end = resume;
+    for j in resume..cached.len() - 1 {
         if segment_metrics(plg, cached[j], cached[j + 1], step_cells, &wall_cost).is_some() {
             safe_end = j + 1;
         } else {
             break;
         }
     }
-    if safe_end == 0 {
+    if safe_end == resume {
         return Vec::new();
     }
 
-    let mut waypoints = Vec::with_capacity(safe_end + 2);
+    let mut waypoints = Vec::with_capacity(safe_end - resume + 1);
     waypoints.push(start_pose);
-    for &(ix, iy, iz) in &cached[..=safe_end] {
+    for &(ix, iy, iz) in &cached[resume + 1..=safe_end] {
         waypoints.push(surface_point_xyz(ix, iy, iz, voxel_size));
     }
     waypoints
+}
+
+/// Index of the cached segment the robot is on, by nearest-point projection in
+/// the ground plane. The route ahead resumes at the following cell.
+fn resume_segment(cached: &[VoxelKey], start: (f32, f32, f32), voxel_size: f32) -> usize {
+    let p = (start.0, start.1);
+    let mut best = 0usize;
+    let mut best_d2 = f32::INFINITY;
+    for i in 0..cached.len() - 1 {
+        let a = surface_point_xyz(cached[i].0, cached[i].1, cached[i].2, voxel_size);
+        let b = surface_point_xyz(
+            cached[i + 1].0,
+            cached[i + 1].1,
+            cached[i + 1].2,
+            voxel_size,
+        );
+        let d2 = point_segment_dist2((a.0, a.1), (b.0, b.1), p);
+        if d2 < best_d2 {
+            best_d2 = d2;
+            best = i;
+        }
+    }
+    best
+}
+
+/// Squared distance from point p to segment a-b in the plane.
+fn point_segment_dist2(a: (f32, f32), b: (f32, f32), p: (f32, f32)) -> f32 {
+    let (abx, aby) = (b.0 - a.0, b.1 - a.1);
+    let denom = abx * abx + aby * aby;
+    let t = if denom == 0.0 {
+        0.0
+    } else {
+        (((p.0 - a.0) * abx + (p.1 - a.1) * aby) / denom).clamp(0.0, 1.0)
+    };
+    let (cx, cy) = (a.0 + t * abx, a.1 + t * aby);
+    let (dx, dy) = (p.0 - cx, p.1 - cy);
+    dx * dx + dy * dy
 }
 
 /// Pick the entry node by connect cost plus cost-to-go, with its on-surface
@@ -729,33 +769,63 @@ mod tests {
     }
 
     #[test]
-    fn truncate_validates_from_start_and_cuts_at_break() {
+    fn truncate_resumes_ahead_of_robot_and_cuts_at_break() {
         let cfg = truncate_config();
         // Cached path runs start (x=0) -> goal (x=9) along the strip.
         let cached: Vec<VoxelKey> = (0..10).map(|x| (x, 0, 0)).collect();
         let start = surface_point_xyz(0, 0, 0, VOXEL);
 
-        // Intact surface: the entire cached path is still traversable.
+        // Intact surface, robot at the start: keep the whole route ahead, which
+        // is the start pose plus cells 1..=9 (the robot's own cell is dropped).
         let full = truncate_to_safe(&surface_graph(&cached), &cached, start, &cfg);
-        assert_eq!(
-            full.len(),
-            cached.len() + 1,
-            "start pose + every cached cell"
-        );
+        assert_eq!(full.len(), cached.len(), "start pose + cells ahead");
+        assert_eq!(full[1], surface_point_xyz(1, 0, 0, VOXEL));
+        assert_eq!(*full.last().unwrap(), surface_point_xyz(9, 0, 0, VOXEL));
 
-        // Surface gone at x=5: validate from the start, cut before the gap, and
-        // keep the start-side prefix (cells 0..=4).
+        // Surface gone at x=5: cut before the gap, keep cells 1..=4 ahead.
         let gap: Vec<VoxelKey> = (0..10).filter(|&x| x != 5).map(|x| (x, 0, 0)).collect();
         let cut = truncate_to_safe(&surface_graph(&gap), &cached, start, &cfg);
-        assert_eq!(cut.len(), 6, "start pose + cells 0..=4");
+        assert_eq!(cut.len(), 5, "start pose + cells 1..=4");
         assert_eq!(*cut.last().unwrap(), surface_point_xyz(4, 0, 0, VOXEL));
 
-        // Surface gone at x=1: the first step is blocked, so nothing ahead is
+        // Surface gone at x=1: the first step ahead is blocked, so nothing is
         // safe and the result is empty (a stop).
         let early: Vec<VoxelKey> = (0..10).filter(|&x| x != 1).map(|x| (x, 0, 0)).collect();
         assert!(
             truncate_to_safe(&surface_graph(&early), &cached, start, &cfg).is_empty(),
             "first step blocked -> empty (stop)"
+        );
+    }
+
+    #[test]
+    fn truncate_does_not_backtrack_when_robot_has_advanced() {
+        let cfg = truncate_config();
+        // Cached route start (x=0) -> goal (x=9). The robot has already walked
+        // to x=5, and the surface is now gone at x=8 (a door closed ahead).
+        let cached: Vec<VoxelKey> = (0..10).map(|x| (x, 0, 0)).collect();
+        let robot = surface_point_xyz(5, 0, 0, VOXEL);
+        let blocked: Vec<VoxelKey> = (0..10).filter(|&x| x != 8).map(|x| (x, 0, 0)).collect();
+
+        let wp = truncate_to_safe(&surface_graph(&blocked), &cached, robot, &cfg);
+
+        // Resumes ahead of the robot: no cell behind x=5, up to the x=8 break.
+        assert_eq!(wp[0], robot);
+        let xs: Vec<i32> = wp[1..]
+            .iter()
+            .map(|w| (w.0 / VOXEL).floor() as i32)
+            .collect();
+        assert!(
+            xs.iter().all(|&x| x >= 5),
+            "path backtracked behind the robot: {xs:?}"
+        );
+        assert_eq!(
+            *xs.last().unwrap(),
+            7,
+            "should stop just before the x=8 break"
+        );
+        assert!(
+            xs.windows(2).all(|p| p[1] > p[0]),
+            "path not monotonic forward: {xs:?}"
         );
     }
 
