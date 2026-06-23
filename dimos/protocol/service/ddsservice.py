@@ -67,9 +67,3 @@ class DDSService(Service):
         if domain_id not in _participants:
             raise RuntimeError(f"DomainParticipant not initialized for domain {domain_id}")
         return _participants[domain_id]
-
-
-__all__ = [
-    "DDSConfig",
-    "DDSService",
-]

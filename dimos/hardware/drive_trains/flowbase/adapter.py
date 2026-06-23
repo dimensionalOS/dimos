@@ -180,6 +180,3 @@ class FlowBaseAdapter:
 def register(registry: TwistBaseAdapterRegistry) -> None:
     """Register this adapter with the registry."""
     registry.register("flowbase", FlowBaseAdapter)
-
-
-__all__ = ["FlowBaseAdapter"]

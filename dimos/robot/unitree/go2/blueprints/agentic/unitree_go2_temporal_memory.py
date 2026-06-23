@@ -27,5 +27,3 @@ unitree_go2_temporal_memory = autoconnect(
     unitree_go2_agentic,
     TemporalMemory.blueprint(config=TemporalMemoryConfig(new_memory=global_config.new_memory)),
 )
-
-__all__ = ["unitree_go2_temporal_memory"]

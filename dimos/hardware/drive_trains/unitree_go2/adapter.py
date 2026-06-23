@@ -686,6 +686,3 @@ class UnitreeGo2TwistAdapter:
 
 def register(registry: TwistBaseAdapterRegistry) -> None:
     registry.register("unitree_go2", UnitreeGo2TwistAdapter)
-
-
-__all__ = ["UnitreeGo2TwistAdapter"]

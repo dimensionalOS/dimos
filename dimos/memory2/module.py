@@ -14,10 +14,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import enum
 import inspect
 import os
 from pathlib import Path
+import sqlite3
 import time
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
@@ -37,6 +39,7 @@ from dimos.memory2.type.observation import EmbeddedObservation, Observation
 from dimos.models.embedding.base import EmbeddingModel
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
 
@@ -44,6 +47,7 @@ if TYPE_CHECKING:
     from reactivex.abc import DisposableBase
 
     from dimos.core.stream import In, Out
+    from dimos.msgs.geometry_msgs.Pose import Pose
 
 logger = setup_logger()
 
@@ -251,18 +255,42 @@ class OnExisting(str, enum.Enum):
     OVERWRITE = "overwrite"
     ERROR = "error"
     BACKUP = "backup"
+    APPEND = "append"
 
 
 class RecorderConfig(MemoryModuleConfig):
     on_existing: OnExisting = OnExisting.BACKUP
     backup_keep_last: int = Field(default=10, ge=0)
+    root_frame: str = "world"
     default_frame_id: str = "base_link"
     tf_tolerance: float = 0.5
     db_path: str | Path = "recording.db"
+    # Also record the live tf stream (under "tf") alongside the In ports.
+    record_tf: bool = True
+    # Rename recorded streams: {port_name: db_stream_name}. Conceptually this is
+    # what the wiring layer's .remappings() expresses, but there's no easy way to
+    # read the active remappings from inside the module (AFAIK), so this config
+    # arg does the per-stream rename directly.
+    stream_remapping: dict[str, str] = Field(default_factory=dict)
+
+
+PoseSetter = Callable[[Any], "Pose | None"]
+
+
+def pose_setter_for(*stream_names: str) -> Callable[[Any], Any]:
+    """Mark a method ``(self, msg) -> Pose | None`` as the pose setter for the
+    given recorded stream(s). Streams without a setter fall back to the tf-based
+    ``world <- frame_id`` lookup."""
+
+    def decorate(fn: Any) -> Any:
+        fn._pose_setter_for = tuple(stream_names)
+        return fn
+
+    return decorate
 
 
 class Recorder(MemoryModule):
-    """Records all ``In`` ports to a memory2 SQLite database.
+    """Records all ``In`` ports to a memory2 SQLite database, plus the live tf tree.
 
     Subclass with the topics you want to record::
 
@@ -271,9 +299,19 @@ class Recorder(MemoryModule):
             lidar: In[PointCloud2]
 
         blueprint.add(MyRecorder, db_path="session.db")
+
+    Each stream's pose defaults to a ``world <- frame_id`` tf lookup; decorate a
+    method with ``@pose_setter_for("stream")`` to source it elsewhere (e.g. from
+    an odometry stream)::
+
+        @pose_setter_for("lidar")
+        def _lidar_pose(self, msg):
+            return self._last_odom_pose
     """
 
     config: RecorderConfig
+
+    _pose_setters: dict[str, Any] = {}
 
     @rpc
     def start(self) -> None:
@@ -285,13 +323,17 @@ class Recorder(MemoryModule):
             )
             return
 
+        self._pose_setters = self._collect_pose_setters()
+
         # TODO: store reset API/logic is not implemented yet. This module
         # shouldn't need to know about files (SqliteStore specific), and
         # .live() subs need to know how to re-sub in case of a restart of
         # this module in a deployed blueprint.
         db_path = Path(self.config.db_path)
         if db_path.exists():
-            if self.config.on_existing is OnExisting.OVERWRITE:
+            if self.config.on_existing is OnExisting.APPEND:
+                pass  # keep the db; _prepare_streams handles any per-stream replacement
+            elif self.config.on_existing is OnExisting.OVERWRITE:
                 db_path.unlink()
                 logger.info("Deleted existing recording %s", db_path)
             elif self.config.on_existing is OnExisting.BACKUP:
@@ -303,14 +345,20 @@ class Recorder(MemoryModule):
             else:
                 raise FileExistsError(f"Recording already exists: {db_path}")
 
-        if not self.inputs:
+        self._prepare_streams()
+
+        if not self.inputs and not self.config.record_tf:
             logger.warning("Recorder has no In ports — nothing to record, subclass the Recorder")
             return
 
         for name, port in self.inputs.items():
-            stream: Stream[Any] = self.store.stream(name, port.type)
+            stream_name = self.config.stream_remapping.get(name, name)
+            stream: Stream[Any] = self.store.stream(stream_name, port.type)
             self._port_to_stream(name, port, stream)
-            logger.info("Recording %s (%s)", name, port.type.__name__)
+            logger.info("Recording %s -> %s (%s)", name, stream_name, port.type.__name__)
+
+        if self.config.record_tf:
+            self._record_tf()
 
     def _port_to_stream(self, name: str, input_topic: In[Any], stream: Stream[Any]) -> None:
         """Append each message from *input_topic* to *stream*, attaching world pose via tf.
@@ -323,23 +371,73 @@ class Recorder(MemoryModule):
         Registers the subscription as a disposable on this module.
         """
 
-        default_frame_id = self.config.default_frame_id
-        tf_tolerance = self.config.tf_tolerance
-
         def on_msg(msg: Any) -> None:
-            ts = getattr(msg, "ts", None) or time.time()
-            frame_id = getattr(msg, "frame_id", None) or default_frame_id
-            transform = self.tf.get("world", frame_id, time_point=ts, time_tolerance=tf_tolerance)
-            pose = transform.to_pose() if transform is not None else None
-
+            ts = self._resolve_ts(name, msg)
+            pose = self._resolve_pose(name, msg, ts)
             if not pose:
                 logger.warning(
-                    "[%s] No tf available for frame '%s' at time %s (msg ts: %s), storing without pose",
+                    "[%s] No pose for time %s (msg ts: %s), storing without pose",
                     name,
-                    frame_id,
                     ts,
                     getattr(msg, "ts", None),
                 )
             stream.append(msg, ts=ts, pose=pose)
 
         self.register_disposable(Disposable(input_topic.subscribe(on_msg)))
+
+    def _prepare_streams(self) -> None:
+        """On APPEND, drop the streams this recorder is about to (re)write — the
+        remapped In-port streams plus ``tf`` — so a re-run replaces them instead
+        of duplicating, while leaving any other streams in the db untouched."""
+        if self.config.on_existing is not OnExisting.APPEND:
+            return
+        targets = {self.config.stream_remapping.get(name, name) for name in self.inputs}
+        if self.config.record_tf:
+            targets.add("tf")
+        for stream in targets.intersection(self.store.list_streams()):
+            self.store.delete_stream(stream)
+
+    def _resolve_ts(self, name: str, msg: Any) -> float:
+        """Timestamp to record *msg* at. Override to re-base onto another clock."""
+        return getattr(msg, "ts", None) or time.time()
+
+    def _resolve_pose(self, name: str, msg: Any, ts: float) -> Pose | None:
+        """Pose to anchor *msg* with. Dispatches to the stream's
+        ``@pose_setter_for`` if one is defined, else falls back to a
+        ``world <- frame_id`` tf lookup."""
+        setter = self._pose_setters.get(name)
+        if setter is not None:
+            return cast("Pose | None", setter(msg))
+        frame_id = getattr(msg, "frame_id", None) or self.config.default_frame_id
+        transform = self.tf.get(
+            self.config.root_frame, frame_id, time_point=ts, time_tolerance=self.config.tf_tolerance
+        )
+        return transform.to_pose() if transform is not None else None
+
+    def _collect_pose_setters(self) -> dict[str, PoseSetter]:
+        """Map stream name -> bound ``@pose_setter_for`` method."""
+        setters: dict[str, PoseSetter] = {}
+        for attr_name in dir(type(self)):
+            fn = getattr(type(self), attr_name, None)
+            for stream in getattr(fn, "_pose_setter_for", ()):
+                setters[stream] = getattr(self, attr_name)
+        return setters
+
+    def _record_tf(self) -> None:
+        """Record the live tf stream under "tf" (no-op without a pubsub tf)."""
+        topic = getattr(self.tf.config, "topic", None)
+        pubsub = getattr(self.tf, "pubsub", None)
+        if not topic or pubsub is None:
+            logger.warning("Recorder: no pubsub tf available — not recording tf")
+            return
+        tf_stream = self.store.stream("tf", TFMessage)
+
+        def on_tf(msg: TFMessage, _topic: Any) -> None:
+            try:
+                for transform in msg.transforms:
+                    tf_stream.append(TFMessage(transform), ts=transform.ts, pose=None)
+            except sqlite3.ProgrammingError:
+                # A late LCM callback raced teardown and hit the closed store.
+                pass
+
+        self.register_disposable(Disposable(pubsub.subscribe(topic, on_tf)))

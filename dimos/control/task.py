@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from dimos.control.components import JointName
-from dimos.hardware.manipulators.spec import ControlMode
+from dimos.hardware.manipulators.spec import ControlMode as ControlMode
 from dimos.hardware.whole_body.spec import IMUState
 
 if TYPE_CHECKING:
@@ -326,17 +326,3 @@ class BaseControlTask(ControlTask):
     def set_velocities_by_name(self, velocities: dict[str, float], t_now: float) -> bool:
         """No-op default."""
         return False
-
-
-__all__ = [
-    # Protocol + Base
-    "BaseControlTask",
-    # Types
-    "ControlMode",
-    "ControlTask",
-    "CoordinatorState",
-    "JointCommandOutput",
-    "JointName",
-    "JointStateSnapshot",
-    "ResourceClaim",
-]

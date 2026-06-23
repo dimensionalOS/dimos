@@ -12,16 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PointLio fed by a VirtualMid360 replaying a recorded pcap (live SDK path).
+"""Demos: a SLAM consumer fed by a VirtualMid360 replaying a pcap (live SDK path).
 
 Each module reads its own config from env vars (DIMOS_MID360_* for the sensor,
-DIMOS_POINTLIO_* for PointLio); set the lidar/host IPs so the two ends agree.
+DIMOS_FASTLIO_* / DIMOS_POINTLIO_* for the consumer); set the lidar/host IPs so
+the two ends agree.
 """
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.virtual_mid360.module import VirtualMid360
 from dimos.visualization.vis_module import vis_module
+
+demo_virtual_mid360_fastlio = autoconnect(
+    VirtualMid360.blueprint(),
+    FastLio2.blueprint(),
+    vis_module("rerun"),
+).global_config(n_workers=3, robot_model="virtual_mid360_fastlio")
 
 demo_virtual_mid360_pointlio = autoconnect(
     VirtualMid360.blueprint(),

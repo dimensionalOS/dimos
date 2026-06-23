@@ -525,11 +525,3 @@ class MujocoEngine(SimulationEngine):
         if cam_id < 0:
             return None
         return float(self._model.cam_fovy[cam_id])
-
-
-__all__ = [
-    "CameraConfig",
-    "CameraFrame",
-    "MujocoEngine",
-    "StepHook",
-]

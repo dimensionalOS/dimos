@@ -152,6 +152,3 @@ def register(registry: TwistBaseAdapterRegistry) -> None:
 
     registry.register("transport_lcm", partial(TransportTwistAdapter, transport_cls=LCMTransport))
     registry.register("transport_ros", partial(TransportTwistAdapter, transport_cls=ROSTransport))
-
-
-__all__ = ["TransportTwistAdapter"]

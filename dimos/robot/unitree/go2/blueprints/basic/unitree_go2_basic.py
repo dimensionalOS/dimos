@@ -140,8 +140,3 @@ unitree_go2_basic = (
     #
     #    .configurators(ClockSyncConfigurator())
 )
-
-__all__ = [
-    "rerun_config",
-    "unitree_go2_basic",
-]

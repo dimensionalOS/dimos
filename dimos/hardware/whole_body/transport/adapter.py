@@ -194,6 +194,3 @@ def register(registry: WholeBodyAdapterRegistry) -> None:
         "transport_ros",
         partial(TransportWholeBodyAdapter, transport_cls=ROSTransport),
     )
-
-
-__all__ = ["TransportWholeBodyAdapter"]
