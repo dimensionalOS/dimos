@@ -463,10 +463,20 @@ def _parse_key_value_arg(value: str) -> tuple[str, Any]:
         return (key, val)
 
 
+def _validate_key_value_args(values: list[str]) -> list[str]:
+    """Validate KEY=VALUE arguments during CLI parsing."""
+    for value in values:
+        if "=" not in value:
+            raise typer.BadParameter(f"expected KEY=VALUE, got: {value}")
+    return values
+
+
 @mcp_app.command("call")
 def mcp_call_tool(
     tool_name: str = typer.Argument(..., help="Tool name to call"),
-    args: list[str] = typer.Option([], "--arg", "-a", help="Arguments as key=value"),
+    args: list[str] = typer.Option(
+        [], "--arg", "-a", callback=_validate_key_value_args, help="Arguments as key=value"
+    ),
     json_args: str = typer.Option("", "--json-args", "-j", help="Arguments as JSON string"),
 ) -> None:
     """Call an MCP tool by name."""
