@@ -43,6 +43,7 @@ from toolz import pipe  # type: ignore[import-untyped]
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.transport import PubSubTransport
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
@@ -164,7 +165,10 @@ def _default_blueprint() -> Blueprint:
 
 
 class Config(ModuleConfig):
+    # Pubsubs cover discoverable sources such as LCM. visual_transports is
+    # populated by the coordinator for concrete local streams such as SHM.
     pubsubs: list[SubscribeAllCapable[Any, Any]] = field(default_factory=lambda: [LCM()])
+    visual_transports: list[PubSubTransport[Any]] = field(default_factory=list)
 
     visual_override: dict[Glob | str, Callable[[Any], Archetype] | None] = field(
         default_factory=dict
@@ -186,10 +190,12 @@ Config.model_rebuild(_types_namespace={"Archetype": Archetype, "Blueprint": Blue
 
 
 class RerunBridgeModule(Module):
-    """Bridge that logs messages from pubsubs to Rerun.
+    """Bridge that logs transport messages to Rerun.
 
-    Spawns its own Rerun viewer and subscribes to all topics on each provided
-    pubsub. Any message that has a to_rerun() method is automatically logged.
+    Spawns its own Rerun viewer and subscribes to configured pubsubs and
+    explicit visual transports. Pubsubs cover discoverable transports such as
+    LCM; visual_transports covers concrete local transports such as SHM.
+    Any message that has a to_rerun() method is automatically logged.
 
     Example:
         from dimos.protocol.pubsub.impl.lcmpubsub import LCM
@@ -215,6 +221,8 @@ class RerunBridgeModule(Module):
         self._last_log = {}
         self._override_cache: dict[str, Callable[[Any], RerunData | None]] = {}
         self._frame_attached: dict[str, str] = {}
+        self._subscribed_visual_transport_topics: set[str] = set()
+        self._started = False
 
     @property
     def host(self) -> str:
@@ -265,12 +273,55 @@ class RerunBridgeModule(Module):
         return composed
 
     def _get_entity_path(self, topic: Any) -> str:
+        """Map a transport topic to a Rerun entity path.
+
+        LCM topics usually already include a leading slash and a type suffix.
+        SHM topics are plain strings. Normalize both forms so visual overrides
+        such as "world/color_image" match consistently.
+        """
         if self.config.topic_to_entity:
             return self.config.topic_to_entity(topic)
 
         topic_str = getattr(topic, "name", None) or str(topic)
         topic_str = topic_str.split("#")[0]  # strip LCM topic suffix
+        if not topic_str.startswith("/"):
+            topic_str = f"/{topic_str}"
         return f"{self.config.entity_prefix}{topic_str}"
+
+    @rpc
+    def set_visual_transports(self, transports: list[PubSubTransport[Any]]) -> None:
+        """Replace explicit visual transports and subscribe when running.
+
+        The coordinator calls this after stream wiring and after loading
+        additional blueprints into an existing coordinator.
+        """
+        self.config.visual_transports = transports
+        if self._started:
+            self._subscribe_visual_transports()
+
+    def _subscribe_visual_transports(self) -> None:
+        """Attach to configured SHM streams once per topic."""
+        for transport in self.config.visual_transports:
+            topic = str(getattr(transport, "topic", ""))
+            if not topic or topic in self._subscribed_visual_transport_topics:
+                continue
+            self._subscribed_visual_transport_topics.add(topic)
+            if hasattr(transport, "start"):
+                transport.start()
+            # If subscribe raises, the bridge still owns cleanup for the transport it started.
+            self.register_disposable(Disposable(transport.stop))
+            transport_topic = getattr(transport, "topic", topic)
+
+            def on_visual_message(msg: Any, transport_topic: Any = transport_topic) -> None:
+                self._on_message(msg, transport_topic)
+
+            unsub = transport.subscribe(
+                # Capture the current topic so callbacks keep the correct
+                # entity path even as this loop advances to the next transport.
+                on_visual_message
+            )
+            if unsub is not None:
+                self.register_disposable(Disposable(unsub))
 
     def _on_message(self, msg: Any, topic: Any) -> None:
         """Handle incoming message - log to rerun."""
@@ -306,6 +357,7 @@ class RerunBridgeModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        self._started = True
 
         logger.info("Rerun bridge starting")
 
@@ -396,6 +448,8 @@ class RerunBridgeModule(Module):
                 pubsub.start()
             unsub = pubsub.subscribe_all(self._on_message)
             self.register_disposable(Disposable(unsub))
+
+        self._subscribe_visual_transports()
 
         for pubsub in self.config.pubsubs:
             if hasattr(pubsub, "stop"):
@@ -506,8 +560,10 @@ class RerunBridgeModule(Module):
 
     @rpc
     def stop(self) -> None:
+        self._started = False
         self._override_cache.clear()
         self._frame_attached.clear()
+        self._subscribed_visual_transport_topics.clear()
         super().stop()
 
 

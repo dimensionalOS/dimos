@@ -45,6 +45,11 @@ ahead of time.
 DEFAULT_CAPACITY_COLOR_IMAGE = 1920 * 1080 * 3
 # Default depth image size: 1280x720 frame * 4 (float32 size)
 DEFAULT_CAPACITY_DEPTH_IMAGE = 1280 * 720 * 4
+# Fixed-capacity SHM channels must be sized before the first message arrives.
+# These defaults cover current Go2 replay and navigation payloads while keeping
+# large local streams off UDP multicast.
+DEFAULT_CAPACITY_POINTCLOUD = 64 * 1024 * 1024
+DEFAULT_CAPACITY_OCCUPANCY_GRID = 16 * 1024 * 1024
 
 # From https://github.com/lcm-proj/lcm.git
 LCM_MAX_CHANNEL_NAME_LENGTH = 63
