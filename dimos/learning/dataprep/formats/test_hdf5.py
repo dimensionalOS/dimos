@@ -16,8 +16,8 @@
 
 Builds a tiny in-memory Sample stream (no SqliteStore), writes it, then reads
 it back through `inspect` and asserts the episode/frame counts, per-feature
-shapes, and that stats landed. Skips cleanly if h5py isn't installed (it lives
-in the `learning` optional-dependency group).
+shapes, and that stats landed. h5py is a test dependency (`learning` extra), so
+these always run.
 """
 
 from __future__ import annotations
@@ -25,10 +25,8 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
+import h5py
 import numpy as np
-import pytest
-
-h5py = pytest.importorskip("h5py")
 
 from dimos.learning.dataprep.core import OutputConfig, Sample
 from dimos.learning.dataprep.formats.hdf5 import inspect, write

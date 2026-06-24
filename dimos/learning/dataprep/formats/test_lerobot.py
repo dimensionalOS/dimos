@@ -16,8 +16,8 @@
 
 Asserts the v3.0 layout: a single concatenated data parquet, parquet meta
 (tasks + episodes, no jsonl), and one MP4 per camera under
-`videos/<key>/chunk-000/`. The image test skips if no mp4v codec is available;
-the whole module skips if pyarrow/pandas aren't installed (`learning` extra).
+`videos/<key>/chunk-000/`. pyarrow/pandas (the `learning` extra) and cv2 are
+test dependencies, so these always run.
 """
 
 from __future__ import annotations
@@ -27,15 +27,9 @@ import json
 from pathlib import Path
 
 import numpy as np
-import pytest
-
-pytest.importorskip("pyarrow")
-pytest.importorskip("pandas")
-cv2 = pytest.importorskip("cv2")
-
-# Below the importorskip guards above; used to read back v3.0 meta/parquet.
 import pandas as pd
 import pyarrow.parquet as pq
+import pytest
 
 from dimos.learning.dataprep.core import OutputConfig, Sample
 from dimos.learning.dataprep.formats.lerobot import inspect, write

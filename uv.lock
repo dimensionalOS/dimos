@@ -2318,7 +2318,7 @@ project-deps = [
 tests = [
     { name = "chromadb" },
     { name = "coverage" },
-    { name = "dimos", extra = ["apriltag", "cpu", "drone", "mapping", "visualization", "web"] },
+    { name = "dimos", extra = ["apriltag", "cpu", "drone", "learning", "mapping", "visualization", "web"] },
     { name = "einops" },
     { name = "gdown" },
     { name = "googlemaps" },
@@ -2362,7 +2362,7 @@ tests = [
 tests-self-hosted = [
     { name = "chromadb" },
     { name = "coverage" },
-    { name = "dimos", extra = ["agents", "apriltag", "cpu", "drone", "manipulation", "mapping", "misc", "perception", "sim", "unitree", "visualization", "web"] },
+    { name = "dimos", extra = ["agents", "apriltag", "cpu", "drone", "learning", "manipulation", "mapping", "misc", "perception", "sim", "unitree", "visualization", "web"] },
     { name = "einops" },
     { name = "gdown" },
     { name = "googlemaps" },
@@ -2583,7 +2583,7 @@ project-deps = [
 tests = [
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },
-    { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu"] },
+    { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
     { name = "dimos", extras = ["web", "visualization"] },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
@@ -2629,7 +2629,7 @@ tests-self-hosted = [
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },
     { name = "dimos", extras = ["agents", "perception", "manipulation", "sim", "unitree", "misc"] },
-    { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu"] },
+    { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
     { name = "dimos", extras = ["web", "visualization"] },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
