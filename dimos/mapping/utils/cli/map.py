@@ -97,16 +97,16 @@ def _accumulate(
     block_count: int,
     device: str,
     graph: PoseGraph | None = None,
-    world_frame: bool = False,
+    world_frame: bool = True,
     carve_columns: bool = False,
     progress_cb: Callable[[Observation[Any]], None] | None = None,
 ) -> PointCloud2 | None:
     """Accumulate a voxel map from `obs_iter`, optionally PGO-correcting each frame.
 
-    By default each frame's per-frame pose is applied to register the (sensor/body
-    frame) cloud into the world. Set ``world_frame=True`` (the ``--go2`` path) when
-    the clouds are already world-registered (e.g. fastlio) — then only the PGO
-    correction is applied, if any.
+    By default the clouds are assumed already world-registered (the go2/fastlio
+    path) — only the PGO correction is applied, if any. Set ``world_frame=False``
+    (the ``--use-tf`` path) when each frame's cloud is in the sensor/body frame
+    and must be registered into the world via its per-frame pose.
 
     Returns the final ``PointCloud2`` (or ``None`` if the input was empty).
     Disposal of the underlying ``VoxelGrid`` is handled by ``VoxelMapTransformer``.
@@ -133,7 +133,7 @@ def _accumulate(
             if len(obs.data) == 0:
                 continue
             # body->world via the per-frame pose, unless the clouds are already
-            # world-registered (--go2). graph adds the PGO correction on top
+            # world-registered (go2 default). graph adds the PGO correction on top
             # (correction ∘ pose), applied after the pose.
             tf: Transform | None = None
             if not world_frame:
@@ -328,11 +328,11 @@ def main(
         None, "--out", help="Output .rrd path (default: ./<dataset>.rrd)"
     ),
     no_gui: bool = typer.Option(False, "--no-gui", help="Write the .rrd but don't launch rerun"),
-    go2: bool = typer.Option(
+    use_tf: bool = typer.Option(
         False,
-        "--go2",
-        help="Clouds are already world-registered (e.g. fastlio); skip applying the "
-        "per-frame pose. Default registers each (body-frame) cloud by its pose.",
+        "--use-tf",
+        help="Clouds are in the sensor/body frame; register each by its per-frame pose. "
+        "By default clouds are assumed already world-registered (e.g. go2/fastlio).",
     ),
     carve: bool = typer.Option(
         False,
@@ -470,7 +470,7 @@ def main(
             block_count=block_count,
             device=device,
             graph=graph,
-            world_frame=go2,
+            world_frame=not use_tf,
             carve_columns=carve,
             progress_cb=progress(n_kept, "pgo pass 2 (rebuilding)"),
         )
@@ -484,7 +484,7 @@ def main(
             block_count=block_count,
             device=device,
             graph=graph,
-            world_frame=go2,
+            world_frame=not use_tf,
             carve_columns=carve,
             progress_cb=progress(total, "full pgo (rebuilding)"),
         )
@@ -495,7 +495,7 @@ def main(
         voxel=voxel,
         block_count=block_count,
         device=device,
-        world_frame=go2,
+        world_frame=not use_tf,
         carve_columns=carve,
         progress_cb=progress(n_kept, "reconstructing global map"),
     )

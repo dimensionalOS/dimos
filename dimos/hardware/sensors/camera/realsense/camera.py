@@ -358,17 +358,29 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         )
         transforms.append(depth_to_depth_optical)
 
-        color_tf = self._extrinsics_to_transform(
-            self._color_to_depth_extrinsics,
-            self._camera_link,
-            self._color_frame,
-            ts,
-        )
-        # Invert the transform since extrinsics are color->depth
-        color_tf = color_tf.inverse()
-        color_tf.frame_id = self._camera_link
-        color_tf.child_frame_id = self._color_frame
-        color_tf.ts = ts
+        # camera_link -> camera_color_frame. With depth disabled there are no
+        # color->depth extrinsics, so fall back to identity (color at the
+        # camera_link origin) instead of dereferencing None.
+        if self._color_to_depth_extrinsics is not None:
+            color_tf = self._extrinsics_to_transform(
+                self._color_to_depth_extrinsics,
+                self._camera_link,
+                self._color_frame,
+                ts,
+            )
+            # Invert the transform since extrinsics are color->depth
+            color_tf = color_tf.inverse()
+            color_tf.frame_id = self._camera_link
+            color_tf.child_frame_id = self._color_frame
+            color_tf.ts = ts
+        else:
+            color_tf = Transform(
+                translation=Vector3(0.0, 0.0, 0.0),
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                frame_id=self._camera_link,
+                child_frame_id=self._color_frame,
+                ts=ts,
+            )
         transforms.append(color_tf)
 
         # camera_color_frame -> camera_color_optical_frame

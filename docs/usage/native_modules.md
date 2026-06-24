@@ -116,11 +116,11 @@ class MyConfig(NativeModuleConfig):
 If a config field shouldn't be a CLI arg, add it to `cli_exclude`:
 
 ```python skip
-class FastLio2Config(NativeModuleConfig):
-    executable: str = "./build/fastlio2"
-    config: str = "mid360.yaml"                          # human-friendly name
-    config_path: str = Field(default_factory=lambda m: str(Path(m["config"]).resolve()))
-    cli_exclude: frozenset[str] = frozenset({"config"})  # only config_path is passed
+class MyNativeConfig(NativeModuleConfig):
+    executable: str = "./build/my_native"
+    acc_cov: float = 1.0                                  # rendered into a config file, not a CLI arg
+    config_path: str | None = None                        # set at start() to the generated file
+    cli_exclude: frozenset[str] = frozenset({"acc_cov"})  # only config_path is passed
 ```
 
 ## Using with blueprints

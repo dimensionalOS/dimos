@@ -35,11 +35,8 @@ from dimos.control.components import (
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.navigation.cmu_nav.main import cmu_nav_rerun_config, create_cmu_nav
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
 from dimos.robot.unitree.g1.config import G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -120,18 +117,13 @@ coordinator_flowbase_keyboard_teleop = autoconnect(
 # FlowBase + Livox MID-360 + FastLio2 SLAM + nav stack with click-to-drive in Rerun. The velocity
 # sink is ControlCoordinator + FlowBaseAdapter
 
-_flowbase_mid360_mount = Pose(0.20, -0.20, 0.10, *Quaternion.from_euler(Vector3(0, 0, 0)))
-
 coordinator_flowbase_nav = (
     autoconnect(
         FastLio2.blueprint(
             host_ip=os.getenv("LIDAR_HOST_IP", "192.168.1.5"),
             lidar_ip=os.getenv("LIDAR_IP", "192.168.1.189"),
-            mount=_flowbase_mid360_mount,
-            map_freq=1.0,
-            config="default.yaml",
         ),
-        create_nav_stack(
+        create_cmu_nav(
             planner="simple",
             vehicle_height=0.5,  # FlowBase platform clearance — tune if needed
             max_speed=0.8,  # conservative starting point
@@ -173,7 +165,7 @@ coordinator_flowbase_nav = (
             ],
         ),
         RerunBridgeModule.blueprint(
-            **nav_stack_rerun_config({"memory_limit": "1GB"}, vis_throttle=0.5),
+            **cmu_nav_rerun_config({"memory_limit": "1GB"}, vis_throttle=0.5),
             rerun_open="native",
         ),
         RerunWebSocketServer.blueprint(),
@@ -181,7 +173,6 @@ coordinator_flowbase_nav = (
     .remappings(
         [
             (FastLio2, "lidar", "registered_scan"),
-            (FastLio2, "global_map", "global_map_fastlio"),
             # SimplePlanner / FarPlanner owns way_point — disconnect MovementManager's
             # redundant pass-through copy (matches unitree-g1-nav-onboard).
             (MovementManager, "way_point", "_mgr_way_point_unused"),
