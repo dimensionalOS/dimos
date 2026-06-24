@@ -35,11 +35,13 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 
-from dimos.learning.dataprep.core import OutputConfig, Sample
-from dimos.learning.dataprep.formats._stats import StreamingStats
+from dimos.learning.dataprep.core import DEFAULT_FPS, OutputConfig, Sample
+from dimos.learning.dataprep.formats._stats import stats_from_metadata
 
 
 class _Hdf5Writer:
@@ -64,13 +66,9 @@ class _Hdf5Writer:
             self.out = self.out.with_suffix(".hdf5")
         self.out.parent.mkdir(parents=True, exist_ok=True)
 
-        self.stats = StreamingStats(
-            image_subsample=int(output.metadata.get("image_subsample", 10)),
-            quantile_reservoir=int(output.metadata.get("quantile_reservoir", 10_000)),
-            seed=int(output.metadata.get("stats_seed", 0)),
-        )
+        self.stats = stats_from_metadata(output.metadata)
         self.default_task_label: str = output.metadata.get("default_task_label", "task")
-        self.fps = float(output.metadata.get("fps", 30.0))
+        self.fps = float(output.metadata.get("fps", DEFAULT_FPS))
 
         self.tasks_index: dict[str, int] = {}
         self.total_frames = 0
@@ -81,8 +79,8 @@ class _Hdf5Writer:
         self.cur_task = self.default_task_label  # actual label for the in-progress episode
         self.cur_start_ts: float | None = None
         self.buf_ts: list[float] = []
-        self.buf_obs: dict[str, list[np.ndarray]] = {}
-        self.buf_act: dict[str, list[np.ndarray]] = {}
+        self.buf_obs: dict[str, list[NDArray[Any]]] = {}
+        self.buf_act: dict[str, list[NDArray[Any]]] = {}
 
         self._h5 = h5py.File(self.out, "w")
         self._episodes_g = self._h5.create_group("episodes")

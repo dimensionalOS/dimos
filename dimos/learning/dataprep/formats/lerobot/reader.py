@@ -24,6 +24,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from dimos.learning.dataprep.core import summarize_lengths
 from dimos.learning.dataprep.formats.lerobot.writer import CHUNK, EPISODES_DIR, FILE, META_DIR
 
 _META_COLS = {"timestamp", "frame_index", "episode_index", "index", "task_index"}
@@ -64,8 +65,6 @@ class _LeRobotReader:
 
     def summary(self) -> dict[str, Any]:
         """Observation/action features (shape + dtype), episode/frame counts."""
-        from dimos.learning.dataprep.core import summarize_lengths
-
         observation, action = self._features()
         return {
             "format": "lerobot",

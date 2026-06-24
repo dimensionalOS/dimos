@@ -23,6 +23,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from dimos.learning.dataprep.core import summarize_lengths
+
 
 class _Hdf5Reader:
     """Read-only view over a built ``.hdf5`` dataset.
@@ -85,8 +87,6 @@ class _Hdf5Reader:
     def summary(self) -> dict[str, Any]:
         """Features (per-frame shape/dtype), episode/frame counts, and whether
         feature shapes are uniform across episodes."""
-        from dimos.learning.dataprep.core import summarize_lengths
-
         h5 = self._h5
         lengths = self._episode_lengths()
         observation, action = self._features()

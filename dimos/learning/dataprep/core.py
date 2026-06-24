@@ -42,10 +42,11 @@ if TYPE_CHECKING:
     from dimos.memory2.store.sqlite import SqliteStore
     from dimos.memory2.stream import Stream
 
-# A dataset format is a `formats/<name>.py` module exposing `write` and
-# `inspect` with these signatures, registered in `get_writer`/`get_inspector`.
+# Each `formats/<name>/` package's writer/reader expose these, via get_writer/get_inspector.
 Writer = Callable[[Iterator["Sample"], "OutputConfig"], Path]
 Inspector = Callable[[Path], dict[str, Any]]
+
+DEFAULT_FPS = 30.0  # resample rate == written video/timestamp rate
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -94,7 +95,7 @@ class DataPrepConfig(BaseConfig):
     episodes: EpisodeExtractor = EpisodeExtractor()
     observation: dict[str, StreamField] = Field(default_factory=dict)
     action: dict[str, StreamField] = Field(default_factory=dict)
-    sync: SyncConfig = SyncConfig(anchor="image", rate_hz=30.0, tolerance_ms=50.0)
+    sync: SyncConfig = SyncConfig(anchor="image", rate_hz=DEFAULT_FPS, tolerance_ms=50.0)
     output: OutputConfig = OutputConfig(format="lerobot", path=STATE_DIR / "datasets" / "default")
 
 

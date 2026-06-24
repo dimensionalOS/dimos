@@ -32,9 +32,11 @@ from dimos.learning.dataprep.core import (
     Episode,
     Sample,
     extract_episodes,
+    get_inspector,
     get_writer,
     iter_episode_samples,
 )
+from dimos.memory2.store.sqlite import SqliteStore
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -78,8 +80,6 @@ def run_dataprep(config: DataPrepConfig) -> Path:
     configured format writer, and writes `dimos_meta.json`. Synchronous —
     raises on failure so the caller owns the exit code.
     """
-    from dimos.memory2.store.sqlite import SqliteStore
-
     shared = set(config.observation) & set(config.action)
     if shared:
         raise ValueError(
@@ -184,8 +184,6 @@ def inspect_dataset(path: Path | str, fmt: str | None = None) -> dict[str, Any]:
     `fmt` is auto-detected when omitted: a `.hdf5`/`.h5` file → hdf5; a
     directory containing `meta/info.json` → lerobot.
     """
-    from dimos.learning.dataprep.core import get_inspector
-
     p = Path(path)
     if fmt is None:
         if p.suffix in (".h5", ".hdf5"):

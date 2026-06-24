@@ -517,7 +517,6 @@ module = [
     "geometry_msgs.*",
     "h5py",
     "h5py.*",
-    "lazy_loader",
     "mcap",
     "mcap.*",
     "mujoco",

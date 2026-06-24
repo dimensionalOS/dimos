@@ -26,6 +26,7 @@ import random
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 
 from dimos.learning.dataprep.core import is_image_array
 
@@ -34,11 +35,11 @@ from dimos.learning.dataprep.core import is_image_array
 class FeatureAggregator:
     is_image: bool
     n: int = 0
-    mean: np.ndarray | None = None
-    m2: np.ndarray | None = None
-    minv: np.ndarray | None = None
-    maxv: np.ndarray | None = None
-    reservoir: list[np.ndarray] = field(default_factory=list)
+    mean: NDArray[Any] | None = None
+    m2: NDArray[Any] | None = None
+    minv: NDArray[Any] | None = None
+    maxv: NDArray[Any] | None = None
+    reservoir: list[NDArray[Any]] = field(default_factory=list)
     image_seen: int = 0
     shape: tuple[int, ...] | None = None
     dtype: str | None = None
@@ -55,7 +56,7 @@ class StreamingStats:
         self._rng = random.Random(seed)
         self.aggs: dict[str, FeatureAggregator] = {}
 
-    def update(self, name: str, value: np.ndarray) -> None:
+    def update(self, name: str, value: NDArray[Any]) -> None:
         a = np.asarray(value)
         is_image = is_image_array(a)
         agg = self.aggs.setdefault(
@@ -122,3 +123,12 @@ class StreamingStats:
                 entry["q99"] = np.quantile(stacked, 0.99, axis=0).tolist()
             out[name] = entry
         return out
+
+
+def stats_from_metadata(metadata: dict[str, Any]) -> StreamingStats:
+    """Build a StreamingStats from output metadata, with shared writer defaults."""
+    return StreamingStats(
+        image_subsample=int(metadata.get("image_subsample", 10)),
+        quantile_reservoir=int(metadata.get("quantile_reservoir", 10_000)),
+        seed=int(metadata.get("stats_seed", 0)),
+    )

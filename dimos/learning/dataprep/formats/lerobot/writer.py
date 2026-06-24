@@ -44,9 +44,10 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 
-from dimos.learning.dataprep.core import OutputConfig, Sample, is_image_array
-from dimos.learning.dataprep.formats._stats import StreamingStats
+from dimos.learning.dataprep.core import DEFAULT_FPS, OutputConfig, Sample, is_image_array
+from dimos.learning.dataprep.formats._stats import StreamingStats, stats_from_metadata
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -151,7 +152,7 @@ class _LeRobotV3Writer:
         (self.root / META_DIR / EPISODES_DIR / CHUNK).mkdir(parents=True, exist_ok=True)
         (self.root / DATA_DIR / CHUNK).mkdir(parents=True, exist_ok=True)
 
-        self.fps = float(output.metadata.get("fps", 30.0))
+        self.fps = float(output.metadata.get("fps", DEFAULT_FPS))
         self._fourcc = cv2.VideoWriter.fourcc(*"mp4v")
         self.default_task_label = output.metadata.get("default_task_label", "task")
 
@@ -185,12 +186,7 @@ class _LeRobotV3Writer:
         self.cur_task = self.default_task_label  # actual label for the in-progress episode
 
     def _new_stats(self) -> StreamingStats:
-        md = self.output.metadata
-        return StreamingStats(
-            image_subsample=int(md.get("image_subsample", 10)),
-            quantile_reservoir=int(md.get("quantile_reservoir", 10_000)),
-            seed=int(md.get("stats_seed", 0)),
-        )
+        return stats_from_metadata(self.output.metadata)
 
     def _video_path(self, image_key: str) -> Path:
         feat = _feature_name("observation", image_key, is_image=True, single_action=False)
@@ -198,7 +194,7 @@ class _LeRobotV3Writer:
         d.mkdir(parents=True, exist_ok=True)
         return d / f"{FILE}.mp4"
 
-    def _open_video(self, image_key: str, frame: np.ndarray) -> Any:
+    def _open_video(self, image_key: str, frame: NDArray[Any]) -> Any:
         h, w = frame.shape[:2]
         path = self._video_path(image_key)
         vw = self._cv2.VideoWriter(str(path), self._fourcc, self.fps, (w, h))

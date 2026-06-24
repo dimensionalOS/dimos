@@ -85,7 +85,6 @@ class EpisodeMonitorModule(Module):
         self._state: RecordingState = "idle"
         self._saved: int = 0
         self._discarded: int = 0
-        self._last_event: EpisodeEvent = "init"
         self._prev_bits: dict[str, bool] = {}  # rising-edge detection for buttons
         self._lock = threading.Lock()
 
@@ -100,10 +99,6 @@ class EpisodeMonitorModule(Module):
         with self._lock:
             status = self._snapshot("init", time.time())
         self._emit(status)
-
-    @rpc
-    def stop(self) -> None:
-        super().stop()
 
     @rpc
     def reset_counters(self) -> EpisodeStatus:
@@ -173,7 +168,6 @@ class EpisodeMonitorModule(Module):
 
     def _snapshot(self, last_event: EpisodeEvent, ts: float) -> EpisodeStatus:
         """Build a status from current state. Caller must hold `self._lock`."""
-        self._last_event = last_event
         return EpisodeStatus(
             ts=ts,
             state=self._state,
