@@ -21,7 +21,8 @@ from dimos.core.transport import LCMTransport
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.relocalization.module import RelocalizationModule
 from dimos.mapping.voxels import VoxelGridMapper
-from dimos.memory2.module import Recorder, RecorderConfig
+from dimos.memory2.module import Recorder, RecorderConfig, pose_setter_for
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -57,6 +58,17 @@ class Go2Memory(Recorder):
     lidar: In[PointCloud2]
     odom: In[PoseStamped]
     config: Go2MemoryConfig
+
+    _last_odom_pose: Pose | None = None
+
+    @pose_setter_for("odom")
+    def _odom_pose(self, msg: PoseStamped) -> Pose | None:
+        self._last_odom_pose = msg
+        return self._last_odom_pose
+
+    @pose_setter_for("lidar")
+    def _lidar_pose(self, msg: PointCloud2) -> Pose | None:
+        return self._last_odom_pose  # should always exist (odom alwyas wins the race)
 
 
 unitree_go2_markers = (
