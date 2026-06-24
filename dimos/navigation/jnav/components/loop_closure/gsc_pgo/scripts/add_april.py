@@ -26,7 +26,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from dimos.navigation.jnav.utils import recording_db as rdb
+from dimos.navigation.jnav.utils import recording_db
 from dimos.navigation.jnav.utils.apriltag_agreement import (
     VISIT_GAP_S,
     split_visits,
@@ -45,17 +45,19 @@ DEFAULT_MARKER_LENGTH_METERS = 0.10
 DEFAULT_DICTIONARY = "DICT_APRILTAG_36h11"
 
 
-def _parse_dynamic(raw: str | None) -> list[int]:
-    if not raw:
+def _parse_dynamic(dynamic_arg: str | None) -> list[int]:
+    if not dynamic_arg:
         return []
-    return sorted({int(token) for token in raw.replace(",", " ").split()})
+    return sorted({int(token) for token in dynamic_arg.replace(",", " ").split()})
 
 
 def _times_by_tag(store: Any, stream_name: str) -> dict[int, list[float]]:
-    by_tag: dict[int, list[float]] = {}
+    times_by_tag: dict[int, list[float]] = {}
     for observation in store.stream(stream_name):
-        by_tag.setdefault(int(observation.tags["marker_id"]), []).append(float(observation.ts))
-    return by_tag
+        times_by_tag.setdefault(int(observation.tags["marker_id"]), []).append(
+            float(observation.ts)
+        )
+    return times_by_tag
 
 
 def summarize(store: Any) -> dict[str, Any]:
@@ -63,9 +65,11 @@ def summarize(store: Any) -> dict[str, Any]:
     never-revisited tags. Prints the table and returns the result for summary.json."""
     streams = set(store.list_streams())
     raw_available = RAW_STREAM in streams
-    raw = _times_by_tag(store, RAW_STREAM) if raw_available else {}
-    filtered = _times_by_tag(store, FILTERED_STREAM) if FILTERED_STREAM in streams else {}
-    tag_ids = sorted(set(raw) | set(filtered))
+    raw_times_by_tag = _times_by_tag(store, RAW_STREAM) if raw_available else {}
+    filtered_times_by_tag = (
+        _times_by_tag(store, FILTERED_STREAM) if FILTERED_STREAM in streams else {}
+    )
+    tag_ids = sorted(set(raw_times_by_tag) | set(filtered_times_by_tag))
 
     print(
         f"  {'tag':>5} {'raw':>6} {'filtered':>9} {'revisits':>9}   (visit gap {VISIT_GAP_S:.0f}s)"
@@ -73,8 +77,8 @@ def summarize(store: Any) -> dict[str, Any]:
     tags: list[dict[str, Any]] = []
     not_revisited: list[int] = []
     for tag_id in tag_ids:
-        raw_count = len(raw.get(tag_id, []))
-        filtered_times = sorted(filtered.get(tag_id, []))
+        raw_count = len(raw_times_by_tag.get(tag_id, []))
+        filtered_times = sorted(filtered_times_by_tag.get(tag_id, []))
         visits = len(split_visits(filtered_times, gap_s=VISIT_GAP_S)) if filtered_times else 0
         revisited = visits >= MIN_REVISITS
         if not revisited:
@@ -89,8 +93,10 @@ def summarize(store: Any) -> dict[str, Any]:
             }
         )
         raw_display = raw_count if raw_available else "-"
-        flag = "  <-- NOT revisited" if not revisited else ""
-        print(f"  {tag_id:>5} {raw_display!s:>6} {len(filtered_times):>9} {visits:>9}{flag}")
+        revisit_flag = "  <-- NOT revisited" if not revisited else ""
+        print(
+            f"  {tag_id:>5} {raw_display!s:>6} {len(filtered_times):>9} {visits:>9}{revisit_flag}"
+        )
 
     print(
         f"  totals: {len(tag_ids)} tags | {len(tag_ids) - len(not_revisited)} revisited"
@@ -104,7 +110,9 @@ def summarize(store: Any) -> dict[str, Any]:
     return {
         "visit_gap_s": VISIT_GAP_S,
         "min_revisits": MIN_REVISITS,
-        "all_unfiltered_tag_ids": sorted(raw) if raw_available else sorted(filtered),
+        "all_unfiltered_tag_ids": sorted(raw_times_by_tag)
+        if raw_available
+        else sorted(filtered_times_by_tag),
         "total_tags": len(tag_ids),
         "revisited": len(tag_ids) - len(not_revisited),
         "not_revisited": not_revisited,
@@ -160,11 +168,11 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    recording = args.rec.expanduser()
-    db_path = recording if recording.name == "mem2.db" else recording / "mem2.db"
+    recording_path = args.rec.expanduser()
+    db_path = recording_path if recording_path.name == "mem2.db" else recording_path / "mem2.db"
     if not db_path.exists():
         parser.error(f"no mem2.db at {db_path}")
-    store = rdb.store(db_path)
+    store = recording_db.store(db_path)
     summary_path = args.output.expanduser() if args.output else (db_path.parent / SUMMARY_NAME)
     print(f"=== {db_path.parent.name} ===")
 
@@ -177,17 +185,17 @@ def main() -> None:
     # Rebuild both streams and overwrite filter_parameters + result.
     dynamic_tags = _parse_dynamic(args.dynamic)
     intrinsics_path = (args.intrinsics or (db_path.parent / "camera_intrinsics.json")).expanduser()
-    config = load_intrinsics_json(intrinsics_path)
+    intrinsics_config = load_intrinsics_json(intrinsics_path)
     marker_length = (
         args.tag_size
         if args.tag_size is not None
-        else config.get("marker_length", DEFAULT_MARKER_LENGTH_METERS)
+        else intrinsics_config.get("marker_length", DEFAULT_MARKER_LENGTH_METERS)
     )
-    dictionary = args.dictionary or config.get("dictionary", DEFAULT_DICTIONARY)
+    dictionary = args.dictionary or intrinsics_config.get("dictionary", DEFAULT_DICTIONARY)
     ensure_april_streams(
         store,
-        config["intrinsics"],
-        config["distortion"],
+        intrinsics_config["intrinsics"],
+        intrinsics_config["distortion"],
         image_stream=args.camera,
         marker_length=marker_length,
         dictionary=dictionary,

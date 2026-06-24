@@ -53,86 +53,120 @@ def build(
     tag_stream="raw_april_tags",
     out_name="gt_compare.rrd",
 ):
-    rec = Path(rec).expanduser()
-    db = rec / "mem2.db"
-    out = rec / out_name
-    st = rdb.store(db)
-    intr = json.loads((rec / "camera_intrinsics.json").read_text())
-    ext = np.array(intr["optical_in_base"], float)
-    Tbo = Pose3(Rot3.Quaternion(ext[6], ext[3], ext[4], ext[5]), Point3(ext[0], ext[1], ext[2]))
+    recording_dir = Path(rec).expanduser()
+    db_path = recording_dir / "mem2.db"
+    out_path = recording_dir / out_name
+    store = rdb.store(db_path)
+    intrinsics = json.loads((recording_dir / "camera_intrinsics.json").read_text())
+    optical_in_base = np.array(intrinsics["optical_in_base"], float)
+    base_to_optical = Pose3(
+        Rot3.Quaternion(
+            optical_in_base[6], optical_in_base[3], optical_in_base[4], optical_in_base[5]
+        ),
+        Point3(optical_in_base[0], optical_in_base[1], optical_in_base[2]),
+    )
 
-    def accumulate(name):
-        pts = []
-        for i, o in enumerate(st.stream(name)):
-            if i % SCAN_STRIDE:
+    def accumulate(stream_name):
+        scans = []
+        for scan_index, observation in enumerate(store.stream(stream_name)):
+            if scan_index % SCAN_STRIDE:
                 continue
-            xyz = np.asarray(o.data.points_f32())
-            if len(xyz):
-                pts.append(xyz[::3])
-        a = np.concatenate(pts, 0)
-        _, idx = np.unique(np.floor(a / VOXEL).astype(np.int64), axis=0, return_index=True)
-        return a[idx]
+            points = np.asarray(observation.data.points_f32())
+            if len(points):
+                scans.append(points[::3])
+        all_points = np.concatenate(scans, 0)
+        _, unique_indices = np.unique(
+            np.floor(all_points / VOXEL).astype(np.int64), axis=0, return_index=True
+        )
+        return all_points[unique_indices]
 
-    def traj(name):
+    def traj(stream_name):
         return np.array(
             [
-                [o.data.pose.position.x, o.data.pose.position.y, o.data.pose.position.z]
-                for o in st.stream(name)
+                [
+                    observation.data.pose.position.x,
+                    observation.data.pose.position.y,
+                    observation.data.pose.position.z,
+                ]
+                for observation in store.stream(stream_name)
             ],
             np.float32,
         )
 
     def landmarks(gt_odom):
-        gt = [
+        odom_poses = [
             (
-                o.ts,
+                observation.ts,
                 Pose3(
                     Rot3.Quaternion(
-                        o.data.pose.orientation.w,
-                        o.data.pose.orientation.x,
-                        o.data.pose.orientation.y,
-                        o.data.pose.orientation.z,
+                        observation.data.pose.orientation.w,
+                        observation.data.pose.orientation.x,
+                        observation.data.pose.orientation.y,
+                        observation.data.pose.orientation.z,
                     ),
-                    Point3(o.data.pose.position.x, o.data.pose.position.y, o.data.pose.position.z),
+                    Point3(
+                        observation.data.pose.position.x,
+                        observation.data.pose.position.y,
+                        observation.data.pose.position.z,
+                    ),
                 ),
             )
-            for o in st.stream(gt_odom)
+            for observation in store.stream(gt_odom)
         ]
-        gts = np.array([t for t, _ in gt])
-        pos = {}
-        for obs in st.stream(tag_stream):
-            t = obs.tags
+        odom_timestamps = np.array([timestamp for timestamp, _ in odom_poses])
+        positions_by_marker = {}
+        for tag_observation in store.stream(tag_stream):
+            tag_metrics = tag_observation.tags
             if not (
-                float(t["sharpness"]) >= GATE["s"]
-                and float(t["reproj_px"]) <= GATE["r"]
-                and float(t["tag_px"]) >= GATE["px"]
-                and float(t["distance_m"]) <= GATE["d"]
-                and float(t["view_angle_deg"]) <= GATE["a"]
-                and (float(t["lin_speed"]) < 0 or float(t["lin_speed"]) <= GATE["lv"])
-                and (float(t["ang_speed"]) < 0 or float(t["ang_speed"]) <= GATE["av"])
+                float(tag_metrics["sharpness"]) >= GATE["s"]
+                and float(tag_metrics["reproj_px"]) <= GATE["r"]
+                and float(tag_metrics["tag_px"]) >= GATE["px"]
+                and float(tag_metrics["distance_m"]) <= GATE["d"]
+                and float(tag_metrics["view_angle_deg"]) <= GATE["a"]
+                and (
+                    float(tag_metrics["lin_speed"]) < 0
+                    or float(tag_metrics["lin_speed"]) <= GATE["lv"]
+                )
+                and (
+                    float(tag_metrics["ang_speed"]) < 0
+                    or float(tag_metrics["ang_speed"]) <= GATE["av"]
+                )
             ):
                 continue
-            ps = obs.data
-            cb = gt[int(np.argmin(np.abs(gts - float(obs.ts))))][1]
-            Tw = cb.compose(Tbo).compose(
+            tag_pose = tag_observation.data
+            closest_base_pose = odom_poses[
+                int(np.argmin(np.abs(odom_timestamps - float(tag_observation.ts))))
+            ][1]
+            tag_in_world = closest_base_pose.compose(base_to_optical).compose(
                 Pose3(
                     Rot3.Quaternion(
-                        ps.orientation.w, ps.orientation.x, ps.orientation.y, ps.orientation.z
+                        tag_pose.orientation.w,
+                        tag_pose.orientation.x,
+                        tag_pose.orientation.y,
+                        tag_pose.orientation.z,
                     ),
-                    Point3(ps.x, ps.y, ps.z),
+                    Point3(tag_pose.x, tag_pose.y, tag_pose.z),
                 )
             )
-            pos.setdefault(int(t["marker_id"]), []).append(np.asarray(Tw.translation()))
-        means = [np.mean(value, 0) for key, value in sorted(pos.items())]
-        lbl = [f"tag{key}" for key in sorted(pos)]
-        return np.array(means), lbl
+            positions_by_marker.setdefault(int(tag_metrics["marker_id"]), []).append(
+                np.asarray(tag_in_world.translation())
+            )
+        mean_positions = [
+            np.mean(positions, 0) for marker_id, positions in sorted(positions_by_marker.items())
+        ]
+        labels = [f"tag{marker_id}" for marker_id in sorted(positions_by_marker)]
+        return np.array(mean_positions), labels
 
-    streams = st.list_streams()
-    gt_lidars = sorted(s for s in streams if s.startswith("gt_") and "_lidar" in s)
+    streams = store.list_streams()
+    gt_lidars = sorted(
+        stream_name
+        for stream_name in streams
+        if stream_name.startswith("gt_") and "_lidar" in stream_name
+    )
     print("raw + GT lidar streams:", gt_lidars)
 
     rr.init("gt_compare")
-    rr.save(str(out))
+    rr.save(str(out_path))
     rr.log(
         "raw/cloud",
         rr.Points3D(accumulate(lidar_stream), colors=COLORS["raw"], radii=0.02),
@@ -141,31 +175,39 @@ def build(
     rr.log(
         "raw/trajectory", rr.LineStrips3D([traj(odom_stream)], colors=[255, 120, 120]), static=True
     )
-    for k, name in enumerate(gt_lidars):
-        color = PALETTE[k % len(PALETTE)]
-        cloud = accumulate(name)
-        rr.log(f"{name}/cloud", rr.Points3D(cloud, colors=color, radii=0.02), static=True)
-        print(f"  logged {name}: {len(cloud):,} pts")
-        odom = name.replace("_lidar", "_odometry")
-        if odom in streams:
-            rr.log(f"{name}/trajectory", rr.LineStrips3D([traj(odom)], colors=color), static=True)
-    # landmarks placed against the first available gt odometry
-    gt_odoms = sorted(s for s in streams if s.startswith("gt_") and "_odometry" in s)
-    if gt_odoms:
-        lm, lbl = landmarks(gt_odoms[0])
-        if len(lm):
+    for lidar_index, lidar_name in enumerate(gt_lidars):
+        color = PALETTE[lidar_index % len(PALETTE)]
+        cloud = accumulate(lidar_name)
+        rr.log(f"{lidar_name}/cloud", rr.Points3D(cloud, colors=color, radii=0.02), static=True)
+        print(f"  logged {lidar_name}: {len(cloud):,} pts")
+        odom_name = lidar_name.replace("_lidar", "_odometry")
+        if odom_name in streams:
             rr.log(
-                "landmarks",
-                rr.Points3D(lm, colors=[255, 230, 0], radii=0.25, labels=lbl),
+                f"{lidar_name}/trajectory",
+                rr.LineStrips3D([traj(odom_name)], colors=color),
                 static=True,
             )
-            print(f"  logged {len(lbl)} landmarks")
-    print("wrote", out)
-    return out
+    # landmarks placed against the first available gt odometry
+    gt_odoms = sorted(
+        stream_name
+        for stream_name in streams
+        if stream_name.startswith("gt_") and "_odometry" in stream_name
+    )
+    if gt_odoms:
+        landmark_positions, labels = landmarks(gt_odoms[0])
+        if len(landmark_positions):
+            rr.log(
+                "landmarks",
+                rr.Points3D(landmark_positions, colors=[255, 230, 0], radii=0.25, labels=labels),
+                static=True,
+            )
+            print(f"  logged {len(labels)} landmarks")
+    print("wrote", out_path)
+    return out_path
 
 
 def _arg(flag, default=None):
-    return next((a.split("=", 1)[1] for a in sys.argv if a.startswith(flag + "=")), default)
+    return next((arg.split("=", 1)[1] for arg in sys.argv if arg.startswith(flag + "=")), default)
 
 
 if __name__ == "__main__":

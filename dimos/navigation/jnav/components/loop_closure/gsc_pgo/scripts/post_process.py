@@ -73,7 +73,9 @@ WHAT = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else
 
 
 def arg(flag, default=""):
-    return next((a.split("=", 1)[1] for a in sys.argv if a.startswith(flag + "=")), default)
+    return next(
+        (item.split("=", 1)[1] for item in sys.argv if item.startswith(flag + "=")), default
+    )
 
 
 REC_ARG = arg("--rec")
@@ -86,7 +88,7 @@ if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", ODOM_STREAM):
     raise ValueError(f"unsafe --odom stream name: {ODOM_STREAM!r}")
 RAW_STREAM = arg("--tags", "raw_april_tags")  # input unfiltered AprilTag stream
 IGNORE_TAGS = {
-    int(x) for x in arg("--ignore-tags").replace(",", " ").split()
+    int(marker_id) for marker_id in arg("--ignore-tags").replace(",", " ").split()
 }  # dynamic/moving tags
 OUT_PREFIX = arg("--out", "gt_pointlio")  # output prefix -> <out>_odometry / <out>_lidar
 WRITE_LCM = "--no-lcm" not in sys.argv  # also emit <out>_lidar.pc2.lcm of the corrected cloud
@@ -118,39 +120,42 @@ if not REC_ARG:
     )
 REC = Path(REC_ARG).expanduser()
 DB = REC / "mem2.db"
-intr = json.loads((REC / "camera_intrinsics.json").read_text())
-ext = np.array(intr["optical_in_base"], float)
-Tbo = Pose3(Rot3.Quaternion(ext[6], ext[3], ext[4], ext[5]), Point3(ext[0], ext[1], ext[2]))
-st = rdb.store(DB)
-if RAW_STREAM not in st.list_streams():
+intrinsics = json.loads((REC / "camera_intrinsics.json").read_text())
+optical_in_base = np.array(intrinsics["optical_in_base"], float)
+T_base_optical = Pose3(
+    Rot3.Quaternion(optical_in_base[6], optical_in_base[3], optical_in_base[4], optical_in_base[5]),
+    Point3(optical_in_base[0], optical_in_base[1], optical_in_base[2]),
+)
+store = rdb.store(DB)
+if RAW_STREAM not in store.list_streams():
     sys.exit(
         f"!! {RAW_STREAM} missing -- run detect_tags.py first to build the unfiltered tag stream."
     )
 from dimos.memory2.db_tf import transform_matrix
 
-_TF_AVAILABLE = USE_TF and st.tf.has_transforms()
+_TF_AVAILABLE = USE_TF and store.tf.has_transforms()
 
 
-def world_points(obs):
+def world_points(observation):
     """Nx3 world-registered points for a lidar observation.
 
     Primary: the recording's tf (``world <- LIDAR_FRAME``) at the scan time.
     Fallback: the observation's stored pose as the transform. Otherwise the
     scan is assumed already world-registered (legacy recordings).
     """
-    pts = np.asarray(obs.data.points_f32())
-    if not len(pts):
-        return pts
+    points = np.asarray(observation.data.points_f32())
+    if not len(points):
+        return points
     if _TF_AVAILABLE:
-        tf = st.tf.get(WORLD_FRAME, LIDAR_FRAME, float(obs.ts), TF_TOL)
-        if tf is not None:
-            rot, trans = transform_matrix(tf)
-            return pts @ rot.T + trans
-    pose = getattr(obs, "pose", None)
+        transform = store.tf.get(WORLD_FRAME, LIDAR_FRAME, float(observation.ts), TF_TOL)
+        if transform is not None:
+            rotation, translation = transform_matrix(transform)
+            return points @ rotation.T + translation
+    pose = getattr(observation, "pose", None)
     if isinstance(pose, (tuple, list)) and len(pose) >= 7:
-        rot = Rot3.Quaternion(pose[6], pose[3], pose[4], pose[5]).matrix()
-        return pts @ rot.T + np.array(pose[:3], float)
-    return pts  # already world-registered
+        rotation = Rot3.Quaternion(pose[6], pose[3], pose[4], pose[5]).matrix()
+        return points @ rotation.T + np.array(pose[:3], float)
+    return points  # already world-registered
 
 
 print(f"recording: {REC}", flush=True)
@@ -162,38 +167,38 @@ print(
 )
 
 
-def passes(t):
+def passes(detection):
     return (
-        t["sharpness"] >= GATE["min_sharpness"]
-        and t["reproj_px"] <= GATE["max_reproj_px"]
-        and t["tag_px"] >= GATE["min_tag_px"]
-        and t["distance_m"] <= GATE["max_distance_m"]
-        and t["view_angle_deg"] <= GATE["max_view_angle_deg"]
-        and (t["lin_speed"] < 0 or t["lin_speed"] <= GATE["max_lin_speed"])
-        and (t["ang_speed"] < 0 or t["ang_speed"] <= GATE["max_ang_speed"])
+        detection["sharpness"] >= GATE["min_sharpness"]
+        and detection["reproj_px"] <= GATE["max_reproj_px"]
+        and detection["tag_px"] >= GATE["min_tag_px"]
+        and detection["distance_m"] <= GATE["max_distance_m"]
+        and detection["view_angle_deg"] <= GATE["max_view_angle_deg"]
+        and (detection["lin_speed"] < 0 or detection["lin_speed"] <= GATE["max_lin_speed"])
+        and (detection["ang_speed"] < 0 or detection["ang_speed"] <= GATE["max_ang_speed"])
     )
 
 
 # read raw detections (pose + diagnostics)
 print("reading tag detections...", flush=True)
-raw = []
-for obs in st.stream(RAW_STREAM):
-    ps = obs.data
-    tg = obs.tags
-    raw.append(
+raw_detections = []
+for observation in store.stream(RAW_STREAM):
+    pose = observation.data
+    tags = observation.tags
+    raw_detections.append(
         dict(
-            ts=float(obs.ts),
-            marker_id=int(tg["marker_id"]),
+            ts=float(observation.ts),
+            marker_id=int(tags["marker_id"]),
             T_cam_tag=Pose3(
                 Rot3.Quaternion(
-                    ps.orientation.w, ps.orientation.x, ps.orientation.y, ps.orientation.z
+                    pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z
                 ),
-                Point3(ps.x, ps.y, ps.z),
+                Point3(pose.x, pose.y, pose.z),
             ),
-            reproj_px=float(tg["reproj_px"]),
+            reproj_px=float(tags["reproj_px"]),
             **{
-                k: float(tg[k])
-                for k in (
+                diagnostic: float(tags[diagnostic])
+                for diagnostic in (
                     "sharpness",
                     "tag_px",
                     "distance_m",
@@ -204,84 +209,100 @@ for obs in st.stream(RAW_STREAM):
             },
         )
     )
-gated = [t for t in raw if passes(t) and t["marker_id"] not in IGNORE_TAGS]
+gated_detections = [
+    detection
+    for detection in raw_detections
+    if passes(detection) and detection["marker_id"] not in IGNORE_TAGS
+]
 
 # keyframes from raw odometry
-con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
-fo = np.array(
+odom_connection = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+odom_rows = np.array(
     list(
-        con.execute(
+        odom_connection.execute(
             "select ts,pose_x,pose_y,pose_z,pose_qx,pose_qy,pose_qz,pose_qw "
             f"from {ODOM_STREAM} order by ts"
         )
     ),
     float,
 )
-con.close()
+odom_connection.close()
 
 
-def pr(r):
-    return Rot3.Quaternion(r[7], r[4], r[5], r[6]), np.array(r[1:4])
+def row_pose(row):
+    return Rot3.Quaternion(row[7], row[4], row[5], row[6]), np.array(row[1:4])
 
 
-ki = [0]
-prev_rot, prev_pos = pr(fo[0])
-for i in range(1, len(fo)):
-    rot, pos = pr(fo[i])
+keyframe_indices = [0]
+prev_rot, prev_pos = row_pose(odom_rows[0])
+for row_index in range(1, len(odom_rows)):
+    rot, pos = row_pose(odom_rows[row_index])
     if (
         np.linalg.norm(pos - prev_pos) > 0.5
         or np.degrees(np.linalg.norm(Rot3.Logmap(prev_rot.inverse() * rot))) > 10
     ):
-        ki.append(i)
+        keyframe_indices.append(row_index)
         prev_rot, prev_pos = rot, pos
-kfs = [pr(fo[i]) for i in ki]
-kts = fo[ki, 0]
-N = len(kfs)
+keyframe_poses = [row_pose(odom_rows[index]) for index in keyframe_indices]
+keyframe_times = odom_rows[keyframe_indices, 0]
+num_keyframes = len(keyframe_poses)
 
 # one factor per keyframe x marker: keep the best-reproj detection in each bucket
-bucket = {}
-for t in gated:
-    kf = int(np.argmin(np.abs(kts - t["ts"])))
-    key = (kf, t["marker_id"])
-    if key not in bucket or t["reproj_px"] < bucket[key]["reproj_px"]:
-        bucket[key] = t
+best_per_keyframe_marker = {}
+for detection in gated_detections:
+    keyframe = int(np.argmin(np.abs(keyframe_times - detection["ts"])))
+    key = (keyframe, detection["marker_id"])
+    if (
+        key not in best_per_keyframe_marker
+        or detection["reproj_px"] < best_per_keyframe_marker[key]["reproj_px"]
+    ):
+        best_per_keyframe_marker[key] = detection
 
 # revisit report
-raw_by, vis_by = {}, {}
-for t in raw:
-    raw_by.setdefault(t["marker_id"], 0)
-    raw_by[t["marker_id"]] += 1
-for (_kf, mid), t in bucket.items():
-    vis_by.setdefault(mid, []).append(t["ts"])
+raw_count_by_marker, visit_times_by_marker = {}, {}
+for detection in raw_detections:
+    raw_count_by_marker.setdefault(detection["marker_id"], 0)
+    raw_count_by_marker[detection["marker_id"]] += 1
+for (_keyframe, marker_id), detection in best_per_keyframe_marker.items():
+    visit_times_by_marker.setdefault(marker_id, []).append(detection["ts"])
 
 
 def n_visits(times):
     times = sorted(times)
     visits = [[times[0]]]
-    for tt in times[1:]:
-        (visits[-1].append(tt) if tt - visits[-1][-1] <= VISIT_GAP_S else visits.append([tt]))
+    for time_value in times[1:]:
+        (
+            visits[-1].append(time_value)
+            if time_value - visits[-1][-1] <= VISIT_GAP_S
+            else visits.append([time_value])
+        )
     return len(visits)
 
 
 print(f"gates: {GATE}")
 print(
-    f"raw detections {len(raw)} -> {len(gated)} pass gates -> {len(bucket)} keyframe-tag factors\n"
+    f"raw detections {len(raw_detections)} -> {len(gated_detections)} pass gates -> "
+    f"{len(best_per_keyframe_marker)} keyframe-tag factors\n"
 )
 print(f"{'tag':>4} | {'raw viewings':>12} | {'filtered revisits':>17}")
 not_revisited = []
-for mid in sorted(raw_by):
-    nv = n_visits(vis_by[mid]) if mid in vis_by else 0
-    flag = "" if nv >= 2 else "   <-- NOT REVISITED"
-    print(f"{mid:>4} | {raw_by[mid]:>12} | {nv:>10} visit(s){flag}")
-    if nv < 2:
-        not_revisited.append(mid)
+for marker_id in sorted(raw_count_by_marker):
+    visit_count = (
+        n_visits(visit_times_by_marker[marker_id]) if marker_id in visit_times_by_marker else 0
+    )
+    flag = "" if visit_count >= 2 else "   <-- NOT REVISITED"
+    print(
+        f"{marker_id:>4} | {raw_count_by_marker[marker_id]:>12} | {visit_count:>10} visit(s){flag}"
+    )
+    if visit_count < 2:
+        not_revisited.append(marker_id)
 print(
     f"\ntags NOT revisited (no loop-closure constraint): {not_revisited if not_revisited else 'none'}\n"
 )
 
 # factor graph + solve
-odom = noiseModel.Diagonal.Variances(np.array([1e-8, 1e-8, 1e-5, 1e-4, 1e-4, 1e-6]))
-grav0 = noiseModel.Diagonal.Variances(np.array([1e-8, 1e-8, 1e-6, 1e-8, 1e-8, 1e-8]))
+odom_noise = noiseModel.Diagonal.Variances(np.array([1e-8, 1e-8, 1e-5, 1e-4, 1e-4, 1e-6]))
+gravity_anchor_noise = noiseModel.Diagonal.Variances(np.array([1e-8, 1e-8, 1e-6, 1e-8, 1e-8, 1e-8]))
 
 
 # quality weighting: planar-PnP pose error grows ~quadratically with range, and reproj_px is a
@@ -290,55 +311,61 @@ grav0 = noiseModel.Diagonal.Variances(np.array([1e-8, 1e-8, 1e-6, 1e-8, 1e-8, 1e
 REF_D, REF_R = 0.4, 1.0
 
 
-def tn(Rbt, distance_m=REF_D, reproj_px=REF_R):
-    s = max((max(distance_m, 0.2) / REF_D) ** 2 * (max(reproj_px, 0.5) / REF_R) ** 2, 0.25)
-    Rm = Rbt.matrix()
-    c = np.zeros((6, 6))
-    c[:3, :3] = Rm @ np.diag([0.04, 0.04, 0.0025]) @ Rm.T
-    c[3:, 3:] = Rm @ np.diag([0.0025, 0.0025, 0.25]) @ Rm.T
-    return noiseModel.Gaussian.Covariance(c * s)
+def tag_noise(tag_rotation, distance_m=REF_D, reproj_px=REF_R):
+    scale = max((max(distance_m, 0.2) / REF_D) ** 2 * (max(reproj_px, 0.5) / REF_R) ** 2, 0.25)
+    rotation_matrix = tag_rotation.matrix()
+    covariance = np.zeros((6, 6))
+    covariance[:3, :3] = rotation_matrix @ np.diag([0.04, 0.04, 0.0025]) @ rotation_matrix.T
+    covariance[3:, 3:] = rotation_matrix @ np.diag([0.0025, 0.0025, 0.25]) @ rotation_matrix.T
+    return noiseModel.Gaussian.Covariance(covariance * scale)
 
 
-print(f"building factor graph over {N} keyframes...", flush=True)
-g = NonlinearFactorGraph()
-v = Values()
-for i in range(N):
-    rot, pos = kfs[i]
-    v.insert(i, Pose3(rot, Point3(pos)))
-    if i == 0:
-        g.add(PriorFactorPose3(0, Pose3(rot, Point3(pos)), grav0))
+print(f"building factor graph over {num_keyframes} keyframes...", flush=True)
+graph = NonlinearFactorGraph()
+initial_values = Values()
+for keyframe_index in range(num_keyframes):
+    rot, pos = keyframe_poses[keyframe_index]
+    initial_values.insert(keyframe_index, Pose3(rot, Point3(pos)))
+    if keyframe_index == 0:
+        graph.add(PriorFactorPose3(0, Pose3(rot, Point3(pos)), gravity_anchor_noise))
     else:
-        rot_prev, pos_prev = kfs[i - 1]
-        g.add(
+        rot_prev, pos_prev = keyframe_poses[keyframe_index - 1]
+        graph.add(
             BetweenFactorPose3(
-                i - 1,
-                i,
+                keyframe_index - 1,
+                keyframe_index,
                 Pose3(
                     rot_prev.inverse() * rot,
                     Point3(rot_prev.inverse().rotate(Point3(pos - pos_prev))),
                 ),
-                odom,
+                odom_noise,
             )
         )
-seen = set()
-for (kf, mid), t in sorted(bucket.items()):
-    rot, pos = kfs[kf]
-    kp = Pose3(rot, Point3(pos))
-    T = Tbo.compose(t["T_cam_tag"])
-    if mid not in seen:
-        seen.add(mid)
-        v.insert(Symbol("l", mid).key(), kp.compose(T))
-    g.add(
+seen_markers = set()
+for (keyframe, marker_id), detection in sorted(best_per_keyframe_marker.items()):
+    rot, pos = keyframe_poses[keyframe]
+    keyframe_pose = Pose3(rot, Point3(pos))
+    T_base_tag = T_base_optical.compose(detection["T_cam_tag"])
+    if marker_id not in seen_markers:
+        seen_markers.add(marker_id)
+        initial_values.insert(Symbol("l", marker_id).key(), keyframe_pose.compose(T_base_tag))
+    graph.add(
         BetweenFactorPose3(
-            kf, Symbol("l", mid).key(), T, tn(T.rotation(), t["distance_m"], t["reproj_px"])
+            keyframe,
+            Symbol("l", marker_id).key(),
+            T_base_tag,
+            tag_noise(T_base_tag.rotation(), detection["distance_m"], detection["reproj_px"]),
         )
     )
 
 print("solving stage 1 (tag PGO)...", flush=True)
 lm_params = LevenbergMarquardtParams()
 lm_params.setMaxIterations(200)
-est = LevenbergMarquardtOptimizer(g, v, lm_params).optimize()
-raw_kf = [Pose3(kfs[i][0], Point3(kfs[i][1])) for i in range(N)]
+estimate = LevenbergMarquardtOptimizer(graph, initial_values, lm_params).optimize()
+raw_keyframe_poses = [
+    Pose3(keyframe_poses[index][0], Point3(keyframe_poses[index][1]))
+    for index in range(num_keyframes)
+]
 
 # STAGE 2: ICP loop-closure refinement (tags=macro, lidar ICP=local anchor)
 # Tag PGO has pulled revisits roughly together; now ICP the lidar submaps of spatially-close,
@@ -355,155 +382,206 @@ if ICP:
     ICP_FIT_MIN, ICP_RMSE_MAX = 0.45, 0.25
     SUBMAP_HALF_S = 1.0  # accumulate scans within +/- this of a keyframe time into its submap
 
-    corr = [est.atPose3(i) for i in range(N)]
-    cpos = np.array([np.asarray(p.translation()) for p in corr])
+    corrected_poses = [estimate.atPose3(index) for index in range(num_keyframes)]
+    corrected_positions = np.array([np.asarray(pose.translation()) for pose in corrected_poses])
 
     # revisit candidate pairs
-    tree = cKDTree(cpos)
-    pairs = set()
-    for i, j in tree.query_pairs(ICP_RADIUS_M):
-        if abs(kts[i] - kts[j]) >= ICP_MIN_DT_S:
-            pairs.add((min(i, j), max(i, j)))
-    pairs = sorted(pairs, key=lambda p: np.linalg.norm(cpos[p[0]] - cpos[p[1]]))
-    involved = {k for p in pairs for k in p}
+    position_tree = cKDTree(corrected_positions)
+    candidate_pairs = set()
+    for first_index, second_index in position_tree.query_pairs(ICP_RADIUS_M):
+        if abs(keyframe_times[first_index] - keyframe_times[second_index]) >= ICP_MIN_DT_S:
+            candidate_pairs.add((min(first_index, second_index), max(first_index, second_index)))
+    candidate_pairs = sorted(
+        candidate_pairs,
+        key=lambda pair: np.linalg.norm(
+            corrected_positions[pair[0]] - corrected_positions[pair[1]]
+        ),
+    )
+    involved_keyframes = {index for pair in candidate_pairs for index in pair}
     print(
-        f"ICP stage: {len(pairs)} revisit candidate pairs over {len(involved)} keyframes",
+        f"ICP stage: {len(candidate_pairs)} revisit candidate pairs "
+        f"over {len(involved_keyframes)} keyframes",
         flush=True,
     )
 
     # build per-(involved)-keyframe body-frame submaps from the input lidar (odom-registered)
     print("ICP stage: reading lidar submaps...", flush=True)
-    submap = {k: [] for k in involved}
-    scan_n = 0
-    t_sub = time.time()
-    for obs in st.stream(LIDAR_STREAM):
-        scan_n += 1
-        if scan_n % 20000 == 0:
-            print(f"  read {scan_n} scans, {time.time() - t_sub:.0f}s", flush=True)
-        ts = float(obs.ts)
-        k = int(np.argmin(np.abs(kts - ts)))
-        if k not in submap or abs(kts[k] - ts) > SUBMAP_HALF_S:
+    submap_chunks = {index: [] for index in involved_keyframes}
+    scan_count = 0
+    submap_start_time = time.time()
+    for observation in store.stream(LIDAR_STREAM):
+        scan_count += 1
+        if scan_count % 20000 == 0:
+            print(f"  read {scan_count} scans, {time.time() - submap_start_time:.0f}s", flush=True)
+        scan_ts = float(observation.ts)
+        keyframe = int(np.argmin(np.abs(keyframe_times - scan_ts)))
+        if keyframe not in submap_chunks or abs(keyframe_times[keyframe] - scan_ts) > SUBMAP_HALF_S:
             continue
-        rot_k, pos_k = kfs[k]
-        world = world_points(obs)
-        submap[k].append((world - pos_k) @ rot_k.matrix())  # world -> kf-k body frame
-    pcd = {}
-    for k, chunks in submap.items():
+        keyframe_rot, keyframe_pos = keyframe_poses[keyframe]
+        world = world_points(observation)
+        submap_chunks[keyframe].append(
+            (world - keyframe_pos) @ keyframe_rot.matrix()
+        )  # world -> kf-keyframe body frame
+    submap_clouds = {}
+    for keyframe, chunks in submap_chunks.items():
         if not chunks:
             continue
-        p = o3d.geometry.PointCloud()
-        p.points = o3d.utility.Vector3dVector(np.concatenate(chunks, 0).astype(np.float64))
-        p = p.voxel_down_sample(ICP_VOXEL)
-        p.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=0.5, max_nn=30))
-        pcd[k] = p
-    print(f"ICP stage: built {len(pcd)} submaps, registering {len(pairs)} pairs...", flush=True)
+        cloud = o3d.geometry.PointCloud()
+        cloud.points = o3d.utility.Vector3dVector(np.concatenate(chunks, 0).astype(np.float64))
+        cloud = cloud.voxel_down_sample(ICP_VOXEL)
+        cloud.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=0.5, max_nn=30))
+        submap_clouds[keyframe] = cloud
+    print(
+        f"ICP stage: built {len(submap_clouds)} submaps, "
+        f"registering {len(candidate_pairs)} pairs...",
+        flush=True,
+    )
 
     icp_noise = noiseModel.Robust.Create(
         noiseModel.mEstimator.Huber.Create(1.345),
         noiseModel.Diagonal.Variances(np.array([4e-4, 4e-4, 4e-4, 2.5e-3, 2.5e-3, 2.5e-3])),
     )
-    added = 0
-    t_icp = time.time()
-    for pair_n, (i, j) in enumerate(pairs):
-        if pair_n and pair_n % 5000 == 0:
+    accepted_count = 0
+    icp_start_time = time.time()
+    for pair_index, (first_index, second_index) in enumerate(candidate_pairs):
+        if pair_index and pair_index % 5000 == 0:
             print(
-                f"  registered {pair_n}/{len(pairs)} pairs, {added} accepted, {time.time() - t_icp:.0f}s",
+                f"  registered {pair_index}/{len(candidate_pairs)} pairs, "
+                f"{accepted_count} accepted, {time.time() - icp_start_time:.0f}s",
                 flush=True,
             )
-        if i not in pcd or j not in pcd:
+        if first_index not in submap_clouds or second_index not in submap_clouds:
             continue
-        init = (corr[i].inverse() * corr[j]).matrix()  # i<-j initial guess from tag correction
-        res = o3d.pipelines.registration.registration_icp(
-            pcd[j],
-            pcd[i],
+        initial_guess = (
+            corrected_poses[first_index].inverse() * corrected_poses[second_index]
+        ).matrix()  # first<-second initial guess from tag correction
+        result = o3d.pipelines.registration.registration_icp(
+            submap_clouds[second_index],
+            submap_clouds[first_index],
             ICP_MAX_CORR_M,
-            init,
+            initial_guess,
             o3d.pipelines.registration.TransformationEstimationPointToPlane(),
         )
-        if res.fitness >= ICP_FIT_MIN and res.inlier_rmse <= ICP_RMSE_MAX:
-            T = res.transformation
-            g.add(BetweenFactorPose3(i, j, Pose3(Rot3(T[:3, :3]), Point3(T[:3, 3])), icp_noise))
-            added += 1
+        if result.fitness >= ICP_FIT_MIN and result.inlier_rmse <= ICP_RMSE_MAX:
+            transform = result.transformation
+            graph.add(
+                BetweenFactorPose3(
+                    first_index,
+                    second_index,
+                    Pose3(Rot3(transform[:3, :3]), Point3(transform[:3, 3])),
+                    icp_noise,
+                )
+            )
+            accepted_count += 1
     print(
-        f"ICP stage: accepted {added}/{len(pairs)} loop closures "
+        f"ICP stage: accepted {accepted_count}/{len(candidate_pairs)} loop closures "
         f"(fit>={ICP_FIT_MIN}, rmse<={ICP_RMSE_MAX}m)",
         flush=True,
     )
-    if added:
-        # est already holds every key (keyframe + landmark poses); warm-start from it
+    if accepted_count:
+        # estimate already holds every key (keyframe + landmark poses); warm-start from it
         print("solving stage 2 (tag PGO + ICP closures)...", flush=True)
-        est = LevenbergMarquardtOptimizer(g, est, lm_params).optimize()
+        estimate = LevenbergMarquardtOptimizer(graph, estimate, lm_params).optimize()
 
-C = [est.atPose3(i).compose(raw_kf[i].inverse()) for i in range(N)]
-shift = max(float(np.linalg.norm(np.asarray(C[i].translation()))) for i in range(N))
+corrections = [
+    estimate.atPose3(index).compose(raw_keyframe_poses[index].inverse())
+    for index in range(num_keyframes)
+]
+max_correction_shift = max(
+    float(np.linalg.norm(np.asarray(corrections[index].translation())))
+    for index in range(num_keyframes)
+)
 print(
-    f"PGO: N={N} keyframes, {len(bucket)} tag factors over {len(seen)} markers, "
-    f"max correction shift {shift:.1f} m",
+    f"PGO: N={num_keyframes} keyframes, {len(best_per_keyframe_marker)} tag factors "
+    f"over {len(seen_markers)} markers, "
+    f"max correction shift {max_correction_shift:.1f} m",
     flush=True,
 )
 
 
-def C_at(ts):
-    if ts <= kts[0]:
-        return C[0]
-    if ts >= kts[-1]:
-        return C[-1]
-    j = int(np.searchsorted(kts, ts))
-    a, b = j - 1, j
-    al = (ts - kts[a]) / (kts[b] - kts[a])
-    return C[a].compose(Pose3.Expmap(al * Pose3.Logmap(C[a].between(C[b]))))
+def correction_at(ts):
+    if ts <= keyframe_times[0]:
+        return corrections[0]
+    if ts >= keyframe_times[-1]:
+        return corrections[-1]
+    insert_index = int(np.searchsorted(keyframe_times, ts))
+    before_index, after_index = insert_index - 1, insert_index
+    alpha = (ts - keyframe_times[before_index]) / (
+        keyframe_times[after_index] - keyframe_times[before_index]
+    )
+    return corrections[before_index].compose(
+        Pose3.Expmap(
+            alpha * Pose3.Logmap(corrections[before_index].between(corrections[after_index]))
+        )
+    )
 
 
-def pose_tuple(P):
-    t = P.translation()
-    q = P.rotation().toQuaternion()
-    return (t[0], t[1], t[2], q.x(), q.y(), q.z(), q.w())
+def pose_tuple(pose):
+    translation = pose.translation()
+    quaternion = pose.rotation().toQuaternion()
+    return (
+        translation[0],
+        translation[1],
+        translation[2],
+        quaternion.x(),
+        quaternion.y(),
+        quaternion.z(),
+        quaternion.w(),
+    )
 
 
 if WHAT in ("odom", "both"):
-    name = f"{OUT_PREFIX}_odometry{SUFFIX}"
-    if name in st.list_streams():
-        st.delete_stream(name)
-    out = st.stream(name, Odometry)
-    print(f"writing {name} ({len(fo)} poses)...", flush=True)
-    n = 0
-    t0 = time.time()
-    for r in fo:
-        ts = float(r[0])
-        P = C_at(ts).compose(
-            Pose3(Rot3.Quaternion(r[7], r[4], r[5], r[6]), Point3(r[1], r[2], r[3]))
+    out_name = f"{OUT_PREFIX}_odometry{SUFFIX}"
+    if out_name in store.list_streams():
+        store.delete_stream(out_name)
+    out_stream = store.stream(out_name, Odometry)
+    print(f"writing {out_name} ({len(odom_rows)} poses)...", flush=True)
+    written_count = 0
+    write_start_time = time.time()
+    for row in odom_rows:
+        ts = float(row[0])
+        corrected_pose = correction_at(ts).compose(
+            Pose3(Rot3.Quaternion(row[7], row[4], row[5], row[6]), Point3(row[1], row[2], row[3]))
         )
-        x, y, zz, qx, qy, qz, qw = pose_tuple(P)
-        out.append(
+        x, y, z, qx, qy, qz, qw = pose_tuple(corrected_pose)
+        out_stream.append(
             Odometry(
                 ts=ts,
                 frame_id="odom",
                 child_frame_id="base_link",
-                pose=Pose(x, y, zz, qx, qy, qz, qw),
+                pose=Pose(x, y, z, qx, qy, qz, qw),
             ),
             ts=ts,
-            pose=(x, y, zz, qx, qy, qz, qw),
+            pose=(x, y, z, qx, qy, qz, qw),
         )
-        n += 1
-        if n % 20000 == 0:
-            print(f"  {n}/{len(fo)} poses, {time.time() - t0:.0f}s", flush=True)
-    print(f"wrote {name}: {len(fo)} poses in {time.time() - t0:.0f}s", flush=True)
+        written_count += 1
+        if written_count % 20000 == 0:
+            print(
+                f"  {written_count}/{len(odom_rows)} poses, {time.time() - write_start_time:.0f}s",
+                flush=True,
+            )
+    print(
+        f"wrote {out_name}: {len(odom_rows)} poses in {time.time() - write_start_time:.0f}s",
+        flush=True,
+    )
 
 if WHAT in ("lidar", "both"):
-    name = f"{OUT_PREFIX}_lidar{SUFFIX}"
-    fo_ts = fo[:, 0]
+    out_name = f"{OUT_PREFIX}_lidar{SUFFIX}"
+    odom_times = odom_rows[:, 0]
 
     def base_pose(ts):
-        j = int(np.searchsorted(fo_ts, ts))
-        j = min(max(j, 0), len(fo) - 1)
-        if j > 0 and abs(fo_ts[j - 1] - ts) < abs(fo_ts[j] - ts):
-            j -= 1
-        r = fo[j]
-        return Pose3(Rot3.Quaternion(r[7], r[4], r[5], r[6]), Point3(r[1], r[2], r[3]))
+        index = int(np.searchsorted(odom_times, ts))
+        index = min(max(index, 0), len(odom_rows) - 1)
+        if index > 0 and abs(odom_times[index - 1] - ts) < abs(odom_times[index] - ts):
+            index -= 1
+        row = odom_rows[index]
+        return Pose3(
+            Rot3.Quaternion(row[7], row[4], row[5], row[6]), Point3(row[1], row[2], row[3])
+        )
 
-    if name in st.list_streams():
-        st.delete_stream(name)
-    out = st.stream(name, PointCloud2)
+    if out_name in store.list_streams():
+        store.delete_stream(out_name)
+    out_stream = store.stream(out_name, PointCloud2)
 
     # The db stream stays per-scan, but the .pc2.lcm is ONE aggregated cloud (voxel-downsampled +
     # statistical-outlier-removed), not 5184 per-scan events. Intensity rides through open3d's
@@ -512,78 +590,97 @@ if WHAT in ("lidar", "both"):
         import open3d as o3d
 
     CHUNK = 1000
-    agg_xyz, agg_i = [], []  # incrementally voxel-downsampled chunks
-    buf_xyz, buf_i = [], []
-    have_inten = False
+    aggregated_points, aggregated_intensities = [], []  # incrementally voxel-downsampled chunks
+    buffered_points, buffered_intensities = [], []
+    have_intensities = False
 
-    def collapse(xyz_list, i_list, voxel):
-        pc = o3d.geometry.PointCloud()
-        pc.points = o3d.utility.Vector3dVector(np.concatenate(xyz_list).astype(np.float64))
-        carry = bool(i_list)
-        if carry:
-            inten_col = np.concatenate(i_list).astype(np.float64)[:, None]
-            pc.colors = o3d.utility.Vector3dVector(np.repeat(inten_col, 3, axis=1))
-        pc = pc.voxel_down_sample(voxel)
-        dx = np.asarray(pc.points, np.float32)
-        di = np.asarray(pc.colors, np.float32)[:, 0] if carry else None
-        return dx, di
-
-    print(f"writing {name} (corrected lidar)...", flush=True)
-    n = 0
-    t0 = time.time()
-    for obs in st.stream(LIDAR_STREAM):
-        ts = float(obs.ts)
-        Cts = C_at(ts)
-        Rm = Cts.rotation().matrix()
-        tv = np.asarray(Cts.translation())
-        xyz = world_points(obs)
-        inten = obs.data.intensities_f32()
-        xyz2 = (xyz @ Rm.T + tv).astype(np.float32)
-        m = PointCloud2.from_numpy(
-            xyz2, frame_id="odom", intensities=(np.asarray(inten) if inten is not None else None)
+    def collapse(points_chunks, intensity_chunks, voxel):
+        cloud = o3d.geometry.PointCloud()
+        cloud.points = o3d.utility.Vector3dVector(np.concatenate(points_chunks).astype(np.float64))
+        carry_intensities = bool(intensity_chunks)
+        if carry_intensities:
+            intensity_column = np.concatenate(intensity_chunks).astype(np.float64)[:, None]
+            cloud.colors = o3d.utility.Vector3dVector(np.repeat(intensity_column, 3, axis=1))
+        cloud = cloud.voxel_down_sample(voxel)
+        downsampled_points = np.asarray(cloud.points, np.float32)
+        downsampled_intensities = (
+            np.asarray(cloud.colors, np.float32)[:, 0] if carry_intensities else None
         )
-        m.ts = ts  # stamp the cloud (lcm_encode needs a non-None ts)
-        out.append(m, ts=ts, pose=pose_tuple(Cts.compose(base_pose(ts))))
+        return downsampled_points, downsampled_intensities
+
+    print(f"writing {out_name} (corrected lidar)...", flush=True)
+    written_count = 0
+    write_start_time = time.time()
+    for observation in store.stream(LIDAR_STREAM):
+        ts = float(observation.ts)
+        correction = correction_at(ts)
+        rotation_matrix = correction.rotation().matrix()
+        translation = np.asarray(correction.translation())
+        points = world_points(observation)
+        intensities = observation.data.intensities_f32()
+        corrected_points = (points @ rotation_matrix.T + translation).astype(np.float32)
+        cloud_msg = PointCloud2.from_numpy(
+            corrected_points,
+            frame_id="odom",
+            intensities=(np.asarray(intensities) if intensities is not None else None),
+        )
+        cloud_msg.ts = ts  # stamp the cloud (lcm_encode needs a non-None ts)
+        out_stream.append(cloud_msg, ts=ts, pose=pose_tuple(correction.compose(base_pose(ts))))
         if WRITE_LCM:
-            buf_xyz.append(xyz2)
-            if inten is not None:
-                have_inten = True
-                buf_i.append(np.asarray(inten, np.float32))
-            if len(buf_xyz) >= CHUNK:
-                dx, di = collapse(buf_xyz, buf_i if have_inten else [], LCM_VOXEL)
-                agg_xyz.append(dx)
-                if di is not None:
-                    agg_i.append(di)
-                buf_xyz, buf_i = [], []
-        n += 1
-        if n % 2000 == 0:
-            print(f"  {n} scans, {time.time() - t0:.0f}s", flush=True)
-    print(f"wrote {name}: {n} scans in {time.time() - t0:.0f}s", flush=True)
+            buffered_points.append(corrected_points)
+            if intensities is not None:
+                have_intensities = True
+                buffered_intensities.append(np.asarray(intensities, np.float32))
+            if len(buffered_points) >= CHUNK:
+                downsampled_points, downsampled_intensities = collapse(
+                    buffered_points, buffered_intensities if have_intensities else [], LCM_VOXEL
+                )
+                aggregated_points.append(downsampled_points)
+                if downsampled_intensities is not None:
+                    aggregated_intensities.append(downsampled_intensities)
+                buffered_points, buffered_intensities = [], []
+        written_count += 1
+        if written_count % 2000 == 0:
+            print(f"  {written_count} scans, {time.time() - write_start_time:.0f}s", flush=True)
+    print(
+        f"wrote {out_name}: {written_count} scans in {time.time() - write_start_time:.0f}s",
+        flush=True,
+    )
 
     if WRITE_LCM:
-        if buf_xyz:  # flush remainder
-            dx, di = collapse(buf_xyz, buf_i if have_inten else [], LCM_VOXEL)
-            agg_xyz.append(dx)
-            if di is not None:
-                agg_i.append(di)
-        # final unified voxel pass over the per-chunk results, then statistical outlier removal
-        merged_i = agg_i if have_inten else []
-        dx, di = collapse(agg_xyz, merged_i, LCM_VOXEL)
-        print(
-            f"aggregating .pc2.lcm: {len(dx):,} pts after voxel, removing outliers...", flush=True
-        )
-        pc = o3d.geometry.PointCloud()
-        pc.points = o3d.utility.Vector3dVector(dx.astype(np.float64))
-        if di is not None:
-            pc.colors = o3d.utility.Vector3dVector(
-                np.repeat(di.astype(np.float64)[:, None], 3, axis=1)
+        if buffered_points:  # flush remainder
+            downsampled_points, downsampled_intensities = collapse(
+                buffered_points, buffered_intensities if have_intensities else [], LCM_VOXEL
             )
-        pc, _keep = pc.remove_statistical_outlier(LCM_OUTLIER_NN, LCM_OUTLIER_STD)
-        merged_xyz = np.asarray(pc.points, np.float32)
-        merged_inten = np.asarray(pc.colors, np.float32)[:, 0] if di is not None else None
+            aggregated_points.append(downsampled_points)
+            if downsampled_intensities is not None:
+                aggregated_intensities.append(downsampled_intensities)
+        # final unified voxel pass over the per-chunk results, then statistical outlier removal
+        merged_intensity_chunks = aggregated_intensities if have_intensities else []
+        downsampled_points, downsampled_intensities = collapse(
+            aggregated_points, merged_intensity_chunks, LCM_VOXEL
+        )
+        print(
+            f"aggregating .pc2.lcm: {len(downsampled_points):,} pts after voxel, "
+            f"removing outliers...",
+            flush=True,
+        )
+        cloud = o3d.geometry.PointCloud()
+        cloud.points = o3d.utility.Vector3dVector(downsampled_points.astype(np.float64))
+        if downsampled_intensities is not None:
+            cloud.colors = o3d.utility.Vector3dVector(
+                np.repeat(downsampled_intensities.astype(np.float64)[:, None], 3, axis=1)
+            )
+        cloud, _keep = cloud.remove_statistical_outlier(LCM_OUTLIER_NN, LCM_OUTLIER_STD)
+        merged_xyz = np.asarray(cloud.points, np.float32)
+        merged_inten = (
+            np.asarray(cloud.colors, np.float32)[:, 0]
+            if downsampled_intensities is not None
+            else None
+        )
         merged = PointCloud2.from_numpy(merged_xyz, frame_id="odom", intensities=merged_inten)
-        merged.ts = float(fo_ts[0])
-        lcm_path = REC / f"{name}.pc2.lcm"
+        merged.ts = float(odom_times[0])
+        lcm_path = REC / f"{out_name}.pc2.lcm"
         lcm_path.write_bytes(merged.lcm_encode())
         print(
             f"wrote {lcm_path}: 1 aggregated cloud, {len(merged_xyz):,} pts "

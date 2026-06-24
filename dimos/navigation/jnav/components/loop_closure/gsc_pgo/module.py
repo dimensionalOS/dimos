@@ -223,8 +223,8 @@ class PGO(NativeModule):
         if self.config.debug:
             logger.info("PGO native module started (C++ iSAM2 + PCL ICP)")
 
-    def _on_correction_for_tf(self, msg: Transform) -> None:
-        self.tf.publish(msg)
+    def _on_correction_for_tf(self, correction: Transform) -> None:
+        self.tf.publish(correction)
 
     @rpc
     def stop(self) -> None:
