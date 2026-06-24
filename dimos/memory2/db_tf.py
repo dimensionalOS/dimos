@@ -103,9 +103,7 @@ class DbTf:
         non-warning lookup so per-scan misses don't spam the log.
         """
         buffer = self._ensure_loaded()
-        # _get is the non-warning lookup; public get() logs on every miss, which
-        # spams the log for per-scan registration where misses are expected.
-        return buffer._get(target_frame, source_frame, time_point, time_tolerance)
+        return buffer.lookup(target_frame, source_frame, time_point, time_tolerance)
 
 
 def transform_matrix(transform: Transform) -> tuple[np.ndarray, np.ndarray]:
