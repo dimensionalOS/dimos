@@ -367,9 +367,9 @@ def iter_episode_samples(
 def get_writer(format_name: str) -> Writer:
     """Lazy-import the format writer's `write` function."""
     if format_name == "lerobot":
-        from dimos.learning.dataprep.formats.lerobot import write
+        from dimos.learning.dataprep.formats.lerobot.writer import write
     elif format_name == "hdf5":
-        from dimos.learning.dataprep.formats.hdf5 import write
+        from dimos.learning.dataprep.formats.hdf5.writer import write
     else:
         raise ValueError(f"Unknown format: {format_name!r}")
     return write
@@ -378,9 +378,9 @@ def get_writer(format_name: str) -> Writer:
 def get_inspector(format_name: str) -> Inspector:
     """Lazy-import the format reader's `inspect` function."""
     if format_name == "lerobot":
-        from dimos.learning.dataprep.formats.lerobot import inspect
+        from dimos.learning.dataprep.formats.lerobot.reader import inspect
     elif format_name == "hdf5":
-        from dimos.learning.dataprep.formats.hdf5 import inspect
+        from dimos.learning.dataprep.formats.hdf5.reader import inspect
     else:
         raise ValueError(f"Unknown format: {format_name!r}")
     return inspect

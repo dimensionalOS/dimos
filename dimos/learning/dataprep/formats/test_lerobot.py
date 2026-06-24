@@ -32,7 +32,8 @@ import pyarrow.parquet as pq
 import pytest
 
 from dimos.learning.dataprep.core import OutputConfig, Sample
-from dimos.learning.dataprep.formats.lerobot import inspect, write
+from dimos.learning.dataprep.formats.lerobot.reader import inspect
+from dimos.learning.dataprep.formats.lerobot.writer import write
 
 
 def _state_samples(n: int = 4) -> Iterator[Sample]:
