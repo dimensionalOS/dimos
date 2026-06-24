@@ -20,9 +20,11 @@ and the front camera are recorded into a memory2 db. The Go2/Mid-360 mount frame
 published continuously onto tf so they're captured in the recording. Raw Livox capture
 is opt-in: set ``RECORD_PCAP=1`` to also record a .pcap of the Mid-360 UDP stream.
 
-Run it for a timestamped ``recordings/`` folder::
+The lidar IPs come from each module's own config (``DIMOS_MID360_LIDAR_IP`` for the
+Mid-360 / pcap capture, ``DIMOS_POINTLIO_LIDAR_IP`` for Point-LIO). Run it for a
+timestamped ``recordings/`` folder::
 
-    export LIDAR_IP=192.168.1.171
+    export DIMOS_MID360_LIDAR_IP=192.168.1.171 DIMOS_POINTLIO_LIDAR_IP=192.168.1.171
     uv run python dimos/robot/unitree/go2/blueprints/basic/unitree_go2_mid360_record.py
 """
 
@@ -45,14 +47,11 @@ from dimos.utils.logging_config import set_run_log_dir, setup_logger
 
 logger = setup_logger()
 
-_LIDAR_IP = os.getenv("LIDAR_IP", "192.168.1.171")
-_LIDAR_HOST_IP = os.getenv("LIDAR_HOST_IP", "192.168.1.100")
 # Opt-in raw-Livox pcap capture (default off). Set RECORD_PCAP=1 to include it.
 _RECORD_PCAP = os.getenv("RECORD_PCAP", "").lower() in ("1", "true", "yes", "on")
 
 _TELEOP_LINEAR_SPEED = 0.3
 _TELEOP_ANGULAR_SPEED = 0.6
-_N_WORKERS = 12
 
 
 def _default_recording_dir() -> Path:
@@ -72,13 +71,13 @@ _modules = [
             (GO2Connection, "odom", "go2_odom"),
         ]
     ),
-    Mid360.blueprint(lidar_ip=_LIDAR_IP, host_ip=_LIDAR_HOST_IP).remappings(
+    Mid360.blueprint().remappings(
         [
             (Mid360, "lidar", "livox_lidar"),
             (Mid360, "imu", "livox_imu"),
         ]
     ),
-    PointLio.blueprint(frame_id="world", lidar_ip=_LIDAR_IP).remappings(
+    PointLio.blueprint(frame_id="world").remappings(
         [
             (PointLio, "lidar", "pointlio_lidar"),
             (PointLio, "odometry", "pointlio_odometry"),
@@ -99,10 +98,10 @@ _modules = [
 ]
 
 if _RECORD_PCAP:
-    _modules.append(Mid360PcapRecorder.blueprint(lidar_ip=_LIDAR_IP))
+    _modules.append(Mid360PcapRecorder.blueprint())
 
 unitree_go2_mid360_record = autoconnect(*_modules).global_config(
-    n_workers=_N_WORKERS, robot_model="unitree_go2"
+    n_workers=12, robot_model="unitree_go2"
 )
 
 

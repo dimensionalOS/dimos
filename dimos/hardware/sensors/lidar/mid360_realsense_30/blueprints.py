@@ -19,12 +19,13 @@ into a memory2 db, with the rig's mount frames published continuously onto tf. T
 variants: ``mid360_realsense_record`` (db only) and ``mid360_realsense_record_with_pcap``
 (also captures a raw .pcap of the Mid-360 UDP stream).
 
-    export LIDAR_IP=192.168.1.107
+The lidar IPs come from each module's own config (``DIMOS_MID360_LIDAR_IP`` for the
+Mid-360 / pcap capture, ``DIMOS_POINTLIO_LIDAR_IP`` for Point-LIO)::
+
+    export DIMOS_MID360_LIDAR_IP=192.168.1.155 DIMOS_POINTLIO_LIDAR_IP=192.168.1.155
     dimos run mid360-realsense-record            # db only
     dimos run mid360-realsense-record-with-pcap  # db + raw pcap
 """
-
-import os
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
@@ -36,9 +37,6 @@ from dimos.hardware.sensors.lidar.mid360_realsense_30.static_transforms import (
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
 
-_LIDAR_IP = os.getenv("LIDAR_IP", "192.168.1.107")
-_N_WORKERS = 8
-
 _modules = [
     RealSenseCamera.blueprint().remappings(
         [
@@ -48,13 +46,13 @@ _modules = [
             (RealSenseCamera, "depth_camera_info", "realsense_depth_camera_info"),
         ]
     ),
-    Mid360.blueprint(lidar_ip=_LIDAR_IP).remappings(
+    Mid360.blueprint().remappings(
         [
             (Mid360, "lidar", "livox_lidar"),
             (Mid360, "imu", "livox_imu"),
         ]
     ),
-    PointLio.blueprint(frame_id="world", lidar_ip=_LIDAR_IP).remappings(
+    PointLio.blueprint(frame_id="world").remappings(
         [
             (PointLio, "lidar", "pointlio_lidar"),
             (PointLio, "odometry", "pointlio_odometry"),
@@ -65,9 +63,9 @@ _modules = [
     Mid360RealsenseStaticTf.blueprint(),
 ]
 
-mid360_realsense_record = autoconnect(*_modules).global_config(n_workers=_N_WORKERS)
+mid360_realsense_record = autoconnect(*_modules).global_config(n_workers=8)
 
 mid360_realsense_record_with_pcap = autoconnect(
     *_modules,
-    Mid360PcapRecorder.blueprint(lidar_ip=_LIDAR_IP),
-).global_config(n_workers=_N_WORKERS)
+    Mid360PcapRecorder.blueprint(),
+).global_config(n_workers=8)
