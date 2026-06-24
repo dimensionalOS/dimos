@@ -269,8 +269,6 @@ class GO2Connection(Module, Camera, Pointcloud):
 
         self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
 
-        # self.record("go2_bigoffice")
-
     @rpc
     def stop(self) -> None:
         self.liedown()
