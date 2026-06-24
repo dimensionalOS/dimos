@@ -211,6 +211,7 @@ all_modules = {
     "person-follow-skill-container": "dimos.agents.skills.person_follow.PersonFollowSkillContainer",
     "person-tracker": "dimos.perception.detection.person_tracker.PersonTracker",
     "pgo": "dimos.navigation.cmu_nav.modules.pgo.pgo.PGO",
+    "pgo": "dimos.navigation.jnav.components.loop_closure.gsc_pgo.module.PGO",
     "phone-teleop-module": "dimos.teleop.phone.phone_teleop_module.PhoneTeleopModule",
     "pick-and-place-module": "dimos.manipulation.pick_and_place_module.PickAndPlaceModule",
     "point-lio": "dimos.hardware.sensors.lidar.pointlio.module.PointLio",
