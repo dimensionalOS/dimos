@@ -87,7 +87,7 @@ def tag_world_position(
         @ pose7_to_matrix(optical_in_base7)
         @ pose7_to_matrix(tag_in_optical7)
     )
-    return transform[:3, 3]
+    return np.asarray(transform[:3, 3])
 
 
 def read_optical_in_base(intrinsics_json: Path) -> list[float]:
@@ -102,7 +102,8 @@ def tag_in_camera_sightings(db_path: Path) -> list[tuple[float, int, list[float]
     """(ts, marker_id, tag-in-optical pose7) per April-tag observation, read
     straight from the recorded april_tags PoseStamped stream (no re-detection)."""
     sightings: list[tuple[float, int, list[float]]] = []
-    for observation in store(db_path).stream("april_tags"):
+    tag_stream: Any = store(db_path).stream("april_tags")
+    for observation in tag_stream:
         pose_tuple = observation.pose_tuple
         if pose_tuple is None:
             continue

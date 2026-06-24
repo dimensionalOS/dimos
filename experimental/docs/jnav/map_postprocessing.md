@@ -19,12 +19,12 @@ The tags are the whole trick. Drift accumulates, but a tag you saw at minute 1 a
 
 ## The three steps
 
-The scripts live in `dimos/navigation/jnav/components/loop_closure/gsc_pgo/`.
+The scripts live in `dimos/navigation/jnav/components/loop_closure/gsc_pgo/scripts/`.
 
 **1. Detect the tags.** Run the camera frames through detection and write both the raw and the gated tag streams in one step:
 
 ```
-python dimos/navigation/jnav/components/loop_closure/gsc_pgo/add_april.py --rec=PATH
+python dimos/navigation/jnav/components/loop_closure/gsc_pgo/scripts/add_april.py --rec=PATH
 ```
 
 `add_april.py` writes `raw_april_tags` (every detection, unfiltered, with its quality numbers attached — this is what postprocessing reads), the gated/clustered `april_tags` stream, and an `april_tags` section in the recording's `summary.json` (see below). Leaving `raw_april_tags` unfiltered matters: you tune the quality gates later without re-running detection, which is the slow part. (`detect_tags.py` writes just the raw stream if that's all you want; `--dynamic 17` keeps a moving tag in raw but drops it from the gated stream.)
@@ -32,13 +32,13 @@ python dimos/navigation/jnav/components/loop_closure/gsc_pgo/add_april.py --rec=
 Inspect what was found without rebuilding anything — per tag, raw count and revisit count, flagging any tag never revisited (your fast check for whether a recording even has loop constraints):
 
 ```
-python dimos/navigation/jnav/components/loop_closure/gsc_pgo/add_april.py --rec=PATH --summary
+python dimos/navigation/jnav/components/loop_closure/gsc_pgo/scripts/add_april.py --rec=PATH --summary
 ```
 
 **2. Solve.** Two stages, one command:
 
 ```
-python dimos/navigation/jnav/components/loop_closure/gsc_pgo/post_process.py both --rec=PATH
+python dimos/navigation/jnav/components/loop_closure/gsc_pgo/scripts/post_process.py both --rec=PATH
 ```
 
 - **Tag PGO (GTSAM).** Odometry between-poses are stiff on roll/pitch and z (gravity isn't drifting) and loose on yaw, where the real error lives. The tag sightings are landmark factors, weighted by how good each detection was. This fixes the big-picture drift.
@@ -49,7 +49,7 @@ It writes `gt_pointlio_odometry` and `gt_pointlio_lidar` back into the db, optio
 **3. Look at it.** `post_process.py` opens the rrd for you, but you can rebuild it anytime:
 
 ```
-python dimos/navigation/jnav/components/loop_closure/gsc_pgo/make_rrd.py --rec=PATH
+python dimos/navigation/jnav/components/loop_closure/gsc_pgo/scripts/make_rrd.py --rec=PATH
 ```
 
 Raw cloud in red, every `gt_*` version in its own color, tag landmarks marked. Add another correction method and it shows up automatically — good for comparing approaches side by side.

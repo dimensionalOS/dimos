@@ -640,7 +640,7 @@ def evaluate(
         camera = camera_stream
         intrinsics_config = load_intrinsics_json(intrinsics_json)
         db_store = store(db_path)
-        stored_stream = (
+        stored_stream: Any = (
             db_store.stream(APRIL_TAGS_STREAM)
             if APRIL_TAGS_STREAM in db_store.list_streams()
             else []

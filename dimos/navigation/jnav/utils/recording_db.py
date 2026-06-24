@@ -21,6 +21,7 @@ passed in by the caller — nothing here is tied to a particular recording layou
 
 from __future__ import annotations
 
+import atexit
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,16 @@ def store(db_path: Path) -> SqliteStore:
         cached.start()
         _stores[key] = cached
     return cached
+
+
+def close_all() -> None:
+    """Stop every cached store, releasing their file handles."""
+    for cached in _stores.values():
+        cached.stop()
+    _stores.clear()
+
+
+atexit.register(close_all)
 
 
 def list_streams(db_path: Path) -> list[str]:

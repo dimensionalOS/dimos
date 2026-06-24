@@ -26,10 +26,14 @@ lookup instead of assuming a single baked-in pose.
 
 from __future__ import annotations
 
+import re
+import sqlite3
+import threading
 from typing import TYPE_CHECKING
 
 import numpy as np
 
+from dimos.memory.store.sqlite import SqliteStoreConfig
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -43,6 +47,15 @@ TF_STREAMS = ("tf", "tf_static")
 # Larger than any single recording's span so the buffer never prunes loaded
 # transforms (MultiTBuffer drops samples older than ts - buffer_size).
 _NO_PRUNE = 1.0e15
+# SQLite can't parameterize table names, so caller-supplied stream names are
+# interpolated; allow only safe identifiers to keep that injection-free.
+_SAFE_TABLE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _safe_table(name: str) -> str:
+    if not _SAFE_TABLE.match(name):
+        raise ValueError(f"unsafe stream/table name: {name!r}")
+    return name
 
 
 class DbTf:
@@ -52,23 +65,27 @@ class DbTf:
         self._store = store
         self._stream_names = stream_names
         self._buffer: MultiTBuffer | None = None
+        self._load_lock = threading.Lock()
 
     def _ensure_loaded(self) -> MultiTBuffer:
         if self._buffer is not None:
             return self._buffer
-        buffer = MultiTBuffer(buffer_size=_NO_PRUNE)
-        available = set(self._store.list_streams())
-        for name in self._stream_names:
-            if name not in available:
-                continue
-            for observation in self._store.stream(name, TFMessage):
-                message = observation.data
-                transforms = getattr(message, "transforms", None)
-                if transforms is None:
-                    transforms = [message]
-                buffer.receive_transform(*transforms)
-        self._buffer = buffer
-        return buffer
+        with self._load_lock:
+            if self._buffer is not None:  # another thread loaded while we waited
+                return self._buffer
+            buffer = MultiTBuffer(buffer_size=_NO_PRUNE)
+            available = set(self._store.list_streams())
+            for name in self._stream_names:
+                if name not in available:
+                    continue
+                for observation in self._store.stream(name, TFMessage):
+                    message = observation.data
+                    transforms = getattr(message, "transforms", None)
+                    if transforms is None:
+                        transforms = [message]
+                    buffer.receive_transform(*transforms)
+            self._buffer = buffer
+            return buffer
 
     def has_transforms(self) -> bool:
         return bool(self._ensure_loaded().buffers)
@@ -86,7 +103,7 @@ class DbTf:
         non-warning lookup so per-scan misses don't spam the log.
         """
         buffer = self._ensure_loaded()
-        return buffer._get(target_frame, source_frame, time_point, time_tolerance)
+        return buffer.lookup(target_frame, source_frame, time_point, time_tolerance)
 
 
 def transform_matrix(transform: Transform) -> tuple[np.ndarray, np.ndarray]:
@@ -121,15 +138,16 @@ def write_tf_tree(
 
     Returns the number of tf observations written.
     """
-    import sqlite3
-
-    db_path = store.config.path
+    config = store.config
+    if not isinstance(config, SqliteStoreConfig):
+        raise TypeError("write_tf_tree reads the db directly and needs a SqliteStore")
+    db_path = config.path
     connection = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
     odom = np.array(
         list(
             connection.execute(
                 "select ts,pose_x,pose_y,pose_z,pose_qx,pose_qy,pose_qz,pose_qw "
-                f"from {odom_stream} order by ts"
+                f"from {_safe_table(odom_stream)} order by ts"
             )
         ),
         float,
@@ -173,8 +191,8 @@ def write_tf_tree(
         )
         return links
 
-    for ts in np.arange(t0, t1 + static_period, static_period):
-        tf_stream.append(TFMessage(*statics_at(float(ts))), ts=float(ts))
+    for static_ts in np.arange(t0, t1 + static_period, static_period):
+        tf_stream.append(TFMessage(*statics_at(float(static_ts))), ts=float(static_ts))
         written += 1
 
     return written

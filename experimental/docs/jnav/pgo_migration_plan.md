@@ -31,9 +31,9 @@ dimos/navigation/jnav/
       spec.py                   # LoopClosure Protocol
       gsc_pgo/
         module.py               # NativeModule -> builds external gsc_pgo flake
-        post_process.py         # ported from better_pgo scripts/post_process.py
-        (add_april.py, detect_tags.py, make_rrd.py)  # the other postprocess scripts
-      ivan_pgo/ ivan_pgo_transformer/ unrefined_pgo/   # comparison baselines (eval_all needs them)
+        scripts/
+          post_process.py       # ported from better_pgo scripts/post_process.py
+          (add_april.py, detect_tags.py, make_rrd.py)  # the other postprocess scripts
 experimental/docs/jnav/
   map_postprocessing.md         # adapted from docs/capabilities/navigation/map_postprocessing.md
 ```
@@ -105,7 +105,7 @@ github:jeff-hykin/gsc_pgo       # all C++ + flake.nix/flake.lock
   doesn't break. (If baselines are unwanted, prune eval_all's list instead.)
 
 ### Phase 5 — postprocessing scripts (from better_pgo)
-- Port `scripts/post_process.py` → `components/loop_closure/gsc_pgo/post_process.py`.
+- Port `scripts/post_process.py` → `components/loop_closure/gsc_pgo/scripts/post_process.py`.
 - Port `add_april.py`, `detect_tags.py`, `make_rrd.py` alongside it (the doc's
   3-step flow references all of them).
 - Rewrite their internal imports: `eval_utils.apriltags` → `dimos.navigation.jnav.utils.apriltags`, etc.

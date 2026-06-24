@@ -85,7 +85,7 @@ def corrected_trajectory(
     *,
     lidar_stream: str,
     odom_stream: str,
-):
+) -> tuple[list[Any], list[Any], Any]:
     module_class = load_module_class(module_path, module_name)
     config = filter_config_for_module(module_class, config)
     graph, closures, _ = run_module_graph(
