@@ -63,7 +63,7 @@ def _default_recording_dir() -> Path:
     return Path("recordings") / stamp
 
 
-_modules = [
+unitree_go2_mid360_record = autoconnect(
     MovementManager.blueprint(),
     GO2Connection.blueprint().remappings(
         [
@@ -95,14 +95,14 @@ _modules = [
             (KeyboardTeleop, "cmd_vel", "tele_cmd_vel"),
         ]
     ),
-]
+).global_config(n_workers=12, robot_model="unitree_go2")
 
+# Opt-in: also capture a raw .pcap of the Mid-360 UDP stream (RECORD_PCAP=1).
 if _RECORD_PCAP:
-    _modules.append(Mid360PcapRecorder.blueprint())
-
-unitree_go2_mid360_record = autoconnect(*_modules).global_config(
-    n_workers=12, robot_model="unitree_go2"
-)
+    unitree_go2_mid360_record = autoconnect(
+        unitree_go2_mid360_record,
+        Mid360PcapRecorder.blueprint(),
+    )
 
 
 if __name__ == "__main__":

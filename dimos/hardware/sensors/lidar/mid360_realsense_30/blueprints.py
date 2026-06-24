@@ -37,7 +37,7 @@ from dimos.hardware.sensors.lidar.mid360_realsense_30.static_transforms import (
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
 
-_modules = [
+mid360_realsense_record = autoconnect(
     RealSenseCamera.blueprint().remappings(
         [
             (RealSenseCamera, "depth_image", "realsense_depth_image"),
@@ -61,11 +61,10 @@ _modules = [
     Mid360RealsenseRecorder.blueprint(),
     # Continuously republishes the rig's mount frames onto tf (no latched static tf).
     Mid360RealsenseStaticTf.blueprint(),
-]
-
-mid360_realsense_record = autoconnect(*_modules).global_config(n_workers=8)
-
-mid360_realsense_record_with_pcap = autoconnect(
-    *_modules,
-    Mid360PcapRecorder.blueprint(),
 ).global_config(n_workers=8)
+
+# Same rig, also capturing a raw .pcap of the Mid-360 UDP stream.
+mid360_realsense_record_with_pcap = autoconnect(
+    mid360_realsense_record,
+    Mid360PcapRecorder.blueprint(),
+)
