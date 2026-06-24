@@ -274,16 +274,20 @@ class RecorderConfig(MemoryModuleConfig):
     stream_remapping: dict[str, str] = Field(default_factory=dict)
 
 
-PoseSetter = Callable[[Any], "Pose | None | Awaitable[Pose | None]"]
+PoseSetter = Callable[[Any], "Awaitable[Pose | None]"]
 
 
 def pose_setter_for(*stream_names: str) -> Callable[[Any], Any]:
-    """Mark a method ``(self, msg) -> Pose | None`` as the pose setter for the
-    given recorded stream(s). The method may be sync or ``async def`` — the
-    recorder awaits it if it returns an awaitable. Streams without a setter fall
-    back to the tf-based ``world <- frame_id`` lookup."""
+    """Mark an ``async def`` method ``(self, msg) -> Pose | None`` as the pose
+    setter for the given recorded stream(s). Streams without a setter fall back
+    to the tf-based ``world <- frame_id`` lookup."""
 
     def decorate(fn: Any) -> Any:
+        if not inspect.iscoroutinefunction(fn):
+            raise TypeError(
+                f"@pose_setter_for must decorate an `async def` method; "
+                f"{getattr(fn, '__qualname__', fn)} is not async"
+            )
         fn._pose_setter_for = tuple(stream_names)
         return fn
 
@@ -406,15 +410,12 @@ class Recorder(MemoryModule):
         return getattr(msg, "ts", None) or time.time()
 
     async def _resolve_pose(self, name: str, msg: Any, ts: float) -> Pose | None:
-        """Pose to anchor *msg* with. Dispatches to the stream's
-        ``@pose_setter_for`` if one is defined (awaited when async), else falls
-        back to a ``world <- frame_id`` tf lookup."""
+        """Pose to anchor *msg* with. Dispatches to the stream's (async)
+        ``@pose_setter_for`` if one is defined, else falls back to a
+        ``world <- frame_id`` tf lookup."""
         setter = self._pose_setters.get(name)
         if setter is not None:
-            result = setter(msg)
-            if inspect.isawaitable(result):
-                result = await result
-            return cast("Pose | None", result)
+            return cast("Pose | None", await setter(msg))
         frame_id = getattr(msg, "frame_id", None) or self.config.default_frame_id
         transform = self.tf.get(
             self.config.root_frame, frame_id, time_point=ts, time_tolerance=self.config.tf_tolerance
