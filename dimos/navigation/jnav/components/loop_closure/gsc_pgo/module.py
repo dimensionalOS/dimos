@@ -106,7 +106,7 @@ class PGOConfig(NativeModuleConfig):
     # Skip ICP on candidates farther than this (m). 0 disables.
     loop_candidate_max_distance_m: float = 30.0
 
-    # --- Tag (AprilTag/ArUco) loop closure --------------------------------
+    # Tag (AprilTag/ArUco) loop closure
     use_tag_loop_closure: bool = False
     # LCM channel of the static TF tree (dimos "pattern#msg_name" convention).
     tf_static_channel: str = "/tf_static#tf2_msgs.TFMessage"
@@ -125,7 +125,7 @@ class PGOConfig(NativeModuleConfig):
     loop_robust_kernel: bool = False
     loop_robust_huber_k: float = 1.345
 
-    # --- Landmark events (decoupled perceiver -> PGO factor-graph manager) ----
+    # Landmark events (decoupled perceiver -> PGO factor-graph manager)
     # When set, the PGO ingests Landmark events on the `landmarks` In and
     # attaches each as a graph landmark variable + a BetweenFactor(keyframe,
     # landmark). Two sightings of the same landmark id share the variable, so a
@@ -142,7 +142,7 @@ class PGOConfig(NativeModuleConfig):
     landmark_assoc_max_dt: float = 0.2
     landmark_buffer_window: float = 3.0
 
-    # --- Gravity anchor ------------------------------------------------------
+    # Gravity anchor
     # Pin keyframe 0 (whose orientation is gravity-aligned by the LIO front end)
     # so landmark/loop closures cannot rotate the initial roll/pitch off gravity.
     # The full pose is pinned (also the gauge reference); roll/pitch stiffness is
