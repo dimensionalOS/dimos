@@ -28,9 +28,7 @@ import rerun as rr
 import typer
 
 from dimos.mapping.ray_tracing.transformer import RayTraceMap
-from dimos.memory2.store.memory import MemoryStore
 from dimos.memory2.store.sqlite import SqliteStore
-from dimos.memory2.stream import Stream
 from dimos.memory2.transform import FnTransformer
 from dimos.memory2.type.observation import Observation
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -39,9 +37,6 @@ from dimos.navigation.nav_3d.mls_planner.mls_planner import MLSPlanner
 from dimos.utils.data import resolve_named_path
 
 TIMELINE = "ts"
-
-TIMING_KEYS = ["update_ms", "plan_ms", "total_ms"]
-SIZE_KEYS = ["voxels", "surface_cells", "nodes", "edges"]
 
 # Distinct path colors for overlaid configurations, config 0 first.
 PATH_PALETTE = [
@@ -73,23 +68,6 @@ def _parse_configs(
         c, b, w = (float(p) for p in parts)
         out.append((c, b, w))
     return out
-
-
-def _print_summary(streams: dict[str, dict[str, Stream[float]]]) -> None:
-    print("\nper-frame summary (mean / p50 / p95 / max):")
-    for kind, by_key in streams.items():
-        for key, stream in by_key.items():
-            values = [obs.data for obs in stream]
-            if not values:
-                continue
-            arr = np.asarray(values, dtype=np.float64)
-            mean, p50, p95, peak = (
-                arr.mean(),
-                np.percentile(arr, 50),
-                np.percentile(arr, 95),
-                arr.max(),
-            )
-            print(f"  {kind}/{key:<14} {mean:9.2f} {p50:9.2f} {p95:9.2f} {peak:9.2f}")
 
 
 PairObs = Observation[tuple[Observation[PointCloud2], Observation[Odometry]]]
@@ -177,6 +155,95 @@ def _log_shared(
     return surface, nodes, edges
 
 
+def _init_recording(db_path: FsPath, out: FsPath | None, live: bool) -> None:
+    rr.init("plan_rrd", recording_id=db_path.stem)
+    if out is not None and live:
+        # Generous viewer memory so the gRPC sink never backpressures the writer.
+        rr.spawn(connect=False, memory_limit="16GB", server_memory_limit="16GB")
+        rr.set_sinks(rr.GrpcSink(), rr.FileSink(str(out)))
+    elif out is not None:
+        rr.save(str(out))
+    else:
+        rr.spawn()
+    register_colormap_annotation("turbo")
+
+
+def _build_planners(
+    configs: list[tuple[float, float, float]],
+    voxel_size: float,
+    robot_height: float,
+    surface_closing_radius: float,
+    node_spacing: float,
+    step_height: float,
+    step_penalty_weight: float,
+) -> list[tuple[str, list[int], MLSPlanner]]:
+    planners: list[tuple[str, list[int], MLSPlanner]] = []
+    for i, (clr, buf, wgt) in enumerate(configs):
+        planner = MLSPlanner(
+            voxel_size=voxel_size,
+            robot_height=robot_height,
+            surface_closing_radius=surface_closing_radius,
+            node_spacing_m=node_spacing,
+            wall_clearance_m=clr,
+            wall_buffer_m=buf,
+            wall_buffer_weight=wgt,
+            step_threshold_m=step_height,
+            step_penalty_weight=step_penalty_weight,
+        )
+        color = PATH_PALETTE[i % len(PATH_PALETTE)]
+        label = f"cfg{i}_c{clr:g}_b{buf:g}_w{wgt:g}"
+        planners.append((label, color, planner))
+        print(f"config {i}: clearance={clr} buffer={buf} weight={wgt} color={color} -> {label}")
+    return planners
+
+
+def _process_frame(
+    ray_obs: Observation[PointCloud2],
+    planners: list[tuple[str, list[int], MLSPlanner]],
+    goal: tuple[float, float, float],
+    robot_height: float,
+    render_voxel: float,
+    clearance_clamp: float,
+) -> dict[str, float]:
+    """Plan every config for one frame, log paths/map/metrics, return the ref timing."""
+    assert ray_obs.pose_tuple is not None
+    bounds = ray_obs.tags["region_bounds"]
+    px, py, pz, *_ = ray_obs.pose_tuple
+    start = (float(px), float(py), float(pz) - robot_height)
+    ox, oy, radius, z_min, z_max = bounds
+    pts = ray_obs.data.points_f32()
+    rr.set_time(TIMELINE, timestamp=ray_obs.ts)
+
+    ref_timing: dict[str, float] = {}
+    surface = nodes = edges = np.empty((0,), dtype=np.float32)
+    for j, (label, color, planner) in enumerate(planners):
+        t0 = perf_counter()
+        planner.update_region(pts, (ox, oy), radius, z_min, z_max)
+        t1 = perf_counter()
+        waypoints = planner.plan(start, goal)
+        t2 = perf_counter()
+        _log_path_wp(waypoints, f"world/paths/{label}", color)
+        if j == 0:
+            ref_timing = {
+                "update_ms": (t1 - t0) * 1000,
+                "plan_ms": (t2 - t1) * 1000,
+                "total_ms": (t2 - t0) * 1000,
+            }
+            surface, nodes, edges = _log_shared(start, planner, render_voxel, clearance_clamp)
+
+    for key, value in ref_timing.items():
+        rr.log(f"metrics/timing/{key}", rr.Scalars(value))
+    sizes = {
+        "voxels": planners[0][2].voxel_count(),
+        "surface_cells": len(surface),
+        "nodes": len(nodes),
+        "edges": len(edges),
+    }
+    for key, value in sizes.items():
+        rr.log(f"metrics/size/{key}", rr.Scalars(value))
+    return ref_timing
+
+
 def main(
     dataset: str = typer.Argument(..., help="Dataset .db: bare name (cwd or data/) or path"),
     out: FsPath | None = typer.Option(
@@ -243,17 +310,7 @@ def main(
     ),
 ) -> None:
     db_path = resolve_named_path(dataset, ".db")
-
-    rr.init("plan_rrd", recording_id=db_path.stem)
-    if out is not None and live:
-        # Generous viewer memory so the gRPC sink never backpressures the writer.
-        rr.spawn(connect=False, memory_limit="16GB", server_memory_limit="16GB")
-        rr.set_sinks(rr.GrpcSink(), rr.FileSink(str(out)))
-    elif out is not None:
-        rr.save(str(out))
-    else:
-        rr.spawn()
-    register_colormap_annotation("turbo")
+    _init_recording(db_path, out, live)
 
     store = SqliteStore(path=str(db_path))
     with store:
@@ -277,74 +334,26 @@ def main(
         )
 
         configs = _parse_configs(config, wall_clearance, wall_buffer, wall_buffer_weight)
-        planners: list[tuple[str, list[int], MLSPlanner]] = []
-        for i, (clr, buf, wgt) in enumerate(configs):
-            planner = MLSPlanner(
-                voxel_size=voxel_size,
-                robot_height=robot_height,
-                surface_closing_radius=surface_closing_radius,
-                node_spacing_m=node_spacing,
-                wall_clearance_m=clr,
-                wall_buffer_m=buf,
-                wall_buffer_weight=wgt,
-                step_threshold_m=step_height,
-                step_penalty_weight=step_penalty_weight,
-            )
-            color = PATH_PALETTE[i % len(PATH_PALETTE)]
-            label = f"cfg{i}_c{clr:g}_b{buf:g}_w{wgt:g}"
-            planners.append((label, color, planner))
-            print(f"config {i}: clearance={clr} buffer={buf} weight={wgt} color={color} -> {label}")
+        planners = _build_planners(
+            configs,
+            voxel_size,
+            robot_height,
+            surface_closing_radius,
+            node_spacing,
+            step_height,
+            step_penalty_weight,
+        )
 
         rr.log("world/goal", rr.Points3D([goal], colors=[[255, 0, 0]], radii=0.1), static=True)
-
-        metrics = MemoryStore()
-        timing_streams = {k: metrics.stream(f"timing_{k}", float) for k in TIMING_KEYS}
-        size_streams = {k: metrics.stream(f"size_{k}", float) for k in SIZE_KEYS}
 
         try:
             frame = 0
             for ray_obs in ray_pipeline:
                 if ray_obs.pose_tuple is None:
                     continue
-                bounds = ray_obs.tags["region_bounds"]
-                px, py, pz, *_ = ray_obs.pose_tuple
-                start = (float(px), float(py), float(pz) - robot_height)
-                ox, oy, radius, z_min, z_max = bounds
-                pts = ray_obs.data.points_f32()
-                rr.set_time(TIMELINE, timestamp=ray_obs.ts)
-
-                ref_timing: dict[str, float] = {}
-                surface = nodes = edges = np.empty((0,), dtype=np.float32)
-                for j, (label, color, planner) in enumerate(planners):
-                    t0 = perf_counter()
-                    planner.update_region(pts, (ox, oy), radius, z_min, z_max)
-                    t1 = perf_counter()
-                    waypoints = planner.plan(start, goal)
-                    t2 = perf_counter()
-                    _log_path_wp(waypoints, f"world/paths/{label}", color)
-                    if j == 0:
-                        ref_timing = {
-                            "update_ms": (t1 - t0) * 1000,
-                            "plan_ms": (t2 - t1) * 1000,
-                            "total_ms": (t2 - t0) * 1000,
-                        }
-                        surface, nodes, edges = _log_shared(
-                            start, planner, render_voxel, clearance_clamp
-                        )
-
-                for key, value in ref_timing.items():
-                    timing_streams[key].append(float(value), ts=ray_obs.ts)
-                    rr.log(f"metrics/timing/{key}", rr.Scalars(value))
-                sizes = {
-                    "voxels": planners[0][2].voxel_count(),
-                    "surface_cells": len(surface),
-                    "nodes": len(nodes),
-                    "edges": len(edges),
-                }
-                for key, value in sizes.items():
-                    size_streams[key].append(float(value), ts=ray_obs.ts)
-                    rr.log(f"metrics/size/{key}", rr.Scalars(value))
-
+                ref_timing = _process_frame(
+                    ray_obs, planners, goal, robot_height, render_voxel, clearance_clamp
+                )
                 frame += 1
                 print(
                     f"frame={frame} configs={len(planners)} "
@@ -354,9 +363,7 @@ def main(
                     flush=True,
                 )
         except KeyboardInterrupt:
-            print("\ninterrupted; reporting metrics for completed frames")
-        finally:
-            _print_summary({"timing": timing_streams, "size": size_streams})
+            print("\ninterrupted")
 
     if out is not None:
         print(f"wrote {out}")
