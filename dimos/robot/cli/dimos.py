@@ -171,17 +171,18 @@ def arg_help(
 
         if inspect.isclass(t) and issubclass(t, BaseModel):
             output += f"{indent}{module}{k}:\n"
-            # Find blueprint atom
-            bp = next(bp for bp in blueprint.blueprints if bp.module.name == k)
+            # transports.* has no backing blueprint atom — its leaves come from
+            # the transport configs' own defaults.
+            bp = next((bp for bp in blueprint.blueprints if bp.module.name == k), None)
             output += arg_help(
                 t, blueprint, indent=indent + "  ", module=module + k + ".", _atom=bp
             )
         else:
-            assert _atom is not None
             # Use __name__ to avoid "<class 'int'>" style output on basic types.
             display_type = t.__name__ if isinstance(t, type) else t
-            required = "[Required] " if info.is_required() and k not in _atom.kwargs else ""
-            d = _atom.kwargs.get(k, info.default)
+            in_kwargs = _atom is not None and k in _atom.kwargs
+            required = "[Required] " if info.is_required() and not in_kwargs else ""
+            d = _atom.kwargs.get(k, info.default) if _atom is not None else info.default
             default = f" (default: {d})" if d is not PydanticUndefined else ""
             output += f"{indent}* {required}{module}{k}: {display_type}{default}\n"
     return output
