@@ -263,7 +263,6 @@ manipulation = [
     "roboplan",
 ]
 
-
 cpu = [
     # CPU inference backends
     "onnxruntime",
@@ -427,7 +426,7 @@ tests-self-hosted = [
 required-version = ">=0.9.17"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false}
+exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false }
 override-dependencies = [
     # moondream pins pillow<11 but we need >=12.2.0 for security fixes
     # (CVE-2026-25990, CVE-2026-40192, CVE-2026-42311).
