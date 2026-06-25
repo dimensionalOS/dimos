@@ -61,6 +61,8 @@ _ROBOPLAN_PLANNER_REQUIRES_ROBOPLAN_WORLD = (
     'planner_name="roboplan" requires world_backend="roboplan"'
 )
 
+DEFAULT_KINEMATICS_NAME: KinematicsName = "pink"
+
 
 def validate_backend_combination(
     *,
@@ -108,7 +110,7 @@ def create_world(
 
 
 def create_kinematics(
-    name: str = "pink",
+    name: str = DEFAULT_KINEMATICS_NAME,
     config: ManipulationKinematicsConfig | None = None,
     **kwargs: Any,
 ) -> KinematicsSpec:
@@ -172,7 +174,7 @@ def create_planning_specs(
     if kinematics_name is not None:
         kinematics = kinematics_config_from_name(kinematics_name)
     if kinematics is None:
-        kinematics = kinematics_config_from_name("pink")
+        kinematics = kinematics_config_from_name(DEFAULT_KINEMATICS_NAME)
 
     validate_backend_combination(
         world_backend=world_backend,
