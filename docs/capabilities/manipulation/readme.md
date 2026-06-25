@@ -156,8 +156,7 @@ CLI example:
 
 ```bash
 uv run dimos run xarm7-planner-coordinator \
-  -o manipulationmodule.visualization.backend=viser \
-  -o manipulationmodule.visualization.allow_plan_execute=true
+  -o manipulationmodule.visualization.backend=viser
 ```
 
 Blueprint example:
@@ -174,7 +173,6 @@ manipulation = ManipulationModule.blueprint(
             "port": 8095,
             "open_browser": True,
             "panel_enabled": True,  # default; set False for scene-only Viser
-            "allow_plan_execute": False,  # keep panel execution blocked by default
         },
     )
 )
@@ -198,8 +196,8 @@ after the planning world has added its robots. This snapshot maps world robot ID
 visuals without `WorldMonitor` depending on Viser-specific hooks. Embedded Meshcat visualization
 does not need extra setup because it observes the Drake world directly.
 
-Panel execution is opt-in. Leave `allow_plan_execute=False` unless the operator intentionally
-wants the browser panel to call the existing manipulation execution path.
+When the Viser panel is enabled, it can call the existing manipulation execution path after a
+fresh feasible plan is available and the current robot joints still match the plan start.
 
 ### Perception + Agent
 
