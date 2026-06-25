@@ -447,15 +447,18 @@ class RoboPlanWorld:
     def _apply_collision_exclusions(
         self, scene: Any, config: RobotModelConfig, urdf_path: Path
     ) -> None:
+        set_collisions = getattr(scene, "setCollisions", None)
+        if set_collisions is None:
+            logger.warning(
+                "RoboPlan Scene has no setCollisions API; relying on the generated SRDF "
+                "for collision exclusions only"
+            )
+            return
         for link1, link2 in self._collision_exclusion_pairs(config, urdf_path):
             try:
-                scene.setCollisions(link1, link2, False)
+                set_collisions(link1, link2, False)
             except RuntimeError:
-                logger.debug(
-                    f"RoboPlan did not accept collision exclusion pair: {link1} <-> {link2}"
-                )
-            except AttributeError:
-                return
+                logger.warning(f"RoboPlan rejected collision exclusion pair: {link1} <-> {link2}")
 
     def _extract_joint_limits(
         self, config: RobotModelConfig, model_handle: Any
