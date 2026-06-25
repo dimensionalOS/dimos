@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.spec import mapping
@@ -43,10 +44,18 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     # Bounds for the health of voxels. Positive health means voxel is occupied.
     min_health: int = -2
     max_health: int = 1
-    # Spare a clearing miss when |ray dot surface normal| is below this.
+    # Don't clear a miss when abs of ray dot normal is below this, clear it when above.
+    # Higher clears only on direct hits, lower clears on slight grazes too.
     graze_cos: float = 0.7
     # Only spare a voxel whose neighborhood was hit within this many frames.
+    # A stale voxel can be cleared, even if it's a grazing hit. Large disables it.
     recency_window: int = 15
+    # Publish the accumulated local map and region bounds every Nth frame. Zero disables them.
+    emit_every: int = 1
+    # Publish the global map every Nth frame. Zero disables it.
+    global_emit_every: int = 1
+    # Size the local region to this percentile of batch point distances.
+    region_percentile: float = 95.0
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
@@ -58,8 +67,8 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
     odometry: In[Odometry]
     global_map: Out[PointCloud2]
     local_map: Out[PointCloud2]
+    region_bounds: Out[PoseStamped]
 
 
-# Verify protocol port compliance (mypy will flag missing ports)
 if TYPE_CHECKING:
     RayTracingVoxelMap()
