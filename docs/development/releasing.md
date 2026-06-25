@@ -21,19 +21,13 @@ Throughout this document, replace `X.Y.Z` with the version you are releasing (e.
 
 ## 2. Creating the release
 
-1. Run the full test suite locally on the release branch.
-
-   ```bash
-   uv run pytest -m 'not tool' --error-for-skips
-   ```
-
-2. [Run](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow#running-a-workflow) the `release` workflow on the `release/X.Y.Z` branch.
-3. Monitor the CI run. When it reaches the publish-pypi step, you'll need other team members to approve the release.
-4. After completion, a merge-back PR will have been created. Find the PR titled `Merge release/X.Y.Z back to main` and merge-commit.
+1. [Run](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow#running-a-workflow) the `release` workflow on the `release/X.Y.Z` branch.
+2. Monitor the CI run. When it reaches the publish-pypi step, you'll need other team members to approve the release.
+3. After completion, a merge-back PR will have been created. Find the PR titled `Merge release/X.Y.Z back to main` and merge-commit.
 
     > **Warning** — pick **"Create a merge commit"** from the merge-button dropdown. NOT "Squash and merge", NOT "Rebase and merge". Squashing collapses the two-parent topology and the tag stops being reachable from main.
 
-5. Confirm `vX.Y.Z` shows on https://github.com/dimensionalOS/dimos/releases and on https://pypi.org/project/dimos/.
+4. Confirm `vX.Y.Z` shows on https://github.com/dimensionalOS/dimos/releases and on https://pypi.org/project/dimos/.
 
 ## 3. Cleanup
 

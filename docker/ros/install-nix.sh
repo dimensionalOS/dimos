@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Defaults for inputs normally exported by the calling composite action.
+# Letting them default here means the script also works when called directly
+# from a workflow `run:` step without the action wrapper.
+: "${INPUT_ENABLE_KVM:=false}"
+: "${INPUT_SET_AS_TRUSTED_USER:=false}"
+: "${INPUT_EXTRA_NIX_CONFIG:=}"
+: "${INPUT_INSTALL_OPTIONS:=}"
+
 if nix_path="$(type -p nix)" ; then
   echo "Aborting: Nix is already installed at ${nix_path}"
   exit

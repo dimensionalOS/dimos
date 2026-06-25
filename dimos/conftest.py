@@ -95,7 +95,10 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "self_hosted_large: tests that need a high-memory self-hosted runner"
     )
-    config.addinivalue_line("markers", "skipif_in_ci: skip when CI env var is set")
+    config.addinivalue_line(
+        "markers",
+        "skipif_in_ci: skip when CI is set (override: DIMOS_FULL_TEST_RUN=1)",
+    )
     config.addinivalue_line("markers", "skipif_no_openai: skip when OPENAI_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_alibaba: skip when ALIBABA_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_ros: skip when ROS dependencies are not present")
@@ -137,7 +140,10 @@ def lcm_url() -> str:
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items):
     _skipif_markers = {
-        "skipif_in_ci": (bool(os.getenv("CI")), "Skipped in CI"),
+        "skipif_in_ci": (
+            bool(os.getenv("CI")) and not os.getenv("DIMOS_FULL_TEST_RUN"),
+            "Skipped in CI",
+        ),
         "skipif_no_openai": (not os.getenv("OPENAI_API_KEY"), "OPENAI_API_KEY not set"),
         "skipif_no_alibaba": (not os.getenv("ALIBABA_API_KEY"), "ALIBABA_API_KEY not set"),
         "skipif_no_ros": (not _has_ros(), "ROS dependencies are not present"),
