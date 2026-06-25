@@ -187,6 +187,13 @@ visualization = [
     "dimos-viewer==0.32.0a1",
 ]
 
+learning = [
+    # dimos.learning.dataprep dataset writers (lazy-imported per format)
+    "pyarrow",  # LeRobot v3.0 data/episodes parquet
+    "pandas",   # LeRobot v3.0 tasks.parquet (task-indexed)
+    "h5py",     # HDF5 writer
+]
+
 agents = [
     "langchain>=1.2.3,<2",
     "langchain-core>=1.2.22,<2",
@@ -372,7 +379,7 @@ tests = [
 
     # Deps the lint job swaps for stubs (`stubs/<pkg>/` or `types-*`):
     # the real packages are needed at test time, stubs cover mypy.
-    "dimos[apriltag,mapping,drone,cpu]",
+    "dimos[apriltag,mapping,drone,cpu,learning]",
     "mujoco>=3.3.4",
     "pygame>=2.6.1",
     "python-can>=4",
@@ -510,6 +517,8 @@ module = [
     "etils",
     "faster_whisper",
     "geometry_msgs.*",
+    "h5py",
+    "h5py.*",
     "mcap",
     "mcap.*",
     "mujoco",
@@ -526,6 +535,8 @@ module = [
     "pycuda.*",
     "pydrake",
     "pydrake.*",
+    "pyarrow",
+    "pyarrow.*",
     "pyzed",
     "pyzed.*",
     "rclpy.*",
@@ -559,6 +570,10 @@ follow_imports = "skip"
 
 [[tool.mypy.overrides]]
 module = ["transformers", "transformers.*"]
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = ["pyarrow", "pyarrow.*"]
 follow_imports = "skip"
 
 [tool.pytest.ini_options]

@@ -24,7 +24,7 @@ from pathlib import Path
 import sys
 import time
 import types
-from typing import TYPE_CHECKING, Any, Union, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Literal, Union, cast, get_args, get_origin
 
 import click
 from dotenv import load_dotenv
@@ -681,6 +681,42 @@ def send(
 map_app = typer.Typer(help="Voxel-map tools over recorded sqlite datasets")
 main.add_typer(map_app, name="map")
 map_app.command("global")(_map_main)
+
+
+dataprep_app = typer.Typer(help="Build and inspect learning datasets from recordings")
+main.add_typer(dataprep_app, name="dataprep")
+
+
+@dataprep_app.command("build")
+def dataprep_build(
+    source: Path | None = typer.Option(None, "--source", "-s", help="Recording .db to read"),
+    output: Path | None = typer.Option(None, "--output", help="Dataset output directory"),
+    output_format: str = typer.Option(None, "--format", "-f", help="Output format: lerobot | hdf5"),
+    config_path: Path | None = typer.Option(
+        None, "--config", "-c", help="JSON DataPrepConfig (needed for obs/action stream maps)"
+    ),
+) -> None:
+    """Build a dataset from a recording (lerobot/hdf5 + dimos_meta.json)."""
+    from dimos.learning.dataprep.cli import build
+
+    build(config_path, source, output, cast("Literal['lerobot', 'hdf5'] | None", output_format))
+
+
+@dataprep_app.command("inspect")
+def dataprep_inspect(
+    dataset: Path | None = typer.Argument(
+        None, help="Built dataset: a .hdf5 file or a lerobot directory"
+    ),
+    output_format: str = typer.Option(
+        None, "--format", "-f", help="lerobot | hdf5 (auto-detected from the path if omitted)"
+    ),
+) -> None:
+    """Summarize a built dataset: features, shapes, episode/frame counts, uniformity."""
+    from dimos.learning.dataprep.cli import inspect
+
+    inspect(dataset, cast("Literal['lerobot', 'hdf5'] | None", output_format))
+
+
 map_app.command("summary")(_map_summary_main)
 map_app.command("rename")(_map_rename_main)
 map_app.command("pose-fill")(_map_pose_fill_main)
