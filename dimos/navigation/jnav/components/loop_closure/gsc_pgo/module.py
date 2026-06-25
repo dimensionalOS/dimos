@@ -29,10 +29,9 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.navigation.jnav.msgs.Graph3D import Graph3D
 from dimos.navigation.jnav.msgs.GraphDelta3D import GraphDelta3D
-from dimos.navigation.jnav.msgs.Landmark import Landmark
+from dimos.navigation.jnav.msgs.LocationConstraint import LocationConstraint
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -45,7 +44,7 @@ class PGOConfig(NativeModuleConfig):
     cwd: str | None = str(Path(__file__).resolve().parent)
     executable: str = "result/bin/pgo"
     build_command: str | None = (
-        'nix build "github:jeff-hykin/gsc_pgo/494e7a1d657c3702ec805c9e3d251a2fe8bc9529#default"'
+        'nix build "github:jeff-hykin/gsc_pgo/e5f9165164e124df16535fa6b8616adfae1d10df#default"'
         " --no-write-lock-file"
     )
 
@@ -106,41 +105,22 @@ class PGOConfig(NativeModuleConfig):
     # Skip ICP on candidates farther than this (m). 0 disables.
     loop_candidate_max_distance_m: float = 30.0
 
-    # Tag (AprilTag/ArUco) loop closure
-    use_tag_loop_closure: bool = False
-    # LCM channel of the static TF tree (dimos "pattern#msg_name" convention).
-    tf_static_channel: str = "/tf_static#tf2_msgs.TFMessage"
-    tag_loop_time_thresh: float = 5.0
-    tag_assoc_max_dt: float = 0.1
-    tag_buffer_window: float = 2.0
-    # Anisotropic tag noise (variances, tag frame; normal = +z): in-plane/yaw
-    # tight, range/out-of-plane loose so tag range error can't distort z.
-    tag_var_inplane_trans_m2: float = 0.0025
-    tag_var_range_trans_m2: float = 0.25
-    tag_var_yaw_rot_rad2: float = 0.0025
-    tag_var_outplane_rot_rad2: float = 0.04
-    # 6-DOF Mahalanobis gate vs current estimate (chi^2 95% = 12.59). 0 = off.
-    tag_consistency_chi2: float = 0.0
-    # Robust (Huber) kernel on all loop factors (lidar + tag). Off = original.
+    # Robust (Huber) kernel on all loop factors (lidar + location). Off = original.
     loop_robust_kernel: bool = False
     loop_robust_huber_k: float = 1.345
 
-    # Landmark events (decoupled perceiver -> PGO factor-graph manager)
-    # When set, the PGO ingests Landmark events on the `landmarks` In and
-    # attaches each as a graph landmark variable + a BetweenFactor(keyframe,
-    # landmark). Two sightings of the same landmark id share the variable, so a
-    # revisit closes the loop and GTSAM optimizes it jointly. A separate
-    # perceiver (utils/apriltag_perceiver.py) does the detection + noise/
-    # confidence filtering and emits the Landmark events. Off by default.
-    use_landmarks: bool = False
-    # Anisotropic landmark observation noise (variances, landmark frame; normal =
-    # +z): in-plane/yaw tight, range/out-of-plane loose (mirrors the tag model).
-    landmark_var_inplane_trans_m2: float = 0.0025
-    landmark_var_range_trans_m2: float = 0.25
-    landmark_var_yaw_rot_rad2: float = 0.0025
-    landmark_var_outplane_rot_rad2: float = 0.04
-    landmark_assoc_max_dt: float = 0.2
-    landmark_buffer_window: float = 3.0
+    # Location constraints (decoupled perceiver -> PGO factor-graph manager).
+    # When set, the PGO ingests LocationConstraint events on the
+    # `location_constraints` In. Each becomes its own pose node (placed from
+    # interpolated odometry at the constraint's timestamp) plus a
+    # BetweenFactor(node, location) whose noise model is the covariance carried in
+    # the message. Two constraints sharing a to_id share the location variable, so
+    # a revisit closes the loop; a constraint_instance_id lets an external source
+    # revise/remove its earlier constraints. Off by default.
+    use_location_constraints: bool = False
+    # Seconds of odometry history retained, for interpolating a constraint's pose
+    # at its own timestamp.
+    odom_buffer_window: float = 10.0
 
     # Gravity anchor
     # Pin keyframe 0 (whose orientation is gravity-aligned by the LIO front end)
@@ -191,13 +171,10 @@ class PGO(NativeModule):
     # latest odometry pose internally, so a raw sensor-frame scan is expected.
     lidar: In[PointCloud2]
     odometry: In[Odometry]
-    # Optional: tag detections (tag-in-optical pose + numeric id) for tag-based
-    # loop closure. Only consumed when config.use_tag_loop_closure is set.
-    tag_detections: In[Detection3DArray]
-    # Optional: decoupled Landmark events from a perceiver (e.g. the AprilTag
-    # perceiver). Only consumed when config.use_landmarks is set; each becomes a
-    # graph landmark variable + observation factor that GTSAM optimizes jointly.
-    landmarks: In[Landmark]
+    # Optional: decoupled LocationConstraint events from a perceiver. Only
+    # consumed when config.use_location_constraints is set; each becomes its own
+    # pose node + a BetweenFactor(node, location) that GTSAM optimizes jointly.
+    location_constraints: In[LocationConstraint]
     corrected_odometry: Out[Odometry]
     correction: Out[Transform]
     pose_graph: Out[Graph3D]
