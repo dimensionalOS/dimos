@@ -16,8 +16,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Generator
 from pathlib import Path
 import sys
+from typing import Any
 
 import pytest
 from pytest_mock import MockerFixture
@@ -36,6 +38,21 @@ from dimos.manipulation.planning.spec.protocols import PlannerSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+
+
+@pytest.fixture
+def make_module() -> Generator[Callable[..., ManipulationModule], None, None]:
+    """Build ManipulationModules and stop them on teardown, even on failure."""
+    modules: list[ManipulationModule] = []
+
+    def _make(**kwargs: Any) -> ManipulationModule:
+        module = ManipulationModule(**kwargs)
+        modules.append(module)
+        return module
+
+    yield _make
+    for module in modules:
+        module.stop()
 
 
 @pytest.fixture
@@ -135,61 +152,59 @@ def test_create_planning_stack_wires_selected_components(
     world.finalize.assert_called_once()
 
 
-def test_start_with_no_robots_skips_planning(mocker: MockerFixture):
-    module = ManipulationModule(robots=[])
-    try:
-        create_world_mock = mocker.patch("dimos.manipulation.manipulation_module.create_world")
-        create_planning_specs_mock = mocker.patch(
-            "dimos.manipulation.manipulation_module.create_planning_specs"
-        )
+def test_start_with_no_robots_skips_planning(
+    mocker: MockerFixture, make_module: Callable[..., ManipulationModule]
+):
+    module = make_module(robots=[])
+    create_world_mock = mocker.patch("dimos.manipulation.manipulation_module.create_world")
+    create_planning_specs_mock = mocker.patch(
+        "dimos.manipulation.manipulation_module.create_planning_specs"
+    )
 
-        module._initialize_planning()
+    module._initialize_planning()
 
-        assert module._robots == {}
-        assert module._world_monitor is None
-        create_world_mock.assert_not_called()
-        create_planning_specs_mock.assert_not_called()
-    finally:
-        module.stop()
+    assert module._robots == {}
+    assert module._world_monitor is None
+    create_world_mock.assert_not_called()
+    create_planning_specs_mock.assert_not_called()
 
 
 def test_start_uses_configured_planner_and_kinematics(
-    mocker: MockerFixture, robot_config: RobotModelConfig
+    mocker: MockerFixture,
+    robot_config: RobotModelConfig,
+    make_module: Callable[..., ManipulationModule],
 ):
-    module = ManipulationModule(robots=[robot_config], kinematics=JacobianKinematicsConfig())
-    try:
-        world = mocker.MagicMock(name="world")
-        world_monitor = mocker.MagicMock()
-        world_monitor.add_robot.return_value = "robot-id"
-        planner = mocker.MagicMock(name="planner")
-        kinematics = mocker.MagicMock(name="kinematics")
-        planning_specs = mocker.MagicMock(
-            world_monitor=world_monitor,
-            planner=planner,
-            kinematics=kinematics,
-        )
-        create_world_mock = mocker.patch(
-            "dimos.manipulation.manipulation_module.create_world", return_value=world
-        )
-        create_planning_specs_mock = mocker.patch(
-            "dimos.manipulation.manipulation_module.create_planning_specs",
-            return_value=planning_specs,
-        )
+    module = make_module(robots=[robot_config], kinematics=JacobianKinematicsConfig())
+    world = mocker.MagicMock(name="world")
+    world_monitor = mocker.MagicMock()
+    world_monitor.add_robot.return_value = "robot-id"
+    planner = mocker.MagicMock(name="planner")
+    kinematics = mocker.MagicMock(name="kinematics")
+    planning_specs = mocker.MagicMock(
+        world_monitor=world_monitor,
+        planner=planner,
+        kinematics=kinematics,
+    )
+    create_world_mock = mocker.patch(
+        "dimos.manipulation.manipulation_module.create_world", return_value=world
+    )
+    create_planning_specs_mock = mocker.patch(
+        "dimos.manipulation.manipulation_module.create_planning_specs",
+        return_value=planning_specs,
+    )
 
-        module._initialize_planning()
+    module._initialize_planning()
 
-        create_world_mock.assert_called_once_with(
-            backend="drake", visualization=module.config.visualization
-        )
-        create_planning_specs_mock.assert_called_once_with(
-            world=world,
-            world_backend="drake",
-            planner_name="rrt_connect",
-            kinematics_name=None,
-            kinematics=module.config.kinematics,
-        )
-        assert module._planner is planner
-        assert module._kinematics is kinematics
-        assert module._robots["arm"][0] == "robot-id"
-    finally:
-        module.stop()
+    create_world_mock.assert_called_once_with(
+        backend="drake", visualization=module.config.visualization
+    )
+    create_planning_specs_mock.assert_called_once_with(
+        world=world,
+        world_backend="drake",
+        planner_name="rrt_connect",
+        kinematics_name=None,
+        kinematics=module.config.kinematics,
+    )
+    assert module._planner is planner
+    assert module._kinematics is kinematics
+    assert module._robots["arm"][0] == "robot-id"
