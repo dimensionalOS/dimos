@@ -632,8 +632,6 @@ class RoboPlanWorld:
         )
 
     def _extract_native_path(self, result: Any) -> list[NDArray[np.float64]]:
-        if result is None:
-            raise ValueError("RoboPlan RRT returned no path")
         if isinstance(result, (list, tuple)):
             return [np.asarray(q, dtype=np.float64) for q in result]
         return [np.asarray(q, dtype=np.float64) for q in result.positions]
