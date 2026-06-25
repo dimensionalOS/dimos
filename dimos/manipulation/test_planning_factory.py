@@ -32,6 +32,7 @@ from dimos.manipulation.planning.factory import (
 )
 from dimos.manipulation.planning.kinematics.config import JacobianKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.protocols import PlannerSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -86,8 +87,7 @@ def test_validate_backend_combination_rejects_invalid_combinations():
 
 
 def test_create_planner_uses_roboplan_world_as_native_planner(mocker: MockerFixture):
-    world = mocker.MagicMock()
-    world.plan_joint_path = mocker.MagicMock()
+    world = mocker.MagicMock(spec=PlannerSpec)
 
     assert create_planner(name="roboplan", world=world, world_backend="roboplan") is world
 

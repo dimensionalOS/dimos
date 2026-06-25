@@ -26,6 +26,7 @@ from dimos.manipulation.planning.kinematics.config import (
     PinkKinematicsConfig,
     kinematics_config_from_name,
 )
+from dimos.manipulation.planning.spec.protocols import PlannerSpec
 from dimos.manipulation.visualization.config import (
     ManipulationVisualizationConfig,
     NoManipulationVisualizationConfig,
@@ -35,7 +36,6 @@ if TYPE_CHECKING:
     from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
     from dimos.manipulation.planning.spec.protocols import (
         KinematicsSpec,
-        PlannerSpec,
         WorldSpec,
     )
 
@@ -148,9 +148,9 @@ def create_planner(
     if name == "roboplan":
         if world_backend != "roboplan" or world is None:
             raise ValueError('planner_name="roboplan" requires world_backend="roboplan"')
-        if not hasattr(world, "plan_joint_path"):
+        if not isinstance(world, PlannerSpec):
             raise ValueError("RoboPlan-native planner requires a RoboPlan world planner object")
-        return world  # type: ignore[return-value]
+        return world
 
     raise ValueError(f"Unknown planner: {name}. Available: {list(SUPPORTED_PLANNERS)}")
 
