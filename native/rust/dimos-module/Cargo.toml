@@ -22,3 +22,7 @@ zenoh = { version = "1", optional = true }
 [dev-dependencies]
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tracing-test = "0.2"
+
+[[example]]
+name = "transport_bench"
+required-features = ["zenoh"]
