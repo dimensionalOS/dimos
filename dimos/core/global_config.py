@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterable
 import re
+from typing import Any
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -28,6 +30,16 @@ from dimos.visualization.rerun.constants import (
 
 def _get_all_numbers(s: str) -> list[float]:
     return [float(x) for x in re.findall(r"-?\d+\.?\d*", s)]
+
+
+# Field names whose values must never be printed/serialized in the clear:
+# anything containing "_secret" or "token", or ending in "_key".
+_SECRET_KEY_RE = re.compile(r"_secret|token|_key$", re.IGNORECASE)
+_REDACTED = "***"
+
+
+def _is_secret_key(name: str) -> bool:
+    return _SECRET_KEY_RE.search(name) is not None
 
 
 class GlobalConfig(BaseSettings):
@@ -85,6 +97,19 @@ class GlobalConfig(BaseSettings):
             if not hasattr(self, key):
                 raise AttributeError(f"GlobalConfig has no field '{key}'")
             setattr(self, key, value)
+
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        """Dump fields with secret-looking values redacted."""
+        return {
+            k: (_REDACTED if v is not None and _is_secret_key(k) else v)
+            for k, v in super().model_dump(**kwargs).items()
+        }
+
+    def __repr_args__(self) -> Iterable[tuple[str | None, Any]]:
+        return [
+            (k, _REDACTED if v is not None and k and _is_secret_key(k) else v)
+            for k, v in super().__repr_args__()
+        ]
 
     @property
     def unitree_connection_type(self) -> str:
