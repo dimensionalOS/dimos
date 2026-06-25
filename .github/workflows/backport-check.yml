@@ -1,4 +1,4 @@
-name: labels
+name: backport-check
 
 on:
   pull_request:
@@ -13,12 +13,11 @@ permissions: {}
 
 jobs:
   check:
-    name: "Admins: Backport label added"
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
     steps:
-      - name: Check backport label
+      - name: "Admins: Backport label added"
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
