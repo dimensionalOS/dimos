@@ -1,0 +1,56 @@
+<mujoco model="xarm7 compliant trajectory obstacle scene">
+  <include file="xarm7.xml"/>
+
+  <statistic center="0.35 0 0.35" extent="0.75"/>
+
+  <visual>
+    <headlight diffuse="0.7 0.7 0.7" ambient="0.4 0.4 0.4" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="145" elevation="-22"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.85 0.85 0.85" rgb2="0.75 0.75 0.75"
+      markrgb="0.9 0.9 0.9" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0"/>
+    <material name="compliance_wall" rgba="0.15 0.35 0.95 1"/>
+    <material name="contact_target" rgba="0.95 0.25 0.15 0.35"/>
+    <material name="calibration_prop" rgba="0.25 0.25 0.25 1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
+
+    <!-- Robot base pedestal. -->
+    <geom type="cylinder" size="0.06 0.06" pos="0 0 0.06" rgba="1 1 1 1"/>
+
+    <!--
+      Fixed obstacle for compliant-trajectory checks. The wall is intentionally
+      close to the nominal xArm7 workspace so a trajectory that reaches forward
+      can encounter resistance while the compliant controller should keep the
+      position-servo offset bounded instead of integrating through the contact.
+    -->
+    <geom name="compliance_wall" type="box" size="0.025 0.28 0.22" pos="0.42 0 0.32"
+      material="compliance_wall"/>
+
+    <!-- Translucent visual target behind the wall for manual trajectory tuning. -->
+    <geom name="behind_wall_target" type="sphere" size="0.035" pos="0.48 0 0.32"
+      material="contact_target" contype="0" conaffinity="0"/>
+
+    <!-- The included xArm model ships a home keyframe sized for three free bodies. -->
+    <body name="calibration_prop_1" pos="0.70 -0.25 0.04">
+      <freejoint/>
+      <geom type="sphere" size="0.025" material="calibration_prop" mass="0.05"/>
+    </body>
+    <body name="calibration_prop_2" pos="0.75 0.00 0.04">
+      <freejoint/>
+      <geom type="sphere" size="0.025" material="calibration_prop" mass="0.05"/>
+    </body>
+    <body name="calibration_prop_3" pos="0.70 0.25 0.04">
+      <freejoint/>
+      <geom type="sphere" size="0.025" material="calibration_prop" mass="0.05"/>
+    </body>
+  </worldbody>
+</mujoco>
