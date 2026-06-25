@@ -26,7 +26,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 import tempfile
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 
@@ -56,7 +56,11 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
+    from dimos.manipulation.planning.spec.protocols import WorldSpec
+
 logger = setup_logger()
+
+_WORLD_FRAME = ""
 
 
 @dataclass
@@ -77,15 +81,14 @@ class RoboPlanContext:
 class RoboPlanWorld:
     """WorldSpec implementation backed by RoboPlan scene and collision queries."""
 
-    def __init__(self, enable_viz: bool = False, **_: Any) -> None:
-        self._scene: Any | None = None
+    def __init__(self, enable_viz: bool = False, **_: object) -> None:
+        self._scene: roboplan_core.Scene | None = None
         self._enable_viz = enable_viz
         if enable_viz:
             logger.warning("RoboPlanWorld does not currently provide manipulation visualization")
 
         self._robots: dict[WorldRobotID, _RoboPlanRobotData] = {}
         self._obstacles: dict[str, Obstacle] = {}
-        self._obstacle_handles: dict[str, Any] = {}
         self._robot_counter = 0
         self._finalized = False
         self._live_context = RoboPlanContext()
@@ -141,29 +144,25 @@ class RoboPlanWorld:
         obstacle_id = obstacle.name
         if obstacle_id in self._obstacles:
             return obstacle_id
-        handle = self._add_obstacle_to_scene(obstacle, obstacle_id)
+        self._add_obstacle_to_scene(obstacle, obstacle_id)
         self._obstacles[obstacle_id] = obstacle
-        self._obstacle_handles[obstacle_id] = handle
         return obstacle_id
 
     def remove_obstacle(self, obstacle_id: str) -> bool:
         """Remove an obstacle from the RoboPlan scene."""
         if obstacle_id not in self._obstacles:
             return False
-        handle = self._obstacle_handles.get(obstacle_id, obstacle_id)
         scene = self._require_scene()
-        scene.removeGeometry(handle)
+        scene.removeGeometry(obstacle_id)
         del self._obstacles[obstacle_id]
-        self._obstacle_handles.pop(obstacle_id, None)
         return True
 
     def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
         """Update an obstacle pose and invalidate collision scratch."""
         if obstacle_id not in self._obstacles:
             return False
-        handle = self._obstacle_handles.get(obstacle_id, obstacle_id)
         scene = self._require_scene()
-        scene.updateGeometryPlacement(handle, pose_to_matrix(pose))
+        scene.updateGeometryPlacement(obstacle_id, _WORLD_FRAME, pose_to_matrix(pose))
         self._obstacles[obstacle_id] = replace(self._obstacles[obstacle_id], pose=pose)
         return True
 
@@ -263,10 +262,10 @@ class RoboPlanWorld:
         step_size: float = 0.05,
     ) -> bool:
         """Check if an interpolated edge is collision-free."""
+        self._require_finalized()
         q_start = self._joint_state_to_q(robot_id, start)
         q_end = self._joint_state_to_q(robot_id, end)
-        with self.scratch_context() as ctx:
-            return not self._call_path_collision_checker(ctx, robot_id, q_start, q_end, step_size)
+        return not self._call_path_collision_checker(robot_id, q_start, q_end, step_size)
 
     # Forward Kinematics
 
@@ -316,7 +315,7 @@ class RoboPlanWorld:
 
     def plan_joint_path(
         self,
-        world: Any,
+        world: WorldSpec,
         robot_id: WorldRobotID,
         start: JointState,
         goal: JointState,
@@ -369,7 +368,7 @@ class RoboPlanWorld:
 
     # Internals
 
-    def _create_scene(self, config: RobotModelConfig) -> Any:
+    def _create_scene(self, config: RobotModelConfig) -> roboplan_core.Scene:
         urdf_path = self._prepare_robot_urdf(config)
         srdf_path = self._prepare_robot_srdf(config, urdf_path)
         package_paths = [str(path) for path in config.package_paths.values()]
@@ -442,18 +441,11 @@ class RoboPlanWorld:
         return pairs
 
     def _apply_collision_exclusions(
-        self, scene: Any, config: RobotModelConfig, urdf_path: Path
+        self, scene: roboplan_core.Scene, config: RobotModelConfig, urdf_path: Path
     ) -> None:
-        set_collisions = getattr(scene, "setCollisions", None)
-        if set_collisions is None:
-            logger.warning(
-                "RoboPlan Scene has no setCollisions API; relying on the generated SRDF "
-                "for collision exclusions only"
-            )
-            return
         for link1, link2 in self._collision_exclusion_pairs(config, urdf_path):
             try:
-                set_collisions(link1, link2, False)
+                scene.setCollisions(link1, link2, False)
             except RuntimeError:
                 logger.warning(f"RoboPlan rejected collision exclusion pair: {link1} <-> {link2}")
 
@@ -501,7 +493,9 @@ class RoboPlanWorld:
         order_indices = [joint_order.index(joint_name) for joint_name in config.joint_names]
         return lower_array[order_indices], upper_array[order_indices]
 
-    def _query_scene_joint_order(self, scene: Any, config: RobotModelConfig) -> list[str] | None:
+    def _query_scene_joint_order(
+        self, scene: roboplan_core.Scene, config: RobotModelConfig
+    ) -> list[str] | None:
         try:
             group_info = scene.getJointGroupInfo(config.name)
         except AttributeError:
@@ -536,7 +530,7 @@ class RoboPlanWorld:
         if not self._finalized:
             raise RuntimeError("World must be finalized first")
 
-    def _require_scene(self) -> Any:
+    def _require_scene(self) -> roboplan_core.Scene:
         if self._scene is None:
             raise RuntimeError("RoboPlan scene is not initialized; add a robot first")
         return self._scene
@@ -556,7 +550,6 @@ class RoboPlanWorld:
 
     def _call_path_collision_checker(
         self,
-        ctx: RoboPlanContext,
         robot_id: WorldRobotID,
         q_start: NDArray[np.float64],
         q_end: NDArray[np.float64],
@@ -576,25 +569,50 @@ class RoboPlanWorld:
             )
         )
 
-    def _add_obstacle_to_scene(self, obstacle: Obstacle, obstacle_id: str) -> Any:
+    def _add_obstacle_to_scene(self, obstacle: Obstacle, obstacle_id: str) -> None:
         scene = self._require_scene()
         matrix = pose_to_matrix(obstacle.pose)
+        color = np.asarray(obstacle.color, dtype=np.float64)
         if obstacle.obstacle_type == ObstacleType.BOX:
             self._require_dimensions(obstacle, 3)
             width, height, depth = obstacle.dimensions
-            return scene.addBoxGeometry(obstacle_id, width, height, depth, matrix)
+            scene.addBoxGeometry(
+                obstacle_id,
+                _WORLD_FRAME,
+                roboplan_core.Box(width, height, depth),
+                matrix,
+                color,
+            )
+            return
         if obstacle.obstacle_type == ObstacleType.SPHERE:
             self._require_dimensions(obstacle, 1)
             (radius,) = obstacle.dimensions
-            return scene.addSphereGeometry(obstacle_id, radius, matrix)
+            scene.addSphereGeometry(
+                obstacle_id, _WORLD_FRAME, roboplan_core.Sphere(radius), matrix, color
+            )
+            return
         if obstacle.obstacle_type == ObstacleType.CYLINDER:
             self._require_dimensions(obstacle, 2)
             radius, length = obstacle.dimensions
-            return scene.addCylinderGeometry(obstacle_id, radius, length, matrix)
+            scene.addCylinderGeometry(
+                obstacle_id,
+                _WORLD_FRAME,
+                roboplan_core.Cylinder(radius, length),
+                matrix,
+                color,
+            )
+            return
         if obstacle.obstacle_type == ObstacleType.MESH:
             if not obstacle.mesh_path:
                 raise ValueError("MESH obstacle requires mesh_path")
-            return scene.addMeshGeometry(obstacle_id, obstacle.mesh_path, matrix)
+            scene.addMeshGeometry(
+                obstacle_id,
+                _WORLD_FRAME,
+                roboplan_core.Mesh(obstacle.mesh_path),
+                matrix,
+                color,
+            )
+            return
         raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
 
     def _require_dimensions(self, obstacle: Obstacle, n_dims: int) -> None:
@@ -625,13 +643,13 @@ class RoboPlanWorld:
             raise ValueError("RoboPlan RRT returned no path")
         return self._extract_native_path(result)
 
-    def _to_native_joint_configuration(self, robot_id: WorldRobotID, q: NDArray[np.float64]) -> Any:
+    def _to_native_joint_configuration(
+        self, robot_id: WorldRobotID, q: NDArray[np.float64]
+    ) -> roboplan_core.JointConfiguration:
         robot = self._get_robot(robot_id)
         return roboplan_core.JointConfiguration(
             robot.config.joint_names, np.asarray(q, dtype=np.float64)
         )
 
-    def _extract_native_path(self, result: Any) -> list[NDArray[np.float64]]:
-        if isinstance(result, (list, tuple)):
-            return [np.asarray(q, dtype=np.float64) for q in result]
+    def _extract_native_path(self, result: roboplan_core.JointPath) -> list[NDArray[np.float64]]:
         return [np.asarray(q, dtype=np.float64) for q in result.positions]

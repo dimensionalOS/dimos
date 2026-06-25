@@ -49,6 +49,27 @@ class FakeJointPath:
         self.positions = positions
 
 
+class FakeBox:
+    def __init__(self, x: float, y: float, z: float) -> None:
+        self.dimensions = (x, y, z)
+
+
+class FakeSphere:
+    def __init__(self, radius: float) -> None:
+        self.radius = radius
+
+
+class FakeCylinder:
+    def __init__(self, radius: float, length: float) -> None:
+        self.radius = radius
+        self.length = length
+
+
+class FakeMesh:
+    def __init__(self, filename: str) -> None:
+        self.filename = filename
+
+
 class FakeJointGroupInfo:
     def __init__(self, joint_names: list[str]) -> None:
         self.joint_names = joint_names
@@ -63,6 +84,7 @@ class FakeScene:
         self.constructor_args = args
         self.models: list[tuple[str, str, dict[str, str]]] = []
         self.geometry: dict[str, np.ndarray] = {}
+        self.collision_settings: dict[tuple[str, str], bool] = {}
 
     def addRobotModel(self, path: str, name: str, package_paths: dict[str, str]) -> str:
         self.models.append((path, name, package_paths))
@@ -86,17 +108,60 @@ class FakeScene:
         return q
 
     def addBoxGeometry(
-        self, obstacle_id: str, width: float, height: float, depth: float, matrix: np.ndarray
-    ) -> str:
-        _ = (width, height, depth)
+        self,
+        obstacle_id: str,
+        parent_frame: str,
+        box: FakeBox,
+        matrix: np.ndarray,
+        color: np.ndarray,
+    ) -> None:
+        _ = (parent_frame, box, color)
         self.geometry[obstacle_id] = matrix
-        return obstacle_id
 
-    def updateGeometryPlacement(self, handle: str, matrix: np.ndarray) -> None:
-        self.geometry[handle] = matrix
+    def addSphereGeometry(
+        self,
+        obstacle_id: str,
+        parent_frame: str,
+        sphere: FakeSphere,
+        matrix: np.ndarray,
+        color: np.ndarray,
+    ) -> None:
+        _ = (parent_frame, sphere, color)
+        self.geometry[obstacle_id] = matrix
 
-    def removeGeometry(self, handle: str) -> None:
-        del self.geometry[handle]
+    def addCylinderGeometry(
+        self,
+        obstacle_id: str,
+        parent_frame: str,
+        cylinder: FakeCylinder,
+        matrix: np.ndarray,
+        color: np.ndarray,
+    ) -> None:
+        _ = (parent_frame, cylinder, color)
+        self.geometry[obstacle_id] = matrix
+
+    def addMeshGeometry(
+        self,
+        obstacle_id: str,
+        parent_frame: str,
+        mesh: FakeMesh,
+        matrix: np.ndarray,
+        color: np.ndarray,
+    ) -> None:
+        _ = (parent_frame, mesh, color)
+        self.geometry[obstacle_id] = matrix
+
+    def updateGeometryPlacement(
+        self, obstacle_id: str, parent_frame: str, matrix: np.ndarray
+    ) -> None:
+        _ = parent_frame
+        self.geometry[obstacle_id] = matrix
+
+    def removeGeometry(self, obstacle_id: str) -> None:
+        del self.geometry[obstacle_id]
+
+    def setCollisions(self, body1: str, body2: str, enable: bool) -> None:
+        self.collision_settings[(body1, body2)] = enable
 
     def forwardKinematics(self, q: np.ndarray, frame_name: str, base_frame: str = "") -> np.ndarray:
         _ = (frame_name, base_frame)
@@ -141,6 +206,11 @@ def _install_fake_roboplan(monkeypatch: pytest.MonkeyPatch) -> None:
     core = ModuleType("roboplan.core")
     core.Scene = FakeScene  # type: ignore[attr-defined]
     core.JointConfiguration = FakeJointConfiguration  # type: ignore[attr-defined]
+    core.JointPath = FakeJointPath  # type: ignore[attr-defined]
+    core.Box = FakeBox  # type: ignore[attr-defined]
+    core.Sphere = FakeSphere  # type: ignore[attr-defined]
+    core.Cylinder = FakeCylinder  # type: ignore[attr-defined]
+    core.Mesh = FakeMesh  # type: ignore[attr-defined]
 
     def has_collisions_along_path(
         scene: FakeScene,

@@ -530,8 +530,6 @@ module = [
     "rclpy.*",
     "reportlab",
     "reportlab.*",
-    "roboplan",
-    "roboplan.*",
     "sam2.*",
     "scipy",
     "scipy.*",
