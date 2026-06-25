@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, get_args
 
 from dimos.manipulation.planning.kinematics.config import (
     DrakeOptimizationKinematicsConfig,
@@ -49,9 +49,13 @@ class PlanningSpecs:
     planner: PlannerSpec
 
 
-SUPPORTED_WORLD_BACKENDS = ("drake", "roboplan")
-SUPPORTED_PLANNERS = ("rrt_connect", "roboplan")
-SUPPORTED_KINEMATICS = ("jacobian", "drake_optimization", "pink")
+WorldBackend: TypeAlias = Literal["drake", "roboplan"]
+PlannerName: TypeAlias = Literal["rrt_connect", "roboplan"]
+KinematicsName: TypeAlias = Literal["jacobian", "drake_optimization", "pink"]
+
+SUPPORTED_WORLD_BACKENDS = get_args(WorldBackend)
+SUPPORTED_PLANNERS = get_args(PlannerName)
+SUPPORTED_KINEMATICS = get_args(KinematicsName)
 
 
 def validate_backend_combination(
