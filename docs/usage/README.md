@@ -5,6 +5,7 @@ This page explains general concepts.
 ## Table of Contents
 
 - [Modules](/docs/usage/modules.md): The primary units of deployment in DimOS, modules run in parallel and are python classes.
+- [Pure Modules](/docs/usage/pure_modules.md): Modules as pure functions over time-aligned inputs — the same class runs live or over recordings.
 - [Streams](/docs/usage/sensor_streams/README.md): How modules communicate, a Pub / Sub system.
 - [Blueprints](/docs/usage/blueprints.md): a way to group modules together and define their connections to each other.
 - [RPC](/docs/usage/blueprints.md#calling-the-methods-of-other-modules): how one module can call a method on another module (arguments get serialized to JSON-like binary data).

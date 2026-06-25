@@ -71,6 +71,15 @@ class BackpressureBuffer(ABC, Generic[T]):
     @abstractmethod
     def __len__(self) -> int: ...
 
+    def clone(self) -> BackpressureBuffer[T]:
+        """Fresh, empty buffer with the same policy.
+
+        Lets a buffer instance serve as a *template* (e.g. a class-level
+        ``backpressure = Bounded(8)``) while each consumer gets its own
+        independent state. Subclasses with constructor args must override.
+        """
+        return type(self)()
+
     def __iter__(self) -> Iterator[T]:
         """Yield items until the buffer is closed."""
         while True:
@@ -138,6 +147,9 @@ class Bounded(BackpressureBuffer[T]):
         self._closed = False
         self._cond = threading.Condition()
 
+    def clone(self) -> Bounded[T]:
+        return Bounded(self._buf.maxlen or 0)
+
     def put(self, item: T) -> bool:
         with self._cond:
             if self._closed:
@@ -177,6 +189,9 @@ class DropNew(BackpressureBuffer[T]):
         self._maxlen = maxlen
         self._closed = False
         self._cond = threading.Condition()
+
+    def clone(self) -> DropNew[T]:
+        return DropNew(self._maxlen)
 
     def put(self, item: T) -> bool:
         with self._cond:
