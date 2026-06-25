@@ -12,10 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Static mount frames for the RealSense D435i + Mid-360 rig.
+"""The RealSense D435i + Mid-360 rig: static mount frames, recorder, record blueprints.
 
-Published continuously onto tf while recording (see :class:`Mid360RealsenseStaticTf`)
-so the mount geometry lands in the recording's tf stream.
+A single physical sensor assembly described in one place: the mount geometry published
+onto tf (:class:`Mid360RealsenseStaticTf`), the memory2 recorder
+(:class:`Mid360RealsenseRecorder`), and the record blueprints that wire them to the
+live sensors.
+
+Point-LIO odom+lidar and the RealSense color/depth/pointcloud streams are recorded into
+a memory2 db, with the rig's mount frames published continuously onto tf. Two variants:
+``mid360_realsense_record`` (db only) and ``mid360_realsense_record_with_pcap`` (also
+captures a raw .pcap of the Mid-360 UDP stream).
+
+The lidar IPs come from each module's own config (``DIMOS_MID360_LIDAR_IP`` for the
+Mid-360 / pcap capture, ``DIMOS_POINTLIO_LIDAR_IP`` for Point-LIO)::
+
+    export DIMOS_MID360_LIDAR_IP=192.168.1.155 DIMOS_POINTLIO_LIDAR_IP=192.168.1.155
+    dimos run mid360-realsense-record            # db only
+    dimos run mid360-realsense-record-with-pcap  # db + raw pcap
 
 Frame sources
 -------------
@@ -33,7 +47,17 @@ from __future__ import annotations
 
 import math
 
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.stream import In
+from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
+from dimos.hardware.sensors.lidar.livox.module import Mid360
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.hardware.sensors.lidar.pointlio.pose_recorder import PointlioPoseRecorder
+from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.tf.static_tf_publisher import (
     FrameSpec,
     StaticTfPublisher,
@@ -99,3 +123,53 @@ class Mid360RealsenseStaticTf(StaticTfPublisher):
 
     def transforms(self) -> list[Transform]:
         return frames_to_edge_transforms(FRAMES)
+
+
+class Mid360RealsenseRecorder(PointlioPoseRecorder):
+    """Records Point-LIO odom+lidar plus the RealSense streams into a memory2 db.
+
+    Trajectory is baked into ``pointlio_lidar`` via the inherited ``@pose_setter_for``.
+    The raw Livox stream is NOT recorded here — enable the pcap recorder in the record
+    blueprint to capture it. Companion streams are recorded as-is and anchored via the
+    static mount frames published on tf.
+    """
+
+    # pointlio_odometry / pointlio_lidar are inherited from PointlioPoseRecorder.
+    color_image: In[Image]
+    realsense_depth_image: In[Image]
+    realsense_pointcloud: In[PointCloud2]
+    realsense_camera_info: In[CameraInfo]
+    realsense_depth_camera_info: In[CameraInfo]
+
+
+mid360_realsense_record = autoconnect(
+    RealSenseCamera.blueprint().remappings(
+        [
+            (RealSenseCamera, "depth_image", "realsense_depth_image"),
+            (RealSenseCamera, "pointcloud", "realsense_pointcloud"),
+            (RealSenseCamera, "camera_info", "realsense_camera_info"),
+            (RealSenseCamera, "depth_camera_info", "realsense_depth_camera_info"),
+        ]
+    ),
+    Mid360.blueprint().remappings(
+        [
+            (Mid360, "lidar", "livox_lidar"),
+            (Mid360, "imu", "livox_imu"),
+        ]
+    ),
+    PointLio.blueprint(frame_id="world").remappings(
+        [
+            (PointLio, "lidar", "pointlio_lidar"),
+            (PointLio, "odometry", "pointlio_odometry"),
+        ]
+    ),
+    Mid360RealsenseRecorder.blueprint(),
+    # Continuously republishes the rig's mount frames onto tf (no latched static tf).
+    Mid360RealsenseStaticTf.blueprint(),
+).global_config(n_workers=8)
+
+# Same rig, also capturing a raw .pcap of the Mid-360 UDP stream.
+mid360_realsense_record_with_pcap = autoconnect(
+    mid360_realsense_record,
+    Mid360PcapRecorder.blueprint(),
+)
