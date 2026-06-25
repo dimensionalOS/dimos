@@ -38,7 +38,13 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.manipulation.planning.factory import create_planning_specs, create_world
+from dimos.manipulation.planning.factory import (
+    KinematicsName,
+    PlannerName,
+    WorldBackend,
+    create_planning_specs,
+    create_world,
+)
 from dimos.manipulation.planning.kinematics.config import (
     ManipulationKinematicsConfig,
     PinkKinematicsConfig,
@@ -105,14 +111,14 @@ class ManipulationModuleConfig(ModuleConfig):
 
     robots: list[RobotModelConfig] = Field(default_factory=list)
     planning_timeout: float = 10.0
-    world_backend: str = "drake"  # "drake" or "roboplan"
+    world_backend: WorldBackend = "drake"
     visualization: ManipulationVisualizationConfig = Field(
         default_factory=NoManipulationVisualizationConfig
     )
-    planner_name: str = "rrt_connect"  # "rrt_connect"
+    planner_name: PlannerName = "rrt_connect"
     kinematics: ManipulationKinematicsConfig = Field(default_factory=PinkKinematicsConfig)
     # Deprecated: use kinematics.backend instead.
-    kinematics_name: str | None = None  # "jacobian", "drake_optimization", or "pink"
+    kinematics_name: KinematicsName | None = None
     # Floor plane Z height (meters). When set, a box obstacle is added at startup
     # to prevent the planner from routing trajectories below this height.
     # Set to None to disable.

@@ -123,7 +123,7 @@ Install the manipulation dependencies:
 uv sync --extra manipulation --inexact
 ```
 
-The `manipulation` extra includes RoboPlan via `roboplan-dimos` from PyPI.
+The `manipulation` extra includes RoboPlan via `roboplan` from PyPI.
 The `--inexact` flag preserves other extras already installed in your current
 environment.
 

@@ -65,7 +65,6 @@ class _RoboPlanRobotData:
     config: RobotModelConfig
     lower_limits: NDArray[np.float64]
     upper_limits: NDArray[np.float64]
-    model_handle: Any = None
 
 
 @dataclass
@@ -107,14 +106,12 @@ class RoboPlanWorld:
         self._robot_counter += 1
         robot_id = f"robot_{self._robot_counter}"
         self._scene = self._create_scene(config)
-        model_handle = config.name
-        lower, upper = self._extract_joint_limits(config, model_handle)
+        lower, upper = self._extract_joint_limits(config)
         self._robots[robot_id] = _RoboPlanRobotData(
             robot_id=robot_id,
             config=config,
             lower_limits=lower,
             upper_limits=upper,
-            model_handle=model_handle,
         )
         self._live_context.q_by_robot[robot_id] = np.zeros(
             len(config.joint_names), dtype=np.float64
@@ -242,7 +239,7 @@ class RoboPlanWorld:
         q = ctx.q_by_robot.get(robot_id)
         if q is None:
             raise KeyError(f"Robot '{robot_id}' not found in context")
-        return not self._has_collisions(robot_id, q, ctx)
+        return not self._has_collisions(robot_id, q)
 
     def get_min_distance(self, ctx: RoboPlanContext, robot_id: WorldRobotID) -> float:
         """Get minimum signed distance.
@@ -336,7 +333,9 @@ class RoboPlanWorld:
         q_goal = self._joint_state_to_q(robot_id, goal)
         try:
             path_arrays = self._run_native_rrt(robot_id, q_start, q_goal, timeout)
-        except Exception as exc:
+        except ValueError as exc:
+            # _run_native_rrt raises ValueError for the known "no path" case; let any
+            # unexpected error propagate instead of swallowing its traceback.
             return PlanningResult(
                 status=PlanningStatus.NO_SOLUTION,
                 planning_time=time.time() - start_time,
@@ -445,24 +444,27 @@ class RoboPlanWorld:
     def _apply_collision_exclusions(
         self, scene: Any, config: RobotModelConfig, urdf_path: Path
     ) -> None:
+        set_collisions = getattr(scene, "setCollisions", None)
+        if set_collisions is None:
+            logger.warning(
+                "RoboPlan Scene has no setCollisions API; relying on the generated SRDF "
+                "for collision exclusions only"
+            )
+            return
         for link1, link2 in self._collision_exclusion_pairs(config, urdf_path):
             try:
-                scene.setCollisions(link1, link2, False)
+                set_collisions(link1, link2, False)
             except RuntimeError:
-                logger.debug(
-                    f"RoboPlan did not accept collision exclusion pair: {link1} <-> {link2}"
-                )
-            except AttributeError:
-                return
+                logger.warning(f"RoboPlan rejected collision exclusion pair: {link1} <-> {link2}")
 
     def _extract_joint_limits(
-        self, config: RobotModelConfig, model_handle: Any
+        self, config: RobotModelConfig
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         if config.joint_limits_lower is not None and config.joint_limits_upper is not None:
             lower = np.asarray(config.joint_limits_lower, dtype=np.float64)
             upper = np.asarray(config.joint_limits_upper, dtype=np.float64)
         else:
-            limits = self._query_scene_joint_limits(config, model_handle)
+            limits = self._query_scene_joint_limits(config)
             if limits is None:
                 raise ValueError(
                     "RoboPlanWorld requires explicit joint_limits_lower/joint_limits_upper "
@@ -476,9 +478,8 @@ class RoboPlanWorld:
         return lower, upper
 
     def _query_scene_joint_limits(
-        self, config: RobotModelConfig, model_handle: Any
+        self, config: RobotModelConfig
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
-        _ = model_handle
         scene = self._require_scene()
         joint_order = self._query_scene_joint_order(scene, config)
         if joint_order is None:
@@ -548,11 +549,8 @@ class RoboPlanWorld:
             return q
         return np.asarray(scene.toFullJointPositions(robot.config.name, q), dtype=np.float64)
 
-    def _has_collisions(
-        self, robot_id: WorldRobotID, q: NDArray[np.float64], ctx: RoboPlanContext
-    ) -> bool:
+    def _has_collisions(self, robot_id: WorldRobotID, q: NDArray[np.float64]) -> bool:
         scene = self._require_scene()
-        _ = ctx
         scene_q = self._to_scene_q(robot_id, q)
         return bool(scene.hasCollisions(scene_q))
 
@@ -634,8 +632,6 @@ class RoboPlanWorld:
         )
 
     def _extract_native_path(self, result: Any) -> list[NDArray[np.float64]]:
-        if result is None:
-            raise ValueError("RoboPlan RRT returned no path")
         if isinstance(result, (list, tuple)):
             return [np.asarray(q, dtype=np.float64) for q in result]
         return [np.asarray(q, dtype=np.float64) for q in result.positions]

@@ -466,26 +466,14 @@ def test_generated_srdf_uses_scoped_temp_directory(
     assert world._srdf_tempdirs
 
 
-@pytest.mark.parametrize(
-    ("field_name", "field_value", "message"),
-    [
-        (
-            "base_pose",
-            PoseStamped(position=Vector3(1, 0, 0), orientation=Quaternion()),
-            "base_pose",
-        ),  # type: ignore[call-arg]
-    ],
-)
-def test_unsupported_robot_config_fields_fail_before_planning(
-    fake_roboplan: None,
-    robot_config: RobotModelConfig,
-    field_name: str,
-    field_value: Any,
-    message: str,
+def test_unsupported_base_pose_fails_before_planning(
+    fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
 
-    setattr(robot_config, field_name, field_value)
+    robot_config.base_pose = PoseStamped(  # type: ignore[call-arg]
+        position=Vector3(1, 0, 0), orientation=Quaternion()
+    )
     world = RoboPlanWorld()
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ValueError, match="base_pose"):
         world.add_robot(robot_config)
