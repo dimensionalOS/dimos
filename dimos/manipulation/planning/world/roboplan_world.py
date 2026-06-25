@@ -336,7 +336,9 @@ class RoboPlanWorld:
         q_goal = self._joint_state_to_q(robot_id, goal)
         try:
             path_arrays = self._run_native_rrt(robot_id, q_start, q_goal, timeout)
-        except Exception as exc:
+        except ValueError as exc:
+            # _run_native_rrt raises ValueError for the known "no path" case; let any
+            # unexpected error propagate instead of swallowing its traceback.
             return PlanningResult(
                 status=PlanningStatus.NO_SOLUTION,
                 planning_time=time.time() - start_time,
