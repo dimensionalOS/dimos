@@ -37,9 +37,13 @@ impl Transport for ZenohTransport {
     }
 }
 
-/// Strip the leading `/` from a dimos topic to form a Zenoh key.
-fn key_for(channel: &str) -> &str {
-    channel.strip_prefix('/').unwrap_or(channel)
+/// Convert a dimos topic to a Zenoh key: drop the leading `/`, and turn the
+/// `#type` separator into a path segment (`#` is forbidden in Zenoh keys).
+fn key_for(channel: &str) -> String {
+    channel
+        .strip_prefix('/')
+        .unwrap_or(channel)
+        .replace('#', "/")
 }
 
 fn to_io(e: ::zenoh::Error) -> io::Error {
@@ -65,6 +69,14 @@ mod tests {
     #[test]
     fn nested_topic() {
         assert_eq!(key_for("/robot/cmd_vel"), "robot/cmd_vel");
+    }
+
+    #[test]
+    fn type_suffix_becomes_path_segment() {
+        assert_eq!(
+            key_for("/data#geometry_msgs.Twist"),
+            "data/geometry_msgs.Twist"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

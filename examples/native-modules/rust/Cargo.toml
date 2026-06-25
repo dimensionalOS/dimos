@@ -3,6 +3,9 @@ name = "dimos-native-module-examples"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+zenoh = ["dimos-module/zenoh"]
+
 [[bin]]
 name = "native_ping"
 path = "src/native_ping.rs"
@@ -10,6 +13,16 @@ path = "src/native_ping.rs"
 [[bin]]
 name = "native_pong"
 path = "src/native_pong.rs"
+
+[[bin]]
+name = "zenoh_ping"
+path = "src/zenoh_ping.rs"
+required-features = ["zenoh"]
+
+[[bin]]
+name = "zenoh_pong"
+path = "src/zenoh_pong.rs"
+required-features = ["zenoh"]
 
 [dependencies]
 dimos-module = { path = "../../../native/rust/dimos-module" }
