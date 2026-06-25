@@ -62,10 +62,10 @@ unitree_go2_coordinator = (
     )
     .transports(
         {
-            ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
-            ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
-            ("go2_cmd_vel", Twist): LCMTransport("/go2/cmd_vel", Twist),
-            ("go2_odom", PoseStamped): LCMTransport("/go2/odom", PoseStamped),
+            ("cmd_vel", Twist): LCMTransport.spec("/cmd_vel", Twist),
+            ("twist_command", Twist): LCMTransport.spec("/cmd_vel", Twist),
+            ("go2_cmd_vel", Twist): LCMTransport.spec("/go2/cmd_vel", Twist),
+            ("go2_odom", PoseStamped): LCMTransport.spec("/go2/odom", PoseStamped),
         }
     )
     .global_config(obstacle_avoidance=False)

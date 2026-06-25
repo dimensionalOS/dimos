@@ -45,8 +45,12 @@ teleop_quest_rerun = autoconnect(
     vis_module("rerun"),
 ).transports(
     {
-        ("left_controller_output", PoseStamped): LCMTransport("/teleop/left_delta", PoseStamped),
-        ("right_controller_output", PoseStamped): LCMTransport("/teleop/right_delta", PoseStamped),
+        ("left_controller_output", PoseStamped): LCMTransport.spec(
+            "/teleop/left_delta", PoseStamped
+        ),
+        ("right_controller_output", PoseStamped): LCMTransport.spec(
+            "/teleop/right_delta", PoseStamped
+        ),
     }
 )
 
@@ -69,7 +73,7 @@ teleop_quest_xarm7_video = (
     )
     .transports(
         {
-            ("color_image", Image): LCMTransport("/teleop/color_image", Image),
+            ("color_image", Image): LCMTransport.spec("/teleop/color_image", Image),
         }
     )
 )
@@ -109,8 +113,8 @@ teleop_quest_go2 = (
     )
     .transports(
         {
-            ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
-            ("color_image", Image): pSHMTransport(
+            ("cmd_vel", Twist): LCMTransport.spec("/cmd_vel", Twist),
+            ("color_image", Image): pSHMTransport.spec(
                 "color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
             ),
         }

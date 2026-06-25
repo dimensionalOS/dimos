@@ -47,7 +47,7 @@ def test_desk_marker_tf_blueprint_declares_static_tf_module() -> None:
         == DESK_MARKER_NAMESPACE_PREFIX
     )
     assert (
-        desk_marker_tf.transport_map[("detections", MarkerDetectionStreamModule)].topic.topic
+        desk_marker_tf.transport_map[("detections", MarkerDetectionStreamModule)].args[0]
         == "/marker_detection/detections"
     )
 

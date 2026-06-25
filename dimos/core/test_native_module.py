@@ -160,7 +160,7 @@ def test_autoconnect(args_file: str) -> None:
         StubProducer.blueprint(),
     ).transports(
         {
-            ("pointcloud", PointCloud2): LCMTransport("/my/custom/lidar", PointCloud2),
+            ("pointcloud", PointCloud2): LCMTransport.spec("/my/custom/lidar", PointCloud2),
         },
     )
 

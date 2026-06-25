@@ -53,6 +53,12 @@ unitree_go2_keyboard_teleop = (
         ),
         KeyboardTeleop.blueprint(),
     )
+    .transports(
+        {
+            ("twist_command", Twist): LCMTransport.spec("/cmd_vel", Twist),
+            ("joint_state", JointState): LCMTransport.spec("/coordinator/joint_state", JointState),
+        }
+    )
     .remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
     .global_config(obstacle_avoidance=True)
 )

@@ -21,15 +21,14 @@ import types as types_mod
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Union, get_args, get_origin, get_type_hints
 
-from pydantic import create_model
+from pydantic import BaseModel, create_model
 
 if TYPE_CHECKING:
     from dimos.protocol.service.system_configurator.base import SystemConfigurator
 
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase, is_module_type
-from dimos.core.stream import In, Out
-from dimos.core.transport import PubSubTransport
+from dimos.core.stream import In, Out, Transport
 from dimos.spec.utils import Spec, is_spec
 from dimos.utils.logging_config import setup_logger
 
@@ -141,6 +140,29 @@ class BlueprintAtom:
         )
 
 
+@dataclass(frozen=True)
+class TransportSpec:
+    """Deferred transport construction: a transport class plus its ctor args.
+
+    Blueprint authors declare transports via ``Cls.spec(...)`` so nothing is
+    constructed at blueprint-definition time. The coordinator materializes
+    specs at build time, once CLI/env/config overrides have resolved.
+    """
+
+    cls: type[Transport[Any]]
+    args: tuple[Any, ...] = ()
+    kwargs: Mapping[str, Any] = field(default_factory=dict)
+
+    @property
+    def config_cls(self) -> type[BaseModel] | None:
+        # Set by transports that expose a pydantic config override surface
+        return self.cls._config_cls
+
+    def build(self, config: BaseModel | None = None) -> Transport[Any]:
+        extra = {"config": config} if config is not None else {}
+        return self.cls(*self.args, **self.kwargs, **extra)
+
+
 # These fields cannot be pickled.
 _PROXY_FIELDS = ("transport_map", "global_config_overrides", "remapping_map")
 
@@ -149,7 +171,7 @@ _PROXY_FIELDS = ("transport_map", "global_config_overrides", "remapping_map")
 class Blueprint:
     blueprints: tuple[BlueprintAtom, ...]
     disabled_modules_tuple: tuple[type[ModuleBase], ...] = field(default_factory=tuple)
-    transport_map: Mapping[tuple[str, type], PubSubTransport[Any]] = field(
+    transport_map: Mapping[tuple[str, type], TransportSpec] = field(
         default_factory=lambda: MappingProxyType({})
     )
     global_config_overrides: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
@@ -185,9 +207,22 @@ class Blueprint:
             for b in self.blueprints
         }
         configs["g"] = (GlobalConfig | None, None)
+        transport_fields: dict[str, Any] = {}
+        seen: set[type] = set()
+        for spec in self.transport_map.values():
+            cls = spec.config_cls
+            if cls is None or cls in seen:
+                continue
+            seen.add(cls)
+            transport_fields[transport_config_name(cls)] = (cls | None, None)
+        if transport_fields:
+            transports_model = create_model(
+                "TransportsConfig", __config__={"extra": "forbid"}, **transport_fields
+            )
+            configs["transports"] = (transports_model | None, None)
         return create_model("BlueprintConfig", __config__={"extra": "forbid"}, **configs)  # type: ignore[call-overload,no-any-return]
 
-    def transports(self, transports: dict[tuple[str, type], Any]) -> "Blueprint":
+    def transports(self, transports: dict[tuple[str, type], TransportSpec]) -> "Blueprint":
         return replace(self, transport_map=MappingProxyType({**self.transport_map, **transports}))
 
     def global_config(self, **kwargs: Any) -> "Blueprint":
@@ -217,6 +252,10 @@ class Blueprint:
             return self.blueprints
         disabled = set(self.disabled_modules_tuple)
         return tuple(bp for bp in self.blueprints if bp.module not in disabled)
+
+
+def transport_config_name(cls: type) -> str:
+    return cls.__name__.removesuffix("Config").lower()
 
 
 def autoconnect(*blueprints: Blueprint) -> Blueprint:
