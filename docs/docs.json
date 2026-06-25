@@ -136,7 +136,15 @@
           {
             "group": "Quadruped",
             "pages": [
-              "platforms/quadruped/go2/index"
+              {
+                "group": "Unitree Go2",
+                "pages": [
+                  "platforms/quadruped/go2/index",
+                  "platforms/quadruped/go2/setup",
+                  "platforms/quadruped/go2/simulation",
+                  "platforms/quadruped/go2/premap"
+                ]
+              }
             ]
           },
           {
