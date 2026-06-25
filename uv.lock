@@ -48,7 +48,7 @@ dimos-viewer = false
 dimos-lcm = false
 lcm-dimos-fork = false
 pyrealsense2-extended = false
-roboplan-dimos = false
+roboplan = false
 
 [manifest]
 overrides = [
@@ -2096,7 +2096,7 @@ all = [
     { name = "qpsolvers", extra = ["proxqp"] },
     { name = "reportlab" },
     { name = "rerun-sdk" },
-    { name = "roboplan-dimos" },
+    { name = "roboplan" },
     { name = "sounddevice" },
     { name = "soundfile" },
     { name = "sse-starlette" },
@@ -2170,7 +2170,7 @@ manipulation = [
     { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin'" },
     { name = "pyyaml" },
     { name = "qpsolvers", extra = ["proxqp"] },
-    { name = "roboplan-dimos" },
+    { name = "roboplan" },
     { name = "trimesh" },
     { name = "viser", extra = ["urdf"] },
     { name = "xacro" },
@@ -2520,7 +2520,7 @@ requires-dist = [
     { name = "reportlab", marker = "extra == 'apriltag'", specifier = ">=4.5.0" },
     { name = "rerun-sdk", specifier = "==0.32.0a1" },
     { name = "rerun-sdk", marker = "extra == 'visualization'", specifier = "==0.32.0a1" },
-    { name = "roboplan-dimos", marker = "extra == 'manipulation'", specifier = ">=0.4.0" },
+    { name = "roboplan", marker = "extra == 'manipulation'" },
     { name = "scipy", specifier = ">=1.15.1" },
     { name = "sortedcontainers", specifier = "==2.4.0" },
     { name = "sounddevice", marker = "extra == 'agents'" },
@@ -7256,24 +7256,24 @@ name = "open3d"
 version = "0.19.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "addict" },
-    { name = "configargparse" },
-    { name = "dash" },
-    { name = "flask" },
-    { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "matplotlib", version = "3.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "nbformat" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "pandas", version = "3.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "pillow" },
-    { name = "pyquaternion" },
-    { name = "pyyaml" },
-    { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "scikit-learn", version = "1.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "tqdm" },
-    { name = "werkzeug" },
+    { name = "addict", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "configargparse", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "dash", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "flask", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and sys_platform != 'linux')" },
+    { name = "matplotlib", version = "3.11.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
+    { name = "nbformat", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and sys_platform != 'linux')" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
+    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and sys_platform != 'linux')" },
+    { name = "pandas", version = "3.0.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
+    { name = "pillow", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "pyquaternion", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "pyyaml", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and sys_platform != 'linux')" },
+    { name = "scikit-learn", version = "1.9.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
+    { name = "tqdm", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "werkzeug", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5c/4b/91e8a4100adf0ccd2f7ad21dd24c2e3d8f12925396528d0462cfb1735e5a/open3d-0.19.0-cp310-cp310-macosx_10_15_universal2.whl", hash = "sha256:f7128ded206e07987cc29d0917195fb64033dea31e0d60dead3629b33d3c175f", size = 103086005, upload-time = "2025-01-08T07:25:56.755Z" },
@@ -7292,13 +7292,13 @@ name = "open3d-unofficial-arm"
 version = "0.19.0.post9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "configargparse" },
-    { name = "dash" },
-    { name = "flask" },
-    { name = "nbformat" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "werkzeug" },
+    { name = "configargparse", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "dash", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "flask", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "nbformat", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "werkzeug", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ec/f9/edcfaa213800ea278804402baa65693840bc7a323b3de8a31c54ce4e42c8/open3d_unofficial_arm-0.19.0.post9.tar.gz", hash = "sha256:ee300bd557f04750db6e47ccb6c6867c6dd6cfc04169dddeb92505da9ea739ef", size = 5327, upload-time = "2026-04-16T21:21:11.152Z" }
 wheels = [
@@ -7750,10 +7750,10 @@ resolution-markers = [
     "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "python-dateutil", marker = "python_full_version < '3.11'" },
-    { name = "pytz", marker = "python_full_version < '3.11'" },
-    { name = "tzdata", marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and sys_platform != 'linux')" },
+    { name = "python-dateutil", marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and sys_platform != 'linux')" },
+    { name = "pytz", marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and sys_platform != 'linux')" },
+    { name = "tzdata", marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and sys_platform != 'linux')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/33/01/d40b85317f86cf08d853a4f495195c73815fdf205eef3993821720274518/pandas-2.3.3.tar.gz", hash = "sha256:e05e1af93b977f7eafa636d043f9f94c7ee3ac81af99c13508215942e64c993b", size = 4495223, upload-time = "2025-09-29T23:34:51.853Z" }
 wheels = [
@@ -7837,8 +7837,8 @@ resolution-markers = [
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "python-dateutil", marker = "python_full_version >= '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
+    { name = "python-dateutil", marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
     { name = "tzdata", marker = "(python_full_version >= '3.11' and sys_platform == 'emscripten') or (python_full_version >= '3.11' and sys_platform == 'win32')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f8/87/4341c6252d1c47b08768c3d25ac487362bf403f0313ddae4a2a26c9b1b4c/pandas-3.0.3.tar.gz", hash = "sha256:696a4a00a2a2a35d4e5deb3fc946641b96c944f02230e4f76137fe35d806c4fc", size = 4651414, upload-time = "2026-05-11T18:54:29.21Z" }
@@ -9374,8 +9374,8 @@ name = "pyquaternion"
 version = "0.9.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and sys_platform != 'linux')" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7d/0d/3d092aa20efaedacb89c3221a92c6491be5b28f618a2c36b52b53e7446c2/pyquaternion-0.9.9.tar.gz", hash = "sha256:b1f61af219cb2fe966b5fb79a192124f2e63a3f7a777ac3cadf2957b1a81bea8", size = 15530, upload-time = "2020-10-05T01:31:30.327Z" }
 wheels = [
@@ -10193,8 +10193,8 @@ wheels = [
 ]
 
 [[package]]
-name = "roboplan-dimos"
-version = "0.4.0"
+name = "roboplan"
+version = "0.0.100"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -10203,12 +10203,23 @@ dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pin" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/22/12/b03a104da580e8051825eb3b5268764079240e2468cf32eb977ed604c720/roboplan_dimos-0.4.0.tar.gz", hash = "sha256:384acbd717b59aabc7b840ae73665a2f943d0907b5aaa9278396e1537c381894", size = 43662828, upload-time = "2026-06-20T02:57:26.577Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/32/66/42ba4788f3516d956cd60c76e5e3e3b60947e663e801917ab09a26be48a2/roboplan-0.0.100.tar.gz", hash = "sha256:a2c7b129630c4a7c5599b435962ecf91c16ebf1374dfb8a0365565831ef5cd82", size = 48439846, upload-time = "2026-06-25T00:52:43.416Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b4/92/5d40de4fb229541becac63638419e974f0b872cfd77706034493ee272b46/roboplan_dimos-0.4.0-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:8900044347a76f1aab22f1f905447455c0be566cdf121d63a6ec207b0d205eec", size = 43339062, upload-time = "2026-06-20T02:57:09.252Z" },
-    { url = "https://files.pythonhosted.org/packages/33/a2/f84399291ae3dfd6fc11213654aa91222bcd071cca6225cc30af35a33360/roboplan_dimos-0.4.0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:8be535f427ac443d74a9d826e28468087ceef58bf42a1829b6e767dc15cd3abc", size = 43337110, upload-time = "2026-06-20T02:57:13.304Z" },
-    { url = "https://files.pythonhosted.org/packages/a9/e4/180d2378fa2cc5ded8bf612b0ae8ac612f3581974400bd24b32b6fc49f6e/roboplan_dimos-0.4.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:8c6a7edc7b7b4a65d0c91dfc9e863c7870d2317c75ac20d0a394376666010d86", size = 43306881, upload-time = "2026-06-20T02:57:17.436Z" },
-    { url = "https://files.pythonhosted.org/packages/c0/f3/1f49cd337e37d6227eec21558f968ddd03680fcfef165c7824a82ff26e45/roboplan_dimos-0.4.0-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:b4c46d3b80d0840ec4976377ddcc5d8c05403d82dfd4d8ed42739dd2d2760afb", size = 43306903, upload-time = "2026-06-20T02:57:21.95Z" },
+    { url = "https://files.pythonhosted.org/packages/8e/7e/b5d40766c2427112936786c00293cf72563f704d83ce98cf1f2c1063e874/roboplan-0.0.100-cp310-cp310-macosx_14_0_arm64.whl", hash = "sha256:062b18c7f01e52b0e9ef6a7cb61f57cfbc0faa607122e21e0c854b1a3d2a116f", size = 42196048, upload-time = "2026-06-25T00:51:32.744Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/b6/57677ddd26a83031db37e291f13a3d00f76d63aa978992278ee633c69415/roboplan-0.0.100-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:79a760d9eedfa4bdb896316b43c58b1ecab2c1d4caea4f8a400d8344fbb977d8", size = 48026832, upload-time = "2026-06-25T00:51:37.987Z" },
+    { url = "https://files.pythonhosted.org/packages/dd/d2/b31265d468c3c2b70a412bd61022f44c5fd9e6c450020078dece3db4f9a4/roboplan-0.0.100-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:2a3ae288f664c45e1fb22ac23d6c6a12934059ef116411440eb64ff9ffaa7cff", size = 49297082, upload-time = "2026-06-25T00:51:42.872Z" },
+    { url = "https://files.pythonhosted.org/packages/8e/7c/44b09dfa98077152a5620a46668afd96e470d7a9865ca74e3efe10630725/roboplan-0.0.100-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:abdd9f841a27d3cb7cdb446cc76e3919481c0b5f638d0e9228fc6268edae00b3", size = 42194541, upload-time = "2026-06-25T00:51:47.397Z" },
+    { url = "https://files.pythonhosted.org/packages/27/cf/d63c42f0a48b496105e0f4b7cf5ec8f771e3c96a35603697a38a0df62be1/roboplan-0.0.100-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:2a8abfaadfb54dd5209c44992cf9f99b0e414aa5af048537871789f772f3f454", size = 48024767, upload-time = "2026-06-25T00:51:52.185Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/80/0f1bca0a723e19ef3b0f0261de82f64d34d7206693f3b7cb065a821d4cba/roboplan-0.0.100-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:e7784c63b8a8a8708683221c66fa9d88898208909af904eb5126ba16f44f1fc7", size = 49295272, upload-time = "2026-06-25T00:51:56.916Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/66/a7abbc1a595157a2312db46ab2aca25f58679eda2e03bbb857e7fa96bf4a/roboplan-0.0.100-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:9beb11befd10b152c604f0ecaff892afff01615ce4884ba4236ef2a4560fe03a", size = 42174552, upload-time = "2026-06-25T00:52:01.334Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/94/84d6490d9a2bca205de5a5d7c7d51c041daf425c37f66e7693c021336abc/roboplan-0.0.100-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:3f908becbbcc8637f8ca1b1f18aeee88a8f04edea02afc2e37889773d740b960", size = 47993567, upload-time = "2026-06-25T00:52:06.173Z" },
+    { url = "https://files.pythonhosted.org/packages/1d/46/a4369b23887c2a9ab047c5da611fe0e47c58d54fdff3c94fa63aab7d800e/roboplan-0.0.100-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:b6c72ead7d40be4f39664d51e126cee2ef72794029edf2293ec095d2b7f1e0a7", size = 49260596, upload-time = "2026-06-25T00:52:11.209Z" },
+    { url = "https://files.pythonhosted.org/packages/72/3c/8bcbfaa5b7a7fc57a1ee9258359cfc959c97bd0581b546641a3eaae6ac61/roboplan-0.0.100-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:512aaa06d5b06a6db00e88260af37e1c82652f85aae8a528b458257cb1776059", size = 42174557, upload-time = "2026-06-25T00:52:15.922Z" },
+    { url = "https://files.pythonhosted.org/packages/ac/a6/3b0267542595c50fc9a19e5ba50c60428a8a1bda4f28220d989030e6d21b/roboplan-0.0.100-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:ffbff5cd0477764c0df27740271caab674ca75155106a2adc1e1919efe0dfad2", size = 47993582, upload-time = "2026-06-25T00:52:20.574Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/63/a00380c470f9399acd4f8bd15c22cb7045f5d4e960457e95a8698330c5c1/roboplan-0.0.100-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:280abb8bb2a715cae374144620384788ea4ace602e4ef768db90cd72f8f271f7", size = 49260622, upload-time = "2026-06-25T00:52:25.409Z" },
+    { url = "https://files.pythonhosted.org/packages/56/a6/86c053056f730e322d84dca3035108f1efc1a178ec87bf71c17a877ffd6e/roboplan-0.0.100-cp314-cp314-macosx_14_0_arm64.whl", hash = "sha256:1f986f5e907a3db09fbbd8f6407da0ce4ceb8300668132795fb53c4e07f0c943", size = 42174391, upload-time = "2026-06-25T00:52:29.639Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/7c/620051e5370e0fb6217f299dea6bebcaf3a025f946ceb9e05317d3378a84/roboplan-0.0.100-cp314-cp314-manylinux_2_28_aarch64.whl", hash = "sha256:86eefdec4b3a555bc6c04014822a07ff269ba00d16497c0c2ea25b6365321bdf", size = 47993630, upload-time = "2026-06-25T00:52:34.178Z" },
+    { url = "https://files.pythonhosted.org/packages/12/c3/514c57883048853279d784333b9bf6abb6099f526a558872664ab0414ca6/roboplan-0.0.100-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:9c20a3c94f1e6cc2b3531efb1b06db5042167596c143c281eb08f03e4e38c81e", size = 49260636, upload-time = "2026-06-25T00:52:38.771Z" },
 ]
 
 [[package]]
@@ -10600,10 +10611,10 @@ resolution-markers = [
     "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "joblib", marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "threadpoolctl", marker = "python_full_version < '3.11'" },
+    { name = "joblib", marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and sys_platform != 'linux')" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and sys_platform != 'linux')" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and sys_platform != 'linux')" },
+    { name = "threadpoolctl", marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and sys_platform != 'linux')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/98/c2/a7855e41c9d285dfe86dc50b250978105dce513d6e459ea66a6aeb0e1e0c/scikit_learn-1.7.2.tar.gz", hash = "sha256:20e9e49ecd130598f1ca38a1d85090e1a600147b9c02fa6f15d69cb53d968fda", size = 7193136, upload-time = "2025-09-09T08:21:29.075Z" }
 wheels = [
@@ -10670,11 +10681,11 @@ resolution-markers = [
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "joblib", marker = "python_full_version >= '3.11'" },
-    { name = "narwhals", marker = "python_full_version >= '3.11'" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "threadpoolctl", marker = "python_full_version >= '3.11'" },
+    { name = "joblib", marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
+    { name = "narwhals", marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
+    { name = "threadpoolctl", marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/fa/6f/37092bdb25f712817231799fc5674d8e704066a8a70c1d2d40517e18b4ab/scikit_learn-1.9.0.tar.gz", hash = "sha256:8833266989d3a5110178a9fae30783675460724d0e1efb13b14901d2c660c557", size = 7750767, upload-time = "2026-06-02T11:54:32.706Z" }
 wheels = [
@@ -12726,7 +12737,7 @@ name = "winrt-runtime"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
+    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/16/dd/acdd527c1d890c8f852cc2af644aa6c160974e66631289420aa871b05e65/winrt_runtime-3.2.1.tar.gz", hash = "sha256:c8dca19e12b234ae6c3dadf1a4d0761b51e708457492c13beb666556958801ea", size = 21721, upload-time = "2025-06-06T14:40:27.593Z" }
 wheels = [
@@ -12752,7 +12763,7 @@ name = "winrt-windows-devices-bluetooth"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
+    { name = "winrt-runtime", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b2/a0/1c8a0c469abba7112265c6cb52f0090d08a67c103639aee71fc690e614b8/winrt_windows_devices_bluetooth-3.2.1.tar.gz", hash = "sha256:db496d2d92742006d5a052468fc355bf7bb49e795341d695c374746113d74505", size = 23732, upload-time = "2025-06-06T14:41:20.489Z" }
 wheels = [
@@ -12778,7 +12789,7 @@ name = "winrt-windows-devices-bluetooth-advertisement"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
+    { name = "winrt-runtime", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/06/fc/7ffe66ca4109b9e994b27c00f3d2d506e6e549e268791f755287ad9106d8/winrt_windows_devices_bluetooth_advertisement-3.2.1.tar.gz", hash = "sha256:0223852a7b7fa5c8dea3c6a93473bd783df4439b1ed938d9871f947933e574cc", size = 16906, upload-time = "2025-06-06T14:41:21.448Z" }
 wheels = [
@@ -12804,7 +12815,7 @@ name = "winrt-windows-devices-bluetooth-genericattributeprofile"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
+    { name = "winrt-runtime", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/44/21/aeeddc0eccdfbd25e543360b5cc093233e2eab3cdfb53ad3cabae1b5d04d/winrt_windows_devices_bluetooth_genericattributeprofile-3.2.1.tar.gz", hash = "sha256:cdf6ddc375e9150d040aca67f5a17c41ceaf13a63f3668f96608bc1d045dde71", size = 38896, upload-time = "2025-06-06T14:41:22.687Z" }
 wheels = [
@@ -12830,7 +12841,7 @@ name = "winrt-windows-devices-enumeration"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
+    { name = "winrt-runtime", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9e/dd/75835bfbd063dffa152109727dedbd80f6e92ea284855f7855d48cdf31c9/winrt_windows_devices_enumeration-3.2.1.tar.gz", hash = "sha256:df316899e39bfc0ffc1f3cb0f5ee54d04e1d167fbbcc1484d2d5121449a935cf", size = 23538, upload-time = "2025-06-06T14:41:26.787Z" }
 wheels = [
@@ -12856,7 +12867,7 @@ name = "winrt-windows-devices-radios"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
+    { name = "winrt-runtime", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/5e/02/9704ea359ad8b0d6faa1011f98fb477e8fb6eac5201f39d19e73c2407e7b/winrt_windows_devices_radios-3.2.1.tar.gz", hash = "sha256:4dc9b9d1501846049eb79428d64ec698d6476c27a357999b78a8331072e18a0b", size = 5908, upload-time = "2025-06-06T14:41:44.868Z" }
 wheels = [
@@ -12882,7 +12893,7 @@ name = "winrt-windows-foundation"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
+    { name = "winrt-runtime", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/0c/55/098ce7ea0679efcc1298b269c48768f010b6c68f90c588f654ec874c8a74/winrt_windows_foundation-3.2.1.tar.gz", hash = "sha256:ad2f1fcaa6c34672df45527d7c533731fdf65b67c4638c2b4aca949f6eec0656", size = 30485, upload-time = "2025-06-06T14:41:53.344Z" }
 wheels = [
@@ -12908,7 +12919,7 @@ name = "winrt-windows-foundation-collections"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
+    { name = "winrt-runtime", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ef/62/d21e3f1eeb8d47077887bbf0c3882c49277a84d8f98f7c12bda64d498a07/winrt_windows_foundation_collections-3.2.1.tar.gz", hash = "sha256:0eff1ad0d8d763ad17e9e7bbd0c26a62b27215016393c05b09b046d6503ae6d5", size = 16043, upload-time = "2025-06-06T14:41:53.983Z" }
 wheels = [
@@ -12934,7 +12945,7 @@ name = "winrt-windows-storage-streams"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
+    { name = "winrt-runtime", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/00/50/f4488b07281566e3850fcae1021f0285c9653992f60a915e15567047db63/winrt_windows_storage_streams-3.2.1.tar.gz", hash = "sha256:476f522722751eb0b571bc7802d85a82a3cae8b1cce66061e6e758f525e7b80f", size = 34335, upload-time = "2025-06-06T14:43:23.905Z" }
 wheels = [
