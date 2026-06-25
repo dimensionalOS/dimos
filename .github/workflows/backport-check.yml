@@ -1,0 +1,40 @@
+name: backport-check
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, labeled, unlabeled]
+    branches: [main]
+
+concurrency:
+  group: backport-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - name: "Admins: Backport label added"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Skip when no release is in flight (`backport:skip` is excluded by the prefix filter).
+          release_labels=$(gh api "repos/$REPO/labels" --paginate \
+            --jq '.[].name | select(startswith("backport release/"))')
+          if [[ -z "$release_labels" ]]; then
+            echo "::notice::No active 'backport release/*' labels; nothing to enforce."
+            exit 0
+          fi
+          pr_labels=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
+            --json labels --jq '.labels[].name')
+          if echo "$pr_labels" | grep -qE '^(backport release/|backport:skip$)'; then
+            exit 0
+          fi
+          echo "::error::PR needs a 'backport release/X.Y.Z' label, or 'backport:skip' to opt out. Active release labels:"
+          echo "$release_labels" | sed 's/^/  - /'
+          exit 1
