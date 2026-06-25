@@ -138,13 +138,15 @@ def test_config() -> None:
 
 
 def test_transports() -> None:
-    custom_transport = LCMTransport("/custom_topic", Data1)
     blueprint_set = autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).transports(
-        {("data1", Data1): custom_transport}
+        {("data1", Data1): LCMTransport.spec("/custom_topic", Data1)}
     )
 
     assert ("data1", Data1) in blueprint_set.transport_map
-    assert blueprint_set.transport_map[("data1", Data1)] == custom_transport
+    # TransportSpec compares by value (class + args + kwargs), not identity.
+    assert blueprint_set.transport_map[("data1", Data1)] == LCMTransport.spec(
+        "/custom_topic", Data1
+    )
 
 
 def test_global_config() -> None:

@@ -22,6 +22,7 @@ from typing import (
     TypeVar,
 )
 
+from pydantic import BaseModel
 import reactivex as rx
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
@@ -80,6 +81,11 @@ class State(enum.Enum):
 
 
 class Transport(Resource, ObservableMixin[T]):
+    # Transports that expose a pydantic config override surface set this to the
+    # config class; the blueprint config flow picks them up automatically. None
+    # means "no overridable config" (LCM/SHM transports).
+    _config_cls: type[BaseModel] | None = None
+
     # used by local Output
     def broadcast(self, selfstream: Out[T], value: T) -> None:
         raise NotImplementedError

@@ -64,12 +64,12 @@ unitree_g1_coordinator = (
     # collide with ControlCoordinator's (joint_state/joint_command/...).
     .transports(
         {
-            ("motor_states", JointState): LCMTransport("/g1/motor_states", JointState),
-            ("imu", Imu): LCMTransport("/g1/imu", Imu),
-            ("motor_command", MotorCommandArray): LCMTransport(
+            ("motor_states", JointState): LCMTransport.spec("/g1/motor_states", JointState),
+            ("imu", Imu): LCMTransport.spec("/g1/imu", Imu),
+            ("motor_command", MotorCommandArray): LCMTransport.spec(
                 "/g1/motor_command", MotorCommandArray
             ),
-            ("joint_command", JointState): LCMTransport("/g1/joint_command", JointState),
+            ("joint_command", JointState): LCMTransport.spec("/g1/joint_command", JointState),
         }
     )
 )

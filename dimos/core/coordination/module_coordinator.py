@@ -23,12 +23,14 @@ import sys
 import threading
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
+from dimos.core.coordination.blueprints import transport_config_name
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.worker_manager import WorkerManager
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.resource import Resource
+from dimos.core.stream import Transport
 from dimos.core.transport import LCMTransport, PubSubTransport, pLCMTransport
 from dimos.spec.utils import is_spec, spec_annotation_compliance, spec_structural_compliance
 from dimos.utils.generic import short_id
@@ -65,9 +67,9 @@ class ModuleCoordinator(Resource):
         self._deployed_modules = {}
         self._deployed_atoms: dict[type[ModuleBase], BlueprintAtom] = {}
         self._resolved_module_refs: dict[tuple[type[ModuleBase], str], type[ModuleBase]] = {}
-        self._transport_registry: dict[tuple[str, type], PubSubTransport[Any]] = {}
+        self._transport_registry: dict[tuple[str, type], Transport[Any]] = {}
         self._class_aliases: dict[type[ModuleBase], type[ModuleBase]] = {}
-        self._module_transports: dict[type[ModuleBase], dict[str, PubSubTransport[Any]]] = {}
+        self._module_transports: dict[type[ModuleBase], dict[str, Transport[Any]]] = {}
         self._started = False
         self._modules_lock = threading.RLock()
         self._coordinator_rpc: CoordinatorRPC | None = None
@@ -249,7 +251,9 @@ class ModuleCoordinator(Resource):
             if hasattr(module, "on_system_modules"):
                 module.on_system_modules(modules)
 
-    def _connect_streams(self, blueprint: Blueprint) -> None:
+    def _connect_streams(
+        self, blueprint: Blueprint, transports: Mapping[tuple[str, type], Transport[Any]]
+    ) -> None:
         streams: dict[tuple[str, type], list[tuple[type, str]]] = defaultdict(list)
 
         for bp in blueprint.active_blueprints:
@@ -263,7 +267,9 @@ class ModuleCoordinator(Resource):
             if key in self._transport_registry:
                 transport = self._transport_registry[key]
             else:
-                transport = _get_transport_for(blueprint, remapped_name, stream_type)
+                transport = transports.get(key)
+                if transport is None:
+                    transport = _get_transport_for(blueprint, remapped_name, stream_type)
             self._transport_registry[key] = transport
             for module, original_name in streams[key]:
                 instance = self.get_instance(module)  # type: ignore[assignment]
@@ -290,6 +296,8 @@ class ModuleCoordinator(Resource):
         blueprint_args = blueprint_args or {}
         if "g" in blueprint_args:
             global_config.update(**blueprint_args.pop("g"))
+        transport_overrides = blueprint_args.pop("transports", None) or {}
+        transports = _materialize_transports(blueprint, transport_overrides)
 
         _run_configurators(blueprint)
         _check_requirements(blueprint)
@@ -300,7 +308,7 @@ class ModuleCoordinator(Resource):
         coordinator.start()
 
         _deploy_all_modules(blueprint, coordinator, global_config, blueprint_args)
-        coordinator._connect_streams(blueprint)
+        coordinator._connect_streams(blueprint, transports)
         _connect_module_refs(blueprint, coordinator)
 
         coordinator.build_all_modules()
@@ -337,6 +345,8 @@ class ModuleCoordinator(Resource):
         blueprint_args = blueprint_args or {}
         if "g" in blueprint_args:
             self._global_config.update(**blueprint_args.pop("g"))
+        transport_overrides = blueprint_args.pop("transports", None) or {}
+        transports = _materialize_transports(blueprint, transport_overrides)
 
         # Scale worker pool.
         n_extra = int(blueprint.global_config_overrides.get("n_workers", 0))
@@ -361,7 +371,7 @@ class ModuleCoordinator(Resource):
         before = set(self._deployed_modules)
 
         _deploy_all_modules(blueprint, self, self._global_config, blueprint_args)
-        self._connect_streams(blueprint)
+        self._connect_streams(blueprint, transports)
         _connect_module_refs(blueprint, self, existing_modules=before)
 
         new_modules = [proxy for cls, proxy in self._deployed_modules.items() if cls not in before]
@@ -572,15 +582,29 @@ def _is_name_unique(blueprint: Blueprint, name: str) -> bool:
 
 
 def _get_transport_for(blueprint: Blueprint, name: str, stream_type: type) -> PubSubTransport[Any]:
-    transport = blueprint.transport_map.get((name, stream_type), None)
-    if transport:
-        return transport
-
     use_pickled = getattr(stream_type, "lcm_encode", None) is None
     topic = f"/{name}" if _is_name_unique(blueprint, name) else f"/{short_id()}"
-    transport = pLCMTransport(topic) if use_pickled else LCMTransport(topic, stream_type)
+    return pLCMTransport(topic) if use_pickled else LCMTransport(topic, stream_type)
 
-    return transport
+
+def _materialize_transports(
+    blueprint: Blueprint, overrides: Mapping[str, Mapping[str, Any]]
+) -> dict[tuple[str, type], Transport[Any]]:
+    """Build the blueprint's declared transports, merging CLI/env config overrides.
+
+    WebRTC transports get a freshly constructed provider config from the
+    resolved ``transports.<name>.*`` overrides; everything else builds from the
+    spec as-is. Returns ready-to-use instances pickled into module workers.
+    """
+    materialized: dict[tuple[str, type], Transport[Any]] = {}
+    for key, spec in blueprint.transport_map.items():
+        config = None
+        config_cls = spec.config_cls
+        if config_cls is not None:
+            sub = overrides.get(transport_config_name(config_cls), {})
+            config = config_cls(**sub)
+        materialized[key] = spec.build(config=config)
+    return materialized
 
 
 def _verify_no_name_conflicts(blueprint: Blueprint) -> None:
@@ -621,7 +645,7 @@ def _verify_no_name_conflicts(blueprint: Blueprint) -> None:
 
 def _verify_no_conflicts_with_existing(
     blueprint: Blueprint,
-    existing_registry: dict[tuple[str, type], PubSubTransport[Any]],
+    existing_registry: dict[tuple[str, type], Transport[Any]],
 ) -> None:
     """Check that a new blueprint's streams don't conflict with already-registered transports."""
     if not existing_registry:

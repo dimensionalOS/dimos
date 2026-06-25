@@ -39,6 +39,8 @@ from dimos.protocol.pubsub.impl.shmpubsub import BytesSharedMemory, PickleShared
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from dimos.core.coordination.blueprints import TransportSpec
+
 T = TypeVar("T")
 
 # TODO
@@ -67,6 +69,13 @@ class PubSubTransport(Transport[T]):
 
     def __init__(self, topic: Any) -> None:
         self.topic = topic
+
+    @classmethod
+    def spec(cls, *args: Any, **kwargs: Any) -> TransportSpec:
+        """Defer construction: capture ctor args for the coordinator to build later."""
+        from dimos.core.coordination.blueprints import TransportSpec
+
+        return TransportSpec(cls, args, kwargs)
 
     def __str__(self) -> str:
         return (
