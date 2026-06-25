@@ -57,6 +57,10 @@ SUPPORTED_WORLD_BACKENDS = get_args(WorldBackend)
 SUPPORTED_PLANNERS = get_args(PlannerName)
 SUPPORTED_KINEMATICS = get_args(KinematicsName)
 
+_ROBOPLAN_PLANNER_REQUIRES_ROBOPLAN_WORLD = (
+    'planner_name="roboplan" requires world_backend="roboplan"'
+)
+
 
 def validate_backend_combination(
     *,
@@ -77,7 +81,7 @@ def validate_backend_combination(
         )
 
     if planner_name == "roboplan" and world_backend != "roboplan":
-        raise ValueError('planner_name="roboplan" requires world_backend="roboplan"')
+        raise ValueError(_ROBOPLAN_PLANNER_REQUIRES_ROBOPLAN_WORLD)
     if kinematics_name == "drake_optimization" and world_backend != "drake":
         raise ValueError('kinematics_name="drake_optimization" requires world_backend="drake"')
 
@@ -147,7 +151,7 @@ def create_planner(
         return RRTConnectPlanner(**kwargs)
     if name == "roboplan":
         if world_backend != "roboplan" or world is None:
-            raise ValueError('planner_name="roboplan" requires world_backend="roboplan"')
+            raise ValueError(_ROBOPLAN_PLANNER_REQUIRES_ROBOPLAN_WORLD)
         if not isinstance(world, PlannerSpec):
             raise ValueError("RoboPlan-native planner requires a RoboPlan world planner object")
         return world
