@@ -37,8 +37,7 @@ class G1Config:
     urdf: UrdfLoader
     height_clearance: float
     width_clearance: float
-    # Lidar height above the ground when standing (used as the LIO init pose).
-    # This is a stance value, not a kinematic mount, so it is NOT in the URDF.
+    # LIO init pose: standing lidar height. A stance value, not in the URDF.
     sensor_height: float
 
     @property

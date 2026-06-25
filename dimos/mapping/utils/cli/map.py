@@ -502,11 +502,8 @@ def main(
 
     marker_dets: list[Observation[Any]] = []
     if markers:
-        # Image observations in dimos recordings are stamped with
-        # frame_id="camera_optical", so obs.pose is already optical-in-world
-        # (verified: matches lidar_base_pose + BASE_TO_OPTICAL to ~1mm). With
-        # --image-pose, swap that stored pose for a different source (e.g.
-        # fastlio_odometry), composing the base→optical mount onto it first.
+        # obs.pose is already optical-in-world (stamped frame_id="camera_optical").
+        # --image-pose swaps it for another source, composing base→optical onto it first.
         color_image = store.stream("color_image", Image).from_time(seek or None).to_time(duration)
         n_images = color_image.count()
         if image_pose is not None:

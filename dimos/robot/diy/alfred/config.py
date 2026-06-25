@@ -34,8 +34,8 @@ class AlfredConfig:
     name: str
     height_clearance: float
     width_clearance: float
-    # Lidar mount pose relative to base (used as the LIO init pose). Alfred has no
-    # URDF, so the static transform below is defined manually from this mount.
+    # LIO init pose: lidar mount relative to base. Alfred has no URDF, so the
+    # static transform below is built manually from this.
     sensor_mount: Pose
 
     @property

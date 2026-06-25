@@ -29,14 +29,7 @@ class TfModuleConfig(ModuleConfig):
 
 
 class TfModule(Module):
-    """A Module that republishes its config's static (non-moving) transforms on an interval.
-
-    Modules that need to publish fixed frames inherit from this instead of Module
-    directly, so the base Module stays free of transform-publishing machinery that
-    most modules don't need. `frame_mapping` resolution still lives on Module (every
-    module needs it for blueprint-level frame namespacing); only the static-transform
-    publishing is added here.
-    """
+    """A Module that republishes its config's static (non-moving) transforms on an interval."""
 
     config: TfModuleConfig
 
@@ -49,8 +42,7 @@ class TfModule(Module):
 
     @rpc
     def start(self) -> None:
-        # NOTE: there's basically always going to be some inital race around static transform frames and tf.get's
-        # publishing the statics before main starts helps mitigate/reduce that
+        # publish statics before main starts to reduce the race with early tf.get's
         self._start_static_publish()
         super().start()
 
@@ -63,8 +55,7 @@ class TfModule(Module):
         frame_mapping_field = type(self.config).model_fields["frame_mapping"]
         existing_frames: dict[str, str] = frame_mapping_field.default_factory()  # type: ignore[misc,union-attr,call-arg]
 
-        # step1 translate urdf_name=>common_name (see Module._setup_frame_mapping for what
-        # "common name" vs "real frame id" means)
+        # translate urdf_name => common_name (see Module._setup_frame_mapping)
         reverse_mapping = {value: key for key, value in existing_frames.items()}
         static_transforms_common_names = {
             reverse_mapping.get(urdf_frame_id, urdf_frame_id): Transform(
@@ -77,7 +68,7 @@ class TfModule(Module):
             )
             for urdf_frame_id, transform in self.config.static_transforms.items()
         }
-        # step2 map common_name=>real_frame_id using the module's resolved frame_mapping
+        # map common_name => real_frame_id
         final_frame_mapping = self.frame_mapping
         return {
             final_frame_mapping.get(common_frame_id, common_frame_id): Transform(
@@ -128,10 +119,7 @@ class TfModule(Module):
         self._on_static_publish()
 
     def _on_static_publish(self) -> None:
-        """
-        This is a callback for modules to publish other data (ex: camera info) in the static loop
-        This should be rarely used, but exists for the few cases where it is needed
-        """
+        """Callback for modules to publish extra data (ex: camera info) in the static loop."""
 
     def _stop_static_publish(self) -> None:
         if self._static_publish_stop is not None:

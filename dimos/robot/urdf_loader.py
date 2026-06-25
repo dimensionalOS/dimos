@@ -12,13 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""URDF/MJCF frame loading.
-
-The model file is the ground truth for a robot's frames. `UrdfLoader` parses it
-lazily and derives the frame information dimos needs (the structural body frame
-and the fixed-joint static transforms) without pulling in any control,
-manipulation, or hardware machinery.
-"""
+"""URDF/MJCF frame loading: derive the body frame and static transforms."""
 
 from __future__ import annotations
 
@@ -36,8 +30,8 @@ from dimos.robot.model_parser import JointDescription, ModelDescription, parse_m
 class UrdfLoader(BaseModel):
     """Lazily parses a URDF/MJCF model and exposes its derived frame info.
 
-    Parsing is deferred until first access so importing a config that references
-    a model never triggers an LFS download or disk read.
+    Parsing is deferred until first access so referencing a model in a config
+    never triggers an LFS download or disk read.
     """
 
     name: str
@@ -69,9 +63,8 @@ class UrdfLoader(BaseModel):
     def body_frame(self) -> str:
         """The robot's structural root link (usually ``base_link``).
 
-        Skips past ``type="floating"`` joints and returns the first structural
-        link. (``world`` can be the true root frame, but it is detached from the
-        robot, so it is not the body frame.)
+        Skips ``floating`` joints, since ``world`` may be the true root but is
+        detached from the robot and so not the body frame.
         """
         model = self._ensure_parsed()
         outgoing: dict[str, list[JointDescription]] = {}
@@ -89,17 +82,7 @@ class UrdfLoader(BaseModel):
 
     @cached_property
     def static_transforms(self) -> dict[str, Transform]:
-        """Fixed-joint transforms keyed by child frame (parent → child).
-
-        Example::
-            print(UrdfLoader(name="go2", model_path="go2.urdf").static_transforms)
-            # {
-            #     "camera_link": Transform(translation=(0.3, 0, 0), rotation=identity,
-            #                              frame_id="base_link", child_frame_id="camera_link"),
-            #     "camera_optical": Transform(translation=(0, 0, 0), rotation=(-0.5, 0.5, -0.5, 0.5),
-            #                                 frame_id="camera_link", child_frame_id="camera_optical"),
-            # }
-        """
+        """Fixed-joint transforms keyed by child frame (parent → child)."""
         result: dict[str, Transform] = {}
         for joint in self._ensure_parsed().joints:
             if joint.type != "fixed" or not joint.child_link:

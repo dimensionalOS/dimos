@@ -109,10 +109,7 @@ class ModuleConfig(BaseConfig):
     tf_transport: type[TFSpec] = LCMTF  # type: ignore[type-arg]
     frame_id_prefix: str | None = None
     frame_id: str | None = None
-    # TODO: later expose frame remappings, somehow, at the blueprint level
-    # frame mapping is how others can remap frame names, in the future we should have a way to do this remapping at the blueprint level too
-    # (static-transform publishing lives on the TfModule subclass, but frame_mapping
-    #  stays here because blueprint-level frame namespacing applies to every module)
+    # how others remap frame names; TODO: also expose this at the blueprint level
     frame_mapping: dict[str, str] = Field(default_factory=dict)
     g: GlobalConfig = global_config
 
@@ -198,9 +195,6 @@ class ModuleBase(Configurable, CompositeResource):
         self._close_module()
 
     def _setup_frame_mapping(self) -> dict[str, str]:
-        # frame_mapping resolution stays on the base Module (every module exposes a
-        # resolved frame_mapping for blueprint-level namespacing). Static-transform
-        # publishing lives on the TfModule subclass.
         frame_mapping_field = type(self.config).model_fields["frame_mapping"]
         if not hasattr(frame_mapping_field, "default_factory") or not callable(
             frame_mapping_field.default_factory
@@ -208,14 +202,8 @@ class ModuleBase(Configurable, CompositeResource):
             raise ValueError(
                 f"""In the {self.name!r} module config definition, the frame_mapping needs to be a pydantic field, not a dict"""
             )
-        # given something like:
-        # class MyConfig:
-        #     frame_mapping: dict[str, str] = Field(default_factory=lambda: dict(
-        #         body="base_link",
-        #         parent="world",
-        #     ))
-        # the "body" is what I call a common_name
-        # "base_link" is the REAL frame id that other modules can query/use
+        # frame_mapping maps a "common_name" (e.g. "body") to the REAL frame id
+        # (e.g. "base_link") that other modules query
         existing_frames: dict[str, str] = frame_mapping_field.default_factory()  # type: ignore[call-arg]
         final_frame_mapping = {**existing_frames, **self.config.frame_mapping}
         for existing_frame, remapped_frame in final_frame_mapping.items():

@@ -125,10 +125,8 @@ class MultiTBuffer:
                 if key not in self.buffers:
                     self.buffers[key] = TBuffer(self.buffer_size)
                 self.buffers[key].add(transform)
-            # pruning happens in self.buffers[key].add(), but we don't want static ones to get pruned
-            # would be better to fix pruning somehow but the class that does the pruning
-            # is more generic than TF-speficic pruning, so I'm going to backfill instead for now
-            # plz improve when the latching-topic change is made
+            # add() prunes old transforms; backfill to keep statics from being pruned
+            # TODO: replace with latching topics
             self._backfill_statics()
             self._cv.notify_all()
 
