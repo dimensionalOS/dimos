@@ -462,16 +462,22 @@ function startTick() {
         state.cmdSendCount = 0;
         _lastHudSample = now;
 
+        // Bail if the cockpit DOM is gone (failed connect / view teardown) —
+        // the interval can outlive the elements for a tick.
+        const summary = document.getElementById('hud-summary');
+        if (!summary) return;
+
         // Summary always; detail grid rendered (hidden until expanded).
-        document.getElementById('hud-summary').textContent = hudSummaryLine();
+        summary.textContent = hudSummaryLine();
         renderTelemetryGrid();
 
         // Health pills (good/warn/bad) + transport label. Both the telemetry
         // header pill and the video-overlay LINK pill track signal health.
         const health = statsHealth();
         const pill = document.getElementById('hud-health');
-        pill.className = 'pill pill-' + health;
-        document.getElementById('hud-transport').textContent = transportLabel();
+        if (pill) pill.className = 'pill pill-' + health;
+        const transport = document.getElementById('hud-transport');
+        if (transport) transport.textContent = transportLabel();
         const linkPill = document.getElementById('link-pill');
         if (linkPill) {
             linkPill.className = 'pill pill-' + health;
