@@ -103,10 +103,13 @@ def dataset() -> str:
 
 
 def test_summary(dataset: str) -> None:
-    res = _run("summary", dataset)
-    assert res.returncode == 0, res.stderr
-    assert "lidar" in res.stdout
-    assert "odom" in res.stdout
+    # `summary` is generic and lives under `dimos mem` (not `dimos map`).
+    from dimos.robot.cli.dimos import main as cli_app
+
+    res = _runner.invoke(cli_app, ["mem", "summary", dataset])
+    assert res.exit_code == 0, res.output
+    assert "lidar" in res.output
+    assert "odom" in res.output
 
 
 @requires_turbojpeg
