@@ -29,11 +29,16 @@ if __name__ == "__main__":
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--zed", action="store_true", help="ZED Mini stereo camera (ZED SDK required)")
     group.add_argument("--zed-only", action="store_true", help="ZED Mini only, no robot — point cloud quality check")
+    group.add_argument("--robot-only", action="store_true", help="FlowBase keyboard teleop only, no camera")
     group.add_argument("--trial", action="store_true", help="Laptop webcam only, no robot")
     parser.add_argument("--address", default=None, help="FlowBase address override (default: 172.6.2.20:11323)")
     args = parser.parse_args()
 
-    if args.trial:
+    if args.robot_only:
+        from dimos.navigation.camera_nav.blueprint_flowbase import _make_flowbase_coordinator
+        ModuleCoordinator.build(_make_flowbase_coordinator(address=args.address)).loop()
+
+    elif args.trial:
         from dimos.navigation.camera_nav.blueprint_flowbase import camera_nav_static_trial
         ModuleCoordinator.build(camera_nav_static_trial).loop()
 
