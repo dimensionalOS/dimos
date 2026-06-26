@@ -78,3 +78,23 @@ def test_spec_annotation_compliance_requires_matching_annotations() -> None:
 def test_spec_annotation_compliance_rejects_non_spec() -> None:
     with pytest.raises(TypeError):
         spec_annotation_compliance(StructurallyCompliant(), NormalProtocol)
+
+
+class DefaultArgSpec(Spec, Protocol):
+    def speak(self, text: str, blocking: bool = True) -> str: ...
+
+
+class MissingDefaultArg:
+    def speak(self, text: str) -> str:
+        return text
+
+
+class ProvidesDefaultArg:
+    def speak(self, text: str, blocking: bool = True) -> str:
+        return text
+
+
+def test_spec_annotation_compliance_handles_defaulted_parameters() -> None:
+    # A spec parameter with a default that the impl omits is rejected, not a crash.
+    assert spec_annotation_compliance(MissingDefaultArg(), DefaultArgSpec) is False
+    assert spec_annotation_compliance(ProvidesDefaultArg(), DefaultArgSpec) is True

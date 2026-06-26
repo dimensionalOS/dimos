@@ -171,6 +171,8 @@ def _signatures_compatible(spec_sig: inspect.Signature, impl_sig: inspect.Signat
     for spec_param in spec_sig.parameters.values():
         if spec_param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
             continue
+        if spec_param.name not in bound.arguments:
+            return False  # spec declares this parameter but the impl does not provide it
         impl_param = bound.arguments[spec_param.name]
         if (
             spec_param.kind is not inspect.Parameter.POSITIONAL_ONLY
