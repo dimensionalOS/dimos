@@ -23,7 +23,6 @@ import selectors
 import shlex
 import subprocess
 import time
-from typing import IO, cast
 
 from dimos.utils.logging_config import setup_logger
 
@@ -63,7 +62,7 @@ def run_logged_command(
         bufsize=1,
     )
     assert proc.stdout is not None
-    stdout = cast("IO[str]", proc.stdout)
+    stdout = proc.stdout
 
     selector = selectors.DefaultSelector()
     selector.register(stdout, selectors.EVENT_READ)
@@ -72,10 +71,10 @@ def run_logged_command(
     try:
         while True:
             if stdout_open:
-                for key, _ in selector.select(timeout=1.0):
-                    line = key.fileobj.readline()
+                for _, _ in selector.select(timeout=1.0):
+                    line = stdout.readline()
                     if line == "":
-                        selector.unregister(key.fileobj)
+                        selector.unregister(stdout)
                         stdout_open = False
                         break
                     clean = line.rstrip()
