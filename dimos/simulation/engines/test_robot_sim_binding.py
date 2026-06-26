@@ -122,6 +122,20 @@ def test_mujoco_engine_uses_robot_binding_joint_order(tmp_path: Path) -> None:
     assert engine.has_root_freejoint
 
 
+def test_mujoco_engine_reset_joint_positions_sets_qpos_and_targets(tmp_path: Path) -> None:
+    xml_path = tmp_path / "robot_scene.xml"
+    _write_scene_then_robot_xml(xml_path)
+    engine = MujocoEngine(config_path=xml_path, headless=True, robot_sim_spec=_robot_spec())
+
+    engine.reset_joint_positions([0.25, -0.5])
+
+    assert engine.joint_positions == [0.25, -0.5]
+    assert engine.get_position_target(0) == 0.25
+    assert engine.get_position_target(1) == -0.5
+    assert engine.data.qpos[14] == pytest.approx(0.25)
+    assert engine.data.qpos[15] == pytest.approx(-0.5)
+
+
 def test_robot_binding_requires_configured_imu(tmp_path: Path) -> None:
     xml_path = tmp_path / "robot_scene.xml"
     _write_scene_then_robot_xml(xml_path)

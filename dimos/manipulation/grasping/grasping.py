@@ -25,7 +25,7 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
+from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec, TSDFGraspGenSpec
 from dimos.msgs.geometry_msgs.PoseArray import PoseArray
 from dimos.perception.object_scene_registration_spec import ObjectSceneRegistrationSpec
 from dimos.utils.logging_config import setup_logger
@@ -43,7 +43,8 @@ class GraspingModule(Module):
     grasps: Out[PoseArray]
 
     _scene_registration: ObjectSceneRegistrationSpec
-    _grasp_gen: GraspGenSpec
+    _grasp_gen: GraspGenSpec | None = None
+    _tsdf_grasp_gen: TSDFGraspGenSpec | None = None
 
     @rpc
     def start(self) -> None:
@@ -85,6 +86,10 @@ class GraspingModule(Module):
 
         # Call GraspGenModule (running in Docker)
         try:
+            if self._grasp_gen is None:
+                msg = "Pointcloud grasp generator is not available."
+                logger.warning(msg)
+                return msg
             result = self._grasp_gen.generate_grasps(pc, scene_pc)
         except Exception as e:
             msg = f"Grasp generation failed: {e}"
@@ -101,6 +106,63 @@ class GraspingModule(Module):
 
         # Format result for agent/human
         return self._format_grasp_result(result, object_name)
+
+    @skill
+    def generate_grasps_for_object(self, object_id: str, cushion_m: float = 0.03) -> str:
+        """Generate TSDF grasp candidates for a specific registered object id.
+
+        Args:
+            object_id: Stable runtime object id returned by perception after detection.
+            cushion_m: Extra padding around object bounds in meters.
+        """
+        if self._tsdf_grasp_gen is None:
+            msg = "TSDF grasp generator is not available."
+            logger.warning(msg)
+            return msg
+
+        try:
+            target = self._scene_registration.get_object_by_object_id(object_id)
+        except Exception as exc:
+            msg = f"Failed to look up registered object '{object_id}': {exc}"
+            logger.error(msg)
+            return msg
+
+        if target is None:
+            msg = f"No registered object found with object_id '{object_id}'."
+            logger.warning(msg)
+            return msg
+
+        try:
+            candidates = self._tsdf_grasp_gen.generate_grasps_for_target_bounds(
+                target_center=target.center,
+                target_size=target.size,
+                target_frame_id=target.frame_id,
+                target_ts=target.ts,
+                cushion_m=cushion_m,
+            )
+        except Exception as exc:
+            msg = f"Target-conditioned grasp generation failed for '{object_id}': {exc}"
+            logger.error(msg)
+            return msg
+
+        if candidates is None:
+            msg = f"No target-conditioned grasps generated for '{target.name}' ({object_id})."
+            logger.info(msg)
+            return msg
+        if len(candidates) == 0:
+            msg = f"VGN returned no target-conditioned grasps for '{target.name}' ({object_id})."
+            logger.info(msg)
+            return msg
+
+        poses = candidates.to_pose_array()
+        self.grasps.publish(poses)
+        logger.info(
+            "Generated %s target-conditioned grasps for '%s' (%s)",
+            len(candidates),
+            target.name,
+            object_id,
+        )
+        return self._format_grasp_result(poses, target.name)
 
     def _get_object_pointcloud(
         self, object_name: str, object_id: str | None = None

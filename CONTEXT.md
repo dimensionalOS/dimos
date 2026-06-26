@@ -32,6 +32,26 @@ _Avoid_: plugin, embedded simulator
 A depth image interpreted with its camera calibration and the pose of its camera frame at the image timestamp.
 _Avoid_: depth point cloud, raw 3D points
 
+**Grasp target**:
+The intended physical object or bounded scene region that grasp generation should produce grasp candidates for.
+_Avoid_: correct object, target object, grasp object
+
+**Object id**:
+A stable identifier for a registered perceived object, used when a robot command must refer to one non-ambiguous physical object.
+_Avoid_: object-ish argument, object name when identity matters
+
+**Registered object**:
+A perceived object that has been assigned an Object id and has enough spatial metadata to be used as a Grasp target.
+_Avoid_: detection when referring to a persistent object reference
+
+**Target-masked TSDF**:
+A grasp-generation workspace representation where observations outside the selected Grasp target are suppressed with a deliberate cushion so the target remains intact.
+_Avoid_: censored TSDF, object-only scene
+
+**Target bounds**:
+A world-frame axis-aligned bounding region used as a rough attention area for a Grasp target before grasp generation.
+_Avoid_: perfect object geometry, grasp geometry
+
 **SHM runtime data plane**:
 A shared-memory command/state channel between a simulated hardware adapter and a simulator runtime, used when high-rate control must cross process boundaries without RPC.
 _Avoid_: public simulator API, benchmark control plane, module object sharing
