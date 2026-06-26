@@ -15,6 +15,7 @@
 import pytest
 
 
+@pytest.mark.skipif_no_openai
 @pytest.mark.self_hosted_large
 def test_go_to_the_bed(lcm_spy, start_blueprint, human_input, dim_sim, explore_house) -> None:
     start_blueprint(
