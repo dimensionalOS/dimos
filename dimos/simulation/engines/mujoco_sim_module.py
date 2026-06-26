@@ -56,6 +56,7 @@ from dimos.simulation.engines.mujoco_engine import (
     CameraConfig,
     CameraFrame,
     MujocoEngine,
+    RaycastLidarConfig,
 )
 from dimos.simulation.engines.mujoco_shm import (
     CMD_MODE_PD_TAU,
@@ -63,6 +64,7 @@ from dimos.simulation.engines.mujoco_shm import (
     shm_key_from_path,
 )
 from dimos.simulation.engines.robot_sim_binding import RobotSimSpec
+from dimos.simulation.mujoco.constants import LIDAR_RESOLUTION, MAX_HEIGHT, MAX_RANGE, MIN_RANGE
 from dimos.spec import perception
 from dimos.utils.logging_config import setup_logger
 
@@ -239,6 +241,18 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     enable_pointcloud: bool = False
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
+    # Optional MuJoCo-native lidar: cast rays from one or more named cameras
+    # and publish world-frame PointCloud2 points on ``pointcloud``.
+    enable_mujoco_lidar: bool = False
+    mujoco_lidar_camera_names: list[str] = Field(default_factory=list)
+    mujoco_lidar_voxel_size: float = LIDAR_RESOLUTION
+    mujoco_lidar_geom_groups: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4, 5])
+    mujoco_lidar_raycast_width: int = 64
+    mujoco_lidar_raycast_height: int = 32
+    mujoco_lidar_min_range: float = MIN_RANGE
+    mujoco_lidar_max_range: float = MAX_RANGE
+    mujoco_lidar_max_height: float = MAX_HEIGHT
+    mujoco_lidar_robot_exclusion_radius: float = 0.0
     # Inject menagerie/dimos-bundled mesh bytes (via
     # dimos.simulation.mujoco.model.get_assets) into MjModel.from_xml_string.
     # MJCFs that reference meshes by bare filename (G1 GR00T, Go2) need this;
@@ -375,32 +389,68 @@ class MujocoSimModule(
             from dimos.simulation.mujoco.model import get_assets
 
             engine_assets = get_assets()
-        # Compose the camera list.  Each registered camera blocks the
-        # sim thread inside _step_once (mujoco_engine._render_cameras
-        # does update_scene + GPU render synchronously between physics
-        # steps - typically 5-30 ms per camera), so registering a camera
-        # nobody consumes burns the 500 Hz tick deadline for nothing.
-        # Skip the primary camera entirely when none of color / depth /
-        # pointcloud is enabled.
-        cameras: list[CameraConfig] = []
+        # Compose rendered cameras separately from raycast lidar. Each
+        # rendered camera blocks the sim thread, so MuJoCo lidar does not
+        # register depth cameras here.
+        cameras_by_name: dict[str, CameraConfig] = {}
+        raycast_lidars: list[RaycastLidarConfig] = []
+
+        def add_camera(
+            name: str,
+            *,
+            geom_groups: list[int] | None = None,
+            max_geom: int | None = 10000,
+        ) -> None:
+            if not name:
+                return
+            groups = tuple(geom_groups) if geom_groups is not None else None
+            existing = cameras_by_name.get(name)
+            if existing is not None:
+                if groups is not None:
+                    existing.geom_groups = groups
+                    existing.max_geom = max_geom
+                return
+            cameras_by_name[name] = CameraConfig(
+                name=name,
+                width=self.config.width,
+                height=self.config.height,
+                fps=float(self.config.fps),
+                max_geom=max_geom,
+                geom_groups=groups,
+            )
+
         primary_needed = (
-            self.config.enable_color or self.config.enable_depth or self.config.enable_pointcloud
+            self.config.enable_color
+            or self.config.enable_depth
+            or (self.config.enable_pointcloud and not self.config.enable_mujoco_lidar)
         )
         if primary_needed:
-            cameras.append(
-                CameraConfig(
-                    name=self.config.camera_name,
-                    width=self.config.width,
-                    height=self.config.height,
-                    fps=float(self.config.fps),
+            add_camera(self.config.camera_name)
+
+        if self.config.enable_pointcloud and self.config.enable_mujoco_lidar:
+            for camera_name in self._mujoco_lidar_camera_names():
+                raycast_lidars.append(
+                    RaycastLidarConfig(
+                        name=camera_name,
+                        width=self.config.mujoco_lidar_raycast_width,
+                        height=self.config.mujoco_lidar_raycast_height,
+                        fps=self.config.pointcloud_fps,
+                        min_range=self.config.mujoco_lidar_min_range,
+                        max_range=self.config.mujoco_lidar_max_range,
+                        max_height=self.config.mujoco_lidar_max_height,
+                        geom_groups=tuple(self.config.mujoco_lidar_geom_groups),
+                        robot_exclusion_radius=self.config.mujoco_lidar_robot_exclusion_radius,
+                    )
                 )
-            )
+
+        cameras = list(cameras_by_name.values())
 
         # Hooks are installed via set_step_hooks() after gripper detection
         # below, since they depend on the resolved gripper index.
         engine_kwargs: dict[str, Any] = dict(
             headless=self.config.headless,
             cameras=cameras,
+            raycast_lidars=raycast_lidars,
             robot_sim_spec=self.config.robot_sim_spec,
             reset_joint_positions=self.config.reset_joint_positions,
         )
@@ -495,8 +545,12 @@ class MujocoSimModule(
             )
         )
 
-        # Optional pointcloud generation: back-projects primary camera depth.
-        if self.config.enable_pointcloud and self.config.enable_depth:
+        # Optional pointcloud generation. Default mode preserves the legacy
+        # RGB-D camera pointcloud; MuJoCo lidar mode publishes native raycast
+        # hits in world coordinates.
+        if self.config.enable_pointcloud and (
+            self.config.enable_depth or self.config.enable_mujoco_lidar
+        ):
             pc_interval = 1.0 / self.config.pointcloud_fps
             self.register_disposable(
                 rx.interval(pc_interval).subscribe(
@@ -517,36 +571,57 @@ class MujocoSimModule(
 
     def _compose_model(self) -> mujoco.MjModel:
         """Compose optional scene package MJCF + robot MJCF + entities."""
-        from dimos.simulation.mujoco.entity_scene import add_entities_to_spec
+        from dimos.simulation.mujoco.entity_scene import add_entities_to_spec, spawn_penetrators
 
         if self.config.robot_mjcf is None:
             raise RuntimeError("MujocoSimModule: robot_mjcf is required for composition")
 
-        if self.config.scene_xml is not None:
-            spec_scene = mujoco.MjSpec.from_file(str(self.config.scene_xml))
-        else:
-            spec_scene = mujoco.MjSpec()
+        def build_spec(*, force_static: frozenset[str] = frozenset()) -> mujoco.MjSpec:
+            if self.config.scene_xml is not None:
+                spec_scene = mujoco.MjSpec.from_file(str(self.config.scene_xml))
+            else:
+                spec_scene = mujoco.MjSpec()
 
-        spec_robot = mujoco.MjSpec.from_file(str(self.config.robot_mjcf))
-        if self.config.robot_meshdir is not None:
-            spec_robot.meshdir = str(self.config.robot_meshdir)
+            spec_robot = mujoco.MjSpec.from_file(str(self.config.robot_mjcf))
+            if self.config.robot_meshdir is not None:
+                spec_robot.meshdir = str(self.config.robot_meshdir)
 
-        # Keep the robot controller timing stable when attached to a scene
-        # package whose wrapper may have different default options.
-        spec_scene.option.timestep = spec_robot.option.timestep
+            # Keep the robot controller timing stable when attached to a scene
+            # package whose wrapper may have different default options.
+            spec_scene.option.timestep = spec_robot.option.timestep
 
-        spawn_xy = self.config.spawn_xy or (0.0, 0.0)
-        spawn_z = self.config.spawn_z if self.config.spawn_z is not None else 0.0
-        frame = spec_scene.worldbody.add_frame(
-            pos=[float(spawn_xy[0]), float(spawn_xy[1]), float(spawn_z)],
-        )
-        prefix = f"{self.config.robot_id}-" if self.config.robot_id else None
-        spec_scene.attach(spec_robot, prefix=prefix, frame=frame)
+            spawn_xy = self.config.spawn_xy or (0.0, 0.0)
+            spawn_z = self.config.spawn_z if self.config.spawn_z is not None else 0.0
+            frame_kwargs: dict[str, Any] = {
+                "pos": [float(spawn_xy[0]), float(spawn_xy[1]), float(spawn_z)],
+            }
+            if self.config.spawn_yaw is not None:
+                yaw = float(self.config.spawn_yaw)
+                frame_kwargs["quat"] = [math.cos(yaw * 0.5), 0.0, 0.0, math.sin(yaw * 0.5)]
+            frame = spec_scene.worldbody.add_frame(
+                **frame_kwargs,
+            )
+            prefix = f"{self.config.robot_id}-" if self.config.robot_id else None
+            spec_scene.attach(spec_robot, prefix=prefix, frame=frame)
 
+            if self.config.scene_entities:
+                add_entities_to_spec(
+                    spec_scene, self.config.scene_entities, force_static=force_static
+                )
+            return spec_scene
+
+        spec_scene = build_spec()
+        model = spec_scene.compile()
         if self.config.scene_entities:
-            add_entities_to_spec(spec_scene, self.config.scene_entities)
-
-        return spec_scene.compile()
+            penetrators = spawn_penetrators(model)
+            if penetrators:
+                logger.warning(
+                    "MujocoSimModule: scene entities spawn in deep contact; welding static",
+                    count=len(penetrators),
+                    samples=sorted(penetrators)[:20],
+                )
+                model = build_spec(force_static=penetrators).compile()
+        return model
 
     @rpc
     def stop(self) -> None:
@@ -877,6 +952,9 @@ class MujocoSimModule(
     def _generate_pointcloud(self) -> None:
         if self._engine is None:
             return
+        if self.config.enable_mujoco_lidar:
+            self._generate_mujoco_lidar_pointcloud()
+            return
         # Back-project the primary camera's depth image.
         if self._camera_info_base is None:
             return
@@ -906,3 +984,36 @@ class MujocoSimModule(
             self.pointcloud.publish(pcd)
         except Exception as exc:
             logger.error("Pointcloud generation error", error=str(exc))
+
+    def _mujoco_lidar_camera_names(self) -> list[str]:
+        names = self.config.mujoco_lidar_camera_names
+        return list(names) if names else [self.config.camera_name]
+
+    def _generate_mujoco_lidar_pointcloud(self) -> None:
+        engine = self._engine
+        if engine is None:
+            return
+
+        all_points: list[NDArray[Any]] = []
+        latest_ts = 0.0
+        for camera_name in self._mujoco_lidar_camera_names():
+            frame = engine.read_raycast_lidar(camera_name)
+            if frame is None:
+                continue
+            if frame.points.size > 0:
+                all_points.append(frame.points)
+                latest_ts = max(latest_ts, frame.timestamp)
+
+        if not all_points:
+            return
+
+        try:
+            pcd = PointCloud2.from_numpy(
+                np.vstack(all_points),
+                frame_id="world",
+                timestamp=latest_ts or time.time(),
+            )
+            pcd = pcd.voxel_downsample(self.config.mujoco_lidar_voxel_size)
+            self.pointcloud.publish(pcd)
+        except Exception as exc:
+            logger.error("MuJoCo lidar pointcloud generation error", error=str(exc))

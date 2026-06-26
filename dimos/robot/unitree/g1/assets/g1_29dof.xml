@@ -154,6 +154,9 @@
             <geom pos="0.0039635 0 -0.054" type="mesh" rgba="0.2 0.2 0.2 1" mesh="head_link"/>
             <geom pos="0.0039635 0 -0.054" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.7 0.7 0.7 1" mesh="waist_support_link"/>
             <geom pos="0.0039635 0 -0.054" quat="1 0 0 0" type="mesh" rgba="0.7 0.7 0.7 1" mesh="waist_support_link"/>
+            <camera name="lidar_front_camera" pos="0.07 0 0.42" xyaxes="0 -1 0 0 0 1" mode="fixed" fovy="160"/>
+            <camera name="lidar_left_camera" pos="0.05 0.07 0.42" xyaxes="1 0 0 0 0 1" mode="fixed" fovy="160"/>
+            <camera name="lidar_right_camera" pos="0.05 -0.07 0.42" xyaxes="-1 0 0 0 0 1" mode="fixed" fovy="160"/>
             <site name="imu" size="0.01" pos="-0.03959 -0.00224 0.13792"/>
             <body name="left_shoulder_pitch_link" pos="0.0039563 0.10022 0.23778" quat="0.990264 0.139201 1.38722e-05 -9.86868e-05">
               <inertial pos="0 0.035892 -0.011628" quat="0.654152 0.0130458 -0.326267 0.68225" mass="0.718" diaginertia="0.000465864 0.000432842 0.000406394"/>

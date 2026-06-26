@@ -51,12 +51,43 @@ _MJJNT_FREE = int(mujoco.mjtJoint.mjJNT_FREE)  # type: ignore[attr-defined]
 _RESET_WAIT_TIMEOUT_S = 5.0
 
 
+def _camera_name_candidates(camera_name: str) -> tuple[str, ...]:
+    stripped = camera_name.strip("/")
+    candidates = [camera_name]
+    if stripped != camera_name:
+        candidates.append(stripped)
+    elif stripped:
+        candidates.append(f"/{stripped}")
+    return tuple(dict.fromkeys(candidates))
+
+
+def _camera_ray_directions(width: int, height: int, fovy_degrees: float) -> NDArray[np.float64]:
+    """Return normalized camera-frame ray directions for MuJoCo cameras.
+
+    MuJoCo/OpenGL cameras look along local -Z, with +X right and +Y up.
+    """
+    fovy = math.radians(fovy_degrees)
+    focal = height / (2.0 * math.tan(fovy / 2.0))
+    cx = width / 2.0
+    cy = height / 2.0
+
+    ys, xs = np.mgrid[0:height, 0:width]
+    x = (xs + 0.5 - cx) / focal
+    y = -(ys + 0.5 - cy) / focal
+    z = -np.ones_like(x)
+    directions = np.stack((x, y, z), axis=-1).reshape(-1, 3).astype(np.float64)
+    norms = np.linalg.norm(directions, axis=1, keepdims=True)
+    return directions / norms
+
+
 @dataclass
 class CameraConfig:
     name: str
     width: int = 640
     height: int = 480
     fps: float = 15.0
+    max_geom: int | None = 10000
+    geom_groups: tuple[int, ...] | None = None
 
 
 @dataclass
@@ -70,13 +101,43 @@ class CameraFrame:
 
 
 @dataclass
+class RaycastLidarConfig:
+    name: str
+    width: int = 64
+    height: int = 32
+    fps: float = 1.0
+    min_range: float = 0.2
+    max_range: float = 3.0
+    max_height: float = 1.2
+    geom_groups: tuple[int, ...] | None = None
+    robot_exclusion_radius: float = 0.0
+
+
+@dataclass
+class RaycastLidarFrame:
+    points: NDArray[np.float32]
+    timestamp: float
+
+
+@dataclass
 class _CameraRendererState:
     cfg: CameraConfig
     cam_id: int
     rgb_renderer: mujoco.Renderer
     depth_renderer: mujoco.Renderer
+    scene_option: mujoco.MjvOption | None
     interval: float
     last_render_time: float = 0.0
+
+
+@dataclass
+class _RaycastLidarState:
+    cfg: RaycastLidarConfig
+    cam_id: int
+    ray_directions_camera: NDArray[np.float64]
+    geomgroup: NDArray[np.uint8]
+    interval: float
+    last_cast_time: float = 0.0
 
 
 class MujocoEngine(SimulationEngine):
@@ -93,6 +154,7 @@ class MujocoEngine(SimulationEngine):
         config_path: Path,
         headless: bool,
         cameras: list[CameraConfig] | None = None,
+        raycast_lidars: list[RaycastLidarConfig] | None = None,
         on_before_step: StepHook | None = None,
         on_after_step: StepHook | None = None,
         assets: dict[str, bytes] | None = None,
@@ -111,7 +173,8 @@ class MujocoEngine(SimulationEngine):
         self._spawn_yaw = spawn_yaw
         self._reset_joint_positions = reset_joint_positions
 
-        xml_path = self._resolve_xml_path(config_path)
+        model_path = self._resolve_model_path(config_path)
+        binary_model = model_path.suffix.lower() == ".mjb"
         if model is not None:
             if assets is not None:
                 raise ValueError("MujocoEngine cannot use injected assets with a precompiled model")
@@ -120,15 +183,19 @@ class MujocoEngine(SimulationEngine):
             # MJCFs that reference meshes by bare filename (e.g. menagerie
             # G1) need the mesh bytes injected by name; from_xml_path can't
             # find them on disk.
-            with open(xml_path) as f:
+            if binary_model:
+                raise ValueError("MujocoEngine cannot inject XML assets into a binary MJB model")
+            with open(model_path) as f:
                 xml_str = f.read()
             self._model = mujoco.MjModel.from_xml_string(xml_str, assets=assets)
+        elif binary_model:
+            self._model = mujoco.MjModel.from_binary_path(str(model_path))
         else:
-            self._model = mujoco.MjModel.from_xml_path(str(xml_path))
-        self._xml_path = xml_path
+            self._model = mujoco.MjModel.from_xml_path(str(model_path))
+        self._xml_path = model_path
 
         self._data = mujoco.MjData(self._model)
-        mapping_xml_path = None if model is not None else self._xml_path
+        mapping_xml_path = None if model is not None or binary_model else self._xml_path
         self._joint_mappings = build_joint_mappings(mapping_xml_path, self._model)
         self._robot_binding: RobotSimBinding | None = None
         if robot_sim_spec is not None:
@@ -171,6 +238,9 @@ class MujocoEngine(SimulationEngine):
         self._camera_configs = cameras or []
         self._camera_frames: dict[str, CameraFrame] = {}
         self._camera_lock = threading.Lock()
+        self._raycast_lidar_configs = raycast_lidars or []
+        self._raycast_lidar_frames: dict[str, RaycastLidarFrame] = {}
+        self._raycast_lidar_lock = threading.Lock()
 
     def set_step_hooks(
         self,
@@ -185,14 +255,14 @@ class MujocoEngine(SimulationEngine):
         self._on_before_step = before
         self._on_after_step = after
 
-    def _resolve_xml_path(self, config_path: Path) -> Path:
+    def _resolve_model_path(self, config_path: Path) -> Path:
         if config_path is None:
             raise ValueError("config_path is required for MuJoCo simulation loading")
         resolved = config_path.expanduser()
-        xml_path = resolved / "scene.xml" if resolved.is_dir() else resolved
-        if not xml_path.exists():
-            raise FileNotFoundError(f"MuJoCo XML not found: {xml_path}")
-        return xml_path
+        model_path = resolved / "scene.xml" if resolved.is_dir() else resolved
+        if not model_path.exists():
+            raise FileNotFoundError(f"MuJoCo model not found: {model_path}")
+        return model_path
 
     def _find_first_freejoint_adrs(self) -> tuple[int | None, int | None]:
         if self._model.njnt > 0 and int(self._model.jnt_type[0]) == _MJJNT_FREE:
@@ -291,22 +361,75 @@ class MujocoEngine(SimulationEngine):
         """Create renderers for all configured cameras"""
         cam_renderers: dict[str, _CameraRendererState] = {}
         for cfg in self._camera_configs:
-            cam_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_CAMERA, cfg.name)
+            cam_id = self._camera_id(cfg.name)
             if cam_id < 0:
                 logger.warning("Camera not found in MJCF, skipping", camera_name=cfg.name)
                 continue
-            rgb_renderer = mujoco.Renderer(self._model, height=cfg.height, width=cfg.width)
-            depth_renderer = mujoco.Renderer(self._model, height=cfg.height, width=cfg.width)
+            max_geom = cfg.max_geom
+            if max_geom is None:
+                max_geom = max(10000, int(self._model.ngeom) + 1000)
+            rgb_renderer = mujoco.Renderer(
+                self._model,
+                height=cfg.height,
+                width=cfg.width,
+                max_geom=max_geom,
+            )
+            depth_renderer = mujoco.Renderer(
+                self._model,
+                height=cfg.height,
+                width=cfg.width,
+                max_geom=max_geom,
+            )
             depth_renderer.enable_depth_rendering()
+            scene_option = None
+            if cfg.geom_groups is not None:
+                scene_option = mujoco.MjvOption()
+                scene_option.geomgroup[:] = 0
+                for group in cfg.geom_groups:
+                    if 0 <= group < len(scene_option.geomgroup):
+                        scene_option.geomgroup[group] = 1
             interval = 1.0 / cfg.fps if cfg.fps > 0 else float("inf")
             cam_renderers[cfg.name] = _CameraRendererState(
                 cfg=cfg,
                 cam_id=cam_id,
                 rgb_renderer=rgb_renderer,
                 depth_renderer=depth_renderer,
+                scene_option=scene_option,
                 interval=interval,
             )
         return cam_renderers
+
+    def _init_raycast_lidars(self) -> dict[str, _RaycastLidarState]:
+        lidar_states: dict[str, _RaycastLidarState] = {}
+        for cfg in self._raycast_lidar_configs:
+            cam_id = self._camera_id(cfg.name)
+            if cam_id < 0:
+                logger.warning(
+                    "Raycast lidar camera not found in MJCF, skipping",
+                    camera_name=cfg.name,
+                )
+                continue
+
+            geomgroup = np.zeros(6, dtype=np.uint8)
+            if cfg.geom_groups is None:
+                geomgroup[:] = 1
+            else:
+                for group in cfg.geom_groups:
+                    if 0 <= group < len(geomgroup):
+                        geomgroup[group] = 1
+
+            lidar_states[cfg.name] = _RaycastLidarState(
+                cfg=cfg,
+                cam_id=cam_id,
+                ray_directions_camera=_camera_ray_directions(
+                    cfg.width,
+                    cfg.height,
+                    float(self._model.cam_fovy[cam_id]),
+                ),
+                geomgroup=geomgroup,
+                interval=1.0 / cfg.fps if cfg.fps > 0 else float("inf"),
+            )
+        return lidar_states
 
     def _render_cameras(self, now: float, cam_renderers: dict[str, _CameraRendererState]) -> None:
         """Render all due cameras and store frames. Must be called from sim thread."""
@@ -315,10 +438,14 @@ class MujocoEngine(SimulationEngine):
                 continue
             state.last_render_time = now
 
-            state.rgb_renderer.update_scene(self._data, camera=state.cam_id)
+            state.rgb_renderer.update_scene(
+                self._data, camera=state.cam_id, scene_option=state.scene_option
+            )
             rgb = state.rgb_renderer.render().copy()
 
-            state.depth_renderer.update_scene(self._data, camera=state.cam_id)
+            state.depth_renderer.update_scene(
+                self._data, camera=state.cam_id, scene_option=state.scene_option
+            )
             depth = state.depth_renderer.render().copy()
 
             frame = CameraFrame(
@@ -331,6 +458,58 @@ class MujocoEngine(SimulationEngine):
             )
             with self._camera_lock:
                 self._camera_frames[state.cfg.name] = frame
+
+    def _raycast_lidars(
+        self,
+        now: float,
+        lidar_states: dict[str, _RaycastLidarState],
+    ) -> None:
+        """Raycast lidar frames from MuJoCo cameras. Must be called from sim thread."""
+        bodyexclude = self._robot_binding.root_body_id if self._robot_binding is not None else -1
+        for state in lidar_states.values():
+            if now - state.last_cast_time < state.interval:
+                continue
+            state.last_cast_time = now
+
+            origin = self._data.cam_xpos[state.cam_id].copy()
+            camera_mat = self._data.cam_xmat[state.cam_id].reshape(3, 3).copy()
+            directions_world = state.ray_directions_camera @ camera_mat.T
+            n_rays = directions_world.shape[0]
+            geom_ids = np.full(n_rays, -1, dtype=np.int32)
+            distances = np.full(n_rays, -1.0, dtype=np.float64)
+            mujoco.mj_multiRay(
+                self._model,
+                self._data,
+                origin,
+                directions_world.ravel(),
+                state.geomgroup,
+                1,
+                bodyexclude,
+                geom_ids,
+                distances,
+                None,
+                n_rays,
+                state.cfg.max_range,
+            )
+            valid = (distances >= state.cfg.min_range) & (distances <= state.cfg.max_range)
+            valid &= np.abs(state.ray_directions_camera[:, 1] * distances) <= state.cfg.max_height
+            if np.any(valid):
+                points_world = origin + directions_world[valid] * distances[valid, None]
+                if state.cfg.robot_exclusion_radius > 0.0 and self._root_qpos_adr is not None:
+                    root_xy = self._data.qpos[self._root_qpos_adr : self._root_qpos_adr + 2]
+                    keep = (
+                        np.linalg.norm(points_world[:, :2] - root_xy, axis=1)
+                        >= state.cfg.robot_exclusion_radius
+                    )
+                    points_world = points_world[keep]
+                arr = points_world.astype(np.float32)
+            else:
+                arr = np.empty((0, 3), dtype=np.float32)
+            with self._raycast_lidar_lock:
+                self._raycast_lidar_frames[state.cfg.name] = RaycastLidarFrame(
+                    points=arr,
+                    timestamp=now,
+                )
 
     @staticmethod
     def _close_cam_renderers(cam_renderers: dict[str, _CameraRendererState]) -> None:
@@ -401,6 +580,7 @@ class MujocoEngine(SimulationEngine):
 
         # Camera renderers: created once in the sim thread
         cam_renderers = self._init_cameras()
+        lidar_states = self._init_raycast_lidars()
 
         def _step_once(sync_viewer: bool) -> None:
             loop_start = time.time()
@@ -429,6 +609,7 @@ class MujocoEngine(SimulationEngine):
                 except Exception as exc:
                     logger.error("on_after_step failed", error=str(exc))
             self._render_cameras(loop_start, cam_renderers)
+            self._raycast_lidars(loop_start, lidar_states)
 
             elapsed = time.time() - loop_start
             sleep_time = dt - elapsed
@@ -689,9 +870,21 @@ class MujocoEngine(SimulationEngine):
         with self._camera_lock:
             return self._camera_frames.get(camera_name)
 
+    def read_raycast_lidar(self, camera_name: str) -> RaycastLidarFrame | None:
+        """Read the latest raycast lidar frame for a camera (thread-safe)."""
+        with self._raycast_lidar_lock:
+            return self._raycast_lidar_frames.get(camera_name)
+
     def get_camera_fovy(self, camera_name: str) -> float | None:
         """Get vertical field of view for a named camera, in degrees."""
-        cam_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_CAMERA, camera_name)
+        cam_id = self._camera_id(camera_name)
         if cam_id < 0:
             return None
         return float(self._model.cam_fovy[cam_id])
+
+    def _camera_id(self, camera_name: str) -> int:
+        for candidate in _camera_name_candidates(camera_name):
+            cam_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_CAMERA, candidate)
+            if cam_id >= 0:
+                return int(cam_id)
+        return -1

@@ -216,6 +216,31 @@ def _scene_entity(entity_id: str) -> dict[str, object]:
     }
 
 
+def _write_hull_obj(path: Path) -> None:
+    path.write_text(
+        """
+v 0 0 0
+v 0.1 0 0
+v 0 0.1 0
+v 0 0 0.1
+f 1 2 3
+f 1 2 4
+f 1 3 4
+f 2 3 4
+""".strip()
+    )
+
+
+def _mesh_scene_entity(entity_id: str, hull_path: Path) -> dict[str, object]:
+    entity = _scene_entity(entity_id)
+    descriptor = dict(entity["descriptor"])  # type: ignore[arg-type]
+    descriptor["shape_hint"] = "mesh"
+    descriptor["extents"] = []
+    entity["descriptor"] = descriptor
+    entity["collision_paths"] = [str(hull_path)]
+    return entity
+
+
 @pytest.mark.mujoco
 def test_compose_model_attaches_robot_before_scene_entities(tmp_path: Path) -> None:
     mujoco = pytest.importorskip("mujoco")
@@ -255,6 +280,34 @@ def test_compose_model_attaches_robot_before_scene_entities(tmp_path: Path) -> N
     assert engine.model is model
     assert engine.root_qpos_adr == 0
     assert any(name.endswith("hinge") for name in engine.joint_names)
+
+
+@pytest.mark.mujoco
+def test_compose_model_reuses_entity_mesh_assets(tmp_path: Path) -> None:
+    mujoco = pytest.importorskip("mujoco")
+    scene_xml = tmp_path / "scene.xml"
+    robot_xml = tmp_path / "robot.xml"
+    hull_obj = tmp_path / "shared_hull.obj"
+    _write_scene_xml(scene_xml)
+    _write_robot_xml(robot_xml)
+    _write_hull_obj(hull_obj)
+
+    module = object.__new__(MujocoSimModule)
+    module.config = MujocoSimModuleConfig(
+        scene_xml=scene_xml,
+        robot_mjcf=robot_xml,
+        scene_entities=[
+            _mesh_scene_entity("box_000", hull_obj),
+            _mesh_scene_entity("box_001", hull_obj),
+        ],
+        spawn_xy=(0.0, 0.0),
+    )
+
+    model = MujocoSimModule._compose_model(module)
+
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "entity:box_000") >= 0
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "entity:box_001") >= 0
+    assert model.nmesh == 1
 
 
 @pytest.mark.mujoco

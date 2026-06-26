@@ -28,14 +28,16 @@ Real hardware (default):
 Sim (``--simulation``):
     MujocoSimModule (in-process MuJoCo + SHM) + sim_mujoco_g1 adapter.
     50 Hz tick (matches the rate the policy was trained at). No arming
-    ramp, no dry-run, no servo_arms -- sim physics doesn't gravity-collapse
-    the arms between trajectories.
+    ramp and no dry-run. The 14 arm joints are still held with the same
+    lower-priority servo task as hardware so headless and viewer runs do not
+    depend on incidental startup timing.
 
 Usage:
     dimos run unitree-g1-groot-wbc                 # real hardware
     dimos --simulation mujoco run unitree-g1-groot-wbc    # sim
-    dimos --simulation mujoco --scene data/scene_packages/dimos_office/scene.meta.json \\
-        run unitree-g1-groot-wbc                   # sim in a cooked scene package
+    dimos --simulation mujoco --scene none run unitree-g1-groot-wbc
+    dimos --simulation mujoco --scene office run unitree-g1-groot-wbc
+    dimos --simulation mujoco --scene supermarket run unitree-g1-groot-wbc
 
 Overrides (replace the old env-var dance):
     dimos run unitree-g1-groot-wbc \\
@@ -61,11 +63,25 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
 from dimos.hardware.whole_body.spec import WholeBodyConfig
+from dimos.mapping.costmapper import CostMapper
+from dimos.mapping.pointclouds.occupancy import HeightCostConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.navigation.movement_manager.movement_manager import MovementManager
+from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
+from dimos.robot.unitree.g1.config import G1
+from dimos.robot.unitree.g1.g1_rerun import (
+    G1_RERUN_ROOT,
+    g1_costmap,
+    g1_urdf_joint_state,
+    g1_urdf_static_robot,
+)
 from dimos.utils.data import LfsPath
+from dimos.visualization.rerun.scene_package import scene_package_static_entities
+from dimos.visualization.vis_module import vis_module
 
 # Lazy data handles. LfsPath only triggers the LFS pull on first
 # str()/open(); using ``get_data(...)`` at import time would block the
@@ -77,11 +93,53 @@ _ROBOT_MESHDIR = LfsPath("g1_urdf/meshes")
 
 _adapter_address: str | Path
 _cmd_vel_topic = "/cmd_vel" if global_config.simulation else "/g1/cmd_vel"
+_MUJOCO_LIDAR_CAMERAS = (
+    "lidar_front_camera",
+    "lidar_left_camera",
+    "lidar_right_camera",
+)
+_MUJOCO_LIDAR_CAMERA = _MUJOCO_LIDAR_CAMERAS[0]
+# Robot geoms occupy groups 0/1. The legacy floor uses group 2, and cooked
+# scene packages/entities use group 3, so lidar should render world geometry.
+_MUJOCO_LIDAR_GEOM_GROUPS = (2, 3)
+assert G1.height_clearance is not None and G1.width_clearance is not None
+_MUJOCO_LIDAR_BASE_KWARGS: dict[str, Any] = {
+    "width": 320,
+    "height": 240,
+    "fps": 2,
+    "enable_color": False,
+    "enable_depth": False,
+    "enable_pointcloud": True,
+    "pointcloud_fps": 1.0,
+    "enable_mujoco_lidar": True,
+    "mujoco_lidar_geom_groups": list(_MUJOCO_LIDAR_GEOM_GROUPS),
+    "mujoco_lidar_raycast_width": 64,
+    "mujoco_lidar_raycast_height": 32,
+    "mujoco_lidar_robot_exclusion_radius": G1.width_clearance,
+}
+_G1_SUPERMARKET_COMPOSED_MJB = (
+    "mujoco/composed/unitree-g1-groot-wbc_spawn_9p2_11p8_yaw_m1p57_static_only_lidar.mjb"
+)
+_G1_NAV_VOXEL_RESOLUTION = 0.05
+_G1_NAV_OVERHEAD_SAFETY_MARGIN = 0.2
+_G1_NAV_MAX_STEP_HEIGHT = 0.10
+_G1_NAV_ROTATION_DIAMETER = 0.8
+_G1_NAV_SAFE_RADIUS_MARGIN = 0.6
+
+
+def _mujoco_lidar_kwargs(camera_name: str, camera_names: tuple[str, ...]) -> dict[str, Any]:
+    return {
+        "camera_name": camera_name,
+        "mujoco_lidar_camera_names": list(camera_names),
+        **_MUJOCO_LIDAR_BASE_KWARGS,
+    }
+
 
 if global_config.simulation and global_config.simulation != "mujoco":
     raise ValueError("unitree-g1-groot-wbc only supports --simulation mujoco")
 
 if global_config.simulation == "mujoco":
+    from dimos.mapping.voxels import VoxelGridMapper
     from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
     from dimos.simulation.engines.robot_sim_binding import (
         RobotSimSpec,
@@ -118,9 +176,7 @@ if global_config.simulation == "mujoco":
             address=_MJCF_PATH,
             headless=True,
             dof=29,
-            enable_color=False,
-            enable_depth=False,
-            enable_pointcloud=False,
+            **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),
             inject_legacy_assets=True,
             robot_sim_spec=_g1_sim_spec,
         )
@@ -129,6 +185,21 @@ if global_config.simulation == "mujoco":
         if global_config.scene is None:
             return _legacy_mujoco_backend(), _MJCF_PATH
 
+        scene_path = Path(str(global_config.scene)).expanduser()
+        if scene_path.suffix.lower() == ".mjb":
+            if not scene_path.exists():
+                raise FileNotFoundError(f"MuJoCo binary scene not found: {scene_path}")
+            return (
+                MujocoSimModule.blueprint(
+                    address=scene_path,
+                    headless=True,
+                    dof=29,
+                    **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),
+                    robot_sim_spec=_g1_sim_spec,
+                ),
+                scene_path,
+            )
+
         from dimos.simulation.scenes.catalog import resolve_scene_package
 
         package = resolve_scene_package(global_config.scene)
@@ -136,6 +207,19 @@ if global_config.simulation == "mujoco":
             return _legacy_mujoco_backend(), _MJCF_PATH
         if package.mujoco_scene_path is None:
             raise ValueError(f"scene package has no MuJoCo scene artifact: {package.metadata_path}")
+
+        composed_scene = _precomposed_g1_scene(package.package_dir)
+        if composed_scene is not None:
+            return (
+                MujocoSimModule.blueprint(
+                    address=composed_scene,
+                    headless=True,
+                    dof=29,
+                    **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),
+                    robot_sim_spec=_g1_sim_spec,
+                ),
+                composed_scene,
+            )
 
         return (
             MujocoSimModule.blueprint(
@@ -146,13 +230,17 @@ if global_config.simulation == "mujoco":
                 scene_entities=package.entities,
                 headless=True,
                 dof=29,
-                enable_color=False,
-                enable_depth=False,
-                enable_pointcloud=False,
+                **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),
                 robot_sim_spec=_g1_sim_spec,
             ),
             _ROBOT_ONLY_MJCF_PATH,
         )
+
+    def _precomposed_g1_scene(package_dir: Path) -> Path | None:
+        if "supermarket" not in package_dir.name:
+            return None
+        candidate = package_dir / _G1_SUPERMARKET_COMPOSED_MJB
+        return candidate if candidate.exists() else None
 
     # Sim backend: MuJoCo engine via SHM.
     _backend, _adapter_address = _scene_mujoco_backend()
@@ -166,9 +254,35 @@ if global_config.simulation == "mujoco":
     _auto_dry_run = False
     _default_ramp_seconds = 0.0
     _decimation: int | None = 1
-    # Sim physics holds the arms between trajectories on its own -- no
-    # servo task needed.
-    _arm_holder: TaskConfig | None = None
+    _arm_holder = TaskConfig(
+        name="servo_arms",
+        type="servo",
+        joint_names=g1_arms,
+        priority=10,
+        auto_start=True,
+        params={"default_positions": ARM_DEFAULT_POSE},
+    )
+    _mapper = VoxelGridMapper.blueprint(emit_every=1)
+    _nav_stack = autoconnect(
+        _mapper,
+        CostMapper.blueprint(
+            config=HeightCostConfig(
+                resolution=_G1_NAV_VOXEL_RESOLUTION,
+                can_pass_under=G1.height_clearance + _G1_NAV_OVERHEAD_SAFETY_MARGIN,
+                can_climb=_G1_NAV_MAX_STEP_HEIGHT,
+            ),
+            initial_safe_radius_meters=G1.width_clearance + _G1_NAV_SAFE_RADIUS_MARGIN,
+        ),
+        ReplanningAStarPlanner.blueprint(
+            robot_width=G1.width_clearance,
+            robot_rotation_diameter=_G1_NAV_ROTATION_DIAMETER,
+        ),
+        MovementManager.blueprint(),
+    )
+    _remappings = [
+        (VoxelGridMapper, "lidar", "pointcloud"),
+        (ControlCoordinator, "twist_command", "cmd_vel"),
+    ]
 else:
     from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
@@ -193,6 +307,8 @@ else:
         auto_start=True,
         params={"default_positions": ARM_DEFAULT_POSE},
     )
+    _nav_stack = MovementManager.blueprint()
+    _remappings = [(ControlCoordinator, "twist_command", "cmd_vel")]
 
 
 def _g1_groot_rerun_blueprint() -> Any:
@@ -212,43 +328,46 @@ def _g1_groot_rerun_blueprint() -> Any:
     )
 
 
-def _static_g1_body(rr: Any) -> Any:
-    return rr.Boxes3D(
-        half_sizes=[0.25, 0.20, 0.6],
-        centers=[[0.0, 0.0, 0.6]],
-        colors=[(0, 255, 127)],
-        fill_mode="MajorWireframe",
-    )
+def _g1_nav_path(path: NavPath) -> Any:
+    return path.to_rerun(z_offset=0.3)
 
+
+_static_rerun_entities = {
+    # MujocoSimModule logs odom as a Transform3D at world/odom; the robot
+    # mesh lives underneath and link transforms are driven by joint state.
+    G1_RERUN_ROOT: g1_urdf_static_robot(root_path=G1_RERUN_ROOT),
+}
+_static_rerun_entities.update(scene_package_static_entities(global_config.scene))
 
 _rerun_config = {
     "blueprint": _g1_groot_rerun_blueprint,
-    "static": {
-        # MujocoSimModule logs odom as a Transform3D at world/odom.
-        # This body marker inherits that transform, giving dimos-viewer
-        # a visible robot anchor until a richer joint/URDF view exists.
-        "world/odom/g1": _static_g1_body,
+    "visual_override": {
+        # This blueprint uses raycast lidar, so suppress raw camera streams
+        # in Rerun.
+        "world/color_image": None,
+        "world/camera_info": None,
+        "world/depth_image": None,
+        "world/depth_camera_info": None,
+        "world/coordinator_joint_state": g1_urdf_joint_state(root_path=G1_RERUN_ROOT),
+        "world/global_costmap": g1_costmap,
+        "world/navigation_costmap": g1_costmap,
+        "world/path": _g1_nav_path,
     },
+    "max_hz": {
+        "world/coordinator_joint_state": 20.0,
+        "world/global_map": 1.0,
+        "world/global_costmap": 2.0,
+        "world/navigation_costmap": 2.0,
+        # The planner publishes an empty Path() immediately before the new
+        # planned path. Throttling this entity drops the real path.
+        "world/path": 0,
+    },
+    "static": _static_rerun_entities,
 }
 
 
 def _viewer() -> Any:
-    if global_config.viewer == "none":
-        return autoconnect()
-    if global_config.viewer != "rerun":
-        raise ValueError(f"Unsupported viewer backend for G1 GR00T WBC: {global_config.viewer}")
-
-    from dimos.visualization.rerun.bridge import RerunBridgeModule
-    from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
-
-    return autoconnect(
-        RerunBridgeModule.blueprint(
-            **_rerun_config,
-            rerun_open=global_config.rerun_open,
-            rerun_web=global_config.rerun_web,
-        ),
-        RerunWebSocketServer.blueprint(),
-    )
+    return vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config)
 
 
 _coordinator = ControlCoordinator.blueprint(
@@ -284,8 +403,7 @@ _coordinator = ControlCoordinator.blueprint(
 ).transports(
     {
         ("joint_command", JointState): LCMTransport("/g1/joint_command", JointState),
-        ("twist_command", Twist): LCMTransport(_cmd_vel_topic, Twist),
-        ("tele_cmd_vel", Twist): LCMTransport(_cmd_vel_topic, Twist),
+        ("cmd_vel", Twist): LCMTransport(_cmd_vel_topic, Twist),
         # Real-hw only: the transport_lcm adapter speaks to
         # G1WholeBodyConnection over these topics. autoconnect already
         # matches by (name, type) so sim doesn't need them -- they're
@@ -296,6 +414,8 @@ _coordinator = ControlCoordinator.blueprint(
     }
 )
 
-unitree_g1_groot_wbc = autoconnect(_backend, _coordinator, _viewer()).global_config(
-    robot_model="unitree_g1"
+unitree_g1_groot_wbc = (
+    autoconnect(_backend, _coordinator, _nav_stack, _viewer())
+    .remappings(_remappings)
+    .global_config(robot_model="unitree_g1")
 )

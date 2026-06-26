@@ -262,15 +262,3 @@ def _rewrite_entity_paths(
     if isinstance(artifacts, dict):
         for key, value in list(artifacts.items()):
             artifacts[key] = rewrite(value)
-
-
-__all__ = [
-    "ARTIFACT_FRAMES",
-    "BrowserCollisionSpec",
-    "BrowserVisualSpec",
-    "MujocoSceneSpec",
-    "SceneCookSpec",
-    "SceneMeshAlignment",
-    "ScenePackage",
-    "load_scene_package",
-]

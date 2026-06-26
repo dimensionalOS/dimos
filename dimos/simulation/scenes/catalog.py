@@ -22,37 +22,17 @@ from typing import Any
 from dimos.simulation.scene_assets.spec import ScenePackage, load_scene_package
 from dimos.utils.data import get_data
 
-DEFAULT_SCENE = "dimos-office"
+DEFAULT_SCENE = "office"
 _DISABLED_SCENE_NAMES = {"", "none", "off", "disabled", "false", "0"}
 _ALIASES = {
-    "default": DEFAULT_SCENE,
     "office": DEFAULT_SCENE,
     "dimos-office": DEFAULT_SCENE,
     "dimos_office": DEFAULT_SCENE,
-    "office-splat": "dimos-office-splat",
-    "dimos-office-splat": "dimos-office-splat",
-    "dimos_office_splat": "dimos-office-splat",
-    "street": "street-lite",
-    "street-lite": "street-lite",
-    "street_lite": "street-lite",
-    "mall": "mall-babylon-nolights",
-    "mall_babylon_nolights": "mall-babylon-nolights",
-    "mall-babylon-nolights": "mall-babylon-nolights",
-    "lowpoly": "lowpoly-tdm",
-    "lowpoly-tdm": "lowpoly-tdm",
-    "lowpoly_tdm": "lowpoly-tdm",
-    "tdm": "lowpoly-tdm",
-    "apartment": "dimos-apartment",
-    "dimos-apartment": "dimos-apartment",
-    "dimos_apartment": "dimos-apartment",
+    "supermarket": "supermarket",
 }
 _PACKAGE_DIRS = {
     DEFAULT_SCENE: "dimos_office",
-    "dimos-office-splat": "dimos_office_splat",
-    "street-lite": "street_lite",
-    "mall-babylon-nolights": "mall_babylon_nolights",
-    "lowpoly-tdm": "lowpoly_tdm",
-    "dimos-apartment": "dimos_apartment",
+    "supermarket": "supermarket",
 }
 
 
@@ -67,7 +47,7 @@ def resolve_scene_package(
     runtime composer attaches the robot via ``MjSpec.attach()``.
     """
     if scene is None:
-        scene = DEFAULT_SCENE
+        return None
 
     scene_text = str(scene).strip()
     if scene_text.lower() in _DISABLED_SCENE_NAMES:
@@ -129,6 +109,3 @@ def _resolve_dimos_office() -> ScenePackage:
 
 def _scene_package_dir() -> Path:
     return get_data("scene_packages")
-
-
-__all__ = ["DEFAULT_SCENE", "resolve_scene_package"]

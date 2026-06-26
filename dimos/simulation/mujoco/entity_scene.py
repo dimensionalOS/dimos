@@ -75,6 +75,17 @@ def entity_body_name(entity_id: str) -> str:
     return f"{ENTITY_BODY_PREFIX}{entity_id}"
 
 
+def _entity_id_from_geom_name(name: str) -> str | None:
+    if not name.startswith(ENTITY_BODY_PREFIX):
+        return None
+    rest = name[len(ENTITY_BODY_PREFIX) :]
+    marker = ":geom"
+    marker_idx = rest.rfind(marker)
+    if marker_idx < 0:
+        return None
+    return rest[:marker_idx]
+
+
 def _initial_entities(entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [e for e in entities if e.get("spawn", "initial") == "initial"]
 
@@ -139,6 +150,12 @@ def _entity_collision_hulls(entity: dict[str, Any]) -> list[Path]:
     return paths
 
 
+def _entity_mesh_asset_name(path: Path) -> str:
+    safe_stem = "".join(c if c.isalnum() else "_" for c in path.stem).strip("_")
+    digest = hashlib.sha256(str(path).encode()).hexdigest()[:12]
+    return f"entity_hull_{safe_stem}_{digest}"
+
+
 def _entity_friction(entity: dict[str, Any]) -> tuple[float, float, float]:
     """``physics.friction`` from entity metadata (scalar sliding or full
     [sliding, torsional, rolling] triple), else the scoot-able default."""
@@ -177,6 +194,7 @@ def add_entities_to_spec(
     """
     import mujoco
 
+    mesh_assets: dict[Path, str] = {}
     for entity in _initial_entities(entities):
         descriptor = entity.get("descriptor", {})
         entity_id = descriptor.get("entity_id") or entity.get("id")
@@ -240,8 +258,12 @@ def add_entities_to_spec(
                 body.mass = mass
                 geom_kwargs.pop("mass", None)
             for i, hull_obj in enumerate(hull_paths):
-                mesh_name = f"{base_name}:hull{i:03d}"
-                spec.add_mesh(name=mesh_name, file=str(hull_obj))
+                hull_path = hull_obj.resolve()
+                mesh_name = mesh_assets.get(hull_path)
+                if mesh_name is None:
+                    mesh_name = _entity_mesh_asset_name(hull_path)
+                    spec.add_mesh(name=mesh_name, file=str(hull_path))
+                    mesh_assets[hull_path] = mesh_name
                 # Name geoms uniquely so MuJoCo's compile doesn't reject
                 # duplicate-name collisions across multi-hull entities.
                 gk = dict(geom_kwargs)
@@ -289,8 +311,9 @@ def spawn_penetrators(model: mujoco.MjModel) -> frozenset[str]:
             continue
         for geom_id in (contact.geom1, contact.geom2):
             name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, int(geom_id)) or ""
-            if name.startswith(ENTITY_BODY_PREFIX) and name.endswith(":geom"):
-                bad.add(name[len(ENTITY_BODY_PREFIX) : -len(":geom")])
+            entity_id = _entity_id_from_geom_name(name)
+            if entity_id is not None:
+                bad.add(entity_id)
     return frozenset(bad)
 
 
@@ -336,12 +359,3 @@ def compose_entity_model(scene_package: ScenePackage) -> Path | None:
     mjb_path = out_dir / f"entities_{key}.mjb"
     mujoco.mj_saveModel(model, str(mjb_path))
     return mjb_path
-
-
-__all__ = [
-    "ENTITY_BODY_PREFIX",
-    "add_entities_to_spec",
-    "compose_entity_model",
-    "entity_body_name",
-    "spawn_penetrators",
-]
