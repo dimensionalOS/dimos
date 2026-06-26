@@ -141,7 +141,7 @@ class HardwareDepthModule(Module, DepthBackprojector):
         if info is not None:
             K = info.get_K_matrix()
             fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
-        else:
+        if info is None or fx == 0 or fy == 0:
             f = max(H, W) / 2.0
             fx = fy = f
             cx, cy = W / 2.0, H / 2.0
@@ -181,12 +181,7 @@ class HardwareDepthModule(Module, DepthBackprojector):
         )
         if tf is None:
             if self._last_tf is None:
-                logger.debug(
-                    "HardwareDepthModule: TF %s→%s unavailable, dropping frame",
-                    self.config.world_frame,
-                    self.config.camera_frame,
-                )
-                return None, self.config.world_frame
+                return points_cam, self.config.camera_frame
             tf = self._last_tf
         else:
             self._last_tf = tf

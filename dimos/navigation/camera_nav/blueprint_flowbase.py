@@ -52,7 +52,7 @@ def _depth_img(img):
 
 camera_nav_static_trial = autoconnect(
     CameraModule.blueprint(),
-    MonocularDepthModule.blueprint(device="cpu"),
+    MonocularDepthModule.blueprint(),
     DepthAccumulatorModule.blueprint(),
     RerunBridgeModule.blueprint(
         pubsubs=[LCM()],

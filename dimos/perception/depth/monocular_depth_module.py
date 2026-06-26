@@ -141,11 +141,14 @@ class MonocularDepthModule(Module, DepthBackprojector):
             self._latest_camera_info = info
 
     def _on_image(self, image: Image) -> None:
+        t0 = time.perf_counter()
         try:
             depth_np, points, colors = self._run_inference(image)
         except Exception:
             logger.exception("MonocularDepthModule: inference failed")
             return
+        logger.info("MonocularDepthModule: %.2fs/frame  %d pts  device=%s",
+                    time.perf_counter() - t0, len(points), self._device)
 
         self.depth_image.publish(
             Image(
@@ -200,7 +203,7 @@ class MonocularDepthModule(Module, DepthBackprojector):
         if info is not None:
             K = info.get_K_matrix()
             fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
-        else:
+        if info is None or fx == 0 or fy == 0:
             f = max(H, W) / 2.0
             fx = fy = f
             cx, cy = W / 2.0, H / 2.0
@@ -236,12 +239,7 @@ class MonocularDepthModule(Module, DepthBackprojector):
         )
         if tf is None:
             if self._last_tf is None:
-                logger.debug(
-                    "MonocularDepthModule: TF %s→%s unavailable, dropping frame",
-                    self.config.world_frame,
-                    self.config.camera_frame,
-                )
-                return None, self.config.world_frame
+                return points_cam, self.config.camera_frame
             tf = self._last_tf
         else:
             self._last_tf = tf
