@@ -37,10 +37,10 @@ from dimos.experimental.pimsim.scene.sidecar import (
 )
 from dimos.simulation.mujoco.collision_spec import CollisionSpec
 from dimos.simulation.scene_assets.mesh_scene import (
-    SceneMeshAlignment,
     ScenePrimMesh,
     load_scene_prims,
 )
+from dimos.simulation.scene_assets.spec import SceneMeshAlignment
 
 _HASH_SUFFIX_RE = re.compile(r"_[0-9a-fA-F]{6,}$")
 

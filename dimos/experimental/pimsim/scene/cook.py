@@ -41,12 +41,12 @@ from dimos.experimental.pimsim.scene.visual_blender import cook_plan_visual_asse
 from dimos.experimental.pimsim.scene.visual_glb import cook_browser_visual
 from dimos.simulation.mujoco.collision_spec import CollisionSpec
 from dimos.simulation.mujoco.scene_mesh_to_mjcf import load_or_bake
-from dimos.simulation.scene_assets.mesh_scene import SceneMeshAlignment
 from dimos.simulation.scene_assets.spec import (
     BrowserCollisionSpec,
     BrowserVisualSpec,
     MujocoSceneSpec,
     SceneCookSpec,
+    SceneMeshAlignment,
     ScenePackage,
 )
 from dimos.utils.data import get_data_dir
@@ -295,9 +295,9 @@ def _cook_entity_prototype_collision(
         prototype_id = entity.get("prototype_id")
         if not isinstance(prototype_id, str):
             continue
-        hull_paths = hulls_by_prototype.get(prototype_id)
-        if hull_paths:
-            entity["collision_paths"] = [str(path) for path in hull_paths]
+        prototype_hull_paths = hulls_by_prototype.get(prototype_id)
+        if prototype_hull_paths:
+            entity["collision_paths"] = [str(path) for path in prototype_hull_paths]
     return counts
 
 

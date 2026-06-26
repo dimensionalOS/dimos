@@ -27,12 +27,11 @@ import open3d as o3d  # type: ignore[import-untyped]
 from dimos.experimental.pimsim.scene.inspect import inspect_scene_asset
 from dimos.simulation.mujoco.collision_spec import CollisionSpec
 from dimos.simulation.scene_assets.mesh_scene import (
-    SceneMeshAlignment,
     ScenePrimMesh,
     load_scene_prims,
     split_disconnected_scene_prims,
 )
-from dimos.simulation.scene_assets.spec import BrowserCollisionSpec
+from dimos.simulation.scene_assets.spec import BrowserCollisionSpec, SceneMeshAlignment
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
