@@ -14,23 +14,30 @@
 
 """Accumulates per-frame depth clouds into a globally consistent 3D map.
 
-Each incoming frame is registered against the existing map via point-to-point
-ICP before being added. ICP uses the odometry-based world-frame position as
-the initial estimate and refines it by minimising point-pair residuals:
+Map building strategy for a moving robot with no LiDAR:
 
-    E(T) = Σ_i ‖T p_i − q_{j(i)}‖²
+  1. ICP registration against a sliding window of the last N frames, not the
+     full map. This bounds ICP complexity to O(N · icp_window) regardless of
+     how large the total map grows.
 
-where p_i are source points, q_{j(i)} their nearest neighbours in the map,
-and T is the refinement transform (close to identity when odometry is good).
-This corrects per-frame drift without requiring a full pose-graph pass.
+  2. Voxel compaction runs every merge_interval frames, not every frame.
+     Between compactions, frames are concatenated cheaply. The map never
+     deletes observations — it only grows, bounded by the voxel resolution.
 
-For long traversals with revisits, run correct_map.py after recording to apply
-global PGO loop closure on top.
+  3. Publishing to Rerun is throttled to publish_freq Hz so the Rerun bridge
+     is never the bottleneck on a fast-moving robot.
+
+ICP minimises:  E(T) = Σ_i ‖T p_i − q_{j(i)}‖²
+
+where p_i are points in the new frame (already in approximate world frame via
+odometry/VIO), and q_{j(i)} their nearest neighbours in the sliding window.
+T is applied only if ICP fitness > 0.3 (sufficient point overlap).
 """
 
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any
 
 import numpy as np
@@ -62,28 +69,38 @@ def _icp_refine(
         o3d.pipelines.registration.TransformationEstimationPointToPoint(),
         o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=max_iter),
     )
-    # fitness = fraction of source points with a correspondence; too low means
-    # insufficient overlap and the transform would be unreliable.
     return result.transformation if result.fitness > 0.3 else np.eye(4)
 
 
+def _merge_window(frames: list[o3d.geometry.PointCloud]) -> o3d.geometry.PointCloud:
+    merged = o3d.geometry.PointCloud()
+    for f in frames:
+        merged += f
+    return merged
+
+
 class Config(ModuleConfig):
-    voxel_size: float = 0.05
+    voxel_size: float = 0.03
     world_frame: str = "world"
-    # ICP registration: frames are registered against the accumulated map to
-    # correct odometry drift before being added. Disabled until the map reaches
-    # icp_min_points so the first frames don't register against noise.
-    icp_min_points: int = 500
-    icp_max_correspondence: float = 0.2  # metres; max allowed point-pair distance
-    icp_max_iter: int = 30
+    # ICP: uses the last icp_window frames as target so complexity stays bounded
+    # as the map grows. Starts once the window has icp_min_points total.
+    icp_window: int = 5
+    icp_min_points: int = 300
+    icp_max_correspondence: float = 0.2
+    icp_max_iter: int = 20
+    # Map compaction: voxel-downsample the full accumulated map every
+    # merge_interval frames (not every frame) to amortise the cost.
+    merge_interval: int = 10
+    # Rerun publish rate cap — keeps the bridge from becoming the bottleneck.
+    publish_freq: float = 5.0
 
 
 class DepthAccumulatorModule(Module):
-    """Accumulates camera-frame clouds into a persistent, drift-corrected global map.
+    """Builds a persistent, drift-corrected 3D world map from per-frame depth clouds.
 
-    Points are never deleted — the map only grows, bounded by voxel downsampling.
-    Each frame is ICP-registered against the existing map before being merged,
-    which corrects odometry drift without requiring a full pose-graph pass.
+    Designed for moving robots with camera-only sensing. Optimised so per-frame
+    cost stays constant regardless of map size: ICP targets a sliding window of
+    recent frames, and full-map compaction is amortised across merge_interval frames.
     """
 
     config: Config
@@ -94,7 +111,10 @@ class DepthAccumulatorModule(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._lock = threading.Lock()
-        self._map: o3d.geometry.PointCloud = o3d.geometry.PointCloud()
+        self._map = o3d.geometry.PointCloud()
+        self._window: list[o3d.geometry.PointCloud] = []  # sliding ICP target
+        self._frame_count = 0
+        self._last_publish = 0.0
 
     @rpc
     def start(self) -> None:
@@ -111,6 +131,8 @@ class DepthAccumulatorModule(Module):
     def reset(self) -> None:
         with self._lock:
             self._map = o3d.geometry.PointCloud()
+            self._window.clear()
+            self._frame_count = 0
 
     def _on_frame_cloud(self, cloud: PointCloud2) -> None:
         pts, cols = cloud.as_numpy()
@@ -122,29 +144,53 @@ class DepthAccumulatorModule(Module):
         if cols is not None and len(cols) == len(pts):
             frame_pcd.colors = o3d.utility.Vector3dVector(cols.astype(np.float64))
 
+        # Downsampled copy used for ICP source and for the sliding window store.
+        frame_down = frame_pcd.voxel_down_sample(self.config.voxel_size * 2)
+
         with self._lock:
-            if len(self._map.points) >= self.config.icp_min_points:
-                # Downsample both sides to keep ICP fast (2× and 4× voxel respectively).
-                src = frame_pcd.voxel_down_sample(self.config.voxel_size * 2)
-                tgt = self._map.voxel_down_sample(self.config.voxel_size * 4)
+            # --- ICP against sliding window (bounded cost) ---
+            window_pts = sum(len(f.points) for f in self._window)
+            if self._window and window_pts >= self.config.icp_min_points:
+                target = _merge_window(self._window).voxel_down_sample(self.config.voxel_size * 3)
                 corr = _icp_refine(
-                    src, tgt,
+                    frame_down, target,
                     self.config.icp_max_correspondence,
                     self.config.icp_max_iter,
                 )
                 frame_pcd.transform(corr)
+                frame_down.transform(corr)
 
-            # Merge: never delete existing map points; voxel-downsample to bound memory.
-            self._map = (self._map + frame_pcd).voxel_down_sample(self.config.voxel_size)
+            # Advance sliding window
+            self._window.append(frame_down)
+            if len(self._window) > self.config.icp_window:
+                self._window.pop(0)
+
+            # --- Accumulate (never delete, cheap concatenation) ---
+            self._map += frame_pcd
+            self._frame_count += 1
+
+            # Compact periodically to bound memory; not every frame
+            if self._frame_count % self.config.merge_interval == 0:
+                self._map = self._map.voxel_down_sample(self.config.voxel_size)
+
+            # --- Throttled publish ---
+            now = time.monotonic()
+            if now - self._last_publish < 1.0 / self.config.publish_freq:
+                return
+            self._last_publish = now
 
             pts_out = np.asarray(self._map.points, dtype=np.float32)
             cols_out = (
                 np.asarray(self._map.colors, dtype=np.float32)
-                if self._map.has_colors()
-                else None
+                if self._map.has_colors() else None
             )
 
         logger.debug("DepthAccumulatorModule: %d points in global map", len(pts_out))
         self.global_map.publish(
-            _make_colored_cloud(pts_out, cols_out if cols_out is not None else np.zeros((len(pts_out), 3), dtype=np.float32), self.config.world_frame, cloud.ts)
+            _make_colored_cloud(
+                pts_out,
+                cols_out if cols_out is not None else np.zeros((len(pts_out), 3), dtype=np.float32),
+                self.config.world_frame,
+                cloud.ts,
+            )
         )

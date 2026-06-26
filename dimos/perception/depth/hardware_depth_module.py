@@ -23,6 +23,7 @@ import threading
 from typing import Any
 
 import numpy as np
+from reactivex import operators as ops
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
@@ -33,6 +34,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.depth.monocular_depth_module import _make_colored_cloud
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.reactive import backpressure
 
 logger = setup_logger()
 
@@ -40,7 +42,8 @@ logger = setup_logger()
 class Config(ModuleConfig):
     min_depth: float = 0.3
     max_depth: float = 8.0
-    stride: int = 2
+    stride: int = 1
+    max_freq: float = 10.0  # cap backprojection rate; ZED grabs at 15Hz
     camera_frame: str = "camera_optical"
     world_frame: str = "world"
     tf_timeout: float = 0.2
@@ -68,7 +71,15 @@ class HardwareDepthModule(Module):
         super().start()
         self.register_disposable(Disposable(self.depth_image.subscribe(self._on_depth)))
         self.register_disposable(Disposable(self.camera_info.subscribe(self._on_camera_info)))
-        self.register_disposable(Disposable(self.color_image.subscribe(self._on_color)))
+        self.register_disposable(
+            Disposable(
+                backpressure(
+                    self.color_image.pure_observable().pipe(
+                        ops.throttle_with_timeout(1.0 / self.config.max_freq)
+                    )
+                ).subscribe(self._on_color)
+            )
+        )
 
     @rpc
     def stop(self) -> None:
