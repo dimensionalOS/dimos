@@ -40,7 +40,6 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.mapping.pointclouds.accumulators.general import GeneralPointCloudAccumulator
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.depth.monocular_depth_module import _make_colored_cloud
 from dimos.utils.logging_config import setup_logger
@@ -80,7 +79,12 @@ class Config(ModuleConfig):
 
 
 class DepthAccumulatorModule(Module):
-    """Accumulates camera-frame clouds into a persistent, drift-corrected global map."""
+    """Accumulates camera-frame clouds into a persistent, drift-corrected global map.
+
+    Points are never deleted — the map only grows, bounded by voxel downsampling.
+    Each frame is ICP-registered against the existing map before being merged,
+    which corrects odometry drift without requiring a full pose-graph pass.
+    """
 
     config: Config
 
@@ -90,16 +94,11 @@ class DepthAccumulatorModule(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._lock = threading.Lock()
-        self._accum: GeneralPointCloudAccumulator | None = None
+        self._map: o3d.geometry.PointCloud = o3d.geometry.PointCloud()
 
     @rpc
     def start(self) -> None:
         super().start()
-        from dimos.core.global_config import GlobalConfig
-        self._accum = GeneralPointCloudAccumulator(
-            voxel_size=self.config.voxel_size,
-            global_config=GlobalConfig(),
-        )
         self.register_disposable(
             Disposable(self.frame_cloud.subscribe(self._on_frame_cloud))
         )
@@ -110,12 +109,8 @@ class DepthAccumulatorModule(Module):
 
     @rpc
     def reset(self) -> None:
-        from dimos.core.global_config import GlobalConfig
         with self._lock:
-            self._accum = GeneralPointCloudAccumulator(
-                voxel_size=self.config.voxel_size,
-                global_config=GlobalConfig(),
-            )
+            self._map = o3d.geometry.PointCloud()
 
     def _on_frame_cloud(self, cloud: PointCloud2) -> None:
         pts, cols = cloud.as_numpy()
@@ -128,12 +123,10 @@ class DepthAccumulatorModule(Module):
             frame_pcd.colors = o3d.utility.Vector3dVector(cols.astype(np.float64))
 
         with self._lock:
-            map_pcd = self._accum.get_point_cloud()
-
-            if len(map_pcd.points) >= self.config.icp_min_points:
+            if len(self._map.points) >= self.config.icp_min_points:
                 # Downsample both sides to keep ICP fast (2× and 4× voxel respectively).
                 src = frame_pcd.voxel_down_sample(self.config.voxel_size * 2)
-                tgt = map_pcd.voxel_down_sample(self.config.voxel_size * 4)
+                tgt = self._map.voxel_down_sample(self.config.voxel_size * 4)
                 corr = _icp_refine(
                     src, tgt,
                     self.config.icp_max_correspondence,
@@ -141,16 +134,17 @@ class DepthAccumulatorModule(Module):
                 )
                 frame_pcd.transform(corr)
 
-            self._accum.add(frame_pcd)
-            global_pcd = self._accum.get_point_cloud()
-            pts_out = np.asarray(global_pcd.points, dtype=np.float32)
+            # Merge: never delete existing map points; voxel-downsample to bound memory.
+            self._map = (self._map + frame_pcd).voxel_down_sample(self.config.voxel_size)
+
+            pts_out = np.asarray(self._map.points, dtype=np.float32)
             cols_out = (
-                np.asarray(global_pcd.colors, dtype=np.float32)
-                if global_pcd.has_colors()
-                else np.zeros((len(pts_out), 3), dtype=np.float32)
+                np.asarray(self._map.colors, dtype=np.float32)
+                if self._map.has_colors()
+                else None
             )
 
         logger.debug("DepthAccumulatorModule: %d points in global map", len(pts_out))
         self.global_map.publish(
-            _make_colored_cloud(pts_out, cols_out, self.config.world_frame, cloud.ts)
+            _make_colored_cloud(pts_out, cols_out if cols_out is not None else np.zeros((len(pts_out), 3), dtype=np.float32), self.config.world_frame, cloud.ts)
         )

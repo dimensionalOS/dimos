@@ -36,7 +36,14 @@ from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 
 def _cloud_points(cloud):
-    return cloud.to_rerun(mode="points")
+    import numpy as np
+    import rerun as rr
+    pts, cols = cloud.as_numpy()
+    if len(pts) == 0:
+        return rr.Points3D([])
+    if cols is not None and len(cols) == len(pts):
+        return rr.Points3D(positions=pts, colors=(cols * 255).astype(np.uint8))
+    return rr.Points3D(positions=pts)
 
 
 def _depth_img(img):
