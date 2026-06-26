@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<robot name="go2_mid360">
+  <link name="base_link"/>
+  <link name="front_camera"/>
+  <joint name="base_link_to_front_camera" type="fixed">
+    <parent link="base_link"/>
+    <child link="front_camera"/>
+    <origin xyz="0.32715 -3e-05 0.04297" rpy="0.0 0.0 0.0"/>
+  </joint>
+  <link name="mid360_link"/>
+  <joint name="front_camera_to_mid360_link" type="fixed">
+    <parent link="front_camera"/>
+    <child link="mid360_link"/>
+    <origin xyz="-0.032 0.0 0.12" rpy="0.0 0.767944870877505 0.0"/>
+  </joint>
+  <link name="camera_optical"/>
+  <joint name="front_camera_to_camera_optical" type="fixed">
+    <parent link="front_camera"/>
+    <child link="camera_optical"/>
+    <origin xyz="0.0 0.0 0.0" rpy="-1.5707963267948966 0.0 -1.5707963267948966"/>
+  </joint>
+</robot>

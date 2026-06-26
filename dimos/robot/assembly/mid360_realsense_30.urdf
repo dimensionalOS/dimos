@@ -1,0 +1,108 @@
+<?xml version="1.0"?>
+<!-- Generated from FRAMES in dimos/robot/assembly/mid360_realsense_30.py -->
+<!-- RealSense D435i + Mid-360 rig mount tree. rpy is fixed-axis roll-pitch-yaw. -->
+<robot name="mid360_realsense_30">
+  <link name="bottom_screw_frame"/>
+  <link name="link"/>
+  <joint name="bottom_screw_frame_to_link" type="fixed">
+    <parent link="bottom_screw_frame"/>
+    <child link="link"/>
+    <origin xyz="0.010600000000000002 0.0175 0.0125" rpy="0.0 0.0 0.0"/>
+  </joint>
+  <link name="depth_frame"/>
+  <joint name="link_to_depth_frame" type="fixed">
+    <parent link="link"/>
+    <child link="depth_frame"/>
+    <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+  </joint>
+  <link name="depth_optical_frame"/>
+  <joint name="depth_frame_to_depth_optical_frame" type="fixed">
+    <parent link="depth_frame"/>
+    <child link="depth_optical_frame"/>
+    <origin xyz="0.0 0.0 0.0" rpy="-1.5707963267948966 0.0 -1.5707963267948966"/>
+  </joint>
+  <link name="infra1_frame"/>
+  <joint name="link_to_infra1_frame" type="fixed">
+    <parent link="link"/>
+    <child link="infra1_frame"/>
+    <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+  </joint>
+  <link name="infra1_optical_frame"/>
+  <joint name="infra1_frame_to_infra1_optical_frame" type="fixed">
+    <parent link="infra1_frame"/>
+    <child link="infra1_optical_frame"/>
+    <origin xyz="0.0 0.0 0.0" rpy="-1.5707963267948966 0.0 -1.5707963267948966"/>
+  </joint>
+  <link name="infra2_frame"/>
+  <joint name="link_to_infra2_frame" type="fixed">
+    <parent link="link"/>
+    <child link="infra2_frame"/>
+    <origin xyz="0.0 -0.05 0.0" rpy="0.0 0.0 0.0"/>
+  </joint>
+  <link name="infra2_optical_frame"/>
+  <joint name="infra2_frame_to_infra2_optical_frame" type="fixed">
+    <parent link="infra2_frame"/>
+    <child link="infra2_optical_frame"/>
+    <origin xyz="0.0 0.0 0.0" rpy="-1.5707963267948966 0.0 -1.5707963267948966"/>
+  </joint>
+  <link name="color_frame"/>
+  <joint name="link_to_color_frame" type="fixed">
+    <parent link="link"/>
+    <child link="color_frame"/>
+    <origin xyz="0.0 0.015 0.0" rpy="0.0 0.0 0.0"/>
+  </joint>
+  <link name="color_optical_frame"/>
+  <joint name="color_frame_to_color_optical_frame" type="fixed">
+    <parent link="color_frame"/>
+    <child link="color_optical_frame"/>
+    <origin xyz="0.0 0.0 0.0" rpy="-1.5707963267948966 0.0 -1.5707963267948966"/>
+  </joint>
+  <link name="accel_frame"/>
+  <joint name="link_to_accel_frame" type="fixed">
+    <parent link="link"/>
+    <child link="accel_frame"/>
+    <origin xyz="-0.01174 -0.00552 0.0051" rpy="0.0 0.0 0.0"/>
+  </joint>
+  <link name="accel_optical_frame"/>
+  <joint name="accel_frame_to_accel_optical_frame" type="fixed">
+    <parent link="accel_frame"/>
+    <child link="accel_optical_frame"/>
+    <origin xyz="0.0 0.0 0.0" rpy="-1.5707963267948966 0.0 -1.5707963267948966"/>
+  </joint>
+  <link name="gyro_frame"/>
+  <joint name="link_to_gyro_frame" type="fixed">
+    <parent link="link"/>
+    <child link="gyro_frame"/>
+    <origin xyz="-0.01174 -0.00552 0.0051" rpy="0.0 0.0 0.0"/>
+  </joint>
+  <link name="gyro_optical_frame"/>
+  <joint name="gyro_frame_to_gyro_optical_frame" type="fixed">
+    <parent link="gyro_frame"/>
+    <child link="gyro_optical_frame"/>
+    <origin xyz="0.0 0.0 0.0" rpy="-1.5707963267948966 0.0 -1.5707963267948966"/>
+  </joint>
+  <link name="box_pitch_frame"/>
+  <joint name="bottom_screw_frame_to_box_pitch_frame" type="fixed">
+    <parent link="bottom_screw_frame"/>
+    <child link="box_pitch_frame"/>
+    <origin xyz="0.0 0.0 0.0" rpy="0.0 0.6283185307179586 0.0"/>
+  </joint>
+  <link name="box_center"/>
+  <joint name="box_pitch_frame_to_box_center" type="fixed">
+    <parent link="box_pitch_frame"/>
+    <child link="box_center"/>
+    <origin xyz="-0.085 0.0 0.037" rpy="0.0 0.0 0.0"/>
+  </joint>
+  <link name="lidar_frame"/>
+  <joint name="box_center_to_lidar_frame" type="fixed">
+    <parent link="box_center"/>
+    <child link="lidar_frame"/>
+    <origin xyz="0.0 0.0 0.017" rpy="0.0 0.0 0.0"/>
+  </joint>
+  <link name="imu_frame"/>
+  <joint name="lidar_frame_to_imu_frame" type="fixed">
+    <parent link="lidar_frame"/>
+    <child link="imu_frame"/>
+    <origin xyz="0.011 0.02329 -0.04412" rpy="0.0 0.0 0.0"/>
+  </joint>
+</robot>
