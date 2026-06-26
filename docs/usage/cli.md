@@ -295,6 +295,20 @@ Monitor LCM messages in real time.
 lcmspy
 ```
 
+### `lcmflow`
+
+Animated "packet highway" view of LCM traffic. Each topic is a lane;
+every packet drives across it as a vehicle — small fast packets
+(`cmd_vel`, `tf`) are quick dots, large packets (images, point clouds)
+are long slow trucks. Bursts faster than the lane can fit merge into a
+single vehicle with a `×N` count. Keys: `space` pause, `s` cycle sort
+(arrival/traffic/name), `q` quit.
+
+```bash
+lcmflow        # native TUI
+lcmflow web    # serve the same TUI in a browser
+```
+
 ### `agentspy`
 
 Monitor agent messages and tool calls.

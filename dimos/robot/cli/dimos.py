@@ -629,6 +629,15 @@ def lcmspy(ctx: typer.Context) -> None:
 
 
 @main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def lcmflow(ctx: typer.Context) -> None:
+    """LCM packet highway — animated real-time view of LCM traffic."""
+    from dimos.utils.cli.lcmflow.run_lcmflow import main as lcmflow_main
+
+    sys.argv = ["lcmflow", *ctx.args]
+    lcmflow_main()
+
+
+@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def agentspy(ctx: typer.Context) -> None:
     """Agent spy tool for monitoring agents."""
     from dimos.utils.cli.agentspy.agentspy import main as agentspy_main

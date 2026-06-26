@@ -225,7 +225,7 @@ Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation/--no-simul
 | `dimos log [-f] [-n N] [--json] [-r <run-id>]` | View per-run logs |
 | `dimos mcp list-tools / call / status / modules` | MCP tools (requires McpServer in blueprint) |
 | `dimos agent-send "<text>"` | Send text to the running agent via LCM |
-| `dimos lcmspy / agentspy / humancli / top` | Debug/diagnostic tools |
+| `dimos lcmspy / lcmflow / agentspy / humancli / top` | Debug/diagnostic tools (`lcmflow` = animated packet highway) |
 | `dimos topic echo <topic> / send <topic> <expr>` | LCM topic pub/sub |
 | `dimos rerun-bridge` | Launch Rerun visualization standalone |
 

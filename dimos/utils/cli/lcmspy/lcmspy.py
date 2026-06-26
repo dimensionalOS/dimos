@@ -128,7 +128,6 @@ class LCMSpy(LCMService, Topic):
 
         with self._topic_lock:
             if topic not in self.topic:  # type: ignore[operator]
-                print(self.config)
                 self.topic[topic] = self.topic_class(  # type: ignore[assignment, call-arg]
                     topic,
                     history_window=self.config.topic_history_window,
