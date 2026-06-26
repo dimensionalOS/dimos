@@ -102,7 +102,6 @@ jobs:
         include:
           - { os: ubuntu-latest,    arch: x86_64 }
           - { os: ubuntu-24.04-arm, arch: aarch64 }
-          - { os: macos-13,         arch: x86_64 }
           - { os: macos-14,         arch: arm64 }
     runs-on: ${{ matrix.os }}
     permissions:
@@ -112,6 +111,8 @@ jobs:
     env:
       CIBW_ENABLE: "cpython-freethreading"
       CIBW_ARCHS: ${{ matrix.arch }}
+      CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_34  # open3d>=0.19 requires glibc 2.31+
+      CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_34  # open3d>=0.19 requires glibc 2.31+
       CIBW_TEST_COMMAND: "python -c 'from dimos.navigation.replanning_a_star.min_cost_astar_ext import min_cost_astar_cpp'"
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
