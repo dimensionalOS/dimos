@@ -153,6 +153,12 @@ def _signatures_compatible(spec_sig: inspect.Signature, impl_sig: inspect.Signat
     args: list[inspect.Parameter] = []
     kwargs: dict[str, inspect.Parameter] = {}
     for p in impl_sig.parameters.values():
+        # An extra *optional* impl parameter (not declared by the spec, has a default)
+        # does not break substitutability -- a spec-driven caller never passes it -- so
+        # ignore it. Extra *required* params are kept, so binding fails and the impl is
+        # rejected.
+        if p.default is not inspect.Parameter.empty and p.name not in spec_sig.parameters:
+            continue
         if p.kind is inspect.Parameter.POSITIONAL_ONLY:
             args.append(p)
         elif p.kind is inspect.Parameter.KEYWORD_ONLY:
