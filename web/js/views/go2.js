@@ -176,13 +176,15 @@ export function renderGo2(c) {
                 <section class="bg-bg-950 border border-[#2a2a2a] rounded-xl p-4 shrink-0">
                     <div class="term-caps text-xs text-gray-500 mb-3">Drive</div>
                     <div class="flex flex-col items-center gap-2">
-                        <div id="key-w" class="kb-key">W</div>
                         <div class="flex gap-2">
-                            <div id="key-q" class="kb-key">Q</div>
+                            <div id="key-q" class="kb-key kb-key-secondary">Q</div>
+                            <div id="key-w" class="kb-key">W</div>
+                            <div id="key-e" class="kb-key kb-key-secondary">E</div>
+                        </div>
+                        <div class="flex gap-2">
                             <div id="key-a" class="kb-key">A</div>
                             <div id="key-s" class="kb-key">S</div>
                             <div id="key-d" class="kb-key">D</div>
-                            <div id="key-e" class="kb-key">E</div>
                         </div>
                     </div>
                     <div class="mt-3 text-[11px] text-gray-500 leading-relaxed">

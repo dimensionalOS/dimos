@@ -39,13 +39,15 @@ angular.z = 0</pre>
 
             <div class="bg-bg-950 border border-[#2a2a2a] rounded-lg p-6 my-6">
                 <div class="flex flex-col items-center gap-2">
-                    <div id="key-w" class="kb-key">W</div>
                     <div class="flex gap-2">
-                        <div id="key-q" class="kb-key">Q</div>
+                        <div id="key-q" class="kb-key kb-key-secondary">Q</div>
+                        <div id="key-w" class="kb-key">W</div>
+                        <div id="key-e" class="kb-key kb-key-secondary">E</div>
+                    </div>
+                    <div class="flex gap-2">
                         <div id="key-a" class="kb-key">A</div>
                         <div id="key-s" class="kb-key">S</div>
                         <div id="key-d" class="kb-key">D</div>
-                        <div id="key-e" class="kb-key">E</div>
                     </div>
                     <div class="flex gap-2 mt-3">
                         <div id="key-shift" class="kb-key wide">Shift</div>
