@@ -12,23 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Publishes ``world ← base_link`` TF from FlowBase wheel odometry.
+"""Converts FlowBase wheel odometry into world←base_link TF.
 
-``ControlCoordinator`` reads ``[x, y, theta]`` from ``FlowBaseAdapter.read_odometry``
-and stores it as *positions* on the base joints (``{hw_id}/vx``, ``{hw_id}/vy``,
-``{hw_id}/wz``).  This module subscribes to ``coordinator_joint_state`` and
-re-publishes those values as a proper TF transform so downstream modules (cameras,
-depth estimation, costmappers) can place observations in the world frame.
-
-Wire it alongside ``ControlCoordinator`` in any FlowBase blueprint::
-
-    autoconnect(
-        coordinator_flowbase,
-        FlowBaseOdomModule.blueprint(),
-        ...
-    )
-
-``coordinator_joint_state`` autoconnects by name.
+ControlCoordinator stores (x, y, theta) from FlowBaseAdapter.read_odometry()
+as *positions* on the base joints ({hw_id}/vx, {hw_id}/vy, {hw_id}/wz).
+This module re-publishes those as a TF transform so downstream modules can
+place observations in the world frame.
 """
 
 from __future__ import annotations
@@ -50,33 +39,13 @@ logger = setup_logger()
 
 
 class Config(ModuleConfig):
-    """Configuration for FlowBaseOdomModule.
-
-    Attributes:
-        hw_id:       Hardware ID used in joint names (matches ``ControlCoordinator`` hw_id).
-        world_frame: TF parent frame.
-        base_frame:  TF child frame published by this module.
-    """
-
     hw_id: str = "base"
     world_frame: str = "world"
     base_frame: str = "base_link"
 
 
 class FlowBaseOdomModule(Module):
-    """Converts FlowBase wheel-odometry joint positions into ``world ← base_link`` TF.
-
-    Subscribes to the ``coordinator_joint_state`` stream (published by
-    ``ControlCoordinator``) and extracts the ``{hw_id}/vx``, ``{hw_id}/vy``,
-    and ``{hw_id}/wz`` joint positions, which the coordinator populates from
-    ``FlowBaseAdapter.read_odometry()``.  These are (x, y, theta) in metres
-    and radians relative to the start pose.
-
-    Ports
-    -----
-    Inputs
-        coordinator_joint_state : Joint state from ``ControlCoordinator``.
-    """
+    """Publishes world←base_link TF from ControlCoordinator joint positions."""
 
     config: Config
 
@@ -102,14 +71,12 @@ class FlowBaseOdomModule(Module):
             y = pos[names.index(f"{hw}/vy")]
             theta = pos[names.index(f"{hw}/wz")]
         except (ValueError, IndexError):
-            # Message doesn't contain base joints — skip quietly.
             return
 
-        tf = Transform(
+        self.tf.publish(Transform(
             translation=Vector3(x, y, 0.0),
             rotation=Quaternion.from_euler(Vector3(0.0, 0.0, theta)),
             frame_id=self.config.world_frame,
             child_frame_id=self.config.base_frame,
             ts=js.ts,
-        )
-        self.tf.publish(tf)
+        ))

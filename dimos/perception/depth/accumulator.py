@@ -12,26 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Thin Module wrapper around GeneralPointCloudAccumulator for camera pipelines.
+"""Accumulates per-frame depth clouds into a globally consistent 3D map.
 
-``GeneralPointCloudAccumulator`` (in ``dimos.mapping.pointclouds.accumulators``)
-already handles voxel-based accumulation with cylinder-splice: each new frame
-removes stale points in its visible region and replaces them with fresh
-observations.  This prevents ghost copies as the camera moves — better than
-time-based decay.
+Each incoming frame is registered against the existing map via point-to-point
+ICP before being added. ICP uses the odometry-based world-frame position as
+the initial estimate and refines it by minimising point-pair residuals:
 
-This module simply adapts the ``frame_cloud`` port from
-``MonocularDepthModule`` to the ``global_map`` port expected by ``CostMapper``,
-using that existing accumulator internally::
+    E(T) = Σ_i ‖T p_i − q_{j(i)}‖²
 
-    autoconnect(
-        MonocularDepthModule.blueprint(),
-        DepthAccumulatorModule.blueprint(),
-        CostMapper.blueprint(algo="height_cost"),
-    )
+where p_i are source points, q_{j(i)} their nearest neighbours in the map,
+and T is the refinement transform (close to identity when odometry is good).
+This corrects per-frame drift without requiring a full pose-graph pass.
 
-For loop closure on longer traversals, compose with the existing ``PGO``
-transformer from ``dimos.mapping.loop_closure.pgo``.
+For long traversals with revisits, run correct_map.py after recording to apply
+global PGO loop closure on top.
 """
 
 from __future__ import annotations
@@ -54,35 +48,39 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
+def _icp_refine(
+    source: o3d.geometry.PointCloud,
+    target: o3d.geometry.PointCloud,
+    max_distance: float,
+    max_iter: int,
+) -> np.ndarray:
+    """Return the ICP refinement transform, or identity if fitness is too low."""
+    result = o3d.pipelines.registration.registration_icp(
+        source,
+        target,
+        max_distance,
+        np.eye(4),
+        o3d.pipelines.registration.TransformationEstimationPointToPoint(),
+        o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=max_iter),
+    )
+    # fitness = fraction of source points with a correspondence; too low means
+    # insufficient overlap and the transform would be unreliable.
+    return result.transformation if result.fitness > 0.3 else np.eye(4)
+
+
 class Config(ModuleConfig):
-    """Configuration for DepthAccumulatorModule.
-
-    Attributes:
-        voxel_size: Cell size in metres — match CostMapper resolution (0.05 m).
-        world_frame: Frame ID written into ``global_map``.
-    """
-
     voxel_size: float = 0.05
     world_frame: str = "world"
+    # ICP registration: frames are registered against the accumulated map to
+    # correct odometry drift before being added. Disabled until the map reaches
+    # icp_min_points so the first frames don't register against noise.
+    icp_min_points: int = 500
+    icp_max_correspondence: float = 0.2  # metres; max allowed point-pair distance
+    icp_max_iter: int = 30
 
 
 class DepthAccumulatorModule(Module):
-    """Accumulates camera-frame clouds into a persistent global map.
-
-    Wraps ``GeneralPointCloudAccumulator`` which uses a cylinder-splice
-    strategy: each new frame removes existing map points in its visible
-    region before adding the fresh observations.  This prevents ghost
-    copies when the camera or robot moves without requiring an explicit
-    time-based decay.
-
-    Ports
-    -----
-    Inputs
-        frame_cloud : Per-frame coloured cloud from ``MonocularDepthModule``.
-    Outputs
-        global_map  : Accumulated cloud; satisfies the ``GlobalPointcloud``
-            spec consumed by ``CostMapper``.
-    """
+    """Accumulates camera-frame clouds into a persistent, drift-corrected global map."""
 
     config: Config
 
@@ -112,14 +110,12 @@ class DepthAccumulatorModule(Module):
 
     @rpc
     def reset(self) -> None:
-        """Clear the accumulated map."""
         from dimos.core.global_config import GlobalConfig
         with self._lock:
             self._accum = GeneralPointCloudAccumulator(
                 voxel_size=self.config.voxel_size,
                 global_config=GlobalConfig(),
             )
-        logger.info("DepthAccumulatorModule: map cleared")
 
     def _on_frame_cloud(self, cloud: PointCloud2) -> None:
         pts, cols = cloud.as_numpy()
@@ -132,6 +128,19 @@ class DepthAccumulatorModule(Module):
             frame_pcd.colors = o3d.utility.Vector3dVector(cols.astype(np.float64))
 
         with self._lock:
+            map_pcd = self._accum.get_point_cloud()
+
+            if len(map_pcd.points) >= self.config.icp_min_points:
+                # Downsample both sides to keep ICP fast (2× and 4× voxel respectively).
+                src = frame_pcd.voxel_down_sample(self.config.voxel_size * 2)
+                tgt = map_pcd.voxel_down_sample(self.config.voxel_size * 4)
+                corr = _icp_refine(
+                    src, tgt,
+                    self.config.icp_max_correspondence,
+                    self.config.icp_max_iter,
+                )
+                frame_pcd.transform(corr)
+
             self._accum.add(frame_pcd)
             global_pcd = self._accum.get_point_cloud()
             pts_out = np.asarray(global_pcd.points, dtype=np.float32)

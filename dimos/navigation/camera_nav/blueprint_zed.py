@@ -14,30 +14,8 @@
 
 """Camera-nav blueprint for ZED Mini stereo camera (requires ZED SDK / pyzed.sl).
 
-Kept in a separate file so importing ``blueprint_flowbase`` does not pull in
-``pyzed`` on machines where the SDK is not installed.
-
-``camera_nav_zed_teleop``
-    ZED Mini stereo camera.  Uses hardware stereo depth (much better quality
-    than DepthAnythingV2) and the ZED's built-in Visual Inertial Odometry for
-    pose — no wheel odometry needed.  ``MonocularDepthModule`` and
-    ``FlowBaseOdomModule`` are both removed from this path.
-
-Port autoconnects:
-    ZEDCamera.color_image    →  HardwareDepthModule.color_image
-    ZEDCamera.depth_image    →  HardwareDepthModule.depth_image
-    ZEDCamera.camera_info    →  HardwareDepthModule.camera_info
-    HardwareDepthModule.frame_cloud  →  DepthAccumulatorModule.frame_cloud
-    HardwareDepthModule.frame_cloud  →  CameraNavRecorder.frame_cloud
-
-TF (ZEDCamera publishes all of these from its VIO + extrinsics):
-    world ← base_link           (from ZED positional tracking)
-    base_link ← camera_link     (from base_transform config)
-    camera_link ← camera_color_optical_frame
-
-Post-traversal correction::
-
-    python -m dimos.navigation.camera_nav.correct_map traversal.db --rerun
+Kept in a separate file so importing blueprint_flowbase does not pull in pyzed.
+ZED VIO provides world←base_link TF directly, so FlowBaseOdomModule is not needed.
 """
 
 from __future__ import annotations
@@ -59,20 +37,10 @@ def _cloud_points(cloud):
     return cloud.to_rerun(mode="points")
 
 
-# ---------------------------------------------------------------------------
-# Camera mount — tune these two values to match your physical ZED Mini mount.
-#
-# Coordinate convention for base_link: x=forward, y=left, z=up (ROS standard).
-# Measure from the center of the FlowBase platform to the ZED Mini lens.
-#
-#   translation: (forward_m, lateral_m, height_m)
-#   rotation:    from_euler(Vector3(roll, pitch, yaw))
-#                pitch is negative to tilt the camera downward
-#                e.g. Vector3(0, -0.26, 0)  ≈ 15° downward tilt
-# ---------------------------------------------------------------------------
+# Tune translation and pitch to match physical ZED Mini mount.
 _ZED_MOUNT = Transform(
-    translation=Vector3(0.0, 0.0, 0.5),          # adjust to your mount height
-    rotation=Quaternion.from_euler(Vector3(0.0, -0.26, 0.0)),  # 15° downward tilt
+    translation=Vector3(0.0, 0.0, 0.5),
+    rotation=Quaternion.from_euler(Vector3(0.0, -0.26, 0.0)),  # ≈15° downward tilt
     frame_id="base_link",
     child_frame_id="camera_link",
 )
@@ -81,24 +49,23 @@ _RERUN_VIZ = RerunBridgeModule.blueprint(
     pubsubs=[LCM()],
     rerun_open="web",
     visual_override={
-        "global_map": _cloud_points,
-        "frame_cloud": _cloud_points,
+        "world/global_map": _cloud_points,
+        "world/frame_cloud": _cloud_points,
     },
 )
 
 camera_nav_zed_teleop = autoconnect(
     coordinator_flowbase_keyboard_teleop,
-    # ZED handles depth + VIO — no FlowBaseOdomModule or MonocularDepthModule needed.
     ZEDCamera.blueprint(
         base_transform=_ZED_MOUNT,
         enable_depth=True,
-        enable_pointcloud=False,   # we backproject ourselves via HardwareDepthModule
-        enable_tracking=True,      # ZED VIO → publishes world ← base_link TF
+        enable_pointcloud=False,
+        enable_tracking=True,
         enable_imu_fusion=True,
         set_floor_as_origin=True,
     ),
     HardwareDepthModule.blueprint(
-        camera_frame="camera_color_optical_frame",  # ZED's left-camera optical frame name
+        camera_frame="camera_color_optical_frame",
     ),
     DepthAccumulatorModule.blueprint(),
     CameraNavRecorder.blueprint(db_path="traversal.db"),

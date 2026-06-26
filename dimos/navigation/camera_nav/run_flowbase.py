@@ -14,25 +14,10 @@
 
 """Start the camera-nav + FlowBase keyboard teleop blueprint.
 
-    python -m dimos.navigation.camera_nav.run_flowbase           # webcam (monocular)
-    python -m dimos.navigation.camera_nav.run_flowbase --zed     # ZED Mini (stereo)
-    python -m dimos.navigation.camera_nav.run_flowbase --trial   # laptop webcam, no robot
-
-``--trial`` mode
-    Opens the host webcam (index 0) and runs DepthAnythingV2 → Rerun without
-    connecting to any robot.  Use this to verify the depth / point-cloud /
-    visualisation pipeline on a dev machine before hardware deployment.
-
-``--zed`` mode (ZED Mini connected, ZED SDK installed)
-    Connects to the FlowBase at 172.6.2.20:11323.
-    Uses ZED hardware stereo depth + VIO odometry.
-
-Default (generic webcam mode)
-    Connects to the FlowBase at 172.6.2.20:11323.
-    Uses DepthAnythingV2 monocular depth + wheel odometry.
-
-After stopping (--zed or default), run PGO correction:
-  python -m dimos.navigation.camera_nav.correct_map traversal.db --rerun
+    python -m dimos.navigation.camera_nav.run_flowbase                      # monocular webcam
+    python -m dimos.navigation.camera_nav.run_flowbase --address 10.0.0.94  # custom IP
+    python -m dimos.navigation.camera_nav.run_flowbase --zed                # ZED Mini stereo
+    python -m dimos.navigation.camera_nav.run_flowbase --trial              # no robot, dev machine
 """
 
 import argparse
@@ -42,23 +27,24 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("--zed", action="store_true", help="Use ZED Mini stereo camera (ZED SDK required)")
-    group.add_argument("--trial", action="store_true", help="Laptop webcam only, no robot required")
-    parser.add_argument("--address", default=None, help="FlowBase address (default: 172.6.2.20:11323)")
+    group.add_argument("--zed", action="store_true", help="ZED Mini stereo camera (ZED SDK required)")
+    group.add_argument("--trial", action="store_true", help="Laptop webcam only, no robot")
+    parser.add_argument("--address", default=None, help="FlowBase address override (default: 172.6.2.20:11323)")
     args = parser.parse_args()
 
     if args.trial:
         from dimos.navigation.camera_nav.blueprint_flowbase import camera_nav_static_trial
         ModuleCoordinator.build(camera_nav_static_trial).loop()
+
     elif args.zed:
         from dimos.navigation.camera_nav.blueprint_zed import camera_nav_zed_teleop
         ModuleCoordinator.build(camera_nav_zed_teleop).loop()
+
     else:
         from dimos.navigation.camera_nav.blueprint_flowbase import (
             _make_flowbase_coordinator,
             _CAMERA_MOUNT,
             _cloud_points,
-            _depth_img,
         )
         from dimos.core.coordination.blueprints import autoconnect
         from dimos.hardware.drive_trains.flowbase.odom_tf import FlowBaseOdomModule
@@ -79,11 +65,7 @@ if __name__ == "__main__":
             RerunBridgeModule.blueprint(
                 pubsubs=[LCM()],
                 rerun_open="web",
-                visual_override={
-                    "world/global_map": _cloud_points,
-                    "world/frame_cloud": _cloud_points,
-                    "world/depth_image": _depth_img,
-                },
+                visual_override={"world/global_map": _cloud_points, "world/frame_cloud": _cloud_points},
             ),
         )
         ModuleCoordinator.build(blueprint).loop()

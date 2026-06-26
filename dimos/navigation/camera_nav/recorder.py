@@ -12,28 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Records ``frame_cloud`` observations with robot body pose for post-traversal PGO correction.
-
-Drop into any camera-nav pipeline to capture data for offline loop closure::
-
-    from dimos.navigation.camera_nav.blueprint import camera_nav_stack
-    from dimos.navigation.camera_nav.recorder import CameraNavRecorder
-    from dimos.core.coordination.blueprints import autoconnect
-
-    pipeline = autoconnect(
-        my_robot_blueprint,
-        camera_nav_stack,
-        CameraNavRecorder.blueprint(db_path="traversal.db"),
-    )
-
-After a traversal run ``correct_map.py`` to produce a drift-corrected map::
-
-    python -m dimos.navigation.camera_nav.correct_map traversal.db --output corrected.pcd
-"""
+"""Records frame_cloud observations with robot body pose for post-traversal PGO correction."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from dimos.core.stream import In
 from dimos.memory2.module import Recorder, pose_setter_for
@@ -47,29 +30,12 @@ logger = setup_logger()
 
 
 class CameraNavRecorder(Recorder):
-    """Records per-frame clouds with robot body pose attached.
-
-    Each ``frame_cloud`` observation is stored alongside the ``world <- base_link``
-    pose from the robot's TF tree.  After a traversal, pass the resulting
-    SQLite database to ``correct_map.py`` which runs PGO loop closure and
-    re-accumulates the clouds using drift-corrected poses.
-
-    Ports
-    -----
-    Inputs
-        frame_cloud : Per-frame coloured cloud from ``MonocularDepthModule``.
-    """
+    """Stores per-frame clouds with world←base_link pose for offline PGO correction."""
 
     frame_cloud: In[PointCloud2]
 
     @pose_setter_for("frame_cloud")
     def _body_pose(self, cloud: PointCloud2) -> PoseStamped | None:
-        """Return ``world <- base_link`` pose at the cloud's timestamp.
-
-        Using ``base_link`` (not the cloud's own ``frame_id``) gives PGO the
-        robot's odom trajectory, regardless of whether the cloud is already
-        in world frame.
-        """
         tf = self.tf.get(
             self.config.root_frame,
             "base_link",
