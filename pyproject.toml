@@ -104,7 +104,6 @@ dependencies = [
     "pydantic",
     "python-dotenv",
     "typing_extensions>=4.0; python_version < '3.11'",
-    "annotation-protocol>=1.4.0",
     "plum-dispatch==2.5.7",
     # Logging
     "structlog>=25.5.0,<26",
@@ -506,7 +505,6 @@ exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/conftest.py*"
 
 [[tool.mypy.overrides]]
 module = [
-    "annotation_protocol",
     "a750_control",
     "a750_control.*",
     "cyclonedds",

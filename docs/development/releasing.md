@@ -8,7 +8,7 @@ Throughout this document, replace `X.Y.Z` with the version you are releasing (e.
 
 1. Check for an existing `release/*` branch on the remote (`git ls-remote --heads origin 'release/*'`, or the Branches page). If one is still around from a previous release, complete section 3 for that branch before continuing.
 2. Bump the version on `main`. `uv version --bump patch` (or `minor` / `major`). Open a PR, squash-merge.
-3. Create the temporary release branch from the version-bump commit:
+3. Create the temporary release branch from the version-bump commit (need CI to complete on main before push will succeed):
 
    ```bash
    git fetch origin
