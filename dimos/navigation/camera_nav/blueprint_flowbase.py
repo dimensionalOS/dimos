@@ -36,9 +36,12 @@ Post-traversal correction::
 from __future__ import annotations
 
 from dimos.control.blueprints.mobile import coordinator_flowbase_keyboard_teleop
+from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.drive_trains.flowbase.odom_tf import FlowBaseOdomModule
 from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -72,9 +75,9 @@ camera_nav_static_trial = autoconnect(
         pubsubs=[LCM()],
         rerun_open="web",
         visual_override={
-            "global_map": _cloud_points,
-            "frame_cloud": _cloud_points,
-            "depth_image": _depth_img,
+            "world/global_map": _cloud_points,
+            "world/frame_cloud": _cloud_points,
+            "world/depth_image": _depth_img,
         },
     ),
 )
@@ -99,6 +102,25 @@ _CAMERA_MOUNT = Transform(
     frame_id="base_link",
     child_frame_id="camera_link",
 )
+
+def _make_flowbase_coordinator(address: str | None = None):
+    """Build a FlowBase + WASD keyboard teleop coordinator with a configurable IP."""
+    _joints = make_twist_base_joints("base")
+    hw = HardwareComponent(
+        hardware_id="base",
+        hardware_type=HardwareType.BASE,
+        joints=_joints,
+        adapter_type="flowbase",
+        address=address,
+    )
+    return autoconnect(
+        ControlCoordinator.blueprint(
+            hardware=[hw],
+            tasks=[TaskConfig(name="vel_base", type="velocity", joint_names=_joints, priority=10)],
+        ),
+        KeyboardTeleop.blueprint(),
+    ).remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
+
 
 # FlowBase keyboard teleop + camera perception + map recording in one blueprint.
 #
@@ -125,8 +147,8 @@ camera_nav_flowbase_teleop = autoconnect(
         pubsubs=[LCM()],
         rerun_open="web",
         visual_override={
-            "global_map": _cloud_points,
-            "frame_cloud": _cloud_points,
+            "world/global_map": _cloud_points,
+            "world/frame_cloud": _cloud_points,
         },
     ),
 )

@@ -44,6 +44,7 @@ if __name__ == "__main__":
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--zed", action="store_true", help="Use ZED Mini stereo camera (ZED SDK required)")
     group.add_argument("--trial", action="store_true", help="Laptop webcam only, no robot required")
+    parser.add_argument("--address", default=None, help="FlowBase address (default: 172.6.2.20:11323)")
     args = parser.parse_args()
 
     if args.trial:
@@ -53,5 +54,36 @@ if __name__ == "__main__":
         from dimos.navigation.camera_nav.blueprint_zed import camera_nav_zed_teleop
         ModuleCoordinator.build(camera_nav_zed_teleop).loop()
     else:
-        from dimos.navigation.camera_nav.blueprint_flowbase import camera_nav_flowbase_teleop
-        ModuleCoordinator.build(camera_nav_flowbase_teleop).loop()
+        from dimos.navigation.camera_nav.blueprint_flowbase import (
+            _make_flowbase_coordinator,
+            _CAMERA_MOUNT,
+            _cloud_points,
+            _depth_img,
+        )
+        from dimos.core.coordination.blueprints import autoconnect
+        from dimos.hardware.drive_trains.flowbase.odom_tf import FlowBaseOdomModule
+        from dimos.hardware.sensors.camera.module import CameraModule
+        from dimos.navigation.camera_nav.recorder import CameraNavRecorder
+        from dimos.perception.depth.accumulator import DepthAccumulatorModule
+        from dimos.perception.depth.monocular_depth_module import MonocularDepthModule
+        from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+        from dimos.visualization.rerun.bridge import RerunBridgeModule
+
+        blueprint = autoconnect(
+            _make_flowbase_coordinator(address=args.address),
+            FlowBaseOdomModule.blueprint(),
+            CameraModule.blueprint(transform=_CAMERA_MOUNT),
+            MonocularDepthModule.blueprint(),
+            DepthAccumulatorModule.blueprint(),
+            CameraNavRecorder.blueprint(db_path="traversal.db"),
+            RerunBridgeModule.blueprint(
+                pubsubs=[LCM()],
+                rerun_open="web",
+                visual_override={
+                    "world/global_map": _cloud_points,
+                    "world/frame_cloud": _cloud_points,
+                    "world/depth_image": _depth_img,
+                },
+            ),
+        )
+        ModuleCoordinator.build(blueprint).loop()
