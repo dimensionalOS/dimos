@@ -564,6 +564,16 @@ module = [
 ]
 ignore_missing_imports = true
 
+# Forward dependency: scene-package cooking lands in a follow-up PR.
+# entity_scene references ScenePackage under TYPE_CHECKING only.
+[[tool.mypy.overrides]]
+module = [
+    "dimos.simulation.scene_assets.*",
+    "dimos.simulation.scenes.*",
+]
+ignore_missing_imports = true
+follow_imports = "skip"
+
 [[tool.mypy.overrides]]
 module = ["pydrake", "pydrake.*"]
 follow_imports = "skip"
