@@ -62,7 +62,10 @@ def scene_package_static_entities(
     browser viewers do not need direct filesystem access to the asset.
     """
     package = resolve_scene_package_for_rerun(scene)
-    visual_path = package.browser_visual_path("rerun") if package is not None else None
+    if package is None:
+        return {}
+
+    visual_path = package.browser_visual_path("rerun")
     if visual_path is None or not visual_path.exists():
         return {}
 
