@@ -91,11 +91,12 @@ def _resolve_dimos_office() -> ScenePackage:
         )
 
     package = load_scene_package(metadata_path)
+    rerun_visual_path = package.browser_visual_path("rerun")
     if (
-        package.visual_path is not None
+        rerun_visual_path is not None
         and package.browser_collision_path is not None
         and package.mujoco_scene_path is not None
-        and package.visual_path.exists()
+        and rerun_visual_path.exists()
         and package.browser_collision_path.exists()
         and package.mujoco_scene_path.exists()
     ):

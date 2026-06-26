@@ -1,60 +1,60 @@
-# Runtime Scene Packages
+# Scene Packages At Runtime
 
-Scene packages are cooked assets. Runtime code should treat them as a small
-manifest plus a set of simulator/viewer artifacts, not as raw meshes to inspect
-or recook.
+A scene package is a cooked environment. Runtime code should not inspect raw
+GLBs, run Blender, or apply cooking heuristics. It should load
+`scene.meta.json`, choose the artifact for its backend, and pass that artifact
+to the simulator or viewer.
 
-The basic consumer interface is:
+## Load A Package
+
+Use `resolve_scene_package()` for the same values accepted by `--scene`:
 
 ```python
 from dimos.simulation.scenes.catalog import resolve_scene_package
 
 package = resolve_scene_package("office")
 assert package is not None
-
-print(package.metadata_path)
-print(package.visual_path)             # GLB for Rerun/browser viewers
-print(package.browser_collision_path)  # GLB for picking/raycast users
-print(package.objects_path)            # semantic object table, if present
-print(package.mujoco_scene_path)       # scene-only MuJoCo wrapper.xml
-print(package.entities)                # optional runtime entities
 ```
 
-Do not parse `scene.meta.json` directly. Use `resolve_scene_package()` when
-accepting the same values as `--scene`, or `load_scene_package()` from
-`dimos.simulation.scene_assets.spec` when you already have an exact
-`scene.meta.json` path.
+Use `load_scene_package()` when you already have an exact metadata path:
 
-## One-Minute Smoke Test
+```python
+from dimos.simulation.scene_assets.spec import load_scene_package
 
-This repository includes a tiny demo module that shows exactly what a consumer
-does with a scene package:
-
-```bash
-python -m dimos.simulation.scenes.demo_scene_package_consumer office
+package = load_scene_package("data/scene_packages/dimos_office/scene.meta.json")
 ```
 
-To also compile the office scene with the robot-only G1 MJCF, run:
-
-```bash
-python -m dimos.simulation.scenes.demo_scene_package_consumer office --compile-g1-mujoco
-```
-
-That command does not start DimOS workers or a viewer. It resolves the package,
-loads the MuJoCo scene artifact, attaches the G1 robot MJCF, adds package
-entities, and compiles a MuJoCo model. It is intended as a small reference for
-new runtime consumers.
-
-## Running G1 GR00T With A Scene
-
-The currently shipped named runtime scenes are:
+The currently shipped named scenes are:
 
 ```text
-none    legacy G1 MuJoCo model, no cooked scene package
-office  cooked office scene package from data/.lfs/scene_packages.tar.gz
+none    no cooked scene package
+office  cooked DimOS office package
 ```
 
-Run the office scene with Rerun visualization:
+## Pick The Backend Artifact
+
+Scene packages can contain several artifacts for different consumers:
+
+```python
+rerun_glb = package.browser_visual_path("rerun")
+babylon_glb = package.browser_visual_path("babylon")
+browser_collision = package.browser_collision_path
+objects_json = package.objects_path
+mujoco_xml = package.mujoco_scene_path
+entities = package.entities
+```
+
+Browser visuals are backend-specific because GLB support differs by viewer.
+Rerun should request `browser_visual_path("rerun")`; Babylon/PimSim should
+request `browser_visual_path("babylon")`. If a target returns `None`, the
+package was not cooked for that backend.
+
+MuJoCo uses the scene-only XML plus runtime entities. The robot is attached by
+`MujocoSimModule`; it is not part of `scene.meta.json`.
+
+## Run G1 With A Scene
+
+Run the cooked office scene:
 
 ```bash
 python -m dimos.robot.cli.dimos \
@@ -66,7 +66,7 @@ python -m dimos.robot.cli.dimos \
   -o mujocosimmodule.headless=true
 ```
 
-Run without a scene:
+Run the same blueprint without a cooked scene:
 
 ```bash
 python -m dimos.robot.cli.dimos \
@@ -78,60 +78,42 @@ python -m dimos.robot.cli.dimos \
   -o mujocosimmodule.headless=true
 ```
 
-Prefer `mujocosimmodule.headless=true` for normal testing. With
-`headless=false`, MuJoCo opens its native window and the simulation can run much
-slower. Use that only when directly debugging MuJoCo contacts or rendering; for
-normal operation, look at the robot, scene GLB, lidar point cloud, costmaps, and
-planned path in the Rerun native viewer.
+Use `mujocosimmodule.headless=true` for normal testing and inspect the scene,
+robot, lidar, map, and path in Rerun. `headless=false` opens the MuJoCo native
+window and is useful for contact debugging, but it can run much slower.
 
-The first run may extract these LFS archives:
+## MuJoCo Loading Modes
 
-```text
-data/.lfs/scene_packages.tar.gz
-data/.lfs/g1_urdf.tar.gz
-data/.lfs/groot.tar.gz
-```
-
-## What Loading Means
-
-For MuJoCo, a scene package is not a complete robot simulation by itself. The
-runtime does this:
+Normal packages are robot-agnostic:
 
 ```text
---scene office
-  -> resolve_scene_package("office")
-  -> package.mujoco_scene_path      # scene-only wrapper.xml
-  -> robot-only G1 MJCF
-  -> package.entities
-  -> MujocoSimModule composes and compiles one model
+scene.meta.json -> wrapper.xml + entities -> attach robot MJCF -> compile MjModel
 ```
 
-Large scenes may also ship a composed `.mjb`. In that case the `.mjb` already
-contains the robot, scene, spawn pose, and selected entity set. Passing an `.mjb`
-path to `--scene` skips runtime composition:
-
-```bash
-python -m dimos.robot.cli.dimos \
-  --simulation mujoco \
-  --scene /path/to/package/mujoco/composed/unitree-g1-groot-wbc_spawn.mjb \
-  --viewer rerun \
-  run unitree-g1-groot-wbc
-```
-
-A composed `.mjb` is fast to load but not robot-agnostic. Build one per robot
-model, spawn/entity configuration, and meaningful scene revision.
-
-## Adding A Runtime Consumer
-
-Use the package artifact that matches your backend:
+Large scenes may also ship composed `.mjb` files:
 
 ```text
-Rerun/browser visual       package.visual_path
-browser picking/raycast    package.browser_collision_path + package.objects_path
-MuJoCo runtime compose     package.mujoco_scene_path + package.entities
-precomposed MuJoCo         path to package/mujoco/composed/*.mjb
+wrapper.xml + robot MJCF + spawn/entity selection -> composed/<name>.mjb
 ```
 
-Keep runtime consumers independent from the cooking pipeline. Cooking code may
-need Blender, CoACD, gltfpack, Open3D, USD tooling, and source-asset heuristics.
-Runtime consumers should only need the stable `ScenePackage` contract.
+Passing a composed `.mjb` path to `--scene` skips runtime composition and loads
+the binary model directly. This is faster, but the file is specific to one
+robot, spawn pose, entity set, and scene revision.
+
+## Package Contract
+
+Runtime consumers should depend on:
+
+```text
+ScenePackage.package_dir
+ScenePackage.alignment
+ScenePackage.browser_visual_path(target)
+ScenePackage.browser_collision_path
+ScenePackage.objects_path
+ScenePackage.mujoco_scene_path
+ScenePackage.mujoco_binary_path
+ScenePackage.entities
+```
+
+Cooking details belong in `dimos.experimental.pimsim.scene`; runtime modules
+should stay on this package contract.

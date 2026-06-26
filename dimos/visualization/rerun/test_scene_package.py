@@ -38,7 +38,7 @@ class FakeRerun:
 
 def test_resolves_composed_mjb_to_scene_package_visual(tmp_path: Path) -> None:
     package_dir = tmp_path / "store"
-    visual_path = package_dir / "browser" / "visual.glb"
+    visual_path = package_dir / "browser" / "visual.rerun.glb"
     visual_path.parent.mkdir(parents=True)
     visual_path.write_bytes(b"glb bytes")
     composed_path = package_dir / "mujoco" / "composed" / "g1.mjb"
@@ -55,12 +55,12 @@ def test_resolves_composed_mjb_to_scene_package_visual(tmp_path: Path) -> None:
         package_dir=package_dir,
         source_path=tmp_path / "source.blend",
         alignment=alignment,
-        visual_path=visual_path,
+        browser_visuals={"rerun": visual_path},
     ).write_metadata()
 
     package = resolve_scene_package_for_rerun(composed_path)
     assert package is not None
-    assert package.visual_path == visual_path.resolve()
+    assert package.browser_visual_path("rerun") == visual_path.resolve()
 
     static_entities = scene_package_static_entities(composed_path)
     assert set(static_entities) == {"world/scene"}

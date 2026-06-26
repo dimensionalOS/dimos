@@ -106,6 +106,7 @@ class ScenePackage:
     source_path: Path
     alignment: SceneMeshAlignment
     visual_path: Path | None = None
+    browser_visuals: dict[str, Path] = field(default_factory=dict)
     browser_collision_path: Path | None = None
     objects_path: Path | None = None
     mujoco_scene_path: Path | None = None
@@ -124,6 +125,10 @@ class ScenePackage:
             "artifact_frames": ARTIFACT_FRAMES,
             "artifacts": {
                 "browser_visual": _serialize_package_path(self.visual_path, package_dir),
+                "browser_visuals": _serialize_browser_visuals(
+                    self.browser_visuals,
+                    package_dir,
+                ),
                 "browser_collision": _serialize_package_path(
                     self.browser_collision_path,
                     package_dir,
@@ -138,6 +143,23 @@ class ScenePackage:
             "entities": _serialize_entity_paths(self.entities, package_dir),
             "stats": self.stats,
         }
+
+    def browser_visual_path(self, target: str) -> Path | None:
+        """Return a visual GLB for a specific browser/viewer backend.
+
+        Scene packages can carry multiple browser-facing visuals because viewer
+        support for glTF extensions differs. For example, Rerun currently needs
+        conservative GLBs, while Babylon can use more web-oriented output.
+
+        Older packages only have ``browser_visual``. Rerun may use that legacy
+        artifact; other targets should cook their own named asset.
+        """
+        target_key = target.strip().lower()
+        if target_key in self.browser_visuals:
+            return self.browser_visuals[target_key]
+        if target_key == "rerun":
+            return self.browser_visuals.get("default") or self.visual_path
+        return self.browser_visuals.get("default")
 
     def write_metadata(self, path: Path | None = None) -> Path:
         metadata_path = path or self.metadata_path or (self.package_dir / "scene.meta.json")
@@ -154,11 +176,14 @@ def load_scene_package(path: str | Path) -> ScenePackage:
     artifacts = raw.get("artifacts", {})
     align = SceneMeshAlignment(**raw["alignment"])
     package_dir = _resolve_package_dir(raw.get("package_dir"), metadata_path)
+    browser_visuals = _resolve_browser_visuals(artifacts.get("browser_visuals"), package_dir)
+    legacy_visual_path = _resolve_package_path(artifacts.get("browser_visual"), package_dir)
     return ScenePackage(
         package_dir=package_dir,
         source_path=Path(raw["source_path"]),
         alignment=align,
-        visual_path=_resolve_package_path(artifacts.get("browser_visual"), package_dir),
+        visual_path=legacy_visual_path,
+        browser_visuals=browser_visuals,
         browser_collision_path=(
             _resolve_package_path(artifacts.get("browser_collision"), package_dir)
         ),
@@ -221,6 +246,30 @@ def _resolve_package_path(raw: str | None, package_dir: Path) -> Path | None:
     if path.is_absolute():
         return path
     return (package_dir / path).resolve()
+
+
+def _serialize_browser_visuals(
+    visuals: dict[str, Path],
+    package_dir: Path,
+) -> dict[str, str]:
+    return {
+        str(target).strip().lower(): serialized
+        for target, path in sorted(visuals.items())
+        if (serialized := _serialize_package_path(path, package_dir)) is not None
+    }
+
+
+def _resolve_browser_visuals(raw: Any, package_dir: Path) -> dict[str, Path]:
+    if not isinstance(raw, dict):
+        return {}
+    resolved: dict[str, Path] = {}
+    for target, path in raw.items():
+        if not isinstance(target, str) or not isinstance(path, str):
+            continue
+        visual_path = _resolve_package_path(path, package_dir)
+        if visual_path is not None:
+            resolved[target.strip().lower()] = visual_path
+    return resolved
 
 
 _ENTITY_PATH_KEYS = ("visual_path", "collision_path", "mesh_path")
