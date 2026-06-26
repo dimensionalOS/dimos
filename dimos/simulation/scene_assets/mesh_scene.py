@@ -413,6 +413,7 @@ def split_disconnected_scene_prims(
     min_component_extent: float,
     min_component_faces: int,
     can_split: Callable[[ScenePrimMesh], bool] | None = None,
+    force_split: Callable[[ScenePrimMesh], bool] | None = None,
 ) -> tuple[list[ScenePrimMesh], dict[str, int]]:
     """Split scene-graph nodes that are disconnected prop clusters.
 
@@ -437,38 +438,42 @@ def split_disconnected_scene_prims(
         if can_split is not None and not can_split(prim):
             result.append(prim)
             continue
+        forced = force_split(prim) if force_split is not None else False
         if len(prim.triangles) < max(min_component_faces * 2, 1):
             result.append(prim)
             continue
         prim_extent = np.ptp(prim.vertices, axis=0)
-        if float(prim_extent.max()) < prim_min_extent:
-            result.append(prim)
-            continue
-        positive_extent = prim_extent[prim_extent > 1e-6]
-        if (
-            len(positive_extent) < 3
-            or float(positive_extent.max() / positive_extent.min()) < axis_ratio
-        ):
-            result.append(prim)
-            continue
+        if not forced:
+            if float(prim_extent.max()) < prim_min_extent:
+                result.append(prim)
+                continue
+            positive_extent = prim_extent[prim_extent > 1e-6]
+            if (
+                len(positive_extent) < 3
+                or float(positive_extent.max() / positive_extent.min()) < axis_ratio
+            ):
+                result.append(prim)
+                continue
 
         mesh = trimesh.Trimesh(vertices=prim.vertices, faces=prim.triangles, process=False)
         parts = mesh.split(only_watertight=False)
-        if len(parts) < min_components:
+        required_components = 2 if forced else min_components
+        if len(parts) < required_components:
             result.append(prim)
             continue
 
-        component_extents = np.array(
-            [np.ptp(np.asarray(part.vertices), axis=0).max() for part in parts],
-            dtype=np.float64,
-        )
-        median_component_extent = float(np.median(component_extents))
-        if median_component_extent <= 0.0:
-            result.append(prim)
-            continue
-        if float(prim_extent.max()) / median_component_extent < extent_ratio:
-            result.append(prim)
-            continue
+        if not forced:
+            component_extents = np.array(
+                [np.ptp(np.asarray(part.vertices), axis=0).max() for part in parts],
+                dtype=np.float64,
+            )
+            median_component_extent = float(np.median(component_extents))
+            if median_component_extent <= 0.0:
+                result.append(prim)
+                continue
+            if float(prim_extent.max()) / median_component_extent < extent_ratio:
+                result.append(prim)
+                continue
 
         emitted = 0
         dropped = 0
@@ -476,7 +481,8 @@ def split_disconnected_scene_prims(
             vertices = np.asarray(part.vertices, dtype=np.float32)
             triangles = np.asarray(part.faces, dtype=np.int32)
             component_extent = float(np.ptp(vertices, axis=0).max()) if len(vertices) else 0.0
-            if len(triangles) < min_component_faces or component_extent < min_component_extent:
+            too_few_faces = not forced and len(triangles) < min_component_faces
+            if too_few_faces or component_extent < min_component_extent:
                 dropped += 1
                 continue
             result.append(
@@ -697,14 +703,3 @@ def load_scene_prims(
     if not prims:
         raise RuntimeError(f"no Mesh prims with triangles found in {path}")
     return prims
-
-
-__all__ = [
-    "SceneMeshAlignment",
-    "ScenePrimMesh",
-    "floor_z_under_origin",
-    "load_scene_mesh",
-    "load_scene_prims",
-    "make_raycasting_scene",
-    "split_disconnected_scene_prims",
-]

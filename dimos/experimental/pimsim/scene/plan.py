@@ -28,8 +28,13 @@ import re
 from typing import Any
 
 import numpy as np
+from scipy.spatial.transform import Rotation as R
 
-from dimos.experimental.pimsim.scene.sidecar import InteractableSpec, SceneCookSidecar
+from dimos.experimental.pimsim.scene.sidecar import (
+    EntityGroupSpec,
+    InteractableSpec,
+    SceneCookSidecar,
+)
 from dimos.simulation.mujoco.collision_spec import CollisionSpec
 from dimos.simulation.scene_assets.mesh_scene import (
     SceneMeshAlignment,
@@ -54,9 +59,10 @@ class EntityCookPlan:
     initial_quat: tuple[float, float, float, float]
     descriptor: dict[str, Any]
     visual_path: Path | None
+    prototype_id: str | None = None
 
     def to_metadata(self) -> dict[str, Any]:
-        return {
+        metadata = {
             "id": self.spec.id,
             "tags": list(self.spec.tags),
             "source_prim_paths": list(self.spec.source_prim_paths),
@@ -83,9 +89,12 @@ class EntityCookPlan:
             "physics": self.spec.physics,
             "visual": self.spec.visual,
         }
+        if self.prototype_id is not None:
+            metadata["prototype_id"] = self.prototype_id
+        return metadata
 
     def to_json_dict(self) -> dict[str, Any]:
-        return {
+        raw = {
             "id": self.spec.id,
             "safe_id": self.safe_id,
             "matched_prim_paths": list(self.matched_prim_paths),
@@ -96,6 +105,31 @@ class EntityCookPlan:
             "descriptor": self.descriptor,
             "visual_path": str(self.visual_path) if self.visual_path else None,
             "remove_from_static": self.spec.remove_from_static,
+        }
+        if self.prototype_id is not None:
+            raw["prototype_id"] = self.prototype_id
+        return raw
+
+
+@dataclass(frozen=True)
+class EntityPrototypePlan:
+    """Shared source mesh cooked once and instanced by many entities."""
+
+    id: str
+    safe_id: str
+    source_prim_path: str
+    vertices: np.ndarray
+    triangles: np.ndarray
+    collision_dir: Path
+
+    def to_json_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "safe_id": self.safe_id,
+            "source_prim_path": self.source_prim_path,
+            "vertex_count": len(self.vertices),
+            "triangle_count": len(self.triangles),
+            "collision_dir": str(self.collision_dir),
         }
 
 
@@ -108,6 +142,7 @@ class SceneCookPlan:
     sidecar: SceneCookSidecar
     collision_spec: CollisionSpec
     entities: tuple[EntityCookPlan, ...] = ()
+    prototypes: tuple[EntityPrototypePlan, ...] = ()
     stats: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -128,6 +163,7 @@ class SceneCookPlan:
             },
             "sidecar_path": str(self.sidecar.path) if self.sidecar.path else None,
             "entities": [entity.to_json_dict() for entity in self.entities],
+            "prototypes": [prototype.to_json_dict() for prototype in self.prototypes],
             "stats": self.stats,
         }
 
@@ -142,7 +178,7 @@ def build_scene_cook_plan(
 ) -> SceneCookPlan:
     source = Path(source_path).expanduser().resolve()
     base_collision = collision_spec or sidecar.collision
-    if not sidecar.interactables:
+    if not sidecar.interactables and not sidecar.entity_groups:
         return SceneCookPlan(
             source_path=source,
             alignment=alignment,
@@ -152,9 +188,11 @@ def build_scene_cook_plan(
         )
 
     entities_dir = Path(output_dir).expanduser().resolve() / "entities"
-    needs_prims = any(item.source_prim_paths for item in sidecar.interactables)
+    needs_prims = bool(sidecar.entity_groups) or any(
+        item.source_prim_paths for item in sidecar.interactables
+    )
     prims = load_scene_prims(source, alignment=alignment) if needs_prims else []
-    entities = tuple(
+    explicit_entities = tuple(
         (
             _build_synthetic_entity_plan(item, entities_dir)
             if item.is_synthetic
@@ -162,14 +200,29 @@ def build_scene_cook_plan(
         )
         for item in sidecar.interactables
     )
-    effective_collision = _collision_spec_with_entity_skips(base_collision, entities)
+    group_entities, prototypes, group_skip_patterns = _build_entity_group_plans(
+        sidecar.entity_groups,
+        prims,
+        entities_dir,
+    )
+    entities = (*explicit_entities, *group_entities)
+    effective_collision = _collision_spec_with_entity_skips(
+        base_collision,
+        entities,
+        group_skip_patterns=group_skip_patterns,
+    )
     return SceneCookPlan(
         source_path=source,
         alignment=alignment,
         sidecar=sidecar,
         collision_spec=effective_collision,
         entities=entities,
-        stats={"source_prims": len(prims), "entities": len(entities)},
+        prototypes=prototypes,
+        stats={
+            "source_prims": len(prims),
+            "entities": len(entities),
+            "entity_prototypes": len(prototypes),
+        },
     )
 
 
@@ -261,6 +314,97 @@ def _build_synthetic_entity_plan(
     )
 
 
+def _build_entity_group_plans(
+    groups: tuple[EntityGroupSpec, ...],
+    prims: list[ScenePrimMesh],
+    entities_dir: Path,
+) -> tuple[tuple[EntityCookPlan, ...], tuple[EntityPrototypePlan, ...], tuple[str, ...]]:
+    entities: list[EntityCookPlan] = []
+    prototypes_by_id: dict[str, EntityPrototypePlan] = {}
+    group_skip_patterns: list[str] = []
+
+    for group in groups:
+        matched = sorted((prim for prim in prims if group.matches(prim)), key=_prim_sort_key)
+        if not matched:
+            patterns = ", ".join(group.source_prim_paths)
+            raise ValueError(
+                f"scene entity group {group.id_prefix!r} matched no source prims: {patterns}"
+            )
+        if group.remove_from_static:
+            group_skip_patterns.extend(group.source_prim_paths)
+
+        physics = {"shape": "mesh", **group.physics}
+        for index, prim in enumerate(matched):
+            entity, prototype = _build_group_entity_plan(
+                group,
+                prim,
+                index=index,
+                physics=physics,
+                entities_dir=entities_dir,
+            )
+            entities.append(entity)
+            prototypes_by_id.setdefault(prototype.id, prototype)
+
+    return tuple(entities), tuple(prototypes_by_id.values()), tuple(group_skip_patterns)
+
+
+def _build_group_entity_plan(
+    group: EntityGroupSpec,
+    prim: ScenePrimMesh,
+    *,
+    index: int,
+    physics: dict[str, Any],
+    entities_dir: Path,
+) -> tuple[EntityCookPlan, EntityPrototypePlan]:
+    prim_path = prim.prim_path or prim.name
+    prototype_key = _entity_group_prototype_key(group, prim)
+    prototype_safe_id = _safe_entity_id(f"{group.id_prefix}_{prototype_key}")
+    entity_id = f"{group.id_prefix}_{index:05d}_{prototype_safe_id}"
+    spec = InteractableSpec(
+        id=entity_id,
+        source_prim_paths=(prim_path,),
+        remove_from_static=group.remove_from_static,
+        spawn=group.spawn,
+        kind=group.kind,
+        mass=group.mass,
+        tags=group.tags,
+        physics=physics,
+        visual=group.visual,
+    )
+
+    vertices = np.asarray(prim.vertices, dtype=np.float64)
+    aabb_min_np = vertices.min(axis=0).astype(float)
+    aabb_max_np = vertices.max(axis=0).astype(float)
+    extents = np.maximum(aabb_max_np - aabb_min_np, 1e-4).astype(float)
+    local_vertices, center_np, quat = _localize_prim_mesh(vertices)
+    shape_hint, shape_extents = _resolve_shape(spec, extents)
+    descriptor = _make_descriptor(spec, shape_hint, shape_extents, visual_path=None)
+    descriptor["prototype_id"] = prototype_safe_id
+
+    entity = EntityCookPlan(
+        spec=spec,
+        safe_id=_safe_entity_id(entity_id),
+        matched_prim_paths=(prim_path,),
+        visual_node_patterns=(),
+        aabb_min=(float(aabb_min_np[0]), float(aabb_min_np[1]), float(aabb_min_np[2])),
+        aabb_max=(float(aabb_max_np[0]), float(aabb_max_np[1]), float(aabb_max_np[2])),
+        center=(float(center_np[0]), float(center_np[1]), float(center_np[2])),
+        initial_quat=quat,
+        descriptor=descriptor,
+        visual_path=None,
+        prototype_id=prototype_safe_id,
+    )
+    prototype = EntityPrototypePlan(
+        id=prototype_safe_id,
+        safe_id=prototype_safe_id,
+        source_prim_path=prim_path,
+        vertices=local_vertices.astype(np.float32),
+        triangles=np.asarray(prim.triangles, dtype=np.int32),
+        collision_dir=entities_dir / "_prototypes" / prototype_safe_id / "mujoco_collision",
+    )
+    return entity, prototype
+
+
 def _resolve_shape(
     spec: InteractableSpec,
     extents_np: np.ndarray,
@@ -305,6 +449,52 @@ def _make_descriptor(
     return descriptor
 
 
+def _entity_group_prototype_key(group: EntityGroupSpec, prim: ScenePrimMesh) -> str:
+    prim_path = prim.prim_path or prim.visual_node_name or prim.name
+    if group.prototype_key == "prim_path":
+        return prim_path
+    if group.prototype_key != "mesh_name":
+        raise ValueError(
+            f"entity group {group.id_prefix!r}: unsupported prototype_key {group.prototype_key!r}"
+        )
+
+    basename = prim_path.lstrip("/").rsplit("/", 1)[-1]
+    if "__" in basename:
+        basename = basename.split("__", 1)[1]
+    basename = basename.rsplit("_Mesh", 1)[0]
+    repeated = re.match(r"^(.+?)\.\d+_\1$", basename)
+    if repeated:
+        return repeated.group(1)
+    return _HASH_SUFFIX_RE.sub("", basename)
+
+
+def _localize_prim_mesh(
+    vertices: np.ndarray,
+) -> tuple[np.ndarray, tuple[float, float, float], tuple[float, float, float, float]]:
+    aabb_min = vertices.min(axis=0)
+    aabb_max = vertices.max(axis=0)
+    center = (aabb_min + aabb_max) * 0.5
+    centered = vertices - center
+    cov = centered.T @ centered
+    _, axes = np.linalg.eigh(cov)
+    axes = axes[:, ::-1]
+    if np.linalg.det(axes) < 0.0:
+        axes[:, 2] *= -1.0
+    local_vertices = centered @ axes
+    quat_xyzw = R.from_matrix(axes).as_quat()
+    quat_wxyz = (
+        float(quat_xyzw[3]),
+        float(quat_xyzw[0]),
+        float(quat_xyzw[1]),
+        float(quat_xyzw[2]),
+    )
+    return (
+        local_vertices,
+        (float(center[0]), float(center[1]), float(center[2])),
+        quat_wxyz,
+    )
+
+
 def _visual_node_patterns(prims: list[ScenePrimMesh]) -> tuple[str, ...]:
     names: list[str] = []
     for prim in prims:
@@ -319,13 +509,27 @@ def _visual_node_patterns(prims: list[ScenePrimMesh]) -> tuple[str, ...]:
 def _collision_spec_with_entity_skips(
     collision_spec: CollisionSpec,
     entities: tuple[EntityCookPlan, ...],
+    *,
+    group_skip_patterns: tuple[str, ...] = (),
 ) -> CollisionSpec:
-    prim_overrides: dict[str, dict[str, Any]] = dict(collision_spec.prim_overrides)
+    entity_skip_overrides: dict[str, dict[str, Any]] = {}
+    for pattern in group_skip_patterns:
+        entity_skip_overrides[pattern] = {"type": "skip", "visual": False}
     for entity in entities:
+        if entity.prototype_id is not None:
+            continue
         if not entity.spec.remove_from_static:
             continue
         for prim_path in sorted(entity.matched_prim_paths):
-            prim_overrides.setdefault(prim_path, {"type": "skip"})
+            entity_skip_overrides[prim_path] = {"type": "skip", "visual": False}
+
+    # CollisionSpec.resolve() is first-match-wins. Entity extraction must
+    # take precedence over broad class overrides such as "Grocery_Scatter_*",
+    # otherwise extracted dynamic entities are duplicated in static collision.
+    prim_overrides: dict[str, dict[str, Any]] = {
+        **entity_skip_overrides,
+        **collision_spec.prim_overrides,
+    }
     return replace(collision_spec, prim_overrides=prim_overrides)
 
 
@@ -336,6 +540,3 @@ def _prim_sort_key(prim: ScenePrimMesh) -> tuple[str, str]:
 def _safe_entity_id(entity_id: str) -> str:
     safe = "".join(c if c.isalnum() or c in {"-", "_", "."} else "_" for c in entity_id)
     return safe or "entity"
-
-
-__all__ = ["EntityCookPlan", "SceneCookPlan", "build_scene_cook_plan"]

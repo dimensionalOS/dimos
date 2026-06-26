@@ -136,6 +136,3 @@ def _run_coacd(mesh: object, mesh_path: Path) -> list[tuple[object, object]]:
             "entity hulls: CoACD failed for %s (%s); using single convex hull", mesh_path, exc
         )
         return []
-
-
-__all__ = ["COLLISION_DIR_NAME", "cook_entity_collision_hulls"]

@@ -25,6 +25,7 @@ from dataclasses import asdict
 import hashlib
 import json
 from pathlib import Path
+import time
 from typing import Any
 
 from dimos.experimental.pimsim.scene.browser_collision import cook_browser_collision
@@ -33,8 +34,9 @@ from dimos.experimental.pimsim.scene.entity_collision import (
     cook_entity_collision_hulls,
 )
 from dimos.experimental.pimsim.scene.inspect import inspect_scene_asset
-from dimos.experimental.pimsim.scene.plan import build_scene_cook_plan
+from dimos.experimental.pimsim.scene.plan import EntityPrototypePlan, build_scene_cook_plan
 from dimos.experimental.pimsim.scene.sidecar import SceneCookSidecar
+from dimos.experimental.pimsim.scene.source_asset import prepare_scene_source
 from dimos.experimental.pimsim.scene.visual_blender import cook_plan_visual_assets
 from dimos.experimental.pimsim.scene.visual_glb import cook_browser_visual
 from dimos.simulation.mujoco.collision_spec import CollisionSpec
@@ -102,32 +104,43 @@ def cook_scene_package(
     mujoco_dir = package_dir / "mujoco"
     package_dir.mkdir(parents=True, exist_ok=True)
 
+    prepared_source = prepare_scene_source(source, rebake=rebake)
+    cook_source = prepared_source.cook_path
+
     stats: dict[str, Any] = {
-        "source": inspect_scene_asset(source).to_json_dict(),
+        "source": inspect_scene_asset(cook_source).to_json_dict(),
         "cook_spec": _cook_spec_json(cook_spec),
         "cook_version": _COOK_VERSION,
     }
-    if sidecar.path is not None or sidecar.interactables:
+    if prepared_source.normalized:
+        stats["source_normalization"] = prepared_source.to_json_dict()
+    if sidecar.path is not None or sidecar.interactables or sidecar.entity_groups:
         stats["authored_sidecar"] = sidecar.to_json_dict()
 
     plan = build_scene_cook_plan(
-        source,
+        cook_source,
         sidecar=sidecar,
         alignment=align,
         output_dir=package_dir,
         collision_spec=collision_spec,
     )
-    stats["cook_plan"] = plan.to_json_dict()
+    stats["cook_plan"] = {
+        "source_path": str(plan.source_path),
+        "sidecar_path": str(plan.sidecar.path) if plan.sidecar.path else None,
+        "entities": len(plan.entities),
+        "prototypes": [prototype.to_json_dict() for prototype in plan.prototypes],
+        "stats": plan.stats,
+    }
 
     entities = plan.entities_metadata()
     if entities:
         stats["interactables"] = {
             "count": len(entities),
-            "ids": [entity["id"] for entity in entities],
+            "id_samples": [entity["id"] for entity in entities[:100]],
             "static_visual_filter": "plan/blender",
         }
 
-    visual_source = source
+    visual_source = cook_source
     # Only invoke Blender when at least one entity actually extracts from
     # the source mesh; pure-synthetic sidecars (manip rigs) don't need it.
     needs_blender = visual.enabled and any(
@@ -135,16 +148,25 @@ def cook_scene_package(
     )
     if needs_blender:
         visual_source = cook_plan_visual_assets(
-            source,
+            cook_source,
             package_dir,
             plan=plan,
             rebake=rebake,
         )
 
     if mujoco.enabled:
+        prototype_hull_counts = _cook_entity_prototype_collision(
+            plan.prototypes,
+            entities,
+            rebake=rebake,
+        )
         hull_counts = _cook_entity_collision(entities, rebake=rebake)
-        if hull_counts:
-            stats["entity_collision"] = {"hulls_per_entity": hull_counts}
+        if prototype_hull_counts or hull_counts:
+            stats["entity_collision"] = {}
+            if prototype_hull_counts:
+                stats["entity_collision"]["hulls_per_prototype"] = prototype_hull_counts
+            if hull_counts:
+                stats["entity_collision"]["hulls_per_entity"] = hull_counts
 
     visual_result = cook_browser_visual(
         visual_source,
@@ -159,7 +181,7 @@ def cook_scene_package(
         }
 
     browser_collision_result = cook_browser_collision(
-        source,
+        cook_source,
         browser_dir,
         alignment=SceneMeshAlignment(y_up=False),
         spec=browser_collision,
@@ -170,9 +192,10 @@ def cook_scene_package(
         stats["browser_collision"] = browser_collision_result.stats
 
     mujoco_scene_path: Path | None = None
+    mujoco_binary_path: Path | None = None
     if mujoco.enabled:
         mujoco_scene_path = load_or_bake(
-            scene_mesh_path=source,
+            scene_mesh_path=cook_source,
             alignment=align,
             cache_root=mujoco_dir,
             collision_spec=plan.collision_spec,
@@ -180,6 +203,13 @@ def cook_scene_package(
             rebake=rebake,
         )
         stats["mujoco"] = {"scene_path": str(mujoco_scene_path)}
+        if mujoco.compile_binary:
+            mujoco_binary_path, binary_stats = _compile_mujoco_binary(
+                mujoco_scene_path,
+                rebake=rebake,
+            )
+            stats["mujoco"]["binary_path"] = str(mujoco_binary_path)
+            stats["mujoco"]["binary"] = binary_stats
 
     package = ScenePackage(
         package_dir=package_dir,
@@ -189,6 +219,7 @@ def cook_scene_package(
         browser_collision_path=browser_collision_result.path if browser_collision_result else None,
         objects_path=browser_collision_result.objects_path if browser_collision_result else None,
         mujoco_scene_path=mujoco_scene_path,
+        mujoco_binary_path=mujoco_binary_path,
         metadata_path=package_dir / "scene.meta.json",
         entities=entities,
         stats=stats,
@@ -214,6 +245,8 @@ def _cook_entity_collision(
     for entity in entities:
         if entity.get("descriptor", {}).get("shape_hint") != "mesh":
             continue
+        if entity.get("collision_paths"):
+            continue
         visual_path = entity.get("visual_path")
         if not visual_path or not Path(visual_path).exists():
             logger.warning(
@@ -231,6 +264,86 @@ def _cook_entity_collision(
             entity["collision_paths"] = [str(path) for path in hull_paths]
             hull_counts[str(entity.get("id"))] = len(hull_paths)
     return hull_counts
+
+
+def _cook_entity_prototype_collision(
+    prototypes: tuple[EntityPrototypePlan, ...],
+    entities: list[dict[str, Any]],
+    *,
+    rebake: bool,
+) -> dict[str, int]:
+    """Cook shared mesh prototypes once and attach hull paths to instances."""
+    if not prototypes:
+        return {}
+
+    hulls_by_prototype: dict[str, list[Path]] = {}
+    counts: dict[str, int] = {}
+    for prototype in prototypes:
+        source_obj = prototype.collision_dir.parent / "source.obj"
+        if rebake or not source_obj.exists():
+            _write_obj(source_obj, prototype.vertices, prototype.triangles)
+        hull_paths = cook_entity_collision_hulls(
+            source_obj,
+            prototype.collision_dir,
+            rebake=rebake,
+        )
+        if hull_paths:
+            hulls_by_prototype[prototype.id] = hull_paths
+            counts[prototype.id] = len(hull_paths)
+
+    for entity in entities:
+        prototype_id = entity.get("prototype_id")
+        if not isinstance(prototype_id, str):
+            continue
+        hull_paths = hulls_by_prototype.get(prototype_id)
+        if hull_paths:
+            entity["collision_paths"] = [str(path) for path in hull_paths]
+    return counts
+
+
+def _write_obj(path: Path, vertices: Any, triangles: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as f:
+        for vertex in vertices:
+            f.write(f"v {float(vertex[0])} {float(vertex[1])} {float(vertex[2])}\n")
+        for tri in triangles:
+            f.write(f"f {int(tri[0]) + 1} {int(tri[1]) + 1} {int(tri[2]) + 1}\n")
+
+
+def _compile_mujoco_binary(scene_xml_path: Path, *, rebake: bool) -> tuple[Path, dict[str, Any]]:
+    """Compile a scene-only MuJoCo XML wrapper to ``.mjb``.
+
+    This binary is fast to load but not editable as ``MjSpec``. It is a
+    cache/debug artifact for fixed scene models; robot attachment still
+    requires the XML wrapper unless a robot-specific composed binary is
+    produced separately.
+    """
+    import mujoco
+
+    binary_path = scene_xml_path.with_suffix(".mjb")
+    if binary_path.exists() and not rebake:
+        return binary_path, {
+            "cached": True,
+            "size_bytes": binary_path.stat().st_size,
+        }
+
+    start = time.perf_counter()
+    model = mujoco.MjModel.from_xml_path(str(scene_xml_path))
+    compile_s = time.perf_counter() - start
+
+    save_start = time.perf_counter()
+    mujoco.mj_saveModel(model, str(binary_path))
+    save_s = time.perf_counter() - save_start
+
+    return binary_path, {
+        "cached": False,
+        "compile_seconds": compile_s,
+        "save_seconds": save_s,
+        "size_bytes": binary_path.stat().st_size,
+        "nbody": int(model.nbody),
+        "ngeom": int(model.ngeom),
+        "nmesh": int(model.nmesh),
+    }
 
 
 def _package_key(
@@ -283,10 +396,43 @@ def cli_main() -> None:
         choices=("none", "webp", "ktx2"),
         default="none",
     )
+    parser.add_argument(
+        "--no-visual-texture-normalization",
+        action="store_true",
+        help=(
+            "do not rewrite embedded visual textures to plain 8-bit PNGs after "
+            "gltfpack. The default preserves textures but avoids viewer-specific "
+            "compressed or high-bit-depth texture formats."
+        ),
+    )
+    parser.add_argument(
+        "--visual-quantize",
+        action="store_true",
+        help=(
+            "allow gltfpack quantization. This makes smaller files but emits "
+            "KHR_mesh_quantization, which some viewers cannot load."
+        ),
+    )
+    parser.add_argument(
+        "--visual-gpu-instancing",
+        action="store_true",
+        help=(
+            "allow gltfpack to emit EXT_mesh_gpu_instancing. This can make "
+            "dense repeated assets much smaller, but not every viewer supports it."
+        ),
+    )
     parser.add_argument("--no-browser-collision", action="store_true")
     parser.add_argument("--browser-collision-target-faces", type=int, default=100_000)
     parser.add_argument("--no-mujoco", action="store_true")
     parser.add_argument("--include-mujoco-visual", action="store_true")
+    parser.add_argument(
+        "--compile-mujoco-binary",
+        action="store_true",
+        help=(
+            "also compile the scene-only MuJoCo wrapper.xml to wrapper.mjb. "
+            "Fast to load, but not usable for runtime robot attachment by itself."
+        ),
+    )
     parser.add_argument("--rebake", action="store_true")
     args = parser.parse_args()
 
@@ -309,6 +455,9 @@ def cli_main() -> None:
                 None if args.visual_texture_format == "none" else args.visual_texture_format
             ),
             max_texture_size=args.visual_max_texture_size,
+            normalize_textures=not args.no_visual_texture_normalization,
+            quantize=args.visual_quantize,
+            use_gpu_instancing=args.visual_gpu_instancing,
         ),
         browser_collision_spec=BrowserCollisionSpec(
             enabled=not args.no_browser_collision,
@@ -317,6 +466,7 @@ def cli_main() -> None:
         mujoco_spec=MujocoSceneSpec(
             enabled=not args.no_mujoco,
             include_visual_mesh=args.include_mujoco_visual,
+            compile_binary=args.compile_mujoco_binary,
         ),
         rebake=args.rebake,
     )
@@ -325,6 +475,3 @@ def cli_main() -> None:
 
 if __name__ == "__main__":
     cli_main()
-
-
-__all__ = ["SCENE_PACKAGE_DIR", "cook_scene_package"]

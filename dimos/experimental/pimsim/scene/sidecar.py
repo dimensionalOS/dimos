@@ -36,6 +36,7 @@ logger = setup_logger()
 
 CookEntitySpawn = Literal["initial", "manual"]
 CookEntityKind = Literal["dynamic", "kinematic", "static"]
+EntityGroupMode = Literal["per_prim"]
 
 _COOK_SIDECAR_SUFFIXES = (".cook.json", ".scene.json")
 
@@ -113,6 +114,71 @@ class InteractableSpec:
 
 
 @dataclass(frozen=True)
+class EntityGroupSpec:
+    """Pattern-authored runtime entities expanded from many source prims.
+
+    ``mode="per_prim"`` creates one runtime entity for each matched source
+    prim.  The cook plan can then share collision prototypes across repeated
+    source mesh names instead of decomposing every instance independently.
+    """
+
+    id_prefix: str
+    source_prim_paths: tuple[str, ...]
+    mode: EntityGroupMode = "per_prim"
+    remove_from_static: bool = True
+    spawn: CookEntitySpawn = "initial"
+    kind: CookEntityKind = "dynamic"
+    mass: float = 1.0
+    tags: tuple[str, ...] = ()
+    physics: dict[str, Any] = field(default_factory=dict)
+    visual: dict[str, Any] = field(default_factory=dict)
+    prototype_key: str = "mesh_name"
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> EntityGroupSpec:
+        prims = raw.get("source_prim_paths", raw.get("prim_paths", ()))
+        if isinstance(prims, str):
+            prims = (prims,)
+        if not prims:
+            raise ValueError(f"entity group {raw.get('id_prefix')!r}: source_prim_paths required")
+        tags = raw.get("tags", ())
+        if isinstance(tags, str):
+            tags = (tags,)
+        mode = raw.get("mode", "per_prim")
+        if mode != "per_prim":
+            raise ValueError(f"entity group {raw.get('id_prefix')!r}: unsupported mode {mode!r}")
+        return cls(
+            id_prefix=str(raw["id_prefix"]),
+            source_prim_paths=tuple(str(pattern) for pattern in prims),
+            mode=mode,
+            remove_from_static=bool(raw.get("remove_from_static", True)),
+            spawn=raw.get("spawn", "initial"),
+            kind=raw.get("kind", "dynamic"),
+            mass=float(raw.get("mass", 1.0)),
+            tags=tuple(str(tag) for tag in tags),
+            physics=dict(raw.get("physics", {})),
+            visual=dict(raw.get("visual", {})),
+            prototype_key=str(raw.get("prototype_key", "mesh_name")),
+        )
+
+    def to_json_dict(self) -> dict[str, Any]:
+        raw = asdict(self)
+        raw["source_prim_paths"] = list(self.source_prim_paths)
+        raw["tags"] = list(self.tags)
+        return raw
+
+    def matches(self, prim: ScenePrimMesh) -> bool:
+        prim_candidates = tuple(
+            candidate for candidate in (prim.visual_node_name, prim.prim_path) if candidate
+        )
+        return any(
+            match_prim_pattern(candidate, pattern, include_sanitized=False)
+            for candidate in prim_candidates
+            for pattern in self.source_prim_paths
+        )
+
+
+@dataclass(frozen=True)
 class SceneCookSidecar:
     """Authored policy loaded from ``<scene>.cook.json``.
 
@@ -124,6 +190,7 @@ class SceneCookSidecar:
     path: Path | None = None
     collision: CollisionSpec = field(default_factory=CollisionSpec)
     interactables: tuple[InteractableSpec, ...] = ()
+    entity_groups: tuple[EntityGroupSpec, ...] = ()
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any], *, path: Path | None = None) -> SceneCookSidecar:
@@ -137,7 +204,15 @@ class SceneCookSidecar:
         interactables = tuple(
             InteractableSpec.from_dict(item) for item in raw.get("interactables", ())
         )
-        return cls(path=path, collision=collision, interactables=interactables)
+        entity_groups = tuple(
+            EntityGroupSpec.from_dict(item) for item in raw.get("entity_groups", ())
+        )
+        return cls(
+            path=path,
+            collision=collision,
+            interactables=interactables,
+            entity_groups=entity_groups,
+        )
 
     @classmethod
     def from_json(cls, path: str | Path) -> SceneCookSidecar:
@@ -164,6 +239,7 @@ class SceneCookSidecar:
             "path": str(self.path) if self.path else None,
             "collision": asdict(self.collision),
             "interactables": [item.to_json_dict() for item in self.interactables],
+            "entity_groups": [item.to_json_dict() for item in self.entity_groups],
         }
 
 
@@ -180,10 +256,3 @@ def match_prim_pattern(
     if include_sanitized:
         candidates.append(sanitized)
     return any(fnmatch.fnmatchcase(candidate, pattern) for candidate in candidates)
-
-
-__all__ = [
-    "InteractableSpec",
-    "SceneCookSidecar",
-    "match_prim_pattern",
-]

@@ -23,7 +23,6 @@ from typing import Any
 
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
-import trimesh
 
 from dimos.experimental.pimsim.scene.inspect import inspect_scene_asset
 from dimos.simulation.mujoco.collision_spec import CollisionSpec
@@ -116,6 +115,8 @@ def cook_browser_collision(
 
 
 def _write_glb(mesh: o3d.geometry.TriangleMesh, path: Path) -> None:
+    import trimesh
+
     vertices = np.asarray(mesh.vertices, dtype=np.float64)
     faces = np.asarray(mesh.triangles, dtype=np.int64)
     if len(vertices) == 0 or len(faces) == 0:
@@ -133,7 +134,25 @@ def _load_collision_prims(
     source_alignment = alignment or SceneMeshAlignment(y_up=False)
 
     prims = load_scene_prims(source, alignment=source_alignment)
-    if spec.split_disconnected_components:
+    has_forced_splits = any(
+        bool(override.get("split_components")) for override in spec.prim_overrides.values()
+    )
+    if spec.split_disconnected_components or has_forced_splits:
+
+        def _split_override(prim: ScenePrimMesh) -> dict[str, object]:
+            return spec.resolve(prim.prim_path or prim.name)
+
+        def _can_split_prim(prim: ScenePrimMesh) -> bool:
+            override = _split_override(prim)
+            if override.get("split_components"):
+                return True
+            return (
+                spec.split_disconnected_components and override.get("type", spec.default) == "auto"
+            )
+
+        def _force_split_prim(prim: ScenePrimMesh) -> bool:
+            return bool(_split_override(prim).get("split_components"))
+
         prims, split_stats = split_disconnected_scene_prims(
             prims,
             min_components=spec.split_min_components,
@@ -142,9 +161,8 @@ def _load_collision_prims(
             axis_ratio=spec.split_axis_ratio,
             min_component_extent=spec.split_component_min_extent_m,
             min_component_faces=spec.split_component_min_faces,
-            can_split=lambda prim: (
-                spec.resolve(prim.prim_path or prim.name).get("type", spec.default) == "auto"
-            ),
+            can_split=_can_split_prim,
+            force_split=_force_split_prim,
         )
         if split_stats["split_prims"]:
             logger.info(
@@ -239,11 +257,3 @@ def _mesh_from_arrays(vertices: np.ndarray, faces: np.ndarray) -> o3d.geometry.T
     mesh.vertices = o3d.utility.Vector3dVector(vertices)
     mesh.triangles = o3d.utility.Vector3iVector(faces.astype(np.int32))
     return mesh
-
-
-__all__ = [
-    "OBJECTS_SIDECAR_NAME",
-    "BrowserCollisionCookResult",
-    "cook_browser_collision",
-    "extract_scene_objects",
-]

@@ -87,6 +87,9 @@ class CollisionSpec:
 
     Optional override keys:
 
+    - ``"visual"``: ``false`` suppresses non-colliding visual passthrough
+      when MuJoCo visual meshes are enabled. This is intended for prims
+      extracted into runtime entities so they are not drawn twice.
     - ``"friction"``: list ``[slide, spin, roll]``.
     - ``"min_thickness"``: for ``"box"`` overrides, minimum full
       thickness in metres along world Z.  Useful for authored walkable
@@ -97,6 +100,10 @@ class CollisionSpec:
     - ``"max_hulls"``: per-pattern CoACD cap.
     - ``"target_faces"``: per-pattern triangle target for ``mesh`` /
       ``decimate`` outputs, or a post-process cap for hull outputs.
+    - ``"split_components"``: ``true`` forces this source prim to be split
+      into disconnected components before collision fitting.  Use this for
+      scene-graph nodes that group unrelated architectural pieces under one
+      mesh and otherwise produce oversized convex hulls.
     """
 
     #: Fallback policy when no pattern matches.  ``"auto"`` runs the full
@@ -958,11 +965,3 @@ def _coacd_decompose(
         if len(v) >= 4 and len(t) >= 1:
             out.append((v, t))
     return out
-
-
-__all__ = [
-    "CollisionSpec",
-    "GeomEmission",
-    "PrimDecision",
-    "decide_for_prim",
-]

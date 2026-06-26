@@ -180,6 +180,3 @@ def _inspect_open3d(path: Path) -> SceneAssetStats:
         vertex_count=len(mesh.vertices),
         triangle_count=len(mesh.triangles),
     )
-
-
-__all__ = ["SceneAssetStats", "inspect_scene_asset"]

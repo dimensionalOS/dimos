@@ -30,6 +30,7 @@ ARTIFACT_FRAMES = {
     "browser_visual": "source",
     "browser_collision": "source",
     "mujoco": "dimos_world",
+    "mujoco_binary": "dimos_world",
 }
 
 
@@ -58,6 +59,9 @@ class BrowserVisualSpec:
     simplify_error: float = 0.02
     texture_format: str | None = None
     max_texture_size: int | None = None
+    normalize_textures: bool = True
+    quantize: bool = False
+    use_gpu_instancing: bool = False
     max_meshes: int = 200
     max_materials: int = 50
     max_textures: int = 750
@@ -80,6 +84,7 @@ class MujocoSceneSpec:
 
     enabled: bool = True
     include_visual_mesh: bool = False
+    compile_binary: bool = False
 
 
 @dataclass(frozen=True)
@@ -104,6 +109,7 @@ class ScenePackage:
     browser_collision_path: Path | None = None
     objects_path: Path | None = None
     mujoco_scene_path: Path | None = None
+    mujoco_binary_path: Path | None = None
     metadata_path: Path | None = None
     entities: list[dict[str, Any]] = field(default_factory=list)
     stats: dict[str, Any] = field(default_factory=dict)
@@ -124,6 +130,10 @@ class ScenePackage:
                 ),
                 "objects": _serialize_package_path(self.objects_path, package_dir),
                 "mujoco_scene": _serialize_package_path(self.mujoco_scene_path, package_dir),
+                "mujoco_binary": _serialize_package_path(
+                    self.mujoco_binary_path,
+                    package_dir,
+                ),
             },
             "entities": _serialize_entity_paths(self.entities, package_dir),
             "stats": self.stats,
@@ -154,6 +164,7 @@ def load_scene_package(path: str | Path) -> ScenePackage:
         ),
         objects_path=_resolve_package_path(artifacts.get("objects"), package_dir),
         mujoco_scene_path=_resolve_package_path(artifacts.get("mujoco_scene"), package_dir),
+        mujoco_binary_path=_resolve_package_path(artifacts.get("mujoco_binary"), package_dir),
         metadata_path=metadata_path,
         entities=_resolve_entity_paths(raw.get("entities", []), package_dir),
         stats=raw.get("stats", {}),
@@ -173,6 +184,7 @@ def _validate_artifact_frames(raw: dict[str, Any], metadata_path: Path) -> None:
         "browser_visual": "browser_visual",
         "browser_collision": "browser_collision",
         "mujoco_scene": "mujoco",
+        "mujoco_binary": "mujoco_binary",
     }
     for artifact_name, frame_name in required.items():
         if artifacts.get(artifact_name) and frames.get(frame_name) != ARTIFACT_FRAMES[frame_name]:

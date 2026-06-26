@@ -19,12 +19,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import shutil
-import subprocess
 import tempfile
 
+from dimos.experimental.pimsim.scene.command import (
+    blender_output_line_is_interesting,
+    run_logged_command,
+)
 from dimos.experimental.pimsim.scene.plan import SceneCookPlan
 
-_COMMAND_TAIL_LINES = 30
 _VISUAL_PLAN_VERSION = 2
 
 _PLAN_VISUAL_SCRIPT = r"""
@@ -48,9 +50,14 @@ def fail(message):
     raise RuntimeError(message)
 
 
+def log(message):
+    print(f"DIMOS_VISUAL_PLAN {message}", flush=True)
+
+
 def import_source():
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete()
+    log(f"import start source={source} suffix={suffix}")
     if suffix in {".usd", ".usda", ".usdc", ".usdz"}:
         bpy.ops.wm.usd_import(filepath=str(source))
     elif suffix in {".gltf", ".glb"}:
@@ -63,6 +70,11 @@ def import_source():
         bpy.ops.wm.ply_import(filepath=str(source))
     else:
         fail(f"unsupported visual source suffix: {suffix}")
+    log(
+        "import done "
+        f"objects={len(bpy.context.scene.objects)} "
+        f"meshes={len(bpy.data.meshes)} images={len(bpy.data.images)}"
+    )
 
 
 def alignment_matrix():
@@ -141,6 +153,10 @@ def duplicate_for_entity(obj, center, suffix):
 
 def export_entity(entity, objects):
     visual_path = pathlib.Path(entity["visual_path"])
+    log(
+        f"entity export start id={entity['id']} "
+        f"objects={len(objects)} visual_path={visual_path}"
+    )
     visual_path.parent.mkdir(parents=True, exist_ok=True)
     center = Vector(tuple(float(v) for v in entity["center"]))
     duplicates = [duplicate_for_entity(obj, center, entity["safe_id"]) for obj in objects]
@@ -159,9 +175,11 @@ def export_entity(entity, objects):
     finally:
         for dup in duplicates:
             bpy.data.objects.remove(dup, do_unlink=True)
+    log(f"entity export done id={entity['id']}")
 
 
 def export_static_visual(objects_to_remove):
+    log(f"static visual remove start objects={len(objects_to_remove)}")
     for obj in sorted(objects_to_remove, key=lambda item: item.name):
         if obj.name in bpy.data.objects:
             bpy.data.objects.remove(obj, do_unlink=True)
@@ -169,6 +187,7 @@ def export_static_visual(objects_to_remove):
     if not remaining:
         fail("static visual would contain no mesh objects after entity removal")
     static_visual_path.parent.mkdir(parents=True, exist_ok=True)
+    log(f"static visual export start remaining_meshes={len(remaining)} path={static_visual_path}")
     bpy.ops.object.select_all(action="DESELECT")
     bpy.ops.export_scene.gltf(
         filepath=str(static_visual_path),
@@ -176,12 +195,16 @@ def export_static_visual(objects_to_remove):
         export_yup=True,
         export_apply=True,
     )
+    log("static visual export done")
 
 
 import_source()
 remove_from_static = set()
 report = []
-for entity in plan["entities"]:
+entities = plan["entities"]
+log(f"entity plan start count={len(entities)}")
+for index, entity in enumerate(entities, start=1):
+    log(f"entity plan progress index={index}/{len(entities)} id={entity['id']}")
     objects = resolve_objects(entity)
     export_entity(entity, objects)
     if entity["remove_from_static"]:
@@ -234,7 +257,7 @@ def cook_plan_visual_assets(
         script_file.write(_PLAN_VISUAL_SCRIPT)
         script_path = Path(script_file.name)
     try:
-        _run_command(
+        run_logged_command(
             [
                 blender,
                 "--background",
@@ -246,6 +269,7 @@ def cook_plan_visual_assets(
                 str(plan_path),
             ],
             "blender visual plan cook",
+            line_log_filter=blender_output_line_is_interesting,
         )
     finally:
         plan_path.unlink(missing_ok=True)
@@ -283,20 +307,6 @@ def _blender_plan_json(plan: SceneCookPlan, static_visual_source: Path) -> dict[
     }
 
 
-def _run_command(args: list[str], label: str) -> str:
-    result = subprocess.run(
-        args,
-        check=False,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    output = result.stdout or ""
-    if result.returncode != 0:
-        raise RuntimeError(f"{label} failed with exit code {result.returncode}:\n{_tail(output)}")
-    return output
-
-
 def _manifest_matches(path: Path, expected: dict[str, object]) -> bool:
     if not path.exists():
         return False
@@ -304,10 +314,3 @@ def _manifest_matches(path: Path, expected: dict[str, object]) -> bool:
         return bool(json.loads(path.read_text()) == expected)
     except json.JSONDecodeError:
         return False
-
-
-def _tail(output: str) -> str:
-    return "\n".join(output.splitlines()[-_COMMAND_TAIL_LINES:])
-
-
-__all__ = ["cook_plan_visual_assets"]

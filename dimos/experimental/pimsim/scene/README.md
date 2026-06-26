@@ -21,7 +21,10 @@ data/scene_packages/<name>/
 ├── scene.meta.json          manifest: alignment, artifact paths, entities, stats
 ├── mujoco/<hash>/
 │   ├── wrapper.xml          scene-only MJCF, no robot
+│   ├── wrapper.mjb          optional scene-only compiled MuJoCo model
 │   └── *.obj                static collision assets
+├── mujoco/composed/
+│   └── <robot>_<spawn>.mjb  optional robot+scene compiled MuJoCo model
 ├── entities/<id>/
 │   ├── visual.glb           per-entity visual, in entity-local frame
 │   └── mujoco_collision/    cook-time convex hulls
@@ -33,6 +36,51 @@ data/scene_packages/<name>/
 
 Packages are content-hash keyed on the source mesh, alignment, sidecar, and cook
 schema version. Changing one of those inputs creates a new cooked output.
+
+## MuJoCo Artifact Split
+
+There are two MuJoCo loading modes. Keep the distinction explicit when reviewing
+or testing scene packages.
+
+### Scene Package XML
+
+This is the default path:
+
+```text
+scene.meta.json -> mujoco/<hash>/wrapper.xml + entities -> runtime attaches robot -> compile MjModel
+```
+
+Use it for normal scenes and for robot-agnostic packages. The package contains
+the world only. At runtime `MujocoSimModule` loads `wrapper.xml`, attaches the
+requested robot MJCF, adds dynamic entities from `scene.meta.json`, and compiles
+one in-memory model. This keeps one cooked package usable by many robots and
+spawn points.
+
+Tradeoff: MuJoCo XML compile cost is paid at startup. That is fine for office-
+scale scenes. It is not fine for product-dense scenes with tens of thousands of
+individual geoms.
+
+### Composed Binary MJB
+
+This is the fast-load path for huge scenes:
+
+```text
+wrapper.xml + robot MJCF + selected spawn/entities -> composed/<robot>_<spawn>.mjb
+```
+
+Use it when XML compile time dominates startup, such as the supermarket scene
+with thousands of shelf products. The `.mjb` already contains the robot, scene,
+spawn pose, static collision, and any runtime entities chosen for that build.
+MuJoCo loads that binary model directly.
+
+Tradeoff: a composed `.mjb` is not robot-agnostic. Build one per robot model,
+spawn/entity configuration, and meaningful scene revision. You also cannot edit
+it with `MjSpec` after loading it; if the robot, spawn, or dynamic-entity set
+changes, rebuild the binary from the XML package.
+
+The scene-only `wrapper.mjb` produced by `--compile-mujoco-binary` is useful for
+profiling and cache validation, but it does not replace runtime robot attach.
+For G1 WBC testing, use a composed robot+scene `.mjb`.
 
 ## Spec And Backends
 
@@ -83,6 +131,121 @@ systems load their artifacts.
 5. Load it through a blueprint with `--scene`.
 
 The DimOS office scene is the reference example below.
+
+## Authored Blender Sources
+
+The cooker accepts `.blend` files as authored scene sources. A Blender file is
+not a concrete mesh asset: it can contain view layers, disabled source
+collections, Geometry Nodes, procedural instances, cameras, lights, text, and
+other authoring data. Before the normal cook starts, DimOS runs Blender
+headlessly and normalizes the evaluated dependency graph into a GLB:
+
+```text
+scene.blend -> evaluated depsgraph GLB -> normal scene cook
+```
+
+The normalizer walks `depsgraph.object_instances`, so Geometry Nodes and
+instanced collection content are realized as concrete mesh nodes instead of
+being dropped by a plain Blender glTF export. Direct mesh formats (`.glb`,
+`.gltf`, `.obj`, `.ply`, `.stl`, `.usd`, `.usda`, `.usdc`, `.usdz`) skip this
+step.
+
+To inspect a `.blend` scene with the same geometry the cooker will see:
+
+```bash
+python - <<'PY'
+from pathlib import Path
+
+import numpy as np
+
+from dimos.experimental.pimsim.scene.source_asset import prepare_scene_source
+from dimos.simulation.scene_assets.mesh_scene import SceneMeshAlignment, load_scene_prims
+
+prepared = prepare_scene_source(Path("data/my_scene/source.blend"))
+print(prepared.to_json_dict())
+
+for prim in load_scene_prims(prepared.cook_path, alignment=SceneMeshAlignment()):
+    name = prim.visual_node_name or prim.prim_path or prim.name
+    if "Floor" not in name:
+        continue
+    lo = np.min(prim.vertices, axis=0)
+    hi = np.max(prim.vertices, axis=0)
+    print(name, lo.round(4).tolist(), hi.round(4).tolist())
+PY
+```
+
+Then cook the `.blend` directly:
+
+```bash
+python -m dimos.experimental.pimsim.scene.cook \
+  data/my_scene/source.blend \
+  --cook-spec data/my_scene/source.cook.json \
+  --output-dir data/scene_packages/my_scene \
+  --rebake
+```
+
+The sidecar still targets normalized mesh prim names. Inspect first, then write
+the sidecar against the names printed from `load_scene_prims(prepared.cook_path)`.
+
+To also emit a scene-only MuJoCo binary for profiling or cache validation, add
+`--compile-mujoco-binary`:
+
+```bash
+python -m dimos.experimental.pimsim.scene.cook \
+  data/my_scene/source.blend \
+  --cook-spec data/my_scene/source.cook.json \
+  --output-dir data/scene_packages/my_scene \
+  --compile-mujoco-binary \
+  --rebake
+```
+
+That writes `mujoco/<hash>/wrapper.mjb`. It is still scene-only; it does not
+include a robot.
+
+## Tool Diagnostics
+
+Scene cooking shells out to production asset tools. Their output is streamed
+through the DimOS logger with a command label, elapsed-time heartbeats, and a
+tail of recent output on failure. Long Blender imports should therefore show
+which stage is running: source normalization, authored visual extraction,
+browser visual import, decimation, join, or export.
+
+`gltfpack` is the preferred browser visual optimizer for GLB inputs, but install
+a native meshoptimizer `gltfpack` binary when using texture compression. The
+Node/npx package can optimize geometry, but it is built without WebP/KTX texture
+compression support. If a cook fails immediately after requesting
+`--visual-texture-format webp` or `ktx2`, put a native `gltfpack` on `PATH` or
+use `--visual-texture-format none`.
+
+The default visual cook is conservative: DimOS passes `-noq` to gltfpack so the
+output GLB has no required quantization extension. This produces larger files,
+but keeps the artifact loadable by generic GLB consumers such as Rerun. Use
+`--visual-quantize` only when the target viewer supports `KHR_mesh_quantization`.
+With uncompressed textures, DimOS also rewrites embedded images to ordinary
+8-bit PNG payloads after gltfpack. This keeps the source materials textured
+while avoiding renderer-specific failures from high-bit-depth PNGs or required
+texture-compression extensions. Use `--no-visual-texture-normalization` only
+when a downstream viewer needs the original embedded texture encoding.
+The final GLB sanitize pass also demotes `KHR_texture_transform` from
+`extensionsRequired` to `extensionsUsed`, since Rerun rejects it as required but
+can still load the asset when the transform is treated as optional.
+
+If `gltfpack` exits with only `unreachable`, that is an internal optimizer
+crash. Re-run with the native binary first. If it still fails, diagnose with
+`--visual-optimizer blender` or `copy`, or split the visual asset into smaller
+source chunks before optimizing.
+
+For product-dense authored scenes, glTF GPU instancing can keep browser visuals
+small. The supermarket source has tens of thousands of repeated product
+instances; without instancing, an optimizer can turn compact source meshes into
+millions of duplicated output triangles. Keep the default off when the package
+must render in generic Rerun viewers, and enable it explicitly with
+`--visual-gpu-instancing` only for viewers that support
+`EXT_mesh_gpu_instancing`.
+If preserving the authored node instancing matters more than reducing draw
+calls, use `--visual-optimizer copy` after the filtered static visual source has
+been generated. That keeps repeated assets as normal glTF nodes instead of
+flattening them into a giant mesh.
 
 ## Office Example
 
@@ -226,6 +389,21 @@ At runtime, `MujocoSimModule`:
 
 The robot MJCF must stay robot-only: no office floor, no scene walls, no
 furniture, no manipulation rig. Scene geometry belongs in the cooked package.
+
+For a large scene where XML compile is too slow, load a composed binary model
+instead of the scene package metadata:
+
+```bash
+python -m dimos.robot.cli.dimos \
+  --simulation mujoco \
+  --scene /home/pim/Desktop/dimos-scene-cooking-part2/data/scene_packages/supermarket_static_product_primitives_20dyn/mujoco/composed/unitree-g1-groot-wbc_spawn_9p2_11p8_yaw_m1p57.mjb \
+  --n-workers 10 \
+  run unitree-g1-groot-wbc \
+  -o mujocosimmodule.headless=false
+```
+
+That path skips scene-package runtime composition. The `.mjb` already contains
+the G1 robot and the supermarket scene at the authored test spawn.
 
 ## Sidecar Schema
 

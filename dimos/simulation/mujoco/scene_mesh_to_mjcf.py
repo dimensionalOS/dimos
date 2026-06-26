@@ -173,7 +173,7 @@ _CACHE_KEY_LEN = 12
 # affect MJCF emission (new geom kinds, rewritten visual policy, etc.).
 # This is only a local cache salt; it is not a persisted file format
 # contract and old cache directories can safely stay on disk.
-_CACHE_SCHEMA_VERSION = "scene-only-v10"
+_CACHE_SCHEMA_VERSION = "scene-only-v11"
 
 
 @dataclass
@@ -260,7 +260,25 @@ def bake_scene_mjcf(
 
     logger.info(f"bake_scene_mjcf: loading + aligning {scene_mesh_path}")
     prims = load_scene_prims(scene_mesh_path, alignment=align)
-    if spec.split_disconnected_components:
+    has_forced_splits = any(
+        bool(override.get("split_components")) for override in spec.prim_overrides.values()
+    )
+    if spec.split_disconnected_components or has_forced_splits:
+
+        def _split_override(prim: ScenePrimMesh) -> dict[str, object]:
+            return spec.resolve(prim.prim_path or prim.name)
+
+        def _can_split_prim(prim: ScenePrimMesh) -> bool:
+            override = _split_override(prim)
+            if override.get("split_components"):
+                return True
+            return (
+                spec.split_disconnected_components and override.get("type", spec.default) == "auto"
+            )
+
+        def _force_split_prim(prim: ScenePrimMesh) -> bool:
+            return bool(_split_override(prim).get("split_components"))
+
         prims, split_stats = split_disconnected_scene_prims(
             prims,
             min_components=spec.split_min_components,
@@ -269,9 +287,8 @@ def bake_scene_mjcf(
             axis_ratio=spec.split_axis_ratio,
             min_component_extent=spec.split_component_min_extent_m,
             min_component_faces=spec.split_component_min_faces,
-            can_split=lambda prim: (
-                spec.resolve(prim.prim_path or prim.name).get("type", spec.default) == "auto"
-            ),
+            can_split=_can_split_prim,
+            force_split=_force_split_prim,
         )
         if split_stats["split_prims"]:
             logger.info(
@@ -378,7 +395,9 @@ def _cache_key(
     h.update(_CACHE_SCHEMA_VERSION.encode())
     h.update(_file_signature(scene_mesh_path).encode())
     h.update(repr(sorted(asdict(alignment).items())).encode())
-    h.update(json.dumps(asdict(spec), sort_keys=True).encode())
+    # CollisionSpec prim_overrides are first-match-wins, so key order is
+    # semantically relevant. Preserve insertion order in the cache key.
+    h.update(json.dumps(asdict(spec), sort_keys=False).encode())
     h.update(b"visual=" + (b"1" if include_visual_mesh else b"0"))
     return h.hexdigest()[:_CACHE_KEY_LEN]
 
@@ -435,8 +454,10 @@ def _process_one_prim(
     counters = {"hulls": 0, "box_fallbacks": 0, "visuals": 0, "degenerate": 0}
 
     # Visual passthrough (always before the collision branch -- even
-    # ``skip`` prims can have a visual).
-    if include_visual_mesh:
+    # ``skip`` prims can have a visual). Sidecars can opt out for prims
+    # extracted into runtime entities so MuJoCo does not draw them twice.
+    visual_enabled = bool(spec.resolve(prim.prim_path or prim.name).get("visual", True))
+    if include_visual_mesh and visual_enabled:
         vis_name = f"{prim.name}_visual"
         vis_path = cache_dir / f"{vis_name}.obj"
         try:
@@ -520,7 +541,34 @@ def _bake_prims(
     n_degenerate = 0
     reasons: dict[str, int] = {}
 
-    work_items = [(prim, cache_dir, spec, include_visual_mesh) for prim in prims]
+    work_items = []
+    n_pre_skipped = 0
+    pre_skip_reasons: dict[str, int] = {}
+    for prim in prims:
+        # When visual passthrough is disabled, explicit skip prims have no
+        # output at all. Do not pay process-pool overhead for dense clutter
+        # such as product scatter that the sidecar intentionally removes from
+        # the static scene.
+        override = spec.resolve(prim.prim_path or prim.name)
+        if not include_visual_mesh and override.get("type", spec.default) == "skip":
+            n_pre_skipped += 1
+            pre_skip_reasons["sidecar:skip"] = pre_skip_reasons.get("sidecar:skip", 0) + 1
+            continue
+        work_items.append((prim, cache_dir, spec, include_visual_mesh))
+
+    if not work_items:
+        return _BakeArtifacts(
+            asset_lines=[],
+            geom_lines=[],
+            n_primitive=0,
+            n_hulls_total=0,
+            n_box_fallbacks=0,
+            n_skipped=n_pre_skipped,
+            n_visuals=0,
+            n_degenerate_dropped=0,
+            decision_reasons=pre_skip_reasons,
+        )
+
     n_workers = max(1, (os.cpu_count() or 4) - 1)
     if _native_thread_count() > 1:
         n_workers = min(n_workers, 8)
@@ -530,14 +578,18 @@ def _bake_prims(
     else:
         start_method = "fork"
     logger.info(
-        f"_bake_prims: fanning {len(prims)} prims across {n_workers} workers ({start_method})"
+        f"_bake_prims: fanning {len(work_items)} prims across {n_workers} workers "
+        f"({start_method}); pre-skipped {n_pre_skipped}"
     )
 
     t0 = time.time()
     mp_ctx = multiprocessing.get_context(start_method)
     executor = ProcessPoolExecutor(max_workers=n_workers, mp_context=mp_ctx)
 
-    progress_every = 25 if len(prims) <= 500 else 250
+    n_skipped += n_pre_skipped
+    reasons.update(pre_skip_reasons)
+    total_work = len(work_items)
+    progress_every = 25 if total_work <= 500 else 250
     with executor as ex:
         futures = [ex.submit(_process_one_prim, item) for item in work_items]
         done = 0
@@ -555,12 +607,12 @@ def _bake_prims(
             n_visuals += counters["visuals"]
             n_degenerate += counters["degenerate"]
             done += 1
-            if done % progress_every == 0 or done == len(prims):
+            if done % progress_every == 0 or done == total_work:
                 elapsed = time.time() - t0
-                eta = elapsed * (len(prims) - done) / max(done, 1)
+                eta = elapsed * (total_work - done) / max(done, 1)
                 logger.info(
-                    f"  prim {done}/{len(prims)} "
-                    f"({100 * done / len(prims):.0f}%) "
+                    f"  prim {done}/{total_work} "
+                    f"({100 * done / total_work:.0f}%) "
                     f"elapsed={elapsed:.0f}s eta={eta:.0f}s "
                     f"hulls_so_far={n_hulls_total}"
                 )
@@ -998,6 +1050,3 @@ def cli_main() -> None:
 
 if __name__ == "__main__":
     cli_main()
-
-
-__all__ = ["bake_scene_mjcf", "load_or_bake"]
