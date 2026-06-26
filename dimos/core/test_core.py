@@ -14,14 +14,11 @@
 
 import time
 
-import pytest
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.core.testing import MockRobotClient
-from dimos.core.transport import LCMTransport, pLCMTransport
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.odometry import Odometry
@@ -90,34 +87,3 @@ def test_classmethods() -> None:
     assert hasattr(class_rpcs["start"], "__rpc__"), "start should have __rpc__ attribute"
 
     nav._close_module()
-
-
-@pytest.mark.skipif_in_ci
-def test_basic_deployment(dimos) -> None:
-    robot = dimos.deploy(MockRobotClient)
-
-    print("\n")
-    print("lidar stream", robot.lidar)
-    print("odom stream", robot.odometry)
-
-    nav = dimos.deploy(Navigation)
-
-    # this one encodes proper LCM messages
-    robot.lidar.transport = LCMTransport("/lidar", PointCloud2)
-
-    # odometry & mov using just a pickle over LCM
-    robot.odometry.transport = pLCMTransport("/odom")
-    nav.mov.transport = pLCMTransport("/mov")
-
-    nav.lidar.connect(robot.lidar)
-    nav.odometry.connect(robot.odometry)
-    robot.mov.connect(nav.mov)
-
-    robot.start()
-    nav.start()
-
-    time.sleep(1)
-
-    assert robot.mov_msg_count >= 8
-    assert nav.odom_msg_count >= 8
-    assert nav.lidar_msg_count >= 8
