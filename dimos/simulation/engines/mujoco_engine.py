@@ -22,7 +22,7 @@ import math
 from pathlib import Path
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import mujoco
 import mujoco.viewer as viewer  # type: ignore[import-untyped]
@@ -77,7 +77,7 @@ def _camera_ray_directions(width: int, height: int, fovy_degrees: float) -> NDAr
     z = -np.ones_like(x)
     directions = np.stack((x, y, z), axis=-1).reshape(-1, 3).astype(np.float64)
     norms = np.linalg.norm(directions, axis=1, keepdims=True)
-    return directions / norms
+    return cast("NDArray[np.float64]", directions / norms)
 
 
 @dataclass
@@ -189,7 +189,7 @@ class MujocoEngine(SimulationEngine):
                 xml_str = f.read()
             self._model = mujoco.MjModel.from_xml_string(xml_str, assets=assets)
         elif binary_model:
-            self._model = mujoco.MjModel.from_binary_path(str(model_path))
+            self._model = mujoco.MjModel.from_binary_path(str(model_path))  # type: ignore[attr-defined]
         else:
             self._model = mujoco.MjModel.from_xml_path(str(model_path))
         self._xml_path = model_path
@@ -373,21 +373,22 @@ class MujocoEngine(SimulationEngine):
                 height=cfg.height,
                 width=cfg.width,
                 max_geom=max_geom,
-            )
+            )  # type: ignore[call-arg]
             depth_renderer = mujoco.Renderer(
                 self._model,
                 height=cfg.height,
                 width=cfg.width,
                 max_geom=max_geom,
-            )
+            )  # type: ignore[call-arg]
             depth_renderer.enable_depth_rendering()
             scene_option = None
             if cfg.geom_groups is not None:
                 scene_option = mujoco.MjvOption()
-                scene_option.geomgroup[:] = 0
+                geomgroup = scene_option.geomgroup  # type: ignore[attr-defined]
+                geomgroup[:] = 0
                 for group in cfg.geom_groups:
-                    if 0 <= group < len(scene_option.geomgroup):
-                        scene_option.geomgroup[group] = 1
+                    if 0 <= group < len(geomgroup):
+                        geomgroup[group] = 1
             interval = 1.0 / cfg.fps if cfg.fps > 0 else float("inf")
             cam_renderers[cfg.name] = _CameraRendererState(
                 cfg=cfg,
@@ -477,7 +478,7 @@ class MujocoEngine(SimulationEngine):
             n_rays = directions_world.shape[0]
             geom_ids = np.full(n_rays, -1, dtype=np.int32)
             distances = np.full(n_rays, -1.0, dtype=np.float64)
-            mujoco.mj_multiRay(
+            mujoco.mj_multiRay(  # type: ignore[attr-defined]
                 self._model,
                 self._data,
                 origin,
@@ -521,7 +522,7 @@ class MujocoEngine(SimulationEngine):
         if self._model.nkey > 0:
             mujoco.mj_resetDataKeyframe(self._model, self._data, 0)
         else:
-            mujoco.mj_resetData(self._model, self._data)
+            mujoco.mj_resetData(self._model, self._data)  # type: ignore[attr-defined]
         self._apply_spawn_pose_unlocked()
         self._apply_reset_joint_positions_unlocked()
         for i, mapping in enumerate(self._joint_mappings):
@@ -811,7 +812,7 @@ class MujocoEngine(SimulationEngine):
             direction = np.array([0.0, 0.0, -1.0], dtype=np.float64)
             geom_id = np.array([-1], dtype=np.int32)
             geomgroup = np.array([0, 0, 1, 1, 0, 0], dtype=np.uint8)
-            distance = mujoco.mj_ray(
+            distance = mujoco.mj_ray(  # type: ignore[attr-defined]
                 self._model,
                 self._data,
                 origin,

@@ -58,11 +58,12 @@ def _rerun_transform_without_frames(rr: Any, transform: Any) -> Any:
 
 
 def _mesh_to_rerun(rr: Any, mesh: Any) -> Any:
-    color = (178, 178, 178, 255)
+    color: tuple[int, int, int, int] = (178, 178, 178, 255)
     face_colors = getattr(getattr(mesh, "visual", None), "face_colors", None)
     if face_colors is not None and len(face_colors):
         rgba = np.asarray(face_colors[0], dtype=np.uint8).tolist()
-        color = tuple(int(v) for v in rgba)
+        if len(rgba) >= 4:
+            color = (int(rgba[0]), int(rgba[1]), int(rgba[2]), int(rgba[3]))
 
     return rr.Mesh3D(
         vertex_positions=np.asarray(mesh.vertices, dtype=np.float32),
@@ -145,7 +146,7 @@ class UrdfRobotStaticRerunFactory:
 
     def _load_robot(self) -> Any:
         if self._robot is None:
-            from yourdfpy import URDF
+            from yourdfpy import URDF  # type: ignore[import-not-found]
 
             self._robot = URDF.load(str(_resolve_urdf_path(self.urdf_path)))
         return self._robot
@@ -191,7 +192,7 @@ class UrdfRobotJointStateRerunFactory:
     def _load_tree(self) -> None:
         if self._tree is None:
             import rerun.urdf as rr_urdf
-            from yourdfpy import URDF
+            from yourdfpy import URDF  # type: ignore[import-not-found]
 
             urdf_path = _resolve_urdf_path(self.urdf_path)
             robot = URDF.load(str(urdf_path))

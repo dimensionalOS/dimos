@@ -47,7 +47,7 @@ Overrides (replace the old env-var dance):
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
@@ -332,7 +332,7 @@ def _g1_nav_path(path: NavPath) -> Any:
     return path.to_rerun(z_offset=0.3)
 
 
-_static_rerun_entities = {
+_static_rerun_entities: dict[str, Any] = {
     # MujocoSimModule logs odom as a Transform3D at world/odom; the robot
     # mesh lives underneath and link transforms are driven by joint state.
     G1_RERUN_ROOT: g1_urdf_static_robot(root_path=G1_RERUN_ROOT),
@@ -416,6 +416,6 @@ _coordinator = ControlCoordinator.blueprint(
 
 unitree_g1_groot_wbc = (
     autoconnect(_backend, _coordinator, _nav_stack, _viewer())
-    .remappings(_remappings)
+    .remappings(cast("Any", _remappings))
     .global_config(robot_model="unitree_g1")
 )
