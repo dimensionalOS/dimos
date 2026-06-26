@@ -13,7 +13,9 @@
 # limitations under the License.
 
 import re
+from typing import Literal
 
+from pydantic import Field, FiniteFloat
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from dimos.constants import DEFAULT_BUILD_NATIVE
@@ -63,7 +65,30 @@ class GlobalConfig(BaseSettings):
     robot_width: float = 0.3
     robot_rotation_diameter: float = 0.6
     nerf_speed: float = 1.0
+    # Local path follower in ``replanning_a_star.LocalPlanner`` (issue 921 / P3-3).
+    local_planner_path_controller: Literal["differential", "holonomic"] = "holonomic"
+    local_planner_holonomic_kp: float = 2.0
+    local_planner_holonomic_ky: float = 1.5
+    local_planner_holonomic_kv: FiniteFloat = Field(default=0.0, ge=0.0)
+    local_planner_holonomic_kw: FiniteFloat = Field(default=0.0, ge=0.0)
+    local_planner_max_tangent_accel_m_s2: float = Field(default=1.0, gt=0.0)
+    local_planner_max_normal_accel_m_s2: float = Field(default=0.6, gt=0.0)
+    local_planner_goal_decel_m_s2: float = Field(default=1.0, gt=0.0)
+    local_planner_max_planar_cmd_accel_m_s2: float = Field(default=5.0, gt=0.0)
+    local_planner_max_yaw_accel_rad_s2: float = Field(default=5.0, gt=0.0)
+    local_planner_max_yaw_rate_rad_s: float | None = Field(default=None, gt=0.0)
+    # Issue 921 P4-1: one knob for LocalPlanner sleep pacing and controller dt (e.g. PD).
+    local_planner_control_rate_hz: float = Field(default=10.0, ge=0.1, le=60.0)
+    # Optional issue 921 JSONL telemetry export. Set to a file path for live speed-vs-divergence logs.
+    local_planner_trajectory_tick_log_path: str | None = None
     planner_robot_speed: float | None = None
+    # Session-default movement envelope (named run profile from
+    # ``dimos.navigation.holonomic_trajectory_controller.trajectory_run_profiles.GO2_RUN_PROFILES``: walk, trot,
+    # run_conservative, run_verified). The Go2 locomotion mode (default vs rage)
+    # is derived from the profile's required_locomotion_mode at connection
+    # start-up, so navigation/agentic blueprints activate the run mode from config
+    # instead of only the rage keyboard-teleop blueprint. Default stays "walk".
+    go2_run_profile: str = "walk"
     mcp_port: int = 9990
     build_native: bool = DEFAULT_BUILD_NATIVE
     dtop: bool = False
@@ -77,12 +102,13 @@ class GlobalConfig(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        validate_assignment=True,
     )
 
     def update(self, **kwargs: object) -> None:
         """Update config fields in place."""
         for key, value in kwargs.items():
-            if not hasattr(self, key):
+            if key not in type(self).model_fields:
                 raise AttributeError(f"GlobalConfig has no field '{key}'")
             setattr(self, key, value)
 
