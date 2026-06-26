@@ -61,6 +61,24 @@ _RERUN_VIZ = RerunBridgeModule.blueprint(
     },
 )
 
+# Standalone: ZED only, no robot. ZED VIO publishes world←camera_link TF,
+# so the map builds from camera motion alone.
+camera_nav_zed_standalone = autoconnect(
+    ZEDCamera.blueprint(
+        enable_depth=True,
+        enable_pointcloud=False,
+        enable_tracking=True,
+        enable_imu_fusion=True,
+        set_floor_as_origin=True,
+    ),
+    HardwareDepthModule.blueprint(
+        camera_frame="camera_color_optical_frame",
+    ),
+    DepthAccumulatorModule.blueprint(),
+    _RERUN_VIZ,
+)
+
+# Full: ZED + FlowBase keyboard teleop + traversal recording.
 camera_nav_zed_teleop = autoconnect(
     coordinator_flowbase_keyboard_teleop,
     ZEDCamera.blueprint(

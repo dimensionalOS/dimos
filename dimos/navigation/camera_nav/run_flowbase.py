@@ -28,6 +28,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--zed", action="store_true", help="ZED Mini stereo camera (ZED SDK required)")
+    group.add_argument("--zed-only", action="store_true", help="ZED Mini only, no robot — point cloud quality check")
     group.add_argument("--trial", action="store_true", help="Laptop webcam only, no robot")
     parser.add_argument("--address", default=None, help="FlowBase address override (default: 172.6.2.20:11323)")
     args = parser.parse_args()
@@ -35,6 +36,10 @@ if __name__ == "__main__":
     if args.trial:
         from dimos.navigation.camera_nav.blueprint_flowbase import camera_nav_static_trial
         ModuleCoordinator.build(camera_nav_static_trial).loop()
+
+    elif args.zed_only:
+        from dimos.navigation.camera_nav.blueprint_zed import camera_nav_zed_standalone
+        ModuleCoordinator.build(camera_nav_zed_standalone).loop()
 
     elif args.zed:
         from dimos.navigation.camera_nav.blueprint_zed import camera_nav_zed_teleop
