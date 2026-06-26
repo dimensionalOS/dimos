@@ -27,6 +27,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
 from dimos.core.transport import pLCMTransport
+from dimos.utils.testing.agent_teardown import teardown_agent_setup
 
 load_dotenv()
 
@@ -93,11 +94,4 @@ def agent_setup(request, mcp_url: str, lcm_url: str):
 
     yield fn
 
-    if coordinator is not None:
-        coordinator.stop()
-
-    for transport in transports:
-        transport.stop()
-
-    for unsub in unsubs:
-        unsub()
+    teardown_agent_setup(coordinator, transports, unsubs)

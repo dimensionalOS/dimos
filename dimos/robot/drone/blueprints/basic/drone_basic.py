@@ -24,6 +24,10 @@ from dimos.robot.drone.camera_module import DroneCameraModule
 from dimos.robot.drone.connection_module import DroneConnectionModule
 from dimos.visualization.vis_module import vis_module
 
+# Camera intrinsics [fx, fy, cx, cy], shared by the camera module and the
+# static Rerun pinhole below so the two can't drift.
+_CAMERA_INTRINSICS = [1000.0, 1000.0, 960.0, 540.0]
+
 
 def _static_drone_body(rr: Any) -> list[Any]:
     """Static visualization of drone body."""
@@ -33,6 +37,25 @@ def _static_drone_body(rr: Any) -> list[Any]:
             colors=[(255, 100, 0)],
         ),
         rr.Transform3D(parent_frame="tf#/base_link"),
+    ]
+
+
+def _static_camera_pinhole(rr: Any) -> list[Any]:
+    """Pinhole at the camera-image entity.
+
+    The camera feed is logged at ``world/video``, which falls under the 3D
+    view's ``world`` origin. A 2D image needs a pinhole ancestor to be placed
+    in a 3D view, so without this Rerun warns ("2D visualizers require a
+    pinhole ancestor to be shown in a 3D view") and the feed only renders in
+    the dedicated 2D pane. Logging the pinhole here lets it also show as a
+    camera frustum in 3D.
+    """
+    fx, fy, cx, cy = _CAMERA_INTRINSICS
+    return [
+        rr.Pinhole(
+            image_from_camera=[[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]],
+            resolution=[2.0 * cx, 2.0 * cy],
+        ),
     ]
 
 
@@ -61,6 +84,7 @@ _rerun_config = {
     "blueprint": _drone_rerun_blueprint,
     "static": {
         "world/tf/base_link": _static_drone_body,
+        "world/video": _static_camera_pinhole,
     },
 }
 
@@ -79,5 +103,5 @@ drone_basic = autoconnect(
         video_port=video_port,
         outdoor=False,
     ),
-    DroneCameraModule.blueprint(camera_intrinsics=[1000.0, 1000.0, 960.0, 540.0]),
+    DroneCameraModule.blueprint(camera_intrinsics=_CAMERA_INTRINSICS),
 )
