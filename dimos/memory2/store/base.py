@@ -29,6 +29,7 @@ from dimos.memory2.vectorstore.base import VectorStore
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
 if TYPE_CHECKING:
+    from dimos.memory2.db_tf import DbTf
     from dimos.memory2.replay import Replay
 
 T = TypeVar("T")
@@ -105,11 +106,25 @@ class Store(Configurable, CompositeResource):
         Configurable.__init__(self, **kwargs)
         CompositeResource.__init__(self)
         self._streams: dict[str, Stream[Any]] = {}
+        self._tf: DbTf | None = None
 
     @property
     def streams(self) -> StreamAccessor[Stream[Any]]:
         """Attribute-style access to streams: ``store.streams.name``."""
         return StreamAccessor(self)
+
+    @property
+    def tf(self) -> DbTf:
+        """Transform lookups over the recording's ``tf``/``tf_static`` streams.
+
+        ``store.tf.get(target_frame, source_frame, ts)`` composes multi-hop chains
+        (e.g. ``world -> ... -> mid360_link``) from the recorded transforms.
+        """
+        if self._tf is None:
+            from dimos.memory2.db_tf import DbTf
+
+            self._tf = DbTf(self)
+        return self._tf
 
     def replay(
         self,

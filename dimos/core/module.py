@@ -477,14 +477,16 @@ class ModuleBase(Configurable, CompositeResource):
         self,
         observable: "Observable[Any]",
         async_cb: Callable[[Any], Any],
+        on_drop: Callable[[], None] | None = None,
     ) -> "DisposableBase":
         """Subscribe `async_cb` (an async function) to `observable`, dispatching
         each emitted value onto self._loop. Invocations are serialized through a
-        per-subscription dispatcher task with LATEST coalescing. The subscription
+        per-subscription dispatcher task with LATEST coalescing. `on_drop`, if
+        given, fires once per message dropped by that coalescing. The subscription
         is registered for cleanup on stop()."""
         if not inspect.iscoroutinefunction(async_cb):
             raise TypeError("process_observable requires an `async def` callback")
-        on_msg, dispatcher_disp = self._make_async_dispatch(async_cb)
+        on_msg, dispatcher_disp = self._make_async_dispatch(async_cb, on_drop)
         sub = observable.subscribe(on_msg)
         return self.register_disposable(CompositeDisposable(sub, dispatcher_disp))
 
@@ -635,7 +637,9 @@ class ModuleBase(Configurable, CompositeResource):
             self.process_observable(in_stream.pure_observable(), handler)
 
     def _make_async_dispatch(
-        self, async_handler: Callable[[Any], Any]
+        self,
+        async_handler: Callable[[Any], Any],
+        on_drop: Callable[[], None] | None = None,
     ) -> tuple[Callable[[Any], None], "DisposableBase"]:
         """Build a sync callback that delivers `msg` into a single-slot LATEST
         mailbox drained by a dedicated dispatcher task on `self._loop`.
@@ -645,7 +649,9 @@ class ModuleBase(Configurable, CompositeResource):
             awaits).
           - If messages arrive faster than the handler can process them,
             intermediate messages are dropped and only the most recent unprocessed
-            message is kept (LATEST policy).
+            message is kept (LATEST policy). `on_drop`, if given, is called once
+            per dropped message (on the loop thread) so callers that need every
+            message can surface the loss.
           - The returned Disposable cancels the dispatcher task.
         """
         loop = self._loop
@@ -685,6 +691,10 @@ class ModuleBase(Configurable, CompositeResource):
                 return
 
             def _set() -> None:
+                # A slot that still holds an unconsumed value is about to be
+                # overwritten — that queued message is being dropped (LATEST).
+                if slot["has_value"] and on_drop is not None:
+                    on_drop()
                 slot["value"] = msg
                 slot["has_value"] = True
                 event.set()

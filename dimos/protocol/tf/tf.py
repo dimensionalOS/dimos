@@ -214,6 +214,19 @@ class MultiTBuffer:
                     return None
                 self._cv.wait(timeout=remaining)
 
+    def lookup(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: float | None = None,
+        time_tolerance: float | None = None,
+    ) -> Transform | None:
+        """Composed transform lookup that does NOT log on a miss (unlike `get`).
+
+        For high-frequency / best-effort lookups where misses are expected and a
+        per-call warning would spam the log (e.g. per-scan world-registration)."""
+        return self._get(parent_frame, child_frame, time_point, time_tolerance)
+
     def get(
         self,
         parent_frame: str,
