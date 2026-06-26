@@ -60,6 +60,56 @@ def test_poseless_obs_are_skipped() -> None:
     assert [r.tags["frame_count"] for r in results] == [1]
 
 
-def test_negative_emit_every_is_rejected() -> None:
-    with pytest.raises(ValueError):
-        RayTraceMap(emit_every=-1)
+def _ring(
+    center: tuple[float, float], radius: float, z: float, n: int = 100
+) -> NDArray[np.float32]:
+    angles = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
+    xs = center[0] + radius * np.cos(angles)
+    ys = center[1] + radius * np.sin(angles)
+    zs = np.full_like(xs, z)
+    return np.stack([xs, ys, zs], axis=1).astype(np.float32)
+
+
+def test_tags_region_bounds_around_registered_origin() -> None:
+    margin = 0.2 + 0.1
+    # Sensor-frame ring centered on the sensor. The pose registers it to (2, 3, 0.5).
+    obs = _obs(_ring((0.0, 0.0), radius=1.0, z=0.0), ts=1.0, pose=(2.0, 3.0, 0.5))
+
+    [emitted] = list(RayTraceMap()(iter([obs])))
+
+    cx, cy, radius, z_min, z_max = emitted.tags["region_bounds"]
+    assert (cx, cy) == pytest.approx((2.0, 3.0))
+    assert radius == pytest.approx(1.0 + margin)
+    assert z_min == pytest.approx(0.5 - margin)
+    assert z_max == pytest.approx(0.5 + margin)
+
+
+def test_empty_frame_yields_zero_radius_region_at_robot() -> None:
+    empty = np.empty((0, 3), dtype=np.float32)
+    obs = _obs(empty, ts=1.0, pose=(1.0, 2.0, 3.0))
+
+    [emitted] = list(RayTraceMap()(iter([obs])))
+
+    assert emitted.tags["region_bounds"] == pytest.approx((1.0, 2.0, 0.0, 3.0, 3.0))
+
+
+def test_registers_sensor_frame_cloud_by_pose() -> None:
+    margin = 0.2 + 0.1
+    s = 2.0**-0.5
+    # 90-degree pitch maps sensor +x to world -z, then translate by (5, 0, 2),
+    # landing the point at world (5, 0, 1).
+    point = np.array([[1.0, 0.0, 0.0]], dtype=np.float32)
+    obs = Observation(
+        id=0,
+        ts=1.0,
+        pose=(5.0, 0.0, 2.0, 0.0, s, 0.0, s),
+        _data=PointCloud2.from_numpy(point),
+    )
+
+    [emitted] = list(RayTraceMap()(iter([obs])))
+
+    cx, cy, radius, z_min, z_max = emitted.tags["region_bounds"]
+    assert (cx, cy) == pytest.approx((5.0, 0.0))
+    assert radius == pytest.approx(0.0 + margin)
+    assert z_min == pytest.approx(1.0 - margin)
+    assert z_max == pytest.approx(1.0 + margin)

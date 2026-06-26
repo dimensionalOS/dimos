@@ -67,7 +67,7 @@ name = "dimos"
 authors = [
     {name = "Dimensional Team", email = "build@dimensionalOS.com"},
 ]
-version = "0.0.12"
+version = "0.0.13"
 description = "Powering agentive generalist robotics"
 requires-python = ">=3.10"
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -185,6 +185,13 @@ misc = [
 visualization = [
     "rerun-sdk==0.32.0a1",
     "dimos-viewer==0.32.0a1",
+]
+
+learning = [
+    # dimos.learning.dataprep dataset writers (lazy-imported per format)
+    "pyarrow",  # LeRobot v3.0 data/episodes parquet
+    "pandas",   # LeRobot v3.0 tasks.parquet (task-indexed)
+    "h5py",     # HDF5 writer
 ]
 
 agents = [
@@ -372,7 +379,7 @@ tests = [
 
     # Deps the lint job swaps for stubs (`stubs/<pkg>/` or `types-*`):
     # the real packages are needed at test time, stubs cover mypy.
-    "dimos[apriltag,mapping,drone,cpu]",
+    "dimos[apriltag,mapping,drone,cpu,learning]",
     "mujoco>=3.3.4",
     "pygame>=2.6.1",
     "python-can>=4",
@@ -505,9 +512,13 @@ module = [
     "cyclonedds",
     "cyclonedds.*",
     "dimos_lcm.*",
+    "dimos_mls_planner",
+    "dimos_voxel_ray_tracing",
     "etils",
     "faster_whisper",
     "geometry_msgs.*",
+    "h5py",
+    "h5py.*",
     "mcap",
     "mcap.*",
     "mujoco",
@@ -524,6 +535,8 @@ module = [
     "pycuda.*",
     "pydrake",
     "pydrake.*",
+    "pyarrow",
+    "pyarrow.*",
     "pyzed",
     "pyzed.*",
     "rclpy.*",
@@ -557,6 +570,10 @@ follow_imports = "skip"
 
 [[tool.mypy.overrides]]
 module = ["transformers", "transformers.*"]
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = ["pyarrow", "pyarrow.*"]
 follow_imports = "skip"
 
 [tool.pytest.ini_options]

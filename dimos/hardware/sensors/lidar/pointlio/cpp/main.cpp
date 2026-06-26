@@ -219,35 +219,6 @@ static void on_imu_data(const uint32_t /*handle*/, const uint8_t /*dev_type*/, L
     if (!g_running.load() || data == nullptr || !g_point_lio) { return; }
 
     uint64_t pkt_ts_ns = get_timestamp_ns(data);
-    // Live IMU-drop instrumentation: a dropped datagram shows as a sensor-ts
-    // jump; wall gaps exceeding sensor gaps mean callback starvation.
-    {
-        static std::atomic<uint64_t> last_pkt_ts_ns{0};
-        static std::atomic<uint64_t> imu_pkt_count{0};
-        static std::atomic<uint64_t> imu_gap_count{0};
-        static std::atomic<uint64_t> max_sensor_gap_us{0};
-        using clk = std::chrono::steady_clock;
-        static auto last_wall = clk::now();
-        auto now_wall = clk::now();
-        uint64_t prev = last_pkt_ts_ns.exchange(pkt_ts_ns);
-        uint64_t pkt_count = imu_pkt_count.fetch_add(1) + 1;
-        if (prev != 0 && pkt_ts_ns > prev) {
-            uint64_t sensor_gap_us = (pkt_ts_ns - prev) / 1000;
-            uint64_t wall_gap_us = std::chrono::duration_cast<std::chrono::microseconds>( now_wall - last_wall).count();
-            uint64_t cur_max = max_sensor_gap_us.load();
-            while (sensor_gap_us > cur_max &&
-                   !max_sensor_gap_us.compare_exchange_weak(cur_max, sensor_gap_us)) {}
-            if (sensor_gap_us > 15000) {
-                imu_gap_count.fetch_add(1);
-                fprintf(stderr, "[imu-gap] sensor_gap=%.1fms wall_gap=%.1fms pkt#%llu\n", sensor_gap_us / 1000.0, wall_gap_us / 1000.0, static_cast<unsigned long long>(pkt_count));
-            }
-        }
-        last_wall = now_wall;
-        if (pkt_count % 1000 == 0) {
-            fprintf(stderr, "[imu-stats] pkts=%llu gaps>15ms=%llu max_sensor_gap=%.1fms\n", static_cast<unsigned long long>(pkt_count), static_cast<unsigned long long>(imu_gap_count.load()), max_sensor_gap_us.load() / 1000.0);
-        }
-    }
-
     double ts = static_cast<double>(pkt_ts_ns) / 1e9;
     auto* imu_pts = reinterpret_cast<const LivoxLidarImuRawPoint*>(data->data);
     uint16_t dot_num = data->dot_num;
