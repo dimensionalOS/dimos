@@ -103,7 +103,7 @@ dependencies = [
     "sortedcontainers==2.4.0",
     "pydantic",
     "python-dotenv",
-    "typing_extensions>=4.0; python_version < '3.11'",
+    "typing_extensions>=4.0; python_version < '3.13'",
     "plum-dispatch==2.5.7",
     # Logging
     "structlog>=25.5.0,<26",

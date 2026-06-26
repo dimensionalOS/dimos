@@ -40,7 +40,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-06-19T12:47:59.312614Z"
+exclude-newer = "2026-06-19T13:31:15.809764Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -1986,7 +1986,7 @@ dependencies = [
     { name = "textual-serve" },
     { name = "toolz" },
     { name = "typer" },
-    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
     { name = "websocket-client" },
 ]
 
@@ -2494,7 +2494,7 @@ requires-dist = [
     { name = "transformers", extras = ["torch"], marker = "extra == 'perception'", specifier = ">=4.53.0,<4.54" },
     { name = "trimesh", marker = "extra == 'manipulation'" },
     { name = "typer", specifier = ">=0.19.2,<1" },
-    { name = "typing-extensions", marker = "python_full_version < '3.11'", specifier = ">=4.0" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13'", specifier = ">=4.0" },
     { name = "ultralytics", marker = "extra == 'perception'", specifier = ">=8.3.70" },
     { name = "unitree-sdk2py-dimos", marker = "extra == 'unitree-dds'", specifier = ">=1.0.2" },
     { name = "unitree-webrtc-connect", marker = "extra == 'unitree'", specifier = ">=2.1.2" },
