@@ -26,7 +26,7 @@ permissions: {}
 jobs:
   ready-to-merge:
     if: >-
-      github.event_name == 'workflow_run' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request') ||
       (github.event_name == 'pull_request_target' &&
        (github.event.action == 'synchronize' ||
         github.event.action == 'converted_to_draft' ||
