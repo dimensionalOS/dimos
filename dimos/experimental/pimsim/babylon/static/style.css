@@ -220,11 +220,15 @@ button[data-active="false"] {
 .proof-window {
   left: 48px;
   top: 168px;
-  width: min(930px, calc(100vw - 510px));
-  height: calc(100vh - 470px);
+  /* The 930px width / 490px height caps were tuned for ~1440p layouts and
+     pinned the viewport to a tiny frame on larger displays. Let it grow
+     into the available space: right sidebar is 394px wide with a 48px right
+     margin and ~70px gap (510px total), bottom controls strip is ~284px
+     tall, header is 168px (matches the ``top``). */
+  width: calc(100vw - 510px);
+  height: calc(100vh - 284px - 168px);
   min-width: 620px;
   min-height: 360px;
-  max-height: 490px;
   overflow: hidden;
   background: #121719;
 }
@@ -380,8 +384,9 @@ button[data-active="false"] {
   right: 48px;
   top: 168px;
   width: 394px;
-  height: calc(100vh - 284px);
-  max-height: 676px;
+  /* Hard 676px cap removed - on tall displays the sidebar floated mid-screen.
+     Match the viewport's vertical extent. */
+  height: calc(100vh - 284px - 168px);
   display: grid;
   grid-template-rows: 168px minmax(150px, 1fr) 168px;
   gap: 16px;

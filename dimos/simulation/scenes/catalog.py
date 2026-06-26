@@ -47,6 +47,7 @@ _ALIASES = {
     "apartment": "dimos-apartment",
     "dimos-apartment": "dimos-apartment",
     "dimos_apartment": "dimos-apartment",
+    "supermarket": "supermarket",
 }
 _PACKAGE_DIRS = {
     DEFAULT_SCENE: "dimos_office",
@@ -55,6 +56,7 @@ _PACKAGE_DIRS = {
     "mall-babylon-nolights": "mall_babylon_nolights",
     "lowpoly-tdm": "lowpoly_tdm",
     "dimos-apartment": "dimos_apartment",
+    "supermarket": "supermarket",
 }
 
 

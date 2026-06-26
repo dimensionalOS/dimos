@@ -264,6 +264,30 @@ def _native_scene_lidar_enabled(scene_package: Any | None, lidar_disabled: bool)
     return False
 
 
+def _precomposed_g1_scene_mjb(scene_package: Any | None) -> Path | None:
+    """Find a prebuilt robot+scene+lidar binary inside a cooked scene package.
+
+    Convention: ``mujoco/composed/unitree-g1-groot-wbc_*static_only_lidar.mjb``.
+    Loading via ``MujocoSimModule(address=<mjb>)`` skips a multi-minute
+    ``MjSpec.compile()`` on heavy scenes (supermarket ~4 minutes -> ~3 s),
+    keeping the run inside the whole-body adapter's 60 s readiness window.
+
+    Names inside the precomposed binary are prefixed with ``/`` by
+    ``MjSpec.attach``; ``RobotSimSpec`` already handles that for joints / IMU,
+    and ``_camera_name_candidates`` covers lidar cameras. Disable via
+    ``DIMOS_DISABLE_PRECOMPOSED_MJB=1``.
+    """
+    if scene_package is None:
+        return None
+    if _env_bool("DIMOS_DISABLE_PRECOMPOSED_MJB", False):
+        return None
+    composed_dir = Path(scene_package.package_dir) / "mujoco" / "composed"
+    if not composed_dir.is_dir():
+        return None
+    candidates = sorted(composed_dir.glob("unitree-g1-groot-wbc_*static_only_lidar.mjb"))
+    return candidates[0] if candidates else None
+
+
 def _select_backend() -> _BackendSelection:
     if global_config.simulation != "mujoco":
         return _BackendSelection(
@@ -292,6 +316,19 @@ def _select_backend() -> _BackendSelection:
         viewer_mjcf_path = scene_package.mujoco_scene_path
     else:
         viewer_mjcf_path = _MJCF_PATH
+
+    # Fast-path: if the package ships a prebuilt robot+scene+lidar mjb, load
+    # it directly via ``address=`` instead of recomposing every start. For
+    # the supermarket this drops startup from ~4 min compose to ~3 s load,
+    # which is what keeps it inside the whole-body adapter's 60 s readiness
+    # window.
+    precomposed_mjb = _precomposed_g1_scene_mjb(scene_package)
+    if precomposed_mjb is not None:
+        logger.info("Loading precomposed MuJoCo binary: %s", precomposed_mjb)
+        scene_xml = None
+        scene_entities = []
+        viewer_mjcf_path = precomposed_mjb
+
     lidar_disabled = _env_bool("DIMOS_DISABLE_LIDAR", False)
     depth_cloud_enabled = _env_bool("DIMOS_ENABLE_DEPTH_CLOUD", False)
     native_scene_lidar_enabled = _native_scene_lidar_enabled(scene_package, lidar_disabled)
@@ -317,8 +354,9 @@ def _select_backend() -> _BackendSelection:
     )
 
     backend = MujocoSimModule.blueprint(
+        address=str(precomposed_mjb) if precomposed_mjb is not None else "",
         scene_xml=scene_xml,
-        robot_mjcf=str(_MJCF_PATH),
+        robot_mjcf=None if precomposed_mjb is not None else str(_MJCF_PATH),
         robot_meshdir=str(_G1_MESH_DIR),
         headless=_env_bool("DIMOS_MUJOCO_HEADLESS", True),
         dof=_SIM_DOF,
@@ -356,9 +394,10 @@ def _select_backend() -> _BackendSelection:
     return _BackendSelection(
         blueprint=backend,
         adapter_type="sim_mujoco_g1",
-        # SHM adapter key: use the robot MJCF path. Matches MujocoSimModule's
-        # shm_key_source so the adapter attaches to the right SHM buffer.
-        adapter_address=str(_MJCF_PATH),
+        # SHM adapter key derives from robot_mjcf when set, else from address.
+        # Match MujocoSimModule.shm_key_source so the adapter attaches to the
+        # right SHM buffer for both the compose path and the precomposed mjb.
+        adapter_address=(str(precomposed_mjb) if precomposed_mjb is not None else str(_MJCF_PATH)),
         viewer_mjcf_path=viewer_mjcf_path,
         tick_rate=_SIM_TICK_RATE_HZ,
         auto_arm=True,
@@ -598,7 +637,17 @@ def _babylon_blueprint(viewer_mjcf_path: str | Path, cmd_vel_topic: str) -> Blue
     if global_config.simulation:
         scene_package = _scene_package_config()
         if scene_package is not None and scene_package.visual_path is not None:
-            scene_visual_path = str(scene_package.visual_path)
+            # Convention override: if a Babylon-optimized GLB sits next to the
+            # canonical visual (gltfpack ``-mi`` collapses scenes like the
+            # supermarket from 47k nodes to ~200, dropping Babylon parse from
+            # minutes to a glance), prefer it. Falls back to the canonical
+            # ``visual.glb`` when the optimized copy isn't shipped - packages
+            # in the upstream LFS tarball stay one-file and Rerun keeps using
+            # ``scene_package.visual_path`` unchanged.
+            babylon_visual = scene_package.visual_path.with_name("visual.babylon.glb")
+            scene_visual_path = str(
+                babylon_visual if babylon_visual.exists() else scene_package.visual_path
+            )
             browser_collision_path = (
                 str(scene_package.browser_collision_path)
                 if scene_package.browser_collision_path is not None

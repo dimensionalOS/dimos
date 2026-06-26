@@ -1076,9 +1076,25 @@ async function loadSceneAsset(config) {
     if (mesh.material) configureStaticSceneMaterial(mesh.material);
     if (mesh.getTotalVertices && mesh.getTotalVertices() > 0) {
       mesh.computeWorldMatrix(true);
-      mesh.refreshBoundingInfo(true);
+      const hasThinInstances = !!mesh.thinInstanceCount && mesh.thinInstanceCount > 0;
+      if (hasThinInstances) {
+        // EXT_mesh_gpu_instancing meshes land as Babylon "thin instances".
+        // refreshBoundingInfo() only sees the prototype geometry at the GLB
+        // origin, so as the camera pans Babylon frustum-culls the entire
+        // mesh whenever (0, 0, 0) leaves the frustum - scattered instances
+        // pop out even though they're in view. thinInstanceRefreshBoundingInfo
+        // expands the bbox to enclose every instance; alwaysSelectAsActiveMesh
+        // is the belt-and-suspenders fallback. 47k instanced draws is trivial
+        // GPU work, so killing CPU-side culling on instanced meshes is cheap.
+        mesh.thinInstanceRefreshBoundingInfo(true);
+        mesh.alwaysSelectAsActiveMesh = true;
+      } else {
+        mesh.refreshBoundingInfo(true);
+      }
       mesh.freezeWorldMatrix();
-      mesh.doNotSyncBoundingInfo = true;
+      // Instanced bbox depends on instance buffer updates we may apply
+      // later; leave the sync hook intact for those.
+      mesh.doNotSyncBoundingInfo = !hasThinInstances;
     }
   }
   root.freezeWorldMatrix();
