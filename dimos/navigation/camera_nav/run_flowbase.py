@@ -42,8 +42,8 @@ if __name__ == "__main__":
         ModuleCoordinator.build(camera_nav_zed_standalone).loop()
 
     elif args.zed:
-        from dimos.navigation.camera_nav.blueprint_zed import camera_nav_zed_teleop
-        ModuleCoordinator.build(camera_nav_zed_teleop).loop()
+        from dimos.navigation.camera_nav.blueprint_zed import _make_zed_teleop
+        ModuleCoordinator.build(_make_zed_teleop(address=args.address)).loop()
 
     else:
         from dimos.navigation.camera_nav.blueprint_flowbase import (

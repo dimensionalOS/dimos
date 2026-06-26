@@ -88,7 +88,58 @@ camera_nav_zed_standalone = autoconnect(
     _RERUN_VIZ,
 )
 
-# Full: ZED + FlowBase keyboard teleop + traversal recording.
+def _make_zed_teleop(address: str | None = None):
+    """ZED + FlowBase keyboard teleop with configurable robot IP."""
+    from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
+    from dimos.control.coordinator import ControlCoordinator, TaskConfig
+    from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
+
+    _joints = make_twist_base_joints("base")
+    hw = HardwareComponent(
+        hardware_id="base",
+        hardware_type=HardwareType.BASE,
+        joints=_joints,
+        adapter_type="flowbase",
+        address=address,
+    )
+    coordinator = autoconnect(
+        ControlCoordinator.blueprint(
+            hardware=[hw],
+            tasks=[TaskConfig(name="vel_base", type="velocity", joint_names=_joints, priority=10)],
+        ),
+        KeyboardTeleop.blueprint(),
+    ).remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
+
+    return autoconnect(
+        coordinator,
+        ZEDCamera.blueprint(
+            base_transform=_ZED_MOUNT,
+            enable_depth=True,
+            depth_mode="ULTRA",
+            enable_fill_mode=True,
+            enable_pointcloud=False,
+            enable_tracking=True,
+            enable_imu_fusion=True,
+            set_floor_as_origin=True,
+        ),
+        HardwareDepthModule.blueprint(
+            camera_frame="camera_color_optical_frame",
+            stride=1,
+            max_depth=8.0,
+            max_freq=10.0,
+        ),
+        DepthAccumulatorModule.blueprint(
+            voxel_size=0.03,
+            icp_window=5,
+            merge_interval=10,
+            publish_freq=5.0,
+        ),
+        CameraNavRecorder.blueprint(db_path="traversal.db"),
+        _RERUN_VIZ,
+    )
+
+
+# Full: ZED + FlowBase keyboard teleop + traversal recording (default IP).
 camera_nav_zed_teleop = autoconnect(
     coordinator_flowbase_keyboard_teleop,
     ZEDCamera.blueprint(
