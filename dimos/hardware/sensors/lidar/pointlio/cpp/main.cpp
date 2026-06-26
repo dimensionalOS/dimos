@@ -5,13 +5,13 @@
 //
 // Binds Livox SDK2 directly into the Point-LIO core: SDK callbacks feed
 // CustomMsg/Imu to the IESKF estimator, which performs LiDAR-inertial SLAM.
-// Sensor-frame (mid360_link) point clouds and odometry are published on LCM.
+// Sensor-frame point clouds and odometry are published on LCM.
 //
 // Usage:
 //   ./pointlio_native \
 //       --lidar '/lidar#sensor_msgs.PointCloud2' \
 //       --odometry '/odometry#nav_msgs.Odometry' \
-//       --config_path /path/to/default.yaml \
+//       --filter_size_surf 0.2 --ivox_grid_resolution 2.0 ... \   # tuning as plain CLI args
 //       --host_ip 192.168.1.5 --lidar_ip 192.168.1.155
 
 #include <lcm/lcm-cpp.hpp>
@@ -57,10 +57,28 @@ static double get_publish_ts() {
     return std::chrono::duration<double>( std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
+// Parse a comma-separated list of doubles (CLI vector args); empty on bad input.
+static std::vector<double> parse_doubles(const std::string& csv) {
+    std::vector<double> out;
+    size_t i = 0;
+    while (i < csv.size()) {
+        size_t j = csv.find(',', i);
+        if (j == std::string::npos) { j = csv.size(); }
+        try {
+            out.push_back(std::stod(csv.substr(i, j - i)));
+        } catch (...) {
+            return {};
+        }
+        i = j + 1;
+    }
+    return out;
+}
+
 static std::string g_lidar_topic;
 static std::string g_odometry_topic;
 static std::string g_frame_id;          // required via --frame_id
 static std::string g_child_frame_id;     // required via --child_frame_id
+static std::string g_sensor_frame_id;    // required via --sensor_frame_id
 static float g_frequency = 10.0f;
 
 // Frame accumulator (Livox SDK raw → CustomMsg)
@@ -85,7 +103,7 @@ static uint64_t get_timestamp_ns(const LivoxLidarEthernetPacket* pkt) {
 using dimos::time_from_seconds;
 using dimos::make_header;
 
-// Publish the lidar point cloud in the sensor body frame (g_frame_id).
+// Publish the lidar point cloud in the sensor frame (g_sensor_frame_id).
 // `cloud` is Point-LIO's undistorted scan in the sensor's own frame
 // (get_body_cloud), so points are published as-is with no world registration.
 static void publish_lidar(PointCloudXYZI::Ptr cloud, double timestamp, const std::string& topic = "") {
@@ -95,7 +113,7 @@ static void publish_lidar(PointCloudXYZI::Ptr cloud, double timestamp, const std
     int num_points = static_cast<int>(cloud->size());
 
     sensor_msgs::PointCloud2 pc;
-    pc.header = make_header(g_frame_id, timestamp);
+    pc.header = make_header(g_sensor_frame_id, timestamp);
     pc.height = 1;
     pc.width = num_points;
     pc.is_bigendian = 0;
@@ -292,11 +310,68 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    std::string config_path = mod.arg("config_path", "");
-    if (config_path.empty()) {
-        fprintf(stderr, "Error: --config_path <path> is required\n");
-        return 1;
-    }
+    // Point-LIO tuning, passed as CLI args by the dimos module (no YAML).
+    PointLioParams params;
+    // common
+    params.con_frame = mod.arg_bool("con_frame", params.con_frame);
+    params.con_frame_num = mod.arg_int("con_frame_num", params.con_frame_num);
+    params.cut_frame = mod.arg_bool("cut_frame", params.cut_frame);
+    params.cut_frame_time_interval = mod.arg_float("cut_frame_time_interval", params.cut_frame_time_interval);
+    params.time_lag_imu_to_lidar = mod.arg_float("time_lag_imu_to_lidar", params.time_lag_imu_to_lidar);
+    // preprocess
+    params.scan_line = mod.arg_int("scan_line", params.scan_line);
+    params.scan_rate = mod.arg_int("scan_rate", params.scan_rate);
+    params.blind = mod.arg_float("blind", params.blind);
+    params.point_filter_num = mod.arg_int("point_filter_num", params.point_filter_num);
+    std::string lidar_type = mod.arg("lidar_type", "avia");
+    params.lidar_type = lidar_type == "velodyne" ? 2 : lidar_type == "ouster" ? 3 :
+                        lidar_type == "hesai" ? 4 : lidar_type == "unilidar" ? 5 : 1;
+    std::string ts_unit = mod.arg("timestamp_unit", "nanosecond");
+    params.timestamp_unit = ts_unit == "second" ? 0 : ts_unit == "millisecond" ? 1 :
+                            ts_unit == "microsecond" ? 2 : 3;
+    // mapping
+    params.use_imu_as_input = mod.arg_bool("use_imu_as_input", params.use_imu_as_input);
+    params.prop_at_freq_of_imu = mod.arg_bool("prop_at_freq_of_imu", params.prop_at_freq_of_imu);
+    params.check_satu = mod.arg_bool("check_satu", params.check_satu);
+    params.init_map_size = mod.arg_int("init_map_size", params.init_map_size);
+    params.space_down_sample = mod.arg_bool("space_down_sample", params.space_down_sample);
+    params.satu_acc = mod.arg_float("satu_acc", params.satu_acc);
+    params.satu_gyro = mod.arg_float("satu_gyro", params.satu_gyro);
+    params.acc_norm = mod.arg_float("acc_norm", params.acc_norm);
+    params.plane_thr = mod.arg_float("plane_thr", params.plane_thr);
+    params.filter_size_surf = mod.arg_float("filter_size_surf", params.filter_size_surf);
+    params.filter_size_map = mod.arg_float("filter_size_map", params.filter_size_map);
+    params.ivox_grid_resolution = mod.arg_float("ivox_grid_resolution", params.ivox_grid_resolution);
+    std::string ivox_nearby = mod.arg("ivox_nearby_type", "nearby6");
+    params.ivox_nearby_type = ivox_nearby == "center" ? 0 : ivox_nearby == "nearby18" ? 18 :
+                              ivox_nearby == "nearby26" ? 26 : 6;
+    params.cube_side_length = mod.arg_float("cube_side_length", params.cube_side_length);
+    params.det_range = mod.arg_float("det_range", params.det_range);
+    params.fov_degree = mod.arg_float("fov_degree", params.fov_degree);
+    params.imu_en = mod.arg_bool("imu_en", params.imu_en);
+    params.start_in_aggressive_motion = mod.arg_bool("start_in_aggressive_motion", params.start_in_aggressive_motion);
+    params.extrinsic_est_en = mod.arg_bool("extrinsic_est_en", params.extrinsic_est_en);
+    params.imu_time_inte = mod.arg_float("imu_time_inte", params.imu_time_inte);
+    params.lidar_meas_cov = mod.arg_float("lidar_meas_cov", params.lidar_meas_cov);
+    params.acc_cov_input = mod.arg_float("acc_cov_input", params.acc_cov_input);
+    params.vel_cov = mod.arg_float("vel_cov", params.vel_cov);
+    params.gyr_cov_input = mod.arg_float("gyr_cov_input", params.gyr_cov_input);
+    params.gyr_cov_output = mod.arg_float("gyr_cov_output", params.gyr_cov_output);
+    params.acc_cov_output = mod.arg_float("acc_cov_output", params.acc_cov_output);
+    params.b_gyr_cov = mod.arg_float("b_gyr_cov", params.b_gyr_cov);
+    params.b_acc_cov = mod.arg_float("b_acc_cov", params.b_acc_cov);
+    params.imu_meas_acc_cov = mod.arg_float("imu_meas_acc_cov", params.imu_meas_acc_cov);
+    params.imu_meas_omg_cov = mod.arg_float("imu_meas_omg_cov", params.imu_meas_omg_cov);
+    params.match_s = mod.arg_float("match_s", params.match_s);
+    params.gravity_align = mod.arg_bool("gravity_align", params.gravity_align);
+    if (auto g = parse_doubles(mod.arg("gravity", "")); !g.empty()) params.gravity = g;
+    if (auto gi = parse_doubles(mod.arg("gravity_init", "")); !gi.empty()) params.gravity_init = gi;
+    if (auto et = parse_doubles(mod.arg("extrinsic_t", "")); !et.empty()) params.extrinsic_T = et;
+    if (auto er = parse_doubles(mod.arg("extrinsic_r", "")); !er.empty()) params.extrinsic_R = er;
+    // odometry
+    params.publish_odometry_without_downsample =
+        mod.arg_bool("publish_odometry_without_downsample", params.publish_odometry_without_downsample);
+    params.odom_only = mod.arg_bool("odom_only", params.odom_only);
 
     // Point-LIO internal processing rates
     double msr_freq = mod.arg_float("msr_freq", 50.0f);
@@ -307,7 +382,8 @@ int main(int argc, char** argv) {
     std::string lidar_ip = mod.arg("lidar_ip", "192.168.1.155");
     g_frequency = mod.arg_float("frequency", 10.0f);
     g_frame_id = mod.arg_required("frame_id");
-    g_child_frame_id = mod.arg_required("body_frame_id");
+    g_child_frame_id = mod.arg_required("child_frame_id");
+    g_sensor_frame_id = mod.arg_required("sensor_frame_id");
     float pointcloud_freq = mod.arg_float("pointcloud_freq", 5.0f);
     float odom_freq = mod.arg_float("odom_freq", 50.0f);
 
@@ -333,7 +409,7 @@ int main(int argc, char** argv) {
         printf("[pointlio] Starting Point-LIO + Livox Mid-360 native module\n");
         printf("[pointlio] lidar topic: %s\n", g_lidar_topic.empty() ? "(disabled)" : g_lidar_topic.c_str());
         printf("[pointlio] odometry topic: %s\n", g_odometry_topic.empty() ? "(disabled)" : g_odometry_topic.c_str());
-        printf("[pointlio] config: %s\n", config_path.c_str());
+        printf("[pointlio] tuning: filter_size_surf=%.3f ivox_res=%.3f lidar_type=%d\n", params.filter_size_surf, params.ivox_grid_resolution, params.lidar_type);
         printf("[pointlio] host_ip: %s  lidar_ip: %s  frequency: %.1f Hz\n", host_ip.c_str(), lidar_ip.c_str(), g_frequency);
         printf("[pointlio] pointcloud_freq: %.1f Hz  odom_freq: %.1f Hz\n", pointcloud_freq, odom_freq);
     }
@@ -349,7 +425,7 @@ int main(int argc, char** argv) {
     g_lcm = &lcm;
 
     if (debug) { printf("[pointlio] Initializing Point-LIO...\n"); }
-    PointLio point_lio(config_path, msr_freq, main_freq);
+    PointLio point_lio(params, msr_freq, main_freq);
     g_point_lio = &point_lio;
     if (debug) { printf("[pointlio] Point-LIO initialized.\n"); }
 

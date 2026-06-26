@@ -89,7 +89,6 @@
             pkgs.glib
             pkgs.eigen
             pkgs.pcl
-            pkgs.yaml-cpp
             pkgs.glog
             pkgs.boost
             pkgs.llvmPackages.openmp
