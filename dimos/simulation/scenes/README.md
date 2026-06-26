@@ -1,22 +1,54 @@
-# Scene Packages At Runtime
+# Scene Packages
 
-A scene package is a cooked environment. Runtime code should not inspect raw
-GLBs, run Blender, or apply cooking heuristics. It should load
-`scene.meta.json`, choose the artifact for its backend, and pass that artifact
-to the simulator or viewer.
+A scene package is a cooked environment that runtime code can load without
+knowing how the environment was produced.
 
-## Load A Package
+Before scene packages, a scene was usually a loose set of files: MuJoCo XML,
+mesh files, browser assets, object metadata, and local path assumptions. A
+consumer had to know the folder layout for that one scene. Scene packages make
+that explicit: load `scene.meta.json` once, then ask the package for the
+artifact needed by the simulator, viewer, or planner.
+
+Scene packages are runtime artifacts. Cooking tools may use Blender, GLB
+optimizers, collision decomposition, or manual sidecars, but runtime modules
+should not depend on those details.
+
+## What A Package Can Contain
+
+A package can carry several assets for different consumers:
+
+- MuJoCo XML for physics simulation
+- optional MuJoCo `.mjb` binaries for faster loading of large scenes
+- Rerun or browser visual assets
+- future visual assets such as Gaussian splats
+- static environment geometry
+- dynamic or separately spawned entities
+- object prototypes reused by many instances
+- coordinate-frame and scale alignment metadata
+
+Not every package needs every artifact. A viewer can load the visual asset, a
+simulator can load the physics asset, and another renderer can ask for its own
+target-specific output later.
+
+## Runtime API
 
 Use `resolve_scene_package()` for the same values accepted by `--scene`:
 
 ```python
 from dimos.simulation.scenes.catalog import resolve_scene_package
 
-package = resolve_scene_package("office")
-assert package is not None
+package = resolve_scene_package(global_config.scene)
 ```
 
-Use `load_scene_package()` when you already have an exact metadata path:
+Supported inputs:
+
+- `None` or `--scene none`
+- named packages such as `office` or `supermarket`
+- path to `scene.meta.json`
+- path to a scene package directory
+- path to a precompiled MuJoCo `.mjb` in consumers that support direct binary loading
+
+Use `load_scene_package()` when you already have the exact metadata path:
 
 ```python
 from dimos.simulation.scene_assets.spec import load_scene_package
@@ -24,65 +56,38 @@ from dimos.simulation.scene_assets.spec import load_scene_package
 package = load_scene_package("data/scene_packages/dimos_office/scene.meta.json")
 ```
 
-The currently shipped named scenes are:
-
-```text
-none    no cooked scene package
-office  cooked DimOS office package
-```
-
-## Pick The Backend Artifact
-
-Scene packages can contain several artifacts for different consumers:
+Once resolved, consumers should use the package object instead of hardcoded
+scene-specific paths:
 
 ```python
-rerun_glb = package.browser_visual_path("rerun")
-babylon_glb = package.browser_visual_path("babylon")
-browser_collision = package.browser_collision_path
-objects_json = package.objects_path
-mujoco_xml = package.mujoco_scene_path
-entities = package.entities
+if package is not None:
+    mujoco_xml = package.mujoco_scene_path
+    rerun_visual = package.browser_visual_path("rerun")
+    browser_collision = package.browser_collision_path
+    objects_json = package.objects_path
+    entities = package.entities
+    alignment = package.alignment
 ```
 
-Browser visuals are backend-specific because GLB support differs by viewer.
-Rerun should request `browser_visual_path("rerun")`; Babylon/PimSim should
-request `browser_visual_path("babylon")`. If a target returns `None`, the
-package was not cooked for that backend.
+`alignment` describes how source assets are scaled and oriented relative to the
+runtime world. This lets viewers and simulators agree on frame conventions.
 
-MuJoCo uses the scene-only XML plus runtime entities. The robot is attached by
-`MujocoSimModule`; it is not part of `scene.meta.json`.
+Browser-facing assets are target-specific. Rerun should ask for
+`browser_visual_path("rerun")`; a browser renderer such as Babylon/PimSim can
+ask for `browser_visual_path("babylon")`. If a target returns `None`, the
+package was not cooked for that target.
 
-## Run G1 With A Scene
+## Named Packages
 
-Run the cooked office scene:
+The current named packages are:
 
-```bash
-python -m dimos.robot.cli.dimos \
-  --simulation mujoco \
-  --scene office \
-  --viewer rerun \
-  --n-workers 12 \
-  run unitree-g1-groot-wbc \
-  -o mujocosimmodule.headless=true
+```text
+none         no cooked scene package
+office       cooked DimOS office package
+supermarket  cooked supermarket package
 ```
 
-Run the same blueprint without a cooked scene:
-
-```bash
-python -m dimos.robot.cli.dimos \
-  --simulation mujoco \
-  --scene none \
-  --viewer rerun \
-  --n-workers 12 \
-  run unitree-g1-groot-wbc \
-  -o mujocosimmodule.headless=true
-```
-
-Use `mujocosimmodule.headless=true` for normal testing and inspect the scene,
-robot, lidar, map, and path in Rerun. `headless=false` opens the MuJoCo native
-window and is useful for contact debugging, but it can run much slower.
-
-## MuJoCo Loading Modes
+## MuJoCo Loading
 
 Normal packages are robot-agnostic:
 
@@ -90,30 +95,60 @@ Normal packages are robot-agnostic:
 scene.meta.json -> wrapper.xml + entities -> attach robot MJCF -> compile MjModel
 ```
 
-Large scenes may also ship composed `.mjb` files:
+Large scenes may also ship precompiled MuJoCo binaries:
 
 ```text
 wrapper.xml + robot MJCF + spawn/entity selection -> composed/<name>.mjb
 ```
 
-Passing a composed `.mjb` path to `--scene` skips runtime composition and loads
-the binary model directly. This is faster, but the file is specific to one
-robot, spawn pose, entity set, and scene revision.
+Loading a composed `.mjb` is faster, but that file is specific to one robot,
+spawn pose, entity selection, and scene revision. Keep the scene package
+metadata as the source of truth and treat composed binaries as cache artifacts.
 
-## Package Contract
+## Run G1 With A Scene
 
-Runtime consumers should depend on:
+No scene:
 
-```text
-ScenePackage.package_dir
-ScenePackage.alignment
-ScenePackage.browser_visual_path(target)
-ScenePackage.browser_collision_path
-ScenePackage.objects_path
-ScenePackage.mujoco_scene_path
-ScenePackage.mujoco_binary_path
-ScenePackage.entities
+```bash
+dimos \
+  --simulation mujoco \
+  --scene none \
+  --viewer rerun \
+  --rerun-open native \
+  --n-workers 12 \
+  run unitree-g1-groot-wbc
 ```
 
-Cooking details belong in `dimos.experimental.pimsim.scene`; runtime modules
-should stay on this package contract.
+Office:
+
+```bash
+dimos \
+  --simulation mujoco \
+  --scene office \
+  --viewer rerun \
+  --rerun-open native \
+  --n-workers 12 \
+  run unitree-g1-groot-wbc
+```
+
+Supermarket:
+
+```bash
+dimos \
+  --simulation mujoco \
+  --scene supermarket \
+  --viewer rerun \
+  --rerun-open native \
+  --n-workers 12 \
+  run unitree-g1-groot-wbc
+```
+
+Prefer headless MuJoCo with Rerun native for normal testing. Opening the MuJoCo
+viewer with `mujocosimmodule.headless=false` is useful for contact debugging,
+but it can run much slower.
+
+## Boundaries
+
+This package contract is for runtime loading. Cooking logic belongs in the
+scene cooking tools. Runtime modules should stay on the `ScenePackage` API and
+avoid depending on Blender, source-scene naming, or cooking heuristics.
