@@ -1,18 +1,75 @@
-# Scene Packages
+# Scene Cooking
 
-A scene package is the cooked, robot-agnostic form of a 3D environment. It
-contains the visual mesh, collision geometry, per-object metadata, a scene-only
-MuJoCo wrapper, and optional runtime entities.
-
-The runtime rule is simple:
+Scene cooking is the offline half of the scene-package workflow. It turns a raw
+environment asset plus an authored sidecar into a robot-agnostic package that
+runtime modules can load.
 
 ```text
-source asset + sidecar -> cooked scene package -> simulator attaches any robot
+source asset + <scene>.cook.json -> cooked scene package -> runtime attaches robot
 ```
 
-The robot is not part of the package. The cooker prepares the world once,
-offline. `MujocoSimModule` loads the cooked world at runtime and attaches the
-robot MJCF into the same `MjSpec`.
+This PR is part 2 of the split. Part 1 adds runtime scene loading and the
+consumer contract in `dimos/simulation/scenes/README.md`. Keep that split clean:
+runtime code loads `scene.meta.json`; cooking code is the only place that should
+need Blender, CoACD, gltfpack, Open3D, USD tooling, or source-asset heuristics.
+
+The robot is not part of the scene package. The cooker prepares the world once,
+offline. `MujocoSimModule` can then load the cooked world at runtime and attach
+the robot MJCF into the same `MjSpec`.
+
+## Minimum Interface
+
+The cooker needs four things:
+
+```text
+1. source asset      .glb, .blend, .usd, .obj, .ply, .stl, ...
+2. sidecar          <scene>.cook.json, optional but recommended
+3. alignment        scale, rotation, translation, up-axis
+4. output directory data/scene_packages/<name>
+```
+
+Install the Python cooking dependencies with:
+
+```bash
+uv sync --extra scene
+```
+
+For full DimOS development environments, `uv sync --extra all` also includes the
+scene extra. External tools are still separate system binaries:
+
+```text
+blender   required for .blend normalization and authored visual extraction
+gltfpack  recommended for browser visual optimization
+```
+
+Before a long cook, run the preflight module. It normalizes authored formats
+when needed, loads the sidecar, counts source prims, builds the entity plan, and
+prints the exact cook command:
+
+```bash
+python -m dimos.experimental.pimsim.scene.demo_scene_cook_requirements \
+  data/dimos_office_mesh/dimos_office_mesh.glb \
+  --cook-spec data/dimos_office_mesh/dimos_office_mesh.cook.json \
+  --output-dir data/scene_packages/dimos_office \
+  --scale 2.0 \
+  --no-y-up
+```
+
+Then cook:
+
+```bash
+python -m dimos.experimental.pimsim.scene.cook \
+  data/dimos_office_mesh/dimos_office_mesh.glb \
+  --cook-spec data/dimos_office_mesh/dimos_office_mesh.cook.json \
+  --output-dir data/scene_packages/dimos_office \
+  --scale 2.0 \
+  --no-y-up \
+  --rebake
+```
+
+The output is a package with one manifest and backend-specific artifacts. The
+runtime consumer should use `load_scene_package()` or `resolve_scene_package()`,
+not the raw source asset.
 
 ## Package Layout
 
@@ -202,13 +259,24 @@ python -m dimos.experimental.pimsim.scene.cook \
 That writes `mujoco/<hash>/wrapper.mjb`. It is still scene-only; it does not
 include a robot.
 
-## Tool Diagnostics
+## Tool Diagnostics And Rerun GLBs
 
 Scene cooking shells out to production asset tools. Their output is streamed
 through the DimOS logger with a command label, elapsed-time heartbeats, and a
 tail of recent output on failure. Long Blender imports should therefore show
 which stage is running: source normalization, authored visual extraction,
 browser visual import, decimation, join, or export.
+
+Rerun can load normal textured GLBs, but it is strict about required glTF
+extensions. The default visual cook is intentionally conservative so the output
+is useful in Rerun and in generic browser viewers:
+
+- `gltfpack -noq` avoids `KHR_mesh_quantization` as a required extension.
+- `KHR_texture_transform` is demoted from required to used.
+- Embedded textures are normalized to ordinary 8-bit PNG payloads unless
+  explicitly disabled.
+- WebP/KTX2 texture compression is opt-in because it requires viewer support
+  and a native meshoptimizer `gltfpack` build.
 
 `gltfpack` is the preferred browser visual optimizer for GLB inputs, but install
 a native meshoptimizer `gltfpack` binary when using texture compression. The
@@ -358,17 +426,19 @@ top_z = pos_z + size_z
 bottom_z = pos_z - size_z
 ```
 
-## Loading In MuJoCo
+## Loading Cooked Output
 
-The G1 GR00T WBC blueprint already uses the scene package path when `--scene`
-is provided:
+Runtime details live in `dimos/simulation/scenes/README.md`. For a quick G1
+GR00T WBC check with a cooked named scene:
 
 ```bash
 python -m dimos.robot.cli.dimos \
   --simulation mujoco \
   --scene office \
   --viewer rerun \
-  run unitree-g1-groot-wbc
+  --n-workers 12 \
+  run unitree-g1-groot-wbc \
+  -o mujocosimmodule.headless=true
 ```
 
 `office` resolves through `dimos/simulation/scenes/catalog.py` to:
@@ -390,20 +460,27 @@ At runtime, `MujocoSimModule`:
 The robot MJCF must stay robot-only: no office floor, no scene walls, no
 furniture, no manipulation rig. Scene geometry belongs in the cooked package.
 
+Prefer `mujocosimmodule.headless=true` and inspect the robot, scene GLB, lidar,
+costmaps, and planned path in the Rerun native viewer. `headless=false` opens
+MuJoCo's native window and can run much slower, so use it only for direct MuJoCo
+render/contact debugging.
+
 For a large scene where XML compile is too slow, load a composed binary model
 instead of the scene package metadata:
 
 ```bash
 python -m dimos.robot.cli.dimos \
   --simulation mujoco \
-  --scene /home/pim/Desktop/dimos-scene-cooking-part2/data/scene_packages/supermarket_static_product_primitives_20dyn/mujoco/composed/unitree-g1-groot-wbc_spawn_9p2_11p8_yaw_m1p57.mjb \
-  --n-workers 10 \
+  --scene /path/to/package/mujoco/composed/unitree-g1-groot-wbc_spawn.mjb \
+  --viewer rerun \
+  --n-workers 12 \
   run unitree-g1-groot-wbc \
-  -o mujocosimmodule.headless=false
+  -o mujocosimmodule.headless=true
 ```
 
 That path skips scene-package runtime composition. The `.mjb` already contains
-the G1 robot and the supermarket scene at the authored test spawn.
+the robot, cooked scene, spawn pose, and selected runtime entity set for that
+build.
 
 ## Sidecar Schema
 
