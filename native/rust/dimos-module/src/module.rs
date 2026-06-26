@@ -349,7 +349,7 @@ pub(crate) fn spawn_publish_task<T: Transport>(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         while let Some((topic, data)) = publish_rx.recv().await {
-            if let Err(e) = transport.publish(&topic, &data).await {
+            if let Err(e) = transport.publish(&topic, data).await {
                 error!(topic = %topic, error = %e, "publish error");
             }
         }
@@ -498,7 +498,7 @@ mod tests {
     }
 
     impl crate::transport::Transport for ControllableMockTransport {
-        async fn publish(&self, _channel: &str, _data: &[u8]) -> io::Result<()> {
+        async fn publish(&self, _channel: &str, _data: Vec<u8>) -> io::Result<()> {
             self.publish_entered.notify_one();
             let delay = self.publish_delay_ms.load(Ordering::Relaxed);
             if delay > 0 {

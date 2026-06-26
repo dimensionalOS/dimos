@@ -70,7 +70,7 @@ async fn bench_pair<T: Transport>(
     let pong_pub = Arc::clone(&pong);
     tokio::spawn(async move {
         while let Some(bytes) = echo_rx.recv().await {
-            let _ = pong_pub.publish(PONG_KEY, &bytes).await;
+            let _ = pong_pub.publish(PONG_KEY, bytes).await;
         }
     });
 
@@ -118,7 +118,7 @@ async fn run_size<T: Transport>(
     let start = Instant::now();
     let mut messages = 0u64;
     while start.elapsed() < WINDOW {
-        if ping.publish(PING_KEY, payload).await.is_err() {
+        if ping.publish(PING_KEY, payload.to_vec()).await.is_err() {
             return failed;
         }
         // Bound the wait so a dropped echo ends the size instead of hanging.
@@ -143,7 +143,7 @@ async fn warm_up<T: Transport>(
 ) -> bool {
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
-        if ping.publish(PING_KEY, payload).await.is_err() {
+        if ping.publish(PING_KEY, payload.to_vec()).await.is_err() {
             return false;
         }
         let echoed = tokio::time::timeout(Duration::from_millis(200), ack_rx.recv()).await;

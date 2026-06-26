@@ -63,8 +63,8 @@ impl LcmTransport {
 }
 
 impl Transport for LcmTransport {
-    async fn publish(&self, channel: &str, data: &[u8]) -> io::Result<()> {
-        self.inner.publish(channel, data).await
+    async fn publish(&self, channel: &str, data: Vec<u8>) -> io::Result<()> {
+        self.inner.publish(channel, &data).await
     }
 
     async fn subscribe(&self, channel: &str, on_msg: Dispatch) -> io::Result<()> {

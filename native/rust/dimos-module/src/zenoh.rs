@@ -20,9 +20,9 @@ impl ZenohTransport {
 }
 
 impl Transport for ZenohTransport {
-    async fn publish(&self, channel: &str, data: &[u8]) -> io::Result<()> {
+    async fn publish(&self, channel: &str, data: Vec<u8>) -> io::Result<()> {
         self.session
-            .put(key_for(channel), data.to_vec())
+            .put(key_for(channel), data)
             .await
             .map_err(to_io)
     }
@@ -97,7 +97,7 @@ mod tests {
         let received = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 transport
-                    .publish("/dimos_test/round_trip", payload)
+                    .publish("/dimos_test/round_trip", payload.to_vec())
                     .await
                     .expect("publish");
                 if let Ok(Some(got)) =

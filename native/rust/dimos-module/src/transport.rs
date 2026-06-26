@@ -13,7 +13,7 @@ pub type Dispatch = Arc<dyn Fn(&[u8]) + Send + Sync>;
 /// `NativeModule` is generic over any transport
 pub trait Transport: Send + Sync + 'static {
     /// Send `data` on `channel`.
-    fn publish(&self, channel: &str, data: &[u8]) -> impl Future<Output = io::Result<()>> + Send;
+    fn publish(&self, channel: &str, data: Vec<u8>) -> impl Future<Output = io::Result<()>> + Send;
     /// Deliver each message on `channel` to `on_msg`.
     fn subscribe(
         &self,
