@@ -23,7 +23,12 @@ import pytest
 from dimos.experimental.pimsim.scene import plan as plan_module
 from dimos.experimental.pimsim.scene.sidecar import SceneCookSidecar
 from dimos.simulation.scene_assets.mesh_scene import SceneMeshAlignment, ScenePrimMesh
-from dimos.simulation.scene_assets.spec import ARTIFACT_FRAMES, ScenePackage, load_scene_package
+from dimos.simulation.scene_assets.spec import (
+    ARTIFACT_FRAMES,
+    ScenePackage,
+    browser_visual_spec_for_target,
+    load_scene_package,
+)
 
 
 def _metadata(tmp_path: Path) -> dict[str, object]:
@@ -39,6 +44,10 @@ def _metadata(tmp_path: Path) -> dict[str, object]:
         "artifact_frames": ARTIFACT_FRAMES,
         "artifacts": {
             "browser_visual": str(tmp_path / "visual.glb"),
+            "browser_visuals": {
+                "rerun": str(tmp_path / "visual.rerun.glb"),
+                "babylon": str(tmp_path / "visual.babylon.glb"),
+            },
             "browser_collision": str(tmp_path / "collision.glb"),
             "objects": str(tmp_path / "objects.json"),
             "mujoco_scene": str(tmp_path / "wrapper.xml"),
@@ -107,6 +116,8 @@ def test_load_scene_package_accepts_expected_artifact_frames(tmp_path: Path) -> 
     package = load_scene_package(metadata_path)
 
     assert package.visual_path == tmp_path / "visual.glb"
+    assert package.browser_visual_path("rerun") == tmp_path / "visual.rerun.glb"
+    assert package.browser_visual_path("babylon") == tmp_path / "visual.babylon.glb"
     assert package.browser_collision_path == tmp_path / "collision.glb"
     assert package.objects_path == tmp_path / "objects.json"
     assert package.mujoco_scene_path == tmp_path / "wrapper.xml"
@@ -119,6 +130,10 @@ def test_scene_package_metadata_uses_package_relative_paths(tmp_path: Path) -> N
         source_path=tmp_path / "source.glb",
         alignment=SceneMeshAlignment(),
         visual_path=tmp_path / "browser" / "visual.glb",
+        browser_visuals={
+            "rerun": tmp_path / "browser" / "visual.rerun.glb",
+            "babylon": tmp_path / "browser" / "visual.babylon.glb",
+        },
         browser_collision_path=tmp_path / "browser" / "collision.glb",
         objects_path=tmp_path / "browser" / "objects.json",
         mujoco_scene_path=tmp_path / "mujoco" / "abc123" / "wrapper.xml",
@@ -136,6 +151,10 @@ def test_scene_package_metadata_uses_package_relative_paths(tmp_path: Path) -> N
 
     assert raw["package_dir"] == "."
     assert raw["artifacts"]["browser_visual"] == "browser/visual.glb"
+    assert raw["artifacts"]["browser_visuals"] == {
+        "babylon": "browser/visual.babylon.glb",
+        "rerun": "browser/visual.rerun.glb",
+    }
     assert raw["artifacts"]["browser_collision"] == "browser/collision.glb"
     assert raw["artifacts"]["objects"] == "browser/objects.json"
     assert raw["artifacts"]["mujoco_scene"] == "mujoco/abc123/wrapper.xml"
@@ -145,6 +164,8 @@ def test_scene_package_metadata_uses_package_relative_paths(tmp_path: Path) -> N
     loaded = load_scene_package(metadata_path)
     assert loaded.package_dir == tmp_path
     assert loaded.visual_path == tmp_path / "browser" / "visual.glb"
+    assert loaded.browser_visual_path("rerun") == tmp_path / "browser" / "visual.rerun.glb"
+    assert loaded.browser_visual_path("babylon") == tmp_path / "browser" / "visual.babylon.glb"
     assert loaded.mujoco_scene_path == tmp_path / "mujoco" / "abc123" / "wrapper.xml"
     assert loaded.mujoco_binary_path == tmp_path / "mujoco" / "abc123" / "wrapper.mjb"
     assert loaded.entities[0]["visual_path"] == str(
@@ -162,6 +183,21 @@ def test_load_scene_package_tolerates_missing_objects_sidecar(tmp_path: Path) ->
     package = load_scene_package(metadata_path)
 
     assert package.objects_path is None
+
+
+def test_browser_visual_profiles_are_backend_specific() -> None:
+    rerun = browser_visual_spec_for_target("rerun")
+    babylon = browser_visual_spec_for_target("babylon")
+
+    assert rerun.artifact_name == "visual.rerun.glb"
+    assert rerun.quantize is False
+    assert rerun.normalize_textures is True
+    assert rerun.demote_required_extensions == ("KHR_texture_transform",)
+
+    assert babylon.artifact_name == "visual.babylon.glb"
+    assert babylon.quantize is True
+    assert babylon.normalize_textures is False
+    assert babylon.demote_required_extensions == ()
 
 
 def test_extract_scene_objects_emits_per_prim_aabb() -> None:

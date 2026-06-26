@@ -21,11 +21,11 @@ import struct
 
 from PIL import Image
 
-from dimos.experimental.pimsim.scene.visual_glb import (
-    _buffer_view_bytes,
-    _demote_required_extensions,
-    _normalize_embedded_textures,
-    _read_glb,
+from dimos.simulation.scene_assets.glb import (
+    buffer_view_bytes,
+    demote_required_extensions,
+    normalize_embedded_textures,
+    read_glb,
 )
 
 
@@ -37,14 +37,14 @@ def test_normalize_embedded_textures_preserves_glb_and_rewrites_png8(
     path = tmp_path / "textured.glb"
     _write_test_glb(path, geometry_payload, texture_payload)
 
-    count = _normalize_embedded_textures(path)
+    count = normalize_embedded_textures(path)
 
     assert count == 1
-    gltf, bin_chunk = _read_glb(path)
+    gltf, bin_chunk = read_glb(path)
     assert gltf["images"][0]["mimeType"] == "image/png"
-    assert _buffer_view_bytes(bin_chunk, gltf["bufferViews"][0]) == geometry_payload
+    assert buffer_view_bytes(bin_chunk, gltf["bufferViews"][0]) == geometry_payload
 
-    normalized_texture = _buffer_view_bytes(bin_chunk, gltf["bufferViews"][1])
+    normalized_texture = buffer_view_bytes(bin_chunk, gltf["bufferViews"][1])
     with Image.open(BytesIO(normalized_texture)) as image:
         assert image.format == "PNG"
         assert image.mode == "RGB"
@@ -60,10 +60,10 @@ def test_demote_required_extensions_keeps_extension_optional(tmp_path: Path) -> 
         used_extensions=["KHR_texture_transform", "EXT_texture_webp"],
     )
 
-    demoted = _demote_required_extensions(path, {"KHR_texture_transform"})
+    demoted = demote_required_extensions(path, {"KHR_texture_transform"})
 
     assert demoted == {"KHR_texture_transform"}
-    gltf, _ = _read_glb(path)
+    gltf, _ = read_glb(path)
     assert gltf["extensionsRequired"] == ["EXT_texture_webp"]
     assert "KHR_texture_transform" in gltf["extensionsUsed"]
 

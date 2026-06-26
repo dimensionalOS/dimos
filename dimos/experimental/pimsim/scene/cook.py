@@ -42,12 +42,14 @@ from dimos.experimental.pimsim.scene.visual_glb import cook_browser_visual
 from dimos.simulation.mujoco.collision_spec import CollisionSpec
 from dimos.simulation.mujoco.scene_mesh_to_mjcf import load_or_bake
 from dimos.simulation.scene_assets.spec import (
+    BROWSER_VISUAL_TARGETS,
     BrowserCollisionSpec,
     BrowserVisualSpec,
     MujocoSceneSpec,
     SceneCookSpec,
     SceneMeshAlignment,
     ScenePackage,
+    browser_visual_spec_for_target,
 )
 from dimos.utils.data import get_data_dir
 from dimos.utils.logging_config import setup_logger
@@ -175,9 +177,16 @@ def cook_scene_package(
         rebake=rebake,
     )
     if visual_result is not None:
-        stats["browser_visual"] = {
+        visual_stats = {
+            "target": visual.target_key,
             "tool": visual_result.tool,
             **visual_result.stats,
+        }
+        stats["browser_visual"] = {
+            **visual_stats,
+        }
+        stats["browser_visuals"] = {
+            visual.target_key: visual_stats,
         }
 
     browser_collision_result = cook_browser_collision(
@@ -216,6 +225,7 @@ def cook_scene_package(
         source_path=source,
         alignment=align,
         visual_path=visual_result.path if visual_result else None,
+        browser_visuals={visual.target_key: visual_result.path} if visual_result else {},
         browser_collision_path=browser_collision_result.path if browser_collision_result else None,
         objects_path=browser_collision_result.objects_path if browser_collision_result else None,
         mujoco_scene_path=mujoco_scene_path,
@@ -386,40 +396,65 @@ def cli_main() -> None:
     parser.add_argument(
         "--visual-optimizer",
         choices=("gltfpack", "blender", "copy"),
-        default="gltfpack",
     )
-    parser.add_argument("--visual-simplify-ratio", type=float, default=0.3)
-    parser.add_argument("--visual-simplify-error", type=float, default=0.02)
+    parser.add_argument(
+        "--visual-target",
+        choices=BROWSER_VISUAL_TARGETS,
+        default="rerun",
+        help=(
+            "browser visual target to cook. Rerun uses conservative GLBs; "
+            "Babylon can use web-oriented glTF extensions."
+        ),
+    )
+    parser.add_argument("--visual-output-name")
+    parser.add_argument("--visual-simplify-ratio", type=float)
+    parser.add_argument("--visual-simplify-error", type=float)
     parser.add_argument("--visual-max-texture-size", type=int)
     parser.add_argument(
         "--visual-texture-format",
         choices=("none", "webp", "ktx2"),
-        default="none",
+    )
+    parser.add_argument(
+        "--visual-texture-normalization",
+        dest="visual_texture_normalization",
+        action="store_true",
+        default=None,
+        help="rewrite embedded visual textures to plain 8-bit PNGs",
     )
     parser.add_argument(
         "--no-visual-texture-normalization",
-        action="store_true",
-        help=(
-            "do not rewrite embedded visual textures to plain 8-bit PNGs after "
-            "gltfpack. The default preserves textures but avoids viewer-specific "
-            "compressed or high-bit-depth texture formats."
-        ),
+        dest="visual_texture_normalization",
+        action="store_false",
+        default=None,
+        help="keep the optimizer's embedded texture encoding",
     )
     parser.add_argument(
         "--visual-quantize",
+        dest="visual_quantize",
         action="store_true",
-        help=(
-            "allow gltfpack quantization. This makes smaller files but emits "
-            "KHR_mesh_quantization, which some viewers cannot load."
-        ),
+        default=None,
+        help="allow mesh quantization when the target viewer supports it",
+    )
+    parser.add_argument(
+        "--no-visual-quantize",
+        dest="visual_quantize",
+        action="store_false",
+        default=None,
+        help="disable mesh quantization",
     )
     parser.add_argument(
         "--visual-gpu-instancing",
+        dest="visual_gpu_instancing",
         action="store_true",
-        help=(
-            "allow gltfpack to emit EXT_mesh_gpu_instancing. This can make "
-            "dense repeated assets much smaller, but not every viewer supports it."
-        ),
+        default=None,
+        help="allow EXT_mesh_gpu_instancing when the target viewer supports it",
+    )
+    parser.add_argument(
+        "--no-visual-gpu-instancing",
+        dest="visual_gpu_instancing",
+        action="store_false",
+        default=None,
+        help="disable EXT_mesh_gpu_instancing",
     )
     parser.add_argument("--no-browser-collision", action="store_true")
     parser.add_argument("--browser-collision-target-faces", type=int, default=100_000)
@@ -436,6 +471,24 @@ def cli_main() -> None:
     parser.add_argument("--rebake", action="store_true")
     args = parser.parse_args()
 
+    visual_overrides: dict[str, Any] = {"enabled": not args.no_visual}
+    for key, value in (
+        ("output_name", args.visual_output_name),
+        ("optimizer", args.visual_optimizer),
+        ("simplify_ratio", args.visual_simplify_ratio),
+        ("simplify_error", args.visual_simplify_error),
+        ("max_texture_size", args.visual_max_texture_size),
+        ("normalize_textures", args.visual_texture_normalization),
+        ("quantize", args.visual_quantize),
+        ("use_gpu_instancing", args.visual_gpu_instancing),
+    ):
+        if value is not None:
+            visual_overrides[key] = value
+    if args.visual_texture_format is not None:
+        visual_overrides["texture_format"] = (
+            None if args.visual_texture_format == "none" else args.visual_texture_format
+        )
+
     package = cook_scene_package(
         args.source,
         output_dir=args.output_dir,
@@ -446,18 +499,9 @@ def cli_main() -> None:
             y_up=not args.no_y_up,
         ),
         cook_sidecar=SceneCookSidecar.from_json(args.cook_spec) if args.cook_spec else None,
-        visual_spec=BrowserVisualSpec(
-            enabled=not args.no_visual,
-            optimizer=args.visual_optimizer,
-            simplify_ratio=args.visual_simplify_ratio,
-            simplify_error=args.visual_simplify_error,
-            texture_format=(
-                None if args.visual_texture_format == "none" else args.visual_texture_format
-            ),
-            max_texture_size=args.visual_max_texture_size,
-            normalize_textures=not args.no_visual_texture_normalization,
-            quantize=args.visual_quantize,
-            use_gpu_instancing=args.visual_gpu_instancing,
+        visual_spec=browser_visual_spec_for_target(
+            args.visual_target,
+            **visual_overrides,
         ),
         browser_collision_spec=BrowserCollisionSpec(
             enabled=not args.no_browser_collision,

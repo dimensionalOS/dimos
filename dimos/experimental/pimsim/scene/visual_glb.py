@@ -17,21 +17,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from io import BytesIO
 import json
 from pathlib import Path
 import shutil
-import struct
 import tempfile
 from typing import Any
-
-from PIL import Image
 
 from dimos.experimental.pimsim.scene.command import (
     blender_output_line_is_interesting,
     run_logged_command,
 )
 from dimos.experimental.pimsim.scene.inspect import inspect_scene_asset
+from dimos.simulation.scene_assets.glb import (
+    demote_required_extensions,
+    normalize_embedded_textures,
+)
 from dimos.simulation.scene_assets.spec import BrowserVisualSpec
 from dimos.utils.logging_config import setup_logger
 
@@ -49,16 +49,6 @@ _BLENDER_INPUT_SUFFIXES = {
     ".ply",
 }
 _GLTFPACK_INPUT_SUFFIXES = {".gltf", ".glb", ".obj"}
-_GLB_MAGIC = b"glTF"
-_GLB_VERSION = 2
-_GLB_HEADER_SIZE = 12
-_GLB_CHUNK_HEADER_SIZE = 8
-_GLB_JSON_CHUNK_TYPE = 0x4E4F534A
-_GLB_BIN_CHUNK_TYPE = 0x004E4942
-_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
-_STANDARD_TEXTURE_MIME_TYPES = {"image/png", "image/jpeg"}
-_STANDARD_TEXTURE_MODES = {"RGB", "RGBA"}
-_DEMOTABLE_REQUIRED_EXTENSIONS = {"KHR_texture_transform"}
 
 _BLENDER_SCRIPT = r"""
 import pathlib
@@ -200,7 +190,7 @@ def cook_browser_visual(
     source = Path(source_path).expanduser().resolve()
     out_dir = Path(output_dir).expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / visual_spec.output_name
+    out_path = out_dir / visual_spec.artifact_name
     if out_path.exists() and not rebake:
         return BrowserVisualCookResult(
             path=out_path,
@@ -359,237 +349,24 @@ def _sanitize_browser_visual_output(path: Path, spec: BrowserVisualSpec) -> None
     if path.suffix.lower() != ".glb":
         return
 
-    demoted_extensions = _demote_required_extensions(
-        path,
-        _DEMOTABLE_REQUIRED_EXTENSIONS,
-    )
+    demoted_extensions = demote_required_extensions(path, set(spec.demote_required_extensions))
     if demoted_extensions:
         logger.info(
-            "demoted browser visual GLB extensions path=%s extensions=%s",
+            "demoted browser visual GLB extensions target=%s path=%s extensions=%s",
+            spec.target_key,
             path,
             sorted(demoted_extensions),
         )
 
     if spec.normalize_textures and spec.texture_format is None:
-        normalized_textures = _normalize_embedded_textures(path)
+        normalized_textures = normalize_embedded_textures(path)
         if normalized_textures:
             logger.info(
-                "normalized embedded browser visual textures path=%s count=%d",
+                "normalized embedded browser visual textures target=%s path=%s count=%d",
+                spec.target_key,
                 path,
                 normalized_textures,
             )
-
-
-def _demote_required_extensions(path: Path, extensions: set[str]) -> set[str]:
-    gltf, bin_chunk = _read_glb(path)
-    required = gltf.get("extensionsRequired")
-    if not isinstance(required, list):
-        return set()
-
-    demoted = {extension for extension in required if extension in extensions}
-    if not demoted:
-        return set()
-
-    next_required = [extension for extension in required if extension not in demoted]
-    if next_required:
-        gltf["extensionsRequired"] = next_required
-    else:
-        gltf.pop("extensionsRequired", None)
-    used = gltf.get("extensionsUsed")
-    if isinstance(used, list):
-        merged = list(dict.fromkeys([*used, *sorted(demoted)]))
-        gltf["extensionsUsed"] = merged
-    else:
-        gltf["extensionsUsed"] = sorted(demoted)
-    _write_glb(path, gltf, bin_chunk, {})
-    return demoted
-
-
-def _normalize_embedded_textures(path: Path) -> int:
-    gltf, bin_chunk = _read_glb(path)
-    images = gltf.get("images")
-    buffer_views = gltf.get("bufferViews")
-    buffers = gltf.get("buffers")
-    if not isinstance(images, list) or not images:
-        return 0
-    if not isinstance(buffer_views, list) or not isinstance(buffers, list):
-        return 0
-    if len(buffers) != 1:
-        raise RuntimeError(f"cannot normalize textures in multi-buffer GLB: {path}")
-
-    replacements: dict[int, bytes] = {}
-    for image_index, image in enumerate(images):
-        if not isinstance(image, dict):
-            continue
-        buffer_view_index = image.get("bufferView")
-        if not isinstance(buffer_view_index, int):
-            continue
-        if buffer_view_index < 0 or buffer_view_index >= len(buffer_views):
-            raise RuntimeError(
-                f"image {image_index} references missing bufferView {buffer_view_index}: {path}"
-            )
-        view = buffer_views[buffer_view_index]
-        if not isinstance(view, dict):
-            continue
-        texture_bytes = _buffer_view_bytes(bin_chunk, view)
-        normalized = _normalized_texture_bytes(
-            texture_bytes,
-            mime_type=image.get("mimeType"),
-        )
-        if normalized is None:
-            continue
-        replacements[buffer_view_index] = normalized
-        image["mimeType"] = "image/png"
-        image.pop("uri", None)
-
-    if not replacements:
-        return 0
-
-    _write_glb(path, gltf, bin_chunk, replacements)
-    return len(replacements)
-
-
-def _normalized_texture_bytes(
-    texture_bytes: bytes,
-    *,
-    mime_type: Any,
-) -> bytes | None:
-    try:
-        with Image.open(BytesIO(texture_bytes)) as image:
-            image.load()
-            if _is_standard_embedded_texture(image, texture_bytes, mime_type):
-                return None
-            has_alpha = image.mode in {"RGBA", "LA"} or "transparency" in image.info
-            mode = "RGBA" if has_alpha else "RGB"
-            converted = image.convert(mode)
-            out = BytesIO()
-            converted.save(out, format="PNG", compress_level=1)
-            return out.getvalue()
-    except Exception as exc:
-        raise RuntimeError("failed to normalize embedded GLB texture to 8-bit PNG") from exc
-
-
-def _is_standard_embedded_texture(
-    image: Image.Image,
-    texture_bytes: bytes,
-    mime_type: Any,
-) -> bool:
-    if mime_type not in _STANDARD_TEXTURE_MIME_TYPES:
-        return False
-    if image.mode not in _STANDARD_TEXTURE_MODES:
-        return False
-    return not _is_high_bit_depth_png(texture_bytes)
-
-
-def _is_high_bit_depth_png(texture_bytes: bytes) -> bool:
-    if not texture_bytes.startswith(_PNG_SIGNATURE) or len(texture_bytes) < 25:
-        return False
-    return texture_bytes[24] > 8
-
-
-def _read_glb(path: Path) -> tuple[dict[str, Any], bytes]:
-    data = path.read_bytes()
-    if len(data) < _GLB_HEADER_SIZE:
-        raise RuntimeError(f"invalid GLB header: {path}")
-    magic, version, declared_length = struct.unpack_from("<4sII", data, 0)
-    if magic != _GLB_MAGIC or version != _GLB_VERSION:
-        raise RuntimeError(f"expected GLB v2 file: {path}")
-    if declared_length != len(data):
-        raise RuntimeError(
-            f"GLB length mismatch for {path}: header={declared_length} actual={len(data)}"
-        )
-
-    offset = _GLB_HEADER_SIZE
-    json_bytes: bytes | None = None
-    bin_chunk: bytes | None = None
-    while offset < len(data):
-        if offset + _GLB_CHUNK_HEADER_SIZE > len(data):
-            raise RuntimeError(f"truncated GLB chunk header: {path}")
-        chunk_length, chunk_type = struct.unpack_from("<II", data, offset)
-        offset += _GLB_CHUNK_HEADER_SIZE
-        chunk_end = offset + chunk_length
-        if chunk_end > len(data):
-            raise RuntimeError(f"truncated GLB chunk payload: {path}")
-        chunk = data[offset:chunk_end]
-        if chunk_type == _GLB_JSON_CHUNK_TYPE:
-            json_bytes = chunk
-        elif chunk_type == _GLB_BIN_CHUNK_TYPE:
-            bin_chunk = chunk
-        offset = chunk_end
-
-    if json_bytes is None or bin_chunk is None:
-        raise RuntimeError(f"GLB must contain JSON and BIN chunks: {path}")
-    gltf = json.loads(json_bytes.rstrip(b" \t\r\n\0").decode("utf-8"))
-    if not isinstance(gltf, dict):
-        raise RuntimeError(f"GLB JSON chunk is not an object: {path}")
-    return gltf, bin_chunk
-
-
-def _buffer_view_bytes(bin_chunk: bytes, view: dict[str, Any]) -> bytes:
-    if int(view.get("buffer", 0)) != 0:
-        raise RuntimeError("embedded texture normalization only supports buffer 0")
-    byte_offset = int(view.get("byteOffset", 0))
-    byte_length = int(view["byteLength"])
-    return bin_chunk[byte_offset : byte_offset + byte_length]
-
-
-def _write_glb(
-    path: Path,
-    gltf: dict[str, Any],
-    bin_chunk: bytes,
-    buffer_view_replacements: dict[int, bytes],
-) -> None:
-    buffer_views = gltf.get("bufferViews")
-    buffers = gltf.get("buffers")
-    if not isinstance(buffer_views, list) or not isinstance(buffers, list) or len(buffers) != 1:
-        raise RuntimeError(f"cannot rewrite GLB buffer views: {path}")
-
-    new_bin = bytearray()
-    for index, view in enumerate(buffer_views):
-        if not isinstance(view, dict):
-            raise RuntimeError(f"invalid GLB bufferView at index {index}: {path}")
-        payload = buffer_view_replacements.get(index)
-        if payload is None:
-            payload = _buffer_view_bytes(bin_chunk, view)
-        _pad_bytearray(new_bin, alignment=4, pad=0)
-        view["byteOffset"] = len(new_bin)
-        view["byteLength"] = len(payload)
-        new_bin.extend(payload)
-    _pad_bytearray(new_bin, alignment=4, pad=0)
-    buffers[0]["byteLength"] = len(new_bin)
-
-    json_chunk = json.dumps(gltf, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    json_chunk = _padded_bytes(json_chunk, alignment=4, pad=b" ")
-    bin_bytes = bytes(new_bin)
-    total_length = (
-        _GLB_HEADER_SIZE
-        + _GLB_CHUNK_HEADER_SIZE
-        + len(json_chunk)
-        + _GLB_CHUNK_HEADER_SIZE
-        + len(bin_bytes)
-    )
-    with tempfile.NamedTemporaryFile("wb", suffix=".glb", delete=False) as temp:
-        temp_path = Path(temp.name)
-        temp.write(struct.pack("<4sII", _GLB_MAGIC, _GLB_VERSION, total_length))
-        temp.write(struct.pack("<II", len(json_chunk), _GLB_JSON_CHUNK_TYPE))
-        temp.write(json_chunk)
-        temp.write(struct.pack("<II", len(bin_bytes), _GLB_BIN_CHUNK_TYPE))
-        temp.write(bin_bytes)
-    try:
-        shutil.move(str(temp_path), path)
-    finally:
-        temp_path.unlink(missing_ok=True)
-
-
-def _pad_bytearray(data: bytearray, *, alignment: int, pad: int) -> None:
-    while len(data) % alignment:
-        data.append(pad)
-
-
-def _padded_bytes(data: bytes, *, alignment: int, pad: bytes) -> bytes:
-    while len(data) % alignment:
-        data += pad
-    return data
 
 
 def _gltfpack_command() -> list[str]:
