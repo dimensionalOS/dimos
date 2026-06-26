@@ -86,6 +86,7 @@ coordinator_mock_twist_base = ControlCoordinator.blueprint(
 ).remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
 
 # FlowBase holonomic twist base (3-DOF: vx, vy, wz) over Portal RPC
+
 coordinator_flowbase = ControlCoordinator.blueprint(
     hardware=[_flowbase_twist_base()],
     tasks=[
@@ -96,6 +97,7 @@ coordinator_flowbase = ControlCoordinator.blueprint(
             priority=10,
         ),
     ],
+
 ).remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
 
 # FlowBase + WASD pygame keyboard teleop in a single blueprint

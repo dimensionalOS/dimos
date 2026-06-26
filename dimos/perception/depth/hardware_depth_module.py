@@ -33,6 +33,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.depth.monocular_depth_module import _make_colored_cloud
+from dimos.spec.depth import DepthBackprojector
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
 
@@ -43,13 +44,13 @@ class Config(ModuleConfig):
     min_depth: float = 0.3
     max_depth: float = 8.0
     stride: int = 1
-    max_freq: float = 10.0  # cap backprojection rate; ZED grabs at 15Hz
+    max_freq: float = 10.0
     camera_frame: str = "camera_optical"
     world_frame: str = "world"
     tf_timeout: float = 0.2
 
 
-class HardwareDepthModule(Module):
+class HardwareDepthModule(Module, DepthBackprojector):
     """Backprojects hardware depth + RGB into a coloured PointCloud2 per frame."""
 
     config: Config
@@ -65,6 +66,7 @@ class HardwareDepthModule(Module):
         self._latest_depth: Image | None = None
         self._latest_info: CameraInfo | None = None
         self._lock = threading.Lock()
+        self._last_tf = None
 
     @rpc
     def start(self) -> None:
@@ -178,12 +180,16 @@ class HardwareDepthModule(Module):
             self.config.world_frame, self.config.camera_frame, ts, self.config.tf_timeout
         )
         if tf is None:
-            logger.debug(
-                "HardwareDepthModule: TF %s→%s unavailable, using camera frame",
-                self.config.world_frame,
-                self.config.camera_frame,
-            )
-            return points_cam, self.config.camera_frame
+            if self._last_tf is None:
+                logger.debug(
+                    "HardwareDepthModule: TF %s→%s unavailable, dropping frame",
+                    self.config.world_frame,
+                    self.config.camera_frame,
+                )
+                return None, self.config.world_frame
+            tf = self._last_tf
+        else:
+            self._last_tf = tf
 
         R = tf.rotation.to_rotation_matrix()
         t = np.array([tf.translation.x, tf.translation.y, tf.translation.z], dtype=np.float32)

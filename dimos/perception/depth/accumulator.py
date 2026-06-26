@@ -12,27 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Accumulates per-frame depth clouds into a globally consistent 3D map.
-
-Map building strategy for a moving robot with no LiDAR:
-
-  1. ICP registration against a sliding window of the last N frames, not the
-     full map. This bounds ICP complexity to O(N · icp_window) regardless of
-     how large the total map grows.
-
-  2. Voxel compaction runs every merge_interval frames, not every frame.
-     Between compactions, frames are concatenated cheaply. The map never
-     deletes observations — it only grows, bounded by the voxel resolution.
-
-  3. Publishing to Rerun is throttled to publish_freq Hz so the Rerun bridge
-     is never the bottleneck on a fast-moving robot.
-
-ICP minimises:  E(T) = Σ_i ‖T p_i − q_{j(i)}‖²
-
-where p_i are points in the new frame (already in approximate world frame via
-odometry/VIO), and q_{j(i)} their nearest neighbours in the sliding window.
-T is applied only if ICP fitness > 0.3 (sufficient point overlap).
-"""
+"""Accumulates per-frame depth clouds into a persistent, drift-corrected 3D map."""
 
 from __future__ import annotations
 
@@ -49,6 +29,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.depth.monocular_depth_module import _make_colored_cloud
+from dimos.spec.mapping import GlobalPointcloud
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -79,29 +60,22 @@ def _merge_window(frames: list[o3d.geometry.PointCloud]) -> o3d.geometry.PointCl
     return merged
 
 
+_MAX_UNCOMPACTED_POINTS = 1_000_000
+
+
 class Config(ModuleConfig):
     voxel_size: float = 0.03
     world_frame: str = "world"
-    # ICP: uses the last icp_window frames as target so complexity stays bounded
-    # as the map grows. Starts once the window has icp_min_points total.
     icp_window: int = 5
     icp_min_points: int = 300
     icp_max_correspondence: float = 0.2
     icp_max_iter: int = 20
-    # Map compaction: voxel-downsample the full accumulated map every
-    # merge_interval frames (not every frame) to amortise the cost.
     merge_interval: int = 10
-    # Rerun publish rate cap — keeps the bridge from becoming the bottleneck.
     publish_freq: float = 5.0
 
 
-class DepthAccumulatorModule(Module):
-    """Builds a persistent, drift-corrected 3D world map from per-frame depth clouds.
-
-    Designed for moving robots with camera-only sensing. Optimised so per-frame
-    cost stays constant regardless of map size: ICP targets a sliding window of
-    recent frames, and full-map compaction is amortised across merge_interval frames.
-    """
+class DepthAccumulatorModule(Module, GlobalPointcloud):
+    """Builds a persistent, drift-corrected 3D world map from per-frame depth clouds."""
 
     config: Config
 
@@ -112,7 +86,7 @@ class DepthAccumulatorModule(Module):
         super().__init__(**kwargs)
         self._lock = threading.Lock()
         self._map = o3d.geometry.PointCloud()
-        self._window: list[o3d.geometry.PointCloud] = []  # sliding ICP target
+        self._window: list[o3d.geometry.PointCloud] = []
         self._frame_count = 0
         self._last_publish = 0.0
 
@@ -144,11 +118,9 @@ class DepthAccumulatorModule(Module):
         if cols is not None and len(cols) == len(pts):
             frame_pcd.colors = o3d.utility.Vector3dVector(cols.astype(np.float64))
 
-        # Downsampled copy used for ICP source and for the sliding window store.
         frame_down = frame_pcd.voxel_down_sample(self.config.voxel_size * 2)
 
         with self._lock:
-            # --- ICP against sliding window (bounded cost) ---
             window_pts = sum(len(f.points) for f in self._window)
             if self._window and window_pts >= self.config.icp_min_points:
                 target = _merge_window(self._window).voxel_down_sample(self.config.voxel_size * 3)
@@ -160,17 +132,15 @@ class DepthAccumulatorModule(Module):
                 frame_pcd.transform(corr)
                 frame_down.transform(corr)
 
-            # Advance sliding window
             self._window.append(frame_down)
             if len(self._window) > self.config.icp_window:
                 self._window.pop(0)
 
-            # --- Accumulate (never delete, cheap concatenation) ---
             self._map += frame_pcd
             self._frame_count += 1
 
-            # Compact periodically to bound memory; not every frame
-            if self._frame_count % self.config.merge_interval == 0:
+            if (self._frame_count % self.config.merge_interval == 0
+                    or len(self._map.points) > _MAX_UNCOMPACTED_POINTS):
                 self._map = self._map.voxel_down_sample(self.config.voxel_size)
 
             # --- Throttled publish ---

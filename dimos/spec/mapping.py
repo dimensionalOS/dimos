@@ -19,7 +19,15 @@ from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
+class FrameCloud(Protocol):
+    """Per-frame coloured point cloud in world frame from a backprojector."""
+
+    frame_cloud: Out[PointCloud2]
+
+
 class GlobalPointcloud(Protocol):
+    """Accumulated global point cloud from fused FrameCloud observations."""
+
     global_map: Out[PointCloud2]
 
 

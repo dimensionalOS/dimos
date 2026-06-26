@@ -65,6 +65,7 @@ _RERUN_VIZ = RerunBridgeModule.blueprint(
 # so the map builds from camera motion alone.
 camera_nav_zed_standalone = autoconnect(
     ZEDCamera.blueprint(
+        resolution="VGA",
         enable_depth=True,
         depth_mode="ULTRA",
         enable_fill_mode=True,
@@ -76,7 +77,7 @@ camera_nav_zed_standalone = autoconnect(
     HardwareDepthModule.blueprint(
         camera_frame="camera_color_optical_frame",
         stride=1,
-        max_depth=8.0,
+        max_depth=12.0,
         max_freq=10.0,
     ),
     DepthAccumulatorModule.blueprint(
@@ -114,6 +115,7 @@ def _make_zed_teleop(address: str | None = None):
         coordinator,
         ZEDCamera.blueprint(
             base_transform=_ZED_MOUNT,
+            resolution="VGA",
             enable_depth=True,
             depth_mode="ULTRA",
             enable_fill_mode=True,
@@ -125,7 +127,7 @@ def _make_zed_teleop(address: str | None = None):
         HardwareDepthModule.blueprint(
             camera_frame="camera_color_optical_frame",
             stride=1,
-            max_depth=8.0,
+            max_depth=12.0,
             max_freq=10.0,
         ),
         DepthAccumulatorModule.blueprint(
@@ -144,6 +146,7 @@ camera_nav_zed_teleop = autoconnect(
     coordinator_flowbase_keyboard_teleop,
     ZEDCamera.blueprint(
         base_transform=_ZED_MOUNT,
+        resolution="VGA",
         enable_depth=True,
         depth_mode="ULTRA",
         enable_fill_mode=True,
@@ -155,7 +158,7 @@ camera_nav_zed_teleop = autoconnect(
     HardwareDepthModule.blueprint(
         camera_frame="camera_color_optical_frame",
         stride=1,
-        max_depth=8.0,
+        max_depth=12.0,
         max_freq=10.0,
     ),
     DepthAccumulatorModule.blueprint(

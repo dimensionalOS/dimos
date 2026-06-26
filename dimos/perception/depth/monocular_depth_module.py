@@ -32,6 +32,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.spec.depth import DepthBackprojector
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
 
@@ -75,7 +76,7 @@ class Config(ModuleConfig):
     device: str | None = None
 
 
-class MonocularDepthModule(Module):
+class MonocularDepthModule(Module, DepthBackprojector):
     """Runs DepthAnythingV2 on color_image and publishes frame_cloud in world frame."""
 
     config: Config
@@ -93,6 +94,7 @@ class MonocularDepthModule(Module):
         self._model_lock = threading.Lock()
         self._latest_camera_info: CameraInfo | None = None
         self._camera_info_lock = threading.Lock()
+        self._last_tf = None
 
     @rpc
     def start(self) -> None:
@@ -233,12 +235,16 @@ class MonocularDepthModule(Module):
             self.config.world_frame, self.config.camera_frame, ts, self.config.tf_timeout
         )
         if tf is None:
-            logger.debug(
-                "MonocularDepthModule: TF %s→%s unavailable, using camera frame",
-                self.config.world_frame,
-                self.config.camera_frame,
-            )
-            return points_cam, self.config.camera_frame
+            if self._last_tf is None:
+                logger.debug(
+                    "MonocularDepthModule: TF %s→%s unavailable, dropping frame",
+                    self.config.world_frame,
+                    self.config.camera_frame,
+                )
+                return None, self.config.world_frame
+            tf = self._last_tf
+        else:
+            self._last_tf = tf
 
         R = tf.rotation.to_rotation_matrix()
         t = np.array([tf.translation.x, tf.translation.y, tf.translation.z], dtype=np.float32)

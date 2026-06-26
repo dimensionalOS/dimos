@@ -40,6 +40,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.spec import depth as depth_spec
 from dimos.spec import perception
 from dimos.utils.reactive import backpressure
 
@@ -77,7 +78,7 @@ class ZEDCameraConfig(ModuleConfig, DepthCameraConfig):
     world_frame: str = "world"
 
 
-class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
+class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera, depth_spec.StereoDepth):
     config: ZEDCameraConfig
     color_image: Out[Image]
     depth_image: Out[Image]
