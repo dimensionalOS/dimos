@@ -63,9 +63,17 @@ _RERUN_VIZ = RerunBridgeModule.blueprint(
 
 # Standalone: ZED only, no robot. ZED VIO publishes world←camera_link TF,
 # so the map builds from camera motion alone.
+#
+# depth_mode="ULTRA": SGM stereo — accurate and memory-stable vs NEURAL which
+# exhausts GPU keyframe memory after ~4 min.
+# enable_fill_mode=True: fills stereo holes for denser depth coverage.
+# stride=1: use every ZED depth pixel (not subsampled) for navigation density.
+# max_depth=5.0: ZED Mini stereo is unreliable beyond ~5m; clip there.
 camera_nav_zed_standalone = autoconnect(
     ZEDCamera.blueprint(
         enable_depth=True,
+        depth_mode="ULTRA",
+        enable_fill_mode=True,
         enable_pointcloud=False,
         enable_tracking=True,
         enable_imu_fusion=True,
@@ -73,8 +81,10 @@ camera_nav_zed_standalone = autoconnect(
     ),
     HardwareDepthModule.blueprint(
         camera_frame="camera_color_optical_frame",
+        stride=1,
+        max_depth=5.0,
     ),
-    DepthAccumulatorModule.blueprint(),
+    DepthAccumulatorModule.blueprint(voxel_size=0.03),
     _RERUN_VIZ,
 )
 
@@ -84,6 +94,8 @@ camera_nav_zed_teleop = autoconnect(
     ZEDCamera.blueprint(
         base_transform=_ZED_MOUNT,
         enable_depth=True,
+        depth_mode="ULTRA",
+        enable_fill_mode=True,
         enable_pointcloud=False,
         enable_tracking=True,
         enable_imu_fusion=True,
@@ -91,8 +103,10 @@ camera_nav_zed_teleop = autoconnect(
     ),
     HardwareDepthModule.blueprint(
         camera_frame="camera_color_optical_frame",
+        stride=1,
+        max_depth=5.0,
     ),
-    DepthAccumulatorModule.blueprint(),
+    DepthAccumulatorModule.blueprint(voxel_size=0.03),
     CameraNavRecorder.blueprint(db_path="traversal.db"),
     _RERUN_VIZ,
 )
