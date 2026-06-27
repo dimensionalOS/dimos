@@ -50,11 +50,27 @@ def _jet(t: np.ndarray) -> np.ndarray:
 class PointCloudFilter:
     """Raw ZED frame → clean (xyz, rgb, dist) arrays.
 
-    Uses sl.VIEW.LEFT for high-fidelity camera RGB instead of the packed
-    RGBA baked into XYZRGBA (which loses colour precision).
-    A regular stride-2 pixel grid gives ~40–60 k valid points at VGA —
-    dense enough for stereo-like geometry, safe for Rerun.
+    Three minimal stages — no smoothing, no voxelisation, no centroid collapse:
+
+    1. Confidence gate (CONF_MIN = 30): only the bottom 30 % of stereo
+       match quality is discarded. Real surfaces, thin structures, and edges
+       all score well above this floor. This operates in 2-D before any XYZ
+       value is accepted.
+
+    2. Geometric gate: isfinite + depth range [min_d, max_d].
+
+    3. Isolated-pixel removal: a valid pixel with zero valid 4-connected
+       neighbours is speckle, not geometry. Real surfaces always produce
+       spatially connected runs of valid pixels; even a 1-pixel-thin edge
+       has at least one neighbour along itself. Implemented as four numpy
+       shifts — O(N), no spatial indexing, no radius search.
+
+    These three stages together remove speckle at source while leaving
+    object boundaries, thin structures and full stereo density intact.
+    Uses sl.VIEW.LEFT for full-fidelity RGB (not packed float RGBA).
     """
+
+    CONF_MIN = 30   # confidence floor — removes only the worst stereo matches
 
     def __init__(self, min_depth: float = 0.3, max_depth: float = 8.0, stride: int = 2):
         self.min_d  = min_depth
@@ -62,29 +78,48 @@ class PointCloudFilter:
         self.stride = stride
         self._img   = sl.Mat()
         self._pc    = sl.Mat()
+        self._conf  = sl.Mat()
 
     def grab(self, zed: sl.Camera) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
-        """Return (xyz, rgb, dist) for valid pixels, or None if frame is empty."""
-        # Actual camera colour (BGRA → RGB)
+        """Return (xyz, rgb, dist) for clean pixels, or None if frame is empty."""
+        s = self.stride
+
+        # Camera RGB (BGRA → RGB)
         zed.retrieve_image(self._img, sl.VIEW.LEFT, sl.MEM.CPU)
-        bgra    = self._img.get_data()
-        cam_rgb = bgra[:, :, 2::-1].copy()          # H×W×3 uint8 RGB
+        cam_rgb = self._img.get_data()[:, :, 2::-1].copy()        # H×W×3 uint8
 
-        # Stereo XYZ per pixel
+        # Stereo confidence — checked BEFORE XYZ is accepted
+        zed.retrieve_measure(self._conf, sl.MEASURE.CONFIDENCE, sl.MEM.CPU)
+        conf_s = self._conf.get_data()[::s, ::s].astype(np.float32)  # Hs×Ws
+
+        # XYZ point cloud
         zed.retrieve_measure(self._pc, sl.MEASURE.XYZRGBA, sl.MEM.CPU)
-        xyz_hw = self._pc.get_data()[:, :, :3]      # H×W×3 float32
+        xyz_s  = self._pc.get_data()[::s, ::s, :3].astype(np.float32) # Hs×Ws×3
+        rgb_s  = cam_rgb[::s, ::s, :]                                  # Hs×Ws×3
+        dist_s = np.linalg.norm(xyz_s, axis=2)                         # Hs×Ws
 
-        # Stride-2 regular grid subsample
-        s       = self.stride
-        xyz_sub = xyz_hw[::s, ::s, :].reshape(-1, 3).astype(np.float32)
-        rgb_sub = cam_rgb[::s, ::s, :].reshape(-1, 3)
+        # ── Stage 1 + 2: confidence + geometric gate (operates in 2-D) ────────
+        valid = (
+            np.isfinite(conf_s)
+            & (conf_s  >= self.CONF_MIN)
+            & np.isfinite(xyz_s[:, :, 0])
+            & (dist_s  >  self.min_d)
+            & (dist_s  <  self.max_d)
+        )
 
-        dist = np.linalg.norm(xyz_sub, axis=1)
-        ok   = np.isfinite(xyz_sub[:, 0]) & (dist > self.min_d) & (dist < self.max_d)
+        # ── Stage 3: isolated-pixel removal — speckle has no valid neighbours ─
+        nbrs = np.zeros(valid.shape, dtype=np.int8)
+        nbrs[1:,  :] += valid[:-1, :]    # above
+        nbrs[:-1, :] += valid[1:,  :]    # below
+        nbrs[:,  1:] += valid[:,  :-1]   # left
+        nbrs[:, :-1] += valid[:,  1:]    # right
+        valid &= (nbrs >= 1)             # drop pixels with zero valid neighbours
 
+        ok = valid.reshape(-1)
         if not ok.any():
             return None
-        return xyz_sub[ok], rgb_sub[ok], dist[ok]
+
+        return xyz_s.reshape(-1, 3)[ok], rgb_s.reshape(-1, 3)[ok], dist_s.reshape(-1)[ok]
 
 
 # ── Stage 2: Pose transform ───────────────────────────────────────────────────
