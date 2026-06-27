@@ -2,32 +2,41 @@ import time
 import numpy as np
 import pyzed.sl as sl
 
-print("1: imports ok")
-
 zed = sl.Camera()
-print("2: camera created")
 
 ip = sl.InitParameters()
 ip.camera_resolution = sl.RESOLUTION.VGA
 ip.camera_fps = 15
-ip.depth_mode = sl.DEPTH_MODE.PERFORMANCE
-print("3: init params set")
+ip.depth_mode = sl.DEPTH_MODE.NEURAL
+ip.coordinate_system = sl.COORDINATE_SYSTEM.RIGHT_HANDED_Z_UP_X_FWD
+ip.coordinate_units = sl.UNIT.METER
 
 err = zed.open(ip)
-print(f"4: open result: {err}")
 if err != sl.ERROR_CODE.SUCCESS:
+    print(f"failed: {err}")
     exit(1)
 
-# NO tracking - test grab alone first
-rt = sl.RuntimeParameters()
-print("5: grabbing (no tracking)")
-err = zed.grab(rt)
-print(f"6: grab result: {err}")
+print("camera open")
 
+rt = sl.RuntimeParameters()
 pc = sl.Mat()
-zed.retrieve_measure(pc, sl.MEASURE.XYZRGBA, sl.MEM.CPU)
-data = pc.get_data()
-print(f"7: pc shape: {data.shape}")
+frame = 0
+t0 = time.monotonic()
+
+try:
+    while True:
+        if zed.grab(rt) != sl.ERROR_CODE.SUCCESS:
+            continue
+
+        zed.retrieve_measure(pc, sl.MEASURE.XYZRGBA, sl.MEM.CPU)
+        data = pc.get_data()
+        valid = int(np.isfinite(data[:, :, 0]).sum())
+        fps = frame / max(time.monotonic() - t0, 1e-6)
+        print(f"frame={frame}  valid_pts={valid}  fps={fps:.1f}")
+        frame += 1
+
+except KeyboardInterrupt:
+    pass
 
 zed.close()
-print("8: done")
+print("done")
