@@ -65,7 +65,6 @@ if __name__ == "__main__":
     from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
     from dimos.perception.depth.accumulator import DepthAccumulatorModule
     from dimos.perception.depth.monocular_depth_module import MonocularDepthModule
-    from dimos.protocol.pubsub.impl.lcmpubsub import LCM
     from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_primitive_no_nav import (
         unitree_g1_primitive_no_nav,
     )
@@ -74,6 +73,7 @@ if __name__ == "__main__":
 
     device = "cpu" if args.cpu else None  # None = auto-detect CUDA/MPS
 
+    # pubsubs=[] — in sim everything is in-process via observables, no LCM daemon needed.
     sim = autoconnect(
         unitree_g1_primitive_no_nav,
         G1SimConnection.blueprint(),
@@ -84,7 +84,7 @@ if __name__ == "__main__":
         ReplanningAStarPlanner.blueprint(),
         MovementManager.blueprint(),
         RerunBridgeModule.blueprint(
-            pubsubs=[LCM()],
+            pubsubs=[],
             rerun_open="web",
             visual_override={
                 "world/global_map": cloud_points,
