@@ -31,6 +31,7 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.memory2.db_tf import TfTreeWriter
+from dimos.memory2.db_tf2 import TfGraphWriter
 from dimos.memory2.embed import EmbedImages
 from dimos.memory2.store.null import NullStore
 from dimos.memory2.store.sqlite import SqliteStore
@@ -463,29 +464,44 @@ class Recorder(MemoryModule):
             return
         tf_stream = self.store.stream("tf", TFMessage)
 
-        # Per-row tf tree (last 2 refs per child frame), written to "tf_tree".
-        # Needs the db path, so only when backed by SQLite.
-        tree_writer = (
-            TfTreeWriter(self.store.config.path, "tf")
-            if isinstance(self.store, SqliteStore)
-            else None
-        )
-        if tree_writer is not None:
-            self.register_disposable(Disposable(tree_writer.close))
+        is_sqlite = isinstance(self.store, SqliteStore)
+        # Per-row tf tree (last 2 refs per child frame), for the current DbTf.
+        tree_writer = TfTreeWriter(self.store.config.path, "tf") if is_sqlite else None
+        # Topology change-log + child_frame tags, for the DbTf2 graph-stream design.
+        # Both written during the transition; DbTf2 becomes the default at swap time.
+        graph_writer = TfGraphWriter(self.store.config.path, "tf") if is_sqlite else None
+        for writer in (tree_writer, graph_writer):
+            if writer is not None:
+                self.register_disposable(Disposable(writer.close))
 
-        def on_tf(msg: TFMessage, _topic: Any) -> None:
-            try:
-                for transform in msg.transforms:
-                    observation = tf_stream.append(TFMessage(transform), ts=transform.ts, pose=None)
-                    if tree_writer is not None:
-                        tree_writer.record(transform.child_frame_id, observation.id)
-            except sqlite3.ProgrammingError:
-                # A late LCM callback raced teardown and hit the closed store.
-                pass
+        def make_handler(is_static: bool) -> Any:
+            def on_tf(msg: TFMessage, _topic: Any) -> None:
+                try:
+                    for transform in msg.transforms:
+                        observation = tf_stream.append(
+                            TFMessage(transform),
+                            ts=transform.ts,
+                            pose=None,
+                            tags={"child_frame": transform.child_frame_id},
+                        )
+                        if tree_writer is not None:
+                            tree_writer.record(transform.child_frame_id, observation.id)
+                        if graph_writer is not None:
+                            graph_writer.record(
+                                transform.child_frame_id,
+                                transform.frame_id,
+                                is_static,
+                                transform.ts,
+                            )
+                except sqlite3.ProgrammingError:
+                    # A late LCM callback raced teardown and hit the closed store.
+                    pass
 
-        self.register_disposable(Disposable(pubsub.subscribe(topic, on_tf)))
-        # Also listen on the static_tf stream (nothing publishes it yet); static
-        # transforms are treated exactly like dynamic ones (folded into "tf").
+            return on_tf
+
+        self.register_disposable(Disposable(pubsub.subscribe(topic, make_handler(False))))
+        # Also listen on the static_tf stream (nothing publishes it yet); these are
+        # recorded the same way but flagged static in the topology.
         self.register_disposable(
-            Disposable(pubsub.subscribe(Topic("/tf_static", TFMessage), on_tf))
+            Disposable(pubsub.subscribe(Topic("/tf_static", TFMessage), make_handler(True)))
         )
