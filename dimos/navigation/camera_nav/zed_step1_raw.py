@@ -1,4 +1,4 @@
-"""Step 1: raw XYZRGBA — print stats only, no Rerun, no processing."""
+"""Step 1: raw XYZRGBA stats."""
 import time
 import numpy as np
 import pyzed.sl as sl
@@ -26,25 +26,22 @@ def main() -> None:
     frame  = 0
     t_prev = time.monotonic()
 
-    print("frame  | valid_pts | fps  | tracking")
+    print("frame | valid_pts | fps")
     try:
         while True:
             if zed.grab(rt) != sl.ERROR_CODE.SUCCESS:
                 continue
 
             zed.retrieve_measure(pc_mat, sl.MEASURE.XYZRGBA)
-            pts = pc_mat.get_data().reshape(-1, 4)
-            valid = np.sum(np.isfinite(pts[:, 0]))
-
-            pose  = sl.Pose()
-            state = zed.get_position(pose, sl.REFERENCE_FRAME.WORLD)
-            ok    = "WORLD" if state == sl.POSITIONAL_TRACKING_STATE.OK else "INIT"
+            # .copy() moves data out of ZED's internal buffer before numpy touches it
+            pts   = pc_mat.get_data().copy().reshape(-1, 4)
+            valid = int(np.isfinite(pts[:, 0]).sum())
 
             t_now  = time.monotonic()
             fps    = 1.0 / max(t_now - t_prev, 1e-6)
             t_prev = t_now
 
-            print(f"{frame:5d}  | {valid:9d} | {fps:4.1f} | {ok}")
+            print(f"{frame:5d} | {valid:9d} | {fps:.1f}")
             frame += 1
 
     except KeyboardInterrupt:
