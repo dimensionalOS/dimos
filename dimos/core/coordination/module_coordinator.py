@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Mapping, MutableMapping
+from dataclasses import replace
 import importlib
 import inspect
 import shutil
@@ -24,11 +25,13 @@ import threading
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
+from dimos.core.coordination.worker_launcher import VenvWorkerLauncher
 from dimos.core.coordination.worker_manager import WorkerManager
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.resource import Resource
+from dimos.core.runtime_environment import RuntimeEnvironmentRegistry
 from dimos.core.transport import LCMTransport, PubSubTransport, pLCMTransport
 from dimos.spec.utils import is_spec, spec_annotation_compliance, spec_structural_compliance
 from dimos.utils.generic import short_id
@@ -68,6 +71,9 @@ class ModuleCoordinator(Resource):
         self._transport_registry: dict[tuple[str, type], PubSubTransport[Any]] = {}
         self._class_aliases: dict[type[ModuleBase], type[ModuleBase]] = {}
         self._module_transports: dict[type[ModuleBase], dict[str, PubSubTransport[Any]]] = {}
+        self._runtime_environment_registry = RuntimeEnvironmentRegistry.with_current_process()
+        self._runtime_placement_map: dict[type[ModuleBase], str] = {}
+        self._module_manager_keys: dict[type[ModuleBase], str] = {}
         self._started = False
         self._modules_lock = threading.RLock()
         self._coordinator_rpc: CoordinatorRPC | None = None
@@ -147,7 +153,15 @@ class ModuleCoordinator(Resource):
             return [cls.__name__ for cls in self._deployed_modules]
 
     def health_check(self) -> bool:
-        return all(m.health_check() for m in self._managers.values())
+        return all(m.health_check() for m in self._active_managers().values())
+
+    def _active_managers(self) -> dict[str, WorkerManager]:
+        return {
+            key: manager
+            for key, manager in self._managers.items()
+            if key in self._module_manager_keys.values()
+            or (key == "python" and bool(cast("WorkerManagerPython", manager).workers))
+        }
 
     @property
     def n_modules(self) -> int:
@@ -166,32 +180,143 @@ class ModuleCoordinator(Resource):
         if not self._managers:
             raise ValueError("Trying to dimos.deploy before the client has started")
 
-        deployed_module = self._managers[module_class.deployment].deploy(
-            module_class, global_config, kwargs
-        )
+        manager_key = self._manager_key_for_module(module_class)
+        kwargs = self._inject_native_runtime_registry(module_class, kwargs)
+        deployed_module = self._managers[manager_key].deploy(module_class, global_config, kwargs)
         with self._modules_lock:
             self._deployed_modules[module_class] = deployed_module
+            self._module_manager_keys[module_class] = manager_key
         return deployed_module  # type: ignore[return-value]
 
+    def _manager_key_for_module(self, module_class: type[ModuleBase]) -> str:
+        if module_class.deployment != "python":
+            return module_class.deployment
+        env_name = self._runtime_placement_map.get(module_class)
+        if env_name is None:
+            return "python"
+        return self._ensure_venv_manager(env_name)
+
+    def _ensure_venv_manager(self, env_name: str) -> str:
+        manager_key = f"python:{env_name}"
+        if manager_key in self._managers:
+            return manager_key
+        try:
+            material = self._runtime_environment_registry.resolve(env_name).resolve_python()
+        except Exception as exc:
+            raise RuntimeError(
+                f"Module placement references runtime environment {env_name!r}, but it could not "
+                "be resolved as a Python runtime capability. Register a Python runtime environment on the "
+                "blueprint with .runtime_environments(...)."
+            ) from exc
+        executable = str(material.python_executable)
+        if material.python_executable.is_absolute():
+            executable_found = material.python_executable.exists()
+        else:
+            executable_found = shutil.which(executable) is not None
+        if not executable_found:
+            raise RuntimeError(
+                f"Runtime environment {env_name!r} Python capability references missing "
+                f"executable {executable!r}."
+            )
+        manager = WorkerManagerPython(
+            g=self._global_config,
+            worker_launcher=VenvWorkerLauncher(python_executable=executable, env=material.env),
+        )
+        if self._started:
+            try:
+                manager.start()
+            except Exception as exc:
+                manager.stop()
+                raise RuntimeError(
+                    f"Failed to start runtime environment {env_name!r} Python capability "
+                    f"with executable {executable!r}."
+                ) from exc
+        self._managers[manager_key] = manager
+        return manager_key
+
+    def _inject_native_runtime_registry(
+        self, module_class: type[ModuleBase], kwargs: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        from dimos.core.native_module import NativeModule
+
+        result = dict(kwargs)
+        if issubclass(module_class, NativeModule):
+            result["runtime_environment_registry"] = self._runtime_environment_registry
+        return result
+
     def deploy_parallel(
-        self, module_specs: list[ModuleSpec], blueprint_args: Mapping[str, Mapping[str, Any]]
+        self,
+        module_specs: list[ModuleSpec],
+        blueprint_args: Mapping[str, Mapping[str, Any]],
+        runtime_environment_registry: RuntimeEnvironmentRegistry | None = None,
+        runtime_placement_map: Mapping[type[ModuleBase], str] | None = None,
     ) -> list[ModuleProxy]:
         if not self._managers:
             raise ValueError("Not started")
 
-        # Group specs by deployment type, tracking original indices for reassembly
-        indices_by_deployment: dict[str, list[int]] = {}
-        specs_by_deployment: dict[str, list[ModuleSpec]] = {}
-        for index, spec in enumerate(module_specs):
-            # spec = (module_class, global_config, kwargs)
-            dep = spec[0].deployment
-            indices_by_deployment.setdefault(dep, []).append(index)
-            specs_by_deployment.setdefault(dep, []).append(spec)
+        if runtime_environment_registry is not None:
+            self._runtime_environment_registry = self._runtime_environment_registry.merge(
+                runtime_environment_registry
+            )
+        previous_placements = dict(self._runtime_placement_map)
+        existing_manager_keys = set(self._managers)
+        module_classes = {spec[0] for spec in module_specs}
+        active_runtime_placement_map = (
+            {
+                module_class: env_name
+                for module_class, env_name in runtime_placement_map.items()
+                if module_class in module_classes
+            }
+            if runtime_placement_map is not None
+            else None
+        )
+        if active_runtime_placement_map is not None:
+            self._runtime_placement_map.update(active_runtime_placement_map)
+
+        try:
+            # Group specs by deployment manager, tracking original indices for reassembly
+            indices_by_deployment: dict[str, list[int]] = {}
+            specs_by_deployment: dict[str, list[ModuleSpec]] = {}
+            effective_module_specs: list[ModuleSpec] = []
+            for index, spec in enumerate(module_specs):
+                module_class, spec_global_config, kwargs = spec
+                dep = self._manager_key_for_module(module_class)
+                effective_kwargs = dict(kwargs)
+                effective_kwargs.update(blueprint_args.get(module_class.name, {}))
+                effective_kwargs = self._inject_native_runtime_registry(
+                    module_class, effective_kwargs
+                )
+                spec = (module_class, spec_global_config, effective_kwargs)
+                effective_module_specs.append(spec)
+                indices_by_deployment.setdefault(dep, []).append(index)
+                specs_by_deployment.setdefault(dep, []).append(spec)
+        except Exception:
+            self._runtime_placement_map = previous_placements
+            for key in set(self._managers) - existing_manager_keys:
+                self._stop_and_remove_manager(key)
+            raise
 
         results: list[Any] = [None] * len(module_specs)
 
         def _deploy_group(dep: str) -> None:
-            deployed = self._managers[dep].deploy_parallel(specs_by_deployment[dep], blueprint_args)
+            try:
+                deployed = self._managers[dep].deploy_parallel(specs_by_deployment[dep], {})
+            except Exception as exc:
+                if dep.startswith("python:"):
+                    env_name = dep.removeprefix("python:")
+                    try:
+                        executable = str(
+                            self._runtime_environment_registry.resolve(env_name)
+                            .resolve_python()
+                            .python_executable
+                        )
+                    except Exception:
+                        executable = "<unresolved>"
+                    raise RuntimeError(
+                        f"Failed to deploy with runtime environment {env_name!r} Python "
+                        f"capability using executable {executable!r}."
+                    ) from exc
+                raise
             for index, module in zip(indices_by_deployment[dep], deployed, strict=True):
                 results[index] = module
 
@@ -199,16 +324,22 @@ class ModuleCoordinator(Resource):
             safe_thread_map(list(specs_by_deployment.keys()), _deploy_group)
         except:
             self.stop()
+            self._runtime_placement_map = previous_placements
+            for key in set(self._managers) - existing_manager_keys:
+                self._stop_and_remove_manager(key)
             raise
 
         with self._modules_lock:
             self._deployed_modules.update(
                 {
                     cls: mod
-                    for (cls, _, _), mod in zip(module_specs, results, strict=True)
+                    for (cls, _, _), mod in zip(effective_module_specs, results, strict=True)
                     if mod is not None
                 }
             )
+            for (cls, _, _), mod in zip(effective_module_specs, results, strict=True):
+                if mod is not None:
+                    self._module_manager_keys[cls] = self._manager_key_for_module(cls)
         return results
 
     def build_all_modules(self) -> None:
@@ -392,6 +523,11 @@ class ModuleCoordinator(Resource):
             self._unload_module(module_class)
 
     def _unload_module(self, module_class: type[ModuleBase]) -> None:
+        self._unload_module_impl(module_class, preserve_placement=False)
+
+    def _unload_module_impl(
+        self, module_class: type[ModuleBase], *, preserve_placement: bool
+    ) -> None:
         module_class = self._resolve_class(module_class)
         if module_class not in self._deployed_modules:
             raise ValueError(f"{module_class.__name__} is not deployed")
@@ -411,7 +547,10 @@ class ModuleCoordinator(Resource):
                 exc_info=True,
             )
 
-        python_wm = cast("WorkerManagerPython", self._managers["python"])
+        manager_key = self._module_manager_keys.get(
+            module_class, self._manager_key_for_module(module_class)
+        )
+        python_wm = cast("WorkerManagerPython", self._managers[manager_key])
         try:
             python_wm.undeploy(proxy)
         except Exception:
@@ -422,6 +561,9 @@ class ModuleCoordinator(Resource):
             )
 
         del self._deployed_modules[module_class]
+        self._module_manager_keys.pop(module_class, None)
+        if not preserve_placement:
+            self._clear_runtime_placement_aliases(module_class)
         self._deployed_atoms.pop(module_class, None)
         self._module_transports.pop(module_class, None)
         self._class_aliases = {
@@ -432,6 +574,27 @@ class ModuleCoordinator(Resource):
             for key, target in self._resolved_module_refs.items()
             if key[0] is not module_class and target is not module_class
         }
+        if (
+            manager_key.startswith("python:")
+            and manager_key not in self._module_manager_keys.values()
+        ):
+            self._stop_and_remove_manager(manager_key)
+
+    def _clear_runtime_placement_aliases(self, module_class: type[ModuleBase]) -> None:
+        """Clear placement for a class and stale handles that alias to it."""
+        self._runtime_placement_map.pop(module_class, None)
+        for alias_class, resolved_class in list(self._class_aliases.items()):
+            if resolved_class is module_class:
+                self._runtime_placement_map.pop(alias_class, None)
+
+    def _stop_and_remove_manager(self, manager_key: str) -> None:
+        manager = self._managers.pop(manager_key, None)
+        if manager is None:
+            return
+        try:
+            manager.stop()
+        except Exception:
+            logger.error("Error stopping manager", manager=manager_key, exc_info=True)
 
     def restart_module_by_class_name(
         self,
@@ -478,7 +641,8 @@ class ModuleCoordinator(Resource):
             )
 
         old_atom = self._deployed_atoms[module_class]
-        kwargs = dict(old_atom.kwargs)
+        kwargs = self._inject_native_runtime_registry(module_class, old_atom.kwargs)
+        runtime_env_name = self._runtime_placement_map.get(module_class)
         saved_transports = dict(self._module_transports.get(module_class, {}))
         inbound_refs = [
             (consumer, ref_name)
@@ -491,7 +655,7 @@ class ModuleCoordinator(Resource):
             if consumer is module_class
         ]
 
-        self.unload_module(module_class)
+        self._unload_module_impl(module_class, preserve_placement=True)
 
         if reload_source:
             source_mod = sys.modules.get(module_class.__module__)
@@ -507,10 +671,17 @@ class ModuleCoordinator(Resource):
                 if self._class_aliases[old_cls] is module_class:
                     self._class_aliases[old_cls] = new_class
             self._class_aliases[module_class] = new_class
+            if runtime_env_name is not None:
+                self._runtime_placement_map.pop(module_class, None)
+                self._runtime_placement_map[new_class] = runtime_env_name
 
-        python_wm = cast("WorkerManagerPython", self._managers["python"])
+        manager_key = self._module_manager_keys.get(new_class) or self._manager_key_for_module(
+            new_class
+        )
+        python_wm = cast("WorkerManagerPython", self._managers[manager_key])
         new_proxy = python_wm.deploy_fresh(new_class, self._global_config, kwargs)
         self._deployed_modules[new_class] = new_proxy
+        self._module_manager_keys[new_class] = manager_key
 
         new_bp = new_class.blueprint(**kwargs)
         new_atom = new_bp.active_blueprints[0]
@@ -687,10 +858,20 @@ def _deploy_all_modules(
     for bp in blueprint.active_blueprints:
         module_specs.append((bp.module, gc, bp.kwargs.copy()))
 
-    module_coordinator.deploy_parallel(module_specs, blueprint_args)
+    module_coordinator.deploy_parallel(
+        module_specs,
+        blueprint_args,
+        runtime_environment_registry=blueprint.runtime_environment_registry,
+        runtime_placement_map=blueprint.runtime_placement_map,
+    )
 
     for bp in blueprint.active_blueprints:
-        module_coordinator._deployed_atoms[bp.module] = bp
+        effective_kwargs = dict(bp.kwargs)
+        effective_kwargs.update(blueprint_args.get(bp.module.name, {}))
+        effective_kwargs = module_coordinator._inject_native_runtime_registry(
+            bp.module, effective_kwargs
+        )
+        module_coordinator._deployed_atoms[bp.module] = replace(bp, kwargs=effective_kwargs)
 
 
 def _ref_msg(module_name: str, ref: object, spec_name: str, detail: str) -> str:

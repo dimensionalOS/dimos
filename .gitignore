@@ -14,9 +14,11 @@ __pycache__/
 # Ignore virtual environment directories
 *venv*/
 .venv*/
-# Keep OpenSpec change artifacts trackable even when change names include ignored words.
+# Keep OpenSpec artifacts trackable even when names include ignored words.
 !/openspec/changes/
 !/openspec/changes/**
+!/openspec/specs/
+!/openspec/specs/**
 .ssh/
 .direnv/
 

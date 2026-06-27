@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+from pathlib import Path
 import pickle
 from types import MappingProxyType
 from typing import Protocol, get_type_hints
@@ -35,6 +36,7 @@ from dimos.core.coordination.blueprints import (
 )
 from dimos.core.core import rpc
 from dimos.core.module import Module
+from dimos.core.runtime_environment import PythonVenvRuntimeEnvironment
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.spec.utils import Spec
@@ -237,12 +239,43 @@ def test_blueprint_pickle_roundtrip() -> None:
     restored = pickle.loads(pickle.dumps(blueprint))
 
     assert restored == blueprint
-    for name in ("transport_map", "global_config_overrides", "remapping_map"):
+    for name in (
+        "transport_map",
+        "global_config_overrides",
+        "remapping_map",
+        "runtime_placement_map",
+    ):
         assert isinstance(getattr(restored, name), MappingProxyType)
     assert dict(restored.global_config_overrides) == {"option1": True, "option2": 42}
     assert restored.remapping_map[(ModuleA, "module_a")] is ModuleB
     with pytest.raises(TypeError):
         restored.global_config_overrides["x"] = 1
+
+
+def test_runtime_environments_and_placements_merge_by_module_class() -> None:
+    sensors = PythonVenvRuntimeEnvironment(
+        name="sensors",
+        python_executable=Path("/opt/sensors/bin/python"),
+        env={"DIMOS_TEST": "1"},
+    )
+    cameras = PythonVenvRuntimeEnvironment(
+        name="cameras",
+        python_executable=Path("/opt/cameras/bin/python"),
+    )
+
+    first = (
+        ModuleA.blueprint().runtime_environments(sensors).runtime_placements({ModuleA: "sensors"})
+    )
+    second = (
+        ModuleB.blueprint().runtime_environments(cameras).runtime_placements({ModuleA: "cameras"})
+    )
+
+    merged = autoconnect(first, second)
+
+    assert merged.runtime_environment_registry.resolve("sensors") is sensors
+    assert merged.runtime_environment_registry.resolve("cameras") is cameras
+    assert merged.runtime_placement_map[ModuleA] == "cameras"
+    assert ModuleB not in merged.runtime_placement_map
 
 
 def test_active_blueprints_filters_disabled() -> None:

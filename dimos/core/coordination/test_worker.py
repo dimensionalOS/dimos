@@ -12,10 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
+import time
 from typing import TYPE_CHECKING
 
+import psutil
 import pytest
 
+from dimos.core.coordination.python_worker import PythonWorker, reset_forkserver_context
+from dimos.core.coordination.worker_launcher import VenvWorkerLauncher
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
@@ -89,6 +94,19 @@ class HeavyModule(Module):
         pass
 
 
+class NoisyModule(Module):
+    @rpc
+    def start(self) -> None:
+        print("stdout noise from worker")
+        print("stderr noise from worker", file=sys.stderr)
+
+    @rpc
+    def ping(self) -> str:
+        print("stdout rpc noise from worker")
+        print("stderr rpc noise from worker", file=sys.stderr)
+        return "pong"
+
+
 class AnotherHeavyModule(Module):
     dedicated_worker = True
 
@@ -115,6 +133,73 @@ def create_worker_manager():
 
 
 @pytest.mark.skipif_macos_bug
+def test_venv_worker_launch_deploy_rpc_shutdown() -> None:
+    manager = WorkerManagerPython(
+        g=GlobalConfig(n_workers=1),
+        worker_launcher=VenvWorkerLauncher(sys.executable, startup_timeout=5.0),
+    )
+    try:
+        module = manager.deploy(SimpleModule, global_config, {})
+        module.start()
+        assert module.increment() == 1
+        assert module.increment() == 2
+        assert module.get_counter() == 2
+        module.stop()
+    finally:
+        manager.stop()
+
+
+def test_venv_worker_missing_python_executable() -> None:
+    worker = PythonWorker(launcher=VenvWorkerLauncher("/does/not/exist/python"))
+
+    with pytest.raises(FileNotFoundError, match="Python executable"):
+        worker.start_process()
+
+
+@pytest.mark.skipif_macos_bug
+def test_venv_worker_connection_timeout_cleanup(tmp_path) -> None:
+    sleeper = tmp_path / "sleepy-python"
+    sleeper.write_text("#!/bin/sh\nsleep 30\n")
+    sleeper.chmod(0o755)
+    worker = PythonWorker(launcher=VenvWorkerLauncher(str(sleeper), startup_timeout=0.2))
+
+    with pytest.raises(TimeoutError, match="Timed out"):
+        worker.start_process()
+
+    time.sleep(0.2)
+    assert not any(
+        "sleepy-python" in " ".join(proc.info.get("cmdline") or [])
+        for proc in psutil.process_iter(["cmdline"])
+    )
+
+
+@pytest.mark.skipif_macos_bug
+def test_venv_worker_stdout_stderr_noise_does_not_corrupt_control() -> None:
+    manager = WorkerManagerPython(
+        g=GlobalConfig(n_workers=1),
+        worker_launcher=VenvWorkerLauncher(sys.executable, startup_timeout=5.0),
+    )
+    try:
+        module = manager.deploy(NoisyModule, global_config, {})
+        module.start()
+        assert module.ping() == "pong"
+        module.stop()
+    finally:
+        manager.stop()
+
+
+@pytest.mark.skipif_macos_bug
+def test_venv_worker_startup_import_error_propagates(tmp_path) -> None:
+    failing_python = tmp_path / "failing-python"
+    failing_python.write_text("#!/bin/sh\nexit 42\n")
+    failing_python.chmod(0o755)
+    worker = PythonWorker(launcher=VenvWorkerLauncher(str(failing_python), startup_timeout=1.0))
+
+    with pytest.raises(RuntimeError, match="exit code 42"):
+        worker.start_process()
+
+
+@pytest.mark.skipif_macos_bug
 def test_worker_manager_basic(create_worker_manager):
     worker_manager = create_worker_manager(n_workers=2)
     module = worker_manager.deploy(SimpleModule, global_config, {})
@@ -130,6 +215,31 @@ def test_worker_manager_basic(create_worker_manager):
     assert result == 2
 
     module.stop()
+
+
+@pytest.mark.skipif_macos_bug
+def test_worker_manager_default_forkserver_lifecycle() -> None:
+    manager = WorkerManagerPython(g=GlobalConfig(n_workers=1))
+    try:
+        manager.start()
+        worker = manager.workers[0]
+        pid = worker.pid
+        assert pid is not None
+
+        module = manager.deploy(SimpleModule, global_config, {})
+        module.start()
+        assert module.increment() == 1
+        assert module.get_counter() == 1
+        module.stop()
+
+        worker.shutdown()
+        deadline = time.monotonic() + 3.0
+        while psutil.pid_exists(pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not psutil.pid_exists(pid)
+    finally:
+        manager.stop()
+        reset_forkserver_context()
 
 
 @pytest.mark.skipif_macos_bug

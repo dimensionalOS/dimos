@@ -33,13 +33,13 @@ The system SHALL allow phase-1 venv Module packages to depend on the current roo
 - **WHEN** a smaller DimOS worker runtime package becomes available
 - **THEN** venv Module packages can depend on that runtime package instead of the full root `dimos` package
 
-### Requirement: Demo proves dependency isolation with a lightweight package
-The system SHALL include a demo package and blueprint proving that a Module-specific dependency can exist only in the venv worker environment while the coordinator still imports, builds, and wires the blueprint.
+### Requirement: Demo proves venv worker placement with a lightweight package
+The system SHALL include a demo package and blueprint proving that a Module can be declared in one import-safe package and run in a named venv worker environment while the coordinator imports, builds, and wires the blueprint.
 
-#### Scenario: Coordinator lacks demo runtime dependency
-- **WHEN** the coordinator environment does not have the demo package's worker-only dependency installed
-- **THEN** the coordinator can still import the demo Module class and build the demo blueprint
+#### Scenario: Coordinator imports demo package
+- **WHEN** the coordinator imports the demo Module class and builds the demo blueprint
+- **THEN** the import and build succeed without running the demo's runtime helper at module import time
 
-#### Scenario: Venv worker uses demo runtime dependency
+#### Scenario: Venv worker uses demo runtime helper
 - **WHEN** the demo blueprint runs with the demo Module placed into its named Python runtime environment
-- **THEN** the Module uses the worker-only dependency inside the venv and publishes or responds through normal DimOS Module behavior
+- **THEN** the Module uses its package-local runtime helper inside the venv and publishes or responds through normal DimOS Module behavior
