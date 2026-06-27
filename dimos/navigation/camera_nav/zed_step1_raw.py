@@ -40,9 +40,7 @@ try:
         fps = frame / max(time.monotonic() - t0, 1e-6)
         print(f"frame={frame}  valid_pts={valid}  fps={fps:.1f}")
 
-        # Subsample to ~5k points before sending to Rerun
-        stride = max(1, len(flat_valid) // 5000)
-        sub = flat_valid[::stride]
+        sub = flat_valid
         xyz = sub[:, :3]
         rgba = sub[:, 3].view(np.uint32)
         r = ((rgba >> 16) & 0xFF).astype(np.uint8)
