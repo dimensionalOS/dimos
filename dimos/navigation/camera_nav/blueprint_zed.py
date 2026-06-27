@@ -23,6 +23,7 @@ from __future__ import annotations
 from dimos.control.blueprints.mobile import coordinator_flowbase_keyboard_teleop
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.zed.camera import ZEDCamera
+from dimos.mapping.voxels import VoxelGridMapper
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -219,3 +220,42 @@ camera_nav_zed_teleop = autoconnect(
     CameraNavRecorder.blueprint(db_path="traversal.db"),
     _RERUN_VIZ,
 )
+
+_RERUN_VIZ_VOXEL = RerunBridgeModule.blueprint(
+    pubsubs=[LCM()],
+    rerun_open="web",
+    visual_override={
+        "world/global_map": _cloud_points,
+        "world/camera_info": _pinhole_setup,
+    },
+)
+
+# VoxelGridMapper blueprint: ZED stereo → HardwareDepthModule → VoxelGridMapper.
+# HardwareDepthModule.frame_cloud is remapped to "lidar" so autoconnect can wire
+# it to VoxelGridMapper.lidar (port names differ by convention).
+# VoxelGridMapper uses Open3D VoxelBlockGrid with CUDA auto-fallback to CPU.
+camera_nav_zed_voxel = autoconnect(
+    ZEDCamera.blueprint(
+        resolution="VGA",
+        enable_depth=True,
+        depth_mode="NEURAL",
+        enable_fill_mode=True,
+        enable_pointcloud=False,
+        enable_tracking=True,
+        enable_imu_fusion=True,
+        set_floor_as_origin=True,
+    ),
+    HardwareDepthModule.blueprint(
+        camera_frame="camera_color_optical_frame",
+        stride=1,
+        max_depth=8.0,
+        max_freq=10.0,
+    ),
+    VoxelGridMapper.blueprint(
+        voxel_size=0.05,
+        device="CUDA:0",
+        carve_columns=True,
+        emit_every=1,
+    ),
+    _RERUN_VIZ_VOXEL,
+).remappings([(HardwareDepthModule, "frame_cloud", "lidar")])
