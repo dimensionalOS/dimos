@@ -17,6 +17,14 @@
 from __future__ import annotations
 
 
+def costmap_viz(grid):
+    """Render occupancy grid as a 3D textured floor overlay in Rerun.
+
+    OccupancyGrid convention: -1=unknown (grey), 0=free (green), 100=lethal (red).
+    """
+    return grid.to_rerun()
+
+
 def cloud_points(cloud):
     """Render a PointCloud2 as coloured 3D points in Rerun."""
     import numpy as np

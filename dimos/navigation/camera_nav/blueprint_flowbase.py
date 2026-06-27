@@ -28,27 +28,38 @@ from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.mapping.costmapper import CostMapper
 from dimos.navigation.camera_nav.recorder import CameraNavRecorder
-from dimos.navigation.camera_nav.viz import cloud_points, pinhole_setup
+from dimos.navigation.camera_nav.viz import cloud_points, costmap_viz, pinhole_setup
+from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
+    WavefrontFrontierExplorer,
+)
+from dimos.navigation.movement_manager.movement_manager import MovementManager
+from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.perception.depth.accumulator import DepthAccumulatorModule
 from dimos.perception.depth.monocular_depth_module import MonocularDepthModule
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 
+_RERUN_VIZ = RerunBridgeModule.blueprint(
+    pubsubs=[LCM()],
+    rerun_open="web",
+    visual_override={
+        "world/global_map": cloud_points,
+        "world/frame_cloud": cloud_points,
+        "world/global_costmap": costmap_viz,
+        "world/camera_info": pinhole_setup,
+    },
+)
+
+# Visualisation-only trial (no robot): webcam → depth → 3D map + costmap in Rerun.
 camera_nav_static_trial = autoconnect(
     CameraModule.blueprint(),
     MonocularDepthModule.blueprint(),
     DepthAccumulatorModule.blueprint(),
-    RerunBridgeModule.blueprint(
-        pubsubs=[LCM()],
-        rerun_open="web",
-        visual_override={
-            "world/global_map": cloud_points,
-            "world/frame_cloud": cloud_points,
-            "world/camera_info": pinhole_setup,
-        },
-    ),
+    CostMapper.blueprint(algo="height_cost"),
+    _RERUN_VIZ,
 )
 
 # Camera mount: x=forward, y=left, z=up (ROS convention).
@@ -79,20 +90,17 @@ def _make_flowbase_coordinator(address: str | None = None):
     ).remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
 
 
+# Full nav on FlowBase: monocular camera → 3D map → costmap → frontier → A* → velocity.
 camera_nav_flowbase_teleop = autoconnect(
     _make_flowbase_coordinator(),
     FlowBaseOdomModule.blueprint(),
     CameraModule.blueprint(transform=_CAMERA_MOUNT),
     MonocularDepthModule.blueprint(),
     DepthAccumulatorModule.blueprint(),
+    CostMapper.blueprint(algo="height_cost"),
+    WavefrontFrontierExplorer.blueprint(),
+    ReplanningAStarPlanner.blueprint(),
+    MovementManager.blueprint(),
     CameraNavRecorder.blueprint(db_path="traversal.db"),
-    RerunBridgeModule.blueprint(
-        pubsubs=[LCM()],
-        rerun_open="web",
-        visual_override={
-            "world/global_map": cloud_points,
-            "world/frame_cloud": cloud_points,
-            "world/camera_info": pinhole_setup,
-        },
-    ),
+    _RERUN_VIZ,
 )
