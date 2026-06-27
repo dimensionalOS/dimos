@@ -44,6 +44,15 @@ def _cloud_points(cloud):
     return rr.Points3D(positions=pts)
 
 
+def _pinhole_setup(info):
+    """Log Pinhole to world/color_image so Rerun can display the image in 3D."""
+    import rerun as rr
+    K = info.get_K_matrix()
+    if info.width == 0 or info.height == 0:
+        return None
+    return [("world/color_image", rr.Pinhole(image_from_camera=K, width=info.width, height=info.height))]
+
+
 # Tune translation and pitch to match physical ZED Mini mount.
 _ZED_MOUNT = Transform(
     translation=Vector3(0.0, 0.0, 0.5),
@@ -58,6 +67,7 @@ _RERUN_VIZ = RerunBridgeModule.blueprint(
     visual_override={
         "world/global_map": _cloud_points,
         "world/frame_cloud": _cloud_points,
+        "world/camera_info": _pinhole_setup,
     },
 )
 
@@ -68,6 +78,7 @@ _RERUN_VIZ_COMPARE = RerunBridgeModule.blueprint(
         "world/global_map": _cloud_points,
         "world/frame_cloud": _cloud_points,
         "world/pointcloud": _cloud_points,
+        "world/camera_info": _pinhole_setup,
     },
 )
 

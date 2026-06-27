@@ -46,6 +46,15 @@ def _cloud_points(cloud):
     return rr.Points3D(positions=pts)
 
 
+def _pinhole_setup(info):
+    """Log Pinhole to world/color_image so Rerun can display the image in 3D."""
+    import rerun as rr
+    K = info.get_K_matrix()
+    if info.width == 0 or info.height == 0:
+        return None
+    return [("world/color_image", rr.Pinhole(image_from_camera=K, width=info.width, height=info.height))]
+
+
 camera_nav_static_trial = autoconnect(
     CameraModule.blueprint(),
     MonocularDepthModule.blueprint(),
@@ -56,6 +65,7 @@ camera_nav_static_trial = autoconnect(
         visual_override={
             "world/global_map": _cloud_points,
             "world/frame_cloud": _cloud_points,
+            "world/camera_info": _pinhole_setup,
         },
     ),
 )
@@ -101,6 +111,7 @@ camera_nav_flowbase_teleop = autoconnect(
         visual_override={
             "world/global_map": _cloud_points,
             "world/frame_cloud": _cloud_points,
+            "world/camera_info": _pinhole_setup,
         },
     ),
 )

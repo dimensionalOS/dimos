@@ -72,6 +72,7 @@ if __name__ == "__main__":
         from dimos.protocol.pubsub.impl.lcmpubsub import LCM
         from dimos.visualization.rerun.bridge import RerunBridgeModule
 
+        from dimos.navigation.camera_nav.blueprint_flowbase import _pinhole_setup
         blueprint = autoconnect(
             _make_flowbase_coordinator(address=args.address),
             FlowBaseOdomModule.blueprint(),
@@ -82,7 +83,11 @@ if __name__ == "__main__":
             RerunBridgeModule.blueprint(
                 pubsubs=[LCM()],
                 rerun_open="web",
-                visual_override={"world/global_map": _cloud_points, "world/frame_cloud": _cloud_points},
+                visual_override={
+                    "world/global_map": _cloud_points,
+                    "world/frame_cloud": _cloud_points,
+                    "world/camera_info": _pinhole_setup,
+                },
             ),
         )
         ModuleCoordinator.build(blueprint).loop()

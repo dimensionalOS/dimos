@@ -188,7 +188,9 @@ class HardwareDepthModule(Module, DepthBackprojector):
                 self._last_tf = tf
 
         if self._last_tf is None:
-            return points_cam, self.config.camera_frame
+            # No odometry: camera is the world origin. Use world frame_id so the
+            # Rerun bridge doesn't attach a different TF than global_map uses.
+            return points_cam, self.config.world_frame
 
         R = self._last_tf.rotation.to_rotation_matrix()
         t = np.array(
