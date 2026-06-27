@@ -38,7 +38,6 @@ the tf streams into a buffer.
 from __future__ import annotations
 
 import bisect
-import json
 import re
 import sqlite3
 import threading
@@ -56,11 +55,13 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.memory2.store.base import Store
+    from dimos.memory2.stream import Stream
 
 logger = setup_logger()
 
 DEFAULT_TF_STREAM = "tf"
-GRAPH_TABLE = "tf_graph"
+# The topology change-log is a first-class stream named "<tf stream>_graph".
+GRAPH_STREAM_SUFFIX = "_graph"
 # Streams the RAM fallback (non-sqlite stores) reads.
 TF_STREAMS = ("tf", "tf_static")
 # If a recording has fewer than this many topology changes, load them all into RAM
@@ -69,9 +70,15 @@ TF_STREAMS = ("tf", "tf_static")
 DEFAULT_MAX_GRAPH_CHANGES_IN_RAM = 20
 # Larger than any single recording's span so the fallback buffer never prunes.
 _NO_PRUNE = 1.0e15
+# Lower bound for "latest topology at or before T" range queries.
+_TS_MIN = -1.0e18
 # SQLite can't parameterize table names, so caller-supplied stream names are
 # interpolated; allow only safe identifiers to keep that injection-free.
 _SAFE_TABLE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _graph_stream_name(stream: str) -> str:
+    return f"{_safe_table(stream)}{GRAPH_STREAM_SUFFIX}"
 
 
 def _safe_table(name: str) -> str:
@@ -86,22 +93,6 @@ def _connect(db_path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.execute("PRAGMA busy_timeout=5000")
     return conn
-
-
-def _graph_table(stream: str) -> str:
-    return f"{_safe_table(stream)}_graph"
-
-
-def ensure_graph_table(conn: sqlite3.Connection, stream: str) -> None:
-    """Create the topology change-log table (safe to call before the tf table
-    exists — it doesn't touch the tf table)."""
-    table = _graph_table(stream)
-    conn.execute(
-        f'CREATE TABLE IF NOT EXISTS "{table}" '
-        "(id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, structure TEXT NOT NULL)"
-    )
-    conn.execute(f'CREATE INDEX IF NOT EXISTS "{table}_ts_idx" ON "{table}"(ts)')
-    conn.commit()
 
 
 def _ensure_child_index(conn: sqlite3.Connection, stream: str) -> None:
@@ -119,41 +110,56 @@ def _ensure_child_index(conn: sqlite3.Connection, stream: str) -> None:
     conn.commit()
 
 
-class TfGraphWriter:
-    """Recorder helper: tracks the running topology and appends a ``tf_graph`` row
-    only when the structure changes."""
+class TfGraph:
+    """A tf topology snapshot, recorded one per structure change.
 
-    def __init__(self, db_path: str, stream: str = DEFAULT_TF_STREAM) -> None:
-        self._stream = _safe_table(stream)
-        self._table = _graph_table(stream)
-        self._conn = _connect(db_path)
+    ``structure`` maps each child frame to ``{"parent": str, "static": bool}`` —
+    the full tf tree as of this message's timestamp. The stream of these snapshots
+    (the ``<tf>_graph`` stream) is the topology change-log that transform lookups
+    walk to resolve a source->target chain at any past time. Defined here (not under
+    ``dimos/msgs``) because it is a recording-internal payload, not a wire message;
+    it is stored via the pickle codec."""
+
+    structure: dict[str, dict[str, Any]]
+    msg_name = "tf2_msgs.TfGraph"
+
+    def __init__(self, structure: dict[str, dict[str, Any]]) -> None:
+        # copy so later mutations of the writer's running structure don't alter an
+        # already-recorded snapshot
+        self.structure = {child: dict(entry) for child, entry in structure.items()}
+
+    def __repr__(self) -> str:
+        return f"TfGraph({len(self.structure)} frames)"
+
+
+class TfGraphWriter:
+    """Recorder helper: tracks the running topology and appends a ``TfGraph``
+    snapshot to the graph stream only when the structure changes."""
+
+    def __init__(self, store: Store, stream: str = DEFAULT_TF_STREAM) -> None:
+        self._stream: Stream[TfGraph] = store.stream(_graph_stream_name(stream), TfGraph)
         self._structure: dict[str, dict[str, Any]] = {}
-        ensure_graph_table(self._conn, self._stream)
 
     def record(self, child_frame: str, parent_frame: str, is_static: bool, ts: float) -> None:
         entry = {"parent": parent_frame, "static": bool(is_static)}
         if self._structure.get(child_frame) == entry:
-            return  # no structural change -> no new graph row
+            return  # no structural change -> no new snapshot
         self._structure[child_frame] = entry
-        self._conn.execute(
-            f'INSERT INTO "{self._table}" (ts, structure) VALUES (?, ?)',
-            (ts, json.dumps(self._structure)),
-        )
-        self._conn.commit()
+        self._stream.append(TfGraph(self._structure), ts=ts)
 
     def close(self) -> None:
-        self._conn.close()
+        # the stream is owned by the store; nothing to close here
+        pass
 
 
 def build_graph_stream(store: Store, stream: str = DEFAULT_TF_STREAM) -> int:
     """One-time migration for a recording that predates the graph stream: tag every
-    tf row with its ``child_frame`` and build ``tf_graph`` chronologically. A frame
-    is treated as static if its pose never changes across the recording. Returns the
-    number of topology-change rows written."""
+    tf row with its ``child_frame`` and build the ``<tf>_graph`` stream
+    chronologically. A frame is treated as static if its pose never changes across
+    the recording. Returns the number of topology-change snapshots written."""
     config = store.config
     if not isinstance(config, SqliteStoreConfig):
         raise TypeError("build_graph_stream needs a SqliteStore")
-    table = _graph_table(stream)
     safe = _safe_table(stream)
 
     # one decode pass: collect (id, ts, child, parent, pose-key) per row
@@ -174,33 +180,31 @@ def build_graph_stream(store: Store, stream: str = DEFAULT_TF_STREAM) -> int:
             poses_per_child.setdefault(transform.child_frame_id, set()).add(pose_key)
     static_frames = {child for child, poses in poses_per_child.items() if len(poses) == 1}
 
+    # tag each tf row with its child_frame + add the seek index (raw, on the tf table)
     conn = _connect(config.path)
     try:
-        ensure_graph_table(conn, safe)
-        conn.execute(f'DELETE FROM "{table}"')
-        # tag each tf row with its child_frame (json_set keeps any existing tags)
         for row_id, _ts, child, _parent, _pose in rows:
             conn.execute(
                 f"UPDATE \"{safe}\" SET tags = json_set(tags, '$.child_frame', ?) WHERE id = ?",
                 (child, row_id),
             )
-        _ensure_child_index(conn, safe)
-        # build the topology change-log
-        structure: dict[str, dict[str, Any]] = {}
-        written = 0
-        for _row_id, ts, child, parent, _pose in rows:
-            entry = {"parent": parent, "static": child in static_frames}
-            if structure.get(child) == entry:
-                continue
-            structure[child] = entry
-            conn.execute(
-                f'INSERT INTO "{table}" (ts, structure) VALUES (?, ?)', (ts, json.dumps(structure))
-            )
-            written += 1
         conn.commit()
-        return written
+        _ensure_child_index(conn, safe)
     finally:
         conn.close()
+
+    # build the topology change-log as a first-class stream
+    graph_stream = store.stream(_graph_stream_name(safe), TfGraph)
+    structure: dict[str, dict[str, Any]] = {}
+    written = 0
+    for _row_id, ts, child, parent, _pose in rows:
+        entry = {"parent": parent, "static": child in static_frames}
+        if structure.get(child) == entry:
+            continue
+        structure[child] = entry
+        graph_stream.append(TfGraph(structure), ts=ts)
+        written += 1
+    return written
 
 
 class DbTf:
@@ -220,7 +224,7 @@ class DbTf:
     ) -> None:
         self._store = store
         self._stream = _safe_table(stream)
-        self._table = _graph_table(stream)
+        self._graph_name = _graph_stream_name(stream)
         self._max_in_ram = max_graph_changes_in_ram
         self._stream_names = stream_names  # RAM fallback only
         self._lock = threading.Lock()
@@ -277,14 +281,20 @@ class DbTf:
         (n_rows,) = conn.execute(f'SELECT count(*) FROM "{self._stream}"').fetchone()
         return bool(n_rows)
 
+    def _graph_stream(self) -> Stream[TfGraph]:
+        return self._store.stream(self._graph_name, TfGraph)
+
+    def _graph_count(self) -> int:
+        if self._graph_name not in set(self._store.list_streams()):
+            return 0
+        return self._graph_stream().count()
+
     def _ensure_built(self) -> None:
         if self._built:
             return
         conn = self._connection()
-        ensure_graph_table(conn, self._stream)
-        (n_graph,) = conn.execute(f'SELECT count(*) FROM "{self._table}"').fetchone()
         (n_rows,) = conn.execute(f'SELECT count(*) FROM "{self._stream}"').fetchone()
-        if n_rows and n_graph == 0:
+        if n_rows and self._graph_count() == 0:
             logger.warning(
                 "\n========================================================================\n"
                 "  tf graph stream MISSING for %r. Building it (one-time): tagging tf rows\n"
@@ -301,14 +311,9 @@ class DbTf:
     def _load_graph_if_small(self) -> None:
         if self._graph_loaded:
             return
-        conn = self._connection()
-        (n_graph,) = conn.execute(f'SELECT count(*) FROM "{self._table}"').fetchone()
-        if n_graph < self._max_in_ram:
+        if self._graph_count() < self._max_in_ram:
             self._graph_in_ram = [
-                (ts, json.loads(structure))
-                for ts, structure in conn.execute(
-                    f'SELECT ts, structure FROM "{self._table}" ORDER BY ts ASC'
-                )
+                (obs.ts, obs.data.structure) for obs in self._graph_stream().order_by("ts")
             ]
         else:
             self._graph_in_ram = None  # too many -> query per lookup
@@ -322,18 +327,15 @@ class DbTf:
             if index < 0:
                 return self._graph_in_ram[0][1]  # before first -> earliest
             return self._graph_in_ram[index][1]
-        # fallback: one query
+        # fallback: one query for the latest snapshot at or before query_time
         self.graph_queries += 1
-        conn = self._connection()
-        row = conn.execute(
-            f'SELECT structure FROM "{self._table}" WHERE ts <= ? ORDER BY ts DESC LIMIT 1',
-            (query_time,),
-        ).fetchone()
-        if row is None:
-            row = conn.execute(
-                f'SELECT structure FROM "{self._table}" ORDER BY ts ASC LIMIT 1'
-            ).fetchone()
-        return json.loads(row[0]) if row else None
+        stream = self._graph_stream()
+        latest = stream.time_range(_TS_MIN, query_time).order_by("ts", desc=True).limit(1)
+        for obs in latest:
+            return obs.data.structure
+        for obs in stream.order_by("ts").limit(1):  # before first -> earliest
+            return obs.data.structure
+        return None
 
     def _chain_frames(self, graph: dict[str, Any], source: str, target: str) -> list[str] | None:
         def to_root(frame: str) -> list[str]:

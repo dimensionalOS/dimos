@@ -463,11 +463,9 @@ class Recorder(MemoryModule):
             return
         tf_stream = self.store.stream("tf", TFMessage)
 
-        is_sqlite = isinstance(self.store, SqliteStore)
-        # Topology change-log + child_frame tags, for the graph-stream DbTf.
-        graph_writer = TfGraphWriter(self.store.config.path, "tf") if is_sqlite else None
-        if graph_writer is not None:
-            self.register_disposable(Disposable(graph_writer.close))
+        # Topology change-log (the "tf_graph" stream) written alongside the tf rows.
+        graph_writer = TfGraphWriter(self.store, "tf")
+        self.register_disposable(Disposable(graph_writer.close))
 
         def make_handler(is_static: bool) -> Any:
             def on_tf(msg: TFMessage, _topic: Any) -> None:

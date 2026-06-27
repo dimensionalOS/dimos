@@ -87,7 +87,7 @@ def _record_single_robot(path: Path, *, static_repeat: bool) -> list[Transform]:
     """world->map->odom->base_link->sensor. Statics emitted once (latched) unless
     static_repeat, in which case they're re-emitted each second."""
     store = SqliteStore(path=str(path))
-    graph = TfGraphWriter(str(path), "tf")
+    graph = TfGraphWriter(store)
     written: list[Transform] = []
 
     statics = [
@@ -156,7 +156,7 @@ def test_reparent_midrun_uses_graph_as_of_query_time(tmp_path: Path) -> None:
     ~100. Exercises time-varying / multi-robot topology."""
     path = tmp_path / "reparent.db"
     store = SqliteStore(path=str(path))
-    graph = TfGraphWriter(str(path), "tf")
+    graph = TfGraphWriter(store)
     _append(store, graph, _static("world", "map", (10.0, 0, 0), _T0), is_static=True)
     _append(store, graph, _static("map", "odom", (100.0, 0, 0), _T0), is_static=True)
 
@@ -220,7 +220,7 @@ def test_disjoint_multirobot_returns_none(tmp_path: Path) -> None:
     query is None, an in-component query resolves."""
     path = tmp_path / "two.db"
     store = SqliteStore(path=str(path))
-    graph = TfGraphWriter(str(path), "tf")
+    graph = TfGraphWriter(store)
     for i in range(20):
         ts = _T0 + i / _DYN_RATE
         _append(
