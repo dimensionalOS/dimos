@@ -16,7 +16,11 @@ if err != sl.ERROR_CODE.SUCCESS:
     print(f"failed: {err}")
     exit(1)
 
-print("camera open")
+tp = sl.PositionalTrackingParameters()
+tp.enable_imu_fusion = True
+tp.set_floor_as_origin = True
+zed.enable_positional_tracking(tp)
+print("camera open, tracking enabled")
 
 rt = sl.RuntimeParameters()
 pc = sl.Mat()
@@ -32,7 +36,10 @@ try:
         data = pc.get_data()
         valid = int(np.isfinite(data[:, :, 0]).sum())
         fps = frame / max(time.monotonic() - t0, 1e-6)
-        print(f"frame={frame}  valid_pts={valid}  fps={fps:.1f}")
+        pose = sl.Pose()
+        state = zed.get_position(pose, sl.REFERENCE_FRAME.WORLD)
+        tracking = "WORLD" if state == sl.POSITIONAL_TRACKING_STATE.OK else "INIT"
+        print(f"frame={frame}  valid_pts={valid}  fps={fps:.1f}  [{tracking}]")
         frame += 1
 
 except KeyboardInterrupt:
