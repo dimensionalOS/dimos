@@ -21,8 +21,6 @@ import time
 from typing import Any, Callable
 
 import numpy as np
-import open3d as o3d
-import open3d.core as o3c
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
 
@@ -32,6 +30,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.perception.depth.utils import make_colored_cloud, to_world
 from dimos.spec.depth import DepthBackprojector
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
@@ -83,7 +82,6 @@ class MonocularDepthModule(Module, DepthBackprojector):
 
     color_image: In[Image]
     camera_info: In[CameraInfo]
-
     frame_cloud: Out[PointCloud2]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -100,9 +98,7 @@ class MonocularDepthModule(Module, DepthBackprojector):
     def start(self) -> None:
         super().start()
         self._load_model()
-        self.register_disposable(
-            Disposable(self.camera_info.subscribe(self._on_camera_info))
-        )
+        self.register_disposable(Disposable(self.camera_info.subscribe(self._on_camera_info)))
         self.register_disposable(
             Disposable(
                 backpressure(
@@ -147,14 +143,18 @@ class MonocularDepthModule(Module, DepthBackprojector):
         except Exception:
             logger.exception("MonocularDepthModule: inference failed")
             return
-        logger.info("MonocularDepthModule: %.2fs/frame  %d pts  device=%s",
-                    time.perf_counter() - t0, len(points), self._device)
+        logger.info(
+            "MonocularDepthModule: %.2fs/frame  %d pts  device=%s",
+            time.perf_counter() - t0, len(points), self._device,
+        )
 
-        points_world, frame_id = self._to_world(points, image.ts)
-        if points_world is not None and len(points_world) > 0:
-            self.frame_cloud.publish(
-                _make_colored_cloud(points_world, colors, frame_id, image.ts)
-            )
+        pts_world, frame_id, self._last_tf, self._tf_last_attempt = to_world(
+            points, image.ts, self.tf,
+            self.config.world_frame, self.config.camera_frame, self.config.tf_timeout,
+            self._last_tf, self._tf_last_attempt, logger,
+        )
+        if len(pts_world) > 0:
+            self.frame_cloud.publish(make_colored_cloud(pts_world, colors, frame_id, image.ts))
 
     def _run_inference(self, image: Image) -> tuple[np.ndarray, np.ndarray]:
         import torch
@@ -219,44 +219,3 @@ class MonocularDepthModule(Module, DepthBackprojector):
         colors = rgb[vi, ui, :3].astype(np.float32) / 255.0
 
         return points, colors
-
-    def _to_world(self, points_cam: np.ndarray, ts: float) -> tuple[np.ndarray | None, str]:
-        if len(points_cam) == 0:
-            return points_cam, self.config.world_frame
-
-        now = time.monotonic()
-        # When TF has never been found, throttle retries to 5s intervals so the
-        # TF module doesn't spam a warning on every frame (e.g. trial/no-odometry mode).
-        # Once TF is known, always refresh to track robot movement.
-        if self._last_tf is not None or now - self._tf_last_attempt >= 5.0:
-            self._tf_last_attempt = now
-            tf = self.tf.get(
-                self.config.world_frame, self.config.camera_frame, ts, self.config.tf_timeout
-            )
-            if tf is not None:
-                self._last_tf = tf
-
-        if self._last_tf is None:
-            # No odometry: camera is the world origin. Use world frame_id so the
-            # Rerun bridge doesn't attach a different TF than global_map uses.
-            return points_cam, self.config.world_frame
-
-        R = self._last_tf.rotation.to_rotation_matrix()
-        t = np.array(
-            [self._last_tf.translation.x, self._last_tf.translation.y, self._last_tf.translation.z],
-            dtype=np.float32,
-        )
-        return (points_cam @ R.T).astype(np.float32) + t, self.config.world_frame
-
-
-def _make_colored_cloud(
-    points: np.ndarray,
-    colors: np.ndarray,
-    frame_id: str,
-    ts: float,
-) -> PointCloud2:
-    pcd_t = o3d.t.geometry.PointCloud()
-    pcd_t.point["positions"] = o3c.Tensor(points, dtype=o3c.float32)
-    if len(colors) == len(points):
-        pcd_t.point["colors"] = o3c.Tensor(colors, dtype=o3c.float32)
-    return PointCloud2(pcd_t, frame_id=frame_id, ts=ts)

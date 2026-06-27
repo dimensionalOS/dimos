@@ -36,6 +36,8 @@ import threading
 import time
 from typing import Any
 
+import os
+
 import numpy as np
 import open3d as o3d
 from reactivex.disposable import Disposable
@@ -44,7 +46,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.perception.depth.monocular_depth_module import _make_colored_cloud
+from dimos.perception.depth.utils import make_colored_cloud
 from dimos.spec.mapping import GlobalPointcloud
 from dimos.utils.logging_config import setup_logger
 
@@ -104,7 +106,7 @@ class Config(ModuleConfig):
     lc_max_correspondence: float = 0.12
     lc_fitness_threshold: float = 0.45
     # Export
-    export_path: str = "map"
+    export_path: str = "~/Downloads/map"
     poisson_depth: int = 9         # octree depth; higher = finer mesh, slower
 
 
@@ -240,7 +242,7 @@ class DepthAccumulatorModule(Module, GlobalPointcloud):
 
         logger.debug("DepthAccumulatorModule: %d points in global map", len(pts_out))
         self.global_map.publish(
-            _make_colored_cloud(
+            make_colored_cloud(
                 pts_out,
                 cols_out if cols_out is not None else np.zeros((len(pts_out), 3), dtype=np.float32),
                 self.config.world_frame,
@@ -319,7 +321,8 @@ class DepthAccumulatorModule(Module, GlobalPointcloud):
             logger.warning("DepthAccumulatorModule: map too sparse to export, skipping")
             return
 
-        path = self.config.export_path
+        path = os.path.expanduser(self.config.export_path)
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
 
         # --- Raw coloured cloud ---
         pcd = snapshot.voxel_down_sample(self.config.voxel_size)

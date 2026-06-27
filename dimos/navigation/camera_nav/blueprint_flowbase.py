@@ -29,33 +29,11 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.navigation.camera_nav.recorder import CameraNavRecorder
+from dimos.navigation.camera_nav.viz import cloud_points, pinhole_setup
 from dimos.perception.depth.accumulator import DepthAccumulatorModule
 from dimos.perception.depth.monocular_depth_module import MonocularDepthModule
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.visualization.rerun.bridge import RerunBridgeModule
-
-
-def _cloud_points(cloud):
-    import numpy as np
-    import rerun as rr
-    pts, cols = cloud.as_numpy()
-    if len(pts) == 0:
-        return rr.Points3D([])
-    if cols is not None and len(cols) == len(pts):
-        return rr.Points3D(positions=pts, colors=(cols * 255).astype(np.uint8))
-    return rr.Points3D(positions=pts)
-
-
-def _pinhole_setup(info):
-    """Set up Pinhole for all image entities so Rerun can show them in 3D view."""
-    import rerun as rr
-    K = info.get_K_matrix()
-    if info.width == 0 or info.height == 0:
-        return None
-    pinhole = rr.Pinhole(image_from_camera=K, width=info.width, height=info.height)
-    rr.log("world/color_image", pinhole, static=True)
-    rr.log("world/depth_image", pinhole, static=True)
-    return None  # suppress world/camera_info entity
 
 
 camera_nav_static_trial = autoconnect(
@@ -66,9 +44,9 @@ camera_nav_static_trial = autoconnect(
         pubsubs=[LCM()],
         rerun_open="web",
         visual_override={
-            "world/global_map": _cloud_points,
-            "world/frame_cloud": _cloud_points,
-            "world/camera_info": _pinhole_setup,
+            "world/global_map": cloud_points,
+            "world/frame_cloud": cloud_points,
+            "world/camera_info": pinhole_setup,
         },
     ),
 )
@@ -112,9 +90,9 @@ camera_nav_flowbase_teleop = autoconnect(
         pubsubs=[LCM()],
         rerun_open="web",
         visual_override={
-            "world/global_map": _cloud_points,
-            "world/frame_cloud": _cloud_points,
-            "world/camera_info": _pinhole_setup,
+            "world/global_map": cloud_points,
+            "world/frame_cloud": cloud_points,
+            "world/camera_info": pinhole_setup,
         },
     ),
 )
