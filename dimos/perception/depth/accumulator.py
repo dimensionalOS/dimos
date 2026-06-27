@@ -93,6 +93,7 @@ _MAX_UNCOMPACTED = 1_000_000
 class Config(ModuleConfig):
     voxel_size: float = 0.03
     world_frame: str = "world"
+    max_map_points: int = 500_000   # hard cap — prevents unbounded memory growth
     # Odometry ICP (sliding window)
     icp_window: int = 5
     icp_min_points: int = 300
@@ -100,10 +101,6 @@ class Config(ModuleConfig):
     icp_max_iter: int = 20
     merge_interval: int = 10
     publish_freq: float = 5.0
-    # Radius outlier removal — removes isolated noise clusters after accumulation.
-    # A point is kept only if it has ≥ radius_min_points neighbours within radius metres.
-    radius_outlier_radius: float = 0.05
-    radius_outlier_min_points: int = 5
     # Pose-graph SLAM
     lc_interval: int = 15
     lc_min_gap: int = 15
@@ -128,7 +125,8 @@ class DepthAccumulatorModule(Module, GlobalPointcloud):
     config: Config
 
     frame_cloud: In[PointCloud2]
-    global_map: Out[PointCloud2]
+    global_map: Out[PointCloud2]   # full accumulated map → Rerun visualisation
+    merged_map: Out[PointCloud2]   # ICP-aligned sliding window → CostMapper (real-time, no drift)
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -203,6 +201,15 @@ class DepthAccumulatorModule(Module, GlobalPointcloud):
             if len(self._window) > self.config.icp_window:
                 self._window.pop(0)
 
+            # --- Merged map: sliding window only → costmap (real-time, no SLAM drift) ---
+            win_pcd = _merge(self._window).voxel_down_sample(self.config.voxel_size)
+            win_pts = np.asarray(win_pcd.points, dtype=np.float32)
+            win_cols = (
+                np.asarray(win_pcd.colors, dtype=np.float32)
+                if win_pcd.has_colors() else np.zeros((len(win_pts), 3), dtype=np.float32)
+            )
+            _merged_cloud = make_colored_cloud(win_pts, win_cols, self.config.world_frame, cloud.ts)
+
             # --- Pose graph: add node and odometry edge ---
             idx = len(self._keyframes)
             abs_pose = (self._poses[-1] @ odom_T) if self._poses else np.eye(4)
@@ -231,34 +238,31 @@ class DepthAccumulatorModule(Module, GlobalPointcloud):
             if (self._frame_count % self.config.merge_interval == 0
                     or len(self._map.points) > _MAX_UNCOMPACTED):
                 self._map = self._map.voxel_down_sample(self.config.voxel_size)
-                # Remove isolated noise clusters: a point must have ≥ N neighbours
-                # within radius r.  Applied after voxel merge so it's cheap.
-                self._map, _ = self._map.remove_radius_outlier(
-                    nb_points=self.config.radius_outlier_min_points,
-                    radius=self.config.radius_outlier_radius,
-                )
+                # Hard memory cap: if still too large after voxel merge, downsample further.
+                if len(self._map.points) > self.config.max_map_points:
+                    ratio = self.config.max_map_points / len(self._map.points)
+                    coarser = self.config.voxel_size / ratio
+                    self._map = self._map.voxel_down_sample(coarser)
 
             # --- Throttled publish ---
             now = time.monotonic()
-            if now - self._last_publish < 1.0 / self.config.publish_freq:
-                return
-            self._last_publish = now
+            do_publish_global = now - self._last_publish >= 1.0 / self.config.publish_freq
+            if do_publish_global:
+                self._last_publish = now
+                pts_out = np.asarray(self._map.points, dtype=np.float32)
+                cols_out = (
+                    np.asarray(self._map.colors, dtype=np.float32)
+                    if self._map.has_colors() else np.zeros((len(pts_out), 3), dtype=np.float32)
+                )
+                _global_cloud = make_colored_cloud(pts_out, cols_out, self.config.world_frame, cloud.ts)
+            else:
+                _global_cloud = None
 
-            pts_out = np.asarray(self._map.points, dtype=np.float32)
-            cols_out = (
-                np.asarray(self._map.colors, dtype=np.float32)
-                if self._map.has_colors() else None
-            )
-
-        logger.debug("DepthAccumulatorModule: %d points in global map", len(pts_out))
-        self.global_map.publish(
-            make_colored_cloud(
-                pts_out,
-                cols_out if cols_out is not None else np.zeros((len(pts_out), 3), dtype=np.float32),
-                self.config.world_frame,
-                cloud.ts,
-            )
-        )
+        # Publish outside the lock.
+        self.merged_map.publish(_merged_cloud)  # every frame → costmap stays current
+        if _global_cloud is not None:
+            logger.debug("DepthAccumulatorModule: %d points in global map", len(pts_out))
+            self.global_map.publish(_global_cloud)
 
     # ------------------------------------------------------------------
     # Loop closure + pose graph optimisation
