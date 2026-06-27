@@ -16,7 +16,16 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
+from enum import Enum
+
+
+class StrEnum(str, Enum):
+    """Python 3.10-compatible subset of enum.StrEnum."""
+
+    def __str__(self) -> str:
+        return self.value
+
+
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, NonNegativeFloat, NonNegativeInt, PositiveInt
@@ -82,8 +91,12 @@ class RobotMotorSurface(StrictModel):
     robot_id: str
     surface_type: Literal["whole_body"] = "whole_body"
     motors: list[MotorDescription]
-    supported_command_modes: list[CommandMode] = Field(default_factory=lambda: [CommandMode.POSITION])
-    state_fields: list[Literal["q", "dq", "tau"]] = Field(default_factory=lambda: ["q", "dq", "tau"])
+    supported_command_modes: list[CommandMode] = Field(
+        default_factory=lambda: [CommandMode.POSITION]
+    )
+    state_fields: list[Literal["q", "dq", "tau"]] = Field(
+        default_factory=lambda: ["q", "dq", "tau"]
+    )
 
 
 class RuntimeDescription(StrictModel):
@@ -113,7 +126,7 @@ class EpisodeResetResponse(StrictModel):
 
     episode_id: str
     runtime_description: RuntimeDescription
-    observations: list["ObservationFrame"] = Field(default_factory=list)
+    observations: list[ObservationFrame] = Field(default_factory=list)
 
 
 class MotorActionFrame(StrictModel):

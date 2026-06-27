@@ -137,3 +137,81 @@ writes artifacts under `artifacts/benchmark/robosuite-panda-lift/`.
 
 If Robosuite is not installed, the script exits with an explicit sidecar health
 failure and writes `robosuite_sidecar.log` with the import error.
+
+## LIBERO-PRO registered-task runtime demo
+
+LIBERO-PRO support follows the same runtime sidecar boundary as Robosuite, but the
+sidecar must run in an environment that can import the LIBERO-PRO stack and has
+prepared registered-suite assets. The DimOS process still does not import
+LIBERO-PRO, Robosuite, or Torch; it starts `dimos_libero_pro_sidecar.server` in a
+subprocess, resolves the described Panda motor surface, drives
+`ControlCoordinator` through the SHM motor bridge, fetches `.npy` camera payloads,
+and records sidecar-owned score output.
+
+Prepared assets are validated by default and are never downloaded or rearranged by
+sidecar startup or `/health`. If asset preparation is desired, use the explicit
+bootstrap path instead of relying on implicit startup mutation:
+
+```bash
+uv run --with huggingface-hub python scripts/benchmarks/demo_libero_pro_runtime.py --prepare-assets
+```
+
+For already-prepared assets, run with a LIBERO-PRO-capable sidecar Python. If
+that environment is separate from the main DimOS environment, point the demo at
+it with `DIMOS_LIBERO_PRO_SIDECAR_PYTHON`:
+
+```bash
+LIBERO_CONFIG_PATH=/path/to/libero-config \
+PYTHONPATH=/path/to/LIBERO-PRO \
+DIMOS_LIBERO_PRO_SIDECAR_PYTHON=/path/to/libero-env/bin/python \
+uv run python scripts/benchmarks/demo_libero_pro_runtime.py
+```
+
+To verify camera wiring live, run the LIBERO-PRO demo with the same DimOS Rerun
+bridge path as the Robosuite demo:
+
+```bash
+LIBERO_CONFIG_PATH=/path/to/libero-config \
+PYTHONPATH=/path/to/LIBERO-PRO \
+DIMOS_LIBERO_PRO_SIDECAR_PYTHON=/path/to/libero-env/bin/python \
+uv run python scripts/benchmarks/demo_libero_pro_runtime.py --rerun --camera-name agentview
+```
+
+For a live MuJoCo/Robosuite viewer window plus Rerun camera streaming, use
+`--visual --rerun`:
+
+```bash
+LIBERO_CONFIG_PATH=/path/to/libero-config \
+PYTHONPATH=/path/to/LIBERO-PRO \
+DIMOS_LIBERO_PRO_SIDECAR_PYTHON=/path/to/libero-env/bin/python \
+uv run python scripts/benchmarks/demo_libero_pro_runtime.py --visual --rerun --camera-name agentview
+```
+
+`--visual` defaults to a longer run and larger joint target amplitude than the
+smoke config so the Panda arm motion is visible. The sidecar defaults
+`MUJOCO_GL=glfw` for visual mode; override it in the environment if your display
+stack needs a different MuJoCo backend.
+
+`--rerun` starts a private Rerun bridge and LCM bus, publishes fetched sidecar
+camera payloads as DimOS `Image` / `CameraInfo` streams, and writes
+`rerun_summary.json` plus raw/display JPEG samples under the demo artifact
+directory. `--rerun-grpc-port`, `--rerun-lcm-port`, `--rerun-max-hz`, and
+`--camera-jpeg-dump-every` mirror the Robosuite demo flags. Rerun is the
+headless-friendly verification path when an interactive viewer cannot be opened.
+
+`LIBERO_CONFIG_PATH` must contain a `config.yaml` whose `bddl_files` and
+`init_states` entries point at the prepared LIBERO-PRO assets. The extra
+`PYTHONPATH` is only needed when running against a source checkout whose package
+is not installed into the sidecar environment.
+
+The default config is
+`dimos/benchmark/runtime/configs/libero_pro_goal_task0.json`. It declares backend
+`libero-pro` with common runtime fields plus backend-specific options for the
+registered suite, task index, init-state index, controller, camera names, horizon,
+and BDDL/init-state roots. Missing BDDL or init-state assets should fail before
+episode reset with a clear sidecar validation error.
+
+The scripted demo is a plumbing acceptance check, not an agent task-success
+benchmark. It can pass when protocol stepping, motor command/state flow, camera
+payload retrieval, score collection, artifact writing, and cleanup succeed even if
+the scripted servo target does not solve the selected LIBERO-PRO task.

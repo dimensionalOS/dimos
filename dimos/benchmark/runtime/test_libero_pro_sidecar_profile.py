@@ -1,0 +1,262 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Stubbed profile tests for the LIBERO-PRO runtime sidecar."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from io import BytesIO
+import json
+from pathlib import Path
+import sys
+from threading import Thread
+from typing import cast
+from urllib.request import Request, urlopen
+
+import numpy as np
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+PROTOCOL_SRC = REPO_ROOT / "packages" / "dimos-runtime-protocol" / "src"
+LIBERO_PRO_SIDECAR_SRC = REPO_ROOT / "packages" / "dimos-libero-pro-sidecar" / "src"
+sys.path.insert(0, str(PROTOCOL_SRC))
+sys.path.insert(0, str(LIBERO_PRO_SIDECAR_SRC))
+
+from dimos_libero_pro_sidecar.server import (
+    LiberoProRuntimeConfig,
+    LiberoProRuntimeState,
+    make_server,
+    validate_assets,
+)
+from dimos_runtime_protocol import EpisodeResetRequest, MotorActionFrame, StepRequest
+
+
+class _FakeLiberoBackend:
+    action_low = [-1.0] * 8
+    action_high = [1.0] * 8
+    task_name = "pick_up_the_black_bowl"
+    language = "pick up the black bowl"
+
+    def reset(self, init_state_index: int) -> dict[str, object]:
+        return _fake_obs([0.0] * 7, [0.0]) | {"init_state_index": init_state_index}
+
+    def step(
+        self, action: Sequence[float]
+    ) -> tuple[dict[str, object], float, bool, dict[str, object]]:
+        values = [float(item) for item in action]
+        return _fake_obs(values[:7], [values[7]]), 0.75, False, {"success": True}
+
+    def render(self) -> None:
+        return
+
+
+class _RenderCountingBackend(_FakeLiberoBackend):
+    def __init__(self) -> None:
+        self.render_count = 0
+
+    def render(self) -> None:
+        self.render_count += 1
+
+
+class _BadActionBackend(_FakeLiberoBackend):
+    action_low = [-1.0] * 7
+    action_high = [1.0] * 7
+
+
+def test_libero_pro_profile_maps_actions_states_score_and_payloads(tmp_path: Path) -> None:
+    state = LiberoProRuntimeState(_config(tmp_path), backend=_FakeLiberoBackend())
+
+    description = state.describe()
+    assert description.backend == "libero-pro"
+    assert [motor.name for motor in description.robot_surfaces[0].motors] == [
+        "panda/joint1",
+        "panda/joint2",
+        "panda/joint3",
+        "panda/joint4",
+        "panda/joint5",
+        "panda/joint6",
+        "panda/joint7",
+        "panda/gripper",
+    ]
+    assert description.metadata["benchmark_name"] == "libero_pro"
+
+    reset = state.reset(EpisodeResetRequest(episode_id="episode", task_id="task"))
+    assert {frame.stream for frame in reset.observations} == {"robot_state", "agentview"}
+
+    response = state.step(
+        StepRequest(
+            episode_id="episode",
+            tick_id=1,
+            action=MotorActionFrame(robot_id="panda", names=state.motor_names, q=[0.1] * 8),
+        )
+    )
+
+    assert response.success is True
+    assert response.motor_state.q == [0.1] * 8
+    image_frame = next(frame for frame in response.observations if frame.stream == "agentview")
+    assert image_frame.data_ref is not None
+    assert image_frame.metadata["image_convention"] == "opengl"
+    assert image_frame.metadata["camera_source"] == "libero_pro_observation"
+    payload = state.payload_bytes(image_frame.data_ref.removeprefix("/payloads/"))
+    assert np.array_equal(np.load(BytesIO(payload), allow_pickle=False), _pure_color_image())
+
+    score = state.score()
+    assert score.success is True
+    assert score.metrics["steps"] == 1
+    assert score.metrics["task_name"] == "pick_up_the_black_bowl"
+    assert score.metrics["language"] == "pick up the black bowl"
+
+
+def test_libero_pro_rejects_incompatible_action_dimension(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="action_dim=7"):
+        LiberoProRuntimeState(_config(tmp_path), backend=_BadActionBackend())
+
+
+def test_libero_pro_rejects_unsupported_controller(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="unsupported LIBERO-PRO controller"):
+        LiberoProRuntimeState(
+            _config(tmp_path, controller="OSC_POSE"), backend=_FakeLiberoBackend()
+        )
+
+
+def test_libero_pro_visual_mode_renders_after_reset_and_step(tmp_path: Path) -> None:
+    backend = _RenderCountingBackend()
+    state = LiberoProRuntimeState(_config(tmp_path, visualize=True), backend=backend)
+
+    state.reset(EpisodeResetRequest(episode_id="episode", task_id="task"))
+    state.step(
+        StepRequest(
+            episode_id="episode",
+            tick_id=1,
+            action=MotorActionFrame(robot_id="panda", names=state.motor_names, q=[0.1] * 8),
+        )
+    )
+
+    assert backend.render_count == 2
+
+
+def test_libero_pro_asset_validation_does_not_bootstrap_by_default(tmp_path: Path) -> None:
+    config = LiberoProRuntimeConfig(
+        host="127.0.0.1",
+        port=8767,
+        benchmark_name="libero_pro",
+        bddl_root=tmp_path / "missing-bddl",
+        init_states_root=tmp_path / "missing-init",
+    )
+
+    with pytest.raises(FileNotFoundError, match="BDDL root"):
+        validate_assets(config)
+
+
+def test_libero_pro_http_endpoints_with_stubbed_backend(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    state = LiberoProRuntimeState(config, backend=_FakeLiberoBackend())
+    server = make_server(
+        LiberoProRuntimeConfig(
+            host="127.0.0.1",
+            port=0,
+            benchmark_name=config.benchmark_name,
+            bddl_root=config.bddl_root,
+            init_states_root=config.init_states_root,
+            camera_names=config.camera_names,
+        ),
+        state=state,
+    )
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        health = _get_json(f"{base_url}/health")
+        assert health["ok"] is True
+        assert _get_json(f"{base_url}/describe")["backend"] == "libero-pro"
+        reset = _post_json(f"{base_url}/reset", {"episode_id": "episode", "task_id": "task"})
+        assert reset["episode_id"] == "episode"
+        step = _post_json(
+            f"{base_url}/step",
+            {
+                "episode_id": "episode",
+                "tick_id": 1,
+                "action": {"robot_id": "panda", "names": state.motor_names, "q": [0.2] * 8},
+            },
+        )
+        assert step["success"] is True
+        observations = cast("Sequence[Mapping[str, object]]", step["observations"])
+        image = next(frame for frame in observations if frame["stream"] == "agentview")
+        payload = urlopen(f"{base_url}{image['data_ref']}", timeout=5).read()
+        assert np.array_equal(np.load(BytesIO(payload), allow_pickle=False), _pure_color_image())
+        assert _get_json(f"{base_url}/score")["success"] is True
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+
+def _config(
+    tmp_path: Path, *, controller: str = "JOINT_POSITION", visualize: bool = False
+) -> LiberoProRuntimeConfig:
+    bddl_root = tmp_path / "bddl"
+    init_states_root = tmp_path / "init_states"
+    bddl_root.mkdir()
+    init_states_root.mkdir()
+    (bddl_root / "task.bddl").write_text("fixture")
+    (init_states_root / "task.pruned_init").write_bytes(b"fixture")
+    return LiberoProRuntimeConfig(
+        host="127.0.0.1",
+        port=8767,
+        benchmark_name="libero_pro",
+        bddl_root=bddl_root,
+        init_states_root=init_states_root,
+        controller=controller,
+        camera_names=("agentview",),
+        init_state_index=2,
+        visualize=visualize,
+    )
+
+
+def _fake_obs(joint_q: list[float], gripper_q: list[float]) -> dict[str, object]:
+    return {
+        "robot0_joint_pos": joint_q,
+        "robot0_joint_vel": [0.0] * len(joint_q),
+        "robot0_gripper_qpos": gripper_q,
+        "robot0_gripper_qvel": [0.0] * len(gripper_q),
+        "agentview_image": _pure_color_image(),
+    }
+
+
+def _pure_color_image() -> np.ndarray:
+    image = np.zeros((2, 2, 3), dtype=np.uint8)
+    image[0, :, :] = [255, 0, 0]
+    image[1, :, :] = [0, 255, 0]
+    return image
+
+
+def _get_json(url: str) -> dict[str, object]:
+    with urlopen(url, timeout=5) as response:
+        data = json.loads(response.read().decode("utf-8"))
+    assert isinstance(data, dict)
+    return data
+
+
+def _post_json(url: str, payload: dict[str, object]) -> dict[str, object]:
+    request = Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"content-type": "application/json"},
+        method="POST",
+    )
+    with urlopen(request, timeout=5) as response:
+        data = json.loads(response.read().decode("utf-8"))
+    assert isinstance(data, dict)
+    return data

@@ -100,11 +100,11 @@ recording*.db
 
 /misc/fresh-ubuntu-tests/cache
 
-# openspec
-/openspec/changes/archive/
-
 # Deepwork local progress state
 .slim/deepwork/
 
 # Benchmark demo output artifacts
 artifacts/
+
+# LIBERO-PRO downloaded benchmark assets
+/libero/
