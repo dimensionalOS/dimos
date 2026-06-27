@@ -14,26 +14,21 @@
 
 """ZEDNavBridge — ZED camera outputs → nav-pipeline-compatible messages.
 
-Replaces HardwareDepthModule for ZED cameras. Key differences:
+ZEDCamera's _tracking_transform publishes two different TF frames depending on
+whether base_transform is set:
+  - base_transform=None  → world → camera_link  (1-hop, what we want)
+  - base_transform=*     → world → base_link     (then base_link → camera_link separately)
 
-1. TF: looks up world→camera_link directly (1-hop, always published by ZEDCamera)
-   then composes with cached static extrinsics (camera_link→depth_optical_frame).
-   HardwareDepthModule attempts a 3-hop chain that fails on startup timing.
+This module handles BOTH cases: it tries world→camera_link first, then falls back
+to world→base_link + base_link→camera_link so the nav pipeline works regardless of
+how ZEDCamera is configured.
 
-2. Retry logic: updates VIO transform every frame, not once every 5s on failure.
+Static extrinsics (camera_link → depth_optical_frame) are looked up once after
+startup and cached for the lifetime of the module.
 
-3. Output ports named to match downstream consumers without remappings:
-     lidar:    Out[PointCloud2]  →  VoxelGridMapper.lidar / RayTracingVoxelMap.lidar
-     odometry: Out[Odometry]    →  RayTracingVoxelMap.odometry
-
-Wire it between ZEDCamera and VoxelGridMapper (or RayTracingVoxelMap):
-
-    camera_nav_zed_nav = autoconnect(
-        ZEDCamera.blueprint(..., enable_tracking=True),
-        ZEDNavBridge.blueprint(camera_name="camera", stride=2),
-        VoxelGridMapper.blueprint(voxel_size=0.05),
-        _RERUN_VIZ,
-    )
+Outputs:
+    lidar:    Out[PointCloud2]  world-frame cloud — feeds VoxelGridMapper directly
+    odometry: Out[Odometry]    VIO pose          — feeds RayTracingVoxelMap
 """
 from __future__ import annotations
 
@@ -63,20 +58,23 @@ logger = setup_logger()
 
 class Config(ModuleConfig):
     camera_name: str = "camera"       # must match ZEDCamera.config.camera_name
+    base_frame: str = "base_link"     # must match ZEDCamera.config.base_frame_id
     world_frame: str = "world"
     min_depth: float = 0.3
     max_depth: float = 8.0
     stride: int = 2
     max_freq: float = 10.0
-    tf_timeout: float = 1.0           # temporal tolerance for TF lookup (seconds)
+    tf_timeout: float = 1.0
 
 
 class ZEDNavBridge(Module):
-    """ZED camera → world-frame PointCloud2 + Odometry for the nav pipeline.
+    """ZED depth + colour → world-frame PointCloud2 + Odometry for nav pipeline.
 
-    Takes depth + colour from ZEDCamera, backprojects to 3D in depth-optical
-    frame, transforms to world using VIO pose, and emits on ports that match
-    VoxelGridMapper / RayTracingVoxelMap without remappings.
+    Use alongside ZEDCamera with base_transform=None so world→camera_link is a
+    direct single-hop transform. Falls back to world→base_link→camera_link when
+    base_transform is set.
+
+    Output ports match VoxelGridMapper / RayTracingVoxelMap — no remappings needed.
     """
 
     config: Config
@@ -93,11 +91,12 @@ class ZEDNavBridge(Module):
         self._lock = threading.Lock()
         self._latest_depth: Image | None = None
         self._latest_info: CameraInfo | None = None
-        # VIO pose: world → camera_link (updated every frame)
+        # VIO pose: world → camera_link (or world → base_link composed below)
         self._vio_tf: Any | None = None
-        # Static extrinsics: camera_link → depth_optical_frame (cached once)
-        self._R_cam_opt: np.ndarray | None = None   # (3,3) float32
-        self._t_cam_opt: np.ndarray | None = None   # (3,)  float32
+        # Static extrinsics camera_link → depth_optical_frame (cached once)
+        self._R_cam_opt: np.ndarray | None = None
+        self._t_cam_opt: np.ndarray | None = None
+        self._frames_without_tf: int = 0
 
     @property
     def _camera_link(self) -> str:
@@ -134,34 +133,51 @@ class ZEDNavBridge(Module):
         with self._lock:
             self._latest_info = info
 
+    def _resolve_vio_tf(self, ts: float) -> Any | None:
+        """Get world→camera_link transform. Tries direct 1-hop first, then 2-hop via base_link."""
+        tol = self.config.tf_timeout
+
+        # Primary: world → camera_link (works when ZEDCamera.base_transform=None)
+        tf = self.tf.get(self.config.world_frame, self._camera_link, ts, tol)
+        if tf is not None:
+            return tf
+
+        # Fallback: world → base_link → camera_link (works when base_transform is set)
+        tf_wb = self.tf.get(self.config.world_frame, self.config.base_frame, ts, tol)
+        tf_bc = self.tf.get(self.config.base_frame, self._camera_link, ts, tol)
+        if tf_wb is not None and tf_bc is not None:
+            composed = tf_wb + tf_bc
+            composed.frame_id = self.config.world_frame
+            composed.child_frame_id = self._camera_link
+            return composed
+
+        return None
+
     def _refresh_tf(self, ts: float) -> None:
-        # 1-hop VIO pose: ZEDCamera publishes world→camera_link directly.
-        # Retry every frame — no 5-second backoff.
-        tf = self.tf.get(
-            self.config.world_frame,
-            self._camera_link,
-            ts,
-            self.config.tf_timeout,
-        )
+        tf = self._resolve_vio_tf(ts)
         if tf is not None:
             self._vio_tf = tf
+            self._frames_without_tf = 0
+        else:
+            self._frames_without_tf += 1
+            # Log once after 10 consecutive misses (not every frame) to avoid spam.
+            if self._frames_without_tf == 10:
+                available = self.tf.get_frames()
+                logger.warning(
+                    "ZEDNavBridge: no VIO transform after 10 frames. "
+                    "Available TF frames: %s. "
+                    "Set base_transform=None in ZEDCamera blueprint if not on a robot.",
+                    sorted(available),
+                )
 
-        # Static extrinsics: only look up once (never change after camera init).
+        # Static extrinsics: camera_link → depth_optical_frame (look up once).
         if self._R_cam_opt is None:
-            tf_ext = self.tf.get(
-                self._camera_link,
-                self._depth_optical_frame,
-                ts,
-                self.config.tf_timeout,
-            )
+            tf_ext = self.tf.get(self._camera_link, self._depth_optical_frame, ts, 2.0)
             if tf_ext is not None:
                 self._R_cam_opt = tf_ext.rotation.to_rotation_matrix().astype(np.float32)
                 tr = tf_ext.translation
                 self._t_cam_opt = np.array([tr.x, tr.y, tr.z], dtype=np.float32)
-                logger.info(
-                    "ZEDNavBridge: cached %s→%s extrinsics",
-                    self._camera_link, self._depth_optical_frame,
-                )
+                logger.info("ZEDNavBridge: extrinsics cached (%s→%s)", self._camera_link, self._depth_optical_frame)
 
     def _on_color(self, color: Image) -> None:
         with self._lock:
@@ -208,15 +224,15 @@ class ZEDNavBridge(Module):
             depth_data = depth_data[:, :, 0]
         depth_np = depth_data.astype(np.float32)
 
-        # ZED returns metres; convert mm only if median is clearly in mm range.
         nonzero = depth_np[depth_np > 0]
         if nonzero.size and np.nanmedian(nonzero) > 100:
             depth_np /= 1000.0
 
+        fx = fy = cx = cy = 0.0
         if info is not None:
             K = info.get_K_matrix()
             fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
-        if info is None or fx == 0:
+        if fx == 0:
             f = max(H, W) / 2.0
             fx = fy = f
             cx, cy = W / 2.0, H / 2.0
@@ -237,7 +253,6 @@ class ZEDNavBridge(Module):
         if len(dd) == 0:
             return np.zeros((0, 3), np.float32), np.zeros((0, 3), np.float32)
 
-        # Points in depth-optical frame: Z forward, X right, Y down.
         xyz_opt = np.column_stack(
             [(uu - cx) * dd / fx, (vv - cy) * dd / fy, dd]
         ).astype(np.float32)
@@ -253,23 +268,20 @@ class ZEDNavBridge(Module):
         if tf is None:
             return None
 
-        R_world_cam = tf.rotation.to_rotation_matrix().astype(np.float32)
-        t_world_cam = np.array(
-            [tf.translation.x, tf.translation.y, tf.translation.z], dtype=np.float32
-        )
-
-        # depth-optical → camera_link (static extrinsics, cached)
+        # depth-optical → camera_link (static; use identity until extrinsics arrive)
         if self._R_cam_opt is not None:
             xyz_cam = xyz_opt @ self._R_cam_opt.T + self._t_cam_opt
         else:
-            xyz_cam = xyz_opt  # approximation until extrinsics are cached
+            xyz_cam = xyz_opt
 
-        # camera_link → world (VIO pose, updated every frame)
-        return xyz_cam @ R_world_cam.T + t_world_cam
+        R_wc = tf.rotation.to_rotation_matrix().astype(np.float32)
+        t_wc = np.array(
+            [tf.translation.x, tf.translation.y, tf.translation.z], dtype=np.float32
+        )
+        return xyz_cam @ R_wc.T + t_wc
 
     def _tf_to_odometry(self, tf: Any, ts: float) -> Odometry:
-        p = tf.translation
-        q = tf.rotation
+        p, q = tf.translation, tf.rotation
         return Odometry(
             ts=ts,
             frame_id=self.config.world_frame,
