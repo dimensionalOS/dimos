@@ -1,14 +1,11 @@
 """ZED Mini → color-preserving global obstacle map.
 
-Built directly on zed_step1_raw.py. Adds per-voxel RGB accumulation so the
-map looks like the real scene, not coloured by height.
-
-Each voxel stores the average colour of all points that have landed in it.
-Revisiting an area reinforces existing voxels — no duplicates, no drift.
+Built on zed_step1_raw.py. Adds per-voxel colour accumulation so the map
+shows the actual scene colours, not pink defaults.
 
 Rerun entities:
   world/raw_cloud   current frame, real RGB (same as step1)
-  world/map         growing accumulated map, real RGB per voxel
+  world/map         accumulated voxel map, real RGB per voxel
 
 Usage:
     python -m dimos.navigation.camera_nav.zed_global_map
@@ -18,19 +15,11 @@ import numpy as np
 import pyzed.sl as sl
 import rerun as rr
 
-VOXEL   = 0.05      # 5 cm — tight enough to look like real geometry
+VOXEL   = 0.03      # 3 cm — tight enough to show real object geometry
 MIN_D   = 0.3
 MAX_D   = 8.0
-MAX_VIZ = 20_000    # cap per-frame points sent to Rerun
-MAX_MAP = 400_000   # coarsen above this
-
-# Packing: voxel index → unique int64 key (handles negative indices)
-_OFF   = np.int64(10_000)   # supports ±10 000 voxels per axis (±500 m at 5 cm)
-_MASK  = np.int64((1 << 15) - 1)
-
-def _pack(vkeys: np.ndarray) -> np.ndarray:
-    v = vkeys.astype(np.int64) + _OFF
-    return (v[:, 0] << 30) | (v[:, 1] << 15) | v[:, 2]
+MAX_VIZ = 20_000    # cap for current-frame Rerun log
+MAX_MAP = 500_000   # coarsen above this
 
 # ── Open ZED (identical to zed_step1_raw.py) ─────────────────────────────────
 zed = sl.Camera()
@@ -51,28 +40,34 @@ rr.init("zed_map", spawn=True)
 rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
 print("camera open")
 
-rt  = sl.RuntimeParameters()
-pc  = sl.Mat()
+rt = sl.RuntimeParameters()
+pc = sl.Mat()
 
-# Global map state
-voxel       = VOXEL
-map_centers = np.empty((0, 3), dtype=np.float32)   # (N, 3) XYZ of voxel centres
-map_colors  = np.empty((0, 3), dtype=np.float32)   # (N, 3) avg RGB 0-255
-map_counts  = np.empty(0,      dtype=np.float32)   # (N,)   how many points merged
-map_packed  = np.empty(0,      dtype=np.int64)     # (N,)   packed keys for lookup
+# Map state: parallel arrays — one entry per voxel
+voxel      = VOXEL
+map_xyz    = np.empty((0, 3), dtype=np.float32)   # voxel centre positions
+map_rgb    = np.empty((0, 3), dtype=np.uint8)      # first-seen camera colour
+# Packed int64 key per voxel for O(log N) existence checks
+# Offset of 100 000 handles ±100 000 voxels per axis (±3 km at 3 cm)
+_OFF  = np.int64(100_000)
+_MASK = np.int64((1 << 18) - 1)   # 18 bits → 262 144 > 200 000
+map_keys = np.empty(0, dtype=np.int64)   # sorted at all times
+
+def _pack(vkeys: np.ndarray) -> np.ndarray:
+    v = vkeys.astype(np.int64) + _OFF
+    return (v[:, 0] << 36) | (v[:, 1] << 18) | v[:, 2]
 
 frame = 0
 t0    = time.monotonic()
 
 try:
     while True:
-        # ── Grab (same as step1) ──────────────────────────────────────────────
+        # ── Grab + retrieve (identical to step1) ──────────────────────────────
         if zed.grab(rt) != sl.ERROR_CODE.SUCCESS:
             continue
 
         zed.retrieve_measure(pc, sl.MEASURE.XYZRGBA, sl.MEM.CPU)
-        data = pc.get_data()
-        flat = data.reshape(-1, 4)
+        flat = pc.get_data().reshape(-1, 4)
 
         dist = np.linalg.norm(flat[:, :3], axis=1)
         mask = np.isfinite(flat[:, 0]) & (dist > MIN_D) & (dist < MAX_D)
@@ -84,90 +79,83 @@ try:
 
         xyz  = pts[:, :3].astype(np.float32)
         rgba = pts[:, 3].view(np.uint32)
-        r    = ((rgba >> 16) & 0xFF).astype(np.float32)
-        g    = ((rgba >>  8) & 0xFF).astype(np.float32)
-        b    = ( rgba        & 0xFF).astype(np.float32)
+        r    = ((rgba >> 16) & 0xFF).astype(np.uint8)
+        g    = ((rgba >>  8) & 0xFF).astype(np.uint8)
+        b    = ( rgba        & 0xFF).astype(np.uint8)
+        rgb  = np.column_stack([r, g, b])
 
-        # ── Current frame viz (same as step1, capped) ────────────────────────
+        # ── Current frame (same as step1, capped) ────────────────────────────
         n   = min(len(xyz), MAX_VIZ)
         idx = np.random.choice(len(xyz), n, replace=False) if len(xyz) > n else np.arange(len(xyz))
         rr.log("world/raw_cloud", rr.Points3D(
             positions=xyz[idx],
-            colors=np.column_stack([r[idx], g[idx], b[idx]]).astype(np.uint8),
+            colors=rgb[idx],
+            radii=0.01,
         ))
 
-        # ── Voxelise current frame ────────────────────────────────────────────
-        pt_vkeys  = np.floor(xyz / voxel).astype(np.int32)
-        pt_packed = _pack(pt_vkeys)
+        # ── Per-frame voxelisation ────────────────────────────────────────────
+        pt_vkeys  = np.floor(xyz / voxel).astype(np.int32)   # (N, 3)
+        pt_keys   = _pack(pt_vkeys)                           # (N,)  int64
 
-        # Unique voxels in this frame + average colour per voxel
-        uniq_packed, inv = np.unique(pt_packed, return_inverse=True)
-        n_uniq   = len(uniq_packed)
-        cnt      = np.bincount(inv, minlength=n_uniq).astype(np.float32)
-        r_mean   = np.bincount(inv, weights=r, minlength=n_uniq) / cnt
-        g_mean   = np.bincount(inv, weights=g, minlength=n_uniq) / cnt
-        b_mean   = np.bincount(inv, weights=b, minlength=n_uniq) / cnt
-
-        # Voxel centres for this frame's unique voxels
-        uniq_vkeys   = pt_vkeys[np.searchsorted(pt_packed, uniq_packed)]   # representative point per voxel
-        uniq_centers = (uniq_vkeys.astype(np.float32) + 0.5) * voxel
+        # Unique voxels this frame — keep one representative point per voxel
+        order     = np.argsort(pt_keys, kind="stable")
+        sorted_k  = pt_keys[order]
+        diff      = np.empty(len(sorted_k), dtype=bool)
+        diff[0]   = True
+        diff[1:]  = sorted_k[1:] != sorted_k[:-1]
+        first_occ = order[diff]                    # index into pts for each unique voxel
+        fr_keys   = pt_keys[first_occ]             # (M,) unique keys this frame
+        fr_xyz    = (pt_vkeys[first_occ].astype(np.float32) + 0.5) * voxel   # voxel centres
+        fr_rgb    = rgb[first_occ]                 # first-seen colour per voxel
 
         # ── Merge into global map ─────────────────────────────────────────────
-        if len(map_packed) == 0:
-            # First frame — initialise map directly
-            map_packed  = uniq_packed
-            map_centers = uniq_centers
-            map_colors  = np.column_stack([r_mean, g_mean, b_mean])
-            map_counts  = cnt.copy()
+        if len(map_keys) == 0:
+            map_keys = np.sort(fr_keys)
+            map_xyz  = fr_xyz[np.argsort(fr_keys)]
+            map_rgb  = fr_rgb[np.argsort(fr_keys)]
         else:
-            # Find which frame voxels already exist in the map
-            sorter   = np.argsort(map_packed)
-            ins      = np.searchsorted(map_packed, uniq_packed, sorter=sorter)
-            ins      = np.clip(ins, 0, len(map_packed) - 1)
-            existing = map_packed[sorter[ins]] == uniq_packed   # True = already in map
+            # Find which frame voxels are not yet in the map (sorted → searchsorted)
+            ins      = np.searchsorted(map_keys, fr_keys)
+            ins_clip = np.clip(ins, 0, len(map_keys) - 1)
+            is_new   = map_keys[ins_clip] != fr_keys
 
-            # Update existing voxels: running average
-            ex_idx = sorter[ins[existing]]
-            new_cnt = map_counts[ex_idx] + cnt[existing]
-            for ch, col_mean in enumerate([r_mean, g_mean, b_mean]):
-                map_colors[ex_idx, ch] = (
-                    map_colors[ex_idx, ch] * map_counts[ex_idx] + col_mean[existing] * cnt[existing]
-                ) / new_cnt
-            map_counts[ex_idx] = new_cnt
-
-            # Insert new voxels
-            is_new = ~existing
             if is_new.any():
-                map_packed  = np.concatenate([map_packed,  uniq_packed[is_new]])
-                map_centers = np.vstack([map_centers, uniq_centers[is_new]])
-                map_colors  = np.vstack([map_colors,  np.column_stack([r_mean[is_new], g_mean[is_new], b_mean[is_new]])])
-                map_counts  = np.concatenate([map_counts, cnt[is_new]])
+                new_keys = fr_keys[is_new]
+                new_xyz  = fr_xyz[is_new]
+                new_rgb  = fr_rgb[is_new]
+                # Merge and keep sorted
+                all_keys = np.concatenate([map_keys, new_keys])
+                all_xyz  = np.vstack([map_xyz, new_xyz])
+                all_rgb  = np.vstack([map_rgb, new_rgb])
+                order2   = np.argsort(all_keys, kind="stable")
+                map_keys = all_keys[order2]
+                map_xyz  = all_xyz[order2]
+                map_rgb  = all_rgb[order2]
 
-        # ── Coarsen if map is too large ───────────────────────────────────────
-        if len(map_packed) > MAX_MAP:
-            voxel *= 2
-            new_vkeys  = np.floor(map_centers / voxel).astype(np.int32)
-            new_packed = _pack(new_vkeys)
-            uniq_new, inv_new = np.unique(new_packed, return_inverse=True)
-            cnt_new = np.bincount(inv_new, weights=map_counts).astype(np.float32)
-            new_colors = np.zeros((len(uniq_new), 3), dtype=np.float32)
-            for ch in range(3):
-                new_colors[:, ch] = np.bincount(inv_new, weights=map_colors[:, ch] * map_counts) / cnt_new
-            new_centers = (new_vkeys[np.searchsorted(new_packed, uniq_new)].astype(np.float32) + 0.5) * voxel
-            map_packed  = uniq_new
-            map_centers = new_centers
-            map_colors  = new_colors
-            map_counts  = cnt_new
-            print(f"[map] coarsened → {voxel:.3f} m  ({len(map_packed)} voxels)")
+        # ── Coarsen if too large ──────────────────────────────────────────────
+        if len(map_keys) > MAX_MAP:
+            voxel  *= 2
+            new_vk  = np.floor(map_xyz / voxel).astype(np.int32)
+            new_k   = _pack(new_vk)
+            ord3    = np.argsort(new_k, kind="stable")
+            new_k   = new_k[ord3]; new_vk = new_vk[ord3]; c_rgb = map_rgb[ord3]
+            diff2   = np.empty(len(new_k), dtype=bool)
+            diff2[0] = True; diff2[1:] = new_k[1:] != new_k[:-1]
+            first2  = np.where(diff2)[0]
+            map_keys = new_k[first2]
+            map_xyz  = (new_vk[first2].astype(np.float32) + 0.5) * voxel
+            map_rgb  = c_rgb[first2]
+            print(f"[map] coarsened → {voxel:.3f} m  ({len(map_keys)} voxels)")
 
         fps = frame / max(time.monotonic() - t0, 1e-6)
-        print(f"frame={frame}  pts={len(pts)}  voxels={len(map_packed)}  fps={fps:.1f}")
+        print(f"frame={frame}  pts={len(pts)}  voxels={len(map_keys)}  fps={fps:.1f}")
 
         # ── Accumulated map every 5 frames ────────────────────────────────────
-        if frame % 5 == 0 and len(map_centers) > 0:
+        if frame % 5 == 0 and len(map_xyz) > 0:
             rr.log("world/map", rr.Points3D(
-                positions=map_centers,
-                colors=map_colors.clip(0, 255).astype(np.uint8),
+                positions=map_xyz,
+                colors=map_rgb,
+                radii=voxel * 0.45,   # voxels just touch — no overlap, no gaps
             ))
 
         frame += 1
@@ -176,4 +164,4 @@ except KeyboardInterrupt:
     pass
 
 zed.close()
-print(f"done — {len(map_packed)} voxels")
+print(f"done — {len(map_keys)} voxels")
