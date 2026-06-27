@@ -110,6 +110,7 @@ jobs:
       attestations: write  # For uploading the SLSA build-provenance attestation
     env:
       CIBW_ARCHS: ${{ matrix.arch }}
+      CIBW_ENABLE: "cpython-freethreading"
       CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_34  # open3d>=0.19 requires glibc 2.31+
       CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_34  # open3d>=0.19 requires glibc 2.31+
       CIBW_TEST_COMMAND: "python -c 'from dimos.navigation.replanning_a_star.min_cost_astar_ext import min_cost_astar_cpp'"
