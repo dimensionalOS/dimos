@@ -9,7 +9,7 @@ Blueprint: `demo-h264-storage-benchmark`
 The benchmark source publishes identical `Image` frames to two recorder streams:
 
 - `jpeg_image` uses the default memory2 `Image` codec (`JpegCodec`).
-- `h264_image` uses `codec="h264"` and receives encoded H.264 images through `H264LcmTransport(decode_images=False)`.
+- `h264_image` uses `codec="h264"`; the logical stream is still `Image`, while memory2 writes internal H.264 packet blobs.
 
 The reporter measures compact SQLite snapshot sizes with SQLite backup, so active WAL/SHM sidecars do not skew the comparison.
 
@@ -83,7 +83,7 @@ ffmpeg -y -v error \
 
 In this run, memory2 H.264 storage was smaller than the direct ffmpeg elementary stream. That means this benchmark does not show a storage-efficiency penalty from the per-frame Annex B access-unit layout. It mostly shows that the current aiortc/libx264 path and the direct ffmpeg command did not produce identical rate-control output, even with similar nominal settings.
 
-The storage overhead within memory2 was measurable: the H.264 DB was 118,045 bytes larger than its stored blob payloads, or 11.7% over the blob bytes. That overhead includes observation metadata, SQLite page overhead, and one encoded-image envelope per frame.
+The storage overhead within memory2 was measurable: the H.264 DB was 118,045 bytes larger than its stored blob payloads, or 11.7% over the blob bytes. That overhead includes observation metadata, SQLite page overhead, and one internal H.264 packet envelope per frame.
 
 ## Notes
 

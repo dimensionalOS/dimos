@@ -17,8 +17,6 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass, field
 from enum import Enum
-import json
-import struct
 import time
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 import warnings
@@ -84,85 +82,41 @@ class AgentImageMessage(TypedDict):
     data: str  # Base64 encoded image data
 
 
-RAW_IMAGE_ENCODING = "raw"
-H264_IMAGE_ENCODING = "h264"
-_ENCODED_IMAGE_MAGIC = b"DIMI1"
-
-
-def _data_equal(left: np.ndarray[Any, np.dtype[Any]] | bytes, right: object) -> bool:
-    if isinstance(left, np.ndarray) and isinstance(right, np.ndarray):
-        return bool(np.array_equal(left, right))
-    if isinstance(left, bytes) and isinstance(right, bytes):
-        return left == right
-    return False
-
-
-def _pack_encoded_image_payload(metadata: dict[str, Any], payload: bytes) -> bytes:
-    header = json.dumps(metadata, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return _ENCODED_IMAGE_MAGIC + struct.pack(">I", len(header)) + header + payload
-
-
-def _unpack_encoded_image_payload(payload: bytes) -> tuple[dict[str, Any], bytes]:
-    if not payload.startswith(_ENCODED_IMAGE_MAGIC):
-        return {}, payload
-    offset = len(_ENCODED_IMAGE_MAGIC)
-    header_len = struct.unpack(">I", payload[offset : offset + 4])[0]
-    header_start = offset + 4
-    header_end = header_start + header_len
-    metadata = json.loads(payload[header_start:header_end].decode("utf-8"))
-    return metadata, payload[header_end:]
-
-
 @dataclass
 class Image(Timestamped):
-    """Image container for raw pixels or explicitly encoded image payloads."""
+    """Simple NumPy-based image container."""
 
     msg_name = "sensor_msgs.Image"
 
-    data: np.ndarray[Any, np.dtype[Any]] | bytes = field(
+    data: np.ndarray[Any, np.dtype[Any]] = field(
         default_factory=lambda: np.zeros((1, 1, 3), dtype=np.uint8)
     )
     format: ImageFormat = field(default=ImageFormat.BGR)
     frame_id: str = field(default="")
     ts: float = field(default_factory=time.time)
-    encoding: str = field(default=RAW_IMAGE_ENCODING)
-    codec_metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.encoding == RAW_IMAGE_ENCODING:
-            if not isinstance(self.data, np.ndarray):
-                self.data = np.asarray(self.data)
-            if not isinstance(self.data, np.ndarray):
-                raise TypeError("Raw Image payload must be a NumPy array")
-            arr: np.ndarray[Any, np.dtype[Any]] = self.data
-            if arr.ndim < 2:
-                raise ValueError("Image requires a 2D/3D NumPy array")
-            return
-        if isinstance(self.data, bytearray):
-            self.data = bytes(self.data)
-        elif not isinstance(self.data, bytes):
-            self.data = memoryview(np.ascontiguousarray(self.data)).tobytes()
-        if not self.data:
-            raise ValueError("Encoded Image payload cannot be empty")
+        if not isinstance(self.data, np.ndarray):
+            self.data = np.asarray(self.data)
+        if self.data.ndim < 2:
+            raise ValueError("Image requires a 2D/3D NumPy array")
 
     def __str__(self) -> str:
         return (
             f"Image(shape={self.shape}, format={self.format.value}, dtype={self.dtype}, "
-            f"encoding={self.encoding}, ts={to_human_readable(self.ts)})"
+            f"ts={to_human_readable(self.ts)})"
         )
 
     def __repr__(self) -> str:
-        return f"Image(shape={self.shape}, format={self.format.value}, dtype={self.dtype}, encoding='{self.encoding}', frame_id='{self.frame_id}', ts={self.ts})"
+        return f"Image(shape={self.shape}, format={self.format.value}, dtype={self.dtype}, frame_id='{self.frame_id}', ts={self.ts})"
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Image):
             return False
         return (
-            _data_equal(self.data, other.data)
+            np.array_equal(self.data, other.data)
             and self.format == other.format
             and self.frame_id == other.frame_id
-            and self.encoding == other.encoding
-            and self.codec_metadata == other.codec_metadata
             and abs(self.ts - other.ts) < 1e-6
         )
 
@@ -170,103 +124,40 @@ class Image(Timestamped):
         return int(self.height * self.width)
 
     def __getstate__(self) -> dict[str, Any]:
-        return {
-            "data": self.data,
-            "format": self.format,
-            "frame_id": self.frame_id,
-            "ts": self.ts,
-            "encoding": self.encoding,
-            "codec_metadata": self.codec_metadata,
-        }
+        return {"data": self.data, "format": self.format, "frame_id": self.frame_id, "ts": self.ts}
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         self.data = state.get("data", np.zeros((1, 1, 3), dtype=np.uint8))
         self.format = state.get("format", ImageFormat.BGR)
         self.frame_id = state.get("frame_id", "")
         self.ts = state.get("ts", time.time())
-        self.encoding = state.get("encoding", RAW_IMAGE_ENCODING)
-        self.codec_metadata = state.get("codec_metadata", {})
-
-    @property
-    def is_raw(self) -> bool:
-        return self.encoding == RAW_IMAGE_ENCODING
-
-    @property
-    def is_encoded(self) -> bool:
-        return not self.is_raw
-
-    def require_raw(self, operation: str = "operation") -> np.ndarray[Any, np.dtype[Any]]:
-        if self.encoding != RAW_IMAGE_ENCODING:
-            raise ValueError(f"{operation} requires raw Image data; got encoding={self.encoding!r}")
-        assert isinstance(self.data, np.ndarray)
-        return self.data
 
     @property
     def height(self) -> int:
-        if self.is_encoded:
-            return int(self.codec_metadata.get("height", 0))
-        arr = self.require_raw("height")
-        return int(arr.shape[0])
+        return int(self.data.shape[0])
 
     @property
     def width(self) -> int:
-        if self.is_encoded:
-            return int(self.codec_metadata.get("width", 0))
-        arr = self.require_raw("width")
-        return int(arr.shape[1])
+        return int(self.data.shape[1])
 
     @property
     def channels(self) -> int:
-        if self.is_encoded:
-            if "channels" in self.codec_metadata:
-                return int(self.codec_metadata["channels"])
-            if self.format in (
-                ImageFormat.GRAY,
-                ImageFormat.GRAY16,
-                ImageFormat.DEPTH,
-                ImageFormat.DEPTH16,
-            ):
-                return 1
-            if self.format in (ImageFormat.RGBA, ImageFormat.BGRA):
-                return 4
-            return 3
-        arr = self.require_raw("channels")
-        if arr.ndim == 2:
+        if self.data.ndim == 2:
             return 1
-        if arr.ndim == 3:
-            return int(arr.shape[2])
+        if self.data.ndim == 3:
+            return int(self.data.shape[2])
         raise ValueError("Invalid image dimensions")
 
     @property
     def shape(self) -> tuple[int, ...]:
-        if self.is_encoded:
-            if self.channels == 1:
-                return (self.height, self.width)
-            return (self.height, self.width, self.channels)
-        return tuple(self.require_raw("shape").shape)
+        return tuple(self.data.shape)
 
     @property
     def dtype(self) -> np.dtype[Any]:
-        if self.is_encoded:
-            return np.dtype(str(self.codec_metadata.get("dtype", "uint8")))
-        return self.require_raw("dtype").dtype
+        return self.data.dtype
 
     def copy(self) -> Image:
-        data: np.ndarray[Any, np.dtype[Any]] | bytes
-        if self.is_encoded:
-            if not isinstance(self.data, bytes):
-                raise ValueError("Encoded Image payload must be bytes")
-            data = bytes(self.data)
-        else:
-            data = self.require_raw("copy").copy()
-        return Image(
-            data=data,
-            format=self.format,
-            frame_id=self.frame_id,
-            ts=self.ts,
-            encoding=self.encoding,
-            codec_metadata=dict(self.codec_metadata),
-        )
+        return Image(data=self.data.copy(), format=self.format, frame_id=self.frame_id, ts=self.ts)
 
     @classmethod
     def from_numpy(
@@ -281,27 +172,6 @@ class Image(Timestamped):
             format=format,
             frame_id=frame_id,
             ts=ts if ts is not None else time.time(),
-        )
-
-    @classmethod
-    def encoded(
-        cls,
-        *,
-        data: bytes,
-        encoding: str,
-        format: ImageFormat,
-        frame_id: str = "",
-        ts: float | None = None,
-        codec_metadata: dict[str, Any] | None = None,
-    ) -> Image:
-        metadata = dict(codec_metadata or {})
-        return cls(
-            data=data,
-            format=format,
-            frame_id=frame_id,
-            ts=ts if ts is not None else time.time(),
-            encoding=encoding,
-            codec_metadata=metadata,
         )
 
     @classmethod
@@ -341,7 +211,7 @@ class Image(Timestamped):
 
     def to_opencv(self) -> np.ndarray:
         """Convert to OpenCV BGR format."""
-        arr = self.require_raw("to_opencv")
+        arr = self.data
         if self.format == ImageFormat.BGR:
             return arr
         if self.format == ImageFormat.RGB:
@@ -361,12 +231,12 @@ class Image(Timestamped):
 
     def as_numpy(self) -> np.ndarray:
         """Get image data as numpy array."""
-        return self.require_raw("as_numpy")
+        return self.data
 
     def to_rgb(self) -> Image:
-        arr = self.require_raw("to_rgb")
         if self.format == ImageFormat.RGB:
             return self.copy()
+        arr = self.data
         if self.format == ImageFormat.BGR:
             return Image(
                 data=cv2.cvtColor(arr, cv2.COLOR_BGR2RGB),
@@ -397,9 +267,9 @@ class Image(Timestamped):
         return self.copy()
 
     def to_bgr(self) -> Image:
-        arr = self.require_raw("to_bgr")
         if self.format == ImageFormat.BGR:
             return self.copy()
+        arr = self.data
         if self.format == ImageFormat.RGB:
             return Image(
                 data=cv2.cvtColor(arr, cv2.COLOR_RGB2BGR),
@@ -434,19 +304,18 @@ class Image(Timestamped):
         return self.copy()
 
     def to_grayscale(self) -> Image:
-        arr = self.require_raw("to_grayscale")
         if self.format in (ImageFormat.GRAY, ImageFormat.GRAY16, ImageFormat.DEPTH):
             return self.copy()
         if self.format == ImageFormat.BGR:
             return Image(
-                data=cv2.cvtColor(arr, cv2.COLOR_BGR2GRAY),
+                data=cv2.cvtColor(self.data, cv2.COLOR_BGR2GRAY),
                 format=ImageFormat.GRAY,
                 frame_id=self.frame_id,
                 ts=self.ts,
             )
         if self.format == ImageFormat.RGB:
             return Image(
-                data=cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY),
+                data=cv2.cvtColor(self.data, cv2.COLOR_RGB2GRAY),
                 format=ImageFormat.GRAY,
                 frame_id=self.frame_id,
                 ts=self.ts,
@@ -454,7 +323,7 @@ class Image(Timestamped):
         if self.format in (ImageFormat.RGBA, ImageFormat.BGRA):
             code = cv2.COLOR_RGBA2GRAY if self.format == ImageFormat.RGBA else cv2.COLOR_BGRA2GRAY
             return Image(
-                data=cv2.cvtColor(arr, code),
+                data=cv2.cvtColor(self.data, code),
                 format=ImageFormat.GRAY,
                 frame_id=self.frame_id,
                 ts=self.ts,
@@ -463,13 +332,11 @@ class Image(Timestamped):
 
     def to_rerun(self) -> Any:
         """Convert to rerun Image format."""
-        return _format_to_rerun(self.require_raw("to_rerun"), self.format)
+        return _format_to_rerun(self.data, self.format)
 
     def resize(self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR) -> Image:
         return Image(
-            data=cv2.resize(
-                self.require_raw("resize"), (width, height), interpolation=interpolation
-            ),
+            data=cv2.resize(self.data, (width, height), interpolation=interpolation),
             format=self.format,
             frame_id=self.frame_id,
             ts=self.ts,
@@ -505,8 +372,7 @@ class Image(Timestamped):
         Returns:
             A new Image containing the cropped region
         """
-        arr = self.require_raw("crop")
-        img_height, img_width = arr.shape[:2]
+        img_height, img_width = self.data.shape[:2]
 
         # Clamp the crop region to image bounds
         x = max(0, min(x, img_width))
@@ -515,10 +381,10 @@ class Image(Timestamped):
         y_end = min(y + height, img_height)
 
         # Perform the crop using array slicing
-        if arr.ndim == 2:
-            cropped_data = arr[y:y_end, x:x_end]
+        if self.data.ndim == 2:
+            cropped_data = self.data[y:y_end, x:x_end]
         else:
-            cropped_data = arr[y:y_end, x:x_end, :]
+            cropped_data = self.data[y:y_end, x:x_end, :]
 
         return Image(data=cropped_data, format=self.format, frame_id=self.frame_id, ts=self.ts)
 
@@ -530,9 +396,8 @@ class Image(Timestamped):
         reading every pixel, and the mean converges quickly (CLT).
         """
         max_val = 65535.0 if self.format in (ImageFormat.GRAY16, ImageFormat.DEPTH16) else 255.0
-        arr = self.require_raw("brightness")
-        step = max(1, max(arr.shape[:2]) // 256)
-        return float(arr[::step, ::step].mean() / max_val)
+        step = max(1, max(self.data.shape[:2]) // 256)
+        return float(self.data[::step, ::step].mean() / max_val)
 
     @property
     def sharpness(self) -> float:
@@ -541,7 +406,7 @@ class Image(Timestamped):
         Downsamples to ~160px wide before computing Laplacian variance
         for fast evaluation (~10-20x cheaper than full-res Sobel).
         """
-        gray = self.to_grayscale().require_raw("sharpness")
+        gray = self.to_grayscale().data
         # Downsample to ~160px wide for cheap evaluation
         h, w = gray.shape[:2]
         if w > 160:
@@ -621,31 +486,6 @@ class Image(Timestamped):
             msg.header.stamp.sec = int(now)
             msg.header.stamp.nsec = int((now - int(now)) * 1e9)
 
-        if self.is_encoded:
-            if not isinstance(self.data, bytes):
-                raise ValueError("Encoded Image payload must be bytes")
-            codec_metadata = dict(self.codec_metadata)
-            codec_metadata.setdefault("width", self.width)
-            codec_metadata.setdefault("height", self.height)
-            codec_metadata.setdefault("channels", self.channels)
-            codec_metadata.setdefault("dtype", str(self.dtype))
-            metadata = {
-                "format": self.format.value,
-                "encoding": self.encoding,
-                "codec_metadata": codec_metadata,
-            }
-            packed = _pack_encoded_image_payload(metadata, self.data)
-            msg.height = self.height
-            msg.width = self.width
-            msg.encoding = self.encoding
-            msg.is_bigendian = False
-            msg.step = 0
-            msg.data_length = len(packed)
-            msg.data = packed
-            return msg.lcm_encode()  # type: ignore[no-any-return]
-
-        arr = self.require_raw("lcm_encode")
-
         # Image properties
         msg.height = self.height
         msg.width = self.width
@@ -653,10 +493,10 @@ class Image(Timestamped):
         msg.is_bigendian = False
 
         # Calculate step (bytes per row)
-        channels = 1 if arr.ndim == 2 else arr.shape[2]
+        channels = 1 if self.data.ndim == 2 else self.data.shape[2]
         msg.step = self.width * self.dtype.itemsize * channels
 
-        view = memoryview(np.ascontiguousarray(arr)).cast("B")  # type: ignore[arg-type]
+        view = memoryview(np.ascontiguousarray(self.data)).cast("B")  # type: ignore[arg-type]
         msg.data_length = len(view)
         msg.data = view
 
@@ -669,26 +509,6 @@ class Image(Timestamped):
         # JPEG-compressed images use a different decode path.
         if msg.encoding == "jpeg":
             return cls.lcm_jpeg_decode(data, **kwargs)
-        if msg.encoding == H264_IMAGE_ENCODING:
-            metadata, payload = _unpack_encoded_image_payload(bytes(msg.data))
-            codec_metadata = dict(metadata.get("codec_metadata", {}))
-            codec_metadata.setdefault("width", msg.width)
-            codec_metadata.setdefault("height", msg.height)
-            image_format = ImageFormat(metadata.get("format", ImageFormat.RGB.value))
-            return cls.encoded(
-                data=payload,
-                encoding=H264_IMAGE_ENCODING,
-                format=image_format,
-                frame_id=msg.header.frame_id if hasattr(msg, "header") else "",
-                ts=(
-                    msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
-                    if hasattr(msg, "header")
-                    and hasattr(msg.header, "stamp")
-                    and msg.header.stamp.sec > 0
-                    else time.time()
-                ),
-                codec_metadata=codec_metadata,
-            )
 
         fmt, dtype, channels = _parse_lcm_encoding(msg.encoding)
         arr: np.ndarray[Any, Any] = np.frombuffer(msg.data, dtype=dtype)
@@ -722,7 +542,7 @@ class Image(Timestamped):
 
         jpeg = TurboJPEG()
         # Canonicalize to RGB so JPEG bytes are deterministic regardless of input format.
-        rgb_array = self.to_rgb().require_raw("to_jpeg_bytes")
+        rgb_array = self.to_rgb().data
         return jpeg.encode(rgb_array, quality=quality, pixel_format=TJPF_RGB)  # type: ignore[no-any-return]
 
     def lcm_jpeg_encode(self, quality: int = 75, frame_id: str | None = None) -> bytes:
@@ -800,8 +620,6 @@ class Image(Timestamped):
 
 
 __all__ = [
-    "H264_IMAGE_ENCODING",
-    "RAW_IMAGE_ENCODING",
     "Image",
     "ImageFormat",
     "sharpness_barrier",

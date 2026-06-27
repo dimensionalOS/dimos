@@ -50,15 +50,15 @@ from dimos.memory2.store.base import Store
 from dimos.memory2.stream import Stream
 ```
 
-## H.264 encoded Image shape
+## H.264 Image transport and storage shape
 
 When editing H.264 image transport or memory2 storage, keep the public module
 contract as `Out[Image]` and `In[Image]`. Do not expose RTP fragments to module
 authors or memory2 observations.
 
-For LCM, DDS, and memory2 storage, each encoded `Image` must contain all H.264
-NAL units for exactly one source frame as one Annex B access unit, with H.264
-frame state in `Image.codec_metadata`. Store one memory2 observation per source
-frame. P-frames still depend on earlier GOP state, so decode from a valid
-keyframe and suppress output after sequence gaps, late join, or replay seek until
-the next keyframe.
+`Image` is always decoded, pixel-addressable raster data; `Image.data` must stay
+a NumPy array. For LCM transport and memory2 storage, H.264 bytes are an internal
+physical representation. Each internal H.264 packet contains all NAL units for
+exactly one source frame as one Annex B access unit. Store one memory2
+observation per source frame, attach codec/keyframe metadata as internal tags,
+and decode from a valid keyframe after sequence gaps, late join, or random seek.

@@ -54,7 +54,7 @@ class MoondreamHostedVlModel(VlModel):
             image = Image.from_numpy(image)
 
         rgb_image = image.to_rgb()
-        return PILImage.fromarray(rgb_image.require_raw("MoondreamHostedVlModel._to_pil_image"))
+        return PILImage.fromarray(rgb_image.data)
 
     def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:  # type: ignore[no-untyped-def]
         pil_image = self._to_pil_image(image)

@@ -30,7 +30,7 @@ def visualize_path(
     scale: int = 8,
 ) -> Image:
     image = visualize_occupancy_grid(occupancy_grid, "rainbow")
-    bgr = image.require_raw("visualize_path")
+    bgr = image.data
 
     bgr = cv2.resize(
         bgr,

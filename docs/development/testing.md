@@ -67,7 +67,7 @@ pytest -m self_hosted dimos/path/to/test_something.py
 
 The H.264 unit tests use fake codec adapters where possible, so they run in the
 default suite without requiring FFmpeg/libx264. Run the focused tests after
-changing encoded `Image` shape, eager/raw `Image` compatibility, H.264 transport,
+changing raw `Image` compatibility, H.264 transport,
 memory2 storage, or the demo blueprint:
 
 ```bash

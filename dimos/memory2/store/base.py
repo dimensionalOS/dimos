@@ -176,6 +176,22 @@ class Store(Configurable, CompositeResource):
         if notifier is None or isinstance(notifier, type):
             notifier = (notifier or SubjectNotifier)()
 
+        from dimos.memory2.video.h264 import H264ImageBackend, is_h264_backend_marker
+        from dimos.msgs.sensor_msgs.Image import Image
+
+        if is_h264_backend_marker(codec):
+            if payload_type is None or not issubclass(payload_type, Image):
+                raise TypeError("codec='h264' is only supported for Image streams")
+            if bs is None:
+                raise RuntimeError("codec='h264' requires a BlobStore")
+            return H264ImageBackend(
+                metadata_store=obs,
+                blob_store=bs,
+                vector_store=vs,
+                notifier=notifier,
+                h264_config=config.get("h264_config"),
+            )
+
         return Backend(
             metadata_store=obs,
             codec=codec,

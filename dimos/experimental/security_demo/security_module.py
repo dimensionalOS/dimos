@@ -299,7 +299,7 @@ class SecurityModule(Module):
         )
 
         annotated = draw_bounding_box(
-            image.require_raw("SecurityModule._detection_step").copy(),
+            image.data.copy(),
             list(best.bbox),
             label=best.name,
             confidence=best.confidence,
@@ -340,7 +340,7 @@ class SecurityModule(Module):
         twist = self._visual_servo.compute_twist(best.bbox, latest_image.width)
         self.cmd_vel.publish(twist)
 
-        overlay = latest_image.require_raw("SecurityModule._follow_step").copy()
+        overlay = latest_image.data.copy()
         if hasattr(best, "mask") and best.mask is not None:
             mask_bool = best.mask > 0
             green = np.zeros_like(overlay)

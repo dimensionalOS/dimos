@@ -38,7 +38,7 @@ def _get_image_data(image: Image) -> np.ndarray[Any, Any]:
     """Extract numpy array from Image."""
     if not hasattr(image, "data"):
         raise AttributeError(f"Image missing .data attribute: {type(image)}")
-    return image.require_raw("_get_image_data")
+    return image.data
 
 
 if CLIP_AVAILABLE:

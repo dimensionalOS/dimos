@@ -70,7 +70,7 @@ def is_scene_stale(frames: list["Frame"], stale_threshold: float = 5.0) -> bool:
         return False
     if not hasattr(first_img, "data") or not hasattr(last_img, "data"):
         return False
-    first_data = first_img.require_raw("is_scene_stale first frame")
-    last_data = last_img.require_raw("is_scene_stale last frame")
+    first_data = first_img.data
+    last_data = last_img.data
     diff = np.abs(first_data.astype(float) - last_data.astype(float))
     return bool(diff.mean() < stale_threshold)

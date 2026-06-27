@@ -195,7 +195,7 @@ def rectify_image(image: Image, camera_matrix: np.ndarray, dist_coeffs: np.ndarr
 
     Returns an Image with numpy or cupy data depending on caller choice.
     """
-    rect = cv2.undistort(image.require_raw("rectify_image"), camera_matrix, dist_coeffs)
+    rect = cv2.undistort(image.data, camera_matrix, dist_coeffs)
     return Image(data=rect, format=image.format, frame_id=image.frame_id, ts=image.ts)
 
 

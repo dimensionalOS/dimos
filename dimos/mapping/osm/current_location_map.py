@@ -74,7 +74,7 @@ class CurrentLocationMap:
 
         assert self._map_image is not None
         assert self._position is not None
-        map_data = self._map_image.image.require_raw("CurrentLocationMap._fetch_new_map")
+        map_data = self._map_image.image.data
         pil_image = PILImage.fromarray(map_data)
         draw = ImageDraw.Draw(pil_image)
         x, y = self._map_image.latlon_to_pixel(self._position)

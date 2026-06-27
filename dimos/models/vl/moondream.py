@@ -67,7 +67,7 @@ class MoondreamVlModel(HuggingFaceModel, VlModel):
 
         image, _ = self._prepare_image(image)
         rgb_image = image.to_rgb()
-        return PILImage.fromarray(rgb_image.require_raw("MoondreamVlModel._to_pil"))
+        return PILImage.fromarray(rgb_image.data)
 
     def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:  # type: ignore[no-untyped-def]
         pil_image = self._to_pil(image)

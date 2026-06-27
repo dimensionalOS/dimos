@@ -225,33 +225,33 @@ color = store.stream(
 )
 ```
 
-Recorder modules that need H.264 storage should create their target stream with
-the same codec override:
+Recorder modules that need H.264 storage can opt in per input stream with
+`RecorderConfig.stream_codecs`:
 
 ```python skip
 from dimos.core.stream import In
-from dimos.memory2.module import Recorder
+from dimos.memory2.module import Recorder, RecorderConfig
 from dimos.msgs.sensor_msgs.Image import Image
 
 class H264Recorder(Recorder):
     color_image: In[Image]
 
-    def start(self) -> None:
-        stream = self.store.stream("color_image", Image, codec="h264")
-        self._port_to_stream("color_image", self.color_image, stream)
+recorder = H264Recorder.blueprint(
+    config=RecorderConfig(stream_codecs={"color_image": "h264"})
+)
 ```
 
 H.264 storage keeps the normal memory2 shape: one observation row per source
-frame. The blob for that observation stores one encoded `Image` whose data is a
-complete H.264 Annex B access unit, not individual RTP fragments. H.264 frame
-metadata lives in `Image.codec_metadata`.
+frame. The logical stream type is still `Image`, while the physical blob stores
+one internal H.264 packet envelope containing a complete Annex B access unit, not
+individual RTP fragments. H.264 frame metadata lives in observation tags.
 
-Metadata queries do not decode pixels. You can inspect timestamps, poses, tags,
-frame ids, `Image.encoding`, and H.264 codec metadata without paying decode
-cost. Accessing `obs.data` returns an encoded `Image` for H.264 streams. Use an
-explicit H.264 decode session to convert replayed encoded images to raw pixel
-images; that decoder suppresses deltas until the first keyframe at or after the
-replay start point.
+Metadata queries do not decode pixels. You can inspect timestamps, poses, and
+tags without paying decode cost. Accessing `obs.data` returns a decoded raw
+`Image`; random lazy reads seek to the previous stored keyframe by durable
+observation id and decode forward to the requested observation. Whole-stream
+id-ordered iteration uses a narrow sequential decode path; replay remains correct
+and yields decoded images while scheduling by timestamp.
 
 H.264 storage currently supports uint8 RGB, BGR, and grayscale images. It raises
 an explicit error for depth images, 16-bit images, alpha formats, and other
@@ -275,6 +275,6 @@ codec or storage changes to inspect:
 
 - logs from the source, recorder, and probe;
 - memory2 metadata queries that do not touch `obs.data`;
-- lazy `obs.data` decode after a valid keyframe, with best-effort suppression of undecodable deltas;
+- lazy `obs.data` decode by seeking from the previous durable keyframe;
 - replay of the recorded stream; and
 - sequence-gap behavior, if you inject packet loss in the transport tests.

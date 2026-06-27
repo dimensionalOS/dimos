@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 import os
 import sqlite3
 from typing import Annotated, Any
@@ -31,6 +32,8 @@ from dimos.memory2.utils.sqlite import open_disposable_sqlite_connection
 from dimos.memory2.utils.validation import validate_identifier
 from dimos.memory2.vectorstore.base import VectorStore
 from dimos.memory2.vectorstore.sqlite import SqliteVectorStore
+from dimos.msgs.sensor_msgs.Image import ImageFormat
+from dimos.protocol.video.h264 import H264Config
 
 
 class SqliteStoreConfig(StoreConfig):
@@ -66,6 +69,7 @@ class SqliteStore(Store):
     def _assemble_backend(self, name: str, stored: dict[str, Any]) -> Backend[Any]:
         """Reconstruct a Backend from a stored config dict."""
         from dimos.memory2.codecs.base import _resolve_payload_type, codec_from_id
+        from dimos.memory2.video.h264 import H264ImageBackend, is_h264_backend_marker
 
         payload_module = stored["payload_module"]
         codec = codec_from_id(stored["codec_id"], payload_module)
@@ -110,9 +114,19 @@ class SqliteStore(Store):
             conn=backend_conn,
             name=name,
             codec=codec,
-            blob_store_conn_match=blob_store_conn_match and eager_blobs,
+            blob_store_conn_match=blob_store_conn_match
+            and eager_blobs
+            and not is_h264_backend_marker(codec),
             page_size=page_size,
         )
+        if is_h264_backend_marker(codec):
+            return H264ImageBackend(
+                metadata_store=metadata_store,
+                blob_store=bs,
+                vector_store=vs,
+                notifier=notifier,
+                h264_config=self._deserialize_h264_config(stored.get("h264_config")),
+            )
         backend: Backend[Any] = Backend(
             metadata_store=metadata_store,
             codec=codec,
@@ -123,6 +137,23 @@ class SqliteStore(Store):
             eager_blobs=eager_blobs,
         )
         return backend
+
+    @staticmethod
+    def _serialize_h264_config(config: H264Config) -> dict[str, Any]:
+        data = asdict(config)
+        data["supported_formats"] = [fmt.value for fmt in config.supported_formats]
+        return data
+
+    @staticmethod
+    def _deserialize_h264_config(data: dict[str, Any] | None) -> H264Config | None:
+        if data is None:
+            return None
+        config = dict(data)
+        if "supported_formats" in config:
+            config["supported_formats"] = tuple(
+                ImageFormat(fmt) for fmt in config["supported_formats"]
+            )
+        return H264Config(**config)
 
     @staticmethod
     def _serialize_backend(
@@ -140,6 +171,11 @@ class SqliteStore(Store):
         if backend.vector_store is not None:
             cfg["vector_store"] = backend.vector_store.serialize()
         cfg["notifier"] = backend.notifier.serialize()
+
+        from dimos.memory2.video.h264 import H264ImageBackend
+
+        if isinstance(backend, H264ImageBackend):
+            cfg["h264_config"] = SqliteStore._serialize_h264_config(backend.h264_config)
         return cfg
 
     def _create_backend(
@@ -176,10 +212,12 @@ class SqliteStore(Store):
         codec = self._resolve_codec(payload_type, config.get("codec"))
         config["codec"] = codec
 
+        from dimos.memory2.video.h264 import is_h264_backend_marker
+
         # Create SqliteObservationStore with conn-sharing
         bs = config["blob_store"]
         blob_conn_match = isinstance(bs, SqliteBlobStore) and bs._conn is backend_conn
-        eager_blobs = config.get("eager_blobs", False)
+        eager_blobs = config.get("eager_blobs", False) and not is_h264_backend_marker(codec)
         obs_store: SqliteObservationStore[Any] = SqliteObservationStore(
             conn=backend_conn,
             name=name,

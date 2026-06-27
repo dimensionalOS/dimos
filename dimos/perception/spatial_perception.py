@@ -190,7 +190,7 @@ class SpatialMemory(Module):
         def set_video(image_msg: Image) -> None:
             # Convert Image message to numpy array
             if hasattr(image_msg, "data"):
-                frame = image_msg.require_raw("SpatialMemory.set_video")
+                frame = image_msg.data
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                 self._latest_video_frame = frame
             else:

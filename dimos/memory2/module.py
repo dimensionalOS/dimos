@@ -259,6 +259,7 @@ class RecorderConfig(MemoryModuleConfig):
     default_frame_id: str = "base_link"
     tf_tolerance: float = 0.5
     db_path: str | Path = "recording.db"
+    stream_codecs: dict[str, str] = Field(default_factory=dict)
 
 
 class Recorder(MemoryModule):
@@ -308,9 +309,14 @@ class Recorder(MemoryModule):
             return
 
         for name, port in self.inputs.items():
-            stream: Stream[Any] = self.store.stream(name, port.type)
+            codec = self.config.stream_codecs.get(name)
+            overrides = {"codec": codec} if codec is not None else {}
+            stream: Stream[Any] = self.store.stream(name, port.type, **overrides)
             self._port_to_stream(name, port, stream)
-            logger.info("Recording %s (%s)", name, port.type.__name__)
+            if codec is not None:
+                logger.info("Recording %s (%s, codec=%s)", name, port.type.__name__, codec)
+            else:
+                logger.info("Recording %s (%s)", name, port.type.__name__)
 
     def _port_to_stream(self, name: str, input_topic: In[Any], stream: Stream[Any]) -> None:
         """Append each message from *input_topic* to *stream*, attaching world pose via tf.

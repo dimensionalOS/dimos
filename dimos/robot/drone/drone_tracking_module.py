@@ -115,7 +115,7 @@ class DroneTrackingModule(Module):
             if self._latest_frame is None:
                 return None
             # Convert Image to numpy array
-            data = self._latest_frame.require_raw("DroneTrackingModule._get_latest_frame")
+            data = self._latest_frame.data
             return data
 
     @rpc

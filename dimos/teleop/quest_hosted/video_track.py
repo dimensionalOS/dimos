@@ -104,9 +104,7 @@ class CameraVideoTrack(VideoStreamTrack):
             self._first_mono = now
         pts = int((now - self._first_mono) * VIDEO_CLOCK_RATE)
 
-        frame = av.VideoFrame.from_ndarray(
-            img.require_raw("CameraVideoTrack.recv"), format=_AV_FORMAT_MAP.get(img.format, "bgr24")
-        )
+        frame = av.VideoFrame.from_ndarray(img.data, format=_AV_FORMAT_MAP.get(img.format, "bgr24"))
         frame.pts = pts
         frame.time_base = VIDEO_TIME_BASE
         return frame

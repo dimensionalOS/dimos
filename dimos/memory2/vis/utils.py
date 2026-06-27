@@ -65,7 +65,7 @@ def mosaic(
     canvas = np.zeros((rows * cell_height, cols * cell_w, 3), dtype=np.uint8)
     for i, img in enumerate(images):
         r, c = divmod(i, cols)
-        tile = cv2.resize(img.to_bgr().require_raw("mosaic_observations"), (cell_w, cell_height))
+        tile = cv2.resize(img.to_bgr().data, (cell_w, cell_height))
         canvas[r * cell_height : (r + 1) * cell_height, c * cell_w : (c + 1) * cell_w] = tile
 
     result = Image(data=canvas, format=ImageFormat.BGR)

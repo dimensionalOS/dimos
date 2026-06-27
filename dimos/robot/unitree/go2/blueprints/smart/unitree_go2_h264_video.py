@@ -30,7 +30,7 @@ from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.patrolling.module import PatrollingModule
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.protocol.video.demo_h264_video_e2e import H264VideoProbe
-from dimos.protocol.video.h264 import H264Config, H264Decoder, VideoDecodeGapError
+from dimos.protocol.video.h264 import H264Config
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.visualization.vis_module import vis_module
@@ -40,22 +40,10 @@ _go2_h264_config = H264Config(
     target_fps=15,
     keyframe_interval=30,
 )
-_go2_rerun_decoder: H264Decoder | None = None
 
 
 def _convert_h264_color_image(image: Image) -> Any:
-    """Decode H.264 color frames before logging them in Rerun."""
-    global _go2_rerun_decoder
-
-    if image.encoding == "h264":
-        if _go2_rerun_decoder is None:
-            _go2_rerun_decoder = H264Decoder(_go2_h264_config)
-        try:
-            image = _go2_rerun_decoder.decode(image)
-        except (VideoDecodeGapError, ValueError):
-            # Replay/subscription can start mid-GOP. Suppress deltas until the
-            # next keyframe restores decoder state.
-            return None
+    """Convert decoded color frames before logging them in Rerun."""
     return image.to_rerun()
 
 

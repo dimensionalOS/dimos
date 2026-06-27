@@ -93,7 +93,7 @@ class ObjectTracker2D(Module):
         def on_frame(frame_msg: Image) -> None:
             arrival_time = time.perf_counter()
             with self._frame_lock:
-                self._latest_rgb_frame = frame_msg.require_raw("ObjectTracker2D.on_frame")
+                self._latest_rgb_frame = frame_msg.data
                 self._frame_arrival_time = arrival_time
 
         unsub = self.color_image.subscribe(on_frame)

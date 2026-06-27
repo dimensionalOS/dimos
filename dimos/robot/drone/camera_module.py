@@ -138,7 +138,7 @@ class DroneCameraModule(Module):
                     self._latest_frame = None
 
                     # Get numpy array from Image
-                    img_array = frame.require_raw("DroneCameraModule._process_frames")
+                    img_array = frame.data
 
                     # Create header
                     header = Header(self.camera_frame_id)

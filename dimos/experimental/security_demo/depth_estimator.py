@@ -84,7 +84,7 @@ class DepthEstimator:
 
     def _process(self, image: Image) -> None:
         rgb = image.to_rgb()
-        pil_image = PILImage.fromarray(rgb.require_raw("DepthEstimator._process"))
+        pil_image = PILImage.fromarray(rgb.data)
         if pil_image.width > _DEPTH_MAX_WIDTH:
             scale = _DEPTH_MAX_WIDTH / pil_image.width
             new_h = int(pil_image.height * scale)
