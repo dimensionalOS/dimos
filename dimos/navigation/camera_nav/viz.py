@@ -33,8 +33,12 @@ def cloud_points(cloud):
     if len(pts) == 0:
         return rr.Points3D([])
     if cols is not None and len(cols) == len(pts):
-        return rr.Points3D(positions=pts, colors=(cols * 255).astype(np.uint8))
-    return rr.Points3D(positions=pts)
+        colors = (cols * 255).astype(np.uint8)
+    else:
+        # Fallback: uniform light grey — prevents Rerun from auto-colouring by
+        # Z-position which produces the misleading rainbow/heatmap appearance.
+        colors = np.full((len(pts), 3), 200, dtype=np.uint8)
+    return rr.Points3D(positions=pts, colors=colors)
 
 
 def pinhole_setup(info):

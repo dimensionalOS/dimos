@@ -51,11 +51,11 @@ _ZED_MOUNT = Transform(
     child_frame_id="camera_link",
 )
 
-# ZED camera blueprint — VGA + ULTRA depth is the sweet-spot for memory vs quality.
+# ZED camera blueprint — VGA + NEURAL depth: SDK 4.x replacement for deprecated ULTRA.
 _ZED_CAMERA = ZEDCamera.blueprint(
     resolution="VGA",
     enable_depth=True,
-    depth_mode="ULTRA",
+    depth_mode="NEURAL",
     enable_fill_mode=True,
     enable_pointcloud=False,
     enable_tracking=True,
@@ -131,7 +131,7 @@ camera_nav_zed_compare = autoconnect(
     ZEDCamera.blueprint(
         resolution="VGA",
         enable_depth=True,
-        depth_mode="ULTRA",
+        depth_mode="NEURAL",
         enable_fill_mode=True,
         enable_pointcloud=True,
         enable_tracking=True,
@@ -151,7 +151,7 @@ camera_nav_zed_teleop = autoconnect(
         base_transform=_ZED_MOUNT,
         resolution="VGA",
         enable_depth=True,
-        depth_mode="ULTRA",
+        depth_mode="NEURAL",
         enable_fill_mode=True,
         enable_pointcloud=False,
         enable_tracking=True,
@@ -197,7 +197,7 @@ def _make_zed_teleop(address: str | None = None):
             base_transform=_ZED_MOUNT,
             resolution="VGA",
             enable_depth=True,
-            depth_mode="ULTRA",
+            depth_mode="NEURAL",
             enable_fill_mode=True,
             enable_pointcloud=False,
             enable_tracking=True,
