@@ -264,11 +264,11 @@ class RerunPublisher:
                if len(xyz) > n else np.arange(len(xyz)))
 
         rr.log("world/frame", rr.Points3D(
-            positions=xyz[idx], colors=rgb[idx], radii=0.004,
+            positions=xyz[idx], colors=rgb[idx], radii=0.003,
         ))
         t   = np.clip((dist[idx] - self._min_d) / (self._max_d - self._min_d), 0.0, 1.0)
         rr.log("world/depth", rr.Points3D(
-            positions=xyz[idx], colors=_jet(t), radii=0.004,
+            positions=xyz[idx], colors=_jet(t), radii=0.003,
         ))
 
     def log_map(self, fusion: DualLayerFusion, frame: int) -> None:
@@ -279,7 +279,7 @@ class RerunPublisher:
         if len(xyz) > self.MAX_MAP:
             idx = np.random.choice(len(xyz), self.MAX_MAP, replace=False)
             xyz = xyz[idx]; rgb = rgb[idx]
-        rr.log("world/map", rr.Points3D(positions=xyz, colors=rgb, radii=0.004))
+        rr.log("world/map", rr.Points3D(positions=xyz, colors=rgb, radii=0.003))
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -292,7 +292,7 @@ def main() -> None:
     ip.depth_mode             = sl.DEPTH_MODE.NEURAL
     ip.coordinate_system      = sl.COORDINATE_SYSTEM.RIGHT_HANDED_Z_UP_X_FWD
     ip.coordinate_units       = sl.UNIT.METER
-    ip.depth_maximum_distance = 8.0
+    ip.depth_maximum_distance = 12.0      # ZED Mini rated to 12 m — captures full scene
 
     if zed.open(ip) != sl.ERROR_CODE.SUCCESS:
         print("ZED failed to open"); return
@@ -301,18 +301,17 @@ def main() -> None:
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
     print("camera open")
 
-    filt   = PointCloudFilter(min_depth=0.3, max_depth=8.0, stride=2)
+    filt   = PointCloudFilter(min_depth=0.3, max_depth=12.0, stride=2)
     pose   = PoseTransform()
     fusion = DualLayerFusion(voxel_size=0.02)
-    pub    = RerunPublisher(min_depth=0.3, max_depth=8.0, map_interval=10)
+    pub    = RerunPublisher(min_depth=0.3, max_depth=12.0, map_interval=10)
 
     # Activate when SDK 5.4.0 tracking is fixed:
     # pose.enable(zed)
 
-    # Light SDK-level filter: removes worst stereo mismatches before Python sees them.
-    # 50 is deliberately moderate — keeps edges and low-texture surfaces intact.
     rt = sl.RuntimeParameters()
-    rt.confidence_threshold = 50
+    rt.confidence_threshold = 55          # slightly tighter than 50 — removes stray noise voxels
+    rt.enable_fill_mode     = True        # fill depth holes → more complete objects, better far coverage
 
     frame = 0
     t0    = time.monotonic()
