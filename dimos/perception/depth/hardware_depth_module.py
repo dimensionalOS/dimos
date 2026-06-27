@@ -67,6 +67,7 @@ class HardwareDepthModule(Module, DepthBackprojector):
         self._latest_info: CameraInfo | None = None
         self._lock = threading.Lock()
         self._last_tf = None
+        self._tf_last_attempt = 0.0
 
     @rpc
     def start(self) -> None:
@@ -176,16 +177,22 @@ class HardwareDepthModule(Module, DepthBackprojector):
         if len(points_cam) == 0:
             return points_cam, self.config.world_frame
 
-        tf = self.tf.get(
-            self.config.world_frame, self.config.camera_frame, ts, self.config.tf_timeout
-        )
-        if tf is None:
-            if self._last_tf is None:
-                return points_cam, self.config.camera_frame
-            tf = self._last_tf
-        else:
-            self._last_tf = tf
+        import time as _time
+        now = _time.monotonic()
+        if self._last_tf is not None or now - self._tf_last_attempt >= 5.0:
+            self._tf_last_attempt = now
+            tf = self.tf.get(
+                self.config.world_frame, self.config.camera_frame, ts, self.config.tf_timeout
+            )
+            if tf is not None:
+                self._last_tf = tf
 
-        R = tf.rotation.to_rotation_matrix()
-        t = np.array([tf.translation.x, tf.translation.y, tf.translation.z], dtype=np.float32)
+        if self._last_tf is None:
+            return points_cam, self.config.camera_frame
+
+        R = self._last_tf.rotation.to_rotation_matrix()
+        t = np.array(
+            [self._last_tf.translation.x, self._last_tf.translation.y, self._last_tf.translation.z],
+            dtype=np.float32,
+        )
         return (points_cam @ R.T).astype(np.float32) + t, self.config.world_frame

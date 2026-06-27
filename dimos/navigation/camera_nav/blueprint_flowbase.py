@@ -46,10 +46,6 @@ def _cloud_points(cloud):
     return rr.Points3D(positions=pts)
 
 
-def _depth_img(img):
-    return img.to_rerun()
-
-
 camera_nav_static_trial = autoconnect(
     CameraModule.blueprint(),
     MonocularDepthModule.blueprint(),
@@ -60,7 +56,6 @@ camera_nav_static_trial = autoconnect(
         visual_override={
             "world/global_map": _cloud_points,
             "world/frame_cloud": _cloud_points,
-            "world/depth_image": _depth_img,
         },
     ),
 )

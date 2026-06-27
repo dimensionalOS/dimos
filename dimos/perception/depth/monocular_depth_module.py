@@ -30,7 +30,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.spec.depth import DepthBackprojector
 from dimos.utils.logging_config import setup_logger
@@ -84,7 +84,6 @@ class MonocularDepthModule(Module, DepthBackprojector):
     color_image: In[Image]
     camera_info: In[CameraInfo]
 
-    depth_image: Out[Image]
     frame_cloud: Out[PointCloud2]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -95,6 +94,7 @@ class MonocularDepthModule(Module, DepthBackprojector):
         self._latest_camera_info: CameraInfo | None = None
         self._camera_info_lock = threading.Lock()
         self._last_tf = None
+        self._tf_last_attempt = 0.0
 
     @rpc
     def start(self) -> None:
@@ -143,21 +143,12 @@ class MonocularDepthModule(Module, DepthBackprojector):
     def _on_image(self, image: Image) -> None:
         t0 = time.perf_counter()
         try:
-            depth_np, points, colors = self._run_inference(image)
+            points, colors = self._run_inference(image)
         except Exception:
             logger.exception("MonocularDepthModule: inference failed")
             return
         logger.info("MonocularDepthModule: %.2fs/frame  %d pts  device=%s",
                     time.perf_counter() - t0, len(points), self._device)
-
-        self.depth_image.publish(
-            Image(
-                data=depth_np.astype(np.float32),
-                format=ImageFormat.DEPTH,
-                frame_id=self.config.camera_frame,
-                ts=image.ts,
-            )
-        )
 
         points_world, frame_id = self._to_world(points, image.ts)
         if points_world is not None and len(points_world) > 0:
@@ -165,7 +156,7 @@ class MonocularDepthModule(Module, DepthBackprojector):
                 _make_colored_cloud(points_world, colors, frame_id, image.ts)
             )
 
-    def _run_inference(self, image: Image) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _run_inference(self, image: Image) -> tuple[np.ndarray, np.ndarray]:
         import torch
 
         rgb = image.to_rgb().data
@@ -189,8 +180,7 @@ class MonocularDepthModule(Module, DepthBackprojector):
             preds = self._infer_fn(rgb_t, K_t)  # type: ignore[misc]
 
         depth_np: np.ndarray = preds["depth"].squeeze().cpu().numpy()
-        points, colors = self._backproject(depth_np, rgb, info, H, W)
-        return depth_np, points, colors
+        return self._backproject(depth_np, rgb, info, H, W)
 
     def _backproject(
         self,
@@ -234,18 +224,26 @@ class MonocularDepthModule(Module, DepthBackprojector):
         if len(points_cam) == 0:
             return points_cam, self.config.world_frame
 
-        tf = self.tf.get(
-            self.config.world_frame, self.config.camera_frame, ts, self.config.tf_timeout
-        )
-        if tf is None:
-            if self._last_tf is None:
-                return points_cam, self.config.camera_frame
-            tf = self._last_tf
-        else:
-            self._last_tf = tf
+        now = time.monotonic()
+        # When TF has never been found, throttle retries to 5s intervals so the
+        # TF module doesn't spam a warning on every frame (e.g. trial/no-odometry mode).
+        # Once TF is known, always refresh to track robot movement.
+        if self._last_tf is not None or now - self._tf_last_attempt >= 5.0:
+            self._tf_last_attempt = now
+            tf = self.tf.get(
+                self.config.world_frame, self.config.camera_frame, ts, self.config.tf_timeout
+            )
+            if tf is not None:
+                self._last_tf = tf
 
-        R = tf.rotation.to_rotation_matrix()
-        t = np.array([tf.translation.x, tf.translation.y, tf.translation.z], dtype=np.float32)
+        if self._last_tf is None:
+            return points_cam, self.config.camera_frame
+
+        R = self._last_tf.rotation.to_rotation_matrix()
+        t = np.array(
+            [self._last_tf.translation.x, self._last_tf.translation.y, self._last_tf.translation.z],
+            dtype=np.float32,
+        )
         return (points_cam @ R.T).astype(np.float32) + t, self.config.world_frame
 
 
