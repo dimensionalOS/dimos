@@ -13,7 +13,9 @@
 # limitations under the License.
 
 from dataclasses import asdict
+import os
 import time
+from typing import Any
 
 import numpy as np
 from pydantic import Field
@@ -37,8 +39,8 @@ logger = setup_logger()
 class Config(ModuleConfig):
     algo: str = "height_cost"
     config: OccupancyConfig = Field(default_factory=HeightCostConfig)
-    # for robots that cant see directly below themself
     initial_safe_radius_meters: float = 0.0
+    export_path: str = "~/Downloads/map_costmap.npy"
 
 
 class CostMapper(Module):
@@ -46,6 +48,10 @@ class CostMapper(Module):
     global_map: In[PointCloud2]
     merged_map: In[PointCloud2]
     global_costmap: Out[OccupancyGrid]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._last_grid: OccupancyGrid | None = None
 
     @rpc
     def start(self) -> None:
@@ -58,12 +64,13 @@ class CostMapper(Module):
             return merged if merged is not None else gmap
 
         def _publish_costmap(grid: OccupancyGrid, calc_time_ms: float, rx_monotonic: float) -> None:
+            self._last_grid = grid
             self.global_costmap.publish(grid)
 
         def _calculate_and_time(
             msg: PointCloud2,
         ) -> tuple[OccupancyGrid, float, float]:
-            rx_monotonic = time.monotonic()  # Capture receipt time
+            rx_monotonic = time.monotonic()
             start = time.perf_counter()
             grid = self._calculate_costmap(msg)
             elapsed_ms = (time.perf_counter() - start) * 1000
@@ -81,6 +88,11 @@ class CostMapper(Module):
 
     @rpc
     def stop(self) -> None:
+        if self._last_grid is not None:
+            path = os.path.expanduser(self.config.export_path)
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            np.save(path, self._last_grid.grid)
+            logger.info("CostMapper: saved costmap → %s", path)
         super().stop()
 
     # @timed()  # TODO: fix thread leak in timed decorator

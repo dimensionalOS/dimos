@@ -76,6 +76,10 @@ class ZEDCameraConfig(ModuleConfig, DepthCameraConfig):
     enable_area_memory: bool = False
     set_floor_as_origin: bool = True
     world_frame: str = "world"
+    # Camera image controls — -1 = auto. Lower exposure prevents blown-out images
+    # under bright artificial lighting. Range 0–100.
+    exposure: int = -1
+    gain: int = -1
 
 
 class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera, depth_spec.StereoDepth):
@@ -161,6 +165,11 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera, depth_spec.
         if err != sl.ERROR_CODE.SUCCESS:
             self._zed = None
             raise RuntimeError(f"Failed to open ZED camera: {err}")
+
+        if self.config.exposure >= 0:
+            self._zed.set_camera_settings(sl.VIDEO_SETTINGS.EXPOSURE, self.config.exposure)
+        if self.config.gain >= 0:
+            self._zed.set_camera_settings(sl.VIDEO_SETTINGS.GAIN, self.config.gain)
 
         self._runtime_params = sl.RuntimeParameters()
         self._runtime_params.enable_fill_mode = self.config.enable_fill_mode
