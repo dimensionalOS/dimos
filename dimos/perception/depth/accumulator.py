@@ -45,6 +45,7 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.depth.utils import make_colored_cloud
 from dimos.spec.mapping import GlobalPointcloud
@@ -125,6 +126,7 @@ class DepthAccumulatorModule(Module, GlobalPointcloud):
     config: Config
 
     frame_cloud: In[PointCloud2]
+    imu: In[Imu]                   # optional — gyro guards ICP against fast-rotation frames
     global_map: Out[PointCloud2]   # full accumulated map → Rerun visualisation
     merged_map: Out[PointCloud2]   # ICP-aligned sliding window → CostMapper (real-time, no drift)
 
@@ -140,12 +142,17 @@ class DepthAccumulatorModule(Module, GlobalPointcloud):
         self._pose_graph = o3d.pipelines.registration.PoseGraph()
         self._frame_count = 0
         self._last_publish = 0.0
+        self._last_frame_ts: float = 0.0
+        self._last_imu: Imu | None = None
 
     @rpc
     def start(self) -> None:
         super().start()
         self.register_disposable(
             Disposable(self.frame_cloud.subscribe(self._on_frame_cloud))
+        )
+        self.register_disposable(
+            Disposable(self.imu.subscribe(self._on_imu))
         )
 
     @rpc
@@ -166,10 +173,16 @@ class DepthAccumulatorModule(Module, GlobalPointcloud):
             self._poses.clear()
             self._pose_graph = o3d.pipelines.registration.PoseGraph()
             self._frame_count = 0
+            self._last_frame_ts = 0.0
+            self._last_imu = None
 
     # ------------------------------------------------------------------
     # Per-frame processing
     # ------------------------------------------------------------------
+
+    def _on_imu(self, imu: Imu) -> None:
+        with self._lock:
+            self._last_imu = imu
 
     def _on_frame_cloud(self, cloud: PointCloud2) -> None:
         pts, cols = cloud.as_numpy()
@@ -184,10 +197,25 @@ class DepthAccumulatorModule(Module, GlobalPointcloud):
         frame_down = frame_pcd.voxel_down_sample(self.config.voxel_size * 2)
 
         with self._lock:
+            # --- Fast-rotation guard using IMU gyroscope ---
+            # ICP searches locally (max_correspondence=0.2 m) and fails on fast motion,
+            # producing spurious transforms that layer the map as "waves".  If the IMU
+            # reports significant angular velocity since the last frame, skip ICP and
+            # trust ZED VIO (which already integrates the same IMU internally).
+            dt = cloud.ts - self._last_frame_ts if self._last_frame_ts > 0 else 0.067
+            fast_rotation = False
+            if self._last_imu is not None:
+                av = self._last_imu.angular_velocity
+                omega = (av.x ** 2 + av.y ** 2 + av.z ** 2) ** 0.5
+                # skip ICP when rotation > ~10° between frames
+                if omega * dt > 0.175:
+                    fast_rotation = True
+            self._last_frame_ts = cloud.ts
+
             # --- Odometry ICP against sliding window ---
             odom_T = np.eye(4)
             window_pts = sum(len(f.points) for f in self._window)
-            if self._window and window_pts >= self.config.icp_min_points:
+            if not fast_rotation and self._window and window_pts >= self.config.icp_min_points:
                 target = _merge(self._window).voxel_down_sample(self.config.voxel_size * 3)
                 odom_T, _ = _icp(
                     frame_down, target,
