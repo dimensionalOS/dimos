@@ -32,7 +32,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.perception.depth.utils import make_colored_cloud, to_world
+from dimos.perception.depth.utils import make_colored_cloud as _make_colored_cloud
 from dimos.spec.depth import DepthBackprojector
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
@@ -44,10 +44,6 @@ class Config(ModuleConfig):
     min_depth: float = 0.3
     max_depth: float = 8.0
     stride: int = 1
-    # Erode the valid-depth mask by this many pixels at depth discontinuities.
-    # Flying pixels live exactly at edges where stereo sees both foreground and
-    # background; erosion removes them before backprojection.
-    edge_erode_px: int = 2
     max_freq: float = 10.0
     camera_frame: str = "camera_optical"
     world_frame: str = "world"
@@ -62,6 +58,7 @@ class HardwareDepthModule(Module, DepthBackprojector):
     color_image: In[Image]
     depth_image: In[Image]
     camera_info: In[CameraInfo]
+
     frame_cloud: Out[PointCloud2]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -117,13 +114,11 @@ class HardwareDepthModule(Module, DepthBackprojector):
         if len(points) == 0:
             return
 
-        pts_world, frame_id, self._last_tf, self._tf_last_attempt = to_world(
-            points, color.ts, self.tf,
-            self.config.world_frame, self.config.camera_frame, self.config.tf_timeout,
-            self._last_tf, self._tf_last_attempt, logger,
-        )
-        if pts_world is not None:
-            self.frame_cloud.publish(make_colored_cloud(pts_world, colors, frame_id, color.ts))
+        points_world, frame_id = self._to_world(points, color.ts)
+        if points_world is not None:
+            self.frame_cloud.publish(
+                _make_colored_cloud(points_world, colors, frame_id, color.ts)
+            )
 
     def _backproject(
         self, color: Image, depth: Image, info: CameraInfo | None
@@ -158,21 +153,11 @@ class HardwareDepthModule(Module, DepthBackprojector):
         uu, vv = np.meshgrid(us, vs)
 
         depth_sub = depth_np[::stride, ::stride]
-        base_valid = (
+        valid = (
             np.isfinite(depth_sub)
             & (depth_sub > self.config.min_depth)
             & (depth_sub < self.config.max_depth)
         )
-
-        # Erode the valid mask: flying pixels appear exactly at depth edges where
-        # one pixel's ray straddles a foreground/background boundary.  Shrinking the
-        # valid region by edge_erode_px removes them without touching surface interiors.
-        if self.config.edge_erode_px > 0:
-            from scipy.ndimage import binary_erosion
-            valid = binary_erosion(base_valid, iterations=self.config.edge_erode_px)
-        else:
-            valid = base_valid
-
         uu, vv, dd = uu[valid], vv[valid], depth_sub[valid]
 
         if len(dd) == 0:
@@ -187,3 +172,29 @@ class HardwareDepthModule(Module, DepthBackprojector):
         colors = rgb[vi, ui, :3].astype(np.float32) / 255.0
 
         return points, colors
+
+    def _to_world(self, points_cam: np.ndarray, ts: float) -> tuple[np.ndarray | None, str]:
+        if len(points_cam) == 0:
+            return points_cam, self.config.world_frame
+
+        import time as _time
+        now = _time.monotonic()
+        if self._last_tf is not None or now - self._tf_last_attempt >= 5.0:
+            self._tf_last_attempt = now
+            tf = self.tf.get(
+                self.config.world_frame, self.config.camera_frame, ts, self.config.tf_timeout
+            )
+            if tf is not None:
+                self._last_tf = tf
+
+        if self._last_tf is None:
+            # No odometry: camera is the world origin. Use world frame_id so the
+            # Rerun bridge doesn't attach a different TF than global_map uses.
+            return points_cam, self.config.world_frame
+
+        R = self._last_tf.rotation.to_rotation_matrix()
+        t = np.array(
+            [self._last_tf.translation.x, self._last_tf.translation.y, self._last_tf.translation.z],
+            dtype=np.float32,
+        )
+        return (points_cam @ R.T).astype(np.float32) + t, self.config.world_frame
