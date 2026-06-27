@@ -50,45 +50,63 @@ def _jet(t: np.ndarray) -> np.ndarray:
 class PointCloudFilter:
     """Raw ZED frame → clean (xyz, rgb, dist) arrays.
 
-    Two-stage rejection:
-      1. SDK-level (RuntimeParameters.confidence_threshold = 50): removes the
-         worst stereo mismatches at source before data reaches Python.
-         Value 50 is deliberately moderate — removes clear garbage without
-         gutting low-texture surfaces or object edges.
-      2. Geometric: isfinite + depth-range gate on the remaining points.
+    Three-stage rejection, applied in order before any XYZ value is used:
 
-    Uses sl.VIEW.LEFT for high-fidelity camera RGB (not the packed float RGBA).
+    1. SDK-level (RuntimeParameters): confidence_threshold=60 discards the
+       worst stereo matches at source. fill_mode is OFF — it interpolates
+       bad values at object edges and is the primary cause of white speckles.
+
+    2. Confidence map gate (sl.MEASURE.CONFIDENCE, threshold 50):
+       Retrieved before XYZ is accepted. Pixels below 50 are discarded
+       before their depth value is ever converted to a 3-D point.
+       This is the correct ordering — confidence decides validity, then
+       XYZ is used only for valid pixels.
+
+    3. Geometric: isfinite + depth-range gate.
+       Max 7 m: ZED Mini accuracy degrades past ~7 m; keeping it tight
+       removes the unstable long-range depth that manifests as floating
+       speckle clusters in the background.
+
+    Uses sl.VIEW.LEFT for high-fidelity RGB (not packed float RGBA).
     Stride-2 regular grid: ~40–60 k valid points at VGA, safe for Rerun.
     """
 
-    def __init__(self, min_depth: float = 0.3, max_depth: float = 8.0, stride: int = 2):
+    CONF_MIN  = 50    # per-pixel confidence floor (0–100)
+    CONF_MAX  = 100   # upper bound — NaN confidence values are excluded by isfinite
+
+    def __init__(self, min_depth: float = 0.3, max_depth: float = 7.0, stride: int = 2):
         self.min_d  = min_depth
         self.max_d  = max_depth
         self.stride = stride
         self._img   = sl.Mat()
         self._pc    = sl.Mat()
+        self._conf  = sl.Mat()
 
     def grab(self, zed: sl.Camera) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
-        """Return (xyz, rgb, dist) for valid pixels, or None if frame is empty."""
+        """Return (xyz, rgb, dist) for valid, confident pixels; None if empty."""
+        s = self.stride
+
         # Actual camera colour (BGRA → RGB)
         zed.retrieve_image(self._img, sl.VIEW.LEFT, sl.MEM.CPU)
-        bgra    = self._img.get_data()
-        cam_rgb = bgra[:, :, 2::-1].copy()          # H×W×3 uint8 RGB
+        cam_rgb = self._img.get_data()[:, :, 2::-1].copy()   # H×W×3 uint8 RGB
 
-        # Stereo XYZ per pixel
+        # Per-pixel stereo confidence — evaluated BEFORE XYZ is accepted
+        zed.retrieve_measure(self._conf, sl.MEASURE.CONFIDENCE, sl.MEM.CPU)
+        conf_hw  = self._conf.get_data()                      # H×W float32
+        conf_sub = conf_hw[::s, ::s].reshape(-1).astype(np.float32)
+
+        # Stereo XYZ (only accessed for pixels that pass confidence)
         zed.retrieve_measure(self._pc, sl.MEASURE.XYZRGBA, sl.MEM.CPU)
-        xyz_hw = self._pc.get_data()[:, :, :3]      # H×W×3 float32
-
-        # Stride-2 regular grid subsample
-        s       = self.stride
-        xyz_sub = xyz_hw[::s, ::s, :].reshape(-1, 3).astype(np.float32)
+        xyz_sub = self._pc.get_data()[::s, ::s, :3].reshape(-1, 3).astype(np.float32)
         rgb_sub = cam_rgb[::s, ::s, :].reshape(-1, 3)
 
         dist = np.linalg.norm(xyz_sub, axis=1)
         ok   = (
-            np.isfinite(xyz_sub[:, 0])   # valid stereo match
-            & (dist > self.min_d)        # not too close
-            & (dist < self.max_d)        # not beyond range
+            np.isfinite(conf_sub)                              # confidence is a real number
+            & (conf_sub >= self.CONF_MIN)                      # confidence gate — before XYZ
+            & np.isfinite(xyz_sub[:, 0])                       # XYZ is finite
+            & (dist > self.min_d)                              # near-field noise gate
+            & (dist < self.max_d)                              # long-range instability gate
         )
 
         if not ok.any():
@@ -292,7 +310,8 @@ def main() -> None:
     ip.depth_mode             = sl.DEPTH_MODE.NEURAL
     ip.coordinate_system      = sl.COORDINATE_SYSTEM.RIGHT_HANDED_Z_UP_X_FWD
     ip.coordinate_units       = sl.UNIT.METER
-    ip.depth_maximum_distance = 12.0      # ZED Mini rated to 12 m — captures full scene
+    ip.depth_stabilization    = 5          # temporal smoothing (0=off, higher=more stable)
+    ip.depth_maximum_distance = 7.0        # hard cap at reliable range; beyond this ZED Mini is noisy
 
     if zed.open(ip) != sl.ERROR_CODE.SUCCESS:
         print("ZED failed to open"); return
@@ -301,17 +320,17 @@ def main() -> None:
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
     print("camera open")
 
-    filt   = PointCloudFilter(min_depth=0.3, max_depth=12.0, stride=2)
+    filt   = PointCloudFilter(min_depth=0.3, max_depth=7.0, stride=2)
     pose   = PoseTransform()
     fusion = DualLayerFusion(voxel_size=0.02)
-    pub    = RerunPublisher(min_depth=0.3, max_depth=12.0, map_interval=10)
+    pub    = RerunPublisher(min_depth=0.3, max_depth=7.0, map_interval=10)
 
     # Activate when SDK 5.4.0 tracking is fixed:
     # pose.enable(zed)
 
     rt = sl.RuntimeParameters()
-    rt.confidence_threshold = 55          # slightly tighter than 50 — removes stray noise voxels
-    rt.enable_fill_mode     = True        # fill depth holes → more complete objects, better far coverage
+    rt.confidence_threshold = 60          # SDK-level pre-filter before data reaches Python
+    rt.enable_fill_mode     = False       # OFF: fill mode interpolates bad values at edges → white speckles
 
     frame = 0
     t0    = time.monotonic()
