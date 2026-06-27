@@ -20,6 +20,22 @@ _Avoid_: combined URDF, merged robot scene
 The authoritative belief state for manipulation planning, including robot state and scene state used by planners.
 _Avoid_: planner context, backend instance
 
+**Robokin kinematics backend**:
+A DimOS kinematics backend that presents multiple robokin-supported inverse-kinematics engines through one robotics-facing capability.
+_Avoid_: Oink backend, RoboKin world backend, single-engine Oink solver
+
+**Robokin engine**:
+A specific solver implementation selected inside the Robokin kinematics backend, such as Placo, Pyroki, or Oink.
+_Avoid_: Robokin backend, world backend, planner backend
+
+**RoboPlan kinematics backend**:
+A DimOS kinematics backend implemented by RoboPlanWorld using RoboPlan-backed model state, planning groups, Jacobians, and collision state.
+_Avoid_: Robokin backend, separate RoboPlan IK world, planner-only RoboPlan integration
+
+**RoboPlan Oink IK solver**:
+RoboPlan's task-based inverse-kinematics capability for solving one or more frame pose targets under joint constraints.
+_Avoid_: hand-written Jacobian IK, Robokin-only Oink wrapper
+
 **Coordinated simulation clock**:
 A simulation benchmark clock policy where simulator time advances in lockstep with the DimOS control coordinator clock.
 _Avoid_: autonomous simulator loop, write-triggered stepping, settle step
@@ -139,6 +155,14 @@ _Avoid_: manipulator-only adapter, end-effector API, task action API
 **Benchmark episode config**:
 A backend-facing declaration of benchmark intent that names the task, robot, runtime constraints, and evaluation setup before any DimOS blueprint is launched.
 _Avoid_: hardware config, simulator config, blueprint config
+
+**Semantic skill benchmark episode**:
+A benchmark episode where the agent acts through named, task-level DimOS skills while simulator backends provide reset, observation, and external scoring.
+_Avoid_: motor-control benchmark episode, raw simulator action episode, code-as-policy episode
+
+**Agentic manipulation module**:
+A universal DimOS skill-facing module that exposes agent-appropriate manipulation capabilities by coordinating existing manipulation and control modules.
+_Avoid_: benchmark skill container, Robosuite skill module, simulator-specific manipulation API
 
 **Resolved runtime plan**:
 The concrete DimOS launch material derived from a benchmark episode config, including hardware components, simulator connection config, observation streams, evaluator setup, and artifact routing.
