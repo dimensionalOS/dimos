@@ -32,7 +32,7 @@ try:
     while True:
         if zed.grab(rt) != sl.ERROR_CODE.SUCCESS:
             continue
-        zed.retrieve_measure(pc, sl.MEASURE.XYZRGBA)
+        zed.retrieve_measure(pc, sl.MEASURE.XYZRGBA, sl.MEM.CPU)
         data = pc.get_data()
         n_total = data.shape[0] * data.shape[1]
         n_valid = int(np.isfinite(data[:, :, 0]).sum())
