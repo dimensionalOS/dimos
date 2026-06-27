@@ -109,11 +109,6 @@ jobs:
       id-token: write      # For attest-build-provenance's OIDC sigstore signing
       attestations: write  # For uploading the SLSA build-provenance attestation
     env:
-      # cp313+ deferred until dependenciess catch up:
-      #   - dimos-viewer 0.32.0a1:     no cp313 wheels published
-      #   - open3d 0.19.0:             no cp313 wheels published
-      CIBW_BUILD: "cp310-* cp311-* cp312-*"
-      CIBW_ENABLE: "cpython-freethreading"
       CIBW_ARCHS: ${{ matrix.arch }}
       CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_34  # open3d>=0.19 requires glibc 2.31+
       CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_34  # open3d>=0.19 requires glibc 2.31+
