@@ -42,9 +42,12 @@ logger = setup_logger()
 
 class Config(ModuleConfig):
     min_depth: float = 0.3
-    max_depth: float = 5.0          # ZED stereo reliable to ~5 m; beyond this gets noisy
-    stride: int = 2                 # skip every other pixel — halves noise sources, keeps coverage
-    edge_grad_threshold: float = 0.1  # mask depth pixels at sharp discontinuities (flying pixels)
+    max_depth: float = 8.0
+    stride: int = 1
+    # Erode the valid-depth mask by this many pixels at depth discontinuities.
+    # Flying pixels live exactly at edges where stereo sees both foreground and
+    # background; erosion removes them before backprojection.
+    edge_erode_px: int = 2
     max_freq: float = 10.0
     camera_frame: str = "camera_optical"
     world_frame: str = "world"
@@ -155,19 +158,21 @@ class HardwareDepthModule(Module, DepthBackprojector):
         uu, vv = np.meshgrid(us, vs)
 
         depth_sub = depth_np[::stride, ::stride]
-
-        # Mask depth edges: large gradients indicate depth discontinuities where
-        # flying pixels occur (one pixel sees both foreground and background).
-        gx = np.abs(np.gradient(depth_sub, axis=1))
-        gy = np.abs(np.gradient(depth_sub, axis=0))
-        edge_mask = (gx + gy) < (self.config.edge_grad_threshold * depth_sub + 1e-6)
-
-        valid = (
+        base_valid = (
             np.isfinite(depth_sub)
             & (depth_sub > self.config.min_depth)
             & (depth_sub < self.config.max_depth)
-            & edge_mask
         )
+
+        # Erode the valid mask: flying pixels appear exactly at depth edges where
+        # one pixel's ray straddles a foreground/background boundary.  Shrinking the
+        # valid region by edge_erode_px removes them without touching surface interiors.
+        if self.config.edge_erode_px > 0:
+            from scipy.ndimage import binary_erosion
+            valid = binary_erosion(base_valid, iterations=self.config.edge_erode_px)
+        else:
+            valid = base_valid
+
         uu, vv, dd = uu[valid], vv[valid], depth_sub[valid]
 
         if len(dd) == 0:
