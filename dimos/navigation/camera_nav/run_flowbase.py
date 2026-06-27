@@ -35,6 +35,7 @@ if __name__ == "__main__":
     group.add_argument("--robot-only", action="store_true", help="FlowBase keyboard teleop only, no camera")
     group.add_argument("--trial", action="store_true", help="Laptop webcam only, no robot")
     parser.add_argument("--address", default=None, help="FlowBase address override (default: 172.6.2.20:11323)")
+    parser.add_argument("--cpu", action="store_true", help="Force CPU inference (use when MPS/CUDA is unstable)")
     args = parser.parse_args()
 
     if args.robot_only:
@@ -42,8 +43,28 @@ if __name__ == "__main__":
         ModuleCoordinator.build(_make_flowbase_coordinator(address=args.address)).loop()
 
     elif args.trial:
-        from dimos.navigation.camera_nav.blueprint_flowbase import camera_nav_static_trial
-        ModuleCoordinator.build(camera_nav_static_trial).loop()
+        from dimos.core.coordination.blueprints import autoconnect
+        from dimos.hardware.sensors.camera.module import CameraModule
+        from dimos.navigation.camera_nav.blueprint_flowbase import _cloud_points, _pinhole_setup
+        from dimos.perception.depth.accumulator import DepthAccumulatorModule
+        from dimos.perception.depth.monocular_depth_module import MonocularDepthModule
+        from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+        from dimos.visualization.rerun.bridge import RerunBridgeModule
+        blueprint = autoconnect(
+            CameraModule.blueprint(),
+            MonocularDepthModule.blueprint(device="cpu" if args.cpu else None),
+            DepthAccumulatorModule.blueprint(),
+            RerunBridgeModule.blueprint(
+                pubsubs=[LCM()],
+                rerun_open="web",
+                visual_override={
+                    "world/global_map": _cloud_points,
+                    "world/frame_cloud": _cloud_points,
+                    "world/camera_info": _pinhole_setup,
+                },
+            ),
+        )
+        ModuleCoordinator.build(blueprint).loop()
 
     elif args.zed_only:
         from dimos.navigation.camera_nav.blueprint_zed import camera_nav_zed_standalone

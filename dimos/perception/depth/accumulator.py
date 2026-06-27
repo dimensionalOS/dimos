@@ -147,7 +147,10 @@ class DepthAccumulatorModule(Module, GlobalPointcloud):
     @rpc
     def stop(self) -> None:
         with self._lock:
-            self._export_map()
+            pcd_snapshot = o3d.geometry.PointCloud(self._map)
+        # Run export in background so we don't block the coordinator shutdown timeout.
+        t = threading.Thread(target=self._export_map, args=(pcd_snapshot,), daemon=False)
+        t.start()
         super().stop()
 
     @rpc
@@ -310,16 +313,16 @@ class DepthAccumulatorModule(Module, GlobalPointcloud):
     # Export
     # ------------------------------------------------------------------
 
-    def _export_map(self) -> None:
+    def _export_map(self, snapshot: o3d.geometry.PointCloud) -> None:
         """Export coloured point cloud and Poisson surface mesh at shutdown."""
-        if len(self._map.points) < 100:
+        if len(snapshot.points) < 100:
             logger.warning("DepthAccumulatorModule: map too sparse to export, skipping")
             return
 
         path = self.config.export_path
 
         # --- Raw coloured cloud ---
-        pcd = self._map.voxel_down_sample(self.config.voxel_size)
+        pcd = snapshot.voxel_down_sample(self.config.voxel_size)
         o3d.io.write_point_cloud(f"{path}.ply", pcd)
         logger.info(
             "DepthAccumulatorModule: exported %d points → %s.ply",
