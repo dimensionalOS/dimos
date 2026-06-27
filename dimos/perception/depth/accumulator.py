@@ -91,23 +91,27 @@ _MAX_UNCOMPACTED = 1_000_000
 # ---------------------------------------------------------------------------
 
 class Config(ModuleConfig):
-    voxel_size: float = 0.03
+    voxel_size: float = 0.05        # 5 cm — merges nearby noisy points
     world_frame: str = "world"
     # Odometry ICP (sliding window)
     icp_window: int = 5
     icp_min_points: int = 300
-    icp_max_correspondence: float = 0.2
-    icp_max_iter: int = 20
+    icp_max_correspondence: float = 0.15
+    icp_max_iter: int = 30
+    icp_min_fitness: float = 0.30   # reject transform if ICP fit < this (avoids wave artifacts)
     merge_interval: int = 10
     publish_freq: float = 5.0
+    # Per-frame outlier removal (statistical)
+    outlier_nb_neighbors: int = 20
+    outlier_std_ratio: float = 2.0
     # Pose-graph SLAM
-    lc_interval: int = 15          # check loop closure every N frames
-    lc_min_gap: int = 15           # minimum keyframe gap to consider for loop closure
+    lc_interval: int = 15
+    lc_min_gap: int = 15
     lc_max_correspondence: float = 0.12
     lc_fitness_threshold: float = 0.45
     # Export
     export_path: str = "~/Downloads/map"
-    poisson_depth: int = 9         # octree depth; higher = finer mesh, slower
+    poisson_depth: int = 9
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +183,14 @@ class DepthAccumulatorModule(Module, GlobalPointcloud):
         if cols is not None and len(cols) == len(pts):
             frame_pcd.colors = o3d.utility.Vector3dVector(cols.astype(np.float64))
 
+        # Remove statistical outliers (flying pixels, edge noise) before anything else.
+        frame_pcd, _ = frame_pcd.remove_statistical_outlier(
+            nb_neighbors=self.config.outlier_nb_neighbors,
+            std_ratio=self.config.outlier_std_ratio,
+        )
+        if len(frame_pcd.points) == 0:
+            return
+
         frame_down = frame_pcd.voxel_down_sample(self.config.voxel_size * 2)
 
         with self._lock:
@@ -187,13 +199,17 @@ class DepthAccumulatorModule(Module, GlobalPointcloud):
             window_pts = sum(len(f.points) for f in self._window)
             if self._window and window_pts >= self.config.icp_min_points:
                 target = _merge(self._window).voxel_down_sample(self.config.voxel_size * 3)
-                odom_T, _ = _icp(
+                odom_T, fitness = _icp(
                     frame_down, target,
                     self.config.icp_max_correspondence,
                     self.config.icp_max_iter,
                 )
-                frame_pcd.transform(odom_T)
-                frame_down.transform(odom_T)
+                if fitness >= self.config.icp_min_fitness:
+                    frame_pcd.transform(odom_T)
+                    frame_down.transform(odom_T)
+                else:
+                    # Bad ICP — assume no motion rather than applying a wrong transform.
+                    odom_T = np.eye(4)
 
             self._window.append(frame_down)
             if len(self._window) > self.config.icp_window:
