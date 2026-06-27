@@ -262,13 +262,17 @@ camera_nav_zed_voxel = autoconnect(
     _RERUN_VIZ_VOXEL,
 ).remappings([(HardwareDepthModule, "frame_cloud", "lidar")])
 
-# Nav blueprint: ZEDNavBridge replaces HardwareDepthModule.
-#   - base_transform=None → ZEDCamera publishes world→camera_link directly (1-hop).
-#     With base_transform set (even identity), it publishes world→base_link instead,
-#     which causes the TF lookup to fail silently.
-#   - ZEDNavBridge.lidar / .odometry match VoxelGridMapper ports — no remappings.
-#   - voxel_size=0.06 + carve_columns=False keeps memory bounded without losing
-#     voxels when the camera looks at the same XY column from different heights.
+_RERUN_VIZ_NAV = RerunBridgeModule.blueprint(
+    pubsubs=[LCM()],
+    rerun_open="web",
+    visual_override={
+        "world/lidar": _cloud_points,
+        "world/camera_info": _pinhole_setup,
+    },
+)
+
+# Minimal: ZED → world-frame point cloud in Rerun. Nothing else.
+# base_transform=None so ZEDCamera publishes world→camera_link directly (1-hop TF).
 camera_nav_zed_nav = autoconnect(
     ZEDCamera.blueprint(
         resolution="VGA",
@@ -284,15 +288,9 @@ camera_nav_zed_nav = autoconnect(
     ZEDNavBridge.blueprint(
         camera_name="camera",
         stride=2,
-        max_depth=8.0,
+        max_depth=6.0,
         max_freq=10.0,
         tf_timeout=1.0,
     ),
-    VoxelGridMapper.blueprint(
-        voxel_size=0.06,
-        device="CUDA:0",
-        carve_columns=False,
-        emit_every=1,
-    ),
-    _RERUN_VIZ_VOXEL,
+    _RERUN_VIZ_NAV,
 )
