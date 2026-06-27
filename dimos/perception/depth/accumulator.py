@@ -99,7 +99,7 @@ class Config(ModuleConfig):
     merge_interval: int = 10
     publish_freq: float = 5.0
     # Pose-graph SLAM
-    lc_interval: int = 30          # check loop closure every N frames
+    lc_interval: int = 15          # check loop closure every N frames
     lc_min_gap: int = 15           # minimum keyframe gap to consider for loop closure
     lc_max_correspondence: float = 0.12
     lc_fitness_threshold: float = 0.45
