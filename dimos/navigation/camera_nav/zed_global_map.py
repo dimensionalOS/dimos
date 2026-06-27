@@ -27,6 +27,13 @@ if err != sl.ERROR_CODE.SUCCESS:
     exit(1)
 print("camera open")
 
+# Rerun MUST be spawned before enabling positional tracking.
+# enable_positional_tracking() starts background threads; rr.init(spawn=True)
+# calls fork() which is unsafe after threads exist on macOS → segfault.
+rr.init("zed_map", spawn=True)
+rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
+print("rerun ready")
+
 tp = sl.PositionalTrackingParameters()
 tp.enable_imu_fusion = True
 err = zed.enable_positional_tracking(tp)
@@ -34,10 +41,6 @@ if err != sl.ERROR_CODE.SUCCESS:
     print(f"tracking failed: {err}")
     exit(1)
 print("tracking enabled")
-
-rr.init("zed_map", spawn=True)
-rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
-print("ready")
 
 rt = sl.RuntimeParameters()
 pc = sl.Mat()
@@ -55,7 +58,6 @@ try:
             frame += 1
             continue
 
-        # 4x4 world←camera transform
         T = pose.pose_data.get_data().astype(np.float32)
         R, t = T[:3, :3], T[:3, 3]
 
@@ -72,7 +74,6 @@ try:
 
         xyz = pts[:, :3].astype(np.float32) @ R.T + t
 
-        # voxel map — no duplicates on revisit
         vkeys = np.unique(np.floor(xyz / VOXEL).astype(np.int32), axis=0)
         if len(all_vkeys) == 0:
             all_vkeys = vkeys
@@ -82,7 +83,6 @@ try:
         fps = frame / max(time.monotonic() - t0, 1e-6)
         print(f"frame={frame}  pts={len(pts)}  voxels={len(all_vkeys)}  fps={fps:.1f}")
 
-        # current frame — cap at 20k to avoid Rerun h2 crash
         rgba = pts[:, 3].view(np.uint32)
         r = ((rgba >> 16) & 0xFF).astype(np.uint8)
         g = ((rgba >>  8) & 0xFF).astype(np.uint8)
@@ -91,7 +91,6 @@ try:
         idx = np.random.choice(len(xyz), n, replace=False) if len(xyz) > n else np.arange(len(xyz))
         rr.log("world/cloud", rr.Points3D(positions=xyz[idx], colors=np.column_stack([r[idx], g[idx], b[idx]])))
 
-        # accumulated map every 5 frames
         if frame % 5 == 0:
             centres = (all_vkeys.astype(np.float32) + 0.5) * VOXEL
             rr.log("world/map", rr.Points3D(positions=centres, radii=VOXEL * 0.4))
