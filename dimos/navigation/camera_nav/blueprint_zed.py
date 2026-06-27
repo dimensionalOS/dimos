@@ -61,6 +61,44 @@ _RERUN_VIZ = RerunBridgeModule.blueprint(
     },
 )
 
+_RERUN_VIZ_COMPARE = RerunBridgeModule.blueprint(
+    pubsubs=[LCM()],
+    rerun_open="web",
+    visual_override={
+        "world/global_map": _cloud_points,
+        "world/frame_cloud": _cloud_points,
+        "world/pointcloud": _cloud_points,
+    },
+)
+
+# Compare: ZED SDK native cloud vs our backprojection + accumulation.
+# Rerun shows world/pointcloud (SDK), world/frame_cloud (ours), world/global_map (accumulated).
+camera_nav_zed_compare = autoconnect(
+    ZEDCamera.blueprint(
+        resolution="VGA",
+        enable_depth=True,
+        depth_mode="ULTRA",
+        enable_fill_mode=True,
+        enable_pointcloud=True,
+        enable_tracking=True,
+        enable_imu_fusion=True,
+        set_floor_as_origin=True,
+    ),
+    HardwareDepthModule.blueprint(
+        camera_frame="camera_color_optical_frame",
+        stride=1,
+        max_depth=12.0,
+        max_freq=10.0,
+    ),
+    DepthAccumulatorModule.blueprint(
+        voxel_size=0.03,
+        icp_window=5,
+        merge_interval=10,
+        publish_freq=5.0,
+    ),
+    _RERUN_VIZ_COMPARE,
+)
+
 # Standalone: ZED only, no robot. ZED VIO publishes world←camera_link TF,
 # so the map builds from camera motion alone.
 camera_nav_zed_standalone = autoconnect(
