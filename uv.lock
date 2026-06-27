@@ -40,7 +40,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-06-19T13:31:15.809764Z"
+exclude-newer = "2026-06-20T22:34:37.479985Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -2498,7 +2498,7 @@ requires-dist = [
     { name = "transformers", extras = ["torch"], marker = "extra == 'perception'", specifier = ">=4.53.0,<4.54" },
     { name = "trimesh", marker = "extra == 'manipulation'" },
     { name = "typer", specifier = ">=0.19.2,<1" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'", specifier = ">=4.0" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13'", specifier = ">=4.7" },
     { name = "ultralytics", marker = "extra == 'perception'", specifier = ">=8.3.70" },
     { name = "unitree-sdk2py-dimos", marker = "extra == 'unitree-dds'", specifier = ">=1.0.2" },
     { name = "unitree-webrtc-connect", marker = "extra == 'unitree'", specifier = ">=2.1.2" },
