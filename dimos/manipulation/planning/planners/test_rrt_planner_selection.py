@@ -27,6 +27,7 @@ from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGro
 from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
+from dimos.manipulation.planning.spec.models import CartesianPlanningRequest
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -245,3 +246,25 @@ def test_plan_selected_joint_path_rejects_single_robot_subset_selection() -> Non
     )
 
     assert result.status == PlanningStatus.UNSUPPORTED
+
+
+def test_plan_cartesian_path_returns_unsupported_without_ik_fallback() -> None:
+    group = _group("arm/manipulator", "arm", ("arm/joint1", "arm/joint2"))
+    world = _SelectionWorld(robot_configs={"robot_1": _robot_config("arm", ["joint1", "joint2"])})
+
+    result = RRTConnectPlanner().plan_cartesian_path(
+        cast("WorldSpec", world),
+        CartesianPlanningRequest(
+            selection=_selection(group),
+            group_id="arm/manipulator",
+            start=_joint_state(["arm/joint1", "arm/joint2"], [0.0, 0.0]),
+            target=PoseStamped(position=[0.1, 0.0, 0.0], orientation=[0.0, 0.0, 0.0, 1.0]),
+            target_mode="absolute",
+        ),
+    )
+
+    assert result.status == PlanningStatus.UNSUPPORTED
+    assert "Cartesian planning is not supported" in result.message
+    assert world.config_collision_names == []
+    assert world.edge_collision_names == []
+    assert world.coupled_collision_checks == 0

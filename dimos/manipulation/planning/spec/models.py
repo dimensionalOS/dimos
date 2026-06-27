@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
+    from dimos.manipulation.planning.groups.models import PlanningGroupSelection
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.sensor_msgs.JointState import JointState
@@ -85,6 +86,47 @@ ForwardKinematicsStatus: TypeAlias = Literal[
     "STALE_STATE",
 ]
 """Status for a group-scoped forward-kinematics query."""
+
+CartesianTargetMode: TypeAlias = Literal["absolute", "relative"]
+"""Mode describing whether a Cartesian target is an absolute pose or relative delta."""
+
+CartesianPathMode: TypeAlias = Literal["free", "linear"]
+"""Mode describing requested Cartesian path semantics."""
+
+
+@dataclass(frozen=True)
+class CartesianDelta:
+    """Relative TCP delta for Cartesian planning.
+
+    Translation is meters. Rotation is roll, pitch, yaw in radians. The frame is the
+    frame in which the delta is expressed.
+    """
+
+    translation: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    rotation_rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    frame_id: str = "world"
+
+
+@dataclass(frozen=True)
+class CartesianPlanningRequest:
+    """Planner-native Cartesian path request.
+
+    `selection` defines the selected global joints to plan and return. `group_id`
+    identifies the selected planning group's TCP/target frame whose pose should reach
+    or follow the Cartesian target. `start` contains exactly the selected global joints
+    in caller order.
+    """
+
+    selection: PlanningGroupSelection
+    group_id: PlanningGroupID
+    start: JointState
+    target: PoseStamped | CartesianDelta
+    target_mode: CartesianTargetMode
+    path_mode: CartesianPathMode = "free"
+    reference_frame: str = "world"
+    max_translation_step: float = 0.01
+    max_rotation_step: float = 0.05
+    timeout: float = 10.0
 
 
 @dataclass(frozen=True)

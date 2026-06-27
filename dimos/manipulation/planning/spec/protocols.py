@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.manipulation.planning.spec.models import (
+        CartesianPlanningRequest,
         GeneratedPlan,
         IKResult,
         Obstacle,
@@ -289,6 +290,14 @@ class PlannerSpec(Protocol):
         timeout: float = 10.0,
     ) -> PlanningResult:
         """Plan over an explicit planning-group selection."""
+        ...
+
+    def plan_cartesian_path(
+        self,
+        world: WorldSpec,
+        request: CartesianPlanningRequest,
+    ) -> PlanningResult:
+        """Plan over a Cartesian TCP target for a selected planning group."""
         ...
 
     def get_name(self) -> str:

@@ -33,6 +33,7 @@ from dimos.manipulation.planning.groups.identifiers import (
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import (
+    CartesianPlanningRequest,
     JointPath,
     PlanningResult,
     RobotName,
@@ -240,6 +241,18 @@ class RRTConnectPlanner:
             iterations=result.iterations,
             message=result.message,
             timestamps=result.timestamps,
+        )
+
+    def plan_cartesian_path(
+        self,
+        world: WorldSpec,
+        request: CartesianPlanningRequest,
+    ) -> PlanningResult:
+        """Return explicit unsupported status for Cartesian planner requests."""
+        _ = (world, request)
+        return _create_failure_result(
+            PlanningStatus.UNSUPPORTED,
+            "Cartesian planning is not supported by this planner",
         )
 
     def _plan_multi_robot_selected_joint_path(
