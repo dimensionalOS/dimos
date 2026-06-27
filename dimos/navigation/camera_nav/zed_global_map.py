@@ -50,22 +50,16 @@ def _jet(t: np.ndarray) -> np.ndarray:
 class PointCloudFilter:
     """Raw ZED frame → clean (xyz, rgb, dist) arrays.
 
-    Three-stage rejection:
-      1. SDK-level: RuntimeParameters.confidence_threshold removes low-quality
-         stereo matches before data ever leaves the ZED SDK.
-      2. Geometric: isfinite + depth-range gate.
-      3. Per-pixel confidence map: sl.MEASURE.CONFIDENCE gates on a 0–100 score.
-         This catches edge pixels, reflective surfaces, and low-texture regions
-         that pass the isfinite check but carry unreliable depth — the primary
-         source of white/floating noise voxels.
+    Two-stage rejection:
+      1. SDK-level (RuntimeParameters.confidence_threshold = 50): removes the
+         worst stereo mismatches at source before data reaches Python.
+         Value 50 is deliberately moderate — removes clear garbage without
+         gutting low-texture surfaces or object edges.
+      2. Geometric: isfinite + depth-range gate on the remaining points.
 
     Uses sl.VIEW.LEFT for high-fidelity camera RGB (not the packed float RGBA).
     Stride-2 regular grid: ~40–60 k valid points at VGA, safe for Rerun.
     """
-
-    # Per-pixel confidence threshold (0–100). 70 removes noisy edge/reflective
-    # pixels while keeping the vast majority of reliable surface points.
-    CONF_THRESH = 70
 
     def __init__(self, min_depth: float = 0.3, max_depth: float = 8.0, stride: int = 2):
         self.min_d  = min_depth
@@ -73,7 +67,6 @@ class PointCloudFilter:
         self.stride = stride
         self._img   = sl.Mat()
         self._pc    = sl.Mat()
-        self._conf  = sl.Mat()
 
     def grab(self, zed: sl.Camera) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
         """Return (xyz, rgb, dist) for valid pixels, or None if frame is empty."""
@@ -86,23 +79,16 @@ class PointCloudFilter:
         zed.retrieve_measure(self._pc, sl.MEASURE.XYZRGBA, sl.MEM.CPU)
         xyz_hw = self._pc.get_data()[:, :, :3]      # H×W×3 float32
 
-        # Per-pixel stereo confidence (0 = unreliable, 100 = most reliable)
-        zed.retrieve_measure(self._conf, sl.MEASURE.CONFIDENCE, sl.MEM.CPU)
-        conf_hw = self._conf.get_data()              # H×W float32
-
         # Stride-2 regular grid subsample
-        s        = self.stride
-        xyz_sub  = xyz_hw[::s, ::s, :].reshape(-1, 3).astype(np.float32)
-        rgb_sub  = cam_rgb[::s, ::s, :].reshape(-1, 3)
-        conf_sub = conf_hw[::s, ::s].reshape(-1).astype(np.float32)
+        s       = self.stride
+        xyz_sub = xyz_hw[::s, ::s, :].reshape(-1, 3).astype(np.float32)
+        rgb_sub = cam_rgb[::s, ::s, :].reshape(-1, 3)
 
         dist = np.linalg.norm(xyz_sub, axis=1)
         ok   = (
-            np.isfinite(xyz_sub[:, 0])          # valid stereo match
-            & (dist > self.min_d)               # not too close
-            & (dist < self.max_d)               # not beyond range
-            & np.isfinite(conf_sub)             # confidence itself valid
-            & (conf_sub >= self.CONF_THRESH)    # high-confidence only
+            np.isfinite(xyz_sub[:, 0])   # valid stereo match
+            & (dist > self.min_d)        # not too close
+            & (dist < self.max_d)        # not beyond range
         )
 
         if not ok.any():
@@ -323,13 +309,10 @@ def main() -> None:
     # Activate when SDK 5.4.0 tracking is fixed:
     # pose.enable(zed)
 
-    # SDK-level pre-filtering: discard low-confidence depth before it reaches Python.
-    # confidence_threshold (0–100): keep pixels with confidence ≥ this value.
-    # texture_confidence_threshold: additionally rejects untextured regions (walls,
-    # floors) where stereo matching is ambiguous.
+    # Light SDK-level filter: removes worst stereo mismatches before Python sees them.
+    # 50 is deliberately moderate — keeps edges and low-texture surfaces intact.
     rt = sl.RuntimeParameters()
-    rt.confidence_threshold         = 80
-    rt.texture_confidence_threshold = 80
+    rt.confidence_threshold = 50
 
     frame = 0
     t0    = time.monotonic()
