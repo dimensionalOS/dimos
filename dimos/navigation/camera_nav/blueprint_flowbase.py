@@ -47,12 +47,15 @@ def _cloud_points(cloud):
 
 
 def _pinhole_setup(info):
-    """Log Pinhole to world/color_image so Rerun can display the image in 3D."""
+    """Set up Pinhole for all image entities so Rerun can show them in 3D view."""
     import rerun as rr
     K = info.get_K_matrix()
     if info.width == 0 or info.height == 0:
         return None
-    return [("world/color_image", rr.Pinhole(image_from_camera=K, width=info.width, height=info.height))]
+    pinhole = rr.Pinhole(image_from_camera=K, width=info.width, height=info.height)
+    rr.log("world/color_image", pinhole, static=True)
+    rr.log("world/depth_image", pinhole, static=True)
+    return None  # suppress world/camera_info entity
 
 
 camera_nav_static_trial = autoconnect(
