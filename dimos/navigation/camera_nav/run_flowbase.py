@@ -18,7 +18,8 @@
     python -m dimos.navigation.camera_nav.run_flowbase --address 10.0.0.94  # custom IP
     python -m dimos.navigation.camera_nav.run_flowbase --zed                # ZED Mini stereo
     python -m dimos.navigation.camera_nav.run_flowbase --zed-only           # ZED only, no robot
-    python -m dimos.navigation.camera_nav.run_flowbase --zed-voxel          # ZED → VoxelGridMapper (dimos built-in)
+    python -m dimos.navigation.camera_nav.run_flowbase --zed-nav            # ZED → ZEDNavBridge → VoxelGridMapper (fixes motion update)
+    python -m dimos.navigation.camera_nav.run_flowbase --zed-voxel          # ZED → VoxelGridMapper via HardwareDepthModule
     python -m dimos.navigation.camera_nav.run_flowbase --zed-compare        # SDK cloud vs our pipeline
     python -m dimos.navigation.camera_nav.run_flowbase --trial              # webcam only, no robot
 """
@@ -32,7 +33,8 @@ if __name__ == "__main__":
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--zed", action="store_true", help="ZED Mini stereo camera (ZED SDK required)")
     group.add_argument("--zed-only", action="store_true", help="ZED Mini only, no robot — point cloud quality check")
-    group.add_argument("--zed-voxel", action="store_true", help="ZED → VoxelGridMapper 3D voxel map (dimos built-in)")
+    group.add_argument("--zed-nav", action="store_true", help="ZED → ZEDNavBridge → VoxelGridMapper (fixes motion update, nav-ready odometry)")
+    group.add_argument("--zed-voxel", action="store_true", help="ZED → VoxelGridMapper via HardwareDepthModule")
     group.add_argument("--zed-compare", action="store_true", help="ZED SDK native cloud vs our pipeline side-by-side")
     group.add_argument("--robot-only", action="store_true", help="FlowBase keyboard teleop only, no camera")
     group.add_argument("--trial", action="store_true", help="Laptop webcam only, no robot")
@@ -76,6 +78,10 @@ if __name__ == "__main__":
     elif args.zed_only:
         from dimos.navigation.camera_nav.blueprint_zed import camera_nav_zed_standalone
         ModuleCoordinator.build(camera_nav_zed_standalone).loop()
+
+    elif args.zed_nav:
+        from dimos.navigation.camera_nav.blueprint_zed import camera_nav_zed_nav
+        ModuleCoordinator.build(camera_nav_zed_nav).loop()
 
     elif args.zed_voxel:
         from dimos.navigation.camera_nav.blueprint_zed import camera_nav_zed_voxel

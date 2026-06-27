@@ -28,6 +28,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.navigation.camera_nav.recorder import CameraNavRecorder
+from dimos.navigation.camera_nav.zed_nav_bridge import ZEDNavBridge
 from dimos.perception.depth.accumulator import DepthAccumulatorModule
 from dimos.perception.depth.hardware_depth_module import HardwareDepthModule
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
@@ -259,3 +260,33 @@ camera_nav_zed_voxel = autoconnect(
     ),
     _RERUN_VIZ_VOXEL,
 ).remappings([(HardwareDepthModule, "frame_cloud", "lidar")])
+
+# Nav blueprint: ZEDNavBridge replaces HardwareDepthModule.
+# - Direct 1-hop TF lookup (world→camera_link) fixes the motion-update bug.
+# - Output ports named lidar + odometry match VoxelGridMapper / RayTracingVoxelMap directly.
+camera_nav_zed_nav = autoconnect(
+    ZEDCamera.blueprint(
+        resolution="VGA",
+        enable_depth=True,
+        depth_mode="NEURAL",
+        enable_fill_mode=True,
+        enable_pointcloud=False,
+        enable_tracking=True,
+        enable_imu_fusion=True,
+        set_floor_as_origin=True,
+    ),
+    ZEDNavBridge.blueprint(
+        camera_name="camera",
+        stride=2,
+        max_depth=8.0,
+        max_freq=10.0,
+        tf_timeout=1.0,
+    ),
+    VoxelGridMapper.blueprint(
+        voxel_size=0.05,
+        device="CUDA:0",
+        carve_columns=True,
+        emit_every=1,
+    ),
+    _RERUN_VIZ_VOXEL,
+)
