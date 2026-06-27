@@ -39,7 +39,6 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.spec import depth as depth_spec
 from dimos.spec import perception
@@ -90,7 +89,6 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera, depth_spec.
     pointcloud: Out[PointCloud2]
     camera_info: Out[CameraInfo]
     depth_camera_info: Out[CameraInfo]
-    imu: Out[Imu]
 
     @property
     def _camera_link(self) -> str:
@@ -133,7 +131,6 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera, depth_spec.
         self._stream_width = self.config.width
         self._stream_height = self.config.height
         self._sl_camera_info: sl.CameraInformation | None = None
-        self._sensors_data: sl.SensorsData | None = None
 
     def _publish_camera_info(self) -> None:
         ts = time.time()
@@ -185,7 +182,6 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera, depth_spec.
             self._stream_width = self._sl_camera_info.camera_configuration.resolution.width
             self._stream_height = self._sl_camera_info.camera_configuration.resolution.height
 
-        self._sensors_data = sl.SensorsData()
         self._build_camera_info()
         self._get_extrinsics()
 
@@ -304,24 +300,6 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera, depth_spec.
                 continue
 
             ts = time.time()
-
-            # IMU — read synchronised to the grabbed frame.
-            # angular_velocity (rad/s) and linear_acceleration (m/s²) are in the
-            # camera body frame.  orientation is the ZED EKF orientation estimate.
-            if self._sensors_data is not None:
-                self._zed.get_sensors_data(self._sensors_data, sl.TIME_REFERENCE.IMAGE)
-                imu_data = self._sensors_data.get_imu_data()
-                if imu_data.is_available:
-                    av = imu_data.get_angular_velocity()
-                    la = imu_data.get_linear_acceleration()
-                    ori = imu_data.get_pose().get_orientation().get()
-                    self.imu.publish(Imu(
-                        angular_velocity=Vector3(float(av[0]), float(av[1]), float(av[2])),
-                        linear_acceleration=Vector3(float(la[0]), float(la[1]), float(la[2])),
-                        orientation=Quaternion(float(ori[0]), float(ori[1]), float(ori[2]), float(ori[3])),
-                        frame_id="imu_link",
-                        ts=ts,
-                    ))
 
             color_img = None
             if self._image_left is not None:
@@ -505,7 +483,6 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera, depth_spec.
         self._depth_map = None
         self._pose = None
         self._sl_camera_info = None
-        self._sensors_data = None
         self._tracking_enabled = False
         super().stop()
 
