@@ -23,6 +23,7 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.manipulation.planning.factory import create_kinematics
 from dimos.manipulation.planning.groups.models import PlanningGroup
@@ -166,12 +167,12 @@ def _fake_modules(converge: bool = True) -> tuple[ModuleType, ModuleType]:
     return pink, pinocchio
 
 
-def _install_fake_modules(converge: bool = True) -> None:
+def _install_fake_modules(mocker: MockerFixture, converge: bool = True) -> None:
     pink, pinocchio = _fake_modules(converge=converge)
-    pink_ik_module.pink = pink
-    pink_ik_module.pinocchio = pinocchio
-    pink_ik_module.qpsolvers = SimpleNamespace(available_solvers=["proxqp"])
-    pink_ik_module._PINK_IMPORT_ERROR = None
+    mocker.patch.object(pink_ik_module, "pink", pink)
+    mocker.patch.object(pink_ik_module, "pinocchio", pinocchio)
+    mocker.patch.object(pink_ik_module, "qpsolvers", SimpleNamespace(available_solvers=["proxqp"]))
+    mocker.patch.object(pink_ik_module, "_PINK_IMPORT_ERROR", None)
 
 
 def _robot_config() -> RobotModelConfig:
@@ -194,15 +195,9 @@ def _pose_stamped(x: float, y: float, z: float, yaw: float = 0.0) -> PoseStamped
     )
 
 
-class _TestPinkIK(PinkIK):
-    def __init__(self, converge: bool = True) -> None:
-        self.config = PinkIKConfig(max_iterations=3)
-        _install_fake_modules(converge=converge)
-        self._robot_model_contexts = {}
-
-
-def _pink_ik(converge: bool = True) -> PinkIK:
-    return _TestPinkIK(converge=converge)
+def _pink_ik(mocker: MockerFixture, converge: bool = True) -> PinkIK:
+    _install_fake_modules(mocker, converge=converge)
+    return PinkIK(PinkIKConfig(max_iterations=3))
 
 
 def _context() -> _PinkRobotContext:
@@ -361,15 +356,12 @@ class _CountingMultiRobotWorld(_FakeMultiRobotWorld):
 
 
 def test_create_kinematics_pink_missing_dependency_is_actionable(
-    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
 ) -> None:
-    def missing_dependencies(_solver: str) -> object:
-        raise PinkIKDependencyError(
-            "Pink IK backend requires Pink. Install manipulation dependencies with: "
-            "uv sync --extra manipulation. PyPI package: pin-pink; import name: pink."
-        )
-
-    monkeypatch.setattr(pink_ik_module, "_check_optional_dependencies", missing_dependencies)
+    mocker.patch.object(pink_ik_module, "_PINK_IMPORT_ERROR", ImportError("missing pink"))
+    mocker.patch.object(pink_ik_module, "pink", None)
+    mocker.patch.object(pink_ik_module, "pinocchio", None)
+    mocker.patch.object(pink_ik_module, "qpsolvers", None)
 
     with pytest.raises(PinkIKDependencyError) as exc_info:
         create_kinematics("pink")
@@ -378,30 +370,25 @@ def test_create_kinematics_pink_missing_dependency_is_actionable(
 
 
 def test_create_kinematics_pink_unavailable_solver_mentions_manipulation_extra(
-    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
 ) -> None:
-    def unavailable_solver(_solver: str) -> object:
-        raise PinkIKDependencyError(
-            "Pink IK solver 'proxqp' is not available from qpsolvers. "
-            "Install manipulation dependencies with uv sync --extra manipulation."
-        )
-
-    monkeypatch.setattr(pink_ik_module, "_check_optional_dependencies", unavailable_solver)
+    _install_fake_modules(mocker)
+    mocker.patch.object(pink_ik_module, "qpsolvers", SimpleNamespace(available_solvers=[]))
 
     with pytest.raises(PinkIKDependencyError, match="--extra manipulation"):
         create_kinematics("pink")
 
 
-def test_create_kinematics_pink_returns_backend(monkeypatch: pytest.MonkeyPatch) -> None:
-    _install_fake_modules()
+def test_create_kinematics_pink_returns_backend(mocker: MockerFixture) -> None:
+    _install_fake_modules(mocker)
 
     assert isinstance(create_kinematics("pink"), PinkIK)
 
 
 def test_create_kinematics_pink_config_passes_tuning(
-    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
 ) -> None:
-    _install_fake_modules()
+    _install_fake_modules(mocker)
 
     ik = create_kinematics(config=PinkKinematicsConfig(max_iterations=7, dt=0.02, posture_cost=0.0))
 
@@ -411,8 +398,8 @@ def test_create_kinematics_pink_config_passes_tuning(
     assert ik.config.posture_cost == 0.0
 
 
-def test_pink_ik_config_overrides_are_applied(monkeypatch: pytest.MonkeyPatch) -> None:
-    _install_fake_modules()
+def test_pink_ik_config_overrides_are_applied(mocker: MockerFixture) -> None:
+    _install_fake_modules(mocker)
 
     ik = PinkIK(PinkIKConfig(solver="proxqp", dt=0.1), max_iterations=7, posture_cost=0.0)
 
@@ -442,9 +429,9 @@ def test_seed_for_robot_config_uses_complete_global_seed_without_world() -> None
 
 
 def test_solve_pose_targets_complete_seed_does_not_read_world_state(
-    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ik = _pink_ik(converge=True)
+    ik = _pink_ik(mocker, converge=True)
     context = _context()
     context.frame_name = "wrist_tool"
     context.frame_id = 1
@@ -476,9 +463,9 @@ def test_solve_pose_targets_complete_seed_does_not_read_world_state(
 
 
 def test_solve_pose_targets_incomplete_seed_reads_world_state_once(
-    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ik = _pink_ik(converge=True)
+    ik = _pink_ik(mocker, converge=True)
     context = _context()
     context.frame_name = "wrist_tool"
     context.frame_id = 1
@@ -540,8 +527,8 @@ def test_uncontrolled_urdf_joints_are_locked_out_of_pink_model() -> None:
     assert seen_locked_joint_ids == [[4]]
 
 
-def test_solve_single_returns_successful_ik_result() -> None:
-    ik = _pink_ik(converge=True)
+def test_solve_single_returns_successful_ik_result(mocker: MockerFixture) -> None:
+    ik = _pink_ik(mocker, converge=True)
     target = np.eye(4)
     target[:3, 3] = [0.1, 0.2, 0.3]
 
@@ -561,8 +548,8 @@ def test_solve_single_returns_successful_ik_result() -> None:
     assert result.joint_state.position == pytest.approx([0.2, 0.1, 0.3])
 
 
-def test_solve_single_reports_non_convergence() -> None:
-    ik = _pink_ik(converge=False)
+def test_solve_single_reports_non_convergence(mocker: MockerFixture) -> None:
+    ik = _pink_ik(mocker, converge=False)
     target = np.eye(4)
     target[:3, 3] = [0.1, 0.0, 0.0]
 
@@ -580,8 +567,10 @@ def test_solve_single_reports_non_convergence() -> None:
     assert "did not converge" in result.message
 
 
-def test_solve_does_not_filter_collision_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
-    ik = _pink_ik(converge=True)
+def test_solve_does_not_filter_collision_candidates(
+    mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ik = _pink_ik(mocker, converge=True)
     context = _context()
     _patch_robot_contexts(monkeypatch, ik, {"tool": context})
 
@@ -600,9 +589,9 @@ def test_solve_does_not_filter_collision_candidates(monkeypatch: pytest.MonkeyPa
 
 
 def test_solve_pose_targets_returns_selected_resolved_joints_and_group_tip(
-    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ik = _pink_ik(converge=True)
+    ik = _pink_ik(mocker, converge=True)
     context = _context()
     context.frame_name = "wrist_tool"
     context.frame_id = 1
@@ -648,9 +637,9 @@ def test_solve_pose_targets_returns_selected_resolved_joints_and_group_tip(
 
 
 def test_solve_pose_targets_same_robot_uses_one_multi_frame_solve(
-    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ik = _pink_ik(converge=True)
+    ik = _pink_ik(mocker, converge=True)
     wrist_context = _context()
     wrist_context.frame_name = "wrist_tool"
     wrist_context.frame_id = 1
@@ -709,9 +698,9 @@ def test_solve_pose_targets_same_robot_uses_one_multi_frame_solve(
 
 
 def test_solve_pose_targets_same_robot_builds_one_model_context(
-    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ik = _pink_ik(converge=True)
+    ik = _pink_ik(mocker, converge=True)
     world = _FakeWorld(collision_free=True)
     tool_group = PlanningGroup(
         id="arm/tool",
@@ -764,9 +753,9 @@ def test_solve_pose_targets_same_robot_builds_one_model_context(
 
 
 def test_solve_multi_frame_updates_fk_once_per_iteration(
-    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ik = _pink_ik(converge=True)
+    ik = _pink_ik(mocker, converge=True)
     ik.config = PinkIKConfig(max_iterations=1)
     pinocchio = cast("Any", pink_ik_module.pinocchio)
     original_forward_kinematics = pinocchio.forwardKinematics
@@ -799,8 +788,10 @@ def test_solve_multi_frame_updates_fk_once_per_iteration(
     assert forward_calls == 1
 
 
-def test_target_in_model_frame_converts_world_pose_through_robot_base() -> None:
-    ik = _pink_ik(converge=True)
+def test_target_in_model_frame_converts_world_pose_through_robot_base(
+    mocker: MockerFixture,
+) -> None:
+    ik = _pink_ik(mocker, converge=True)
     config = _robot_config()
     config.base_pose = _pose_stamped(1.0, 2.0, 0.0, yaw=np.pi / 2.0)
     target_world = _pose_stamped(0.8, 2.1, 0.3, yaw=np.pi / 2.0)
@@ -812,9 +803,9 @@ def test_target_in_model_frame_converts_world_pose_through_robot_base() -> None:
 
 
 def test_solve_pose_targets_passes_world_target_to_solver_in_model_frame(
-    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ik = _pink_ik(converge=True)
+    ik = _pink_ik(mocker, converge=True)
     context = _context()
     context.frame_name = "wrist_tool"
     context.frame_id = 1
@@ -854,9 +845,9 @@ def test_solve_pose_targets_passes_world_target_to_solver_in_model_frame(
 
 
 def test_solve_pose_targets_cross_robot_combines_global_joint_names(
-    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ik = _pink_ik(converge=True)
+    ik = _pink_ik(mocker, converge=True)
     world = _FakeMultiRobotWorld()
     left_group = PlanningGroup(
         id="left/arm",
@@ -920,9 +911,9 @@ def test_solve_pose_targets_cross_robot_combines_global_joint_names(
 
 
 def test_solve_pose_targets_returns_first_robot_failure_before_touching_later_limits(
-    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ik = _pink_ik(converge=True)
+    ik = _pink_ik(mocker, converge=True)
     world = _CountingMultiRobotWorld()
     left_group = PlanningGroup(
         id="left/arm",
@@ -967,9 +958,9 @@ def test_solve_pose_targets_returns_first_robot_failure_before_touching_later_li
 
 
 def test_solve_pose_targets_auxiliary_robot_does_not_read_joint_limits(
-    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ik = _pink_ik(converge=True)
+    ik = _pink_ik(mocker, converge=True)
     world = _CountingMultiRobotWorld()
     left_group = PlanningGroup(
         id="left/arm",
@@ -1016,8 +1007,10 @@ def test_solve_pose_targets_auxiliary_robot_does_not_read_joint_limits(
     assert world.joint_limit_calls == ["left_robot"]
 
 
-def test_solve_retries_after_joint_limit_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    ik = _pink_ik(converge=True)
+def test_solve_retries_after_joint_limit_failure(
+    mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ik = _pink_ik(mocker, converge=True)
     context = _context()
     _patch_robot_contexts(monkeypatch, ik, {"tool": context})
     calls = 0
@@ -1042,7 +1035,7 @@ def test_solve_retries_after_joint_limit_failure(monkeypatch: pytest.MonkeyPatch
             iterations=1,
         )
 
-    monkeypatch.setattr(ik, "_solve_single", fake_solve_single)
+    solve_single = mocker.patch.object(ik, "_solve_single", side_effect=fake_solve_single)
 
     result = ik.solve(
         world=cast("Any", _FakeWorld(collision_free=True)),
@@ -1054,5 +1047,5 @@ def test_solve_retries_after_joint_limit_failure(monkeypatch: pytest.MonkeyPatch
         max_attempts=2,
     )
 
-    assert calls == 2
+    assert solve_single.call_count == 2
     assert result.status == IKStatus.SUCCESS

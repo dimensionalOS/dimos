@@ -95,7 +95,7 @@ def _go2_rerun_blueprint() -> Any:
     )
 
 
-rerun_config = {
+rerun_config: dict[str, Any] = {
     "blueprint": _go2_rerun_blueprint,
     # Custom converters for specific rerun entity paths
     # Normally all these would be specified in their respectative modules

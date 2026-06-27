@@ -1,6 +1,8 @@
 # Manipulation
 
-Motion planning and teleoperation for robotic manipulators. Uses Drake for physics simulation and optional Meshcat or Viser planning visualization.
+Motion planning and teleoperation for robotic manipulators. Drake remains the default
+world backend, RoboPlan is available as an optional planning backend, and
+manipulation visualization supports Meshcat or Viser.
 
 ## Quick Start
 
@@ -76,6 +78,67 @@ preview()               # Preview in Meshcat
 execute()               # Execute via coordinator
 ```
 
+### Planning backend selection
+
+Manipulation planning separates the world backend from the planner algorithm:
+
+- `world_backend` selects the robot/world/collision representation.
+- `planner_name` selects the path-planning algorithm.
+- `kinematics.backend` selects the IK backend. The legacy `kinematics_name`
+  field remains available as a compatibility shim.
+
+Drake remains the default:
+
+```bash
+dimos run xarm7-planner-coordinator
+```
+
+RoboPlan is available as an optional backend for evaluating a non-Drake world
+implementation. Select it explicitly with module options:
+
+```bash
+dimos run xarm7-planner-coordinator \
+  -o manipulationmodule.world_backend=roboplan \
+  -o manipulationmodule.planner_name=rrt_connect
+```
+
+Valid combinations:
+
+| `world_backend` | `planner_name` | `kinematics.backend` | Status |
+|-----------------|----------------|-------------------|--------|
+| `drake` | `rrt_connect` | `pink` | Default path |
+| `drake` | `rrt_connect` | `jacobian` | Legacy Jacobian IK |
+| `drake` | `rrt_connect` | `drake_optimization` | Drake-only IK |
+| `roboplan` | `rrt_connect` | `pink` or `jacobian` | Generic RRT over RoboPlan collision checks |
+| `roboplan` | `roboplan` | `pink` or `jacobian` | RoboPlan-native planner, using the RoboPlan world object |
+
+Invalid combinations fail during startup instead of waiting for the first plan
+request. For example, `planner_name=roboplan` requires
+`world_backend=roboplan`, and `kinematics.backend=drake_optimization` requires
+`world_backend=drake`.
+
+Install the manipulation dependencies:
+
+```bash
+uv sync --extra manipulation --inexact
+```
+
+The `manipulation` extra includes RoboPlan via `roboplan` from PyPI.
+The `--inexact` flag preserves other extras already installed in your current
+environment.
+
+Safety behavior for unsupported RoboPlan features:
+
+- Planning-critical unsupported inputs fail loudly before planning. Examples
+  include unsupported obstacle geometry, unavailable robot loading APIs, or
+  unavailable collision query APIs. RoboPlan worlds generate a minimal SRDF from
+  the DimOS robot config, including configured collision-exclusion pairs.
+- Unverified non-critical query methods raise explicit `NotImplementedError`.
+  In particular, signed minimum-distance semantics are not implemented for
+  RoboPlan until a safe equivalent is verified.
+- Embedded Meshcat visualization requires a world implementing `VisualizationSpec`;
+  use Viser or `none` with the RoboPlan backend.
+
 ### Planning Visualization
 
 Manipulation visualization is configured on `ManipulationModuleConfig.visualization`.
@@ -93,8 +156,7 @@ CLI example:
 
 ```bash
 uv run dimos run xarm7-planner-coordinator \
-  -o manipulationmodule.visualization.backend=viser \
-  -o manipulationmodule.visualization.allow_plan_execute=true
+  -o manipulationmodule.visualization.backend=viser
 ```
 
 Blueprint example:
@@ -111,7 +173,6 @@ manipulation = ManipulationModule.blueprint(
             "port": 8095,
             "open_browser": True,
             "panel_enabled": True,  # default; set False for scene-only Viser
-            "allow_plan_execute": False,  # keep panel execution blocked by default
         },
     )
 )
@@ -135,8 +196,8 @@ after the planning world has added its robots. This snapshot maps world robot ID
 visuals without `WorldMonitor` depending on Viser-specific hooks. Embedded Meshcat visualization
 does not need extra setup because it observes the Drake world directly.
 
-Panel execution is opt-in. Leave `allow_plan_execute=False` unless the operator intentionally
-wants the browser panel to call the existing manipulation execution path.
+When the Viser panel is enabled, it can call the existing manipulation execution path after a
+fresh feasible plan is available and the current robot joints still match the plan start.
 
 ### Perception + Agent
 
@@ -149,7 +210,7 @@ XARM7_IP=<ip> dimos run coordinator-xarm7 xarm-perception-agent
 
 ```
 KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
-  (pygame UI)              (100Hz tick loop)      (Drake + Meshcat)
+  (pygame UI)              (100Hz tick loop)      (WorldSpec backend)
        │                        │                       │
   PoseStamped            CartesianIK task         RRT planner
   commands               (Pinocchio IK)           JacobianIK
@@ -159,7 +220,7 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 
 - **KeyboardTeleopModule** — Pygame UI publishing cartesian pose commands
 - **ControlCoordinator** — 100Hz control loop with mock or real hardware adapters
-- **ManipulationModule** — Drake physics, Meshcat viz, RRT motion planning, obstacle management
+- **ManipulationModule** — world backend, optional visualization, RRT motion planning, obstacle management
 
 Internally, planning code depends on `WorldSpec` for world, collision, and
 kinematics behavior. Meshcat preview and publishing are exposed separately

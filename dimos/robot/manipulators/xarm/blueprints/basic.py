@@ -37,7 +37,6 @@ from dimos.robot.manipulators.xarm.config import (
 xarm6_planner_only = ManipulationModule.blueprint(
     robots=[make_xarm6_model_config(name="arm")],
     planning_timeout=10.0,
-    visualization={"backend": "meshcat"},
 )
 
 dual_xarm6_planner = ManipulationModule.blueprint(
@@ -46,7 +45,6 @@ dual_xarm6_planner = ManipulationModule.blueprint(
         make_xarm6_model_config(name="right_arm", y_offset=-0.5),
     ],
     planning_timeout=10.0,
-    visualization={"backend": "meshcat"},
 )
 
 _left_xarm6_hw = make_xarm_hardware(
