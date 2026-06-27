@@ -18,10 +18,11 @@ import numpy as np
 import pyzed.sl as sl
 import rerun as rr
 
-VOXEL     = 0.08    # 8 cm voxel grid
-MIN_DEPTH = 0.30
-MAX_DEPTH = 8.00
-MAX_VOXELS = 500_000  # coarsen above this threshold
+VOXEL      = 0.08      # 8 cm voxel grid
+MIN_DEPTH  = 0.30
+MAX_DEPTH  = 8.00
+MAX_VOXELS = 500_000   # coarsen above this threshold
+MAX_VIZ    = 30_000    # max points sent to Rerun per frame (avoid h2 crash)
 
 
 def _height_colors(z: np.ndarray) -> np.ndarray:
@@ -83,10 +84,17 @@ try:
             frame += 1
             continue
 
-        # 4x4 homogeneous transform (row-major flat list of 16 floats)
-        T = np.array(pose.pose_data.m, dtype=np.float32).reshape(4, 4)
-        R = T[:3, :3]
-        t = T[:3, 3]
+        # Translation: (3,) float array
+        tr = pose.get_translation(sl.Translation())
+        t  = np.array(tr.get(), dtype=np.float32)
+
+        # Rotation: 3×3 matrix
+        rm = pose.get_rotation_matrix(sl.Rotation())
+        R  = np.array(rm.get_data(), dtype=np.float32)[:3, :3]
+
+        if not (np.isfinite(t).all() and np.isfinite(R).all()):
+            frame += 1
+            continue
 
         # ── Point cloud ───────────────────────────────────────────────────────
         zed.retrieve_measure(pc, sl.MEASURE.XYZRGBA, sl.MEM.CPU)
@@ -103,12 +111,10 @@ try:
 
         # ── Transform to world frame ──────────────────────────────────────────
         xyz_world = pts[:, :3].astype(np.float32) @ R.T + t
-
-        # ── Decode colours ────────────────────────────────────────────────────
-        rgba = pts[:, 3].view(np.uint32)
-        r_ch = ((rgba >> 16) & 0xFF).astype(np.uint8)
-        g_ch = ((rgba >>  8) & 0xFF).astype(np.uint8)
-        b_ch = ( rgba        & 0xFF).astype(np.uint8)
+        # Drop any points that became NaN/Inf after transform
+        finite_mask = np.isfinite(xyz_world).all(axis=1)
+        xyz_world = xyz_world[finite_mask]
+        pts        = pts[finite_mask]
 
         # ── Voxel fusion — vectorised, no Python loops ────────────────────────
         frame_vkeys = np.floor(xyz_world / voxel).astype(np.int32)
@@ -128,11 +134,21 @@ try:
         fps = frame / max(time.monotonic() - t0, 1e-6)
         print(f"frame={frame}  pts={len(pts)}  voxels={len(all_vkeys)}  fps={fps:.1f}")
 
-        # ── Rerun: current frame (every frame) ───────────────────────────────
-        rr.log("world/cloud", rr.Points3D(
-            positions=xyz_world,
-            colors=np.column_stack([r_ch, g_ch, b_ch]),
-        ))
+        # ── Rerun: current frame — subsample to avoid h2 crash ───────────────
+        rgba = pts[:, 3].view(np.uint32)
+        r_ch = ((rgba >> 16) & 0xFF).astype(np.uint8)
+        g_ch = ((rgba >>  8) & 0xFF).astype(np.uint8)
+        b_ch = ( rgba        & 0xFF).astype(np.uint8)
+
+        if len(xyz_world) > MAX_VIZ:
+            idx      = np.random.choice(len(xyz_world), MAX_VIZ, replace=False)
+            xyz_viz  = xyz_world[idx]
+            rgb_viz  = np.column_stack([r_ch[idx], g_ch[idx], b_ch[idx]])
+        else:
+            xyz_viz = xyz_world
+            rgb_viz = np.column_stack([r_ch, g_ch, b_ch])
+
+        rr.log("world/cloud", rr.Points3D(positions=xyz_viz, colors=rgb_viz))
 
         # ── Rerun: global map (every 5 frames) ────────────────────────────────
         if frame % 5 == 0:
