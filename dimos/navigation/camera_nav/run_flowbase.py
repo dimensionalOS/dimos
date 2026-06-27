@@ -84,36 +84,5 @@ if __name__ == "__main__":
         ModuleCoordinator.build(_make_zed_teleop(address=args.address)).loop()
 
     else:
-        from dimos.navigation.camera_nav.blueprint_flowbase import (
-            _make_flowbase_coordinator,
-            _CAMERA_MOUNT,
-            _cloud_points,
-        )
-        from dimos.core.coordination.blueprints import autoconnect
-        from dimos.hardware.drive_trains.flowbase.odom_tf import FlowBaseOdomModule
-        from dimos.hardware.sensors.camera.module import CameraModule
-        from dimos.navigation.camera_nav.recorder import CameraNavRecorder
-        from dimos.perception.depth.accumulator import DepthAccumulatorModule
-        from dimos.perception.depth.monocular_depth_module import MonocularDepthModule
-        from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-        from dimos.visualization.rerun.bridge import RerunBridgeModule
-
-        from dimos.navigation.camera_nav.blueprint_flowbase import _pinhole_setup
-        blueprint = autoconnect(
-            _make_flowbase_coordinator(address=args.address),
-            FlowBaseOdomModule.blueprint(),
-            CameraModule.blueprint(transform=_CAMERA_MOUNT),
-            MonocularDepthModule.blueprint(),
-            DepthAccumulatorModule.blueprint(),
-            CameraNavRecorder.blueprint(db_path="traversal.db"),
-            RerunBridgeModule.blueprint(
-                pubsubs=[LCM()],
-                rerun_open="web",
-                visual_override={
-                    "world/global_map": _cloud_points,
-                    "world/frame_cloud": _cloud_points,
-                    "world/camera_info": _pinhole_setup,
-                },
-            ),
-        )
-        ModuleCoordinator.build(blueprint).loop()
+        from dimos.navigation.camera_nav.blueprint_flowbase import camera_nav_flowbase_teleop
+        ModuleCoordinator.build(camera_nav_flowbase_teleop).loop()
