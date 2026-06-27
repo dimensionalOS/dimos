@@ -58,6 +58,7 @@ class JointTrajectoryGenerator:
         max_velocity: list[float] | float = 1.0,
         max_acceleration: list[float] | float = 2.0,
         points_per_segment: int = 50,
+        minimum_segment_duration: float = 0.01,
     ) -> None:
         """
         Initialize trajectory generator.
@@ -70,6 +71,7 @@ class JointTrajectoryGenerator:
         """
         self.num_joints = num_joints
         self.points_per_segment = points_per_segment
+        self.minimum_segment_duration = minimum_segment_duration
 
         # Initialize limits
         self.max_velocity: list[float] = []
@@ -169,7 +171,7 @@ class JointTrajectoryGenerator:
             segment_duration = max(segment_duration, t)
 
         # Ensure minimum duration
-        segment_duration = max(segment_duration, 0.01)
+        segment_duration = max(segment_duration, self.minimum_segment_duration)
 
         # Generate points along the segment
         points: list[TrajectoryPoint] = []

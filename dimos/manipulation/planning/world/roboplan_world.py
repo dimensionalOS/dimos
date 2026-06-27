@@ -25,6 +25,7 @@ from collections.abc import Iterable
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
+import importlib
 from itertools import combinations, pairwise
 from math import atan2, sqrt
 from pathlib import Path
@@ -47,13 +48,27 @@ except ImportError as exc:
 
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.groups.utils import joint_target_to_global_names
-from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
-from dimos.manipulation.planning.spec.models import Obstacle, PlanningResult, WorldRobotID
+from dimos.manipulation.planning.spec.config import (
+    RobotModelConfig,
+    TrajectoryParametrizationConfig,
+)
+from dimos.manipulation.planning.spec.enums import (
+    ObstacleType,
+    ParametrizationStatus,
+    PlanningStatus,
+)
+from dimos.manipulation.planning.spec.models import (
+    GeneratedPlan,
+    GeneratedTrajectory,
+    Obstacle,
+    PlanningResult,
+    WorldRobotID,
+)
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.manipulation.planning.utils.path_utils import compute_path_length
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix
 
@@ -136,6 +151,9 @@ class RoboPlanWorld:
         self._enable_viz = enable_viz
         self._max_generated_composite_groups = max_generated_composite_groups
         self._selected_start_tolerance = selected_start_tolerance
+        self._trajectory_parametrization_config = TrajectoryParametrizationConfig(
+            backend="roboplan"
+        )
         if enable_viz:
             logger.warning("RoboPlanWorld does not currently provide manipulation visualization")
 
@@ -492,10 +510,213 @@ class RoboPlanWorld:
         )
 
     def get_name(self) -> str:
-        """Get planner name."""
-        return "RoboPlan"
+        """Get backend name."""
+        return "roboplan"
+
+    def configure_trajectory_parametrization(self, config: TrajectoryParametrizationConfig) -> None:
+        """Configure RoboPlan-backed trajectory parametrization."""
+        if config.backend != "roboplan":
+            raise ValueError("RoboPlanWorld only supports backend='roboplan'")
+        self._trajectory_parametrization_config = config
+
+    def parametrize(
+        self,
+        plan: GeneratedPlan,
+        *,
+        speed_scale: float = 1.0,
+    ) -> GeneratedTrajectory:
+        """Time-parametrize a geometric generated plan using RoboPlan TOPP-RA."""
+        if not plan.is_success():
+            return self._trajectory_parametrization_failure(
+                plan,
+                ParametrizationStatus.INVALID_PLAN,
+                "GeneratedPlan is not successful",
+                speed_scale=speed_scale,
+            )
+        if speed_scale <= 0.0:
+            return self._trajectory_parametrization_failure(
+                plan,
+                ParametrizationStatus.INVALID_PLAN,
+                "speed_scale must be positive",
+                speed_scale=speed_scale,
+            )
+        if len(plan.path) < 2:
+            return self._trajectory_parametrization_failure(
+                plan,
+                ParametrizationStatus.INVALID_PLAN,
+                "GeneratedPlan must contain at least two waypoints",
+                speed_scale=speed_scale,
+            )
+        try:
+            self._require_finalized()
+            roboplan_toppra = importlib.import_module("roboplan.toppra")
+            group_data = self._group_data_for_selection_ids(plan.group_ids)
+            joint_path = self._generated_plan_to_roboplan_joint_path(plan, group_data)
+            options = self._roboplan_toppra_options(roboplan_toppra, speed_scale=speed_scale)
+            self._set_scene_current_q(self._live_context)
+            native_trajectory = roboplan_toppra.PathParameterizerTOPPRA(
+                self._require_scene(), group_data.group_name
+            ).generate(joint_path, options)
+            return self._roboplan_trajectory_to_generated(
+                plan,
+                group_data,
+                native_trajectory,
+                speed_scale=speed_scale,
+            )
+        except ImportError:
+            return self._trajectory_parametrization_failure(
+                plan,
+                ParametrizationStatus.BACKEND_UNAVAILABLE,
+                "RoboPlan trajectory parametrization requires roboplan.toppra. "
+                "Install the manipulation extra before selecting backend='roboplan'.",
+                speed_scale=speed_scale,
+            )
+        except ValueError as exc:
+            return self._trajectory_parametrization_failure(
+                plan,
+                ParametrizationStatus.INVALID_PLAN,
+                str(exc),
+                speed_scale=speed_scale,
+            )
+        except Exception as exc:
+            return self._trajectory_parametrization_failure(
+                plan,
+                ParametrizationStatus.FAILED,
+                f"RoboPlan trajectory parametrization failed: {exc}",
+                speed_scale=speed_scale,
+            )
 
     # Internals
+
+    def _trajectory_parametrization_failure(
+        self,
+        plan: GeneratedPlan,
+        status: ParametrizationStatus,
+        message: str,
+        *,
+        speed_scale: float = 1.0,
+    ) -> GeneratedTrajectory:
+        return GeneratedTrajectory(
+            status=status,
+            message=message,
+            speed_scale=speed_scale,
+            source_group_ids=plan.group_ids,
+            source_plan_status=plan.status,
+            source_plan_message=plan.message,
+        )
+
+    def _generated_plan_to_roboplan_joint_path(
+        self,
+        plan: GeneratedPlan,
+        group_data: _RoboPlanGroupData,
+    ) -> Any:
+        expected_global_names = [
+            group_data.native_to_global_joint_name[native_name]
+            for native_name in group_data.native_joint_names
+        ]
+        positions: list[list[float]] = []
+        for waypoint in plan.path:
+            if len(waypoint.name) != len(waypoint.position):
+                raise ValueError("Generated-plan waypoint name and position lengths must match")
+            positions_by_name = {
+                name: float(position)
+                for name, position in zip(waypoint.name, waypoint.position, strict=True)
+            }
+            try:
+                positions.append([positions_by_name[name] for name in expected_global_names])
+            except KeyError as exc:
+                raise ValueError(
+                    f"GeneratedPlan waypoint is missing selected joint '{exc.args[0]}'"
+                ) from exc
+        joint_path = roboplan_core.JointPath()
+        joint_path.joint_names = list(group_data.native_joint_names)
+        joint_path.positions = np.asarray(positions, dtype=np.float64)
+        return joint_path
+
+    def _roboplan_toppra_options(self, roboplan_toppra: Any, *, speed_scale: float) -> Any:
+        config = self._trajectory_parametrization_config
+        options = roboplan_toppra.TOPPRAOptions()
+        mode_name_by_config = {
+            "hermite": "Hermite",
+            "cubic": "Cubic",
+            "adaptive": "Adaptive",
+            "linear_blend": "LinearBlend",
+        }
+        options.dt = config.roboplan_dt
+        options.mode = getattr(
+            roboplan_toppra.SplineFittingMode,
+            mode_name_by_config[config.roboplan_spline_mode],
+        )
+        options.velocity_scale = config.velocity_scale * speed_scale
+        options.acceleration_scale = config.acceleration_scale * speed_scale
+        options.max_adaptive_iterations = config.roboplan_max_adaptive_iterations
+        options.max_adaptive_step_size = config.roboplan_max_adaptive_step_size
+        options.max_blend_deviation = config.roboplan_max_blend_deviation
+        return options
+
+    def _roboplan_trajectory_to_generated(
+        self,
+        plan: GeneratedPlan,
+        group_data: _RoboPlanGroupData,
+        native_trajectory: Any,
+        *,
+        speed_scale: float,
+    ) -> GeneratedTrajectory:
+        native_joint_names = tuple(
+            getattr(native_trajectory, "joint_names", None) or group_data.native_joint_names
+        )
+        try:
+            global_joint_names = [
+                group_data.native_to_global_joint_name[native_name]
+                for native_name in native_joint_names
+            ]
+        except KeyError as exc:
+            raise ValueError(
+                f"RoboPlan trajectory returned unknown native joint '{exc.args[0]}'"
+            ) from exc
+
+        times = np.asarray(getattr(native_trajectory, "times", []), dtype=np.float64)
+        positions = np.asarray(getattr(native_trajectory, "positions", []), dtype=np.float64)
+        velocities_raw = getattr(native_trajectory, "velocities", None)
+        velocities = (
+            np.zeros_like(positions)
+            if velocities_raw is None or len(velocities_raw) == 0
+            else np.asarray(velocities_raw, dtype=np.float64)
+        )
+        if positions.ndim != 2:
+            raise ValueError("RoboPlan trajectory positions must be a 2D array")
+        if len(times) != positions.shape[0]:
+            raise ValueError("RoboPlan trajectory times must align with positions")
+        if positions.shape[1] != len(global_joint_names):
+            raise ValueError("RoboPlan trajectory joint count does not match joint_names")
+        if velocities.shape != positions.shape:
+            raise ValueError("RoboPlan trajectory velocities must align with positions")
+        if len(times) == 0 or np.any(~np.isfinite(times)) or np.any(np.diff(times) < 0.0):
+            raise ValueError("RoboPlan trajectory times must be finite and monotonic")
+        if np.any(~np.isfinite(positions)) or np.any(~np.isfinite(velocities)):
+            raise ValueError("RoboPlan trajectory contains non-finite values")
+
+        points = [
+            TrajectoryPoint(
+                time_from_start=float(time_from_start),
+                positions=[float(value) for value in position],
+                velocities=[float(value) for value in velocity],
+            )
+            for time_from_start, position, velocity in zip(
+                times, positions, velocities, strict=True
+            )
+        ]
+        return GeneratedTrajectory(
+            joint_names=global_joint_names,
+            points=points,
+            duration=float(times[-1]),
+            speed_scale=speed_scale,
+            status=ParametrizationStatus.SUCCESS,
+            message="Trajectory parametrized with roboplan",
+            source_group_ids=plan.group_ids,
+            source_plan_status=plan.status,
+            source_plan_message=plan.message,
+        )
 
     def _create_scene(self) -> Any:
         if self._uses_composite_model:

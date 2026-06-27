@@ -170,6 +170,7 @@ class GuiSliderHandle:
     max: float
     step: float
     value: float
+    disabled: bool = False
     removed: bool = False
     update_callback: GuiCallback | None = None
 
@@ -447,6 +448,17 @@ class FakeManipulationModule(SimpleNamespace):
     def get_error(self) -> str:
         return str(getattr(self, "_error_message", ""))
 
+    def set_motion_speed(self, speed_scale: float) -> bool:
+        self._motion_speed = float(speed_scale)
+        self._motion_speed_updates = [
+            *getattr(self, "_motion_speed_updates", []),
+            float(speed_scale),
+        ]
+        return True
+
+    def get_motion_speed(self) -> float:
+        return float(getattr(self, "_motion_speed", 1.0))
+
     def get_current_joint_state(self, robot_name: str) -> JointState | None:
         robot_id = self.robot_id_for_name(robot_name)
         world_monitor = getattr(self, "_world_monitor", None)
@@ -561,6 +573,7 @@ def make_module_with_robot() -> tuple[SimpleNamespace, FakeManipulationModule]:
         _state=NamedState(name="IDLE"),
         _error_message="",
         _world_monitor=world_monitor,
+        _motion_speed=1.0,
     )
     return world_monitor, module
 
@@ -611,6 +624,7 @@ def test_gui_builds_controls_in_manipulation_panel_folder(
     assert server.folders[0].kwargs == {"expand_by_default": True}
     assert "status" in gui._handles
     assert "robot" not in gui._handles
+    assert "next_plan_speed" in gui._handles
     assert "planning_groups_heading" in gui._handles
     assert "target_heading" in gui._handles
     assert "target_summary" in gui._handles
@@ -624,6 +638,8 @@ def test_gui_builds_controls_in_manipulation_panel_folder(
     handle_order = list(gui._handles)
     assert handle_order.index(f"group:{DEFAULT_GROUP_ID}") < handle_order.index("plan")
     assert handle_order.index("target_summary") < handle_order.index("plan")
+    assert handle_order.index("actions_heading") < handle_order.index("next_plan_speed")
+    assert handle_order.index("next_plan_speed") < handle_order.index("plan")
     assert handle_order.index("plan") < handle_order.index("plan_controls_heading")
     assert handle_order.index("plan_controls_heading") < handle_order.index("preview")
     assert handle_order.index("preview") < handle_order.index("execute")
@@ -637,6 +653,12 @@ def test_gui_builds_controls_in_manipulation_panel_folder(
     assert "Ghosts:" not in gui._handles["target_summary"].value
     assert isinstance(gui._handles["plan_controls_heading"], GuiMarkdownHandle)
     assert "Plan controls" in gui._handles["plan_controls_heading"].value
+    speed_slider = gui._handles["next_plan_speed"]
+    assert isinstance(speed_slider, GuiSliderHandle)
+    assert speed_slider.label == "Next plan speed"
+    assert speed_slider.min > 0.0
+    assert speed_slider.max == pytest.approx(1.0)
+    assert speed_slider.value == pytest.approx(1.0)
     plan_button = gui._handles["plan"]
     assert isinstance(plan_button, GuiButtonHandle)
     assert plan_button.color == PRIMARY_ACTION_COLOR
@@ -649,6 +671,42 @@ def test_gui_builds_controls_in_manipulation_panel_folder(
     assert joint_folder.label == "Joint Control"
     assert joint_folder.kwargs == {"expand_by_default": False}
     assert gui._operation_worker._timeout_seconds is None
+
+
+def test_next_plan_speed_slider_updates_module_without_staling_current_plan(
+    make_panel: Callable[..., ViserPanelGui],
+) -> None:
+    server = FakeGuiServer()
+    module_context = make_module_with_robot()
+    module = module_context[1]
+    module._last_trajectory = SimpleNamespace(speed_scale=1.0)
+    gui = make_panel(server, module_context, ViserVisualizationConfig())
+    gui.state.plan_state = PanelPlanState(status=PlanStatus.FRESH)
+    speed_slider = gui._handles["next_plan_speed"]
+    assert isinstance(speed_slider, GuiSliderHandle)
+    assert speed_slider.update_callback is not None
+
+    speed_slider.value = 0.5
+    speed_slider.update_callback(SimpleNamespace(target=SimpleNamespace(value=0.5)))
+
+    assert module.get_motion_speed() == pytest.approx(0.5)
+    assert module._motion_speed_updates == [0.5]
+    assert gui.state.plan_state.status == PlanStatus.FRESH
+    assert "motion_speed_summary" not in gui._handles
+
+
+def test_next_plan_speed_slider_is_disabled_during_panel_operation(
+    make_panel: Callable[..., ViserPanelGui],
+) -> None:
+    server = FakeGuiServer()
+    gui = make_panel(server, make_module_with_robot(), ViserVisualizationConfig())
+    speed_slider = gui._handles["next_plan_speed"]
+    assert isinstance(speed_slider, GuiSliderHandle)
+
+    gui.state.action_status = ActionStatus.RUNNING
+    gui.refresh()
+
+    assert speed_slider.disabled is True
 
 
 def test_gui_scene_grid_checkbox_toggles_reference_grid(
@@ -1459,7 +1517,7 @@ def test_gui_rebuilding_joint_sliders_removes_stale_viser_handles(
     module_context = (world_monitor, module)
     server = FakeGuiServer()
     gui = make_panel(server, module_context)
-    stale_sliders = list(server.sliders)
+    stale_sliders = [slider for slider in server.sliders if slider.label != "Next plan speed"]
     assert [slider.value for slider in stale_sliders] == [0.0, 0.0]
 
     current.position = [-0.738, -0.2826151825863572]

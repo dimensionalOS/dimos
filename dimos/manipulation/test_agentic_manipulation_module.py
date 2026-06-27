@@ -25,12 +25,18 @@ from dimos.agents.skill_result import SkillResult
 from dimos.manipulation.agentic_manipulation_module import AgenticManipulationModule
 from dimos.manipulation.skill_errors import ManipulationSkillError
 
-Call: TypeAlias = tuple[str, tuple[str | None, ...]]
+Call: TypeAlias = tuple[str, tuple[str | float | None, ...]]
 GetStateMethod: TypeAlias = Callable[
     [AgenticManipulationModule, str | None], SkillResult[ManipulationSkillError]
 ]
 MoveToJointsMethod: TypeAlias = Callable[
     [AgenticManipulationModule, str, str | None], SkillResult[ManipulationSkillError]
+]
+SetMotionSpeedMethod: TypeAlias = Callable[
+    [AgenticManipulationModule, float], SkillResult[ManipulationSkillError]
+]
+GetMotionSpeedMethod: TypeAlias = Callable[
+    [AgenticManipulationModule], SkillResult[ManipulationSkillError]
 ]
 
 
@@ -48,6 +54,14 @@ class FakeManipulationProvider:
     ) -> SkillResult[ManipulationSkillError]:
         self.calls.append(("move_to_joints", (joints, robot_name)))
         return self.result
+
+    def set_motion_speed(self, speed_scale: float) -> bool:
+        self.calls.append(("set_motion_speed", (speed_scale,)))
+        return True
+
+    def get_motion_speed(self) -> float:
+        self.calls.append(("get_motion_speed", ()))
+        return 0.5
 
     def open_gripper(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
         self.calls.append(("open_gripper", (robot_name,)))
@@ -120,6 +134,37 @@ def test_open_gripper_delegates_exact_arguments_and_result(
     assert provider.calls == [("open_gripper", (None,))]
 
 
+def test_set_motion_speed_delegates_exact_arguments_and_result(
+    module: AgenticManipulationModule,
+    provider: FakeManipulationProvider,
+) -> None:
+    set_motion_speed = cast(
+        "SetMotionSpeedMethod", AgenticManipulationModule.set_motion_speed.__wrapped__
+    )
+
+    result = set_motion_speed(module, 0.5)
+
+    assert result.success is True
+    assert result.message == "Motion speed scale set to 0.50x. Re-plan to apply it."
+    assert provider.calls == [("set_motion_speed", (0.5,))]
+
+
+def test_get_motion_speed_delegates_exact_arguments_and_result(
+    module: AgenticManipulationModule,
+    provider: FakeManipulationProvider,
+) -> None:
+    get_motion_speed = cast(
+        "GetMotionSpeedMethod", AgenticManipulationModule.get_motion_speed.__wrapped__
+    )
+
+    result = get_motion_speed(module)
+
+    assert result.success is True
+    assert result.message == "Current motion speed scale is 0.50x."
+    assert result.metadata["speed_scale"] == pytest.approx(0.5)
+    assert provider.calls == [("get_motion_speed", ())]
+
+
 def test_close_gripper_delegates_exact_arguments_and_result(
     module: AgenticManipulationModule,
     provider: FakeManipulationProvider,
@@ -154,6 +199,8 @@ def test_decorated_skill_call_preserves_provider_result_semantics(
     [
         ("get_robot_state", {"robot_name": str | None}),
         ("move_to_joints", {"joints": str, "robot_name": str | None}),
+        ("set_motion_speed", {"speed_scale": float}),
+        ("get_motion_speed", {}),
         ("open_gripper", {"robot_name": str | None}),
         ("close_gripper", {"robot_name": str | None}),
     ],
@@ -180,7 +227,14 @@ def test_skill_methods_have_schema_safe_metadata(
 def test_skill_methods_generate_get_skills_schemas(module: AgenticManipulationModule) -> None:
     skills = {skill.func_name: skill for skill in module.get_skills()}
 
-    assert set(skills) == {"close_gripper", "get_robot_state", "move_to_joints", "open_gripper"}
+    assert set(skills) == {
+        "close_gripper",
+        "get_motion_speed",
+        "get_robot_state",
+        "move_to_joints",
+        "open_gripper",
+        "set_motion_speed",
+    }
     for method_name in skills:
         schema = json.loads(skills[method_name].args_schema)
         assert schema["type"] == "object"
@@ -189,3 +243,6 @@ def test_skill_methods_generate_get_skills_schemas(module: AgenticManipulationMo
     assert "joints" in move_schema["properties"]
     assert "robot_name" in move_schema["properties"]
     assert move_schema["required"] == ["joints"]
+    speed_schema = json.loads(skills["set_motion_speed"].args_schema)
+    assert "speed_scale" in speed_schema["properties"]
+    assert speed_schema["required"] == ["speed_scale"]

@@ -31,11 +31,20 @@ from dimos.manipulation.manipulation_module import (
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
-from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.enums import IKStatus, PlanningStatus
+from dimos.manipulation.planning.spec.config import (
+    RobotModelConfig,
+    TrajectoryParametrizationConfig,
+)
+from dimos.manipulation.planning.spec.enums import (
+    IKStatus,
+    ParametrizationStatus,
+    PlanningStatus,
+    TrajectoryDispatchStatus,
+)
 from dimos.manipulation.planning.spec.models import (
     CollisionCheckResult,
     GeneratedPlan,
+    GeneratedTrajectory,
     IKResult,
     PlanningSceneInfo,
 )
@@ -107,12 +116,108 @@ class _ManipulationModuleHarness(ManipulationModule):
         self._kinematics = None
         self._coordinator_client = None
         self._last_plan = None
-        self.config = MagicMock(planning_timeout=10.0)
+        self._last_trajectory = None
+        self._motion_speed_scale = 1.0
+        self.config = MagicMock(
+            planning_timeout=10.0,
+            trajectory_parametrization=TrajectoryParametrizationConfig(),
+            coordinator_rpc_timeout=3.0,
+        )
 
 
 def _make_module() -> ManipulationModule:
     """Create a lightweight ManipulationModule harness for behavior tests."""
     return _ManipulationModuleHarness()
+
+
+def _successful_generated_trajectory() -> GeneratedTrajectory:
+    """Create a successful global generated trajectory for dispatch tests."""
+    return GeneratedTrajectory(
+        joint_names=["test_arm/joint2", "test_arm/joint1"],
+        points=[
+            TrajectoryPoint(
+                time_from_start=0.0,
+                positions=[0.2, 0.1],
+                velocities=[0.02, 0.01],
+            ),
+            TrajectoryPoint(
+                time_from_start=1.5,
+                positions=[0.4, 0.3],
+                velocities=[0.04, 0.03],
+            ),
+        ],
+        duration=1.5,
+        status=ParametrizationStatus.SUCCESS,
+        source_group_ids=("test_arm/manipulator",),
+    )
+
+
+class TestTrajectoryDispatchPreparation:
+    """Test projection from global generated trajectories to coordinator tasks."""
+
+    def test_prepare_trajectory_dispatch_preserves_timing_and_holds_unselected_joints(
+        self, robot_config: RobotModelConfig
+    ) -> None:
+        module = _make_module()
+        module._robots["test_arm"] = ("world_test_arm", robot_config, MagicMock())
+        planning_groups = MagicMock()
+        planning_groups.select.return_value = MagicMock(robot_names=("test_arm",))
+        world_monitor = MagicMock(planning_groups=planning_groups)
+        world_monitor.get_current_joint_state.return_value = JointState(
+            {"name": ["joint1", "joint2", "joint3"], "position": [9.0, 8.0, 7.0]}
+        )
+        module._world_monitor = world_monitor
+
+        dispatch = module._prepare_trajectory_dispatch(_successful_generated_trajectory())
+
+        assert dispatch.status == TrajectoryDispatchStatus.SUCCESS
+        assert dispatch.robot_names_by_task == {"traj_arm": "test_arm"}
+        task_trajectory = dispatch.trajectories_by_task["traj_arm"]
+        assert task_trajectory.joint_names == [
+            "test_arm/joint1",
+            "test_arm/joint2",
+            "test_arm/joint3",
+        ]
+        assert [point.time_from_start for point in task_trajectory.points] == [0.0, 1.5]
+        assert task_trajectory.points[0].positions == pytest.approx([0.1, 0.2, 7.0])
+        assert task_trajectory.points[0].velocities == pytest.approx([0.01, 0.02, 0.0])
+        assert task_trajectory.points[1].positions == pytest.approx([0.3, 0.4, 7.0])
+        assert task_trajectory.points[1].velocities == pytest.approx([0.03, 0.04, 0.0])
+        world_monitor.get_current_joint_state.assert_called_once_with("world_test_arm")
+        planning_groups.select.assert_called_once_with(("test_arm/manipulator",))
+
+    def test_prepare_trajectory_dispatch_reports_missing_task(
+        self, robot_config: RobotModelConfig
+    ) -> None:
+        module = _make_module()
+        robot_without_task = robot_config.model_copy(update={"coordinator_task_name": None})
+        module._robots["test_arm"] = ("world_test_arm", robot_without_task, MagicMock())
+        planning_groups = MagicMock()
+        planning_groups.select.return_value = MagicMock(robot_names=("test_arm",))
+        module._world_monitor = MagicMock(planning_groups=planning_groups)
+
+        dispatch = module._prepare_trajectory_dispatch(_successful_generated_trajectory())
+
+        assert dispatch.status == TrajectoryDispatchStatus.MISSING_TASK
+        assert "No coordinator_task_name" in dispatch.message
+
+    def test_prepare_trajectory_dispatch_reports_missing_current_joint(
+        self, robot_config: RobotModelConfig
+    ) -> None:
+        module = _make_module()
+        module._robots["test_arm"] = ("world_test_arm", robot_config, MagicMock())
+        planning_groups = MagicMock()
+        planning_groups.select.return_value = MagicMock(robot_names=("test_arm",))
+        world_monitor = MagicMock(planning_groups=planning_groups)
+        world_monitor.get_current_joint_state.return_value = JointState(
+            {"name": ["joint1", "joint2"], "position": [9.0, 8.0]}
+        )
+        module._world_monitor = world_monitor
+
+        dispatch = module._prepare_trajectory_dispatch(_successful_generated_trajectory())
+
+        assert dispatch.status == TrajectoryDispatchStatus.MISSING_JOINT
+        assert "missing joint 'test_arm/joint3'" in dispatch.message
 
 
 class TestStateMachine:
@@ -259,6 +364,7 @@ class TestPlanningInitialization:
 
         planning_initialization.mock_planning_specs.assert_called_once_with(
             world=planning_initialization.mock_world,
+            world_backend="drake",
             planner_name="rrt_connect",
             kinematics_name=None,
             kinematics=kinematics,
@@ -278,6 +384,7 @@ class TestPlanningInitialization:
 
         planning_initialization.mock_planning_specs.assert_called_once_with(
             world=planning_initialization.mock_world,
+            world_backend="drake",
             planner_name="rrt_connect",
             kinematics_name="pink",
             kinematics=module.config.kinematics,
@@ -432,7 +539,14 @@ class TestExecute:
             path=[JointState(name=["arm/j1"], position=[1.0])],
             status=PlanningStatus.SUCCESS,
         )
-
+        module._last_trajectory = GeneratedTrajectory(
+            joint_names=["arm/j1"],
+            points=[TrajectoryPoint(time_from_start=1.5, positions=[1.0])],
+            duration=1.5,
+            status=ParametrizationStatus.SUCCESS,
+            source_group_ids=("arm/manipulator",),
+            source_plan_status=PlanningStatus.SUCCESS,
+        )
         assert module.execute() is False
 
     def test_execute_success(self, robot_config, simple_trajectory):
@@ -461,7 +575,6 @@ class TestExecute:
             ],
             status=PlanningStatus.SUCCESS,
         )
-
         mock_client = MagicMock()
         mock_client.task_invoke.return_value = True
         module._coordinator_client = mock_client
@@ -476,7 +589,13 @@ class TestExecute:
             "test_arm/joint2",
             "test_arm/joint3",
         ]
-        assert trajectory.points == simple_trajectory.points
+        assert len(trajectory.points) > 2
+        assert trajectory.points[0].positions == pytest.approx([0.0, 0.0, 0.0])
+        assert trajectory.points[-1].positions == pytest.approx([0.5, 0.5, 0.5])
+        point_times = [point.time_from_start for point in trajectory.points]
+        assert point_times == sorted(point_times)
+        assert point_times[0] == pytest.approx(0.0)
+        assert point_times[-1] > point_times[0]
 
     def test_execute_rejected(self, robot_config, simple_trajectory):
         """Rejected execution sets FAULT state."""
@@ -504,7 +623,6 @@ class TestExecute:
             ],
             status=PlanningStatus.SUCCESS,
         )
-
         mock_client = MagicMock()
         mock_client.task_invoke.return_value = False
         module._coordinator_client = mock_client
@@ -906,26 +1024,53 @@ class TestManipulationPreview:
         module._world_monitor = MagicMock()
         module._last_plan = GeneratedPlan(
             group_ids=("arm/manipulator",),
-            path=[JointState(name=["arm/j1"], position=[0.0])],
+            path=[
+                JointState(name=["arm/j1"], position=[0.0]),
+                JointState(name=["arm/j1"], position=[1.0]),
+            ],
             status=PlanningStatus.SUCCESS,
+        )
+        module._last_trajectory = GeneratedTrajectory(
+            joint_names=["arm/j1"],
+            points=[TrajectoryPoint(time_from_start=1.5, positions=[1.0])],
+            duration=1.5,
+            status=ParametrizationStatus.SUCCESS,
+            source_group_ids=("arm/manipulator",),
+            source_plan_status=PlanningStatus.SUCCESS,
         )
 
         assert module.preview_plan() is True
 
-        module._world_monitor.animate_plan.assert_called_once_with(module._last_plan, 1.0)
+        preview_plan, preview_duration = module._world_monitor.animate_plan.call_args.args
+        assert preview_plan.group_ids == module._last_plan.group_ids
+        assert preview_plan.path[0].name == ["arm/j1"]
+        assert preview_duration == 1.5
 
     def test_preview_plan_explicit_duration_overrides_default(self):
         module = _make_module()
         module._world_monitor = MagicMock()
         module._last_plan = GeneratedPlan(
             group_ids=("arm/manipulator",),
-            path=[JointState(name=["arm/j1"], position=[0.0])],
+            path=[
+                JointState(name=["arm/j1"], position=[0.0]),
+                JointState(name=["arm/j1"], position=[1.0]),
+            ],
             status=PlanningStatus.SUCCESS,
+        )
+        module._last_trajectory = GeneratedTrajectory(
+            joint_names=["arm/j1"],
+            points=[TrajectoryPoint(time_from_start=1.5, positions=[1.0])],
+            duration=1.5,
+            status=ParametrizationStatus.SUCCESS,
+            source_group_ids=("arm/manipulator",),
+            source_plan_status=PlanningStatus.SUCCESS,
         )
 
         assert module.preview_plan(duration=1.5) is True
 
-        module._world_monitor.animate_plan.assert_called_once_with(module._last_plan, 1.5)
+        preview_plan, preview_duration = module._world_monitor.animate_plan.call_args.args
+        assert preview_plan.group_ids == module._last_plan.group_ids
+        assert preview_duration == 1.5
 
     def test_preview_plan_respects_robot_filter(self):
         module = _make_module()
@@ -935,13 +1080,26 @@ class TestManipulationPreview:
         )
         module._last_plan = GeneratedPlan(
             group_ids=("arm/manipulator",),
-            path=[JointState(name=["arm/j1"], position=[0.0])],
+            path=[
+                JointState(name=["arm/j1"], position=[0.0]),
+                JointState(name=["arm/j1"], position=[1.0]),
+            ],
             status=PlanningStatus.SUCCESS,
+        )
+        module._last_trajectory = GeneratedTrajectory(
+            joint_names=["arm/j1"],
+            points=[TrajectoryPoint(time_from_start=1.5, positions=[1.0])],
+            duration=1.5,
+            status=ParametrizationStatus.SUCCESS,
+            source_group_ids=("arm/manipulator",),
+            source_plan_status=PlanningStatus.SUCCESS,
         )
 
         assert module.preview_plan(robot_name="arm") is True
 
-        module._world_monitor.animate_plan.assert_called_once_with(module._last_plan, 1.0)
+        preview_plan, preview_duration = module._world_monitor.animate_plan.call_args.args
+        assert preview_plan.group_ids == module._last_plan.group_ids
+        assert preview_duration == 1.5
 
     def test_preview_plan_rejects_unaffected_robot_filter(self):
         module = _make_module()
@@ -1030,14 +1188,16 @@ class TestGeneratedPlanProjection:
         assert left_call.args[0:2] == ("left_task", "execute")
         left_trajectory = left_call.args[2]["trajectory"]
         assert left_trajectory.joint_names == ["left/j1", "left/j2", "left/j3"]
-        assert [point.positions for point in left_trajectory.points] == [
-            [1.0, 2.0, 9.0],
-            [4.0, 5.0, 9.0],
-        ]
+        assert left_trajectory.points[0].positions == pytest.approx([1.0, 2.0, 9.0])
+        assert left_trajectory.points[-1].positions == pytest.approx([4.0, 5.0, 9.0])
         assert right_call.args[0:2] == ("right_task", "execute")
         right_trajectory = right_call.args[2]["trajectory"]
         assert right_trajectory.joint_names == ["right/j1", "right/j2"]
-        assert [point.positions for point in right_trajectory.points] == [[3.0, 8.0], [6.0, 8.0]]
+        assert right_trajectory.points[0].positions == pytest.approx([3.0, 8.0])
+        assert right_trajectory.points[-1].positions == pytest.approx([6.0, 8.0])
+        left_times = [point.time_from_start for point in left_trajectory.points]
+        right_times = [point.time_from_start for point in right_trajectory.points]
+        assert left_times == right_times
 
     def test_execute_plan_holds_non_selected_joints_from_current_state(self):
         config = _make_robot_config("left", ["j1", "j2", "j3"], "task")
@@ -1065,10 +1225,10 @@ class TestGeneratedPlanProjection:
 
         trajectory = module._coordinator_client.task_invoke.call_args.args[2]["trajectory"]
         assert trajectory.joint_names == ["left/j1", "left/j2", "left/j3"]
-        assert [point.positions for point in trajectory.points] == [
-            [10.0, 2.0, 30.0],
-            [10.0, 3.0, 30.0],
-        ]
+        assert trajectory.points[0].positions == pytest.approx([10.0, 2.0, 30.0])
+        assert trajectory.points[-1].positions == pytest.approx([10.0, 3.0, 30.0])
+        point_times = [point.time_from_start for point in trajectory.points]
+        assert point_times == sorted(point_times)
 
     def test_execute_plan_rejects_local_waypoint_names(self):
         config = _make_robot_config("left", ["j1", "j2"], "task")
@@ -1106,7 +1266,157 @@ class TestGeneratedPlanProjection:
 
         assert module.preview_plan(robot_name="left") is True
 
-        module._world_monitor.animate_plan.assert_called_once_with(module._last_plan, 1.0)
+        preview_plan, preview_duration = module._world_monitor.animate_plan.call_args.args
+        assert preview_plan.group_ids == module._last_plan.group_ids
+        assert preview_plan.path[0].name == ["left/j1"]
+        assert preview_duration == 1.5
+
+    def test_explicit_plan_parametrization_does_not_poison_last_trajectory(self):
+        config = _make_robot_config("left", ["j1"], "task")
+        module = _make_module_with_monitor(config)
+        last_plan = GeneratedPlan(
+            group_ids=("left/arm",),
+            path=[
+                JointState(name=["left/j1"], position=[0.0]),
+                JointState(name=["left/j1"], position=[1.0]),
+            ],
+            status=PlanningStatus.SUCCESS,
+        )
+        explicit_plan = GeneratedPlan(
+            group_ids=("left/arm",),
+            path=[
+                JointState(name=["left/j1"], position=[2.0]),
+                JointState(name=["left/j1"], position=[3.0]),
+            ],
+            status=PlanningStatus.SUCCESS,
+        )
+        cached = GeneratedTrajectory(
+            joint_names=["left/j1"],
+            points=[TrajectoryPoint(time_from_start=0.0, positions=[9.0])],
+            duration=0.0,
+            status=ParametrizationStatus.SUCCESS,
+            source_group_ids=("left/arm",),
+        )
+        module._last_plan = last_plan
+        module._last_trajectory = cached
+
+        explicit_trajectory = module._parametrize_plan(explicit_plan)
+
+        assert explicit_trajectory.is_success()
+        assert module._last_trajectory is cached
+        assert module._trajectory_for_plan(last_plan) is cached
+
+    def test_motion_speed_scale_preserves_cached_trajectory_and_plan(self):
+        module = _make_module()
+        cached_plan = GeneratedPlan(
+            group_ids=("left/arm",),
+            path=[JointState(name=["left/j1"], position=[0.0])],
+            status=PlanningStatus.SUCCESS,
+        )
+        module._last_plan = cached_plan
+        cached_trajectory = GeneratedTrajectory(
+            joint_names=["left/j1"],
+            points=[TrajectoryPoint(time_from_start=0.0, positions=[0.0])],
+            duration=0.0,
+            speed_scale=1.0,
+            status=ParametrizationStatus.SUCCESS,
+            source_group_ids=("left/arm",),
+        )
+        module._last_trajectory = cached_trajectory
+
+        assert module.set_motion_speed(0.5) is True
+
+        assert module.get_motion_speed() == pytest.approx(0.5)
+        assert module._last_plan is cached_plan
+        assert module._last_trajectory is cached_trajectory
+        assert getattr(module.set_motion_speed, "__skill__", False) is False
+        assert getattr(module.get_motion_speed, "__skill__", False) is False
+
+    def test_parametrize_plan_passes_configured_motion_speed_scale(self, mocker: MockerFixture):
+        config = _make_robot_config("left", ["j1"], "task")
+        module = _make_module_with_monitor(config)
+        module._motion_speed_scale = 0.25
+        plan = GeneratedPlan(
+            group_ids=("left/arm",),
+            path=[
+                JointState(name=["left/j1"], position=[0.0]),
+                JointState(name=["left/j1"], position=[1.0]),
+            ],
+            status=PlanningStatus.SUCCESS,
+        )
+        trajectory = GeneratedTrajectory(
+            joint_names=["left/j1"],
+            points=[TrajectoryPoint(time_from_start=0.0, positions=[0.0])],
+            duration=0.0,
+            status=ParametrizationStatus.SUCCESS,
+            source_group_ids=("left/arm",),
+        )
+        parametrizer = MagicMock()
+        parametrizer.parametrize.return_value = trajectory
+        mocker.patch.object(
+            module,
+            "_trajectory_parametrizer_for_config",
+            return_value=parametrizer,
+        )
+
+        assert module._parametrize_plan(plan) is trajectory
+        parametrizer.parametrize.assert_called_once_with(plan, speed_scale=0.25)
+
+    def test_invalid_explicit_plan_parametrization_returns_invalid_without_mutating_plan(self):
+        config = _make_robot_config("left", ["j1"], "task")
+        module = _make_module_with_monitor(config)
+        plan = GeneratedPlan(
+            group_ids=("left/arm",),
+            path=[JointState(name=["j1"], position=[1.0])],
+            status=PlanningStatus.SUCCESS,
+            message="source ok",
+        )
+
+        trajectory = module._parametrize_plan(plan)
+
+        assert trajectory.status == ParametrizationStatus.INVALID_PLAN
+        assert "global" in trajectory.message.lower() or "/" in trajectory.message
+        assert trajectory.source_group_ids == plan.group_ids
+        assert trajectory.source_plan_status == PlanningStatus.SUCCESS
+        assert plan.status == PlanningStatus.SUCCESS
+
+    def test_preview_and_execute_reuse_cached_generated_trajectory(self):
+        config = _make_robot_config("left", ["j1"], "task")
+        module = _make_module_with_monitor(config)
+        module._world_monitor.planning_groups = _FakePlanningGroups(
+            [_make_global_group("left", "arm", ["j1"])]
+        )
+        module._world_monitor.get_current_joint_state.return_value = JointState(
+            name=["j1"], position=[0.0]
+        )
+        module._coordinator_client = MagicMock()
+        module._last_plan = GeneratedPlan(
+            group_ids=("left/arm",),
+            path=[JointState(name=["left/j1"], position=[0.0])],
+            status=PlanningStatus.SUCCESS,
+        )
+        generated = GeneratedTrajectory(
+            joint_names=["left/j1"],
+            points=[
+                TrajectoryPoint(time_from_start=0.0, positions=[5.0], velocities=[0.0]),
+                TrajectoryPoint(time_from_start=2.5, positions=[6.0], velocities=[0.0]),
+            ],
+            duration=2.5,
+            status=ParametrizationStatus.SUCCESS,
+            source_group_ids=("left/arm",),
+            source_plan_status=PlanningStatus.SUCCESS,
+        )
+        module._last_trajectory = generated
+
+        assert module.preview_plan() is True
+        preview_plan, preview_duration = module._world_monitor.animate_plan.call_args.args
+        assert [point.position for point in preview_plan.path] == [[5.0], [6.0]]
+        assert preview_duration == 2.5
+
+        assert module.execute() is True
+        dispatched = module._coordinator_client.task_invoke.call_args.args[2]["trajectory"]
+        assert [point.positions for point in dispatched.points] == [[5.0], [6.0]]
+        assert [point.time_from_start for point in dispatched.points] == [0.0, 2.5]
 
     def test_has_and_clear_planned_path_use_last_plan(self):
         module = _make_module()

@@ -22,6 +22,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from dimos.spec.utils import Spec
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from contextlib import AbstractContextManager
@@ -33,6 +35,7 @@ if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.manipulation.planning.spec.models import (
         GeneratedPlan,
+        GeneratedTrajectory,
         IKResult,
         Obstacle,
         PlanningGroupID,
@@ -293,4 +296,28 @@ class PlannerSpec(Protocol):
 
     def get_name(self) -> str:
         """Get planner name."""
+        ...
+
+
+@runtime_checkable
+class TrajectoryParametrizerSpec(Spec, Protocol):
+    """Protocol for converting a geometric plan into a timed global trajectory."""
+
+    def parametrize(
+        self,
+        plan: GeneratedPlan,
+        *,
+        speed_scale: float = 1.0,
+    ) -> GeneratedTrajectory:
+        """Parametrize a successful geometric generated plan.
+
+        Args:
+            plan: Geometric plan to time-parametrize.
+            speed_scale: Runtime speed multiplier applied to velocity and acceleration
+                policy for this parametrization only.
+        """
+        ...
+
+    def get_name(self) -> str:
+        """Get trajectory parametrizer backend name."""
         ...
