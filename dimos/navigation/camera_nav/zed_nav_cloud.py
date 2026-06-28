@@ -549,10 +549,21 @@ def main() -> None:
 
             ts = time.monotonic()
 
+            # Advance Rerun timeline every frame so the viewer updates
+            rr.set_time_sequence("frame", frame)
+
             # Stage 1: observation validation
             intr.read(zed)
             depth      = observer.observe(zed)
             valid_frac = observer.valid_fraction(depth)
+
+            # Always log depth — gives immediate Rerun feedback before VIO locks.
+            # The viewer shows content from frame 0 regardless of tracking state.
+            if frame % 3 == 0:
+                d = depth.copy()
+                d[~np.isfinite(d)] = 0.0
+                d_vis = (np.clip(d / 8.0, 0.0, 1.0) * 255).astype(np.uint8)
+                rr.log("camera/depth", rr.Image(d_vis))
 
             # Stage 2: world alignment (only when VIO locked)
             pose.update(zed)
@@ -568,7 +579,7 @@ def main() -> None:
                 # 3b: cast rays → mark free space between camera and hits
                 free_pts = raycaster.cast(pose.t, xyz_world)
                 ev_map.observe_free(free_pts)
-                # Always show current frame so there's immediate visual feedback
+                # Current-frame hits (blue) — immediate world-space feedback
                 cap = min(len(xyz_world), 30_000)
                 rr.log("world/current_frame", rr.Points3D(
                     positions=xyz_world[:cap],
@@ -576,11 +587,17 @@ def main() -> None:
                     radii=0.004,
                 ))
 
-            # Stage 4: publish map every MAP_EVERY frames
+            # Stage 4: publish accumulated map every MAP_EVERY frames
             if frame % nav_cloud._every == 0 and ev_map.total_voxels > 0:
+                # Cap evidence_map display — can grow to 500 k+ points
+                all_xyz  = ev_map.all_xyz()
+                all_obs  = ev_map.obs_counts()
+                if len(all_xyz) > 80_000:
+                    idx     = np.random.choice(len(all_xyz), 80_000, replace=False)
+                    all_xyz = all_xyz[idx];  all_obs = all_obs[idx]
                 rr.log("world/evidence_map", rr.Points3D(
-                    positions=ev_map.all_xyz(),
-                    colors=_obs_colors(ev_map.obs_counts()),
+                    positions=all_xyz,
+                    colors=_obs_colors(all_obs),
                     radii=0.004,
                 ))
                 stable = ev_map.stable_xyz
@@ -592,7 +609,6 @@ def main() -> None:
                     ))
                 free = ev_map.free_xyz
                 if len(free) > 0:
-                    # cap display to avoid saturating Rerun
                     cap = min(len(free), 80_000)
                     idx = np.random.choice(len(free), cap, replace=False) if len(free) > cap else np.arange(len(free))
                     rr.log("world/free_space", rr.Points3D(
