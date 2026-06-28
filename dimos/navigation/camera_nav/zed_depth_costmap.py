@@ -444,7 +444,7 @@ class BirdsEyeOccupancy:
             # Real surfaces (walls, furniture) produce many pixels per cell — count≥3.
             hits = np.zeros((n, n), dtype=np.uint16)
             np.add.at(hits, (row_hit, col_hit), 1)
-            grid[hits >= 3] = 2   # occupied — overwrites free, requires 3+ hits
+            grid[hits >= 5] = 2   # occupied — overwrites free, requires 5+ hits
 
         rgb = np.full((n, n, 3), 60, dtype=np.uint8)   # unknown: dark gray
         rgb[grid == 1] = (30, 180, 30)                   # free:     green
