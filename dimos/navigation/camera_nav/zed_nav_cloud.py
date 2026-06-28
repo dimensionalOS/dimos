@@ -562,44 +562,42 @@ def main() -> None:
 
             rr.set_time("frame", sequence=frame)
 
-            # Stage 1: observation validation
+            # ── Shared acquisition ─────────────────────────────────────────────
             intr.read(zed)
             depth      = observer.observe(zed)
             valid_frac = observer.valid_fraction(depth)
-
-            # Depth image logged every 3 frames — immediate Rerun feedback before VIO locks
-            if frame % 3 == 0:
-                d = depth.copy()
-                d[~np.isfinite(d)] = 0.0
-                d_vis = (np.clip(d / 8.0, 0.0, 1.0) * 255).astype(np.uint8)
-                rr.log("camera/depth", rr.Image(d_vis))
-
-            # Stage 2: world alignment (only when VIO locked)
             pose.update(zed)
-            xyz_world = None
-            if pose.locked:
+
+            if frame % 3 == 0:
+                d = depth.copy();  d[~np.isfinite(d)] = 0.0
+                rr.log("camera/depth", rr.Image((np.clip(d / 8.0, 0, 1) * 255).astype(np.uint8)))
+
+            # ── STREAM 1: RAW WORLD HITS (no stability requirement) ────────────
+            # Project every frame as soon as intrinsics are ready.
+            # Before VIO locks: pose.R=I, pose.t=0  → camera-space points at origin.
+            # After VIO locks:  real pose            → world-space points.
+            # Nothing blocks this stream. It is always the first proof the
+            # backprojection and coordinate transforms are working.
+            xyz = np.empty((0, 3), dtype=np.float32)
+            if intr._ready:
                 fx, fy, cx, cy = intr.params
-                xyz_world = projector.project(depth, fx, fy, cx, cy, pose.R, pose.t)
+                xyz = projector.project(depth, fx, fy, cx, cy, pose.R, pose.t)
 
-            # Stage 3: evidence fusion + ray casting
-            if xyz_world is not None and len(xyz_world) > 0:
-                ev_map.observe(xyz_world)
-                free_pts = raycaster.cast(pose.t, xyz_world)
-                ev_map.observe_free(free_pts)
-
-                # Show current-frame hits immediately — no waiting for stable_min.
-                # This is the first visible proof that VIO locked and projection works.
-                # Gray points: every valid depth pixel projected to world space.
-                cap = min(len(xyz_world), 30_000)
-                rr.log("world/current_frame", rr.Points3D(
-                    positions=xyz_world[:cap],
-                    colors=np.full((cap, 3), [160, 160, 160], dtype=np.uint8),
+            if len(xyz) > 0:
+                cap = min(len(xyz), 20_000)
+                rr.log("world/raw_hits", rr.Points3D(
+                    positions=xyz[:cap],
+                    colors=np.full((cap, 3), [180, 180, 180], dtype=np.uint8),
                     radii=0.01,
                 ))
 
-            # Stage 4: publish accumulated map every MAP_EVERY frames.
-            # stable_cloud (colored by confidence) shows on top of current_frame.
-            # free_space shows the swept traversable volume.
+            # ── STREAM 2: STABLE MAP (VIO-locked, multi-frame fusion) ──────────
+            # Only accumulate into EvidenceMap when pose is trustworthy.
+            # This keeps the navigation map clean without blocking visualization.
+            if pose.locked and len(xyz) > 0:
+                ev_map.observe(xyz)
+                ev_map.observe_free(raycaster.cast(pose.t, xyz))
+
             if frame % nav_cloud._every == 0:
                 stable = ev_map.stable_xyz
                 if len(stable) > 0:
@@ -621,12 +619,9 @@ def main() -> None:
 
             fps = frame / max(ts - t0, 1e-6)
             print(
-                f"frame={frame:5d}  "
-                f"valid={valid_frac*100:5.1f}%  "
-                f"occ={ev_map.total_voxels:6d}  stable={ev_map.stable_count:6d}  "
-                f"free={ev_map.free_count:7d}  "
-                f"vio={'LOCKED' if pose.locked else 'no-lock'}  "
-                f"fps={fps:.1f}"
+                f"frame={frame:5d}  valid={valid_frac*100:4.1f}%  "
+                f"raw={len(xyz):5d}  occ={ev_map.total_voxels:6d}  stable={ev_map.stable_count:6d}  "
+                f"vio={'LOCKED' if pose.locked else 'no-lock'}  fps={fps:.1f}"
             )
             frame += 1
 
