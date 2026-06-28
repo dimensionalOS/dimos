@@ -14,11 +14,16 @@
 
 """Evaluate a loop-closure module against a recording.
 
+The raw-baseline robot trajectory comes from the recording's tf (the
+``world``->``base_link`` chain, sampled at each odom time). tf is REQUIRED: a
+recording without a tf tree is an error (run ``add_tf`` first) — there is no
+odom-pose fallback. tf is allowed to come online within a short opening window
+(``--tf-startup-tolerance-s``).
+
 Two ground-truth-free scores, before vs after correction:
   * April-tag agreement — a fixed tag re-seen along the run should map to one
     world position; the spread of its per-visit robot positions measures drift.
-    Tags are taken as relative to the chosen odom stream (sighting time ->
-    nearest odom pose), so no static transforms or stored db poses are needed.
+    A tag sighting is placed at the robot's baseline pose nearest its time.
   * Lidar-voxel agreement — re-anchoring the registered scans onto the
     corrected trajectory should collapse double walls, so the corrected map
     should occupy FEWER voxels than the raw one.
@@ -93,18 +98,17 @@ from dimos.navigation.jnav.utils.recording_db import (
     REPLAY_PUBLISH_HZ,
     iterate_stream,
     list_streams,
-    odometry_lookup,
     store,
     stream_count,
 )
 from dimos.navigation.jnav.utils.trajectory_metrics import (
     GraphPose,
-    PoseLookup7,
     drifted_lookup,
     graph_lookup,
     has_drift,
     lidar_voxel_agreement,
     pose7_lookup,
+    trajectory_lookup,
     trajectory_recovery_error,
 )
 
@@ -116,7 +120,9 @@ _RRD_MAX_PATH_POINTS = 5000
 VOXEL_MAX_SCANS = 300
 
 # Bump to invalidate every cached cell (scoring/replay semantics changed).
-EVAL_VERSION = 1
+# v2: raw baseline is now composed from tf (world->body) when present, not the
+# odom stream's stored poses.
+EVAL_VERSION = 2
 
 
 def cell_fingerprint(
@@ -538,27 +544,68 @@ def run_module_graph(
     return graph, int(data["closures"]), replay_stats  # type: ignore[return-value]
 
 
-def odometry_pose7_lookup(db_path: Path, odom_stream: str) -> PoseLookup7:
+# Tolerance for composing world->body from the recording's tf at an odom time.
+TF_LOOKUP_TOLERANCE_S = 0.1
+# tf may come online slightly after the odom stream starts (sensor/static warmup);
+# odom samples before tf is available are skipped only within this opening window.
+TF_STARTUP_TOLERANCE_S = 2.0
+
+
+def tf_pose_samples(
+    db_path: Path,
+    odom_stream: str,
+    *,
+    world_frame: str,
+    body_frame: str,
+    startup_tolerance_s: float = TF_STARTUP_TOLERANCE_S,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Robot trajectory composed from the recording's tf (``world_frame ->
+    body_frame``) sampled at each odom timestamp.
+
+    tf is REQUIRED — this raises (no odom-pose fallback) when the recording has no
+    tf tree, or when tf never comes online within ``startup_tolerance_s`` of the
+    odom start. Missing samples after tf is online (sporadic lookup gaps) are
+    skipped."""
+    db_store = store(db_path)
+    if "tf" not in db_store.list_streams() or not db_store.tf.has_transforms():
+        raise SystemExit(
+            f"{db_path}: no tf tree — eval requires tf (run add_tf first); odom fallback removed"
+        )
     times: list[float] = []
     poses: list[list[float]] = []
-    for timestamp, payload in iterate_stream(db_path, odom_stream):
-        pose = RateReplay._payload_pose(payload)
+    odom_t0: float | None = None
+    tf_online = False
+    for timestamp, _payload in iterate_stream(db_path, odom_stream):
+        if odom_t0 is None:
+            odom_t0 = timestamp
+        transform = db_store.tf.get(world_frame, body_frame, timestamp, TF_LOOKUP_TOLERANCE_S)
+        if transform is None:
+            if tf_online:
+                continue  # sporadic gap once tf is up — skip this sample
+            if timestamp - odom_t0 <= startup_tolerance_s:
+                continue  # opening warmup window — tf not online yet, tolerated
+            raise SystemExit(
+                f"{db_path}: tf did not come online within {startup_tolerance_s}s of the"
+                f" odom start (world={world_frame!r} body={body_frame!r})"
+            )
+        tf_online = True
         times.append(timestamp)
         poses.append(
             [
-                pose.position.x,
-                pose.position.y,
-                pose.position.z,
-                pose.orientation.x,
-                pose.orientation.y,
-                pose.orientation.z,
-                pose.orientation.w,
+                transform.translation.x,
+                transform.translation.y,
+                transform.translation.z,
+                transform.rotation.x,
+                transform.rotation.y,
+                transform.rotation.z,
+                transform.rotation.w,
             ]
         )
-    return pose7_lookup(
+    if not times:
+        raise SystemExit(f"{db_path}: tf produced no {world_frame}->{body_frame} samples")
+    return (
         np.asarray(times, dtype=np.float64),
-        np.asarray(poses, dtype=np.float64),
-        ODOM_MATCH_TOLERANCE_S,
+        np.asarray(poses, dtype=np.float64).reshape(-1, 7),
     )
 
 
@@ -614,6 +661,9 @@ def evaluate(
     recording_name: str | None = None,
     drift_per_sec: list[float] | None = None,
     ignore_tags: set[int] | None = None,
+    world_frame: str = "world",
+    body_frame: str = "base_link",
+    tf_startup_tolerance_s: float = TF_STARTUP_TOLERANCE_S,
 ) -> dict[str, Any]:
     streams = list_streams(db_path)
     for required in (odom_stream, lidar_stream):
@@ -690,12 +740,23 @@ def evaluate(
     if not graph:
         raise SystemExit(f"{module_name} produced an empty pose graph")
 
+    # Raw-baseline trajectory: composed from the recording's tf (world->body).
+    # tf is required — no odom-pose fallback (see tf_pose_samples).
+    raw_times, raw_poses7 = tf_pose_samples(
+        db_path,
+        odom_stream,
+        world_frame=world_frame,
+        body_frame=body_frame,
+        startup_tolerance_s=tf_startup_tolerance_s,
+    )
+    print(f"raw baseline from tf {world_frame}->{body_frame} ({len(raw_times)} samples)")
+    raw_xyz_base = trajectory_lookup(raw_times, raw_poses7[:, :3], ODOM_MATCH_TOLERANCE_S)
+    raw_pose7_base = pose7_lookup(raw_times, raw_poses7, ODOM_MATCH_TOLERANCE_S)
+
     # The module solved on drifted input, so its graph lives in the drifted
     # world; the raw baselines must be drifted to match (see drift_per_sec).
-    raw_xyz_lookup = drifted_lookup(odometry_lookup(db_path, odom_stream), drift_per_sec, drift_t0)
-    raw_pose7_lookup = drifted_lookup(
-        odometry_pose7_lookup(db_path, odom_stream), drift_per_sec, drift_t0
-    )
+    raw_xyz_lookup = drifted_lookup(raw_xyz_base, drift_per_sec, drift_t0)
+    raw_pose7_lookup = drifted_lookup(raw_pose7_base, drift_per_sec, drift_t0)
 
     xyz_graph = [(node[0], node[1], node[2], node[3]) for node in graph]
     if sightings:
@@ -728,9 +789,7 @@ def evaluate(
     # Drift-recovery ATE: corrected trajectory vs the UN-drifted ground truth
     # (the odom before drift was injected). Only meaningful with --drift-per-sec;
     # the right metric where tag/voxel agreement is weak (e.g. KITTI's long loop).
-    trajectory = trajectory_recovery_error(
-        graph, odometry_lookup(db_path, odom_stream), drift_per_sec, drift_t0
-    )
+    trajectory = trajectory_recovery_error(graph, raw_xyz_base, drift_per_sec, drift_t0)
     if trajectory is not None:
         print(
             f"  drift recovery:    {trajectory['drifted_ate_m']:.2f}"
@@ -751,15 +810,7 @@ def evaluate(
     out_dir.mkdir(parents=True, exist_ok=True)
     rrd_path = out_dir / "eval.rrd"
     if with_rrd:
-        raw_positions = np.asarray(
-            [
-                [pose.position.x, pose.position.y, pose.position.z]
-                for _, payload in iterate_stream(db_path, odom_stream)
-                for pose in [RateReplay._payload_pose(payload)]
-            ],
-            dtype=np.float64,
-        )
-        write_trajectory_rrd(rrd_path, raw_positions, graph)
+        write_trajectory_rrd(rrd_path, raw_poses7[:, :3], graph)
 
     summary = {
         "db": str(db_path),
@@ -773,6 +824,9 @@ def evaluate(
             db_path, pgo_config, lidar_stream, odom_stream, drift_per_sec
         ),
         "replay": replay_stats,
+        "pose_source": "tf",
+        "world_frame": world_frame,
+        "body_frame": body_frame,
         "april_tags": {
             "source": tag_source,
             "sightings": n_sightings,
@@ -873,6 +927,22 @@ def main() -> None:
         help="comma-separated April-tag ids to drop from scoring (dynamic/unreliable "
         "tags whose motion would look like drift). e.g. '17'",
     )
+    parser.add_argument(
+        "--world-frame",
+        default="world",
+        help="tf frame the raw baseline is expressed in (when the recording has tf)",
+    )
+    parser.add_argument(
+        "--body-frame",
+        default="base_link",
+        help="tf frame tracking the robot body (the raw baseline is world_frame->body_frame)",
+    )
+    parser.add_argument(
+        "--tf-startup-tolerance-s",
+        type=float,
+        default=TF_STARTUP_TOLERANCE_S,
+        help="grace window for tf to come online after the odom start before erroring",
+    )
     args = parser.parse_args()
 
     drift_per_sec = (
@@ -915,6 +985,9 @@ def main() -> None:
         recording_name=args.recording_name,
         drift_per_sec=drift_per_sec,
         ignore_tags=ignore_tags,
+        world_frame=args.world_frame,
+        body_frame=args.body_frame,
+        tf_startup_tolerance_s=args.tf_startup_tolerance_s,
     )
 
 
