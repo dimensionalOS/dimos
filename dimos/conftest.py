@@ -86,7 +86,6 @@ def _is_macos() -> bool:
 
 
 def pytest_configure(config):
-    config.addinivalue_line("markers", "tool: dev tooling")
     config.addinivalue_line(
         "markers",
         "self_hosted: tests that need the self-hosted runner (LFS, ROS, CUDA, etc.)",
