@@ -425,7 +425,6 @@ class BirdsEyeOccupancy:
 
         if valid.any():
             u = np.tile(np.arange(W, dtype=np.float32), (H, 1))
-            v = np.tile(np.arange(H, dtype=np.float32), (W, 1)).T
 
             d      = depth[valid]
             x_fwd  = d                             # camera-link X = depth (forward)
@@ -435,12 +434,17 @@ class BirdsEyeOccupancy:
             row_hit = np.clip((mid - x_fwd  / self.RES).astype(np.int32), 0, n - 1)
 
             # Mark free along each ray — fully vectorised, no Python loop.
-            # t=(0.1…0.9) × ray; outer product gives (9, N_valid) step positions.
             t        = np.linspace(0.1, 0.9, 9, dtype=np.float32)
             row_free = np.clip(mid - np.outer(t, x_fwd  / self.RES).astype(np.int32), 0, n - 1)
             col_free = np.clip(mid + np.outer(t, y_left / self.RES).astype(np.int32), 0, n - 1)
             grid[row_free.ravel(), col_free.ravel()] = 1   # free
-            grid[row_hit, col_hit]                   = 2   # occupied (overwrites free)
+
+            # Count how many depth pixels land in each cell.
+            # Flying pixels (stereo edge artifacts) land in isolated cells — count=1.
+            # Real surfaces (walls, furniture) produce many pixels per cell — count≥3.
+            hits = np.zeros((n, n), dtype=np.uint16)
+            np.add.at(hits, (row_hit, col_hit), 1)
+            grid[hits >= 3] = 2   # occupied — overwrites free, requires 3+ hits
 
         rgb = np.full((n, n, 3), 60, dtype=np.uint8)   # unknown: dark gray
         rgb[grid == 1] = (30, 180, 30)                   # free:     green
