@@ -318,6 +318,10 @@ class VoxelAccumulator:
             self._idx[int(k)] = self._n + i
         self._n += n_new
 
+    def clear(self) -> None:
+        self._idx.clear()
+        self._n = 0
+
     @property
     def xyz(self) -> np.ndarray: return self._xyz[:self._n]
 
@@ -457,10 +461,10 @@ class BirdsEyeOccupancy:
             np.add.at(hits, (row_hit, col_hit), 1)
             grid[hits >= 5] = 2   # occupied — overwrites free, requires 5+ hits
 
-        rgb = np.full((n, n, 3), 60, dtype=np.uint8)   # unknown: dark gray
-        rgb[grid == 1] = (30, 180, 30)                   # free:     green
-        rgb[grid == 2] = (220, 50,  50)                  # occupied: red
-        rgb[mid,  mid] = (255, 255,  0)                  # camera:   yellow dot
+        rgb = np.full((n, n, 3), (200, 180, 0), dtype=np.uint8)  # unknown: yellow
+        rgb[grid == 1] = (30, 180, 30)                          # free:     green
+        rgb[grid == 2] = (220, 50,  50)                         # occupied: red
+        rgb[mid,  mid] = (255, 255, 255)                        # camera:   white dot
         return rgb
 
 
@@ -536,16 +540,16 @@ class WorldOccupancyGrid:
         occ  = self._hits >= self.OCC_THRESH
         free = (self._rays >= self.FREE_THRESH) & ~occ
 
-        rgb = np.full((n, n, 3), 40, dtype=np.uint8)   # unknown: very dark
-        rgb[free] = (30, 180, 30)                        # free:     green
-        rgb[occ]  = (220, 50,  50)                       # occupied: red
+        rgb = np.full((n, n, 3), (200, 180, 0), dtype=np.uint8)  # unknown: yellow
+        rgb[free] = (30, 180, 30)                                  # free:     green
+        rgb[occ]  = (220, 50,  50)                                 # occupied: red
 
-        # Camera marker — 5×5 yellow square
+        # Camera marker — 5×5 white square (distinct from yellow background)
         cam_row = int(np.clip(mid - self._cam_t[0] / self.RES, 0, n - 1))
         cam_col = int(np.clip(mid - self._cam_t[1] / self.RES, 0, n - 1))
         r0 = max(0, cam_row - 2);  r1 = min(n, cam_row + 3)
         c0 = max(0, cam_col - 2);  c1 = min(n, cam_col + 3)
-        rgb[r0:r1, c0:c1] = (255, 255, 0)
+        rgb[r0:r1, c0:c1] = (255, 255, 255)
 
         return rgb
 
@@ -588,8 +592,9 @@ class DepthStreamer:
         self._vox     = voxels
         self._cg      = costgrid
         self._emit_c  = emit_confidence
-        self._birdseye  = BirdsEyeOccupancy()
-        self._world_occ = WorldOccupancyGrid()
+        self._birdseye    = BirdsEyeOccupancy()
+        self._world_occ   = WorldOccupancyGrid()
+        self._was_locked  = False
         self._pinhole_logged = False
 
     def assemble(self, zed: sl.Camera, ts: float) -> DepthFramePacket:
@@ -610,15 +615,20 @@ class DepthStreamer:
     def process(self, pkt: DepthFramePacket, frame: int) -> None:
         """Backproject → accumulate → (periodically) rebuild costmap.
 
-        Accumulation is skipped until VIO has a confirmed lock.  Before lock,
-        pose_R=I and the backprojected points are in camera-optical frame
-        (Z=depth, not Z=up) — poisoning the map with wrong Z prevents the
-        height-cost algorithm from producing any meaningful costmap.
+        Before VIO lock: pose_R=I so xyz is in camera-link frame (X=fwd, Z=up).
+        Voxels accumulate in that frame — costmap renders immediately.
+        On first VIO lock: voxels are cleared and world-frame accumulation begins,
+        giving a clean handoff without camera-frame contamination.
         """
         xyz = self._bp.project(pkt)
-        if len(xyz) > 0 and self._pose.locked:
+        if len(xyz) > 0:
+            just_locked = self._pose.locked and not self._was_locked
+            if just_locked:
+                self._vox.clear()   # discard camera-frame voxels; restart in world frame
             self._vox.add(xyz)
-            self._world_occ.update(xyz, pkt.pose_t)
+            if self._pose.locked:
+                self._world_occ.update(xyz, pkt.pose_t)
+        self._was_locked = self._pose.locked
         self._log_depth_frame(pkt, xyz)
         if frame % self.MAP_EVERY == 0:
             self._log_map_and_costmap()
