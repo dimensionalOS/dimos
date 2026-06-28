@@ -392,7 +392,64 @@ class CostGrid:
         return rgb, ox, oy
 
 
-# ── Stage 7: Streamer ─────────────────────────────────────────────────────────
+# ── Stage 7: Bird's-eye occupancy ────────────────────────────────────────────
+
+class BirdsEyeOccupancy:
+    """Single-frame bird's-eye occupancy image from depth.
+
+    No VIO, no accumulation.  One depth frame → one colour image.
+
+    Layout (camera at centre of image):
+      forward  = up in image
+      left     = left in image
+      gray     = unknown (no ray reached here)
+      green    = free   (ray passed through)
+      red      = occupied (surface hit)
+    """
+
+    RES  = 0.10   # metres per cell
+    HALF = 5.0    # grid covers ±HALF metres around camera
+
+    def __init__(self) -> None:
+        self._n   = int(self.HALF * 2 / self.RES)   # 100 × 100 cells
+        self._mid = self._n // 2
+
+    def build(
+        self, depth: np.ndarray, fx: float, fy: float, cx: float, cy: float
+    ) -> np.ndarray:
+        n, mid = self._n, self._mid
+        H, W   = depth.shape
+
+        grid  = np.zeros((n, n), dtype=np.uint8)   # 0=unknown 1=free 2=occupied
+        valid = np.isfinite(depth)
+
+        if valid.any():
+            u = np.tile(np.arange(W, dtype=np.float32), (H, 1))
+            v = np.tile(np.arange(H, dtype=np.float32), (W, 1)).T
+
+            d      = depth[valid]
+            x_fwd  = d                             # camera-link X = depth (forward)
+            y_left = -(u[valid] - cx) * d / fx    # camera-link Y = lateral
+
+            col_hit = np.clip((mid + y_left / self.RES).astype(np.int32), 0, n - 1)
+            row_hit = np.clip((mid - x_fwd  / self.RES).astype(np.int32), 0, n - 1)
+
+            # Mark free along each ray — fully vectorised, no Python loop.
+            # t=(0.1…0.9) × ray; outer product gives (9, N_valid) step positions.
+            t        = np.linspace(0.1, 0.9, 9, dtype=np.float32)
+            row_free = np.clip(mid - np.outer(t, x_fwd  / self.RES).astype(np.int32), 0, n - 1)
+            col_free = np.clip(mid + np.outer(t, y_left / self.RES).astype(np.int32), 0, n - 1)
+            grid[row_free.ravel(), col_free.ravel()] = 1   # free
+            grid[row_hit, col_hit]                   = 2   # occupied (overwrites free)
+
+        rgb = np.full((n, n, 3), 60, dtype=np.uint8)   # unknown: dark gray
+        rgb[grid == 1] = (30, 180, 30)                   # free:     green
+        rgb[grid == 2] = (220, 50,  50)                  # occupied: red
+        rgb[mid,  mid] = (255, 255,  0)                  # camera:   yellow dot
+        return rgb
+
+
+# ── Stage 8: Streamer ─────────────────────────────────────────────────────────
 
 _JET_T = np.linspace(0, 1, 256, dtype=np.float32)
 _JET_R = np.clip(1.5 - np.abs(4 * _JET_T - 3), 0, 1)
@@ -430,6 +487,7 @@ class DepthStreamer:
         self._vox     = voxels
         self._cg      = costgrid
         self._emit_c  = emit_confidence
+        self._birdseye = BirdsEyeOccupancy()
         self._pinhole_logged = False
 
     def assemble(self, zed: sl.Camera, ts: float) -> DepthFramePacket:
@@ -472,6 +530,12 @@ class DepthStreamer:
             self._pinhole_logged = True
 
         rr.log("world/camera/depth", rr.DepthImage(pkt.depth, meter=1.0))
+
+        # Bird's-eye occupancy — no VIO needed, runs every frame
+        fx, fy, cx, cy = pkt.intrinsics
+        rr.log("occupancy/birdseye", rr.Image(
+            self._birdseye.build(pkt.depth, fx, fy, cx, cy)
+        ))
 
         if pkt.confidence is not None:
             conf_u8 = np.nan_to_num(pkt.confidence, nan=0.0).clip(0, 100)
