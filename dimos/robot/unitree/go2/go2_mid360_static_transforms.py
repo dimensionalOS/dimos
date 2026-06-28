@@ -21,7 +21,13 @@ lidar) can be anchored to ``base_link``.
 Mount geometry (measured on the physical rig)
 ---------------------------------------------
 - base_link -> front_camera: 32.7cm forward, ~4.3cm up (URDF front_camera mount).
-- front_camera -> mid360_link: lidar is 3.2cm back, 12cm up, pitched 44 deg down.
+- front_camera -> mid360_mount: lidar is 3.2cm back, 12cm up, pitched 44 deg down —
+  the physical sensor pose (position + tilt).
+- mid360_mount -> mid360_link: a counter-rotation (inverse of the mount tilt) that
+  leaves the position untouched but un-tilts the orientation, so ``mid360_link`` is
+  gravity-aligned. The LIO odometry is gravity-anchored, so the recorded scans live
+  in this gravity-aligned frame at the physical sensor position — keeping the mount
+  in a separate ``mid360_mount`` frame preserves the physical geometry.
 - front_camera -> camera_optical: the standard ROS optical rotation (x-right, y-down,
   z-forward).
 """
@@ -45,7 +51,10 @@ OPTICAL_RPY = (-math.pi / 2, 0.0, -math.pi / 2)
 FRAMES: list[FrameSpec] = [
     ("base_link", None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
     ("front_camera", "base_link", (0.32715, -0.00003, 0.04297), (0.0, 0.0, 0.0)),
-    ("mid360_link", "front_camera", (-0.032, 0.0, 0.12), (0.0, MID360_PITCH_DOWN, 0.0)),
+    # physical sensor pose: position + the 44 deg downward tilt
+    ("mid360_mount", "front_camera", (-0.032, 0.0, 0.12), (0.0, MID360_PITCH_DOWN, 0.0)),
+    # gravity-aligned data frame: same position, tilt counter-rotated out
+    ("mid360_link", "mid360_mount", (0.0, 0.0, 0.0), (0.0, -MID360_PITCH_DOWN, 0.0)),
     ("camera_optical", "front_camera", (0.0, 0.0, 0.0), OPTICAL_RPY),
 ]
 
