@@ -178,9 +178,15 @@ class PoseReader:
         if not self._active:
             return
         if zed.get_position(self._pose, sl.REFERENCE_FRAME.WORLD) == sl.POSITIONAL_TRACKING_STATE.OK:
-            T       = self._pose.pose_data.get_data().astype(np.float32)
-            self._R = T[:3, :3]
-            self._t = T[:3, 3]
+            t = self._pose.get_translation()
+            q = self._pose.get_orientation()
+            self._t = np.array(t.get(), dtype=np.float32)
+            x, y, z, w = np.array(q.get(), dtype=np.float32)
+            self._R = np.array([
+                [1-2*(y*y+z*z), 2*(x*y-z*w),   2*(x*z+y*w)  ],
+                [2*(x*y+z*w),   1-2*(x*x+z*z), 2*(y*z-x*w)  ],
+                [2*(x*z-y*w),   2*(y*z+x*w),   1-2*(x*x+y*y)],
+            ], dtype=np.float32)
 
     @property
     def R(self) -> np.ndarray: return self._R
