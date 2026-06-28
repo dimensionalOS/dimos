@@ -1,32 +1,26 @@
-"""ZED Mini → filtered depth frame packets for DimOS costmap generation.
+"""ZED Mini → filtered depth packets → world-frame voxel map → OccupancyGrid.
 
-Streams one DepthFramePacket per camera frame.  Each packet contains
-everything DimOS needs to project depth into 3-D, fuse over time with
-pose, and build a navigation costmap — without receiving a point cloud.
+Pipeline stages (one class each):
 
-  DepthFramePacket
-    timestamp   float       monotonic seconds
-    depth       H×W f32    metres, NaN = invalid / uncertain / out-of-range
-    intrinsics  (fx,fy,cx,cy)
-    width, height
-    pose_R      3×3 f32    camera→world rotation   (identity until tracking fixed)
-    pose_t      (3,) f32   camera→world translation
-    confidence  H×W f32    0-100 per-pixel score, or None if not requested
+  DepthFilter          sl.MEASURE.DEPTH + confidence → clean H×W float32 depth
+  IntrinsicsReader     reads + caches ZED left-camera K matrix
+  PoseReader           ZED VIO pose, camera→world (R, t)
+  DepthFramePacket     one complete frame: depth + intrinsics + pose + optional conf
+  ─── new stages built on top of the packet ────────────────────────────────────
+  DepthBackprojector   depth image + intrinsics + pose → world-frame XYZ (N×3)
+  VoxelAccumulator     hash-indexed voxel map, stores actual xyz (not centroids)
+  CostGrid             2D height-cost grid from accumulated 3D points
+  DepthStreamer        assembles packets, drives all stages, logs to Rerun + stdout
 
-DimOS responsibilities (NOT done here):
-  depth → 3-D projection using intrinsics + pose
-  occupancy grid generation
-  temporal fusion using pose
-  costmap building
+Rerun entities:
+  world/camera              Pinhole model (static)
+  world/camera/depth        filtered depth image (float32, auto-colorised)
+  world/camera/confidence   per-pixel stereo confidence (greyscale)
+  world/cloud               current frame in world frame (height-coloured)
+  world/map                 accumulated voxel map (height-coloured, every 10 frames)
+  world/costmap             2D occupancy grid as RGB image (green/yellow/red)
 
-Pipeline classes
-  DepthFramePacket   plain dataclass — the packet contract
-  DepthFilter        filters raw ZED depth in-place (no downsampling)
-  IntrinsicsReader   reads + caches ZED left-camera calibration
-  PoseReader         ZED VIO pose (passthrough until SDK 5.4.0 is fixed)
-  DepthStreamer      assembles packets, streams to Rerun + stdout
-
-Usage
+Usage:
   python -m dimos.navigation.camera_nav.zed_depth_costmap
 """
 
@@ -40,23 +34,32 @@ import pyzed.sl as sl
 import rerun as rr
 
 
+# ── Shared voxel key packing (same scheme as zed_global_map.py) ───────────────
+
+_OFF  = np.int64(100_000)
+_MASK = np.int64(0x3FFFF)
+
+def _pack(vkeys: np.ndarray) -> np.ndarray:
+    v = (vkeys.astype(np.int64) + _OFF) & _MASK
+    return (v[:, 0] << 36) | (v[:, 1] << 18) | v[:, 2]
+
+
 # ── Packet contract ────────────────────────────────────────────────────────────
 
 @dataclass
 class DepthFramePacket:
-    """One complete depth frame ready for DimOS costmap fusion.
+    """One complete depth frame.
 
-    depth is a float32 image where valid pixels carry depth in metres and
-    invalid / low-confidence / out-of-range pixels are NaN.  DimOS uses
-    np.isfinite(depth) to locate valid pixels before projection.
+    depth: H×W float32, metres.  NaN = invalid / low-confidence / out-of-range.
+    Use np.isfinite(depth) to find valid pixels before projection.
     """
-    timestamp:  float                       # time.monotonic() at grab
-    depth:      np.ndarray                  # H×W float32, metres, NaN=invalid
-    intrinsics: np.ndarray                  # [fx, fy, cx, cy] float64
+    timestamp:  float
+    depth:      np.ndarray           # H×W float32, metres, NaN=invalid
+    intrinsics: np.ndarray           # [fx, fy, cx, cy] float64
     width:      int
     height:     int
-    pose_R:     np.ndarray                  # 3×3 float32  camera→world rotation
-    pose_t:     np.ndarray                  # (3,) float32 camera→world translation
+    pose_R:     np.ndarray           # 3×3 float32  camera→world rotation
+    pose_t:     np.ndarray           # (3,) float32 camera→world translation
     confidence: np.ndarray | None = field(default=None)  # H×W float32 0-100
 
     @property
@@ -72,43 +75,32 @@ class DepthFramePacket:
 # ── Stage 1: Depth filter ──────────────────────────────────────────────────────
 
 class DepthFilter:
-    """Filters raw ZED MEASURE.DEPTH into a clean float32 depth image.
+    """sl.MEASURE.DEPTH + confidence → clean H×W float32 depth at full resolution.
 
-    Invalid pixels (NaN, Inf, ≤ 0), low-confidence pixels, and out-of-range
-    pixels are set to NaN.  The pixel grid is kept at full camera resolution —
-    no downsampling — so DimOS receives the maximum scene content per frame.
-
-    Confidence threshold is intentionally moderate (40) to remove clear stereo
-    failures without stripping valid geometry at edges or low-texture surfaces.
+    No downsampling — every valid pixel reaches the backprojector.
+    Confidence threshold 40 removes clear stereo failures while keeping
+    real geometry at low-texture surfaces and depth edges.
     """
 
-    CONF_THRESHOLD: float = 40.0   # pixels below this score → NaN
-    MIN_DEPTH:      float = 0.3    # metres — ignore near-field noise
-    MAX_DEPTH:      float = 8.0    # metres — ignore unstable long-range depth
+    CONF_THRESHOLD: float = 40.0
+    MIN_DEPTH:      float = 0.3
+    MAX_DEPTH:      float = 8.0
 
     def __init__(self) -> None:
         self._depth_mat = sl.Mat()
         self._conf_mat  = sl.Mat()
 
     def filter(self, zed: sl.Camera) -> tuple[np.ndarray, np.ndarray]:
-        """Return (depth_f32 H×W, confidence_f32 H×W).
-
-        depth pixels outside valid range or below confidence are NaN.
-        confidence is always returned so callers can inspect it.
-        """
-        # Raw depth (metres, float32, NaN/Inf for invalid stereo matches)
         zed.retrieve_measure(self._depth_mat, sl.MEASURE.DEPTH, sl.MEM.CPU)
         depth = self._depth_mat.get_data().astype(np.float32)
         if depth.ndim == 3:
             depth = depth[:, :, 0]
 
-        # Per-pixel stereo confidence (0 = worst, 100 = best)
         zed.retrieve_measure(self._conf_mat, sl.MEASURE.CONFIDENCE, sl.MEM.CPU)
         conf = self._conf_mat.get_data().astype(np.float32)
         if conf.ndim == 3:
             conf = conf[:, :, 0]
 
-        # Build combined invalid mask — these pixels become NaN
         invalid = (
             ~np.isfinite(depth)
             | (depth <= self.MIN_DEPTH)
@@ -117,25 +109,17 @@ class DepthFilter:
             | (conf < self.CONF_THRESHOLD)
         )
         depth[invalid] = np.nan
-
         return depth, conf
 
 
 # ── Stage 2: Intrinsics reader ────────────────────────────────────────────────
 
 class IntrinsicsReader:
-    """Reads and caches ZED left-camera calibration parameters.
-
-    Calibration is fixed per session; we read once after open() and reuse.
-    """
+    """Reads and caches ZED left-camera calibration (fixed for the session)."""
 
     def __init__(self) -> None:
-        self._fx: float = 0.0
-        self._fy: float = 0.0
-        self._cx: float = 0.0
-        self._cy: float = 0.0
-        self._w:  int   = 0
-        self._h:  int   = 0
+        self._fx = self._fy = self._cx = self._cy = 0.0
+        self._w = self._h = 0
         self._ready = False
 
     def read(self, zed: sl.Camera) -> None:
@@ -144,12 +128,9 @@ class IntrinsicsReader:
         ci  = zed.get_camera_information()
         cal = ci.camera_configuration.calibration_parameters.left_cam
         res = ci.camera_configuration.resolution
-        self._fx = cal.fx
-        self._fy = cal.fy
-        self._cx = cal.cx
-        self._cy = cal.cy
-        self._w  = res.width
-        self._h  = res.height
+        self._fx, self._fy = cal.fx, cal.fy
+        self._cx, self._cy = cal.cx, cal.cy
+        self._w, self._h   = res.width, res.height
         self._ready = True
 
     @property
@@ -157,31 +138,23 @@ class IntrinsicsReader:
         return np.array([self._fx, self._fy, self._cx, self._cy], dtype=np.float64)
 
     @property
-    def width(self) -> int:
-        return self._w
+    def width(self) -> int: return self._w
 
     @property
-    def height(self) -> int:
-        return self._h
+    def height(self) -> int: return self._h
 
     @property
     def K(self) -> np.ndarray:
         return np.array(
-            [[self._fx, 0, self._cx],
-             [0, self._fy, self._cy],
-             [0, 0, 1]], dtype=np.float64
+            [[self._fx, 0, self._cx], [0, self._fy, self._cy], [0, 0, 1]],
+            dtype=np.float64,
         )
 
 
 # ── Stage 3: Pose reader ──────────────────────────────────────────────────────
 
 class PoseReader:
-    """Returns ZED VIO camera→world pose.
-
-    ZED SDK 5.4.0 on macOS: enable_positional_tracking() segfaults.
-    Returns identity (R=I, t=0) until tracking is fixed.
-    Call enable(zed) after that SDK issue is resolved — nothing else changes.
-    """
+    """ZED VIO camera→world pose.  Identity passthrough until enable() is called."""
 
     def __init__(self) -> None:
         self._R      = np.eye(3, dtype=np.float32)
@@ -191,9 +164,14 @@ class PoseReader:
 
     def enable(self, zed: sl.Camera) -> bool:
         tp = sl.PositionalTrackingParameters()
-        tp.enable_imu_fusion = True
+        tp.enable_imu_fusion   = True
+        tp.set_floor_as_origin = True   # Z=0 at floor → costmap Z thresholds are absolute
         ok = zed.enable_positional_tracking(tp) == sl.ERROR_CODE.SUCCESS
         self._active = ok
+        if ok:
+            print("VIO tracking enabled")
+        else:
+            print("VIO tracking failed — map will accumulate in camera frame")
         return ok
 
     def update(self, zed: sl.Camera) -> None:
@@ -205,46 +183,226 @@ class PoseReader:
             self._t = T[:3, 3]
 
     @property
-    def R(self) -> np.ndarray:
-        return self._R
+    def R(self) -> np.ndarray: return self._R
 
     @property
-    def t(self) -> np.ndarray:
-        return self._t
+    def t(self) -> np.ndarray: return self._t
+
+    @property
+    def active(self) -> bool: return self._active
 
 
-# ── Stage 4: Streamer ─────────────────────────────────────────────────────────
+# ── Stage 4: Backprojector ────────────────────────────────────────────────────
+
+class DepthBackprojector:
+    """DepthFramePacket → world-frame XYZ (N×3 float32).
+
+    Pixel grid → camera-frame (u-cx)*d/fx, (v-cy)*d/fy, d → rotated by pose.
+    Only valid (non-NaN) depth pixels are projected.
+    Uses the full camera resolution because DepthFilter never downsampled.
+    """
+
+    def project(self, pkt: DepthFramePacket) -> np.ndarray:
+        d = pkt.depth                       # H×W float32
+        H, W = d.shape
+        fx, fy, cx, cy = pkt.intrinsics
+
+        us = np.arange(W, dtype=np.float32)
+        vs = np.arange(H, dtype=np.float32)
+        uu, vv = np.meshgrid(us, vs)
+
+        valid = np.isfinite(d)
+        dd    = d[valid]
+        x_cam = (uu[valid] - cx) * dd / fx
+        y_cam = (vv[valid] - cy) * dd / fy
+        z_cam = dd
+
+        xyz_cam = np.column_stack([x_cam, y_cam, z_cam]).astype(np.float32)
+        return xyz_cam @ pkt.pose_R.T + pkt.pose_t  # → world frame
+
+
+# ── Stage 5: Voxel accumulator ────────────────────────────────────────────────
+
+class VoxelAccumulator:
+    """Hash-indexed 3D voxel map storing actual observed xyz positions.
+
+    Identity layer: 2 cm voxel hash decides new vs revisit.
+    Fine layer:     actual stereo positions stored and refined via running average.
+    Only xyz is stored (no colour) — the costmap only needs geometry.
+    """
+
+    def __init__(self, voxel_size: float = 0.02, capacity: int = 500_000) -> None:
+        self._v   = voxel_size
+        self._cap = capacity
+        self._idx: dict[int, int] = {}
+        self._xyz  = np.empty((capacity, 3), dtype=np.float32)
+        self._conf = np.zeros(capacity, dtype=np.uint16)
+        self._n    = 0
+
+    def add(self, xyz: np.ndarray) -> None:
+        if len(xyz) == 0:
+            return
+        vk   = np.floor(xyz / self._v).astype(np.int32)
+        keys = _pack(vk)
+        _, first = np.unique(keys, return_index=True)
+        keys = keys[first]; xyz = xyz[first]
+
+        key_list = keys.tolist()
+        exists   = np.array([k in self._idx for k in key_list], dtype=bool)
+
+        if exists.any():
+            rows  = np.array([self._idx[int(k)] for k in keys[exists].tolist()], dtype=np.int32)
+            old_c = self._conf[rows].astype(np.float32)
+            new_c = np.minimum(old_c + 1, 65_535)
+            w     = (old_c / new_c)[:, None]
+            self._xyz[rows]  = self._xyz[rows] * w + xyz[exists] * (1 - w)
+            self._conf[rows] = new_c.astype(np.uint16)
+
+        new_xyz  = xyz[~exists]
+        new_keys = keys[~exists]
+        n_new    = len(new_xyz)
+        if n_new == 0:
+            return
+        if self._n + n_new > self._cap:
+            self._grow()
+        rows = slice(self._n, self._n + n_new)
+        self._xyz[rows]  = new_xyz
+        self._conf[rows] = 1
+        for i, k in enumerate(new_keys.tolist()):
+            self._idx[int(k)] = self._n + i
+        self._n += n_new
+
+    @property
+    def xyz(self) -> np.ndarray: return self._xyz[:self._n]
+
+    @property
+    def count(self) -> int: return self._n
+
+    def _grow(self) -> None:
+        new_cap  = self._cap * 2
+        new_xyz  = np.empty((new_cap, 3), dtype=np.float32)
+        new_conf = np.zeros(new_cap, dtype=np.uint16)
+        new_xyz[:self._n]  = self._xyz[:self._n]
+        new_conf[:self._n] = self._conf[:self._n]
+        self._xyz = new_xyz; self._conf = new_conf; self._cap = new_cap
+
+
+# ── Stage 6: Height-cost grid ─────────────────────────────────────────────────
+
+class CostGrid:
+    """2D occupancy grid from accumulated 3D points using height-gap cost.
+
+    Z convention: set_floor_as_origin=True → Z=0 at floor.
+      0 – FLOOR_Z   → floor / free
+      FLOOR_Z – OBS_Z → obstacle band (robot body height)
+      above OBS_Z    → overhead — ignored
+
+    Cost logic (same as dimos CostMapper height_cost):
+      per cell: max_z - min_z = height gap
+      gap > CAN_PASS_UNDER → use min_z  (beam / overhead clearance → free)
+      else: cost = clip((eff_z / OBS_Z) × 100, 0, 100)
+    """
+
+    RES           = 0.05   # metres per cell
+    FLOOR_Z       = 0.12   # below → floor
+    OBS_Z         = 1.8    # above → overhead (not mapped)
+    CAN_PASS_UNDER = 0.6   # height gap above which low edge is used
+
+    def build(self, xyz: np.ndarray) -> tuple[np.ndarray, float, float] | tuple[None, None, None]:
+        """Return (grid H×W uint8 RGB, origin_x, origin_y) or (None, None, None)."""
+        if len(xyz) == 0:
+            return None, None, None
+
+        # Only points in the meaningful height band
+        ok  = (xyz[:, 2] > -0.3) & (xyz[:, 2] < self.OBS_Z)
+        xyz = xyz[ok]
+        if len(xyz) == 0:
+            return None, None, None
+
+        ox = xyz[:, 0].min() - 1.0
+        oy = xyz[:, 1].min() - 1.0
+        W  = max(1, int(np.ceil((xyz[:, 0].max() + 1.0 - ox) / self.RES)))
+        H  = max(1, int(np.ceil((xyz[:, 1].max() + 1.0 - oy) / self.RES)))
+
+        col = np.clip(((xyz[:, 0] - ox) / self.RES).astype(np.int32), 0, W - 1)
+        row = np.clip(((xyz[:, 1] - oy) / self.RES).astype(np.int32), 0, H - 1)
+
+        z_min = np.full((H, W),  np.inf, np.float32)
+        z_max = np.full((H, W), -np.inf, np.float32)
+        np.minimum.at(z_min, (row, col), xyz[:, 2])
+        np.maximum.at(z_max, (row, col), xyz[:, 2])
+
+        observed = np.isfinite(z_min) & np.isfinite(z_max)
+        gap      = z_max - z_min
+        eff_z    = np.where(gap > self.CAN_PASS_UNDER, z_min, z_max)
+
+        # Cost 0–100
+        cost = np.zeros((H, W), np.float32)
+        cost[observed] = np.clip(
+            (eff_z[observed] / self.OBS_Z) * 100.0, 0.0, 100.0
+        )
+        cost[eff_z <= self.FLOOR_Z] = 0.0   # floor → free
+
+        # Colorise to RGB for Rerun
+        rgb = np.zeros((H, W, 3), dtype=np.uint8)
+        rgb[~observed] = (80, 80, 80)        # unknown → dark grey
+        free_mask = observed & (cost < 10)
+        rgb[free_mask] = (30, 180, 30)       # free → green
+        obs_mask = observed & (cost >= 10)
+        t  = (cost[obs_mask] / 100.0).clip(0, 1)
+        r  = (255 * t).astype(np.uint8)
+        g  = (180 * (1 - t)).astype(np.uint8)
+        rgb[obs_mask] = np.column_stack([r, g, np.zeros_like(r)])
+
+        return rgb, ox, oy
+
+
+# ── Stage 7: Streamer ─────────────────────────────────────────────────────────
+
+_JET_T = np.linspace(0, 1, 256, dtype=np.float32)
+_JET_R = np.clip(1.5 - np.abs(4 * _JET_T - 3), 0, 1)
+_JET_G = np.clip(1.5 - np.abs(4 * _JET_T - 2), 0, 1)
+_JET_B = np.clip(1.5 - np.abs(4 * _JET_T - 1), 0, 1)
+_JET   = (np.column_stack([_JET_R, _JET_G, _JET_B]) * 255).astype(np.uint8)
+
+def _height_colors(z: np.ndarray, z_min: float = -0.1, z_max: float = 1.8) -> np.ndarray:
+    t   = np.clip((z - z_min) / max(z_max - z_min, 1e-6), 0, 1)
+    idx = (t * 255).astype(np.int32).clip(0, 255)
+    return _JET[idx]
+
 
 class DepthStreamer:
-    """Assembles and streams DepthFramePackets.
+    """Assembles packets, drives all downstream stages, logs to Rerun."""
 
-    Rerun entities:
-      world/camera            Pinhole camera model (static)
-      world/camera/depth      filtered depth image (DepthImage, colorised)
-      world/camera/confidence confidence map as greyscale image
-    """
+    MAX_CLOUD = 50_000   # per-frame cap to stay below Rerun h2 limit
+    MAX_MAP   = 80_000   # map visualisation cap
+    MAP_EVERY = 10       # frames between map + costmap updates
 
     def __init__(
         self,
         depth_filter:  DepthFilter,
         intrinsics:    IntrinsicsReader,
         pose:          PoseReader,
+        backproj:      DepthBackprojector,
+        voxels:        VoxelAccumulator,
+        costgrid:      CostGrid,
         emit_confidence: bool = True,
     ) -> None:
         self._filt    = depth_filter
         self._intr    = intrinsics
         self._pose    = pose
+        self._bp      = backproj
+        self._vox     = voxels
+        self._cg      = costgrid
         self._emit_c  = emit_confidence
         self._pinhole_logged = False
 
-    def assemble(self, zed: sl.Camera, timestamp: float) -> DepthFramePacket:
-        """Build one DepthFramePacket from the current grabbed frame."""
+    def assemble(self, zed: sl.Camera, ts: float) -> DepthFramePacket:
         self._intr.read(zed)
         self._pose.update(zed)
         depth, conf = self._filt.filter(zed)
-
         return DepthFramePacket(
-            timestamp  = timestamp,
+            timestamp  = ts,
             depth      = depth,
             intrinsics = self._intr.intrinsics,
             width      = self._intr.width,
@@ -254,36 +412,64 @@ class DepthStreamer:
             confidence = conf if self._emit_c else None,
         )
 
-    def log_rerun(self, pkt: DepthFramePacket) -> None:
-        """Visualise the packet in Rerun."""
-        # Log pinhole once (calibration is static)
+    def process(self, pkt: DepthFramePacket, frame: int) -> None:
+        """Backproject → accumulate → (periodically) rebuild costmap."""
+        xyz = self._bp.project(pkt)
+        if len(xyz) > 0:
+            self._vox.add(xyz)
+        self._log_depth_frame(pkt, xyz)
+        if frame % self.MAP_EVERY == 0:
+            self._log_map_and_costmap()
+
+    # ── Rerun logging ─────────────────────────────────────────────────────────
+
+    def _log_depth_frame(self, pkt: DepthFramePacket, xyz: np.ndarray) -> None:
         if not self._pinhole_logged:
-            rr.log(
-                "world/camera",
-                rr.Pinhole(
-                    image_from_camera=pkt.K,
-                    width=pkt.width,
-                    height=pkt.height,
-                ),
-                static=True,
-            )
+            rr.log("world/camera", rr.Pinhole(
+                image_from_camera=pkt.K, width=pkt.width, height=pkt.height,
+            ), static=True)
             self._pinhole_logged = True
 
-        # Depth image — Rerun colorises float32 depth automatically
         rr.log("world/camera/depth", rr.DepthImage(pkt.depth, meter=1.0))
 
-        # Confidence map as greyscale (0-100 → 0-255)
         if pkt.confidence is not None:
             conf_u8 = np.nan_to_num(pkt.confidence, nan=0.0).clip(0, 100)
-            conf_u8 = (conf_u8 * 2.55).astype(np.uint8)
-            rr.log("world/camera/confidence", rr.Image(conf_u8))
+            rr.log("world/camera/confidence", rr.Image((conf_u8 * 2.55).astype(np.uint8)))
+
+        if len(xyz) > 0:
+            n   = min(len(xyz), self.MAX_CLOUD)
+            idx = np.random.choice(len(xyz), n, replace=False) if len(xyz) > n else np.arange(n)
+            rr.log("world/cloud", rr.Points3D(
+                positions=xyz[idx],
+                colors=_height_colors(xyz[idx, 2]),
+                radii=0.003,
+            ))
+
+    def _log_map_and_costmap(self) -> None:
+        xyz = self._vox.xyz
+        if len(xyz) == 0:
+            return
+
+        # Accumulated voxel map
+        n   = min(len(xyz), self.MAX_MAP)
+        idx = np.random.choice(len(xyz), n, replace=False) if len(xyz) > n else np.arange(len(xyz))
+        rr.log("world/map", rr.Points3D(
+            positions=xyz[idx],
+            colors=_height_colors(xyz[idx, 2]),
+            radii=0.004,
+        ))
+
+        # 2-D costmap as RGB image
+        rgb, ox, oy = self._cg.build(xyz)
+        if rgb is not None:
+            rr.log("world/costmap", rr.Image(rgb))
 
     def log_stdout(self, pkt: DepthFramePacket, frame: int, fps: float) -> None:
-        valid = pkt.valid_fraction
         tx, ty, tz = pkt.pose_t
         print(
             f"frame={frame:5d}  "
-            f"valid={valid*100:5.1f}%  "
+            f"valid={pkt.valid_fraction * 100:5.1f}%  "
+            f"map={self._vox.count:6d}  "
             f"pose=({tx:.2f},{ty:.2f},{tz:.2f})  "
             f"fps={fps:.1f}"
         )
@@ -293,7 +479,7 @@ class DepthStreamer:
 
 def main() -> None:
     # Fork Rerun BEFORE zed.open() — ZED starts internal capture threads on open();
-    # forking after those threads exist is unsafe on macOS and causes segfaults.
+    # forking after those threads exist is unsafe on macOS (fork-after-threads segfault).
     rr.init("zed_depth_costmap", spawn=True)
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
 
@@ -309,14 +495,20 @@ def main() -> None:
     if zed.open(ip) != sl.ERROR_CODE.SUCCESS:
         print("ZED failed to open"); return
 
-    print("camera open — streaming depth packets. Ctrl-C to quit.")
+    print("camera open — Ctrl-C to quit.")
 
     depth_filter = DepthFilter()
     intrinsics   = IntrinsicsReader()
     pose         = PoseReader()
-    streamer     = DepthStreamer(depth_filter, intrinsics, pose, emit_confidence=True)
+    backproj     = DepthBackprojector()
+    voxels       = VoxelAccumulator(voxel_size=0.02)
+    costgrid     = CostGrid()
+    streamer     = DepthStreamer(
+        depth_filter, intrinsics, pose, backproj, voxels, costgrid,
+        emit_confidence=True,
+    )
 
-    pose.enable(zed)  # safe: Rerun forked before zed.open(), no fork-after-threads
+    pose.enable(zed)  # safe: Rerun already forked before zed.open()
 
     rt    = sl.RuntimeParameters()
     frame = 0
@@ -326,22 +518,16 @@ def main() -> None:
         while True:
             if zed.grab(rt) != sl.ERROR_CODE.SUCCESS:
                 continue
-
             ts  = time.monotonic()
             pkt = streamer.assemble(zed, ts)
-            streamer.log_rerun(pkt)
+            streamer.process(pkt, frame)
             streamer.log_stdout(pkt, frame, frame / max(ts - t0, 1e-6))
-
-            # pkt is ready for DimOS here — hand it to the costmap pipeline:
-            # costmap_module.receive(pkt)
-
             frame += 1
-
     except KeyboardInterrupt:
         pass
 
     zed.close()
-    print("done")
+    print(f"done — {voxels.count} voxels in map")
 
 
 if __name__ == "__main__":
