@@ -292,6 +292,11 @@ class DepthStreamer:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
+    # Fork Rerun BEFORE zed.open() — ZED starts internal capture threads on open();
+    # forking after those threads exist is unsafe on macOS and causes segfaults.
+    rr.init("zed_depth_costmap", spawn=True)
+    rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
+
     zed = sl.Camera()
     ip  = sl.InitParameters()
     ip.camera_resolution      = sl.RESOLUTION.VGA
@@ -304,8 +309,6 @@ def main() -> None:
     if zed.open(ip) != sl.ERROR_CODE.SUCCESS:
         print("ZED failed to open"); return
 
-    rr.init("zed_depth_costmap", spawn=True)
-    rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
     print("camera open — streaming depth packets. Ctrl-C to quit.")
 
     depth_filter = DepthFilter()
@@ -313,8 +316,7 @@ def main() -> None:
     pose         = PoseReader()
     streamer     = DepthStreamer(depth_filter, intrinsics, pose, emit_confidence=True)
 
-    # Uncomment when SDK 5.4.0 tracking is fixed:
-    # pose.enable(zed)
+    pose.enable(zed)  # safe: Rerun forked before zed.open(), no fork-after-threads
 
     rt    = sl.RuntimeParameters()
     frame = 0

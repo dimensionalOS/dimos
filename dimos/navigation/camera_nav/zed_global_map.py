@@ -276,6 +276,11 @@ class RerunPublisher:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
+    # Fork Rerun BEFORE zed.open() — ZED starts internal capture threads on open();
+    # forking after those threads exist is unsafe on macOS and causes segfaults.
+    rr.init("zed_hifi_map", spawn=True)
+    rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
+
     zed = sl.Camera()
     ip  = sl.InitParameters()
     ip.camera_resolution      = sl.RESOLUTION.VGA
@@ -288,8 +293,6 @@ def main() -> None:
     if zed.open(ip) != sl.ERROR_CODE.SUCCESS:
         print("ZED failed to open"); return
 
-    rr.init("zed_hifi_map", spawn=True)
-    rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
     print("camera open")
 
     filt   = PointCloudFilter(min_depth=0.3, max_depth=8.0, stride=2)
@@ -297,8 +300,7 @@ def main() -> None:
     fusion = DualLayerFusion(voxel_size=0.02)
     pub    = RerunPublisher(min_depth=0.3, max_depth=8.0, map_interval=10)
 
-    # Activate when SDK 5.4.0 tracking is fixed:
-    # pose.enable(zed)
+    pose.enable(zed)  # safe: Rerun forked before zed.open(), no fork-after-threads
 
     rt    = sl.RuntimeParameters()
     frame = 0
