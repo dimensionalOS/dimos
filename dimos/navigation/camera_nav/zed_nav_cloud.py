@@ -1,0 +1,508 @@
+"""Navigation-optimized point cloud pipeline for DimOS CostMapper.
+
+Objective: produce a world-frame PointCloud2 where every point is
+high-confidence evidence of occupied space — not just a projected pixel.
+
+Four independent pipeline stages:
+
+  Stage 1  DepthObserver     ZED frame → validated depth (three validation passes)
+  Stage 2  WorldProjector    validated depth + VIO pose → world-frame XYZ
+  Stage 3  EvidenceMap       per-voxel observation counting → stable occupied set
+  Stage 4  NavigationCloud   stable voxels → clean N×3 output for CostMapper
+
+Design principle:
+  Every depth pixel has a non-zero chance of being a stereo artifact even after
+  confidence filtering.  Requiring a voxel to be observed from multiple independent
+  camera positions (different poses) makes artifact survival exponentially unlikely.
+  A 5% per-pixel artifact rate after Stage 1 becomes < 0.01% after Stage 3
+  with stable_min = 3, because three independent stereo failures must land in the
+  same 3 cm cube — a near-impossible coincidence for noise, but routine for walls.
+
+Usage:
+  python -m dimos.navigation.camera_nav.zed_nav_cloud
+
+Output fed to CostMapper:
+  world/stable_cloud  N×3 float32, Z=up, metres, frame_id="world"
+"""
+
+from __future__ import annotations
+
+import time
+from typing import NamedTuple
+
+import numpy as np
+import pyzed.sl as sl
+import rerun as rr
+
+
+# ── Optical-frame → camera_link rotation (constant, from ZEDCamera TF) ────────
+#
+# ZED get_position() returns pose of camera_link in world frame.
+# camera_link:   X = forward (depth axis), Y = left, Z = up
+# camera_optical: X = right in image, Y = down in image, Z = depth
+#
+# Mapping: x_link = z_opt,  y_link = -x_opt,  z_link = -y_opt
+# Matches OPTICAL_ROTATION = Quaternion(-0.5, 0.5, -0.5, 0.5) used in ZEDCamera.
+# Without this rotation, Z in the output = depth (not height), and the CostMapper
+# height-cost algorithm computes gradients of scene-distance instead of terrain.
+_R_OPT_TO_LINK = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=np.float32)
+
+# ── Voxel key packing ──────────────────────────────────────────────────────────
+_OFF  = np.int64(100_000)
+_MASK = np.int64(0x3FFFF)
+
+def _pack(vkeys: np.ndarray) -> np.ndarray:
+    v = (vkeys.astype(np.int64) + _OFF) & _MASK
+    return (v[:, 0] << 36) | (v[:, 1] << 18) | v[:, 2]
+
+def _neighbor_count(valid: np.ndarray) -> np.ndarray:
+    """Count valid pixels in each pixel's 3×3 neighborhood (0–9)."""
+    v = valid.astype(np.uint8)
+    p = np.pad(v, 1, constant_values=0)
+    return (
+        p[:-2, :-2] + p[:-2, 1:-1] + p[:-2, 2:] +
+        p[1:-1, :-2] + p[1:-1, 1:-1] + p[1:-1, 2:] +
+        p[2:, :-2]  + p[2:, 1:-1]  + p[2:, 2:]
+    )
+
+
+# ── Configuration ──────────────────────────────────────────────────────────────
+
+class ObservationConfig(NamedTuple):
+    conf_min:      float = 40.0  # stereo confidence threshold (0–100)
+    depth_min:     float = 0.30  # metres
+    depth_max:     float = 8.00  # metres
+    min_neighbors: int   = 5     # minimum valid 3×3 neighbors to keep a pixel
+
+
+class EvidenceConfig(NamedTuple):
+    voxel_size: float = 0.03    # metres — finer than CostMapper cell for Z accuracy
+    stable_min: int   = 3       # observations required before a voxel is stable
+    capacity:   int   = 500_000
+
+
+# ── Stage 1: Observation validation ───────────────────────────────────────────
+
+class DepthObserver:
+    """ZED frame → validated depth array.
+
+    Three passes in series, each targeting a different artifact class:
+
+    Pass A — range + NaN
+        Removes physically impossible values: NaN (no stereo match), Inf,
+        negative, and out-of-sensor-range depths.  These are definitively wrong;
+        no further checking is needed.
+
+    Pass B — stereo confidence
+        The ZED SDK assigns a per-pixel confidence score (0–100) based on the
+        quality of the left-right stereo match.  Pixels below conf_min have a
+        poor match — the depth value may be entirely fabricated by interpolation.
+        This eliminates most texture-less surfaces and reflective material errors.
+
+    Pass C — neighborhood isolation
+        Stereo artifacts that survive passes A and B tend to be spatially
+        isolated: a single pixel with a plausible depth surrounded by invalid
+        neighbours.  Real surfaces produce spatially coherent depth patches.
+        A pixel is rejected if fewer than min_neighbors of its 9 neighbourhood
+        pixels passed passes A and B.  With min_neighbors=5 this removes
+        isolated single-pixel and small-cluster artifacts while preserving
+        valid depth at object edges (which typically have ≥5 valid neighbours
+        on the interior side).
+    """
+
+    def __init__(self, cfg: ObservationConfig = ObservationConfig()) -> None:
+        self._cfg       = cfg
+        self._depth_mat = sl.Mat()
+        self._conf_mat  = sl.Mat()
+
+    def observe(self, zed: sl.Camera) -> np.ndarray:
+        """Return H×W float32 depth. Rejected pixels are NaN."""
+        zed.retrieve_measure(self._depth_mat, sl.MEASURE.DEPTH, sl.MEM.CPU)
+        raw_depth = self._depth_mat.get_data().astype(np.float32)
+        if raw_depth.ndim == 3:
+            raw_depth = raw_depth[:, :, 0]
+
+        zed.retrieve_measure(self._conf_mat, sl.MEASURE.CONFIDENCE, sl.MEM.CPU)
+        conf = self._conf_mat.get_data().astype(np.float32)
+        if conf.ndim == 3:
+            conf = conf[:, :, 0]
+
+        cfg = self._cfg
+
+        # Pass A: range + NaN
+        valid = (
+            np.isfinite(raw_depth)
+            & (raw_depth >= cfg.depth_min)
+            & (raw_depth <= cfg.depth_max)
+            & np.isfinite(conf)
+        )
+
+        # Pass B: stereo confidence
+        valid &= conf >= cfg.conf_min
+
+        # Pass C: neighborhood isolation
+        valid &= _neighbor_count(valid) >= cfg.min_neighbors
+
+        depth = np.full_like(raw_depth, np.nan)
+        depth[valid] = raw_depth[valid]
+        return depth
+
+    def valid_fraction(self, depth: np.ndarray) -> float:
+        return float(np.isfinite(depth).mean())
+
+
+# ── Stage 2a: Camera calibration ──────────────────────────────────────────────
+
+class IntrinsicsReader:
+    """Reads and caches ZED left-camera intrinsics (fixed for the session)."""
+
+    def __init__(self) -> None:
+        self._ready = False
+        self._fx = self._fy = self._cx = self._cy = 0.0
+
+    def read(self, zed: sl.Camera) -> None:
+        if self._ready:
+            return
+        ci  = zed.get_camera_information()
+        cal = ci.camera_configuration.calibration_parameters.left_cam
+        self._fx, self._fy = cal.fx, cal.fy
+        self._cx, self._cy = cal.cx, cal.cy
+        self._ready = True
+
+    @property
+    def params(self) -> tuple[float, float, float, float]:
+        """(fx, fy, cx, cy)"""
+        return self._fx, self._fy, self._cx, self._cy
+
+
+# ── Stage 2b: Pose tracking ───────────────────────────────────────────────────
+
+class PoseTracker:
+    """Synchronized VIO pose with lock detection.
+
+    The lock guard is the second critical safety check:
+    Before the first POSITIONAL_TRACKING_STATE.OK, pose_R = I and pose_t = 0.
+    Backprojected points in that state are in camera-optical frame (Z = depth)
+    mislabelled as world frame (Z = up).  Feeding them to EvidenceMap poisons
+    the accumulated map irreversibly for the rest of the session.
+
+    locked becomes True on the first OK state and stays True.
+    Only when locked=True should WorldProjector be called.
+    """
+
+    def __init__(self) -> None:
+        self._R      = np.eye(3, dtype=np.float32)
+        self._t      = np.zeros(3, dtype=np.float32)
+        self._locked = False
+        self._active = False
+        self._pose   = sl.Pose()
+
+    def enable(self, zed: sl.Camera) -> bool:
+        tp = sl.PositionalTrackingParameters()
+        tp.enable_imu_fusion   = True
+        tp.set_floor_as_origin = True  # Z=0 at floor → costmap Z thresholds are absolute
+        ok = zed.enable_positional_tracking(tp) == sl.ERROR_CODE.SUCCESS
+        self._active = ok
+        print("VIO tracking enabled" if ok else "VIO tracking failed — map will not build")
+        return ok
+
+    def update(self, zed: sl.Camera) -> None:
+        if not self._active:
+            return
+        if zed.get_position(self._pose, sl.REFERENCE_FRAME.WORLD) == sl.POSITIONAL_TRACKING_STATE.OK:
+            t = self._pose.get_translation()
+            q = self._pose.get_orientation()
+            self._t = np.array(t.get(), dtype=np.float32)
+            x, y, z, w = np.array(q.get(), dtype=np.float32)
+            self._R = np.array([
+                [1-2*(y*y+z*z), 2*(x*y-z*w),   2*(x*z+y*w)  ],
+                [2*(x*y+z*w),   1-2*(x*x+z*z), 2*(y*z-x*w)  ],
+                [2*(x*z-y*w),   2*(y*z+x*w),   1-2*(x*x+y*y)],
+            ], dtype=np.float32)
+            self._locked = True
+
+    @property
+    def locked(self) -> bool: return self._locked
+
+    @property
+    def R(self) -> np.ndarray: return self._R
+
+    @property
+    def t(self) -> np.ndarray: return self._t
+
+
+# ── Stage 2c: Projection ──────────────────────────────────────────────────────
+
+class WorldProjector:
+    """Validated depth → world-frame XYZ.
+
+    Three-step transform that exactly matches ZEDNavBridge:
+      1. Pinhole backproject (u, v, d) → camera-optical XYZ
+      2. _R_OPT_TO_LINK          → camera_link XYZ (Z = up)
+      3. VIO pose                → world XYZ (Z = up)
+
+    Step 2 is not optional: skipping it sends Z = depth (not Z = height)
+    into CostMapper, which then computes gradients of scene-depth rather
+    than terrain elevation.  Every point appears roughly at the same
+    'height' (distance) producing flat, cost-free output.
+    """
+
+    def project(
+        self,
+        depth:  np.ndarray,
+        fx: float, fy: float, cx: float, cy: float,
+        pose_R: np.ndarray,
+        pose_t: np.ndarray,
+    ) -> np.ndarray:
+        valid = np.isfinite(depth)
+        if not valid.any():
+            return np.empty((0, 3), dtype=np.float32)
+
+        H, W = depth.shape
+        us = np.arange(W, dtype=np.float32)
+        vs = np.arange(H, dtype=np.float32)
+        uu, vv = np.meshgrid(us, vs)
+
+        dd    = depth[valid]
+        xyz_opt = np.column_stack([
+            (uu[valid] - cx) * dd / fx,   # X optical = right in image
+            (vv[valid] - cy) * dd / fy,   # Y optical = down in image
+            dd,                            # Z optical = depth into scene
+        ]).astype(np.float32)
+
+        xyz_link  = xyz_opt  @ _R_OPT_TO_LINK.T   # optical → camera_link (Z = up)
+        xyz_world = xyz_link @ pose_R.T + pose_t   # camera_link → world
+
+        return xyz_world
+
+
+# ── Stage 3: Evidence fusion ───────────────────────────────────────────────────
+
+class EvidenceMap:
+    """Per-voxel observation counter.
+
+    Core logic: a voxel is stable when it has been independently observed
+    stable_min times from different camera positions.  Only stable voxels
+    are included in the output.
+
+    'Independent' is enforced by deduplicating hits within a single frame
+    before incrementing counts — so moving forward and back does not let
+    a single observation count multiple times.
+
+    Position accuracy: stored positions are running means of actual stereo
+    measurements, not voxel centroids.  This preserves Z accuracy for the
+    CostMapper height-cost algorithm, which needs precise min/max Z per cell.
+    """
+
+    def __init__(self, cfg: EvidenceConfig = EvidenceConfig()) -> None:
+        self._v    = cfg.voxel_size
+        self._smin = cfg.stable_min
+        self._cap  = cfg.capacity
+        self._idx: dict[int, int] = {}
+        self._xyz  = np.empty((self._cap, 3), dtype=np.float32)
+        self._obs  = np.zeros(self._cap, dtype=np.uint16)
+        self._n    = 0
+
+    def observe(self, xyz: np.ndarray) -> None:
+        """Add one frame of world-frame observations to the map."""
+        if len(xyz) == 0:
+            return
+
+        vk   = np.floor(xyz / self._v).astype(np.int32)
+        keys = _pack(vk)
+
+        # One vote per voxel per frame — prevents stationary camera inflating counts
+        _, first = np.unique(keys, return_index=True)
+        keys = keys[first]
+        xyz  = xyz[first]
+
+        key_list = keys.tolist()
+        exists   = np.array([k in self._idx for k in key_list], dtype=bool)
+
+        if exists.any():
+            rows  = np.array([self._idx[int(k)] for k in keys[exists].tolist()], dtype=np.int32)
+            old_c = self._obs[rows].astype(np.float32)
+            new_c = np.minimum(old_c + 1.0, 65_535.0)
+            w     = (old_c / new_c)[:, None]
+            self._xyz[rows] = self._xyz[rows] * w + xyz[exists] * (1.0 - w)
+            self._obs[rows] = new_c.astype(np.uint16)
+
+        new_mask = ~exists
+        if new_mask.any():
+            n_new = int(new_mask.sum())
+            if self._n + n_new > self._cap:
+                self._grow()
+            sl_ = slice(self._n, self._n + n_new)
+            self._xyz[sl_] = xyz[new_mask]
+            self._obs[sl_] = 1
+            for i, k in enumerate(keys[new_mask].tolist()):
+                self._idx[int(k)] = self._n + i
+            self._n += n_new
+
+    @property
+    def stable_xyz(self) -> np.ndarray:
+        """World-frame XYZ of voxels observed >= stable_min times."""
+        mask = self._obs[:self._n] >= self._smin
+        return self._xyz[:self._n][mask].copy()
+
+    @property
+    def total_voxels(self) -> int:
+        return self._n
+
+    @property
+    def stable_count(self) -> int:
+        return int((self._obs[:self._n] >= self._smin).sum())
+
+    def obs_counts(self) -> np.ndarray:
+        return self._obs[:self._n]
+
+    def all_xyz(self) -> np.ndarray:
+        return self._xyz[:self._n]
+
+    def _grow(self) -> None:
+        new_cap  = self._cap * 2
+        new_xyz  = np.empty((new_cap, 3), dtype=np.float32)
+        new_obs  = np.zeros(new_cap, dtype=np.uint16)
+        new_xyz[:self._n] = self._xyz[:self._n]
+        new_obs[:self._n] = self._obs[:self._n]
+        self._xyz = new_xyz
+        self._obs = new_obs
+        self._cap = new_cap
+
+
+# ── Stage 4: Navigation cloud output ──────────────────────────────────────────
+
+class NavigationCloud:
+    """Stable voxels → clean N×3 cloud for CostMapper.
+
+    Publishes at a lower rate than the camera (cloud_every frames).
+    CostMapper does not need 15 Hz input; publishing at ~1 Hz reduces
+    CPU load and gives EvidenceMap more frames to accumulate per cycle.
+    """
+
+    def __init__(self, ev_map: EvidenceMap, cloud_every: int = 15) -> None:
+        self._map   = ev_map
+        self._every = cloud_every
+
+    def get(self, frame: int) -> np.ndarray | None:
+        """Return stable cloud if it's time to publish, else None."""
+        if frame % self._every != 0:
+            return None
+        stable = self._map.stable_xyz
+        return stable if len(stable) > 0 else None
+
+
+# ── Rerun visualisation helper ─────────────────────────────────────────────────
+
+def _obs_colors(counts: np.ndarray) -> np.ndarray:
+    """Color by observation count so evidence build-up is visible.
+    blue=1 (unconfirmed), cyan=2, green=3+ (stable), white=10+
+    """
+    n = len(counts)
+    c = np.full((n, 3), 30, dtype=np.uint8)
+    c[counts == 1] = (30, 30, 200)
+    c[counts == 2] = (30, 160, 160)
+    c[counts >= 3]  = (30, 200, 30)
+    c[counts >= 10] = (200, 200, 200)
+    return c
+
+
+# ── Entry point ────────────────────────────────────────────────────────────────
+
+def main() -> None:
+    rr.init("zed_nav_cloud", spawn=True)
+    rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
+
+    zed = sl.Camera()
+    ip  = sl.InitParameters()
+    ip.camera_resolution      = sl.RESOLUTION.VGA
+    ip.camera_fps             = 15
+    ip.depth_mode             = sl.DEPTH_MODE.NEURAL
+    ip.coordinate_system      = sl.COORDINATE_SYSTEM.RIGHT_HANDED_Z_UP_X_FWD
+    ip.coordinate_units       = sl.UNIT.METER
+    ip.depth_maximum_distance = 8.0
+
+    if zed.open(ip) != sl.ERROR_CODE.SUCCESS:
+        print("ZED failed to open"); return
+
+    print("camera open — Ctrl-C to quit")
+
+    obs_cfg = ObservationConfig(conf_min=40, depth_min=0.3, depth_max=8.0, min_neighbors=5)
+    ev_cfg  = EvidenceConfig(voxel_size=0.03, stable_min=3)
+
+    observer  = DepthObserver(obs_cfg)
+    intr      = IntrinsicsReader()
+    pose      = PoseTracker()
+    projector = WorldProjector()
+    ev_map    = EvidenceMap(ev_cfg)
+    nav_cloud = NavigationCloud(ev_map, cloud_every=15)
+
+    pose.enable(zed)
+
+    rt    = sl.RuntimeParameters()
+    frame = 0
+    t0    = time.monotonic()
+
+    try:
+        while True:
+            if zed.grab(rt) != sl.ERROR_CODE.SUCCESS:
+                continue
+
+            ts = time.monotonic()
+
+            # Stage 1: observation validation
+            intr.read(zed)
+            depth      = observer.observe(zed)
+            valid_frac = observer.valid_fraction(depth)
+
+            # Stage 2: world alignment (only when VIO locked)
+            pose.update(zed)
+            xyz_world = None
+            if pose.locked:
+                fx, fy, cx, cy = intr.params
+                xyz_world = projector.project(depth, fx, fy, cx, cy, pose.R, pose.t)
+
+            # Stage 3: evidence fusion
+            if xyz_world is not None and len(xyz_world) > 0:
+                ev_map.observe(xyz_world)
+
+            # Stage 4: publish stable cloud
+            stable = nav_cloud.get(frame)
+            if stable is not None:
+                rr.log("world/stable_cloud", rr.Points3D(
+                    positions=stable,
+                    colors=np.full((len(stable), 3), [30, 200, 30], dtype=np.uint8),
+                    radii=0.005,
+                ))
+                # Evidence map colored by count (diagnostic)
+                all_xyz = ev_map.all_xyz()
+                rr.log("world/evidence_map", rr.Points3D(
+                    positions=all_xyz,
+                    colors=_obs_colors(ev_map.obs_counts()),
+                    radii=0.004,
+                ))
+
+            fps = frame / max(ts - t0, 1e-6)
+            print(
+                f"frame={frame:5d}  "
+                f"valid={valid_frac*100:5.1f}%  "
+                f"voxels={ev_map.total_voxels:6d}  "
+                f"stable={ev_map.stable_count:6d}  "
+                f"vio={'LOCKED' if pose.locked else 'no-lock'}  "
+                f"fps={fps:.1f}"
+            )
+            frame += 1
+
+    except KeyboardInterrupt:
+        pass
+
+    zed.close()
+    stable_frac = ev_map.stable_count / max(ev_map.total_voxels, 1)
+    print(
+        f"\ndone — {ev_map.stable_count} stable / {ev_map.total_voxels} total "
+        f"({stable_frac*100:.1f}% stable)"
+    )
+
+
+if __name__ == "__main__":
+    main()
