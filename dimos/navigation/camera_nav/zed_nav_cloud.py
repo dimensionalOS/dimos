@@ -55,6 +55,62 @@ def _pack(vkeys: np.ndarray) -> np.ndarray:
     v = (vkeys.astype(np.int64) + _OFF) & _MASK
     return (v[:, 0] << 36) | (v[:, 1] << 18) | v[:, 2]
 
+
+# ── Ray casting ────────────────────────────────────────────────────────────────
+
+class RayCaster:
+    """Cast rays from camera origin through each depth hit to mark free space.
+
+    For each ray: march from origin → (free_fraction × depth), stepping one
+    voxel at a time.  Every voxel along the path is evidence of traversable space.
+
+    Rays are subsampled (stride) so the operation stays cheap even at 30 k hits/frame.
+    The stop criterion (free_fraction < 1.0) ensures we never mark the occupied
+    surface voxel itself as free.
+    """
+
+    def __init__(
+        self,
+        voxel_size:    float = 0.03,
+        stride:        int   = 16,
+        free_fraction: float = 0.9,
+    ) -> None:
+        self._v     = voxel_size
+        self._stride = stride
+        self._frac  = free_fraction
+
+    def cast(self, origin: np.ndarray, hit_xyz: np.ndarray) -> np.ndarray:
+        """Return (M, 3) world-frame positions of free-space voxels.
+
+        origin:  (3,) camera position in world frame (pose_t)
+        hit_xyz: (N, 3) world-frame occupied hit points from WorldProjector
+        """
+        if len(hit_xyz) == 0:
+            return np.empty((0, 3), dtype=np.float32)
+
+        hits    = hit_xyz[::self._stride]                          # subsample rays
+        diffs   = hits - origin.astype(np.float32)                 # (N', 3)
+        lengths = np.linalg.norm(diffs, axis=1)                    # (N',)
+
+        ok      = lengths > self._v                                 # skip trivially short rays
+        diffs   = diffs[ok];  lengths = lengths[ok]
+        if len(lengths) == 0:
+            return np.empty((0, 3), dtype=np.float32)
+
+        dirs     = diffs / lengths[:, None]                        # (N', 3) unit vectors
+        free_end = lengths * self._frac                            # stop before the hit
+        n_steps  = max(1, int(free_end.max() / self._v))
+
+        # t[s] = (s+1) * voxel_size  — step positions along ray
+        t = (np.arange(n_steps, dtype=np.float32) + 1.0) * self._v  # (S,)
+
+        # pts[n, s] = origin + t[s] * dirs[n]   shape (N', S, 3)
+        pts    = origin.astype(np.float32) + t[None, :, None] * dirs[:, None, :]
+        inside = t[None, :] < free_end[:, None]                    # (N', S) mask
+
+        return pts[inside]  # (M, 3)
+
+
 # ── Configuration ──────────────────────────────────────────────────────────────
 
 class ObservationConfig(NamedTuple):
@@ -64,9 +120,11 @@ class ObservationConfig(NamedTuple):
 
 
 class EvidenceConfig(NamedTuple):
-    voxel_size: float = 0.03    # metres — finer than CostMapper cell for Z accuracy
-    stable_min: int   = 3       # observations required before a voxel is stable
-    capacity:   int   = 500_000
+    voxel_size:    float = 0.03      # metres
+    stable_min:    int   = 3         # occupied votes before a voxel is stable
+    free_min:      int   = 2         # free votes before a voxel is confirmed free
+    capacity:      int   = 500_000   # initial occupied pool
+    free_capacity: int   = 1_000_000 # initial free pool (free voxels outnumber occupied)
 
 
 # ── Stage 1: Observation validation ───────────────────────────────────────────
@@ -276,6 +334,13 @@ class EvidenceMap:
         self._xyz  = np.empty((self._cap, 3), dtype=np.float32)
         self._obs  = np.zeros(self._cap, dtype=np.uint16)
         self._n    = 0
+        # Free-space voxel pool (UNKNOWN = never hit by any ray)
+        self._fmin  = cfg.free_min
+        self._fcap  = cfg.free_capacity
+        self._fidx: dict[int, int] = {}
+        self._fxyz  = np.empty((self._fcap, 3), dtype=np.float32)
+        self._fobs  = np.zeros(self._fcap, dtype=np.uint16)
+        self._fn    = 0
 
     def observe(self, xyz: np.ndarray) -> None:
         """Add one frame of world-frame observations to the map."""
@@ -327,6 +392,59 @@ class EvidenceMap:
     def stable_count(self) -> int:
         return int((self._obs[:self._n] >= self._smin).sum())
 
+    def observe_free(self, xyz: np.ndarray) -> None:
+        """Mark world-frame positions as free (ray passed through here).
+
+        OCCUPIED takes priority: any voxel already in the occupied pool is skipped.
+        Free voxels store their voxel centroid (not a running mean) — the position
+        is exact to the voxel resolution so no refinement is needed.
+        """
+        if len(xyz) == 0:
+            return
+
+        vk   = np.floor(xyz / self._v).astype(np.int32)
+        keys = _pack(vk)
+
+        # Deduplicate within this frame
+        _, first = np.unique(keys, return_index=True)
+        keys = keys[first];  vk = vk[first]
+
+        # Skip voxels already known to be occupied
+        key_list = keys.tolist()
+        not_occ  = np.array([k not in self._idx for k in key_list], dtype=bool)
+        keys     = keys[not_occ];  vk = vk[not_occ]
+        if len(keys) == 0:
+            return
+
+        key_list = keys.tolist()
+        exists   = np.array([k in self._fidx for k in key_list], dtype=bool)
+
+        if exists.any():
+            rows = np.array([self._fidx[int(k)] for k in keys[exists].tolist()], dtype=np.int32)
+            self._fobs[rows] = np.minimum(self._fobs[rows] + 1, 65_535).astype(np.uint16)
+
+        new_mask = ~exists
+        if new_mask.any():
+            n_new = int(new_mask.sum())
+            if self._fn + n_new > self._fcap:
+                self._free_grow()
+            sl_ = slice(self._fn, self._fn + n_new)
+            self._fxyz[sl_] = (vk[new_mask] + 0.5) * self._v  # voxel centroid
+            self._fobs[sl_] = 1
+            for i, k in enumerate(keys[new_mask].tolist()):
+                self._fidx[int(k)] = self._fn + i
+            self._fn += n_new
+
+    @property
+    def free_xyz(self) -> np.ndarray:
+        """Confirmed free voxel positions (seen free >= free_min times, not occupied)."""
+        mask = self._fobs[:self._fn] >= self._fmin
+        return self._fxyz[:self._fn][mask].copy()
+
+    @property
+    def free_count(self) -> int:
+        return int((self._fobs[:self._fn] >= self._fmin).sum())
+
     def obs_counts(self) -> np.ndarray:
         return self._obs[:self._n]
 
@@ -339,9 +457,15 @@ class EvidenceMap:
         new_obs  = np.zeros(new_cap, dtype=np.uint16)
         new_xyz[:self._n] = self._xyz[:self._n]
         new_obs[:self._n] = self._obs[:self._n]
-        self._xyz = new_xyz
-        self._obs = new_obs
-        self._cap = new_cap
+        self._xyz = new_xyz;  self._obs = new_obs;  self._cap = new_cap
+
+    def _free_grow(self) -> None:
+        new_cap  = self._fcap * 2
+        new_xyz  = np.empty((new_cap, 3), dtype=np.float32)
+        new_obs  = np.zeros(new_cap, dtype=np.uint16)
+        new_xyz[:self._fn] = self._fxyz[:self._fn]
+        new_obs[:self._fn] = self._fobs[:self._fn]
+        self._fxyz = new_xyz;  self._fobs = new_obs;  self._fcap = new_cap
 
 
 # ── Stage 4: Navigation cloud output ──────────────────────────────────────────
@@ -402,12 +526,13 @@ def main() -> None:
     print("camera open — Ctrl-C to quit")
 
     obs_cfg = ObservationConfig(conf_min=40, depth_min=0.3, depth_max=8.0)
-    ev_cfg  = EvidenceConfig(voxel_size=0.03, stable_min=3)
+    ev_cfg  = EvidenceConfig(voxel_size=0.03, stable_min=3, free_min=2)
 
     observer  = DepthObserver(obs_cfg)
     intr      = IntrinsicsReader()
     pose      = PoseTracker()
     projector = WorldProjector()
+    raycaster = RayCaster(voxel_size=ev_cfg.voxel_size, stride=16, free_fraction=0.9)
     ev_map    = EvidenceMap(ev_cfg)
     nav_cloud = NavigationCloud(ev_map, cloud_every=15)
 
@@ -436,9 +561,13 @@ def main() -> None:
                 fx, fy, cx, cy = intr.params
                 xyz_world = projector.project(depth, fx, fy, cx, cy, pose.R, pose.t)
 
-            # Stage 3: evidence fusion
+            # Stage 3: evidence fusion + ray casting
             if xyz_world is not None and len(xyz_world) > 0:
+                # 3a: mark occupied
                 ev_map.observe(xyz_world)
+                # 3b: cast rays → mark free space between camera and hits
+                free_pts = raycaster.cast(pose.t, xyz_world)
+                ev_map.observe_free(free_pts)
                 # Always show current frame so there's immediate visual feedback
                 cap = min(len(xyz_world), 30_000)
                 rr.log("world/current_frame", rr.Points3D(
@@ -447,11 +576,10 @@ def main() -> None:
                     radii=0.004,
                 ))
 
-            # Stage 4: publish stable cloud every MAP_EVERY frames
+            # Stage 4: publish map every MAP_EVERY frames
             if frame % nav_cloud._every == 0 and ev_map.total_voxels > 0:
-                all_xyz = ev_map.all_xyz()
                 rr.log("world/evidence_map", rr.Points3D(
-                    positions=all_xyz,
+                    positions=ev_map.all_xyz(),
                     colors=_obs_colors(ev_map.obs_counts()),
                     radii=0.004,
                 ))
@@ -462,13 +590,23 @@ def main() -> None:
                         colors=np.full((len(stable), 3), [30, 200, 30], dtype=np.uint8),
                         radii=0.005,
                     ))
+                free = ev_map.free_xyz
+                if len(free) > 0:
+                    # cap display to avoid saturating Rerun
+                    cap = min(len(free), 80_000)
+                    idx = np.random.choice(len(free), cap, replace=False) if len(free) > cap else np.arange(len(free))
+                    rr.log("world/free_space", rr.Points3D(
+                        positions=free[idx],
+                        colors=np.full((len(idx), 3), [220, 120, 30], dtype=np.uint8),
+                        radii=0.003,
+                    ))
 
             fps = frame / max(ts - t0, 1e-6)
             print(
                 f"frame={frame:5d}  "
                 f"valid={valid_frac*100:5.1f}%  "
-                f"voxels={ev_map.total_voxels:6d}  "
-                f"stable={ev_map.stable_count:6d}  "
+                f"occ={ev_map.total_voxels:6d}  stable={ev_map.stable_count:6d}  "
+                f"free={ev_map.free_count:7d}  "
                 f"vio={'LOCKED' if pose.locked else 'no-lock'}  "
                 f"fps={fps:.1f}"
             )
