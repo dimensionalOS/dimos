@@ -492,17 +492,21 @@ class NavigationCloud:
 
 # ── Rerun visualisation helper ─────────────────────────────────────────────────
 
-def _obs_colors(counts: np.ndarray) -> np.ndarray:
-    """Color by observation count so evidence build-up is visible.
-    blue=1 (unconfirmed), cyan=2, green=3+ (stable), white=10+
+def _confidence_colors(counts: np.ndarray) -> np.ndarray:
+    """Color stable voxels by reinforcement level.
+
+    blue  = just reached stable threshold (3 obs) — tentatively confirmed
+    cyan  = moderately reinforced (5–9 obs)
+    white = heavily reinforced (15+ obs) — very confident wall
+
+    'Revisits reinforce walls': returning to the same surface makes it brighter,
+    not noisier. Noise artifacts never accumulate enough votes to appear at all.
     """
-    n = len(counts)
-    c = np.full((n, 3), 30, dtype=np.uint8)
-    c[counts == 1] = (30, 30, 200)
-    c[counts == 2] = (30, 160, 160)
-    c[counts >= 3]  = (30, 200, 30)
-    c[counts >= 10] = (200, 200, 200)
-    return c
+    t = np.clip((counts.astype(np.float32) - 3) / 12.0, 0.0, 1.0)  # 0 at 3, 1 at 15+
+    r = (t * 200).astype(np.uint8)
+    g = (t * 220).astype(np.uint8)
+    b = (220 - t * 170).astype(np.uint8)   # 220 → 50
+    return np.column_stack([r, g, b])
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
@@ -549,16 +553,14 @@ def main() -> None:
 
             ts = time.monotonic()
 
-            # Advance Rerun timeline every frame so the viewer updates
-            rr.set_time_sequence("frame", frame)
+            rr.set_time("frame", sequence=frame)
 
             # Stage 1: observation validation
             intr.read(zed)
             depth      = observer.observe(zed)
             valid_frac = observer.valid_fraction(depth)
 
-            # Always log depth — gives immediate Rerun feedback before VIO locks.
-            # The viewer shows content from frame 0 regardless of tracking state.
+            # Depth image logged every 3 frames — immediate Rerun feedback before VIO locks
             if frame % 3 == 0:
                 d = depth.copy()
                 d[~np.isfinite(d)] = 0.0
@@ -574,38 +576,21 @@ def main() -> None:
 
             # Stage 3: evidence fusion + ray casting
             if xyz_world is not None and len(xyz_world) > 0:
-                # 3a: mark occupied
                 ev_map.observe(xyz_world)
-                # 3b: cast rays → mark free space between camera and hits
                 free_pts = raycaster.cast(pose.t, xyz_world)
                 ev_map.observe_free(free_pts)
-                # Current-frame hits (blue) — immediate world-space feedback
-                cap = min(len(xyz_world), 30_000)
-                rr.log("world/current_frame", rr.Points3D(
-                    positions=xyz_world[:cap],
-                    colors=np.full((cap, 3), [100, 100, 200], dtype=np.uint8),
-                    radii=0.004,
-                ))
 
-            # Stage 4: publish accumulated map every MAP_EVERY frames
-            if frame % nav_cloud._every == 0 and ev_map.total_voxels > 0:
-                # Cap evidence_map display — can grow to 500 k+ points
-                all_xyz  = ev_map.all_xyz()
-                all_obs  = ev_map.obs_counts()
-                if len(all_xyz) > 80_000:
-                    idx     = np.random.choice(len(all_xyz), 80_000, replace=False)
-                    all_xyz = all_xyz[idx];  all_obs = all_obs[idx]
-                rr.log("world/evidence_map", rr.Points3D(
-                    positions=all_xyz,
-                    colors=_obs_colors(all_obs),
-                    radii=0.004,
-                ))
+            # Stage 4: publish map every MAP_EVERY frames
+            # Only two layers in 3D: stable occupied (confidence-colored) + free space.
+            # No current_frame noise, no evidence_map clutter — empty space stays empty.
+            if frame % nav_cloud._every == 0:
                 stable = ev_map.stable_xyz
                 if len(stable) > 0:
+                    s_obs = ev_map._obs[:ev_map._n][ev_map._obs[:ev_map._n] >= ev_map._smin]
                     rr.log("world/stable_cloud", rr.Points3D(
                         positions=stable,
-                        colors=np.full((len(stable), 3), [30, 200, 30], dtype=np.uint8),
-                        radii=0.005,
+                        colors=_confidence_colors(s_obs),
+                        radii=0.006,
                     ))
                 free = ev_map.free_xyz
                 if len(free) > 0:
@@ -613,8 +598,8 @@ def main() -> None:
                     idx = np.random.choice(len(free), cap, replace=False) if len(free) > cap else np.arange(len(free))
                     rr.log("world/free_space", rr.Points3D(
                         positions=free[idx],
-                        colors=np.full((len(idx), 3), [220, 120, 30], dtype=np.uint8),
-                        radii=0.003,
+                        colors=np.full((len(idx), 3), [60, 60, 80], dtype=np.uint8),
+                        radii=0.002,
                     ))
 
             fps = frame / max(ts - t0, 1e-6)
