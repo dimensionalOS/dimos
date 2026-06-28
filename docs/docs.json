@@ -113,13 +113,9 @@
           {
             "group": "Navigation",
             "pages": [
-              "capabilities/navigation/cmu_nav",
-              {
-                "group": "Native",
-                "pages": [
-                  "capabilities/navigation/native/index"
-                ]
-              }
+              "capabilities/navigation/index",
+              "capabilities/navigation/deep_dive",
+              "capabilities/navigation/relocalization"
             ]
           },
           {
@@ -141,8 +137,7 @@
                 "pages": [
                   "platforms/quadruped/go2/index",
                   "platforms/quadruped/go2/setup",
-                  "platforms/quadruped/go2/simulation",
-                  "platforms/quadruped/go2/premap"
+                  "platforms/quadruped/go2/simulation"
                 ]
               }
             ]

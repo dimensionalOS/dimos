@@ -53,8 +53,6 @@ find_package(Eigen3 REQUIRED)
 # PCL (only components we need — avoid full PCL which drags in VTK via io)
 find_package(PCL 1.8 REQUIRED COMPONENTS common filters)
 
-find_package(yaml-cpp REQUIRED)
-
 # glog (iVox map backend — include/ivox/ivox3d.h needs glog)
 find_package(glog REQUIRED)
 
@@ -94,7 +92,6 @@ target_link_libraries(pointlio_native PRIVATE
   ${LCM_LIBRARIES}
   ${LIVOX_SDK}
   ${PCL_LIBRARIES}
-  yaml-cpp::yaml-cpp
   glog::glog
 )
 

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any
 
 from dimos.memory2.transform import Transformer
@@ -21,6 +22,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.nav_3d.mls_planner.mls_planner import MLSPlanner
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -29,6 +31,8 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from dimos.memory2.type.observation import Observation
+
+logger = setup_logger()
 
 
 class MLSPlan(Transformer[PointCloud2, Path]):
@@ -72,24 +76,36 @@ class MLSPlan(Transformer[PointCloud2, Path]):
         )
         for obs in upstream:
             if obs.pose_tuple is None:
+                logger.debug("MLSPlan: obs %s has no pose; skipping", obs.id)
                 continue
             x, y, z, *_ = obs.pose_tuple
             start = (float(x), float(y), float(z) - self.robot_height)
 
-            voxel_map = obs.data
-            planner.update_global_map(voxel_map.points_f32())
+            ox, oy, radius, z_min, z_max = obs.tags["region_bounds"]
+            t_update = time.perf_counter()
+            planner.update_region(obs.data.points_f32(), (ox, oy), radius, z_min, z_max)
+            t_plan = time.perf_counter()
             waypoints = planner.plan(start, self.goal)
+            t_done = time.perf_counter()
             path = self._path_from_waypoints(waypoints, obs.ts)
+
+            timings = {
+                "update_ms": (t_plan - t_update) * 1000,
+                "plan_ms": (t_done - t_plan) * 1000,
+                "total_ms": (t_done - t_update) * 1000,
+            }
 
             yield obs.derive(
                 data=path,
                 tags={
                     **obs.tags,
-                    "voxel_map": voxel_map,
-                    "surface_map": planner.surface_map(),
+                    "voxel_map": planner.voxel_map(),
+                    "surface_clearance": planner.surface_clearance_map(),
                     "nodes": planner.nodes(),
                     "node_edges": planner.node_edges(),
                     "start": start,
                     "planned": waypoints is not None,
+                    "timings": timings,
+                    "voxels": planner.voxel_count(),
                 },
             )

@@ -1,25 +1,36 @@
-name: pr-label
+name: pr-labels
 
-# Adds/removes `ready-to-merge` based on the `ci-complete` job's conclusion
-# (which is what branch protection gates on). The `workflow_run` event fires
-# after the `ci` workflow finishes; `pull_request_target: synchronize` clears
-# the stale label on a new push before CI finishes on the new commit.
+# `ready-to-merge`: adds/removes the label based on the `ci-complete` job's
+# conclusion (which is what branch protection gates on). The `workflow_run`
+# event fires after the `ci` workflow finishes; `pull_request_target:
+# synchronize` clears the stale label on a new push before CI finishes on
+# the new commit.
+#
+# `backport-check`: when a `backport release/X.Y.Z` label exists (release in
+# flight), every PR to main must declare backport intent via that label or
+# `backport:skip`.
 #
 # Runs on the default branch via these events, so the GITHUB_TOKEN is
-# write-scoped even for PRs from forks.
+# write-scoped even for PRs from forks — and the workflow file itself can't
+# be tampered with by a fork PR.
 
 on:
   workflow_run:
     workflows: [ci]
     types: [completed]
   pull_request_target:
-    types: [synchronize, converted_to_draft, ready_for_review]
+    types: [synchronize, converted_to_draft, ready_for_review, opened, reopened, labeled, unlabeled]
 
 permissions: {}
 
 jobs:
   ready-to-merge:
-    if: github.event_name == 'pull_request_target' || github.event.workflow_run.event == 'pull_request'
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request') ||
+      (github.event_name == 'pull_request_target' &&
+       (github.event.action == 'synchronize' ||
+        github.event.action == 'converted_to_draft' ||
+        github.event.action == 'ready_for_review'))
     runs-on: ubuntu-latest
     permissions:
       actions: read         # For listWorkflowRuns / listJobsForWorkflowRun
@@ -108,3 +119,32 @@ jobs:
               }
               await setLabel(prNumber, ciOk && !pr.draft);
             }
+
+  backport-check:
+    name: "Admins: Backport label added"
+    if: github.event_name == 'pull_request_target' && github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - name: Verify backport intent
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Skip when no release is in flight (`backport:skip` is excluded by the prefix filter).
+          release_labels=$(gh api "repos/$REPO/labels" --paginate \
+            --jq '.[].name | select(startswith("backport release/"))')
+          if [[ -z "$release_labels" ]]; then
+            echo "::notice::No active 'backport release/*' labels; nothing to enforce."
+            exit 0
+          fi
+          pr_labels=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
+            --json labels --jq '.labels[].name')
+          if echo "$pr_labels" | grep -qE '^(backport release/|backport:skip$)'; then
+            exit 0
+          fi
+          echo "::error::PR needs a 'backport release/X.Y.Z' label, or 'backport:skip' to opt out. Active release labels:"
+          echo "$release_labels" | sed 's/^/  - /'
+          exit 1

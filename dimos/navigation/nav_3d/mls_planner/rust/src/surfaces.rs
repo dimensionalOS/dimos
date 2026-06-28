@@ -1,9 +1,9 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Surface extraction: from a voxel map, mark cells with robot-height
-//! clearance above as standable, then morphologically close per-z-level
-//! holes without letting closing bridge across walls.
+//! Surface extraction: mark cells with robot-height clearance above as
+//! standable, then morphologically close per-z-level holes without bridging
+//! across walls.
 
 use ahash::{AHashMap, AHashSet};
 use image::{GrayImage, Luma};
@@ -18,8 +18,8 @@ const OFF: Luma<u8> = Luma([0]);
 
 pub type ColumnIz = AHashMap<(i32, i32), Vec<i32>>;
 
-/// A cell is standable if it has at least the robot's height of clear
-/// space above it.
+/// A cell is standable if it has at least the robot's height of clear space
+/// above it.
 fn is_standable(ix: i32, iy: i32, iz: i32, by_col: &ColumnIz, clearance_cells: i32) -> bool {
     let Some(zs) = by_col.get(&(ix, iy)) else {
         return true;
@@ -36,8 +36,7 @@ fn is_standable(ix: i32, iy: i32, iz: i32, by_col: &ColumnIz, clearance_cells: i
 pub fn extract_surfaces(
     voxel_map: &AHashSet<VoxelKey>,
     clearance_cells: i32,
-    dilation_passes: u32,
-    erosion_passes: u32,
+    closing_passes: u32,
     by_col: &mut ColumnIz,
     out: &mut Vec<VoxelKey>,
 ) {
@@ -61,40 +60,102 @@ pub fn extract_surfaces(
         .par_iter()
         .flat_map_iter(|((ix, iy), zs)| {
             let mut local: Vec<VoxelKey> = Vec::new();
-            for w in zs.windows(2) {
-                if w[1] - w[0] > clearance_cells {
-                    local.push((*ix, *iy, w[0]));
-                }
-            }
-            if let Some(&last_iz) = zs.last() {
-                local.push((*ix, *iy, last_iz));
-            }
+            standable_in_column(*ix, *iy, zs, clearance_cells, &mut local);
             local
         })
         .collect();
     drop(entries);
 
-    close_surface_holes(
-        standable,
-        by_col,
-        dilation_passes,
-        erosion_passes,
-        clearance_cells,
-        out,
-    );
+    close_surface_holes(standable, by_col, closing_passes, clearance_cells, out);
 }
 
-/// Dilation and erosion on all xy slices of the extracted surfaces
-/// to fill in small holes.
-fn close_surface_holes(
-    standable: Vec<VoxelKey>,
-    by_col: &ColumnIz,
-    dilation_passes: u32,
-    erosion_passes: u32,
+/// Standable cells in one column: any cell with robot clearance above, plus
+/// the topmost cell.
+fn standable_in_column(
+    ix: i32,
+    iy: i32,
+    zs: &[i32],
     clearance_cells: i32,
     out: &mut Vec<VoxelKey>,
 ) {
-    if standable.is_empty() || (dilation_passes == 0 && erosion_passes == 0) {
+    for w in zs.windows(2) {
+        if w[1] - w[0] > clearance_cells {
+            out.push((ix, iy, w[0]));
+        }
+    }
+    if let Some(&last_iz) = zs.last() {
+        out.push((ix, iy, last_iz));
+    }
+}
+
+/// Insert a voxel into the per-column index, keeping each column sorted.
+pub fn add_to_by_col(by_col: &mut ColumnIz, (ix, iy, iz): VoxelKey) {
+    let zs = by_col.entry((ix, iy)).or_default();
+    if let Err(pos) = zs.binary_search(&iz) {
+        zs.insert(pos, iz);
+    }
+}
+
+/// Remove a voxel from the per-column index, dropping emptied columns.
+pub fn remove_from_by_col(by_col: &mut ColumnIz, (ix, iy, iz): VoxelKey) {
+    if let Some(zs) = by_col.get_mut(&(ix, iy)) {
+        if let Ok(pos) = zs.binary_search(&iz) {
+            zs.remove(pos);
+        }
+        if zs.is_empty() {
+            by_col.remove(&(ix, iy));
+        }
+    }
+}
+
+/// Re-extract surface cells in the inclusive write box. Reads a morphology
+/// halo around the box so boundary closing matches a full rebuild, then
+/// filters back to the box. by_col must already be current.
+pub fn extract_surfaces_region(
+    by_col: &ColumnIz,
+    clearance_cells: i32,
+    closing_passes: u32,
+    write: (i32, i32, i32, i32),
+) -> Vec<VoxelKey> {
+    let (wx0, wx1, wy0, wy1) = write;
+    let pad = (2 * closing_passes) as i32;
+
+    let standable: Vec<VoxelKey> = ((wx0 - pad)..(wx1 + pad + 1))
+        .into_par_iter()
+        .flat_map_iter(|ix| {
+            let mut local: Vec<VoxelKey> = Vec::new();
+            for iy in (wy0 - pad)..=(wy1 + pad) {
+                if let Some(zs) = by_col.get(&(ix, iy)) {
+                    standable_in_column(ix, iy, zs, clearance_cells, &mut local);
+                }
+            }
+            local
+        })
+        .collect();
+
+    let mut closed: Vec<VoxelKey> = Vec::new();
+    close_surface_holes(
+        standable,
+        by_col,
+        closing_passes,
+        clearance_cells,
+        &mut closed,
+    );
+    closed
+        .into_iter()
+        .filter(|&(ix, iy, _)| ix >= wx0 && ix <= wx1 && iy >= wy0 && iy <= wy1)
+        .collect()
+}
+
+/// Dilate then erode every xy slice to fill small holes.
+fn close_surface_holes(
+    standable: Vec<VoxelKey>,
+    by_col: &ColumnIz,
+    closing_passes: u32,
+    clearance_cells: i32,
+    out: &mut Vec<VoxelKey>,
+) {
+    if standable.is_empty() || closing_passes == 0 {
         out.extend(standable);
         return;
     }
@@ -105,16 +166,11 @@ fn close_surface_holes(
     }
 
     let slices: Vec<(i32, Vec<(i32, i32)>)> = by_z.into_iter().collect();
-    out.par_extend(slices.par_iter().flat_map_iter(|(iz, xys)| {
-        close_at_z(
-            xys,
-            *iz,
-            by_col,
-            dilation_passes,
-            erosion_passes,
-            clearance_cells,
-        )
-    }));
+    out.par_extend(
+        slices.par_iter().flat_map_iter(|(iz, xys)| {
+            close_at_z(xys, *iz, by_col, closing_passes, clearance_cells)
+        }),
+    );
 }
 
 /// Close holes on an xy slice of the surfaces.
@@ -122,11 +178,10 @@ fn close_at_z(
     xys: &[(i32, i32)],
     iz: i32,
     by_col: &ColumnIz,
-    dilation_passes: u32,
-    erosion_passes: u32,
+    closing_passes: u32,
     clearance_cells: i32,
 ) -> Vec<VoxelKey> {
-    let pad = (dilation_passes + erosion_passes) as i32;
+    let pad = (2 * closing_passes) as i32;
     let mut min_x = i32::MAX;
     let mut max_x = i32::MIN;
     let mut min_y = i32::MAX;
@@ -148,12 +203,9 @@ fn close_at_z(
         img.put_pixel((ix - x0) as u32, (iy - y0) as u32, ON);
     }
 
-    if dilation_passes > 0 {
-        img = dilate(&img, Norm::L1, dilation_passes.min(u8::MAX as u32) as u8);
-    }
-    if erosion_passes > 0 {
-        img = erode(&img, Norm::L1, erosion_passes.min(u8::MAX as u32) as u8);
-    }
+    let k = closing_passes.min(u8::MAX as u32) as u8;
+    img = dilate(&img, Norm::L1, k);
+    img = erode(&img, Norm::L1, k);
 
     let mut out = Vec::new();
     for py in 0..h {
@@ -181,35 +233,29 @@ mod tests {
         cells.iter().copied().collect()
     }
 
-    fn run(cells: &[VoxelKey], clearance: i32, dil: u32, ero: u32) -> Vec<VoxelKey> {
+    fn run(cells: &[VoxelKey], clearance: i32, closing: u32) -> Vec<VoxelKey> {
         let map = voxel_map(cells);
         let mut by_col = ColumnIz::new();
         let mut out = Vec::new();
-        extract_surfaces(&map, clearance, dil, ero, &mut by_col, &mut out);
+        extract_surfaces(&map, clearance, closing, &mut by_col, &mut out);
         out
     }
 
     #[test]
     fn empty_input() {
-        assert!(run(&[], 5, 0, 0).is_empty());
-    }
-
-    #[test]
-    fn single_cell_is_topmost_surface() {
-        let s = run(&[(0, 0, 0)], 5, 0, 0);
-        assert_eq!(s, vec![(0, 0, 0)]);
+        assert!(run(&[], 5, 0).is_empty());
     }
 
     #[test]
     fn stacked_cells_within_headroom_only_topmost_is_surface() {
         let cells: Vec<VoxelKey> = (0..5).map(|z| (0, 0, z)).collect();
-        let s = run(&cells, 5, 0, 0);
+        let s = run(&cells, 5, 0);
         assert_eq!(s, vec![(0, 0, 4)]);
     }
 
     #[test]
     fn gap_larger_than_headroom_makes_lower_cell_standable() {
-        let mut s = run(&[(0, 0, 0), (0, 0, 10)], 5, 0, 0);
+        let mut s = run(&[(0, 0, 0), (0, 0, 10)], 5, 0);
         s.sort();
         assert_eq!(s, vec![(0, 0, 0), (0, 0, 10)]);
     }
@@ -229,7 +275,7 @@ mod tests {
         .into_iter()
         .map(|(dx, dy)| (dx, dy, 0))
         .collect();
-        let s = run(&cells, 5, 3, 3);
+        let s = run(&cells, 5, 3);
         assert!(
             s.contains(&(0, 0, 0)),
             "closing should fill the center hole"
@@ -252,7 +298,7 @@ mod tests {
         .map(|(dx, dy)| (dx, dy, 0))
         .collect();
         cells.push((0, 0, 1));
-        let s = run(&cells, 5, 3, 3);
+        let s = run(&cells, 5, 3);
         assert!(!s.contains(&(0, 0, 0)));
     }
 }

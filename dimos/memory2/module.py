@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 import enum
 import inspect
 import os
@@ -274,15 +274,20 @@ class RecorderConfig(MemoryModuleConfig):
     stream_remapping: dict[str, str] = Field(default_factory=dict)
 
 
-PoseSetter = Callable[[Any], "Pose | None"]
+PoseSetter = Callable[[Any], "Awaitable[Pose | None]"]
 
 
 def pose_setter_for(*stream_names: str) -> Callable[[Any], Any]:
-    """Mark a method ``(self, msg) -> Pose | None`` as the pose setter for the
-    given recorded stream(s). Streams without a setter fall back to the tf-based
-    ``world <- frame_id`` lookup."""
+    """Mark an ``async def`` method ``(self, msg) -> Pose | None`` as the pose
+    setter for the given recorded stream(s). Streams without a setter fall back
+    to the tf-based ``world <- frame_id`` lookup."""
 
     def decorate(fn: Any) -> Any:
+        if not inspect.iscoroutinefunction(fn):
+            raise TypeError(
+                f"@pose_setter_for must decorate an `async def` method; "
+                f"{getattr(fn, '__qualname__', fn)} is not async"
+            )
         fn._pose_setter_for = tuple(stream_names)
         return fn
 
@@ -302,10 +307,11 @@ class Recorder(MemoryModule):
 
     Each stream's pose defaults to a ``world <- frame_id`` tf lookup; decorate a
     method with ``@pose_setter_for("stream")`` to source it elsewhere (e.g. from
-    an odometry stream)::
+    an odometry stream). Setters run on the module's event loop and may be
+    ``async def``::
 
         @pose_setter_for("lidar")
-        def _lidar_pose(self, msg):
+        async def _lidar_pose(self, msg):
             return self._last_odom_pose
     """
 
@@ -368,12 +374,14 @@ class Recorder(MemoryModule):
         already in world coords) fall back to ``config.default_frame_id`` —
         so every observation gets a robot-pose anchor when tf is publishing.
 
-        Registers the subscription as a disposable on this module.
+        Each port is recorded by an async callback dispatched on the module's
+        event loop via :meth:`process_observable`, which serialises invocations
+        and registers the subscription for cleanup on stop().
         """
 
-        def on_msg(msg: Any) -> None:
+        async def on_msg(msg: Any) -> None:
             ts = self._resolve_ts(name, msg)
-            pose = self._resolve_pose(name, msg, ts)
+            pose = await self._resolve_pose(name, msg, ts)
             if not pose:
                 logger.warning(
                     "[%s] No pose for time %s (msg ts: %s), storing without pose",
@@ -383,7 +391,7 @@ class Recorder(MemoryModule):
                 )
             stream.append(msg, ts=ts, pose=pose)
 
-        self.register_disposable(Disposable(input_topic.subscribe(on_msg)))
+        self.process_observable(input_topic.pure_observable(), on_msg)
 
     def _prepare_streams(self) -> None:
         """On APPEND, drop the streams this recorder is about to (re)write — the
@@ -401,13 +409,13 @@ class Recorder(MemoryModule):
         """Timestamp to record *msg* at. Override to re-base onto another clock."""
         return getattr(msg, "ts", None) or time.time()
 
-    def _resolve_pose(self, name: str, msg: Any, ts: float) -> Pose | None:
-        """Pose to anchor *msg* with. Dispatches to the stream's
+    async def _resolve_pose(self, name: str, msg: Any, ts: float) -> Pose | None:
+        """Pose to anchor *msg* with. Dispatches to the stream's (async)
         ``@pose_setter_for`` if one is defined, else falls back to a
         ``world <- frame_id`` tf lookup."""
         setter = self._pose_setters.get(name)
         if setter is not None:
-            return cast("Pose | None", setter(msg))
+            return cast("Pose | None", await setter(msg))
         frame_id = getattr(msg, "frame_id", None) or self.config.default_frame_id
         transform = self.tf.get(
             self.config.root_frame, frame_id, time_point=ts, time_tolerance=self.config.tf_tolerance

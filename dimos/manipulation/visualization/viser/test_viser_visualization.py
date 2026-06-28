@@ -1157,7 +1157,7 @@ def test_gui_preset_dropdown_and_controls_include_init_home_current_and_callback
     gui._apply_preset("Current")
     assert [gui._joint_sliders[name].value for name in ("j1", "j2")] == [0.25, 0.5]
     gui._submit_execute()
-    assert gui.state.error == "Panel execution disabled; set allow_plan_execute=True to enable"
+    assert "Cannot execute" in gui.state.error
 
 
 def test_gui_rebuilding_joint_sliders_removes_stale_viser_handles(
@@ -1205,7 +1205,7 @@ def test_gui_parses_numpy_transform_control_arrays() -> None:
     assert list(pose.orientation) == [0.1, 0.2, 0.3, 0.5]
 
 
-def test_panel_execution_is_gated_by_default_and_refresh_updates_robot_controls(
+def test_panel_execution_requires_fresh_plan_and_refresh_updates_robot_controls(
     make_panel: Callable[..., ViserPanelGui],
 ) -> None:
     current = FakeJointState(["j1"], position=[1.2])
@@ -1234,7 +1234,7 @@ def test_panel_execution_is_gated_by_default_and_refresh_updates_robot_controls(
     assert gui._joint_sliders["j1"].value == 0.5
 
     gui._submit_execute()
-    assert "Panel execution disabled" in gui.state.error
+    assert "Cannot execute" in gui.state.error
 
 
 def test_gui_moves_joint_target_immediately_and_stores_evaluated_joint_solution(
@@ -1418,9 +1418,7 @@ def test_gui_safe_execute_requires_fresh_matching_plan_and_clear_resets_path(
     gui = make_panel(
         FakeGuiServer(),
         adapter,
-        ViserVisualizationConfig(
-            panel_enabled=True, allow_plan_execute=True, current_match_tolerance=0.05
-        ),
+        ViserVisualizationConfig(panel_enabled=True, current_match_tolerance=0.05),
     )
     gui._operation_worker.stop()
     monkeypatch.setattr(

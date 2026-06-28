@@ -38,7 +38,13 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.manipulation.planning.factory import create_planning_specs, create_world
+from dimos.manipulation.planning.factory import (
+    KinematicsName,
+    PlannerName,
+    WorldBackend,
+    create_planning_specs,
+    create_world,
+)
 from dimos.manipulation.planning.kinematics.config import (
     ManipulationKinematicsConfig,
     PinkKinematicsConfig,
@@ -105,13 +111,14 @@ class ManipulationModuleConfig(ModuleConfig):
 
     robots: list[RobotModelConfig] = Field(default_factory=list)
     planning_timeout: float = 10.0
+    world_backend: WorldBackend = "drake"
     visualization: ManipulationVisualizationConfig = Field(
         default_factory=NoManipulationVisualizationConfig
     )
-    planner_name: str = "rrt_connect"  # "rrt_connect"
+    planner_name: PlannerName = "rrt_connect"
     kinematics: ManipulationKinematicsConfig = Field(default_factory=PinkKinematicsConfig)
     # Deprecated: use kinematics.backend instead.
-    kinematics_name: str | None = None  # "jacobian", "drake_optimization", or "pink"
+    kinematics_name: KinematicsName | None = None
     # Floor plane Z height (meters). When set, a box obstacle is added at startup
     # to prevent the planner from routing trajectories below this height.
     # Set to None to disable.
@@ -186,9 +193,13 @@ class ManipulationModule(Module):
             logger.warning("No robots configured, planning disabled")
             return
 
-        world = create_world(visualization=self.config.visualization)
+        world = create_world(
+            backend=self.config.world_backend,
+            visualization=self.config.visualization,
+        )
         planning_specs = create_planning_specs(
             world=world,
+            world_backend=self.config.world_backend,
             planner_name=self.config.planner_name,
             kinematics_name=self.config.kinematics_name,
             kinematics=self.config.kinematics,

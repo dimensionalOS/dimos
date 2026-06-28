@@ -18,12 +18,11 @@ Usage:
     # LFS archive, NOT the archive name)
     PCAP_PATH="$(python -c "from dimos.utils.data import get_data; print(get_data('mid360_shake_stairs/mid360_shake_stairs.pcap'))")"
 
-    # gen .db from pcap with your config (defaults to <pcap>.db next to the pcap)
-    python -m dimos.hardware.sensors.lidar.pointlio.scripts.pcap_to_db \
-        --config dimos/hardware/sensors/lidar/pointlio/config/default.yaml \
-        --pcap "$PCAP_PATH"
+    # gen .db from pcap (defaults to <pcap>.db next to the pcap)
+    python -m dimos.hardware.sensors.lidar.pointlio.scripts.pcap_to_db --pcap "$PCAP_PATH"
 
-    # add to existing .db
+    # add to existing .db (a missing --db is fetched via get_data before falling
+    # back to building from scratch; a missing --pcap is likewise fetched)
     DB="mem2.db"
     python -m dimos.hardware.sensors.lidar.pointlio.scripts.pcap_to_db --db "$DB"  --pcap "$PCAP_PATH"
 
@@ -61,9 +60,122 @@ _STAGNANT_SEC = 5.0
 _STARTUP_TIMEOUT_SEC = 60.0
 # Max |Δts| to match a lidar frame to an odometry pose when aggregating the .rrd.
 _POSE_MATCH_TOL = 0.1
+# db stream/table names (= the recorder's In-port names).
+_ODOM_STREAM = "pointlio_odometry"
+_LIDAR_STREAM = "pointlio_lidar"
 # Extra seconds past the pcap's own duration before auto-stopping, when no
 # explicit --max-sensor-sec is given.
 _DRAIN_MARGIN_SEC = 4.0
+
+# Per-field PointLioConfig tuning, exposed as --flags. Each entry is
+# (field, kind, help); kind is "float"/"int"/"bool"/"vec" or a tuple of choices.
+# A flag's value defaults to None (= leave the config default) so only the ones
+# passed end up in the override dict. dashes in the flag map to the field name.
+_TUNING_FIELDS: tuple[tuple[str, Any, str], ...] = (
+    # common
+    ("con_frame", "bool", "accumulate multiple sweeps into one frame"),
+    ("con_frame_num", "int", "sweeps per accumulated frame (con_frame)"),
+    ("cut_frame", "bool", "split each sweep into time sub-frames"),
+    ("cut_frame_time_interval", "float", "sub-frame interval (s) when cut_frame"),
+    ("time_lag_imu_to_lidar", "float", "IMU->lidar clock offset (s)"),
+    # preprocess
+    (
+        "lidar_type",
+        ("avia", "velodyne", "ouster", "hesai", "unilidar"),
+        "lidar driver branch (avia = Livox Mid-360)",
+    ),
+    ("scan_line", "int", "number of scan lines"),
+    ("scan_rate", "int", "scan rate (Hz)"),
+    (
+        "timestamp_unit",
+        ("second", "millisecond", "microsecond", "nanosecond"),
+        "per-point timestamp unit",
+    ),
+    ("blind", "float", "spherical min range (m); nearer points dropped"),
+    ("point_filter_num", "int", "keep every Nth raw point (1 = all)"),
+    # mapping
+    ("use_imu_as_input", "bool", "IMU-as-input model (default robust IMU-as-output)"),
+    ("prop_at_freq_of_imu", "bool", "propagate state at IMU frequency"),
+    ("check_satu", "bool", "zero residuals on saturated IMU samples"),
+    ("init_map_size", "int", "initial iVox map size"),
+    ("space_down_sample", "bool", "voxel-downsample each scan (leaf = filter_size_surf)"),
+    ("satu_acc", "float", "accel saturation threshold (g)"),
+    ("satu_gyro", "float", "gyro saturation threshold (deg/s)"),
+    ("acc_norm", "float", "IMU accel unit (1 = g, 9.81 = m/s^2)"),
+    ("plane_thr", "float", "plane-fit residual threshold (m)"),
+    ("filter_size_surf", "float", "pre-KF scan downsample leaf (m)"),
+    ("filter_size_map", "float", "persistent map voxel leaf (m)"),
+    ("ivox_grid_resolution", "float", "iVox local-map grid (m)"),
+    (
+        "ivox_nearby_type",
+        ("center", "nearby6", "nearby18", "nearby26"),
+        "iVox neighbour stencil",
+    ),
+    ("cube_side_length", "float", "map cube side length (m)"),
+    ("det_range", "float", "max detection range (m)"),
+    ("fov_degree", "float", "horizontal FOV (deg)"),
+    ("imu_en", "bool", "use the IMU"),
+    ("start_in_aggressive_motion", "bool", "skip the static IMU-init assumption"),
+    ("extrinsic_est_en", "bool", "online-estimate the IMU->lidar extrinsic"),
+    ("imu_time_inte", "float", "IMU integration step (s)"),
+    ("lidar_meas_cov", "float", "lidar measurement covariance"),
+    ("acc_cov_input", "float", "accel process cov (input model)"),
+    ("vel_cov", "float", "velocity process covariance"),
+    ("gyr_cov_input", "float", "gyro process cov (input model)"),
+    ("gyr_cov_output", "float", "gyro process cov (output model)"),
+    ("acc_cov_output", "float", "accel process cov (output model)"),
+    ("b_gyr_cov", "float", "gyro-bias random-walk covariance"),
+    ("b_acc_cov", "float", "accel-bias random-walk covariance"),
+    ("imu_meas_acc_cov", "float", "accel measurement covariance"),
+    ("imu_meas_omg_cov", "float", "gyro measurement covariance"),
+    ("match_s", "float", "point-to-plane match scale"),
+    ("gravity_align", "bool", "align initial gravity to -Z"),
+    ("gravity", "vec", "gravity vector: x y z (m/s^2)"),
+    ("gravity_init", "vec", "initial gravity estimate: x y z (m/s^2)"),
+    ("extrinsic_t", "vec", "IMU->lidar translation: x y z (m)"),
+    ("extrinsic_r", "vec", "IMU->lidar rotation: 9 values row-major"),
+    # odometry
+    ("publish_odometry_without_downsample", "bool", "publish odom per scan, no downsample"),
+    ("odom_only", "bool", "odometry only, skip map publishing"),
+)
+
+
+def _add_tuning_args(parser: argparse.ArgumentParser) -> None:
+    """Add a --flag per PointLioConfig tuning field (see _TUNING_FIELDS)."""
+    group = parser.add_argument_group(
+        "PointLio tuning",
+        "Per-field PointLioConfig overrides; omit to keep the config default. "
+        "These win over --config.",
+    )
+    for field, kind, help_text in _TUNING_FIELDS:
+        flag = "--" + field.replace("_", "-")
+        if kind == "bool":
+            group.add_argument(
+                flag,
+                dest=field,
+                default=None,
+                action=argparse.BooleanOptionalAction,
+                help=help_text,
+            )
+        elif kind == "int":
+            group.add_argument(flag, dest=field, default=None, type=int, help=help_text)
+        elif kind == "float":
+            group.add_argument(flag, dest=field, default=None, type=float, help=help_text)
+        elif kind == "vec":
+            group.add_argument(
+                flag, dest=field, default=None, type=float, nargs="+", help=help_text
+            )
+        else:
+            group.add_argument(flag, dest=field, default=None, choices=kind, help=help_text)
+
+
+def _cli_overrides(args: argparse.Namespace) -> dict[str, Any]:
+    """Collect the explicitly-passed --tuning flags into a PointLioConfig override dict."""
+    return {
+        field: getattr(args, field)
+        for field, _kind, _help in _TUNING_FIELDS
+        if getattr(args, field, None) is not None
+    }
 
 
 def _pcap_sensor_span(pcap_path: Path) -> float:
@@ -199,7 +311,9 @@ def _write_rrd(db_path: Path, odom_stream: str, lidar_stream: str, voxel: float)
         store.stop()
 
 
-def _build_blueprint(args: argparse.Namespace, db_path: Path, config_path: str) -> Blueprint:
+def _build_blueprint(
+    args: argparse.Namespace, db_path: Path, overrides: dict[str, Any]
+) -> Blueprint:
     """autoconnect(VirtualMid360 + PointLio + PointlioRecorder).
 
     PointLio's ``odometry``/``lidar`` outputs auto-wire to the recorder's
@@ -211,36 +325,35 @@ def _build_blueprint(args: argparse.Namespace, db_path: Path, config_path: str) 
     from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
     from dimos.hardware.sensors.lidar.virtual_mid360.module import VirtualMid360
 
-    # `config` (not `config_path`, which PointLioConfig derives itself); already
-    # an absolute path so it bypasses the config-dir-relative resolution. Omit
-    # when empty to keep the default.yaml.
-    pointlio_kwargs: dict[str, object] = dict(
+    pointlio_kwargs: dict[str, Any] = dict(
         host_ip=args.host_ip, lidar_ip=args.lidar_ip, odom_freq=args.odom_freq, debug=False
     )
-    if config_path:
-        pointlio_kwargs["config"] = config_path
+    pointlio_kwargs.update(overrides)
 
-    return autoconnect(
-        VirtualMid360.blueprint(
-            pcap=str(args.pcap_path),
-            rate=args.rate,
-            delay=args.warmup_sec,  # hold streaming until PointLio's SDK is up
-            host_ip=args.host_ip,
-            lidar_ip=args.lidar_ip,
-            alias_iface=args.alias_iface,
-            # When the NIC is provisioned by hand, skip the module's own sudo
-            # (it runs in a tty-less worker where a password prompt can't appear).
-            setup_network=not args.no_network_setup,
-        ),
-        PointLio.blueprint(**pointlio_kwargs),
-        PointlioRecorder.blueprint(
-            db_path=str(db_path),
-            odom_stream_name=args.odom_stream_name,
-            lidar_stream_name=args.lidar_stream_name,
-            time_offset=float("nan") if args.time_offset is None else args.time_offset,
-            force=args.force,
-        ),
-    ).global_config(n_workers=4, robot_model="mid360_pointlio_pcap_to_db")
+    return (
+        autoconnect(
+            VirtualMid360.blueprint(
+                pcap=str(args.pcap_path),
+                rate=args.rate,
+                delay=args.warmup_sec,  # hold streaming until PointLio's SDK is up
+                host_ip=args.host_ip,
+                lidar_ip=args.lidar_ip,
+                alias_iface=args.alias_iface,
+                # When the NIC is provisioned by hand, skip the module's own sudo
+                # (it runs in a tty-less worker where a password prompt can't appear).
+                setup_network=not args.no_network_setup,
+            ),
+            PointLio.blueprint(**pointlio_kwargs),
+            PointlioRecorder.blueprint(db_path=str(db_path)),
+        )
+        .remappings(
+            [
+                (PointlioRecorder, _ODOM_STREAM, "odometry"),
+                (PointlioRecorder, _LIDAR_STREAM, "lidar"),
+            ]
+        )
+        .global_config(n_workers=4, robot_model="mid360_pointlio_pcap_to_db")
+    )
 
 
 def _poll_until_drained(
@@ -291,23 +404,66 @@ def _poll_until_drained(
             stagnant_since = None
 
 
+def _load_overrides(config: str) -> dict[str, Any]:
+    """Load a YAML/JSON doc of PointLioConfig field overrides, e.g. {acc_cov_input: 0.3}."""
+    if not config:
+        return {}
+    import yaml
+
+    path = Path(config).expanduser().resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"--config not found: {path}")
+    data = yaml.safe_load(path.read_text()) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"--config must be a mapping of PointLioConfig fields, got {type(data)}")
+    return data
+
+
+def _resolve_db_path(args: argparse.Namespace, pcap_path: Path) -> Path:
+    """Where to record. Omitted --db -> <pcap>.db. A given --db that's missing is
+    fetched via get_data (LFS) before falling back to building from scratch."""
+    if not args.db:
+        return pcap_path.with_suffix(".db")
+    db_path = Path(args.db).expanduser().resolve()
+    if not db_path.exists():
+        try:
+            from dimos.utils.data import get_data
+
+            fetched = get_data(args.db)
+            if fetched.exists():
+                print(f"[pcap_to_db] fetched --db via get_data: {fetched}", flush=True)
+                return fetched.resolve()
+        except (FileNotFoundError, RuntimeError, OSError) as exc:  # not an LFS db -> build fresh
+            print(
+                f"[pcap_to_db] --db not found locally or via get_data ({exc}); "
+                "building from scratch",
+                file=sys.stderr,
+                flush=True,
+            )
+    return db_path
+
+
 def _run(args: argparse.Namespace) -> int:
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
 
-    pcap_path = Path(args.pcap).expanduser().resolve()
+    pcap_path = Path(args.pcap).expanduser()
     if not pcap_path.exists():
-        print(f"[pcap_to_db] missing pcap: {pcap_path}", file=sys.stderr)
-        return 2
+        try:
+            from dimos.utils.data import get_data
+
+            pcap_path = get_data(args.pcap)
+        except (FileNotFoundError, RuntimeError, OSError) as exc:
+            print(
+                f"[pcap_to_db] pcap not found locally or via get_data: {args.pcap} ({exc})",
+                file=sys.stderr,
+            )
+            return 2
+    pcap_path = pcap_path.resolve()
     args.pcap_path = pcap_path
-    db_path = Path(args.db).expanduser().resolve() if args.db else pcap_path.with_suffix(".db")
+    db_path = _resolve_db_path(args, pcap_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    # Resolve --config against the *invoking* cwd (pwd-relative) up front; the
-    # PointLio config field otherwise resolves a relative path against its own
-    # config/ dir, never the pwd. Absolute path passes through unchanged.
-    config_path = str(Path(args.config).expanduser().resolve()) if args.config else ""
-    if config_path and not Path(config_path).exists():
-        print(f"[pcap_to_db] missing --config: {config_path}", file=sys.stderr)
-        return 2
+    overrides = _load_overrides(args.config)
+    overrides.update(_cli_overrides(args))  # --tuning flags win over --config
 
     # Default the stop bound to the pcap's own duration: Point-LIO keeps
     # dead-reckoning (publishing at full rate) after the pcap drains, so the
@@ -328,15 +484,13 @@ def _run(args: argparse.Namespace) -> int:
 
     coord = None
     try:
-        coord = ModuleCoordinator.build(_build_blueprint(args, db_path, config_path))
-        drained = _poll_until_drained(
-            db_path, args.odom_stream_name, args.lidar_stream_name, max_sensor_sec
-        )
+        coord = ModuleCoordinator.build(_build_blueprint(args, db_path, overrides))
+        drained = _poll_until_drained(db_path, _ODOM_STREAM, _LIDAR_STREAM, max_sensor_sec)
     finally:
         if coord is not None:
             coord.stop()
 
-    o_cnt, o_min, o_max = _odom_stats(db_path, args.odom_stream_name)
+    o_cnt, o_min, o_max = _odom_stats(db_path, _ODOM_STREAM)
     if o_cnt == 0 or not drained:
         print("[pcap_to_db] no odometry recorded — check the run above", file=sys.stderr)
         return 1
@@ -346,7 +500,7 @@ def _run(args: argparse.Namespace) -> int:
     )
     if not args.no_rrd:
         try:
-            rrd = _write_rrd(db_path, args.odom_stream_name, args.lidar_stream_name, args.voxel)
+            rrd = _write_rrd(db_path, _ODOM_STREAM, _LIDAR_STREAM, args.voxel)
             if rrd is not None:
                 print(f"[pcap_to_db] wrote {rrd.name} (aggregated lidar + pose path)", flush=True)
         except Exception as exc:  # viz is a non-fatal bonus
@@ -376,13 +530,6 @@ def main(argv: list[str]) -> int:
         help="stop after N sensor seconds (0 = whole pcap)",
     )
     parser.add_argument(
-        "--time-offset",
-        type=float,
-        default=None,
-        help="seconds added to every output ts (auto if omitted)",
-    )
-    parser.add_argument("--force", action="store_true", help="overwrite existing pointlio streams")
-    parser.add_argument(
         "--no-rrd",
         action="store_true",
         help="skip writing the <db>.rrd quick-look (aggregated world lidar + pose path)",
@@ -396,21 +543,8 @@ def main(argv: list[str]) -> int:
         default=4.0,
         help="seconds the fake lidar waits before streaming (lets Point-LIO come up first)",
     )
-    parser.add_argument(
-        "--config",
-        default="",
-        help="Point-LIO YAML config (pwd-relative or absolute; default: module's default.yaml)",
-    )
-    parser.add_argument(
-        "--odom-stream-name",
-        default="pointlio_odometry",
-        help="db stream/table name for the recorded odometry",
-    )
-    parser.add_argument(
-        "--lidar-stream-name",
-        default="pointlio_lidar",
-        help="db stream/table name for the recorded point cloud",
-    )
+    # Hidden: a YAML/JSON doc of PointLioConfig overrides. The per-field --tuning
+    parser.add_argument("--config", default="", help=argparse.SUPPRESS)
     # Addressing knobs (override to run two replays at once).
     parser.add_argument("--host-ip", default="192.168.1.5")
     parser.add_argument("--lidar-ip", default="192.168.1.155")
@@ -423,6 +557,8 @@ def main(argv: list[str]) -> int:
         help="don't let the module alias the NIC via sudo — you've set up host/lidar IPs "
         "+ multicast routes yourself (e.g. on macOS where worker-side sudo can't prompt)",
     )
+
+    _add_tuning_args(parser)
 
     args = parser.parse_args(argv)
     if not args.pcap:

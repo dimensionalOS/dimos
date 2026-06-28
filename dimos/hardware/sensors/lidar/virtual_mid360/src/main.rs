@@ -425,17 +425,28 @@ fn spawn_stream(
             .unwrap_or(0);
         let ts_shift = now_ns.wrapping_sub(first_orig);
 
+        // Linux multicasts point/IMU to mcast_data (the SDK joins the group). On
+        // macOS the IPs are lo0 aliases and a multicast send source-bound to an
+        // alias fails with "No route to host", so we unicast point/IMU to host_ip
+        // instead — the SDK identifies the device by the packet's source IP, so
+        // the source-bind to lidar_ip (which works for unicast on lo0) is what
+        // matters. The consumer's SDK config drops multicast_ip on macOS so its
+        // data socket binds host_ip and receives these unicasts.
+        let data_dest = if cfg!(target_os = "macos") {
+            host_ip
+        } else {
+            mcast_data
+        };
+
         let t_wall0 = Instant::now();
         let mut t_cap0: Option<f64> = None;
         for pkt in packets.iter() {
             if stop.load(Ordering::Relaxed) {
                 break;
             }
-            // Mid-360 multicasts point/IMU to mcast_data:port (the SDK joins it);
-            // status is unicast. Unicasting point/IMU is silently dropped.
             let (socket, dest_ip, dest_port) = match pkt.src_port {
-                PORT_POINT => (&point, mcast_data, DST_POINT),
-                PORT_IMU => (&imu, mcast_data, DST_IMU),
+                PORT_POINT => (&point, data_dest, DST_POINT),
+                PORT_IMU => (&imu, data_dest, DST_IMU),
                 PORT_STATUS => (&status, host_ip, DST_STATUS),
                 _ => continue,
             };

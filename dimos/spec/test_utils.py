@@ -78,3 +78,43 @@ def test_spec_annotation_compliance_requires_matching_annotations() -> None:
 def test_spec_annotation_compliance_rejects_non_spec() -> None:
     with pytest.raises(TypeError):
         spec_annotation_compliance(StructurallyCompliant(), NormalProtocol)
+
+
+class DefaultArgSpec(Spec, Protocol):
+    def speak(self, text: str, blocking: bool = True) -> str: ...
+
+
+class MissingDefaultArg:
+    def speak(self, text: str) -> str:
+        return text
+
+
+class ProvidesDefaultArg:
+    def speak(self, text: str, blocking: bool = True) -> str:
+        return text
+
+
+def test_spec_annotation_compliance_handles_defaulted_parameters() -> None:
+    # A spec parameter with a default that the impl omits is rejected, not a crash.
+    assert spec_annotation_compliance(MissingDefaultArg(), DefaultArgSpec) is False
+    assert spec_annotation_compliance(ProvidesDefaultArg(), DefaultArgSpec) is True
+
+
+class ExtraParamSpec(Spec, Protocol):
+    def f(self, a: int) -> int: ...
+
+
+class ExtraOptionalParam:
+    def f(self, a: int, b: int = 0) -> int:
+        return a
+
+
+class ExtraRequiredParam:
+    def f(self, a: int, b: int) -> int:
+        return a
+
+
+def test_spec_annotation_compliance_allows_extra_optional_parameters() -> None:
+    # Extra impl parameters with defaults stay substitutable; required ones do not.
+    assert spec_annotation_compliance(ExtraOptionalParam(), ExtraParamSpec) is True
+    assert spec_annotation_compliance(ExtraRequiredParam(), ExtraParamSpec) is False

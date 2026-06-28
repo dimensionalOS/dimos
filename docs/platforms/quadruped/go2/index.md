@@ -2,7 +2,7 @@
 
 - [Setup your Dog](/docs/platforms/quadruped/go2/setup.md) — requirements, install, connecting to your Go2, and agentic control
 - [Simulation](/docs/platforms/quadruped/go2/simulation.md) — try it with no hardware via replay or MuJoCo
-- [Record & Load Maps](/docs/platforms/quadruped/go2/premap.md) — record a run, export a premap, and relocalize on replay or a live Go2
+- [Mapping & Navigation](/docs/capabilities/navigation/index.md) — map, premap, relocalize on replay or a live Go2
 
 ## Available Blueprints
 
@@ -17,7 +17,7 @@
 
 ## Deep Dive
 
-- [Navigation Stack](/docs/capabilities/navigation/native/index.md) — column-carving voxel mapping, costmap generation, A* planning
+- [Navigation Stack](/docs/capabilities/navigation/deep_dive.md) — column-carving voxel mapping, costmap generation, A* planning
 - [Visualization](/docs/usage/visualization.md) — Rerun, performance tuning
 - [Data Streams](/docs/usage/data_streams) — RxPY streams, backpressure, quality filtering
 - [Transports](/docs/usage/transports/index.md) — LCM, SHM, DDS

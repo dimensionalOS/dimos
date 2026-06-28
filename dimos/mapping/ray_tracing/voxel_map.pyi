@@ -71,4 +71,16 @@ class VoxelRayMapper:
     def __len__(self) -> int: ...
     def __repr__(self) -> str: ...
 
-__all__ = ["VoxelRayMapper"]
+def local_bounds(
+    points: NDArray[np.float32],
+    origins: NDArray[np.float32],
+    percentile: float,
+    margin: float,
+) -> tuple[float, float, float, float, float]:
+    """Local region a batch of frames observed, as (cx, cy, radius, z_min, z_max).
+
+    Non-finite points are ignored.
+    """
+    ...
+
+__all__ = ["VoxelRayMapper", "local_bounds"]
