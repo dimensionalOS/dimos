@@ -55,24 +55,12 @@ def _pack(vkeys: np.ndarray) -> np.ndarray:
     v = (vkeys.astype(np.int64) + _OFF) & _MASK
     return (v[:, 0] << 36) | (v[:, 1] << 18) | v[:, 2]
 
-def _neighbor_count(valid: np.ndarray) -> np.ndarray:
-    """Count valid pixels in each pixel's 3×3 neighborhood (0–9)."""
-    v = valid.astype(np.uint8)
-    p = np.pad(v, 1, constant_values=0)
-    return (
-        p[:-2, :-2] + p[:-2, 1:-1] + p[:-2, 2:] +
-        p[1:-1, :-2] + p[1:-1, 1:-1] + p[1:-1, 2:] +
-        p[2:, :-2]  + p[2:, 1:-1]  + p[2:, 2:]
-    )
-
-
 # ── Configuration ──────────────────────────────────────────────────────────────
 
 class ObservationConfig(NamedTuple):
-    conf_min:      float = 40.0  # stereo confidence threshold (0–100)
-    depth_min:     float = 0.30  # metres
-    depth_max:     float = 8.00  # metres
-    min_neighbors: int   = 5     # minimum valid 3×3 neighbors to keep a pixel
+    conf_min:  float = 40.0  # stereo confidence threshold (0–100)
+    depth_min: float = 0.30  # metres
+    depth_max: float = 8.00  # metres
 
 
 class EvidenceConfig(NamedTuple):
@@ -86,28 +74,17 @@ class EvidenceConfig(NamedTuple):
 class DepthObserver:
     """ZED frame → validated depth array.
 
-    Three passes in series, each targeting a different artifact class:
-
     Pass A — range + NaN
-        Removes physically impossible values: NaN (no stereo match), Inf,
-        negative, and out-of-sensor-range depths.  These are definitively wrong;
-        no further checking is needed.
+        Removes physically impossible values.
 
     Pass B — stereo confidence
-        The ZED SDK assigns a per-pixel confidence score (0–100) based on the
-        quality of the left-right stereo match.  Pixels below conf_min have a
-        poor match — the depth value may be entirely fabricated by interpolation.
-        This eliminates most texture-less surfaces and reflective material errors.
+        Rejects pixels where the stereo match was poor (score < conf_min).
+        Texture-less surfaces and reflective materials fail here.
 
-    Pass C — neighborhood isolation
-        Stereo artifacts that survive passes A and B tend to be spatially
-        isolated: a single pixel with a plausible depth surrounded by invalid
-        neighbours.  Real surfaces produce spatially coherent depth patches.
-        A pixel is rejected if fewer than min_neighbors of its 9 neighbourhood
-        pixels passed passes A and B.  With min_neighbors=5 this removes
-        isolated single-pixel and small-cluster artifacts while preserving
-        valid depth at object edges (which typically have ≥5 valid neighbours
-        on the interior side).
+    Artifact rejection at the 2D level ends here.  Isolated stereo artifacts
+    that survive both passes are handled in Stage 3 (EvidenceMap): they appear
+    in different 3D locations each frame and never accumulate enough votes to
+    become stable.
     """
 
     def __init__(self, cfg: ObservationConfig = ObservationConfig()) -> None:
@@ -139,9 +116,6 @@ class DepthObserver:
 
         # Pass B: stereo confidence
         valid &= conf >= cfg.conf_min
-
-        # Pass C: neighborhood isolation
-        valid &= _neighbor_count(valid) >= cfg.min_neighbors
 
         depth = np.full_like(raw_depth, np.nan)
         depth[valid] = raw_depth[valid]
@@ -427,7 +401,7 @@ def main() -> None:
 
     print("camera open — Ctrl-C to quit")
 
-    obs_cfg = ObservationConfig(conf_min=40, depth_min=0.3, depth_max=8.0, min_neighbors=5)
+    obs_cfg = ObservationConfig(conf_min=40, depth_min=0.3, depth_max=8.0)
     ev_cfg  = EvidenceConfig(voxel_size=0.03, stable_min=3)
 
     observer  = DepthObserver(obs_cfg)
@@ -465,22 +439,29 @@ def main() -> None:
             # Stage 3: evidence fusion
             if xyz_world is not None and len(xyz_world) > 0:
                 ev_map.observe(xyz_world)
-
-            # Stage 4: publish stable cloud
-            stable = nav_cloud.get(frame)
-            if stable is not None:
-                rr.log("world/stable_cloud", rr.Points3D(
-                    positions=stable,
-                    colors=np.full((len(stable), 3), [30, 200, 30], dtype=np.uint8),
-                    radii=0.005,
+                # Always show current frame so there's immediate visual feedback
+                cap = min(len(xyz_world), 30_000)
+                rr.log("world/current_frame", rr.Points3D(
+                    positions=xyz_world[:cap],
+                    colors=np.full((cap, 3), [100, 100, 200], dtype=np.uint8),
+                    radii=0.004,
                 ))
-                # Evidence map colored by count (diagnostic)
+
+            # Stage 4: publish stable cloud every MAP_EVERY frames
+            if frame % nav_cloud._every == 0 and ev_map.total_voxels > 0:
                 all_xyz = ev_map.all_xyz()
                 rr.log("world/evidence_map", rr.Points3D(
                     positions=all_xyz,
                     colors=_obs_colors(ev_map.obs_counts()),
                     radii=0.004,
                 ))
+                stable = ev_map.stable_xyz
+                if len(stable) > 0:
+                    rr.log("world/stable_cloud", rr.Points3D(
+                        positions=stable,
+                        colors=np.full((len(stable), 3), [30, 200, 30], dtype=np.uint8),
+                        radii=0.005,
+                    ))
 
             fps = frame / max(ts - t0, 1e-6)
             print(
