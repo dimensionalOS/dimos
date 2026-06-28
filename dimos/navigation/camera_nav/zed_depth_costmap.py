@@ -34,6 +34,17 @@ import pyzed.sl as sl
 import rerun as rr
 
 
+# ── Optical-frame → camera_link rotation ─────────────────────────────────────
+# ZED get_position() returns the pose of camera_link in world frame, where
+# camera_link has X=forward, Y=left, Z=up (RIGHT_HANDED_Z_UP_X_FWD body frame).
+# Backprojection with pinhole (u,v,d) gives camera-OPTICAL frame: X=right, Y=down, Z=depth.
+# We must rotate optical→link before applying VIO pose, or the Z (height) axis is wrong.
+# Matches OPTICAL_ROTATION = Quaternion(-0.5, 0.5, -0.5, 0.5) used in ZEDCamera TF.
+# Derived from: x_link=z_opt, y_link=-x_opt, z_link=-y_opt
+_R_OPT_TO_LINK = np.array(
+    [[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=np.float32
+)
+
 # ── Shared voxel key packing (same scheme as zed_global_map.py) ───────────────
 
 _OFF  = np.int64(100_000)
@@ -160,6 +171,7 @@ class PoseReader:
         self._R      = np.eye(3, dtype=np.float32)
         self._t      = np.zeros(3, dtype=np.float32)
         self._active = False
+        self._locked = False
         self._pose   = sl.Pose()
 
     def enable(self, zed: sl.Camera) -> bool:
@@ -187,6 +199,7 @@ class PoseReader:
                 [2*(x*y+z*w),   1-2*(x*x+z*z), 2*(y*z-x*w)  ],
                 [2*(x*z-y*w),   2*(y*z+x*w),   1-2*(x*x+y*y)],
             ], dtype=np.float32)
+            self._locked = True
 
     @property
     def R(self) -> np.ndarray: return self._R
@@ -197,19 +210,30 @@ class PoseReader:
     @property
     def active(self) -> bool: return self._active
 
+    @property
+    def locked(self) -> bool:
+        """True once VIO has reported at least one OK fix. Before this, R=I and t=0
+        (camera-optical frame mislabelled as world) — do not accumulate into the map."""
+        return self._locked
+
 
 # ── Stage 4: Backprojector ────────────────────────────────────────────────────
 
 class DepthBackprojector:
     """DepthFramePacket → world-frame XYZ (N×3 float32).
 
-    Pixel grid → camera-frame (u-cx)*d/fx, (v-cy)*d/fy, d → rotated by pose.
-    Only valid (non-NaN) depth pixels are projected.
-    Uses the full camera resolution because DepthFilter never downsampled.
+    Three-step transform (matches ZEDNavBridge exactly):
+      1. Pinhole backproject (u,v,d) → camera-optical frame (X=right, Y=down, Z=depth)
+      2. _R_OPT_TO_LINK  → camera_link frame (X=forward, Y=left, Z=up)
+      3. VIO pose_R / pose_t  → world frame (X=forward, Y=left, Z=up)
+
+    Step 2 is the fix: without it, pose_R acts on optical-frame points where Z=depth
+    instead of Z=up, producing a height map built on depth-from-camera rather than
+    terrain elevation — the root cause of the sparse / meaningless costmap.
     """
 
     def project(self, pkt: DepthFramePacket) -> np.ndarray:
-        d = pkt.depth                       # H×W float32
+        d = pkt.depth                       # H×W float32, NaN=invalid
         H, W = d.shape
         fx, fy, cx, cy = pkt.intrinsics
 
@@ -219,12 +243,17 @@ class DepthBackprojector:
 
         valid = np.isfinite(d)
         dd    = d[valid]
-        x_cam = (uu[valid] - cx) * dd / fx
-        y_cam = (vv[valid] - cy) * dd / fy
-        z_cam = dd
+        x_opt = (uu[valid] - cx) * dd / fx   # right in image
+        y_opt = (vv[valid] - cy) * dd / fy   # down in image
+        z_opt = dd                            # depth into scene
 
-        xyz_cam = np.column_stack([x_cam, y_cam, z_cam]).astype(np.float32)
-        return xyz_cam @ pkt.pose_R.T + pkt.pose_t  # → world frame
+        xyz_opt = np.column_stack([x_opt, y_opt, z_opt]).astype(np.float32)
+
+        # Step 2: optical → camera_link (x_link=z_opt, y_link=-x_opt, z_link=-y_opt)
+        xyz_link = xyz_opt @ _R_OPT_TO_LINK.T
+
+        # Step 3: camera_link → world via VIO pose
+        return xyz_link @ pkt.pose_R.T + pkt.pose_t
 
 
 # ── Stage 5: Voxel accumulator ────────────────────────────────────────────────
@@ -419,9 +448,15 @@ class DepthStreamer:
         )
 
     def process(self, pkt: DepthFramePacket, frame: int) -> None:
-        """Backproject → accumulate → (periodically) rebuild costmap."""
+        """Backproject → accumulate → (periodically) rebuild costmap.
+
+        Accumulation is skipped until VIO has a confirmed lock.  Before lock,
+        pose_R=I and the backprojected points are in camera-optical frame
+        (Z=depth, not Z=up) — poisoning the map with wrong Z prevents the
+        height-cost algorithm from producing any meaningful costmap.
+        """
         xyz = self._bp.project(pkt)
-        if len(xyz) > 0:
+        if len(xyz) > 0 and self._pose.locked:
             self._vox.add(xyz)
         self._log_depth_frame(pkt, xyz)
         if frame % self.MAP_EVERY == 0:
@@ -472,11 +507,13 @@ class DepthStreamer:
 
     def log_stdout(self, pkt: DepthFramePacket, frame: int, fps: float) -> None:
         tx, ty, tz = pkt.pose_t
+        lock = "LOCKED" if self._pose.locked else "no-lock"
         print(
             f"frame={frame:5d}  "
             f"valid={pkt.valid_fraction * 100:5.1f}%  "
             f"map={self._vox.count:6d}  "
             f"pose=({tx:.2f},{ty:.2f},{tz:.2f})  "
+            f"vio={lock}  "
             f"fps={fps:.1f}"
         )
 
