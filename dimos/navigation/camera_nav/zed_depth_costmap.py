@@ -318,10 +318,6 @@ class VoxelAccumulator:
             self._idx[int(k)] = self._n + i
         self._n += n_new
 
-    def clear(self) -> None:
-        self._idx.clear()
-        self._n = 0
-
     @property
     def xyz(self) -> np.ndarray: return self._xyz[:self._n]
 
@@ -468,96 +464,7 @@ class BirdsEyeOccupancy:
         return rgb
 
 
-# ── Stage 8: World occupancy grid ────────────────────────────────────────────
-
-class WorldOccupancyGrid:
-    """Persistent world-frame bird's-eye occupancy map.
-
-    Accumulates evidence across frames using VIO pose. Each cell tracks:
-      _hits — depth pixels that landed here  (occupied evidence)
-      _rays — cast rays that passed through  (free evidence)
-
-    Occupied if hits >= OCC_THRESH.
-    Free     if rays >= FREE_THRESH and hits < OCC_THRESH.
-    Unknown  if no evidence.
-
-    Call update() only when VIO is locked — xyz_world must be in world frame.
-    Image layout: forward = up, left = left, world origin = centre.
-    """
-
-    RES         = 0.10   # metres per cell
-    HALF        = 10.0   # ±10 m  →  200×200 cells
-    OCC_THRESH  = 5      # depth hits to confirm occupied
-    FREE_THRESH = 3      # ray-through votes to confirm free
-
-    def __init__(self) -> None:
-        n           = int(self.HALF * 2 / self.RES)
-        self._n     = n
-        self._mid   = n // 2
-        self._hits  = np.zeros((n, n), dtype=np.uint32)
-        self._rays  = np.zeros((n, n), dtype=np.uint32)
-        self._cam_t = np.zeros(3, dtype=np.float32)
-
-    def _xy_to_rc(self, x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        n, mid = self._n, self._mid
-        row = np.clip((mid - x / self.RES).astype(np.int32), 0, n - 1)
-        col = np.clip((mid - y / self.RES).astype(np.int32), 0, n - 1)
-        return row, col
-
-    def update(self, xyz_world: np.ndarray, cam_t: np.ndarray) -> None:
-        """Accumulate one world-frame depth frame into the map.
-
-        xyz_world: (N, 3) float32  world-frame hit points
-        cam_t:     (3,)   float32  camera world position (pose_t)
-        """
-        self._cam_t = cam_t.copy()
-        n = self._n
-
-        row_hit, col_hit = self._xy_to_rc(xyz_world[:, 0], xyz_world[:, 1])
-
-        # Occupied evidence: count hits per cell (bincount >> np.add.at)
-        flat_hit    = row_hit * n + col_hit
-        self._hits += np.bincount(flat_hit, minlength=n * n).reshape(n, n).astype(np.uint32)
-
-        # Free evidence: ray cast from camera to each hit point
-        cam_row = int(np.clip(self._mid - cam_t[0] / self.RES, 0, n - 1))
-        cam_col = int(np.clip(self._mid - cam_t[1] / self.RES, 0, n - 1))
-
-        t        = np.linspace(0.1, 0.9, 9, dtype=np.float32)   # (9,)
-        row_free = np.clip(
-            (cam_row + np.outer(t, row_hit - cam_row)).astype(np.int32), 0, n - 1
-        )   # (9, N)
-        col_free = np.clip(
-            (cam_col + np.outer(t, col_hit - cam_col)).astype(np.int32), 0, n - 1
-        )   # (9, N)
-        flat_free   = row_free.ravel() * n + col_free.ravel()
-        self._rays += np.bincount(flat_free, minlength=n * n).reshape(n, n).astype(np.uint32)
-
-    def reset(self) -> None:
-        self._hits[:] = 0
-        self._rays[:] = 0
-        self._cam_t[:] = 0
-
-    def render(self) -> np.ndarray:
-        """Return n×n×3 uint8 RGB image of current map state."""
-        n, mid = self._n, self._mid
-
-        occ  = self._hits >= self.OCC_THRESH
-        free = (self._rays >= self.FREE_THRESH) & ~occ
-
-        rgb = np.full((n, n, 3), (200, 180, 0), dtype=np.uint8)  # unknown: yellow
-        rgb[free] = (30, 180, 30)                                  # free:     green
-        rgb[occ]  = (220, 50,  50)                                 # occupied: red
-
-        # Camera marker — 5×5 white square (distinct from yellow background)
-        cam_row = int(np.clip(mid - self._cam_t[0] / self.RES, 0, n - 1))
-        cam_col = int(np.clip(mid - self._cam_t[1] / self.RES, 0, n - 1))
-        r0 = max(0, cam_row - 2);  r1 = min(n, cam_row + 3)
-        c0 = max(0, cam_col - 2);  c1 = min(n, cam_col + 3)
-        rgb[r0:r1, c0:c1] = (255, 255, 255)
-
-        return rgb
-
+# ── Stage 8: Streamer ─────────────────────────────────────────────────────────
 
 # ── Stage 9: Streamer ─────────────────────────────────────────────────────────
 
@@ -597,9 +504,7 @@ class DepthStreamer:
         self._vox     = voxels
         self._cg      = costgrid
         self._emit_c  = emit_confidence
-        self._birdseye    = BirdsEyeOccupancy()
-        self._world_occ   = WorldOccupancyGrid()
-        self._was_locked  = False
+        self._birdseye       = BirdsEyeOccupancy()
         self._pinhole_logged = False
 
     def assemble(self, zed: sl.Camera, ts: float) -> DepthFramePacket:
@@ -618,22 +523,9 @@ class DepthStreamer:
         )
 
     def process(self, pkt: DepthFramePacket, frame: int) -> None:
-        """Backproject → accumulate → (periodically) rebuild costmap.
-
-        Before VIO lock: pose_R=I so xyz is in camera-link frame (X=fwd, Z=up).
-        Voxels accumulate in that frame — costmap renders immediately.
-        On first VIO lock: voxels are cleared and world-frame accumulation begins,
-        giving a clean handoff without camera-frame contamination.
-        """
         xyz = self._bp.project(pkt)
-        if len(xyz) > 0:
-            just_locked = self._pose.locked and not self._was_locked
-            if just_locked:
-                self._vox.clear()        # discard camera-frame voxels; restart in world frame
-                self._world_occ.reset()  # same clean handoff for the occupancy grid
+        if len(xyz) > 0 and self._pose.locked:
             self._vox.add(xyz)
-            self._world_occ.update(xyz, pkt.pose_t)
-        self._was_locked = self._pose.locked
         self._log_depth_frame(pkt, xyz)
         if frame % self.MAP_EVERY == 0:
             self._log_map_and_costmap()
@@ -684,12 +576,6 @@ class DepthStreamer:
             rgb, ox, oy = self._cg.build(xyz)
             if rgb is not None:
                 rr.log("world/costmap", rr.Image(rgb))
-            else:
-                z_min, z_max = float(xyz[:, 2].min()), float(xyz[:, 2].max())
-                print(f"    costmap: {len(xyz)} voxels but Z range [{z_min:.2f}, {z_max:.2f}]m — "
-                      "all filtered (expect Z in -0.3 to 1.8 m with floor-as-origin)")
-
-        rr.log("occupancy/world", rr.Image(self._world_occ.render()))
 
     def log_stdout(self, pkt: DepthFramePacket, frame: int, fps: float) -> None:
         tx, ty, tz = pkt.pose_t
