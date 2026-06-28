@@ -533,6 +533,11 @@ class WorldOccupancyGrid:
         flat_free   = row_free.ravel() * n + col_free.ravel()
         self._rays += np.bincount(flat_free, minlength=n * n).reshape(n, n).astype(np.uint32)
 
+    def reset(self) -> None:
+        self._hits[:] = 0
+        self._rays[:] = 0
+        self._cam_t[:] = 0
+
     def render(self) -> np.ndarray:
         """Return n×n×3 uint8 RGB image of current map state."""
         n, mid = self._n, self._mid
@@ -624,10 +629,10 @@ class DepthStreamer:
         if len(xyz) > 0:
             just_locked = self._pose.locked and not self._was_locked
             if just_locked:
-                self._vox.clear()   # discard camera-frame voxels; restart in world frame
+                self._vox.clear()        # discard camera-frame voxels; restart in world frame
+                self._world_occ.reset()  # same clean handoff for the occupancy grid
             self._vox.add(xyz)
-            if self._pose.locked:
-                self._world_occ.update(xyz, pkt.pose_t)
+            self._world_occ.update(xyz, pkt.pose_t)
         self._was_locked = self._pose.locked
         self._log_depth_frame(pkt, xyz)
         if frame % self.MAP_EVERY == 0:
