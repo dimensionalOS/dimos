@@ -168,11 +168,13 @@ class PoseReader:
     """ZED VIO camera→world pose.  Identity passthrough until enable() is called."""
 
     def __init__(self) -> None:
-        self._R      = np.eye(3, dtype=np.float32)
-        self._t      = np.zeros(3, dtype=np.float32)
-        self._active = False
-        self._locked = False
-        self._pose   = sl.Pose()
+        self._R           = np.eye(3, dtype=np.float32)
+        self._t           = np.zeros(3, dtype=np.float32)
+        self._active      = False
+        self._locked      = False
+        self._pose        = sl.Pose()
+        self._t0          = time.monotonic()
+        self._last_warn   = 0.0
 
     def enable(self, zed: sl.Camera) -> bool:
         tp = sl.PositionalTrackingParameters()
@@ -189,6 +191,7 @@ class PoseReader:
     def update(self, zed: sl.Camera) -> None:
         if not self._active:
             return
+        now = time.monotonic()
         if zed.get_position(self._pose, sl.REFERENCE_FRAME.WORLD) == sl.POSITIONAL_TRACKING_STATE.OK:
             t = self._pose.get_translation()
             q = self._pose.get_orientation()
@@ -199,7 +202,15 @@ class PoseReader:
                 [2*(x*y+z*w),   1-2*(x*x+z*z), 2*(y*z-x*w)  ],
                 [2*(x*z-y*w),   2*(y*z+x*w),   1-2*(x*x+y*y)],
             ], dtype=np.float32)
+            if not self._locked:
+                print(f"*** VIO LOCKED after {now - self._t0:.1f}s — costmap + world occ will now render ***")
             self._locked = True
+        else:
+            # Warn every 15 s while still searching so the user isn't left guessing
+            if now - max(self._last_warn, self._t0) >= 15.0:
+                print(f"    VIO searching … {now - self._t0:.0f}s elapsed  "
+                      "— move camera slowly to help feature tracking")
+                self._last_warn = now
 
     @property
     def R(self) -> np.ndarray: return self._R
@@ -658,6 +669,10 @@ class DepthStreamer:
             rgb, ox, oy = self._cg.build(xyz)
             if rgb is not None:
                 rr.log("world/costmap", rr.Image(rgb))
+            else:
+                z_min, z_max = float(xyz[:, 2].min()), float(xyz[:, 2].max())
+                print(f"    costmap: {len(xyz)} voxels but Z range [{z_min:.2f}, {z_max:.2f}]m — "
+                      "all filtered (expect Z in -0.3 to 1.8 m with floor-as-origin)")
 
         # World-frame occupancy — renders as soon as VIO locks
         if self._pose.locked:
