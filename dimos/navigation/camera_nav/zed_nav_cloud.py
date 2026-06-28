@@ -514,6 +514,13 @@ def _confidence_colors(counts: np.ndarray) -> np.ndarray:
 def main() -> None:
     rr.init("zed_nav_cloud", spawn=True)
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
+    # Seed a 3D entity immediately so Rerun's auto-blueprint creates a 3D panel.
+    # Without this, camera/depth (2D image) arrives first and Rerun builds only
+    # a 2D view — world/stable_cloud logged later has nowhere to appear.
+    rr.log("world/origin", rr.Points3D(
+        [[0.0, 0.0, 0.0]], radii=0.08,
+        colors=[[255, 80, 80]],
+    ), static=True)
 
     zed = sl.Camera()
     ip  = sl.InitParameters()
@@ -587,10 +594,11 @@ def main() -> None:
                 stable = ev_map.stable_xyz
                 if len(stable) > 0:
                     s_obs = ev_map._obs[:ev_map._n][ev_map._obs[:ev_map._n] >= ev_map._smin]
+                    print(f"  → logging stable_cloud: {len(stable)} pts")
                     rr.log("world/stable_cloud", rr.Points3D(
                         positions=stable,
                         colors=_confidence_colors(s_obs),
-                        radii=0.006,
+                        radii=0.02,
                     ))
                 free = ev_map.free_xyz
                 if len(free) > 0:
@@ -598,8 +606,8 @@ def main() -> None:
                     idx = np.random.choice(len(free), cap, replace=False) if len(free) > cap else np.arange(len(free))
                     rr.log("world/free_space", rr.Points3D(
                         positions=free[idx],
-                        colors=np.full((len(idx), 3), [60, 60, 80], dtype=np.uint8),
-                        radii=0.002,
+                        colors=np.full((len(idx), 3), [80, 140, 200], dtype=np.uint8),
+                        radii=0.01,
                     ))
 
             fps = frame / max(ts - t0, 1e-6)
