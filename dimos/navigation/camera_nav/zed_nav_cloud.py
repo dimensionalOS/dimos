@@ -587,14 +587,23 @@ def main() -> None:
                 free_pts = raycaster.cast(pose.t, xyz_world)
                 ev_map.observe_free(free_pts)
 
-            # Stage 4: publish map every MAP_EVERY frames
-            # Only two layers in 3D: stable occupied (confidence-colored) + free space.
-            # No current_frame noise, no evidence_map clutter — empty space stays empty.
+                # Show current-frame hits immediately — no waiting for stable_min.
+                # This is the first visible proof that VIO locked and projection works.
+                # Gray points: every valid depth pixel projected to world space.
+                cap = min(len(xyz_world), 30_000)
+                rr.log("world/current_frame", rr.Points3D(
+                    positions=xyz_world[:cap],
+                    colors=np.full((cap, 3), [160, 160, 160], dtype=np.uint8),
+                    radii=0.01,
+                ))
+
+            # Stage 4: publish accumulated map every MAP_EVERY frames.
+            # stable_cloud (colored by confidence) shows on top of current_frame.
+            # free_space shows the swept traversable volume.
             if frame % nav_cloud._every == 0:
                 stable = ev_map.stable_xyz
                 if len(stable) > 0:
                     s_obs = ev_map._obs[:ev_map._n][ev_map._obs[:ev_map._n] >= ev_map._smin]
-                    print(f"  → logging stable_cloud: {len(stable)} pts")
                     rr.log("world/stable_cloud", rr.Points3D(
                         positions=stable,
                         colors=_confidence_colors(s_obs),
