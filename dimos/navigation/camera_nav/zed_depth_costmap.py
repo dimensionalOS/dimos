@@ -689,9 +689,7 @@ class DepthStreamer:
                 print(f"    costmap: {len(xyz)} voxels but Z range [{z_min:.2f}, {z_max:.2f}]m — "
                       "all filtered (expect Z in -0.3 to 1.8 m with floor-as-origin)")
 
-        # World-frame occupancy — renders as soon as VIO locks
-        if self._pose.locked:
-            rr.log("occupancy/world", rr.Image(self._world_occ.render()))
+        rr.log("occupancy/world", rr.Image(self._world_occ.render()))
 
     def log_stdout(self, pkt: DepthFramePacket, frame: int, fps: float) -> None:
         tx, ty, tz = pkt.pose_t
