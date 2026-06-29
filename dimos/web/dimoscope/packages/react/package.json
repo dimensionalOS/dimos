@@ -1,0 +1,16 @@
+{
+  "name": "@dimos/react",
+  "version": "0.1.0",
+  "description": "React bindings for @dimos/topics",
+  "type": "module",
+  "main": "./src/index.tsx",
+  "module": "./src/index.tsx",
+  "types": "./src/index.tsx",
+  "exports": {
+    ".": "./src/index.tsx"
+  },
+  "peerDependencies": {
+    "@dimos/topics": "*",
+    "react": ">=18"
+  }
+}

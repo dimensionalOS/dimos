@@ -32,6 +32,14 @@ body {
 .status-open { color: #4ade80; }
 .status-connecting { color: var(--accent); }
 .status-closed { color: #f87171; }
+.badge {
+  font: 11px ui-monospace, monospace;
+  color: #9fb4d8;
+  background: #16203a;
+  border: 1px solid #243456;
+  border-radius: 6px;
+  padding: 2px 8px;
+}
 .muted { color: var(--muted); }
 .small { font-size: 12px; }
 
@@ -59,20 +67,26 @@ body {
 .topic-type { color: var(--muted); font-size: 11px; }
 
 .main { grid-area: main; padding: 16px; display: flex; gap: 16px; flex-wrap: wrap; align-content: flex-start; }
-.side-col { display: flex; flex-direction: column; gap: 16px; width: 320px; }
+.side-col { display: flex; flex-direction: column; gap: 16px; width: 340px; }
 
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
 .panel-title { font-size: 12px; color: var(--muted); margin-bottom: 8px; font-family: ui-monospace, monospace; }
-.worldcanvas { border-radius: 8px; display: block; }
-.json { margin: 0; max-height: 320px; overflow: auto; font: 12px/1.45 ui-monospace, monospace; color: #b9c6d6; }
+.worldcanvas { border-radius: 8px; display: block; background: #0b0e14; }
+.json { margin: 0; max-height: 360px; overflow: auto; font: 12px/1.45 ui-monospace, monospace; color: #b9c6d6; }
 
 .readout div { display: flex; gap: 10px; font-family: ui-monospace, monospace; padding: 2px 0; }
 .readout span { color: var(--muted); width: 36px; display: inline-block; }
 
 .teleop-hint { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
-.teleop-grid { display: grid; grid-template-columns: repeat(3, 44px); gap: 6px; }
+.teleop-grid { display: grid; grid-template-columns: repeat(3, 46px); gap: 6px; }
 .teleop-grid button {
-  height: 40px; background: #1b2230; color: var(--text);
+  height: 42px; background: #1b2230; color: var(--text);
   border: 1px solid var(--line); border-radius: 8px; cursor: pointer; font-size: 16px;
 }
 .teleop-grid button:active { border-color: var(--accent); }
+
+.stats { width: 100%; border-collapse: collapse; font: 12px ui-monospace, monospace; }
+.stats th { text-align: right; color: var(--muted); font-weight: 500; padding: 3px 6px; border-bottom: 1px solid var(--line); }
+.stats th:first-child { text-align: left; }
+.stats td { text-align: right; padding: 3px 6px; }
+.stats td.mono { text-align: left; color: #b9c6d6; }
