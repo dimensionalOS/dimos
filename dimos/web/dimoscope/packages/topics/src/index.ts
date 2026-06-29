@@ -12,3 +12,10 @@ export { BENCH_SCENARIOS, measureScenario, formatMarkdown, onDemandSaving } from
 export type { BenchScenario, BenchRow } from "./bench";
 export type { Transport, RawSample, Status, TransportCaps } from "./transport";
 export type { MessageMeta, Handler, Subscription, TopicStats, TopicInfo } from "./types";
+// Media plane — pluggable, negotiated video delivery (beside Transport).
+export { selectMediaChannel, browserSupports } from "./media";
+export { JpegTopicMedia } from "./adapters/jpegTopicMedia";
+export { WebRtcMedia } from "./adapters/webRtcMedia";
+export { decodeImageToBitmap } from "./image";
+export type { MediaChannel, MediaCaps, MediaKind, MediaDeps, VideoMeta } from "./media";
+export type { ImageMsg } from "./image";

@@ -11,14 +11,17 @@ import {
   type MutableRefObject,
   type ReactNode,
 } from "react";
-import { connect, type DimosClient } from "@dimos/topics";
-import type { MessageMeta, Status, TopicInfo, TopicStats } from "@dimos/topics";
+import { connect, selectMediaChannel, type DimosClient } from "@dimos/topics";
+import type { MediaKind, MessageMeta, Status, TopicInfo, TopicStats } from "@dimos/topics";
 
 /** One selectable transport/server: a label + a thunk that builds a connected client. */
 export interface ServerOpt {
   id: string;
   label: string;
   connect: () => Promise<DimosClient>;
+  /** Media-plane config for this server: where the camera can come from (WebRTC gateway +
+   *  which kinds it can serve). Absent/jpeg-only → the camera uses the Image-topic floor. */
+  media?: { gatewayUrl?: string; kinds?: MediaKind[] };
 }
 
 interface DimosCtx {
@@ -307,6 +310,138 @@ export function useImageTopic(topic: string | null, opts?: { maxFps?: number }) 
     };
   }, [client, topic, maxFps]);
   return { canvasRef, info };
+}
+
+// ── media plane: the camera as a negotiated, pluggable stream ───────────────
+/** Forced media mode (the topbar toggle). "auto" = best available, falling back to jpeg. */
+export type MediaMode = "auto" | "jpeg" | "webrtc";
+const MODE_PREFER: Record<MediaMode, MediaKind[]> = {
+  auto: ["webrtc", "jpeg"],
+  jpeg: ["jpeg"],
+  webrtc: ["webrtc", "jpeg"],
+};
+
+/**
+ * Subscribe a camera topic via the negotiated media plane and render it — a <video> fed by a
+ * WebRTC MediaStream when available, else the JPEG Image-topic floor painted to a <canvas>. The
+ * caller attaches BOTH refs and shows the one matching `kind`. Negotiation uses the active
+ * server's `media` config, so the data plane (topics) is untouched when the mode changes.
+ *
+ * Slice note: builds its own MediaChannel per hook instance (fine for one camera). A multi-cam
+ * grid would hoist the channel to a provider to share one PeerConnection.
+ */
+export function useVideo(topic: string | null, opts?: { mode?: MediaMode }) {
+  const { client, servers, activeId } = useContext(Ctx);
+  const mode = opts?.mode ?? "auto";
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [kind, setKind] = useState<"stream" | "frames">("frames");
+  const [label, setLabel] = useState<string>();
+
+  const mediaCfg = servers.find((s) => s.id === activeId)?.media;
+  const gatewayUrl = mediaCfg?.gatewayUrl;
+  const serverMedia = mediaCfg?.kinds;
+
+  useEffect(() => {
+    if (!client || !topic) return;
+    const ch = selectMediaChannel({ client, gatewayUrl, serverMedia, prefer: MODE_PREFER[mode] });
+    setKind(ch.caps.output);
+    setLabel(ch.label);
+    let alive = true;
+    if (ch.caps.output === "stream") {
+      ch.onStream((id, stream) => {
+        if (alive && id === topic && videoRef.current) videoRef.current.srcObject = stream;
+      });
+    } else {
+      ch.onFrame((id, frame) => {
+        if (!alive || id !== topic) return;
+        const cvs = canvasRef.current;
+        const ctx = cvs?.getContext("2d");
+        if (!cvs || !ctx) return;
+        const f = frame as ImageBitmap; // ImageBitmap | VideoFrame are both CanvasImageSource
+        if (cvs.width !== f.width || cvs.height !== f.height) {
+          cvs.width = f.width;
+          cvs.height = f.height;
+        }
+        ctx.drawImage(frame as CanvasImageSource, 0, 0);
+        (frame as ImageBitmap).close?.();
+      });
+    }
+    ch.connect()
+      .then(() => alive && ch.subscribe(topic))
+      .catch(() => {}); // TODO: runtime fallback to jpeg on connect failure
+    return () => {
+      alive = false;
+      ch.unsubscribe(topic);
+      ch.close();
+    };
+  }, [client, topic, mode, gatewayUrl, serverMedia]);
+
+  return { kind, videoRef, canvasRef, label };
+}
+
+/**
+ * Subscribe to ANY topic by name from the UI — proves the on-demand machinery (topic.ts is
+ * ref-counted, so a pin = a subscribe, an unpin = an unsubscribe). Works for not-yet-discovered
+ * topics (the gateway forwards on first publish) and on every transport.
+ */
+export function SubscribeBar() {
+  const topics = useTopics();
+  const [pins, setPins] = useState<string[]>([]);
+  const [text, setText] = useState("");
+  const add = (name: string) => {
+    const t = name.trim();
+    if (t && !pins.includes(t)) setPins((p) => [...p, t]);
+    setText("");
+  };
+  const inputStyle: React.CSSProperties = {
+    flex: 1,
+    background: "var(--bg)",
+    color: "var(--text)",
+    border: "1px solid var(--line)",
+    borderRadius: 6,
+    padding: "4px 8px",
+    font: "12px ui-monospace, monospace",
+  };
+  return (
+    <div className="panel">
+      <div className="panel-title">Subscribe · any topic</div>
+      <form onSubmit={(e) => { e.preventDefault(); add(text); }} style={{ display: "flex", gap: 6 }}>
+        <input
+          list="dimos-topic-names"
+          placeholder="/dimos/…  subscribe by name"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          style={inputStyle}
+        />
+        <datalist id="dimos-topic-names">
+          {topics.map((t) => (
+            <option key={t.topic} value={t.topic} />
+          ))}
+        </datalist>
+        <button type="submit" className="tab">+</button>
+      </form>
+      <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+        {pins.map((p) => (
+          <PinnedTopic key={p} topic={p} onRemove={() => setPins((ps) => ps.filter((x) => x !== p))} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PinnedTopic({ topic, onRemove }: { topic: string; onRemove: () => void }) {
+  const { meta } = useTopicLatest<unknown>(topic, { maxHz: 4 });
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, font: "12px ui-monospace, monospace" }}>
+      <span style={{ color: meta ? "#4ade80" : "var(--muted)" }}>●</span>
+      <span style={{ flex: 1, color: "var(--text)" }}>{topic}</span>
+      <span className="muted small">{meta ? `${meta.sizeBytes}B` : "waiting…"}</span>
+      <button type="button" className="tab" onClick={onRemove} title="unsubscribe">
+        ×
+      </button>
+    </div>
+  );
 }
 
 /** Safe teleop helpers — gateway clamps + runs a TTL/deadman watchdog. */

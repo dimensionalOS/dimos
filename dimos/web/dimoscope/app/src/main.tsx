@@ -9,7 +9,14 @@ import "./styles.css";
 // kills whatever holds it. start-all.sh launches all of these together.
 const host = location.hostname || "localhost";
 const servers: ServerOpt[] = [
-  { id: "zenoh", label: "Python↔Zenoh", connect: () => connect({ url: `ws://${host}:8088` }) },
+  {
+    id: "zenoh",
+    label: "Python↔Zenoh",
+    connect: () => connect({ url: `ws://${host}:8088` }),
+    // The Python gateway runs aiortc, so the camera can come over WebRTC (encoded once
+    // server-side, hardware-decoded in the browser). Falls back to the JPEG Image topic.
+    media: { gatewayUrl: `ws://${host}:8088`, kinds: ["webrtc", "jpeg"] },
+  },
   { id: "lcm", label: "Bun↔LCM", connect: () => connect({ url: `ws://${host}:8089` }) },
   {
     id: "zenoh-ts",
