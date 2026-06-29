@@ -21,10 +21,10 @@ from typing import Any
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.core.global_config import global_config
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.manipulators._modeling import (
     base_pose,
-    coordinator_joint_mapping,
     joint_names,
 )
 from dimos.utils.data import LfsPath
@@ -161,31 +161,38 @@ def make_xarm_model_config(
     home_joints: list[float] | None = None,
     pre_grasp_offset: float = 0.10,
 ) -> RobotModelConfig:
+    _ = joint_prefix
     xacro_args = {
         "dof": str(dof),
         "limited": "true",
-        "attach_xyz": f"{x_offset} {y_offset} {z_offset}",
-        "attach_rpy": f"0 {pitch} 0",
+        "attach_xyz": "0 0 0",
+        "attach_rpy": "0 0 0",
     }
     if add_gripper:
         xacro_args["add_gripper"] = "true"
 
+    local_joint_names = joint_names(dof)
+    tip_link = "link_tcp" if add_gripper else f"link{dof}"
     return RobotModelConfig(
         name=name,
         model_path=XARM_MODEL_PATH,
-        base_pose=base_pose(x_offset, y_offset, z_offset),
-        joint_names=joint_names(dof),
-        end_effector_link="link_tcp" if add_gripper else f"link{dof}",
+        base_pose=base_pose(x_offset, y_offset, z_offset, pitch),
+        strip_model_world_joint=True,
+        joint_names=local_joint_names,
         base_link="link_base",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="manipulator",
+                joint_names=tuple(local_joint_names),
+                base_link="link_base",
+                tip_link=tip_link,
+                source="explicit",
+            )
+        ],
         package_paths=XARM_PACKAGE_PATHS,
         xacro_args=xacro_args,
         auto_convert_meshes=True,
         collision_exclusion_pairs=(XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else []),
-        joint_name_mapping=coordinator_joint_mapping(
-            name,
-            dof,
-            joint_prefix=joint_prefix,
-        ),
         coordinator_task_name=coordinator_task_name or f"traj_{name}",
         gripper_hardware_id=name if add_gripper else None,
         tf_extra_links=tf_extra_links or [],

@@ -1,0 +1,297 @@
+# Copyright 2025-2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Unified robot configuration.
+
+Single source of truth for a robot. The URDF/MJCF model file is the
+ground truth — joint names, DOF, limits, and link hierarchy are parsed
+automatically. Generates RobotModelConfig, HardwareComponent, and TaskConfig.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+
+from dimos.control.components import HardwareComponent, HardwareType
+from dimos.control.coordinator import TaskConfig
+from dimos.manipulation.planning.groups.discovery import discover_planning_group_definitions
+from dimos.manipulation.planning.groups.identifiers import make_global_joint_names
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.robot.model_parser import ModelDescription, parse_model
+
+
+class GripperConfig(BaseModel):
+    """Gripper configuration."""
+
+    type: str
+    joints: list[str] = Field(default_factory=list)
+    collision_exclusions: list[tuple[str, str]] = Field(default_factory=list)
+    open_position: float = 1.0
+    close_position: float = 0.0
+
+
+class RobotConfig(BaseModel):
+    """Unified robot configuration — URDF/MJCF is the ground truth.
+
+    Model parsing is lazy to avoid LFS downloads at import time.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Required fields
+    name: str
+    model_path: Path | None = None
+    # Physical dimensions (meters)
+    height_clearance: float | None = None  # max height
+    width_clearance: float | None = None  # max width
+
+    # These offsets are applied so that odometry  at 0,0,0 corresponds roughly with the floor
+    # Note: these cannot (easily) be calculated from the URDF because
+    #       the URDF doesn't always have an initial robot pose/stance
+    # This is a quality of life offset, not exact
+    # The key names should match keys in the urdf
+    internal_odom_offsets: dict[str, Any] = Field(default_factory=dict)
+
+    # Hardware connection
+    adapter_type: str = "mock"
+    address: str | None = None
+    adapter_kwargs: dict[str, Any] = Field(default_factory=dict)
+    auto_enable: bool = True
+
+    # Optional overrides (derived from model if not set)
+    joint_names: list[str] | None = None
+    base_link: str | None = (
+        None  # Placement/weld link override; derived from model root when absent.
+    )
+    home_joints: list[float] | None = None
+
+    # Canonical planning placement. Robot models should describe intrinsic geometry;
+    # instance placement belongs here.
+    base_pose: list[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
+    strip_model_world_joint: bool = False
+
+    # Planning
+    max_velocity: float = 1.0
+    max_acceleration: float = 2.0
+    pre_grasp_offset: float = 0.10
+
+    # Gripper
+    gripper: GripperConfig | None = None
+
+    # Model loading
+    package_paths: dict[str, Path] = Field(default_factory=dict)
+    xacro_args: dict[str, str] = Field(default_factory=dict)
+    auto_convert_meshes: bool = True
+    srdf_path: Path | None = None
+
+    # TF publishing
+    tf_extra_links: list[str] = Field(default_factory=list)
+
+    # Task defaults
+    task_type: str = "trajectory"
+    task_priority: int = 10
+
+    # Collision exclusion pairs (gripper-specific, cannot be parsed from model)
+    collision_exclusion_pairs: list[tuple[str, str]] = Field(default_factory=list)
+
+    _parsed: ModelDescription | None = PrivateAttr(default=None)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_fields(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        if "base_pose_link" in data:
+            raise ValueError(
+                "RobotConfig.base_pose_link was removed; use base_link for robot "
+                "placement and PlanningGroupDefinition.base_link for planning chains"
+            )
+        if "end_effector_link" in data:
+            raise ValueError(
+                "RobotConfig.end_effector_link was removed; define pose target frames "
+                "with PlanningGroupDefinition.tip_link or SRDF planning groups"
+            )
+        return data
+
+    def _ensure_parsed(self) -> ModelDescription:
+        """Parse model lazily on first access."""
+        if self._parsed is None:
+            if self.model_path is None:
+                raise ValueError(
+                    f"RobotConfig '{self.name}' has no model_path — "
+                    "joint/link info is unavailable. Set model_path to a URDF/MJCF."
+                )
+            self._parsed = parse_model(self.model_path, self.package_paths, self.xacro_args)
+            if self.joint_names is None:
+                self.joint_names = self._parsed.actuated_joint_names
+            if self.base_link is None:
+                self.base_link = self._parsed.root_link
+            if self.home_joints is None:
+                self.home_joints = self._compute_default_home()
+        return self._parsed
+
+    def _compute_default_home(self) -> list[float]:
+        assert self._parsed is not None
+        home = []
+        for joint_name in self.local_joint_names:
+            joint = self._parsed.get_joint(joint_name)
+            if (
+                joint is not None
+                and joint.lower_limit is not None
+                and joint.upper_limit is not None
+            ):
+                home.append((joint.lower_limit + joint.upper_limit) / 2.0)
+            else:
+                home.append(0.0)
+        return home
+
+    # -- Derived properties ---------------------------------------------------
+
+    @property
+    def model_description(self) -> ModelDescription:
+        return self._ensure_parsed()
+
+    @property
+    def local_joint_names(self) -> list[str]:
+        self._ensure_parsed()
+        assert self.joint_names is not None
+        return self.joint_names
+
+    @property
+    def global_joint_names(self) -> list[str]:
+        return make_global_joint_names(self.name, self.local_joint_names)
+
+    @property
+    def resolved_base_link(self) -> str:
+        self._ensure_parsed()
+        assert self.base_link is not None
+        return self.base_link
+
+    @property
+    def dof(self) -> int:
+        if self.joint_names is not None:
+            return len(self.joint_names)
+        return len(self.local_joint_names)
+
+    @property
+    def coordinator_task_name(self) -> str:
+        return f"traj_{self.name}"
+
+    # -- Converter methods ----------------------------------------------------
+
+    def to_robot_model_config(self) -> RobotModelConfig:
+        """Generate RobotModelConfig for ManipulationModule."""
+        if self.model_path is None:
+            raise ValueError(
+                f"RobotConfig '{self.name}' has no model_path — "
+                "cannot generate RobotModelConfig for manipulation."
+            )
+        bp = self.base_pose
+        base_pose = PoseStamped(
+            position=Vector3(x=bp[0], y=bp[1], z=bp[2]),
+            orientation=Quaternion(bp[3], bp[4], bp[5], bp[6]),
+        )
+
+        exclusions = list(self.collision_exclusion_pairs)
+        if self.gripper:
+            exclusions.extend(self.gripper.collision_exclusions)
+
+        # Use direct fields when available to avoid triggering model parsing at import time
+        joint_names = self.joint_names if self.joint_names is not None else self.local_joint_names
+        base_link = self.base_link if self.base_link is not None else self.resolved_base_link
+        planning_groups = discover_planning_group_definitions(
+            robot_name=self.name,
+            model_path=self.model_path,
+            model=self.model_description,
+            controllable_joint_names=joint_names,
+            srdf_path=self.srdf_path,
+        )
+        return RobotModelConfig(
+            name=self.name,
+            model_path=self.model_path,
+            srdf_path=self.srdf_path,
+            base_pose=base_pose,
+            strip_model_world_joint=self.strip_model_world_joint,
+            joint_names=joint_names,
+            base_link=base_link,
+            planning_groups=planning_groups,
+            package_paths=self.package_paths,
+            xacro_args=self.xacro_args,
+            collision_exclusion_pairs=exclusions,
+            auto_convert_meshes=self.auto_convert_meshes,
+            max_velocity=self.max_velocity,
+            max_acceleration=self.max_acceleration,
+            coordinator_task_name=self.coordinator_task_name,
+            gripper_hardware_id=self.name if self.gripper else None,
+            tf_extra_links=self.tf_extra_links,
+            home_joints=self.home_joints,
+            pre_grasp_offset=self.pre_grasp_offset,
+        )
+
+    def to_hardware_component(self) -> HardwareComponent:
+        """Generate HardwareComponent for ControlCoordinator."""
+        gripper_joints: list[str] = []
+        if self.gripper and self.gripper.joints:
+            gripper_joints = make_global_joint_names(self.name, self.gripper.joints)
+
+        adapter_kwargs = dict(self.adapter_kwargs)
+        if self.home_joints is not None:
+            adapter_kwargs.setdefault("initial_positions", self.home_joints)
+
+        return HardwareComponent(
+            hardware_id=self.name,
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=self.global_joint_names,
+            adapter_type=self.adapter_type,
+            address=self.address,
+            auto_enable=self.auto_enable,
+            gripper_joints=gripper_joints,
+            adapter_kwargs=adapter_kwargs,
+        )
+
+    def to_task_config(
+        self,
+        task_type: str | None = None,
+        task_name: str | None = None,
+        priority: int | None = None,
+        auto_start: bool = False,
+        **task_kwargs: Any,
+    ) -> TaskConfig:
+        """Generate TaskConfig for ControlCoordinator.
+
+        Args:
+            task_type: Override task type (default: self.task_type).
+            task_name: Override task name (default: self.coordinator_task_name).
+            priority: Override priority (default: self.task_priority).
+            auto_start: Whether the coordinator should start this task on startup.
+            **task_kwargs: Task-specific params (e.g., model_path,
+                ee_joint_id, hand, gripper_joint, gripper_open_pos, gripper_closed_pos).
+        """
+        params = dict(task_kwargs.pop("params", {}))
+        params.update(task_kwargs)
+
+        return TaskConfig(
+            name=task_name if task_name is not None else self.coordinator_task_name,
+            type=task_type if task_type is not None else self.task_type,
+            joint_names=self.global_joint_names,
+            priority=priority if priority is not None else self.task_priority,
+            auto_start=auto_start,
+            params=params,
+        )
