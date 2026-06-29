@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal, TypeAlias
 
 from dimos.manipulation.planning.spec.models import (
     GlobalJointName,
@@ -24,6 +25,8 @@ from dimos.manipulation.planning.spec.models import (
     PlanningGroupID,
     RobotName,
 )
+
+PlanningGroupSource: TypeAlias = Literal["srdf", "fallback"]
 
 
 @dataclass(frozen=True)
@@ -38,6 +41,7 @@ class PlanningGroupDefinition:
     joint_names: tuple[LocalModelJointName, ...]
     base_link: str
     tip_link: str | None = None
+    source: PlanningGroupSource = "srdf"
 
     @property
     def has_pose_target(self) -> bool:
@@ -60,6 +64,7 @@ class PlanningGroup:
     local_joint_names: tuple[LocalModelJointName, ...]
     base_link: str
     tip_link: str | None = None
+    source: PlanningGroupSource = "srdf"
 
     @property
     def has_pose_target(self) -> bool:

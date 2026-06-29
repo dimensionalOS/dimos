@@ -138,6 +138,7 @@ def test_parse_srdf_chain_group(tmp_path: Path) -> None:
     assert groups[0].joint_names == ("joint1", "joint2", "joint3")
     assert groups[0].base_link == "link0"
     assert groups[0].tip_link == "link3"
+    assert groups[0].source == "srdf"
 
 
 def test_parse_srdf_ordered_joint_list_group(tmp_path: Path) -> None:
@@ -200,6 +201,7 @@ def test_fallback_generates_manipulator_for_unambiguous_serial_chain() -> None:
     assert group.joint_names == ("joint1", "joint2", "joint3")
     assert group.base_link == "link0"
     assert group.tip_link == "link3"
+    assert group.source == "fallback"
 
 
 def test_fallback_strips_terminal_prismatic_joints() -> None:
@@ -212,6 +214,7 @@ def test_fallback_strips_terminal_prismatic_joints() -> None:
 
     assert group.joint_names == ("joint1", "joint2")
     assert group.tip_link == "link2"
+    assert group.source == "fallback"
 
 
 def test_fallback_rejects_branching_model() -> None:
@@ -277,6 +280,7 @@ def test_discovery_falls_back_when_srdf_has_no_supported_groups(tmp_path: Path) 
     )
 
     assert [group.name for group in groups] == [FALLBACK_PLANNING_GROUP_NAME]
+    assert [group.source for group in groups] == ["fallback"]
 
 
 def test_discovery_prefers_explicit_srdf_over_fallback(tmp_path: Path) -> None:
@@ -354,6 +358,7 @@ def test_registry_preserves_order_and_exposes_defaults() -> None:
     assert [group.id for group in registry.list()] == ["left/manipulator", "right/manipulator"]
     assert registry.default_group_id_for_robot("left") == "left/manipulator"
     assert registry.primary_pose_group_id_for_robot("right") == "right/manipulator"
+    assert registry.get("left/manipulator").source == "srdf"
     assert registry.groups_for_robot("missing") == ()
     assert registry.default_group_id_for_robot("missing") is None
 

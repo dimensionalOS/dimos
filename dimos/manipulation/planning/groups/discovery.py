@@ -150,6 +150,7 @@ def generate_fallback_planning_group(
         joint_names=tuple(joint.name for joint in ordered_joints),
         base_link=ordered_joints[0].parent_link,
         tip_link=ordered_joints[-1].child_link,
+        source="fallback",
     )
 
 
