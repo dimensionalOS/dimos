@@ -2,7 +2,15 @@
 // Shows: live topic discovery, a fused 2D WorldView, a Pose readout, safe
 // teleop, and a live StatsBar (hz / bandwidth / latency per topic).
 import { useState } from "react";
-import { useStatus, useTopics, useTopicLatest, useDimosClient, useServers } from "@dimos/react";
+import {
+  useStatus,
+  useTopics,
+  useTopicLatest,
+  useDimosClient,
+  useServers,
+  SubscribeBar,
+  type MediaMode,
+} from "@dimos/react";
 import { WorldView } from "./panels/WorldView";
 import { CameraView } from "./panels/CameraView";
 import { PoseReadout } from "./panels/PoseReadout";
@@ -34,28 +42,42 @@ export function App() {
   const { servers, activeId, setActiveId } = useServers();
   const [selected, setSelected] = useState<string | null>(null);
   const [tab, setTab] = useState<"2d" | "3d">("2d");
+  const [mediaMode, setMediaMode] = useState<MediaMode>("auto");
 
   return (
     <div className="layout">
       <header className="topbar">
-        <b>dimoscope</b>
-        <span className={`status status-${status}`}>● {status}</span>
-        {servers.length > 1 && (
+        <span className="wordmark" title="DimOS topics in the browser — subscribe · visualize · teleop">
+          dimo<span>scope</span>
+        </span>
+        <span className={`status status-${status}`}>{status}</span>
+        <div className="topbar-right">
+          {servers.length > 1 && (
+            <select
+              className="server-select"
+              value={activeId ?? ""}
+              onChange={(e) => setActiveId(e.target.value)}
+              title="active transport / server"
+            >
+              {servers.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          )}
           <select
             className="server-select"
-            value={activeId ?? ""}
-            onChange={(e) => setActiveId(e.target.value)}
-            title="active transport / server"
+            value={mediaMode}
+            onChange={(e) => setMediaMode(e.target.value as MediaMode)}
+            title="camera media mode (A/B the bandwidth win)"
           >
-            {servers.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.label}
-              </option>
-            ))}
+            <option value="auto">cam: auto</option>
+            <option value="webrtc">cam: webrtc</option>
+            <option value="jpeg">cam: jpeg</option>
           </select>
-        )}
-        <span className="badge">gateway · {label ?? "connecting…"}</span>
-        <span className="muted">DimOS topics in the browser — subscribe · visualize · teleop</span>
+          <span className="badge">gateway · {label ?? "connecting…"}</span>
+        </div>
       </header>
 
       <aside className="sidebar">
@@ -105,9 +127,10 @@ export function App() {
         </div>
         <div className="side-col">
           {/* On 3D, Rerun shows the camera in its own viewport — skip the ~11 MB/s side feed. */}
-          {tab === "2d" && <CameraView />}
+          {tab === "2d" && <CameraView mode={mediaMode} />}
           <PoseReadout />
           <TeleopPad />
+          <SubscribeBar />
           {selected ? <Inspector topic={selected} /> : <StatsBar />}
         </div>
       </main>
