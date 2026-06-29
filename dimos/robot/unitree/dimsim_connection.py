@@ -12,15 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable
 import functools
 from typing import Any
 
 from reactivex import Observable, Subject
 
 from dimos.core.global_config import GlobalConfig
-from dimos.core.transport import PubSubTransport
-from dimos.core.transport_factory import make_transport, tf_backend
+from dimos.core.transport import LCMTransport
+from dimos.core.transport_factory import tf_backend
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -50,40 +49,79 @@ class DimSimConnection:
 
     def __init__(self, global_config: GlobalConfig) -> None:
         self._dimsim_process: DimSimProcess = DimSimProcess(global_config)
-        self._odom_transport: PubSubTransport[PoseStamped] = make_transport("/odom", PoseStamped)
-        self._unsubscribe_odom: Callable[[], None] | None = None
-        self._tf = tf_backend()()
+        # DimSim publishes its sensors over LCM. When dimos runs a non-LCM
+        # transport (e.g. zenoh, the macOS default), bridge them: subscribe over
+        # LCM and re-emit into the connection streams so GO2Connection republishes
+        # them on the active transport -- exactly like the replay/mujoco
+        # connections -- making lidar + camera + global_map appear in Rerun.
+        # On LCM we skip the bridge: Rerun's subscribe_all already sees DimSim's
+        # LCM stream directly, and republishing on the same channels would echo
+        # (LCM has multicast loopback even at ttl=0).
+        self._bridge: bool = global_config.transport != "lcm"
+        self._odom_subject: Subject[PoseStamped] = Subject()
+        self._lidar_subject: Subject[PointCloud2] = Subject()
+        self._video_subject: Subject[Image] = Subject()
+        self._lcm_in: list[tuple[LCMTransport[Any], Subject[Any]]] = []
+        self._cmd_vel_out: LCMTransport[Twist] | None = None
+        self._odom_transport: LCMTransport[PoseStamped] | None = None
+        self._tf: Any = None
+        if self._bridge:
+            self._lcm_in = [
+                (LCMTransport("/odom", PoseStamped), self._odom_subject),
+                (LCMTransport("/lidar", PointCloud2), self._lidar_subject),
+                (LCMTransport("/color_image", Image), self._video_subject),
+            ]
+            # Teleop reverse path: cmd_vel arrives on the active transport (via
+            # GO2Connection.move); forward it to DimSim over LCM, the only
+            # transport DimSim listens on.
+            self._cmd_vel_out = LCMTransport("/cmd_vel", Twist)
+        else:
+            self._odom_transport = LCMTransport("/odom", PoseStamped)
+            self._tf = tf_backend()()
 
     def start(self) -> None:
         self._dimsim_process.start()
-        self._odom_transport.start()
-        self._unsubscribe_odom = self._odom_transport.subscribe(self._handle_odom)
-        self._tf.start()
+        if self._bridge:
+            for transport, subject in self._lcm_in:
+                transport.start()
+                transport.subscribe(subject.on_next)
+            if self._cmd_vel_out is not None:
+                self._cmd_vel_out.start()
+        else:
+            assert self._odom_transport is not None and self._tf is not None
+            self._odom_transport.start()
+            self._odom_transport.subscribe(self._handle_odom)
+            self._tf.start()
 
     def stop(self) -> None:
-        self._tf.stop()
-        if self._unsubscribe_odom is not None:
-            self._unsubscribe_odom()
-        self._odom_transport.stop()
+        if self._bridge:
+            for transport, _ in self._lcm_in:
+                transport.stop()
+            if self._cmd_vel_out is not None:
+                self._cmd_vel_out.stop()
+        else:
+            if self._tf is not None:
+                self._tf.stop()
+            if self._odom_transport is not None:
+                self._odom_transport.stop()
         self._dimsim_process.stop()
 
-    @functools.cache
     def lidar_stream(self) -> Observable[PointCloud2]:
-        return Subject()
+        return self._lidar_subject
 
-    @functools.cache
     def odom_stream(self) -> Observable[PoseStamped]:
-        return Subject()
+        return self._odom_subject
 
-    @functools.cache
     def video_stream(self) -> Observable[Image]:
-        return Subject()
+        return self._video_subject
 
     @functools.cache
     def lowstate_stream(self) -> Observable[Any]:
         return Subject()
 
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
+        if self._cmd_vel_out is not None:
+            self._cmd_vel_out.broadcast(None, twist)
         return True
 
     def standup(self) -> bool:
