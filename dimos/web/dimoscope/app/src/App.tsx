@@ -4,6 +4,7 @@
 import { useState } from "react";
 import { useStatus, useTopics, useTopicLatest, useDimosClient } from "@dimos/react";
 import { WorldView } from "./panels/WorldView";
+import { CameraView } from "./panels/CameraView";
 import { PoseReadout } from "./panels/PoseReadout";
 import { TeleopPad } from "./panels/TeleopPad";
 import { StatsBar } from "./panels/StatsBar";
@@ -31,6 +32,7 @@ export function App() {
   const status = useStatus();
   const label = useDimosClient()?.gatewayLabel;
   const [selected, setSelected] = useState<string | null>(null);
+  const [tab, setTab] = useState<"2d" | "3d">("2d");
 
   return (
     <div className="layout">
@@ -59,13 +61,40 @@ export function App() {
       </aside>
 
       <main className="main">
-        <WorldView />
+        <div className="center-col">
+          <div className="tabs">
+            <button
+              className={`tab ${tab === "2d" ? "tab-active" : ""}`}
+              onClick={() => setTab("2d")}
+            >
+              WorldView · 2D
+            </button>
+            <button
+              className={`tab ${tab === "3d" ? "tab-active" : ""}`}
+              onClick={() => setTab("3d")}
+            >
+              Rerun · 3D
+            </button>
+          </div>
+          {/* WorldView is cheap to unmount (its effects just unsubscribe), so we
+              UNMOUNT it on 3D → frees lidar/odom/map there. Rerun is NOT cheap to
+              remount (a cold grpc re-stream of the recording freezes the renderer),
+              so keep it WARM-mounted and merely hide it on 2D; its render throttles
+              while display:none and it switches in instantly. */}
+          <div className="center-viz" style={tab === "2d" ? undefined : { display: "none" }}>
+            {tab === "2d" && <WorldView />}
+          </div>
+          <div className="center-viz" style={tab === "3d" ? undefined : { display: "none" }}>
+            <RerunPanel active={tab === "3d"} />
+          </div>
+        </div>
         <div className="side-col">
+          {/* On 3D, Rerun shows the camera in its own viewport — skip the ~11 MB/s side feed. */}
+          {tab === "2d" && <CameraView />}
           <PoseReadout />
           <TeleopPad />
           {selected ? <Inspector topic={selected} /> : <StatsBar />}
         </div>
-        <RerunPanel />
       </main>
     </div>
   );
