@@ -76,7 +76,7 @@ def filter_joint_state_to_selected_joints(
         missing.append(global_name)
 
     if missing:
-        raise ValueError(f"IK result is missing selected joints: {missing}")
+        raise ValueError(f"Joint state is missing selected joints: {missing}")
 
     return JointState({"name": list(global_joint_names), "position": selected_positions})
 
