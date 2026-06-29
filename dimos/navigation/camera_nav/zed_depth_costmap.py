@@ -463,8 +463,8 @@ class DepthStreamer:
             self._log_map()
 
     def _log_map(self) -> None:
-        # min_obs=3: a voxel must appear in ≥3 frames — eliminates transient noise
-        pts = self._vox.stable_xyz(min_obs=3)
+        # min_obs=2: a voxel must appear in ≥2 frames — cross-frame noise filter
+        pts = self._vox.stable_xyz(min_obs=2)
         if len(pts) == 0:
             return
         n   = min(len(pts), self.MAX_MAP)
@@ -478,7 +478,7 @@ class DepthStreamer:
 
     def log_stdout(self, pkt: DepthFramePacket, frame: int, fps: float) -> None:
         lock   = "LOCKED" if self._pose.locked else "searching"
-        stable = len(self._vox.stable_xyz(min_obs=3))
+        stable = len(self._vox.stable_xyz(min_obs=2))
         print(
             f"frame={frame:5d}  "
             f"valid={pkt.valid_fraction * 100:5.1f}%  "
@@ -493,11 +493,10 @@ def main() -> None:
     # Fork Rerun BEFORE zed.open() — ZED capture threads make post-open fork unsafe.
     rr.init("zed_depth_costmap", spawn=True)
     rr.send_blueprint(rrb.Blueprint(
-        rrb.Horizontal(
-            rrb.Spatial3DView(name="Live Scan",        origin="world"),
-            rrb.Spatial3DView(name="Persistent Map",   origin="map"),
+        rrb.Tabs(
+            rrb.Spatial3DView(name="Live Scan",      origin="world"),
+            rrb.Spatial3DView(name="map",            origin="map"),
         ),
-        collapse_panels=True,
     ))
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
     rr.log("world/cloud",  rr.Points3D([[0, 0, 0]]), static=True)
