@@ -171,7 +171,7 @@ class TestLCMService:
 
             # Give the thread a moment to stop
             time.sleep(0.1)
-            assert not service._thread.is_alive()
+            assert service._thread is None
 
     def test_getstate_excludes_unpicklable_attrs(self) -> None:
         with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
