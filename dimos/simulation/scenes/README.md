@@ -32,17 +32,18 @@ target-specific output later.
 
 ## Runtime API
 
-Use `resolve_scene_package()` for the same values accepted by `--scene`:
+Use `resolve_scene_package()` for the same values accepted by
+`--scene-package`:
 
 ```python
 from dimos.simulation.scenes.catalog import resolve_scene_package
 
-package = resolve_scene_package(global_config.scene)
+package = resolve_scene_package(global_config.scene_package)
 ```
 
 Supported inputs:
 
-- `None` or `--scene none`
+- `None` or `--scene-package none`
 - named packages such as `office` or `supermarket`
 - path to `scene.meta.json`
 - path to a scene package directory
@@ -112,7 +113,7 @@ No scene:
 ```bash
 dimos \
   --simulation mujoco \
-  --scene none \
+  --scene-package none \
   --viewer rerun \
   --rerun-open native \
   --n-workers 12 \
@@ -124,7 +125,7 @@ Office:
 ```bash
 dimos \
   --simulation mujoco \
-  --scene office \
+  --scene-package office \
   --viewer rerun \
   --rerun-open native \
   --n-workers 12 \
@@ -136,7 +137,7 @@ Supermarket:
 ```bash
 dimos \
   --simulation mujoco \
-  --scene supermarket \
+  --scene-package supermarket \
   --viewer rerun \
   --rerun-open native \
   --n-workers 12 \

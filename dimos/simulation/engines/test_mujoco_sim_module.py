@@ -244,7 +244,8 @@ def _mesh_scene_entity(entity_id: str, hull_path: Path) -> dict[str, object]:
 
 @pytest.mark.mujoco
 def test_compose_model_attaches_robot_before_scene_entities(tmp_path: Path) -> None:
-    mujoco = pytest.importorskip("mujoco")
+    import mujoco
+
     scene_xml = tmp_path / "scene.xml"
     robot_xml = tmp_path / "robot.xml"
     _write_scene_xml(scene_xml)
@@ -285,7 +286,8 @@ def test_compose_model_attaches_robot_before_scene_entities(tmp_path: Path) -> N
 
 @pytest.mark.mujoco
 def test_compose_model_reuses_entity_mesh_assets(tmp_path: Path) -> None:
-    mujoco = pytest.importorskip("mujoco")
+    import mujoco
+
     scene_xml = tmp_path / "scene.xml"
     robot_xml = tmp_path / "robot.xml"
     hull_obj = tmp_path / "shared_hull.obj"

@@ -16,11 +16,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass
-import math
 from pathlib import Path
 from typing import Any
+
+import numpy as np
+from scipy.spatial.transform import Rotation
 
 from dimos.simulation.scene_assets.spec import SceneMeshAlignment, ScenePackage, load_scene_package
 from dimos.simulation.scenes.catalog import resolve_scene_package
@@ -90,23 +92,7 @@ def resolve_scene_package_for_rerun(scene: str | Path | None) -> ScenePackage | 
 
 def scene_alignment_matrix(alignment: SceneMeshAlignment) -> list[list[float]]:
     """Return the rotation part of SceneMeshAlignment as a Rerun mat3x3."""
-    yaw, pitch, roll = [math.radians(float(v)) for v in alignment.rotation_zyx_deg]
-    cz, sz = math.cos(yaw), math.sin(yaw)
-    cy, sy = math.cos(pitch), math.sin(pitch)
-    cx, sx = math.cos(roll), math.sin(roll)
-    rz = ((cz, -sz, 0.0), (sz, cz, 0.0), (0.0, 0.0, 1.0))
-    ry = ((cy, 0.0, sy), (0.0, 1.0, 0.0), (-sy, 0.0, cy))
-    rx = ((1.0, 0.0, 0.0), (0.0, cx, -sx), (0.0, sx, cx))
-
-    matrix = _matmul(_matmul(rz, ry), rx)
+    matrix = Rotation.from_euler("ZYX", alignment.rotation_zyx_deg, degrees=True).as_matrix()
     if alignment.y_up:
-        y_to_z = ((1.0, 0.0, 0.0), (0.0, 0.0, -1.0), (0.0, 1.0, 0.0))
-        matrix = _matmul(matrix, y_to_z)
-    return [list(row) for row in matrix]
-
-
-def _matmul(
-    a: Sequence[Sequence[float]],
-    b: Sequence[Sequence[float]],
-) -> list[list[float]]:
-    return [[sum(a[i][k] * b[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
+        matrix = matrix @ np.array([[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]])
+    return matrix.tolist()

@@ -146,7 +146,7 @@ class UrdfRobotStaticRerunFactory:
 
     def _load_robot(self) -> Any:
         if self._robot is None:
-            from yourdfpy import URDF  # type: ignore[import-not-found]
+            from yourdfpy import URDF
 
             self._robot = URDF.load(str(_resolve_urdf_path(self.urdf_path)))
         return self._robot
@@ -192,7 +192,7 @@ class UrdfRobotJointStateRerunFactory:
     def _load_tree(self) -> None:
         if self._tree is None:
             import rerun.urdf as rr_urdf
-            from yourdfpy import URDF  # type: ignore[import-not-found]
+            from yourdfpy import URDF
 
             urdf_path = _resolve_urdf_path(self.urdf_path)
             robot = URDF.load(str(urdf_path))

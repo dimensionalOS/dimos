@@ -29,6 +29,8 @@ _ALIASES = {
     "dimos-office": DEFAULT_SCENE,
     "dimos_office": DEFAULT_SCENE,
     "supermarket": "supermarket",
+    "dimos-supermarket": "supermarket",
+    "dimos_supermarket": "supermarket",
 }
 _PACKAGE_DIRS = {
     DEFAULT_SCENE: "dimos_office",
@@ -73,24 +75,23 @@ def resolve_scene_package(
         known = ", ".join(sorted(_PACKAGE_DIRS))
         raise ValueError(f"unknown scene '{scene_text}'. Known scenes: {known}")
 
-    if name == DEFAULT_SCENE:
-        return _resolve_dimos_office()
+    return _resolve_named_scene_package(name)
 
+
+def _resolve_named_scene_package(name: str) -> ScenePackage:
     metadata_path = _scene_package_dir() / _PACKAGE_DIRS[name] / "scene.meta.json"
     if not metadata_path.exists():
         raise FileNotFoundError(f"scene package '{name}' is not cooked yet: {metadata_path}")
-    return load_scene_package(metadata_path)
-
-
-def _resolve_dimos_office() -> ScenePackage:
-    metadata_path = _scene_package_dir() / _PACKAGE_DIRS[DEFAULT_SCENE] / "scene.meta.json"
-    if not metadata_path.exists():
-        raise FileNotFoundError(
-            "dimos-office scene package is not cooked yet: "
-            f"{metadata_path}. Run dimos.experimental.pimsim.scene.cook first."
-        )
-
     package = load_scene_package(metadata_path)
+    _validate_package_artifacts(package, name, metadata_path)
+    return package
+
+
+def _validate_package_artifacts(
+    package: ScenePackage,
+    name: str,
+    metadata_path: Path,
+) -> None:
     rerun_visual_path = package.browser_visual_path("rerun")
     if (
         rerun_visual_path is not None
@@ -100,11 +101,11 @@ def _resolve_dimos_office() -> ScenePackage:
         and package.browser_collision_path.exists()
         and package.mujoco_scene_path.exists()
     ):
-        return package
+        return
 
     raise ValueError(
-        "dimos-office scene package is incomplete or has missing artifacts: "
-        f"{metadata_path}. Recook it from the bundled office scene."
+        f"scene package '{name}' is incomplete or has missing artifacts: "
+        f"{metadata_path}. Recook it from the source scene."
     )
 
 

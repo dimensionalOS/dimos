@@ -180,8 +180,8 @@ def test_observation_layout_matches_policy_contract(task: G1GrootWBCTask) -> Non
     cmd = np.array([1.0, 0.5, 0.25], dtype=np.float32)
     gyro = np.array([0.1, 0.2, 0.3], dtype=np.float32)
     gravity = np.array([0.0, 0.0, -1.0], dtype=np.float32)
-    q = np.zeros(29, dtype=np.float32)
-    dq = np.ones(29, dtype=np.float32)
+    q = np.zeros(g1_groot_wbc_task._NUM_MOTORS, dtype=np.float32)
+    dq = np.ones(g1_groot_wbc_task._NUM_MOTORS, dtype=np.float32)
 
     obs = task._build_obs(cmd=cmd, gyro=gyro, gravity=gravity, q=q, dq=dq)
 

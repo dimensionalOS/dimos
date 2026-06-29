@@ -1999,6 +1999,7 @@ dependencies = [
     { name = "typer" },
     { name = "typing-extensions", marker = "python_full_version < '3.11'" },
     { name = "websocket-client" },
+    { name = "yourdfpy" },
 ]
 
 [package.optional-dependencies]
@@ -2519,6 +2520,7 @@ requires-dist = [
     { name = "xacro", marker = "extra == 'manipulation'" },
     { name = "xarm-python-sdk", marker = "extra == 'manipulation'", specifier = ">=1.17.0" },
     { name = "xarm-python-sdk", marker = "extra == 'misc'", specifier = ">=1.17.0" },
+    { name = "yourdfpy", specifier = ">=0.0.60" },
 ]
 provides-extras = ["misc", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "sim", "mapping", "drone", "dds", "base", "apriltag", "all"]
 
