@@ -90,7 +90,10 @@ parts-bin this was extracted from.
   `serve_grpc` :9877, and streams** (console-confirmed) — but the viewport isn't painting geometry yet
   (needs a blueprint/view config or a WebGL-in-embed nudge). Start the feed with:
   `DIMOS_TRANSPORT=lcm python -c "from dimos.visualization.rerun.bridge import run_bridge; run_bridge(rerun_open='web', rerun_web=True)"`.
-- ⏭ **Forked `dimos-viewer`** (in-3D teleop/click-to-nav): a cold Rust→WASM compile of the whole Rerun
-  viewer. Apple `clang` lacks the `wasm32` target → use Homebrew LLVM (`CC_wasm32_unknown_unknown`).
+- ✅ **Forked `dimos-viewer` WASM: BUILT.** `cargo run -p re_dev_tools -- build-web-viewer --debug`
+  with Homebrew LLVM (`CC_wasm32_unknown_unknown=$(brew --prefix llvm)/bin/clang` — Apple clang lacks
+  the wasm32 target) produces `web_viewer/re_viewer_bg.wasm` (128 MB *debug*; `--release` shrinks ~3×).
+  ⏭ Next: serve that `web_viewer/` dir + iframe it (gRPC proxy URL) for in-3D teleop/click-to-nav via
+  `RerunWebSocketServer` :3030 — the fork's edge over the stock viewer.
 - ⏭ True end-to-end on-demand on the Zenoh gateway (per-client `declareSubscriber`/`undeclare`).
 - ⏭ Camera (`useImageTopic`) + a transport selector in the app.
