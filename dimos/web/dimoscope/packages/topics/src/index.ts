@@ -8,5 +8,7 @@ export { GatewayWsTransport } from "./adapters/gatewayWs";
 // re-exporting the class here stays cheap (no eager @eclipse-zenoh/zenoh-ts load).
 export { ZenohTsTransport } from "./adapters/zenohTs";
 export { splitChannel, decodeBody, srcTsMs } from "./decode";
+export { BENCH_SCENARIOS, measureScenario, formatMarkdown, onDemandSaving } from "./bench";
+export type { BenchScenario, BenchRow } from "./bench";
 export type { Transport, RawSample, Status, TransportCaps } from "./transport";
 export type { MessageMeta, Handler, Subscription, TopicStats, TopicInfo } from "./types";

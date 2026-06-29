@@ -1,95 +1,55 @@
-// Headless transport benchmark — measures the @dimos/topics SDK against a gateway:
-// latency (p50/p95/max), throughput, bandwidth, and ON-DEMAND bandwidth savings
-// (subscribe 1 of N vs all N). Writes bench/RESULTS.md + results.json.
+// Headless transport benchmark (Bun runner) — measures the @dimos/topics SDK against a
+// gateway, OR the zenoh-ts direct transport (BENCH_TRANSPORT=ts). Scenarios + measurement
+// live in @dimos/topics/bench so the in-browser bench page (app/src/bench.tsx) is identical.
 //
-// RUN (with bench_publisher.py + a gateway running):
+// RUN (with bench_publisher.py + the relevant server running):
 //   GATEWAY_URL=ws://localhost:8090 BENCH_LABEL="Bun↔LCM" bun run bench/bench.ts
+//   BENCH_TRANSPORT=ts bun run bench/bench.ts          # zenoh-ts direct (needs the :10000 bridge)
 import { connect } from "../packages/topics/src/index";
+import {
+  BENCH_SCENARIOS,
+  measureScenario,
+  formatMarkdown,
+  onDemandSaving,
+  type BenchRow,
+} from "../packages/topics/src/bench";
 
 const WS_URL = process.env.GATEWAY_URL ?? "ws://localhost:8090";
 const LABEL = process.env.BENCH_LABEL ?? "Bun↔LCM gateway";
 const DUR = Number(process.env.BENCH_DUR_MS ?? 5000);
+const TRANSPORT = process.env.BENCH_TRANSPORT; // "ts" → zenoh-ts direct
+const TS_URL = process.env.ZENOH_TS_URL ?? "ws://localhost:10000";
+const url = TRANSPORT === "ts" ? TS_URL : WS_URL;
 
-interface Row {
-  scenario: string;
-  topics: number;
-  msgs: number;
-  hz: number;
-  kbps: number;
-  latP50: number;
-  latP95: number;
-  latMax: number;
+async function buildClient() {
+  if (TRANSPORT === "ts") {
+    const { ZenohTsTransport } = await import("../packages/topics/src/adapters/zenohTs");
+    // read via the remote-api bridge; no scout (bench subscribes explicit /bench/* topics).
+    return connect({ transport: new ZenohTsTransport(TS_URL, undefined, "") });
+  }
+  return connect({ url: WS_URL, reconnect: false });
 }
 
-const rows: Row[] = [];
-const r2 = (n: number) => Math.round(n * 100) / 100;
-
-async function meas(scenario: string, topics: string[]): Promise<Row> {
-  const client = await connect({ url: WS_URL, reconnect: false });
+console.log(`\n=== Benchmark: ${LABEL}  (${DUR}ms/scenario, ${url}) ===`);
+const rows: BenchRow[] = [];
+for (const scenario of BENCH_SCENARIOS) {
+  const client = await buildClient();
   await new Promise((r) => setTimeout(r, 200));
-  const lat: number[] = [];
-  let count = 0;
-  let bytes = 0;
-  const subs = topics.map((t) =>
-    client.topic<any>(t).subscribe((_d, m) => {
-      count++;
-      bytes += m.sizeBytes;
-      if (m.latencyMs != null && m.latencyMs >= 0 && m.latencyMs < 10000) lat.push(m.latencyMs);
-    }),
-  );
-  await new Promise((r) => setTimeout(r, DUR));
-  subs.forEach((s) => s.unsubscribe());
+  const row = await measureScenario(client, scenario, DUR);
   client.close();
-  lat.sort((a, b) => a - b);
-  const q = (p: number) => (lat.length ? lat[Math.min(lat.length - 1, Math.floor(p * lat.length))] : NaN);
-  const row: Row = {
-    scenario,
-    topics: topics.length,
-    msgs: count,
-    hz: r2(count / (DUR / 1000)),
-    kbps: r2(bytes / 1024 / (DUR / 1000)),
-    latP50: r2(q(0.5)),
-    latP95: r2(q(0.95)),
-    latMax: r2(lat[lat.length - 1] ?? NaN),
-  };
   rows.push(row);
   console.log(
-    `  ${scenario.padEnd(32)} topics=${row.topics} hz=${row.hz} kB/s=${row.kbps} ` +
+    `  ${row.scenario.padEnd(32)} topics=${row.topics} hz=${row.hz} kB/s=${row.kbps} ` +
       `lat(ms) p50=${row.latP50} p95=${row.latP95} max=${row.latMax}`,
   );
-  return row;
 }
 
-console.log(`\n=== Benchmark: ${LABEL}  (${DUR}ms/scenario, ${WS_URL}) ===`);
-const all4 = await meas("4x PoseStamped (throughput)", ["/bench/p0", "/bench/p1", "/bench/p2", "/bench/p3"]);
-const one = await meas("1x PoseStamped (on-demand)", ["/bench/p0"]);
-const grid = await meas("1x OccupancyGrid (large)", ["/bench/grid"]);
-void grid;
-
-const ondemandSaving = all4.kbps > 0 ? Math.round((1 - one.kbps / all4.kbps) * 100) : 0;
 const stamp = process.env.BENCH_STAMP ?? "(unstamped)";
-
-const md = [
-  `# Transport benchmark — ${LABEL}`,
-  ``,
-  `_${DUR}ms per scenario · ${WS_URL} · ${stamp}_`,
-  ``,
-  `| scenario | topics | msgs | hz | kB/s | lat p50 | lat p95 | lat max |`,
-  `|---|--:|--:|--:|--:|--:|--:|--:|`,
-  ...rows.map(
-    (r) => `| ${r.scenario} | ${r.topics} | ${r.msgs} | ${r.hz} | ${r.kbps} | ${r.latP50} | ${r.latP95} | ${r.latMax} |`,
-  ),
-  ``,
-  `**On-demand bandwidth:** subscribing 1 of 4 topics delivered **${one.kbps} kB/s** vs **${all4.kbps} kB/s** for all 4 — a **${ondemandSaving}% reduction** on the WS hop (per-client gateway filtering).`,
-  ``,
-  `> Over LCM the gateway still *receives* every topic (UDP multicast), so this saves the browser hop only. True end-to-end on-demand (robot→gateway) needs the Zenoh gateway (\`declareSubscriber\`/\`undeclare\`).`,
-  ``,
-].join("\n");
-
-await Bun.write(new URL("./last_run.md", import.meta.url).pathname, md);
+const saving = onDemandSaving(rows);
+await Bun.write(new URL("./last_run.md", import.meta.url).pathname, formatMarkdown(LABEL, url, DUR, stamp, rows));
 await Bun.write(
   new URL("./results.json", import.meta.url).pathname,
-  JSON.stringify({ label: LABEL, url: WS_URL, durMs: DUR, stamp, rows, ondemandSaving }, null, 2),
+  JSON.stringify({ label: LABEL, url, durMs: DUR, stamp, rows, ondemandSaving: saving }, null, 2),
 );
-console.log(`\n  on-demand WS-hop saving: ${ondemandSaving}%  → wrote bench/last_run.md\n`);
+console.log(`\n  on-demand WS-hop saving: ${saving}%  → wrote bench/last_run.md\n`);
 process.exit(rows[0]?.msgs > 0 ? 0 : 1);
