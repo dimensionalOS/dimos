@@ -16,12 +16,10 @@ Rerun entities:
   world/camera              Pinhole model (static)
   world/camera/depth        filtered depth image (float32, auto-colorised)
   world/camera/confidence   per-pixel stereo confidence (greyscale)
-  world/cloud               current frame occupied points (height-coloured)
+  world/occ3d               LIDAR-like 3D scan: red=occupied  green=free  yellow=unknown
   world/map                 accumulated voxel map (height-coloured, every 10 frames)
   world/costmap             2D occupancy grid as RGB image (green/yellow/red)
   occupancy/birdseye        bird's-eye 2D occupancy (yellow/green/red, every frame)
-  occupancy/3d/occupied     3D occupied voxels (red, every frame)
-  occupancy/3d/free         3D free-space voxels (green, every frame)
 
 Usage:
   python -m dimos.navigation.camera_nav.zed_depth_costmap
@@ -558,7 +556,20 @@ class Occ3D:
         else:
             free_xyz = EMPTY
 
-        return occ_xyz, free_xyz
+        # ── Unknown: one RES step beyond each occupied voxel (occluded shadow) ─
+        # Camera is at origin in camera-link frame, so the ray direction to each
+        # occupied voxel is just the normalised position vector.  Pushing one step
+        # further marks the immediately-occluded space behind each surface.
+        if len(occ_xyz):
+            dist = np.linalg.norm(occ_xyz, axis=1, keepdims=True).clip(1e-6)
+            unk_xyz = (occ_xyz + (occ_xyz / dist) * self.RES).astype(np.float32)
+            unk_xyz[:, 0] = np.clip(unk_xyz[:, 0],  0,          self.X_MAX)
+            unk_xyz[:, 1] = np.clip(unk_xyz[:, 1], -self.Y_HALF, self.Y_HALF)
+            unk_xyz[:, 2] = np.clip(unk_xyz[:, 2], -self.Z_HALF, self.Z_HALF)
+        else:
+            unk_xyz = EMPTY
+
+        return occ_xyz, free_xyz, unk_xyz
 
 
 # ── Stage 9: Streamer ─────────────────────────────────────────────────────────
@@ -647,27 +658,25 @@ class DepthStreamer:
             conf_u8 = np.nan_to_num(pkt.confidence, nan=0.0).clip(0, 100)
             rr.log("world/camera/confidence", rr.Image((conf_u8 * 2.55).astype(np.uint8)))
 
-        if len(xyz) > 0:
-            n   = min(len(xyz), self.MAX_CLOUD)
-            idx = np.random.choice(len(xyz), n, replace=False) if len(xyz) > n else np.arange(n)
-            rr.log("world/cloud", rr.Points3D(
-                positions=xyz[idx],
-                colors=_height_colors(xyz[idx, 2]),
-                radii=0.003,
-            ))
-
-        # 3D occupancy — camera-link frame, no VIO needed, every frame
-        occ, free = self._occ3d.build(pkt.depth, fx, fy, cx, cy)
-        if len(occ):
-            rr.log("occupancy/3d/occupied", rr.Points3D(
-                positions=occ,
-                colors=np.full((len(occ), 3), [220, 50, 50], dtype=np.uint8),
-                radii=0.045,
-            ))
-        if len(free):
-            rr.log("occupancy/3d/free", rr.Points3D(
-                positions=free,
-                colors=np.full((len(free), 3), [30, 180, 30], dtype=np.uint8),
+        # LIDAR-like 3D occupancy in world frame — every frame.
+        # Occ3D voxelises in camera-link (suppresses noise via hit threshold),
+        # then we rotate+translate to world frame using the VIO pose.
+        # Before VIO locks pose_R=I / pose_t=0, so points are in camera-link frame.
+        occ_c, free_c, unk_c = self._occ3d.build(pkt.depth, fx, fy, cx, cy)
+        R, t = pkt.pose_R, pkt.pose_t
+        parts, colors = [], []
+        for pts, rgb in (
+            (occ_c,  [220,  50,  50]),   # red    = occupied
+            (free_c, [ 30, 180,  30]),   # green  = free
+            (unk_c,  [200, 180,   0]),   # yellow = unknown (occluded)
+        ):
+            if len(pts):
+                parts.append(pts @ R.T + t)
+                colors.append(np.full((len(pts), 3), rgb, dtype=np.uint8))
+        if parts:
+            rr.log("world/occ3d", rr.Points3D(
+                positions=np.vstack(parts),
+                colors=np.vstack(colors),
                 radii=0.045,
             ))
 
@@ -709,9 +718,7 @@ def main() -> None:
     rr.init("zed_depth_costmap", spawn=True)
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
     # Seed so Rerun treats 'world' as a 3D space before the depth image arrives.
-    rr.log("world/cloud",         rr.Points3D([[0, 0, 0]]), static=True)
-    rr.log("occupancy/3d/occupied", rr.Points3D([[0, 0, 0]]), static=True)
-    rr.log("occupancy/3d/free",     rr.Points3D([[0, 0, 0]]), static=True)
+    rr.log("world/occ3d", rr.Points3D([[0, 0, 0]]), static=True)
 
     zed = sl.Camera()
     ip  = sl.InitParameters()
