@@ -614,7 +614,16 @@ def main() -> None:
 
     streamer._pose.enable(zed)
 
-    rt    = sl.RuntimeParameters()
+    rt = sl.RuntimeParameters()
+    # Suppress flying pixels and ceiling-light saturation at the SDK level,
+    # before depth reaches our pipeline.
+    # texture_confidence_threshold: reject depth at textureless regions and
+    #   depth-discontinuity edges — exactly where flying pixels form.
+    # remove_saturated_areas: invalidate pixels over-exposed by bright ceiling
+    #   lights, where stereo matching is unreliable.
+    rt.texture_confidence_threshold = 80
+    rt.remove_saturated_areas       = True
+
     frame = 0
     t0    = time.monotonic()
 
