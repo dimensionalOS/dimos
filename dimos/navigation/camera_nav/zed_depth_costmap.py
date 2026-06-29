@@ -522,10 +522,7 @@ class DepthStreamer:
             xyz_clean = _filter_isolated(xyz_sure)
             if len(xyz_clean) > 0:
                 h_rel   = xyz_clean[:, 2] - self._cam_z
-                xyz_obs = xyz_clean[
-                    (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI)
-                    & (xyz_clean[:, 2] > 0.05)   # exclude floor (VIO: Z=0 = floor plane)
-                ]
+                xyz_obs = xyz_clean[(h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI)]
                 if len(xyz_obs) > 0:
                     # Carve free space then accumulate surface hits.
                     # Surface voxels are excluded from carving so obs can grow.
