@@ -16,15 +16,14 @@
 import type { RawSample, Status, Transport, TransportCaps } from "../transport";
 import type { TopicInfo } from "../types";
 
-const PREFIX = "dimos/"; // dimos Zenoh namespace (core/transport_factory.py:transport_topic)
-const SCOUT_MS = 1800; // one-time discovery burst on dimos/** (then undeclared)
+const SCOUT_MS = 1800; // one-time discovery burst on the discovery key (then undeclared)
 
-// zenoh key "dimos/lidar/sensor_msgs.PointCloud2" → {topic:"/dimos/lidar", type:"sensor_msgs.PointCloud2"}
-// (the inverse of zenohpubsub._topic_to_key_expr; matches gateway_zenoh.py's mapping).
+// zenoh key → {topic, type}, prefix-agnostic (mirrors gateway_zenoh.py's rpartition):
+//   "dimos/lidar/sensor_msgs.PointCloud2" → {/dimos/lidar, sensor_msgs.PointCloud2}
+//   "bench/p0/geometry_msgs.PoseStamped"  → {/bench/p0,    geometry_msgs.PoseStamped}
 function parseKey(key: string): { topic: string; type: string } | null {
-  if (!key.startsWith(PREFIX)) return null;
   const slash = key.lastIndexOf("/");
-  if (slash < PREFIX.length) return { topic: "/" + key, type: "?" };
+  if (slash <= 0) return { topic: "/" + key, type: "?" };
   return { topic: "/" + key.slice(0, slash), type: key.slice(slash + 1) };
 }
 // dimos topic "/dimos/lidar" → zenoh subscribe key "dimos/lidar/**" (any type suffix)
@@ -44,10 +43,13 @@ export class ZenohTsTransport implements Transport {
   private statusCb?: (s: Status) => void;
 
   /** @param remoteApiUrl zenoh-bridge-remote-api WS (e.g. ws://localhost:10000)
-   *  @param controlUrl   optional gateway WS for safe teleop/goal (e.g. ws://localhost:8088) */
+   *  @param controlUrl   optional gateway WS for safe teleop/goal (e.g. ws://localhost:8088)
+   *  @param discoveryKey wildcard scouted once for the topic list; "" disables discovery
+   *                      (e.g. the bench, which subscribes explicit keys). */
   constructor(
     private remoteApiUrl: string,
     private controlUrl?: string,
+    private discoveryKey: string = "dimos/**",
   ) {}
 
   async connect(): Promise<void> {
@@ -55,16 +57,18 @@ export class ZenohTsTransport implements Transport {
     const zenoh = await import("@eclipse-zenoh/zenoh-ts"); // lazy: only loads on this path
     this.session = await zenoh.Session.open(new zenoh.Config(this.remoteApiUrl));
     this.statusCb?.("open");
-    // Discovery: Zenoh has no gateway "hello/list", so briefly scout dimos/** to learn
-    // which (topic,type) keys exist, then undeclare it. Data subscriptions below are the
-    // steady-state on-demand path; this is a one-time burst.
-    try {
-      const scout = await this.session.declareSubscriber(PREFIX + "**", {
-        handler: (s: any) => this.note(String(s.keyexpr())),
-      });
-      setTimeout(() => scout.undeclare?.().catch(() => {}), SCOUT_MS);
-    } catch {
-      /* discovery is best-effort */
+    // Discovery: Zenoh has no gateway "hello/list", so briefly scout the discovery key to
+    // learn which (topic,type) keys exist, then undeclare it. Data subscriptions below are
+    // the steady-state on-demand path; this is a one-time burst. discoveryKey "" disables it.
+    if (this.discoveryKey) {
+      try {
+        const scout = await this.session.declareSubscriber(this.discoveryKey, {
+          handler: (s: any) => this.note(String(s.keyexpr())),
+        });
+        setTimeout(() => scout.undeclare?.().catch(() => {}), SCOUT_MS);
+      } catch {
+        /* discovery is best-effort */
+      }
     }
   }
 
