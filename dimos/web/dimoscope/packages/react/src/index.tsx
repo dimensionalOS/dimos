@@ -78,8 +78,11 @@ export function DimosProvider({
         setStatus(cl.status);
         unsub = cl.onStatus(setStatus);
       })
-      .catch(() => {
-        if (alive) setStatus("closed");
+      .catch((e) => {
+        if (alive) {
+          console.error("[dimos] connect failed:", e);
+          setStatus("closed");
+        }
       });
     // Detach the old status listener BEFORE closing, so the outgoing client's
     // "closed" can't clobber the incoming client's status on a server switch.

@@ -1,5 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import wasm from "vite-plugin-wasm";
+import topLevelAwait from "vite-plugin-top-level-await";
 import { fileURLToPath } from "node:url";
 
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
@@ -8,11 +10,17 @@ const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 // demonstrates the real @dimos/topics + @dimos/react surface). dedupe keeps a
 // single React copy across the app + the aliased packages.
 export default defineConfig({
-  plugins: [react()],
-  // The Rerun web viewer ships a .wasm that Vite's dep pre-bundler serves with
-  // the wrong MIME type ("Incorrect response MIME type. Expected application/wasm").
-  // Excluding it makes Vite serve the package files directly with correct headers.
-  optimizeDeps: { exclude: ["@rerun-io/web-viewer", "@rerun-io/web-viewer-react"] },
+  // wasm + topLevelAwait: @eclipse-zenoh/zenoh-ts ships a WASM module via the ESM
+  // integration import, which Vite can't handle without these plugins.
+  plugins: [wasm(), topLevelAwait(), react()],
+  // Exclude WASM-shipping deps from esbuild pre-bundling so Vite serves their files
+  // directly: the Rerun viewer (.wasm MIME) and zenoh-ts (vite-plugin-wasm handles it).
+  // But DO pre-bundle zenoh-ts's CommonJS deps (e.g. channel-ts) so their named exports
+  // resolve when the raw-served zenoh-ts imports them.
+  optimizeDeps: {
+    exclude: ["@rerun-io/web-viewer", "@rerun-io/web-viewer-react", "@eclipse-zenoh/zenoh-ts"],
+    include: ["channel-ts", "base64-arraybuffer", "uuid", "tslog", "typed-duration", "@thi.ng/leb128"],
+  },
   resolve: {
     dedupe: ["react", "react-dom"],
     alias: {
