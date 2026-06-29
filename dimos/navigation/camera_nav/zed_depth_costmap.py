@@ -19,7 +19,7 @@ Rerun entities:
   world/camera        Pinhole model (static)
   world/camera/depth  filtered depth image (float32, auto-colorised)
   world/cloud         current-frame scan: red = sure (≥60)  yellow = unsure (25–60)
-  world/map           persistent accumulated map, height-colored:
+  map/occupied        persistent accumulated map, height-colored:
                         blue  = ankle / low clutter  (0.05–0.5 m)
                         green = knee / waist          (0.5–1.0 m)
                         red   = shoulder / head       (1.0–2.0 m)
@@ -469,7 +469,7 @@ class DepthStreamer:
         n   = min(len(pts), self.MAX_MAP)
         idx = np.random.choice(len(pts), n, replace=False) if len(pts) > n else np.arange(n)
         z_rel  = pts[idx, 2] - self._cam_z
-        rr.log("world/map", rr.Points3D(
+        rr.log("map/occupied", rr.Points3D(
             positions=pts[idx],
             colors=_height_color(z_rel),
             radii=0.005,
@@ -492,7 +492,9 @@ def main() -> None:
     # Fork Rerun BEFORE zed.open() — ZED capture threads make post-open fork unsafe.
     rr.init("zed_depth_costmap", spawn=True)
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
-    rr.log("world/cloud", rr.Points3D([[0, 0, 0]]), static=True)  # anchor 3D view before camera opens
+    rr.log("world/cloud",  rr.Points3D([[0, 0, 0]]), static=True)  # anchor live-scan view
+    rr.log("map",          rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
+    rr.log("map/occupied", rr.Points3D([[0, 0, 0]]), static=True)  # anchor persistent-map view
 
     zed = sl.Camera()
     ip  = sl.InitParameters()
