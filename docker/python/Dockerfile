@@ -33,7 +33,7 @@ RUN apt-get update && apt-get install -y \
     iproute2 # for LCM networking system config \
     liblcm-dev \
     libturbojpeg0-dev \
-    libcyclonedds-dev  # For unitree-sdk2py
+    cyclonedds-dev  # For unitree-sdk2py
 
 # Fix distutils-installed packages that block pip upgrades
 RUN apt-get purge -y python3-blinker python3-sympy python3-oauthlib || true
