@@ -67,7 +67,11 @@ export class GatewayWsTransport implements Transport {
       }
       return;
     }
-    const packet = new Uint8Array(e.data as ArrayBuffer);
+    // Frame = [f64 BE gateway-send-ms][LC02 packet]
+    const buf = e.data as ArrayBuffer;
+    if (buf.byteLength < 8) return;
+    const gatewaySendMs = new DataView(buf).getFloat64(0, false);
+    const packet = new Uint8Array(buf, 8);
     let channel: string, payload: Uint8Array;
     try {
       ({ channel, payload } = decodeChannel(packet));
@@ -75,7 +79,7 @@ export class GatewayWsTransport implements Transport {
       return; // not an LC02 packet we can split
     }
     const { topic, type } = splitChannel(channel);
-    this.sampleCb?.({ topic, type, payload, recvTs: Date.now() });
+    this.sampleCb?.({ topic, type, payload, recvTs: Date.now(), gatewaySendMs });
   }
 
   private send(obj: unknown) {
@@ -94,6 +98,9 @@ export class GatewayWsTransport implements Transport {
   }
   publishTeleop(linearX: number, angularZ: number, ttlMs?: number) {
     this.send({ op: "teleop", linearX, angularZ, ttlMs });
+  }
+  publishGoal(x: number, y: number, z = 0) {
+    this.send({ op: "goal", x, y, z });
   }
   requestList() {
     this.send({ op: "list" });
