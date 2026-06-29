@@ -86,10 +86,10 @@ const md = [
   ``,
 ].join("\n");
 
-await Bun.write(new URL("./RESULTS.md", import.meta.url).pathname, md);
+await Bun.write(new URL("./last_run.md", import.meta.url).pathname, md);
 await Bun.write(
   new URL("./results.json", import.meta.url).pathname,
   JSON.stringify({ label: LABEL, url: WS_URL, durMs: DUR, stamp, rows, ondemandSaving }, null, 2),
 );
-console.log(`\n  on-demand WS-hop saving: ${ondemandSaving}%  → wrote bench/RESULTS.md\n`);
+console.log(`\n  on-demand WS-hop saving: ${ondemandSaving}%  → wrote bench/last_run.md\n`);
 process.exit(rows[0]?.msgs > 0 ? 0 : 1);
