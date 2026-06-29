@@ -39,5 +39,5 @@ class ObstacleAvoidance(Protocol):
     # LoGlo/terrainmap perception within some radius
     lidar: In[PointCloud2]
     odometry: In[Odometry]
-    cmd_vel: In[Twist]
-    safe_cmd_vel: Out[Twist]
+    path: In[Path]
+    safe_path: Out[Path]
