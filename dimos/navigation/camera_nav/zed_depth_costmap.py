@@ -19,7 +19,7 @@ Rerun entities:
   world/camera        Pinhole model (static)
   world/camera/depth  filtered depth image (float32, auto-colorised)
   world/cloud         current-frame scan: red = sure (≥60)  yellow = unsure (25–60)
-  map/occupied        persistent accumulated map, height-colored:
+  world/map           persistent accumulated map, height-colored:
                         blue  = ankle / low clutter  (0.05–0.5 m)
                         green = knee / waist          (0.5–1.0 m)
                         red   = shoulder / head       (1.0–2.0 m)
@@ -36,7 +36,6 @@ from dataclasses import dataclass, field
 import numpy as np
 import pyzed.sl as sl
 import rerun as rr
-import rerun.blueprint as rrb
 
 
 # ── Voxel key packing ────────────────────────────────────────────────────────
@@ -52,8 +51,8 @@ _VMASK = np.int64(0x3FFFF)
 # set_floor_as_origin takes a few seconds to calibrate after VIO locks; using
 # world-Z absolutes (e.g. Z>0.05) silently zeros the map until then.
 # Camera-relative Z is always valid: Z_link=0 is camera height, negative is below.
-_Z_REL_LO: float = -1.2   # 1.2 m below camera  (floor for typical ~1 m mount)
-_Z_REL_HI: float =  0.3   # 0.3 m above camera  (reduces ceiling contamination)
+_Z_REL_LO: float = -1.4   # 1.4 m below camera  (floor for typical ~1 m mount)
+_Z_REL_HI: float =  0.5   # 0.5 m above camera  (above-head obstacles)
 
 
 def _height_color(z_rel: np.ndarray) -> np.ndarray:
@@ -79,12 +78,11 @@ def _pack(vkeys: np.ndarray) -> np.ndarray:
     return (v[:, 0] << 36) | (v[:, 1] << 18) | v[:, 2]
 
 
-def _filter_isolated(xyz: np.ndarray, voxel: float = 0.05, min_pts: int = 3) -> np.ndarray:
-    """Remove sparse hits in a voxel — stereo flying-pixel filter.
+def _filter_isolated(xyz: np.ndarray, voxel: float = 0.05, min_pts: int = 2) -> np.ndarray:
+    """Remove points that are the only hit in their voxel — stereo flying-pixel filter.
 
-    A real surface produces many pixels per voxel; a stereo edge artifact produces one or two.
-    min_pts=3 is stricter than the old 2 — catches more edge artifacts at cost of
-    very-distant-surface sparsity, which is acceptable since the map caps at 8 m.
+    A real surface produces many pixels per voxel; a stereo edge artifact produces one.
+    voxel=5 cm gives enough area to catch the artifact without merging adjacent surfaces.
     """
     if len(xyz) < min_pts:
         return np.zeros((0, 3), dtype=np.float32)
@@ -389,7 +387,7 @@ class VoxelAccumulator:
 class DepthStreamer:
     """Assembles packets, builds persistent world-frame map, logs to Rerun."""
 
-    CONF_SURE = 70       # confidence ≥ this → goes into map + shown red
+    CONF_SURE = 60       # confidence ≥ this → goes into map + shown red
     MAX_CLOUD = 50_000   # Rerun per-frame point cap
     MAX_MAP   = 100_000  # Rerun map point cap
     MAP_EVERY = 10       # frames between map updates
@@ -463,14 +461,14 @@ class DepthStreamer:
             self._log_map()
 
     def _log_map(self) -> None:
-        # min_obs=2: a voxel must appear in ≥2 frames — cross-frame noise filter
+        # min_obs=2: a voxel must appear in ≥2 frames — eliminates single-frame noise
         pts = self._vox.stable_xyz(min_obs=2)
         if len(pts) == 0:
             return
         n   = min(len(pts), self.MAX_MAP)
         idx = np.random.choice(len(pts), n, replace=False) if len(pts) > n else np.arange(n)
         z_rel  = pts[idx, 2] - self._cam_z
-        rr.log("map/occupied", rr.Points3D(
+        rr.log("world/map", rr.Points3D(
             positions=pts[idx],
             colors=_height_color(z_rel),
             radii=0.005,
@@ -492,16 +490,8 @@ class DepthStreamer:
 def main() -> None:
     # Fork Rerun BEFORE zed.open() — ZED capture threads make post-open fork unsafe.
     rr.init("zed_depth_costmap", spawn=True)
-    rr.send_blueprint(rrb.Blueprint(
-        rrb.Tabs(
-            rrb.Spatial3DView(name="Live Scan",      origin="world"),
-            rrb.Spatial3DView(name="map",            origin="map"),
-        ),
-    ))
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
-    rr.log("world/cloud",  rr.Points3D([[0, 0, 0]]), static=True)
-    rr.log("map",          rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
-    rr.log("map/occupied", rr.Points3D([[0, 0, 0]]), static=True)
+    rr.log("world/cloud", rr.Points3D([[0, 0, 0]]), static=True)  # anchor 3D view before camera opens
 
     zed = sl.Camera()
     ip  = sl.InitParameters()
