@@ -125,6 +125,39 @@ If the viewer keeps crashing for you, there are two options for now:
 
 
 
+## Blueprint maturity
+
+dimos ships several G1 blueprints at different maturity levels. This table reflects testing on a
+Unitree G1 EDU (2026-06). Scale: 🟩 stable · 🟨 beta · 🟧 alpha · 🟥 experimental.
+
+| Blueprint | Status | Notes |
+|---|---|---|
+| `unitree-g1-groot-wbc` | 🟨 beta | GR00T whole-body policy — self-balance, walk, and turn via `cmd_vel`; arms teleoperable via `joint_command`. Validated on hardware. Turning needs `wz ≳ 0.5 rad/s`. |
+| `unitree-g1-coordinator` | 🟨 beta | Low-level 29-joint servo control (`G1WholeBodyConnection`). Target of `scripts/g1_replay.py`. |
+| `unitree-g1-nav-onboard` | 🟨 beta | Onboard DDS + Mid360 lidar SLAM + CMU nav stack. Localization, mapping, and manual keyboard teleop work; autonomous goal-following is currently limited (see Known issues). First launch compiles native modules (several minutes; cached afterward). Lower `vis_throttle` if the viewer lags on large maps. |
+| `unitree-g1-nav-simple` | 🟨 beta | Lighter DDS + lidar nav (ray-tracing voxel map + replanning A\*). Same caveats as `nav-onboard`. |
+| `unitree-g1-primitive-no-nav` | 🟧 alpha | Sensor + mapping base layer; no robot connection of its own. |
+| `unitree-g1-basic`, `-g1`, `-shm`, `-joystick`, `-agentic`, `-full` | 🟥 experimental | Do not start on the G1 EDU — see Known issues. Use the DDS/nav blueprints instead. |
+| `unitree-g1-detection` | 🟥 experimental | Camera modules configured for a generic webcam rather than the onboard RealSense. |
+| `unitree-g1-basic-sim`, `unitree-g1-sim` | 🟨 beta | MuJoCo G1 sim. Launch and run (sensors, mapping, perception/spatial-memory). Not drivable by keyboard (no `MovementManager`). |
+| `unitree-g1-nav-sim` | 🟨 beta | Drivable sim (WASD + autonomous click-and-go both work) — but uses a wheeled robot in the CMU Unity sim, not the G1 model. Good for the nav stack, not a faithful G1 sim. |
+| `unitree-g1-groot-wbc` (`--simulation mujoco`) | 🟥 experimental | Fails to start — see Known issues (`sim_mujoco_g1` adapter). The hardware path works. |
+
+### Two high-level control paths
+
+The G1's high-level (sport-mode) control has two implementations in dimos, and blueprints split across them:
+
+- **`G1HighLevelDdsSdk`** — native Unitree G1 SDK over DDS (`LocoClient`). The working onboard path, used by the `nav` blueprints.
+- **`G1Connection`** — the Go2 **WebRTC** mechanism, which the G1 EDU does not expose. Used by the `basic` family, which is why those do not run on the G1.
+
+Low-level control (`G1WholeBodyConnection`, used by `coordinator` and `groot-wbc`) is independent of both and works.
+
+### Known issues
+
+- **The `basic` family (`basic`/`g1`/`shm`/`joystick`/`agentic`/`full`) does not start on the G1.** It uses `G1Connection` (Go2 WebRTC — the G1 runs no signaling service on ports 9991/8081) and a generic webcam `CameraModule` at `/dev/video0` (the G1's RealSense enumerates at `/dev/video6+`). Fix: repoint these blueprints to `G1HighLevelDdsSdk` and the RealSense camera. (`joystick`/`full` additionally require a display for the pygame teleop.)
+- **Autonomous navigation stalls on the G1.** `nav-onboard`/`nav-simple` plan a path but report the robot "stuck": the local-planner minimum velocities (`_min_linear_velocity` / `_min_angular_velocity = 0.2`) are below what the G1 sport-walker executes (≈0.4 m/s / 0.5 rad/s — the same threshold seen with GR00T turning). Manual keyboard teleop (0.5 m/s / 0.8 rad/s) works. Fix: raise the minimum velocities for the G1 in `dimos/navigation/replanning_a_star/controllers.py`.
+- **`groot-wbc` does not run in simulation.** `dimos --simulation mujoco run unitree-g1-groot-wbc` fails with `Unknown whole-body adapter: sim_mujoco_g1` — the MuJoCo whole-body adapter isn't picked up by the coordinator's adapter discovery (only `transport_lcm`/`transport_ros` are registered). Fix: PR #2653 (registers the simulation adapters in `discover()`). The hardware path is unaffected.
+
 ## External Resources
 
 - [Unitree Developer Docs](https://support.unitree.com/home/en/developer)

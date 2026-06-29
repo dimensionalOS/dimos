@@ -108,7 +108,7 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
       🟥 <a href="dimos/robot/unitree/b1">Unitree B1</a><br>
     </td>
     <td align="center" width="20%">
-      🟨 <a href="docs/platforms/humanoid/g1/index.md">Unitree G1</a><br>
+      🟨 <a href="docs/platforms/humanoid/g1/index.md#blueprint-maturity">Unitree G1</a><br>
     </td>
     <td align="center" width="20%">
       🟨 <a href="docs/capabilities/manipulation/readme.md">Xarm</a><br>
