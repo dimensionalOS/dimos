@@ -41,6 +41,12 @@ import rerun as rr
 _VOFF  = np.int64(100_000)
 _VMASK = np.int64(0x3FFFF)
 
+# set_floor_as_origin=True → Z=0 at floor in world frame.
+# Only accumulate points in this height band: excludes floor and ceiling,
+# keeps anything a robot would actually collide with.
+_Z_OBS_MIN: float = 0.05   # 5 cm above floor
+_Z_OBS_MAX: float = 2.0    # 2 m ceiling clearance
+
 def _pack(vkeys: np.ndarray) -> np.ndarray:
     """(N, 3) int32 voxel indices → unique int64 keys."""
     v = (vkeys.astype(np.int64) + _VOFF) & _VMASK
@@ -415,40 +421,39 @@ class DepthStreamer:
         )
         rr.log("world/cloud", rr.Points3D(positions=xyz[idx], colors=colors, radii=0.003))
 
-        # ── Persistent map: only sure points, only when VIO is locked ─────────
-        n_sure = 0; n_clean = 0
+        # ── Persistent map: sure + isolated-filtered + obstacle height only ─────
         if self._pose.locked:
             xyz_sure  = xyz[conf >= self.CONF_SURE]
             xyz_clean = _filter_isolated(xyz_sure)
-            n_sure  = len(xyz_sure)
-            n_clean = len(xyz_clean)
-            self._vox.add(xyz_clean)
+            if len(xyz_clean) > 0:
+                h = xyz_clean[:, 2]
+                xyz_obs = xyz_clean[(h >= _Z_OBS_MIN) & (h <= _Z_OBS_MAX)]
+                self._vox.add(xyz_obs)
 
         if frame % self.MAP_EVERY == 0:
-            self._log_map(frame, n_sure, n_clean)
+            self._log_map()
 
-    def _log_map(self, frame: int, n_sure: int, n_clean: int) -> None:
-        pts = self._vox.stable_xyz(min_obs=1)
-        print(f"  [map@{frame}] sure={n_sure}  clean={n_clean}  vox={self._vox.count}  stable={len(pts)}")
+    def _log_map(self) -> None:
+        # min_obs=2: a voxel must appear in ≥2 frames — eliminates single-frame noise
+        pts = self._vox.stable_xyz(min_obs=2)
         if len(pts) == 0:
             return
         n   = min(len(pts), self.MAX_MAP)
         idx = np.random.choice(len(pts), n, replace=False) if len(pts) > n else np.arange(n)
         rr.log("world/map", rr.Points3D(
             positions=pts[idx],
-            colors=np.full((n, 3), [220, 220, 220], dtype=np.uint8),  # white-gray
+            colors=np.full((n, 3), [220, 220, 220], dtype=np.uint8),
             radii=0.005,
         ))
-        print(f"  [map@{frame}] logged {n} pts → world/map")
 
     def log_stdout(self, pkt: DepthFramePacket, frame: int, fps: float) -> None:
-        lock = "LOCKED" if self._pose.locked else "searching"
+        lock   = "LOCKED" if self._pose.locked else "searching"
+        stable = len(self._vox.stable_xyz(min_obs=2))
         print(
             f"frame={frame:5d}  "
             f"valid={pkt.valid_fraction * 100:5.1f}%  "
-            f"map={self._vox.count:6d}  "
-            f"vio={lock}  "
-            f"fps={fps:.1f}"
+            f"map={self._vox.count:6d}  stable={stable:6d}  "
+            f"vio={lock}  fps={fps:.1f}"
         )
 
 
