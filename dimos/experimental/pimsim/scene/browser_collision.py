@@ -116,6 +116,11 @@ def cook_browser_collision(
 def _write_glb(mesh: o3d.geometry.TriangleMesh, path: Path) -> None:
     import trimesh
 
+    # Quadric decimation collapses triangles but leaves the original input
+    # vertices in the buffer (referenced by nothing). Drop them before export,
+    # else the GLB carries millions of orphan vertices (~25x larger on a 100k
+    # face supermarket collision: 86MB -> 3.3MB) with no geometry change.
+    mesh.remove_unreferenced_vertices()
     vertices = np.asarray(mesh.vertices, dtype=np.float64)
     faces = np.asarray(mesh.triangles, dtype=np.int64)
     if len(vertices) == 0 or len(faces) == 0:
