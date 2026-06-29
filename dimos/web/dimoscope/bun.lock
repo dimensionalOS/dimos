@@ -1,0 +1,15 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "dimoscope",
+      "dependencies": {
+        "@dimos/msgs": "npm:@jsr/dimos__msgs@0.1.4",
+      },
+    },
+  },
+  "packages": {
+    "@dimos/msgs": ["@jsr/dimos__msgs@0.1.4", "https://npm.jsr.io/~/11/@jsr/dimos__msgs/0.1.4.tgz", {}, "sha512-zmerBiDFru76CIDeA1xOEVPR/W2+nNG3yh+PL1LQacWjqph6oqltU5/SCHX7qn9PGdOedW0YpTr9aSFBxoeCaQ=="],
+  }
+}

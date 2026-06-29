@@ -1,0 +1,78 @@
+:root {
+  --bg: #0b0e14;
+  --panel: #121723;
+  --line: #1e2533;
+  --text: #d7dee8;
+  --muted: #6b7686;
+  --accent: #ffcb47;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+.layout {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  grid-template-rows: 48px 1fr;
+  grid-template-areas: "top top" "side main";
+  height: 100vh;
+}
+.topbar {
+  grid-area: top;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+.status { font-size: 12px; }
+.status-open { color: #4ade80; }
+.status-connecting { color: var(--accent); }
+.status-closed { color: #f87171; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+
+.sidebar {
+  grid-area: side;
+  border-right: 1px solid var(--line);
+  padding: 10px;
+  overflow-y: auto;
+}
+.sidebar-title { font-size: 12px; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+.topic {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  cursor: pointer;
+}
+.topic-sel { border-color: var(--accent); }
+.topic-name { font-family: ui-monospace, monospace; font-size: 13px; }
+.topic-type { color: var(--muted); font-size: 11px; }
+
+.main { grid-area: main; padding: 16px; display: flex; gap: 16px; flex-wrap: wrap; align-content: flex-start; }
+.side-col { display: flex; flex-direction: column; gap: 16px; width: 320px; }
+
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+.panel-title { font-size: 12px; color: var(--muted); margin-bottom: 8px; font-family: ui-monospace, monospace; }
+.worldcanvas { border-radius: 8px; display: block; }
+.json { margin: 0; max-height: 320px; overflow: auto; font: 12px/1.45 ui-monospace, monospace; color: #b9c6d6; }
+
+.readout div { display: flex; gap: 10px; font-family: ui-monospace, monospace; padding: 2px 0; }
+.readout span { color: var(--muted); width: 36px; display: inline-block; }
+
+.teleop-hint { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+.teleop-grid { display: grid; grid-template-columns: repeat(3, 44px); gap: 6px; }
+.teleop-grid button {
+  height: 40px; background: #1b2230; color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px; cursor: pointer; font-size: 16px;
+}
+.teleop-grid button:active { border-color: var(--accent); }
