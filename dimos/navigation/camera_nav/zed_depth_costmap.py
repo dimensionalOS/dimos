@@ -16,9 +16,8 @@ Rerun entities:
   world/camera              Pinhole model (static)
   world/camera/depth        filtered depth image (float32, auto-colorised)
   world/camera/confidence   per-pixel stereo confidence (greyscale)
-  world/occ3d               LIDAR-like 3D scan: red=occupied  green=free  yellow=unknown
-  world/map                 accumulated voxel map (height-coloured, every 10 frames)
-  world/costmap             2D occupancy grid as RGB image (green/yellow/red)
+  world/map                 accumulated multi-frame map: red=stable obstacle  green=free
+  world/costmap             2D navigation cost grid (green/red, every 10 frames)
   occupancy/birdseye        bird's-eye 2D occupancy (yellow/green/red, every frame)
 
 Usage:
@@ -325,6 +324,18 @@ class VoxelAccumulator:
     @property
     def count(self) -> int: return self._n
 
+    def stable_xyz(self, min_obs: int = 3) -> np.ndarray:
+        """Return only voxels seen in at least min_obs frames — eliminates flying pixels."""
+        if self._n == 0:
+            return np.zeros((0, 3), dtype=np.float32)
+        mask = self._conf[:self._n] >= min_obs
+        return self._xyz[:self._n][mask]
+
+    def stable_count(self, min_obs: int = 3) -> int:
+        if self._n == 0:
+            return 0
+        return int((self._conf[:self._n] >= min_obs).sum())
+
     def _grow(self) -> None:
         new_cap  = self._cap * 2
         new_xyz  = np.empty((new_cap, 3), dtype=np.float32)
@@ -465,133 +476,17 @@ class BirdsEyeOccupancy:
         return rgb
 
 
-# ── Stage 8: 3-D occupancy grid ──────────────────────────────────────────────
+# ── Stage 8: Streamer ─────────────────────────────────────────────────────────
 
-class Occ3D:
-    """Single-frame 3D occupancy grid in camera-link frame — no VIO needed.
-
-    Direct 3D extension of BirdsEyeOccupancy: same voxel grid, same ray-casting,
-    same hit threshold — just with a Z (height) axis added.
-
-    Camera at grid origin.  X = forward (depth), Y = left, Z = up.
-    Returns occupied and free voxel centre positions for rr.Points3D.
-    Unknown = absence of points (not rendered).
-    """
-
-    RES       = 0.10   # metres per voxel
-    X_MAX     = 8.0    # grid depth  (0 → 8 m forward)
-    Y_HALF    = 5.0    # grid width  (±5 m lateral)
-    Z_HALF    = 2.0    # grid height (±2 m, camera at centre)
-    OCC_THRESH = 5     # hits per voxel to classify as occupied (same as BirdsEyeOccupancy)
-
-    def __init__(self) -> None:
-        self._nx = int(self.X_MAX      / self.RES)   # 80
-        self._ny = int(self.Y_HALF * 2 / self.RES)   # 100
-        self._nz = int(self.Z_HALF * 2 / self.RES)   # 40
-        self._my = self._ny // 2                      # Y index of camera
-        self._mz = self._nz // 2                      # Z index of camera
-
-    def build(
-        self, depth: np.ndarray, fx: float, fy: float, cx: float, cy: float
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Return (occupied_xyz, free_xyz) — float32 voxel centre positions."""
-        nx, ny, nz = self._nx, self._ny, self._nz
-        H, W = depth.shape
-        EMPTY = np.zeros((0, 3), dtype=np.float32)
-
-        valid = np.isfinite(depth)
-        if not valid.any():
-            return EMPTY, EMPTY
-
-        u = np.tile(np.arange(W, dtype=np.float32), (H, 1))
-        v = np.tile(np.arange(H, dtype=np.float32)[:, None], (1, W))
-
-        d      = depth[valid]
-        x_fwd  = d
-        y_left = -(u[valid] - cx) * d / fx
-        z_up   = -(v[valid] - cy) * d / fy
-
-        # ── Occupied: count hits per voxel ────────────────────────────────────
-        ix = np.clip((x_fwd  / self.RES).astype(np.int32),              0, nx - 1)
-        iy = np.clip((self._my + y_left / self.RES).astype(np.int32),   0, ny - 1)
-        iz = np.clip((self._mz + z_up   / self.RES).astype(np.int32),   0, nz - 1)
-
-        flat   = ix * (ny * nz) + iy * nz + iz
-        counts = np.bincount(flat, minlength=nx * ny * nz)
-
-        occ_flat = np.where(counts >= self.OCC_THRESH)[0]
-        if len(occ_flat):
-            oix = occ_flat // (ny * nz)
-            oiy = (occ_flat % (ny * nz)) // nz
-            oiz = occ_flat % nz
-            occ_xyz = np.column_stack([
-                (oix + 0.5) * self.RES,
-                (oiy - self._my) * self.RES,
-                (oiz - self._mz) * self.RES,
-            ]).astype(np.float32)
-        else:
-            occ_xyz = EMPTY
-
-        # ── Free: ray cast from camera (origin) to each hit ───────────────────
-        # Stride-8 then np.unique deduplicate → same approach as BirdsEyeOccupancy
-        t  = np.linspace(0.1, 0.9, 9, dtype=np.float32)
-        xs = x_fwd[::8];  ys = y_left[::8];  zs = z_up[::8]
-
-        fix = np.clip(np.outer(t, xs / self.RES).astype(np.int32),              0, nx - 1)
-        fiy = np.clip(self._my + np.outer(t, ys / self.RES).astype(np.int32),   0, ny - 1)
-        fiz = np.clip(self._mz + np.outer(t, zs / self.RES).astype(np.int32),   0, nz - 1)
-
-        free_flat = np.unique(fix.ravel() * (ny * nz) + fiy.ravel() * nz + fiz.ravel())
-        free_flat = free_flat[counts[free_flat] < self.OCC_THRESH]   # occupied wins
-
-        if len(free_flat):
-            rix = free_flat // (ny * nz)
-            riy = (free_flat % (ny * nz)) // nz
-            riz = free_flat % nz
-            free_xyz = np.column_stack([
-                (rix + 0.5) * self.RES,
-                (riy - self._my) * self.RES,
-                (riz - self._mz) * self.RES,
-            ]).astype(np.float32)
-        else:
-            free_xyz = EMPTY
-
-        # ── Unknown: one RES step beyond each occupied voxel (occluded shadow) ─
-        # Camera is at origin in camera-link frame, so the ray direction to each
-        # occupied voxel is just the normalised position vector.  Pushing one step
-        # further marks the immediately-occluded space behind each surface.
-        if len(occ_xyz):
-            dist = np.linalg.norm(occ_xyz, axis=1, keepdims=True).clip(1e-6)
-            unk_xyz = (occ_xyz + (occ_xyz / dist) * self.RES).astype(np.float32)
-            unk_xyz[:, 0] = np.clip(unk_xyz[:, 0],  0,          self.X_MAX)
-            unk_xyz[:, 1] = np.clip(unk_xyz[:, 1], -self.Y_HALF, self.Y_HALF)
-            unk_xyz[:, 2] = np.clip(unk_xyz[:, 2], -self.Z_HALF, self.Z_HALF)
-        else:
-            unk_xyz = EMPTY
-
-        return occ_xyz, free_xyz, unk_xyz
-
-
-# ── Stage 9: Streamer ─────────────────────────────────────────────────────────
-
-_JET_T = np.linspace(0, 1, 256, dtype=np.float32)
-_JET_R = np.clip(1.5 - np.abs(4 * _JET_T - 3), 0, 1)
-_JET_G = np.clip(1.5 - np.abs(4 * _JET_T - 2), 0, 1)
-_JET_B = np.clip(1.5 - np.abs(4 * _JET_T - 1), 0, 1)
-_JET   = (np.column_stack([_JET_R, _JET_G, _JET_B]) * 255).astype(np.uint8)
-
-def _height_colors(z: np.ndarray, z_min: float = -0.1, z_max: float = 1.8) -> np.ndarray:
-    t   = np.clip((z - z_min) / max(z_max - z_min, 1e-6), 0, 1)
-    idx = (t * 255).astype(np.int32).clip(0, 255)
-    return _JET[idx]
 
 
 class DepthStreamer:
     """Assembles packets, drives all downstream stages, logs to Rerun."""
 
-    MAX_CLOUD = 50_000   # per-frame cap to stay below Rerun h2 limit
-    MAX_MAP   = 80_000   # map visualisation cap
-    MAP_EVERY = 10       # frames between map + costmap updates
+    MAX_OCC  = 80_000   # occupied voxel visualisation cap
+    MAX_FREE = 60_000   # free voxel visualisation cap
+    MAP_EVERY = 10      # frames between map + costmap updates
+    MIN_OBS   = 3       # minimum frame observations to count a voxel as a real obstacle
 
     def __init__(
         self,
@@ -611,7 +506,7 @@ class DepthStreamer:
         self._cg      = costgrid
         self._emit_c  = emit_confidence
         self._birdseye       = BirdsEyeOccupancy()
-        self._occ3d          = Occ3D()
+        self._free           = VoxelAccumulator(voxel_size=0.05)   # accumulated free space
         self._pinhole_logged = False
 
     def assemble(self, zed: sl.Camera, ts: float) -> DepthFramePacket:
@@ -633,13 +528,19 @@ class DepthStreamer:
         xyz = self._bp.project(pkt)
         if len(xyz) > 0 and self._pose.locked:
             self._vox.add(xyz)
-        self._log_depth_frame(pkt, xyz)
+            # Ray-carve free space: sample 9 points along each ray from camera to hit.
+            # Stride-8 keeps the carving cost low while covering all ray directions.
+            t    = np.linspace(0.1, 0.9, 9, dtype=np.float32)
+            pts  = xyz[::8]
+            free = pkt.pose_t + t[:, None, None] * (pts - pkt.pose_t)[None]
+            self._free.add(free.reshape(-1, 3).astype(np.float32))
+        self._log_depth_frame(pkt)
         if frame % self.MAP_EVERY == 0:
             self._log_map_and_costmap()
 
     # ── Rerun logging ─────────────────────────────────────────────────────────
 
-    def _log_depth_frame(self, pkt: DepthFramePacket, xyz: np.ndarray) -> None:
+    def _log_depth_frame(self, pkt: DepthFramePacket) -> None:
         if not self._pinhole_logged:
             rr.log("world/camera", rr.Pinhole(
                 image_from_camera=pkt.K, width=pkt.width, height=pkt.height,
@@ -648,7 +549,6 @@ class DepthStreamer:
 
         rr.log("world/camera/depth", rr.DepthImage(pkt.depth, meter=1.0))
 
-        # Bird's-eye occupancy — no VIO needed, runs every frame
         fx, fy, cx, cy = pkt.intrinsics
         rr.log("occupancy/birdseye", rr.Image(
             self._birdseye.build(pkt.depth, fx, fy, cx, cy)
@@ -658,44 +558,35 @@ class DepthStreamer:
             conf_u8 = np.nan_to_num(pkt.confidence, nan=0.0).clip(0, 100)
             rr.log("world/camera/confidence", rr.Image((conf_u8 * 2.55).astype(np.uint8)))
 
-        # LIDAR-like 3D occupancy in world frame — every frame.
-        # Occ3D voxelises in camera-link (suppresses noise via hit threshold),
-        # then we rotate+translate to world frame using the VIO pose.
-        # Before VIO locks pose_R=I / pose_t=0, so points are in camera-link frame.
-        occ_c, free_c, unk_c = self._occ3d.build(pkt.depth, fx, fy, cx, cy)
-        R, t = pkt.pose_R, pkt.pose_t
-        parts, colors = [], []
-        for pts, rgb in (
-            (occ_c,  [220,  50,  50]),   # red    = occupied
-            (free_c, [ 30, 180,  30]),   # green  = free
-            (unk_c,  [200, 180,   0]),   # yellow = unknown (occluded)
-        ):
-            if len(pts):
-                parts.append(pts @ R.T + t)
-                colors.append(np.full((len(pts), 3), rgb, dtype=np.uint8))
-        if parts:
-            rr.log("world/occ3d", rr.Points3D(
-                positions=np.vstack(parts),
-                colors=np.vstack(colors),
-                radii=0.045,
-            ))
-
     def _log_map_and_costmap(self) -> None:
-        xyz = self._vox.xyz
-        if len(xyz) > 0:
-            # Accumulated voxel map
-            n   = min(len(xyz), self.MAX_MAP)
-            idx = np.random.choice(len(xyz), n, replace=False) if len(xyz) > n else np.arange(len(xyz))
-            rr.log("world/map", rr.Points3D(
-                positions=xyz[idx],
-                colors=_height_colors(xyz[idx, 2]),
-                radii=0.004,
-            ))
+        # Use only voxels confirmed across MIN_OBS frames — eliminates flying pixels.
+        occ = self._vox.stable_xyz(self.MIN_OBS)
+        if len(occ) == 0:
+            return
 
-            # 2-D costmap as RGB image
-            rgb, ox, oy = self._cg.build(xyz)
-            if rgb is not None:
-                rr.log("world/costmap", rr.Image(rgb))
+        parts, colors = [], []
+
+        n   = min(len(occ), self.MAX_OCC)
+        idx = np.random.choice(len(occ), n, replace=False) if len(occ) > n else np.arange(len(occ))
+        parts.append(occ[idx])
+        colors.append(np.full((n, 3), [220, 50, 50], dtype=np.uint8))   # red = obstacle
+
+        free = self._free.xyz
+        if len(free) > 0:
+            n   = min(len(free), self.MAX_FREE)
+            idx = np.random.choice(len(free), n, replace=False) if len(free) > n else np.arange(len(free))
+            parts.append(free[idx])
+            colors.append(np.full((n, 3), [30, 180, 30], dtype=np.uint8))  # green = free
+
+        rr.log("world/map", rr.Points3D(
+            positions=np.vstack(parts),
+            colors=np.vstack(colors),
+            radii=0.03,
+        ))
+
+        rgb, ox, oy = self._cg.build(occ)
+        if rgb is not None:
+            rr.log("world/costmap", rr.Image(rgb))
 
     def log_stdout(self, pkt: DepthFramePacket, frame: int, fps: float) -> None:
         tx, ty, tz = pkt.pose_t
@@ -703,7 +594,8 @@ class DepthStreamer:
         print(
             f"frame={frame:5d}  "
             f"valid={pkt.valid_fraction * 100:5.1f}%  "
-            f"map={self._vox.count:6d}  "
+            f"stable={self._vox.stable_count(self.MIN_OBS):6d}  "
+            f"free={self._free.count:6d}  "
             f"pose=({tx:.2f},{ty:.2f},{tz:.2f})  "
             f"vio={lock}  "
             f"fps={fps:.1f}"
@@ -717,8 +609,8 @@ def main() -> None:
     # forking after those threads exist is unsafe on macOS (fork-after-threads segfault).
     rr.init("zed_depth_costmap", spawn=True)
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
-    # Seed so Rerun treats 'world' as a 3D space before the depth image arrives.
-    rr.log("world/occ3d", rr.Points3D([[0, 0, 0]]), static=True)
+    # Seed so Rerun opens 'world' as a 3D space before the first map update.
+    rr.log("world/map", rr.Points3D([[0, 0, 0]]), static=True)
 
     zed = sl.Camera()
     ip  = sl.InitParameters()
@@ -764,7 +656,7 @@ def main() -> None:
         pass
 
     zed.close()
-    print(f"done — {voxels.count} voxels in map")
+    print(f"done — {voxels.stable_count(3)} stable obstacle voxels")
 
 
 if __name__ == "__main__":
