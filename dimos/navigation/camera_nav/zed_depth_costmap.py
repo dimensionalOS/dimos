@@ -47,21 +47,25 @@ _VMASK = np.int64(0x3FFFF)
 # set_floor_as_origin=True → Z=0 at floor in world frame.
 # Only accumulate points in this height band: excludes floor and ceiling,
 # keeps anything a robot would actually collide with.
-_Z_OBS_MIN: float = 0.05   # 5 cm above floor
-_Z_OBS_MAX: float = 2.0    # 2 m ceiling clearance
+# Height filter relative to the camera.
+# set_floor_as_origin takes a few seconds to calibrate after VIO locks; using
+# world-Z absolutes (e.g. Z>0.05) silently zeros the map until then.
+# Camera-relative Z is always valid: Z_link=0 is camera height, negative is below.
+_Z_REL_LO: float = -1.4   # 1.4 m below camera  (floor for typical ~1 m mount)
+_Z_REL_HI: float =  0.5   # 0.5 m above camera  (above-head obstacles)
 
 
-def _height_color(z: np.ndarray) -> np.ndarray:
-    """Jet colormap over obstacle height band.
+def _height_color(z_rel: np.ndarray) -> np.ndarray:
+    """Jet colormap over camera-relative height band [_Z_REL_LO, _Z_REL_HI].
 
-    blue  = ankle / low clutter  (Z near 0.05 m)
-    green = knee / waist          (Z ≈ 0.5–1.0 m)
-    red   = shoulder / head       (Z near 2.0 m)
+    blue  = floor level   (z_rel ≈ _Z_REL_LO, ~1.4 m below camera)
+    green = mid-height    (z_rel ≈ halfway)
+    red   = camera level  (z_rel ≈ 0) and above
 
-    Makes the 3-D structure of the accumulated map immediately readable:
-    a chair appears as blue legs + green seat; a wall spans the full gradient.
+    z_rel = world_Z − camera_world_Z so it is always valid even before
+    set_floor_as_origin has calibrated the absolute floor height.
     """
-    t = np.clip((z - _Z_OBS_MIN) / (_Z_OBS_MAX - _Z_OBS_MIN), 0.0, 1.0)
+    t = np.clip((z_rel - _Z_REL_LO) / (_Z_REL_HI - _Z_REL_LO), 0.0, 1.0)
     r = np.clip(1.5 - np.abs(4 * t - 3), 0.0, 1.0)
     g = np.clip(1.5 - np.abs(4 * t - 2), 0.0, 1.0)
     b = np.clip(1.5 - np.abs(4 * t - 1), 0.0, 1.0)
@@ -400,6 +404,7 @@ class DepthStreamer:
         self._pose           = pose
         self._bp             = backproj
         self._vox            = VoxelAccumulator(voxel_size=0.05)  # 5 cm: robust to VIO jitter
+        self._cam_z          = 0.0   # camera world-Z, updated each frame for relative coloring
         self._pinhole_logged = False
 
     def assemble(self, zed: sl.Camera, ts: float) -> DepthFramePacket:
@@ -443,12 +448,13 @@ class DepthStreamer:
         rr.log("world/cloud", rr.Points3D(positions=xyz[idx], colors=colors, radii=0.003))
 
         # ── Persistent map: sure + isolated-filtered + obstacle height only ─────
+        self._cam_z = float(pkt.pose_t[2])
         if self._pose.locked:
             xyz_sure  = xyz[conf >= self.CONF_SURE]
             xyz_clean = _filter_isolated(xyz_sure)
             if len(xyz_clean) > 0:
-                h = xyz_clean[:, 2]
-                xyz_obs = xyz_clean[(h >= _Z_OBS_MIN) & (h <= _Z_OBS_MAX)]
+                h_rel = xyz_clean[:, 2] - self._cam_z  # height relative to camera
+                xyz_obs = xyz_clean[(h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI)]
                 self._vox.add(xyz_obs)
 
         if frame % self.MAP_EVERY == 0:
@@ -461,9 +467,10 @@ class DepthStreamer:
             return
         n   = min(len(pts), self.MAX_MAP)
         idx = np.random.choice(len(pts), n, replace=False) if len(pts) > n else np.arange(n)
+        z_rel  = pts[idx, 2] - self._cam_z
         rr.log("world/map", rr.Points3D(
             positions=pts[idx],
-            colors=_height_color(pts[idx, 2]),
+            colors=_height_color(z_rel),
             radii=0.005,
         ))
 
@@ -474,7 +481,7 @@ class DepthStreamer:
             f"frame={frame:5d}  "
             f"valid={pkt.valid_fraction * 100:5.1f}%  "
             f"map={self._vox.count:6d}  stable={stable:6d}  "
-            f"vio={lock}  fps={fps:.1f}"
+            f"cam_z={self._cam_z:+.2f}m  vio={lock}  fps={fps:.1f}"
         )
 
 
