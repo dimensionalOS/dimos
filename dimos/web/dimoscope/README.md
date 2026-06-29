@@ -87,10 +87,20 @@ bench/run.sh zenoh     # Python↔Zenoh gateway
 bench/run.sh all       # both → combined bench/RESULTS.md
 pytest bench/test_bench.py -s
 ```
-See **[bench/RESULTS.md](bench/RESULTS.md)**. Headline: **sub-ms p50 latency** on both; **Python↔Zenoh
-has ~6× lower p95** (reliable transport vs LCM multicast jitter) → "Python is slow" is a non-issue
-for a byte-relay gateway. On-demand subscription cuts WS-hop bandwidth ~75%. (zenoh-ts is browser-only,
-so it's benched via the in-app **Stats** latency, not this headless harness.)
+**All 3 transports, in the real browser runtime** (the only way to bench zenoh-ts — its
+wasm-bindgen *bundler*-target WASM won't instantiate in Bun/Node):
+
+```bash
+bash bench/serve-bench.sh              # 3 servers + bench_publisher on both buses
+# then open http://localhost:5173/bench.html → Run  (copy-Markdown / download-JSON)
+```
+
+Results: **[bench/RESULTS.md](bench/RESULTS.md)** (headless gateways) + **[bench/RESULTS-browser.md](bench/RESULTS-browser.md)**
+(in-browser, all 3) — both off the same `@dimos/topics/bench` measurement core.
+Headline: headless, **sub-ms p50** WS-hop latency on both gateways with **Python↔Zenoh ~6× lower p95**
+(reliable transport vs LCM multicast jitter) → "Python is slow" is a non-issue for a byte-relay gateway.
+In-browser, all three hit **throughput parity (~417 hz)** with comparable end-to-end latency, and
+**on-demand cuts ~75%** bandwidth — for zenoh-ts that's *true* per-client on-demand (only declared keys transit).
 
 ## Layout
 | Path | What |
