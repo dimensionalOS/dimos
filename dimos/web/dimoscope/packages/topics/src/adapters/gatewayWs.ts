@@ -3,7 +3,7 @@
 // Runs unchanged in the browser and in Bun (both have a global WebSocket).
 import { decodeChannel } from "@dimos/msgs";
 import { splitChannel } from "../decode";
-import type { Transport, RawSample, Status, TransportCaps } from "../transport";
+import type { Transport, RawSample, Status, TransportCaps, CommandInfo } from "../transport";
 import type { TopicInfo } from "../types";
 
 export interface GatewayWsOptions {
@@ -20,6 +20,10 @@ export class GatewayWsTransport implements Transport {
   private wantSubs = new Set<string>(); // desired subs, re-sent on reconnect
   private rates = new Map<string, number>();
   private topics: TopicInfo[] = [];
+  commands: CommandInfo[] = [];
+  private commandsCb?: (c: CommandInfo[]) => void;
+  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  private rpcId = 1;
   private reconnect: boolean;
 
   constructor(private url: string, opts: GatewayWsOptions = {}) {
@@ -59,10 +63,21 @@ export class GatewayWsTransport implements Transport {
         if (m.label) this.label = m.label;
         this.topics = m.topics ?? [];
         this.topicsCb?.(this.topics);
+        if (Array.isArray(m.rpc)) {
+          this.commands = m.rpc;
+          this.commandsCb?.(this.commands);
+        }
       } else if (m.op === "topic") {
         if (!this.topics.find((t) => t.topic === m.topic)) {
           this.topics.push({ topic: m.topic, type: m.type });
           this.topicsCb?.(this.topics);
+        }
+      } else if (m.op === "rpc-res") {
+        const p = this.pending.get(m.id);
+        if (p) {
+          this.pending.delete(m.id);
+          if (m.error) p.reject(new Error(m.error));
+          else p.resolve(m.res);
         }
       }
       return;
@@ -102,6 +117,16 @@ export class GatewayWsTransport implements Transport {
   publishGoal(x: number, y: number, z = 0) {
     this.send({ op: "goal", x, y, z });
   }
+  rpc(target: string, method: string, args: unknown[] = []): Promise<unknown> {
+    const id = this.rpcId++;
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      this.send({ op: "rpc", id, target, method, args });
+      setTimeout(() => {
+        if (this.pending.delete(id)) reject(new Error(`rpc ${target}/${method} timed out`));
+      }, 8000);
+    });
+  }
   requestList() {
     this.send({ op: "list" });
   }
@@ -113,6 +138,9 @@ export class GatewayWsTransport implements Transport {
   }
   onStatus(cb: (s: Status) => void) {
     this.statusCb = cb;
+  }
+  onCommands(cb: (c: CommandInfo[]) => void) {
+    this.commandsCb = cb;
   }
   close() {
     this.reconnect = false;

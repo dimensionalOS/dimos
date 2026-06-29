@@ -6,7 +6,7 @@
 // A view transform (scale + center, in a ref) makes the map zoomable/pannable; the
 // canvas is responsive (ResizeObserver + devicePixelRatio). Uses useTopicRef + a
 // requestAnimationFrame loop: redraws at display rate, never re-rendering per message.
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useDimosClient, useTopicRef, useTopics, type TopicInfo } from "@dimos/react";
 
 const LIDAR_CAP = 4000; // max points rendered per frame (stride-decimated)
@@ -31,11 +31,14 @@ export function WorldView() {
   const scanTopic = pick(topics, "sensor_msgs.LaserScan", ["/scan"]);
   const pathTopic = pick(topics, "nav_msgs.Path", ["/path"]);
 
-  const odom = useTopicRef<any>(poseTopic);
-  const map = useTopicRef<any>(mapTopic);
-  const lidar = useTopicRef<any>(lidarTopic);
-  const scan = useTopicRef<any>(scanTopic);
-  const path = useTopicRef<any>(pathTopic);
+  // per-layer on/off → gates the subscription: a layer that's OFF passes null
+  // to useTopicRef, which ref-counts down and actually UNSUBSCRIBES on the wire.
+  const [layers, setLayers] = useState({ pose: true, map: true, lidar: true, scan: true, path: true });
+  const odom = useTopicRef<any>(layers.pose ? poseTopic : null);
+  const map = useTopicRef<any>(layers.map ? mapTopic : null);
+  const lidar = useTopicRef<any>(layers.lidar ? lidarTopic : null);
+  const scan = useTopicRef<any>(layers.scan ? scanTopic : null);
+  const path = useTopicRef<any>(layers.path ? pathTopic : null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const trail = useRef<[number, number][]>([]);
@@ -280,6 +283,16 @@ export function WorldView() {
       .filter(Boolean)
       .join("  ") || "auto-detecting…";
 
+  // toggle chips — one per DETECTED layer (absent streams get no chip); dot
+  // colour mirrors that layer's draw colour, active chip = currently subscribed.
+  const chips: [keyof typeof layers, string | null, string][] = [
+    ["pose", poseTopic, "#ffcb47"],
+    ["map", mapTopic, "#8b95a5"],
+    ["lidar", lidarTopic, "#f0a830"],
+    ["scan", scanTopic, "#27d3e0"],
+    ["path", pathTopic, "#4ade80"],
+  ];
+
   return (
     <div className="panel" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
       <div
@@ -292,6 +305,25 @@ export function WorldView() {
         <button className="tab" onClick={recenter} title="recenter + follow robot" style={{ padding: "2px 8px" }}>
           ⊙ recenter
         </button>
+      </div>
+      {/* per-layer subscribe toggles — only for detected topics */}
+      <div style={{ display: "flex", gap: 6, padding: "6px 10px 0", flexWrap: "wrap" }}>
+        {chips
+          .filter(([, t]) => t)
+          .map(([k, t, c]) => (
+            <button
+              key={k}
+              className={layers[k] ? "tab tab-active" : "tab"}
+              onClick={() => setLayers((s) => ({ ...s, [k]: !s[k] }))}
+              title={`${layers[k] ? "subscribed" : "off"} · ${t}`}
+              style={{ padding: "2px 8px", display: "flex", alignItems: "center", gap: 5 }}
+            >
+              <span
+                style={{ width: 7, height: 7, borderRadius: "50%", background: c, opacity: layers[k] ? 1 : 0.3 }}
+              />
+              {k}
+            </button>
+          ))}
       </div>
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
         <canvas

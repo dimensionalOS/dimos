@@ -6,7 +6,7 @@
 import { GatewayWsTransport } from "./adapters/gatewayWs";
 import { decodeBody, srcTsMs } from "./decode";
 import { Topic } from "./topic";
-import type { RawSample, Status, Transport } from "./transport";
+import type { CommandInfo, RawSample, Status, Transport } from "./transport";
 import type { TopicInfo } from "./types";
 
 export interface ConnectOpts {
@@ -21,9 +21,15 @@ export class DimosClient {
   private topicObjs = new Map<string, Topic<any>>();
   private topicsListeners = new Set<(t: TopicInfo[]) => void>();
   private statusListeners = new Set<(s: Status) => void>();
+  private commandsList: CommandInfo[] = [];
+  private commandsListeners = new Set<(c: CommandInfo[]) => void>();
 
   constructor(private transport: Transport) {
     transport.onSample((s) => this.onSample(s));
+    transport.onCommands?.((c) => {
+      this.commandsList = c;
+      this.commandsListeners.forEach((f) => f(c));
+    });
     transport.onTopics((list) => {
       let changed = false;
       for (const ti of list)
@@ -121,6 +127,21 @@ export class DimosClient {
   navigate(x: number, y: number, z = 0) {
     this.transport.publishGoal(x, y, z);
   }
+
+  /** Invoke a whitelisted dimos `@rpc` command, e.g. client.call("GO2Connection", "standup"). */
+  call<T = unknown>(target: string, method: string, ...args: unknown[]): Promise<T> {
+    return this.transport.rpc(target, method, args) as Promise<T>;
+  }
+  /** Commands the connected gateway advertises as browser-callable (from its hello). */
+  get commands(): CommandInfo[] {
+    return this.commandsList;
+  }
+  onCommands(cb: (c: CommandInfo[]) => void) {
+    this.commandsListeners.add(cb);
+    if (this.commandsList.length) cb(this.commandsList);
+    return () => this.commandsListeners.delete(cb);
+  }
+
   close() {
     this.transport.close();
   }

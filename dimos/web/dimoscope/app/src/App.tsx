@@ -17,6 +17,7 @@ import { PoseReadout } from "./panels/PoseReadout";
 import { TeleopPad } from "./panels/TeleopPad";
 import { StatsBar } from "./panels/StatsBar";
 import { RerunPanel } from "./panels/RerunPanel";
+import { CommandsPanel } from "./panels/CommandsPanel";
 
 function Inspector({ topic }: { topic: string }) {
   const { data, meta } = useTopicLatest<any>(topic, { maxHz: 4 });
@@ -74,6 +75,7 @@ export function App() {
           >
             <option value="auto">cam: auto</option>
             <option value="webrtc">cam: webrtc</option>
+            <option value="webcodecs">cam: webcodecs</option>
             <option value="jpeg">cam: jpeg</option>
           </select>
           <span className="badge">gateway · {label ?? "connecting…"}</span>
@@ -130,6 +132,7 @@ export function App() {
           {tab === "2d" && <CameraView mode={mediaMode} />}
           <PoseReadout />
           <TeleopPad />
+          <CommandsPanel />
           <SubscribeBar />
           {selected ? <Inspector topic={selected} /> : <StatsBar />}
         </div>

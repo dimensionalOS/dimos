@@ -157,7 +157,8 @@ body {
 .topic-type { color: var(--muted); font: 11px var(--mono); margin-top: 2px; }
 
 .main { grid-area: main; padding: 16px; display: flex; gap: 16px; flex-wrap: wrap; align-content: flex-start; }
-.side-col { display: flex; flex-direction: column; gap: 16px; width: 340px; }
+/* wider so the camera (top panel) reads big; clamps on small windows, grows on large */
+.side-col { display: flex; flex-direction: column; gap: 16px; width: clamp(360px, 30vw, 520px); }
 
 /* center column: a tab strip over the big viz (WorldView ⇄ Rerun), grows to fill */
 .center-col { display: flex; flex-direction: column; flex: 1 1 560px; min-width: 520px; gap: 10px; }

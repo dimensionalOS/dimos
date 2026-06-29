@@ -13,7 +13,7 @@
 //
 // zenoh-ts is browser-only (no Bun/Node target) and the heavy client loads lazily inside
 // connect(), so importing this module is cheap and a load failure can't break other paths.
-import type { RawSample, Status, Transport, TransportCaps } from "../transport";
+import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../transport";
 import type { TopicInfo } from "../types";
 
 const SCOUT_MS = 1800; // one-time discovery burst on the discovery key (then undeclared)
@@ -41,6 +41,10 @@ export class ZenohTsTransport implements Transport {
   private sampleCb?: (s: RawSample) => void;
   private topicsCb?: (t: TopicInfo[]) => void;
   private statusCb?: (s: Status) => void;
+  commands: CommandInfo[] = [];
+  private commandsCb?: (c: CommandInfo[]) => void;
+  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  private rpcId = 1;
 
   /** @param remoteApiUrl zenoh-bridge-remote-api WS (e.g. ws://localhost:10000)
    *  @param controlUrl   optional gateway WS for safe teleop/goal (e.g. ws://localhost:8088)
@@ -70,6 +74,7 @@ export class ZenohTsTransport implements Transport {
         /* discovery is best-effort */
       }
     }
+    this.ctrl(); // open the control WS now so the gateway's hello (rpc commands) arrives
   }
 
   private note(key: string) {
@@ -126,7 +131,28 @@ export class ZenohTsTransport implements Transport {
     const st = this.control?.readyState;
     if (this.control && (st === WebSocket.OPEN || st === WebSocket.CONNECTING)) return this.control;
     this.control = new WebSocket(this.controlUrl);
+    this.control.onmessage = (e) => this.onControl(e); // rpc-res + the gateway hello (commands)
     return this.control;
+  }
+  private onControl(e: MessageEvent) {
+    if (typeof e.data !== "string") return;
+    let m: any;
+    try {
+      m = JSON.parse(e.data);
+    } catch {
+      return;
+    }
+    if (m.op === "hello" && Array.isArray(m.rpc)) {
+      this.commands = m.rpc;
+      this.commandsCb?.(this.commands);
+    } else if (m.op === "rpc-res") {
+      const p = this.pending.get(m.id);
+      if (p) {
+        this.pending.delete(m.id);
+        if (m.error) p.reject(new Error(m.error));
+        else p.resolve(m.res);
+      }
+    }
   }
   private ctrlSend(obj: unknown) {
     const ws = this.ctrl();
@@ -141,6 +167,16 @@ export class ZenohTsTransport implements Transport {
   publishGoal(x: number, y: number, z = 0) {
     this.ctrlSend({ op: "goal", x, y, z });
   }
+  rpc(target: string, method: string, args: unknown[] = []): Promise<unknown> {
+    const id = this.rpcId++;
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      this.ctrlSend({ op: "rpc", id, target, method, args }); // routed to the gateway's RPC bridge
+      setTimeout(() => {
+        if (this.pending.delete(id)) reject(new Error(`rpc ${target}/${method} timed out`));
+      }, 8000);
+    });
+  }
 
   requestList() {} // discovery is the passive scout; nothing to request
   onSample(cb: (s: RawSample) => void) {
@@ -151,6 +187,9 @@ export class ZenohTsTransport implements Transport {
   }
   onStatus(cb: (s: Status) => void) {
     this.statusCb = cb;
+  }
+  onCommands(cb: (c: CommandInfo[]) => void) {
+    this.commandsCb = cb;
   }
   close() {
     for (const sub of this.subs.values()) if (sub !== "pending") sub.undeclare?.().catch(() => {});

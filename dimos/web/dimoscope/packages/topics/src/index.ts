@@ -10,12 +10,13 @@ export { ZenohTsTransport } from "./adapters/zenohTs";
 export { splitChannel, decodeBody, srcTsMs } from "./decode";
 export { BENCH_SCENARIOS, measureScenario, formatMarkdown, onDemandSaving } from "./bench";
 export type { BenchScenario, BenchRow } from "./bench";
-export type { Transport, RawSample, Status, TransportCaps } from "./transport";
+export type { Transport, RawSample, Status, TransportCaps, CommandInfo } from "./transport";
 export type { MessageMeta, Handler, Subscription, TopicStats, TopicInfo } from "./types";
 // Media plane — pluggable, negotiated video delivery (beside Transport).
 export { selectMediaChannel, browserSupports } from "./media";
 export { JpegTopicMedia } from "./adapters/jpegTopicMedia";
 export { WebRtcMedia } from "./adapters/webRtcMedia";
+export { WebCodecsMedia } from "./adapters/webCodecsMedia";
 export { decodeImageToBitmap } from "./image";
 export type { MediaChannel, MediaCaps, MediaKind, MediaDeps, VideoMeta } from "./media";
 export type { ImageMsg } from "./image";

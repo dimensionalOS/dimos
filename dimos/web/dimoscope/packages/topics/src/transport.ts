@@ -21,6 +21,13 @@ export interface TransportCaps {
   discovery: "live" | "wildcard" | "passive";
 }
 
+/** A dimos `@rpc` command the gateway advertises as browser-callable (from its hello). */
+export interface CommandInfo {
+  target: string; // module class, e.g. "GO2Connection"
+  method: string; // @rpc method, e.g. "standup"
+  label: string; // human label for a button
+}
+
 export interface Transport {
   connect(): Promise<void>;
   close(): void;
@@ -29,10 +36,15 @@ export interface Transport {
   publishTeleop(linearX: number, angularZ: number, ttlMs?: number): void;
   /** Send a navigation goal (world metres) — gateway publishes a PointStamped to clicked_point. */
   publishGoal(x: number, y: number, z?: number): void;
+  /** Invoke a whitelisted dimos `@rpc` command via the gateway; resolves with its return value. */
+  rpc(target: string, method: string, args?: unknown[]): Promise<unknown>;
   requestList(): void;
   onSample(cb: (s: RawSample) => void): void;
   onTopics(cb: (topics: TopicInfo[]) => void): void;
   onStatus(cb: (s: Status) => void): void;
+  /** Commands the gateway advertised as browser-callable (empty / undefined if none). */
+  readonly commands?: CommandInfo[];
+  onCommands?(cb: (commands: CommandInfo[]) => void): void;
   readonly caps: TransportCaps;
   /** Human label the gateway reports for itself (e.g. "Bun↔LCM", "Python↔Zenoh"). */
   label?: string;
