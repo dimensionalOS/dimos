@@ -12,7 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import { connect, selectMediaChannel, type DimosClient } from "@dimos/topics";
-import type { MediaKind, MessageMeta, Status, TopicInfo, TopicStats } from "@dimos/topics";
+import type { CommandInfo, MediaChannel, MediaKind, MessageMeta, Status, TopicInfo, TopicStats } from "@dimos/topics";
 
 /** One selectable transport/server: a label + a thunk that builds a connected client. */
 export interface ServerOpt {
@@ -314,11 +314,12 @@ export function useImageTopic(topic: string | null, opts?: { maxFps?: number }) 
 
 // ── media plane: the camera as a negotiated, pluggable stream ───────────────
 /** Forced media mode (the topbar toggle). "auto" = best available, falling back to jpeg. */
-export type MediaMode = "auto" | "jpeg" | "webrtc";
+export type MediaMode = "auto" | "jpeg" | "webrtc" | "webcodecs";
 const MODE_PREFER: Record<MediaMode, MediaKind[]> = {
-  auto: ["webrtc", "jpeg"],
+  auto: ["webrtc", "webcodecs", "jpeg"], // proven default first; webcodecs/jpeg as fallback
   jpeg: ["jpeg"],
   webrtc: ["webrtc", "jpeg"],
+  webcodecs: ["webcodecs", "jpeg"],
 };
 
 /**
@@ -337,6 +338,7 @@ export function useVideo(topic: string | null, opts?: { mode?: MediaMode }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [kind, setKind] = useState<"stream" | "frames">("frames");
   const [label, setLabel] = useState<string>();
+  const [active, setActive] = useState<MediaKind>("jpeg"); // the kind actually negotiated
 
   const mediaCfg = servers.find((s) => s.id === activeId)?.media;
   const gatewayUrl = mediaCfg?.gatewayUrl;
@@ -344,40 +346,61 @@ export function useVideo(topic: string | null, opts?: { mode?: MediaMode }) {
 
   useEffect(() => {
     if (!client || !topic) return;
-    const ch = selectMediaChannel({ client, gatewayUrl, serverMedia, prefer: MODE_PREFER[mode] });
-    setKind(ch.caps.output);
-    setLabel(ch.label);
     let alive = true;
-    if (ch.caps.output === "stream") {
-      ch.onStream((id, stream) => {
-        if (alive && id === topic && videoRef.current) videoRef.current.srcObject = stream;
+    let current: MediaChannel | null = null;
+    const kindOf = (ch: MediaChannel): MediaKind =>
+      ch.caps.codec === "jpeg" ? "jpeg" : ch.caps.output === "stream" ? "webrtc" : "webcodecs";
+
+    const wire = (ch: MediaChannel): Promise<void> => {
+      current = ch;
+      setKind(ch.caps.output);
+      setLabel(ch.label);
+      setActive(kindOf(ch));
+      if (ch.caps.output === "stream") {
+        ch.onStream((id, stream) => {
+          if (alive && id === topic && videoRef.current) videoRef.current.srcObject = stream;
+        });
+      } else {
+        ch.onFrame((id, frame) => {
+          if (!alive || id !== topic) return;
+          const cvs = canvasRef.current;
+          const ctx = cvs?.getContext("2d");
+          if (!cvs || !ctx) return;
+          // ImageBitmap exposes .width/.height; VideoFrame (WebCodecs) exposes displayWidth/Height
+          // (its .width is undefined → would zero the canvas). Handle both.
+          const vf = frame as VideoFrame;
+          const fw = vf.displayWidth || (frame as ImageBitmap).width;
+          const fh = vf.displayHeight || (frame as ImageBitmap).height;
+          if (fw && fh && (cvs.width !== fw || cvs.height !== fh)) {
+            cvs.width = fw;
+            cvs.height = fh;
+          }
+          ctx.drawImage(frame as CanvasImageSource, 0, 0);
+          (frame as ImageBitmap).close?.();
+        });
+      }
+      return ch.connect().then(() => {
+        if (alive) ch.subscribe(topic);
       });
-    } else {
-      ch.onFrame((id, frame) => {
-        if (!alive || id !== topic) return;
-        const cvs = canvasRef.current;
-        const ctx = cvs?.getContext("2d");
-        if (!cvs || !ctx) return;
-        const f = frame as ImageBitmap; // ImageBitmap | VideoFrame are both CanvasImageSource
-        if (cvs.width !== f.width || cvs.height !== f.height) {
-          cvs.width = f.width;
-          cvs.height = f.height;
-        }
-        ctx.drawImage(frame as CanvasImageSource, 0, 0);
-        (frame as ImageBitmap).close?.();
-      });
-    }
-    ch.connect()
-      .then(() => alive && ch.subscribe(topic))
-      .catch(() => {}); // TODO: runtime fallback to jpeg on connect failure
+    };
+
+    // Try the preferred channel; on connect failure drop to the jpeg floor at runtime so the
+    // camera never goes dark just because the media gateway hiccuped.
+    const primary = selectMediaChannel({ client, gatewayUrl, serverMedia, prefer: MODE_PREFER[mode] });
+    wire(primary).catch(() => {
+      if (!alive || primary.caps.codec === "jpeg") return;
+      primary.close();
+      wire(selectMediaChannel({ client, prefer: ["jpeg"] })).catch(() => {});
+    });
+
     return () => {
       alive = false;
-      ch.unsubscribe(topic);
-      ch.close();
+      current?.unsubscribe(topic);
+      current?.close();
     };
   }, [client, topic, mode, gatewayUrl, serverMedia]);
 
-  return { kind, videoRef, canvasRef, label };
+  return { kind, videoRef, canvasRef, label, active, requested: mode, offered: serverMedia };
 }
 
 /**
@@ -431,15 +454,55 @@ export function SubscribeBar() {
 }
 
 function PinnedTopic({ topic, onRemove }: { topic: string; onRemove: () => void }) {
-  const { meta } = useTopicLatest<unknown>(topic, { maxHz: 4 });
+  const { data, meta } = useTopicLatest<unknown>(topic, { maxHz: 4 });
+  const stats = useTopicStats(topic);
+  const live = !!meta;
+  // a short, human one-liner of the latest value so "subscribed" obviously means "data flowing".
+  const preview =
+    data == null
+      ? ""
+      : JSON.stringify(data, (_k, v) =>
+          typeof v === "bigint" ? v.toString() : v instanceof Uint8Array ? `<${v.length}B>` : v,
+        )?.slice(0, 120);
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, font: "12px ui-monospace, monospace" }}>
-      <span style={{ color: meta ? "#4ade80" : "var(--muted)" }}>●</span>
-      <span style={{ flex: 1, color: "var(--text)" }}>{topic}</span>
-      <span className="muted small">{meta ? `${meta.sizeBytes}B` : "waiting…"}</span>
-      <button type="button" className="tab" onClick={onRemove} title="unsubscribe">
-        ×
-      </button>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+        font: "12px ui-monospace, monospace",
+        padding: "5px 7px",
+        border: "1px solid var(--line)",
+        borderRadius: 6,
+        background: "var(--bg)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span
+          style={{ color: live ? "#4ade80" : "var(--muted)" }}
+          title={live ? "receiving messages" : "subscribed — waiting for the first message"}
+        >
+          ●
+        </span>
+        <span style={{ flex: 1, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {topic}
+        </span>
+        <span className="muted small" title="message rate · size of the last message">
+          {live ? `${stats?.hz ?? 0} Hz · ${meta!.sizeBytes} B` : "waiting…"}
+        </span>
+        <button type="button" className="tab" onClick={onRemove} title="unsubscribe" style={{ padding: "0 7px" }}>
+          ×
+        </button>
+      </div>
+      {live && preview && (
+        <div
+          className="muted"
+          style={{ paddingLeft: 16, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", opacity: 0.85 }}
+          title={preview}
+        >
+          {preview}
+        </div>
+      )}
     </div>
   );
 }
@@ -457,4 +520,34 @@ export function useTeleop() {
   );
 }
 
-export type { MessageMeta, Status, TopicInfo, TopicStats } from "@dimos/topics";
+/** Invoke a whitelisted dimos `@rpc` command, e.g. `useRpc().call("GO2Connection", "standup")`. */
+export function useRpc() {
+  const client = useDimosClient();
+  return useMemo(
+    () => ({
+      call: <T = unknown>(target: string, method: string, ...args: unknown[]): Promise<T> =>
+        client ? client.call<T>(target, method, ...args) : Promise.reject(new Error("not connected")),
+    }),
+    [client],
+  );
+}
+
+/** Commands the connected gateway advertises as browser-callable (empty if none / unsupported). */
+export function useCommands(): CommandInfo[] {
+  const client = useDimosClient();
+  const [cmds, setCmds] = useState<CommandInfo[]>(() => client?.commands ?? []);
+  useEffect(() => {
+    if (!client) {
+      setCmds([]);
+      return;
+    }
+    setCmds(client.commands);
+    const unsub = client.onCommands(setCmds);
+    return () => {
+      unsub();
+    };
+  }, [client]);
+  return cmds;
+}
+
+export type { CommandInfo, MessageMeta, Status, TopicInfo, TopicStats } from "@dimos/topics";

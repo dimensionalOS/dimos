@@ -10,6 +10,7 @@ import type { Status } from "./transport";
 import type { DimosClient } from "./client";
 import { JpegTopicMedia } from "./adapters/jpegTopicMedia";
 import { WebRtcMedia } from "./adapters/webRtcMedia";
+import { WebCodecsMedia } from "./adapters/webCodecsMedia";
 
 export type MediaKind = "webcodecs" | "webrtc" | "jpeg";
 
@@ -49,7 +50,8 @@ export interface MediaChannel {
 export function browserSupports(kind: MediaKind): boolean {
   switch (kind) {
     case "webcodecs":
-      return "VideoDecoder" in globalThis && "WebTransport" in globalThis;
+      // Chunks ride the gateway WS (not WebTransport), so we only need the decoder + chunk types.
+      return "VideoDecoder" in globalThis && "EncodedVideoChunk" in globalThis;
     case "webrtc":
       return "RTCPeerConnection" in globalThis;
     case "jpeg":
@@ -74,7 +76,7 @@ export function selectMediaChannel(d: MediaDeps): MediaChannel {
   const offered = new Set<MediaKind>(d.serverMedia ?? ["jpeg"]);
   for (const kind of prefer) {
     if (!offered.has(kind) || !browserSupports(kind)) continue;
-    // "webcodecs" is the next adapter — skip until implemented so we don't ref a missing class.
+    if (kind === "webcodecs" && d.gatewayUrl) return new WebCodecsMedia(d.gatewayUrl);
     if (kind === "webrtc" && d.gatewayUrl) return new WebRtcMedia(d.gatewayUrl);
     if (kind === "jpeg") return new JpegTopicMedia(d.client);
   }
