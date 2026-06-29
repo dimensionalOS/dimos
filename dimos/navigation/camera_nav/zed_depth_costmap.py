@@ -362,9 +362,9 @@ class VoxelAccumulator:
             return
         if self._n + n_new > self._cap:
             self._grow()
-        sl = slice(self._n, self._n + n_new)
-        self._xyz[sl] = new_xyz
-        self._obs[sl] = 1
+        rows = slice(self._n, self._n + n_new)
+        self._xyz[rows] = new_xyz
+        self._obs[rows] = 1
         for i, k in enumerate(new_keys.tolist()):
             self._idx[int(k)] = self._n + i
         self._n += n_new
@@ -576,7 +576,8 @@ class DepthStreamer:
             f"frame={frame:5d}  "
             f"sure={self._last_n_sure:5d}  clean={self._last_n_clean:5d}  "
             f"obs={self._last_n_obs:5d}  stable={stable:6d}  "
-            f"cam_z={self._cam_z:+.2f}m  vio={lock}  fps={fps:.1f}"
+            f"cam_z={self._cam_z:+.2f}m  vio={lock}  fps={fps:.1f}",
+            flush=True,
         )
 
 
@@ -634,12 +635,16 @@ def main() -> None:
     rt.texture_confidence_threshold = 65
     rt.remove_saturated_areas       = True
 
-    frame = 0
-    t0    = time.monotonic()
+    frame      = 0
+    grab_fails = 0
+    t0         = time.monotonic()
 
     try:
         while True:
             if zed.grab(rt) != sl.ERROR_CODE.SUCCESS:
+                grab_fails += 1
+                if grab_fails % 30 == 1:
+                    print(f"grab failing ({grab_fails} times) — check camera connection", flush=True)
                 continue
             ts  = time.monotonic()
             pkt = streamer.assemble(zed, ts)
