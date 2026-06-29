@@ -1,15 +1,21 @@
 import { createRoot } from "react-dom/client";
-import { DimosProvider } from "@dimos/react";
+import { DimosProvider, type ServerOpt } from "@dimos/react";
+import { connect } from "@dimos/topics";
 import { App } from "./App";
 import "./styles.css";
 
-// The dimos-web-gateway serves WebSocket on :8090 (same host you run it on).
-// NOTE: 8088, not 8090 — DimSim's internal bridge claims :8090 (dimsim_port) and
-// kills whatever holds it on startup, so the dimoscope gateway lives on :8088.
-const wsUrl = `ws://${location.hostname || "localhost"}:${import.meta.env.VITE_GATEWAY_PORT ?? 8088}`;
+// Transports, each on its own port; the topbar dropdown picks the active one.
+// Bun↔LCM uses :8089 here (not :8090) — DimSim's internal bridge claims :8090 and
+// kills whatever holds it. start-all.sh launches all of these together.
+// (zenoh-ts direct is appended in Phase 4 once its adapter exists.)
+const host = location.hostname || "localhost";
+const servers: ServerOpt[] = [
+  { id: "zenoh", label: "Python↔Zenoh", connect: () => connect({ url: `ws://${host}:8088` }) },
+  { id: "lcm", label: "Bun↔LCM", connect: () => connect({ url: `ws://${host}:8089` }) },
+];
 
 createRoot(document.getElementById("root")!).render(
-  <DimosProvider url={wsUrl}>
+  <DimosProvider servers={servers}>
     <App />
   </DimosProvider>,
 );

@@ -14,39 +14,97 @@ import {
 import { connect, type DimosClient } from "@dimos/topics";
 import type { MessageMeta, Status, TopicInfo, TopicStats } from "@dimos/topics";
 
+/** One selectable transport/server: a label + a thunk that builds a connected client. */
+export interface ServerOpt {
+  id: string;
+  label: string;
+  connect: () => Promise<DimosClient>;
+}
+
 interface DimosCtx {
   client: DimosClient | null;
   status: Status;
+  servers: ServerOpt[];
+  activeId: string | null;
+  setActiveId: (id: string) => void;
 }
-const Ctx = createContext<DimosCtx>({ client: null, status: "connecting" });
+const Ctx = createContext<DimosCtx>({
+  client: null,
+  status: "connecting",
+  servers: [],
+  activeId: null,
+  setActiveId: () => {},
+});
 
-export function DimosProvider({ url, children }: { url: string; children: ReactNode }) {
+/**
+ * Provides a DimosClient to the tree. Pass `servers` (a list of selectable
+ * transports) to expose a switcher — the client is rebuilt (old one closed) when
+ * the active server changes. A bare `url` is accepted as a one-server shorthand.
+ */
+export function DimosProvider({
+  servers,
+  url,
+  children,
+}: {
+  servers?: ServerOpt[];
+  url?: string;
+  children: ReactNode;
+}) {
+  const list = useMemo<ServerOpt[]>(
+    () => servers ?? (url ? [{ id: url, label: url, connect: () => connect({ url }) }] : []),
+    [servers, url],
+  );
+  const [activeId, setActiveId] = useState<string | null>(list[0]?.id ?? null);
   const [client, setClient] = useState<DimosClient | null>(null);
   const [status, setStatus] = useState<Status>("connecting");
+
   useEffect(() => {
+    const opt = list.find((s) => s.id === activeId);
+    if (!opt) return;
     let alive = true;
     let c: DimosClient | undefined;
-    connect({ url }).then((cl) => {
-      if (!alive) {
-        cl.close();
-        return;
-      }
-      c = cl;
-      setClient(cl);
-      setStatus(cl.status);
-      cl.onStatus(setStatus);
-    });
+    let unsub: (() => void) | undefined;
+    setClient(null);
+    setStatus("connecting");
+    opt
+      .connect()
+      .then((cl) => {
+        if (!alive) {
+          cl.close();
+          return;
+        }
+        c = cl;
+        setClient(cl);
+        setStatus(cl.status);
+        unsub = cl.onStatus(setStatus);
+      })
+      .catch(() => {
+        if (alive) setStatus("closed");
+      });
+    // Detach the old status listener BEFORE closing, so the outgoing client's
+    // "closed" can't clobber the incoming client's status on a server switch.
     return () => {
       alive = false;
+      unsub?.();
       c?.close();
     };
-  }, [url]);
-  return <Ctx.Provider value={{ client, status }}>{children}</Ctx.Provider>;
+  }, [list, activeId]);
+
+  return (
+    <Ctx.Provider value={{ client, status, servers: list, activeId, setActiveId }}>
+      {children}
+    </Ctx.Provider>
+  );
 }
 
 export const useDimos = () => useContext(Ctx);
 export const useDimosClient = () => useContext(Ctx).client;
 export const useStatus = () => useContext(Ctx).status;
+/** The transport switcher: list of servers + the active id + a setter. */
+export const useServers = () => {
+  const { servers, activeId, setActiveId } = useContext(Ctx);
+  return { servers, activeId, setActiveId };
+};
 
 /** Live list of discovered topics. */
 export function useTopics(): TopicInfo[] {
