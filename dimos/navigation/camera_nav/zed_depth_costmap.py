@@ -17,10 +17,11 @@ Rerun entities:
   world/camera/depth        filtered depth image (float32, auto-colorised)
   world/camera/confidence   per-pixel stereo confidence (greyscale)
   world/cloud               current frame occupied points (height-coloured)
-  world/free                current frame free-space rays (green)
   world/map                 accumulated voxel map (height-coloured, every 10 frames)
   world/costmap             2D occupancy grid as RGB image (green/yellow/red)
   occupancy/birdseye        bird's-eye 2D occupancy (yellow/green/red, every frame)
+  occupancy/3d/occupied     3D occupied voxels (red, every frame)
+  occupancy/3d/free         3D free-space voxels (green, every frame)
 
 Usage:
   python -m dimos.navigation.camera_nav.zed_depth_costmap
@@ -466,30 +467,98 @@ class BirdsEyeOccupancy:
         return rgb
 
 
-# ── Stage 8: Free-space ray sampler ──────────────────────────────────────────
+# ── Stage 8: 3-D occupancy grid ──────────────────────────────────────────────
 
-def _free_ray_points(
-    xyz: np.ndarray,
-    cam_t: np.ndarray,
-    stride: int = 8,
-    steps: int = 9,
-) -> np.ndarray:
-    """Sample free-space positions along rays from cam_t to each depth hit.
+class Occ3D:
+    """Single-frame 3D occupancy grid in camera-link frame — no VIO needed.
 
-    Between the camera and each confirmed surface there is empty space — this
-    function makes that explicit by sampling N points along each ray.
+    Direct 3D extension of BirdsEyeOccupancy: same voxel grid, same ray-casting,
+    same hit threshold — just with a Z (height) axis added.
 
-    Works in whatever frame xyz is expressed in (camera-link before VIO,
-    world frame after). cam_t must be the camera position in the same frame.
-
-    stride: skip every Nth hit to keep total point count manageable.
-    steps:  how many sample points per ray (linearly spaced 10%–90% of range).
+    Camera at grid origin.  X = forward (depth), Y = left, Z = up.
+    Returns occupied and free voxel centre positions for rr.Points3D.
+    Unknown = absence of points (not rendered).
     """
-    pts = xyz[::stride]                                          # (N, 3)
-    t   = np.linspace(0.1, 0.9, steps, dtype=np.float32)        # (steps,)
-    # broadcast: cam_t + t[i] * (pts[j] - cam_t) → (steps, N, 3)
-    free = cam_t + t[:, None, None] * (pts - cam_t)[None]
-    return free.reshape(-1, 3).astype(np.float32)
+
+    RES       = 0.10   # metres per voxel
+    X_MAX     = 8.0    # grid depth  (0 → 8 m forward)
+    Y_HALF    = 5.0    # grid width  (±5 m lateral)
+    Z_HALF    = 2.0    # grid height (±2 m, camera at centre)
+    OCC_THRESH = 5     # hits per voxel to classify as occupied (same as BirdsEyeOccupancy)
+
+    def __init__(self) -> None:
+        self._nx = int(self.X_MAX      / self.RES)   # 80
+        self._ny = int(self.Y_HALF * 2 / self.RES)   # 100
+        self._nz = int(self.Z_HALF * 2 / self.RES)   # 40
+        self._my = self._ny // 2                      # Y index of camera
+        self._mz = self._nz // 2                      # Z index of camera
+
+    def build(
+        self, depth: np.ndarray, fx: float, fy: float, cx: float, cy: float
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return (occupied_xyz, free_xyz) — float32 voxel centre positions."""
+        nx, ny, nz = self._nx, self._ny, self._nz
+        H, W = depth.shape
+        EMPTY = np.zeros((0, 3), dtype=np.float32)
+
+        valid = np.isfinite(depth)
+        if not valid.any():
+            return EMPTY, EMPTY
+
+        u = np.tile(np.arange(W, dtype=np.float32), (H, 1))
+        v = np.tile(np.arange(H, dtype=np.float32)[:, None], (1, W))
+
+        d      = depth[valid]
+        x_fwd  = d
+        y_left = -(u[valid] - cx) * d / fx
+        z_up   = -(v[valid] - cy) * d / fy
+
+        # ── Occupied: count hits per voxel ────────────────────────────────────
+        ix = np.clip((x_fwd  / self.RES).astype(np.int32),              0, nx - 1)
+        iy = np.clip((self._my + y_left / self.RES).astype(np.int32),   0, ny - 1)
+        iz = np.clip((self._mz + z_up   / self.RES).astype(np.int32),   0, nz - 1)
+
+        flat   = ix * (ny * nz) + iy * nz + iz
+        counts = np.bincount(flat, minlength=nx * ny * nz)
+
+        occ_flat = np.where(counts >= self.OCC_THRESH)[0]
+        if len(occ_flat):
+            oix = occ_flat // (ny * nz)
+            oiy = (occ_flat % (ny * nz)) // nz
+            oiz = occ_flat % nz
+            occ_xyz = np.column_stack([
+                (oix + 0.5) * self.RES,
+                (oiy - self._my) * self.RES,
+                (oiz - self._mz) * self.RES,
+            ]).astype(np.float32)
+        else:
+            occ_xyz = EMPTY
+
+        # ── Free: ray cast from camera (origin) to each hit ───────────────────
+        # Stride-8 then np.unique deduplicate → same approach as BirdsEyeOccupancy
+        t  = np.linspace(0.1, 0.9, 9, dtype=np.float32)
+        xs = x_fwd[::8];  ys = y_left[::8];  zs = z_up[::8]
+
+        fix = np.clip(np.outer(t, xs / self.RES).astype(np.int32),              0, nx - 1)
+        fiy = np.clip(self._my + np.outer(t, ys / self.RES).astype(np.int32),   0, ny - 1)
+        fiz = np.clip(self._mz + np.outer(t, zs / self.RES).astype(np.int32),   0, nz - 1)
+
+        free_flat = np.unique(fix.ravel() * (ny * nz) + fiy.ravel() * nz + fiz.ravel())
+        free_flat = free_flat[counts[free_flat] < self.OCC_THRESH]   # occupied wins
+
+        if len(free_flat):
+            rix = free_flat // (ny * nz)
+            riy = (free_flat % (ny * nz)) // nz
+            riz = free_flat % nz
+            free_xyz = np.column_stack([
+                (rix + 0.5) * self.RES,
+                (riy - self._my) * self.RES,
+                (riz - self._mz) * self.RES,
+            ]).astype(np.float32)
+        else:
+            free_xyz = EMPTY
+
+        return occ_xyz, free_xyz
 
 
 # ── Stage 9: Streamer ─────────────────────────────────────────────────────────
@@ -531,6 +600,7 @@ class DepthStreamer:
         self._cg      = costgrid
         self._emit_c  = emit_confidence
         self._birdseye       = BirdsEyeOccupancy()
+        self._occ3d          = Occ3D()
         self._pinhole_logged = False
 
     def assemble(self, zed: sl.Camera, ts: float) -> DepthFramePacket:
@@ -586,15 +656,19 @@ class DepthStreamer:
                 radii=0.003,
             ))
 
-            # Free-space rays — sample points along each ray from camera to hit.
-            # Green = confirmed empty. Stride-8 keeps point count ~60 k.
-            free = _free_ray_points(xyz, pkt.pose_t)
-            if len(free) > self.MAX_CLOUD:
-                free = free[np.random.choice(len(free), self.MAX_CLOUD, replace=False)]
-            rr.log("world/free", rr.Points3D(
+        # 3D occupancy — camera-link frame, no VIO needed, every frame
+        occ, free = self._occ3d.build(pkt.depth, fx, fy, cx, cy)
+        if len(occ):
+            rr.log("occupancy/3d/occupied", rr.Points3D(
+                positions=occ,
+                colors=np.full((len(occ), 3), [220, 50, 50], dtype=np.uint8),
+                radii=0.045,
+            ))
+        if len(free):
+            rr.log("occupancy/3d/free", rr.Points3D(
                 positions=free,
                 colors=np.full((len(free), 3), [30, 180, 30], dtype=np.uint8),
-                radii=0.002,
+                radii=0.045,
             ))
 
     def _log_map_and_costmap(self) -> None:
@@ -634,10 +708,10 @@ def main() -> None:
     # forking after those threads exist is unsafe on macOS (fork-after-threads segfault).
     rr.init("zed_depth_costmap", spawn=True)
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
-    # Seed 3D entities so Rerun treats 'world' as a 3D space from the first frame.
-    # Without this, the depth image arriving first locks the blueprint to 2D.
-    rr.log("world/cloud", rr.Points3D([[0, 0, 0]]), static=True)
-    rr.log("world/free",  rr.Points3D([[0, 0, 0]]), static=True)
+    # Seed so Rerun treats 'world' as a 3D space before the depth image arrives.
+    rr.log("world/cloud",         rr.Points3D([[0, 0, 0]]), static=True)
+    rr.log("occupancy/3d/occupied", rr.Points3D([[0, 0, 0]]), static=True)
+    rr.log("occupancy/3d/free",     rr.Points3D([[0, 0, 0]]), static=True)
 
     zed = sl.Camera()
     ip  = sl.InitParameters()
