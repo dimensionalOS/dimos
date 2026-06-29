@@ -547,9 +547,11 @@ class DepthStreamer:
                 self._vox.add(xyz_sure)
 
             # Weak tier — low-confidence surfaces (walls, smooth/distant geometry)
-            # Separate accumulator; needs min_obs=5 to export so noise doesn't survive
+            # min_pts=8: walls produce dense returns across large areas; displays and
+            # specular reflections are smaller and sparser — they fail this threshold
             xyz_weak = _obs_filter(_filter_isolated(
-                xyz[(conf >= self.CONF_WEAK) & (conf < self.CONF_SURE)]
+                xyz[(conf >= self.CONF_WEAK) & (conf < self.CONF_SURE)],
+                min_pts=8,
             ))
             if len(xyz_weak) > 0:
                 self._vox_bg.add(xyz_weak)
@@ -559,7 +561,7 @@ class DepthStreamer:
 
     def _log_map(self) -> None:
         sure_pts = self._vox.stable_xyz(min_obs=2)
-        bg_pts   = self._vox_bg.stable_xyz(min_obs=5)
+        bg_pts   = self._vox_bg.stable_xyz(min_obs=10)
         pts = np.concatenate([sure_pts, bg_pts]) if len(bg_pts) > 0 else sure_pts
         if len(pts) == 0:
             return
@@ -635,9 +637,7 @@ def main() -> None:
     #   depth-discontinuity edges — exactly where flying pixels form.
     # remove_saturated_areas: invalidate pixels over-exposed by bright ceiling
     #   lights, where stereo matching is unreliable.
-    # texture_confidence_threshold intentionally not set — SDK default keeps
-    # all pixels including low-texture surfaces (walls). Our _filter_isolated
-    # and two-tier confidence split handle noise downstream.
+    rt.texture_confidence_threshold = 80  # cuts depth bleeding and specular noise; walls pass via weak tier
     rt.remove_saturated_areas       = True
 
     frame = 0
