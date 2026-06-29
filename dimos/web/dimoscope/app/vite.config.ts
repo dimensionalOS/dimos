@@ -9,6 +9,10 @@ const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 // single React copy across the app + the aliased packages.
 export default defineConfig({
   plugins: [react()],
+  // The Rerun web viewer ships a .wasm that Vite's dep pre-bundler serves with
+  // the wrong MIME type ("Incorrect response MIME type. Expected application/wasm").
+  // Excluding it makes Vite serve the package files directly with correct headers.
+  optimizeDeps: { exclude: ["@rerun-io/web-viewer", "@rerun-io/web-viewer-react"] },
   resolve: {
     dedupe: ["react", "react-dom"],
     alias: {
