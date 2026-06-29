@@ -7,7 +7,7 @@ const DRIVE_MS = Number(process.env.DRIVE_MS ?? 4000);
 const client = await connect({ url: process.env.GATEWAY_URL ?? "ws://localhost:8090", reconnect: false });
 let x = 0,
   y = 0;
-client.topic<any>("/odom").subscribeLatest((d) => {
+client.topic<any>(process.env.ODOM_TOPIC ?? "/odom").subscribeLatest((d) => {
   x = d?.pose?.position?.x ?? 0;
   y = d?.pose?.position?.y ?? 0;
 });

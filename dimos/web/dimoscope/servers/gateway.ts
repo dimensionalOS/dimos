@@ -19,7 +19,7 @@
 // RUN:  bun run servers/gateway.ts        (env: GATEWAY_PORT, DIMOS_LCM_HOST/PORT)
 // ─────────────────────────────────────────────────────────────────────────
 import dgram from "node:dgram";
-import { encodeChannel, encodePacket, geometry_msgs } from "@dimos/msgs";
+import { encodeChannel, encodePacket, geometry_msgs, std_msgs } from "@dimos/msgs";
 
 const MCAST = process.env.DIMOS_LCM_HOST ?? "239.255.76.67";
 const LPORT = Number(process.env.DIMOS_LCM_PORT ?? 7667);
@@ -121,6 +121,9 @@ udp.on("message", (buf) => {
     broadcastJSON({ op: "topic", topic: meta.topic, type: meta.type }); // live discovery
   }
   const now = Date.now();
+  const frame = new Uint8Array(8 + pkt.length); // [f64 BE gateway-send-ms][LC02]
+  new DataView(frame.buffer).setFloat64(0, now, false);
+  frame.set(pkt, 8);
   for (const ws of clients) {
     const st = ws.data;
     if (!(st.subs.has("*") || st.subs.has(meta.topic))) continue; // on-demand filter
@@ -130,7 +133,7 @@ udp.on("message", (buf) => {
       if (now - last < 1000 / hz) continue; // downsample
       st.lastSent.set(meta.topic, now);
     }
-    ws.send(pkt);
+    ws.send(frame);
     st.tx++;
   }
 });
@@ -158,6 +161,15 @@ function publishTwist(linX: number, angZ: number) {
 function armDeadman(st: ClientState, ttlMs: number) {
   if (st.teleopTimer) clearTimeout(st.teleopTimer);
   st.teleopTimer = setTimeout(() => publishTwist(0, 0), ttlMs); // stop if no cmd within ttl
+}
+
+// ── nav goal: publish a PointStamped to clicked_point (what the nav stack consumes) ──
+function publishGoal(x: number, y: number, z: number) {
+  const ps = new geometry_msgs.PointStamped({
+    header: new std_msgs.Header({ frame_id: "world" }),
+    point: new geometry_msgs.Point({ x, y, z }),
+  });
+  udp.send(encodePacket("/clicked_point#geometry_msgs.PointStamped", ps), LPORT, MCAST);
 }
 
 // ── control channel + fan-out ───────────────────────────────────────────────
@@ -234,6 +246,9 @@ Bun.serve<ClientState>({
         case "stop":
           if (st.teleopTimer) clearTimeout(st.teleopTimer);
           publishTwist(0, 0);
+          break;
+        case "goal":
+          publishGoal(Number(m.x) || 0, Number(m.y) || 0, Number(m.z) || 0);
           break;
       }
     },

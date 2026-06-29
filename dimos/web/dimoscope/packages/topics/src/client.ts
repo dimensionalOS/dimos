@@ -53,12 +53,23 @@ export class DimosClient {
       return; // unknown type / fragment
     }
     const srcTs = srcTsMs(data);
+    // Prefer true transport latency (gateway-send → browser-recv); fall back to
+    // source-stamp age. Gateway-send avoids the huge "age" of replay/stale stamps.
+    // Gateway-send → browser-recv on the same host: sub-ms deltas can round
+    // slightly negative (Date.now() is integer ms; the gateway stamps fractional
+    // ms), so floor at 0. Falls back to source-stamp age when no gateway stamp.
+    const latencyMs =
+      s.gatewaySendMs != null
+        ? Math.max(0, s.recvTs - s.gatewaySendMs)
+        : srcTs != null
+          ? s.recvTs - srcTs
+          : undefined;
     t._deliver(data, {
       topic: s.topic,
       type: s.type,
       recvTs: s.recvTs,
       srcTs,
-      latencyMs: srcTs != null ? s.recvTs - srcTs : undefined,
+      latencyMs,
       sizeBytes: s.payload.length,
       dropped: 0,
     });
@@ -104,6 +115,11 @@ export class DimosClient {
   }
   stop() {
     this.transport.publishTeleop(0, 0);
+  }
+
+  /** Send a nav goal in world metres (x,y[,z]). Gateway → PointStamped on clicked_point. */
+  navigate(x: number, y: number, z = 0) {
+    this.transport.publishGoal(x, y, z);
   }
   close() {
     this.transport.close();

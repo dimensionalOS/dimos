@@ -20,7 +20,7 @@ ws.addEventListener("message", (ev) => {
     return;
   }
   try {
-    const { channel, data } = decodePacket(new Uint8Array(ev.data as ArrayBuffer));
+    const { channel, data } = decodePacket(new Uint8Array(ev.data as ArrayBuffer, 8)); // skip [f64 sendMs]
     const n = (seen.get(channel) ?? 0) + 1;
     seen.set(channel, n);
     if (n <= 1) {

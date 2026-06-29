@@ -11,6 +11,8 @@ export interface RawSample {
   type: string;
   payload: Uint8Array;
   recvTs: number;
+  /** Gateway send time (ms) from the frame prefix — for true transport latency. */
+  gatewaySendMs?: number;
 }
 
 export interface TransportCaps {
@@ -25,6 +27,8 @@ export interface Transport {
   subscribe(topic: string, maxHz?: number): void;
   unsubscribe(topic: string): void;
   publishTeleop(linearX: number, angularZ: number, ttlMs?: number): void;
+  /** Send a navigation goal (world metres) — gateway publishes a PointStamped to clicked_point. */
+  publishGoal(x: number, y: number, z?: number): void;
   requestList(): void;
   onSample(cb: (s: RawSample) => void): void;
   onTopics(cb: (topics: TopicInfo[]) => void): void;
