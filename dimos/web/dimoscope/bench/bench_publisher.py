@@ -76,13 +76,19 @@ class BenchPub(Module):
         )
 
 
+def tn(t: str) -> str:
+    # Zenoh key-exprs cannot start with "/"; LCM channels keep it. The Zenoh
+    # gateway re-adds the leading "/" so browser topic names match either way.
+    return t[1:] if (TRANSPORT == "zenoh" and t.startswith("/")) else t
+
+
 if __name__ == "__main__":
     mod = BenchPub()
-    mod.p0.transport = mk("/bench/p0", PoseStamped)
-    mod.p1.transport = mk("/bench/p1", PoseStamped)
-    mod.p2.transport = mk("/bench/p2", PoseStamped)
-    mod.p3.transport = mk("/bench/p3", PoseStamped)
-    mod.grid.transport = mk("/bench/grid", OccupancyGrid)
+    mod.p0.transport = mk(tn("/bench/p0"), PoseStamped)
+    mod.p1.transport = mk(tn("/bench/p1"), PoseStamped)
+    mod.p2.transport = mk(tn("/bench/p2"), PoseStamped)
+    mod.p3.transport = mk(tn("/bench/p3"), PoseStamped)
+    mod.grid.transport = mk(tn("/bench/grid"), OccupancyGrid)
     mod.start()
     print(f"bench_publisher: 4×PoseStamped @ {PUB_HZ}Hz + grid @ {GRID_HZ}Hz over {TRANSPORT}")
     try:

@@ -4,4 +4,6 @@ dist/
 app/dist/
 *.log
 bench/results.json
+bench/results_*.json
+bench/last_run.md
 .DS_Store

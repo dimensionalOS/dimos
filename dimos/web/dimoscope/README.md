@@ -1,71 +1,92 @@
-# dimoscope
+# dimoscope — DimOS topics in the browser
 
-A lightweight, npm-native **web viewer + teleop for the dimos LCM bus**. Open a
-browser, it **auto-discovers topics**, **auto-picks a visualization per message
-type**, and lets you **drive the robot** — everything decoded client-side with
-[`@dimos/msgs`](https://jsr.io/@dimos/msgs).
-
-Built for the Dimensional trial task ("an easy-to-use web framework to subscribe
-to topics and visualize"). No Deno — the bridge runs on **Bun** (`node:dgram`),
-the app is **Vite + React + TS**. Runs against **real dimos** (no mocks).
+A **transport-agnostic browser SDK** to subscribe to DimOS topics, visualize them, and
+teleoperate — plus the gateways and a transport benchmark. The browser is a first-class bus
+client: it decodes messages itself with [`@dimos/msgs`](https://jsr.io/@dimos/msgs) (the 8-byte
+type hash is self-describing), so the gateway is a thin byte-relay and the **same SDK works over
+any transport**.
 
 ```
-dimos (LCM/UDP)  ──►  bridge.ts (Bun)  ──►  WebSocket  ──►  browser (@dimos/msgs decode → widgets)
-   ▲  /cmd_vel        node:dgram ⇄ WS                          DimosBus + React hooks
-   └──────────────────────────────────────────────────────────────── teleop ◄──┘
+robot / sim ─► DimOS bus (LCM | Zenoh)
+                  │
+        ┌─────────┴───────── gateway (thin relay) ─────────┐
+        │  Bun↔LCM (servers/gateway.ts, default)            │   ← byte-relay + on-demand filter
+        │  Python↔Zenoh (servers/gateway_zenoh.py, alt)     │     + teleop safety
+        └─────────┬─────────────────────────────────────────┘
+              WebSocket (raw LCM frames + JSON control)
+                  ▼
+        @dimos/topics  (decode via @dimos/msgs · backpressure · stats · on-demand)
+                  ▼
+        @dimos/react  ─►  example app (WorldView · Pose · Teleop · Stats)  +  teleop ▲
 ```
-The bridge also **reassembles LCM fragments** (dimos fragments any message over
-~1.4KB), so messages like OccupancyGrid arrive whole — the browser is unchanged.
 
-This lives at `dimos/web/dimoscope/`; the demo publisher is `examples/fakesensors.py`.
-All paths below are relative to the **dimos repo root**.
+## Quickstart (real DimOS, no hardware)
 
-## Prerequisites (one-time)
-- `brew install git-lfs libjpeg-turbo`
-- A dimos venv (bare wheel is enough for simplerobot + fakesensors):
-  ```bash
-  uv venv --python 3.12        # uv fetches its own 3.12 (bypasses pyenv)
-  uv pip install dimos         # prebuilt wheel — NOT `uv sync` (that compiles + pulls torch)
-  ```
-
-## Quickstart (real dimos)
-
-Four terminals, from the dimos repo root:
+From the dimos repo root (uses the repo `.venv`):
 
 ```bash
-# 1) the bridge (LCM bus ⇄ WebSocket)
-cd dimos/web/dimoscope && bun install && bun run bridge.ts
-
-# 2) the robot — real dimos example module
+# 1) a robot + sensors (publish /odom + /map over LCM)
 .venv/bin/python examples/simplerobot/simplerobot.py --headless
+.venv/bin/python examples/fakesensors.py
 
-# 3) sensors — a hand-written real dimos Module that publishes /map
-PYTHONUNBUFFERED=1 .venv/bin/python examples/fakesensors.py
-#   (first run builds the matplotlib font cache once — give it a moment)
+# 2) the gateway (Bun↔LCM)
+cd dimos/web/dimoscope && bun install && bun run servers/gateway.ts     # ws://localhost:8090
 
-# 4) the web app
-cd dimos/web/dimoscope/app && bun install && bun run dev      # open http://localhost:5173
+# 3) the app
+cd dimos/web/dimoscope/app && bun install && bun run dev                # http://localhost:5173
 ```
 
-WorldView shows the robot pose + trail + the occupancy grid. Drive it with
-**WASD / arrow keys**.
+The app auto-discovers topics, draws the map + robot + trail in **WorldView**, shows a live pose
+readout + a **Stats** panel (hz / kB/s / latency), and drives the robot with **WASD / arrows**
+(gateway clamps velocity + deadman-stops). Headless checks: `bun run servers/probe.ts`,
+`bun run bench/sdk_smoke.ts`, `bun run bench/teleop_test.ts`.
 
-Verify the pipe headlessly (no browser): `bun run wsprobe.ts` → prints the topics
-it received (e.g. `/odom`, `/map`).
+## The SDK (`@dimos/topics`)
 
-## Notes
-- **macOS multicast:** if the bridge shows no traffic, move the multicast route to
-  loopback once: `sudo route -n delete -net 224.0.0.0/4 2>/dev/null; sudo route -n add -net 224.0.0.0/4 -interface lo0`. (Not needed on all setups.)
-- dimos LCM default = `udpm://239.255.76.67:7667`; the bridge listens there.
+```ts
+import { connect } from "@dimos/topics";
+const client = await connect({ url: "ws://localhost:8090" });
+
+client.listTopics();                                  // [{topic, type}, …] (live discovery)
+const odom = client.topic<PoseStamped>("/odom");
+odom.subscribeLatest((pose, meta) => { … meta.latencyMs … });
+odom.setRateLimit(15);                                // backpressure (also asks gateway to downsample)
+odom.stats();                                         // { hz, bytesPerSec, dropped, lastLatencyMs }
+client.teleop(0.5, 0.0);                              // safe: gateway clamps + TTL/deadman watchdog
+```
+React: `DimosProvider`, `useTopics`, `useTopicLatest`, `useTopicRef` (no re-render → rAF canvas),
+`useTopicStats`, `useTeleop`. **On-demand:** a topic is subscribed on the wire only while it has a
+live subscriber.
+
+## Benchmark
+
+```bash
+bench/run.sh           # Bun↔LCM gateway
+bench/run.sh zenoh     # Python↔Zenoh gateway
+pytest bench/test_bench.py -s
+```
+See **[bench/RESULTS.md](bench/RESULTS.md)**. Headline: **sub-ms p50 latency** on both; **Python↔Zenoh
+has ~3× lower p95** (reliable transport vs LCM multicast jitter) → "Python is slow" is a non-issue
+for a byte-relay gateway. On-demand subscription cuts WS-hop bandwidth ~75%.
 
 ## Layout
-| Path | What it is |
+| Path | What |
 |---|---|
-| `bridge.ts` | Bun: `node:dgram` multicast ⇄ WebSocket relay + LCM fragment reassembly |
-| `wsprobe.ts` | headless WS client for verification |
-| `examples/fakesensors.py` *(repo root)* | a real dimos `Module` demo publisher (subscribes /odom, publishes /map OccupancyGrid) |
-| `app/src/bus.ts` | `DimosBus` — decode, topic discovery, subscribe, publish |
-| `app/src/useBus.tsx` | React hooks: `useBus`, `useTopics`, `useTopic` |
-| `app/src/widgets/` | `WorldView` (auto-detects pose/map/scan/path by type), `TeleopPad`, `JsonInspector`, `PoseReadout`, `registry` |
+| `packages/topics/` | `@dimos/topics` — transport iface + `gatewayWs` adapter, client, topic, decode, stats |
+| `packages/react/` | `@dimos/react` — hooks |
+| `app/` | Vite example app (`panels/`: WorldView, PoseReadout, TeleopPad, StatsBar) |
+| `servers/gateway.ts` | Bun↔LCM gateway (LC03 reassembly, on-demand, teleop safety) |
+| `servers/gateway_zenoh.py` | Python↔Zenoh gateway (same WS protocol) |
+| `bench/` | publisher + headless bench + `run.sh` + `test_bench.py` + RESULTS.md |
 
-See **WALKTHROUGH.md** for the guided, concept-by-concept tour.
+The original prototype (`bridge.ts`, `app/src/bus.ts`, `app/src/widgets/`, `WALKTHROUGH.md`) is the
+parts-bin this was extracted from.
+
+## Status / next
+- ✅ SDK + Bun↔LCM gateway + React app + teleop (verified in Chrome) + benchmark + Python↔Zenoh gateway.
+- ⏭ **3D viewer:** embed the **stock** Rerun web viewer (`@rerun-io/web-viewer-react@0.32.0-alpha.1`)
+  fed by dimos `serve_grpc` :9877. The **forked `dimos-viewer`** (in-3D teleop/click-to-nav) needs a
+  cold Rust→WASM compile of the whole Rerun viewer — Apple `clang` lacks the `wasm32` target, so it
+  needs Homebrew LLVM (`CC` override); deferred (stock is the reliable path).
+- ⏭ True end-to-end on-demand on the Zenoh gateway (per-client `declareSubscriber`/`undeclare`).
+- ⏭ Camera (`useImageTopic`) + a transport selector in the app.
