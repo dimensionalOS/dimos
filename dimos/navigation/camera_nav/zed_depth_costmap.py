@@ -51,8 +51,8 @@ _VMASK = np.int64(0x3FFFF)
 # set_floor_as_origin takes a few seconds to calibrate after VIO locks; using
 # world-Z absolutes (e.g. Z>0.05) silently zeros the map until then.
 # Camera-relative Z is always valid: Z_link=0 is camera height, negative is below.
-_Z_REL_LO: float = -1.4   # 1.4 m below camera  (floor for typical ~1 m mount)
-_Z_REL_HI: float =  0.5   # 0.5 m above camera  (above-head obstacles)
+_Z_REL_LO: float = -1.2   # 1.2 m below camera  (floor for typical ~1 m mount)
+_Z_REL_HI: float =  0.3   # 0.3 m above camera  (reduces ceiling contamination)
 
 
 def _height_color(z_rel: np.ndarray) -> np.ndarray:
@@ -78,11 +78,12 @@ def _pack(vkeys: np.ndarray) -> np.ndarray:
     return (v[:, 0] << 36) | (v[:, 1] << 18) | v[:, 2]
 
 
-def _filter_isolated(xyz: np.ndarray, voxel: float = 0.05, min_pts: int = 2) -> np.ndarray:
-    """Remove points that are the only hit in their voxel — stereo flying-pixel filter.
+def _filter_isolated(xyz: np.ndarray, voxel: float = 0.05, min_pts: int = 3) -> np.ndarray:
+    """Remove sparse hits in a voxel — stereo flying-pixel filter.
 
-    A real surface produces many pixels per voxel; a stereo edge artifact produces one.
-    voxel=5 cm gives enough area to catch the artifact without merging adjacent surfaces.
+    A real surface produces many pixels per voxel; a stereo edge artifact produces one or two.
+    min_pts=3 is stricter than the old 2 — catches more edge artifacts at cost of
+    very-distant-surface sparsity, which is acceptable since the map caps at 8 m.
     """
     if len(xyz) < min_pts:
         return np.zeros((0, 3), dtype=np.float32)
@@ -387,7 +388,7 @@ class VoxelAccumulator:
 class DepthStreamer:
     """Assembles packets, builds persistent world-frame map, logs to Rerun."""
 
-    CONF_SURE = 60       # confidence ≥ this → goes into map + shown red
+    CONF_SURE = 70       # confidence ≥ this → goes into map + shown red
     MAX_CLOUD = 50_000   # Rerun per-frame point cap
     MAX_MAP   = 100_000  # Rerun map point cap
     MAP_EVERY = 10       # frames between map updates
@@ -461,8 +462,8 @@ class DepthStreamer:
             self._log_map()
 
     def _log_map(self) -> None:
-        # min_obs=2: a voxel must appear in ≥2 frames — eliminates single-frame noise
-        pts = self._vox.stable_xyz(min_obs=2)
+        # min_obs=3: a voxel must appear in ≥3 frames — eliminates transient noise
+        pts = self._vox.stable_xyz(min_obs=3)
         if len(pts) == 0:
             return
         n   = min(len(pts), self.MAX_MAP)
@@ -476,7 +477,7 @@ class DepthStreamer:
 
     def log_stdout(self, pkt: DepthFramePacket, frame: int, fps: float) -> None:
         lock   = "LOCKED" if self._pose.locked else "searching"
-        stable = len(self._vox.stable_xyz(min_obs=2))
+        stable = len(self._vox.stable_xyz(min_obs=3))
         print(
             f"frame={frame:5d}  "
             f"valid={pkt.valid_fraction * 100:5.1f}%  "
