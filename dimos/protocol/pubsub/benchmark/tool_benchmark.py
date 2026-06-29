@@ -19,6 +19,7 @@ import threading
 import time
 from typing import Any
 
+import psutil
 import pytest
 
 from dimos.protocol.pubsub.benchmark.testdata import testcases
@@ -73,6 +74,7 @@ def benchmark_results() -> Generator[BenchmarkResults, None, None]:
     results.print_summary()
     results.print_heatmap()
     results.print_bandwidth_heatmap()
+    results.print_cpu_heatmap()
     results.print_latency_heatmap()
     results.print_loss_heatmap()
 
@@ -111,8 +113,12 @@ def test_throughput(
         # Set target so callback can signal when all received
         target_count[0] = MAX_MESSAGES
 
-        # Publish messages until time limit, max messages, or all received
+        # CPU sampled over the publish window only, so lossy transports' receive
+        # idle doesn't skew it. psutil counts in-process threads but not kernel
+        # softirq or external daemons, so network transports read lower than SHM.
         msgs_sent = 0
+        process = psutil.Process()
+        cpu_before = process.cpu_times()
         start = time.perf_counter()
         end_time = start + BENCH_DURATION
 
@@ -124,6 +130,8 @@ def test_throughput(
                 break
 
         publish_end = time.perf_counter()
+        cpu_after = process.cpu_times()
+        cpu_seconds = (cpu_after.user - cpu_before.user) + (cpu_after.system - cpu_before.system)
         target_count[0] = msgs_sent  # Update to actual sent count
 
         # Check if already done, otherwise wait up to RECEIVE_TIMEOUT
@@ -154,6 +162,7 @@ def test_throughput(
             msgs_received=final_received,
             msg_size_bytes=msg_size,
             receive_time=latency,
+            cpu_seconds=cpu_seconds,
         )
         benchmark_results.add(result)
 
