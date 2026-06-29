@@ -32,7 +32,8 @@ RUN apt-get update && apt-get install -y \
     supervisor \
     iproute2 # for LCM networking system config \
     liblcm-dev \
-    libturbojpeg0-dev
+    libturbojpeg0-dev \
+    libcyclonedds-dev
 
 # Fix distutils-installed packages that block pip upgrades
 RUN apt-get purge -y python3-blinker python3-sympy python3-oauthlib || true

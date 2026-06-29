@@ -40,7 +40,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-06-19T13:31:15.809764Z"
+exclude-newer = "2026-06-22T14:17:13.225888Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -2355,7 +2355,7 @@ tests = [
 tests-self-hosted = [
     { name = "chromadb" },
     { name = "coverage" },
-    { name = "dimos", extra = ["agents", "apriltag", "cpu", "drone", "learning", "manipulation", "mapping", "misc", "perception", "sim", "unitree", "visualization", "web"] },
+    { name = "dimos", extra = ["agents", "apriltag", "cpu", "drone", "learning", "manipulation", "mapping", "misc", "perception", "sim", "unitree", "unitree-dds", "visualization", "web"] },
     { name = "einops" },
     { name = "gdown" },
     { name = "googlemaps" },
@@ -2365,7 +2365,6 @@ tests-self-hosted = [
     { name = "langchain-openai" },
     { name = "lap" },
     { name = "maturin" },
-    { name = "mcap" },
     { name = "md-babel-py" },
     { name = "moondream" },
     { name = "mujoco" },
@@ -2621,7 +2620,7 @@ tests = [
 tests-self-hosted = [
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },
-    { name = "dimos", extras = ["agents", "perception", "manipulation", "sim", "unitree", "misc"] },
+    { name = "dimos", extras = ["agents", "perception", "manipulation", "sim", "unitree", "unitree-dds", "misc"] },
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
     { name = "dimos", extras = ["web", "visualization"] },
     { name = "einops", specifier = ">=0.8.1" },
@@ -2633,7 +2632,6 @@ tests-self-hosted = [
     { name = "langchain-openai", specifier = ">=1,<2" },
     { name = "lap", specifier = ">=0.5.12" },
     { name = "maturin", specifier = ">=1.7" },
-    { name = "mcap", specifier = ">=1.2.0" },
     { name = "md-babel-py", specifier = ">=1.2.0" },
     { name = "moondream" },
     { name = "mujoco", specifier = ">=3.3.4" },
