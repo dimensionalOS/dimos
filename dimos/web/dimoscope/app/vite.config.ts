@@ -28,5 +28,8 @@ export default defineConfig({
       "@dimos/react": r("../packages/react/src/index.tsx"),
     },
   },
+  // Multi-page: the app (index.html) + the in-browser benchmark (bench.html). Dev serves
+  // any .html directly; build needs both entries listed here.
+  build: { rollupOptions: { input: { main: r("./index.html"), bench: r("./bench.html") } } },
   server: { port: 5173, host: true },
 });
