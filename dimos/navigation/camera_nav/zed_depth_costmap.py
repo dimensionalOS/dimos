@@ -387,7 +387,7 @@ class VoxelAccumulator:
 class DepthStreamer:
     """Assembles packets, builds persistent world-frame map, logs to Rerun."""
 
-    CONF_SURE = 60       # confidence ≥ this → goes into map + shown red
+    CONF_SURE = 65       # confidence ≥ this → goes into map + shown red
     MAX_CLOUD = 50_000   # Rerun per-frame point cap
     MAX_MAP   = 100_000  # Rerun map point cap
     MAP_EVERY = 10       # frames between map updates
@@ -403,7 +403,7 @@ class DepthStreamer:
         self._intr           = intrinsics
         self._pose           = pose
         self._bp             = backproj
-        self._vox            = VoxelAccumulator(voxel_size=0.05)  # 5 cm: robust to VIO jitter
+        self._vox            = VoxelAccumulator(voxel_size=0.08)  # 8 cm: merges same surface seen from different angles
         self._cam_z          = 0.0   # camera world-Z, updated each frame for relative coloring
         self._pinhole_logged = False
 
