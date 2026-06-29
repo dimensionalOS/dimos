@@ -2,7 +2,7 @@
 // Shows: live topic discovery, a fused 2D WorldView, a Pose readout, safe
 // teleop, and a live StatsBar (hz / bandwidth / latency per topic).
 import { useState } from "react";
-import { useStatus, useTopics, useTopicLatest } from "@dimos/react";
+import { useStatus, useTopics, useTopicLatest, useDimosClient } from "@dimos/react";
 import { WorldView } from "./panels/WorldView";
 import { PoseReadout } from "./panels/PoseReadout";
 import { TeleopPad } from "./panels/TeleopPad";
@@ -29,6 +29,7 @@ function Inspector({ topic }: { topic: string }) {
 export function App() {
   const topics = useTopics();
   const status = useStatus();
+  const label = useDimosClient()?.gatewayLabel;
   const [selected, setSelected] = useState<string | null>(null);
 
   return (
@@ -36,7 +37,7 @@ export function App() {
       <header className="topbar">
         <b>dimoscope</b>
         <span className={`status status-${status}`}>● {status}</span>
-        <span className="badge">gateway · Bun↔LCM</span>
+        <span className="badge">gateway · {label ?? "connecting…"}</span>
         <span className="muted">DimOS topics in the browser — subscribe · visualize · teleop</span>
       </header>
 

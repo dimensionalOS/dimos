@@ -80,8 +80,13 @@ export class DimosClient {
   /** All discovered topics (real ones; skips untyped LCM internals). */
   listTopics(): TopicInfo[] {
     return [...this.topicsMap]
-      .filter(([topic, type]) => type !== "?" && topic.startsWith("/"))
+      .filter(([topic, type]) => type !== "?" && topic.startsWith("/") && !topic.includes("/rpc/"))
       .map(([topic, type]) => ({ topic, type }));
+  }
+
+  /** The label the connected gateway reports (e.g. "Bun↔LCM", "Python↔Zenoh"). */
+  get gatewayLabel(): string | undefined {
+    return this.transport.label;
   }
 
   onTopics(cb: (t: TopicInfo[]) => void) {
