@@ -372,7 +372,7 @@ class DepthStreamer:
         self._intr           = intrinsics
         self._pose           = pose
         self._bp             = backproj
-        self._vox            = VoxelAccumulator(voxel_size=0.02)
+        self._vox            = VoxelAccumulator(voxel_size=0.05)  # 5 cm: robust to VIO jitter
         self._pinhole_logged = False
 
     def assemble(self, zed: sl.Camera, ts: float) -> DepthFramePacket:
@@ -391,6 +391,7 @@ class DepthStreamer:
         )
 
     def process(self, pkt: DepthFramePacket, frame: int) -> None:
+        rr.set_time("frame", sequence=frame)
         if not self._pinhole_logged:
             rr.log("world/camera", rr.Pinhole(
                 image_from_camera=pkt.K, width=pkt.width, height=pkt.height,
@@ -424,7 +425,7 @@ class DepthStreamer:
             self._log_map()
 
     def _log_map(self) -> None:
-        pts = self._vox.stable_xyz(min_obs=2)   # cross-frame noise filter
+        pts = self._vox.stable_xyz(min_obs=1)   # per-frame _filter_isolated already removes artifacts
         if len(pts) == 0:
             return
         n   = min(len(pts), self.MAX_MAP)
@@ -452,8 +453,7 @@ def main() -> None:
     # Fork Rerun BEFORE zed.open() — ZED capture threads make post-open fork unsafe.
     rr.init("zed_depth_costmap", spawn=True)
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
-    rr.log("world/cloud", rr.Points3D([[0, 0, 0]]), static=True)
-    rr.log("world/map",   rr.Points3D([[0, 0, 0]]), static=True)
+    rr.log("world/cloud", rr.Points3D([[0, 0, 0]]), static=True)  # anchor 3D view before camera opens
 
     zed = sl.Camera()
     ip  = sl.InitParameters()
