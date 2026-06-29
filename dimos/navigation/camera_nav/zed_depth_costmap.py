@@ -16,9 +16,11 @@ Rerun entities:
   world/camera              Pinhole model (static)
   world/camera/depth        filtered depth image (float32, auto-colorised)
   world/camera/confidence   per-pixel stereo confidence (greyscale)
-  world/cloud               current frame in world frame (height-coloured)
+  world/cloud               current frame occupied points (height-coloured)
+  world/free                current frame free-space rays (green)
   world/map                 accumulated voxel map (height-coloured, every 10 frames)
   world/costmap             2D occupancy grid as RGB image (green/yellow/red)
+  occupancy/birdseye        bird's-eye 2D occupancy (yellow/green/red, every frame)
 
 Usage:
   python -m dimos.navigation.camera_nav.zed_depth_costmap
@@ -464,7 +466,31 @@ class BirdsEyeOccupancy:
         return rgb
 
 
-# ── Stage 8: Streamer ─────────────────────────────────────────────────────────
+# ── Stage 8: Free-space ray sampler ──────────────────────────────────────────
+
+def _free_ray_points(
+    xyz: np.ndarray,
+    cam_t: np.ndarray,
+    stride: int = 8,
+    steps: int = 9,
+) -> np.ndarray:
+    """Sample free-space positions along rays from cam_t to each depth hit.
+
+    Between the camera and each confirmed surface there is empty space — this
+    function makes that explicit by sampling N points along each ray.
+
+    Works in whatever frame xyz is expressed in (camera-link before VIO,
+    world frame after). cam_t must be the camera position in the same frame.
+
+    stride: skip every Nth hit to keep total point count manageable.
+    steps:  how many sample points per ray (linearly spaced 10%–90% of range).
+    """
+    pts = xyz[::stride]                                          # (N, 3)
+    t   = np.linspace(0.1, 0.9, steps, dtype=np.float32)        # (steps,)
+    # broadcast: cam_t + t[i] * (pts[j] - cam_t) → (steps, N, 3)
+    free = cam_t + t[:, None, None] * (pts - cam_t)[None]
+    return free.reshape(-1, 3).astype(np.float32)
+
 
 # ── Stage 9: Streamer ─────────────────────────────────────────────────────────
 
@@ -560,6 +586,17 @@ class DepthStreamer:
                 radii=0.003,
             ))
 
+            # Free-space rays — sample points along each ray from camera to hit.
+            # Green = confirmed empty. Stride-8 keeps point count ~60 k.
+            free = _free_ray_points(xyz, pkt.pose_t)
+            if len(free) > self.MAX_CLOUD:
+                free = free[np.random.choice(len(free), self.MAX_CLOUD, replace=False)]
+            rr.log("world/free", rr.Points3D(
+                positions=free,
+                colors=np.full((len(free), 3), [30, 180, 30], dtype=np.uint8),
+                radii=0.002,
+            ))
+
     def _log_map_and_costmap(self) -> None:
         xyz = self._vox.xyz
         if len(xyz) > 0:
@@ -597,6 +634,10 @@ def main() -> None:
     # forking after those threads exist is unsafe on macOS (fork-after-threads segfault).
     rr.init("zed_depth_costmap", spawn=True)
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
+    # Seed 3D entities so Rerun treats 'world' as a 3D space from the first frame.
+    # Without this, the depth image arriving first locks the blueprint to 2D.
+    rr.log("world/cloud", rr.Points3D([[0, 0, 0]]), static=True)
+    rr.log("world/free",  rr.Points3D([[0, 0, 0]]), static=True)
 
     zed = sl.Camera()
     ip  = sl.InitParameters()
