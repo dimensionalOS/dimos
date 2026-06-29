@@ -635,7 +635,7 @@ def main() -> None:
     #   depth-discontinuity edges — exactly where flying pixels form.
     # remove_saturated_areas: invalidate pixels over-exposed by bright ceiling
     #   lights, where stereo matching is unreliable.
-    rt.texture_confidence_threshold = 65
+    rt.texture_confidence_threshold = 0   # disable SDK texture filter — walls have low texture and were being rejected before our pipeline; _filter_isolated handles the extra edge noise
     rt.remove_saturated_areas       = True
 
     frame = 0
