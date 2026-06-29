@@ -19,6 +19,7 @@ import threading
 import time
 from typing import Any
 
+import psutil
 import pytest
 
 from dimos.protocol.pubsub.benchmark.testdata import testcases
@@ -73,6 +74,7 @@ def benchmark_results() -> Generator[BenchmarkResults, None, None]:
     results.print_summary()
     results.print_heatmap()
     results.print_bandwidth_heatmap()
+    results.print_cpu_heatmap()
     results.print_latency_heatmap()
     results.print_loss_heatmap()
 
@@ -113,7 +115,19 @@ def test_throughput(
         target_count[0] = MAX_MESSAGES
 
         # Publish messages until time limit, max messages, or all received
+        # Capture CPU time across the active window (publish + receive); psutil
+        # aggregates all threads of this process, so native transport threads
+        # (Zenoh's Rust runtime, cyclonedds/LCM threads) are included.
+        #
+        # This is per-process userspace CPU, not total machine cost: kernel-side
+        # packet delivery (softirq/ksoftirqd for UDP multicast and loopback) is
+        # not billed to us, so network-mediated transports (LCM/UDP) read lower
+        # than transports that spin in userspace (Shm). Out-of-process daemons
+        # (Redis server) aren't counted at all. Measured after warmup, so this is
+        # steady-state per-message cost, excluding transport startup.
         msgs_sent = 0
+        process = psutil.Process()
+        cpu_before = process.cpu_times()
         start = time.perf_counter()
         end_time = start + BENCH_DURATION
 
@@ -135,6 +149,8 @@ def test_throughput(
         if not all_received.is_set():
             all_received.wait(timeout=RECEIVE_TIMEOUT)
         latency_end = time.perf_counter()
+        cpu_after = process.cpu_times()
+        cpu_seconds = (cpu_after.user - cpu_before.user) + (cpu_after.system - cpu_before.system)
 
         with lock:
             final_received = received_count
@@ -155,6 +171,7 @@ def test_throughput(
             msgs_received=final_received,
             msg_size_bytes=msg_size,
             receive_time=latency,
+            cpu_seconds=cpu_seconds,
         )
         benchmark_results.add(result)
 
