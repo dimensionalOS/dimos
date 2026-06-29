@@ -45,15 +45,21 @@ import rerun.blueprint as rrb
 _VOFF  = np.int64(100_000)
 _VMASK = np.int64(0x3FFFF)
 
-# set_floor_as_origin=True → Z=0 at floor in world frame.
-# Only accumulate points in this height band: excludes floor and ceiling,
-# keeps anything a robot would actually collide with.
-# Height filter relative to the camera.
-# set_floor_as_origin takes a few seconds to calibrate after VIO locks; using
-# world-Z absolutes (e.g. Z>0.05) silently zeros the map until then.
-# Camera-relative Z is always valid: Z_link=0 is camera height, negative is below.
-_Z_REL_LO: float = -1.4   # 1.4 m below camera  (floor for typical ~1 m mount)
-_Z_REL_HI: float =  0.5   # 0.5 m above camera  (above-head obstacles)
+# Camera-relative height band for obstacle accumulation.
+# VIO absolute translation is unreliable (set_floor_as_origin calibration drifts),
+# so all height filtering is camera-relative: h_rel = world_Z - cam_Z.
+_Z_REL_LO: float = -1.4   # 1.4 m below camera
+_Z_REL_HI: float =  0.5   # 0.5 m above camera
+
+# Floor exclusion via ray angle.
+# The floor is always below the camera, so rays to floor points point steeply
+# downward. Ray directions are reliable even when VIO translation drifts because
+# both the camera position and the surface point are in the same VIO frame —
+# the relative vector between them is unaffected by translation error.
+# _FLOOR_RAY_Z is the Z component of the normalised ray direction below which
+# we treat the point as a floor hit. -0.30 ≈ 17° below horizontal; tune up
+# (toward 0) to be more conservative, down (toward -1) to be more permissive.
+_FLOOR_RAY_Z: float = -0.30
 
 
 def _height_color(z_rel: np.ndarray) -> np.ndarray:
@@ -521,8 +527,14 @@ class DepthStreamer:
             xyz_sure  = xyz[conf >= self.CONF_SURE]
             xyz_clean = _filter_isolated(xyz_sure)
             if len(xyz_clean) > 0:
-                h_rel   = xyz_clean[:, 2] - self._cam_z
-                xyz_obs = xyz_clean[(h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI)]
+                h_rel    = xyz_clean[:, 2] - self._cam_z
+                rays     = xyz_clean - cam_pos                         # (N, 3)
+                dist     = np.linalg.norm(rays, axis=1)                # (N,)
+                d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0) # sin(angle from horiz)
+                xyz_obs  = xyz_clean[
+                    (h_rel    >= _Z_REL_LO) & (h_rel <= _Z_REL_HI)
+                    & (d_z_norm > _FLOOR_RAY_Z)   # exclude steep-downward (floor) rays
+                ]
                 if len(xyz_obs) > 0:
                     # Carve free space then accumulate surface hits.
                     # Surface voxels are excluded from carving so obs can grow.
