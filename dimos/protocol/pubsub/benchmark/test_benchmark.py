@@ -114,17 +114,11 @@ def test_throughput(
         # Set target so callback can signal when all received
         target_count[0] = MAX_MESSAGES
 
-        # Publish messages until time limit, max messages, or all received
-        # Capture CPU time across the active window (publish + receive); psutil
-        # aggregates all threads of this process, so native transport threads
-        # (Zenoh's Rust runtime, cyclonedds/LCM threads) are included.
-        #
-        # This is per-process userspace CPU, not total machine cost: kernel-side
-        # packet delivery (softirq/ksoftirqd for UDP multicast and loopback) is
-        # not billed to us, so network-mediated transports (LCM/UDP) read lower
-        # than transports that spin in userspace (Shm). Out-of-process daemons
-        # (Redis server) aren't counted at all. Measured after warmup, so this is
-        # steady-state per-message cost, excluding transport startup.
+        # CPU is sampled over the publish window only (cpu_after at publish_end),
+        # so the receive-timeout idle on lossy transports doesn't skew it. psutil
+        # sums all threads, so native delivery threads (Zenoh/cyclonedds/LCM) count;
+        # kernel-side packet delivery (softirq) and out-of-process daemons (Redis)
+        # do not, so network transports read lower than userspace-spinning ones.
         msgs_sent = 0
         process = psutil.Process()
         cpu_before = process.cpu_times()
@@ -139,6 +133,8 @@ def test_throughput(
                 break
 
         publish_end = time.perf_counter()
+        cpu_after = process.cpu_times()
+        cpu_seconds = (cpu_after.user - cpu_before.user) + (cpu_after.system - cpu_before.system)
         target_count[0] = msgs_sent  # Update to actual sent count
 
         # Check if already done, otherwise wait up to RECEIVE_TIMEOUT
@@ -149,8 +145,6 @@ def test_throughput(
         if not all_received.is_set():
             all_received.wait(timeout=RECEIVE_TIMEOUT)
         latency_end = time.perf_counter()
-        cpu_after = process.cpu_times()
-        cpu_seconds = (cpu_after.user - cpu_before.user) + (cpu_after.system - cpu_before.system)
 
         with lock:
             final_received = received_count

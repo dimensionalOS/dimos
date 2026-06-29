@@ -59,8 +59,8 @@ class BenchmarkResult:
 
     @property
     def cpu_cores(self) -> float:
-        """Average CPU cores utilized (cpu_seconds / wall time)."""
-        return self.cpu_seconds / self.total_time if self.total_time > 0 else 0
+        """Average CPU cores used while publishing (cpu_seconds / duration)."""
+        return self.cpu_seconds / self.duration if self.duration > 0 else 0
 
     @property
     def throughput_msgs(self) -> float:
