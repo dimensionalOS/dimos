@@ -289,3 +289,68 @@ def test_joint_target_to_global_names_rejects_mixed_global_and_local_target_name
 
     with pytest.raises(ValueError, match="mixes global and local joint names"):
         joint_target_to_global_names(group, target)
+
+
+def test_robot_model_config_derives_legacy_end_effector_link_from_pose_group() -> None:
+    config = RobotModelConfig(
+        name="arm",
+        model_path=Path("robot.urdf"),
+        joint_names=["j1", "j2"],
+        joint_name_mapping={"hw_j1": "j1", "hw_j2": "j2"},
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="manipulator",
+                joint_names=("j1", "j2"),
+                base_link="base",
+                tip_link="tool",
+            )
+        ],
+    )
+
+    assert config.end_effector_link == "tool"
+    assert config.get_urdf_joint_name("hw_j1") == "j1"
+    assert config.get_coordinator_joint_name("j2") == "hw_j2"
+    assert config.get_coordinator_joint_names() == ["hw_j1", "hw_j2"]
+
+
+def test_robot_model_config_end_effector_link_requires_pose_group() -> None:
+    config = RobotModelConfig(
+        name="arm",
+        model_path=Path("robot.urdf"),
+        joint_names=["j1"],
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="joint_only",
+                joint_names=("j1",),
+                base_link="base",
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="no pose-target planning group"):
+        _ = config.end_effector_link
+
+
+def test_robot_model_config_end_effector_link_rejects_ambiguous_pose_groups() -> None:
+    config = RobotModelConfig(
+        name="arm",
+        model_path=Path("robot.urdf"),
+        joint_names=["j1", "j2"],
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="left",
+                joint_names=("j1",),
+                base_link="base",
+                tip_link="left_tool",
+            ),
+            PlanningGroupDefinition(
+                name="right",
+                joint_names=("j2",),
+                base_link="base",
+                tip_link="right_tool",
+            ),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="multiple pose-target planning groups"):
+        _ = config.end_effector_link
