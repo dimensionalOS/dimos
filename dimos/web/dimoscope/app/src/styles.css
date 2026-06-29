@@ -41,6 +41,10 @@ body {
   padding: 2px 8px;
 }
 .muted { color: var(--muted); }
+.server-select {
+  background: var(--panel); color: var(--text); border: 1px solid var(--line);
+  border-radius: 6px; padding: 2px 6px; font: 12px ui-monospace, monospace; cursor: pointer;
+}
 .small { font-size: 12px; }
 
 .sidebar {

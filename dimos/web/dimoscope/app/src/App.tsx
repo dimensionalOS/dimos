@@ -2,7 +2,7 @@
 // Shows: live topic discovery, a fused 2D WorldView, a Pose readout, safe
 // teleop, and a live StatsBar (hz / bandwidth / latency per topic).
 import { useState } from "react";
-import { useStatus, useTopics, useTopicLatest, useDimosClient } from "@dimos/react";
+import { useStatus, useTopics, useTopicLatest, useDimosClient, useServers } from "@dimos/react";
 import { WorldView } from "./panels/WorldView";
 import { CameraView } from "./panels/CameraView";
 import { PoseReadout } from "./panels/PoseReadout";
@@ -31,6 +31,7 @@ export function App() {
   const topics = useTopics();
   const status = useStatus();
   const label = useDimosClient()?.gatewayLabel;
+  const { servers, activeId, setActiveId } = useServers();
   const [selected, setSelected] = useState<string | null>(null);
   const [tab, setTab] = useState<"2d" | "3d">("2d");
 
@@ -39,6 +40,20 @@ export function App() {
       <header className="topbar">
         <b>dimoscope</b>
         <span className={`status status-${status}`}>● {status}</span>
+        {servers.length > 1 && (
+          <select
+            className="server-select"
+            value={activeId ?? ""}
+            onChange={(e) => setActiveId(e.target.value)}
+            title="active transport / server"
+          >
+            {servers.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+        )}
         <span className="badge">gateway · {label ?? "connecting…"}</span>
         <span className="muted">DimOS topics in the browser — subscribe · visualize · teleop</span>
       </header>
