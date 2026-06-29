@@ -82,25 +82,29 @@ live subscriber.
 ## Benchmark
 
 ```bash
-bench/run.sh           # Bun↔LCM gateway
-bench/run.sh zenoh     # Python↔Zenoh gateway
-bench/run.sh all       # both → combined bench/RESULTS.md
+bench/run.sh           # Bun↔LCM gateway (:8090)
+bench/run.sh zenoh     # Python↔Zenoh gateway (:8091)
+bench/run.sh ts        # zenoh-ts direct via the :10000 bridge — headless under Deno
+bench/run.sh all       # all three → combined bench/RESULTS.md (end-to-end latency)
 pytest bench/test_bench.py -s
 ```
-**All 3 transports, in the real browser runtime** (the only way to bench zenoh-ts — its
-wasm-bindgen *bundler*-target WASM won't instantiate in Bun/Node):
 
+**zenoh-ts benches headless under Deno, not Bun:** its wasm-bindgen *bundler*-target WASM fails in
+Bun (`wasm.__wbindgen_start is not a function`) but Deno instantiates it (zenoh-ts's own examples are
+Deno-based). So `run.sh all` covers all three via the same `@dimos/topics/bench` core — gateways under
+Bun, zenoh-ts under Deno (`bench/bench_deno.ts`).
+
+There's also a **browser** bench — the app's real runtime — for an end-to-end cross-check:
 ```bash
 bash bench/serve-bench.sh              # 3 servers + bench_publisher on both buses
 # then open http://localhost:5173/bench.html → Run  (copy-Markdown / download-JSON)
 ```
 
-Results: **[bench/RESULTS.md](bench/RESULTS.md)** (headless gateways) + **[bench/RESULTS-browser.md](bench/RESULTS-browser.md)**
-(in-browser, all 3) — both off the same `@dimos/topics/bench` measurement core.
-Headline: headless, **sub-ms p50** WS-hop latency on both gateways with **Python↔Zenoh ~6× lower p95**
-(reliable transport vs LCM multicast jitter) → "Python is slow" is a non-issue for a byte-relay gateway.
-In-browser, all three hit **throughput parity (~417 hz)** with comparable end-to-end latency, and
-**on-demand cuts ~75%** bandwidth — for zenoh-ts that's *true* per-client on-demand (only declared keys transit).
+Results: **[bench/RESULTS.md](bench/RESULTS.md)** (headless, all 3) + **[bench/RESULTS-browser.md](bench/RESULTS-browser.md)**
+(in-browser, all 3) — same measurement core. Headline: **throughput parity** (~330 hz headless / ~417
+in-browser) across all three; **sub-ms end-to-end latency** (p50 ~0.3–0.4, p95 ~0.7–1 ms); **~75% on-demand**
+bandwidth cut — for zenoh-ts that's *true* per-client on-demand (only declared keys transit). The gateways'
+own WS-hop latency (`run.sh lcm`/`zenoh`) shows **Zenoh's tail ~3–6× lower** than LCM multicast.
 
 ## Layout
 | Path | What |

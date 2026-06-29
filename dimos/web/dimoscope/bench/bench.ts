@@ -20,6 +20,9 @@ const DUR = Number(process.env.BENCH_DUR_MS ?? 5000);
 const TRANSPORT = process.env.BENCH_TRANSPORT; // "ts" → zenoh-ts direct
 const TS_URL = process.env.ZENOH_TS_URL ?? "ws://localhost:10000";
 const url = TRANSPORT === "ts" ? TS_URL : WS_URL;
+// BENCH_E2E=1 → end-to-end latency (publish→client) instead of the gateway WS-hop, so a
+// combined all-transport table (incl. the gateway-less zenoh-ts) compares the same thing.
+const E2E = process.env.BENCH_E2E === "1";
 
 async function buildClient() {
   if (TRANSPORT === "ts") {
@@ -35,7 +38,7 @@ const rows: BenchRow[] = [];
 for (const scenario of BENCH_SCENARIOS) {
   const client = await buildClient();
   await new Promise((r) => setTimeout(r, 200));
-  const row = await measureScenario(client, scenario, DUR);
+  const row = await measureScenario(client, scenario, DUR, E2E);
   client.close();
   rows.push(row);
   console.log(
