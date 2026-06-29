@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import functools
 import threading
 from typing import (
     TYPE_CHECKING,
@@ -176,7 +177,10 @@ class pSHMTransport(PubSubTransport[T]):
         self.shm = PickleSharedMemory(**kwargs)
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (pSHMTransport, (self.topic,))
+        return (
+            functools.partial(pSHMTransport, default_capacity=self.shm.config.default_capacity),
+            (self.topic,),
+        )
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
         if not self._started:
@@ -206,7 +210,10 @@ class SHMTransport(PubSubTransport[T]):
         self.shm = BytesSharedMemory(**kwargs)
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (SHMTransport, (self.topic,))
+        return (
+            functools.partial(SHMTransport, default_capacity=self.shm.config.default_capacity),
+            (self.topic,),
+        )
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
         if not self._started:
