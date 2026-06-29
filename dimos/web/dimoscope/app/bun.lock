@@ -6,6 +6,7 @@
       "name": "dimoscope-app",
       "dependencies": {
         "@dimos/msgs": "npm:@jsr/dimos__msgs@0.1.4",
+        "@rerun-io/web-viewer-react": "0.32.0-alpha.1",
         "react": "^18.3.1",
         "react-dom": "^18.3.1",
       },
@@ -114,6 +115,10 @@
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.5.5", "", {}, "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="],
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
+
+    "@rerun-io/web-viewer": ["@rerun-io/web-viewer@0.32.0-alpha.1", "", {}, "sha512-TSTLM0Q6RBHbivJQ/lFJCzqpwH13m1TqvKV3q6OFqZ61YumkPjsKZ98jXA26sUlmISjcNmtZr8ufVSMHIzZiww=="],
+
+    "@rerun-io/web-viewer-react": ["@rerun-io/web-viewer-react@0.32.0-alpha.1", "", { "dependencies": { "@rerun-io/web-viewer": "0.32.0-alpha.1" }, "peerDependencies": { "@types/react": "^18.2.33 || ^19.0.0", "react": "^18.2.0 || ^19.0.0" } }, "sha512-OVMMnLAlPMt49sduPOU/Q7SfqpcN5mNGe7ykD3QBascwew2l9B7Xzqt90aIy0qDa9loQakucwKvY82w7e09cdA=="],
 
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.0-beta.27", "", {}, "sha512-+d0F4MKMCbeVUJwG96uQ4SgAznZNSq93I3V+9NHA4OpvqG8mRCpGdKmK8l/dl02h2CCDHwW2FqilnTyDcAnqjA=="],
 

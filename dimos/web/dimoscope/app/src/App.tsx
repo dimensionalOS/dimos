@@ -7,6 +7,7 @@ import { WorldView } from "./panels/WorldView";
 import { PoseReadout } from "./panels/PoseReadout";
 import { TeleopPad } from "./panels/TeleopPad";
 import { StatsBar } from "./panels/StatsBar";
+import { RerunPanel } from "./panels/RerunPanel";
 
 function Inspector({ topic }: { topic: string }) {
   const { data, meta } = useTopicLatest<any>(topic, { maxHz: 4 });
@@ -63,6 +64,7 @@ export function App() {
           <TeleopPad />
           {selected ? <Inspector topic={selected} /> : <StatsBar />}
         </div>
+        <RerunPanel />
       </main>
     </div>
   );

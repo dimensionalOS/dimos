@@ -83,10 +83,14 @@ The original prototype (`bridge.ts`, `app/src/bus.ts`, `app/src/widgets/`, `WALK
 parts-bin this was extracted from.
 
 ## Status / next
-- ✅ SDK + Bun↔LCM gateway + React app + teleop (verified in Chrome) + benchmark + Python↔Zenoh gateway.
-- ⏭ **3D viewer:** embed the **stock** Rerun web viewer (`@rerun-io/web-viewer-react@0.32.0-alpha.1`)
-  fed by dimos `serve_grpc` :9877. The **forked `dimos-viewer`** (in-3D teleop/click-to-nav) needs a
-  cold Rust→WASM compile of the whole Rerun viewer — Apple `clang` lacks the `wasm32` target, so it
-  needs Homebrew LLVM (`CC` override); deferred (stock is the reliable path).
+- ✅ SDK + Bun↔LCM gateway + React app + teleop (verified in Chrome incl. driving the robot) +
+  benchmark + Python↔Zenoh gateway + comparison.
+- ⚠️ **Rerun 3D panel** (`panels/RerunPanel.tsx`): the stock `@rerun-io/web-viewer-react@0.32.0-alpha.1`
+  **embeds, loads (after a Vite `optimizeDeps.exclude` for the wasm MIME), connects to dimos
+  `serve_grpc` :9877, and streams** (console-confirmed) — but the viewport isn't painting geometry yet
+  (needs a blueprint/view config or a WebGL-in-embed nudge). Start the feed with:
+  `DIMOS_TRANSPORT=lcm python -c "from dimos.visualization.rerun.bridge import run_bridge; run_bridge(rerun_open='web', rerun_web=True)"`.
+- ⏭ **Forked `dimos-viewer`** (in-3D teleop/click-to-nav): a cold Rust→WASM compile of the whole Rerun
+  viewer. Apple `clang` lacks the `wasm32` target → use Homebrew LLVM (`CC_wasm32_unknown_unknown`).
 - ⏭ True end-to-end on-demand on the Zenoh gateway (per-client `declareSubscriber`/`undeclare`).
 - ⏭ Camera (`useImageTopic`) + a transport selector in the app.
