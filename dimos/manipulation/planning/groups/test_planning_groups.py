@@ -27,9 +27,15 @@ from dimos.manipulation.planning.groups.discovery import (
     generate_fallback_planning_group,
     parse_srdf_planning_groups,
 )
+from dimos.manipulation.planning.groups.identifiers import local_joint_name_from_global
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
-from dimos.manipulation.planning.groups.utils import joint_target_to_global_names
+from dimos.manipulation.planning.groups.utils import (
+    filter_joint_state_to_selected_joints,
+    joint_target_to_global_names,
+    matching_global_joint_name,
+    planning_group_id_from_selector,
+)
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -89,6 +95,28 @@ def _make_group() -> PlanningGroup:
         local_joint_names=("j1", "j2", "j3"),
         base_link="base",
         tip_link="ee",
+    )
+
+
+def _robot_config(
+    name: str = "robot",
+    planning_groups: list[PlanningGroupDefinition] | None = None,
+) -> RobotModelConfig:
+    return RobotModelConfig(
+        name=name,
+        model_path=Path("/tmp/robot.urdf"),
+        base_pose=PoseStamped(),
+        joint_names=["joint1", "joint2", "joint3"],
+        planning_groups=planning_groups
+        if planning_groups is not None
+        else [
+            PlanningGroupDefinition(
+                name=FALLBACK_PLANNING_GROUP_NAME,
+                joint_names=("joint1", "joint2"),
+                base_link="base",
+                tip_link="tool",
+            )
+        ],
     )
 
 
@@ -194,6 +222,63 @@ def test_fallback_rejects_branching_model() -> None:
         )
 
 
+def test_fallback_rejects_all_terminal_prismatic_candidates() -> None:
+    with pytest.raises(PlanningGroupDiscoveryError, match="removed all candidate joints"):
+        generate_fallback_planning_group(
+            model=_serial_model("prismatic", "prismatic"),
+            controllable_joint_names=["joint1", "joint2"],
+        )
+
+
+def test_parse_srdf_skips_invalid_groups_and_keeps_valid_group(tmp_path: Path) -> None:
+    model = _serial_model("revolute", "revolute")
+    srdf_path = _write_srdf(
+        tmp_path,
+        """
+        <group name='missing_tip'><chain base_link='link0'/></group>
+        <group><chain base_link='link0' tip_link='link2'/></group>
+        <group name='unknown_joint'><joint name='joint1'/><joint name='missing'/></group>
+        <group name='arm'><joint name='joint1'/><joint name='joint2'/></group>
+        """,
+    )
+
+    groups = parse_srdf_planning_groups(
+        srdf_path,
+        model=model,
+        controllable_joint_names=["joint1", "joint2"],
+    )
+
+    assert [group.name for group in groups] == ["arm"]
+
+
+def test_discovery_rejects_missing_explicit_srdf(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match="SRDF file not found"):
+        discover_planning_group_definitions(
+            robot_name="robot",
+            model_path=tmp_path / "robot.urdf",
+            model=_serial_model("revolute"),
+            controllable_joint_names=["joint1"],
+            srdf_path=tmp_path / "missing.srdf",
+        )
+
+
+def test_discovery_falls_back_when_srdf_has_no_supported_groups(tmp_path: Path) -> None:
+    model_path = tmp_path / "robot.urdf.xacro"
+    model_path.write_text("<robot name='test'/>")
+    (tmp_path / "robot.srdf").write_text(
+        "<robot name='test'><group name='links'><link name='link1'/></group></robot>"
+    )
+
+    groups = discover_planning_group_definitions(
+        robot_name="robot",
+        model_path=model_path,
+        model=_serial_model("revolute"),
+        controllable_joint_names=["joint1"],
+    )
+
+    assert [group.name for group in groups] == [FALLBACK_PLANNING_GROUP_NAME]
+
+
 def test_discovery_prefers_explicit_srdf_over_fallback(tmp_path: Path) -> None:
     model = _serial_model("revolute", "revolute")
     model_path = tmp_path / "robot.urdf"
@@ -263,6 +348,51 @@ def test_primary_pose_group_id_for_robot_raises_when_ambiguous() -> None:
         registry.primary_pose_group_id_for_robot("robot")
 
 
+def test_registry_preserves_order_and_exposes_defaults() -> None:
+    registry = PlanningGroupRegistry([_robot_config("left"), _robot_config("right")])
+
+    assert [group.id for group in registry.list()] == ["left/manipulator", "right/manipulator"]
+    assert registry.default_group_id_for_robot("left") == "left/manipulator"
+    assert registry.primary_pose_group_id_for_robot("right") == "right/manipulator"
+    assert registry.groups_for_robot("missing") == ()
+    assert registry.default_group_id_for_robot("missing") is None
+
+
+def test_registry_rejects_duplicate_robot_and_unknown_group() -> None:
+    registry = PlanningGroupRegistry([_robot_config()])
+
+    with pytest.raises(ValueError, match="already registered"):
+        registry.add_robot(_robot_config())
+    with pytest.raises(KeyError, match="Unknown planning group ID"):
+        registry.get("robot/missing")
+
+
+def test_selection_preserves_group_order_and_rejects_overlapping_joints() -> None:
+    registry = PlanningGroupRegistry(
+        [
+            _robot_config(
+                planning_groups=[
+                    PlanningGroupDefinition("arm", ("joint1", "joint2"), "base", "tool"),
+                    PlanningGroupDefinition("gripper", ("joint3",), "tool"),
+                ]
+            )
+        ]
+    )
+
+    selection = registry.select(["robot/gripper", "robot/arm"])
+
+    assert selection.group_ids == ("robot/gripper", "robot/arm")
+    assert selection.joint_names == ("robot/joint3", "robot/joint1", "robot/joint2")
+    assert selection.robot_names == ("robot",)
+
+    overlapping = (
+        PlanningGroup("robot/first", "robot", "first", ("robot/joint1",), ("joint1",), "base"),
+        PlanningGroup("robot/second", "robot", "second", ("robot/joint1",), ("joint1",), "base"),
+    )
+    with pytest.raises(ValueError, match="overlap"):
+        type(selection).from_groups(overlapping)
+
+
 def test_joint_target_to_global_names_accepts_named_global_targets_in_group_order() -> None:
     group = _make_group()
     target = JointState({"name": ["left/j3", "left/j1", "left/j2"], "position": [3.0, 1.0, 2.0]})
@@ -289,6 +419,68 @@ def test_joint_target_to_global_names_rejects_mixed_global_and_local_target_name
 
     with pytest.raises(ValueError, match="mixes global and local joint names"):
         joint_target_to_global_names(group, target)
+
+
+def test_joint_target_to_global_names_rejects_bad_counts_missing_and_extra() -> None:
+    group = _make_group()
+
+    with pytest.raises(ValueError, match="2 positions, expected 3"):
+        joint_target_to_global_names(group, JointState({"position": [1.0, 2.0]}))
+    with pytest.raises(ValueError, match="2 names but 3 positions"):
+        joint_target_to_global_names(
+            group, JointState({"name": ["j1", "j2"], "position": [1.0, 2.0, 3.0]})
+        )
+    with pytest.raises(ValueError, match="missing joints"):
+        joint_target_to_global_names(
+            group, JointState({"name": ["j1", "j2"], "position": [1.0, 2.0]})
+        )
+    with pytest.raises(ValueError, match="extra joints"):
+        joint_target_to_global_names(
+            group, JointState({"name": ["j1", "j2", "j3", "j4"], "position": [1.0, 2.0, 3.0, 4.0]})
+        )
+
+
+def test_filter_joint_state_to_selected_joints_uses_local_fallbacks() -> None:
+    joint_state = JointState({"name": ["j1", "robot/j2"], "position": [1.0, 2.0]})
+
+    filtered = filter_joint_state_to_selected_joints(
+        joint_state,
+        ["robot/j1", "robot/j2"],
+        ["j1", "j2"],
+    )
+
+    assert filtered.name == ["robot/j1", "robot/j2"]
+    assert filtered.position == [1.0, 2.0]
+
+
+def test_filter_joint_state_to_selected_joints_rejects_mismatched_and_missing_names() -> None:
+    joint_state = JointState({"name": ["robot/j1"], "position": [1.0]})
+
+    with pytest.raises(ValueError, match="same length"):
+        filter_joint_state_to_selected_joints(joint_state, ["robot/j1", "robot/j2"], ["j1"])
+    with pytest.raises(ValueError, match="missing selected joints"):
+        filter_joint_state_to_selected_joints(joint_state, ["robot/j1", "robot/j2"])
+
+
+def test_matching_global_joint_name_requires_unique_suffix_match() -> None:
+    assert matching_global_joint_name({"left/j1": 1.0, "right/j2": 2.0}, "j1") == "left/j1"
+    assert matching_global_joint_name({"left/j1": 1.0, "right/j1": 2.0}, "j1") is None
+    assert matching_global_joint_name({"left/j1": 1.0}, "j2") is None
+
+
+def test_planning_group_id_from_selector_accepts_id_or_group() -> None:
+    group = _make_group()
+
+    assert planning_group_id_from_selector(group) == "left/arm"
+    assert planning_group_id_from_selector("left/arm") == "left/arm"
+
+
+def test_local_joint_name_from_global_validates_robot_prefix_and_local_shape() -> None:
+    assert local_joint_name_from_global("robot", "robot/j1") == "j1"
+    with pytest.raises(ValueError, match="does not belong"):
+        local_joint_name_from_global("robot", "other/j1")
+    with pytest.raises(ValueError, match="Invalid global joint name"):
+        local_joint_name_from_global("robot", "robot/")
 
 
 def test_robot_model_config_derives_legacy_end_effector_link_from_pose_group() -> None:
