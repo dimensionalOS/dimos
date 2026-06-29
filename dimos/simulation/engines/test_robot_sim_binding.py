@@ -17,9 +17,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import mujoco
 import pytest
-
-mujoco = pytest.importorskip("mujoco")
 
 from dimos.simulation.engines.mujoco_engine import MujocoEngine
 from dimos.simulation.engines.robot_sim_binding import (

@@ -193,7 +193,4 @@ class TestCodecFor:
         assert isinstance(codec_for(PoseStamped), LcmCodec)
 
     def test_image_type_returns_jpeg(self) -> None:
-        pytest.importorskip("turbojpeg")
-        from dimos.memory2.codecs.jpeg import JpegCodec
-
         assert isinstance(codec_for(Image), JpegCodec)

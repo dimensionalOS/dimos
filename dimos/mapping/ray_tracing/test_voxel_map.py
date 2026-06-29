@@ -15,8 +15,6 @@
 import numpy as np
 import pytest
 
-pytest.importorskip("dimos_voxel_ray_tracing")
-
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 
 ORIGIN = (0.0, 0.0, 0.0)

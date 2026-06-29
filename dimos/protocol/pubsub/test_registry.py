@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import pytest
+import turbojpeg
 
 from dimos.core.transport import (
     JpegLcmTransport,
@@ -108,10 +109,9 @@ def test_make_pubsub_transport_shm_uses_SHMTransport() -> None:
 
 
 def test_make_pubsub_transport_jpeg_shm_uses_JpegShmTransport() -> None:
-    # The Python `turbojpeg` package is importable even when the native
-    # libturbojpeg.so is missing; the RuntimeError only fires when TurboJPEG()
-    # is actually constructed. Probe by trying to instantiate it.
-    turbojpeg = pytest.importorskip("turbojpeg")
+    # The native libturbojpeg.so can be missing even when the `turbojpeg`
+    # package imports fine; the RuntimeError only fires when TurboJPEG() is
+    # actually constructed. Probe by trying to instantiate it.
     try:
         turbojpeg.TurboJPEG()
     except RuntimeError as exc:
