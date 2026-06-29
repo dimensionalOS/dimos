@@ -416,16 +416,20 @@ class DepthStreamer:
         rr.log("world/cloud", rr.Points3D(positions=xyz[idx], colors=colors, radii=0.003))
 
         # ── Persistent map: only sure points, only when VIO is locked ─────────
+        n_sure = 0; n_clean = 0
         if self._pose.locked:
-            xyz_sure = xyz[conf >= self.CONF_SURE]
-            xyz_clean = _filter_isolated(xyz_sure)   # drop single-pixel artifacts
+            xyz_sure  = xyz[conf >= self.CONF_SURE]
+            xyz_clean = _filter_isolated(xyz_sure)
+            n_sure  = len(xyz_sure)
+            n_clean = len(xyz_clean)
             self._vox.add(xyz_clean)
 
         if frame % self.MAP_EVERY == 0:
-            self._log_map()
+            self._log_map(frame, n_sure, n_clean)
 
-    def _log_map(self) -> None:
-        pts = self._vox.stable_xyz(min_obs=1)   # per-frame _filter_isolated already removes artifacts
+    def _log_map(self, frame: int, n_sure: int, n_clean: int) -> None:
+        pts = self._vox.stable_xyz(min_obs=1)
+        print(f"  [map@{frame}] sure={n_sure}  clean={n_clean}  vox={self._vox.count}  stable={len(pts)}")
         if len(pts) == 0:
             return
         n   = min(len(pts), self.MAX_MAP)
@@ -435,6 +439,7 @@ class DepthStreamer:
             colors=np.full((n, 3), [220, 220, 220], dtype=np.uint8),  # white-gray
             radii=0.005,
         ))
+        print(f"  [map@{frame}] logged {n} pts → world/map")
 
     def log_stdout(self, pkt: DepthFramePacket, frame: int, fps: float) -> None:
         lock = "LOCKED" if self._pose.locked else "searching"
