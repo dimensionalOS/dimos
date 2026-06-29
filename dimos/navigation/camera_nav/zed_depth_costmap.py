@@ -585,6 +585,12 @@ def main() -> None:
     if zed.open(ip) != sl.ERROR_CODE.SUCCESS:
         print("ZED failed to open"); return
 
+    # Cap exposure to prevent bright light (windows, lamps) from washing out stereo
+    # texture. Auto-exposure chases the bright source and under-exposes the scene;
+    # a fixed value keeps geometry well-textured for stereo matching.
+    # Range 0-100; lower = faster shutter. Tune up if the scene is too dark.
+    zed.set_camera_settings(sl.VIDEO_SETTINGS.EXPOSURE, 50)
+
     print("camera open — Ctrl-C to quit.")
 
     streamer = DepthStreamer(
