@@ -19,7 +19,10 @@ Rerun entities:
   world/camera        Pinhole model (static)
   world/camera/depth  filtered depth image (float32, auto-colorised)
   world/cloud         current-frame scan: red = sure (≥60)  yellow = unsure (25–60)
-  world/map           persistent accumulated map (white, grows as camera moves)
+  world/map           persistent accumulated map, height-colored:
+                        blue  = ankle / low clutter  (0.05–0.5 m)
+                        green = knee / waist          (0.5–1.0 m)
+                        red   = shoulder / head       (1.0–2.0 m)
 
 Usage:
   python -m dimos.navigation.camera_nav.zed_depth_costmap
@@ -46,6 +49,24 @@ _VMASK = np.int64(0x3FFFF)
 # keeps anything a robot would actually collide with.
 _Z_OBS_MIN: float = 0.05   # 5 cm above floor
 _Z_OBS_MAX: float = 2.0    # 2 m ceiling clearance
+
+
+def _height_color(z: np.ndarray) -> np.ndarray:
+    """Jet colormap over obstacle height band.
+
+    blue  = ankle / low clutter  (Z near 0.05 m)
+    green = knee / waist          (Z ≈ 0.5–1.0 m)
+    red   = shoulder / head       (Z near 2.0 m)
+
+    Makes the 3-D structure of the accumulated map immediately readable:
+    a chair appears as blue legs + green seat; a wall spans the full gradient.
+    """
+    t = np.clip((z - _Z_OBS_MIN) / (_Z_OBS_MAX - _Z_OBS_MIN), 0.0, 1.0)
+    r = np.clip(1.5 - np.abs(4 * t - 3), 0.0, 1.0)
+    g = np.clip(1.5 - np.abs(4 * t - 2), 0.0, 1.0)
+    b = np.clip(1.5 - np.abs(4 * t - 1), 0.0, 1.0)
+    return (np.column_stack([r, g, b]) * 255).astype(np.uint8)
+
 
 def _pack(vkeys: np.ndarray) -> np.ndarray:
     """(N, 3) int32 voxel indices → unique int64 keys."""
@@ -442,7 +463,7 @@ class DepthStreamer:
         idx = np.random.choice(len(pts), n, replace=False) if len(pts) > n else np.arange(n)
         rr.log("world/map", rr.Points3D(
             positions=pts[idx],
-            colors=np.full((n, 3), [220, 220, 220], dtype=np.uint8),
+            colors=_height_color(pts[idx, 2]),
             radii=0.005,
         ))
 
