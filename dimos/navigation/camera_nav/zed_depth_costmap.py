@@ -369,13 +369,18 @@ class VoxelAccumulator:
         The segment (cam_pos → surface - ε) is known free space.  Any accumulated
         voxel there is a stereo ghost — weakening it drops it below min_obs=2 and
         it disappears from stable_xyz on the next map update.
+
+        Surface voxels observed this same frame are excluded from carving so they
+        can accumulate obs counts normally across frames.
         """
         if self._n == 0 or len(xyz) == 0:
             return
-        # One ray per unique surface voxel (avoids redundant parallel rays)
+        # One ray per unique surface voxel; keep those keys to protect from carving
         vk = np.floor(xyz / self._v).astype(np.int32)
-        _, first = np.unique(_pack(vk), return_index=True)
+        raw_keys = _pack(vk)
+        _, first = np.unique(raw_keys, return_index=True)
         xyz = xyz[first]
+        surface_keys = set(raw_keys[first].tolist())   # protect these from carving
 
         rays  = xyz - cam_pos                                      # (M, 3)
         dists = np.linalg.norm(rays, axis=1)                       # (M,)
@@ -396,6 +401,7 @@ class VoxelAccumulator:
             return
 
         free_keys = set(_pack(np.floor(pts / self._v).astype(np.int32)).tolist())
+        free_keys -= surface_keys   # never carve what we're also observing this frame
         for k in free_keys:
             row = self._idx.get(int(k))
             if row is not None and self._obs[row] > 0:
@@ -518,12 +524,10 @@ class DepthStreamer:
                 h_rel   = xyz_clean[:, 2] - self._cam_z
                 xyz_obs = xyz_clean[(h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI)]
                 if len(xyz_obs) > 0:
-                    # Step 1: erase accumulated voxels the new rays show to be free
+                    # Carve free space then accumulate surface hits.
+                    # Surface voxels are excluded from carving so obs can grow.
                     self._vox.carve(xyz_obs, cam_pos)
-                    # Step 2: reject new points behind an existing solid surface
-                    keep = self._vox.filter_occluded(xyz_obs, cam_pos)
-                    # Step 3: accumulate remaining confirmed surface hits
-                    self._vox.add(xyz_obs[keep])
+                    self._vox.add(xyz_obs)
 
         if frame % self.MAP_EVERY == 0:
             self._log_map()
