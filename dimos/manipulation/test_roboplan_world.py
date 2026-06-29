@@ -25,6 +25,7 @@ from typing import Any, ClassVar
 import numpy as np
 import pytest
 
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
 from dimos.manipulation.planning.spec.models import Obstacle
@@ -263,7 +264,14 @@ def robot_config(tmp_path: Path) -> RobotModelConfig:
         model_path=model_path,
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
         joint_names=["joint1", "joint2"],
-        end_effector_link="tcp",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="manipulator",
+                joint_names=("joint1", "joint2"),
+                base_link="base",
+                tip_link="tcp",
+            )
+        ],
         joint_limits_lower=[-1.0, -2.0],
         joint_limits_upper=[1.0, 2.0],
     )

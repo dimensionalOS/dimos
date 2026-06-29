@@ -26,6 +26,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.manipulation.planning.factory import create_kinematics
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 import dimos.manipulation.planning.kinematics.pink_ik as pink_ik
 from dimos.manipulation.planning.kinematics.pink_ik import (
@@ -169,8 +170,15 @@ def _robot_config() -> RobotModelConfig:
         model_path=Path("/tmp/fake.urdf"),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
         joint_names=["joint_a", "joint_b", "joint_c"],
-        end_effector_link="tool",
         base_link="base",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="manipulator",
+                joint_names=("joint_a", "joint_b", "joint_c"),
+                base_link="base",
+                tip_link="tool",
+            )
+        ],
     )
 
 

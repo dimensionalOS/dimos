@@ -116,7 +116,6 @@ def make_a750_model_config(
                 joint_names=tuple(local_joint_names),
                 base_link="base_link",
                 tip_link="gripper_base",
-                source="explicit",
             )
         ],
         package_paths=A750_PACKAGE_PATHS,

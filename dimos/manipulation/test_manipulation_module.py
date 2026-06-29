@@ -30,6 +30,7 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationState,
 )
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -62,8 +63,15 @@ def _get_xarm7_config() -> RobotModelConfig:
         model_path=desc_path / "urdf/xarm_device.urdf.xacro",
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
-        end_effector_link="link7",
         base_link="link_base",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="manipulator",
+                joint_names=("joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"),
+                base_link="link_base",
+                tip_link="link7",
+            )
+        ],
         package_paths={"xarm_description": desc_path},
         xacro_args={"dof": "7", "limited": "true"},
         auto_convert_meshes=True,

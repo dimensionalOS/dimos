@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import itertools
 from pathlib import Path
-import warnings
 import xml.etree.ElementTree as ET
 
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
@@ -32,11 +31,6 @@ FALLBACK_PLANNING_GROUP_NAME = "manipulator"
 
 class PlanningGroupDiscoveryError(ValueError):
     """Raised when planning groups cannot be discovered for a model."""
-
-
-def _warn(message: str) -> None:
-    logger.warning(message)
-    warnings.warn(message, UserWarning, stacklevel=2)
 
 
 def discover_planning_group_definitions(
@@ -61,7 +55,7 @@ def discover_planning_group_definitions(
         )
         if groups:
             return groups
-        _warn(
+        logger.warning(
             f"No supported planning groups found in SRDF {resolved_srdf_path} "
             f"for robot {robot_name}; trying fallback generation"
         )
@@ -94,7 +88,7 @@ def parse_srdf_planning_groups(
     for group_elem in root.findall("group"):
         group_name = group_elem.get("name")
         if not group_name:
-            _warn(f"Skipping SRDF group without a name in {srdf_path}")
+            logger.warning(f"Skipping SRDF group without a name in {srdf_path}")
             continue
 
         children = [child for child in list(group_elem) if isinstance(child.tag, str)]
@@ -120,7 +114,7 @@ def parse_srdf_planning_groups(
             )
         else:
             child_tags = [child.tag for child in children]
-            _warn(
+            logger.warning(
                 f"Skipping unsupported SRDF planning group {group_name} in "
                 f"{srdf_path} with child tags {child_tags}"
             )
@@ -141,7 +135,7 @@ def generate_fallback_planning_group(
     ordered_joints = _validate_and_order_serial_joints(model, controllable_joint_names)
     while ordered_joints and ordered_joints[-1].type == "prismatic":
         removed = ordered_joints.pop()
-        _warn(
+        logger.warning(
             f"Excluding terminal prismatic joint {removed.name} from "
             f"fallback planning group {FALLBACK_PLANNING_GROUP_NAME}"
         )
@@ -156,7 +150,6 @@ def generate_fallback_planning_group(
         joint_names=tuple(joint.name for joint in ordered_joints),
         base_link=ordered_joints[0].parent_link,
         tip_link=ordered_joints[-1].child_link,
-        source="fallback",
     )
 
 
@@ -168,7 +161,7 @@ def _resolve_srdf_path(model_path: Path, srdf_path: Path | None) -> Path | None:
 
     for candidate in _srdf_auto_discovery_candidates(model_path):
         if candidate.exists():
-            _warn(f"Auto-discovered SRDF at {candidate}")
+            logger.warning(f"Auto-discovered SRDF at {candidate}")
             return candidate
     return None
 
@@ -196,7 +189,7 @@ def _parse_chain_group(
     base_link = chain_elem.get("base_link")
     tip_link = chain_elem.get("tip_link")
     if not base_link or not tip_link:
-        _warn(
+        logger.warning(
             f"Skipping SRDF chain group {group_name} in {srdf_path} because "
             "base_link or tip_link is missing"
         )
@@ -207,7 +200,7 @@ def _parse_chain_group(
         controlled_joints = [joint for joint in ordered_joints if joint.type != "fixed"]
         _validate_controllable(group_name, controlled_joints, controllable_joint_names)
     except PlanningGroupDiscoveryError as exc:
-        _warn(f"Skipping SRDF chain group {group_name} in {srdf_path}: {exc}")
+        logger.warning(f"Skipping SRDF chain group {group_name} in {srdf_path}: {exc}")
         return None
 
     return PlanningGroupDefinition(
@@ -215,7 +208,6 @@ def _parse_chain_group(
         joint_names=tuple(joint.name for joint in controlled_joints),
         base_link=base_link,
         tip_link=tip_link,
-        source="srdf",
     )
 
 
@@ -229,13 +221,15 @@ def _parse_joint_list_group(
 ) -> PlanningGroupDefinition | None:
     joint_names = [child.get("name", "") for child in joint_children]
     if any(not name for name in joint_names):
-        _warn(f"Skipping SRDF joint-list group {group_name} in {srdf_path} with empty joint name")
+        logger.warning(
+            f"Skipping SRDF joint-list group {group_name} in {srdf_path} with empty joint name"
+        )
         return None
     try:
         ordered_joints = _validate_ordered_serial_joints(model, joint_names)
         _validate_controllable(group_name, ordered_joints, controllable_joint_names)
     except PlanningGroupDiscoveryError as exc:
-        _warn(f"Skipping SRDF joint-list group {group_name} in {srdf_path}: {exc}")
+        logger.warning(f"Skipping SRDF joint-list group {group_name} in {srdf_path}: {exc}")
         return None
 
     return PlanningGroupDefinition(
@@ -243,7 +237,6 @@ def _parse_joint_list_group(
         joint_names=tuple(joint.name for joint in ordered_joints),
         base_link=ordered_joints[0].parent_link,
         tip_link=ordered_joints[-1].child_link,
-        source="srdf",
     )
 
 

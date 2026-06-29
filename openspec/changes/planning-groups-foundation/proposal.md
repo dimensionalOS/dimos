@@ -8,7 +8,7 @@ This change extracts PR 1 from the reference branch/worktree `cc/spec/movegroup`
 
 - Add planning-group identifiers, definitions, runtime models, registry helpers, and joint-name conversion utilities.
 - Update planning spec/config models so robot-scoped `end_effector_link` is removed and pose target frames are represented by planning-group `tip_link` values.
-- Add high-level `RobotConfig` conversion/discovery support for planning groups.
+- Add planning-group conversion/discovery support through manipulation planning config models.
 - Update manipulator robot configs to declare or discover explicit planning groups.
 - Add foundation-level unit tests and minimal concept docs.
 
@@ -24,5 +24,5 @@ This change extracts PR 1 from the reference branch/worktree `cc/spec/movegroup`
 
 - Base branch: `main`.
 - Reference implementation: branch/worktree `cc/spec/movegroup`; stabilize to a commit before assigning agents.
-- Primary files: `dimos/manipulation/planning/groups/*`, `dimos/manipulation/planning/spec/*`, `dimos/robot/config.py`, `dimos/robot/manipulators/*/config.py`, foundation tests, and planning-group docs.
+- Primary files: `dimos/manipulation/planning/groups/*`, `dimos/manipulation/planning/spec/*`, `dimos/robot/manipulators/*/config.py`, `dimos/manipulation/planning/groups/test_planning_groups.py`, foundation tests, and planning-group docs.
 - Out of scope: world backends, IK/RRT algorithms, `ManipulationModule`, Viser UI, and control changes.

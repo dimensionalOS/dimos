@@ -186,7 +186,6 @@ def make_xarm_model_config(
                 joint_names=tuple(local_joint_names),
                 base_link="link_base",
                 tip_link=tip_link,
-                source="explicit",
             )
         ],
         package_paths=XARM_PACKAGE_PATHS,

@@ -23,8 +23,7 @@ use global joint names so multiple robots can safely share local names such as
 
 ## Discovering planning groups
 
-High-level `RobotConfig.to_robot_model_config()` discovers planning groups in
-this order:
+Planning-group config helpers can discover groups in this order:
 
 1. Explicit `planning_groups` on the robot model config.
 2. Explicit `srdf_path` on the robot model config.
@@ -60,7 +59,7 @@ unique serial target frame.
 
 ## Fallback behavior
 
-When no SRDF or explicit group config is available through `RobotConfig`,
+When no SRDF or explicit group config is available,
 fallback uses `RobotModelConfig.joint_names` as the candidate controllable set.
 This field is the robot's ordered local model joint set, not an implicit
 planning group.

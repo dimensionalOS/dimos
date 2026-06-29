@@ -95,7 +95,6 @@ def openarm_model_config(side: str, name: str | None = None) -> RobotModelConfig
                 joint_names=tuple(local_joint_names),
                 base_link="openarm_body_link0",
                 tip_link=f"openarm_{side}_link7",
-                source="explicit",
             )
         ],
         package_paths=OPENARM_PACKAGE_PATHS,
@@ -135,7 +134,6 @@ def openarm_single_model_config() -> RobotModelConfig:
                 joint_names=tuple(local_joint_names),
                 base_link="openarm_body_link0",
                 tip_link="openarm_left_link7",
-                source="explicit",
             )
         ],
         package_paths=OPENARM_PACKAGE_PATHS,

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for planning group discovery."""
+"""Tests for planning groups."""
 
 from __future__ import annotations
 
@@ -27,10 +27,12 @@ from dimos.manipulation.planning.groups.discovery import (
     generate_fallback_planning_group,
     parse_srdf_planning_groups,
 )
-from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
+from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
+from dimos.manipulation.planning.groups.utils import joint_target_to_global_names
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.model_parser import JointDescription, ModelDescription
 
 
@@ -78,6 +80,18 @@ def _write_srdf(tmp_path: Path, body: str) -> Path:
     return srdf_path
 
 
+def _make_group() -> PlanningGroup:
+    return PlanningGroup(
+        id="left/arm",
+        robot_name="left",
+        group_name="arm",
+        joint_names=("left/j1", "left/j2", "left/j3"),
+        local_joint_names=("j1", "j2", "j3"),
+        base_link="base",
+        tip_link="ee",
+    )
+
+
 def test_parse_srdf_chain_group(tmp_path: Path) -> None:
     model = _serial_model("revolute", "revolute", "revolute")
     srdf_path = _write_srdf(
@@ -96,7 +110,6 @@ def test_parse_srdf_chain_group(tmp_path: Path) -> None:
     assert groups[0].joint_names == ("joint1", "joint2", "joint3")
     assert groups[0].base_link == "link0"
     assert groups[0].tip_link == "link3"
-    assert groups[0].source == "srdf"
 
 
 def test_parse_srdf_ordered_joint_list_group(tmp_path: Path) -> None:
@@ -138,17 +151,13 @@ def test_parse_srdf_skips_unsupported_groups_and_ignores_end_effector(
         """,
     )
 
-    with pytest.warns(UserWarning) as warnings:
-        groups = parse_srdf_planning_groups(
-            srdf_path,
-            model=model,
-            controllable_joint_names=["joint1", "joint2"],
-        )
+    groups = parse_srdf_planning_groups(
+        srdf_path,
+        model=model,
+        controllable_joint_names=["joint1", "joint2"],
+    )
 
     assert [group.name for group in groups] == ["arm"]
-    warning_text = "\n".join(str(warning.message) for warning in warnings)
-    assert "Skipping unsupported SRDF planning group links" in warning_text
-    assert "Skipping unsupported SRDF planning group nested" in warning_text
 
 
 def test_fallback_generates_manipulator_for_unambiguous_serial_chain() -> None:
@@ -163,7 +172,6 @@ def test_fallback_generates_manipulator_for_unambiguous_serial_chain() -> None:
     assert group.joint_names == ("joint1", "joint2", "joint3")
     assert group.base_link == "link0"
     assert group.tip_link == "link3"
-    assert group.source == "fallback"
 
 
 def test_fallback_strips_terminal_prismatic_joints() -> None:
@@ -206,9 +214,7 @@ def test_discovery_prefers_explicit_srdf_over_fallback(tmp_path: Path) -> None:
     assert [group.name for group in groups] == ["srdf_arm"]
 
 
-def test_discovery_auto_discovers_srdf_with_warning(
-    tmp_path: Path,
-) -> None:
+def test_discovery_auto_discovers_srdf(tmp_path: Path) -> None:
     model = _serial_model("revolute")
     model_path = tmp_path / "robot.urdf"
     model_path.write_text("<robot name='test'/>")
@@ -217,13 +223,12 @@ def test_discovery_auto_discovers_srdf_with_warning(
         "<group name='auto_arm'><chain base_link='link0' tip_link='link1'/></group>",
     )
 
-    with pytest.warns(UserWarning, match="Auto-discovered SRDF"):
-        groups = discover_planning_group_definitions(
-            robot_name="robot",
-            model_path=model_path,
-            model=model,
-            controllable_joint_names=["joint1"],
-        )
+    groups = discover_planning_group_definitions(
+        robot_name="robot",
+        model_path=model_path,
+        model=model,
+        controllable_joint_names=["joint1"],
+    )
 
     assert [group.name for group in groups] == ["auto_arm"]
 
@@ -242,14 +247,12 @@ def test_primary_pose_group_id_for_robot_raises_when_ambiguous() -> None:
                         joint_names=("joint1",),
                         base_link="base",
                         tip_link="left_tool",
-                        source="explicit",
                     ),
                     PlanningGroupDefinition(
                         name="right",
                         joint_names=("joint2",),
                         base_link="base",
                         tip_link="right_tool",
-                        source="explicit",
                     ),
                 ],
             )
@@ -258,3 +261,31 @@ def test_primary_pose_group_id_for_robot_raises_when_ambiguous() -> None:
 
     with pytest.raises(ValueError, match="multiple|2 pose-targetable|explicit planning group"):
         registry.primary_pose_group_id_for_robot("robot")
+
+
+def test_joint_target_to_global_names_accepts_named_global_targets_in_group_order() -> None:
+    group = _make_group()
+    target = JointState({"name": ["left/j3", "left/j1", "left/j2"], "position": [3.0, 1.0, 2.0]})
+
+    normalized = joint_target_to_global_names(group, target)
+
+    assert normalized.name == ["left/j1", "left/j2", "left/j3"]
+    assert normalized.position == [1.0, 2.0, 3.0]
+
+
+def test_joint_target_to_global_names_accepts_named_local_targets_in_group_order() -> None:
+    group = _make_group()
+    target = JointState({"name": ["j2", "j3", "j1"], "position": [2.0, 3.0, 1.0]})
+
+    normalized = joint_target_to_global_names(group, target)
+
+    assert normalized.name == ["left/j1", "left/j2", "left/j3"]
+    assert normalized.position == [1.0, 2.0, 3.0]
+
+
+def test_joint_target_to_global_names_rejects_mixed_global_and_local_target_names() -> None:
+    group = _make_group()
+    target = JointState({"name": ["left/j1", "j2", "left/j3"], "position": [1.0, 2.0, 3.0]})
+
+    with pytest.raises(ValueError, match="mixes global and local joint names"):
+        joint_target_to_global_names(group, target)

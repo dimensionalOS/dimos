@@ -124,7 +124,6 @@ def make_piper_model_config(
                 joint_names=tuple(local_joint_names),
                 base_link="base_link",
                 tip_link="gripper_base",
-                source="explicit",
             )
         ],
         package_paths=PIPER_PACKAGE_PATHS,

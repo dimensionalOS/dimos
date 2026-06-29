@@ -58,7 +58,6 @@ class PlanningGroupRegistry:
                 local_joint_names=definition.joint_names,
                 base_link=definition.base_link,
                 tip_link=definition.tip_link,
-                source=definition.source,
             )
             self._groups[group_id] = group
             robot_groups.append(group)
