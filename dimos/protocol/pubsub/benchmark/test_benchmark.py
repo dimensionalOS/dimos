@@ -114,11 +114,9 @@ def test_throughput(
         # Set target so callback can signal when all received
         target_count[0] = MAX_MESSAGES
 
-        # CPU is sampled over the publish window only (cpu_after at publish_end),
-        # so the receive-timeout idle on lossy transports doesn't skew it. psutil
-        # sums all threads, so native delivery threads (Zenoh/cyclonedds/LCM) count;
-        # kernel-side packet delivery (softirq) and out-of-process daemons (Redis)
-        # do not, so network transports read lower than userspace-spinning ones.
+        # CPU sampled over the publish window only, so lossy transports' receive
+        # idle doesn't skew it. psutil counts in-process threads but not kernel
+        # softirq or external daemons, so network transports read lower than SHM.
         msgs_sent = 0
         process = psutil.Process()
         cpu_before = process.cpu_times()
