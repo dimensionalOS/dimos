@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal, TypeAlias
 
 from pydantic import Field
 
@@ -28,6 +29,32 @@ from dimos.manipulation.planning.groups.identifiers import (
 )
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+
+TrajectoryParametrizationBackend: TypeAlias = Literal["simple_trapezoid", "roboplan"]
+RoboPlanSplineFittingMode: TypeAlias = Literal["hermite", "cubic", "adaptive", "linear_blend"]
+
+
+class TrajectoryParametrizationConfig(ModuleConfig):
+    """Configuration for manipulation trajectory parametrization.
+
+    The default `simple_trapezoid` backend preserves the historical baseline
+    timing behavior. RoboPlan trajectory parametrization is explicit opt-in and
+    runs through the RoboPlan world so the scene, planning group name, and native
+    joint mapping stay backend-owned.
+    """
+
+    backend: TrajectoryParametrizationBackend = "simple_trapezoid"
+    velocity_scale: float = Field(default=1.0, gt=0.0)
+    acceleration_scale: float = Field(default=1.0, gt=0.0)
+    velocity_limits: list[float] | None = None
+    acceleration_limits: list[float] | None = None
+    minimum_segment_duration: float | None = Field(default=None, gt=0.0)
+    simple_points_per_segment: int = Field(default=50, ge=1)
+    roboplan_dt: float = Field(default=0.01, gt=0.0)
+    roboplan_spline_mode: RoboPlanSplineFittingMode = "hermite"
+    roboplan_max_adaptive_iterations: int = Field(default=10, ge=1)
+    roboplan_max_adaptive_step_size: float = Field(default=0.05, gt=0.0)
+    roboplan_max_blend_deviation: float = Field(default=0.01, gt=0.0)
 
 
 class RobotModelConfig(ModuleConfig):

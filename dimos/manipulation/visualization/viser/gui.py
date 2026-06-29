@@ -84,6 +84,7 @@ PanelHandle: TypeAlias = (
     | GuiDropdownHandle[str]
     | GuiButtonHandle
     | GuiCheckboxHandle
+    | GuiSliderHandle[float]
     | TransformControlsHandle
 )
 
@@ -278,6 +279,7 @@ class ViserPanelGui:
             f"Feasibility: `{self.state.feasibility.status.value}`"
         )
         self._handles["actions_heading"] = gui.add_markdown("### Actions")
+        self._build_motion_settings(gui)
         plan_button = gui.add_button("Plan", disabled=True, color=PRIMARY_ACTION_COLOR)
         plan_button.on_click(lambda _: self._submit_plan())
         self._handles["plan"] = plan_button
@@ -313,6 +315,44 @@ class ViserPanelGui:
         if self.scene is None:
             return
         self.scene.set_reference_grid_visible(bool(visible))
+
+    def _build_motion_settings(self, gui: GuiApi) -> None:
+        """Build controls that affect future generated trajectories."""
+        speed_slider = gui.add_slider(
+            "Next plan speed",
+            min=0.05,
+            max=1.0,
+            step=0.05,
+            initial_value=self._motion_speed_scale_for_slider(),
+        )
+        speed_slider.on_update(lambda event: self._set_next_plan_speed(event.target.value))
+        self._handles["next_plan_speed"] = speed_slider
+
+    def _motion_speed_scale_for_slider(self) -> float:
+        """Return a bounded speed value for the Viser slider."""
+        try:
+            speed_scale = float(self.manipulation_module.get_motion_speed())
+        except Exception:
+            logger.warning("Could not read manipulation motion speed", exc_info=True)
+            return 1.0
+        if speed_scale <= 0.0:
+            return 1.0
+        return min(speed_scale, 1.0)
+
+    def _set_next_plan_speed(self, speed_scale: float) -> None:
+        """Update next-plan speed without invalidating the current panel plan."""
+        if self._closed:
+            return
+        if self.state.action_status != ActionStatus.IDLE:
+            self._set_recoverable_error(
+                "Cannot change next-plan speed while an operation is active"
+            )
+            return
+        if not self.manipulation_module.set_motion_speed(float(speed_scale)):
+            error = self.manipulation_module.get_error() or "Invalid next-plan speed"
+            self._set_recoverable_error(error)
+            return
+        self.refresh()
 
     def _refresh_selected_robot_state(self) -> None:
         robot_name = self.state.selected_robot
@@ -979,6 +1019,7 @@ class ViserPanelGui:
         )
 
     def _update_control_state(self) -> None:
+        self._set_disabled("next_plan_speed", self.state.action_status != ActionStatus.IDLE)
         self._set_disabled("plan", not self.state.can_plan())
         self._set_disabled("preview", not self.state.can_preview())
         self._set_disabled(

@@ -2182,6 +2182,9 @@ manipulation = [
     { name = "xacro" },
     { name = "xarm-python-sdk" },
 ]
+manipulation-toppra = [
+    { name = "roboplan" },
+]
 mapping = [
     { name = "gtsam-extended" },
 ]
@@ -2358,7 +2361,7 @@ project-deps = [
 tests = [
     { name = "chromadb" },
     { name = "coverage" },
-    { name = "dimos", extra = ["apriltag", "cpu", "drone", "mapping", "visualization", "web"] },
+    { name = "dimos", extra = ["apriltag", "cpu", "drone", "manipulation-toppra", "mapping", "visualization", "web"] },
     { name = "einops" },
     { name = "gdown" },
     { name = "googlemaps" },
@@ -2402,7 +2405,7 @@ tests = [
 tests-self-hosted = [
     { name = "chromadb" },
     { name = "coverage" },
-    { name = "dimos", extra = ["agents", "apriltag", "cpu", "drone", "manipulation", "mapping", "misc", "perception", "sim", "unitree", "visualization", "web"] },
+    { name = "dimos", extra = ["agents", "apriltag", "cpu", "drone", "manipulation", "manipulation-toppra", "mapping", "misc", "perception", "sim", "unitree", "visualization", "web"] },
     { name = "einops" },
     { name = "gdown" },
     { name = "googlemaps" },
@@ -2458,7 +2461,7 @@ requires-dist = [
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = "==13.6.0" },
     { name = "cyclonedds", marker = "extra == 'dds'", specifier = ">=0.10.5" },
     { name = "cyclonedds", marker = "extra == 'unitree-dds'", specifier = ">=0.10.5" },
-    { name = "dimos", extras = ["agents", "apriltag", "base", "cpu", "cuda", "drone", "grasp", "manipulation", "misc", "perception", "sim", "unitree", "visualization", "web"], marker = "extra == 'all'" },
+    { name = "dimos", extras = ["agents", "apriltag", "base", "cpu", "cuda", "drone", "grasp", "manipulation", "manipulation-toppra", "misc", "perception", "sim", "unitree", "visualization", "web"], marker = "extra == 'all'" },
     { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'base'" },
     { name = "dimos", extras = ["base", "mapping"], marker = "extra == 'unitree'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
@@ -2529,7 +2532,8 @@ requires-dist = [
     { name = "reportlab", marker = "extra == 'apriltag'", specifier = ">=4.5.0" },
     { name = "rerun-sdk", specifier = "==0.32.0a1" },
     { name = "rerun-sdk", marker = "extra == 'visualization'", specifier = "==0.32.0a1" },
-    { name = "roboplan", extras = ["manipulation"], marker = "extra == 'manipulation'", specifier = ">=0.0.100" },
+    { name = "roboplan", marker = "extra == 'manipulation'", specifier = ">=0.0.100" },
+    { name = "roboplan", marker = "extra == 'manipulation-toppra'", specifier = ">=0.0.100" },
     { name = "scipy", specifier = ">=1.15.1" },
     { name = "sortedcontainers", specifier = "==2.4.0" },
     { name = "sounddevice", marker = "extra == 'agents'" },
@@ -2560,7 +2564,7 @@ requires-dist = [
     { name = "xarm-python-sdk", marker = "extra == 'manipulation'", specifier = ">=1.17.0" },
     { name = "xarm-python-sdk", marker = "extra == 'misc'", specifier = ">=1.17.0" },
 ]
-provides-extras = ["misc", "visualization", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "grasp", "cpu", "cuda", "sim", "mapping", "drone", "dds", "base", "apriltag", "all"]
+provides-extras = ["misc", "visualization", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "manipulation-toppra", "grasp", "cpu", "cuda", "sim", "mapping", "drone", "dds", "base", "apriltag", "all"]
 
 [package.metadata.requires-dev]
 autofix = [{ name = "ruff", specifier = "==0.14.3" }]
@@ -2627,7 +2631,7 @@ project-deps = [
 tests = [
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },
-    { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu"] },
+    { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "manipulation-toppra"] },
     { name = "dimos", extras = ["web", "visualization"] },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
@@ -2673,7 +2677,7 @@ tests-self-hosted = [
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },
     { name = "dimos", extras = ["agents", "perception", "manipulation", "sim", "unitree", "misc"] },
-    { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu"] },
+    { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "manipulation-toppra"] },
     { name = "dimos", extras = ["web", "visualization"] },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },

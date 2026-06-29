@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Define first-class manipulation trajectory parametrization as the boundary between geometric planning and control-task dispatch, including generated trajectory artifacts, backend policy, speed scaling, and status semantics.
+
+## Requirements
 
 ### Requirement: First-class trajectory parametrization spec
 The system SHALL provide a `TrajectoryParametrizerSpec` manipulation-planning role that converts a successful geometric `GeneratedPlan` into a time-parametrized `GeneratedTrajectory`.
@@ -10,6 +14,10 @@ The system SHALL provide a `TrajectoryParametrizerSpec` manipulation-planning ro
 #### Scenario: Parametrizer remains independent of coordinator wiring
 - **WHEN** a trajectory parametrization backend is implemented
 - **THEN** it MUST NOT depend on `ControlCoordinator` task names, task instances, or task-specific dispatch wiring
+
+#### Scenario: Parametrizer accepts runtime speed policy without storing it
+- **WHEN** a caller invokes `TrajectoryParametrizerSpec.parametrize`
+- **THEN** the caller MAY provide a `speed_scale` argument for that invocation and the backend MUST NOT require persistent mutable speed state on the parametrizer spec
 
 ### Requirement: Generated trajectory artifact
 The system SHALL define `GeneratedTrajectory` as the canonical global time-parametrized manipulation artifact produced from a `GeneratedPlan`.
@@ -45,7 +53,7 @@ The system SHALL define a `TrajectoryDispatch` execution-preparation artifact th
 - **THEN** execution-specific projections MUST be produced by a separate dispatch/preparation step rather than stored as canonical generated trajectory data
 
 ### Requirement: Shared generated trajectory for preview, validation, benchmarking, and execution
-Preview, validation, benchmarking, and execution dispatch SHALL consume the same `GeneratedTrajectory` artifact for a planned manipulation motion.
+Preview, validation, benchmarking, and execution dispatch SHALL consume the same `GeneratedTrajectory` artifact for a planned manipulation motion where those paths exist.
 
 #### Scenario: Preview uses generated trajectory timing
 - **WHEN** a planned motion is previewed
@@ -56,34 +64,57 @@ Preview, validation, benchmarking, and execution dispatch SHALL consume the same
 - **THEN** execution dispatch MUST consume the same `GeneratedTrajectory` artifact used by preview, validation, or benchmarking for that motion
 
 ### Requirement: Parametrization backend policy
-The system SHALL support backend-configurable trajectory parametrization policy with a default `simple_trapezoid` backend and an explicit opt-in TOPPRA backend.
+The system SHALL support backend-configurable trajectory parametrization policy with a default `simple_trapezoid` backend and an explicit opt-in RoboPlan backend.
 
 #### Scenario: Default backend is available
 - **WHEN** no trajectory parametrization backend is explicitly configured
 - **THEN** the system MUST use a `simple_trapezoid` backend that preserves current baseline timing behavior behind the new spec boundary
 
-#### Scenario: TOPPRA backend is configured and installed
-- **WHEN** `backend="toppra"` is configured and TOPPRA is available
-- **THEN** the system MUST use TOPPRA for joint velocity and acceleration constrained trajectory parametrization
+#### Scenario: RoboPlan backend is configured with RoboPlan world
+- **WHEN** `backend="roboplan"` is configured with `world_backend="roboplan"`
+- **THEN** the system MUST use RoboPlan-owned scene, group, native-joint mapping, and bundled TOPP-RA wrapper for trajectory parametrization
 
-#### Scenario: TOPPRA backend is configured but missing
-- **WHEN** `backend="toppra"` is configured and TOPPRA cannot be imported during planning or parametrization initialization
-- **THEN** initialization MUST fail clearly with guidance to install TOPPRA support through `dimos[manipulation-toppra]`
+#### Scenario: RoboPlan backend is configured with a non-RoboPlan world
+- **WHEN** `backend="roboplan"` is configured without `world_backend="roboplan"`
+- **THEN** initialization MUST fail clearly with guidance to select the RoboPlan world backend
 
-#### Scenario: TOPPRA policy is reproducible
-- **WHEN** TOPPRA parametrization is configured for tests or benchmarks
-- **THEN** gridpoint or discretization policy MUST be explicit enough for reproducible comparisons
+#### Scenario: RoboPlan TOPP-RA wrapper is unavailable
+- **WHEN** `backend="roboplan"` is configured and RoboPlan's trajectory parametrization wrapper cannot be imported
+- **THEN** parametrization MUST report `BACKEND_UNAVAILABLE` with guidance to install RoboPlan-backed TOPP-RA support
 
-### Requirement: TOPPRA packaging and repository tests
-The system SHALL expose TOPPRA support through a `manipulation-toppra` optional extra, include that extra in `all`, and run TOPPRA parametrization tests unconditionally in the repository test environment.
+#### Scenario: RoboPlan backend policy is reproducible
+- **WHEN** RoboPlan parametrization is configured for tests or benchmarks
+- **THEN** the RoboPlan wrapper options (`dt`, spline mode, adaptive controls, and velocity/acceleration scales) MUST be explicit enough for reproducible comparisons
 
-#### Scenario: Runtime user omits TOPPRA extra
-- **WHEN** a runtime installation omits `manipulation-toppra` and does not configure `backend="toppra"`
+### Requirement: Runtime motion speed tuning
+The system SHALL expose a runtime motion speed scale API that affects future plan-generated trajectory parametrizations without changing geometric plans, static backend config, or already generated trajectories.
+
+#### Scenario: Runtime speed scale is updated
+- **WHEN** an operator or agent sets a valid motion speed scale in `(0, 1]`
+- **THEN** the module MUST store the new runtime scale for the next generated trajectory without clearing an existing cached `GeneratedTrajectory` or mutating the cached `GeneratedPlan`
+
+#### Scenario: Runtime speed scale is applied during future parametrization
+- **WHEN** a new generated plan is parametrized after the runtime speed scale is changed
+- **THEN** the effective velocity and acceleration scales passed to the backend MUST multiply configured scales by the runtime speed scale
+
+#### Scenario: Existing generated trajectory remains frozen
+- **WHEN** the runtime speed scale changes after a `GeneratedTrajectory` has already been produced
+- **THEN** the existing generated trajectory MUST remain available for preview and execution with the speed scale captured when it was generated
+
+#### Scenario: Invalid runtime speed scale is rejected
+- **WHEN** an operator or agent sets a speed scale that is not greater than zero or is greater than one
+- **THEN** the module MUST reject the update and avoid changing the current runtime speed scale
+
+### Requirement: RoboPlan TOPP-RA packaging and repository tests
+The system SHALL expose RoboPlan-backed TOPP-RA support through the existing `manipulation-toppra` optional extra, include that extra in `all`, and run RoboPlan trajectory parametrization tests unconditionally in the repository test environment.
+
+#### Scenario: Runtime user omits RoboPlan backend
+- **WHEN** a runtime installation does not configure `backend="roboplan"`
 - **THEN** baseline manipulation trajectory parametrization MUST remain available through `simple_trapezoid`
 
 #### Scenario: Repository tests run
 - **WHEN** the repository test environment runs trajectory parametrization tests
-- **THEN** TOPPRA tests MUST run without import-based skipping
+- **THEN** RoboPlan trajectory parametrization tests MUST run without import-based skipping
 
 ### Requirement: Separate planning, parametrization, dispatch, and execution statuses
 The system SHALL distinguish geometric planning status, trajectory parametrization status, dispatch preparation status, and runtime execution status.

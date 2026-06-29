@@ -50,6 +50,31 @@ class AgenticManipulationModule(Module):
         return self._manipulation.move_to_joints(joints, robot_name)
 
     @skill
+    def set_motion_speed(self, speed_scale: float) -> SkillResult[ManipulationSkillError]:
+        """Set runtime manipulation motion speed for future motions.
+
+        Args:
+            speed_scale: Speed multiplier in the range `(0, 1]`. Use values below
+                1.0 for slower, gentler motion.
+        """
+        if not self._manipulation.set_motion_speed(speed_scale):
+            return SkillResult[ManipulationSkillError].fail(
+                "INVALID_INPUT",
+                "Motion speed scale must be greater than 0 and less than or equal to 1.",
+            )
+        return SkillResult[ManipulationSkillError].ok(
+            f"Motion speed scale set to {speed_scale:.2f}x. Re-plan to apply it."
+        )
+
+    @skill
+    def get_motion_speed(self) -> SkillResult[ManipulationSkillError]:
+        """Get the current runtime manipulation motion speed scale."""
+        speed_scale = self._manipulation.get_motion_speed()
+        return SkillResult[ManipulationSkillError].ok(
+            f"Current motion speed scale is {speed_scale:.2f}x.", speed_scale=speed_scale
+        )
+
+    @skill
     def open_gripper(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
         """Open the robot gripper fully.
 

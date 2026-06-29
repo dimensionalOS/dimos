@@ -30,9 +30,16 @@ from dimos.manipulation.planning.groups.models import (
     PlanningGroupDefinition,
     PlanningGroupSelection,
 )
-from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
-from dimos.manipulation.planning.spec.models import Obstacle
+from dimos.manipulation.planning.spec.config import (
+    RobotModelConfig,
+    TrajectoryParametrizationConfig,
+)
+from dimos.manipulation.planning.spec.enums import (
+    ObstacleType,
+    ParametrizationStatus,
+    PlanningStatus,
+)
+from dimos.manipulation.planning.spec.models import GeneratedPlan, Obstacle
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -49,9 +56,62 @@ class FakeJointConfiguration:
 
 
 class FakeJointPath:
-    def __init__(self, joint_names: list[str], positions: list[np.ndarray]) -> None:
+    def __init__(
+        self,
+        joint_names: list[str] | None = None,
+        positions: list[np.ndarray] | np.ndarray | None = None,
+    ) -> None:
+        self.joint_names = joint_names or []
+        self.positions = positions if positions is not None else []
+
+
+class FakeJointTrajectory:
+    def __init__(
+        self,
+        joint_names: list[str],
+        positions: np.ndarray,
+        times: np.ndarray,
+    ) -> None:
         self.joint_names = joint_names
         self.positions = positions
+        self.times = times
+        self.velocities = np.zeros_like(positions)
+
+
+class FakeSplineFittingMode:
+    Hermite = "Hermite"
+    Cubic = "Cubic"
+    Adaptive = "Adaptive"
+    LinearBlend = "LinearBlend"
+
+
+class FakeTOPPRAOptions:
+    def __init__(self) -> None:
+        self.dt = 0.01
+        self.mode = FakeSplineFittingMode.Hermite
+        self.velocity_scale = 1.0
+        self.acceleration_scale = 1.0
+        self.max_adaptive_iterations = 10
+        self.max_adaptive_step_size = 0.05
+        self.max_blend_deviation = 0.01
+
+
+class FakePathParameterizerTOPPRA:
+    last_scene: ClassVar[FakeScene | None] = None
+    last_group_name: ClassVar[str | None] = None
+    last_path: ClassVar[FakeJointPath | None] = None
+    last_options: ClassVar[FakeTOPPRAOptions | None] = None
+
+    def __init__(self, scene: FakeScene, group_name: str = "") -> None:
+        FakePathParameterizerTOPPRA.last_scene = scene
+        FakePathParameterizerTOPPRA.last_group_name = group_name
+
+    def generate(self, path: FakeJointPath, options: FakeTOPPRAOptions) -> FakeJointTrajectory:
+        FakePathParameterizerTOPPRA.last_path = path
+        FakePathParameterizerTOPPRA.last_options = options
+        positions = np.asarray(path.positions, dtype=np.float64)
+        times = np.arange(positions.shape[0], dtype=np.float64) * options.dt
+        return FakeJointTrajectory(list(path.joint_names), positions, times)
 
 
 class FakeJointGroupInfo:
@@ -180,6 +240,7 @@ def _install_fake_roboplan(monkeypatch: pytest.MonkeyPatch) -> None:
     core = ModuleType("roboplan.core")
     core.Scene = FakeScene  # type: ignore[attr-defined]
     core.JointConfiguration = FakeJointConfiguration  # type: ignore[attr-defined]
+    core.JointPath = FakeJointPath  # type: ignore[attr-defined]
 
     def has_collisions_along_path(
         scene: FakeScene,
@@ -201,9 +262,15 @@ def _install_fake_roboplan(monkeypatch: pytest.MonkeyPatch) -> None:
     rrt.RRTOptions = FakeRRTOptions  # type: ignore[attr-defined]
     rrt.RRT = FakeRRT  # type: ignore[attr-defined]
 
+    toppra = ModuleType("roboplan.toppra")
+    toppra.PathParameterizerTOPPRA = FakePathParameterizerTOPPRA  # type: ignore[attr-defined]
+    toppra.TOPPRAOptions = FakeTOPPRAOptions  # type: ignore[attr-defined]
+    toppra.SplineFittingMode = FakeSplineFittingMode  # type: ignore[attr-defined]
+
     monkeypatch.setitem(sys.modules, "roboplan", roboplan_pkg)
     monkeypatch.setitem(sys.modules, "roboplan.core", core)
     monkeypatch.setitem(sys.modules, "roboplan.rrt", rrt)
+    monkeypatch.setitem(sys.modules, "roboplan.toppra", toppra)
 
 
 @pytest.fixture
@@ -271,6 +338,49 @@ def test_roboplan_bindings_are_imported_at_module_load(fake_roboplan: None) -> N
 
     assert module.roboplan_core.Scene is FakeScene
     assert module.roboplan_rrt.RRT is FakeRRT
+
+
+def test_roboplan_world_parametrizes_generated_plan_with_native_toppra(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    world, _robot_id = _make_world(fake_roboplan, robot_config)
+    world.finalize()
+    world.configure_trajectory_parametrization(
+        TrajectoryParametrizationConfig(
+            backend="roboplan",
+            roboplan_dt=0.02,
+            roboplan_spline_mode="cubic",
+            velocity_scale=0.5,
+            acceleration_scale=0.25,
+        )
+    )
+    plan = GeneratedPlan(
+        group_ids=("arm/manipulator",),
+        path=[
+            JointState(name=["arm/joint1", "arm/joint2"], position=[0.0, 1.0]),
+            JointState(name=["arm/joint1", "arm/joint2"], position=[0.5, 1.5]),
+        ],
+        status=PlanningStatus.SUCCESS,
+        message="planned",
+    )
+
+    trajectory = world.parametrize(plan, speed_scale=0.4)
+
+    assert trajectory.status == ParametrizationStatus.SUCCESS
+    assert trajectory.joint_names == ["arm/joint1", "arm/joint2"]
+    assert trajectory.source_group_ids == ("arm/manipulator",)
+    assert trajectory.source_plan_message == "planned"
+    assert trajectory.speed_scale == pytest.approx(0.4)
+    assert [point.time_from_start for point in trajectory.points] == [0.0, 0.02]
+    assert [point.positions for point in trajectory.points] == [[0.0, 1.0], [0.5, 1.5]]
+    assert FakePathParameterizerTOPPRA.last_scene is world._scene
+    assert FakePathParameterizerTOPPRA.last_group_name
+    assert FakePathParameterizerTOPPRA.last_path is not None
+    assert FakePathParameterizerTOPPRA.last_path.joint_names == ["joint1", "joint2"]
+    assert FakePathParameterizerTOPPRA.last_options is not None
+    assert FakePathParameterizerTOPPRA.last_options.mode == FakeSplineFittingMode.Cubic
+    assert FakePathParameterizerTOPPRA.last_options.velocity_scale == pytest.approx(0.2)
+    assert FakePathParameterizerTOPPRA.last_options.acceleration_scale == pytest.approx(0.1)
 
 
 def test_robot_registration_finalization_and_joint_limits(

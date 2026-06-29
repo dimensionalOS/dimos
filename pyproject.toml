@@ -242,7 +242,7 @@ manipulation = [
     "drake>=1.40.0; sys_platform != 'darwin' and platform_machine != 'aarch64'",
     "pin-pink>=4.2.0",
     "qpsolvers[proxqp]>=4.12.0",
-    "roboplan[manipulation]>=0.0.100",
+    "roboplan>=0.0.100",
 
     # Hardware SDKs
     "can-motor-control>=0.0.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
@@ -263,6 +263,11 @@ manipulation = [
     "matplotlib>=3.7.1",
     "pyyaml>=6.0",
 
+]
+
+manipulation-toppra = [
+    # RoboPlan bundles Python 3.12-compatible TOPP-RA bindings; direct PyPI toppra is deferred.
+    "roboplan>=0.0.100",
 ]
 
 grasp = [
@@ -328,7 +333,7 @@ apriltag = [
 ]
 
 all = [
-    "dimos[agents,apriltag,base,cpu,cuda,drone,grasp,manipulation,misc,perception,sim,unitree,visualization,web]",
+    "dimos[agents,apriltag,base,cpu,cuda,drone,grasp,manipulation,manipulation-toppra,misc,perception,sim,unitree,visualization,web]",
 ]
 
 [dependency-groups]
@@ -386,7 +391,7 @@ tests = [
 
     # Deps the lint job swaps for stubs (`stubs/<pkg>/` or `types-*`):
     # the real packages are needed at test time, stubs cover mypy.
-    "dimos[apriltag,mapping,drone,cpu]",
+    "dimos[apriltag,mapping,drone,cpu,manipulation-toppra]",
     "mujoco>=3.3.4",
     "pygame>=2.6.1",
     "python-can>=4",
@@ -611,8 +616,10 @@ ignore = [
     "dimos/dashboard/dimos.rbl",
     "dimos/web/dimos_interface/themes.json",
     "dimos/manipulation/manipulation_module.py",
+    "dimos/manipulation/test_manipulation_unit.py",
     "dimos/manipulation/planning/world/drake_world.py",
     "dimos/manipulation/planning/world/roboplan_world.py",
+    "dimos/manipulation/visualization/viser/gui.py",
     "dimos/manipulation/visualization/viser/test_viser_visualization.py",
     "dimos/navigation/cmu_nav/modules/*/main.cpp",
     "dimos/navigation/cmu_nav/common/*.hpp",

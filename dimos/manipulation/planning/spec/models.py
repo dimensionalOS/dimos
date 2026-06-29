@@ -23,7 +23,9 @@ from typing import TYPE_CHECKING, Literal, TypeAlias
 from dimos.manipulation.planning.spec.enums import (
     IKStatus,
     ObstacleType,
+    ParametrizationStatus,
     PlanningStatus,
+    TrajectoryDispatchStatus,
 )
 
 if TYPE_CHECKING:
@@ -33,6 +35,8 @@ if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.sensor_msgs.JointState import JointState
+    from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+    from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
 
 RobotName: TypeAlias = str
@@ -124,6 +128,49 @@ class GeneratedPlan:
     def is_success(self) -> bool:
         """Check if planning was successful."""
         return self.status == PlanningStatus.SUCCESS
+
+
+@dataclass
+class GeneratedTrajectory:
+    """Canonical global time-parametrized manipulation artifact.
+
+    The trajectory uses global joint names, a single shared `time_from_start`
+    domain across all joints, and status that is independent from the source
+    geometric `GeneratedPlan.status`.
+    """
+
+    joint_names: list[GlobalJointName] = field(default_factory=list)
+    points: list[TrajectoryPoint] = field(default_factory=list)
+    duration: float = 0.0
+    speed_scale: float = 1.0
+    status: ParametrizationStatus = ParametrizationStatus.FAILED
+    message: str = ""
+    source_group_ids: tuple[PlanningGroupID, ...] = ()
+    source_plan_status: PlanningStatus = PlanningStatus.NO_SOLUTION
+    source_plan_message: str = ""
+
+    def is_success(self) -> bool:
+        """Check if trajectory parametrization was successful."""
+        return self.status == ParametrizationStatus.SUCCESS
+
+
+@dataclass
+class TrajectoryDispatch:
+    """Execution-preparation artifact derived from `GeneratedTrajectory`.
+
+    `trajectories_by_task` contains coordinator-task-specific messages. These
+    messages preserve the generated trajectory timing instead of retiming each
+    task projection independently.
+    """
+
+    trajectories_by_task: dict[str, JointTrajectory] = field(default_factory=dict)
+    robot_names_by_task: dict[str, RobotName] = field(default_factory=dict)
+    status: TrajectoryDispatchStatus = TrajectoryDispatchStatus.FAILED
+    message: str = ""
+
+    def is_success(self) -> bool:
+        """Check if dispatch preparation was successful."""
+        return self.status == TrajectoryDispatchStatus.SUCCESS
 
 
 @dataclass
