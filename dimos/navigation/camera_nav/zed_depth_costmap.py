@@ -460,7 +460,8 @@ class VoxelAccumulator:
 class DepthStreamer:
     """Assembles packets, builds persistent world-frame map, logs to Rerun."""
 
-    CONF_SURE = 65       # confidence ≥ this → goes into map + shown red
+    CONF_SURE = 65       # confidence ≥ this → sure obstacle layer (min_obs=2)
+    CONF_WEAK = 25       # confidence ≥ this → background layer (min_obs=5); catches walls
     MAX_CLOUD = 50_000   # Rerun per-frame point cap
     MAX_MAP   = 100_000  # Rerun map point cap
     MAP_EVERY = 10       # frames between map updates
@@ -476,8 +477,9 @@ class DepthStreamer:
         self._intr           = intrinsics
         self._pose           = pose
         self._bp             = backproj
-        self._vox            = VoxelAccumulator(voxel_size=0.08)  # 8 cm: merges same surface seen from different angles
-        self._cam_z          = 0.0   # camera world-Z, updated each frame for relative coloring
+        self._vox            = VoxelAccumulator(voxel_size=0.08)  # sure obstacles
+        self._vox_bg         = VoxelAccumulator(voxel_size=0.08)  # weak hits: walls, low-confidence surfaces
+        self._cam_z          = 0.0
         self._pinhole_logged = False
 
     def assemble(self, zed: sl.Camera, ts: float) -> DepthFramePacket:
@@ -520,52 +522,64 @@ class DepthStreamer:
         )
         rr.log("world/cloud", rr.Points3D(positions=xyz[idx], colors=colors, radii=0.003))
 
-        # ── Persistent map: sure + isolated-filtered + obstacle height only ─────
+        # ── Persistent map ────────────────────────────────────────────────────
         self._cam_z = float(pkt.pose_t[2])
         if self._pose.locked:
-            cam_pos   = pkt.pose_t
-            xyz_sure  = xyz[conf >= self.CONF_SURE]
-            xyz_clean = _filter_isolated(xyz_sure)
-            if len(xyz_clean) > 0:
-                h_rel    = xyz_clean[:, 2] - self._cam_z
-                rays     = xyz_clean - cam_pos                         # (N, 3)
-                dist     = np.linalg.norm(rays, axis=1)                # (N,)
-                d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0) # sin(angle from horiz)
-                xyz_obs  = xyz_clean[
-                    (h_rel    >= _Z_REL_LO) & (h_rel <= _Z_REL_HI)
-                    & (d_z_norm > _FLOOR_RAY_Z)   # exclude steep-downward (floor) rays
+            cam_pos = pkt.pose_t
+
+            def _obs_filter(pts: np.ndarray) -> np.ndarray:
+                """Height band + floor-angle filter, shared by both tiers."""
+                if len(pts) == 0:
+                    return pts
+                h_rel    = pts[:, 2] - self._cam_z
+                rays     = pts - cam_pos
+                dist     = np.linalg.norm(rays, axis=1)
+                d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0)
+                return pts[
+                    (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI)
+                    & (d_z_norm > _FLOOR_RAY_Z)
                 ]
-                if len(xyz_obs) > 0:
-                    # Carve free space then accumulate surface hits.
-                    # Surface voxels are excluded from carving so obs can grow.
-                    self._vox.carve(xyz_obs, cam_pos)
-                    self._vox.add(xyz_obs)
+
+            # Sure tier — high-confidence obstacles (chairs, people, boxes)
+            xyz_sure = _obs_filter(_filter_isolated(xyz[conf >= self.CONF_SURE]))
+            if len(xyz_sure) > 0:
+                self._vox.carve(xyz_sure, cam_pos)
+                self._vox.add(xyz_sure)
+
+            # Weak tier — low-confidence surfaces (walls, smooth/distant geometry)
+            # Separate accumulator; needs min_obs=5 to export so noise doesn't survive
+            xyz_weak = _obs_filter(_filter_isolated(
+                xyz[(conf >= self.CONF_WEAK) & (conf < self.CONF_SURE)]
+            ))
+            if len(xyz_weak) > 0:
+                self._vox_bg.add(xyz_weak)
 
         if frame % self.MAP_EVERY == 0:
             self._log_map()
 
     def _log_map(self) -> None:
-        # min_obs=2: a voxel must appear in ≥2 frames — eliminates single-frame noise
-        pts = self._vox.stable_xyz(min_obs=2)
+        sure_pts = self._vox.stable_xyz(min_obs=2)
+        bg_pts   = self._vox_bg.stable_xyz(min_obs=5)
+        pts = np.concatenate([sure_pts, bg_pts]) if len(bg_pts) > 0 else sure_pts
         if len(pts) == 0:
             return
         n   = min(len(pts), self.MAX_MAP)
         idx = np.random.choice(len(pts), n, replace=False) if len(pts) > n else np.arange(n)
-        z_rel  = pts[idx, 2] - self._cam_z
         rr.log("world/map", rr.Points3D(
             positions=pts[idx],
-            colors=_height_color(z_rel),
+            colors=_height_color(pts[idx, 2] - self._cam_z),
             radii=0.005,
         ))
 
     def log_stdout(self, pkt: DepthFramePacket, frame: int, fps: float) -> None:
         lock   = "LOCKED" if self._pose.locked else "searching"
         stable = len(self._vox.stable_xyz(min_obs=2))
+        walls  = len(self._vox_bg.stable_xyz(min_obs=5))
         print(
             f"frame={frame:5d}  "
-            f"valid={pkt.valid_fraction * 100:5.1f}%  "
-            f"map={self._vox.count:6d}  stable={stable:6d}  "
-            f"cam_z={self._cam_z:+.2f}m  vio={lock}  fps={fps:.1f}"
+            f"stable={stable:6d}  walls={walls:6d}  "
+            f"cam_z={self._cam_z:+.2f}m  vio={lock}  fps={fps:.1f}",
+            flush=True,
         )
 
 
@@ -621,7 +635,7 @@ def main() -> None:
     #   depth-discontinuity edges — exactly where flying pixels form.
     # remove_saturated_areas: invalidate pixels over-exposed by bright ceiling
     #   lights, where stereo matching is unreliable.
-    rt.texture_confidence_threshold = 80
+    rt.texture_confidence_threshold = 65
     rt.remove_saturated_areas       = True
 
     frame = 0
