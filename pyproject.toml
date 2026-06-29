@@ -419,11 +419,7 @@ lint = [
 # GPU, ROS-dependent integration tests, simulation).
 tests-self-hosted = [
     {include-group = "tests"},
-    "dimos[agents,perception,manipulation,sim,unitree,misc]",
-    # go2 dds store tests decode mcap (pure-Python). The full `unitree-dds` extra
-    # pulls `cyclonedds`, whose wheel needs a CycloneDDS C lib the ros-dev image
-    # doesn't expose to the build — and these tests never open a live DDS link.
-    "mcap>=1.2.0",
+    "dimos[agents,perception,manipulation,sim,unitree,unitree-dds,misc]",
     # Needed to compile the in-tree extensions.
     "pybind11>=2.12",
 ]
