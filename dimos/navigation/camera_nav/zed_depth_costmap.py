@@ -362,9 +362,9 @@ class VoxelAccumulator:
             return
         if self._n + n_new > self._cap:
             self._grow()
-        rows = slice(self._n, self._n + n_new)
-        self._xyz[rows] = new_xyz
-        self._obs[rows] = 1
+        sl = slice(self._n, self._n + n_new)
+        self._xyz[sl] = new_xyz
+        self._obs[sl] = 1
         for i, k in enumerate(new_keys.tolist()):
             self._idx[int(k)] = self._n + i
         self._n += n_new
@@ -476,12 +476,9 @@ class DepthStreamer:
         self._intr           = intrinsics
         self._pose           = pose
         self._bp             = backproj
-        self._vox            = VoxelAccumulator(voxel_size=0.08)
-        self._cam_z          = 0.0
+        self._vox            = VoxelAccumulator(voxel_size=0.08)  # 8 cm: merges same surface seen from different angles
+        self._cam_z          = 0.0   # camera world-Z, updated each frame for relative coloring
         self._pinhole_logged = False
-        self._last_n_sure    = 0   # pipeline stage counts for diagnostics
-        self._last_n_clean   = 0
-        self._last_n_obs     = 0
 
     def assemble(self, zed: sl.Camera, ts: float) -> DepthFramePacket:
         self._intr.read(zed)
@@ -528,22 +525,19 @@ class DepthStreamer:
         if self._pose.locked:
             cam_pos   = pkt.pose_t
             xyz_sure  = xyz[conf >= self.CONF_SURE]
-            # min_pts=3: require 3 hits per 5 cm voxel — flying pixels form 1-2 pixel
-            # strips along edges; real surfaces produce dense clusters of ≥3.
-            xyz_clean = _filter_isolated(xyz_sure, min_pts=3)
-            self._last_n_sure  = len(xyz_sure)
-            self._last_n_clean = len(xyz_clean)
+            xyz_clean = _filter_isolated(xyz_sure)
             if len(xyz_clean) > 0:
                 h_rel    = xyz_clean[:, 2] - self._cam_z
-                rays     = xyz_clean - cam_pos
-                dist     = np.linalg.norm(rays, axis=1)
-                d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0)
+                rays     = xyz_clean - cam_pos                         # (N, 3)
+                dist     = np.linalg.norm(rays, axis=1)                # (N,)
+                d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0) # sin(angle from horiz)
                 xyz_obs  = xyz_clean[
                     (h_rel    >= _Z_REL_LO) & (h_rel <= _Z_REL_HI)
-                    & (d_z_norm > _FLOOR_RAY_Z)
+                    & (d_z_norm > _FLOOR_RAY_Z)   # exclude steep-downward (floor) rays
                 ]
-                self._last_n_obs = len(xyz_obs)
                 if len(xyz_obs) > 0:
+                    # Carve free space then accumulate surface hits.
+                    # Surface voxels are excluded from carving so obs can grow.
                     self._vox.carve(xyz_obs, cam_pos)
                     self._vox.add(xyz_obs)
 
@@ -567,17 +561,11 @@ class DepthStreamer:
     def log_stdout(self, pkt: DepthFramePacket, frame: int, fps: float) -> None:
         lock   = "LOCKED" if self._pose.locked else "searching"
         stable = len(self._vox.stable_xyz(min_obs=2))
-        # Pipeline stage counts — use these to see where points are being dropped:
-        #   sure  → after confidence ≥65 filter       (ZED quality)
-        #   clean → after 3-hit spatial isolation      (flying pixel filter)
-        #   obs   → after height + floor-angle filter  (scene geometry filter)
-        #   stable→ accumulated across ≥2 frames       (temporal filter)
         print(
             f"frame={frame:5d}  "
-            f"sure={self._last_n_sure:5d}  clean={self._last_n_clean:5d}  "
-            f"obs={self._last_n_obs:5d}  stable={stable:6d}  "
-            f"cam_z={self._cam_z:+.2f}m  vio={lock}  fps={fps:.1f}",
-            flush=True,
+            f"valid={pkt.valid_fraction * 100:5.1f}%  "
+            f"map={self._vox.count:6d}  stable={stable:6d}  "
+            f"cam_z={self._cam_z:+.2f}m  vio={lock}  fps={fps:.1f}"
         )
 
 
@@ -627,24 +615,21 @@ def main() -> None:
     streamer._pose.enable(zed)
 
     rt = sl.RuntimeParameters()
-    # SDK-level pre-filters applied before depth reaches our pipeline.
-    # texture_confidence_threshold=65: rejects depth at the weakest texture matches
-    #   (depth edges, smooth walls) without over-filtering real surfaces.
-    #   80 was too aggressive — smooth warehouse surfaces have low texture confidence.
-    # remove_saturated_areas: invalids pixels blown out by ceiling LEDs.
-    rt.texture_confidence_threshold = 65
+    # Suppress flying pixels and ceiling-light saturation at the SDK level,
+    # before depth reaches our pipeline.
+    # texture_confidence_threshold: reject depth at textureless regions and
+    #   depth-discontinuity edges — exactly where flying pixels form.
+    # remove_saturated_areas: invalidate pixels over-exposed by bright ceiling
+    #   lights, where stereo matching is unreliable.
+    rt.texture_confidence_threshold = 80
     rt.remove_saturated_areas       = True
 
-    frame      = 0
-    grab_fails = 0
-    t0         = time.monotonic()
+    frame = 0
+    t0    = time.monotonic()
 
     try:
         while True:
             if zed.grab(rt) != sl.ERROR_CODE.SUCCESS:
-                grab_fails += 1
-                if grab_fails % 30 == 1:
-                    print(f"grab failing ({grab_fails} times) — check camera connection", flush=True)
                 continue
             ts  = time.monotonic()
             pkt = streamer.assemble(zed, ts)
