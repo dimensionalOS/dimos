@@ -9,15 +9,15 @@ any transport**.
 ```
 robot / sim ─► DimOS bus (LCM | Zenoh)
                   │
-        ┌─────────┴───────── gateway (thin relay) ─────────┐
-        │  Bun↔LCM (servers/gateway.ts, default)            │   ← byte-relay + on-demand filter
-        │  Python↔Zenoh (servers/gateway_zenoh.py, alt)     │     + teleop safety
-        └─────────┬─────────────────────────────────────────┘
-              WebSocket (raw LCM frames + JSON control)
+        ┌─────────┴──────── gateway (thin relay) ─────────┐      zenoh-ts (direct):
+        │  Python↔Zenoh (servers/gateway_zenoh.py) :8088   │      browser speaks Zenoh via
+        │  Bun↔LCM      (servers/gateway.ts)       :8089   │      zenoh-bridge-remote-api :10000
+        └─────────┬────────────────────────────────────────┘      (no gateway in the read path)
+              WebSocket (raw frames + JSON control)        ╲              │
+                  ▼                                         ╲             ▼
+        @dimos/topics  (decode via @dimos/msgs · backpressure · stats · on-demand)  ◄─ pick in the UI
                   ▼
-        @dimos/topics  (decode via @dimos/msgs · backpressure · stats · on-demand)
-                  ▼
-        @dimos/react  ─►  example app (WorldView · Pose · Teleop · Stats)  +  teleop ▲
+        @dimos/react ─► app (WorldView 2D · Camera · Rerun 3D · Pose · Stats) + teleop ▲
 ```
 
 ## Quickstart (real DimOS, no hardware)
@@ -29,17 +29,38 @@ From the dimos repo root (uses the repo `.venv`):
 .venv/bin/python examples/simplerobot/simplerobot.py --headless
 .venv/bin/python examples/fakesensors.py
 
-# 2) the gateway (Bun↔LCM)
-cd dimos/web/dimoscope && bun install && bun run servers/gateway.ts     # ws://localhost:8090
+# 2) the gateways — all three transports at once, each on its own port
+cd dimos/web/dimoscope && bun install && bash servers/start-all.sh
+#   Python↔Zenoh :8088 · Bun↔LCM :8089 · zenoh-ts bridge :10000
 
 # 3) the app
 cd dimos/web/dimoscope/app && bun install && bun run dev                # http://localhost:5173
 ```
 
-The app auto-discovers topics, draws the map + robot + trail in **WorldView**, shows a live pose
-readout + a **Stats** panel (hz / kB/s / latency), and drives the robot with **WASD / arrows**
+The app auto-discovers topics, draws the map + robot + trail in **WorldView**, shows a live camera
++ pose readout + a **Stats** panel (hz / kB/s / latency), and drives the robot with **WASD / arrows**
 (gateway clamps velocity + deadman-stops). Headless checks: `bun run servers/probe.ts`,
 `bun run bench/sdk_smoke.ts`, `bun run bench/teleop_test.ts`.
+
+## Transports — pick one from the topbar dropdown
+
+Same app, same `@dimos/topics` SDK, three swappable transports (the dropdown rebuilds the client):
+
+| Option | How the browser reaches the bus | Port |
+|---|---|---|
+| **Python↔Zenoh** | gateway re-wraps Zenoh samples → WS | `:8088` |
+| **Bun↔LCM** | gateway relays LCM multicast → WS | `:8089` |
+| **zenoh-ts (direct)** | browser speaks Zenoh itself via [`@eclipse-zenoh/zenoh-ts`](https://www.npmjs.com/package/@eclipse-zenoh/zenoh-ts) → a `zenoh-bridge-remote-api` WebSocket — **no gateway in the read path** | `:10000` |
+
+`bash servers/start-all.sh` launches all three. For data over Zenoh + LCM at once, run DimSim:
+`DIMOS_TRANSPORT=zenoh uv run dimos --simulation dimsim run unitree-go2`.
+
+**zenoh-ts bridge** (one-time): `cargo install zenoh-bridge-remote-api` (pin to your Zenoh version —
+the repo uses 1.9). start-all.sh runs it on `:10000` (peer mode, joins the dimos Zenoh net). The
+direct path is **true per-client end-to-end on-demand**: only the keys you `declareSubscriber` ever
+transit to the browser (vs the LCM gateway, which receives every topic off multicast). **Safety:**
+zenoh-ts handles only the *read* path — teleop/goal still go through a gateway so its velocity clamp +
+deadman + stop-on-disconnect apply (a browser doing raw Zenoh `put` would bypass all of that).
 
 ## The SDK (`@dimos/topics`)
 
@@ -63,11 +84,13 @@ live subscriber.
 ```bash
 bench/run.sh           # Bun↔LCM gateway
 bench/run.sh zenoh     # Python↔Zenoh gateway
+bench/run.sh all       # both → combined bench/RESULTS.md
 pytest bench/test_bench.py -s
 ```
 See **[bench/RESULTS.md](bench/RESULTS.md)**. Headline: **sub-ms p50 latency** on both; **Python↔Zenoh
-has ~3× lower p95** (reliable transport vs LCM multicast jitter) → "Python is slow" is a non-issue
-for a byte-relay gateway. On-demand subscription cuts WS-hop bandwidth ~75%.
+has ~6× lower p95** (reliable transport vs LCM multicast jitter) → "Python is slow" is a non-issue
+for a byte-relay gateway. On-demand subscription cuts WS-hop bandwidth ~75%. (zenoh-ts is browser-only,
+so it's benched via the in-app **Stats** latency, not this headless harness.)
 
 ## Layout
 | Path | What |
@@ -95,5 +118,8 @@ parts-bin this was extracted from.
   the wasm32 target) produces `web_viewer/re_viewer_bg.wasm` (128 MB *debug*; `--release` shrinks ~3×).
   ⏭ Next: serve that `web_viewer/` dir + iframe it (gRPC proxy URL) for in-3D teleop/click-to-nav via
   `RerunWebSocketServer` :3030 — the fork's edge over the stock viewer.
-- ⏭ True end-to-end on-demand on the Zenoh gateway (per-client `declareSubscriber`/`undeclare`).
-- ⏭ Camera (`useImageTopic`) + a transport selector in the app.
+- ✅ **True end-to-end on-demand** — the **zenoh-ts (direct)** transport: the browser
+  `declareSubscriber`s Zenoh keys itself via the remote-api bridge, so only subscribed keys transit
+  (verified in-app; teleop/goal kept on the gateway for the safety boundary).
+- ✅ **Camera** (`useImageTopic`) + **transport selector** (topbar dropdown over all three transports).
+- ✅ **Tabbed 3D** (Rerun) ⇄ **zoomable/pannable WorldView**, with streams scoped to the active tab.
