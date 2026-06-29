@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pyzed.sl as sl
 import rerun as rr
+import rerun.blueprint as rrb
 
 
 # ── Voxel key packing ────────────────────────────────────────────────────────
@@ -491,10 +492,17 @@ class DepthStreamer:
 def main() -> None:
     # Fork Rerun BEFORE zed.open() — ZED capture threads make post-open fork unsafe.
     rr.init("zed_depth_costmap", spawn=True)
+    rr.send_blueprint(rrb.Blueprint(
+        rrb.Horizontal(
+            rrb.Spatial3DView(name="Live Scan",        origin="world"),
+            rrb.Spatial3DView(name="Persistent Map",   origin="map"),
+        ),
+        collapse_panels=True,
+    ))
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
-    rr.log("world/cloud",  rr.Points3D([[0, 0, 0]]), static=True)  # anchor live-scan view
+    rr.log("world/cloud",  rr.Points3D([[0, 0, 0]]), static=True)
     rr.log("map",          rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
-    rr.log("map/occupied", rr.Points3D([[0, 0, 0]]), static=True)  # anchor persistent-map view
+    rr.log("map/occupied", rr.Points3D([[0, 0, 0]]), static=True)
 
     zed = sl.Camera()
     ip  = sl.InitParameters()
