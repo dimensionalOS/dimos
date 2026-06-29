@@ -71,7 +71,7 @@ async def main() -> None:
 
     async def handler(ws) -> None:
         clients[ws] = set()
-        await ws.send(json.dumps({"op": "hello", "topics": topic_list()}))
+        await ws.send(json.dumps({"op": "hello", "topics": topic_list(), "label": "Python↔Zenoh"}))
         try:
             async for raw in ws:
                 if isinstance(raw, bytes):

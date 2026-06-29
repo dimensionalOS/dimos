@@ -30,4 +30,6 @@ export interface Transport {
   onTopics(cb: (topics: TopicInfo[]) => void): void;
   onStatus(cb: (s: Status) => void): void;
   readonly caps: TransportCaps;
+  /** Human label the gateway reports for itself (e.g. "Bun↔LCM", "Python↔Zenoh"). */
+  label?: string;
 }

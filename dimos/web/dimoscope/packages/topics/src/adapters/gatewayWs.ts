@@ -12,6 +12,7 @@ export interface GatewayWsOptions {
 
 export class GatewayWsTransport implements Transport {
   readonly caps: TransportCaps = { onDemand: true, discovery: "live" };
+  label?: string;
   private ws?: WebSocket;
   private sampleCb?: (s: RawSample) => void;
   private topicsCb?: (t: TopicInfo[]) => void;
@@ -55,6 +56,7 @@ export class GatewayWsTransport implements Transport {
         return;
       }
       if (m.op === "hello" || m.op === "topics") {
+        if (m.label) this.label = m.label;
         this.topics = m.topics ?? [];
         this.topicsCb?.(this.topics);
       } else if (m.op === "topic") {

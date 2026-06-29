@@ -191,7 +191,7 @@ Bun.serve<ClientState>({
   websocket: {
     open(ws) {
       clients.add(ws);
-      ws.send(JSON.stringify({ op: "hello", topics: topicList() }));
+      ws.send(JSON.stringify({ op: "hello", topics: topicList(), label: "Bun↔LCM" }));
       console.log(`[ws] +client#${ws.data.id} (${clients.size} total)`);
     },
     close(ws) {
