@@ -177,8 +177,6 @@ class pSHMTransport(PubSubTransport[T]):
         self.shm = PickleSharedMemory(**kwargs)
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        # Preserve capacity: workers reconstruct via pickle, and dropping it reverts
-        # to the small default, silently killing oversized streams (e.g. 1080p images).
         return (
             functools.partial(pSHMTransport, default_capacity=self.shm.config.default_capacity),
             (self.topic,),
@@ -212,7 +210,6 @@ class SHMTransport(PubSubTransport[T]):
         self.shm = BytesSharedMemory(**kwargs)
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        # Preserve capacity (see pSHMTransport.__reduce__).
         return (
             functools.partial(SHMTransport, default_capacity=self.shm.config.default_capacity),
             (self.topic,),
