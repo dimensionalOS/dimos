@@ -104,8 +104,8 @@ def _filter_isolated(xyz: np.ndarray, voxel: float = 0.05, min_pts: int = 2) -> 
 @dataclass
 class LocalSupportConfig:
     window_radius: int   = 4     # pixels each side; 4 → 9×9 = 81 neighbours
-    depth_tolerance: float = 0.10  # metres; neighbours within this → consistent
-    min_support: float   = 3.0   # gate threshold applied downstream (not here)
+    depth_tolerance: float = 0.15  # metres; neighbours within this → consistent
+    min_support: float   = 2.0   # gate threshold applied downstream (not here)
     conf_weight: float   = 0.5   # exponent on neighbour confidence before summing
 
 
