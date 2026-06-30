@@ -25,6 +25,9 @@ from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.utils.data import get_data
 from dimos.utils.gpu_utils import is_cuda_available
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 class YoloePromptMode(Enum):
@@ -43,6 +46,9 @@ class Yoloe2DDetector(Detector):
         prompt_mode: YoloePromptMode = YoloePromptMode.LRPC,
         exclude_class_ids: list[int] | None = None,
         max_area_ratio: float | None = 0.3,
+        conf: float = 0.6,
+        iou: float = 0.6,
+        max_det: int | None = None,
     ) -> None:
         """
         Initialize YOLO-E 2D detector.
@@ -54,6 +60,9 @@ class Yoloe2DDetector(Detector):
             prompt_mode: LRPC for prompt-free detection, PROMPT for text/visual prompting.
             exclude_class_ids: Class IDs to filter out from results (pass [] to disable).
             max_area_ratio: Maximum bbox area ratio (0-1) relative to image.
+            conf: Confidence threshold passed to Ultralytics track().
+            iou: NMS IoU threshold passed to Ultralytics track().
+            max_det: Optional maximum detections per frame.
         """
         if model_name is None:
             if prompt_mode == YoloePromptMode.LRPC:
@@ -62,9 +71,15 @@ class Yoloe2DDetector(Detector):
                 model_name = "yoloe-11s-seg.pt"
 
         self.model = YOLOE(get_data(model_path) / model_name)
+        self.detector_id = "yoloe"
+        self.detector_model_name = model_name
+        self.tracker_source = "ultralytics.track"
         self.prompt_mode = prompt_mode
         self._visual_prompts: dict[str, NDArray[Any]] | None = None
         self.max_area_ratio = max_area_ratio
+        self.conf = conf
+        self.iou = iou
+        self.max_det = max_det
         self._lock = threading.Lock()
 
         if prompt_mode == YoloePromptMode.PROMPT:
@@ -80,6 +95,10 @@ class Yoloe2DDetector(Detector):
             self.device = "cuda"
         else:
             self.device = "cpu"
+        logger.info(
+            f"YOLO-E detector loaded model={model_name} prompt_mode={prompt_mode.value} "
+            f"device={self.device} conf={self.conf} iou={self.iou} max_det={self.max_det}"
+        )
 
     def set_prompts(
         self,
@@ -120,11 +139,13 @@ class Yoloe2DDetector(Detector):
         track_kwargs = {
             "source": image.to_opencv(),
             "device": self.device,
-            "conf": 0.6,
-            "iou": 0.6,
+            "conf": self.conf,
+            "iou": self.iou,
             "persist": True,
             "verbose": False,
         }
+        if self.max_det is not None:
+            track_kwargs["max_det"] = self.max_det
 
         with self._lock:
             if self._visual_prompts is not None:
