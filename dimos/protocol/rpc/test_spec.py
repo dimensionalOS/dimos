@@ -127,9 +127,10 @@ def slow_function(delay: float) -> str:
 # Grid tests
 
 
-def test_basic_sync_call() -> None:
+@pytest.mark.parametrize("rpc_context, impl_name", testdata)
+def test_basic_sync_call(rpc_context, impl_name: str) -> None:
     """Test basic synchronous RPC calls."""
-    with lcm_rpc_context() as (server, client):
+    with rpc_context() as (server, client):
         # Serve the function
         unsub = server.serve_rpc(add_function, "add")
 
@@ -146,11 +147,9 @@ def test_basic_sync_call() -> None:
             unsub()
 
 
-@pytest.mark.self_hosted
-@pytest.mark.parametrize("rpc_context, impl_name", testdata)
-async def test_async_call(rpc_context, impl_name: str) -> None:
+async def test_async_call() -> None:
     """Test asynchronous RPC calls."""
-    with rpc_context() as (server, client):
+    with lcm_rpc_context() as (server, client):
         # Serve the function
         unsub = server.serve_rpc(add_function, "add_async")
 
