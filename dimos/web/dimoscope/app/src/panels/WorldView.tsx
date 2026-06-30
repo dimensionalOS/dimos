@@ -54,7 +54,7 @@ export function WorldView() {
   const topics = useTopics();
   const poseTopic = pick(topics, "geometry_msgs.PoseStamped", ["/odom"]);
   const mapTopic = pick(topics, "nav_msgs.OccupancyGrid", ["/map", "/navigation_costmap"]);
-  const lidarTopic = pick(topics, "sensor_msgs.PointCloud2", ["/dimos/lidar", "/lidar"]);
+  const lidarTopic = pick(topics, "sensor_msgs.PointCloud2", ["/lidar"]);
   const scanTopic = pick(topics, "sensor_msgs.LaserScan", ["/scan"]);
   const pathTopic = pick(topics, "nav_msgs.Path", ["/path"]);
 

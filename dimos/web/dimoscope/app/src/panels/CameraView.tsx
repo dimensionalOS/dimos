@@ -5,7 +5,7 @@ import { useTopics, useVideo, type MediaMode, type TopicInfo } from "@dimos/reac
 import { useCvOverlay } from "../cv/useCvOverlay";
 
 function pickImage(topics: TopicInfo[]): string | null {
-  const prefer = ["/dimos/color_image", "/color_image", "/dimos/camera/image_raw", "/image"];
+  const prefer = ["/color_image", "/camera/image_raw", "/image"];
   for (const p of prefer) if (topics.find((t) => t.topic === p)) return p;
   return topics.find((t) => t.type === "sensor_msgs.Image")?.topic ?? null;
 }

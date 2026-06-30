@@ -187,6 +187,8 @@ async def main() -> None:
             payload = bytes(sample.payload)
         base, _, _typ = key.rpartition("/")  # dimos/color_image/sensor_msgs.Image
         topic = "/" + base
+        if topic.startswith("/dimos/"):  # canonical name (match the LCM gateway, which has no prefix)
+            topic = topic[len("/dimos") :]  # /dimos/color_image -> /color_image
         # Decode the camera Image ONCE, then feed whichever consumers want it (only when subscribed).
         trs = webrtc_tracks.get(topic) if HAS_WEBRTC else None
         wc = webcodecs_subs.get(topic) if HAS_WEBCODECS else None

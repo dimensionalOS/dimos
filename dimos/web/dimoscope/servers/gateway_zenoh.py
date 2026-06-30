@@ -46,6 +46,8 @@ def _parse_rpc_commands() -> list[dict]:
         return [
             {"target": "GO2Connection", "method": "standup", "label": "Stand up"},
             {"target": "GO2Connection", "method": "liedown", "label": "Lie down"},
+            {"target": "BenchLoad", "method": "start_bench", "label": "Start bench"},
+            {"target": "BenchLoad", "method": "stop_bench", "label": "Stop bench"},
         ]
     out = []
     for pair in env.split(","):
@@ -156,6 +158,8 @@ async def main() -> None:
             payload = bytes(sample.payload)
         base, _, typ = key.rpartition("/")  # dimos/lidar/sensor_msgs.PointCloud2
         topic = "/" + base
+        if topic.startswith("/dimos/"):  # canonical name: LCM has no prefix, so neither should the browser
+            topic = topic[len("/dimos") :]  # /dimos/lidar -> /lidar
         if topic not in topics:
             topics[topic] = typ
         pkt = make_lc02(f"{topic}#{typ}", payload)

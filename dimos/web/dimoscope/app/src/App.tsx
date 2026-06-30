@@ -18,6 +18,7 @@ import { TeleopPad } from "./panels/TeleopPad";
 import { StatsBar } from "./panels/StatsBar";
 import { RerunPanel } from "./panels/RerunPanel";
 import { CommandsPanel } from "./panels/CommandsPanel";
+import { BenchPanel } from "./panels/BenchPanel";
 
 function Inspector({ topic }: { topic: string }) {
   const { data, meta } = useTopicLatest<any>(topic, { maxHz: 4 });
@@ -126,6 +127,7 @@ export function App() {
             <PoseReadout />
             <TeleopPad />
             <CommandsPanel />
+            <BenchPanel />
             <SubscribeBar />
             {selected ? <Inspector topic={selected} /> : <StatsBar />}
           </div>
