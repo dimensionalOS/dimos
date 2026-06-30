@@ -25,9 +25,11 @@ from pathlib import Path
 
 from dimos.memory.db_tf import DbTf
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.DeformationNode import DeformationNode, tf_id_for
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.tf import MultiTBuffer
 
@@ -206,6 +208,84 @@ def test_reparent_midrun_uses_graph_as_of_query_time(tmp_path: Path) -> None:
     assert want2 is not None and got2 is not None
     assert _diff(want2, got2) < 1e-6
     assert got2.translation.x < 20.0  # odom branch gone
+    store.stop()
+
+
+def _append_deformation(
+    store: SqliteStore, tf_id: int, node_id: int, ts: float, xyz: tuple[float, float, float]
+) -> None:
+    """Record one DeformationNode version, exactly as the recorder does: tagged by
+    tf_id (the edge) and id (the keyframe). Re-call with the same id to add a moved
+    version (the optimizer relocating that keyframe)."""
+    node = DeformationNode(
+        id=node_id,
+        tf_id=tf_id,
+        pose=PoseStamped(ts=ts, frame_id="map", position=list(xyz), orientation=[0, 0, 0, 1]),
+    )
+    store.stream("tf_deformation_nodes", DeformationNode).append(
+        node, ts=ts, pose=None, tags={"tf_id": str(tf_id), "id": str(node_id)}
+    )
+
+
+def _record_corrected_edge(path: Path) -> None:
+    """A map->odom edge (raw = identity) with base_link hanging off odom."""
+    store = SqliteStore(path=str(path))
+    for i in range(20):
+        ts = _T0 + i / _DYN_RATE
+        _append(store, _static("map", "odom", (0.0, 0.0, 0.0), ts))
+        _append(
+            store,
+            Transform(
+                translation=Vector3(i * 0.1, 0, 0),
+                rotation=_yaw(0),
+                frame_id="odom",
+                child_frame_id="base_link",
+                ts=ts,
+            ),
+        )
+    store.stop()
+
+
+def test_loop_closure_deformation_corrects_matched_edge(tmp_path: Path) -> None:
+    """A deformation node whose tf_id = hash(map|odom) deforms the raw map<-odom edge
+    by current ∘ inv(original); an edge with no matching tf_id is untouched."""
+    path = tmp_path / "lc.db"
+    _record_corrected_edge(path)
+    store = SqliteStore(path=str(path))
+    tf_id = tf_id_for("map", "odom")
+    # one keyframe at t0+0.3: the optimizer later moved it from origin to (1, 0, 0)
+    _append_deformation(store, tf_id, 11, _T0 + 0.3, (0.0, 0.0, 0.0))  # original
+    _append_deformation(store, tf_id, 11, _T0 + 0.3, (1.0, 0.0, 0.0))  # current
+    store.stop()
+
+    store = SqliteStore(path=str(path), must_exist=True)
+    db = DbTf(store)
+    got = db.get("map", "odom", _T0 + 0.3, 0.5)
+    assert got is not None and abs(got.translation.x - 1.0) < 1e-6  # raw identity + delta
+    base = db.get("odom", "base_link", _T0 + 0.3, 0.5)  # unmatched edge, unchanged
+    assert base is not None and abs(base.translation.x - 0.9) < 0.2
+    store.stop()
+
+
+def test_loop_closure_deformation_blends_between_keyframes(tmp_path: Path) -> None:
+    """Two bracketing keyframes (delta 0 at t0, delta 2 at t0+? ) blend at the midpoint
+    to delta 1 — linear blend skinning across the trajectory."""
+    path = tmp_path / "lc_blend.db"
+    store = SqliteStore(path=str(path))
+    for i in range(int(_DURATION * _DYN_RATE)):  # map->odom identity across [t0, t0+10)
+        ts = _T0 + i / _DYN_RATE
+        _append(store, _static("map", "odom", (0.0, 0.0, 0.0), ts))
+    tf_id = tf_id_for("map", "odom")
+    _append_deformation(store, tf_id, 1, _T0, (0.0, 0.0, 0.0))  # kf A: original
+    _append_deformation(store, tf_id, 1, _T0, (0.0, 0.0, 0.0))  # kf A: unmoved
+    _append_deformation(store, tf_id, 2, _T0 + 8.0, (0.0, 0.0, 0.0))  # kf B: original
+    _append_deformation(store, tf_id, 2, _T0 + 8.0, (2.0, 0.0, 0.0))  # kf B: moved +2
+    store.stop()
+
+    store = SqliteStore(path=str(path), must_exist=True)
+    db = DbTf(store)
+    got = db.get("map", "odom", _T0 + 4.0, 0.5)  # midpoint of [t0, t0+8]
+    assert got is not None and abs(got.translation.x - 1.0) < 1e-6
     store.stop()
 
 
