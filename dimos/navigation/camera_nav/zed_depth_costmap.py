@@ -28,6 +28,9 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
+import queue
+import threading
+
 import numpy as np
 import pyzed.sl as sl
 import rerun as rr
@@ -509,11 +512,15 @@ class VoxelAccumulator:
 # ── Stage 6: Streamer ─────────────────────────────────────────────────────────
 
 class DepthStreamer:
-    """Drives the camera-agnostic pipeline: gradient filter → backproject → accumulate → Rerun."""
+    """Two-layer pipeline:
+    - Main thread  (fast):  gradient filter → backproject → live Rerun cloud  (<10 ms)
+    - Map thread   (async): world transform → voxel add → carve → map Rerun   (amortised)
+    """
 
-    MAX_CLOUD = 50_000   # Rerun per-frame point cap
-    MAX_MAP   = 100_000  # Rerun map point cap
-    MAP_EVERY = 10       # frames between map updates
+    MAX_CLOUD  = 50_000   # Rerun per-frame point cap
+    MAX_MAP    = 100_000  # Rerun map point cap
+    MAP_EVERY  = 10       # map-thread frames between map Rerun updates
+    CARVE_EVERY = 5       # map-thread frames between carve passes
 
     def __init__(
         self,
@@ -525,15 +532,21 @@ class DepthStreamer:
         self._bp             = backproj
         self._grad           = grad_filter or GradientStabilityFilter()
         self._vox            = VoxelAccumulator(voxel_size=0.08)
+        self._vox_lock       = threading.Lock()
         self._cam_z          = 0.0
         self._pinhole_logged = False
         self._last_n_valid   = 0
         self._last_n_stable  = 0
+        # Map worker: queue holds (xyz_world, cam_pos, cam_z, frame); maxsize=4 drops stale frames
+        self._map_queue: queue.Queue = queue.Queue(maxsize=4)
+        self._map_thread = threading.Thread(target=self._map_worker, daemon=True)
+        self._map_thread.start()
 
     def assemble(self, ts: float) -> DepthFramePacket:
         return self._src.read(ts)
 
     def process(self, pkt: DepthFramePacket, frame: int) -> None:
+        """Fast path — target <10 ms. No voxel ops, no world-frame dict work."""
         rr.set_time("frame", sequence=frame)
         if not self._pinhole_logged:
             rr.log("world/camera", rr.Pinhole(
@@ -543,20 +556,18 @@ class DepthStreamer:
 
         rr.log("world/camera/depth", rr.DepthImage(pkt.depth, meter=1.0))
 
-        # ── Stage 2: geometric stability — reject depth discontinuities ───────
+        # Stage 1+2: hard filter + gradient stability
         stable_mask = self._grad.compute(pkt.depth)
         self._last_n_valid  = int(np.isfinite(pkt.depth).sum())
         self._last_n_stable = int(stable_mask.sum())
-
-        # Log gradient mask so we can inspect which pixels survive in Rerun
         rr.log("world/camera/stable", rr.Image(stable_mask.astype(np.uint8) * 255))
 
-        # ── Stage 3: backproject only geometrically stable pixels ─────────────
-        xyz, conf = self._bp.project(pkt, stable_mask)
+        # Stage 3: backproject (world-frame matmul is O(N) numpy — fast)
+        xyz, _ = self._bp.project(pkt, stable_mask)
         if len(xyz) == 0:
             return
 
-        # ── Live cloud — height-colored ───────────────────────────────────────
+        # Live cloud — instant, no dict work
         self._cam_z = float(pkt.pose_t[2])
         n   = min(len(xyz), self.MAX_CLOUD)
         idx = np.random.choice(len(xyz), n, replace=False) if len(xyz) > n else np.arange(n)
@@ -566,39 +577,55 @@ class DepthStreamer:
             radii=0.003,
         ))
 
-        # ── Persistent map ────────────────────────────────────────────────────
+        # Hand off to map thread — non-blocking; drop frame if worker is behind
         if self._src.pose_locked:
-            cam_pos = pkt.pose_t
+            try:
+                self._map_queue.put_nowait(
+                    (xyz, pkt.pose_t.copy(), self._cam_z, frame)
+                )
+            except queue.Full:
+                pass
 
-            def _obs_filter(pts: np.ndarray) -> np.ndarray:
-                if len(pts) == 0:
-                    return pts
-                h_rel    = pts[:, 2] - self._cam_z
-                rays     = pts - cam_pos
-                dist     = np.linalg.norm(rays, axis=1)
-                d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0)
-                return pts[
-                    (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI)
-                    & (d_z_norm > _FLOOR_RAY_Z)
-                ]
+    def _map_worker(self) -> None:
+        """Background thread: world-frame accumulation, carving, map logging."""
+        carve_count = 0
+        while True:
+            item = self._map_queue.get()
+            if item is None:
+                return
+            xyz_world, cam_pos, cam_z, frame = item
 
-            xyz_map = _obs_filter(_filter_isolated(xyz))
-            if len(xyz_map) > 0:
-                self._vox.carve(xyz_map, cam_pos)
+            # Height band + floor-angle filter
+            h_rel    = xyz_world[:, 2] - cam_z
+            rays     = xyz_world - cam_pos
+            dist     = np.linalg.norm(rays, axis=1)
+            d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0)
+            keep     = (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI) & (d_z_norm > _FLOOR_RAY_Z)
+            xyz_map  = _filter_isolated(xyz_world[keep])
+            if len(xyz_map) == 0:
+                continue
+
+            carve_count += 1
+            with self._vox_lock:
+                if carve_count % self.CARVE_EVERY == 0:
+                    self._vox.carve(xyz_map, cam_pos)
                 self._vox.add(xyz_map)
 
-        if frame % self.MAP_EVERY == 0:
-            self._log_map()
+            if frame % self.MAP_EVERY == 0:
+                self._log_map(cam_z)
 
-    def _log_map(self) -> None:
-        pts = self._vox.stable_xyz(min_obs=2)
+    def _log_map(self, cam_z: float | None = None) -> None:
+        if cam_z is None:
+            cam_z = self._cam_z
+        with self._vox_lock:
+            pts = self._vox.stable_xyz(min_obs=2)
         if len(pts) == 0:
             return
         n   = min(len(pts), self.MAX_MAP)
         idx = np.random.choice(len(pts), n, replace=False) if len(pts) > n else np.arange(n)
         rr.log("world/map", rr.Points3D(
             positions=pts[idx],
-            colors=_height_color(pts[idx, 2] - self._cam_z),
+            colors=_height_color(pts[idx, 2] - cam_z),
             radii=0.005,
         ))
 
@@ -607,7 +634,8 @@ class DepthStreamer:
         n_valid: int = 0, n_stable: int = 0,
     ) -> None:
         lock = "LOCKED" if self._src.pose_locked else "searching"
-        n_map = len(self._vox.stable_xyz(min_obs=2))
+        with self._vox_lock:
+            n_map = len(self._vox.stable_xyz(min_obs=2))
         pct   = 100 * n_stable / n_valid if n_valid > 0 else 0.0
         print(
             f"frame={frame:5d}  "
