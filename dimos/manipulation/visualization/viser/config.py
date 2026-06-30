@@ -50,11 +50,14 @@ class ViserVisualizationConfig(BaseModel):
         default=5.0,
         validation_alias=AliasChoices("preview_request_timeout", "viser_preview_request_timeout"),
     )
+    allow_plan_execute: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("allow_plan_execute", "viser_allow_plan_execute"),
+    )
     current_match_tolerance: float = Field(
         default=0.02,
         validation_alias=AliasChoices("current_match_tolerance", "viser_current_match_tolerance"),
     )
-    allow_plan_execute: bool = False
 
     @property
     def requires_world_visualization(self) -> bool:

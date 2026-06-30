@@ -12,13 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dev replay util: run a lidar+odometry .db through RayTraceMap and MLSPlan into rerun."""
+"""Replay a lidar+odometry .db through RayTraceMap and the MLS planner into rerun.
+
+Pass one or more --config clearance,buffer,weight to overlay each as a colored path.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path as FsPath
-from typing import TYPE_CHECKING
+from time import perf_counter
 
+import numpy as np
+from numpy.typing import NDArray
 import rerun as rr
 import typer
 
@@ -27,23 +32,49 @@ from dimos.memory2.store.sqlite import SqliteStore
 from dimos.memory2.transform import FnTransformer
 from dimos.memory2.type.observation import Observation
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
-from dimos.navigation.nav_3d.mls_planner.transformer import MLSPlan
+from dimos.navigation.nav_3d.mls_planner.mls_planner import MLSPlanner
 from dimos.utils.data import resolve_named_path
 
-if TYPE_CHECKING:
-    import numpy as np
-    from numpy.typing import NDArray
-
 TIMELINE = "ts"
+
+# Distinct path colors for overlaid configurations, config 0 first.
+PATH_PALETTE = [
+    [0, 255, 0],
+    [255, 0, 255],
+    [0, 200, 255],
+    [255, 180, 0],
+    [255, 80, 80],
+    [160, 120, 255],
+    [120, 255, 200],
+    [255, 255, 120],
+]
+
+
+def _parse_configs(
+    specs: list[str] | None,
+    clearance: float,
+    buffer: float,
+    weight: float,
+) -> list[tuple[float, float, float]]:
+    """Each spec is 'clearance,buffer,weight'. Falls back to the single flags."""
+    if not specs:
+        return [(clearance, buffer, weight)]
+    out: list[tuple[float, float, float]] = []
+    for spec in specs:
+        parts = spec.replace(" ", "").split(",")
+        if len(parts) != 3:
+            raise typer.BadParameter(f"--config must be 'clearance,buffer,weight'; got {spec!r}")
+        c, b, w = (float(p) for p in parts)
+        out.append((c, b, w))
+    return out
+
 
 PairObs = Observation[tuple[Observation[PointCloud2], Observation[Odometry]]]
 
 
 def _attach_pose_from_odom(pair_obs: PairObs) -> Observation[PointCloud2]:
-    lidar_obs = pair_obs.data[0]
-    odom_obs = pair_obs.data[1]
+    lidar_obs, odom_obs = pair_obs.data
     odom = odom_obs.data
     pose_tuple = (
         float(odom.position.x),
@@ -68,12 +99,149 @@ def _log_edges(edges: NDArray[np.float32], entity: str) -> None:
     rr.log(entity, rr.LineStrips3D(segments))
 
 
-def _log_path(path: Path, entity: str) -> None:
-    if not path.poses:
+def _log_path_wp(waypoints: NDArray[np.float32] | None, entity: str, color: list[int]) -> None:
+    if waypoints is None or len(waypoints) == 0:
         rr.log(entity, rr.LineStrips3D([]))
         return
-    points = [(float(p.position.x), float(p.position.y), float(p.position.z)) for p in path.poses]
-    rr.log(entity, rr.LineStrips3D([points], colors=[[0, 255, 0]], radii=0.05))
+    points = [(float(p[0]), float(p[1]), float(p[2])) for p in waypoints]
+    rr.log(entity, rr.LineStrips3D([points], colors=[color], radii=0.05))
+
+
+def _clearance_colors(clearance: NDArray[np.float32], clamp_m: float) -> NDArray[np.uint8]:
+    """Map per-cell wall clearance to a blue ramp, clamped so it resolves near walls."""
+    norm = np.clip(np.nan_to_num(clearance / clamp_m, nan=1.0, posinf=1.0), 0.0, 1.0)
+    blocked = np.array([4.0, 8.0, 48.0], dtype=np.float64)
+    clear = np.array([150.0, 200.0, 255.0], dtype=np.float64)
+    rgb: NDArray[np.float64] = blocked + norm[:, None] * (clear - blocked)
+    return rgb.astype(np.uint8)
+
+
+def _log_shared(
+    start: tuple[float, float, float],
+    planner: MLSPlanner,
+    render_voxel: float,
+    clearance_clamp: float,
+) -> tuple[NDArray[np.float32], NDArray[np.float32], NDArray[np.float32]]:
+    """Log the map artifacts shared by every config from a reference planner.
+
+    Returns (surface, nodes, edges) for metric sizing.
+    """
+    rr.log("world/start", rr.Points3D([start], colors=[[0, 255, 0]], radii=0.1))
+
+    voxel_map = planner.voxel_map()
+    if voxel_map.size:
+        rr.log(
+            "world/voxel_map",
+            rr.Points3D(voxel_map, colors=[[180, 125, 125]], radii=render_voxel / 2),
+        )
+
+    surface = planner.surface_clearance_map()
+    if surface.size:
+        rr.log(
+            "world/surface_map",
+            rr.Points3D(
+                surface[:, :3],
+                colors=_clearance_colors(surface[:, 3], clearance_clamp),
+                radii=render_voxel / 2,
+            ),
+        )
+
+    nodes = planner.nodes()
+    if nodes.size:
+        rr.log("world/nodes", rr.Points3D(nodes, colors=[[255, 200, 0]], radii=0.05))
+
+    edges = planner.node_edges()
+    _log_edges(edges, "world/node_edges")
+    return surface, nodes, edges
+
+
+def _init_recording(db_path: FsPath, out: FsPath | None, live: bool) -> None:
+    rr.init("plan_rrd", recording_id=db_path.stem)
+    if out is not None and live:
+        # Generous viewer memory so the gRPC sink never backpressures the writer.
+        rr.spawn(connect=False, memory_limit="16GB", server_memory_limit="16GB")
+        rr.set_sinks(rr.GrpcSink(), rr.FileSink(str(out)))
+    elif out is not None:
+        rr.save(str(out))
+    else:
+        rr.spawn()
+    register_colormap_annotation("turbo")
+
+
+def _build_planners(
+    configs: list[tuple[float, float, float]],
+    voxel_size: float,
+    robot_height: float,
+    surface_closing_radius: float,
+    node_spacing: float,
+    step_height: float,
+    step_penalty_weight: float,
+) -> list[tuple[str, list[int], MLSPlanner]]:
+    planners: list[tuple[str, list[int], MLSPlanner]] = []
+    for i, (clr, buf, wgt) in enumerate(configs):
+        planner = MLSPlanner(
+            voxel_size=voxel_size,
+            robot_height=robot_height,
+            surface_closing_radius=surface_closing_radius,
+            node_spacing_m=node_spacing,
+            wall_clearance_m=clr,
+            wall_buffer_m=buf,
+            wall_buffer_weight=wgt,
+            step_threshold_m=step_height,
+            step_penalty_weight=step_penalty_weight,
+        )
+        color = PATH_PALETTE[i % len(PATH_PALETTE)]
+        label = f"cfg{i}_c{clr:g}_b{buf:g}_w{wgt:g}"
+        planners.append((label, color, planner))
+        print(f"config {i}: clearance={clr} buffer={buf} weight={wgt} color={color} -> {label}")
+    return planners
+
+
+def _process_frame(
+    ray_obs: Observation[PointCloud2],
+    planners: list[tuple[str, list[int], MLSPlanner]],
+    goal: tuple[float, float, float],
+    robot_height: float,
+    render_voxel: float,
+    clearance_clamp: float,
+) -> dict[str, float]:
+    """Plan every config for one frame, log paths/map/metrics, return the ref timing."""
+    assert ray_obs.pose_tuple is not None
+    bounds = ray_obs.tags["region_bounds"]
+    px, py, pz, *_ = ray_obs.pose_tuple
+    start = (float(px), float(py), float(pz) - robot_height)
+    ox, oy, radius, z_min, z_max = bounds
+    pts = ray_obs.data.points_f32()
+    rr.set_time(TIMELINE, timestamp=ray_obs.ts)
+
+    ref_timing: dict[str, float] = {}
+    surface = nodes = edges = np.empty((0,), dtype=np.float32)
+    for j, (label, color, planner) in enumerate(planners):
+        t0 = perf_counter()
+        planner.update_region(pts, (ox, oy), radius, z_min, z_max)
+        t1 = perf_counter()
+        waypoints = planner.plan(start, goal)
+        t2 = perf_counter()
+        _log_path_wp(waypoints, f"world/paths/{label}", color)
+        if j == 0:
+            ref_timing = {
+                "update_ms": (t1 - t0) * 1000,
+                "plan_ms": (t2 - t1) * 1000,
+                "total_ms": (t2 - t0) * 1000,
+            }
+            surface, nodes, edges = _log_shared(start, planner, render_voxel, clearance_clamp)
+
+    for key, value in ref_timing.items():
+        rr.log(f"metrics/timing/{key}", rr.Scalars(value))
+    sizes = {
+        "voxels": planners[0][2].voxel_count(),
+        "surface_cells": len(surface),
+        "nodes": len(nodes),
+        "edges": len(edges),
+    }
+    for key, value in sizes.items():
+        rr.log(f"metrics/size/{key}", rr.Scalars(value))
+    return ref_timing
 
 
 def main(
@@ -92,88 +260,110 @@ def main(
     max_range: float = typer.Option(30.0, "--max-range", help="Max ray cast distance (m)"),
     ray_subsample: int = typer.Option(1, "--ray-subsample", help="Keep every Nth ray"),
     emit_every: int = typer.Option(1, "--emit-every", help="Replan every N lidar frames"),
-    robot_height: float = typer.Option(0.3, "--robot-height", help="Robot height (m)"),
+    robot_height: float = typer.Option(1.0, "--robot-height", help="Robot height (m)"),
+    surface_closing_radius: float = typer.Option(
+        0.3,
+        "--surface-closing-radius",
+        help="Hole-fill radius (m); morphological closing fills holes up to twice this wide",
+    ),
     node_spacing: float = typer.Option(1.0, "--node-spacing", help="Graph node spacing (m)"),
+    wall_clearance: float = typer.Option(
+        0.3,
+        "--wall-clearance",
+        help="Hard clearance; cells closer to a wall or edge are impassable (m)",
+    ),
+    wall_buffer: float = typer.Option(
+        0.75, "--wall-buffer", help="Width of the soft standoff zone beyond clearance (m)"
+    ),
+    wall_buffer_weight: float = typer.Option(
+        100.0, "--wall-buffer-weight", help="Peak soft wall penalty at the clearance edge"
+    ),
+    step_height: float = typer.Option(
+        0.25,
+        "--step-height",
+        help="Max traversable vertical step (m); taller steps are impassable",
+    ),
+    step_penalty_weight: float = typer.Option(
+        4.0, "--step-penalty-weight", help="Soft cost per meter of vertical climb"
+    ),
+    config: list[str] = typer.Option(
+        None,
+        "--config",
+        help="Repeatable 'clearance,buffer,weight' to overlay as colored paths; "
+        "overrides the single --wall-* flags",
+    ),
     goal: tuple[float, float, float] = typer.Option(
-        (0.0, 0.0, 0.0),
-        "--goal",
-        help="Planner goal xyz. Default is dataset-specific; override per recording.",
+        (0.0, 0.0, 0.0), "--goal", help="Planner goal xyz; override per recording"
     ),
     live: bool = typer.Option(
         False, "--live", help="Also spawn the rerun viewer when --out is set"
     ),
     render_voxel: float = typer.Option(0.05, "--render-voxel", help="Rerun voxel render size (m)"),
+    clearance_clamp: float = typer.Option(
+        1.0, "--clearance-clamp", help="Max clearance (m) for the surface color scale"
+    ),
+    from_time: float | None = typer.Option(
+        None, "--from-time", help="Start timestamp (s); default is the stream start"
+    ),
+    to_time: float | None = typer.Option(
+        None, "--to-time", help="End timestamp (s); default is the stream end"
+    ),
 ) -> None:
     db_path = resolve_named_path(dataset, ".db")
-
-    rr.init("plan_rrd", recording_id=db_path.stem)
-    if out is not None and live:
-        # Generous viewer memory so the gRPC sink never backpressures the writer.
-        rr.spawn(connect=False, memory_limit="16GB", server_memory_limit="16GB")
-        rr.set_sinks(rr.GrpcSink(), rr.FileSink(str(out)))
-    elif out is not None:
-        rr.save(str(out))
-    else:
-        rr.spawn()
-    register_colormap_annotation("turbo")
+    _init_recording(db_path, out, live)
 
     store = SqliteStore(path=str(db_path))
     with store:
         lidar = store.stream(lidar_stream, PointCloud2).order_by("ts")
+        if from_time is not None:
+            lidar = lidar.from_time(from_time)
+        if to_time is not None:
+            lidar = lidar.to_time(to_time)
         odom = store.stream(odom_stream, Odometry).order_by("ts")
 
         pose_tagged = lidar.align(odom, tolerance=align_tol).transform(
             FnTransformer(_attach_pose_from_odom)
         )
-        pipeline = pose_tagged.transform(
+        ray_pipeline = pose_tagged.transform(
             RayTraceMap(
                 voxel_size=voxel_size,
                 max_range=max_range,
                 ray_subsample=ray_subsample,
                 emit_every=emit_every,
             )
-        ).transform(
-            MLSPlan(
-                goal=goal,
-                voxel_size=voxel_size,
-                robot_height=robot_height,
-                node_spacing_m=node_spacing,
-            )
+        )
+
+        configs = _parse_configs(config, wall_clearance, wall_buffer, wall_buffer_weight)
+        planners = _build_planners(
+            configs,
+            voxel_size,
+            robot_height,
+            surface_closing_radius,
+            node_spacing,
+            step_height,
+            step_penalty_weight,
         )
 
         rr.log("world/goal", rr.Points3D([goal], colors=[[255, 0, 0]], radii=0.1), static=True)
 
-        for obs in pipeline:
-            rr.set_time(TIMELINE, timestamp=obs.ts)
-
-            start = obs.tags["start"]
-            rr.log("world/start", rr.Points3D([start], colors=[[0, 255, 0]], radii=0.1))
-
-            voxel_map = obs.tags["voxel_map"]
-            rr.log("world/voxel_map", voxel_map.to_rerun(voxel_size=render_voxel))
-
-            surface = obs.tags["surface_map"]
-            if surface.size:
-                rr.log(
-                    "world/surface_map",
-                    rr.Points3D(surface, colors=[[120, 120, 200]], radii=render_voxel / 2),
+        try:
+            frame = 0
+            for ray_obs in ray_pipeline:
+                if ray_obs.pose_tuple is None:
+                    continue
+                ref_timing = _process_frame(
+                    ray_obs, planners, goal, robot_height, render_voxel, clearance_clamp
                 )
-
-            nodes = obs.tags["nodes"]
-            if nodes.size:
-                rr.log("world/nodes", rr.Points3D(nodes, colors=[[255, 200, 0]], radii=0.05))
-
-            _log_edges(obs.tags["node_edges"], "world/node_edges")
-            _log_path(obs.data, "world/path")
-
-            count = obs.tags.get("frame_count", "?")
-            planned = obs.tags.get("planned", False)
-            print(
-                f"frame_count={count} planned={planned} waypoints={len(obs.data.poses)}",
-                end="\r",
-                flush=True,
-            )
-        print()
+                frame += 1
+                print(
+                    f"frame={frame} configs={len(planners)} "
+                    f"rebuild(ref)={ref_timing['total_ms'] - ref_timing['plan_ms']:.1f}ms "
+                    f"plan(ref)={ref_timing['plan_ms']:.1f}ms",
+                    end="\r",
+                    flush=True,
+                )
+        except KeyboardInterrupt:
+            print("\ninterrupted")
 
     if out is not None:
         print(f"wrote {out}")

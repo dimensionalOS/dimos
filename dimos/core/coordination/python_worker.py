@@ -24,6 +24,11 @@ import threading
 import traceback
 from typing import TYPE_CHECKING, Any
 
+from dimos.core.coordination.worker_launcher import (
+    ForkserverWorkerLauncher,
+    WorkerLauncher,
+    WorkerProcessHandle,
+)
 from dimos.core.coordination.worker_messages import (
     CallMethodRequest,
     DeployModuleRequest,
@@ -93,7 +98,7 @@ class Actor:
 
     def __init__(
         self,
-        conn: Connection | None,
+        conn: WorkerProcessHandle | Connection | None,
         module_class: type[ModuleBase],
         worker_id: int,
         module_id: int = 0,
@@ -161,12 +166,12 @@ _module_ids = SequentialIds()
 
 
 class PythonWorker:
-    def __init__(self) -> None:
+    def __init__(self, launcher: WorkerLauncher | None = None) -> None:
         self._lock = threading.Lock()
         self._modules: dict[int, Actor] = {}
         self._reserved: int = 0
-        self._process: Any = None
-        self._conn: Connection | None = None
+        self._handle: WorkerProcessHandle | None = None
+        self._launcher = launcher or ForkserverWorkerLauncher()
         self._worker_id: int = _worker_ids.next()
         self.dedicated: bool = False
 
@@ -177,17 +182,9 @@ class PythonWorker:
     @property
     def pid(self) -> int | None:
         """PID of the worker process, or ``None`` if not alive."""
-        if self._process is None:
+        if self._handle is None:
             return None
-        try:
-            # Signal 0 just checks if the process is alive.
-            pid: int | None = self._process.pid
-            if pid is None:
-                return None
-            os.kill(pid, 0)
-            return pid
-        except OSError:
-            return None
+        return self._handle.pid
 
     @property
     def worker_id(self) -> int:
@@ -202,16 +199,7 @@ class PythonWorker:
         self._reserved += 1
 
     def start_process(self) -> None:
-        ctx = get_forkserver_context()
-        parent_conn, child_conn = ctx.Pipe()
-        self._conn = parent_conn
-
-        self._process = ctx.Process(
-            target=_worker_entrypoint,
-            args=(child_conn, self._worker_id),
-            daemon=True,
-        )
-        self._process.start()
+        self._handle = self._launcher.launch(self._worker_id)
 
     def deploy_module(
         self,
@@ -219,7 +207,7 @@ class PythonWorker:
         global_config: GlobalConfig = global_config,
         kwargs: dict[str, Any] | None = None,
     ) -> Actor:
-        if self._conn is None:
+        if self._handle is None:
             raise RuntimeError("Worker process not started")
 
         kwargs = kwargs or {}
@@ -229,13 +217,13 @@ class PythonWorker:
         request = DeployModuleRequest(module_id=module_id, module_class=module_class, kwargs=kwargs)
         try:
             with self._lock:
-                self._conn.send(request)
-                response: WorkerResponse = self._conn.recv()
+                self._handle.send(request)
+                response: WorkerResponse = self._handle.recv()
 
             if response.error:
                 raise RuntimeError(f"Failed to deploy module: {response.error}")
 
-            actor = Actor(self._conn, module_class, self._worker_id, module_id, self._lock)
+            actor = Actor(self._handle, module_class, self._worker_id, module_id, self._lock)
             actor.set_ref(actor).result()
 
             self._modules[module_id] = actor
@@ -251,12 +239,12 @@ class PythonWorker:
 
     def undeploy_module(self, module_id: int) -> None:
         """Stop and remove a single module from the worker process."""
-        if self._conn is None:
+        if self._handle is None:
             raise RuntimeError("Worker process not started")
 
         with self._lock:
-            self._conn.send(UndeployModuleRequest(module_id=module_id))
-            response: WorkerResponse = self._conn.recv()
+            self._handle.send(UndeployModuleRequest(module_id=module_id))
+            response: WorkerResponse = self._handle.recv()
 
         if response.error:
             raise RuntimeError(f"Failed to undeploy module: {response.error}")
@@ -264,22 +252,22 @@ class PythonWorker:
         self._modules.pop(module_id, None)
 
     def suppress_console(self) -> None:
-        if self._conn is None:
+        if self._handle is None:
             return
         try:
             with self._lock:
-                self._conn.send(SuppressConsoleRequest())
-                self._conn.recv()
+                self._handle.send(SuppressConsoleRequest())
+                self._handle.recv()
         except (BrokenPipeError, EOFError, ConnectionResetError):
             pass
 
     def shutdown(self) -> None:
-        if self._conn is not None:
+        if self._handle is not None:
             try:
                 with self._lock:
-                    self._conn.send(ShutdownRequest())
-                    if self._conn.poll(timeout=5):
-                        self._conn.recv()
+                    self._handle.send(ShutdownRequest())
+                    if self._handle.poll(timeout=5):
+                        self._handle.recv()
                     else:
                         logger.warning(
                             "Worker did not respond to shutdown within 5s, closing pipe.",
@@ -288,19 +276,17 @@ class PythonWorker:
             except (BrokenPipeError, EOFError, ConnectionResetError):
                 pass
             finally:
-                self._conn.close()
-                self._conn = None
+                self._handle.close()
 
-        if self._process is not None:
-            self._process.join(timeout=5)
-            if self._process.is_alive():
+            self._handle.join(timeout=5)
+            if self._handle.is_alive():
                 logger.warning(
                     "Worker still alive after 5s, terminating.",
                     worker_id=self._worker_id,
                 )
-                self._process.terminate()
-                self._process.join(timeout=1)
-            self._process = None
+                self._handle.terminate()
+                self._handle.join(timeout=1)
+            self._handle = None
 
 
 def _suppress_console_output() -> None:

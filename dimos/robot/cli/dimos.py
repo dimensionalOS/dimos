@@ -24,9 +24,8 @@ from pathlib import Path
 import sys
 import time
 import types
-from typing import TYPE_CHECKING, Any, Union, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Literal, Union, cast, get_args, get_origin
 
-import click
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
@@ -38,6 +37,10 @@ from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
+from dimos.core.runtime_environment import (
+    MissingPreparedPythonProjectError,
+    PythonProjectRuntimeEnvironmentError,
+)
 from dimos.mapping.utils.cli.map import main as _map_main
 from dimos.mapping.utils.cli.pose_fill import main as _map_pose_fill_main
 from dimos.mapping.utils.cli.rename import main as _map_rename_main
@@ -146,6 +149,9 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 
 main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 main.add_typer(go2tool_app, name="go2tool")
+
+runtime_app = typer.Typer(help="Runtime environment commands")
+main.add_typer(runtime_app, name="runtime")
 
 
 def arg_help(
@@ -289,7 +295,19 @@ def run(
     if cli_config_overrides:
         kwargs["g"] = cli_config_overrides
 
-    coordinator = ModuleCoordinator.build(blueprint, kwargs)
+    try:
+        coordinator = ModuleCoordinator.build(blueprint, kwargs)
+    except MissingPreparedPythonProjectError as exc:
+        raise typer.BadParameter(
+            f"Blueprint '{blueprint_name}' uses unprepared Python project runtime "
+            f"'{exc.runtime_name}' at '{exc.project}'; missing executable "
+            f"'{exc.missing_executable}'. Prepare it with: "
+            f"dimos runtime prepare {blueprint_name} --runtime {exc.runtime_name}"
+        ) from exc
+    except PythonProjectRuntimeEnvironmentError as exc:
+        raise typer.BadParameter(
+            f"Blueprint '{blueprint_name}' uses an invalid Python project runtime: {exc}"
+        ) from exc
 
     if daemon:
         # Health check before daemonizing — catch early crashes
@@ -348,6 +366,43 @@ def run(
             coordinator.loop()
         finally:
             entry.remove()
+
+
+@runtime_app.command("prepare")
+def runtime_prepare(
+    ctx: typer.Context,
+    robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to prepare"),
+    runtime_name: str | None = typer.Option(None, "--runtime", help="Runtime name to prepare"),
+    disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
+    blueprint_args: list[str] = typer.Option((), "--option", "-o"),
+    config_path: Path = typer.Option(
+        CONFIG_DIR / "dimos", "--config", "-c", help="Path to config file"
+    ),
+) -> None:
+    """Prepare active Python project runtime environments for a blueprint."""
+    from dimos.core.coordination.blueprints import autoconnect
+    from dimos.core.runtime_prepare import RuntimePrepareError, prepare_blueprint_runtimes
+    from dimos.robot.get_all_blueprints import get_by_name_or_exit, get_module_by_name_or_exit
+
+    cli_config_overrides: dict[str, Any] = ctx.obj
+    global_config.update(**cli_config_overrides)
+
+    blueprint_name = "-".join(robot_types)
+    blueprint = autoconnect(*map(get_by_name_or_exit, robot_types))
+
+    if disable:
+        disabled_classes = tuple(
+            get_module_by_name_or_exit(name).blueprints[0].module for name in disable
+        )
+        blueprint = blueprint.disabled_modules(*disabled_classes)
+
+    blueprint_config = blueprint.config()
+    load_config_args(blueprint_config, blueprint_args, config_path)
+
+    try:
+        prepare_blueprint_runtimes(blueprint, runtime_name, output=typer.echo)
+    except RuntimePrepareError as exc:
+        raise typer.BadParameter(f"Blueprint '{blueprint_name}': {exc}") from exc
 
 
 @main.command()
@@ -453,28 +508,30 @@ def mcp_list_tools() -> None:
     typer.echo(json.dumps(tools, indent=2))
 
 
-class _KeyValueType(click.ParamType):
-    """Parse KEY=VALUE arguments, auto-converting JSON values."""
+def _parse_key_value_arg(value: str) -> tuple[str, Any]:
+    """Parse a KEY=VALUE argument, auto-converting JSON values."""
+    if "=" not in value:
+        raise ValueError(f"expected KEY=VALUE, got: {value}")
+    key, val = value.split("=", 1)
+    try:
+        return (key, json.loads(val))
+    except (json.JSONDecodeError, ValueError):
+        return (key, val)
 
-    name = "KEY=VALUE"
 
-    def convert(
-        self, value: str, param: click.Parameter | None, ctx: click.Context | None
-    ) -> tuple[str, Any]:
+def _validate_key_value_args(values: list[str]) -> list[str]:
+    """Validate KEY=VALUE arguments during CLI parsing."""
+    for value in values:
         if "=" not in value:
-            self.fail(f"expected KEY=VALUE, got: {value}", param, ctx)
-        key, val = value.split("=", 1)
-        try:
-            return (key, json.loads(val))
-        except (json.JSONDecodeError, ValueError):
-            return (key, val)
+            raise typer.BadParameter(f"expected KEY=VALUE, got: {value}")
+    return values
 
 
 @mcp_app.command("call")
 def mcp_call_tool(
     tool_name: str = typer.Argument(..., help="Tool name to call"),
     args: list[str] = typer.Option(
-        [], "--arg", "-a", click_type=_KeyValueType(), help="Arguments as key=value"
+        [], "--arg", "-a", callback=_validate_key_value_args, help="Arguments as key=value"
     ),
     json_args: str = typer.Option("", "--json-args", "-j", help="Arguments as JSON string"),
 ) -> None:
@@ -487,8 +544,11 @@ def mcp_call_tool(
             typer.echo(f"Error: invalid JSON in --json-args: {e}", err=True)
             raise typer.Exit(1)
     else:
-        # _KeyValueType.convert() returns (key, val) tuples at runtime
-        arguments = dict(args)  # type: ignore[arg-type]
+        try:
+            arguments = dict(_parse_key_value_arg(arg) for arg in args)
+        except ValueError as e:
+            typer.echo(f"Error: invalid --arg: {e}", err=True)
+            raise typer.Exit(1)
 
     try:
         result = _get_adapter().call_tool(tool_name, arguments)
@@ -681,6 +741,42 @@ def send(
 map_app = typer.Typer(help="Voxel-map tools over recorded sqlite datasets")
 main.add_typer(map_app, name="map")
 map_app.command("global")(_map_main)
+
+
+dataprep_app = typer.Typer(help="Build and inspect learning datasets from recordings")
+main.add_typer(dataprep_app, name="dataprep")
+
+
+@dataprep_app.command("build")
+def dataprep_build(
+    source: Path | None = typer.Option(None, "--source", "-s", help="Recording .db to read"),
+    output: Path | None = typer.Option(None, "--output", help="Dataset output directory"),
+    output_format: str = typer.Option(None, "--format", "-f", help="Output format: lerobot | hdf5"),
+    config_path: Path | None = typer.Option(
+        None, "--config", "-c", help="JSON DataPrepConfig (needed for obs/action stream maps)"
+    ),
+) -> None:
+    """Build a dataset from a recording (lerobot/hdf5 + dimos_meta.json)."""
+    from dimos.learning.dataprep.cli import build
+
+    build(config_path, source, output, cast("Literal['lerobot', 'hdf5'] | None", output_format))
+
+
+@dataprep_app.command("inspect")
+def dataprep_inspect(
+    dataset: Path | None = typer.Argument(
+        None, help="Built dataset: a .hdf5 file or a lerobot directory"
+    ),
+    output_format: str = typer.Option(
+        None, "--format", "-f", help="lerobot | hdf5 (auto-detected from the path if omitted)"
+    ),
+) -> None:
+    """Summarize a built dataset: features, shapes, episode/frame counts, uniformity."""
+    from dimos.learning.dataprep.cli import inspect
+
+    inspect(dataset, cast("Literal['lerobot', 'hdf5'] | None", output_format))
+
+
 map_app.command("summary")(_map_summary_main)
 map_app.command("rename")(_map_rename_main)
 map_app.command("pose-fill")(_map_pose_fill_main)

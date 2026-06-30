@@ -14,11 +14,22 @@
 
 from typing import Protocol
 
+import numpy as np
+from numpy.typing import NDArray
+
+from dimos.msgs.perception_msgs.RegisteredObject import RegisteredObject
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.spec.utils import Spec
 
 
 class ObjectSceneRegistrationSpec(Spec, Protocol):
+    def get_object_by_object_id(self, object_id: str) -> RegisteredObject | None: ...
+    def get_registered_objects(self) -> list[RegisteredObject]: ...
+    def set_prompts(
+        self,
+        text: list[str] | None = None,
+        bboxes: NDArray[np.float64] | None = None,
+    ) -> None: ...
     def get_object_pointcloud_by_name(self, name: str) -> PointCloud2 | None: ...
     def get_object_pointcloud_by_object_id(self, object_id: str) -> PointCloud2 | None: ...
     def get_full_scene_pointcloud(

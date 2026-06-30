@@ -31,7 +31,7 @@ from math import atan2, ceil, sqrt
 from pathlib import Path
 import tempfile
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 
@@ -48,6 +48,7 @@ except ImportError as exc:
     ) from exc
 
 try:
+    roboplan_simple_ik: Any
     import roboplan.simple_ik as roboplan_simple_ik
 except ImportError:
     roboplan_simple_ik = None
@@ -635,6 +636,9 @@ class RoboPlanWorld:
 
     # PlannerSpec for native RoboPlan planning
 
+    def _is_this_world(self, world: object) -> bool:
+        return world is self
+
     def plan_joint_path(
         self,
         world: WorldSpec,
@@ -644,7 +648,7 @@ class RoboPlanWorld:
         timeout: float = 10.0,
     ) -> PlanningResult:
         """Plan a robot-scoped joint path using the robot's full planning group."""
-        if world is not self:
+        if not self._is_this_world(world):
             return PlanningResult(
                 status=PlanningStatus.UNSUPPORTED,
                 message="RoboPlan-native planner requires its RoboPlanWorld instance",
@@ -767,7 +771,7 @@ class RoboPlanWorld:
         timeout: float = 10.0,
     ) -> PlanningResult:
         """Plan a RoboPlan-backed free path to absolute Cartesian TCP targets."""
-        if world is not self:
+        if not self._is_this_world(world):
             return PlanningResult(
                 status=PlanningStatus.UNSUPPORTED,
                 message="RoboPlan-native Cartesian planner requires its RoboPlanWorld instance",
@@ -893,7 +897,7 @@ class RoboPlanWorld:
         timeout: float = 10.0,
     ) -> PlanningResult:
         """Plan a RoboPlan-backed free path to relative Cartesian TCP deltas."""
-        if world is not self:
+        if not self._is_this_world(world):
             return PlanningResult(
                 status=PlanningStatus.UNSUPPORTED,
                 message="RoboPlan-native Cartesian planner requires its RoboPlanWorld instance",
@@ -1054,7 +1058,7 @@ class RoboPlanWorld:
             if not np.all(np.isfinite(position)):
                 raise ValueError("Generated-plan waypoint positions must be finite")
             positions.append(position)
-        joint_path = roboplan_core.JointPath()
+        joint_path = cast("Any", roboplan_core.JointPath())
         joint_path.joint_names = list(group_data.native_joint_names)
         joint_path.positions = np.asarray(positions, dtype=np.float64)
         return joint_path
@@ -2143,7 +2147,7 @@ class RoboPlanWorld:
             if group.tip_link is None:
                 raise ValueError(f"Planning group '{group.id}' has no pose target frame")
             native_map = self._native_names_by_robot[group.robot_name]
-            target = roboplan_core.CartesianConfiguration()
+            target = cast("Any", roboplan_core).CartesianConfiguration()
             # DimOS public Cartesian pose targets are absolute world-frame PoseStamped
             # values. Oink interprets an empty base frame as world, matching the
             # target.tform matrix below even for robot-scoped groups in composite scenes.

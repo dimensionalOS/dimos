@@ -21,8 +21,12 @@ build-backend = "setuptools.build_meta"
 include-package-data = false
 
 [tool.setuptools.packages.find]
-where = [".", "packages/dimos-runtime-protocol/src"]
-include = ["dimos*", "dimos_runtime_protocol*"]
+where = [
+    ".",
+    "packages/dimos-runtime-protocol/src",
+    "packages/dimos-gpd-grasp-demo/src",
+]
+include = ["dimos*", "dimos_runtime_protocol*", "dimos_gpd_grasp_demo*"]
 # Web frontends / vendored node_modules: not part of the Python runtime
 # (MANIFEST.in already prunes these from the sdist; this keeps their stray
 # .py modules out of the wheel too).
@@ -67,9 +71,9 @@ name = "dimos"
 authors = [
     {name = "Dimensional Team", email = "build@dimensionalOS.com"},
 ]
-version = "0.0.12"
+version = "0.0.13"
 description = "Powering agentive generalist robotics"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 readme = {file = "README.md", content-type = "text/markdown"}
 license = {text = "Apache-2.0"}
 keywords = ["robotics", "ros", "agents", "dimos", "dimensional", "openclaw", "roboclaw", "humanoid", "unitree"]
@@ -103,8 +107,7 @@ dependencies = [
     "sortedcontainers==2.4.0",
     "pydantic",
     "python-dotenv",
-    "typing_extensions>=4.0; python_version < '3.11'",
-    "annotation-protocol>=1.4.0",
+    "typing_extensions>=4.7; python_version < '3.13'",
     "plum-dispatch==2.5.7",
     # Logging
     "structlog>=25.5.0,<26",
@@ -185,6 +188,13 @@ misc = [
 visualization = [
     "rerun-sdk==0.32.0a1",
     "dimos-viewer==0.32.0a1",
+]
+
+learning = [
+    # dimos.learning.dataprep dataset writers (lazy-imported per format)
+    "pyarrow",  # LeRobot v3.0 data/episodes parquet
+    "pandas",   # LeRobot v3.0 tasks.parquet (task-indexed)
+    "h5py",     # HDF5 writer
 ]
 
 agents = [
@@ -333,7 +343,7 @@ apriltag = [
 ]
 
 all = [
-    "dimos[agents,apriltag,base,cpu,cuda,drone,grasp,manipulation,manipulation-toppra,misc,perception,sim,unitree,visualization,web]",
+    "dimos[agents,apriltag,base,cpu,cuda,drone,grasp,learning,manipulation,manipulation-toppra,misc,perception,sim,unitree,visualization,web]",
 ]
 
 [dependency-groups]
@@ -391,7 +401,7 @@ tests = [
 
     # Deps the lint job swaps for stubs (`stubs/<pkg>/` or `types-*`):
     # the real packages are needed at test time, stubs cover mypy.
-    "dimos[apriltag,mapping,drone,cpu,manipulation-toppra]",
+    "dimos[apriltag,mapping,drone,cpu,learning,manipulation-toppra]",
     "mujoco>=3.3.4",
     "pygame>=2.6.1",
     "python-can>=4",
@@ -524,15 +534,18 @@ exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/conftest.py*"
 
 [[tool.mypy.overrides]]
 module = [
-    "annotation_protocol",
     "a750_control",
     "a750_control.*",
     "cyclonedds",
     "cyclonedds.*",
     "dimos_lcm.*",
+    "dimos_mls_planner",
+    "dimos_voxel_ray_tracing",
     "etils",
     "faster_whisper",
     "geometry_msgs.*",
+    "h5py",
+    "h5py.*",
     "mcap",
     "mcap.*",
     "mujoco",
@@ -549,6 +562,8 @@ module = [
     "pycuda.*",
     "pydrake",
     "pydrake.*",
+    "pyarrow",
+    "pyarrow.*",
     "pyzed",
     "pyzed.*",
     "rclpy.*",
@@ -584,6 +599,10 @@ follow_imports = "skip"
 module = ["transformers", "transformers.*"]
 follow_imports = "skip"
 
+[[tool.mypy.overrides]]
+module = ["pyarrow", "pyarrow.*"]
+follow_imports = "skip"
+
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
 env = [
@@ -612,6 +631,10 @@ exclude_also = [
 max_size_kb = 50
 ignore = [
     "uv.lock",
+    "packages/dimos-gpd-grasp-demo/pixi.lock",
+    "packages/dimos-gpd-grasp-demo/uv.lock",
+    "packages/dimos-gpd-worker-demo/pixi.lock",
+    "packages/dimos-gpd-worker-demo/uv.lock",
     "*/package-lock.json",
     "dimos/dashboard/dimos.rbl",
     "dimos/web/dimos_interface/themes.json",

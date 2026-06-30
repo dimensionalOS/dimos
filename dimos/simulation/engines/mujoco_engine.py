@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 import threading
@@ -444,6 +444,39 @@ class MujocoEngine(SimulationEngine):
             self._command_mode = "effort"
             self._set_effort_targets(command.effort)
             return
+
+    def reset_joint_positions(self, positions: Sequence[float]) -> None:
+        """Set simulated joint positions and hold them as position targets.
+
+        This is intended for deterministic initial poses before ``connect()``
+        starts the physics thread. It also works while connected, but callers
+        should prefer normal commands for runtime motion.
+        """
+        if len(positions) > self._num_joints:
+            raise ValueError(
+                f"Initial joint pose has {len(positions)} joints, expected at most {self._num_joints}"
+            )
+
+        with self._lock:
+            self._command_mode = "position"
+            for i, position in enumerate(positions):
+                value = float(position)
+                mapping = self._joint_mappings[i]
+                if mapping.qpos_adr is not None:
+                    self._data.qpos[mapping.qpos_adr] = value
+                for qpos_adr in mapping.tendon_qpos_adrs:
+                    self._data.qpos[qpos_adr] = value
+                if mapping.dof_adr is not None:
+                    self._data.qvel[mapping.dof_adr] = 0.0
+                for dof_adr in mapping.tendon_dof_adrs:
+                    self._data.qvel[dof_adr] = 0.0
+                if mapping.actuator_id is not None:
+                    self._data.ctrl[mapping.actuator_id] = value
+                self._joint_positions[i] = value
+                self._joint_velocities[i] = 0.0
+                self._joint_position_targets[i] = value
+
+            mujoco.mj_forward(self._model, self._data)
 
     def _set_position_targets(self, positions: list[float]) -> None:
         if len(positions) > self._num_joints:

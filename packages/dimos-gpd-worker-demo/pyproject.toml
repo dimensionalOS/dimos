@@ -1,0 +1,19 @@
+[project]
+name = "dimos-gpd-worker-demo"
+version = "0.1.0"
+description = "DimOS project-runtime worker demo for importing GPD native bindings."
+requires-python = ">=3.11"
+dependencies = [
+    "dimos",
+    "gpd @ git+https://github.com/TomCC7/gpd.git@c088d8ae2f7965b067e9a12b3c0dacdbe9da924a",
+]
+
+[tool.uv.sources]
+dimos = { path = "../..", editable = true }
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

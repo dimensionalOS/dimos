@@ -79,11 +79,12 @@ When `stop()` is called, the process receives SIGTERM. If it doesn't exit within
 
 | Field              | Type             | Default       | Description                                                 |
 |--------------------|------------------|---------------|-------------------------------------------------------------|
-| `executable`       | `str`            | *(required)*  | Path to the native binary (relative to `cwd` if set)        |
+| `executable`       | `str \| None`    | `None`        | Path to the native binary (relative to `cwd` if set). Required unless a runtime environment supplies one |
 | `build_command`    | `str \| None`    | `None`        | Shell command to run if executable is missing (auto-build)  |
 | `cwd`              | `str \| None`    | `None`        | Working directory for build and runtime. Relative paths are resolved against the Python file defining the module |
 | `extra_args`       | `list[str]`      | `[]`          | Additional CLI arguments appended after auto-generated ones |
 | `extra_env`        | `dict[str, str]` | `{}`          | Extra environment variables for the subprocess              |
+| `runtime_environment` | `str \| None` | `None`        | Optional named runtime environment that supplies native launch defaults |
 | `shutdown_timeout` | `float`          | `10.0`        | Seconds to wait for SIGTERM before SIGKILL                  |
 | `log_format`       | `LogFormat`      | `TEXT`        | How to parse subprocess output (`TEXT` or `JSON`)           |
 | `cli_exclude`      | `frozenset[str]` | `frozenset()` | Config fields to skip when generating CLI args              |
@@ -110,6 +111,37 @@ class MyConfig(NativeModuleConfig):
 - `None` values are skipped.
 - Booleans are lowercased (`true`/`false`).
 - Lists are comma-joined.
+
+### Runtime environment defaults
+
+Native modules may get `executable`, `build_command`, `cwd`, and environment defaults from a named runtime environment. Register the environment on the blueprint with `.runtime_environments(...)`, then set `runtime_environment` in the native config.
+
+```python skip
+from pathlib import Path
+
+from dimos.core.runtime_environment import NixNativeRuntimeEnvironment
+
+native_env = NixNativeRuntimeEnvironment(
+    name="lidar-native",
+    executable="result/bin/my_lidar",
+    build_command="nix build .#my_lidar",
+    cwd=Path("cpp"),
+)
+
+class MyConfig(NativeModuleConfig):
+    runtime_environment: str | None = "lidar-native"
+    host_ip: str = "192.168.1.5"
+
+blueprint = autoconnect(MyLidar.blueprint()).runtime_environments(native_env)
+```
+
+Precedence:
+
+1. The runtime environment supplies defaults.
+2. Non-`None` config values override `executable`, `build_command`, and `cwd`.
+3. `extra_env` overlays the runtime environment's environment.
+
+Configs that set `executable`, `build_command`, `cwd`, and `extra_env` directly still work unchanged.
 
 ### Excluding fields
 
