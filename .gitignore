@@ -6,6 +6,7 @@
 /apriltags.pdf
 .idea
 .vscode/
+.turbo
 
 # Ignore Python cache files
 __pycache__/
