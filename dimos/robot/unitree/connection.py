@@ -348,8 +348,10 @@ class UnitreeWebRTCConnection(Resource):
         if not rage_ok:
             return False
 
-        if enable:
-            time.sleep(2.0)  # let FsmRageMode transition settle
+        # Settle both directions — the FSM transition out of Rage also needs
+        # to complete before SwitchJoystick(False) is accepted, otherwise the
+        # joystick toggle is silently no-op'd mid-transition and we're stuck.
+        time.sleep(2.0)
         return bool(
             self.publish_request(
                 RTC_TOPIC["SPORT_MOD"],
