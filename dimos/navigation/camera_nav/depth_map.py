@@ -329,6 +329,7 @@ class DepthStreamer:
                 self._vox.add(xyz_map)
 
             if frame % self.MAP_EVERY == 0:
+                rr.set_time("frame", sequence=frame)
                 self._log_map(cam_z)
 
     def _log_map(self, cam_z: float | None = None) -> None:
@@ -371,9 +372,9 @@ def init_rerun(app_name: str) -> None:
     rr.init(app_name, spawn=True)
     rr.send_blueprint(rrb.Blueprint(
         rrb.Tabs(
-            rrb.Spatial3DView(name="live cloud", origin="world",
-                              contents=["world/cloud", "world/camera/**"]),
-            rrb.Spatial3DView(name="map", origin="world",
+            rrb.Spatial3DView(name="live cloud + map", origin="world",
+                              contents=["world/cloud", "world/map", "world/camera/**"]),
+            rrb.Spatial3DView(name="map only", origin="world",
                               contents=["world/map"]),
         )
     ))
