@@ -477,8 +477,8 @@ class DepthStreamer:
         self._intr           = intrinsics
         self._pose           = pose
         self._bp             = backproj
-        self._vox            = VoxelAccumulator(voxel_size=0.08)   # sure obstacles — 8 cm resolution
-        self._vox_bg         = VoxelAccumulator(voxel_size=0.30)   # walls — 30 cm voxels aggregate sparse distant returns
+        self._vox            = VoxelAccumulator(voxel_size=0.08)  # sure obstacles
+        self._vox_bg         = VoxelAccumulator(voxel_size=0.08)  # weak hits: walls, low-confidence surfaces
         self._cam_z          = 0.0
         self._pinhole_logged = False
 
@@ -547,12 +547,11 @@ class DepthStreamer:
                 self._vox.add(xyz_sure)
 
             # Weak tier — low-confidence surfaces (walls, smooth/distant geometry)
-            # min_pts=3 with 30 cm voxels: walls at range aggregate enough returns
-            # per voxel to pass; small reflective objects (displays, specular hits)
-            # cover too small an area to accumulate 3 hits in a 30 cm cell
+            # min_pts=8: walls produce dense returns across large areas; displays and
+            # specular reflections are smaller and sparser — they fail this threshold
             xyz_weak = _obs_filter(_filter_isolated(
                 xyz[(conf >= self.CONF_WEAK) & (conf < self.CONF_SURE)],
-                min_pts=3,
+                min_pts=8,
             ))
             if len(xyz_weak) > 0:
                 self._vox_bg.add(xyz_weak)
@@ -562,25 +561,17 @@ class DepthStreamer:
 
     def _log_map(self) -> None:
         sure_pts = self._vox.stable_xyz(min_obs=2)
-        bg_pts   = self._vox_bg.stable_xyz(min_obs=5)   # match stdout counter threshold
-
-        if len(sure_pts) > 0:
-            n   = min(len(sure_pts), self.MAX_MAP)
-            idx = np.random.choice(len(sure_pts), n, replace=False) if len(sure_pts) > n else np.arange(n)
-            rr.log("world/map", rr.Points3D(
-                positions=sure_pts[idx],
-                colors=_height_color(sure_pts[idx, 2] - self._cam_z),
-                radii=0.005,
-            ))
-        if len(bg_pts) > 0:
-            n   = min(len(bg_pts), self.MAX_MAP)
-            idx = np.random.choice(len(bg_pts), n, replace=False) if len(bg_pts) > n else np.arange(n)
-            cyan = np.full((n, 3), [0, 200, 220], dtype=np.uint8)
-            rr.log("world/walls", rr.Points3D(
-                positions=bg_pts[idx],
-                colors=cyan,
-                radii=0.02,
-            ))
+        bg_pts   = self._vox_bg.stable_xyz(min_obs=10)
+        pts = np.concatenate([sure_pts, bg_pts]) if len(bg_pts) > 0 else sure_pts
+        if len(pts) == 0:
+            return
+        n   = min(len(pts), self.MAX_MAP)
+        idx = np.random.choice(len(pts), n, replace=False) if len(pts) > n else np.arange(n)
+        rr.log("world/map", rr.Points3D(
+            positions=pts[idx],
+            colors=_height_color(pts[idx, 2] - self._cam_z),
+            radii=0.005,
+        ))
 
     def log_stdout(self, pkt: DepthFramePacket, frame: int, fps: float) -> None:
         lock   = "LOCKED" if self._pose.locked else "searching"
@@ -604,7 +595,7 @@ def main() -> None:
             rrb.Spatial3DView(name="live cloud", origin="world",
                               contents=["world/cloud", "world/camera/**"]),
             rrb.Spatial3DView(name="map", origin="world",
-                              contents=["world/map", "world/walls"]),
+                              contents=["world/map"]),
         )
     ))
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
