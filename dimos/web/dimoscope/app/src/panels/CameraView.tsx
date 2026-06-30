@@ -2,6 +2,7 @@
 // when the gateway+browser support it, else the JPEG Image-topic floor. Auto-detects the topic.
 import { type CSSProperties } from "react";
 import { useTopics, useVideo, type MediaMode, type TopicInfo } from "@dimos/react";
+import { useCvOverlay } from "../cv/useCvOverlay";
 
 function pickImage(topics: TopicInfo[]): string | null {
   const prefer = ["/dimos/color_image", "/color_image", "/dimos/camera/image_raw", "/image"];
@@ -12,9 +13,16 @@ function pickImage(topics: TopicInfo[]): string | null {
 export function CameraView({ mode, primary }: { mode?: MediaMode; primary?: boolean }) {
   const topics = useTopics();
   const topic = pickImage(topics);
+  // In-browser CV overlay (object detection on the decoded frames). When on, prefer the WebCodecs
+  // frames path — CV needs real VideoFrames, which only the "frames" channels (webcodecs/jpeg) give.
+  const cv = useCvOverlay();
+  const effectiveMode = cv.enabled ? "webcodecs" : mode;
   // useVideo negotiates the media plane and reports what it ACTUALLY landed on (`active`) vs what
   // was forced (`requested`), so the panel can tell the truth when a mode falls back.
-  const { kind, videoRef, canvasRef, label, active, requested } = useVideo(topic, { mode });
+  const { kind, videoRef, canvasRef, label, active, requested } = useVideo(topic, {
+    mode: effectiveMode,
+    onFrame: cv.enabled ? cv.onFrame : undefined,
+  });
 
   const fellBack = requested && requested !== "auto" && active !== requested;
 
@@ -44,7 +52,24 @@ export function CameraView({ mode, primary }: { mode?: MediaMode; primary?: bool
               · ⚠ wanted {requested}, using {active}
             </span>
           )}
+          {cv.enabled && kind === "stream" && (
+            <span style={{ color: "var(--accent)" }}> · ⚠ CV needs webcodecs/jpeg (frames)</span>
+          )}
+          {cv.enabled && kind === "frames" && (
+            <span className="muted">
+              {" "}
+              · cv: {cv.stats.loading ? "loading…" : `${cv.stats.count} obj · ${cv.stats.infMs}ms`}
+            </span>
+          )}
         </span>
+        <button
+          className={`tab ${cv.enabled ? "tab-active" : ""}`}
+          onClick={cv.toggle}
+          title="in-browser object detection on the camera frames (needs WebCodecs/JPEG)"
+          style={{ padding: "2px 8px" }}
+        >
+          CV{cv.enabled ? " ✓" : ""}
+        </button>
         <button className="tab" onClick={fullscreen} title="fullscreen (Esc to exit)" style={{ padding: "2px 8px" }}>
           ⛶ fullscreen
         </button>

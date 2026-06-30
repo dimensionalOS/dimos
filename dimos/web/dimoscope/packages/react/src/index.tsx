@@ -12,7 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import { connect, selectMediaChannel, type DimosClient } from "@dimos/topics";
-import type { CommandInfo, MediaChannel, MediaKind, MessageMeta, Status, TopicInfo, TopicStats } from "@dimos/topics";
+import type { CommandInfo, MediaChannel, MediaKind, MessageMeta, Status, TopicInfo, TopicStats, VideoMeta } from "@dimos/topics";
 
 /** One selectable transport/server: a label + a thunk that builds a connected client. */
 export interface ServerOpt {
@@ -334,11 +334,24 @@ const MODE_PREFER: Record<MediaMode, MediaKind[]> = {
  * Slice note: builds its own MediaChannel per hook instance (fine for one camera). A multi-cam
  * grid would hoist the channel to a provider to share one PeerConnection.
  */
-export function useVideo(topic: string | null, opts?: { mode?: MediaMode }) {
+export function useVideo(
+  topic: string | null,
+  opts?: {
+    mode?: MediaMode;
+    /** Per-frame tap (frames channels only — webcodecs/jpeg, NOT webrtc): called after the canvas
+     *  draw, before the frame is closed. The seam for in-browser CV/overlays. Must NOT retain the
+     *  frame past the call (it's closed right after) — copy it synchronously if you need it async. */
+    onFrame?: (frame: VideoFrame | ImageBitmap, meta: VideoMeta, ctx: CanvasRenderingContext2D) => void;
+  },
+) {
   const { client, servers, activeId } = useContext(Ctx);
   const mode = opts?.mode ?? "auto";
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // Keep the tap in a ref so swapping it never resubscribes the media channel (the heavy effect
+  // below keys on transport/topic/mode only).
+  const onFrameRef = useRef(opts?.onFrame);
+  onFrameRef.current = opts?.onFrame;
   const [kind, setKind] = useState<"stream" | "frames">("frames");
   const [label, setLabel] = useState<string>();
   const [active, setActive] = useState<MediaKind>("jpeg"); // the kind actually negotiated
@@ -364,7 +377,7 @@ export function useVideo(topic: string | null, opts?: { mode?: MediaMode }) {
           if (alive && id === topic && videoRef.current) videoRef.current.srcObject = stream;
         });
       } else {
-        ch.onFrame((id, frame) => {
+        ch.onFrame((id, frame, m) => {
           if (!alive || id !== topic) return;
           const cvs = canvasRef.current;
           const ctx = cvs?.getContext("2d");
@@ -379,6 +392,7 @@ export function useVideo(topic: string | null, opts?: { mode?: MediaMode }) {
             cvs.height = fh;
           }
           ctx.drawImage(frame as CanvasImageSource, 0, 0);
+          onFrameRef.current?.(frame, m, ctx); // CV/overlay seam — draw on ctx / copy frame, then we close it
           (frame as ImageBitmap).close?.();
         });
       }
@@ -553,4 +567,4 @@ export function useCommands(): CommandInfo[] {
   return cmds;
 }
 
-export type { CommandInfo, MessageMeta, Status, TopicInfo, TopicStats } from "@dimos/topics";
+export type { CommandInfo, MessageMeta, Status, TopicInfo, TopicStats, VideoMeta } from "@dimos/topics";
