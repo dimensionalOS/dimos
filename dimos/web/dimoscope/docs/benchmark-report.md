@@ -71,9 +71,42 @@ cheap aiortc/aioquic CLI stand-ins actually predict the real browser stacks**.
 
 ---
 
+## ⚠ BLOCKER found while re-benchmarking: `serve.py` double-delivers (dual-bus tap)
+
+The re-benchmark immediately surfaced a real bug the green typecheck/unit-tests didn't catch.
+
+- **Symptom:** `4× PoseStamped @ 100 Hz` (expect ~400 msg/s) arrives at ~**576 msg/s (≈1.45×)**, and the
+  matrix `loss%` reads **99.98%** on a clean LAN — both signatures of duplicate/interleaved delivery.
+- **Root cause:** `serve.py` lifespan **unconditionally** runs `bus.start_zenoh()` **and**
+  `bus.start_lcm()` (`servers/bus.py` even notes *"if both buses carry the same topic you'd see it
+  twice — normally only one is active"*). On a macOS/zenoh-default host the LCM-published `/bench/*`
+  topics are **also echoed onto zenoh**, so the bus fans out each message ~twice. No dedup.
+- **Proof:** disabling the zenoh tap (`ZENOH_KEY="nomatch/**"`) drops `4× Pose` from **576 → 297 msg/s**
+  (single delivery). Repro: `PORT=8080 ZENOH_KEY="nomatch/**" python serve.py` + `DIMOS_TRANSPORT=lcm
+  bench_publisher.py` + `GATEWAY_URL=ws://localhost:8080/ws deno task bench`.
+- **Impact:** (1) a **latent product correctness bug** — a browser on a dual-bus deployment receives
+  **duplicate messages**; (2) it corrupts **every throughput/loss** number in every layer (CLI, browser,
+  VPS), so those can't be trusted until fixed. **Latency** (per-message publish→recv) is *not* affected.
+- **Fix options (owner: the consolidation/`serve.py` author):** dedup in `bus.py` by `(topic, seq)` over
+  a short window; **or** a `BUS_BACKENDS` env to tap only the active bus (default both is the trap);
+  **or** at minimum gate the zenoh tap behind a flag. Until then, the benches should launch `serve.py`
+  with `ZENOH_KEY` matching nothing when the load is single-bus.
+
+**Decision needed (you):** fix `serve.py` (dedup / backend-select) — then I re-run the full program and
+the throughput/loss tables become trustworthy. I did **not** patch `serve.py` autonomously (it's the
+centerpiece another agent owns + the fix is a design choice). Below: the metrics that *are* trustworthy.
+
 ## Results
 
 > Filled in by the run. Each table notes its layer + date; raw data in `bench/RESULTS-*.md`.
+> **Throughput/loss are bug-affected (see BLOCKER above) — read latency + relative ordering only.**
+
+### A — CLI / headless (single host), LAN sanity (zenoh tap disabled for single delivery)
+| mechanism | hz (lcm-only) | lat p50 | lat p95 | lat max |
+|---|--:|--:|--:|--:|
+| WebSocket | 297 (4× pose) | 0 ms | 0.27 | 0.6 |
+_Latency is sub-ms on LAN as expected; the full mechanism × profile latency matrix is pending the
+`serve.py` fix so throughput/loss are also valid. WebRTC/WebTransport via aiortc/aioquic stand-ins._
 
 ### A — CLI / headless (single host) — `bench/RESULTS-*.md`
 _pending Stage 1._
