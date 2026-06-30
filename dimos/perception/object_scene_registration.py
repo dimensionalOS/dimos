@@ -57,6 +57,7 @@ class ObjectSceneRegistrationModule(Module):
     detections_3d: Out[Detection3DArray]
     objects: Out[list[DetObject]]
     pointcloud: Out[PointCloud2]
+    annotated_image: Out[Image]
 
     _detector: Yoloe2DDetector | None = None
     _camera_info: CameraInfo | None = None
@@ -75,6 +76,9 @@ class ObjectSceneRegistrationModule(Module):
         max_distance: float = 0.0,
         use_aabb: bool = False,
         max_obstacle_width: float = 0.0,
+        # Publish the YOLO-annotated color image (bboxes + labels) for visualization,
+        # e.g. the Rerun bridge. Off the LCM thread, but skip the draw if unused.
+        publish_annotated_image: bool = True,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -87,6 +91,7 @@ class ObjectSceneRegistrationModule(Module):
         self._max_distance = max_distance
         self._use_aabb = use_aabb
         self._max_obstacle_width = max_obstacle_width
+        self._publish_annotated_image = publish_annotated_image
 
     @rpc
     def start(self) -> None:
@@ -309,6 +314,12 @@ class ObjectSceneRegistrationModule(Module):
             detections=[det.to_ros_detection2d() for det in detections_2d.detections],
         )
         self.detections_2d.publish(detections_2d_msg)
+
+        # Publish the annotated color image (bboxes + labels drawn on) for visualization.
+        if self._publish_annotated_image:
+            annotated = detections_2d.annotated_image()
+            annotated.frame_id = color_image.frame_id or ""
+            self.annotated_image.publish(annotated)
 
         # Process 3D detections
         self._process_3d_detections(detections_2d, color_image, depth_image)
