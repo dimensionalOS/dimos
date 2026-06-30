@@ -419,10 +419,15 @@ class FastVoxelMap:
     def _compact(self) -> None:
         if self._n == 0:
             return
-        vk = np.floor(self._pts[:self._n] / self._v).astype(np.int32)
+        pts = self._pts[:self._n]
+        # Global voxel dedup
+        vk = np.floor(pts / self._v).astype(np.int32)
         _, idx = np.unique(_pack(vk), return_index=True)
-        n_u = len(idx)
-        self._pts[:n_u] = self._pts[:self._n][idx]
+        pts = pts[idx]
+        # Drop globally isolated voxels — noise with no neighbor within 10 cm
+        pts = _filter_isolated(pts, voxel=0.10, min_pts=2)
+        n_u = len(pts)
+        self._pts[:n_u] = pts
         self._n = n_u
 
     def _grow(self) -> None:
