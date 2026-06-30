@@ -8,16 +8,20 @@ any transport**.
 
 ```
 robot / sim ─► DimOS bus (LCM | Zenoh)
-                  │
-        ┌─────────┴──────── gateway (thin relay) ─────────┐      zenoh-ts (direct):
-        │  Python↔Zenoh (servers/gateway_zenoh.py) :8088   │      browser speaks Zenoh via
-        │  Bun↔LCM      (servers/gateway.ts)       :8089   │      zenoh-bridge-remote-api :10000
-        └─────────┬────────────────────────────────────────┘      (no gateway in the read path)
-              WebSocket (raw frames + JSON control)        ╲              │
-                  ▼                                         ╲             ▼
-        @dimos/topics  (decode via @dimos/msgs · backpressure · stats · on-demand)  ◄─ pick in the UI
-                  ▼
-        @dimos/react ─► app (WorldView 2D · Camera · Rerun 3D · Pose · Stats) + teleop ▲
+   │
+   ├─► DATA gateway  (thin byte-relay + the teleop/goal/RPC trust boundary)
+   │     Python↔Zenoh  servers/gateway_zenoh.py  :8088        zenoh-ts (direct):
+   │     Bun↔LCM       servers/gateway.ts        :8089        browser speaks Zenoh via
+   │       └─ WebSocket: raw LCM frames + JSON control        zenoh-bridge-remote-api :10000
+   │          (subscribe · teleop · goal · rpc)               (no gateway in the read path)
+   │
+   └─► MEDIA node  (camera only — its OWN Zenoh peer)
+         servers/media_server.py  :8092
+         WebRTC / WebCodecs, encode-once-per-topic → fan out
+   ▼
+@dimos/topics  (decode via @dimos/msgs · on-demand · stats · client.call RPC · useVideo media)
+   ▼
+@dimos/react ─► app (WorldView · Camera · Rerun 3D · Pose · Stats · Commands) + teleop
 ```
 
 ## Quickstart (real DimOS, no hardware)
@@ -29,9 +33,11 @@ From the dimos repo root (uses the repo `.venv`):
 .venv/bin/python examples/simplerobot/simplerobot.py --headless
 .venv/bin/python examples/fakesensors.py
 
-# 2) the gateways — all three transports at once, each on its own port
+# 2) the servers — data gateways + the camera media node, each on its own port
 cd dimos/web/dimoscope && bun install && bash servers/start-all.sh
-#   Python↔Zenoh :8088 · Bun↔LCM :8089 · zenoh-ts bridge :10000
+#   Python↔Zenoh :8088 · Bun↔LCM :8089 · media node :8092 · zenoh-ts bridge :10000
+#   (for the WebRTC/WebCodecs camera, run a ZENOH camera source, e.g.
+#    DIMOS_TRANSPORT=zenoh uv run dimos --simulation mujoco run unitree-go2)
 
 # 3) the app
 cd dimos/web/dimoscope/app && bun install && bun run dev                # http://localhost:5173
@@ -62,11 +68,37 @@ transit to the browser (vs the LCM gateway, which receives every topic off multi
 zenoh-ts handles only the *read* path — teleop/goal still go through a gateway so its velocity clamp +
 deadman + stop-on-disconnect apply (a browser doing raw Zenoh `put` would bypass all of that).
 
+## Media plane (camera)
+
+The camera is the one heavy stream (~11 MB/s JPEG, ~55 MB/s raw), so it rides its **own plane** beside
+the topic data — a **standalone media node** (`servers/media_server.py`, **:8092**), its own Zenoh peer.
+`useVideo(topic)` negotiates the best available delivery (capability + graceful fallback), picked by the
+topbar **cam:** toggle:
+
+| Mode | How | Served by |
+|---|---|---|
+| **webrtc** | aiortc encodes once; browser HW-decodes a `<video>` | media node `:8092` |
+| **webcodecs** | libx264 NAL chunks over WS → `VideoDecoder` → `<canvas>` | media node `:8092` |
+| **jpeg** | the Image topic itself, decoded in-browser (universal floor) | data gateway |
+
+Encode-once-per-topic → fan out to N viewers; multiple cameras = multiple topics, one node serves each.
+**Caveat:** the media node is a Zenoh peer, so webrtc/webcodecs need a **Zenoh** camera source (the jpeg
+floor works on any transport via the data plane).
+
+## Commands (RPC)
+
+The browser invokes **whitelisted dimos `@rpc` commands** through the gateway —
+`client.call("GO2Connection", "standup")` → `{op:"rpc"}` → `rpc_backend().call_sync(...)` → result. The
+gateway holds a **server-side whitelist** (default `standup`/`liedown`; override
+`DIMOS_GATEWAY_RPC="Module/method,…"`) and advertises it in `hello`; the **Commands** panel renders a
+button per advertised command (empty on Bun↔LCM, which has no RPC bridge). Velocity stays on the
+clamped/deadman teleop path — RPC is for discrete commands only.
+
 ## The SDK (`@dimos/topics`)
 
 ```ts
 import { connect } from "@dimos/topics";
-const client = await connect({ url: "ws://localhost:8090" });
+const client = await connect({ url: "ws://localhost:8088" });
 
 client.listTopics();                                  // [{topic, type}, …] (live discovery)
 const odom = client.topic<PoseStamped>("/odom");
@@ -74,10 +106,12 @@ odom.subscribeLatest((pose, meta) => { … meta.latencyMs … });
 odom.setRateLimit(15);                                // backpressure (also asks gateway to downsample)
 odom.stats();                                         // { hz, bytesPerSec, dropped, lastLatencyMs }
 client.teleop(0.5, 0.0);                              // safe: gateway clamps + TTL/deadman watchdog
+await client.call("GO2Connection", "standup");        // RPC: invoke a whitelisted dimos @rpc command
+client.commands;                                      // [{target, method, label}] the gateway advertises
 ```
 React: `DimosProvider`, `useTopics`, `useTopicLatest`, `useTopicRef` (no re-render → rAF canvas),
-`useTopicStats`, `useTeleop`. **On-demand:** a topic is subscribed on the wire only while it has a
-live subscriber.
+`useTopicStats`, `useTeleop`, `useVideo` (camera → `<video>`/`<canvas>`), `useRpc`/`useCommands`.
+**On-demand:** a topic is subscribed on the wire only while it has a live subscriber.
 
 ## Benchmark
 
@@ -109,11 +143,12 @@ own WS-hop latency (`run.sh lcm`/`zenoh`) shows **Zenoh's tail ~3–6× lower** 
 ## Layout
 | Path | What |
 |---|---|
-| `packages/topics/` | `@dimos/topics` — transport iface + `gatewayWs` adapter, client, topic, decode, stats |
-| `packages/react/` | `@dimos/react` — hooks |
-| `app/` | Vite example app (`panels/`: WorldView, PoseReadout, TeleopPad, StatsBar) |
-| `servers/gateway.ts` | Bun↔LCM gateway (LC03 reassembly, on-demand, teleop safety) |
-| `servers/gateway_zenoh.py` | Python↔Zenoh gateway (same WS protocol) |
+| `packages/topics/` | `@dimos/topics` — transport iface + adapters (`gatewayWs`, `zenohTs`) + **media plane** (`media.ts`, `jpegTopicMedia`/`webRtcMedia`/`webCodecsMedia`) + client (incl. `call` RPC), topic, decode, stats |
+| `packages/react/` | `@dimos/react` — hooks (`useTopics`, `useVideo`, `useTeleop`, `useRpc`/`useCommands`, …) |
+| `app/` | Vite example app (`panels/`: WorldView, Camera, PoseReadout, TeleopPad, StatsBar, CommandsPanel, SubscribeBar) |
+| `servers/gateway_zenoh.py` | Python↔Zenoh **data gateway** — relay + teleop/goal/RPC |
+| `servers/gateway.ts` | Bun↔LCM data gateway (LC03 reassembly, on-demand, teleop safety) |
+| `servers/media_server.py` | **media node** `:8092` — camera WebRTC/WebCodecs (own Zenoh peer) |
 | `bench/` | publisher + headless bench + `run.sh` + `test_bench.py` + RESULTS.md |
 
 The original prototype (`bridge.ts`, `app/src/bus.ts`, `app/src/widgets/`, `WALKTHROUGH.md`) is the
@@ -122,6 +157,9 @@ parts-bin this was extracted from.
 ## Status / next
 - ✅ SDK + Bun↔LCM gateway + React app + teleop (verified in Chrome incl. driving the robot) +
   benchmark + Python↔Zenoh gateway + comparison.
+- ✅ **Media plane** — camera over WebRTC / WebCodecs / JPEG, capability-negotiated (`useVideo` +
+  cam-mode toggle) on a **standalone media node** (`:8092`, own Zenoh peer — split out of the gateway).
+- ✅ **RPC bridge** — `client.call("GO2Connection","standup")` → whitelisted dimos `@rpc` (Commands panel).
 - ⚠️ **Rerun 3D panel** (`panels/RerunPanel.tsx`): the stock `@rerun-io/web-viewer-react@0.32.0-alpha.1`
   **embeds, loads (after a Vite `optimizeDeps.exclude` for the wasm MIME), connects to dimos
   `serve_grpc` :9877, and streams** (console-confirmed) — but the viewport isn't painting geometry yet
