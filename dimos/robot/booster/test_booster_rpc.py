@@ -33,7 +33,7 @@ from booster_rpc import RobotMode
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.robot.booster.k1.connection import BoosterRPCConnection
+from dimos.robot.booster.booster_rpc import BoosterRPCConnection
 
 
 def _twist(vx: float = 0.0, vy: float = 0.0, vyaw: float = 0.0) -> Twist:
@@ -43,7 +43,7 @@ def _twist(vx: float = 0.0, vy: float = 0.0, vyaw: float = 0.0) -> Twist:
 @pytest.fixture
 def conn():
     """A BoosterRPCConnection with the gRPC SDK patched out (`_conn` is a mock)."""
-    with patch("dimos.robot.booster.k1.connection.BoosterConnection"):
+    with patch("dimos.robot.booster.booster_rpc.BoosterConnection"):
         c = BoosterRPCConnection(ip="mock")
     yield c
     c._sender_stop.set()
