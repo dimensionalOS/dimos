@@ -3,11 +3,11 @@
 //   const client = await connect({ url: "ws://localhost:8090" });
 //   client.topic<PoseStamped>("/odom").subscribeLatest((p, meta) => ...);
 //   client.teleop(0.5, 0.0);            // structured + safe (gateway clamps/watchdogs)
-import { createGatewayWsTransport } from "./adapters/gatewayWs";
-import { decodeBody, srcTsMs } from "./decode";
-import { createTopic, type Topic } from "./topic";
-import type { CommandInfo, RawSample, Status, Transport } from "./transport";
-import type { TopicInfo } from "./types";
+import { createGatewayWsTransport } from "./adapters/gatewayWs.ts";
+import { decodeBody, seqFrom, srcTsMs } from "./decode.ts";
+import { createTopic, type Topic } from "./topic.ts";
+import type { CommandInfo, RawSample, Status, Transport } from "./transport.ts";
+import type { TopicInfo } from "./types.ts";
 
 export interface ConnectOpts {
   url?: string;
@@ -64,10 +64,14 @@ export const createDimosClient = (deps: DimosClientDeps): DimosClient => {
     const t = topicObjs.get(s.topic);
     if (!t) return; // discovered but nobody subscribed
     let data: unknown;
-    try {
-      data = decodeBody(s.payload);
-    } catch {
-      return; // unknown type / fragment
+    if (s.decoded !== undefined) {
+      data = s.decoded; // server already decoded it (server-json mode) — the decode-location axis
+    } else {
+      try {
+        data = decodeBody(s.payload);
+      } catch {
+        return; // unknown type / fragment
+      }
     }
     const srcTs = srcTsMs(data);
     // Prefer true transport latency (gateway-send → browser-recv); fall back to
@@ -75,12 +79,11 @@ export const createDimosClient = (deps: DimosClientDeps): DimosClient => {
     // Gateway-send → browser-recv on the same host: sub-ms deltas can round
     // slightly negative (Date.now() is integer ms; the gateway stamps fractional
     // ms), so floor at 0. Falls back to source-stamp age when no gateway stamp.
-    const latencyMs =
-      s.gatewaySendMs != null
-        ? Math.max(0, s.recvTs - s.gatewaySendMs)
-        : srcTs != null
-          ? s.recvTs - srcTs
-          : undefined;
+    const latencyMs = s.gatewaySendMs != null
+      ? Math.max(0, s.recvTs - s.gatewaySendMs)
+      : srcTs != null
+      ? s.recvTs - srcTs
+      : undefined;
     t._deliver(data, {
       topic: s.topic,
       type: s.type,
@@ -89,6 +92,7 @@ export const createDimosClient = (deps: DimosClientDeps): DimosClient => {
       latencyMs,
       sizeBytes: s.payload.length,
       dropped: 0,
+      seq: seqFrom(data),
     });
   }
 
@@ -122,11 +126,12 @@ export const createDimosClient = (deps: DimosClientDeps): DimosClient => {
   });
   transport.onTopics((list) => {
     let changed = false;
-    for (const ti of list)
+    for (const ti of list) {
       if (topicsMap.get(ti.topic) !== ti.type) {
         topicsMap.set(ti.topic, ti.type);
         changed = true;
       }
+    }
     if (changed) emitTopics();
   });
   transport.onStatus((s) => {
@@ -178,8 +183,7 @@ export const createDimosClient = (deps: DimosClientDeps): DimosClient => {
 };
 
 export async function connect(opts: ConnectOpts = {}): Promise<DimosClient> {
-  const transport =
-    opts.transport ??
+  const transport = opts.transport ??
     createGatewayWsTransport({ url: opts.url ?? "ws://localhost:8090", reconnect: opts.reconnect });
   const client = createDimosClient({ transport });
   await transport.connect();

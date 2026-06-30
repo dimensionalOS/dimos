@@ -1,7 +1,7 @@
 // CameraView — live camera via the media plane (useVideo): a WebRTC/WebCodecs <video>/<canvas>
 // when the gateway+browser support it, else the JPEG Image-topic floor. Auto-detects the topic.
 import { type CSSProperties } from "react";
-import { useTopics, useVideo, type MediaMode, type TopicInfo } from "@dimos/react";
+import { type MediaMode, type TopicInfo, useTopics, useVideo } from "@dimos/react";
 import { useCvOverlay } from "../cv/useCvOverlay";
 
 function pickImage(topics: TopicInfo[]): string | null {
@@ -37,13 +37,33 @@ export function CameraView({ mode, primary }: { mode?: MediaMode; primary?: bool
 
   // primary = the big center view; secondary = a 16:9 side strip.
   const style: CSSProperties = primary
-    ? { width: "100%", height: "auto", maxHeight: "calc(100vh - 130px)", objectFit: "contain", display: "block", borderRadius: 8, background: "#000" }
-    : { width: "100%", aspectRatio: "16 / 9", objectFit: "cover", display: "block", borderRadius: 8, background: "#000" };
+    ? {
+      width: "100%",
+      height: "auto",
+      maxHeight: "calc(100vh - 130px)",
+      objectFit: "contain",
+      display: "block",
+      borderRadius: 8,
+      background: "#000",
+    }
+    : {
+      width: "100%",
+      aspectRatio: "16 / 9",
+      objectFit: "cover",
+      display: "block",
+      borderRadius: 8,
+      background: "#000",
+    };
 
   return (
-    <div className="panel" style={primary ? { display: "flex", flexDirection: "column" } : undefined}>
+    <div
+      className="panel"
+      style={primary ? { display: "flex", flexDirection: "column" } : undefined}
+    >
       <div className="panel-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <span
+          style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+        >
           Camera · {topic ?? "no sensor_msgs.Image"}
           {label ? ` · ${label}` : ""}
           {fellBack && (
@@ -53,7 +73,7 @@ export function CameraView({ mode, primary }: { mode?: MediaMode; primary?: bool
             </span>
           )}
           {cv.enabled && kind === "stream" && (
-            <span style={{ color: "var(--accent)" }}> · ⚠ CV needs webcodecs/jpeg (frames)</span>
+            <span style={{ color: "var(--accent)" }}>· ⚠ CV needs webcodecs/jpeg (frames)</span>
           )}
           {cv.enabled && kind === "frames" && (
             <span className="muted">
@@ -70,15 +90,18 @@ export function CameraView({ mode, primary }: { mode?: MediaMode; primary?: bool
         >
           CV{cv.enabled ? " ✓" : ""}
         </button>
-        <button className="tab" onClick={fullscreen} title="fullscreen (Esc to exit)" style={{ padding: "2px 8px" }}>
+        <button
+          className="tab"
+          onClick={fullscreen}
+          title="fullscreen (Esc to exit)"
+          style={{ padding: "2px 8px" }}
+        >
           ⛶ fullscreen
         </button>
       </div>
-      {kind === "stream" ? (
-        <video ref={videoRef} autoPlay playsInline muted style={style} />
-      ) : (
-        <canvas ref={canvasRef} style={style} />
-      )}
+      {kind === "stream"
+        ? <video ref={videoRef} autoPlay playsInline muted style={style} />
+        : <canvas ref={canvasRef} style={style} />}
     </div>
   );
 }

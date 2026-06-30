@@ -3,13 +3,13 @@
 // teleop, and a live StatsBar (hz / bandwidth / latency per topic).
 import { useState } from "react";
 import {
-  useStatus,
-  useTopics,
-  useTopicLatest,
+  type MediaMode,
+  SubscribeBar,
   useDimosClient,
   useServers,
-  SubscribeBar,
-  type MediaMode,
+  useStatus,
+  useTopicLatest,
+  useTopics,
 } from "@dimos/react";
 import { WorldView } from "./panels/WorldView";
 import { CameraView } from "./panels/CameraView";
@@ -24,7 +24,14 @@ function Inspector({ topic }: { topic: string }) {
   const { data, meta } = useTopicLatest<any>(topic, { maxHz: 4 });
   const pretty = JSON.stringify(
     data,
-    (_k, v) => (typeof v === "bigint" ? v.toString() : v instanceof Uint8Array ? `<${v.length} bytes>` : v),
+    (
+      _k,
+      v,
+    ) => (typeof v === "bigint"
+      ? v.toString()
+      : v instanceof Uint8Array
+      ? `<${v.length} bytes>`
+      : v),
     2,
   );
   return (
@@ -49,16 +56,25 @@ export function App() {
   return (
     <div className="layout">
       <header className="topbar">
-        <span className="wordmark" title="DimOS topics in the browser — subscribe · visualize · teleop">
+        <span
+          className="wordmark"
+          title="DimOS topics in the browser — subscribe · visualize · teleop"
+        >
           dimo<span>scope</span>
         </span>
         <span className={`status status-${status}`}>{status}</span>
         {/* mode switch — console (WorldView) ⇄ full-page 3D (Rerun) */}
         <div className="tabs" style={{ marginLeft: 6 }}>
-          <button className={`tab ${tab === "2d" ? "tab-active" : ""}`} onClick={() => setTab("2d")}>
+          <button
+            className={`tab ${tab === "2d" ? "tab-active" : ""}`}
+            onClick={() => setTab("2d")}
+          >
             WorldView
           </button>
-          <button className={`tab ${tab === "3d" ? "tab-active" : ""}`} onClick={() => setTab("3d")}>
+          <button
+            className={`tab ${tab === "3d" ? "tab-active" : ""}`}
+            onClick={() => setTab("3d")}
+          >
             Rerun · 3D
           </button>
         </div>
@@ -92,8 +108,10 @@ export function App() {
         </div>
       </header>
 
-      {/* ── WorldView mode = the operator console (camera center + side panels). It UNMOUNTS in Rerun
-          mode → frees its camera + lidar/odom/map subscriptions (Rerun has its own gRPC feed). ── */}
+      {
+        /* ── WorldView mode = the operator console (camera center + side panels). It UNMOUNTS in Rerun
+          mode → frees its camera + lidar/odom/map subscriptions (Rerun has its own gRPC feed). ── */
+      }
       {tab === "2d" && (
         <aside className="sidebar">
           <div className="sidebar-title">Topics ({topics.length})</div>
@@ -119,8 +137,10 @@ export function App() {
             <CameraView mode={mediaMode} primary />
           </div>
           <div className="side-col">
-            {/* Spatial 2D (lidar/map): per-layer on/off + live bandwidth (toggle lidar off → drop
-                ~2 MB/s). The WorldView/Rerun mode switch lives in the topbar now. */}
+            {
+              /* Spatial 2D (lidar/map): per-layer on/off + live bandwidth (toggle lidar off → drop
+                ~2 MB/s). The WorldView/Rerun mode switch lives in the topbar now. */
+            }
             <div className="spatial-viz">
               <WorldView />
             </div>
@@ -134,8 +154,10 @@ export function App() {
         </main>
       )}
 
-      {/* ── Rerun = full-page 3D. Always mounted (warm) so switching is instant + avoids a cold gRPC
-          re-stream; shown only when the topbar mode = Rerun. ── */}
+      {
+        /* ── Rerun = full-page 3D. Always mounted (warm) so switching is instant + avoids a cold gRPC
+          re-stream; shown only when the topbar mode = Rerun. ── */
+      }
       <div className="rerun-full" style={tab === "3d" ? undefined : { display: "none" }}>
         <RerunPanel active={tab === "3d"} />
       </div>

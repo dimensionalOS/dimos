@@ -2,11 +2,11 @@
 // MediaChannel, so the app consumes video uniformly (and "jpeg is just another MediaChannel").
 // Works on EVERY browser + EVERY transport: it just subscribes the camera topic on the normal
 // data plane and decodes each frame to an ImageBitmap. No gateway media support required.
-import type { MediaCaps, MediaChannel, VideoMeta } from "../media";
-import type { Status } from "../transport";
-import type { Subscription } from "../types";
-import type { DimosClient } from "../client";
-import { decodeImageToBitmap, type ImageMsg } from "../image";
+import type { MediaCaps, MediaChannel, VideoMeta } from "../media.ts";
+import type { Status } from "../transport.ts";
+import type { Subscription } from "../types.ts";
+import type { DimosClient } from "../client.ts";
+import { decodeImageToBitmap, type ImageMsg } from "../image.ts";
 
 export interface JpegTopicMediaDeps {
   client: DimosClient; // for the jpeg-topic floor (subscribes via client.topic)
@@ -25,8 +25,9 @@ export const createJpegTopicMedia = (deps: JpegTopicMediaDeps): MediaChannel => 
   let frameCb: ((id: string, f: ImageBitmap, m: VideoMeta) => void) | undefined;
   let statusCb: ((s: Status) => void) | undefined;
 
-  async function connect(): Promise<void> {
+  function connect(): Promise<void> {
     statusCb?.("open"); // rides the existing client connection — nothing to open
+    return Promise.resolve();
   }
 
   function subscribe(streamId: string): void {
@@ -39,7 +40,7 @@ export const createJpegTopicMedia = (deps: JpegTopicMediaDeps): MediaChannel => 
             height: img.height,
             fps: 0,
             codec: img.encoding,
-          }),
+          })
         )
         .catch(() => {});
     });

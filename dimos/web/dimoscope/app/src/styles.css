@@ -29,8 +29,12 @@
   --sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
 }
-* { box-sizing: border-box; }
-html { color-scheme: dark; }
+* {
+  box-sizing: border-box;
+}
+html {
+  color-scheme: dark;
+}
 body {
   margin: 0;
   background: var(--bg);
@@ -66,8 +70,15 @@ body {
   cursor: default;
   user-select: none;
 }
-.wordmark > span { color: var(--accent); } /* "scope" — subtle identity nod */
-.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.wordmark > span {
+  color: var(--accent);
+} /* "scope" — subtle identity nod */
+.topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 
 .status {
   display: inline-flex;
@@ -83,11 +94,21 @@ body {
   background: currentColor;
   flex: none;
 }
-.status-open { color: var(--ok); }
-.status-open::before { animation: pulse 1.9s ease-out infinite; }
-.status-connecting { color: var(--accent); }
-.status-connecting::before { animation: blink 1s steps(1, end) infinite; }
-.status-closed { color: var(--err); }
+.status-open {
+  color: var(--ok);
+}
+.status-open::before {
+  animation: pulse 1.9s ease-out infinite;
+}
+.status-connecting {
+  color: var(--accent);
+}
+.status-connecting::before {
+  animation: blink 1s steps(1, end) infinite;
+}
+.status-closed {
+  color: var(--err);
+}
 
 .badge {
   font: 500 11px var(--mono);
@@ -98,8 +119,12 @@ body {
   padding: 3px 9px;
   white-space: nowrap;
 }
-.muted { color: var(--muted); }
-.small { font-size: 12px; }
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: 12px;
+}
 
 .server-select {
   appearance: none;
@@ -116,8 +141,13 @@ body {
   background-position: right 9px center;
   transition: border-color 0.15s ease, background-color 0.15s ease;
 }
-.server-select:hover { border-color: var(--line-hi); }
-.server-select:focus-visible { outline: none; border-color: var(--accent); }
+.server-select:hover {
+  border-color: var(--line-hi);
+}
+.server-select:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
 
 /* ── sidebar — channel list (inherits the refined look; no JSX change) ────── */
 .sidebar {
@@ -146,23 +176,55 @@ body {
   cursor: pointer;
   transition: border-color 0.15s ease, background-color 0.15s ease, transform 0.06s ease;
 }
-.topic:hover { border-color: var(--line-hi); background: var(--elev); }
-.topic:active { transform: translateY(1px); }
+.topic:hover {
+  border-color: var(--line-hi);
+  background: var(--elev);
+}
+.topic:active {
+  transform: translateY(1px);
+}
 .topic-sel,
 .topic-sel:hover {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 7%, var(--panel));
 }
-.topic-name { font: 500 13px var(--mono); }
-.topic-type { color: var(--muted); font: 11px var(--mono); margin-top: 2px; }
+.topic-name {
+  font: 500 13px var(--mono);
+}
+.topic-type {
+  color: var(--muted);
+  font: 11px var(--mono);
+  margin-top: 2px;
+}
 
-.main { grid-area: main; padding: 16px; display: flex; gap: 16px; flex-wrap: wrap; align-content: flex-start; }
+.main {
+  grid-area: main;
+  padding: 16px;
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  align-content: flex-start;
+}
 /* wider so the camera (top panel) reads big; clamps on small windows, grows on large */
-.side-col { display: flex; flex-direction: column; gap: 16px; width: clamp(360px, 30vw, 520px); }
+.side-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: clamp(360px, 30vw, 520px);
+}
 
 /* center column: a tab strip over the big viz (WorldView ⇄ Rerun), grows to fill */
-.center-col { display: flex; flex-direction: column; flex: 1 1 560px; min-width: 520px; gap: 10px; }
-.tabs { display: flex; gap: 6px; }
+.center-col {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 560px;
+  min-width: 520px;
+  gap: 10px;
+}
+.tabs {
+  display: flex;
+  gap: 6px;
+}
 .tab {
   background: var(--elev);
   border: 1px solid var(--line);
@@ -173,19 +235,39 @@ body {
   cursor: pointer;
   transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
 }
-.tab:hover { color: var(--text); border-color: var(--line-hi); }
+.tab:hover {
+  color: var(--text);
+  border-color: var(--line-hi);
+}
 .tab-active,
 .tab-active:hover {
   border-color: var(--accent);
   color: var(--text);
   background: color-mix(in srgb, var(--accent) 8%, var(--elev));
 }
-.center-viz { display: flex; flex: 1; min-height: 520px; }
+.center-viz {
+  display: flex;
+  flex: 1;
+  min-height: 520px;
+}
 /* spatial (lidar/map) is now a SECONDARY panel in the side column — the camera took the center */
-.spatial { display: flex; flex-direction: column; gap: 8px; }
-.spatial-viz { display: flex; height: 320px; }
+.spatial {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.spatial-viz {
+  display: flex;
+  height: 320px;
+}
 /* Rerun = full-page 3D mode: spans the whole row below the topbar (sidebar + side-col unmounted) */
-.rerun-full { grid-row: 2; grid-column: 1 / -1; display: flex; padding: 16px; min-height: 0; }
+.rerun-full {
+  grid-row: 2;
+  grid-column: 1 / -1;
+  display: flex;
+  padding: 16px;
+  min-height: 0;
+}
 
 .panel {
   background: var(--panel);
@@ -200,15 +282,48 @@ body {
   letter-spacing: 0.01em;
   margin-bottom: 10px;
 }
-.worldcanvas { border-radius: var(--r-sm); display: block; background: var(--bg); width: 100%; height: 100%; }
-.json { margin: 0; max-height: 360px; overflow: auto; font: 12px/1.5 var(--mono); color: #b9c6d6; }
+.worldcanvas {
+  border-radius: var(--r-sm);
+  display: block;
+  background: var(--bg);
+  width: 100%;
+  height: 100%;
+}
+.json {
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  font: 12px/1.5 var(--mono);
+  color: #b9c6d6;
+}
 
-.readout { display: flex; flex-direction: column; gap: 2px; }
-.readout div { display: flex; gap: 10px; font: 13px var(--mono); padding: 3px 0; }
-.readout span { color: var(--muted); width: 40px; display: inline-block; }
+.readout {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.readout div {
+  display: flex;
+  gap: 10px;
+  font: 13px var(--mono);
+  padding: 3px 0;
+}
+.readout span {
+  color: var(--muted);
+  width: 40px;
+  display: inline-block;
+}
 
-.teleop-hint { font: 12px/1.4 var(--sans); color: var(--muted); margin-bottom: 10px; }
-.teleop-grid { display: grid; grid-template-columns: repeat(3, 46px); gap: 6px; }
+.teleop-hint {
+  font: 12px/1.4 var(--sans);
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.teleop-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 46px);
+  gap: 6px;
+}
 .teleop-grid button {
   height: 42px;
   background: linear-gradient(var(--elev), var(--panel));
@@ -220,14 +335,20 @@ body {
   box-shadow: 0 1px 0 0 var(--hi) inset;
   transition: border-color 0.12s ease, background-color 0.12s ease, transform 0.06s ease;
 }
-.teleop-grid button:hover { border-color: var(--line-hi); }
+.teleop-grid button:hover {
+  border-color: var(--line-hi);
+}
 .teleop-grid button:active {
   border-color: var(--accent);
   transform: translateY(1px);
   background: color-mix(in srgb, var(--accent) 12%, var(--panel));
 }
 
-.stats { width: 100%; border-collapse: collapse; font: 12px var(--mono); }
+.stats {
+  width: 100%;
+  border-collapse: collapse;
+  font: 12px var(--mono);
+}
 .stats th {
   text-align: right;
   color: var(--muted);
@@ -237,33 +358,93 @@ body {
   padding: 4px 6px;
   border-bottom: 1px solid var(--line);
 }
-.stats th:first-child { text-align: left; }
-.stats td { text-align: right; padding: 3px 6px; }
-.stats td.mono { text-align: left; color: #b9c6d6; }
-.stats tbody tr { transition: background-color 0.12s ease; }
-.stats tbody tr:hover { background: var(--elev); }
+.stats th:first-child {
+  text-align: left;
+}
+.stats td {
+  text-align: right;
+  padding: 3px 6px;
+}
+.stats td.mono {
+  text-align: left;
+  color: #b9c6d6;
+}
+.stats tbody tr {
+  transition: background-color 0.12s ease;
+}
+.stats tbody tr:hover {
+  background: var(--elev);
+}
 
 /* ── motion — one orchestrated page-load reveal + the live status pulse ───── */
-@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
 /* fade = opacity-only (NO transform). Use where a descendant needs position:fixed (the camera
    "enlarge"): a transform-animation makes the ancestor a containing block and breaks fixed. */
-@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
-@keyframes pulse {
-  0% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 65%, transparent); }
-  70%, 100% { box-shadow: 0 0 0 7px transparent; }
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
-@keyframes blink { 50% { opacity: 0.3; } }
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 65%, transparent);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+}
+@keyframes blink {
+  50% {
+    opacity: 0.3;
+  }
+}
 
-.topbar { animation: rise 0.4s ease both; }
-.sidebar { animation: rise 0.45s ease 0.05s both; }
-.center-col { animation: fade 0.45s ease 0.1s both; } /* fade, not rise → the camera's fullscreen resolves to the viewport */
-.side-col > * { animation: rise 0.45s ease both; }
-.side-col > *:nth-child(1) { animation-delay: 0.12s; }
-.side-col > *:nth-child(2) { animation-delay: 0.17s; }
-.side-col > *:nth-child(3) { animation-delay: 0.22s; }
-.side-col > *:nth-child(4) { animation-delay: 0.27s; }
-.side-col > *:nth-child(5) { animation-delay: 0.32s; }
+.topbar {
+  animation: rise 0.4s ease both;
+}
+.sidebar {
+  animation: rise 0.45s ease 0.05s both;
+}
+.center-col {
+  animation: fade 0.45s ease 0.1s both;
+} /* fade, not rise → the camera's fullscreen resolves to the viewport */
+.side-col > * {
+  animation: rise 0.45s ease both;
+}
+.side-col > *:nth-child(1) {
+  animation-delay: 0.12s;
+}
+.side-col > *:nth-child(2) {
+  animation-delay: 0.17s;
+}
+.side-col > *:nth-child(3) {
+  animation-delay: 0.22s;
+}
+.side-col > *:nth-child(4) {
+  animation-delay: 0.27s;
+}
+.side-col > *:nth-child(5) {
+  animation-delay: 0.32s;
+}
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition: none !important; }
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
 }

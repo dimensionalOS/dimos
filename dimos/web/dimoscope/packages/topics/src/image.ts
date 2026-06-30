@@ -26,7 +26,10 @@ function rawToRGBA(img: ImageMsg): ImageData | null {
       const o = (y * w + x) * 4;
       if (ch === 1) {
         const v = data[i];
-        out[o] = v; out[o + 1] = v; out[o + 2] = v; out[o + 3] = 255;
+        out[o] = v;
+        out[o + 1] = v;
+        out[o + 2] = v;
+        out[o + 3] = 255;
       } else {
         out[o] = data[i + (bgr ? 2 : 0)];
         out[o + 1] = data[i + 1];

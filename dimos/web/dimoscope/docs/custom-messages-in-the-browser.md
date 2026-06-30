@@ -90,7 +90,7 @@ This is the shape of the **Foxglove WebSocket protocol** (advertise channel + sc
 ## 5. Gaps to close for true zero-rebuild
 
 1. **Type/schema source for third-party packages.** `resolve_msg_type` (`dimos/msgs/helpers.py`) only searches `dimos.msgs.<m>.<C>`, `dimos.msgs.<m>`, and `dimos_lcm.<m>` — a user's `my_msgs.Foo` won't resolve by name. Cleanest fix: **don't resolve by name on the publish path at all.** A dimos `Out` port is constructed *with its `msg_type`* (`LCMTransport("/map", OccupancyGrid)`), so a gateway co-located with the blueprint can read the schema directly off the live transport binding. For the decoupled relay gateway, add a registration hook (a configurable namespace list, or an entry-point registry custom message packages opt into).
-2. **Which gateway.** Decode requires Python, so this is a **Python/Zenoh-gateway feature**. The Bun↔LCM gateway can't import Python classes and stays a pure byte-relay for known types — which is fine, since the vibe-coding user's natural path is the Python gateway.
+2. **Which gateway.** Decode requires Python, so this is a **Python/Zenoh-gateway feature**. The Deno↔LCM gateway can't import Python classes and stays a pure byte-relay for known types — which is fine, since the vibe-coding user's natural path is the Python gateway.
 3. **Render polish.** `JsonInspector` covers correctness; a generic numeric auto-plot / array table keyed off "no bespoke widget for this type" makes custom telemetry pleasant. Small, optional, additive to the app.
 
 ---

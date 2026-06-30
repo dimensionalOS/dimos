@@ -1,34 +1,36 @@
-// Headless transport benchmark (Bun runner) — measures the @dimos/topics SDK against a
+// Headless transport benchmark (Deno runner) — measures the @dimos/topics SDK against a
 // gateway, OR the zenoh-ts direct transport (BENCH_TRANSPORT=ts). Scenarios + measurement
 // live in @dimos/topics/bench so the in-browser bench page (app/src/bench.tsx) is identical.
 //
 // RUN (with bench_publisher.py + the relevant server running):
-//   GATEWAY_URL=ws://localhost:8090 BENCH_LABEL="Bun↔LCM" bun run bench/bench.ts
-//   BENCH_TRANSPORT=ts bun run bench/bench.ts          # zenoh-ts direct (needs the :10000 bridge)
-import { connect } from "../packages/topics/src/index";
+//   GATEWAY_URL=ws://localhost:8090 BENCH_LABEL="Deno↔LCM" deno run -A bench/bench.ts
+//   BENCH_TRANSPORT=ts deno run -A bench/bench.ts        # zenoh-ts direct (needs the :10000 bridge)
+import { connect } from "../packages/topics/src/index.ts";
 import {
   BENCH_SCENARIOS,
-  measureScenario,
-  formatMarkdown,
-  onDemandSaving,
   type BenchRow,
-} from "../packages/topics/src/bench";
+  formatMarkdown,
+  measureScenario,
+  onDemandSaving,
+} from "../packages/topics/src/bench.ts";
 
-const WS_URL = process.env.GATEWAY_URL ?? "ws://localhost:8090";
-const LABEL = process.env.BENCH_LABEL ?? "Bun↔LCM gateway";
-const DUR = Number(process.env.BENCH_DUR_MS ?? 5000);
-const TRANSPORT = process.env.BENCH_TRANSPORT; // "ts" → zenoh-ts direct
-const TS_URL = process.env.ZENOH_TS_URL ?? "ws://localhost:10000";
+const WS_URL = Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8090";
+const LABEL = Deno.env.get("BENCH_LABEL") ?? "Deno↔LCM gateway";
+const DUR = Number(Deno.env.get("BENCH_DUR_MS") ?? 5000);
+const TRANSPORT = Deno.env.get("BENCH_TRANSPORT"); // "ts" → zenoh-ts direct
+const TS_URL = Deno.env.get("ZENOH_TS_URL") ?? "ws://localhost:10000";
 const url = TRANSPORT === "ts" ? TS_URL : WS_URL;
 // BENCH_E2E=1 → end-to-end latency (publish→client) instead of the gateway WS-hop, so a
 // combined all-transport table (incl. the gateway-less zenoh-ts) compares the same thing.
-const E2E = process.env.BENCH_E2E === "1";
+const E2E = Deno.env.get("BENCH_E2E") === "1";
 
 async function buildClient() {
   if (TRANSPORT === "ts") {
-    const { createZenohTsTransport } = await import("../packages/topics/src/adapters/zenohTs");
+    const { createZenohTsTransport } = await import("../packages/topics/src/adapters/zenohTs.ts");
     // read via the remote-api bridge; no scout (bench subscribes explicit /bench/* topics).
-    return connect({ transport: createZenohTsTransport({ remoteApiUrl: TS_URL, discoveryKey: "" }) });
+    return connect({
+      transport: createZenohTsTransport({ remoteApiUrl: TS_URL, discoveryKey: "" }),
+    });
   }
   return connect({ url: WS_URL, reconnect: false });
 }
@@ -47,12 +49,15 @@ for (const scenario of BENCH_SCENARIOS) {
   );
 }
 
-const stamp = process.env.BENCH_STAMP ?? "(unstamped)";
+const stamp = Deno.env.get("BENCH_STAMP") ?? "(unstamped)";
 const saving = onDemandSaving(rows);
-await Bun.write(new URL("./last_run.md", import.meta.url).pathname, formatMarkdown(LABEL, url, DUR, stamp, rows));
-await Bun.write(
+await Deno.writeTextFile(
+  new URL("./last_run.md", import.meta.url).pathname,
+  formatMarkdown(LABEL, url, DUR, stamp, rows),
+);
+await Deno.writeTextFile(
   new URL("./results.json", import.meta.url).pathname,
   JSON.stringify({ label: LABEL, url, durMs: DUR, stamp, rows, ondemandSaving: saving }, null, 2),
 );
 console.log(`\n  on-demand WS-hop saving: ${saving}%  → wrote bench/last_run.md\n`);
-process.exit(rows[0]?.msgs > 0 ? 0 : 1);
+Deno.exit(rows[0]?.msgs > 0 ? 0 : 1);

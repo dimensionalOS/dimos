@@ -15,8 +15,8 @@ See also: [README](./README.md) · [benchmarks](./benchmarks.md) · [custom mess
 
 ## 2. The `@dimos/topics` SDK + three gateways behind one contract
 **Thesis: "DimOS topics in the browser", not "Zenoh in the browser."** One small `Transport` interface (`packages/topics/src/transport.ts`); the app/SDK code is identical across all three transports, switchable live from the topbar dropdown:
-- **Bun↔LCM** — `servers/gateway.ts`. Reads the LCM UDP-multicast bus, relays raw packets; the browser decodes. Bun can't speak Zenoh natively.
-- **Python↔Zenoh** — `servers/gateway_zenoh.py`. The only practical way to put Zenoh behind a gateway (Bun/Node have no native Zenoh).
+- **Deno↔LCM** — `servers/gateway.ts`. Reads the LCM UDP-multicast bus, relays raw packets; the browser decodes. Deno can't speak Zenoh natively.
+- **Python↔Zenoh** — `servers/gateway_zenoh.py`. The only practical way to put Zenoh behind a gateway (Deno/Node have no native Zenoh).
 - **zenoh-ts (direct)** — `packages/topics/src/adapters/zenohTs.ts`. Browser ↔ `zenoh-bridge-remote-api`, **no gateway in the read path**; the browser drives a real server-side session and gets real `declareSubscriber` → **true end-to-end on-demand**. Read-path only; teleop/goal still go through a gateway.
 
 Key properties:
@@ -46,7 +46,7 @@ Users who invent their own message types can't see them in the browser today: th
 - **The unifying lens:** a Module is just `In`(subscribe) / `Out`(publish) / `@rpc`(call) over one transport → **three primitives: subscribe · publish · call.** #2502's whole TS surface is those three over WS. "Nothing to invent, just consolidate." The browser is **just another module-consumer**, reached over WS only because browsers can't speak the bus.
 
 ## 7. QoS from the client (parked)
-- Client QoS today = **rate only** (`topic.setRateLimit(hz)`): enforced server-side on Bun↔LCM, **ignored by the Zenoh gateway** (gap, ~15 lines to port), client-drop-only on zenoh-ts.
+- Client QoS today = **rate only** (`topic.setRateLimit(hz)`): enforced server-side on Deno↔LCM, **ignored by the Zenoh gateway** (gap, ~15 lines to port), client-drop-only on zenoh-ts.
 - Zenoh QoS is **publisher-side only** (`SubscriberOptions` carries none) → the browser is a subscriber, so reliability/durability have no subscriber-side home; the QoS fruit is **gateway-side**, not zenoh-ts. #2502's `setQos` is ~10% built.
 - The compelling demo (build later): an in-app network selector (LAN/4G/3G/2G → gateway injects latency/bw-cap/loss) + per-topic rate sliders beside live stats → "pick 3G, rate-limit lidar, keep camera/teleop responsive." (Chrome DevTools throttling does **not** affect WebSocket/WebRTC — use gateway netsim or toxiproxy.)
 

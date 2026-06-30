@@ -32,3 +32,18 @@ export function srcTsMs(data: unknown): number | undefined {
   }
   return undefined;
 }
+
+/**
+ * Best-effort per-topic sequence number, for wire drop/gap detection. The bench
+ * source stamps `frame_id = str(seq)`, so a purely-numeric frame_id is read as a
+ * counter; real frames ("base_link", "odom") are not numeric and yield undefined.
+ * Falls back to a `header.seq` field if the message carries one.
+ */
+export function seqFrom(data: unknown): number | undefined {
+  const fid = (data as any)?.frame_id ?? (data as any)?.header?.frame_id;
+  if (typeof fid === "string" && fid.length > 0 && fid.length < 16 && /^\d+$/.test(fid)) {
+    return Number(fid);
+  }
+  const seq = (data as any)?.header?.seq;
+  return typeof seq === "number" ? seq : undefined;
+}

@@ -7,8 +7,8 @@
 // WS too), next to teleop/goal. Non-trickle ICE (gather-then-send) — trivial + instant on a LAN.
 // Slice scope: ONE active camera per channel (CameraView shows one); the multi-cam grid will
 // hoist this to a shared multi-track PeerConnection.
-import type { MediaCaps, MediaChannel, VideoMeta } from "../media";
-import type { Status } from "../transport";
+import type { MediaCaps, MediaChannel } from "../media.ts";
+import type { Status } from "../transport.ts";
 
 export interface WebRtcMediaDeps {
   gatewayUrl: string; // media node WS for WebRTC signaling (e.g. ws://host:8092)
@@ -73,7 +73,9 @@ export const createWebRtcMedia = (deps: WebRtcMediaDeps): MediaChannel => {
       if (active === streamId) streamCb?.(streamId, ev.streams[0]);
     };
     peer.onconnectionstatechange = () => {
-      if (peer.connectionState === "failed" || peer.connectionState === "closed") statusCb?.("closed");
+      if (peer.connectionState === "failed" || peer.connectionState === "closed") {
+        statusCb?.("closed");
+      }
     };
     const offer = await peer.createOffer();
     await peer.setLocalDescription(offer);

@@ -12,21 +12,28 @@
 //   • server-side DOWNSAMPLE (maxHz per client+topic)
 //   • TELEOP SAFETY: velocity clamp + TTL/deadman watchdog + stop-on-disconnect
 //
-// Why Bun: the gateway is a byte-relay (browser decodes), so it's I/O-bound;
-// Bun gives native WebSocket + node:dgram + no GIL headroom for media streams.
-// Bun cannot speak Zenoh natively — the Zenoh path is gateway-zenoh.py.
+// Why a byte-relay: the gateway is I/O-bound (the browser decodes), so it just
+// needs native WebSocket + node:dgram multicast. Deno gives both. Deno cannot
+// speak Zenoh natively either — the Zenoh path is gateway-zenoh.py.
 //
-// RUN:  bun run servers/gateway.ts        (env: GATEWAY_PORT, DIMOS_LCM_HOST/PORT)
+// RUN:  deno run -A servers/gateway.ts     (env: GATEWAY_PORT, DIMOS_LCM_HOST/PORT)
 // ─────────────────────────────────────────────────────────────────────────
 import dgram from "node:dgram";
-import { encodeChannel, encodePacket, geometry_msgs, std_msgs } from "@dimos/msgs";
+import {
+  decode,
+  decodeChannel,
+  encodeChannel,
+  encodePacket,
+  geometry_msgs,
+  std_msgs,
+} from "@dimos/msgs";
 
-const MCAST = process.env.DIMOS_LCM_HOST ?? "239.255.76.67";
-const LPORT = Number(process.env.DIMOS_LCM_PORT ?? 7667);
-const WS_PORT = Number(process.env.GATEWAY_PORT ?? 8090);
-const MAX_LIN = Number(process.env.TELEOP_MAX_LIN ?? 1.0); // m/s clamp
-const MAX_ANG = Number(process.env.TELEOP_MAX_ANG ?? 1.5); // rad/s clamp
-const DEFAULT_TTL = Number(process.env.TELEOP_TTL_MS ?? 400); // deadman
+const MCAST = Deno.env.get("DIMOS_LCM_HOST") ?? "239.255.76.67";
+const LPORT = Number(Deno.env.get("DIMOS_LCM_PORT") ?? 7667);
+const WS_PORT = Number(Deno.env.get("GATEWAY_PORT") ?? 8090);
+const MAX_LIN = Number(Deno.env.get("TELEOP_MAX_LIN") ?? 1.0); // m/s clamp
+const MAX_ANG = Number(Deno.env.get("TELEOP_MAX_ANG") ?? 1.5); // rad/s clamp
+const DEFAULT_TTL = Number(Deno.env.get("TELEOP_TTL_MS") ?? 400); // deadman
 
 const MAGIC_SHORT = 0x4c433032; // "LC02" single packet
 const MAGIC_LONG = 0x4c433033; // "LC03" fragment
@@ -42,11 +49,44 @@ interface ClientState {
   rate: Map<string, number>; // topic -> maxHz (0/absent = unlimited)
   lastSent: Map<string, number>; // topic -> last forward time (ms)
   teleopTimer: ReturnType<typeof setTimeout> | null;
+  decode?: string; // "server-json" → gateway decodes + sends JSON (the decode-location axis)
   rx: number;
   tx: number;
 }
 let nextId = 1;
-const clients = new Set<Bun.ServerWebSocket<ClientState>>();
+// Deno's WebSocket has no per-connection data slot (Bun's ws.data), so client
+// state lives in this Map keyed on the socket.
+const clients = new Map<WebSocket, ClientState>();
+
+// ── SSE + HTTP-poll delivery: the SAME bus tap + frame over other transports, so
+//    the data-path benchmark can compare WebSocket vs SSE vs HTTP long-poll fairly.
+const enc = new TextEncoder();
+function toB64(u8: Uint8Array): string {
+  let s = "";
+  const CH = 0x8000; // chunk so String.fromCharCode stays within arg limits (large frames)
+  for (let i = 0; i < u8.length; i += CH) s += String.fromCharCode(...u8.subarray(i, i + CH));
+  return btoa(s);
+}
+const wants = (subs: Set<string>, topic: string) => subs.has("*") || subs.has(topic);
+
+interface SseClient {
+  ctrl: ReadableStreamDefaultController<Uint8Array>;
+  subs: Set<string>;
+}
+const sseClients = new Set<SseClient>();
+
+// Ring buffer of recent frames for HTTP long-poll (cursor = monotonic id; a client
+// that falls behind the ring sees a seq gap = loss, rather than unbounded buffering).
+interface RingEntry {
+  id: number;
+  topic: string;
+  frame: Uint8Array;
+}
+const ring: RingEntry[] = [];
+let ringSeq = 0;
+const RING_MAX = Number(Deno.env.get("POLL_RING_MAX") ?? 8192);
+const POLL_WAIT_MS = Number(Deno.env.get("POLL_WAIT_MS") ?? 10000);
+const pollWaiters = new Set<() => void>();
 
 // ── discovery: every topic ever seen on the bus → its message type ──────────
 const topics = new Map<string, string>();
@@ -124,8 +164,9 @@ udp.on("message", (buf) => {
   const frame = new Uint8Array(8 + pkt.length); // [f64 BE gateway-send-ms][LC02]
   new DataView(frame.buffer).setFloat64(0, now, false);
   frame.set(pkt, 8);
-  for (const ws of clients) {
-    const st = ws.data;
+  let jsonMsg: string | null = null; // server-json: decode once, shared across all json clients
+  for (const [ws, st] of clients) {
+    if (ws.readyState !== WebSocket.OPEN) continue;
     if (!(st.subs.has("*") || st.subs.has(meta.topic))) continue; // on-demand filter
     const hz = st.rate.get(meta.topic) ?? 0;
     if (hz > 0) {
@@ -133,8 +174,52 @@ udp.on("message", (buf) => {
       if (now - last < 1000 / hz) continue; // downsample
       st.lastSent.set(meta.topic, now);
     }
-    ws.send(frame);
-    st.tx++;
+    if (st.decode === "server-json") {
+      // rosbridge-style: deserialize here and ship JSON (bigger on the wire, gateway pays the CPU).
+      if (jsonMsg === null) {
+        try {
+          const { payload } = decodeChannel(pkt);
+          jsonMsg = JSON.stringify({
+            op: "sample",
+            topic: meta.topic,
+            type: meta.type,
+            gatewaySendMs: now,
+            data: decode(payload),
+          });
+        } catch {
+          jsonMsg = ""; // undecodable → skip for json clients
+        }
+      }
+      if (jsonMsg) {
+        ws.send(jsonMsg);
+        st.tx++;
+      }
+    } else {
+      ws.send(frame);
+      st.tx++;
+    }
+  }
+
+  // SSE fan-out — same frame, base64-wrapped in a text event (SSE can't carry binary).
+  if (sseClients.size) {
+    const line = enc.encode(`data: ${toB64(frame)}\n\n`);
+    for (const c of sseClients) {
+      if (!wants(c.subs, meta.topic)) continue;
+      try {
+        c.ctrl.enqueue(line);
+      } catch {
+        sseClients.delete(c);
+      }
+    }
+  }
+
+  // HTTP-poll ring buffer (+ wake any long-poll waiters).
+  ring.push({ id: ++ringSeq, topic: meta.topic, frame });
+  if (ring.length > RING_MAX) ring.splice(0, ring.length - RING_MAX);
+  if (pollWaiters.size) {
+    const waiters = [...pollWaiters];
+    pollWaiters.clear();
+    for (const w of waiters) w();
   }
 });
 udp.on("error", (e) => console.error("[lcm] socket error:", e));
@@ -175,84 +260,174 @@ function publishGoal(x: number, y: number, z: number) {
 // ── control channel + fan-out ───────────────────────────────────────────────
 function broadcastJSON(obj: unknown) {
   const s = JSON.stringify(obj);
-  for (const ws of clients) ws.send(s);
+  for (const ws of clients.keys()) if (ws.readyState === WebSocket.OPEN) ws.send(s);
 }
 function topicList() {
   return [...topics].map(([topic, type]) => ({ topic, type }));
 }
+const subsFromQuery = (tp: string | null) =>
+  new Set(tp == null || tp === "*" ? ["*"] : tp.split(",").filter(Boolean));
 
-Bun.serve<ClientState>({
-  port: WS_PORT,
-  fetch(req, server) {
-    if (
-      server.upgrade(req, {
-        data: {
-          id: nextId++,
-          subs: new Set<string>(),
-          rate: new Map(),
-          lastSent: new Map(),
-          teleopTimer: null,
-          rx: 0,
-          tx: 0,
-        },
-      })
-    )
-      return;
+// SSE: stream `data: <base64(frame)>` for the requested topics (?topics=csv|*).
+function handleSse(req: Request): Response {
+  const subs = subsFromQuery(new URL(req.url).searchParams.get("topics"));
+  let client: SseClient | undefined;
+  const stream = new ReadableStream<Uint8Array>({
+    start(ctrl) {
+      client = { ctrl, subs };
+      sseClients.add(client);
+      ctrl.enqueue(
+        enc.encode(
+          `event: hello\ndata: ${
+            JSON.stringify({ topics: topicList(), label: "Deno↔LCM/SSE" })
+          }\n\n`,
+        ),
+      );
+    },
+    cancel() {
+      if (client) sseClients.delete(client);
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      "access-control-allow-origin": "*",
+    },
+  });
+}
+
+// HTTP long-poll: return a binary batch [u32 cursor][u32 count] then count×([u32 len][frame]);
+// hold the request until matching frames arrive (or POLL_WAIT_MS) when the ring has nothing new.
+async function handlePoll(req: Request): Promise<Response> {
+  const u = new URL(req.url);
+  const since = Number(u.searchParams.get("since") ?? 0);
+  const subs = subsFromQuery(u.searchParams.get("topics"));
+  const max = Number(u.searchParams.get("max") ?? 512);
+  // since < 0 means "start from head": skip history so a live client only gets new
+  // frames (matching WS/SSE, which never replay) — return just the current cursor.
+  if (since < 0) {
+    const head = ring.length ? ring[ring.length - 1].id : 0;
+    const b = new Uint8Array(8);
+    new DataView(b.buffer).setUint32(0, head, false);
+    return new Response(b, {
+      headers: { "content-type": "application/octet-stream", "access-control-allow-origin": "*" },
+    });
+  }
+  const collect = () => {
+    const out: RingEntry[] = [];
+    for (const e of ring) {
+      if (e.id <= since || !wants(subs, e.topic)) continue;
+      out.push(e);
+      if (out.length >= max) break;
+    }
+    return out;
+  };
+  let batch = collect();
+  if (batch.length === 0) {
+    await new Promise<void>((res) => {
+      const w = () => {
+        clearTimeout(to);
+        res();
+      };
+      const to = setTimeout(() => {
+        pollWaiters.delete(w);
+        res();
+      }, POLL_WAIT_MS);
+      pollWaiters.add(w);
+    });
+    batch = collect();
+  }
+  const newCursor = batch.length ? batch[batch.length - 1].id : since;
+  let total = 8;
+  for (const e of batch) total += 4 + e.frame.length;
+  const body = new Uint8Array(total);
+  const dv = new DataView(body.buffer);
+  dv.setUint32(0, newCursor, false);
+  dv.setUint32(4, batch.length, false);
+  let off = 8;
+  for (const e of batch) {
+    dv.setUint32(off, e.frame.length, false);
+    off += 4;
+    body.set(e.frame, off);
+    off += e.frame.length;
+  }
+  return new Response(body, {
+    headers: { "content-type": "application/octet-stream", "access-control-allow-origin": "*" },
+  });
+}
+
+Deno.serve({ port: WS_PORT }, (req) => {
+  if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+    const path = new URL(req.url).pathname;
+    if (path === "/sse") return handleSse(req);
+    if (path === "/poll") return handlePoll(req);
     return new Response("dimos-web-gateway up");
-  },
-  websocket: {
-    open(ws) {
-      clients.add(ws);
-      ws.send(JSON.stringify({ op: "hello", topics: topicList(), label: "Bun↔LCM" }));
-      console.log(`[ws] +client#${ws.data.id} (${clients.size} total)`);
-    },
-    close(ws) {
-      const st = ws.data;
-      if (st.teleopTimer) clearTimeout(st.teleopTimer);
-      publishTwist(0, 0); // safety: stop the robot when an operator disconnects
-      clients.delete(ws);
-      console.log(`[ws] -client#${st.id} (${clients.size} total)`);
-    },
-    message(ws, raw) {
-      const st = ws.data;
-      st.rx++;
-      if (typeof raw !== "string") return; // browser never sends raw bus bytes
-      let m: any;
-      try {
-        m = JSON.parse(raw);
-      } catch {
-        return;
-      }
-      switch (m.op) {
-        case "subscribe":
-          st.subs.add(m.topic);
-          if (m.maxHz) st.rate.set(m.topic, m.maxHz);
-          break;
-        case "unsubscribe":
-          st.subs.delete(m.topic);
-          st.rate.delete(m.topic);
-          st.lastSent.delete(m.topic);
-          break;
-        case "rate":
-          st.rate.set(m.topic, m.maxHz || 0);
-          break;
-        case "list":
-          ws.send(JSON.stringify({ op: "topics", topics: topicList() }));
-          break;
-        case "teleop":
-          publishTwist(Number(m.linearX) || 0, Number(m.angularZ) || 0);
-          armDeadman(st, Number(m.ttlMs) || DEFAULT_TTL);
-          break;
-        case "stop":
-          if (st.teleopTimer) clearTimeout(st.teleopTimer);
-          publishTwist(0, 0);
-          break;
-        case "goal":
-          publishGoal(Number(m.x) || 0, Number(m.y) || 0, Number(m.z) || 0);
-          break;
-      }
-    },
-  },
+  }
+  const { socket: ws, response } = Deno.upgradeWebSocket(req);
+  const st: ClientState = {
+    id: nextId++,
+    subs: new Set<string>(),
+    rate: new Map(),
+    lastSent: new Map(),
+    teleopTimer: null,
+    rx: 0,
+    tx: 0,
+  };
+
+  ws.onopen = () => {
+    clients.set(ws, st);
+    ws.send(JSON.stringify({ op: "hello", topics: topicList(), label: "Deno↔LCM" }));
+    console.log(`[ws] +client#${st.id} (${clients.size} total)`);
+  };
+  ws.onclose = () => {
+    if (st.teleopTimer) clearTimeout(st.teleopTimer);
+    publishTwist(0, 0); // safety: stop the robot when an operator disconnects
+    clients.delete(ws);
+    console.log(`[ws] -client#${st.id} (${clients.size} total)`);
+  };
+  ws.onerror = (e) => console.error(`[ws] client#${st.id} error:`, (e as ErrorEvent).message ?? e);
+  ws.onmessage = (ev) => {
+    st.rx++;
+    const raw = ev.data;
+    if (typeof raw !== "string") return; // browser never sends raw bus bytes
+    let m: any;
+    try {
+      m = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    switch (m.op) {
+      case "subscribe":
+        st.subs.add(m.topic);
+        if (m.maxHz) st.rate.set(m.topic, m.maxHz);
+        if (m.decode) st.decode = m.decode;
+        break;
+      case "unsubscribe":
+        st.subs.delete(m.topic);
+        st.rate.delete(m.topic);
+        st.lastSent.delete(m.topic);
+        break;
+      case "rate":
+        st.rate.set(m.topic, m.maxHz || 0);
+        break;
+      case "list":
+        ws.send(JSON.stringify({ op: "topics", topics: topicList() }));
+        break;
+      case "teleop":
+        publishTwist(Number(m.linearX) || 0, Number(m.angularZ) || 0);
+        armDeadman(st, Number(m.ttlMs) || DEFAULT_TTL);
+        break;
+      case "stop":
+        if (st.teleopTimer) clearTimeout(st.teleopTimer);
+        publishTwist(0, 0);
+        break;
+      case "goal":
+        publishGoal(Number(m.x) || 0, Number(m.y) || 0, Number(m.z) || 0);
+        break;
+    }
+  };
+  return response;
 });
 
 console.log(`[gateway] ws://localhost:${WS_PORT}  ·  LCM ${MCAST}:${LPORT}`);

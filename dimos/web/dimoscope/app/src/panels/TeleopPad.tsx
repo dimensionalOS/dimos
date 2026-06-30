@@ -55,7 +55,9 @@ export function TeleopPad() {
   return (
     <div className="panel">
       <div className="panel-title">Teleop · /cmd_vel {active ? "● live" : ""}</div>
-      <div className="teleop-hint">WASD / arrows or buttons. Gateway clamps velocity + deadman-stops.</div>
+      <div className="teleop-hint">
+        WASD / arrows or buttons. Gateway clamps velocity + deadman-stops.
+      </div>
       <div className="teleop-grid">
         <div />
         <button {...hold(LIN, 0)}>↑</button>

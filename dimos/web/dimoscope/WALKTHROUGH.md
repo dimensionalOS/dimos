@@ -29,10 +29,10 @@ relay bus↔browser. That's the only "hard" part, and it's ~50 lines.
 ## Rung 1 — Module, Stream, Transport, the bus  ·  `bridge.ts`
 
 Read `bridge.ts`. The realization that shaped the whole project: the dimos
-TS example uses `@dimos/lcm`, which is **Deno-only**, but it only uses it to
-*receive* and *send* UDP packets. `node:dgram` does multicast UDP in Bun/Node,
-and **all** LCM framing happens in `@dimos/msgs` — so the bridge is a **dumb
-byte relay** that never parses a packet. Dropping Deno costs nothing.
+TS example uses `@dimos/lcm`, but it only uses it to *receive* and *send* UDP
+packets. `node:dgram` does multicast UDP in Deno (and Node), and **all** LCM
+framing happens in `@dimos/msgs` — so the bridge is a **dumb byte relay** that
+never parses a packet, and needs no `@dimos/lcm` at all.
 
 - bus → browser: `udp.on("message", buf => clients.forEach(ws => ws.send(buf)))`
 - browser → bus: `message(ws, m) => udp.send(m)`
@@ -43,7 +43,7 @@ byte relay** that never parses a packet. Dropping Deno costs nothing.
 
 **Run & observe:**
 ```bash
-bun install && bun run bridge.ts      # [lcm] listening … [ws] serving ws://localhost:8080
+deno install && deno task bridge      # [lcm] listening … [ws] serving ws://localhost:8080
 ```
 
 ---
@@ -63,8 +63,8 @@ object to subscribers. The 8-byte type hash inside the payload is what lets
 **Run & observe (headless, no browser):**
 ```bash
 .venv/bin/python examples/simplerobot/simplerobot.py --headless   # real dimos robot
-bun run bridge.ts                                                 # the relay
-bun run wsprobe.ts                                                # prints /odom seen in 3s
+deno task bridge                                                  # the relay
+deno task wsprobe                                                 # prints /odom seen in 3s
 ```
 This is exactly how the pipe was verified against real dimos. ✅
 

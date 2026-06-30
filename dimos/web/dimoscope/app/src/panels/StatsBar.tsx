@@ -29,9 +29,7 @@ export function StatsBar() {
           </tr>
         </thead>
         <tbody>
-          {topics.map((t) => (
-            <Row key={t.topic} topic={t.topic} />
-          ))}
+          {topics.map((t) => <Row key={t.topic} topic={t.topic} />)}
         </tbody>
       </table>
     </div>

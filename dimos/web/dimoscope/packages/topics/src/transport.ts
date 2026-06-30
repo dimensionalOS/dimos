@@ -1,7 +1,7 @@
 // The transport abstraction — mirrors DimOS's Python Transport layer.
 // Implementations: GatewayWsTransport (Bun/LCM or Python/Zenoh gateway, primary),
 // and (future) a direct zenoh-ts adapter. The client is transport-agnostic.
-import type { TopicInfo } from "./types";
+import type { TopicInfo } from "./types.ts";
 
 export type Status = "connecting" | "open" | "closed";
 
@@ -13,6 +13,9 @@ export interface RawSample {
   recvTs: number;
   /** Gateway send time (ms) from the frame prefix — for true transport latency. */
   gatewaySendMs?: number;
+  /** Pre-decoded message (server-side decode mode): when set, the client uses it directly
+   *  instead of decoding `payload` itself — the "where to decode" axis (rosbridge-style). */
+  decoded?: unknown;
 }
 
 export interface TransportCaps {

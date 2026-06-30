@@ -16,10 +16,19 @@ export default defineConfig({
   // Exclude WASM-shipping deps from esbuild pre-bundling so Vite serves their files
   // directly: the Rerun viewer (.wasm MIME) and zenoh-ts (vite-plugin-wasm handles it).
   // But DO pre-bundle zenoh-ts's CommonJS deps (e.g. channel-ts) so their named exports
-  // resolve when the raw-served zenoh-ts imports them.
+  // resolve when the raw-served zenoh-ts imports them. They're listed as `parent > child`
+  // so Vite finds them *through* zenoh-ts — under Deno's node_modules they aren't hoisted
+  // to the top level, so a bare "channel-ts" wouldn't resolve.
   optimizeDeps: {
     exclude: ["@rerun-io/web-viewer", "@rerun-io/web-viewer-react", "@eclipse-zenoh/zenoh-ts"],
-    include: ["channel-ts", "base64-arraybuffer", "uuid", "tslog", "typed-duration", "@thi.ng/leb128"],
+    include: [
+      "@eclipse-zenoh/zenoh-ts > channel-ts",
+      "@eclipse-zenoh/zenoh-ts > base64-arraybuffer",
+      "@eclipse-zenoh/zenoh-ts > uuid",
+      "@eclipse-zenoh/zenoh-ts > tslog",
+      "@eclipse-zenoh/zenoh-ts > typed-duration",
+      "@eclipse-zenoh/zenoh-ts > @thi.ng/leb128",
+    ],
   },
   resolve: {
     dedupe: ["react", "react-dom"],

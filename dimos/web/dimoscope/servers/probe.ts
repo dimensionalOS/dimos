@@ -1,8 +1,8 @@
 // Headless gateway probe — verifies the gateway decodes the live LCM bus.
-// RUN:  bun run servers/probe.ts            (env GATEWAY_URL, default ws://localhost:8090)
+// RUN:  deno run -A servers/probe.ts        (env GATEWAY_URL, default ws://localhost:8090)
 import { decodePacket } from "@dimos/msgs";
 
-const url = process.env.GATEWAY_URL ?? "ws://localhost:8090";
+const url = Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8090";
 const seen = new Map<string, number>();
 const ws = new WebSocket(url);
 ws.binaryType = "arraybuffer";
@@ -24,8 +24,7 @@ ws.addEventListener("message", (ev) => {
     const n = (seen.get(channel) ?? 0) + 1;
     seen.set(channel, n);
     if (n <= 1) {
-      const keys =
-        data && typeof data === "object" ? Object.keys(data as object).slice(0, 8) : [];
+      const keys = data && typeof data === "object" ? Object.keys(data as object).slice(0, 8) : [];
       console.log(`[probe] FIRST ${channel}  fields=[${keys.join(",")}]`);
     }
   } catch {
@@ -37,5 +36,5 @@ setTimeout(() => {
   console.log("[probe] ---- counts per channel (≈rate over 4s) ----");
   for (const [c, n] of seen) console.log(`   ${c}: ${n}`);
   console.log(seen.size ? "[probe] OK ✅ gateway is decoding the bus" : "[probe] NO DATA ❌");
-  process.exit(seen.size ? 0 : 1);
+  Deno.exit(seen.size ? 0 : 1);
 }, 4000);

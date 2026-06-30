@@ -14,6 +14,11 @@ export interface MessageMeta {
   sizeBytes: number;
   /** Cumulative messages coalesced/dropped for this topic by client rate-limit. */
   dropped: number;
+  /** Per-topic source sequence number, parsed from a numeric `frame_id` (or
+   *  `header.seq`) when present — lets a consumer detect wire drops/gaps. The
+   *  bench source stamps `frame_id = str(seq)`; normal named-frame topics
+   *  (e.g. "base_link") yield `undefined`. */
+  seq?: number;
 }
 
 export type Handler<T> = (data: T, meta: MessageMeta) => void;

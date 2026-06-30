@@ -11,7 +11,7 @@
 //     is synchronous and inference reads the copy.
 import { useCallback, useRef, useState } from "react";
 import type { VideoMeta } from "@dimos/react";
-import { loadCocoDetector, type Box, type Detector } from "./detector";
+import { type Box, type Detector, loadCocoDetector } from "./detector";
 
 export interface CvStats {
   count: number; // boxes in the latest detection
@@ -86,7 +86,11 @@ export function useCvOverlay() {
         .detect(work)
         .then((boxes) => {
           boxesRef.current = boxes.filter((b) => b.score >= MIN_SCORE);
-          setHud({ count: boxesRef.current.length, infMs: Math.round(performance.now() - t0), loading: false });
+          setHud({
+            count: boxesRef.current.length,
+            infMs: Math.round(performance.now() - t0),
+            loading: false,
+          });
         })
         .catch(() => {})
         .finally(() => {

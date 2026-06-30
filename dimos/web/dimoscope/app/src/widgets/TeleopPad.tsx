@@ -15,8 +15,10 @@ export function TeleopPad() {
   useEffect(() => {
     const vel = () => {
       const k = keys.current;
-      const lin = (k.has("w") || k.has("ArrowUp") ? LIN : 0) + (k.has("s") || k.has("ArrowDown") ? -LIN : 0);
-      const ang = (k.has("a") || k.has("ArrowLeft") ? ANG : 0) + (k.has("d") || k.has("ArrowRight") ? -ANG : 0);
+      const lin = (k.has("w") || k.has("ArrowUp") ? LIN : 0) +
+        (k.has("s") || k.has("ArrowDown") ? -LIN : 0);
+      const ang = (k.has("a") || k.has("ArrowLeft") ? ANG : 0) +
+        (k.has("d") || k.has("ArrowRight") ? -ANG : 0);
       return { lin, ang };
     };
     const down = (e: KeyboardEvent) => {

@@ -2,7 +2,7 @@
 
 _2026-06-29 21:29 · Chrome · 4000 ms/scenario · **end-to-end latency** (publish→browser), comparable across transports · synthetic `bench_publisher.py` source (no sim)._
 
-Run via `app/bench.html` (`bash bench/serve-bench.sh` first → 3 servers + `bench_publisher` on both buses). Reuses the same `@dimos/topics/bench` scenarios + measurement as the headless Bun bench (`bench/bench.ts`), but in the **real browser runtime** — so **zenoh-ts (browser-only) is benched apples-to-apples** with the gateways.
+Run via `app/bench.html` (`bash bench/serve-bench.sh` first → 3 servers + `bench_publisher` on both buses). Reuses the same `@dimos/topics/bench` scenarios + measurement as the headless Deno bench (`bench/bench.ts`), but in the **real browser runtime** — so **zenoh-ts (browser-only) is benched apples-to-apples** with the gateways.
 
 ## Python↔Zenoh — `ws://localhost:8088`
 | scenario | hz | kB/s | lat p50 | lat p95 | lat max |
@@ -13,7 +13,7 @@ Run via `app/bench.html` (`bash bench/serve-bench.sh` first → 3 servers + `ben
 
 On-demand saving: **75%**.
 
-## Bun↔LCM — `ws://localhost:8089`
+## Deno↔LCM — `ws://localhost:8089`
 | scenario | hz | kB/s | lat p50 | lat p95 | lat max |
 |---|--:|--:|--:|--:|--:|
 | 4x PoseStamped (throughput) | 415.25 | 34.87 | 1.21 | 4.79 | 15.85 |
@@ -36,4 +36,4 @@ On-demand saving: **75%** — here it's **true per-client on-demand** (the brows
 - **End-to-end latency** (publish→browser) is comparable across all three: p50 ~1.2–2.5 ms, p95 ~5–7 ms. (This differs from `RESULTS.md`'s headless numbers, which measure only the gateway→browser WS hop via the gateway send-stamp; here every transport is measured the same publish→browser way for fairness.)
 - **75% on-demand** on each.
 
-> **zenoh-ts headless = Deno, not Bun.** It ships a wasm-bindgen *bundler*-target WASM that fails in Bun (`wasm.__wbindgen_start is not a function`), but **Deno** instantiates it (zenoh-ts's own examples are Deno-based) — so the headless CLI bench `bench/run.sh all` now covers **all three** (gateways under Bun, zenoh-ts under Deno via `bench/bench_deno.ts`), see [RESULTS.md](RESULTS.md). This page is the in-browser cross-check — the app's real runtime, naturally a bit higher latency under display load.
+> The headless CLI bench `bench/run.sh all` covers **all three** transports under **Deno** (gateways via `bench/bench.ts`, zenoh-ts direct via `bench/bench_deno.ts`), see [RESULTS.md](RESULTS.md). This page is the in-browser cross-check — the app's real runtime, naturally a bit higher latency under display load.

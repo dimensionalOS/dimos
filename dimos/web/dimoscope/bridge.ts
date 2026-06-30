@@ -4,9 +4,9 @@
 // Relay between the dimos LCM bus (UDP multicast) and the browser (WebSocket).
 // The browser can't speak UDP multicast, so this is the only piece on the bus.
 //
-// WHY BUN (not Deno): the dimos example uses `@dimos/lcm`, which is Deno-only —
-// but it only receives/sends UDP. Node/Bun's `node:dgram` does multicast UDP,
-// so we drop Deno. Message framing/decoding happens in `@dimos/msgs`.
+// UDP TRANSPORT: the dimos example uses `@dimos/lcm` (Deno-only), but the bridge
+// only receives/sends UDP — Deno's `node:dgram` does multicast UDP. Message
+// framing/decoding happens in `@dimos/msgs`.
 //
 // LCM FRAGMENTATION: dimos fragments any LCM message bigger than ~1.4KB (the UDP
 // MTU) into multiple "LC03" datagrams. `@dimos/msgs.decodePacket` only handles
@@ -14,7 +14,7 @@
 // LC02 packet — the browser stays unchanged. (Small messages like /odom are LC02
 // and pass straight through.)
 //
-// RUN:  bun run bridge.ts
+// RUN:  deno run -A bridge.ts
 // ─────────────────────────────────────────────────────────────────────────
 import dgram from "node:dgram";
 import { encodeChannel } from "@dimos/msgs";
@@ -27,7 +27,7 @@ const MAGIC_SHORT = 0x4c433032; // "LC02" single packet
 const MAGIC_LONG = 0x4c433033; // "LC03" fragment
 const FRAG_HDR = 20; // LCM fragment header size
 
-const clients = new Set<import("bun").ServerWebSocket<unknown>>();
+const clients = new Set<WebSocket>();
 let rx = 0, tx = 0, reassembled = 0;
 
 // ── Fragment reassembly: key by LCM sequence number ─────────────────────────
@@ -80,7 +80,7 @@ const udp = dgram.createSocket({ type: "udp4", reuseAddr: true });
 udp.on("message", (buf) => {
   rx++;
   const out = process(new Uint8Array(buf));
-  if (out) for (const ws of clients) ws.send(out);
+  if (out) { for (const ws of clients) if (ws.readyState === WebSocket.OPEN) ws.send(out); }
 });
 udp.on("error", (e) => console.error("[lcm] socket error:", e));
 udp.bind(LPORT, () => {
@@ -94,28 +94,30 @@ udp.bind(LPORT, () => {
   console.log(`[lcm] listening on ${MCAST}:${LPORT}`);
 });
 
-// ── Browser side: WebSocket server (Bun native, zero deps) ──────────────────
-Bun.serve({
-  port: WS_PORT,
-  fetch(req, server) {
-    if (server.upgrade(req)) return;
+// ── Browser side: WebSocket server (Deno native, zero deps) ─────────────────
+Deno.serve({ port: WS_PORT }, (req) => {
+  if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") {
     return new Response("dimoscope bridge is up");
-  },
-  websocket: {
-    open(ws) {
-      clients.add(ws);
-      console.log(`[ws] +client (${clients.size} total)`);
-    },
-    close(ws) {
-      clients.delete(ws);
-      console.log(`[ws] -client (${clients.size} total)`);
-    },
-    message(_ws, msg) {
-      const buf = typeof msg === "string" ? Buffer.from(msg) : (msg as Uint8Array);
-      udp.send(buf, LPORT, MCAST); // browser publish (e.g. teleop) → bus
-      tx++;
-    },
-  },
+  }
+  const { socket: ws, response } = Deno.upgradeWebSocket(req);
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => {
+    clients.add(ws);
+    console.log(`[ws] +client (${clients.size} total)`);
+  };
+  ws.onclose = () => {
+    clients.delete(ws);
+    console.log(`[ws] -client (${clients.size} total)`);
+  };
+  ws.onmessage = (ev) => {
+    const msg = ev.data;
+    const buf = typeof msg === "string"
+      ? new TextEncoder().encode(msg)
+      : new Uint8Array(msg as ArrayBuffer);
+    udp.send(buf, LPORT, MCAST); // browser publish (e.g. teleop) → bus
+    tx++;
+  };
+  return response;
 });
 
 console.log(`[ws] serving ws://localhost:${WS_PORT}`);

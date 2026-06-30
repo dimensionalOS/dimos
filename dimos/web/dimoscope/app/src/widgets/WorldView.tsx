@@ -30,7 +30,11 @@ function pick(topics: Map<string, string>, type: string, prefer: string[]): stri
 export function WorldView() {
   const { topics } = useTopics();
   const poseTopic = pick(topics, "geometry_msgs.PoseStamped", ["/odom"]);
-  const mapTopic = pick(topics, "nav_msgs.OccupancyGrid", ["/map", "/navigation_costmap", "/global_costmap"]);
+  const mapTopic = pick(topics, "nav_msgs.OccupancyGrid", [
+    "/map",
+    "/navigation_costmap",
+    "/global_costmap",
+  ]);
   const scanTopic = pick(topics, "sensor_msgs.LaserScan", ["/scan"]);
   const pathTopic = pick(topics, "nav_msgs.Path", ["/path"]);
 
@@ -55,8 +59,14 @@ export function WorldView() {
     ctx.strokeStyle = "#1b2230";
     ctx.lineWidth = 1;
     for (let m = -3; m <= 3; m++) {
-      ctx.beginPath(); ctx.moveTo(W(m), 0); ctx.lineTo(W(m), SIZE); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(0, H(m)); ctx.lineTo(SIZE, H(m)); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(W(m), 0);
+      ctx.lineTo(W(m), SIZE);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, H(m));
+      ctx.lineTo(SIZE, H(m));
+      ctx.stroke();
     }
 
     // OccupancyGrid
@@ -123,7 +133,10 @@ export function WorldView() {
       ctx.rotate(-yaw);
       ctx.fillStyle = "#ffcb47";
       ctx.beginPath();
-      ctx.moveTo(12, 0); ctx.lineTo(-7, 7); ctx.lineTo(-7, -7); ctx.closePath();
+      ctx.moveTo(12, 0);
+      ctx.lineTo(-7, 7);
+      ctx.lineTo(-7, -7);
+      ctx.closePath();
       ctx.fill();
       ctx.restore();
     }
@@ -136,7 +149,12 @@ export function WorldView() {
   }, [odom, map, scan, path]);
 
   const tag = (label: string, topic: string | null) => (topic ? `${label}:${topic}` : "");
-  const title = [tag("pose", poseTopic), tag("map", mapTopic), tag("scan", scanTopic), tag("path", pathTopic)]
+  const title = [
+    tag("pose", poseTopic),
+    tag("map", mapTopic),
+    tag("scan", scanTopic),
+    tag("path", pathTopic),
+  ]
     .filter(Boolean)
     .join("  ");
 

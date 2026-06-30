@@ -12,15 +12,24 @@ export function PoseReadout({ topic }: { topic: string }) {
   return (
     <div className="panel">
       <div className="panel-title">Pose · {topic}</div>
-      {p ? (
-        <div className="readout">
-          <div><span>x</span>{p.position.x.toFixed(3)} m</div>
-          <div><span>y</span>{p.position.y.toFixed(3)} m</div>
-          <div><span>yaw</span>{((quatToYaw(p.orientation) * 180) / Math.PI).toFixed(1)}°</div>
-        </div>
-      ) : (
-        <div className="readout">waiting…</div>
-      )}
+      {p
+        ? (
+          <div className="readout">
+            <div>
+              <span>x</span>
+              {p.position.x.toFixed(3)} m
+            </div>
+            <div>
+              <span>y</span>
+              {p.position.y.toFixed(3)} m
+            </div>
+            <div>
+              <span>yaw</span>
+              {((quatToYaw(p.orientation) * 180) / Math.PI).toFixed(1)}°
+            </div>
+          </div>
+        )
+        : <div className="readout">waiting…</div>}
     </div>
   );
 }

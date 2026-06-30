@@ -7,8 +7,8 @@
 //
 // Wire (gateway → browser): a JSON {op:"video-config", topic, codec} when a sub starts, then binary
 //   [u8 flags(bit0=keyframe)][u64 ts_us BE][u16 topic_len BE][topic utf8][H.264 Annex-B NAL]
-import type { MediaCaps, MediaChannel, VideoMeta } from "../media";
-import type { Status } from "../transport";
+import type { MediaCaps, MediaChannel, VideoMeta } from "../media.ts";
+import type { Status } from "../transport.ts";
 
 interface Decoding {
   decoder: VideoDecoder;
@@ -118,7 +118,9 @@ export const createWebCodecsMedia = (deps: WebCodecsMediaDeps): MediaChannel => 
     if (!d.sawKey && !isKey) return; // can't start mid-GOP
     d.sawKey = true;
     try {
-      d.decoder.decode(new EncodedVideoChunk({ type: isKey ? "key" : "delta", timestamp: tsUs, data }));
+      d.decoder.decode(
+        new EncodedVideoChunk({ type: isKey ? "key" : "delta", timestamp: tsUs, data }),
+      );
     } catch {
       d.sawKey = false; // wait for the next keyframe and resync
     }

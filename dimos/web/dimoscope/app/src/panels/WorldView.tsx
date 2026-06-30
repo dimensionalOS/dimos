@@ -7,7 +7,13 @@
 // canvas is responsive (ResizeObserver + devicePixelRatio). Uses useTopicRef + a
 // requestAnimationFrame loop: redraws at display rate, never re-rendering per message.
 import { useEffect, useRef, useState } from "react";
-import { useDimosClient, useTopicRef, useTopics, useTopicStats, type TopicInfo } from "@dimos/react";
+import {
+  type TopicInfo,
+  useDimosClient,
+  useTopicRef,
+  useTopics,
+  useTopicStats,
+} from "@dimos/react";
 
 const LIDAR_CAP = 4000; // max points rendered per frame (stride-decimated)
 const DEFAULT_SCALE = 64; // px per metre at rest
@@ -31,7 +37,11 @@ function fmtBw(bps?: number): string {
 /** A layer toggle that ALSO shows the layer's live bandwidth — so turning lidar OFF visibly drops
  *  ~2 MB/s (true on-demand: OFF passes null to useTopicRef → unsubscribes the topic on the wire). */
 function LayerChip({ name, topic, color, on, onToggle }: {
-  name: string; topic: string; color: string; on: boolean; onToggle: () => void;
+  name: string;
+  topic: string;
+  color: string;
+  on: boolean;
+  onToggle: () => void;
 }) {
   const stats = useTopicStats(topic); // passive read — decays to 0 when the layer is off
   const bw = on ? fmtBw(stats?.bytesPerSec) : "";
@@ -42,7 +52,15 @@ function LayerChip({ name, topic, color, on, onToggle }: {
       title={`${on ? "subscribed" : "off — saves bandwidth"} · ${topic}`}
       style={{ padding: "2px 8px", display: "flex", alignItems: "center", gap: 5 }}
     >
-      <span style={{ width: 7, height: 7, borderRadius: "50%", background: color, opacity: on ? 1 : 0.3 }} />
+      <span
+        style={{
+          width: 7,
+          height: 7,
+          borderRadius: "50%",
+          background: color,
+          opacity: on ? 1 : 0.3,
+        }}
+      />
       {name}
       {bw && <span className="muted" style={{ fontSize: 10 }}>{bw}</span>}
     </button>
@@ -60,7 +78,13 @@ export function WorldView() {
 
   // per-layer on/off → gates the subscription: a layer that's OFF passes null
   // to useTopicRef, which ref-counts down and actually UNSUBSCRIBES on the wire.
-  const [layers, setLayers] = useState({ pose: true, map: true, lidar: true, scan: true, path: true });
+  const [layers, setLayers] = useState({
+    pose: true,
+    map: true,
+    lidar: true,
+    scan: true,
+    path: true,
+  });
   const odom = useTopicRef<any>(layers.pose ? poseTopic : null);
   const map = useTopicRef<any>(layers.map ? mapTopic : null);
   const lidar = useTopicRef<any>(layers.lidar ? lidarTopic : null);
@@ -85,7 +109,12 @@ export function WorldView() {
     if (!cvs) return;
     const px = (e: { clientX: number; clientY: number }) => {
       const r = cvs.getBoundingClientRect();
-      return { mx: e.clientX - r.left, my: e.clientY - r.top, cw: cvs.clientWidth, ch: cvs.clientHeight };
+      return {
+        mx: e.clientX - r.left,
+        my: e.clientY - r.top,
+        cw: cvs.clientWidth,
+        ch: cvs.clientHeight,
+      };
     };
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -103,8 +132,10 @@ export function WorldView() {
     let sx = 0, sy = 0, scx = 0, scy = 0, moved = 0;
     const onDown = (e: MouseEvent) => {
       dragging = true;
-      sx = e.clientX; sy = e.clientY;
-      scx = view.current.cx; scy = view.current.cy;
+      sx = e.clientX;
+      sy = e.clientY;
+      scx = view.current.cx;
+      scy = view.current.cy;
       moved = 0;
     };
     const onMove = (e: MouseEvent) => {
@@ -186,10 +217,16 @@ export function WorldView() {
       ctx.strokeStyle = "#1b2230";
       ctx.lineWidth = 1;
       for (let mx = Math.ceil(wxMin / step) * step; mx <= wxMax; mx += step) {
-        ctx.beginPath(); ctx.moveTo(W(mx), 0); ctx.lineTo(W(mx), ch); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(W(mx), 0);
+        ctx.lineTo(W(mx), ch);
+        ctx.stroke();
       }
       for (let my = Math.ceil(wyMin / step) * step; my <= wyMax; my += step) {
-        ctx.beginPath(); ctx.moveTo(0, H(my)); ctx.lineTo(cw, H(my)); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, H(my));
+        ctx.lineTo(cw, H(my));
+        ctx.stroke();
       }
 
       const m = map.current.data;
@@ -199,10 +236,13 @@ export function WorldView() {
         const oy = m.info.origin?.position?.y ?? 0;
         const cell = res * S;
         ctx.fillStyle = "#39424f";
-        for (let row = 0; row < height; row++)
-          for (let col = 0; col < width; col++)
-            if (m.data[row * width + col] > 50)
+        for (let row = 0; row < height; row++) {
+          for (let col = 0; col < width; col++) {
+            if (m.data[row * width + col] > 50) {
               ctx.fillRect(W(ox + col * res), H(oy + row * res) - cell, cell + 0.5, cell + 0.5);
+            }
+          }
+        }
       }
 
       // lidar PointCloud2 (world frame) — height-coloured top-down points.
@@ -282,7 +322,10 @@ export function WorldView() {
         ctx.rotate(-yaw);
         ctx.fillStyle = "#ffcb47";
         ctx.beginPath();
-        ctx.moveTo(12, 0); ctx.lineTo(-7, 7); ctx.lineTo(-7, -7); ctx.closePath();
+        ctx.moveTo(12, 0);
+        ctx.lineTo(-7, 7);
+        ctx.lineTo(-7, -7);
+        ctx.closePath();
         ctx.fill();
         ctx.restore();
       } else {
@@ -299,16 +342,15 @@ export function WorldView() {
   }, [odom, map, lidar, scan, path]);
 
   const tag = (l: string, t: string | null) => (t ? `${l}:${t}` : "");
-  const title =
-    [
-      tag("pose", poseTopic),
-      tag("map", mapTopic),
-      tag("lidar", lidarTopic),
-      tag("scan", scanTopic),
-      tag("path", pathTopic),
-    ]
-      .filter(Boolean)
-      .join("  ") || "auto-detecting…";
+  const title = [
+    tag("pose", poseTopic),
+    tag("map", mapTopic),
+    tag("lidar", lidarTopic),
+    tag("scan", scanTopic),
+    tag("path", pathTopic),
+  ]
+    .filter(Boolean)
+    .join("  ") || "auto-detecting…";
 
   // toggle chips — one per DETECTED layer (absent streams get no chip); dot
   // colour mirrors that layer's draw colour, active chip = currently subscribed.
@@ -321,7 +363,10 @@ export function WorldView() {
   ];
 
   return (
-    <div className="panel" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+    <div
+      className="panel"
+      style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}
+    >
       <div
         className="panel-title"
         style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}
@@ -329,7 +374,12 @@ export function WorldView() {
         <span>
           WorldView · {title} · <span className="muted">scroll=zoom drag=pan click=goal</span>
         </span>
-        <button className="tab" onClick={recenter} title="recenter + follow robot" style={{ padding: "2px 8px" }}>
+        <button
+          className="tab"
+          onClick={recenter}
+          title="recenter + follow robot"
+          style={{ padding: "2px 8px" }}
+        >
           ⊙ recenter
         </button>
       </div>

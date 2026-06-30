@@ -6,11 +6,11 @@
 // field. Exits non-zero if nothing arrived. This proves: mock → bridge → ws →
 // decode works end to end.
 //
-// RUN (with bridge + mockrobot already running):  bun run wsprobe.ts
+// RUN (with bridge + mockrobot already running):  deno run -A wsprobe.ts
 // ─────────────────────────────────────────────────────────────────────────
 import { decodePacket } from "@dimos/msgs";
 
-const URL = process.env.WS_URL ?? "ws://localhost:8080";
+const URL = Deno.env.get("WS_URL") ?? "ws://localhost:8080";
 const seen = new Map<string, number>();
 let sample: Record<string, unknown> = {};
 
@@ -35,5 +35,5 @@ setTimeout(() => {
   console.log("[probe] topics seen in 3s:");
   for (const [c, n] of seen) console.log(`   ${c.padEnd(40)} ${n} msgs`);
   console.log("[probe] sample:", sample);
-  process.exit(seen.size > 0 ? 0 : 1);
+  Deno.exit(seen.size > 0 ? 0 : 1);
 }, 3000);

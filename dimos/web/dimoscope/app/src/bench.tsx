@@ -8,13 +8,13 @@
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
-  connect,
   BENCH_SCENARIOS,
-  measureScenario,
-  formatMarkdown,
-  onDemandSaving,
   type BenchRow,
+  connect,
   type DimosClient,
+  formatMarkdown,
+  measureScenario,
+  onDemandSaving,
 } from "@dimos/topics";
 import "./styles.css";
 
@@ -28,8 +28,18 @@ interface TransportDef {
   open: () => Promise<DimosClient>;
 }
 const TRANSPORTS: TransportDef[] = [
-  { id: "zenoh", label: "Python↔Zenoh", url: `ws://${host}:8088`, open: () => connect({ url: `ws://${host}:8088`, reconnect: false }) },
-  { id: "lcm", label: "Bun↔LCM", url: `ws://${host}:8089`, open: () => connect({ url: `ws://${host}:8089`, reconnect: false }) },
+  {
+    id: "zenoh",
+    label: "Python↔Zenoh",
+    url: `ws://${host}:8088`,
+    open: () => connect({ url: `ws://${host}:8088`, reconnect: false }),
+  },
+  {
+    id: "lcm",
+    label: "Bun↔LCM",
+    url: `ws://${host}:8089`,
+    open: () => connect({ url: `ws://${host}:8089`, reconnect: false }),
+  },
   {
     id: "zenoh-ts",
     label: "zenoh-ts (direct)",
@@ -72,7 +82,19 @@ function Bench() {
           client.close();
         } catch (e) {
           setProgress(`${t.label} failed: ${String(e).slice(0, 80)}`);
-          rows.push({ scenario: scenario.name, topics: scenario.topics.length, msgs: 0, hz: 0, kbps: 0, latP50: NaN, latP95: NaN, latMax: NaN });
+          rows.push({
+            scenario: scenario.name,
+            topics: scenario.topics.length,
+            msgs: 0,
+            hz: 0,
+            kbps: 0,
+            latP50: NaN,
+            latP95: NaN,
+            latP99: NaN,
+            latMax: NaN,
+            latStd: NaN,
+            lossPct: NaN,
+          });
         }
       }
       out.push({ id: t.id, label: t.label, url: t.url, rows, saving: onDemandSaving(rows) });
@@ -91,17 +113,23 @@ function Bench() {
   return (
     <div style={{ padding: 24, maxWidth: 1100, margin: "0 auto" }}>
       <h2 style={{ fontFamily: "ui-monospace, monospace" }}>
-        dimoscope · transport benchmark <span className="muted">(in-browser, all 3 transports)</span>
+        dimoscope · transport benchmark{" "}
+        <span className="muted">(in-browser, all 3 transports)</span>
       </h2>
       <p className="muted small">
-        Start the servers + source first: <code>bash bench/serve-bench.sh</code> (3 servers + bench_publisher on both
-        buses). {DUR}ms/scenario · latency is end-to-end (publish→browser), comparable across transports.
+        Start the servers + source first: <code>bash bench/serve-bench.sh</code>{" "}
+        (3 servers + bench_publisher on both buses).{" "}
+        {DUR}ms/scenario · latency is end-to-end (publish→browser), comparable across transports.
       </p>
       <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
         <button className="tab" onClick={run} disabled={running}>
           {running ? "running…" : "▶ Run benchmark"}
         </button>
-        <button className="tab" disabled={!results.length} onClick={() => navigator.clipboard.writeText(md)}>
+        <button
+          className="tab"
+          disabled={!results.length}
+          onClick={() => navigator.clipboard.writeText(md)}
+        >
           copy Markdown
         </button>
         <button

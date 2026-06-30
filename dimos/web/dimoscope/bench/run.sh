@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Reproducible transport benchmark: start the relevant server(s) + bench publisher, run
 # the headless bench, tear everything down. Modes:
-#   bench/run.sh            # Bun↔LCM gateway (:8090)
+#   bench/run.sh            # Deno↔LCM gateway (:8090)
 #   bench/run.sh zenoh      # Python↔Zenoh gateway (:8091)
-#   bench/run.sh ts         # zenoh-ts direct via the :10000 bridge — headless under DENO
+#   bench/run.sh ts         # zenoh-ts direct via the :10000 bridge
 #   bench/run.sh all        # all three, sequentially → combined bench/RESULTS.md
-# zenoh-ts won't run in Bun (its wasm-bindgen WASM fails), so its row runs under Deno
-# (bench/bench_deno.ts). `all` measures end-to-end latency (BENCH_E2E) so every transport
-# — including the gateway-less zenoh-ts — is compared the same way.
+# Everything runs headless under Deno. The gateway rows go through bench/bench.ts; the
+# zenoh-ts direct row has its own runner (bench/bench_deno.ts). `all` measures end-to-end
+# latency (BENCH_E2E) so every transport — including the gateway-less zenoh-ts — is
+# compared the same way.
 set -uo pipefail
 MODE="${1:-lcm}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"   # dimoscope/
@@ -30,7 +31,7 @@ run_one() {
     DIMOS_TRANSPORT=zenoh BENCH_HZ=100 "$PY" bench/bench_publisher.py & pids+=($!)
     sleep 3
     BENCH_DUR_MS="${BENCH_DUR_MS:-4000}" BENCH_STAMP="$stamp" \
-      "$DENO" run -A --unstable-sloppy-imports --node-modules-dir bench/bench_deno.ts
+      "$DENO" run -A --node-modules-dir bench/bench_deno.ts
     rc=$?
   else
     if [ "$mode" = zenoh ]; then
@@ -38,13 +39,13 @@ run_one() {
       DIMOS_TRANSPORT=zenoh GATEWAY_PORT="$port" "$PY" servers/gateway_zenoh.py & pids+=($!)
       DIMOS_TRANSPORT=zenoh BENCH_HZ=100 "$PY" bench/bench_publisher.py & pids+=($!)
     else
-      port="${GATEWAY_PORT:-8090}"; label="Bun↔LCM gateway"
-      GATEWAY_PORT="$port" bun run servers/gateway.ts & pids+=($!)
+      port="${GATEWAY_PORT:-8090}"; label="Deno↔LCM gateway"
+      GATEWAY_PORT="$port" "$DENO" run -A servers/gateway.ts & pids+=($!)
       DIMOS_TRANSPORT=lcm BENCH_HZ=100 "$PY" bench/bench_publisher.py & pids+=($!)
     fi
     sleep 2.5
     GATEWAY_URL="ws://localhost:$port" BENCH_LABEL="$label" BENCH_E2E="${BENCH_E2E:-}" \
-      BENCH_DUR_MS="${BENCH_DUR_MS:-4000}" BENCH_STAMP="$stamp" bun run bench/bench.ts
+      BENCH_DUR_MS="${BENCH_DUR_MS:-4000}" BENCH_STAMP="$stamp" "$DENO" run -A bench/bench.ts
     rc=$?
   fi
   # tear down just this run's procs so the next mode's ports/bus are free
@@ -66,7 +67,7 @@ if [ "$MODE" = all ]; then
     echo "$lcm_md"; echo; echo "---"; echo
     echo "$zenoh_md"; echo; echo "---"; echo
     echo "$ts_md"; echo
-    echo "> All three measured end-to-end (publish→client) for a fair compare. The two gateways run under **Bun**; **zenoh-ts runs under Deno** — it can't run in Bun (its wasm-bindgen bundler-target WASM fails: \`__wbindgen_start\`), but Deno instantiates it. zenoh-ts has no gateway in the read path → true per-client on-demand."
+    echo "> All three measured end-to-end (publish→client) for a fair compare, all headless under **Deno**. zenoh-ts has no gateway in the read path → true per-client on-demand."
   } > bench/RESULTS.md
   echo "→ wrote combined bench/RESULTS.md (all 3 transports)"
 else

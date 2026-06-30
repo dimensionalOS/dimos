@@ -6,11 +6,11 @@
 // browser": you just want to SEE it. Same idioms as Transport: connect/close, on* callbacks,
 // readonly caps, optional label. Multiple impls (jpeg floor · webrtc · later webcodecs) chosen
 // by capability negotiation + graceful fallback — exactly like the transport dropdown.
-import type { Status } from "./transport";
-import type { DimosClient } from "./client";
-import { createJpegTopicMedia } from "./adapters/jpegTopicMedia";
-import { createWebRtcMedia } from "./adapters/webRtcMedia";
-import { createWebCodecsMedia } from "./adapters/webCodecsMedia";
+import type { Status } from "./transport.ts";
+import type { DimosClient } from "./client.ts";
+import { createJpegTopicMedia } from "./adapters/jpegTopicMedia.ts";
+import { createWebRtcMedia } from "./adapters/webRtcMedia.ts";
+import { createWebCodecsMedia } from "./adapters/webCodecsMedia.ts";
 
 export type MediaKind = "webcodecs" | "webrtc" | "jpeg";
 
@@ -76,7 +76,9 @@ export function selectMediaChannel(d: MediaDeps): MediaChannel {
   const offered = new Set<MediaKind>(d.serverMedia ?? ["jpeg"]);
   for (const kind of prefer) {
     if (!offered.has(kind) || !browserSupports(kind)) continue;
-    if (kind === "webcodecs" && d.gatewayUrl) return createWebCodecsMedia({ gatewayUrl: d.gatewayUrl });
+    if (kind === "webcodecs" && d.gatewayUrl) {
+      return createWebCodecsMedia({ gatewayUrl: d.gatewayUrl });
+    }
     if (kind === "webrtc" && d.gatewayUrl) return createWebRtcMedia({ gatewayUrl: d.gatewayUrl });
     if (kind === "jpeg") return createJpegTopicMedia({ client: d.client });
   }

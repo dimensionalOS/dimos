@@ -2,7 +2,7 @@
 // runner (bench/bench.ts) and the in-browser bench page (app/src/bench.tsx), so both
 // measure identically. Latency (p50/p95/max), throughput (hz), bandwidth (kB/s), and
 // on-demand WS-hop savings (subscribe 1 of N vs all N). No Bun/Node/file/DOM APIs here.
-import type { DimosClient } from "./client";
+import type { DimosClient } from "./client.ts";
 
 export interface BenchScenario {
   name: string;
@@ -16,12 +16,21 @@ export interface BenchRow {
   kbps: number;
   latP50: number;
   latP95: number;
+  latP99: number;
   latMax: number;
+  /** Latency standard deviation (ms) — the jitter the tail (p95/p99) hints at. */
+  latStd: number;
+  /** Wire loss % from sequence gaps (received vs the seq span seen). NaN if the
+   *  source doesn't stamp a numeric seq. Rate-limited scenarios are excluded. */
+  lossPct: number;
 }
 
 /** The standard load fed by bench/bench_publisher.py (topic names match every transport). */
 export const BENCH_SCENARIOS: BenchScenario[] = [
-  { name: "4x PoseStamped (throughput)", topics: ["/bench/p0", "/bench/p1", "/bench/p2", "/bench/p3"] },
+  {
+    name: "4x PoseStamped (throughput)",
+    topics: ["/bench/p0", "/bench/p1", "/bench/p2", "/bench/p3"],
+  },
   { name: "1x PoseStamped (on-demand)", topics: ["/bench/p0"] },
   { name: "1x OccupancyGrid (large)", topics: ["/bench/grid"] },
 ];
@@ -43,18 +52,44 @@ export async function measureScenario(
   const lat: number[] = [];
   let count = 0;
   let bytes = 0;
+  // Per-topic seq span (first/last seen) + received count → wire loss. Each topic
+  // carries its own counter, so loss is computed per topic then pooled.
+  const seqStat = new Map<string, { min: number; max: number; recv: number }>();
   const subs = scenario.topics.map((t) =>
     client.topic<unknown>(t).subscribe((_d, m) => {
       count++;
       bytes += m.sizeBytes;
       const l = endToEnd ? (m.srcTs != null ? m.recvTs - m.srcTs : undefined) : m.latencyMs;
       if (l != null && l >= 0 && l < 10000) lat.push(l);
-    }),
+      if (m.seq != null) {
+        const s = seqStat.get(m.topic);
+        if (!s) seqStat.set(m.topic, { min: m.seq, max: m.seq, recv: 1 });
+        else {
+          if (m.seq < s.min) s.min = m.seq;
+          if (m.seq > s.max) s.max = m.seq;
+          s.recv++;
+        }
+      }
+    })
   );
   await new Promise((r) => setTimeout(r, durMs));
   subs.forEach((s) => s.unsubscribe());
   lat.sort((a, b) => a - b);
-  const q = (p: number) => (lat.length ? lat[Math.min(lat.length - 1, Math.floor(p * lat.length))] : NaN);
+  const q = (
+    p: number,
+  ) => (lat.length ? lat[Math.min(lat.length - 1, Math.floor(p * lat.length))] : NaN);
+  const mean = lat.length ? lat.reduce((a, b) => a + b, 0) / lat.length : NaN;
+  const std = lat.length
+    ? Math.sqrt(lat.reduce((a, b) => a + (b - mean) * (b - mean), 0) / lat.length)
+    : NaN;
+  // Pool the per-topic spans: expected = Σ(max-min+1), received = Σrecv.
+  let expected = 0;
+  let received = 0;
+  for (const s of seqStat.values()) {
+    expected += s.max - s.min + 1;
+    received += s.recv;
+  }
+  const lossPct = expected > 0 ? r2(Math.max(0, (1 - received / expected) * 100)) : NaN;
   return {
     scenario: scenario.name,
     topics: scenario.topics.length,
@@ -63,7 +98,10 @@ export async function measureScenario(
     kbps: r2(bytes / 1024 / (durMs / 1000)),
     latP50: r2(q(0.5)),
     latP95: r2(q(0.95)),
+    latP99: r2(q(0.99)),
     latMax: r2(lat[lat.length - 1] ?? NaN),
+    latStd: r2(std),
+    lossPct,
   };
 }
 
@@ -90,14 +128,16 @@ export function formatMarkdown(
     ``,
     `_${durMs}ms per scenario · ${url} · ${stamp}_`,
     ``,
-    `| scenario | topics | msgs | hz | kB/s | lat p50 | lat p95 | lat max |`,
-    `|---|--:|--:|--:|--:|--:|--:|--:|`,
+    `| scenario | topics | msgs | hz | kB/s | p50 | p95 | p99 | max | std | loss% |`,
+    `|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|`,
     ...rows.map(
       (r) =>
-        `| ${r.scenario} | ${r.topics} | ${r.msgs} | ${r.hz} | ${r.kbps} | ${r.latP50} | ${r.latP95} | ${r.latMax} |`,
+        `| ${r.scenario} | ${r.topics} | ${r.msgs} | ${r.hz} | ${r.kbps} | ${r.latP50} | ${r.latP95} | ${r.latP99} | ${r.latMax} | ${r.latStd} | ${r.lossPct} |`,
     ),
     ``,
-    `**On-demand bandwidth:** subscribing 1 of 4 topics delivered **${one?.kbps ?? 0} kB/s** vs **${all4?.kbps ?? 0} kB/s** for all 4 — a **${onDemandSaving(rows)}% reduction** on the WS hop.`,
+    `**On-demand bandwidth:** subscribing 1 of 4 topics delivered **${one?.kbps ?? 0} kB/s** vs **${
+      all4?.kbps ?? 0
+    } kB/s** for all 4 — a **${onDemandSaving(rows)}% reduction** on the WS hop.`,
     ``,
   ].join("\n");
 }

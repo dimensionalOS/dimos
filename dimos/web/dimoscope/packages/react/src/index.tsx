@@ -3,16 +3,25 @@
 // useTopicLatest (re-renders per message).
 import {
   createContext,
+  type MutableRefObject,
+  type ReactNode,
   useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type MutableRefObject,
-  type ReactNode,
 } from "react";
-import { connect, selectMediaChannel, type DimosClient } from "@dimos/topics";
-import type { CommandInfo, MediaChannel, MediaKind, MessageMeta, Status, TopicInfo, TopicStats, VideoMeta } from "@dimos/topics";
+import { connect, type DimosClient, selectMediaChannel } from "@dimos/topics";
+import type {
+  CommandInfo,
+  MediaChannel,
+  MediaKind,
+  MessageMeta,
+  Status,
+  TopicInfo,
+  TopicStats,
+  VideoMeta,
+} from "@dimos/topics";
 
 /** One selectable transport/server: a label + a thunk that builds a connected client. */
 export interface ServerOpt {
@@ -207,7 +216,10 @@ function rawToRGBA(img: ImageMsg): ImageData | null {
       const o = (y * w + x) * 4;
       if (ch === 1) {
         const v = data[i];
-        out[o] = v; out[o + 1] = v; out[o + 2] = v; out[o + 3] = 255;
+        out[o] = v;
+        out[o + 1] = v;
+        out[o + 2] = v;
+        out[o + 3] = 255;
       } else {
         out[o] = data[i + (bgr ? 2 : 0)];
         out[o + 1] = data[i + 1];
@@ -341,7 +353,11 @@ export function useVideo(
     /** Per-frame tap (frames channels only — webcodecs/jpeg, NOT webrtc): called after the canvas
      *  draw, before the frame is closed. The seam for in-browser CV/overlays. Must NOT retain the
      *  frame past the call (it's closed right after) — copy it synchronously if you need it async. */
-    onFrame?: (frame: VideoFrame | ImageBitmap, meta: VideoMeta, ctx: CanvasRenderingContext2D) => void;
+    onFrame?: (
+      frame: VideoFrame | ImageBitmap,
+      meta: VideoMeta,
+      ctx: CanvasRenderingContext2D,
+    ) => void;
   },
 ) {
   const { client, servers, activeId } = useContext(Ctx);
@@ -403,7 +419,12 @@ export function useVideo(
 
     // Try the preferred channel; on connect failure drop to the jpeg floor at runtime so the
     // camera never goes dark just because the media gateway hiccuped.
-    const primary = selectMediaChannel({ client, gatewayUrl, serverMedia, prefer: MODE_PREFER[mode] });
+    const primary = selectMediaChannel({
+      client,
+      gatewayUrl,
+      serverMedia,
+      prefer: MODE_PREFER[mode],
+    });
     wire(primary).catch(() => {
       if (!alive || primary.caps.codec === "jpeg") return;
       primary.close();
@@ -446,7 +467,13 @@ export function SubscribeBar() {
   return (
     <div className="panel">
       <div className="panel-title">Subscribe · any topic</div>
-      <form onSubmit={(e) => { e.preventDefault(); add(text); }} style={{ display: "flex", gap: 6 }}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          add(text);
+        }}
+        style={{ display: "flex", gap: 6 }}
+      >
         <input
           list="dimos-topic-names"
           placeholder="/dimos/…  subscribe by name"
@@ -455,15 +482,17 @@ export function SubscribeBar() {
           style={inputStyle}
         />
         <datalist id="dimos-topic-names">
-          {topics.map((t) => (
-            <option key={t.topic} value={t.topic} />
-          ))}
+          {topics.map((t) => <option key={t.topic} value={t.topic} />)}
         </datalist>
         <button type="submit" className="tab">+</button>
       </form>
       <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
         {pins.map((p) => (
-          <PinnedTopic key={p} topic={p} onRemove={() => setPins((ps) => ps.filter((x) => x !== p))} />
+          <PinnedTopic
+            key={p}
+            topic={p}
+            onRemove={() => setPins((ps) => ps.filter((x) => x !== p))}
+          />
         ))}
       </div>
     </div>
@@ -475,12 +504,13 @@ function PinnedTopic({ topic, onRemove }: { topic: string; onRemove: () => void 
   const stats = useTopicStats(topic);
   const live = !!meta;
   // a short, human one-liner of the latest value so "subscribed" obviously means "data flowing".
-  const preview =
-    data == null
-      ? ""
-      : JSON.stringify(data, (_k, v) =>
-          typeof v === "bigint" ? v.toString() : v instanceof Uint8Array ? `<${v.length}B>` : v,
-        )?.slice(0, 120);
+  const preview = data == null
+    ? ""
+    : JSON.stringify(data, (_k, v) =>
+      typeof v === "bigint" ? v.toString() : v instanceof Uint8Array ? `<${v.length}B>` : v)?.slice(
+        0,
+        120,
+      );
   return (
     <div
       style={{
@@ -501,20 +531,34 @@ function PinnedTopic({ topic, onRemove }: { topic: string; onRemove: () => void 
         >
           ●
         </span>
-        <span style={{ flex: 1, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis" }}>
+        <span
+          style={{ flex: 1, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis" }}
+        >
           {topic}
         </span>
         <span className="muted small" title="message rate · size of the last message">
           {live ? `${stats?.hz ?? 0} Hz · ${meta!.sizeBytes} B` : "waiting…"}
         </span>
-        <button type="button" className="tab" onClick={onRemove} title="unsubscribe" style={{ padding: "0 7px" }}>
+        <button
+          type="button"
+          className="tab"
+          onClick={onRemove}
+          title="unsubscribe"
+          style={{ padding: "0 7px" }}
+        >
           ×
         </button>
       </div>
       {live && preview && (
         <div
           className="muted"
-          style={{ paddingLeft: 16, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", opacity: 0.85 }}
+          style={{
+            paddingLeft: 16,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            opacity: 0.85,
+          }}
           title={preview}
         >
           {preview}
@@ -543,7 +587,9 @@ export function useRpc() {
   return useMemo(
     () => ({
       call: <T = unknown>(target: string, method: string, ...args: unknown[]): Promise<T> =>
-        client ? client.call<T>(target, method, ...args) : Promise.reject(new Error("not connected")),
+        client
+          ? client.call<T>(target, method, ...args)
+          : Promise.reject(new Error("not connected")),
     }),
     [client],
   );
@@ -567,4 +613,11 @@ export function useCommands(): CommandInfo[] {
   return cmds;
 }
 
-export type { CommandInfo, MessageMeta, Status, TopicInfo, TopicStats, VideoMeta } from "@dimos/topics";
+export type {
+  CommandInfo,
+  MessageMeta,
+  Status,
+  TopicInfo,
+  TopicStats,
+  VideoMeta,
+} from "@dimos/topics";

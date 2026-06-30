@@ -27,14 +27,27 @@ export function RerunPanel({ active = true }: { active?: boolean }) {
     if (active) requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
   }, [active]);
   return (
-    <div className="panel" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
-      <div className="panel-title">Rerun · 3D (stock web viewer ← serve_grpc) · click a point → nav goal</div>
-      {/* relative box gives a flex-bounded height; the absolute inset:0 child is
+    <div
+      className="panel"
+      style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}
+    >
+      <div className="panel-title">
+        Rerun · 3D (stock web viewer ← serve_grpc) · click a point → nav goal
+      </div>
+      {
+        /* relative box gives a flex-bounded height; the absolute inset:0 child is
           removed from normal flow so the viewer's self-resizing canvas can never
-          push its ancestors taller (was a per-frame runaway-growth feedback loop). */}
+          push its ancestors taller (was a per-frame runaway-growth feedback loop). */
+      }
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
         <div
-          style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 8, background: "#0b0e14" }}
+          style={{
+            position: "absolute",
+            inset: 0,
+            overflow: "hidden",
+            borderRadius: 8,
+            background: "#0b0e14",
+          }}
         >
           <WebViewer
             rrd={PROXY}

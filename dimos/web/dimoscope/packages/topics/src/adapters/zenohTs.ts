@@ -13,21 +13,23 @@
 //
 // zenoh-ts is browser-only (no Bun/Node target) and the heavy client loads lazily inside
 // connect(), so importing this module is cheap and a load failure can't break other paths.
-import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../transport";
-import type { TopicInfo } from "../types";
+import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../transport.ts";
+import type { TopicInfo } from "../types.ts";
 
 const SCOUT_MS = 1800; // one-time discovery burst on the discovery key (then undeclared)
 
-// zenoh key → {topic, type}, prefix-agnostic (mirrors gateway_zenoh.py's rpartition):
-//   "dimos/lidar/sensor_msgs.PointCloud2" → {/dimos/lidar, sensor_msgs.PointCloud2}
-//   "bench/p0/geometry_msgs.PoseStamped"  → {/bench/p0,    geometry_msgs.PoseStamped}
+// zenoh key → {topic, type}; strips the `dimos/` namespace so the browser sees the SAME
+// canonical names as the gateways + LCM (`/lidar`, not `/dimos/lidar`). bench/* keys are
+// already un-prefixed and pass through unchanged.
+//   "dimos/lidar/sensor_msgs.PointCloud2" → {/lidar,    sensor_msgs.PointCloud2}
+//   "bench/p0/geometry_msgs.PoseStamped"  → {/bench/p0, geometry_msgs.PoseStamped}
 function parseKey(key: string): { topic: string; type: string } | null {
   const slash = key.lastIndexOf("/");
   if (slash <= 0) return { topic: "/" + key, type: "?" };
-  return { topic: "/" + key.slice(0, slash), type: key.slice(slash + 1) };
+  let topic = "/" + key.slice(0, slash);
+  if (topic.startsWith("/dimos/")) topic = topic.slice("/dimos".length); // /dimos/lidar → /lidar
+  return { topic, type: key.slice(slash + 1) };
 }
-// dimos topic "/dimos/lidar" → zenoh subscribe key "dimos/lidar/**" (any type suffix)
-const topicToKey = (topic: string) => topic.replace(/^\//, "") + "/**";
 
 export interface ZenohTsDeps {
   /** zenoh-bridge-remote-api WS (e.g. ws://localhost:10000) */
@@ -49,6 +51,13 @@ export const createZenohTsTransport = (deps: ZenohTsDeps): Transport => {
   const rates = new Map<string, number>();
   const lastSent = new Map<string, number>();
   const topics = new Map<string, string>(); // topic -> type
+  const keyBase = new Map<string, string>(); // canonical topic -> real zenoh key base ("/lidar" -> "dimos/lidar")
+  // canonical browser topic → real zenoh subscribe key. parseKey() dropped the `dimos/`
+  // namespace; re-apply it here (bench/* stays un-prefixed), preferring a base learned during
+  // discovery so any non-standard namespace round-trips correctly.
+  const topicToKey = (topic: string) =>
+    (keyBase.get(topic) ?? (topic.startsWith("/bench/") ? topic.slice(1) : "dimos" + topic)) +
+    "/**";
   let control: WebSocket | undefined;
   let sampleCb: ((s: RawSample) => void) | undefined;
   let topicsCb: ((t: TopicInfo[]) => void) | undefined;
@@ -82,6 +91,8 @@ export const createZenohTsTransport = (deps: ZenohTsDeps): Transport => {
   function note(key: string) {
     const m = parseKey(key);
     if (!m || m.type === "?" || m.topic.includes("/rpc/")) return;
+    const slash = key.lastIndexOf("/");
+    if (slash > 0) keyBase.set(m.topic, key.slice(0, slash)); // remember real key base for subscribe()
     if (topics.get(m.topic) !== m.type) {
       topics.set(m.topic, m.type);
       topicsCb?.([...topics].map(([topic, type]) => ({ topic, type })));

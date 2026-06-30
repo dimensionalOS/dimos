@@ -81,6 +81,7 @@ class BenchLoad(Module):
     def start(self) -> None:
         super().start()
         self._seq = 0
+        self._grid_seq = 0
         self._bench_disp: list = []
         if self.config.autostart:
             self.start_bench()
@@ -105,16 +106,17 @@ class BenchLoad(Module):
                 p.publish(
                     PoseStamped(
                         ts=now,  # source timestamp → end-to-end latency
-                        frame_id="bench",
-                        position=(self._seq * 0.001, float(i), 0.0),  # seq recoverable from x
+                        frame_id=str(self._seq),  # per-topic seq → SDK loss detection (matches bench/bench_source.py)
+                        position=(self._seq * 0.001, float(i), 0.0),
                         orientation=_IDENT,
                     )
                 )
 
         def grid_tick(_: int) -> None:
+            self._grid_seq += 1
             self.grid.publish(
                 OccupancyGrid(
-                    grid=_GRID, resolution=0.1, origin=Pose(-3.0, -3.0, 0.0), frame_id="bench"
+                    grid=_GRID, resolution=0.1, origin=Pose(-3.0, -3.0, 0.0), frame_id=str(self._grid_seq)
                 )
             )
 

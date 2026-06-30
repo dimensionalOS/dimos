@@ -2,13 +2,16 @@
 // over WebSocket. Binary frames are raw LCM packets; JSON frames are control.
 // Runs unchanged in the browser and in Bun (both have a global WebSocket).
 import { decodeChannel } from "@dimos/msgs";
-import { splitChannel } from "../decode";
-import type { Transport, RawSample, Status, TransportCaps, CommandInfo } from "../transport";
-import type { TopicInfo } from "../types";
+import { splitChannel } from "../decode.ts";
+import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../transport.ts";
+import type { TopicInfo } from "../types.ts";
 
 export interface GatewayWsDeps {
   url: string;
   reconnect?: boolean;
+  /** "server-json": ask the gateway to decode and send JSON (rosbridge-style) instead of the
+   *  binary self-describing frame. Default "client" (the browser decodes via @dimos/msgs). */
+  decode?: "client" | "server-json";
 }
 
 export const createGatewayWsTransport = (deps: GatewayWsDeps): Transport => {
@@ -54,7 +57,9 @@ export const createGatewayWsTransport = (deps: GatewayWsDeps): Transport => {
       statusCb?.("connecting");
       sock.onopen = () => {
         statusCb?.("open");
-        for (const t of wantSubs) send({ op: "subscribe", topic: t, maxHz: rates.get(t) });
+        for (const t of wantSubs) {
+          send({ op: "subscribe", topic: t, maxHz: rates.get(t), decode: deps.decode });
+        }
         send({ op: "list" });
         resolve();
       };
@@ -95,6 +100,17 @@ export const createGatewayWsTransport = (deps: GatewayWsDeps): Transport => {
           if (m.error) p.reject(new Error(m.error));
           else p.resolve(m.res);
         }
+      } else if (m.op === "sample") {
+        // server-json mode: the gateway decoded the message; deliver it directly. payload carries
+        // the JSON wire bytes so sizeBytes (bandwidth) reflects the JSON cost vs the binary frame.
+        sampleCb?.({
+          topic: m.topic,
+          type: m.type,
+          payload: new TextEncoder().encode(e.data),
+          recvTs: Date.now(),
+          gatewaySendMs: m.gatewaySendMs,
+          decoded: m.data,
+        });
       }
       return;
     }
@@ -120,7 +136,7 @@ export const createGatewayWsTransport = (deps: GatewayWsDeps): Transport => {
   function subscribe(topic: string, maxHz?: number) {
     wantSubs.add(topic);
     if (maxHz) rates.set(topic, maxHz);
-    send({ op: "subscribe", topic, maxHz });
+    send({ op: "subscribe", topic, maxHz, decode: deps.decode });
   }
   function unsubscribe(topic: string) {
     wantSubs.delete(topic);

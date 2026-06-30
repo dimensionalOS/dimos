@@ -1,7 +1,7 @@
 // Topic<T> — a typed handle to one DimOS topic. Manages subscribers, the latest
 // value, rate-limiting (backpressure), and live stats. On-demand: it tells the
 // transport to subscribe only while it has ≥1 subscriber, and unsubscribe at 0.
-import type { Handler, MessageMeta, Subscription, TopicStats } from "./types";
+import type { Handler, MessageMeta, Subscription, TopicStats } from "./types.ts";
 
 export interface TopicWiring {
   subscribe(topic: string, maxHz?: number): void;

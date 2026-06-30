@@ -2,15 +2,8 @@
 //   useBus()    -> the bus instance (for publishing)
 //   useTopics() -> { topics, status }, re-renders when discovery/status changes
 //   useTopic(t) -> latest decoded message on topic t (or null)
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
-import { DimosBus, type Decoded } from "./bus";
+import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from "react";
+import { type Decoded, DimosBus } from "./bus";
 
 const BusCtx = createContext<DimosBus | null>(null);
 

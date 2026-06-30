@@ -32,7 +32,11 @@ export function BenchPanel() {
   async function trigger(method: "start_bench" | "stop_bench") {
     setBusy(true);
     try {
-      const res = await call<string>("BenchLoad", method, ...(method === "start_bench" ? [hz] : []));
+      const res = await call<string>(
+        "BenchLoad",
+        method,
+        ...(method === "start_bench" ? [hz] : []),
+      );
       setLast(String(res));
     } catch (e) {
       setLast(`✗ ${(e as Error).message}`);
@@ -83,9 +87,7 @@ export function BenchPanel() {
           </tr>
         </thead>
         <tbody>
-          {BENCH_TOPICS.map((t) => (
-            <Row key={t} topic={t} />
-          ))}
+          {BENCH_TOPICS.map((t) => <Row key={t} topic={t} />)}
         </tbody>
       </table>
     </div>

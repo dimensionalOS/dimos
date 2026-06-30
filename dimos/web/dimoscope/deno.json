@@ -1,0 +1,45 @@
+{
+  "workspace": ["./app", "./packages/topics", "./packages/react"],
+  "nodeModulesDir": "auto",
+  "imports": {
+    "@dimos/msgs": "npm:@jsr/dimos__msgs@0.1.4",
+    "@eclipse-zenoh/zenoh-ts": "npm:@eclipse-zenoh/zenoh-ts@1.9.0"
+  },
+  "fmt": {
+    "lineWidth": 100,
+    "exclude": ["node_modules", "dist", "app/dist", "**/*.md", "bench/results*.json"]
+  },
+  "lint": {
+    "rules": {
+      "exclude": ["no-explicit-any"]
+    },
+    "exclude": ["node_modules", "dist", "app"]
+  },
+  "tasks": {
+    "app": "cd app && deno run -A npm:vite",
+    "build": "cd app && deno run -A npm:vite build",
+    "preview": "cd app && deno run -A npm:vite preview",
+    "servers": "bash servers/start-all.sh",
+    "gateway": "deno run -A servers/gateway.ts",
+    "bridge": "deno run -A bridge.ts",
+    "probe": "deno run -A servers/probe.ts",
+    "wsprobe": "deno run -A wsprobe.ts",
+    "dtop": "deno run -A cli/dtop.ts",
+    "check": "deno check servers/gateway.ts servers/probe.ts bridge.ts wsprobe.ts cli/dtop.ts cli/genTypes.ts && cd app && deno run -A npm:typescript/tsc --noEmit -p tsconfig.json",
+    "bench": "deno run -A bench/bench.ts",
+    "bench:deno": "deno run -A --node-modules-dir bench/bench_deno.ts",
+    "bench:matrix": "bash bench/matrix.sh",
+    "bench:decode": "bash bench/decode.sh",
+    "bench:webrtc": "bash bench/webrtc.sh",
+    "bench:all": "deno task test && deno task bench:matrix && deno task bench:decode && deno task bench:webrtc",
+    "netsim": "deno run -A bench/netsim.ts",
+    "smoke": "deno run -A bench/sdk_smoke.ts",
+    "teleop:test": "deno run -A bench/teleop_test.ts",
+    "test": "deno test -A --node-modules-dir packages/topics/src/ cli/",
+    "fmt": "deno fmt",
+    "lint": "deno lint",
+    "sim": "DIMOS_TRANSPORT=zenoh uv run dimos --simulation mujoco run unitree-go2",
+    "sim:dimsim": "DIMOS_TRANSPORT=zenoh uv run dimos --simulation dimsim run unitree-go2",
+    "sim:replay": "DIMOS_TRANSPORT=zenoh uv run dimos --replay run unitree-go2"
+  }
+}
