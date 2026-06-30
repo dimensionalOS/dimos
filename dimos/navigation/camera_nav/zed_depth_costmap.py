@@ -466,6 +466,11 @@ class DepthStreamer:
     MAX_MAP   = 100_000  # Rerun map point cap
     MAP_EVERY = 10       # frames between map updates
 
+    # Graduated-confidence tier map thresholds
+    CONF_TA = 80   # tier A: trust immediately
+    CONF_TB = 50   # tier B: medium — need a few consistent observations
+    CONF_TC = 30   # tier C: low   — walls, distant/smooth surfaces
+
     def __init__(
         self,
         depth_filter: DepthFilter,
@@ -479,6 +484,10 @@ class DepthStreamer:
         self._bp             = backproj
         self._vox            = VoxelAccumulator(voxel_size=0.08)  # sure obstacles
         self._vox_bg         = VoxelAccumulator(voxel_size=0.08)  # weak hits: walls, low-confidence surfaces
+        # Graduated-confidence tier map (additional, for comparison)
+        self._vox_ta         = VoxelAccumulator(voxel_size=0.08)  # tier A >80: 8 cm, accept fast
+        self._vox_tb         = VoxelAccumulator(voxel_size=0.12)  # tier B 50-80: 12 cm, need ~4 obs
+        self._vox_tc         = VoxelAccumulator(voxel_size=0.25)  # tier C 30-50: 25 cm, walls grow slowly
         self._cam_z          = 0.0
         self._pinhole_logged = False
 
@@ -556,8 +565,28 @@ class DepthStreamer:
             if len(xyz_weak) > 0:
                 self._vox_bg.add(xyz_weak)
 
+            # Graduated-confidence tier map — each tier trusts repeated pixels more
+            xyz_ta = _obs_filter(_filter_isolated(xyz[conf > self.CONF_TA]))
+            if len(xyz_ta) > 0:
+                self._vox_ta.carve(xyz_ta, cam_pos)
+                self._vox_ta.add(xyz_ta)
+
+            xyz_tb = _obs_filter(_filter_isolated(
+                xyz[(conf > self.CONF_TB) & (conf <= self.CONF_TA)],
+            ))
+            if len(xyz_tb) > 0:
+                self._vox_tb.add(xyz_tb)
+
+            xyz_tc = _obs_filter(_filter_isolated(
+                xyz[(conf > self.CONF_TC) & (conf <= self.CONF_TB)],
+                min_pts=3,
+            ))
+            if len(xyz_tc) > 0:
+                self._vox_tc.add(xyz_tc)
+
         if frame % self.MAP_EVERY == 0:
             self._log_map()
+            self._log_tier_map()
 
     def _log_map(self) -> None:
         sure_pts = self._vox.stable_xyz(min_obs=2)
@@ -573,13 +602,40 @@ class DepthStreamer:
             radii=0.005,
         ))
 
+    def _log_tier_map(self) -> None:
+        a_pts = self._vox_ta.stable_xyz(min_obs=2)
+        b_pts = self._vox_tb.stable_xyz(min_obs=4)
+        c_pts = self._vox_tc.stable_xyz(min_obs=12)
+
+        parts, cols = [], []
+        if len(a_pts) > 0:
+            parts.append(a_pts)
+            cols.append(np.full((len(a_pts), 3), [255, 140,   0], dtype=np.uint8))  # orange
+        if len(b_pts) > 0:
+            parts.append(b_pts)
+            cols.append(np.full((len(b_pts), 3), [100, 220,  50], dtype=np.uint8))  # lime
+        if len(c_pts) > 0:
+            parts.append(c_pts)
+            cols.append(np.full((len(c_pts), 3), [  0, 200, 220], dtype=np.uint8))  # cyan
+        if not parts:
+            return
+
+        pts = np.concatenate(parts)
+        col = np.concatenate(cols)
+        n   = min(len(pts), self.MAX_MAP)
+        idx = np.random.choice(len(pts), n, replace=False) if len(pts) > n else np.arange(n)
+        rr.log("world/tier_map", rr.Points3D(positions=pts[idx], colors=col[idx], radii=0.005))
+
     def log_stdout(self, pkt: DepthFramePacket, frame: int, fps: float) -> None:
         lock   = "LOCKED" if self._pose.locked else "searching"
         stable = len(self._vox.stable_xyz(min_obs=2))
         walls  = len(self._vox_bg.stable_xyz(min_obs=5))
+        ta     = len(self._vox_ta.stable_xyz(min_obs=2))
+        tb     = len(self._vox_tb.stable_xyz(min_obs=4))
+        tc     = len(self._vox_tc.stable_xyz(min_obs=12))
         print(
-            f"frame={frame:5d}  "
-            f"stable={stable:6d}  walls={walls:6d}  "
+            f"frame={frame:5d}  stable={stable:6d}  walls={walls:6d}  "
+            f"ta={ta:5d}  tb={tb:5d}  tc={tc:5d}  "
             f"cam_z={self._cam_z:+.2f}m  vio={lock}  fps={fps:.1f}",
             flush=True,
         )
@@ -596,6 +652,8 @@ def main() -> None:
                               contents=["world/cloud", "world/camera/**"]),
             rrb.Spatial3DView(name="map", origin="world",
                               contents=["world/map"]),
+            rrb.Spatial3DView(name="tier map", origin="world",
+                              contents=["world/tier_map"]),
         )
     ))
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
