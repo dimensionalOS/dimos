@@ -2,6 +2,8 @@ node_modules/
 **/node_modules/
 dist/
 app/dist/
+.vite/
+**/.vite/
 *.log
 bench/results.json
 bench/results_*.json
