@@ -74,10 +74,19 @@ export interface Qos {
    */
   conflation?: "latest" | "all";
   // ── transport-level (declared; honored per caps.qos) ──────────────────────────
-  /** zenoh subscriber / WebRTC channel reliability. */
+  /** Delivery guarantee (DDS/ROS 2): "reliable" retries + keeps order; "best-effort" drops under
+   *  pressure (the gateway sheds it first). zenoh subscriber / WebRTC channel reliability. */
   reliability?: "reliable" | "best-effort";
-  /** zenoh priority band. */
-  priority?: "low" | "normal" | "high";
+  /** Late-joiner behavior (DDS durability): "transient_local" = the gateway replays the last value to a
+   *  new subscriber (latch); "volatile" = nothing persisted. */
+  durability?: "volatile" | "transient_local";
+  /** Buffering discipline (DDS history): "keep_last" bounds the outbox to `depth`; "keep_all" keeps all. */
+  history?: "keep_last" | "keep_all";
+  /** Outbox depth for "keep_last" (per topic). best-effort lanes use 1 (latest-wins / conflation). */
+  depth?: number;
+  /** Scheduler priority band — the gateway drains higher first and sheds lower first under contention
+   *  (the per-client priority outbox in servers/data.py). Also a zenoh priority band. */
+  priority?: "low" | "normal" | "high" | "critical";
   /** zenoh congestion behavior: drop messages vs block the pipe. */
   congestion?: "drop" | "block";
   /** zenoh express (batching off → lower latency, more overhead). */
