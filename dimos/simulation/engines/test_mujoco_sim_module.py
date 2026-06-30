@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+import threading
+import time
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -139,6 +141,64 @@ def test_respawn_at_uses_ground_height_plus_initial_root_clearance() -> None:
         "wait": True,
     }
     assert hooks.cleared is True
+
+
+def test_reset_waiters_are_released_when_reset_requests_are_coalesced() -> None:
+    engine = object.__new__(MujocoEngine)
+    engine._lock = threading.Lock()
+    engine._reset_requested = False
+    engine._reset_done_events = []
+    engine._spawn_xy = None
+    engine._spawn_z = None
+    engine._spawn_yaw = None
+    results: list[bool] = []
+
+    def _wait_until_waiters_ready() -> None:
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            with engine._lock:
+                if len(engine._reset_done_events) == 2:
+                    return
+            time.sleep(0.001)
+        raise TimeoutError("reset waiters were not registered")
+
+    def _request_reset() -> None:
+        results.append(engine.request_reset(wait=True, timeout=1.0))
+
+    def _request_reset_to() -> None:
+        results.append(
+            engine.request_reset_to(
+                spawn_xy=(1.0, 2.0),
+                spawn_z=0.5,
+                spawn_yaw=0.25,
+                wait=True,
+                timeout=1.0,
+            )
+        )
+
+    threads = [
+        threading.Thread(target=_request_reset),
+        threading.Thread(target=_request_reset_to),
+    ]
+    for thread in threads:
+        thread.start()
+
+    _wait_until_waiters_ready()
+    with engine._lock:
+        assert engine._reset_requested
+        assert engine._spawn_xy == (1.0, 2.0)
+        assert engine._spawn_z == 0.5
+        assert engine._spawn_yaw == 0.25
+        done_events = engine._reset_done_events
+        engine._reset_done_events = []
+        engine._reset_requested = False
+    for done_event in done_events:
+        done_event.set()
+
+    for thread in threads:
+        thread.join(timeout=1.0)
+        assert not thread.is_alive()
+    assert results == [True, True]
 
 
 def _write_scene_xml(path: Path) -> None:
