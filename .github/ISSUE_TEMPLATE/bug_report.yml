@@ -1,24 +1,22 @@
 name: Bug Report
 description: Report a bug in DimOS
-labels: ["bug"]
+type: Bug
 body:
   - type: textarea
     id: description
     attributes:
       label: Description
+      description: Describe what happened and include any details that seem relevant.
       value: |
-        ## System
-        <!-- e.g. Ubuntu 24.04, macOS 15.4 -->
+        ## What happened?
 
-        ## Robot/Sim/Hardware (including firmware version)
-        <!-- e.g. Unitree Go2 EDU 1.1.7, or Unity sim etc -->
+        ## What did you expect?
 
         ## Steps to reproduce
 
-        ## DimOS version
-        <!-- branch name or commit: git rev-parse --short HEAD -->
+        ## Environment
+        <!-- OS, Python version, DimOS branch/commit, robot/sim/hardware, firmware when relevant -->
 
         ## Logs / screenshots
-
     validations:
-      required: true
+      required: false

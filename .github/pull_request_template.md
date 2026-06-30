@@ -1,21 +1,30 @@
+## Contribution path
+
+<!-- Choose one path. See CONTRIBUTING.md. -->
+
+- [ ] Small, safe change that does not need a tracking issue
+- [ ] Linked issue/discussion: DIM-XXX / #XXX / URL
+
 ## Problem
 
-<!-- What feature are you adding, or what is broken/missing/sub-optimal? -->
-<!-- Context, symptoms, motivation. Link the issue. -->
+<!-- What motivated this PR? What is broken, missing, confusing, or useful? -->
 
-Closes DIM-XXX
+Closes #
 
 ## Solution
 
-<!-- What you changed and why this approach -->
-<!-- Key design decisions / tradeoffs -->
-<!-- Keep it high-signal; deep planning belongs in the issue. -->
+<!-- What approach did you take? Keep this short; the diff shows the details. -->
 
 ## How to Test
 
-<!-- oneliner required to run the actual feature -->
-<!-- blueprint for robot changes, benchmarks for transport changes etc -->
+<!-- Manual reviewer instructions for using the changed feature.
+For docs-only or template-only PRs, this may be blank. -->
 
-## Contributor License Agreement
+## Checklist
 
+- [ ] I followed the contribution path above.
+- [ ] This PR is scoped to one issue or clearly stated problem.
+- [ ] I have run the relevant checks for the files I changed.
+- [ ] I have reviewed and understand the changes in this PR.
+- [ ] I disclosed AI assistance if it materially helped prepare this PR.
 - [ ] I have read and approved the [CLA](https://github.com/dimensionalOS/dimos/blob/main/CLA.md).

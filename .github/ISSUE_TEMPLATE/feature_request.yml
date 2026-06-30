@@ -3,10 +3,27 @@ description: Suggest a new feature or improvement for DimOS
 labels: ["feature"]
 body:
   - type: textarea
-    id: description
+    id: motivation
     attributes:
-      label: Description
+      label: Problem or motivation
       description: What do you want and why?
-
     validations:
       required: true
+  - type: textarea
+    id: request-or-plan
+    attributes:
+      label: Request or implementation plan
+      description: If this is a request, describe the desired behavior. If you plan to implement it, describe your proposed approach.
+    validations:
+      required: false
+  - type: dropdown
+    id: contribution-intent
+    attributes:
+      label: How would you like to help?
+      options:
+        - "I can implement this"
+        - "I can test or review this"
+        - "Request only"
+        - "Not sure yet"
+    validations:
+      required: false
