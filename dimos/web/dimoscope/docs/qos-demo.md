@@ -65,6 +65,12 @@ Same sim load (pose @ 100 Hz, light + high-priority · a ~2 MB/s lidar/img strea
 the same constrained link, gateway scheduler **OFF (FIFO, today's baseline)** vs **ON (priority outbox)**.
 From `deno task demo:qos` (synthetic, link paced to 4 Mbps):
 
+![QoS under stress — same saturated link: OFF (FIFO) shows pose ~7 s stale (red), ON (priority outbox)
+keeps it ~4 ms fresh (green)](img/qos_under_stress.gif)
+
+_Two browser clients on the same saturated link, side by side — OFF (FIFO) vs ON (priority outbox).
+Left lags multiple seconds; right stays real-time._
+
 | mode | pose hz | **pose p50** | pose p95 | lidar hz |
 |---|--:|--:|--:|--:|
 | **OFF** (FIFO) | 55 | **1294 ms** | 2419 ms | 120 |
