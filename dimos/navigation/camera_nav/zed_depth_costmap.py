@@ -477,8 +477,8 @@ class DepthStreamer:
         self._intr           = intrinsics
         self._pose           = pose
         self._bp             = backproj
-        self._vox            = VoxelAccumulator(voxel_size=0.08)  # sure obstacles
-        self._vox_bg         = VoxelAccumulator(voxel_size=0.08)  # weak hits: walls, low-confidence surfaces
+        self._vox            = VoxelAccumulator(voxel_size=0.08)   # sure obstacles — 8 cm resolution
+        self._vox_bg         = VoxelAccumulator(voxel_size=0.30)   # walls — 30 cm voxels aggregate sparse distant returns
         self._cam_z          = 0.0
         self._pinhole_logged = False
 
@@ -547,11 +547,12 @@ class DepthStreamer:
                 self._vox.add(xyz_sure)
 
             # Weak tier — low-confidence surfaces (walls, smooth/distant geometry)
-            # min_pts=8: walls produce dense returns across large areas; displays and
-            # specular reflections are smaller and sparser — they fail this threshold
+            # min_pts=3 with 30 cm voxels: walls at range aggregate enough returns
+            # per voxel to pass; small reflective objects (displays, specular hits)
+            # cover too small an area to accumulate 3 hits in a 30 cm cell
             xyz_weak = _obs_filter(_filter_isolated(
                 xyz[(conf >= self.CONF_WEAK) & (conf < self.CONF_SURE)],
-                min_pts=8,
+                min_pts=3,
             ))
             if len(xyz_weak) > 0:
                 self._vox_bg.add(xyz_weak)
