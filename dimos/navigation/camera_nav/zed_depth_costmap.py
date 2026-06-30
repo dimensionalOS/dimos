@@ -1,28 +1,23 @@
 """ZED Mini → persistent world-frame 3D occupancy map.
 
-Pipeline stages:
+Camera-agnostic pipeline:
 
-  DepthFilter        sl.MEASURE.DEPTH + CONFIDENCE → depth H×W (NaN where bad)
-  IntrinsicsReader   reads + caches ZED left-camera K matrix
-  PoseReader         ZED VIO pose, camera→world (R, t)
-  DepthFramePacket   one complete frame: depth + intrinsics + pose + confidence
-  DepthBackprojector depth image → world-frame XYZ + per-point confidence (N×3, N)
-  VoxelAccumulator   persistent world-frame map: deduplicates + refines across frames
-  DepthStreamer      assembles packets, drives accumulation, logs to Rerun
+  ZEDDepthSource     all ZED SDK calls; returns raw float32 depth (metres)
+  DepthFramePacket   one frame: depth H×W + intrinsics + VIO pose
+  GradientStabilityFilter  rejects depth-discontinuity pixels (|∇d| ≥ threshold)
+  DepthBackprojector backprojects stable pixels → world-frame XYZ
+  VoxelAccumulator   persistent map: deduplicates and exports voxels seen ≥ 2 frames
+  DepthStreamer       drives the pipeline per frame, logs to Rerun
 
-Filtering before any point enters the map:
-  1. NaN / out-of-range / low-confidence depth removed by DepthFilter (hard filters)
-  2. Depth-discontinuity pixels rejected by GradientStabilityFilter (|∇d| < 0.10 m/px)
-  3. Isolated single-pixel artifacts removed per-frame before accumulation
+Swap ZEDDepthSource for any other DepthSource implementation to support a
+different camera — no other changes required.
 
 Rerun entities:
   world/camera        Pinhole model (static)
-  world/camera/depth  filtered depth image (float32, auto-colorised)
-  world/cloud         current-frame scan: red = sure (≥60)  yellow = unsure (25–60)
-  world/map           persistent accumulated map, height-colored:
-                        blue  = ankle / low clutter  (0.05–0.5 m)
-                        green = knee / waist          (0.5–1.0 m)
-                        red   = shoulder / head       (1.0–2.0 m)
+  world/camera/depth  raw depth image (float32, metres)
+  world/camera/stable gradient stability mask (white = stable pixel)
+  world/cloud         current-frame scan, height-colored
+  world/map           persistent accumulated map, height-colored
 
 Usage:
   python -m dimos.navigation.camera_nav.zed_depth_costmap
@@ -174,51 +169,60 @@ class DepthFramePacket:
         return np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float64)
 
 
-# ── Stage 1: Depth filter ──────────────────────────────────────────────────────
+# ── Camera source protocol ────────────────────────────────────────────────────
+#
+# Any depth camera must implement `read(ts) -> DepthFramePacket` and expose
+# `pose_locked` so the pipeline stages below are camera-agnostic.
+# Swap ZEDDepthSource for a RealSenseDepthSource and nothing else changes.
 
-class DepthFilter:
-    """sl.MEASURE.DEPTH + CONFIDENCE → clean H×W float32 depth.
+# ── ZED Mini source ───────────────────────────────────────────────────────────
 
-    Two confidence tiers are exposed downstream:
-      CONF_SURE (≥60): high-confidence stereo match → shown red
-      CONF_MIN  (≥25): lower-confidence but still usable → shown yellow
-    Pixels below CONF_MIN are set to NaN and discarded entirely.
+class ZEDDepthSource:
+    """ZED SDK → DepthFramePacket.  No confidence filtering — raw depth only.
+
+    Only physically impossible values (inf, below MIN_DEPTH, above MAX_DEPTH)
+    are set to NaN.  All quality filtering happens downstream in the pipeline
+    (GradientStabilityFilter, _filter_isolated, VoxelAccumulator).
     """
 
-    CONF_MIN:   float = 10.0   # discard below this — too noisy to use at all
-    MIN_DEPTH:  float = 0.3
-    MAX_DEPTH:  float = 8.0
+    MIN_DEPTH: float = 0.3
+    MAX_DEPTH: float = 8.0
 
-    def __init__(self) -> None:
+    def __init__(self, zed: sl.Camera) -> None:
+        self._zed       = zed
         self._depth_mat = sl.Mat()
-        self._conf_mat  = sl.Mat()
+        self._intr      = _IntrinsicsReader()
+        self._pose      = _PoseReader()
 
-    def filter(self, zed: sl.Camera) -> tuple[np.ndarray, np.ndarray]:
-        """Return (depth H×W, conf H×W).  depth[pixel] = NaN where unusable."""
-        zed.retrieve_measure(self._depth_mat, sl.MEASURE.DEPTH, sl.MEM.CPU)
-        depth = self._depth_mat.get_data().astype(np.float32)
-        if depth.ndim == 3:
-            depth = depth[:, :, 0]
+    def enable_tracking(self) -> bool:
+        return self._pose.enable(self._zed)
 
-        zed.retrieve_measure(self._conf_mat, sl.MEASURE.CONFIDENCE, sl.MEM.CPU)
-        conf = self._conf_mat.get_data().astype(np.float32)
-        if conf.ndim == 3:
-            conf = conf[:, :, 0]
+    @property
+    def pose_locked(self) -> bool:
+        return self._pose.locked
 
-        invalid = (
-            ~np.isfinite(depth)
-            | (depth <= self.MIN_DEPTH)
-            | (depth >  self.MAX_DEPTH)
-            | ~np.isfinite(conf)
-            | (conf < self.CONF_MIN)
+    def read(self, ts: float) -> DepthFramePacket:
+        self._intr.read(self._zed)
+        self._pose.update(self._zed)
+        self._zed.retrieve_measure(self._depth_mat, sl.MEASURE.DEPTH, sl.MEM.CPU)
+        d = self._depth_mat.get_data().astype(np.float32)
+        if d.ndim == 3:
+            d = d[:, :, 0]
+        d[~np.isfinite(d) | (d <= self.MIN_DEPTH) | (d > self.MAX_DEPTH)] = np.nan
+        return DepthFramePacket(
+            timestamp  = ts,
+            depth      = d,
+            intrinsics = self._intr.intrinsics,
+            width      = self._intr.width,
+            height     = self._intr.height,
+            pose_R     = self._pose.R.copy(),
+            pose_t     = self._pose.t.copy(),
         )
-        depth[invalid] = np.nan
-        return depth, conf
 
 
-# ── Stage 2: Intrinsics reader ────────────────────────────────────────────────
+# ── Internal ZED helpers (used only by ZEDDepthSource) ───────────────────────
 
-class IntrinsicsReader:
+class _IntrinsicsReader:
     """Reads and caches ZED left-camera calibration (fixed for the session)."""
 
     def __init__(self) -> None:
@@ -255,9 +259,7 @@ class IntrinsicsReader:
         )
 
 
-# ── Stage 3: Pose reader ──────────────────────────────────────────────────────
-
-class PoseReader:
+class _PoseReader:
     """ZED VIO camera→world pose.  Identity passthrough until VIO locks."""
 
     def __init__(self) -> None:
@@ -507,48 +509,29 @@ class VoxelAccumulator:
 # ── Stage 6: Streamer ─────────────────────────────────────────────────────────
 
 class DepthStreamer:
-    """Assembles packets, builds persistent world-frame map, logs to Rerun."""
+    """Drives the camera-agnostic pipeline: gradient filter → backproject → accumulate → Rerun."""
 
-    CONF_SURE = 65       # confidence ≥ this → sure obstacle layer (min_obs=2)
-    CONF_WEAK = 25       # confidence ≥ this → background layer (min_obs=5); catches walls
     MAX_CLOUD = 50_000   # Rerun per-frame point cap
     MAX_MAP   = 100_000  # Rerun map point cap
     MAP_EVERY = 10       # frames between map updates
 
     def __init__(
         self,
-        depth_filter:  DepthFilter,
-        intrinsics:    IntrinsicsReader,
-        pose:          PoseReader,
-        backproj:      DepthBackprojector,
-        grad_filter:   GradientStabilityFilter | None = None,
+        source:      ZEDDepthSource,
+        backproj:    DepthBackprojector,
+        grad_filter: GradientStabilityFilter | None = None,
     ) -> None:
-        self._filt           = depth_filter
-        self._intr           = intrinsics
-        self._pose           = pose
+        self._src            = source
         self._bp             = backproj
         self._grad           = grad_filter or GradientStabilityFilter()
         self._vox            = VoxelAccumulator(voxel_size=0.08)
-        self._vox_bg         = VoxelAccumulator(voxel_size=0.08)
         self._cam_z          = 0.0
         self._pinhole_logged = False
         self._last_n_valid   = 0
         self._last_n_stable  = 0
 
-    def assemble(self, zed: sl.Camera, ts: float) -> DepthFramePacket:
-        self._intr.read(zed)
-        self._pose.update(zed)
-        depth, conf = self._filt.filter(zed)
-        return DepthFramePacket(
-            timestamp  = ts,
-            depth      = depth,
-            intrinsics = self._intr.intrinsics,
-            width      = self._intr.width,
-            height     = self._intr.height,
-            pose_R     = self._pose.R.copy(),
-            pose_t     = self._pose.t.copy(),
-            confidence = conf,
-        )
+    def assemble(self, ts: float) -> DepthFramePacket:
+        return self._src.read(ts)
 
     def process(self, pkt: DepthFramePacket, frame: int) -> None:
         rr.set_time("frame", sequence=frame)
@@ -573,24 +556,21 @@ class DepthStreamer:
         if len(xyz) == 0:
             return
 
-        # ── Live cloud ────────────────────────────────────────────────────────
+        # ── Live cloud — height-colored ───────────────────────────────────────
+        self._cam_z = float(pkt.pose_t[2])
         n   = min(len(xyz), self.MAX_CLOUD)
         idx = np.random.choice(len(xyz), n, replace=False) if len(xyz) > n else np.arange(n)
-        sure   = conf[idx] >= self.CONF_SURE
-        colors = np.where(
-            sure[:, None],
-            np.array([[220,  50,  50]], dtype=np.uint8),   # red    = sure
-            np.array([[200, 180,   0]], dtype=np.uint8),   # yellow = unsure
-        )
-        rr.log("world/cloud", rr.Points3D(positions=xyz[idx], colors=colors, radii=0.003))
+        rr.log("world/cloud", rr.Points3D(
+            positions=xyz[idx],
+            colors=_height_color(xyz[idx, 2] - self._cam_z),
+            radii=0.003,
+        ))
 
         # ── Persistent map ────────────────────────────────────────────────────
-        self._cam_z = float(pkt.pose_t[2])
-        if self._pose.locked:
+        if self._src.pose_locked:
             cam_pos = pkt.pose_t
 
             def _obs_filter(pts: np.ndarray) -> np.ndarray:
-                """Height band + floor-angle filter, shared by both tiers."""
                 if len(pts) == 0:
                     return pts
                 h_rel    = pts[:, 2] - self._cam_z
@@ -602,27 +582,16 @@ class DepthStreamer:
                     & (d_z_norm > _FLOOR_RAY_Z)
                 ]
 
-            # Sure tier — high-confidence obstacles (chairs, people, boxes)
-            xyz_sure = _obs_filter(_filter_isolated(xyz[conf >= self.CONF_SURE]))
-            if len(xyz_sure) > 0:
-                self._vox.carve(xyz_sure, cam_pos)
-                self._vox.add(xyz_sure)
-
-            # Weak tier — low-confidence surfaces (walls, smooth/distant geometry)
-            xyz_weak = _obs_filter(_filter_isolated(
-                xyz[(conf >= self.CONF_WEAK) & (conf < self.CONF_SURE)],
-                min_pts=8,
-            ))
-            if len(xyz_weak) > 0:
-                self._vox_bg.add(xyz_weak)
+            xyz_map = _obs_filter(_filter_isolated(xyz))
+            if len(xyz_map) > 0:
+                self._vox.carve(xyz_map, cam_pos)
+                self._vox.add(xyz_map)
 
         if frame % self.MAP_EVERY == 0:
             self._log_map()
 
     def _log_map(self) -> None:
-        sure_pts = self._vox.stable_xyz(min_obs=2)
-        bg_pts   = self._vox_bg.stable_xyz(min_obs=10)
-        pts = np.concatenate([sure_pts, bg_pts]) if len(bg_pts) > 0 else sure_pts
+        pts = self._vox.stable_xyz(min_obs=2)
         if len(pts) == 0:
             return
         n   = min(len(pts), self.MAX_MAP)
@@ -637,14 +606,13 @@ class DepthStreamer:
         self, pkt: DepthFramePacket, frame: int, fps: float,
         n_valid: int = 0, n_stable: int = 0,
     ) -> None:
-        lock   = "LOCKED" if self._pose.locked else "searching"
-        stable = len(self._vox.stable_xyz(min_obs=2))
-        walls  = len(self._vox_bg.stable_xyz(min_obs=5))
-        pct    = 100 * n_stable / n_valid if n_valid > 0 else 0.0
+        lock = "LOCKED" if self._src.pose_locked else "searching"
+        n_map = len(self._vox.stable_xyz(min_obs=2))
+        pct   = 100 * n_stable / n_valid if n_valid > 0 else 0.0
         print(
             f"frame={frame:5d}  "
             f"stable={n_stable:5d}/{n_valid:5d} ({pct:.0f}%)  "
-            f"map={stable:6d}  walls={walls:6d}  "
+            f"map={n_map:6d}  "
             f"cam_z={self._cam_z:+.2f}m  vio={lock}  fps={fps:.1f}",
             flush=True,
         )
@@ -686,25 +654,18 @@ def main() -> None:
 
     print("camera open — Ctrl-C to quit.")
 
+    src = ZEDDepthSource(zed)
+    src.enable_tracking()
+
     streamer = DepthStreamer(
-        DepthFilter(),
-        IntrinsicsReader(),
-        PoseReader(),
+        src,
         DepthBackprojector(),
         GradientStabilityFilter(GradientStabilityConfig(gradient_threshold=0.10)),
     )
 
-    streamer._pose.enable(zed)
-
     rt = sl.RuntimeParameters()
-    # Suppress flying pixels and ceiling-light saturation at the SDK level,
-    # before depth reaches our pipeline.
-    # texture_confidence_threshold: reject depth at textureless regions and
-    #   depth-discontinuity edges — exactly where flying pixels form.
-    # remove_saturated_areas: invalidate pixels over-exposed by bright ceiling
-    #   lights, where stereo matching is unreliable.
-    rt.texture_confidence_threshold = 40  # lower → more wall depth passes; gradient filter handles edge artifacts
-    rt.remove_saturated_areas       = True
+    rt.texture_confidence_threshold = 0     # no SDK-level texture gate; pipeline handles quality
+    rt.remove_saturated_areas       = True  # pixels overexposed by bright lights have no valid signal
 
     frame = 0
     t0    = time.monotonic()
@@ -714,7 +675,7 @@ def main() -> None:
             if zed.grab(rt) != sl.ERROR_CODE.SUCCESS:
                 continue
             ts  = time.monotonic()
-            pkt = streamer.assemble(zed, ts)
+            pkt = streamer.assemble(ts)
             streamer.process(pkt, frame)
             streamer.log_stdout(pkt, frame, frame / max(ts - t0, 1e-6),
                                 n_valid=streamer._last_n_valid,
