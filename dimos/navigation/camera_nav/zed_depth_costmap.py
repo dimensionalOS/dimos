@@ -374,160 +374,85 @@ class DepthBackprojector:
         return xyz_world, colors
 
 
-# ── Stage 5: Voxel accumulator ────────────────────────────────────────────────
+# ── Stage 5: Voxel map ────────────────────────────────────────────────────────
 
-class VoxelAccumulator:
-    """Persistent world-frame 3D map.
+class FastVoxelMap:
+    """Append-only world-frame point map backed entirely by numpy arrays.
 
-    Identity layer (2 cm voxel hash): decides new voxel vs revisit in O(1).
-    Fine layer (actual stereo positions): stored and refined via running average
-    so geometry converges toward the true surface without collapsing to a grid centre.
+    No Python dicts, no per-key loops.  All deduplication uses np.unique — a
+    single vectorised C call — so throughput matches the live cloud pipeline.
 
-    A voxel must be observed in at least min_obs separate frames to be exported —
-    this is the cross-frame equivalent of the per-frame isolation filter.
+    add() deduplicates the incoming batch and appends.
+    Every COMPACT_EVERY adds, a full global dedup runs to bound memory.
     """
 
-    def __init__(self, voxel_size: float = 0.02, capacity: int = 500_000) -> None:
-        self._v   = voxel_size
-        self._cap = capacity
-        self._idx: dict[int, int] = {}
-        self._xyz  = np.empty((capacity, 3), dtype=np.float32)
-        self._obs  = np.zeros(capacity, dtype=np.uint16)   # frame observation count
-        self._n    = 0
+    COMPACT_EVERY: int = 30
+
+    def __init__(self, voxel_size: float = 0.05, capacity: int = 500_000) -> None:
+        self._v      = voxel_size
+        self._cap    = capacity
+        self._pts    = np.empty((capacity, 3), dtype=np.float32)
+        self._n      = 0
+        self._n_adds = 0
 
     def add(self, xyz: np.ndarray) -> None:
-        """Merge one filtered, world-frame point array into the map."""
         if len(xyz) == 0:
             return
-        vk   = np.floor(xyz / self._v).astype(np.int32)
-        keys = _pack(vk)
-        # One representative point per voxel within this batch
-        _, first = np.unique(keys, return_index=True)
-        keys = keys[first];  xyz = xyz[first]
-
-        key_list = keys.tolist()
-        exists   = np.array([k in self._idx for k in key_list], dtype=bool)
-
-        if exists.any():
-            rows  = np.array([self._idx[int(k)] for k in keys[exists].tolist()], dtype=np.int32)
-            old_n = self._obs[rows].astype(np.float32)
-            new_n = np.minimum(old_n + 1, 65_535)
-            w     = (old_n / new_n)[:, None]          # weight of stored observation
-            self._xyz[rows] = self._xyz[rows] * w + xyz[exists] * (1 - w)
-            self._obs[rows] = new_n.astype(np.uint16)
-
-        new_xyz  = xyz[~exists]
-        new_keys = keys[~exists]
-        n_new    = len(new_xyz)
-        if n_new == 0:
-            return
-        if self._n + n_new > self._cap:
-            self._grow()
-        sl = slice(self._n, self._n + n_new)
-        self._xyz[sl] = new_xyz
-        self._obs[sl] = 1
-        for i, k in enumerate(new_keys.tolist()):
-            self._idx[int(k)] = self._n + i
-        self._n += n_new
-
-    def carve(self, xyz: np.ndarray, cam_pos: np.ndarray) -> None:
-        """Decrement obs for voxels along rays from cam_pos to each surface point.
-
-        The segment (cam_pos → surface - ε) is known free space.  Any accumulated
-        voxel there is a stereo ghost — weakening it drops it below min_obs=2 and
-        it disappears from stable_xyz on the next map update.
-
-        Surface voxels observed this same frame are excluded from carving so they
-        can accumulate obs counts normally across frames.
-        """
-        if self._n == 0 or len(xyz) == 0:
-            return
-        # One ray per unique surface voxel; keep those keys to protect from carving
+        # Dedup the incoming batch first
         vk = np.floor(xyz / self._v).astype(np.int32)
-        raw_keys = _pack(vk)
-        _, first = np.unique(raw_keys, return_index=True)
-        xyz = xyz[first]
-        surface_keys = set(raw_keys[first].tolist())   # protect these from carving
+        _, first = np.unique(_pack(vk), return_index=True)
+        new_pts = xyz[first]
 
-        rays  = xyz - cam_pos                                      # (M, 3)
-        dists = np.linalg.norm(rays, axis=1)                       # (M,)
-        ok    = dists > self._v * 2
-        if not ok.any():
-            return
-        dirs = rays[ok] / dists[ok, None]                         # unit vecs (M', 3)
-        d    = dists[ok]                                           # depths (M',)
+        if self._n + len(new_pts) > self._cap:
+            self._compact()
+        if self._n + len(new_pts) > self._cap:
+            self._grow()
 
-        max_t = int(d.max() / self._v)
-        if max_t < 2:
-            return
-        t   = (np.arange(1, max_t) * self._v).astype(np.float32)  # (T,)
-        pts = cam_pos + dirs[:, None, :] * t[None, :, None]        # (M', T, 3)
-        valid = t[None, :] < (d[:, None] - self._v)                # (M', T)
-        pts = pts[valid]                                            # (K, 3)
-        if len(pts) == 0:
-            return
+        sl = slice(self._n, self._n + len(new_pts))
+        self._pts[sl] = new_pts
+        self._n += len(new_pts)
 
-        free_keys = set(_pack(np.floor(pts / self._v).astype(np.int32)).tolist())
-        free_keys -= surface_keys   # never carve what we're also observing this frame
-        for k in free_keys:
-            row = self._idx.get(int(k))
-            if row is not None and self._obs[row] > 0:
-                self._obs[row] -= 1
+        self._n_adds += 1
+        if self._n_adds % self.COMPACT_EVERY == 0:
+            self._compact()
 
-    def filter_occluded(self, xyz: np.ndarray, cam_pos: np.ndarray) -> np.ndarray:
-        """Boolean mask: True = not blocked by an existing closer solid surface.
-
-        Samples each ray at 33% and 67% depth.  If either sample hits a confirmed
-        voxel (obs ≥ 2) the new point lies behind a known surface → reject it.
-        This implements "block accumulation beyond first hit."
-        """
+    def _compact(self) -> None:
         if self._n == 0:
-            return np.ones(len(xyz), dtype=bool)
-        solid = {k for k, i in self._idx.items() if self._obs[i] >= 2}
-        if not solid:
-            return np.ones(len(xyz), dtype=bool)
-        solid_arr = np.array(list(solid), dtype=np.int64)
+            return
+        vk = np.floor(self._pts[:self._n] / self._v).astype(np.int32)
+        _, idx = np.unique(_pack(vk), return_index=True)
+        n_u = len(idx)
+        self._pts[:n_u] = self._pts[:self._n][idx]
+        self._n = n_u
 
-        rays = xyz - cam_pos
-        s1   = (cam_pos + rays * 0.33).astype(np.float32)
-        s2   = (cam_pos + rays * 0.67).astype(np.float32)
-        k1   = _pack(np.floor(s1 / self._v).astype(np.int32))
-        k2   = _pack(np.floor(s2 / self._v).astype(np.int32))
-        blocked = np.isin(k1, solid_arr) | np.isin(k2, solid_arr)
-        return ~blocked
+    def _grow(self) -> None:
+        cap2 = self._cap * 2
+        buf  = np.empty((cap2, 3), dtype=np.float32)
+        buf[:self._n] = self._pts[:self._n]
+        self._pts = buf
+        self._cap = cap2
 
-    def stable_xyz(self, min_obs: int = 2) -> np.ndarray:
-        """Points seen in at least min_obs frames — cross-frame noise filter."""
-        if self._n == 0:
-            return np.zeros((0, 3), dtype=np.float32)
-        mask = self._obs[:self._n] >= min_obs
-        return self._xyz[:self._n][mask]
+    def points(self) -> np.ndarray:
+        return self._pts[:self._n]
 
     @property
     def count(self) -> int:
         return self._n
-
-    def _grow(self) -> None:
-        cap2     = self._cap * 2
-        new_xyz  = np.empty((cap2, 3), dtype=np.float32)
-        new_obs  = np.zeros(cap2, dtype=np.uint16)
-        new_xyz[:self._n] = self._xyz[:self._n]
-        new_obs[:self._n] = self._obs[:self._n]
-        self._xyz = new_xyz;  self._obs = new_obs;  self._cap = cap2
 
 
 # ── Stage 6: Streamer ─────────────────────────────────────────────────────────
 
 class DepthStreamer:
     """Two-layer pipeline:
-    - Main thread  (fast):  gradient filter → backproject → live Rerun cloud  (<10 ms)
-    - Map thread   (async): world transform → voxel add → carve → map Rerun   (amortised)
+    - Main thread (fast):  gradient filter → backproject → live Rerun cloud
+    - Map thread  (async): height filter → isolation filter → FastVoxelMap → map Rerun
+
+    Map worker cost is now O(N log N) numpy only — same order as the live cloud.
     """
 
-    MAX_CLOUD  = 50_000   # Rerun per-frame point cap
-    MAX_MAP    = 100_000  # Rerun map point cap
-    MAP_EVERY  = 10       # map-thread frames between map Rerun updates
-    CARVE_EVERY = 5       # map-thread frames between carve passes
+    MAX_CLOUD = 50_000   # Rerun per-frame point cap
+    MAX_MAP   = 200_000  # Rerun map point cap
+    MAP_EVERY = 5        # map-thread frames between map Rerun updates
 
     def __init__(
         self,
@@ -538,14 +463,13 @@ class DepthStreamer:
         self._src            = source
         self._bp             = backproj
         self._grad           = grad_filter or GradientStabilityFilter()
-        self._vox            = VoxelAccumulator(voxel_size=0.05)
+        self._vox            = FastVoxelMap(voxel_size=0.05)
         self._vox_lock       = threading.Lock()
         self._cam_z          = 0.0
         self._pinhole_logged = False
         self._last_n_valid   = 0
         self._last_n_stable  = 0
-        # Map worker: queue holds (xyz_world, cam_pos, cam_z, frame); maxsize=4 drops stale frames
-        self._map_queue: queue.Queue = queue.Queue(maxsize=4)
+        self._map_queue: queue.Queue = queue.Queue(maxsize=16)
         self._map_thread = threading.Thread(target=self._map_worker, daemon=True)
         self._map_thread.start()
 
@@ -595,15 +519,18 @@ class DepthStreamer:
                 pass
 
     def _map_worker(self) -> None:
-        """Background thread: world-frame accumulation, carving, map logging."""
-        carve_count = 0
+        """Background thread: height filter → isolation → FastVoxelMap → Rerun.
+
+        All operations are vectorised numpy — cost is O(N log N), same order as
+        the live cloud pipeline.  No Python loops, no ray carving.
+        """
         while True:
             item = self._map_queue.get()
             if item is None:
                 return
             xyz_world, cam_pos, cam_z, frame = item
 
-            # Height band + floor-angle filter
+            # Height band + floor-angle filter (all numpy)
             h_rel    = xyz_world[:, 2] - cam_z
             rays     = xyz_world - cam_pos
             dist     = np.linalg.norm(rays, axis=1)
@@ -613,10 +540,7 @@ class DepthStreamer:
             if len(xyz_map) == 0:
                 continue
 
-            carve_count += 1
             with self._vox_lock:
-                if carve_count % self.CARVE_EVERY == 0:
-                    self._vox.carve(xyz_map, cam_pos)
                 self._vox.add(xyz_map)
 
             if frame % self.MAP_EVERY == 0:
@@ -626,7 +550,7 @@ class DepthStreamer:
         if cam_z is None:
             cam_z = self._cam_z
         with self._vox_lock:
-            pts = self._vox.stable_xyz(min_obs=1)
+            pts = self._vox.points().copy()
         if len(pts) == 0:
             return
         n   = min(len(pts), self.MAX_MAP)
@@ -643,7 +567,7 @@ class DepthStreamer:
     ) -> None:
         lock = "LOCKED" if self._src.pose_locked else "searching"
         with self._vox_lock:
-            n_map = len(self._vox.stable_xyz(min_obs=1))
+            n_map = self._vox.count
         pct   = 100 * n_stable / n_valid if n_valid > 0 else 0.0
         print(
             f"frame={frame:5d}  "
