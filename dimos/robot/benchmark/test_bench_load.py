@@ -75,3 +75,49 @@ def test_bench_load_topics_flow() -> None:
     # 100Hz pose / 20Hz grid over a 4s window, minus startup slack.
     assert counts["/bench/p0"] > 50, f"too few PoseStamped on /bench/p0: {counts}"
     assert counts["/bench/grid"] > 2, f"too few OccupancyGrid on /bench/grid: {counts}"
+
+
+@pytest.mark.self_hosted
+def test_bench_load_heavy_stream_flows() -> None:
+    """The configurable large stream (heavy_hz>0) publishes a sized Image on /bench/img."""
+    env = {**os.environ, "DIMOS_TRANSPORT": "lcm"}
+    # Modest 500KB @ 10Hz so the test stays light; heavy stream is off unless heavy_hz>0.
+    code = (
+        "import sys; sys.argv=['dimos','run','bench-load','-o','benchload.autostart=true',"
+        "'-o','benchload.heavy_hz=10','-o','benchload.heavy_bytes=500000'];"
+        "from dimos.robot.cli.dimos import cli_main; cli_main()"
+    )
+    proc = subprocess.Popen(
+        [sys.executable, "-c", code],
+        env=env,
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    counts = {"/bench/img": 0}
+    subs: list = []
+    try:
+        time.sleep(14)  # coordinator boot + worker spawn + autostart
+        assert proc.poll() is None, "bench-load process exited before publishing"
+
+        from dimos.core.transport import LCMTransport
+        from dimos.msgs.sensor_msgs.Image import Image
+
+        t = LCMTransport("/bench/img", Image)
+        t.start()
+        t.subscribe(lambda _m: counts.__setitem__("/bench/img", counts["/bench/img"] + 1))
+        subs.append(t)
+
+        time.sleep(4)  # sample window
+    finally:
+        for t in subs:
+            t.stop()
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        proc.wait(timeout=15)
+
+    # 10Hz over a 4s window, minus startup slack.
+    assert counts["/bench/img"] > 5, f"too few Image on /bench/img: {counts}"
