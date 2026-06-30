@@ -1,7 +1,8 @@
 # dimoscope benchmarks
 
 The master benchmark reference for getting DimOS topics to a browser: **bus transports ·
-delivery mechanisms × network · decode location · load & realistic robot streams · QoS · WebRTC**.
+delivery mechanisms × network · decode location · load & realistic robot streams · QoS · WebRTC ·
+WebTransport under real packet loss**.
 
 > **What changed, and why this doc grew.** The first benchmarks tested 4× PoseStamped @ 100 Hz ≈
 > **28 kB/s** — where *every* mechanism looks identical and nothing is decided. **The interesting
@@ -24,6 +25,8 @@ See also: [data-path.md](./data-path.md) (the methodology narrative + the two-ax
 | `deno task bench:decode` | **decode location** (client-binary vs server-JSON) |
 | `deno task bench:qos` | **QoS** — rate-limit · on-demand · prioritization |
 | `deno task bench:webrtc` | **WebRTC DataChannel** e2e |
+| `deno task bench:webtransport` | **WebTransport** (HTTP/3 / QUIC) e2e — datagrams (small) + streams (big) |
+| `deno task bench:loss` | **WebTransport under real packet loss** (`netsim-udp`) — graceful datagram degradation |
 
 ## Methodology
 
@@ -37,7 +40,8 @@ See also: [data-path.md](./data-path.md) (the methodology narrative + the two-ax
 - **Bad network**: a zero-install TCP impairment proxy (`bench/netsim.ts`) shapes latency/jitter/
   bandwidth. Profiles: `lan` 0 ms · `wifi` 8 ms/±3 · `4g` 50 ms/±15/**12 Mbps** · `3g` 150 ms/±40/**2
   Mbps** · `2g` 400 ms/±120/**280 kbps** · `lossy` 80 ms/±80/5 Mbps. (TCP turns packet *loss* into
-  retransmit→latency, so it's shaped as latency/bandwidth — the reason WebRTC/WebTransport are Phase-2.)
+  retransmit→latency, so it's shaped as latency/bandwidth; for **real** UDP packet drops — what the QUIC
+  datagram path actually faces — `bench/netsim-udp.ts` drops real datagrams in userspace, see §8.)
 
 ---
 
@@ -143,7 +147,38 @@ is publisher-side, so a browser subscriber can't set it (it maps to gateway emul
 
 `deno task bench:webrtc`: ~**350 Hz** of `/bench/*` over a real unordered/`maxRetransmits:0`
 DataChannel — binary frames (no base64), no TCP head-of-line blocking. Its win over WS shows up *under
-loss*, which needs link-level shaping (Phase 2).
+loss* — measured for the sibling QUIC datagram path in §8.
+
+## 8. WebTransport (HTTP/3 / QUIC) — datagrams + streams, and the loss payoff ⭐
+
+`deno task bench:webtransport`: a headless aioquic client pulls ~**330 Hz** of `/bench/*` from
+`servers/webtransport.py` (a re-transmitter in front of the gateway), **size-routing** each frame —
+small (pose/imu, ≤1100 B) over **datagrams** (unreliable/unordered, never retransmitted), large (lidar)
+over a per-frame **unidirectional stream** (reliable). Same `[f64 send-ms][LC02]` frames, same client
+`frameToSample` decode. Clean link: datagram p95 ≈ 2 ms, stream p95 ≈ 9 ms. **Verified in real Chrome**
+(`serverCertificateHashes` over the short-lived self-signed cert): 917 datagrams + 81 streams in 3 s.
+
+**The payoff — `deno task bench:loss`** runs the probe through `bench/netsim-udp.ts`, a userspace UDP
+relay that drops **real** datagrams (no sudo / no dummynet), at 10 ms ± 5 latency so the effect of *loss*
+is isolated from latency. Pose-only (pure datagrams), per drop rate:
+
+| drop | datagrams/s | dgP50 ms | dgP95 ms |
+|---|--:|--:|--:|
+| 0% (direct) | 299 | 0 | 0 |
+| 5% | 279 | 11 | 16 |
+| 10% | 271 | 11 | 16 |
+| 20% | 237 | 11 | **16** |
+
+**Delivered-datagram p95 stays flat (16 ms) as loss climbs to 20 %; throughput falls ~linearly with the
+drop rate.** A lost datagram simply never arrives — no retransmit, no head-of-line blocking. A reliable,
+ordered TCP stream (WebSocket) instead turns the same loss into retransmit→stall: §2's matrix shows WS
+p95 at **1400–1900 ms** on impaired 3g/2g links. Flat 16 ms vs seconds — that gap is the whole reason
+WebTransport (and WebRTC) exist for lossy/remote links.
+
+> Honest caveat: `netsim-udp` drops real UDP datagrams; the TCP `netsim` can only *model* loss as jitter
+> (a reliable stream never exposes raw drops). The asymmetry is the point — TCP converts loss to latency;
+> QUIC datagrams don't. A fully symmetric raw-drop test on TCP too needs kernel shaping (dummynet/netem),
+> the documented fallback.
 
 ---
 
@@ -156,9 +191,10 @@ loss*, which needs link-level shaping (Phase 2).
 | heavy streams on **cellular** | **compress/decimate** or the **media plane**; raw MB/s won't fit |
 | protect light streams under load | **rate-limit the heavy ones** (QoS prioritization) |
 | where to decode | **client-binary** — server-JSON is 2.64× at 28 kB/s, catastrophic at MB/s |
-| lossy/remote links (Phase 2) | **WebTransport** datagrams (small/fast) + streams (big) — no HoL |
+| lossy/remote links | **WebTransport** datagrams (small/fast) + streams (big) — no HoL; flat 16 ms p95 to 20% loss (§8) |
 
 ## Phase 2 (documented, not built)
-**WebTransport** (HTTP/3 — datagrams for small/fast topics, streams for big; reliable reserved for
-control), the **in-browser loss test** under Network Link Conditioner / dummynet (where WebRTC/
-WebTransport beat WS), and **zenoh-ts reconnect + live discovery**.
+**zenoh-ts reconnect + live discovery**, and a **symmetric raw-drop test on the TCP mechanisms** (kernel
+shaping via dummynet/netem) so WS and WebTransport sit on one chart. WebTransport itself is now built and
+measured (§8): aioquic server, headless probe, browser adapter (Chrome-verified), and the userspace UDP
+loss bench.

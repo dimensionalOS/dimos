@@ -19,6 +19,9 @@ export type { HttpPollDeps } from "./adapters/httpPoll.ts";
 // head-of-line blocking. Lazy browser-API use inside connect(), so importing this stays cheap.
 export { createWebRtcDataTransport } from "./adapters/webRtcData.ts";
 export type { WebRtcDataDeps } from "./adapters/webRtcData.ts";
+// WebTransport (HTTP/3 / QUIC, browser-only): datagrams (small) + streams (large), no TCP HoL.
+export { createWebTransportTransport } from "./adapters/webTransport.ts";
+export type { WebTransportDeps } from "./adapters/webTransport.ts";
 export { b64ToBytes, frameToSample } from "./adapters/gatewayFrame.ts";
 export { decodeBody, splitChannel, srcTsMs } from "./decode.ts";
 export {

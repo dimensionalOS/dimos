@@ -24,7 +24,7 @@ the transport differs.
 | **SSE** | TCP/HTTP | server→client | reliable, ordered | yes | universal (binary→base64) | ✅ **new** `adapters/sse.ts` |
 | **HTTP long-poll** | TCP/HTTP | req/resp | reliable | yes | universal | ✅ **new** `adapters/httpPoll.ts` |
 | **WebRTC DataChannel** | SCTP/DTLS/**UDP** | duplex | **configurable** (unordered/partial) | **no** | universal | ✅ **new** (server + adapter, e2e-verified) |
-| **WebTransport** | HTTP/3 **QUIC** | streams+datagrams | **configurable** | **no** | Baseline 3/2026 | ⏭ Phase 2 |
+| **WebTransport** | HTTP/3 **QUIC** | streams+datagrams | **configurable** | **no** | Baseline 3/2026 | ✅ **new** (server + adapter, Chrome-verified) |
 
 **Axis 2 — decode location** (where bytes become a typed object).
 
@@ -58,8 +58,13 @@ bridge in C++ and moved to Protobuf/FlatBuffers to cope. We **measured** Axis 2 
   measures client-binary vs server-JSON on the same bus.
 - **WebRTC DataChannel** — `servers/webrtc_data.py` (a re-transmitter in front of the gateway) +
   `adapters/webRtcData.ts`, verified e2e headlessly via a Python aiortc probe.
+- **WebTransport** (HTTP/3 / QUIC) — `servers/webtransport.py` (an `aioquic` re-transmitter) +
+  `adapters/webTransport.ts`, **size-routing** small frames over datagrams and large over per-frame
+  unidirectional streams; verified headlessly (aioquic probe) **and in real Chrome**
+  (`serverCertificateHashes`). Its loss test rides `bench/netsim-udp.ts` (real datagram drops, no sudo).
 - **Bad-network** — `bench/netsim.ts`, a zero-install TCP impairment proxy (latency/jitter/
-  bandwidth, cellular profiles) in front of the gateway.
+  bandwidth, cellular profiles) in front of the gateway; `bench/netsim-udp.ts` is its UDP sibling for
+  the QUIC/WebTransport path (drops **real** datagrams).
 
 > **Two load generators, one wire contract.** The `bench-load` blueprint
 > (`dimos/robot/benchmark/bench_load.py`) is the coordinator-wired, RPC-controllable *app* driver
@@ -75,10 +80,12 @@ servers + load + teardown):
 
 | command | what it does |
 |---|---|
-| `deno task test` | unit suite (metrics math, seq-loss, decode-axis, rate-limit) — 9 tests |
+| `deno task test` | unit suite (metrics math, seq-loss, decode-axis, rate-limit) |
 | `deno task bench:matrix` | WS/SSE/poll × lan/wifi/4g/3g/2g → `bench/RESULTS-mechanisms.md` |
 | `deno task bench:decode` | client-binary vs server-JSON decode (the 2.64× tax) |
 | `deno task bench:webrtc` | WebRTC DataChannel e2e throughput (aiortc browser stand-in) |
+| `deno task bench:webtransport` | WebTransport (HTTP/3 / QUIC) e2e — datagrams + streams (aioquic probe) |
+| `deno task bench:loss` | WebTransport datagrams under **real** packet loss (`netsim-udp`) |
 | `deno task bench:all` | all of the above in sequence |
 
 Tune with env, e.g. `PROFILES="lan 3g 2g" DUR=3000 deno task bench:matrix`.
@@ -98,7 +105,8 @@ Tune with env, e.g. `PROFILES="lan 3g 2g" DUR=3000 deno task bench:matrix`.
 - **Honest caveat**: on a reliable TCP stream, packet *loss* manifests as retransmit →
   latency/stall, not drops — so `loss%` stays 0 for WS/SSE/poll and impairment shows as
   latency. That is precisely why the **UDP/QUIC** mechanisms (WebRTC, WebTransport) are worth
-  comparing: they don't head-of-line-block, and `loss%` will actually move for them (Phase 2).
+  comparing: they don't head-of-line-block. Measured — `bench/netsim-udp.ts` drops **real** datagrams,
+  and WebTransport's delivered-datagram p95 stays flat at 16 ms to 20% loss (see Results).
 
 ---
 
@@ -150,8 +158,25 @@ the gateway I/O-bound.
 
 A headless aiortc probe pulls **~350 Hz** of `/bench/*` over a real unordered/`maxRetransmits:0`
 DataChannel relayed from the live gateway — binary frames (no base64), no TCP head-of-line blocking.
-Its advantage over WS *under loss* needs link-level shaping (Network Link Conditioner / dummynet — the
-TCP netsim proxy can't shape QUIC/UDP); that loss measurement is the remaining Phase-2 step.
+Its advantage over WS *under loss* is measured for the sibling QUIC datagram path (WebTransport) below.
+
+### WebTransport (e2e + loss) — `deno task bench:webtransport` / `bench:loss`
+
+A headless aioquic probe pulls ~**330 Hz** from `servers/webtransport.py`, which **size-routes** small
+frames over **datagrams** and large frames over per-frame **unidirectional streams** (clean link:
+datagram p95 ≈ 2 ms, stream p95 ≈ 9 ms). Verified in **real Chrome** via `serverCertificateHashes`
+(917 datagrams + 81 streams in 3 s). The loss payoff (`bench:loss` through the `netsim-udp` real-drop
+relay, latency held at 10 ms ± 5 to isolate loss):
+
+| drop | datagrams/s | dgP50 | dgP95 |
+|---|--:|--:|--:|
+| 0% (direct) | 299 | 0 | 0 |
+| 10% | 271 | 11 | 16 |
+| 20% | 237 | 11 | **16** |
+
+Delivered-datagram **p95 stays flat (16 ms) to 20% loss while throughput degrades linearly** — no
+head-of-line blocking. The same loss on a reliable WS/TCP stream becomes retransmit→stall (the matrix's
+3g/2g p95 is 1400–1900 ms). This reproduces the independent `realtime-web` result on our own stack.
 
 ---
 
@@ -163,15 +188,18 @@ WS/WebRTC, so it's no good for reproducible/CI runs. `tc/netem` is Linux-only (h
 
 | tool | layer | platforms | UDP/QUIC | scriptable | role here |
 |---|---|---|---|---|---|
-| **`bench/netsim.ts`** (this repo) | TCP proxy | all (Deno) | ❌ | ✅ env/profiles | **chosen** — zero-install, controllable, one binary fewer |
+| **`bench/netsim.ts`** (this repo) | TCP proxy | all (Deno) | ❌ | ✅ env/profiles | **chosen** (TCP) — zero-install, controllable, one binary fewer |
+| **`bench/netsim-udp.ts`** (this repo) | UDP relay | all (Deno) | ✅ | ✅ env/profiles | **chosen** (QUIC/WebTransport) — drops **real** datagrams, no sudo |
 | **toxiproxy** (Shopify) | TCP proxy | all | ❌ | ✅ HTTP API | industry standard for TCP fault injection; drop-in if preferred |
-| **dummynet** (`dnctl`+`pfctl`) | link | macOS/BSD | ✅ | ✅ per-port | needed for the **UDP/QUIC** mechanisms (Phase 2) on macOS |
+| **dummynet** (`dnctl`+`pfctl`) | link | macOS/BSD | ✅ | ✅ per-port | system-wide UDP shaping; the fallback for a symmetric raw-drop test on TCP too |
 | **tc/netem** | link (kernel) | Linux | ✅ | ✅ | most reproducible; CI in a Linux container |
 | comcast / Network Link Conditioner | link | x-platform / macOS | ✅ | CLI / GUI | quick device-level profiles |
 
-We built `netsim.ts` because it's zero-install, fully scriptable from the matrix, and impairs
-every TCP mechanism uniformly. For the Phase-2 UDP/QUIC mechanisms we'll add **dummynet**
-(macOS-native) or **netem-in-a-container**, since a TCP proxy can't shape QUIC.
+We built `netsim.ts` because it's zero-install, fully scriptable from the matrix, and impairs every TCP
+mechanism uniformly. A TCP proxy can't carry QUIC, so `netsim-udp.ts` is its UDP sibling — it relays
+QUIC datagrams and drops a configurable fraction (real loss), giving the WebTransport loss bench without
+sudo. **dummynet** (macOS-native) / **netem** stay the fallback for *system-wide* shaping (and a
+symmetric raw-drop test on the TCP mechanisms too).
 
 ### Simulating bad networks in the browser (not just the headless bench)
 
@@ -207,12 +235,13 @@ gateway, so the camera stays direct (use NLC for it).
   block WS; poll as the universal baseline. Don't put the heavy streams on either.
 - **Decode location: keep client-binary** (the relay). Measured **2.64× bandwidth** + gateway CPU
   for server-JSON — the rosbridge wall, avoided.
-- **WebRTC DataChannel is built + e2e-verified.** The remaining Phase-2 step is its *loss* test (it
-  needs link-level shaping, not the TCP proxy), where it should beat WS — the independent
-  `realtime-web` benchmark shows exactly this under 15% loss.
-- **Phase 2 — deferred, documented not built:** **WebTransport** (HTTP/3 via `aioquic` + a
-  self-signed-cert browser handshake), **zenoh-ts hardening** (reconnect + live discovery), and the
-  **in-browser 6-mechanism loss comparison** under Network Link Conditioner / dummynet.
+- **WebRTC DataChannel + WebTransport are built + e2e-verified.** WebTransport (HTTP/3 via `aioquic`,
+  datagrams + streams, browser handshake over `serverCertificateHashes`) is measured under **real**
+  packet loss via `bench/netsim-udp.ts`: delivered-datagram p95 stays flat at 16 ms to 20% loss while
+  WS/TCP p95 hits seconds — matching the independent `realtime-web` result.
+- **Phase 2 — deferred, documented not built:** **zenoh-ts hardening** (reconnect + live discovery), and
+  a **symmetric raw-drop comparison** putting all six mechanisms on one chart (kernel shaping via
+  dummynet/netem so the TCP mechanisms face real drops too).
 
 ---
 
