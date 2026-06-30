@@ -181,6 +181,11 @@ body {
   background: color-mix(in srgb, var(--accent) 8%, var(--elev));
 }
 .center-viz { display: flex; flex: 1; min-height: 520px; }
+/* spatial (lidar/map) is now a SECONDARY panel in the side column — the camera took the center */
+.spatial { display: flex; flex-direction: column; gap: 8px; }
+.spatial-viz { display: flex; height: 320px; }
+/* Rerun = full-page 3D mode: spans the whole row below the topbar (sidebar + side-col unmounted) */
+.rerun-full { grid-row: 2; grid-column: 1 / -1; display: flex; padding: 16px; min-height: 0; }
 
 .panel {
   background: var(--panel);
@@ -240,6 +245,9 @@ body {
 
 /* ── motion — one orchestrated page-load reveal + the live status pulse ───── */
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+/* fade = opacity-only (NO transform). Use where a descendant needs position:fixed (the camera
+   "enlarge"): a transform-animation makes the ancestor a containing block and breaks fixed. */
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes pulse {
   0% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 65%, transparent); }
   70%, 100% { box-shadow: 0 0 0 7px transparent; }
@@ -248,7 +256,7 @@ body {
 
 .topbar { animation: rise 0.4s ease both; }
 .sidebar { animation: rise 0.45s ease 0.05s both; }
-.center-col { animation: rise 0.45s ease 0.1s both; }
+.center-col { animation: fade 0.45s ease 0.1s both; } /* fade, not rise → the camera's fullscreen resolves to the viewport */
 .side-col > * { animation: rise 0.45s ease both; }
 .side-col > *:nth-child(1) { animation-delay: 0.12s; }
 .side-col > *:nth-child(2) { animation-delay: 0.17s; }

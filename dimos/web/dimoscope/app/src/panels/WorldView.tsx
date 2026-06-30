@@ -7,7 +7,7 @@
 // canvas is responsive (ResizeObserver + devicePixelRatio). Uses useTopicRef + a
 // requestAnimationFrame loop: redraws at display rate, never re-rendering per message.
 import { useEffect, useRef, useState } from "react";
-import { useDimosClient, useTopicRef, useTopics, type TopicInfo } from "@dimos/react";
+import { useDimosClient, useTopicRef, useTopics, useTopicStats, type TopicInfo } from "@dimos/react";
 
 const LIDAR_CAP = 4000; // max points rendered per frame (stride-decimated)
 const DEFAULT_SCALE = 64; // px per metre at rest
@@ -20,6 +20,33 @@ function quatToYaw(q: { x: number; y: number; z: number; w: number }): number {
 function pick(topics: TopicInfo[], type: string, prefer: string[]): string | null {
   for (const p of prefer) if (topics.find((t) => t.topic === p && t.type === type)) return p;
   return topics.find((t) => t.type === type)?.topic ?? null;
+}
+
+function fmtBw(bps?: number): string {
+  if (!bps) return "";
+  const kb = bps / 1000;
+  return kb >= 1000 ? `${(kb / 1000).toFixed(1)} MB/s` : kb >= 1 ? `${kb.toFixed(0)} kB/s` : "";
+}
+
+/** A layer toggle that ALSO shows the layer's live bandwidth — so turning lidar OFF visibly drops
+ *  ~2 MB/s (true on-demand: OFF passes null to useTopicRef → unsubscribes the topic on the wire). */
+function LayerChip({ name, topic, color, on, onToggle }: {
+  name: string; topic: string; color: string; on: boolean; onToggle: () => void;
+}) {
+  const stats = useTopicStats(topic); // passive read — decays to 0 when the layer is off
+  const bw = on ? fmtBw(stats?.bytesPerSec) : "";
+  return (
+    <button
+      className={on ? "tab tab-active" : "tab"}
+      onClick={onToggle}
+      title={`${on ? "subscribed" : "off — saves bandwidth"} · ${topic}`}
+      style={{ padding: "2px 8px", display: "flex", alignItems: "center", gap: 5 }}
+    >
+      <span style={{ width: 7, height: 7, borderRadius: "50%", background: color, opacity: on ? 1 : 0.3 }} />
+      {name}
+      {bw && <span className="muted" style={{ fontSize: 10 }}>{bw}</span>}
+    </button>
+  );
 }
 
 export function WorldView() {
@@ -311,18 +338,14 @@ export function WorldView() {
         {chips
           .filter(([, t]) => t)
           .map(([k, t, c]) => (
-            <button
+            <LayerChip
               key={k}
-              className={layers[k] ? "tab tab-active" : "tab"}
-              onClick={() => setLayers((s) => ({ ...s, [k]: !s[k] }))}
-              title={`${layers[k] ? "subscribed" : "off"} · ${t}`}
-              style={{ padding: "2px 8px", display: "flex", alignItems: "center", gap: 5 }}
-            >
-              <span
-                style={{ width: 7, height: 7, borderRadius: "50%", background: c, opacity: layers[k] ? 1 : 0.3 }}
-              />
-              {k}
-            </button>
+              name={k}
+              topic={t!}
+              color={c}
+              on={layers[k]}
+              onToggle={() => setLayers((s) => ({ ...s, [k]: !s[k] }))}
+            />
           ))}
       </div>
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>

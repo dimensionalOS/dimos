@@ -52,6 +52,15 @@ export function App() {
           dimo<span>scope</span>
         </span>
         <span className={`status status-${status}`}>{status}</span>
+        {/* mode switch — console (WorldView) ⇄ full-page 3D (Rerun) */}
+        <div className="tabs" style={{ marginLeft: 6 }}>
+          <button className={`tab ${tab === "2d" ? "tab-active" : ""}`} onClick={() => setTab("2d")}>
+            WorldView
+          </button>
+          <button className={`tab ${tab === "3d" ? "tab-active" : ""}`} onClick={() => setTab("3d")}>
+            Rerun · 3D
+          </button>
+        </div>
         <div className="topbar-right">
           {servers.length > 1 && (
             <select
@@ -82,61 +91,52 @@ export function App() {
         </div>
       </header>
 
-      <aside className="sidebar">
-        <div className="sidebar-title">Topics ({topics.length})</div>
-        {topics.length === 0 && (
-          <div className="muted small">discovering… is the gateway + a source running?</div>
-        )}
-        {topics.map((t) => (
-          <button
-            key={t.topic}
-            className={`topic ${selected === t.topic ? "topic-sel" : ""}`}
-            onClick={() => setSelected(selected === t.topic ? null : t.topic)}
-          >
-            <div className="topic-name">{t.topic}</div>
-            <div className="topic-type">{t.type}</div>
-          </button>
-        ))}
-      </aside>
+      {/* ── WorldView mode = the operator console (camera center + side panels). It UNMOUNTS in Rerun
+          mode → frees its camera + lidar/odom/map subscriptions (Rerun has its own gRPC feed). ── */}
+      {tab === "2d" && (
+        <aside className="sidebar">
+          <div className="sidebar-title">Topics ({topics.length})</div>
+          {topics.length === 0 && (
+            <div className="muted small">discovering… is the gateway + a source running?</div>
+          )}
+          {topics.map((t) => (
+            <button
+              key={t.topic}
+              className={`topic ${selected === t.topic ? "topic-sel" : ""}`}
+              onClick={() => setSelected(selected === t.topic ? null : t.topic)}
+            >
+              <div className="topic-name">{t.topic}</div>
+              <div className="topic-type">{t.type}</div>
+            </button>
+          ))}
+        </aside>
+      )}
+      {tab === "2d" && (
+        <main className="main">
+          <div className="center-col">
+            {/* Camera is the PRIMARY view — you drive looking at it (⛶ fullscreen). */}
+            <CameraView mode={mediaMode} primary />
+          </div>
+          <div className="side-col">
+            {/* Spatial 2D (lidar/map): per-layer on/off + live bandwidth (toggle lidar off → drop
+                ~2 MB/s). The WorldView/Rerun mode switch lives in the topbar now. */}
+            <div className="spatial-viz">
+              <WorldView />
+            </div>
+            <PoseReadout />
+            <TeleopPad />
+            <CommandsPanel />
+            <SubscribeBar />
+            {selected ? <Inspector topic={selected} /> : <StatsBar />}
+          </div>
+        </main>
+      )}
 
-      <main className="main">
-        <div className="center-col">
-          <div className="tabs">
-            <button
-              className={`tab ${tab === "2d" ? "tab-active" : ""}`}
-              onClick={() => setTab("2d")}
-            >
-              WorldView · 2D
-            </button>
-            <button
-              className={`tab ${tab === "3d" ? "tab-active" : ""}`}
-              onClick={() => setTab("3d")}
-            >
-              Rerun · 3D
-            </button>
-          </div>
-          {/* WorldView is cheap to unmount (its effects just unsubscribe), so we
-              UNMOUNT it on 3D → frees lidar/odom/map there. Rerun is NOT cheap to
-              remount (a cold grpc re-stream of the recording freezes the renderer),
-              so keep it WARM-mounted and merely hide it on 2D; its render throttles
-              while display:none and it switches in instantly. */}
-          <div className="center-viz" style={tab === "2d" ? undefined : { display: "none" }}>
-            {tab === "2d" && <WorldView />}
-          </div>
-          <div className="center-viz" style={tab === "3d" ? undefined : { display: "none" }}>
-            <RerunPanel active={tab === "3d"} />
-          </div>
-        </div>
-        <div className="side-col">
-          {/* On 3D, Rerun shows the camera in its own viewport — skip the ~11 MB/s side feed. */}
-          {tab === "2d" && <CameraView mode={mediaMode} />}
-          <PoseReadout />
-          <TeleopPad />
-          <CommandsPanel />
-          <SubscribeBar />
-          {selected ? <Inspector topic={selected} /> : <StatsBar />}
-        </div>
-      </main>
+      {/* ── Rerun = full-page 3D. Always mounted (warm) so switching is instant + avoids a cold gRPC
+          re-stream; shown only when the topbar mode = Rerun. ── */}
+      <div className="rerun-full" style={tab === "3d" ? undefined : { display: "none" }}>
+        <RerunPanel active={tab === "3d"} />
+      </div>
     </div>
   );
 }
