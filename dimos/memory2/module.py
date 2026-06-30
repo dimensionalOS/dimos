@@ -41,7 +41,6 @@ from dimos.models.embedding.base import EmbeddingModel
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.pubsub.impl.lcmpubsub import Topic
 from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
 
@@ -454,8 +453,13 @@ class Recorder(MemoryModule):
         return setters
 
     def _record_tf(self) -> None:
-        """Record the live tf + static_tf streams under "tf", writing the topology
-        change-log (tf_graph) as we go (no-op without a pubsub tf)."""
+        """Record the live tf stream under "tf", writing the topology change-log
+        (tf_graph) as we go (no-op without a pubsub tf).
+
+        Static mount frames are re-published onto this same tf stream by the rig's
+        StaticTfPublisher, so they're captured here too — there's no separate raw
+        static-tf topic. (Static-vs-dynamic is recovered offline by ``DbTf``'s graph
+        build from whether a frame's pose ever changes.)"""
         topic = getattr(self.tf.config, "topic", None)
         pubsub = getattr(self.tf, "pubsub", None)
         if not topic or pubsub is None:
@@ -467,38 +471,25 @@ class Recorder(MemoryModule):
         # the "tf_graph" stream is the topology change-log transform lookups walk.
         structure: dict[str, dict[str, Any]] = {}
 
-        def record_graph(child: str, parent: str, is_static: bool, ts: float) -> None:
-            entry = {"parent": parent, "static": bool(is_static)}
+        def record_graph(child: str, parent: str, ts: float) -> None:
+            entry = {"parent": parent, "static": False}
             if structure.get(child) == entry:
                 return  # no structural change -> no new snapshot
             structure[child] = entry
             graph_stream.append(TfGraph(structure), ts=ts)
 
-        def make_handler(is_static: bool) -> Any:
-            def on_tf(msg: TFMessage, _topic: Any) -> None:
-                try:
-                    for transform in msg.transforms:
-                        tf_stream.append(
-                            TFMessage(transform),
-                            ts=transform.ts,
-                            pose=None,
-                            tags={"child_frame": transform.child_frame_id},
-                        )
-                        record_graph(
-                            transform.child_frame_id,
-                            transform.frame_id,
-                            is_static,
-                            transform.ts,
-                        )
-                except sqlite3.ProgrammingError:
-                    # A late LCM callback raced teardown and hit the closed store.
-                    pass
+        def on_tf(msg: TFMessage, _topic: Any) -> None:
+            try:
+                for transform in msg.transforms:
+                    tf_stream.append(
+                        TFMessage(transform),
+                        ts=transform.ts,
+                        pose=None,
+                        tags={"child_frame": transform.child_frame_id},
+                    )
+                    record_graph(transform.child_frame_id, transform.frame_id, transform.ts)
+            except sqlite3.ProgrammingError:
+                # A late LCM callback raced teardown and hit the closed store.
+                pass
 
-            return on_tf
-
-        self.register_disposable(Disposable(pubsub.subscribe(topic, make_handler(False))))
-        # Also listen on the static_tf stream (nothing publishes it yet); these are
-        # recorded the same way but flagged static in the topology.
-        self.register_disposable(
-            Disposable(pubsub.subscribe(Topic("/tf_static", TFMessage), make_handler(True)))
-        )
+        self.register_disposable(Disposable(pubsub.subscribe(topic, on_tf)))
