@@ -37,6 +37,7 @@ import numpy as np
 import pyzed.sl as sl
 import rerun as rr
 import rerun.blueprint as rrb
+from scipy.ndimage import median_filter, uniform_filter
 
 
 # ── Voxel key packing ────────────────────────────────────────────────────────
@@ -96,6 +97,60 @@ def _filter_isolated(xyz: np.ndarray, voxel: float = 0.05, min_pts: int = 2) -> 
     vk  = np.floor(xyz / voxel).astype(np.int32)
     _, inv, cnt = np.unique(_pack(vk), return_inverse=True, return_counts=True)
     return xyz[cnt[inv] >= min_pts]
+
+
+# ── Local support filter ─────────────────────────────────────────────────────
+
+@dataclass
+class LocalSupportConfig:
+    window_radius: int   = 4     # pixels each side; 4 → 9×9 = 81 neighbours
+    depth_tolerance: float = 0.10  # metres; neighbours within this → consistent
+    min_support: float   = 3.0   # gate threshold applied downstream (not here)
+    conf_weight: float   = 0.5   # exponent on neighbour confidence before summing
+
+
+class LocalSupportFilter:
+    """Confidence-weighted neighbourhood support score, computed in image space.
+
+    For each valid depth pixel (i, j) the score is:
+
+        support[i,j] = Σ_{k,l ∈ window} (conf[k,l]/100)^w  ×  [|d[k,l] − d_med| < tol]
+
+    where d_med is the local depth median over the window.  Using the local median
+    as the reference rather than d[i,j] itself means the score reflects how much
+    of the neighbourhood agrees with the dominant surface — not with a potentially
+    outlier pixel's own reading.
+
+    Output is a float32 H×W array of raw scores (not thresholded).  The caller
+    decides the gate; points carry their score into the accumulator so future
+    stages can weight evidence as  occupancy += confidence × support.
+    """
+
+    def __init__(self, cfg: LocalSupportConfig | None = None) -> None:
+        self.cfg = cfg or LocalSupportConfig()
+
+    def compute(self, depth: np.ndarray, conf: np.ndarray) -> np.ndarray:
+        """Return support score H×W (float32, 0 where pixel is invalid)."""
+        cfg = self.cfg
+        w   = 2 * cfg.window_radius + 1
+
+        valid   = np.isfinite(depth) & np.isfinite(conf) & (conf >= 0)
+        depth_f = np.where(valid, depth, 0.0).astype(np.float32)
+        conf_n  = np.where(valid, conf / 100.0, 0.0).astype(np.float32)
+
+        # Dominant surface depth in the neighbourhood
+        local_med = median_filter(depth_f, size=w).astype(np.float32)
+
+        # Which pixels agree with the local dominant surface?
+        within_tol = valid & (np.abs(depth_f - local_med) < cfg.depth_tolerance)
+
+        # Weighted sum of consistent neighbours
+        conf_w  = (conf_n ** cfg.conf_weight) * within_tol.astype(np.float32)
+        support = uniform_filter(conf_w, size=w) * float(w * w)
+
+        # A pixel's own score is zero if it doesn't agree with its neighbourhood
+        support = np.where(within_tol, support, 0.0)
+        return support.astype(np.float32)
 
 
 # ── Optical-frame → camera_link rotation ─────────────────────────────────────
@@ -284,8 +339,19 @@ class DepthBackprojector:
     can color points by stereo reliability without a separate lookup.
     """
 
-    def project(self, pkt: DepthFramePacket) -> tuple[np.ndarray, np.ndarray]:
-        """Return (xyz (N,3) float32, conf (N,) float32)."""
+    def project(
+        self,
+        pkt: DepthFramePacket,
+        support: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Return (xyz (N,3), conf (N,), support (N,)) for all valid depth pixels.
+
+        Backprojects every pixel that passes the basic validity check (finite depth).
+        If a support H×W array is provided, its values are attached per-point so
+        downstream stages can weight evidence as  occupancy += confidence × support.
+        No points are discarded here based on support — that decision belongs to the
+        accumulator.
+        """
         d = pkt.depth
         H, W = d.shape
         fx, fy, cx, cy = pkt.intrinsics
@@ -301,16 +367,21 @@ class DepthBackprojector:
         y_opt = (vv[valid] - cy) * dd / fy
         z_opt = dd
 
-        xyz_opt  = np.column_stack([x_opt, y_opt, z_opt]).astype(np.float32)
-        xyz_link = xyz_opt @ _R_OPT_TO_LINK.T
+        xyz_opt   = np.column_stack([x_opt, y_opt, z_opt]).astype(np.float32)
+        xyz_link  = xyz_opt @ _R_OPT_TO_LINK.T
         xyz_world = xyz_link @ pkt.pose_R.T + pkt.pose_t
 
-        conf = (
+        conf_out = (
             pkt.confidence[valid].astype(np.float32)
             if pkt.confidence is not None
             else np.full(len(xyz_world), 100.0, dtype=np.float32)
         )
-        return xyz_world, conf
+        support_out = (
+            support[valid].astype(np.float32)
+            if support is not None
+            else np.ones(len(xyz_world), dtype=np.float32)
+        )
+        return xyz_world, conf_out, support_out
 
 
 # ── Stage 5: Voxel accumulator ────────────────────────────────────────────────
@@ -468,19 +539,23 @@ class DepthStreamer:
 
     def __init__(
         self,
-        depth_filter: DepthFilter,
-        intrinsics:   IntrinsicsReader,
-        pose:         PoseReader,
-        backproj:     DepthBackprojector,
+        depth_filter:   DepthFilter,
+        intrinsics:     IntrinsicsReader,
+        pose:           PoseReader,
+        backproj:       DepthBackprojector,
+        support_filter: LocalSupportFilter | None = None,
     ) -> None:
         self._filt           = depth_filter
         self._intr           = intrinsics
         self._pose           = pose
         self._bp             = backproj
+        self._support        = support_filter or LocalSupportFilter()
         self._vox            = VoxelAccumulator(voxel_size=0.08)  # sure obstacles
         self._vox_bg         = VoxelAccumulator(voxel_size=0.08)  # weak hits: walls, low-confidence surfaces
         self._cam_z          = 0.0
         self._pinhole_logged = False
+        self._last_n_valid     = 0
+        self._last_n_supported = 0
 
     def assemble(self, zed: sl.Camera, ts: float) -> DepthFramePacket:
         self._intr.read(zed)
@@ -507,11 +582,37 @@ class DepthStreamer:
 
         rr.log("world/camera/depth", rr.DepthImage(pkt.depth, meter=1.0))
 
-        xyz, conf = self._bp.project(pkt)
+        # ── Local support: score every pixel in image space ───────────────────
+        conf_img = (
+            pkt.confidence
+            if pkt.confidence is not None
+            else np.full(pkt.depth.shape, 100.0, dtype=np.float32)
+        )
+        support_img = self._support.compute(pkt.depth, conf_img)
+        self._last_n_valid     = int(np.isfinite(pkt.depth).sum())
+        self._last_n_supported = int((support_img >= self._support.cfg.min_support).sum())
+
+        # Log support image so we can inspect which pixels pass in Rerun
+        w = 2 * self._support.cfg.window_radius + 1
+        rr.log("world/camera/support",
+               rr.Image(np.clip(support_img / float(w * w), 0.0, 1.0)))
+
+        # ── Backproject: all valid pixels, each carries (xyz, conf, support) ──
+        xyz, conf, support = self._bp.project(pkt, support_img)
         if len(xyz) == 0:
             return
 
-        # ── Live cloud: both tiers, every frame ──────────────────────────────
+        # Gate: drop pixels with no neighbourhood support (truly isolated / invalid).
+        # Points above min_support carry their score into the accumulator;
+        # future stages can weight evidence as  occupancy += confidence × support.
+        supported = support >= self._support.cfg.min_support
+        xyz     = xyz[supported]
+        conf    = conf[supported]
+        support = support[supported]
+        if len(xyz) == 0:
+            return
+
+        # ── Live cloud: colour by support strength (blue=low, red=high) ──────
         n   = min(len(xyz), self.MAX_CLOUD)
         idx = np.random.choice(len(xyz), n, replace=False) if len(xyz) > n else np.arange(n)
         sure   = conf[idx] >= self.CONF_SURE
@@ -547,8 +648,6 @@ class DepthStreamer:
                 self._vox.add(xyz_sure)
 
             # Weak tier — low-confidence surfaces (walls, smooth/distant geometry)
-            # min_pts=8: walls produce dense returns across large areas; displays and
-            # specular reflections are smaller and sparser — they fail this threshold
             xyz_weak = _obs_filter(_filter_isolated(
                 xyz[(conf >= self.CONF_WEAK) & (conf < self.CONF_SURE)],
                 min_pts=8,
@@ -573,12 +672,17 @@ class DepthStreamer:
             radii=0.005,
         ))
 
-    def log_stdout(self, pkt: DepthFramePacket, frame: int, fps: float) -> None:
+    def log_stdout(
+        self, pkt: DepthFramePacket, frame: int, fps: float,
+        n_valid: int = 0, n_supported: int = 0,
+    ) -> None:
         lock   = "LOCKED" if self._pose.locked else "searching"
         stable = len(self._vox.stable_xyz(min_obs=2))
         walls  = len(self._vox_bg.stable_xyz(min_obs=5))
+        pct    = 100 * n_supported / n_valid if n_valid > 0 else 0.0
         print(
             f"frame={frame:5d}  "
+            f"supported={n_supported:5d}/{n_valid:5d} ({pct:.0f}%)  "
             f"stable={stable:6d}  walls={walls:6d}  "
             f"cam_z={self._cam_z:+.2f}m  vio={lock}  fps={fps:.1f}",
             flush=True,
@@ -626,6 +730,12 @@ def main() -> None:
         IntrinsicsReader(),
         PoseReader(),
         DepthBackprojector(),
+        LocalSupportFilter(LocalSupportConfig(
+            window_radius=4,      # 9×9 neighbourhood
+            depth_tolerance=0.10, # 10 cm agreement band
+            min_support=3.0,      # ~4 consistent neighbours minimum
+            conf_weight=0.5,
+        )),
     )
 
     streamer._pose.enable(zed)
@@ -650,7 +760,9 @@ def main() -> None:
             ts  = time.monotonic()
             pkt = streamer.assemble(zed, ts)
             streamer.process(pkt, frame)
-            streamer.log_stdout(pkt, frame, frame / max(ts - t0, 1e-6))
+            streamer.log_stdout(pkt, frame, frame / max(ts - t0, 1e-6),
+                                n_valid=streamer._last_n_valid,
+                                n_supported=streamer._last_n_supported)
             frame += 1
     except KeyboardInterrupt:
         pass
