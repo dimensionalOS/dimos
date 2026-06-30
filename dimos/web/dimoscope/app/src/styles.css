@@ -269,6 +269,60 @@ body {
   min-height: 0;
 }
 
+/* Bench = full-page interactive benchmark: spans the row below the topbar, scrolls. */
+.bench-full {
+  grid-row: 2;
+  grid-column: 1 / -1;
+  padding: 16px;
+  min-height: 0;
+  overflow: auto;
+}
+.bench-tab > .panel-title {
+  font-size: 13px;
+}
+.bench-grid {
+  display: grid;
+  grid-template-columns: minmax(340px, 1fr) 1fr;
+  gap: 12px;
+  align-items: start;
+}
+.bench-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.bench-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.bench-label {
+  font: 600 11px var(--mono);
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.bench-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.bench-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.badge-warn {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+@media (max-width: 900px) {
+  .bench-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);

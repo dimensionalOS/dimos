@@ -113,7 +113,8 @@ class BenchSource(Module):
                     )
                 )
 
-        self.register_disposable(rx.interval(1.0 / c.rate_hz).subscribe(tick_pose))
+        if c.rate_hz > 0:  # rate_hz=0 → pose off (heavy-stream-only profiles)
+            self.register_disposable(rx.interval(1.0 / c.rate_hz).subscribe(tick_pose))
 
         if c.grid_hz > 0:
             self.register_disposable(

@@ -20,6 +20,7 @@ import type {
   Status,
   TopicInfo,
   TopicStats,
+  TransportCaps,
   VideoMeta,
 } from "@dimos/topics";
 
@@ -28,6 +29,10 @@ export interface ServerOpt {
   id: string;
   label: string;
   connect: () => Promise<DimosClient>;
+  /** The gateway WS URL, when this server is a plain gateway transport (ws/sse/poll). Lets a
+   *  panel open a sibling client to the same gateway (e.g. the Bench tab's server-json decode A/B).
+   *  Absent for zenoh-ts/webrtc, which have no single gateway URL. */
+  url?: string;
   /** Media-plane config for this server: where the camera can come from (WebRTC gateway +
    *  which kinds it can serve). Absent/jpeg-only → the camera uses the Image-topic floor. */
   media?: { gatewayUrl?: string; kinds?: readonly MediaKind[] };
@@ -120,6 +125,11 @@ export const useServers = () => {
   const { servers, activeId, setActiveId } = useContext(Ctx);
   return { servers, activeId, setActiveId };
 };
+
+/** The active transport's capabilities (on-demand, discovery, qos) — for QoS-aware UI. */
+export function useCaps(): TransportCaps | null {
+  return useDimosClient()?.caps ?? null;
+}
 
 /** Live list of discovered topics. */
 export function useTopics(): TopicInfo[] {
@@ -616,8 +626,10 @@ export function useCommands(): CommandInfo[] {
 export type {
   CommandInfo,
   MessageMeta,
+  Qos,
   Status,
   TopicInfo,
   TopicStats,
+  TransportCaps,
   VideoMeta,
 } from "@dimos/topics";

@@ -19,6 +19,7 @@ import { StatsBar } from "./panels/StatsBar";
 import { RerunPanel } from "./panels/RerunPanel";
 import { CommandsPanel } from "./panels/CommandsPanel";
 import { BenchPanel } from "./panels/BenchPanel";
+import { BenchTab } from "./panels/BenchTab";
 
 function Inspector({ topic }: { topic: string }) {
   const { data, meta } = useTopicLatest<any>(topic, { maxHz: 4 });
@@ -50,7 +51,7 @@ export function App() {
   const label = useDimosClient()?.gatewayLabel;
   const { servers, activeId, setActiveId } = useServers();
   const [selected, setSelected] = useState<string | null>(null);
-  const [tab, setTab] = useState<"2d" | "3d">("2d");
+  const [tab, setTab] = useState<"2d" | "3d" | "bench">("2d");
   const [mediaMode, setMediaMode] = useState<MediaMode>("auto");
 
   return (
@@ -76,6 +77,12 @@ export function App() {
             onClick={() => setTab("3d")}
           >
             Rerun · 3D
+          </button>
+          <button
+            className={`tab ${tab === "bench" ? "tab-active" : ""}`}
+            onClick={() => setTab("bench")}
+          >
+            Bench
           </button>
         </div>
         <div className="topbar-right">
@@ -161,6 +168,17 @@ export function App() {
       <div className="rerun-full" style={tab === "3d" ? undefined : { display: "none" }}>
         <RerunPanel active={tab === "3d"} />
       </div>
+
+      {
+        /* ── Bench = full-page interactive benchmark. MOUNT/UNMOUNT (unlike Rerun): leaving the tab
+          drops its monitor subscriptions + aborts an in-flight sweep, so it never floods in the
+          background. ── */
+      }
+      {tab === "bench" && (
+        <div className="bench-full">
+          <BenchTab />
+        </div>
+      )}
     </div>
   );
 }

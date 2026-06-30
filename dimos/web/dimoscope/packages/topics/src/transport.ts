@@ -1,7 +1,7 @@
 // The transport abstraction — mirrors DimOS's Python Transport layer.
 // Implementations: GatewayWsTransport (Bun/LCM or Python/Zenoh gateway, primary),
 // and (future) a direct zenoh-ts adapter. The client is transport-agnostic.
-import type { TopicInfo } from "./types.ts";
+import type { QosCaps, TopicInfo } from "./types.ts";
 
 export type Status = "connecting" | "open" | "closed";
 
@@ -22,6 +22,8 @@ export interface TransportCaps {
   /** Does unsubscribe actually stop bytes flowing (vs client-side filtering)? */
   onDemand: boolean;
   discovery: "live" | "wildcard" | "passive";
+  /** Which QoS knobs this transport honors (undefined → client-side maxHz only). */
+  qos?: QosCaps;
 }
 
 /** A dimos `@rpc` command the gateway advertises as browser-callable (from its hello). */

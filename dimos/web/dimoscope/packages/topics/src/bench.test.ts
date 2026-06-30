@@ -72,6 +72,18 @@ Deno.test("measureScenario: no seq stamp → lossPct is NaN", async () => {
   assert.ok(Number.isNaN(r.lossPct));
 });
 
+Deno.test("measureScenario: qos arg is optional-chained (fake topic without setQos doesn't throw)", async () => {
+  const { client, deliver } = fakeClient();
+  // fakeClient.topic() returns an object WITHOUT setQos — passing qos must not throw.
+  const p = measureScenario(client, { name: "t", topics: ["/a"] }, 20, true, {
+    maxHz: 5,
+    rateLimit: "server",
+  });
+  deliver("/a", { srcTs: 0, recvTs: 3, seq: 0 });
+  const r = await p;
+  assert.equal(r.msgs, 1);
+});
+
 Deno.test("onDemandSaving: 1-of-4 vs all-4 kB/s", () => {
   const rows = [
     row({ scenario: "4x (throughput)", topics: 4, kbps: 40 }),

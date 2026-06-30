@@ -1,7 +1,7 @@
 // Topic<T> — a typed handle to one DimOS topic. Manages subscribers, the latest
 // value, rate-limiting (backpressure), and live stats. On-demand: it tells the
 // transport to subscribe only while it has ≥1 subscriber, and unsubscribe at 0.
-import type { Handler, MessageMeta, Subscription, TopicStats } from "./types.ts";
+import type { Handler, MessageMeta, Qos, Subscription, TopicStats } from "./types.ts";
 
 export interface TopicWiring {
   subscribe(topic: string, maxHz?: number): void;
@@ -16,8 +16,12 @@ export interface Topic<T = unknown> {
   /** Same wire behavior — delivery is always newest-first (we never queue). */
   subscribeLatest(handler: Handler<T>): Subscription;
   getLatest(): T | undefined;
-  /** Cap delivery to `hz` (also asks the gateway to downsample → saves bandwidth). */
+  /** Cap delivery to `hz` (also asks the gateway to downsample → saves bandwidth).
+   *  Shorthand for `setQos({ maxHz: hz })` with the current rateLimit location. */
   setRateLimit(hz: number): void;
+  /** Set per-subscription QoS. Client-side fields (maxHz / rateLimit / conflation) take
+   *  effect immediately; transport-level fields are honored only where caps.qos allows. */
+  setQos(qos: Qos): void;
   pause(): void;
   resume(): void;
   stats(): TopicStats;
@@ -36,7 +40,8 @@ export const createTopic = <T = unknown>(deps: TopicDeps): Topic<T> => {
   const handlers = new Set<Handler<T>>();
   let latest: T | undefined;
   let paused = false;
-  let maxHz = 0;
+  let qos: Qos = { rateLimit: "server" };
+  let maxHz = 0; // effective delivery cap (derived from qos)
   let lastDeliver = 0;
   let dropped = 0;
   let count = 0;
@@ -44,9 +49,13 @@ export const createTopic = <T = unknown>(deps: TopicDeps): Topic<T> => {
   const recent: number[] = [];
   const recentBytes: number[] = [];
 
+  // The maxHz we ask the gateway for: only when the rate limit is enforced server-side
+  // (rateLimit:"client" leaves the wire alone — bytes still flow, we drop locally below).
+  const serverHz = () => (qos.rateLimit === "client" ? undefined : (maxHz || undefined));
+
   function subscribe(handler: Handler<T>): Subscription {
     handlers.add(handler);
-    if (handlers.size === 1) wiring.subscribe(name, maxHz || undefined);
+    if (handlers.size === 1) wiring.subscribe(name, serverHz());
     return {
       unsubscribe: () => {
         handlers.delete(handler);
@@ -55,9 +64,15 @@ export const createTopic = <T = unknown>(deps: TopicDeps): Topic<T> => {
     };
   }
 
+  function setQos(next: Qos) {
+    qos = { rateLimit: "server", ...next };
+    // conflation "all" = deliver every message (unlimited); otherwise the maxHz cap.
+    maxHz = qos.conflation === "all" ? 0 : (qos.maxHz ?? 0);
+    if (handlers.size > 0) wiring.subscribe(name, serverHz());
+  }
+
   function setRateLimit(hz: number) {
-    maxHz = hz;
-    if (handlers.size > 0) wiring.subscribe(name, hz || undefined);
+    setQos({ ...qos, maxHz: hz });
   }
 
   function stats(): TopicStats {
@@ -98,6 +113,7 @@ export const createTopic = <T = unknown>(deps: TopicDeps): Topic<T> => {
     subscribeLatest: subscribe,
     getLatest: () => latest,
     setRateLimit,
+    setQos,
     pause: () => {
       paused = true;
     },

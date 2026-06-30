@@ -6,7 +6,7 @@
 import { createGatewayWsTransport } from "./adapters/gatewayWs.ts";
 import { decodeBody, seqFrom, srcTsMs } from "./decode.ts";
 import { createTopic, type Topic } from "./topic.ts";
-import type { CommandInfo, RawSample, Status, Transport } from "./transport.ts";
+import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "./transport.ts";
 import type { TopicInfo } from "./types.ts";
 
 export interface ConnectOpts {
@@ -23,6 +23,8 @@ export interface DimosClient {
   listTopics(): TopicInfo[];
   /** The label the connected gateway reports (e.g. "Bun↔LCM", "Python↔Zenoh"). */
   readonly gatewayLabel: string | undefined;
+  /** The active transport's capabilities (on-demand, discovery, qos) — for QoS-aware UI. */
+  readonly caps: TransportCaps;
   onTopics(cb: (t: TopicInfo[]) => void): () => void;
   onStatus(cb: (s: Status) => void): () => void;
   /** Safe teleop — structured velocity; the gateway clamps + runs a TTL watchdog. */
@@ -145,6 +147,9 @@ export const createDimosClient = (deps: DimosClientDeps): DimosClient => {
     listTopics,
     get gatewayLabel() {
       return transport.label;
+    },
+    get caps() {
+      return transport.caps;
     },
     onTopics(cb: (t: TopicInfo[]) => void) {
       topicsListeners.add(cb);

@@ -21,10 +21,24 @@ export { createWebRtcDataTransport } from "./adapters/webRtcData.ts";
 export type { WebRtcDataDeps } from "./adapters/webRtcData.ts";
 export { b64ToBytes, frameToSample } from "./adapters/gatewayFrame.ts";
 export { decodeBody, splitChannel, srcTsMs } from "./decode.ts";
-export { BENCH_SCENARIOS, formatMarkdown, measureScenario, onDemandSaving } from "./bench.ts";
-export type { BenchRow, BenchScenario } from "./bench.ts";
+export {
+  BENCH_SCENARIOS,
+  formatMarkdown,
+  measureScenario,
+  onDemandSaving,
+  STREAM_PROFILES,
+} from "./bench.ts";
+export type { BenchRow, BenchScenario, StreamProfile } from "./bench.ts";
 export type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "./transport.ts";
-export type { Handler, MessageMeta, Subscription, TopicInfo, TopicStats } from "./types.ts";
+export type {
+  Handler,
+  MessageMeta,
+  Qos,
+  QosCaps,
+  Subscription,
+  TopicInfo,
+  TopicStats,
+} from "./types.ts";
 // Media plane — pluggable, negotiated video delivery (beside Transport).
 export { browserSupports, selectMediaChannel } from "./media.ts";
 export { createJpegTopicMedia } from "./adapters/jpegTopicMedia.ts";

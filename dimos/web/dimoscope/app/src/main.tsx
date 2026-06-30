@@ -16,12 +16,14 @@ const servers: ServerOpt[] = [
   {
     id: "zenoh",
     label: "Python↔Zenoh",
+    url: `ws://${host}:8088`,
     connect: () => connect({ url: `ws://${host}:8088` }),
     media: { ...MEDIA },
   },
   {
     id: "lcm",
     label: "Bun↔LCM",
+    url: `ws://${host}:8089`,
     connect: () => connect({ url: `ws://${host}:8089` }),
     media: { ...MEDIA },
   },

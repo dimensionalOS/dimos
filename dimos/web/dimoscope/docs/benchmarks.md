@@ -1,46 +1,164 @@
-# dimoscope transport benchmarks
+# dimoscope benchmarks
 
-How the three browser transports compare on throughput, latency, and bandwidth. The headline isn't "which transport wins" — it's that **the gateway is a byte-relay, so language and transport are not the bottleneck**: Python↔Zenoh keeps pace with Deno↔LCM, and the direct `zenoh-ts` path keeps pace with both.
+The master benchmark reference for getting DimOS topics to a browser: **bus transports ·
+delivery mechanisms × network · decode location · load & realistic robot streams · QoS · WebRTC**.
 
-See also: [README](./README.md) · [findings](./findings.md) · raw data: [`../bench/RESULTS.md`](../bench/RESULTS.md) (headless) and [`../bench/RESULTS-browser.md`](../bench/RESULTS-browser.md) (in-browser).
+> **What changed, and why this doc grew.** The first benchmarks tested 4× PoseStamped @ 100 Hz ≈
+> **28 kB/s** — where *every* mechanism looks identical and nothing is decided. **The interesting
+> physics only appear at MB/s** (lidar, depth, camera). This doc benchmarks those, and that's where
+> the real engineering trade-offs live.
 
-## Method
-- Synthetic source (`bench_publisher.py`, no sim) so the numbers reflect the transport path, not a robot.
-- Same scenarios + measurement module (`@dimos/topics/bench`, `bench/bench.ts`) across every transport.
-- **Headless** measures the gateway→browser WS hop (via the gateway send-stamp). **In-browser** measures full **publish→browser** end-to-end for every transport, so `zenoh-ts` (browser-only) is compared apples-to-apples.
-- 4000 ms per scenario.
+See also: [data-path.md](./data-path.md) (the methodology narrative + the two-axes framing) ·
+[README](./README.md) · [findings](./findings.md). Raw data: [`../bench/RESULTS.md`](../bench/RESULTS.md)
+(transports), [`../bench/RESULTS-mechanisms.md`](../bench/RESULTS-mechanisms.md) and
+`../bench/RESULTS-mechanisms-{lidar,dense,camera,mixed}.md` (mechanisms × stream × network).
 
-## Headless (publish→client, end-to-end) — `bench/RESULTS.md`
-4× PoseStamped throughput scenario:
+## Reproduce (one self-contained command each, from `dimos/web/dimoscope/`)
+
+| command | what it measures |
+|---|---|
+| `deno task test` | the SDK unit suite (metrics math, seq-loss, decode-axis, rate-limit) |
+| `deno task bench` / `bench/run.sh all` | **bus transports** — Deno↔LCM · Python↔Zenoh · zenoh-ts |
+| `deno task bench:matrix` | **mechanisms × network** (WS/SSE/poll × lan/wifi/4g/3g/2g) |
+| `STREAM=lidar deno task bench:matrix` | a **heavy stream** (2 MB/s) × network — also `dense`/`camera`/`mixed` |
+| `deno task bench:decode` | **decode location** (client-binary vs server-JSON) |
+| `deno task bench:qos` | **QoS** — rate-limit · on-demand · prioritization |
+| `deno task bench:webrtc` | **WebRTC DataChannel** e2e |
+
+## Methodology
+
+- **Load**: `bench_source.py` (the headless twin of the `bench-load` blueprint) over LCM. Small
+  (PoseStamped), medium (OccupancyGrid), large (Image of N bytes — a byte-accurate proxy for a
+  lidar/depth/camera frame). Each carries `ts` (publish time) + a per-topic `seq`.
+- **Latency = one-way** (`recvTs − srcTs`); publisher and client share a clock (single host).
+- **`loss%` = seq gaps** (received vs the seq span). *Reliable for steady streams; under link
+  **saturation** it inflates* (buffered/late frames widen the span), so at saturation read **hz +
+  latency**, not loss%.
+- **Bad network**: a zero-install TCP impairment proxy (`bench/netsim.ts`) shapes latency/jitter/
+  bandwidth. Profiles: `lan` 0 ms · `wifi` 8 ms/±3 · `4g` 50 ms/±15/**12 Mbps** · `3g` 150 ms/±40/**2
+  Mbps** · `2g` 400 ms/±120/**280 kbps** · `lossy` 80 ms/±80/5 Mbps. (TCP turns packet *loss* into
+  retransmit→latency, so it's shaped as latency/bandwidth — the reason WebRTC/WebTransport are Phase-2.)
+
+---
+
+## 1. Bus transports — language/transport is *not* the bottleneck
+
+4× PoseStamped, headless, end-to-end (publish→client). From `bench/RESULTS.md`:
 
 | transport | hz | kB/s | p50 ms | p95 ms | max ms |
 |---|--:|--:|--:|--:|--:|
 | Deno↔LCM | 333 | 27.97 | 0.44 | 2.04 | 5.31 |
 | Python↔Zenoh | 329 | 27.63 | 0.84 | 3.41 | 5.46 |
-| zenoh-ts (direct, Deno) | 333 | 27.97 | 0.53 | 3.01 | 5.58 |
+| zenoh-ts (direct) | 333 | 27.97 | 0.53 | 3.01 | 5.58 |
 
-Sub-ms p50 on all three; Python↔Zenoh holds parity with Deno↔LCM.
+**Throughput parity, sub-ms p50 on all three.** The gateway is a byte-relay (the browser decodes via
+the self-describing 8-byte hash), so it's I/O-bound, not CPU-bound — Python keeps pace with Deno, and
+direct zenoh-ts keeps pace with both. In-browser the same scenario runs ~417 Hz / p50 ~1–2 ms.
 
-## In-browser (publish→browser, end-to-end) — `bench/RESULTS-browser.md`
-4× PoseStamped throughput scenario, Chrome:
+## 2. Delivery mechanisms × network — the *light* stream (pose)
 
-| transport | hz | kB/s | p50 ms | p95 ms | max ms |
-|---|--:|--:|--:|--:|--:|
-| Python↔Zenoh | 419 | 35.19 | 1.96 | 7.25 | 29.05 |
-| Deno↔LCM | 415.25 | 34.87 | 1.21 | 4.79 | 15.85 |
-| zenoh-ts (direct) | 417 | 35.02 | 1.83 | 6.15 | 24.18 |
+4× PoseStamped @ 100 Hz (~28 kB/s) over the LCM gateway, WS vs SSE vs HTTP-poll:
 
-Throughput parity (~417 Hz); end-to-end latency comparable across all three (p50 ~1.2–2.5 ms, p95 ~5–7 ms). The higher numbers vs headless are the real browser runtime under display load, measured the same way for all three.
+| profile | ws p50 | sse p50 | poll p50 | note |
+|---|--:|--:|--:|---|
+| lan | 1.7 | 1.7 | 2.0 | all equal — **don't choose a mechanism on LAN numbers** |
+| 3g | 282 | 283 | 489 | poll's per-cycle RTT starts to hurt |
+| 2g | 1461 | 1537 | **dead** | poll's request/response can't keep up; SSE's base64 costs ~33% more bytes |
 
-## On-demand bandwidth
-Subscribing **1 of 4** topics delivers **~6.95 kB/s** vs **~27.8 kB/s** for all four — a **~75% reduction** on the WS hop, on every transport.
-- The two **gateways** still read the whole bus and filter per-client on the WS hop (`gateway.ts` downsample; `gateway_zenoh.py` subscribes `**`).
-- **zenoh-ts is true end-to-end on-demand**: the browser `declareSubscriber`s each key, so unsubscribed keys never transit the network *or* the WS — the gateways can't match that.
+On a clean link nothing differentiates; the mechanism only matters as the network degrades — and even
+then, at 28 kB/s, all of them are "fine enough." **The decisive differences need real payload (§3).**
 
-## Takeaways
-1. **Byte-relay ⇒ language isn't the bottleneck.** Python↔Zenoh ≈ Deno↔LCM. The gateway parses nothing (the browser decodes via the self-describing 8-byte hash), so it's I/O-bound, not CPU-bound.
-2. **Throughput parity** across all three transports.
-3. **~75% on-demand saving**, and only `zenoh-ts` makes it *true* end-to-end on-demand.
-4. Latency is **comparable**, not a differentiator at this load — tail (p95/max) is where Zenoh's reliability vs LCM-multicast jitter shows up, but all are well within interactive range.
+## 3. Realistic robot streams — where it actually bites ⭐
 
-> Note: the whole stack runs headless under **Deno** (one workspace) — gateways included. The headless table above is a fresh `bench/run.sh all` run on Deno (2026-06-30); regenerate any time with that command.
+Real streams aren't 28 kB/s. Simulated via `bench_source`'s configurable Image (byte-accurate):
+
+| stream | bytes/frame | rate | throughput |
+|---|--:|--:|--:|
+| **lidar** | ~200 KB | 10 Hz | **~1.85 MB/s** |
+| **dense lidar / depth** | ~1 MB | 20 Hz | **~18 MB/s** |
+| **camera (JPEG)** | ~550 KB | 20 Hz | **~9.8 MB/s** |
+| **mixed** | pose 100 Hz + grid + lidar | — | concurrent fleet |
+
+**lidar (~2 MB/s)** — `STREAM=lidar`:
+
+| profile | mech | hz | kB/s | p50 | p99 |
+|---|---|--:|--:|--:|--:|
+| lan | ws | 9.5 | 1853 | 10.0 | 13.7 |
+| lan | sse | 9.5 | 1853 | **16.6** | 18.8 |
+| lan | poll | 9.5 | 1853 | 9.9 | 14.3 |
+| 4g | ws | **1.25** | 244 | **2107** | 3390 |
+| 4g | sse | 0.75 | 146 | 2025 | 2889 |
+| 4g | poll | 0.25 | 49 | 877 | 877 |
+
+**dense (~18 MB/s)** — `STREAM=dense`:
+
+| profile | mech | hz | MB/s | p50 |
+|---|---|--:|--:|--:|
+| lan | ws | 18.3 | 17.8 | 19.8 |
+| lan | sse | 18.5 | 18.0 | **41.6** |
+| lan | poll | 18.5 | 18.0 | 18.6 |
+| 4g | ws | 0.25 | 0.24 | 3803 |
+| 4g | sse | **0** | **0** | — (dead) |
+| 4g | poll | **0** | **0** | — (dead) |
+
+**camera (~9.8 MB/s)**: LAN all three ~18 Hz/9.8 MB/s (SSE p50 29.5 vs WS 20.9); 4G → WS/SSE limp at
+0.25 Hz/~2 s, poll dead. **mixed**: on 4G the 2 MB/s lidar saturates the link and the pose/telemetry
+topics show **~99% loss** — the heavy stream starves the light ones.
+
+**What the heavy streams reveal (that pose hid):**
+1. **On LAN the mechanism finally matters** — SSE's base64 makes it **1.5–2× the latency** of WS at
+   MB/s (29–42 ms vs 20 ms). On pose this was invisible.
+2. **MB/s streams saturate cellular.** 2 MB/s lidar collapses to ~1 Hz / 2 s on 4G; 10–18 MB/s
+   (camera/dense) is **impossible** on 4G — **SSE and poll die entirely**, WS merely limps.
+3. **Mixed load → light streams suffer** when a heavy one saturates the pipe (→ QoS, §6).
+4. **Conclusion:** heavy streams need a fat pipe (LAN/5G), **compression/decimation**, or the
+   **media plane** (encode-at-source) — not a raw topic relay over cellular.
+
+## 4. Throughput ceiling
+
+The stack **sustains ~18 MB/s on localhost** (dense, all three mechanisms keep full rate). Beyond
+that the gateway/WS becomes the limit — for higher (raw camera ≈ 55 MB/s) you encode at the source and
+carry compressed video on the bus (the media plane), not raw frames.
+
+## 5. Decode location — client-binary vs server-JSON
+
+`deno task bench:decode` (4× PoseStamped + grid): server-side decode→JSON costs **2.64× the bytes** of
+the binary self-describing relay, with worse p99 and gateway CPU — the rosbridge tax. **At MB-scale it's
+catastrophic**: a lidar/point-cloud frame is a packed binary array; as JSON it balloons several-fold
+*and* the gateway pays the deserialize. Keep decode on the client (the gateway stays a byte-relay).
+
+## 6. QoS — the client knobs (`deno task bench:qos`)
+
+| knob | result |
+|---|---|
+| **rate-limit** `setRateLimit(2)` on the 2 MB/s lidar | 1886 → **390 kB/s** (**4.83× less**), client-driven; the gateway downsamples that topic |
+| **on-demand** (subscribe 1 of 4 topics) | 56 → 14 kB/s = **74.9% reduction** (zenoh-ts makes it true end-to-end) |
+| **prioritization** (4G, mixed): cap the lidar so pose survives | pose throughput **79 → 298 Hz (~4×)** when the lidar is rate-limited |
+
+The headline: **rate-limit the heavy stream and the light ones recover** — "pick a budget, keep
+pose/teleop responsive." This is the only client QoS today (rate); Zenoh's reliability/durability QoS
+is publisher-side, so a browser subscriber can't set it (it maps to gateway emulation — future work).
+
+## 7. WebRTC DataChannel (e2e)
+
+`deno task bench:webrtc`: ~**350 Hz** of `/bench/*` over a real unordered/`maxRetransmits:0`
+DataChannel — binary frames (no base64), no TCP head-of-line blocking. Its win over WS shows up *under
+loss*, which needs link-level shaping (Phase 2).
+
+---
+
+## Takeaways — what to use when
+
+| situation | use |
+|---|---|
+| small/medium topics (pose, odom, costmap), any network | **WebSocket binary** — simplest, duplex, fine everywhere |
+| heavy streams (lidar/camera) on **LAN/5G** | **WebSocket binary** (SSE/poll add 1.5–2× latency at MB/s) |
+| heavy streams on **cellular** | **compress/decimate** or the **media plane**; raw MB/s won't fit |
+| protect light streams under load | **rate-limit the heavy ones** (QoS prioritization) |
+| where to decode | **client-binary** — server-JSON is 2.64× at 28 kB/s, catastrophic at MB/s |
+| lossy/remote links (Phase 2) | **WebTransport** datagrams (small/fast) + streams (big) — no HoL |
+
+## Phase 2 (documented, not built)
+**WebTransport** (HTTP/3 — datagrams for small/fast topics, streams for big; reliable reserved for
+control), the **in-browser loss test** under Network Link Conditioner / dummynet (where WebRTC/
+WebTransport beat WS), and **zenoh-ts reconnect + live discovery**.

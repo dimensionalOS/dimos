@@ -3,11 +3,45 @@
 // measure identically. Latency (p50/p95/max), throughput (hz), bandwidth (kB/s), and
 // on-demand WS-hop savings (subscribe 1 of N vs all N). No Bun/Node/file/DOM APIs here.
 import type { DimosClient } from "./client.ts";
+import type { Qos } from "./types.ts";
 
 export interface BenchScenario {
   name: string;
   topics: string[];
 }
+
+/**
+ * A named workload class — mirrors the headless matrix's STREAM axis
+ * (bench/matrix_run.ts + bench/matrix.sh) so in-browser results label-match the
+ * RESULTS-mechanisms-<id>.md tables. The heavy classes (lidar/camera/dense) all
+ * ride the SAME /bench/img topic; the class is a *publisher* config (hz × bytes),
+ * not a distinct topic — so the browser measures whatever the source is emitting
+ * and the `hint` is just what bench/matrix.sh would set the generator to.
+ */
+export interface StreamProfile {
+  id: string;
+  /** topics to subscribe + measure */
+  topics: string[];
+  /** human note on the publisher config / expected load (for the UI). */
+  hint: string;
+}
+
+/** Canonical workload classes — keep `id` + `topics` in sync with bench/matrix_run.ts STREAMS. */
+export const STREAM_PROFILES: StreamProfile[] = [
+  {
+    id: "pose",
+    topics: ["/bench/p0", "/bench/p1", "/bench/p2", "/bench/p3"],
+    hint: "4×Pose@100Hz — small, high-rate",
+  },
+  { id: "lidar", topics: ["/bench/img"], hint: "img@10Hz × 200KB ≈ 2 MB/s" },
+  { id: "camera", topics: ["/bench/img"], hint: "img@20Hz × 550KB ≈ 11 MB/s" },
+  { id: "dense", topics: ["/bench/img"], hint: "img@20Hz × 1MB ≈ 20 MB/s" },
+  {
+    id: "mixed",
+    topics: ["/bench/p0", "/bench/p1", "/bench/p2", "/bench/p3", "/bench/grid", "/bench/img"],
+    hint: "pose@100 + grid@20 + img@10×200KB",
+  },
+];
 export interface BenchRow {
   scenario: string;
   topics: number;
@@ -48,6 +82,7 @@ export async function measureScenario(
   scenario: BenchScenario,
   durMs: number,
   endToEnd = false,
+  qos?: Qos,
 ): Promise<BenchRow> {
   const lat: number[] = [];
   let count = 0;
@@ -55,8 +90,12 @@ export async function measureScenario(
   // Per-topic seq span (first/last seen) + received count → wire loss. Each topic
   // carries its own counter, so loss is computed per topic then pooled.
   const seqStat = new Map<string, { min: number; max: number; recv: number }>();
-  const subs = scenario.topics.map((t) =>
-    client.topic<unknown>(t).subscribe((_d, m) => {
+  const subs = scenario.topics.map((t) => {
+    const topic = client.topic<unknown>(t);
+    // Apply QoS before subscribing so the gateway downsample (rateLimit:"server") is requested
+    // on the first subscribe. Optional-chained so test fakes without setQos don't throw.
+    if (qos) topic.setQos?.(qos);
+    return topic.subscribe((_d, m) => {
       count++;
       bytes += m.sizeBytes;
       const l = endToEnd ? (m.srcTs != null ? m.recvTs - m.srcTs : undefined) : m.latencyMs;
@@ -70,8 +109,8 @@ export async function measureScenario(
           s.recv++;
         }
       }
-    })
-  );
+    });
+  });
   await new Promise((r) => setTimeout(r, durMs));
   subs.forEach((s) => s.unsubscribe());
   lat.sort((a, b) => a - b);

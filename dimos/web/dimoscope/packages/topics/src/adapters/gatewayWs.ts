@@ -15,7 +15,9 @@ export interface GatewayWsDeps {
 }
 
 export const createGatewayWsTransport = (deps: GatewayWsDeps): Transport => {
-  const caps: TransportCaps = { onDemand: true, discovery: "live" };
+  // qos.maxHz "server": the gateway downsamples per subscriber+topic (op:"subscribe" maxHz),
+  // so a rate cap actually removes bytes from the wire — not just client-side filtering.
+  const caps: TransportCaps = { onDemand: true, discovery: "live", qos: { maxHz: "server" } };
   let ws: WebSocket | undefined;
   let sampleCb: ((s: RawSample) => void) | undefined;
   let topicsCb: ((t: TopicInfo[]) => void) | undefined;
