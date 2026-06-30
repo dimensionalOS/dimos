@@ -26,22 +26,17 @@ robot / sim ─► DimOS bus (LCM | Zenoh)
 
 ## Quickstart (real DimOS, no hardware)
 
-From the dimos repo root (uses the repo `.venv`):
+Everything runs from `dimos/web/dimoscope/` via `bun run` (one-time `bun install` there first) — three tabs:
 
 ```bash
-# 1) a robot + sensors (publish /odom + /map over LCM)
-.venv/bin/python examples/simplerobot/simplerobot.py --headless
-.venv/bin/python examples/fakesensors.py
+cd dimos/web/dimoscope && bun install
 
-# 2) the servers — data gateways + the camera media node, each on its own port
-cd dimos/web/dimoscope && bun install && bash servers/start-all.sh
-#   Python↔Zenoh :8088 · Bun↔LCM :8089 · media node :8092 · zenoh-ts bridge :10000
-#   (for the WebRTC/WebCodecs camera, run a ZENOH camera source, e.g.
-#    DIMOS_TRANSPORT=zenoh uv run dimos --simulation mujoco run unitree-go2)
-
-# 3) the app
-cd dimos/web/dimoscope/app && bun install && bun run dev                # http://localhost:5173
+bun run servers   # data gateways :8088/:8089 + media node :8092 + zenoh-ts bridge :10000
+bun run sim       # a ZENOH camera+sensor source (mujoco);  or  sim:dimsim  /  sim:replay
+bun run app       # the Vite app → http://localhost:5173
 ```
+(From anywhere without `cd`: `bun --cwd dimos/web/dimoscope run servers`. Scripts live in
+`dimos/web/dimoscope/package.json`.)
 
 The app auto-discovers topics, draws the map + robot + trail in **WorldView**, shows a live camera
 + pose readout + a **Stats** panel (hz / kB/s / latency), and drives the robot with **WASD / arrows**
