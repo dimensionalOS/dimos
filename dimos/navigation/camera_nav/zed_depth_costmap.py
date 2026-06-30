@@ -151,16 +151,21 @@ _R_OPT_TO_LINK = np.array(
 class DepthFramePacket:
     """One complete depth frame.
 
-    depth: H×W float32, metres.  NaN = invalid/low-confidence/out-of-range.
+    depth:      H×W float32, metres (forward distance). NaN = invalid.
+    xyz_cam_hw: H×W×3 float32, SDK XYZ in camera_link frame (RIGHT_HANDED_Z_UP_X_FWD).
+                When present, DepthBackprojector uses it directly — no manual math.
+    colors_hw:  H×W×3 uint8 RGB. Optional; enables colored live cloud in Rerun.
     """
     timestamp:  float
-    depth:      np.ndarray           # H×W float32, metres, NaN=invalid
-    intrinsics: np.ndarray           # [fx, fy, cx, cy] float64
+    depth:      np.ndarray                    # H×W float32, NaN=invalid
+    intrinsics: np.ndarray                    # [fx, fy, cx, cy] float64
     width:      int
     height:     int
-    pose_R:     np.ndarray           # 3×3 float32  camera→world rotation
-    pose_t:     np.ndarray           # (3,) float32 camera→world translation
-    confidence: np.ndarray | None = field(default=None)  # H×W float32 0-100
+    pose_R:     np.ndarray                    # 3×3 float32  camera→world
+    pose_t:     np.ndarray                    # (3,) float32 camera→world
+    confidence: np.ndarray | None = field(default=None)   # H×W float32 0-100
+    xyz_cam_hw: np.ndarray | None = field(default=None)   # H×W×3 float32
+    colors_hw:  np.ndarray | None = field(default=None)   # H×W×3 uint8 RGB
 
     @property
     def valid_fraction(self) -> float:
@@ -193,7 +198,8 @@ class ZEDDepthSource:
 
     def __init__(self, zed: sl.Camera) -> None:
         self._zed       = zed
-        self._depth_mat = sl.Mat()
+        self._xyz_mat   = sl.Mat()
+        self._img_mat   = sl.Mat()
         self._intr      = _IntrinsicsReader()
         self._pose      = _PoseReader()
 
@@ -207,19 +213,33 @@ class ZEDDepthSource:
     def read(self, ts: float) -> DepthFramePacket:
         self._intr.read(self._zed)
         self._pose.update(self._zed)
-        self._zed.retrieve_measure(self._depth_mat, sl.MEASURE.DEPTH, sl.MEM.CPU)
-        d = self._depth_mat.get_data().astype(np.float32)
-        if d.ndim == 3:
-            d = d[:, :, 0]
-        d[~np.isfinite(d) | (d <= self.MIN_DEPTH) | (d > self.MAX_DEPTH)] = np.nan
+
+        # XYZ: H×W×4 float32 in camera_link frame (RIGHT_HANDED_Z_UP_X_FWD)
+        # Channel layout: [X=fwd, Y=left, Z=up, pad]
+        self._zed.retrieve_measure(self._xyz_mat, sl.MEASURE.XYZ, sl.MEM.CPU)
+        xyz_raw = self._xyz_mat.get_data()[:, :, :3].astype(np.float32)
+
+        # Depth = forward distance = X channel; NaN where ZED has no valid match
+        depth = xyz_raw[:, :, 0].copy()
+        invalid = ~np.isfinite(depth) | (depth <= self.MIN_DEPTH) | (depth > self.MAX_DEPTH)
+        depth[invalid] = np.nan
+        xyz_raw[invalid] = np.nan
+
+        # Left image for colored live cloud (BGRA → RGB)
+        self._zed.retrieve_image(self._img_mat, sl.VIEW.LEFT, sl.MEM.CPU)
+        img = self._img_mat.get_data()
+        colors_hw = img[:, :, 2::-1].copy()  # BGRA → RGB uint8
+
         return DepthFramePacket(
             timestamp  = ts,
-            depth      = d,
+            depth      = depth,
             intrinsics = self._intr.intrinsics,
             width      = self._intr.width,
             height     = self._intr.height,
             pose_R     = self._pose.R.copy(),
             pose_t     = self._pose.t.copy(),
+            xyz_cam_hw = xyz_raw,
+            colors_hw  = colors_hw,
         )
 
 
@@ -318,53 +338,40 @@ class _PoseReader:
 # ── Stage 4: Backprojector ────────────────────────────────────────────────────
 
 class DepthBackprojector:
-    """DepthFramePacket → (xyz N×3, conf N) in camera-link frame.
+    """DepthFramePacket → (xyz N×3 world-frame, colors N×3 uint8).
 
-    Three-step transform:
-      1. Pinhole backproject (u,v,d) → camera-optical frame
-      2. _R_OPT_TO_LINK            → camera_link frame (X=fwd, Y=left, Z=up)
-      3. VIO pose_R / pose_t        → world frame  (identity before VIO locks)
+    Fast path (ZEDDepthSource): pkt.xyz_cam_hw is already SDK-computed in
+    camera_link frame (RIGHT_HANDED_Z_UP_X_FWD). Just apply the VIO transform.
 
-    Also returns per-point confidence (same order as xyz rows) so the caller
-    can color points by stereo reliability without a separate lookup.
+    Fallback (any other source): manual pinhole backproject + _R_OPT_TO_LINK.
     """
 
     def project(
         self,
-        pkt: DepthFramePacket,
+        pkt:    DepthFramePacket,
         stable: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Return (xyz (N,3) float32, conf (N,) float32) for geometrically stable pixels.
+        """Return (xyz (N,3) float32 world-frame, colors (N,3) uint8 or None)."""
+        valid = np.isfinite(pkt.depth) if stable is None else (np.isfinite(pkt.depth) & stable)
 
-        If a stable H×W bool mask is provided (from GradientStabilityFilter), only
-        those pixels are backprojected. No weighting, no smoothing — every retained
-        point represents a geometrically stable stereo measurement.
-        """
-        d = pkt.depth
-        H, W = d.shape
-        fx, fy, cx, cy = pkt.intrinsics
+        if pkt.xyz_cam_hw is not None:
+            xyz_cam = pkt.xyz_cam_hw[valid]          # (N, 3), camera_link frame
+        else:
+            d = pkt.depth
+            H, W = d.shape
+            fx, fy, cx, cy = pkt.intrinsics
+            uu, vv = np.meshgrid(np.arange(W, dtype=np.float32),
+                                  np.arange(H, dtype=np.float32))
+            dd      = d[valid]
+            xyz_opt = np.column_stack([(uu[valid] - cx) * dd / fx,
+                                       (vv[valid] - cy) * dd / fy,
+                                       dd]).astype(np.float32)
+            xyz_cam = xyz_opt @ _R_OPT_TO_LINK.T
 
-        uu, vv = np.meshgrid(
-            np.arange(W, dtype=np.float32),
-            np.arange(H, dtype=np.float32),
-        )
+        xyz_world = (xyz_cam @ pkt.pose_R.T + pkt.pose_t).astype(np.float32)
 
-        valid = np.isfinite(d) if stable is None else (np.isfinite(d) & stable)
-        dd    = d[valid]
-        x_opt = (uu[valid] - cx) * dd / fx
-        y_opt = (vv[valid] - cy) * dd / fy
-        z_opt = dd
-
-        xyz_opt   = np.column_stack([x_opt, y_opt, z_opt]).astype(np.float32)
-        xyz_link  = xyz_opt @ _R_OPT_TO_LINK.T
-        xyz_world = xyz_link @ pkt.pose_R.T + pkt.pose_t
-
-        conf_out = (
-            pkt.confidence[valid].astype(np.float32)
-            if pkt.confidence is not None
-            else np.full(len(xyz_world), 100.0, dtype=np.float32)
-        )
-        return xyz_world, conf_out
+        colors = pkt.colors_hw[valid] if pkt.colors_hw is not None else None
+        return xyz_world, colors
 
 
 # ── Stage 5: Voxel accumulator ────────────────────────────────────────────────
@@ -531,7 +538,7 @@ class DepthStreamer:
         self._src            = source
         self._bp             = backproj
         self._grad           = grad_filter or GradientStabilityFilter()
-        self._vox            = VoxelAccumulator(voxel_size=0.08)
+        self._vox            = VoxelAccumulator(voxel_size=0.05)
         self._vox_lock       = threading.Lock()
         self._cam_z          = 0.0
         self._pinhole_logged = False
@@ -562,8 +569,8 @@ class DepthStreamer:
         self._last_n_stable = int(stable_mask.sum())
         rr.log("world/camera/stable", rr.Image(stable_mask.astype(np.uint8) * 255))
 
-        # Stage 3: backproject (world-frame matmul is O(N) numpy — fast)
-        xyz, _ = self._bp.project(pkt, stable_mask)
+        # Stage 3: backproject — SDK XYZ fast path, just VIO transform
+        xyz, colors = self._bp.project(pkt, stable_mask)
         if len(xyz) == 0:
             return
 
@@ -571,9 +578,10 @@ class DepthStreamer:
         self._cam_z = float(pkt.pose_t[2])
         n   = min(len(xyz), self.MAX_CLOUD)
         idx = np.random.choice(len(xyz), n, replace=False) if len(xyz) > n else np.arange(n)
+        cloud_colors = colors[idx] if colors is not None else _height_color(xyz[idx, 2] - self._cam_z)
         rr.log("world/cloud", rr.Points3D(
             positions=xyz[idx],
-            colors=_height_color(xyz[idx, 2] - self._cam_z),
+            colors=cloud_colors,
             radii=0.003,
         ))
 
@@ -618,7 +626,7 @@ class DepthStreamer:
         if cam_z is None:
             cam_z = self._cam_z
         with self._vox_lock:
-            pts = self._vox.stable_xyz(min_obs=2)
+            pts = self._vox.stable_xyz(min_obs=1)
         if len(pts) == 0:
             return
         n   = min(len(pts), self.MAX_MAP)
@@ -635,7 +643,7 @@ class DepthStreamer:
     ) -> None:
         lock = "LOCKED" if self._src.pose_locked else "searching"
         with self._vox_lock:
-            n_map = len(self._vox.stable_xyz(min_obs=2))
+            n_map = len(self._vox.stable_xyz(min_obs=1))
         pct   = 100 * n_stable / n_valid if n_valid > 0 else 0.0
         print(
             f"frame={frame:5d}  "
@@ -664,7 +672,7 @@ def main() -> None:
 
     zed = sl.Camera()
     ip  = sl.InitParameters()
-    ip.camera_resolution      = sl.RESOLUTION.VGA
+    ip.camera_resolution      = sl.RESOLUTION.HD720
     ip.camera_fps             = 15
     ip.depth_mode             = sl.DEPTH_MODE.NEURAL
     ip.coordinate_system      = sl.COORDINATE_SYSTEM.RIGHT_HANDED_Z_UP_X_FWD
@@ -688,7 +696,7 @@ def main() -> None:
     streamer = DepthStreamer(
         src,
         DepthBackprojector(),
-        GradientStabilityFilter(GradientStabilityConfig(gradient_threshold=0.10)),
+        GradientStabilityFilter(GradientStabilityConfig(gradient_threshold=0.30)),
     )
 
     rt = sl.RuntimeParameters()
