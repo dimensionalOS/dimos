@@ -1,9 +1,13 @@
 {
   "workspace": ["./app", "./packages/topics", "./packages/react"],
   "nodeModulesDir": "auto",
+  "exclude": ["app", "node_modules", "dist"],
   "imports": {
     "@dimos/msgs": "npm:@jsr/dimos__msgs@0.1.4",
-    "@eclipse-zenoh/zenoh-ts": "npm:@eclipse-zenoh/zenoh-ts@1.9.0"
+    "@eclipse-zenoh/zenoh-ts": "npm:@eclipse-zenoh/zenoh-ts@1.9.0",
+    "react": "npm:react@^18.3.1",
+    "react-dom": "npm:react-dom@^18.3.1",
+    "@types/react": "npm:@types/react@^18.3.12"
   },
   "fmt": {
     "lineWidth": 100,
@@ -25,7 +29,7 @@
     "probe": "deno run -A servers/probe.ts",
     "wsprobe": "deno run -A wsprobe.ts",
     "dtop": "deno run -A cli/dtop.ts",
-    "check": "deno check servers/gateway.ts servers/probe.ts bridge.ts wsprobe.ts cli/dtop.ts cli/genTypes.ts && cd app && deno run -A npm:typescript/tsc --noEmit -p tsconfig.json",
+    "check": "deno check servers/*.ts bridge.ts wsprobe.ts cli/*.ts bench/*.ts packages/topics/src/**/*.ts packages/react/src/**/*.tsx && cd app && deno run -A npm:typescript/tsc --noEmit -p tsconfig.json",
     "bench": "deno run -A bench/bench.ts",
     "bench:deno": "deno run -A --node-modules-dir bench/bench_deno.ts",
     "bench:matrix": "bash bench/matrix.sh",

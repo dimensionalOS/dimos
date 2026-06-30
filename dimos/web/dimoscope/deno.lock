@@ -1644,7 +1644,10 @@
   "workspace": {
     "dependencies": [
       "npm:@eclipse-zenoh/zenoh-ts@1.9.0",
-      "npm:@jsr/dimos__msgs@0.1.4"
+      "npm:@jsr/dimos__msgs@0.1.4",
+      "npm:@types/react@^18.3.12",
+      "npm:react-dom@^18.3.1",
+      "npm:react@^18.3.1"
     ],
     "members": {
       "app": {
