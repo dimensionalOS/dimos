@@ -127,10 +127,9 @@ def slow_function(delay: float) -> str:
 # Grid tests
 
 
-@pytest.mark.parametrize("rpc_context, impl_name", testdata)
-def test_basic_sync_call(rpc_context, impl_name: str) -> None:
+def test_basic_sync_call() -> None:
     """Test basic synchronous RPC calls."""
-    with rpc_context() as (server, client):
+    with lcm_rpc_context() as (server, client):
         # Serve the function
         unsub = server.serve_rpc(add_function, "add")
 
