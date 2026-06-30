@@ -5,7 +5,7 @@
 //
 // RUN (with the :10000 bridge + a zenoh bench_publisher up — see bench/serve-bench.sh):
 //   deno run -A --unstable-sloppy-imports --node-modules-dir bench/bench_deno.ts
-import { connect, ZenohTsTransport } from "../packages/topics/src/index.ts";
+import { connect, createZenohTsTransport } from "../packages/topics/src/index.ts";
 import {
   BENCH_SCENARIOS,
   measureScenario,
@@ -22,7 +22,7 @@ console.log(`\n=== Benchmark: ${LABEL}  (${DUR}ms/scenario, ${TS_URL}) ===`);
 const rows: BenchRow[] = [];
 for (const scenario of BENCH_SCENARIOS) {
   // discoveryKey "" → no scout; subscribe explicit /bench/* keys.
-  const client = await connect({ transport: new ZenohTsTransport(TS_URL, undefined, "") });
+  const client = await connect({ transport: createZenohTsTransport({ remoteApiUrl: TS_URL, discoveryKey: "" }) });
   await new Promise((r) => setTimeout(r, 250));
   const row = await measureScenario(client, scenario, DUR, true); // endToEnd (publish→client)
   client.close();

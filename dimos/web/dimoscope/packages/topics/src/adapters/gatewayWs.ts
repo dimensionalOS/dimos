@@ -1,4 +1,4 @@
-// GatewayWsTransport — talks to the dimos-web-gateway (Bun/LCM or Python/Zenoh)
+// createGatewayWsTransport — talks to the dimos-web-gateway (Bun/LCM or Python/Zenoh)
 // over WebSocket. Binary frames are raw LCM packets; JSON frames are control.
 // Runs unchanged in the browser and in Bun (both have a global WebSocket).
 import { decodeChannel } from "@dimos/msgs";
@@ -6,52 +6,68 @@ import { splitChannel } from "../decode";
 import type { Transport, RawSample, Status, TransportCaps, CommandInfo } from "../transport";
 import type { TopicInfo } from "../types";
 
-export interface GatewayWsOptions {
+export interface GatewayWsDeps {
+  url: string;
   reconnect?: boolean;
 }
 
-export class GatewayWsTransport implements Transport {
-  readonly caps: TransportCaps = { onDemand: true, discovery: "live" };
-  label?: string;
-  private ws?: WebSocket;
-  private sampleCb?: (s: RawSample) => void;
-  private topicsCb?: (t: TopicInfo[]) => void;
-  private statusCb?: (s: Status) => void;
-  private wantSubs = new Set<string>(); // desired subs, re-sent on reconnect
-  private rates = new Map<string, number>();
-  private topics: TopicInfo[] = [];
-  commands: CommandInfo[] = [];
-  private commandsCb?: (c: CommandInfo[]) => void;
-  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
-  private rpcId = 1;
-  private reconnect: boolean;
+export const createGatewayWsTransport = (deps: GatewayWsDeps): Transport => {
+  const caps: TransportCaps = { onDemand: true, discovery: "live" };
+  let ws: WebSocket | undefined;
+  let sampleCb: ((s: RawSample) => void) | undefined;
+  let topicsCb: ((t: TopicInfo[]) => void) | undefined;
+  let statusCb: ((s: Status) => void) | undefined;
+  const wantSubs = new Set<string>(); // desired subs, re-sent on reconnect
+  const rates = new Map<string, number>();
+  let topics: TopicInfo[] = [];
+  let commands: CommandInfo[] = [];
+  let commandsCb: ((c: CommandInfo[]) => void) | undefined;
+  const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  let rpcId = 1;
+  let reconnect = deps.reconnect ?? true;
 
-  constructor(private url: string, opts: GatewayWsOptions = {}) {
-    this.reconnect = opts.reconnect ?? true;
-  }
+  const transport: Transport = {
+    caps,
+    label: undefined,
+    get commands() {
+      return commands;
+    },
+    connect,
+    subscribe,
+    unsubscribe,
+    publishTeleop,
+    publishGoal,
+    rpc,
+    requestList,
+    onSample,
+    onTopics,
+    onStatus,
+    onCommands,
+    close,
+  };
 
-  connect(): Promise<void> {
+  function connect(): Promise<void> {
     return new Promise((resolve) => {
-      const ws = new WebSocket(this.url);
-      ws.binaryType = "arraybuffer";
-      this.ws = ws;
-      this.statusCb?.("connecting");
-      ws.onopen = () => {
-        this.statusCb?.("open");
-        for (const t of this.wantSubs) this.send({ op: "subscribe", topic: t, maxHz: this.rates.get(t) });
-        this.send({ op: "list" });
+      const sock = new WebSocket(deps.url);
+      sock.binaryType = "arraybuffer";
+      ws = sock;
+      statusCb?.("connecting");
+      sock.onopen = () => {
+        statusCb?.("open");
+        for (const t of wantSubs) send({ op: "subscribe", topic: t, maxHz: rates.get(t) });
+        send({ op: "list" });
         resolve();
       };
-      ws.onclose = () => {
-        this.statusCb?.("closed");
-        if (this.reconnect) setTimeout(() => this.connect(), 1000);
+      sock.onclose = () => {
+        statusCb?.("closed");
+        if (reconnect) setTimeout(() => connect(), 1000);
       };
-      ws.onmessage = (e) => this.onMessage(e);
-      ws.onerror = () => {};
+      sock.onmessage = (e) => onMessage(e);
+      sock.onerror = () => {};
     });
   }
 
-  private onMessage(e: MessageEvent) {
+  function onMessage(e: MessageEvent) {
     if (typeof e.data === "string") {
       let m: any;
       try {
@@ -60,22 +76,22 @@ export class GatewayWsTransport implements Transport {
         return;
       }
       if (m.op === "hello" || m.op === "topics") {
-        if (m.label) this.label = m.label;
-        this.topics = m.topics ?? [];
-        this.topicsCb?.(this.topics);
+        if (m.label) transport.label = m.label;
+        topics = m.topics ?? [];
+        topicsCb?.(topics);
         if (Array.isArray(m.rpc)) {
-          this.commands = m.rpc;
-          this.commandsCb?.(this.commands);
+          commands = m.rpc;
+          commandsCb?.(commands);
         }
       } else if (m.op === "topic") {
-        if (!this.topics.find((t) => t.topic === m.topic)) {
-          this.topics.push({ topic: m.topic, type: m.type });
-          this.topicsCb?.(this.topics);
+        if (!topics.find((t) => t.topic === m.topic)) {
+          topics.push({ topic: m.topic, type: m.type });
+          topicsCb?.(topics);
         }
       } else if (m.op === "rpc-res") {
-        const p = this.pending.get(m.id);
+        const p = pending.get(m.id);
         if (p) {
-          this.pending.delete(m.id);
+          pending.delete(m.id);
           if (m.error) p.reject(new Error(m.error));
           else p.resolve(m.res);
         }
@@ -94,56 +110,58 @@ export class GatewayWsTransport implements Transport {
       return; // not an LC02 packet we can split
     }
     const { topic, type } = splitChannel(channel);
-    this.sampleCb?.({ topic, type, payload, recvTs: Date.now(), gatewaySendMs });
+    sampleCb?.({ topic, type, payload, recvTs: Date.now(), gatewaySendMs });
   }
 
-  private send(obj: unknown) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(obj));
+  function send(obj: unknown) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
   }
 
-  subscribe(topic: string, maxHz?: number) {
-    this.wantSubs.add(topic);
-    if (maxHz) this.rates.set(topic, maxHz);
-    this.send({ op: "subscribe", topic, maxHz });
+  function subscribe(topic: string, maxHz?: number) {
+    wantSubs.add(topic);
+    if (maxHz) rates.set(topic, maxHz);
+    send({ op: "subscribe", topic, maxHz });
   }
-  unsubscribe(topic: string) {
-    this.wantSubs.delete(topic);
-    this.rates.delete(topic);
-    this.send({ op: "unsubscribe", topic });
+  function unsubscribe(topic: string) {
+    wantSubs.delete(topic);
+    rates.delete(topic);
+    send({ op: "unsubscribe", topic });
   }
-  publishTeleop(linearX: number, angularZ: number, ttlMs?: number) {
-    this.send({ op: "teleop", linearX, angularZ, ttlMs });
+  function publishTeleop(linearX: number, angularZ: number, ttlMs?: number) {
+    send({ op: "teleop", linearX, angularZ, ttlMs });
   }
-  publishGoal(x: number, y: number, z = 0) {
-    this.send({ op: "goal", x, y, z });
+  function publishGoal(x: number, y: number, z = 0) {
+    send({ op: "goal", x, y, z });
   }
-  rpc(target: string, method: string, args: unknown[] = []): Promise<unknown> {
-    const id = this.rpcId++;
+  function rpc(target: string, method: string, args: unknown[] = []): Promise<unknown> {
+    const id = rpcId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.send({ op: "rpc", id, target, method, args });
+      pending.set(id, { resolve, reject });
+      send({ op: "rpc", id, target, method, args });
       setTimeout(() => {
-        if (this.pending.delete(id)) reject(new Error(`rpc ${target}/${method} timed out`));
+        if (pending.delete(id)) reject(new Error(`rpc ${target}/${method} timed out`));
       }, 8000);
     });
   }
-  requestList() {
-    this.send({ op: "list" });
+  function requestList() {
+    send({ op: "list" });
   }
-  onSample(cb: (s: RawSample) => void) {
-    this.sampleCb = cb;
+  function onSample(cb: (s: RawSample) => void) {
+    sampleCb = cb;
   }
-  onTopics(cb: (t: TopicInfo[]) => void) {
-    this.topicsCb = cb;
+  function onTopics(cb: (t: TopicInfo[]) => void) {
+    topicsCb = cb;
   }
-  onStatus(cb: (s: Status) => void) {
-    this.statusCb = cb;
+  function onStatus(cb: (s: Status) => void) {
+    statusCb = cb;
   }
-  onCommands(cb: (c: CommandInfo[]) => void) {
-    this.commandsCb = cb;
+  function onCommands(cb: (c: CommandInfo[]) => void) {
+    commandsCb = cb;
   }
-  close() {
-    this.reconnect = false;
-    this.ws?.close();
+  function close() {
+    reconnect = false;
+    ws?.close();
   }
-}
+
+  return transport;
+};

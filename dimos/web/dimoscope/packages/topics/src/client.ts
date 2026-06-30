@@ -3,9 +3,9 @@
 //   const client = await connect({ url: "ws://localhost:8090" });
 //   client.topic<PoseStamped>("/odom").subscribeLatest((p, meta) => ...);
 //   client.teleop(0.5, 0.0);            // structured + safe (gateway clamps/watchdogs)
-import { GatewayWsTransport } from "./adapters/gatewayWs";
+import { createGatewayWsTransport } from "./adapters/gatewayWs";
 import { decodeBody, srcTsMs } from "./decode";
-import { Topic } from "./topic";
+import { createTopic, type Topic } from "./topic";
 import type { CommandInfo, RawSample, Status, Transport } from "./transport";
 import type { TopicInfo } from "./types";
 
@@ -15,42 +15,53 @@ export interface ConnectOpts {
   reconnect?: boolean;
 }
 
-export class DimosClient {
-  status: Status = "connecting";
-  private topicsMap = new Map<string, string>();
-  private topicObjs = new Map<string, Topic<any>>();
-  private topicsListeners = new Set<(t: TopicInfo[]) => void>();
-  private statusListeners = new Set<(s: Status) => void>();
-  private commandsList: CommandInfo[] = [];
-  private commandsListeners = new Set<(c: CommandInfo[]) => void>();
+export interface DimosClient {
+  status: Status;
+  /** Get (or create) a typed handle to a topic. Subscribing is on-demand. */
+  topic<T = unknown>(name: string): Topic<T>;
+  /** All discovered topics (real ones; skips untyped LCM internals). */
+  listTopics(): TopicInfo[];
+  /** The label the connected gateway reports (e.g. "Bun↔LCM", "Python↔Zenoh"). */
+  readonly gatewayLabel: string | undefined;
+  onTopics(cb: (t: TopicInfo[]) => void): () => void;
+  onStatus(cb: (s: Status) => void): () => void;
+  /** Safe teleop — structured velocity; the gateway clamps + runs a TTL watchdog. */
+  teleop(linearX: number, angularZ: number, ttlMs?: number): void;
+  stop(): void;
+  /** Send a nav goal in world metres (x,y[,z]). Gateway → PointStamped on clicked_point. */
+  navigate(x: number, y: number, z?: number): void;
+  /** Invoke a whitelisted dimos `@rpc` command, e.g. client.call("GO2Connection", "standup"). */
+  call<T = unknown>(target: string, method: string, ...args: unknown[]): Promise<T>;
+  /** Commands the connected gateway advertises as browser-callable (from its hello). */
+  readonly commands: CommandInfo[];
+  onCommands(cb: (c: CommandInfo[]) => void): () => void;
+  close(): void;
+}
 
-  constructor(private transport: Transport) {
-    transport.onSample((s) => this.onSample(s));
-    transport.onCommands?.((c) => {
-      this.commandsList = c;
-      this.commandsListeners.forEach((f) => f(c));
-    });
-    transport.onTopics((list) => {
-      let changed = false;
-      for (const ti of list)
-        if (this.topicsMap.get(ti.topic) !== ti.type) {
-          this.topicsMap.set(ti.topic, ti.type);
-          changed = true;
-        }
-      if (changed) this.emitTopics();
-    });
-    transport.onStatus((s) => {
-      this.status = s;
-      this.statusListeners.forEach((f) => f(s));
-    });
+export interface DimosClientDeps {
+  transport: Transport;
+}
+
+export const createDimosClient = (deps: DimosClientDeps): DimosClient => {
+  const { transport } = deps;
+  const topicsMap = new Map<string, string>();
+  const topicObjs = new Map<string, Topic<any>>();
+  const topicsListeners = new Set<(t: TopicInfo[]) => void>();
+  const statusListeners = new Set<(s: Status) => void>();
+  let commandsList: CommandInfo[] = [];
+  const commandsListeners = new Set<(c: CommandInfo[]) => void>();
+
+  function emitTopics() {
+    const list = listTopics();
+    topicsListeners.forEach((f) => f(list));
   }
 
-  private onSample(s: RawSample) {
-    if (!this.topicsMap.has(s.topic)) {
-      this.topicsMap.set(s.topic, s.type);
-      this.emitTopics();
+  function onSample(s: RawSample) {
+    if (!topicsMap.has(s.topic)) {
+      topicsMap.set(s.topic, s.type);
+      emitTopics();
     }
-    const t = this.topicObjs.get(s.topic);
+    const t = topicObjs.get(s.topic);
     if (!t) return; // discovered but nobody subscribed
     let data: unknown;
     try {
@@ -81,82 +92,96 @@ export class DimosClient {
     });
   }
 
-  /** Get (or create) a typed handle to a topic. Subscribing is on-demand. */
-  topic<T = unknown>(name: string): Topic<T> {
-    let t = this.topicObjs.get(name);
+  function topic<T = unknown>(name: string): Topic<T> {
+    let t = topicObjs.get(name);
     if (!t) {
-      t = new Topic<T>(name, this.topicsMap.get(name) ?? "?", {
-        subscribe: (topic, maxHz) => this.transport.subscribe(topic, maxHz),
-        unsubscribe: (topic) => this.transport.unsubscribe(topic),
+      t = createTopic<T>({
+        name,
+        type: topicsMap.get(name) ?? "?",
+        wiring: {
+          subscribe: (topicName, maxHz) => transport.subscribe(topicName, maxHz),
+          unsubscribe: (topicName) => transport.unsubscribe(topicName),
+        },
       });
-      this.topicObjs.set(name, t);
+      topicObjs.set(name, t);
     }
     return t as Topic<T>;
   }
 
-  /** All discovered topics (real ones; skips untyped LCM internals). */
-  listTopics(): TopicInfo[] {
-    return [...this.topicsMap]
+  function listTopics(): TopicInfo[] {
+    return [...topicsMap]
       .filter(([topic, type]) => type !== "?" && topic.startsWith("/") && !topic.includes("/rpc/"))
       .map(([topic, type]) => ({ topic, type }));
   }
 
-  /** The label the connected gateway reports (e.g. "Bun↔LCM", "Python↔Zenoh"). */
-  get gatewayLabel(): string | undefined {
-    return this.transport.label;
-  }
+  // ── wiring: subscribe to the transport once at construction ──────────────────
+  transport.onSample((s) => onSample(s));
+  transport.onCommands?.((c) => {
+    commandsList = c;
+    commandsListeners.forEach((f) => f(c));
+  });
+  transport.onTopics((list) => {
+    let changed = false;
+    for (const ti of list)
+      if (topicsMap.get(ti.topic) !== ti.type) {
+        topicsMap.set(ti.topic, ti.type);
+        changed = true;
+      }
+    if (changed) emitTopics();
+  });
+  transport.onStatus((s) => {
+    client.status = s;
+    statusListeners.forEach((f) => f(s));
+  });
 
-  onTopics(cb: (t: TopicInfo[]) => void) {
-    this.topicsListeners.add(cb);
-    return () => this.topicsListeners.delete(cb);
-  }
-  onStatus(cb: (s: Status) => void) {
-    this.statusListeners.add(cb);
-    return () => this.statusListeners.delete(cb);
-  }
+  const client: DimosClient = {
+    status: "connecting",
+    topic,
+    listTopics,
+    get gatewayLabel() {
+      return transport.label;
+    },
+    onTopics(cb: (t: TopicInfo[]) => void) {
+      topicsListeners.add(cb);
+      return () => topicsListeners.delete(cb);
+    },
+    onStatus(cb: (s: Status) => void) {
+      statusListeners.add(cb);
+      return () => statusListeners.delete(cb);
+    },
+    teleop(linearX: number, angularZ: number, ttlMs?: number) {
+      transport.publishTeleop(linearX, angularZ, ttlMs);
+    },
+    stop() {
+      transport.publishTeleop(0, 0);
+    },
+    navigate(x: number, y: number, z = 0) {
+      transport.publishGoal(x, y, z);
+    },
+    call<T = unknown>(target: string, method: string, ...args: unknown[]): Promise<T> {
+      return transport.rpc(target, method, args) as Promise<T>;
+    },
+    get commands() {
+      return commandsList;
+    },
+    onCommands(cb: (c: CommandInfo[]) => void) {
+      commandsListeners.add(cb);
+      if (commandsList.length) cb(commandsList);
+      return () => commandsListeners.delete(cb);
+    },
+    close() {
+      transport.close();
+    },
+  };
 
-  /** Safe teleop — structured velocity; the gateway clamps + runs a TTL watchdog. */
-  teleop(linearX: number, angularZ: number, ttlMs?: number) {
-    this.transport.publishTeleop(linearX, angularZ, ttlMs);
-  }
-  stop() {
-    this.transport.publishTeleop(0, 0);
-  }
-
-  /** Send a nav goal in world metres (x,y[,z]). Gateway → PointStamped on clicked_point. */
-  navigate(x: number, y: number, z = 0) {
-    this.transport.publishGoal(x, y, z);
-  }
-
-  /** Invoke a whitelisted dimos `@rpc` command, e.g. client.call("GO2Connection", "standup"). */
-  call<T = unknown>(target: string, method: string, ...args: unknown[]): Promise<T> {
-    return this.transport.rpc(target, method, args) as Promise<T>;
-  }
-  /** Commands the connected gateway advertises as browser-callable (from its hello). */
-  get commands(): CommandInfo[] {
-    return this.commandsList;
-  }
-  onCommands(cb: (c: CommandInfo[]) => void) {
-    this.commandsListeners.add(cb);
-    if (this.commandsList.length) cb(this.commandsList);
-    return () => this.commandsListeners.delete(cb);
-  }
-
-  close() {
-    this.transport.close();
-  }
-
-  private emitTopics() {
-    const list = this.listTopics();
-    this.topicsListeners.forEach((f) => f(list));
-  }
-}
+  return client;
+};
 
 export async function connect(opts: ConnectOpts = {}): Promise<DimosClient> {
   const transport =
     opts.transport ??
-    new GatewayWsTransport(opts.url ?? "ws://localhost:8090", { reconnect: opts.reconnect });
-  const client = new DimosClient(transport);
+    createGatewayWsTransport({ url: opts.url ?? "ws://localhost:8090", reconnect: opts.reconnect });
+  const client = createDimosClient({ transport });
   await transport.connect();
   return client;
 }

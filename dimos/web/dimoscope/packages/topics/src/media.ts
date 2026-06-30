@@ -8,9 +8,9 @@
 // by capability negotiation + graceful fallback — exactly like the transport dropdown.
 import type { Status } from "./transport";
 import type { DimosClient } from "./client";
-import { JpegTopicMedia } from "./adapters/jpegTopicMedia";
-import { WebRtcMedia } from "./adapters/webRtcMedia";
-import { WebCodecsMedia } from "./adapters/webCodecsMedia";
+import { createJpegTopicMedia } from "./adapters/jpegTopicMedia";
+import { createWebRtcMedia } from "./adapters/webRtcMedia";
+import { createWebCodecsMedia } from "./adapters/webCodecsMedia";
 
 export type MediaKind = "webcodecs" | "webrtc" | "jpeg";
 
@@ -76,9 +76,9 @@ export function selectMediaChannel(d: MediaDeps): MediaChannel {
   const offered = new Set<MediaKind>(d.serverMedia ?? ["jpeg"]);
   for (const kind of prefer) {
     if (!offered.has(kind) || !browserSupports(kind)) continue;
-    if (kind === "webcodecs" && d.gatewayUrl) return new WebCodecsMedia(d.gatewayUrl);
-    if (kind === "webrtc" && d.gatewayUrl) return new WebRtcMedia(d.gatewayUrl);
-    if (kind === "jpeg") return new JpegTopicMedia(d.client);
+    if (kind === "webcodecs" && d.gatewayUrl) return createWebCodecsMedia({ gatewayUrl: d.gatewayUrl });
+    if (kind === "webrtc" && d.gatewayUrl) return createWebRtcMedia({ gatewayUrl: d.gatewayUrl });
+    if (kind === "jpeg") return createJpegTopicMedia({ client: d.client });
   }
-  return new JpegTopicMedia(d.client); // the device without webrtc still gets video
+  return createJpegTopicMedia({ client: d.client }); // the device without webrtc still gets video
 }

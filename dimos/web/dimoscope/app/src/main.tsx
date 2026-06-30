@@ -33,8 +33,13 @@ const servers: ServerOpt[] = [
     // remote-api bridge (:10000); teleop/goal go through the gateway (:8088) so its
     // clamp + deadman safety still applies.
     connect: async () => {
-      const { ZenohTsTransport } = await import("@dimos/topics");
-      return connect({ transport: new ZenohTsTransport(`ws://${host}:10000`, `ws://${host}:8088`) });
+      const { createZenohTsTransport } = await import("@dimos/topics");
+      return connect({
+        transport: createZenohTsTransport({
+          remoteApiUrl: `ws://${host}:10000`,
+          controlUrl: `ws://${host}:8088`,
+        }),
+      });
     },
     media: { ...MEDIA },
   },
