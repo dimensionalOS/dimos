@@ -41,9 +41,10 @@ sys.path.insert(0, str(REPO_ROOT / "packages" / "dimos-runtime-protocol" / "src"
 sys.path.insert(0, str(REPO_ROOT / "packages" / "dimos-robosuite-sidecar" / "src"))
 
 from dimos.benchmark.runtime.artifacts import write_json
+from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from scripts.benchmarks.demo_robosuite_panda_lift import (
-    RerunStreamPublisher,
+    RuntimeRerunBridge,
     _free_tcp_port,
 )
 
@@ -109,25 +110,31 @@ def main() -> None:
         )
 
     grpc_port = args.rerun_grpc_port if args.rerun_grpc_port > 0 else _free_tcp_port()
-    lcm_port = args.rerun_lcm_port if args.rerun_lcm_port > 0 else _free_tcp_port()
-    publisher = RerunStreamPublisher(
+    _ = args.rerun_lcm_port if args.rerun_lcm_port > 0 else _free_tcp_port()
+    bridge = RuntimeRerunBridge(
         grpc_port=grpc_port,
-        lcm_port=lcm_port,
+        lcm_port=0,
         memory_limit=args.rerun_memory_limit,
         max_hz=args.hz,
-        topic_prefix="/rerun_color_smoke",
     )
+    transport = LCMTransport("/color_image", Image)
     published = 0
     try:
-        publisher.start()
+        bridge.start()
         period_s = 1.0 / args.hz if args.hz > 0.0 else 0.0
         for _ in range(args.frames):
-            publisher.publish_rgb(lcm_decoded, fov_y_deg=45.0, frame_id="color_smoke_camera")
+            transport.broadcast(
+                None,
+                Image.from_numpy(
+                    lcm_decoded, format=ImageFormat.RGB, frame_id="color_smoke_camera"
+                ),
+            )
             published += 1
             if period_s > 0.0:
                 time.sleep(period_s)
     finally:
-        publisher.stop()
+        transport.stop()
+        bridge.stop()
 
     summary = {
         "ok": True,
@@ -138,7 +145,7 @@ def main() -> None:
         "height": args.height,
         "width": args.width,
         "rerun_grpc_port": grpc_port,
-        "rerun_lcm_port": lcm_port,
+        "rerun_lcm_port": None,
         "rerun_memory_limit": args.rerun_memory_limit,
         "source": _pixel_summary(source),
         "npy_decoded": _pixel_summary(npy_decoded),

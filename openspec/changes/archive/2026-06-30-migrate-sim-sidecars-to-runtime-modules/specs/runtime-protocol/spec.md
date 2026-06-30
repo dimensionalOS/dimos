@@ -1,8 +1,4 @@
-## Purpose
-
-Define the lightweight backend-neutral protocol contract shared by DimOS and simulator runtime packages.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Shared runtime protocol package
 The system SHALL provide lightweight backend-neutral runtime protocol models that can be reused by DimOS and simulator runtime packages without requiring HTTP transport, the main DimOS package in schema-only contexts, or any simulator backend SDK.
@@ -14,17 +10,6 @@ The system SHALL provide lightweight backend-neutral runtime protocol models tha
 #### Scenario: DimOS module boundary reuses protocol models
 - **WHEN** a Simulator Runtime Module exposes RPC request or response payloads based on runtime protocol models
 - **THEN** the models describe backend-neutral runtime semantics without implying HTTP JSON transport or payload-fetch endpoints
-
-### Requirement: Protocol model validation
-The protocol package SHALL define Pydantic models for runtime description, episode reset, step requests, step responses, robot motor surfaces, motor action frames, motor state frames, observation frames, scores, artifacts, and errors.
-
-#### Scenario: Invalid step request is rejected
-- **WHEN** a step request omits required episode identity, tick identity, or action payload fields
-- **THEN** protocol validation rejects the message before backend-specific step logic runs
-
-#### Scenario: Runtime description reports motor surface
-- **WHEN** a sidecar describes a robot runtime
-- **THEN** the response includes robot id, surface type, ordered motors, supported command modes, and available state fields
 
 ### Requirement: Protocol compatibility handshake
 The runtime protocol SHALL include protocol version and capability metadata that simulator runtimes can report through module-native description RPCs or compatibility handshakes so DimOS can fail fast on incompatible protocol versions or unsupported capabilities.
@@ -51,10 +36,3 @@ The runtime protocol SHALL support image, depth, segmentation, and object/state 
 #### Scenario: HTTP payload reference is removed from target path
 - **WHEN** a runtime observation is produced by a migrated Simulator Runtime Module
 - **THEN** the target path uses stream metadata and DimOS stream outputs rather than HTTP payload references
-
-### Requirement: Backend-neutral protocol types
-Runtime protocol models MUST NOT expose Robosuite, LIBERO-PRO, OmniGibson, DimOS hardware adapter, or simulator object types in public fields.
-
-#### Scenario: Robosuite observation is translated
-- **WHEN** Robosuite produces an `OrderedDict` observation
-- **THEN** the Robosuite sidecar translates it into runtime protocol observation and motor state frames before sending it to DimOS

@@ -17,11 +17,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-import importlib.util
 from io import BytesIO
 from pathlib import Path
 import sys
-from types import ModuleType
 from typing import Protocol, cast
 
 import numpy as np
@@ -37,24 +35,6 @@ from dimos_robosuite_sidecar.server import (
     RobosuiteRuntimeState,
 )
 from dimos_runtime_protocol import EpisodeResetRequest, MotorActionFrame, StepRequest
-
-DEMO_SCRIPT = REPO_ROOT / "scripts" / "benchmarks" / "demo_robosuite_panda_lift.py"
-_DEMO_SPEC = importlib.util.spec_from_file_location("demo_robosuite_panda_lift", DEMO_SCRIPT)
-assert _DEMO_SPEC is not None
-assert _DEMO_SPEC.loader is not None
-_DEMO_MODULE = importlib.util.module_from_spec(_DEMO_SPEC)
-sys.modules[_DEMO_SPEC.name] = _DEMO_MODULE
-_DEMO_SPEC.loader.exec_module(_DEMO_MODULE)
-
-
-class _PublishRerunObservations(Protocol):
-    def __call__(self, client: object, response_observations: object, publisher: object) -> int: ...
-
-
-_publish_rerun_observations = cast(
-    "_PublishRerunObservations",
-    cast("ModuleType", _DEMO_MODULE).__dict__["_publish_rerun_observations"],
-)
 
 
 class _FakeControllers:
@@ -88,26 +68,6 @@ class _FakeRobosuiteModule:
 
 class _Mocker(Protocol):
     def patch(self, target: str, **kwargs: object) -> object: ...
-
-
-class _PayloadClient:
-    def __init__(self, state: RobosuiteRuntimeState) -> None:
-        self._state = state
-
-    def payload(self, data_ref: str) -> bytes:
-        return self._state.payload_bytes(data_ref.removeprefix("/payloads/"))
-
-
-class _CapturePublisher:
-    def __init__(self) -> None:
-        self.images: list[np.ndarray] = []
-        self.fovs: list[float] = []
-        self.frame_ids: list[str] = []
-
-    def publish_rgb(self, rgb: object, *, fov_y_deg: float, frame_id: str) -> None:
-        self.images.append(np.asarray(rgb).copy())
-        self.fovs.append(fov_y_deg)
-        self.frame_ids.append(frame_id)
 
 
 def test_robosuite_panda_lift_profile_maps_actions_states_and_observations(
@@ -183,14 +143,8 @@ def test_pure_color_camera_payload_round_trips_and_decodes_exactly(mocker: _Mock
     raw = np.load(BytesIO(payload), allow_pickle=False)
     assert np.array_equal(raw, _pure_color_image())
 
-    publisher = _CapturePublisher()
-    published = _publish_rerun_observations(_PayloadClient(state), response.observations, publisher)
-
-    assert published == 1
-    assert len(publisher.images) == 1
-    assert np.array_equal(publisher.images[0], np.flipud(_pure_color_image()))
-    assert publisher.fovs == [45.0]
-    assert publisher.frame_ids == ["agentview"]
+    assert image_frame.metadata["image_convention"] == "opengl"
+    assert image_frame.metadata["payload_sha256"]
 
 
 def _config() -> RobosuiteRuntimeConfig:

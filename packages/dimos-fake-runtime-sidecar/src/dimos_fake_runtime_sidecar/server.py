@@ -12,19 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""HTTP fake sidecar that speaks the DimOS runtime protocol."""
+"""Fake runtime state used by the DimOS Simulator Runtime Module."""
 
 from __future__ import annotations
 
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import json
 import time
 
 from dimos_runtime_protocol.models import (
     CommandMode,
     EpisodeResetRequest,
     EpisodeResetResponse,
-    HealthResponse,
     MotorDescription,
     MotorStateFrame,
     RobotMotorSurface,
@@ -85,9 +82,13 @@ class FakeRuntimeState:
         previous = list(self.q)
         targets = request.action.q
         if request.action.names != self.names:
-            raise ValueError(f"motor names mismatch: expected {self.names}, got {request.action.names}")
+            raise ValueError(
+                f"motor names mismatch: expected {self.names}, got {request.action.names}"
+            )
         if len(targets) != len(self.names):
-            raise ValueError(f"target length mismatch: expected {len(self.names)}, got {len(targets)}")
+            raise ValueError(
+                f"target length mismatch: expected {len(self.names)}, got {len(targets)}"
+            )
         alpha = 0.35
         self.q = [old + alpha * (target - old) for old, target in zip(self.q, targets, strict=True)]
         self.dq = [(new - old) * self.step_hz for old, new in zip(previous, self.q, strict=True)]
@@ -121,84 +122,3 @@ class FakeRuntimeState:
             reason="fake runtime observed motor movement" if moved else "no movement observed",
             metrics={"sequence": self.sequence},
         )
-
-
-class FakeRuntimeHandler(BaseHTTPRequestHandler):
-    """Request handler bound to one FakeRuntimeState instance."""
-
-    state: FakeRuntimeState
-
-    def _write_json(self, status: int, payload: dict[str, object]) -> None:
-        data = json.dumps(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def _read_json(self) -> dict[str, object]:
-        length = int(self.headers.get("Content-Length", "0"))
-        if length == 0:
-            return {}
-        data = self.rfile.read(length)
-        value = json.loads(data.decode("utf-8"))
-        if not isinstance(value, dict):
-            raise ValueError("expected JSON object")
-        return value
-
-    def do_GET(self) -> None:  # noqa: N802
-        if self.path == "/health":
-            self._write_json(200, HealthResponse(ok=True, runtime_id="fake-runtime").model_dump())
-        elif self.path == "/describe":
-            self._write_json(200, self.state.describe().model_dump())
-        elif self.path == "/score":
-            self._write_json(200, self.state.score().model_dump())
-        else:
-            self._write_json(404, {"error": f"unknown path {self.path}"})
-
-    def do_POST(self) -> None:  # noqa: N802
-        try:
-            body = self._read_json()
-            if self.path == "/reset":
-                request = EpisodeResetRequest.model_validate(body)
-                self._write_json(200, self.state.reset(request).model_dump())
-            elif self.path == "/step":
-                request = StepRequest.model_validate(body)
-                self._write_json(200, self.state.step(request).model_dump())
-            else:
-                self._write_json(404, {"error": f"unknown path {self.path}"})
-        except Exception as exc:
-            self._write_json(400, {"error": str(exc)})
-
-    def log_message(self, format: str, *args: object) -> None:
-        return
-
-
-def make_server(host: str, port: int, *, robot_id: str = "fakebot", dof: int = 3) -> ThreadingHTTPServer:
-    state = FakeRuntimeState(robot_id=robot_id, dof=dof)
-
-    class BoundHandler(FakeRuntimeHandler):
-        pass
-
-    BoundHandler.state = state
-    return ThreadingHTTPServer((host, port), BoundHandler)
-
-
-def main() -> None:
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Run fake DimOS runtime sidecar")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--robot-id", default="fakebot")
-    parser.add_argument("--dof", type=int, default=3)
-    args = parser.parse_args()
-    server = make_server(args.host, args.port, robot_id=args.robot_id, dof=args.dof)
-    try:
-        server.serve_forever()
-    finally:
-        server.server_close()
-
-
-if __name__ == "__main__":
-    main()

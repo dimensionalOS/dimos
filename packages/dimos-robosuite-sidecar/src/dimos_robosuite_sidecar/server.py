@@ -12,28 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""HTTP sidecar for a narrow Robosuite Panda Lift runtime profile."""
+"""Robosuite Panda Lift runtime state for Simulator Runtime Modules."""
 
 from __future__ import annotations
 
-import argparse
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import hashlib
-from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from io import BytesIO
-import json
 from pathlib import Path
 import time
 from types import ModuleType
-from typing import ClassVar, Mapping, Sequence, cast
-from urllib.parse import unquote, urlparse
+from typing import Any, cast
 
 from dimos_runtime_protocol import (
     CommandMode,
     EpisodeResetRequest,
     EpisodeResetResponse,
-    HealthResponse,
     MotorDescription,
     MotorStateFrame,
     ObservationFrame,
@@ -82,8 +77,8 @@ class RobosuiteRuntimeState:
 
     def __init__(self, config: RobosuiteRuntimeConfig) -> None:
         self.config = config
-        self._robosuite = require_robosuite()
-        self._env = self._make_env()
+        self._robosuite: Any = require_robosuite()
+        self._env: Any = self._make_env()
         self._episode_id = ""
         self._sequence = 0
         self._last_obs: Mapping[str, object] = {}
@@ -99,11 +94,11 @@ class RobosuiteRuntimeState:
                 f"action_dim={len(self._action_low)} motors={len(self.motor_names)}"
             )
 
-    def _make_env(self) -> object:
+    def _make_env(self) -> Any:
         robosuite = self._robosuite
-        controllers = getattr(robosuite, "controllers")
+        controllers = robosuite.controllers
         controller_config = self._controller_config(controllers)
-        make_env = getattr(robosuite, "make")
+        make_env = robosuite.make
         return make_env(
             env_name=self.config.env_name,
             robots=self.config.robot_model,
@@ -119,14 +114,13 @@ class RobosuiteRuntimeState:
             camera_depths=False,
             control_freq=self.config.control_freq,
             horizon=self.config.horizon,
-            seed=self.config.seed,
         )
 
-    def _controller_config(self, controllers: object) -> object:
-        load_composite = getattr(controllers, "load_composite_controller_config")
+    def _controller_config(self, controllers: Any) -> object:
+        load_composite = controllers.load_composite_controller_config
         controller_config = load_composite(controller="BASIC")
         if self.config.controller in {"JOINT_POSITION", "PANDA_JOINT_POSITION"}:
-            load_part = getattr(controllers, "load_part_controller_config")
+            load_part = controllers.load_part_controller_config
             right_config = load_part(default_controller="JOINT_POSITION")
             right_config["gripper"] = {"type": "GRIP"}
             controller_config["body_parts"]["right"] = right_config
@@ -142,7 +136,9 @@ class RobosuiteRuntimeState:
     def _motor_names(self) -> list[str]:
         # Narrow v1 profile: Panda arm joints plus scalar gripper command.
         if self.config.robot_model != "Panda":
-            raise RuntimeError(f"unsupported robot model for v1 Robosuite sidecar: {self.config.robot_model}")
+            raise RuntimeError(
+                f"unsupported robot model for v1 Robosuite sidecar: {self.config.robot_model}"
+            )
         return [f"{self.config.robot_id}/joint{i + 1}" for i in range(7)] + [
             f"{self.config.robot_id}/gripper"
         ]
@@ -152,7 +148,7 @@ class RobosuiteRuntimeState:
             runtime_id="robosuite-panda-lift",
             backend="robosuite",
             protocol=ProtocolVersion(),
-            capabilities=["sync-http", "whole-body-motor-position", "robosuite-panda-lift"],
+            capabilities=["whole-body-motor-position", "robosuite-panda-lift"],
             robot_surfaces=[
                 RobotMotorSurface(
                     robot_id=self.config.robot_id,
@@ -179,10 +175,11 @@ class RobosuiteRuntimeState:
     def reset(self, request: EpisodeResetRequest) -> EpisodeResetResponse:
         self._episode_id = request.episode_id
         self._sequence = 0
-        self._last_obs = cast(Mapping[str, object], self._env.reset())  # type: ignore[attr-defined]
+        self._last_obs = cast("Mapping[str, object]", self._env.reset())  # type: ignore[attr-defined]
         self._last_reward = 0.0
         self._last_done = False
         self._last_success = None
+        self._force_refresh_camera_observation_if_visual()
         # Store protocol payloads before updating the interactive viewer. In
         # visual mode Robosuite/MuJoCo viewer updates can touch render buffers
         # that observation arrays may reference, causing alternating/stale
@@ -205,10 +202,11 @@ class RobosuiteRuntimeState:
         action = self._action_from_request(request)
         obs, reward, done, info = self._env.step(action)  # type: ignore[attr-defined]
         self._sequence += 1
-        self._last_obs = cast(Mapping[str, object], obs)
+        self._last_obs = cast("Mapping[str, object]", obs)
         self._last_reward = float(reward)
         self._last_done = bool(done)
         self._last_success = _success_from_info(info)
+        self._force_refresh_camera_observation_if_visual()
         motor_state = self._motor_state(request.tick_id)
         # Store protocol payloads before updating the interactive viewer; see
         # reset() for the render-buffer ordering rationale.
@@ -228,7 +226,7 @@ class RobosuiteRuntimeState:
     def _render_if_enabled(self) -> None:
         if not self.config.visualize:
             return
-        render = getattr(self._env, "render")
+        render = self._env.render
         render()
 
     def score(self) -> ScoreOutput:
@@ -238,14 +236,20 @@ class RobosuiteRuntimeState:
             success=success,
             score=1.0 if success else 0.0,
             reason="robosuite success flag" if success else "success not observed",
-            metrics={"reward": self._last_reward, "done": self._last_done, "sequence": self._sequence},
+            metrics={
+                "reward": self._last_reward,
+                "done": self._last_done,
+                "sequence": self._sequence,
+            },
         )
 
     def _action_from_request(self, request: StepRequest) -> object:
         import numpy as np
 
         if len(request.action.q) != len(self.motor_names):
-            raise ValueError(f"expected {len(self.motor_names)} q targets, got {len(request.action.q)}")
+            raise ValueError(
+                f"expected {len(self.motor_names)} q targets, got {len(request.action.q)}"
+            )
         values = np.array(request.action.q, dtype=np.float64)
         low = np.array(self._action_low, dtype=np.float64)
         high = np.array(self._action_high, dtype=np.float64)
@@ -256,8 +260,8 @@ class RobosuiteRuntimeState:
         joint_dq = _float_list(self._last_obs.get("robot0_joint_vel", []))
         gripper_q = _float_list(self._last_obs.get("robot0_gripper_qpos", []))
         gripper_dq = _float_list(self._last_obs.get("robot0_gripper_qvel", []))
-        q = (joint_q[:7] + [_mean_or_zero(gripper_q)])[: len(self.motor_names)]
-        dq = (joint_dq[:7] + [_mean_or_zero(gripper_dq)])[: len(self.motor_names)]
+        q = [*joint_q[:7], _mean_or_zero(gripper_q)][: len(self.motor_names)]
+        dq = [*joint_dq[:7], _mean_or_zero(gripper_dq)][: len(self.motor_names)]
         if len(q) != len(self.motor_names):
             q = q + [0.0] * (len(self.motor_names) - len(q))
         if len(dq) != len(self.motor_names):
@@ -319,6 +323,22 @@ class RobosuiteRuntimeState:
             return None
         return _array_copy(cached_image)
 
+    def _force_refresh_camera_observation_if_visual(self) -> None:
+        """Refresh offscreen camera observations before viewer rendering.
+
+        In visual mode, Robosuite's `env.step()` observation can lag the
+        interactive viewer. Force-refreshing before `env.render()` keeps the
+        streamed camera moving while preserving the old render-buffer ordering:
+        copy/store camera payloads first, then let the viewer touch MuJoCo render
+        buffers.
+        """
+
+        if not self.config.visualize:
+            return
+        get_observations = getattr(self._env, "_get_observations", None)
+        if callable(get_observations):
+            self._last_obs = cast("Mapping[str, object]", get_observations(force_update=True))
+
     def _store_payload(self, stream: str, tick_id: int, value: object) -> tuple[str, bytes]:
         payload_id = f"{stream}-{tick_id:06d}-{self._sequence:06d}.npy"
         payload_bytes = _npy_bytes(value)
@@ -334,14 +354,15 @@ class RobosuiteRuntimeState:
             return
         if self._sequence % self.config.image_dump_every != 0:
             return
-        output_dir = Path(self.config.image_dump_dir)
-        _write_rgb_jpeg(output_dir / f"{stem}_server_raw.jpg", value)
-        if self._image_convention() == "opengl":
-            import numpy as np
+        import numpy as np
 
-            _write_rgb_jpeg(output_dir / f"{stem}_server_display.jpg", np.flipud(np.asarray(value)))
+        output_dir = Path(self.config.image_dump_dir)
+        rgb = np.asarray(value)
+        _write_rgb_jpeg(output_dir / f"{stem}_server_raw.jpg", rgb)
+        if self._image_convention() == "opengl":
+            _write_rgb_jpeg(output_dir / f"{stem}_server_display.jpg", np.flipud(rgb))
         else:
-            _write_rgb_jpeg(output_dir / f"{stem}_server_display.jpg", value)
+            _write_rgb_jpeg(output_dir / f"{stem}_server_display.jpg", rgb)
 
     def payload_bytes(self, payload_id: str) -> bytes:
         try:
@@ -351,8 +372,8 @@ class RobosuiteRuntimeState:
 
     def _camera_fov_deg(self) -> float:
         try:
-            sim = getattr(self._env, "sim")
-            model = getattr(sim, "model")
+            sim = self._env.sim
+            model = sim.model
             camera_id = model.camera_name2id(self.config.camera_name)
             return float(model.cam_fovy[camera_id])
         except Exception:
@@ -361,108 +382,6 @@ class RobosuiteRuntimeState:
     def _image_convention(self) -> str:
         macros = getattr(self._robosuite, "macros", None)
         return str(getattr(macros, "IMAGE_CONVENTION", "opengl"))
-
-
-class RobosuiteRuntimeHandler(BaseHTTPRequestHandler):
-    state: ClassVar[RobosuiteRuntimeState]
-
-    def do_GET(self) -> None:
-        if self.path == "/health":
-            self._write_model(
-                HealthResponse(ok=True, runtime_id="robosuite-panda-lift", protocol=ProtocolVersion())
-            )
-        elif self.path == "/describe":
-            self._write_model(self.state.describe())
-        elif self.path == "/score":
-            self._write_model(self.state.score())
-        elif self.path.startswith("/payloads/"):
-            payload_id = unquote(urlparse(self.path).path.removeprefix("/payloads/"))
-            try:
-                self._write_bytes(self.state.payload_bytes(payload_id), content_type="application/x-npy")
-            except FileNotFoundError:
-                self.send_error(HTTPStatus.NOT_FOUND)
-        else:
-            self.send_error(HTTPStatus.NOT_FOUND)
-
-    def do_POST(self) -> None:
-        try:
-            body = self.rfile.read(int(self.headers.get("content-length", "0"))).decode("utf-8")
-            payload = json.loads(body) if body else {}
-            if self.path == "/reset":
-                self._write_model(self.state.reset(EpisodeResetRequest.model_validate(payload)))
-            elif self.path == "/step":
-                self._write_model(self.state.step(StepRequest.model_validate(payload)))
-            else:
-                self.send_error(HTTPStatus.NOT_FOUND)
-        except Exception as exc:
-            self.send_response(HTTPStatus.BAD_REQUEST)
-            self.send_header("content-type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({"code": "bad_request", "message": str(exc)}).encode())
-
-    def log_message(self, format: str, *args: object) -> None:
-        return
-
-    def _write_model(self, model: object) -> None:
-        model_dump = getattr(model, "model_dump", None)
-        payload = model_dump(mode="json") if callable(model_dump) else model
-        self.send_response(HTTPStatus.OK)
-        self.send_header("content-type", "application/json")
-        self.end_headers()
-        self.wfile.write(json.dumps(payload).encode("utf-8"))
-
-    def _write_bytes(self, payload: bytes, *, content_type: str) -> None:
-        self.send_response(HTTPStatus.OK)
-        self.send_header("content-type", content_type)
-        self.send_header("content-length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
-
-
-def make_server(config: RobosuiteRuntimeConfig) -> HTTPServer:
-    RobosuiteRuntimeHandler.state = RobosuiteRuntimeState(config)
-    # Robosuite/MuJoCo render contexts are thread-sensitive. Keep all env reset,
-    # step, offscreen camera, and interactive viewer calls on the server thread
-    # instead of using ThreadingHTTPServer worker threads.
-    return HTTPServer((config.host, config.port), RobosuiteRuntimeHandler)
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8766)
-    parser.add_argument("--env-name", default="Lift")
-    parser.add_argument("--robot-id", default="panda")
-    parser.add_argument("--robot-model", default="Panda")
-    parser.add_argument("--controller", default="JOINT_POSITION")
-    parser.add_argument("--control-freq", type=int, default=100)
-    parser.add_argument("--horizon", type=int, default=200)
-    parser.add_argument("--camera-name", default="agentview")
-    parser.add_argument("--seed", type=int, default=None)
-    parser.add_argument("--visualize", action="store_true")
-    parser.add_argument("--image-dump-dir", default=None)
-    parser.add_argument("--image-dump-every", type=int, default=0)
-    args = parser.parse_args()
-    config = RobosuiteRuntimeConfig(
-        host=args.host,
-        port=args.port,
-        env_name=args.env_name,
-        robot_id=args.robot_id,
-        robot_model=args.robot_model,
-        controller=args.controller,
-        control_freq=args.control_freq,
-        horizon=args.horizon,
-        camera_name=args.camera_name,
-        seed=args.seed,
-        visualize=args.visualize,
-        image_dump_dir=args.image_dump_dir,
-        image_dump_every=args.image_dump_every,
-    )
-    server = make_server(config)
-    try:
-        server.serve_forever()
-    finally:
-        server.server_close()
 
 
 def _float_list(value: object) -> list[float]:
@@ -551,7 +470,3 @@ def _camera_mount(camera_name: str) -> str:
     if "robotview" in camera_name:
         return "robot_external"
     return "scene"
-
-
-if __name__ == "__main__":
-    main()

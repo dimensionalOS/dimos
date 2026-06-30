@@ -15,22 +15,24 @@
 
 """Run the Robosuite Panda Lift plumbing demo with a real ControlCoordinator.
 
-This script intentionally does not install or import Robosuite in the DimOS
-process. It starts the Robosuite sidecar package in a subprocess and communicates
-through the shared runtime protocol plus the local SHM motor bridge.
+By default this demo runs from the host DimOS environment and deploys
+``RobosuiteRuntimeModule`` into the package-local Robosuite Python project runtime
+via the standard blueprint placement API. Robosuite dependencies stay in the
+placed worker environment; the host process owns orchestration, artifacts, and
+Rerun stream forwarding.
+
+Use ``--runtime-mode local`` only as a debug fallback when intentionally running
+the whole demo inside the Robosuite-capable package environment.
 """
 
 from __future__ import annotations
 
 import argparse
-from io import BytesIO
 import json
-import os
 from pathlib import Path
-import socket
-import subprocess
 import sys
 import time
+from typing import cast
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PROTOCOL_SRC = REPO_ROOT / "packages" / "dimos-runtime-protocol" / "src"
@@ -42,7 +44,7 @@ for package_src in (PROTOCOL_SRC, ROBOSUITE_SIDECAR_SRC):
 from dimos_runtime_protocol import (
     EpisodeResetRequest,
     MotorActionFrame,
-    ObservationKind,
+    MotorStateFrame,
     StepRequest,
 )
 
@@ -54,92 +56,11 @@ from dimos.benchmark.runtime.config import (
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.hardware.whole_body.spec import MotorState
-from dimos.simulation.runtime_client.http_client import RuntimeSidecarClient
 from dimos.simulation.runtime_client.shm_motor import MotorShmOwner
 
 
 def _load_config(path: Path) -> BenchmarkEpisodeConfig:
     return BenchmarkEpisodeConfig.model_validate_json(path.read_text())
-
-
-def _sidecar_env() -> dict[str, str]:
-    env = dict(os.environ)
-    existing = env.get("PYTHONPATH", "")
-    paths = [str(PROTOCOL_SRC), str(ROBOSUITE_SIDECAR_SRC)]
-    if existing:
-        paths.append(existing)
-    env["PYTHONPATH"] = os.pathsep.join(paths)
-    return env
-
-
-def _start_robosuite_sidecar(
-    config: BenchmarkEpisodeConfig,
-    *,
-    server_image_dump_dir: Path | None = None,
-    image_dump_every: int = 0,
-) -> subprocess.Popen[str]:
-    command = [
-        sys.executable,
-        "-m",
-        "dimos_robosuite_sidecar.server",
-        "--host",
-        config.runtime_host,
-        "--port",
-        str(config.runtime_port),
-        "--env-name",
-        config.env_name,
-        "--robot-id",
-        config.robot_id,
-        "--robot-model",
-        config.robot_model,
-        "--controller",
-        config.controller,
-        "--control-freq",
-        str(config.control_step_hz),
-        "--horizon",
-        str(config.horizon),
-        "--camera-name",
-        config.camera_name,
-        "--seed",
-        str(config.seed) if config.seed is not None else "0",
-    ]
-    if config.visualize:
-        command.append("--visualize")
-    if server_image_dump_dir is not None and image_dump_every > 0:
-        command.extend(
-            [
-                "--image-dump-dir",
-                str(server_image_dump_dir),
-                "--image-dump-every",
-                str(image_dump_every),
-            ]
-        )
-    return subprocess.Popen(
-        command,
-        cwd=REPO_ROOT,
-        env=_sidecar_env(),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-
-
-def _wait_sidecar_healthy(
-    sidecar: subprocess.Popen[str],
-    client: RuntimeSidecarClient,
-    timeout_s: float,
-) -> object:
-    deadline = time.monotonic() + timeout_s
-    last_error = ""
-    while time.monotonic() < deadline:
-        if sidecar.poll() is not None:
-            raise RuntimeError("Robosuite sidecar exited before becoming healthy")
-        try:
-            return client.health()
-        except Exception as exc:
-            last_error = str(exc)
-            time.sleep(0.1)
-    raise RuntimeError(f"Robosuite sidecar did not become healthy: {last_error}")
 
 
 def _command_frame(owner: MotorShmOwner, robot_id: str) -> tuple[int, MotorActionFrame]:
@@ -157,6 +78,8 @@ def _command_frame(owner: MotorShmOwner, robot_id: str) -> tuple[int, MotorActio
 
 
 def _free_tcp_port() -> int:
+    import socket
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
@@ -166,8 +89,8 @@ def _lcm_url(port: int) -> str:
     return f"udpm://239.255.76.67:{port}?ttl=0"
 
 
-class RerunStreamPublisher:
-    """Publish runtime camera observations through DimOS streams for Rerun."""
+class RuntimeRerunBridge:
+    """Bridge normal DimOS runtime streams into Rerun."""
 
     def __init__(
         self,
@@ -176,20 +99,11 @@ class RerunStreamPublisher:
         lcm_port: int,
         memory_limit: str,
         max_hz: float,
-        topic_prefix: str = "/robosuite_runtime",
     ) -> None:
-        from dimos.core.transport import LCMTransport
-        from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-        from dimos.msgs.sensor_msgs.Image import Image
-        from dimos.protocol.pubsub.impl.lcmpubsub import LCM
         from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-        prefix = topic_prefix.rstrip("/")
-        self._image_topic = f"{prefix}/color_image"
-        self._camera_info_topic = f"{prefix}/camera_info"
-        self._image_entity = "world/robosuite_runtime/color_image"
-        self._camera_info_entity = "world/robosuite_runtime/camera_info"
-        self._camera_info_published = False
+        self._image_entity = "world/color_image"
+        self._camera_info_entity = "world/camera_info"
 
         def runtime_camera_blueprint() -> object:
             import rerun.blueprint as rrb
@@ -200,120 +114,79 @@ class RerunStreamPublisher:
                 )
             )
 
-        def topic_to_entity(topic: object) -> str:
-            topic_name = getattr(topic, "topic", None)
-            if not isinstance(topic_name, str):
-                topic_name = getattr(topic, "name", None)
-            if not isinstance(topic_name, str):
-                topic_name = str(topic).split("#")[0]
-            if topic_name == self._image_topic:
-                return self._image_entity
-            if topic_name == self._camera_info_topic:
-                return self._camera_info_entity
-            return f"world{topic_name}"
-
         max_hz_by_entity = {self._image_entity: max_hz} if max_hz > 0.0 else {}
-        lcm_url = _lcm_url(lcm_port)
-
-        self._image_transport = LCMTransport(self._image_topic, Image, url=lcm_url)
-        self._camera_info_transport = LCMTransport(self._camera_info_topic, CameraInfo, url=lcm_url)
         self._bridge = RerunBridgeModule(
-            pubsubs=[LCM(url=lcm_url)],
             blueprint=runtime_camera_blueprint,
             connect_url=f"rerun+http://127.0.0.1:{grpc_port}/proxy",
             memory_limit=memory_limit,
             max_hz=max_hz_by_entity,
-            topic_to_entity=topic_to_entity,
-            visual_override={
-                self._camera_info_entity: lambda camera_info: camera_info.to_rerun(
-                    image_topic=self._image_entity
-                ),
-            },
+            visual_override={self._camera_info_entity: None},
         )
 
     def start(self) -> None:
         self._bridge.start()
 
     def stop(self) -> None:
-        self._image_transport.stop()
-        self._camera_info_transport.stop()
         self._bridge.stop()
 
-    def publish_rgb(self, rgb: object, *, fov_y_deg: float, frame_id: str) -> None:
-        import numpy as np
 
-        from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-        from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-
-        array = np.asarray(rgb)
-        if array.ndim != 3 or array.shape[2] < 3:
-            raise ValueError(f"expected HxWx3 RGB image, got shape {array.shape}")
-        # Leave Image.frame_id empty because the Rerun bridge logs the image at
-        # the canonical entity path (`world/color_image`) while CameraInfo logs
-        # the pinhole for that same entity. Setting a frame_id on the image would
-        # attach a second transform parent and Rerun rejects that.
-        image = Image.from_numpy(array[:, :, :3], format=ImageFormat.RGB, frame_id="")
-        camera_info = CameraInfo.from_fov(
-            fov_y_deg,
-            width=image.width,
-            height=image.height,
-            axis="vertical",
-            frame_id=frame_id,
-        ).with_ts(image.ts)
-        self._image_transport.broadcast(None, image)
-        if not self._camera_info_published:
-            self._camera_info_transport.broadcast(None, camera_info)
-            self._camera_info_published = True
-
-
-def _publish_rerun_observations(
-    client: RuntimeSidecarClient,
-    response_observations: object,
-    publisher: RerunStreamPublisher | None,
+def _dump_stream_observation_image(
+    capture: RuntimeStreamCapture,
     *,
     image_dump_dir: Path | None = None,
     image_dump_label: str = "frame",
 ) -> int:
-    if publisher is None and image_dump_dir is None:
-        return 0
-    if not isinstance(response_observations, list):
+    if image_dump_dir is None:
         return 0
     published = 0
-    for frame in response_observations:
-        kind = getattr(frame, "kind", None)
-        data_ref = getattr(frame, "data_ref", None)
-        if kind != ObservationKind.IMAGE:
-            continue
-        if not isinstance(data_ref, str):
-            continue
-        payload = client.payload(data_ref)
+    image = capture.last_color_image
+    if image is not None:
         import numpy as np
 
-        image = np.load(BytesIO(payload), allow_pickle=False)
-        metadata = getattr(frame, "metadata", {})
-        fov_y_deg = 45.0
-        if isinstance(metadata, dict):
-            maybe_fov = metadata.get("fov_y_deg")
-            if isinstance(maybe_fov, int | float):
-                fov_y_deg = float(maybe_fov)
-            if metadata.get("image_convention") == "opengl":
-                display_image = np.flipud(image)
-            else:
-                display_image = image
-        else:
-            display_image = image
-        stream = getattr(frame, "stream", "camera")
-        frame_id = stream if isinstance(stream, str) else "camera"
+        from dimos.msgs.sensor_msgs.Image import Image
+
+        if not isinstance(image, Image):
+            raise TypeError(f"expected DimOS Image stream output, got {type(image).__name__}")
+        display_image = np.asarray(image.to_rgb().data)
+        frame_id = getattr(image, "frame_id", "camera") or "camera"
         if image_dump_dir is not None:
-            _write_rgb_jpeg(image_dump_dir / f"{image_dump_label}_{frame_id}_raw.jpg", image)
             _write_rgb_jpeg(
                 image_dump_dir / f"{image_dump_label}_{frame_id}_display.jpg",
                 display_image,
             )
-        if publisher is not None:
-            publisher.publish_rgb(display_image, fov_y_deg=fov_y_deg, frame_id=frame_id)
-            published += 1
+        published += 1
     return published
+
+
+class RuntimeStreamCapture:
+    """Small local subscriber for RobosuiteRuntimeModule output streams."""
+
+    def __init__(self) -> None:
+        self.last_motor_state: object | None = None
+        self.last_color_image: object | None = None
+        self.last_camera_info: object | None = None
+        self.runtime_events: list[object] = []
+        self.streams_since_mark: list[str] = []
+
+    def mark(self) -> None:
+        self.streams_since_mark = []
+
+    def color_image(self, image: object) -> None:
+        self.last_color_image = image
+        self.streams_since_mark.append("color_image")
+
+    def motor_state(self, motor_state: object) -> None:
+        self.last_motor_state = motor_state
+        self.streams_since_mark.append("motor_state")
+
+    def camera_info(self, camera_info: object) -> None:
+        self.last_camera_info = camera_info
+        self.streams_since_mark.append("camera_info")
+
+    def runtime_event(self, event: object) -> None:
+        self.runtime_events.append(event)
+        stream = getattr(event, "stream", "runtime_event")
+        self.streams_since_mark.append(stream if isinstance(stream, str) else "runtime_event")
 
 
 def _write_rgb_jpeg(path: Path, rgb: object) -> None:
@@ -401,9 +274,19 @@ def main() -> None:
         help="Override Robosuite camera, e.g. agentview or robot0_eye_in_hand.",
     )
     parser.add_argument(
+        "--runtime-mode",
+        choices=("placed", "local"),
+        default="placed",
+        help=(
+            "Runtime execution mode. 'placed' builds the Robosuite blueprint and "
+            "runs the simulator module in its named Python project runtime; "
+            "'local' directly instantiates the runtime module in the current process."
+        ),
+    )
+    parser.add_argument(
         "--rerun",
         action="store_true",
-        help="Publish Robosuite camera payloads to Rerun through DimOS streams.",
+        help="Publish Robosuite camera stream outputs to Rerun through DimOS streams.",
     )
     parser.add_argument(
         "--rerun-memory-limit",
@@ -433,8 +316,8 @@ def main() -> None:
         type=int,
         default=25,
         help=(
-            "When --rerun is enabled, write every Nth fetched Robosuite camera payload "
-            "as raw/display JPEGs under artifacts/.../images. Use 1 for every tick, <=0 to disable."
+            "When --rerun is enabled, write every Nth Robosuite camera stream output "
+            "as display JPEGs under artifacts/.../images. Use 1 for every tick, <=0 to disable."
         ),
     )
     args = parser.parse_args()
@@ -472,6 +355,7 @@ def main() -> None:
             rerun_lcm_port=args.rerun_lcm_port,
             rerun_max_hz=args.rerun_max_hz,
             camera_jpeg_dump_every=args.camera_jpeg_dump_every,
+            runtime_mode=args.runtime_mode,
         )
     except Exception as exc:
         print(json.dumps({"ok": False, "reason": str(exc)}, indent=2))
@@ -488,6 +372,7 @@ def run_demo_config(
     rerun_lcm_port: int = 0,
     rerun_max_hz: float = 10.0,
     camera_jpeg_dump_every: int = 25,
+    runtime_mode: str = "placed",
 ) -> Path:
     return _run_demo(
         config,
@@ -497,6 +382,7 @@ def run_demo_config(
         rerun_lcm_port=rerun_lcm_port,
         rerun_max_hz=rerun_max_hz,
         camera_jpeg_dump_every=camera_jpeg_dump_every,
+        runtime_mode=runtime_mode,
     )
 
 
@@ -509,6 +395,7 @@ def run_demo(config_path: Path) -> Path:
         rerun_lcm_port=0,
         rerun_max_hz=10.0,
         camera_jpeg_dump_every=25,
+        runtime_mode="placed",
     )
 
 
@@ -521,38 +408,97 @@ def _run_demo(
     rerun_lcm_port: int,
     rerun_max_hz: float,
     camera_jpeg_dump_every: int,
+    runtime_mode: str,
 ) -> Path:
+    from dimos_robosuite_sidecar.module import RobosuiteRuntimeModule
+
     artifact_dir = (REPO_ROOT / config.artifact_dir).resolve()
     client_image_dump_dir = artifact_dir / "images" / "client"
-    server_image_dump_dir = artifact_dir / "images" / "server"
-    sidecar = _start_robosuite_sidecar(
-        config,
-        server_image_dump_dir=server_image_dump_dir if camera_jpeg_dump_every > 0 else None,
-        image_dump_every=camera_jpeg_dump_every,
-    )
-    client = RuntimeSidecarClient(f"http://{config.runtime_host}:{config.runtime_port}")
+    runtime_image_dump_dir = artifact_dir / "images" / "runtime"
     owner: MotorShmOwner | None = None
     coordinator: ControlCoordinator | None = None
-    rerun_publisher: RerunStreamPublisher | None = None
-    sidecar_output = ""
+    rerun_bridge: RuntimeRerunBridge | None = None
     cleanup_status: dict[str, object] = {
         "coordinator_stopped": False,
+        "module_coordinator_stopped": False,
         "shm_unlinked": False,
-        "sidecar_stopped": False,
+        "runtime_stopped": False,
     }
     selected_rerun_grpc_port: int | None = None
     selected_rerun_lcm_port: int | None = None
+    module_coordinator = None
+    if rerun:
+        # Start Rerun before constructing Robosuite/MuJoCo. Starting the viewer
+        # after MuJoCo visual contexts exist can corrupt subsequent offscreen
+        # camera buffers in visual mode.
+        selected_rerun_grpc_port = rerun_grpc_port if rerun_grpc_port > 0 else _free_tcp_port()
+        selected_rerun_lcm_port = rerun_lcm_port if rerun_lcm_port > 0 else _free_tcp_port()
+        rerun_bridge = RuntimeRerunBridge(
+            grpc_port=selected_rerun_grpc_port,
+            lcm_port=selected_rerun_lcm_port,
+            memory_limit=rerun_memory_limit,
+            max_hz=rerun_max_hz,
+        )
+        rerun_bridge.start()
     try:
-        try:
-            health = _wait_sidecar_healthy(sidecar, client, timeout_s=20.0)
-        except RuntimeError as exc:
-            raise RuntimeError(
-                "Robosuite sidecar did not become healthy. If this environment does not "
-                "have Robosuite installed, run this script in the Robosuite sidecar env."
-            ) from exc
-        description = client.describe()
+        if runtime_mode == "placed":
+            from dimos_robosuite_sidecar.blueprint import robosuite_runtime_blueprint
+
+            from dimos.core.coordination.module_coordinator import ModuleCoordinator
+
+            blueprint = robosuite_runtime_blueprint(
+                env_name=config.env_name,
+                robot_id=config.robot_id,
+                robot_model=config.robot_model,
+                controller=config.controller,
+                control_freq=config.control_step_hz,
+                horizon=config.horizon,
+                camera_name=config.camera_name,
+                seed=config.seed,
+                visualize=config.visualize,
+                image_dump_dir=runtime_image_dump_dir if camera_jpeg_dump_every > 0 else None,
+                image_dump_every=camera_jpeg_dump_every,
+            ).global_config(viewer="none", n_workers=1)
+            module_coordinator = ModuleCoordinator.build(blueprint)
+            runtime = module_coordinator.get_instance(RobosuiteRuntimeModule)
+        else:
+            runtime = RobosuiteRuntimeModule(
+                env_name=config.env_name,
+                robot_id=config.robot_id,
+                robot_model=config.robot_model,
+                controller=config.controller,
+                control_freq=config.control_step_hz,
+                horizon=config.horizon,
+                camera_name=config.camera_name,
+                seed=config.seed,
+                visualize=config.visualize,
+                image_dump_dir=runtime_image_dump_dir if camera_jpeg_dump_every > 0 else None,
+                image_dump_every=camera_jpeg_dump_every,
+            )
+    except Exception as exc:
+        if rerun_bridge is not None:
+            rerun_bridge.stop()
+        raise RuntimeError(
+            "RobosuiteRuntimeModule could not be deployed. For placed mode, prepare "
+            "packages/dimos-robosuite-sidecar as the named runtime environment; for "
+            "local debug mode, run from a Robosuite-capable package environment."
+        ) from exc
+    capture = RuntimeStreamCapture()
+    runtime.motor_state.subscribe(capture.motor_state)
+    runtime.color_image.subscribe(capture.color_image)
+    runtime.camera_info.subscribe(capture.camera_info)
+    runtime.runtime_event.subscribe(capture.runtime_event)
+    health: dict[str, object] = {
+        "ok": True,
+        "runtime": "RobosuiteRuntimeModule",
+        "transport": f"module-rpc-{runtime_mode}",
+        "http_runtime_api": False,
+    }
+    try:
+        description = runtime.describe()
         plan = resolve_runtime_plan(config, description)
-        reset = client.reset(
+        capture.mark()
+        reset = runtime.reset(
             EpisodeResetRequest(
                 episode_id=plan.episode_id,
                 task_id=plan.task_id,
@@ -560,48 +506,41 @@ def _run_demo(
             )
         )
 
-        owner = MotorShmOwner(plan.shm_key, plan.motor_names)
-        owner.write_state([MotorState(q=0.0) for _ in plan.motor_names], sequence=0)
-
-        hardware = HardwareComponent(
-            hardware_id=plan.robot_id,
-            hardware_type=HardwareType.WHOLE_BODY,
-            joints=plan.motor_names,
-            adapter_type="benchmark_runtime",
-            address=plan.shm_key,
-            adapter_kwargs={"motor_names": plan.motor_names, "connect_timeout_s": 5.0},
-        )
         task_name = f"servo_{plan.robot_id}"
-        coordinator = ControlCoordinator(
-            tick_rate=float(plan.control_step_hz),
-            publish_joint_state=False,
-            hardware=[hardware],
-            tasks=[
-                TaskConfig(
-                    name=task_name,
-                    type="servo",
-                    joint_names=plan.motor_names,
-                    auto_start=True,
-                    params={"timeout": 0.0, "default_positions": [0.0] * len(plan.motor_names)},
-                )
-            ],
-        )
-        coordinator.start()
-        if rerun:
-            selected_rerun_grpc_port = rerun_grpc_port if rerun_grpc_port > 0 else _free_tcp_port()
-            selected_rerun_lcm_port = rerun_lcm_port if rerun_lcm_port > 0 else _free_tcp_port()
-            rerun_publisher = RerunStreamPublisher(
-                grpc_port=selected_rerun_grpc_port,
-                lcm_port=selected_rerun_lcm_port,
-                memory_limit=rerun_memory_limit,
-                max_hz=rerun_max_hz,
+        if not config.visualize:
+            owner = MotorShmOwner(plan.shm_key, plan.motor_names)
+            owner.write_state([MotorState(q=0.0) for _ in plan.motor_names], sequence=0)
+
+            hardware = HardwareComponent(
+                hardware_id=plan.robot_id,
+                hardware_type=HardwareType.WHOLE_BODY,
+                joints=plan.motor_names,
+                adapter_type="benchmark_runtime",
+                address=plan.shm_key,
+                adapter_kwargs={"motor_names": plan.motor_names, "connect_timeout_s": 5.0},
             )
-            rerun_publisher.start()
+            coordinator = ControlCoordinator(
+                tick_rate=float(plan.control_step_hz),
+                publish_joint_state=False,
+                hardware=[hardware],
+                tasks=[
+                    TaskConfig(
+                        name=task_name,
+                        type="servo",
+                        joint_names=plan.motor_names,
+                        auto_start=True,
+                        params={
+                            "timeout": 0.0,
+                            "default_positions": [0.0] * len(plan.motor_names),
+                        },
+                    )
+                ],
+            )
+            coordinator.start()
+        if rerun:
             if camera_jpeg_dump_every > 0:
-                _publish_rerun_observations(
-                    client,
-                    reset.observations,
-                    None,
+                _dump_stream_observation_image(
+                    capture,
                     image_dump_dir=client_image_dump_dir,
                     image_dump_label="reset",
                 )
@@ -612,45 +551,70 @@ def _run_demo(
             target = _target_for_tick(
                 plan.target_position, len(plan.motor_names), tick, config.visualize
             )
-            accepted = coordinator.task_invoke(
-                task_name, "set_target", {"positions": target, "t_now": None}
-            )
-            if accepted is not True:
-                raise RuntimeError(f"servo task rejected target at tick {tick}")
-            time.sleep(1.0 / plan.control_step_hz)
-            command_sequence, action = _command_frame(owner, plan.robot_id)
-            response = client.step(
+            if config.visualize:
+                # The visual smoke path is intended to make simulator motion obvious.
+                # The ControlCoordinator/SHM servo path intentionally damps targets,
+                # which is useful for normal benchmark plumbing but too subtle for
+                # visual debugging. Send the runtime action directly here while the
+                # non-visual smoke keeps exercising the coordinator bridge.
+                command_sequence = tick + 1
+                action = MotorActionFrame(
+                    robot_id=plan.robot_id,
+                    names=plan.motor_names,
+                    q=target,
+                    sequence=command_sequence,
+                )
+                time.sleep(1.0 / plan.control_step_hz)
+            else:
+                if coordinator is None:
+                    raise RuntimeError("non-visual demo requires a ControlCoordinator")
+                accepted = coordinator.task_invoke(
+                    task_name, "set_target", {"positions": target, "t_now": None}
+                )
+                if accepted is not True:
+                    raise RuntimeError(f"servo task rejected target at tick {tick}")
+                time.sleep(1.0 / plan.control_step_hz)
+                if owner is None:
+                    raise RuntimeError("non-visual demo requires a motor SHM owner")
+                command_sequence, action = _command_frame(owner, plan.robot_id)
+            capture.mark()
+            response = runtime.step(
                 StepRequest(episode_id=plan.episode_id, tick_id=tick, action=action)
             )
+            motor_state = capture.last_motor_state
+            if not isinstance(motor_state, MotorStateFrame):
+                raise RuntimeError("RobosuiteRuntimeModule did not publish motor_state")
+            motor_state = cast("MotorStateFrame", motor_state)
             should_dump_jpeg = (
                 rerun and camera_jpeg_dump_every > 0 and tick % camera_jpeg_dump_every == 0
             )
-            published_rerun_frames += _publish_rerun_observations(
-                client,
-                response.observations,
-                rerun_publisher,
+            if rerun and capture.last_color_image is not None:
+                published_rerun_frames += 1
+            _dump_stream_observation_image(
+                capture,
                 image_dump_dir=client_image_dump_dir if should_dump_jpeg else None,
                 image_dump_label=f"tick_{tick:06d}",
             )
-            owner.write_state(
-                [
-                    MotorState(
-                        q=response.motor_state.q[i],
-                        dq=response.motor_state.dq[i],
-                        tau=response.motor_state.tau[i],
-                    )
-                    for i in range(len(plan.motor_names))
-                ],
-                sequence=response.motor_state.sequence,
-            )
+            if owner is not None:
+                owner.write_state(
+                    [
+                        MotorState(
+                            q=motor_state.q[i],
+                            dq=motor_state.dq[i],
+                            tau=motor_state.tau[i],
+                        )
+                        for i in range(len(plan.motor_names))
+                    ],
+                    sequence=motor_state.sequence,
+                )
             trace.append(
                 {
                     "tick": tick,
                     "command_sequence": command_sequence,
-                    "state_sequence": response.motor_state.sequence,
+                    "state_sequence": motor_state.sequence,
                     "command_q": action.q,
-                    "state_q": response.motor_state.q,
-                    "observation_streams": [frame.stream for frame in response.observations],
+                    "state_q": motor_state.q,
+                    "observation_streams": list(capture.streams_since_mark),
                     "rerun_frames_published": published_rerun_frames,
                     "reward": response.reward,
                     "done": response.done,
@@ -664,7 +628,7 @@ def _run_demo(
             print("visual demo complete; keeping Robosuite viewer open for 5 seconds")
             time.sleep(5.0)
 
-        score = client.score()
+        score = runtime.score()
         write_json(artifact_dir / "episode_config.json", config)
         write_json(artifact_dir / "runtime_description.json", description)
         write_json(artifact_dir / "resolved_runtime_plan.json", plan)
@@ -683,7 +647,7 @@ def _run_demo(
                 "client_jpeg_dump_dir": str(client_image_dump_dir)
                 if rerun and camera_jpeg_dump_every > 0
                 else None,
-                "server_jpeg_dump_dir": str(server_image_dump_dir)
+                "runtime_jpeg_dump_dir": str(runtime_image_dump_dir)
                 if camera_jpeg_dump_every > 0
                 else None,
                 "jpeg_dump_every": camera_jpeg_dump_every,
@@ -693,9 +657,9 @@ def _run_demo(
         write_json(artifact_dir / "health.json", health)
         return artifact_dir
     finally:
-        if rerun_publisher is not None:
+        if rerun_bridge is not None:
             try:
-                rerun_publisher.stop()
+                rerun_bridge.stop()
                 cleanup_status["rerun_stopped"] = True
             except Exception as exc:
                 cleanup_status["rerun_error"] = str(exc)
@@ -712,18 +676,21 @@ def _run_demo(
                 cleanup_status["shm_unlinked"] = True
             except Exception as exc:
                 cleanup_status["shm_error"] = str(exc)
-        sidecar.terminate()
-        try:
-            sidecar_output, _ = sidecar.communicate(timeout=2.0)
-        except subprocess.TimeoutExpired:
-            sidecar.kill()
-            sidecar_output, _ = sidecar.communicate(timeout=2.0)
-        cleanup_status["sidecar_returncode"] = sidecar.returncode
-        cleanup_status["sidecar_stopped"] = sidecar.returncode is not None
-        sidecar_log = artifact_dir / "robosuite_sidecar.log"
-        sidecar_log.parent.mkdir(parents=True, exist_ok=True)
-        sidecar_log.write_text(sidecar_output)
-        write_json(sidecar_log.parent / "cleanup_status.json", cleanup_status)
+        if module_coordinator is not None:
+            try:
+                module_coordinator.stop()
+                cleanup_status["module_coordinator_stopped"] = True
+                cleanup_status["runtime_stopped"] = True
+            except Exception as exc:
+                cleanup_status["module_coordinator_error"] = str(exc)
+        else:
+            try:
+                runtime.stop()
+                cleanup_status["runtime_stopped"] = True
+            except Exception as exc:
+                cleanup_status["runtime_error"] = str(exc)
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        write_json(artifact_dir / "cleanup_status.json", cleanup_status)
 
 
 if __name__ == "__main__":

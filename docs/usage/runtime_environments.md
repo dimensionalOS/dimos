@@ -150,6 +150,45 @@ The package's `pyproject.toml` should declare the worker dependencies needed by 
 
 Phase 1 packages may depend on the root `dimos` package. A future split can replace that with a smaller worker runtime package.
 
+### Simulator runtime modules
+
+Simulator integrations follow the project-worker pattern when their dependency
+closure is too heavy or conflicting for the coordinator environment. The runtime
+package exposes an import-safe `Module` class plus a package-local blueprint helper
+that hides the placement boilerplate:
+
+```python skip
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.runtime_environment import PythonProjectRuntimeEnvironment
+
+from my_sim_runtime.module import MySimRuntimeModule
+
+
+def my_sim_runtime_blueprint(runtime: PythonProjectRuntimeEnvironment | None = None):
+    environment = runtime or PythonProjectRuntimeEnvironment(
+        name="my-sim-runtime",
+        project=Path("packages/my-sim-runtime"),
+    )
+    return (
+        autoconnect(MySimRuntimeModule.blueprint())
+        .runtime_environments(environment)
+        .runtime_placements({MySimRuntimeModule: environment.name})
+    )
+```
+
+The module boundary is DimOS-native:
+
+- control plane: `describe`, `reset`, synchronous `step`, and `score` RPCs;
+- data plane: typed streams such as `Out[Image]`, `Out[CameraInfo]`, motor state,
+  and runtime events;
+- simulator ownership: reset, step, render, and camera capture are marshalled onto
+  the simulator owner thread when the backend has thread-affine render contexts.
+
+Do not use a long-running HTTP server or `/payloads/{id}` image fetches as the
+target runtime boundary. Those paths are migration removal gates once the placed
+module path covers import boundaries, runtime preparation, control RPCs, typed
+data streams, and benchmark parity.
+
 ## Native module runtime environments
 
 Native modules can reference a named native runtime environment instead of repeating executable/build settings in every config.

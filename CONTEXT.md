@@ -88,6 +88,18 @@ _Avoid_: autonomous simulator loop, write-triggered stepping, settle step
 A separate process or environment that owns a benchmark simulator backend while DimOS owns orchestration, control integration, skills, and artifacts.
 _Avoid_: plugin, embedded simulator
 
+**HTTP runtime removal gate**:
+A migration success condition requiring existing HTTP runtime sidecar servers, clients, payload fetch endpoints, and HTTP-first demos to be removed once their behavior is covered by Simulator Runtime Modules.
+_Avoid_: HTTP fallback, target simulator architecture, long-term transport boundary
+
+**Simulator Runtime Module**:
+A first-class DimOS Module that represents a simulator runtime at the blueprint boundary while preserving simulator ownership of benchmark reset, stepping, observations, and scoring.
+_Avoid_: HTTP runtime sidecar, benchmark script launcher, embedded simulator
+
+**Simulator runtime blueprint helper**:
+A package-local blueprint factory that registers a simulator runtime's named Python project environment and places its Simulator Runtime Module into that environment using the standard blueprint placement API.
+_Avoid_: module-local deployment flag, global sidecar registry, caller-written placement boilerplate
+
 **Remote module worker**:
 A separate Python environment that hosts first-class DimOS Modules while the main DimOS process owns blueprint orchestration and module coordination.
 _Avoid_: arbitrary sidecar service, embedded optional dependency
@@ -145,11 +157,11 @@ The phase-1 rule that an incompatible or failing venv module implementation fail
 _Avoid_: optional module fallback, background retry policy, partial blueprint success
 
 **Venv module placement API**:
-A blueprint-level mapping that runs selected Python module contracts in named venvs using concrete module implementation descriptors.
+A blueprint-level mapping that runs selected import-safe Python Module classes in named runtime environments.
 _Avoid_: new Module base class, permanent class deployment attribute, global transport setting
 
 **Python venv placement**:
-A mapping entry keyed by the coordinator-visible module contract class and valued by a named venv plus implementation descriptor.
+A mapping entry keyed by an import-safe Python Module class and valued by the name of a Python runtime environment.
 _Avoid_: deployment type, stream transport key, hardcoded worker process
 
 **Reserved deploy kwargs**:
@@ -248,9 +260,17 @@ _Avoid_: task observation, scene observation, evaluator state
 A hardware control surface that treats a robot as an ordered set of motors with per-motor state and commands, independent of whether the robot is a manipulator, mobile base, or humanoid.
 _Avoid_: manipulator-only adapter, end-effector API, task action API
 
+**Runtime motor action frame**:
+An ordered command frame addressed to a simulator runtime's declared whole-body motor surface for one benchmark step.
+_Avoid_: backend-native action vector, opaque simulator action, stream transport payload
+
 **Benchmark episode config**:
 A backend-facing declaration of benchmark intent that names the task, robot, runtime constraints, and evaluation setup before any DimOS blueprint is launched.
 _Avoid_: hardware config, simulator config, blueprint config
+
+**Benchmark reset authority**:
+The control-plane responsibility for establishing a new benchmark episode state before simulation time advances.
+_Avoid_: reset topic ownership, observation stream side effect, simulator auto-reset
 
 **Semantic skill benchmark episode**:
 A benchmark episode where the agent acts through named, task-level DimOS skills while simulator backends provide reset, observation, and external scoring.

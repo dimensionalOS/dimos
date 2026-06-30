@@ -633,6 +633,7 @@ ignore = [
     "uv.lock",
     "packages/dimos-gpd-grasp-demo/pixi.lock",
     "packages/dimos-gpd-grasp-demo/uv.lock",
+    "packages/dimos-robosuite-sidecar/uv.lock",
     "packages/dimos-gpd-worker-demo/pixi.lock",
     "packages/dimos-gpd-worker-demo/uv.lock",
     "*/package-lock.json",

@@ -13,17 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run a LIBERO-PRO registered-task demo through the DimOS runtime sidecar path.
+"""Run a LIBERO-PRO registered-task demo through the DimOS runtime module path.
 
-The DimOS process intentionally does not import LIBERO-PRO, Robosuite, or Torch.
-It starts the LIBERO-PRO sidecar in a subprocess and communicates through the
-shared runtime protocol plus the local SHM motor bridge.
+This script runs from the host DimOS environment and deploys the first-class
+``LiberoProRuntimeModule`` into the package-local LIBERO-PRO Python project
+runtime. The simulator dependencies stay in the placed worker environment while
+the host process drives DimOS-native RPCs and streams.
 """
 
 from __future__ import annotations
 
 import argparse
-from io import BytesIO
+from collections.abc import Callable
 import json
 import os
 from pathlib import Path
@@ -31,6 +32,7 @@ import socket
 import subprocess
 import sys
 import time
+from typing import Protocol
 
 import numpy as np
 
@@ -43,9 +45,13 @@ for package_src in (PROTOCOL_SRC, LIBERO_PRO_SIDECAR_SRC):
 
 from dimos_runtime_protocol import (
     EpisodeResetRequest,
+    EpisodeResetResponse,
     MotorActionFrame,
-    ObservationKind,
+    MotorStateFrame,
+    RuntimeDescription,
+    ScoreOutput,
     StepRequest,
+    StepResponse,
 )
 
 from dimos.benchmark.runtime.artifacts import write_json
@@ -57,9 +63,35 @@ from dimos.benchmark.runtime.config import (
 )
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.hardware.whole_body.spec import MotorState
-from dimos.simulation.runtime_client.http_client import RuntimeSidecarClient
 from dimos.simulation.runtime_client.shm_motor import MotorShmOwner
+
+
+class _Subscribable(Protocol):
+    def subscribe(self, cb: Callable[..., object]) -> object: ...
+
+
+class _ImageMessage(Protocol):
+    data: object
+    frame_id: str
+
+
+class _LiberoProRuntime(Protocol):
+    color_image: _Subscribable
+    camera_info: _Subscribable
+    motor_state: _Subscribable
+    runtime_event: _Subscribable
+
+    def describe(self) -> RuntimeDescription: ...
+
+    def reset(self, request: EpisodeResetRequest) -> EpisodeResetResponse: ...
+
+    def step(self, request: StepRequest) -> StepResponse: ...
+
+    def score(self) -> ScoreOutput: ...
+
+    def stop(self) -> None: ...
 
 
 def _load_config(path: Path) -> BenchmarkEpisodeConfig:
@@ -85,45 +117,6 @@ def _repo_path(path: Path) -> Path:
     return path if path.is_absolute() else REPO_ROOT / path
 
 
-def _common_sidecar_args(
-    config: BenchmarkEpisodeConfig,
-    options: LiberoProBackendOptions,
-) -> list[str]:
-    command = [
-        "--host",
-        config.runtime_host,
-        "--port",
-        str(config.runtime_port),
-        "--robot-id",
-        config.robot_id,
-        "--control-freq",
-        str(config.control_step_hz),
-        "--benchmark-name",
-        options.benchmark_name,
-        "--task-order-index",
-        str(options.task_order_index),
-        "--task-index",
-        str(options.task_index),
-        "--init-state-index",
-        str(options.init_state_index),
-        "--controller",
-        options.controller,
-        "--horizon",
-        str(options.horizon),
-        "--bddl-root",
-        str(_repo_path(options.bddl_root)),
-        "--init-states-root",
-        str(_repo_path(options.init_states_root)),
-        "--seed",
-        str(config.seed) if config.seed is not None else "0",
-    ]
-    if config.visualize:
-        command.append("--visualize")
-    for camera_name in options.camera_names:
-        command.extend(["--camera-name", camera_name])
-    return command
-
-
 def _prepare_assets(config: BenchmarkEpisodeConfig, options: LiberoProBackendOptions) -> None:
     subprocess.run(
         [
@@ -146,42 +139,31 @@ def _prepare_assets(config: BenchmarkEpisodeConfig, options: LiberoProBackendOpt
     )
 
 
-def _start_libero_pro_sidecar(
+def _create_runtime_module(
     config: BenchmarkEpisodeConfig,
     options: LiberoProBackendOptions,
-) -> subprocess.Popen[str]:
-    command = [
-        _sidecar_python(),
-        "-m",
-        "dimos_libero_pro_sidecar.server",
-        *_common_sidecar_args(config, options),
-    ]
-    return subprocess.Popen(
-        command,
-        cwd=Path("/tmp/opencode"),
-        env=_sidecar_env(visualize=config.visualize),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
+) -> tuple[_LiberoProRuntime, ModuleCoordinator]:
+    from dimos_libero_pro_sidecar.blueprint import libero_pro_runtime_blueprint
+    from dimos_libero_pro_sidecar.module import LiberoProRuntimeModule
 
-
-def _wait_sidecar_healthy(
-    sidecar: subprocess.Popen[str],
-    client: RuntimeSidecarClient,
-    timeout_s: float,
-) -> object:
-    deadline = time.monotonic() + timeout_s
-    last_error = ""
-    while time.monotonic() < deadline:
-        if sidecar.poll() is not None:
-            raise RuntimeError("LIBERO-PRO sidecar exited before becoming healthy")
-        try:
-            return client.health()
-        except Exception as exc:
-            last_error = str(exc)
-            time.sleep(0.1)
-    raise RuntimeError(f"LIBERO-PRO sidecar did not become healthy: {last_error}")
+    blueprint = libero_pro_runtime_blueprint(
+        bddl_root=_repo_path(options.bddl_root),
+        init_states_root=_repo_path(options.init_states_root),
+        benchmark_name=options.benchmark_name,
+        robot_id=config.robot_id,
+        task_order_index=options.task_order_index,
+        task_index=options.task_index,
+        init_state_index=options.init_state_index,
+        controller=options.controller,
+        camera_names=tuple(options.camera_names),
+        control_freq=config.control_step_hz,
+        horizon=options.horizon,
+        seed=config.seed,
+        allow_asset_bootstrap=False,
+        visualize=config.visualize,
+    ).global_config(viewer="none", n_workers=1)
+    coordinator = ModuleCoordinator.build(blueprint)
+    return coordinator.get_instance(LiberoProRuntimeModule), coordinator
 
 
 def _command_frame(owner: MotorShmOwner, robot_id: str) -> tuple[int, MotorActionFrame]:
@@ -208,8 +190,8 @@ def _lcm_url(port: int) -> str:
     return f"udpm://239.255.76.67:{port}?ttl=0"
 
 
-class RerunStreamPublisher:
-    """Publish LIBERO-PRO runtime camera observations through DimOS streams."""
+class RuntimeRerunBridge:
+    """Bridge normal DimOS runtime streams into Rerun."""
 
     def __init__(
         self,
@@ -218,20 +200,11 @@ class RerunStreamPublisher:
         lcm_port: int,
         memory_limit: str,
         max_hz: float,
-        topic_prefix: str = "/libero_pro_runtime",
     ) -> None:
-        from dimos.core.transport import LCMTransport
-        from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-        from dimos.msgs.sensor_msgs.Image import Image
-        from dimos.protocol.pubsub.impl.lcmpubsub import LCM
         from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-        prefix = topic_prefix.rstrip("/")
-        self._image_topic = f"{prefix}/color_image"
-        self._camera_info_topic = f"{prefix}/camera_info"
-        self._image_entity = "world/libero_pro_runtime/color_image"
-        self._camera_info_entity = "world/libero_pro_runtime/camera_info"
-        self._camera_info_published = False
+        self._image_entity = "world/color_image"
+        self._camera_info_entity = "world/camera_info"
 
         def runtime_camera_blueprint() -> object:
             import rerun.blueprint as rrb
@@ -242,29 +215,12 @@ class RerunStreamPublisher:
                 )
             )
 
-        def topic_to_entity(topic: object) -> str:
-            topic_name = getattr(topic, "topic", None)
-            if not isinstance(topic_name, str):
-                topic_name = getattr(topic, "name", None)
-            if not isinstance(topic_name, str):
-                topic_name = str(topic).split("#")[0]
-            if topic_name == self._image_topic:
-                return self._image_entity
-            if topic_name == self._camera_info_topic:
-                return self._camera_info_entity
-            return f"world{topic_name}"
-
         max_hz_by_entity = {self._image_entity: max_hz} if max_hz > 0.0 else {}
-        lcm_url = _lcm_url(lcm_port)
-        self._image_transport = LCMTransport(self._image_topic, Image, url=lcm_url)
-        self._camera_info_transport = LCMTransport(self._camera_info_topic, CameraInfo, url=lcm_url)
         self._bridge = RerunBridgeModule(
-            pubsubs=[LCM(url=lcm_url)],
             blueprint=runtime_camera_blueprint,
             connect_url=f"rerun+http://127.0.0.1:{grpc_port}/proxy",
             memory_limit=memory_limit,
             max_hz=max_hz_by_entity,
-            topic_to_entity=topic_to_entity,
             visual_override={
                 self._camera_info_entity: lambda camera_info: camera_info.to_rerun(
                     image_topic=self._image_entity
@@ -276,29 +232,7 @@ class RerunStreamPublisher:
         self._bridge.start()
 
     def stop(self) -> None:
-        self._image_transport.stop()
-        self._camera_info_transport.stop()
         self._bridge.stop()
-
-    def publish_rgb(self, rgb: object, *, fov_y_deg: float, frame_id: str) -> None:
-        from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-        from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-
-        array = np.asarray(rgb)
-        if array.ndim != 3 or array.shape[2] < 3:
-            raise ValueError(f"expected HxWx3 RGB image, got shape {array.shape}")
-        image = Image.from_numpy(array[:, :, :3], format=ImageFormat.RGB, frame_id="")
-        camera_info = CameraInfo.from_fov(
-            fov_y_deg,
-            width=image.width,
-            height=image.height,
-            axis="vertical",
-            frame_id=frame_id,
-        ).with_ts(image.ts)
-        self._image_transport.broadcast(None, image)
-        if not self._camera_info_published:
-            self._camera_info_transport.broadcast(None, camera_info)
-            self._camera_info_published = True
 
 
 def _target_for_tick(plan_target: float, motor_count: int, tick: int) -> list[float]:
@@ -310,8 +244,8 @@ def _target_for_tick(plan_target: float, motor_count: int, tick: int) -> list[fl
     return targets[:motor_count]
 
 
-def _safe_payload_name(data_ref: str) -> str:
-    return data_ref.strip("/").replace("/", "_") or "payload"
+def _safe_stream_name(stream_name: str) -> str:
+    return stream_name.strip("/").replace("/", "_") or "camera"
 
 
 def _write_rgb_jpeg(path: Path, rgb: object) -> None:
@@ -326,75 +260,58 @@ def _write_rgb_jpeg(path: Path, rgb: object) -> None:
         raise RuntimeError(f"failed to write JPEG {path}")
 
 
-def _publish_rerun_observations(
-    client: RuntimeSidecarClient,
-    response_observations: object,
-    publisher: RerunStreamPublisher | None,
-    *,
-    image_dump_dir: Path | None = None,
-    image_dump_label: str = "frame",
-) -> int:
-    if publisher is None and image_dump_dir is None:
-        return 0
-    if not isinstance(response_observations, list):
-        return 0
-    published = 0
-    for frame in response_observations:
-        if getattr(frame, "kind", None) != ObservationKind.IMAGE:
-            continue
-        data_ref = getattr(frame, "data_ref", None)
-        if not isinstance(data_ref, str):
-            continue
-        payload = client.payload(data_ref)
-        image = np.load(BytesIO(payload), allow_pickle=False)
-        metadata = getattr(frame, "metadata", {})
-        fov_y_deg = 45.0
-        display_image = image
-        if isinstance(metadata, dict):
-            maybe_fov = metadata.get("fov_y_deg")
-            if isinstance(maybe_fov, int | float):
-                fov_y_deg = float(maybe_fov)
-            if metadata.get("image_convention") == "opengl":
-                display_image = np.flipud(image)
-        stream = getattr(frame, "stream", "camera")
-        frame_id = stream if isinstance(stream, str) else "camera"
-        if image_dump_dir is not None:
-            _write_rgb_jpeg(image_dump_dir / f"{image_dump_label}_{frame_id}_raw.jpg", image)
-            _write_rgb_jpeg(
-                image_dump_dir / f"{image_dump_label}_{frame_id}_display.jpg",
-                display_image,
-            )
-        if publisher is not None:
-            publisher.publish_rgb(display_image, fov_y_deg=fov_y_deg, frame_id=frame_id)
-            published += 1
-    return published
+class RuntimeStreamCapture:
+    """Collect DimOS-native outputs published by the local runtime module."""
+
+    def __init__(self) -> None:
+        self.images: list[_ImageMessage] = []
+        self.camera_infos: list[object] = []
+        self.motor_states: list[MotorStateFrame] = []
+        self.runtime_events: list[object] = []
+
+    def attach(self, module: _LiberoProRuntime) -> None:
+        module.color_image.subscribe(self.images.append)
+        module.camera_info.subscribe(self.camera_infos.append)
+        module.motor_state.subscribe(self.motor_states.append)
+        module.runtime_event.subscribe(self.runtime_events.append)
+
+    def take_images(self) -> list[_ImageMessage]:
+        images = self.images
+        self.images = []
+        return images
+
+    def take_camera_infos(self) -> list[object]:
+        camera_infos = self.camera_infos
+        self.camera_infos = []
+        return camera_infos
+
+    def take_motor_states(self) -> list[MotorStateFrame]:
+        motor_states = self.motor_states
+        self.motor_states = []
+        return motor_states
+
+    def take_runtime_events(self) -> list[object]:
+        runtime_events = self.runtime_events
+        self.runtime_events = []
+        return runtime_events
 
 
-def _fetch_camera_payloads(
-    client: RuntimeSidecarClient,
-    observations: object,
-    payload_dir: Path,
+def _camera_image_records(
+    images: list[_ImageMessage],
+    image_dir: Path,
     label: str,
 ) -> list[dict[str, object]]:
-    if not isinstance(observations, list):
-        return []
     records: list[dict[str, object]] = []
-    for frame in observations:
-        if getattr(frame, "kind", None) != ObservationKind.IMAGE:
-            continue
-        data_ref = getattr(frame, "data_ref", None)
-        if not isinstance(data_ref, str):
-            continue
-        payload = client.payload(data_ref)
-        array = np.load(BytesIO(payload), allow_pickle=False)
-        payload_path = payload_dir / f"{label}_{_safe_payload_name(data_ref)}.npy"
-        payload_path.parent.mkdir(parents=True, exist_ok=True)
-        payload_path.write_bytes(payload)
+    for index, image in enumerate(images):
+        array = np.asarray(image.data)
+        frame_id = image.frame_id or "camera"
+        image_path = image_dir / f"{label}_{_safe_stream_name(str(frame_id))}_{index:02d}.npy"
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        np.save(image_path, array, allow_pickle=False)
         records.append(
             {
-                "stream": getattr(frame, "stream", "camera"),
-                "data_ref": data_ref,
-                "path": str(payload_path),
+                "stream": frame_id,
+                "path": str(image_path),
                 "shape": list(array.shape),
                 "dtype": str(array.dtype),
                 "min": float(array.min()) if array.size else 0.0,
@@ -404,17 +321,42 @@ def _fetch_camera_payloads(
     return records
 
 
+def _dump_stream_images(
+    images: list[_ImageMessage],
+    *,
+    image_dump_dir: Path | None = None,
+    image_dump_label: str = "frame",
+) -> int:
+    if image_dump_dir is None:
+        return 0
+    published = 0
+    for index, image_msg in enumerate(images):
+        image = np.asarray(image_msg.data)
+        display_image = image
+        frame_id = image_msg.frame_id or "camera"
+        if image_dump_dir is not None:
+            _write_rgb_jpeg(
+                image_dump_dir / f"{image_dump_label}_{frame_id}_{index:02d}_raw.jpg", image
+            )
+            _write_rgb_jpeg(
+                image_dump_dir / f"{image_dump_label}_{frame_id}_{index:02d}_display.jpg",
+                display_image,
+            )
+        published += 1
+    return published
+
+
 def _trace_summary(trace: list[dict[str, object]]) -> dict[str, object]:
     final = trace[-1] if trace else {}
     stream_set: set[str] = set()
-    payload_count = 0
+    image_count = 0
     for entry in trace:
         value = entry.get("observation_streams", [])
         if isinstance(value, list):
             stream_set.update(stream for stream in value if isinstance(stream, str))
-        payloads = entry.get("camera_payloads", [])
-        if isinstance(payloads, list):
-            payload_count += len(payloads)
+        images = entry.get("camera_images", [])
+        if isinstance(images, list):
+            image_count += len(images)
     return {
         "ticks": len(trace),
         "first_command_sequence": trace[0].get("command_sequence") if trace else None,
@@ -423,7 +365,7 @@ def _trace_summary(trace: list[dict[str, object]]) -> dict[str, object]:
         "final_command_q": final.get("command_q"),
         "final_state_q": final.get("state_q"),
         "observation_streams": sorted(stream_set),
-        "camera_payload_count": payload_count,
+        "camera_image_count": image_count,
         "final_reward": final.get("reward"),
         "final_done": final.get("done"),
         "final_success": final.get("success"),
@@ -445,33 +387,34 @@ def run_demo_config(
     if prepare_assets:
         _prepare_assets(config, options)
     artifact_dir = (REPO_ROOT / config.artifact_dir).resolve()
-    payload_dir = artifact_dir / "camera_payloads"
+    image_dir = artifact_dir / "camera_images"
     client_image_dump_dir = artifact_dir / "images" / "client"
-    sidecar = _start_libero_pro_sidecar(config, options)
-    client = RuntimeSidecarClient(f"http://{config.runtime_host}:{config.runtime_port}")
+    runtime, module_coordinator = _create_runtime_module(config, options)
+    stream_capture = RuntimeStreamCapture()
+    stream_capture.attach(runtime)
     owner: MotorShmOwner | None = None
     coordinator: ControlCoordinator | None = None
-    rerun_publisher: RerunStreamPublisher | None = None
+    rerun_bridge: RuntimeRerunBridge | None = None
     selected_rerun_grpc_port: int | None = None
     selected_rerun_lcm_port: int | None = None
     published_rerun_frames = 0
-    sidecar_output = ""
     cleanup_status: dict[str, object] = {
         "coordinator_stopped": False,
+        "module_coordinator_stopped": False,
         "shm_unlinked": False,
-        "sidecar_stopped": False,
+        "runtime_stopped": False,
     }
     try:
         try:
-            health = _wait_sidecar_healthy(sidecar, client, timeout_s=30.0)
+            description = runtime.describe()
         except RuntimeError as exc:
             raise RuntimeError(
-                "LIBERO-PRO sidecar did not become healthy. Run this demo from an "
-                "environment that can import LIBERO-PRO and has prepared BDDL/init assets."
+                "LIBERO-PRO runtime module could not start. Prepare the "
+                "packages/dimos-libero-pro-sidecar runtime environment and BDDL/init "
+                "assets first (or pass --prepare-assets for explicit asset bootstrap)."
             ) from exc
-        description = client.describe()
         plan = resolve_runtime_plan(config, description)
-        reset = client.reset(
+        reset = runtime.reset(
             EpisodeResetRequest(
                 episode_id=plan.episode_id,
                 task_id=plan.task_id,
@@ -510,21 +453,22 @@ def run_demo_config(
         if rerun:
             selected_rerun_grpc_port = rerun_grpc_port if rerun_grpc_port > 0 else _free_tcp_port()
             selected_rerun_lcm_port = rerun_lcm_port if rerun_lcm_port > 0 else _free_tcp_port()
-            rerun_publisher = RerunStreamPublisher(
+            rerun_bridge = RuntimeRerunBridge(
                 grpc_port=selected_rerun_grpc_port,
                 lcm_port=selected_rerun_lcm_port,
                 memory_limit=rerun_memory_limit,
                 max_hz=rerun_max_hz,
             )
-            rerun_publisher.start()
+            rerun_bridge.start()
 
         trace: list[dict[str, object]] = []
-        reset_payloads = _fetch_camera_payloads(client, reset.observations, payload_dir, "reset")
+        reset_images = stream_capture.take_images()
+        reset_camera_infos = stream_capture.take_camera_infos()
+        reset_events = stream_capture.take_runtime_events()
+        reset_image_records = _camera_image_records(reset_images, image_dir, "reset")
         if rerun and camera_jpeg_dump_every > 0:
-            _publish_rerun_observations(
-                client,
-                reset.observations,
-                None,
+            _dump_stream_images(
+                reset_images,
                 image_dump_dir=client_image_dump_dir,
                 image_dump_label="reset",
             )
@@ -537,42 +481,49 @@ def run_demo_config(
                 raise RuntimeError(f"servo task rejected target at tick {tick}")
             time.sleep(1.0 / plan.control_step_hz)
             command_sequence, action = _command_frame(owner, plan.robot_id)
-            response = client.step(
+            response = runtime.step(
                 StepRequest(episode_id=plan.episode_id, tick_id=tick, action=action)
             )
-            camera_payloads = _fetch_camera_payloads(
-                client, response.observations, payload_dir, f"tick_{tick:06d}"
-            )
+            tick_images = stream_capture.take_images()
+            tick_camera_infos = stream_capture.take_camera_infos()
+            tick_motor_states = stream_capture.take_motor_states()
+            tick_runtime_events = stream_capture.take_runtime_events()
+            camera_images = _camera_image_records(tick_images, image_dir, f"tick_{tick:06d}")
             should_dump_jpeg = (
                 rerun and camera_jpeg_dump_every > 0 and tick % camera_jpeg_dump_every == 0
             )
-            published_rerun_frames += _publish_rerun_observations(
-                client,
-                response.observations,
-                rerun_publisher,
+            if rerun:
+                published_rerun_frames += len(tick_images)
+            _dump_stream_images(
+                tick_images,
                 image_dump_dir=client_image_dump_dir if should_dump_jpeg else None,
                 image_dump_label=f"tick_{tick:06d}",
+            )
+            stream_motor_state = (
+                tick_motor_states[-1] if tick_motor_states else response.motor_state
             )
             owner.write_state(
                 [
                     MotorState(
-                        q=response.motor_state.q[i],
-                        dq=response.motor_state.dq[i],
-                        tau=response.motor_state.tau[i],
+                        q=stream_motor_state.q[i],
+                        dq=stream_motor_state.dq[i],
+                        tau=stream_motor_state.tau[i],
                     )
                     for i in range(len(plan.motor_names))
                 ],
-                sequence=response.motor_state.sequence,
+                sequence=stream_motor_state.sequence,
             )
             trace.append(
                 {
                     "tick": tick,
                     "command_sequence": command_sequence,
-                    "state_sequence": response.motor_state.sequence,
+                    "state_sequence": stream_motor_state.sequence,
                     "command_q": action.q,
-                    "state_q": response.motor_state.q,
-                    "observation_streams": [frame.stream for frame in response.observations],
-                    "camera_payloads": camera_payloads,
+                    "state_q": stream_motor_state.q,
+                    "observation_streams": [str(record["stream"]) for record in camera_images],
+                    "camera_images": camera_images,
+                    "camera_info_count": len(tick_camera_infos),
+                    "runtime_event_count": len(tick_runtime_events),
                     "rerun_frames_published": published_rerun_frames,
                     "reward": response.reward,
                     "done": response.done,
@@ -586,12 +537,20 @@ def run_demo_config(
             print("visual demo complete; keeping LIBERO-PRO viewer open for 5 seconds")
             time.sleep(5.0)
 
-        score = client.score()
+        score = runtime.score()
         write_json(artifact_dir / "episode_config.json", config)
         write_json(artifact_dir / "runtime_description.json", description)
         write_json(artifact_dir / "resolved_runtime_plan.json", plan)
         write_json(artifact_dir / "reset_response.json", reset)
-        write_json(artifact_dir / "reset_camera_payloads.json", reset_payloads)
+        write_json(
+            artifact_dir / "reset_runtime_streams.json",
+            {
+                "image_count": len(reset_images),
+                "camera_info_count": len(reset_camera_infos),
+                "runtime_event_count": len(reset_events),
+            },
+        )
+        write_json(artifact_dir / "reset_camera_images.json", reset_image_records)
         write_json(artifact_dir / "motor_trace.json", trace)
         write_json(artifact_dir / "protocol_trace_summary.json", _trace_summary(trace))
         write_json(
@@ -610,12 +569,11 @@ def run_demo_config(
             },
         )
         write_json(artifact_dir / "score.json", score)
-        write_json(artifact_dir / "health.json", health)
         return artifact_dir
     finally:
-        if rerun_publisher is not None:
+        if rerun_bridge is not None:
             try:
-                rerun_publisher.stop()
+                rerun_bridge.stop()
                 cleanup_status["rerun_stopped"] = True
             except Exception as exc:
                 cleanup_status["rerun_error"] = str(exc)
@@ -632,18 +590,14 @@ def run_demo_config(
                 cleanup_status["shm_unlinked"] = True
             except Exception as exc:
                 cleanup_status["shm_error"] = str(exc)
-        sidecar.terminate()
         try:
-            sidecar_output, _ = sidecar.communicate(timeout=2.0)
-        except subprocess.TimeoutExpired:
-            sidecar.kill()
-            sidecar_output, _ = sidecar.communicate(timeout=2.0)
-        cleanup_status["sidecar_returncode"] = sidecar.returncode
-        cleanup_status["sidecar_stopped"] = sidecar.returncode is not None
-        sidecar_log = artifact_dir / "libero_pro_sidecar.log"
-        sidecar_log.parent.mkdir(parents=True, exist_ok=True)
-        sidecar_log.write_text(sidecar_output)
-        write_json(sidecar_log.parent / "cleanup_status.json", cleanup_status)
+            module_coordinator.stop()
+            cleanup_status["module_coordinator_stopped"] = True
+            cleanup_status["runtime_stopped"] = True
+        except Exception as exc:
+            cleanup_status["runtime_error"] = str(exc)
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        write_json(artifact_dir / "cleanup_status.json", cleanup_status)
 
 
 def run_demo(config_path: Path) -> Path:
@@ -665,7 +619,7 @@ def main() -> None:
     parser.add_argument(
         "--prepare-assets",
         action="store_true",
-        help="Run the explicit LIBERO-PRO asset bootstrap before sidecar startup.",
+        help="Run the explicit LIBERO-PRO asset bootstrap before runtime module startup.",
     )
     parser.add_argument(
         "--visual",
@@ -694,7 +648,7 @@ def main() -> None:
     parser.add_argument(
         "--rerun",
         action="store_true",
-        help="Publish LIBERO-PRO camera payloads to Rerun through DimOS streams.",
+        help="Publish LIBERO-PRO camera stream outputs to Rerun through DimOS streams.",
     )
     parser.add_argument(
         "--rerun-memory-limit",
@@ -723,7 +677,7 @@ def main() -> None:
         "--camera-jpeg-dump-every",
         type=int,
         default=25,
-        help="When --rerun is enabled, dump every Nth camera payload as JPEGs. Use <=0 to disable.",
+        help="When --rerun is enabled, dump every Nth camera stream output as JPEGs. Use <=0 to disable.",
     )
     args = parser.parse_args()
     try:

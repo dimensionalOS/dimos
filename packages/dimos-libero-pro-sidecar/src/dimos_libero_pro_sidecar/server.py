@@ -12,32 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Single-threaded HTTP sidecar for registered LIBERO-PRO tasks."""
+"""LIBERO-PRO runtime state for Simulator Runtime Modules."""
 
 from __future__ import annotations
 
-import argparse
 from collections.abc import Sequence
 from dataclasses import dataclass
-from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from io import BytesIO
-import json
 from pathlib import Path
 import time
-from typing import ClassVar, Protocol, cast
-from urllib.parse import unquote, urlparse
+from typing import Protocol, cast
 
 from dimos_runtime_protocol import (
     CommandMode,
     EpisodeResetRequest,
     EpisodeResetResponse,
-    HealthResponse,
     MotorDescription,
     MotorStateFrame,
     ObservationFrame,
     ObservationKind,
-    ProtocolVersion,
     RobotMotorSurface,
     RuntimeDescription,
     ScoreOutput,
@@ -413,79 +406,6 @@ class LiberoProRuntimeState:
         return payload_id, payload
 
 
-class LiberoProRuntimeHandler(BaseHTTPRequestHandler):
-    state: ClassVar[LiberoProRuntimeState]
-
-    def do_GET(self) -> None:
-        if self.path == "/health":
-            try:
-                validate_assets(self.state.config)
-                self._write_model(
-                    HealthResponse(ok=True, runtime_id="libero-pro", protocol=ProtocolVersion())
-                )
-            except Exception as exc:
-                self._write_model(
-                    HealthResponse(ok=False, runtime_id="libero-pro", detail=str(exc)),
-                    status=HTTPStatus.SERVICE_UNAVAILABLE,
-                )
-        elif self.path == "/describe":
-            self._write_model(self.state.describe())
-        elif self.path == "/score":
-            self._write_model(self.state.score())
-        elif self.path.startswith("/payloads/"):
-            payload_id = unquote(urlparse(self.path).path.removeprefix("/payloads/"))
-            try:
-                self._write_bytes(
-                    self.state.payload_bytes(payload_id), content_type="application/x-npy"
-                )
-            except FileNotFoundError:
-                self.send_error(HTTPStatus.NOT_FOUND)
-        else:
-            self.send_error(HTTPStatus.NOT_FOUND)
-
-    def do_POST(self) -> None:
-        try:
-            body = self.rfile.read(int(self.headers.get("content-length", "0"))).decode("utf-8")
-            payload = json.loads(body) if body else {}
-            if self.path == "/reset":
-                self._write_model(self.state.reset(EpisodeResetRequest.model_validate(payload)))
-            elif self.path == "/step":
-                self._write_model(self.state.step(StepRequest.model_validate(payload)))
-            else:
-                self.send_error(HTTPStatus.NOT_FOUND)
-        except Exception as exc:
-            self._write_json(HTTPStatus.BAD_REQUEST, {"code": "bad_request", "message": str(exc)})
-
-    def log_message(self, format: str, *args: object) -> None:
-        return
-
-    def _write_model(self, model: object, *, status: HTTPStatus = HTTPStatus.OK) -> None:
-        dump = getattr(model, "model_dump", None)
-        self._write_json(status, dump(mode="json") if callable(dump) else model)
-
-    def _write_json(self, status: HTTPStatus, payload: object) -> None:
-        data = json.dumps(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("content-type", "application/json")
-        self.send_header("content-length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def _write_bytes(self, payload: bytes, *, content_type: str) -> None:
-        self.send_response(HTTPStatus.OK)
-        self.send_header("content-type", content_type)
-        self.send_header("content-length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
-
-
-def make_server(
-    config: LiberoProRuntimeConfig, *, state: LiberoProRuntimeState | None = None
-) -> HTTPServer:
-    LiberoProRuntimeHandler.state = state or LiberoProRuntimeState(config)
-    return HTTPServer((config.host, config.port), LiberoProRuntimeHandler)
-
-
 def validate_assets(config: LiberoProRuntimeConfig) -> None:
     if config.allow_asset_bootstrap:
         bootstrap_assets(config)
@@ -525,50 +445,6 @@ def bootstrap_assets(config: LiberoProRuntimeConfig) -> None:
         local_dir_use_symlinks=False,
         allow_patterns=["bddl_files/**", "init_files/**"],
     )
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8767)
-    parser.add_argument("--benchmark-name", required=True)
-    parser.add_argument("--bddl-root", type=Path, required=True)
-    parser.add_argument("--init-states-root", type=Path, required=True)
-    parser.add_argument("--robot-id", default="panda")
-    parser.add_argument("--task-order-index", type=int, default=0)
-    parser.add_argument("--task-index", type=int, default=0)
-    parser.add_argument("--init-state-index", type=int, default=0)
-    parser.add_argument("--controller", default="JOINT_POSITION")
-    parser.add_argument("--control-freq", type=int, default=20)
-    parser.add_argument("--horizon", type=int, default=1000)
-    parser.add_argument("--seed", type=int, default=None)
-    parser.add_argument("--camera-name", action="append", dest="camera_names")
-    parser.add_argument("--allow-asset-bootstrap", action="store_true")
-    parser.add_argument("--visualize", action="store_true")
-    args = parser.parse_args()
-    config = LiberoProRuntimeConfig(
-        host=args.host,
-        port=args.port,
-        benchmark_name=args.benchmark_name,
-        bddl_root=args.bddl_root,
-        init_states_root=args.init_states_root,
-        robot_id=args.robot_id,
-        task_order_index=args.task_order_index,
-        task_index=args.task_index,
-        init_state_index=args.init_state_index,
-        controller=args.controller,
-        camera_names=tuple(args.camera_names or ["agentview"]),
-        control_freq=args.control_freq,
-        horizon=args.horizon,
-        seed=args.seed,
-        allow_asset_bootstrap=args.allow_asset_bootstrap,
-        visualize=args.visualize,
-    )
-    server = make_server(config)
-    try:
-        server.serve_forever()
-    finally:
-        server.server_close()
 
 
 def _task_bddl_file(config: LiberoProRuntimeConfig, benchmark: object, task: object) -> Path:
@@ -674,7 +550,3 @@ def _success_from_info(info: dict[str, object]) -> bool | None:
         if isinstance(value, int | float):
             return bool(value)
     return None
-
-
-if __name__ == "__main__":
-    main()
