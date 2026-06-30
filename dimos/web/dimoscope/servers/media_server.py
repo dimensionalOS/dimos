@@ -103,11 +103,16 @@ def _encode_webcodecs(topic: str, img, loop, video_q) -> None:
         if enc is None:
             enc = av.CodecContext.create("libx264", "w")
             enc.width, enc.height, enc.pix_fmt = w, h, "yuv420p"
-            enc.time_base = Fraction(1, 1_000_000)
-            enc.bit_rate = int(os.environ.get("WEBCODECS_BITRATE", 2_500_000))
+            # libx264 rate control needs the REAL fps: without it the per-frame bit budget is
+            # mis-derived (the µs time_base implies an absurd fps) so every frame is starved →
+            # max QP → blocky/washed-out garbage. This was the bug: framerate was never set.
+            enc.framerate = Fraction(30, 1)
+            enc.time_base = Fraction(1, 1_000_000)  # pts stay in µs
             enc.options = {
                 "tune": "zerolatency",
+                "preset": "veryfast",  # latency/quality balance
                 "profile": "baseline",  # avc1.42e0 — universal hardware decode
+                "crf": os.environ.get("WEBCODECS_CRF", "23"),  # constant-quality (replaces ABR bit_rate)
                 "g": "30",  # IDR cadence (force_key gets late joiners going sooner)
                 "bf": "0",  # no B-frames → lower latency, simpler decode order
                 "x264-params": "repeat-headers=1",  # SPS/PPS before every IDR → late joiners decode
