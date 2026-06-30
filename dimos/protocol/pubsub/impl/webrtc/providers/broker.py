@@ -403,7 +403,16 @@ class BrokerProvider(AsyncProviderBase):
                     logger.info("Dropping %s publish: no operator connected", topic)
                 return
             self._dropped_publish_warned = False
-            self._loop.call_soon_threadsafe(ch.send, data)
+            # Recheck readyState on the loop thread — channel can close
+            # between here and the tick; ch.send on a closed channel raises.
+            def _send_safe(c=ch, d=data) -> None:
+                if c.readyState == "open":
+                    try:
+                        c.send(d)
+                    except Exception:
+                        logger.debug("publish dropped: send raised", exc_info=True)
+
+            self._loop.call_soon_threadsafe(_send_safe)
 
     def set_video_frame(self, img: Any) -> None:
         """Robot → operator video: publish the latest camera frame.
