@@ -45,7 +45,7 @@ class PGOConfig(NativeModuleConfig):
     cwd: str | None = str(Path(__file__).resolve().parent)
     executable: str = "result/bin/pgo"
     build_command: str | None = (
-        'nix build "github:jeff-hykin/gsc_pgo/e5f9165164e124df16535fa6b8616adfae1d10df#default"'
+        'nix build "github:jeff-hykin/gsc_pgo/e8d910f305719b81efabc6b8e1035ee7020369e9#default"'
         " --no-write-lock-file"
     )
 
