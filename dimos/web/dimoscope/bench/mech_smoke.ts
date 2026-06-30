@@ -10,7 +10,9 @@ import { measureScenario } from "../packages/topics/src/bench.ts";
 import { createDimosClient } from "../packages/topics/src/client.ts";
 import type { Transport } from "../packages/topics/src/transport.ts";
 
-const WS_URL = Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8090";
+// serve.py serves WS at /ws, SSE at /sse, poll at /poll on one origin. BASE is the origin; WS_URL adds /ws.
+const BASE = (Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8080").replace(/\/ws$/, "");
+const WS_URL = `${BASE}/ws`;
 const DUR = Number(Deno.env.get("DUR") ?? 2000);
 const WARMUP_MS = Number(Deno.env.get("WARMUP_MS") ?? 15000);
 const SCENARIO = {
@@ -56,6 +58,6 @@ async function run(label: string, transport: Transport) {
 console.log(`[mech_smoke] warming up (≤${WARMUP_MS}ms)…`);
 await warmup();
 await run("ws", createGatewayWsTransport({ url: WS_URL, reconnect: false }));
-await run("sse", createSseTransport({ url: WS_URL, reconnect: false }));
-await run("poll", createHttpPollTransport({ url: WS_URL }));
+await run("sse", createSseTransport({ url: BASE, reconnect: false }));
+await run("poll", createHttpPollTransport({ url: BASE }));
 Deno.exit(0);

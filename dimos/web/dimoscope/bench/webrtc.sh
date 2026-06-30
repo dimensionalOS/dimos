@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-command WebRTC DataChannel e2e benchmark: gateway + load generator + servers/webrtc_data.py +
+# One-command WebRTC DataChannel e2e benchmark: the dimoscope service (/rtc) + load generator +
 # a headless aiortc probe (browser stand-in) counting frames over a real unordered/lossy DataChannel.
 # → `deno task bench:webrtc`.  (DUR is in seconds here — the probe measures a fixed window.)
 set -uo pipefail
@@ -19,15 +19,12 @@ pids=()
 cleanup() { for p in "${pids[@]:-}"; do kill "$p" 2>/dev/null || true; done; }
 trap cleanup EXIT
 
-echo "[webrtc] starting gateway (:$GW_PORT) + load generator (LCM)…"
-GATEWAY_PORT="$GW_PORT" "$DENO" run -A --unstable-sloppy-imports servers/gateway.ts >"$LOG/gw.log" 2>&1 &
+echo "[webrtc] starting dimoscope service (:$GW_PORT, /rtc) + load generator (LCM)…"
+PORT="$GW_PORT" "$PY" serve.py >"$LOG/gw.log" 2>&1 &
 pids+=($!)
 DIMOS_TRANSPORT=lcm BENCH_HZ="${BENCH_HZ:-100}" PYTHONPATH=bench "$PY" bench/bench_source.py >"$LOG/pub.log" 2>&1 &
 pids+=($!)
 
-echo "[webrtc] warming up load generator (cold dimos import)…"
+echo "[webrtc] warming up service + load generator (cold dimos import)…"
 sleep 15
-WEBRTC_PORT="$WRTC_PORT" GATEWAY_URL="ws://localhost:$GW_PORT" "$PY" servers/webrtc_data.py >"$LOG/webrtc.log" 2>&1 &
-pids+=($!)
-sleep 3 # webrtc_data subscribes to the gateway
-WEBRTC_URL="ws://localhost:$WRTC_PORT" DUR="$DUR" "$PY" bench/webrtc_client_probe.py
+WEBRTC_URL="ws://localhost:$GW_PORT/rtc" DUR="$DUR" "$PY" bench/webrtc_client_probe.py

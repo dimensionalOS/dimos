@@ -5,7 +5,7 @@
 import { createDimosClient } from "../packages/topics/src/client.ts";
 import { createGatewayWsTransport } from "../packages/topics/src/adapters/gatewayWs.ts";
 
-const URL = Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8090";
+const URL = Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8080/ws";
 const DUR = Number(Deno.env.get("DUR") ?? 3000);
 const MODE = Deno.env.get("MODE") ?? "basic";
 

@@ -7,7 +7,7 @@ import { measureScenario } from "../packages/topics/src/bench.ts";
 import { createDimosClient } from "../packages/topics/src/client.ts";
 import type { BenchRow } from "../packages/topics/src/bench.ts";
 
-const URL = Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8090";
+const URL = Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8080/ws";
 const DUR = Number(Deno.env.get("DUR") ?? 3000);
 const SCEN = {
   name: "4x PoseStamped + grid",

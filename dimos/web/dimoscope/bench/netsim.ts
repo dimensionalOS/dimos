@@ -30,7 +30,7 @@
 //   NETSIM_PROFILE=3g NETSIM_LISTEN=8099 NETSIM_TARGET=localhost:8090 \
 //     deno run -A bench/netsim.ts
 const LISTEN = Number(Deno.env.get("NETSIM_LISTEN") ?? 8099);
-const [THOST, TPORT] = (Deno.env.get("NETSIM_TARGET") ?? "localhost:8090").split(":");
+const [THOST, TPORT] = (Deno.env.get("NETSIM_TARGET") ?? "localhost:8080").split(":");
 
 // latency ms, jitter ±ms, bandwidth kbps (0 = unlimited). Rough but representative.
 interface Profile {

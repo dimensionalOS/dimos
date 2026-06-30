@@ -29,23 +29,19 @@ pids=()
 cleanup() { for p in "${pids[@]:-}"; do kill "$p" 2>/dev/null || true; done; }
 trap cleanup EXIT
 
-echo "[loss] gateway + pose-only load (4×PoseStamped @ 100Hz → ~400 datagrams/s, no streams)…"
-GATEWAY_PORT="$GW_PORT" "$DENO" run -A servers/gateway.ts >"$LOG/gw.log" 2>&1 &
+echo "[loss] dimoscope service (QUIC 127.0.0.1:$WT_PORT) + pose-only load (4×PoseStamped @ 100Hz → ~400 datagrams/s, no streams)…"
+PORT="$GW_PORT" WT_PORT="$WT_PORT" HOST=127.0.0.1 "$PY" serve.py >"$LOG/gw.log" 2>&1 &
 pids+=($!)
 DIMOS_TRANSPORT=lcm BENCH_HZ=100 BENCH_IMG_HZ=0 BENCH_GRID_HZ=0 \
   PYTHONPATH=bench "$PY" bench/bench_source.py >"$LOG/pub.log" 2>&1 &
 pids+=($!)
-echo "[loss] warming up load (cold dimos import)…"
+echo "[loss] warming up service + load (cold dimos import)…"
 sleep 15
-WEBTRANSPORT_HOST=127.0.0.1 WEBTRANSPORT_PORT="$WT_PORT" GATEWAY_URL="ws://localhost:$GW_PORT" \
-  "$PY" servers/webtransport.py >"$LOG/wt.log" 2>&1 &
-pids+=($!)
-sleep 3
 
 echo
 echo "=== WebTransport (QUIC datagrams) under REAL packet loss — relay @ 10ms±5, varying drop% ==="
 echo "    hz = datagrams/s delivered  ·  dgP95 = delivered-datagram p95 latency (ms)"
-# baseline: direct to webtransport.py, no relay
+# baseline: direct to the service's QUIC, no relay
 out=$(WT_HOST=127.0.0.1 WT_PORT="$WT_PORT" DUR="$DUR" "$PY" bench/webtransport_client_probe.py)
 printf "  %-22s %s\n" "0% (direct)" "$out"
 # through the UDP relay at increasing real loss (latency forced low to isolate the drop effect)

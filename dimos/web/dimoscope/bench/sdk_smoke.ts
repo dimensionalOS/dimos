@@ -2,7 +2,7 @@
 // RUN:  deno run -A bench/sdk_smoke.ts
 import { connect } from "../packages/topics/src/index.ts";
 
-const url = Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8090";
+const url = Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8080/ws";
 const client = await connect({ url, reconnect: false });
 console.log("[smoke] connected", url);
 

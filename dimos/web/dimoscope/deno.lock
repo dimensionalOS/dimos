@@ -9,6 +9,7 @@
     "npm:@types/react-dom@^18.3.1": "18.3.7_@types+react@18.3.31",
     "npm:@types/react@^18.3.12": "18.3.31",
     "npm:@vitejs/plugin-react@^4.3.4": "4.7.0_vite@5.4.21",
+    "npm:playwright@1.58.2": "1.58.2",
     "npm:react-dom@^18.3.1": "18.3.1_react@18.3.1",
     "npm:react@^18.3.1": "18.3.1",
     "npm:typescript@*": "5.9.3",
@@ -1149,6 +1150,11 @@
         "mime-types"
       ]
     },
+    "fsevents@2.3.2": {
+      "integrity": "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==",
+      "os": ["darwin"],
+      "scripts": true
+    },
     "fsevents@2.3.3": {
       "integrity": "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==",
       "os": ["darwin"],
@@ -1383,6 +1389,20 @@
     "picocolors@1.1.1": {
       "integrity": "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA=="
     },
+    "playwright-core@1.58.2": {
+      "integrity": "sha512-yZkEtftgwS8CsfYo7nm0KE8jsvm6i/PTgVtB8DL726wNf6H2IMsDuxCpJj59KDaxCtSnrWan2AeDqM7JBaultg==",
+      "bin": true
+    },
+    "playwright@1.58.2": {
+      "integrity": "sha512-vA30H8Nvkq/cPBnNw4Q8TWz1EJyqgpuinBcHET0YVJVFldr8JDNiU9LaWAE1KqSkRYazuaBhTpB5ZzShOezQ6A==",
+      "dependencies": [
+        "playwright-core"
+      ],
+      "optionalDependencies": [
+        "fsevents@2.3.2"
+      ],
+      "bin": true
+    },
     "postcss@8.5.16": {
       "integrity": "sha512-vuwillviilfKZsg0VGj5R/YwwcHx4SLsIOI/7K6mQkWx+l5cUHTjj5g0AasTBcyXsbfTgrwsUNmVUb5xVwyPwg==",
       "dependencies": [
@@ -1454,7 +1474,7 @@
         "@rollup/rollup-win32-ia32-msvc",
         "@rollup/rollup-win32-x64-gnu",
         "@rollup/rollup-win32-x64-msvc",
-        "fsevents"
+        "fsevents@2.3.3"
       ],
       "bin": true
     },
@@ -1584,7 +1604,7 @@
         "rollup"
       ],
       "optionalDependencies": [
-        "fsevents"
+        "fsevents@2.3.3"
       ],
       "bin": true
     },

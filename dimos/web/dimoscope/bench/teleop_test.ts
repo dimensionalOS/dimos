@@ -5,7 +5,7 @@ import { connect } from "../packages/topics/src/index.ts";
 
 const DRIVE_MS = Number(Deno.env.get("DRIVE_MS") ?? 4000);
 const client = await connect({
-  url: Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8090",
+  url: Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8080/ws",
   reconnect: false,
 });
 let x = 0,

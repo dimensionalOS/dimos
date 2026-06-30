@@ -9,7 +9,10 @@ import { measureScenario } from "../packages/topics/src/bench.ts";
 import { createDimosClient } from "../packages/topics/src/client.ts";
 import type { Transport } from "../packages/topics/src/transport.ts";
 
-const URL = Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8099";
+// serve.py serves WS at /ws, SSE at /sse, poll at /poll (all one origin). Strip a trailing /ws so
+// the SSE/poll adapters get the base; build the WS url with /ws.
+const URL = (Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8099").replace(/\/ws$/, "");
+const WS = `${URL}/ws`;
 const PROFILE = Deno.env.get("PROFILE") ?? "lan";
 const STREAM = Deno.env.get("STREAM") ?? "pose";
 const DUR = Number(Deno.env.get("DUR") ?? 3000);
@@ -28,7 +31,7 @@ const S = STREAMS[STREAM] ?? STREAMS.pose;
 const SCENARIO = { name: STREAM, topics: S.topics };
 
 const mk: Record<string, () => Transport> = {
-  ws: () => createGatewayWsTransport({ url: URL, reconnect: false }),
+  ws: () => createGatewayWsTransport({ url: WS, reconnect: false }),
   sse: () => createSseTransport({ url: URL, reconnect: false }),
   poll: () => createHttpPollTransport({ url: URL }),
 };

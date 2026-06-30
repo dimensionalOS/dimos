@@ -20,8 +20,8 @@ pids=()
 cleanup() { for p in "${pids[@]:-}"; do kill "$p" 2>/dev/null || true; done; }
 trap cleanup EXIT
 
-echo "[qos] gateway + bench_source (mixed: pose 100Hz + grid + lidar 200KB@10Hz)…"
-GATEWAY_PORT="$GW_PORT" "$DENO" run -A servers/gateway.ts >"$LOG/gw.log" 2>&1 &
+echo "[qos] dimoscope service + bench_source (mixed: pose 100Hz + grid + lidar 200KB@10Hz)…"
+PORT="$GW_PORT" "$PY" serve.py >"$LOG/gw.log" 2>&1 &
 pids+=($!)
 DIMOS_TRANSPORT=lcm BENCH_HZ=100 BENCH_GRID_HZ=20 BENCH_IMG_HZ=10 BENCH_IMG_BYTES=200000 \
   PYTHONPATH=bench "$PY" bench/bench_source.py >"$LOG/pub.log" 2>&1 &
@@ -29,7 +29,7 @@ pids+=($!)
 sleep 16
 
 echo
-GATEWAY_URL="ws://localhost:$GW_PORT" DUR="$DUR" MODE=basic "$DENO" run -A bench/qos_run.ts
+GATEWAY_URL="ws://localhost:$GW_PORT/ws" DUR="$DUR" MODE=basic "$DENO" run -A bench/qos_run.ts
 
 echo "[qos] phase 2 — through a 4G netsim link…"
 NETSIM_PROFILE=4g NETSIM_LISTEN="$PROXY_PORT" NETSIM_TARGET="localhost:$GW_PORT" \
@@ -37,4 +37,4 @@ NETSIM_PROFILE=4g NETSIM_LISTEN="$PROXY_PORT" NETSIM_TARGET="localhost:$GW_PORT"
 pids+=($!)
 sleep 0.6
 echo
-GATEWAY_URL="ws://localhost:$PROXY_PORT" DUR="$DUR" MODE=prio "$DENO" run -A bench/qos_run.ts
+GATEWAY_URL="ws://localhost:$PROXY_PORT/ws" DUR="$DUR" MODE=prio "$DENO" run -A bench/qos_run.ts

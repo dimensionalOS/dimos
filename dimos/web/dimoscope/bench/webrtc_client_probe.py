@@ -1,7 +1,7 @@
-"""Headless aiortc client for servers/webrtc_data.py — a browser stand-in that connects, opens a
-DataChannel, and counts frames received over DUR seconds. Verifies the full server path
-(gateway → webrtc_data → DataChannel) e2e without a browser. Run with a gateway + bench_source up:
-  WEBRTC_URL=ws://localhost:8093 DUR=2 .venv/bin/python bench/webrtc_client_probe.py
+"""Headless aiortc client for the dimoscope /rtc endpoint (serve.py) — a browser stand-in that
+connects, opens a DataChannel, and counts frames received over DUR seconds. Verifies the full path
+(serve.py bus → /rtc DataChannel) e2e without a browser. Run with serve.py + bench_source up:
+  WEBRTC_URL=ws://localhost:8080/rtc DUR=2 .venv/bin/python bench/webrtc_client_probe.py
 """
 import asyncio
 import json

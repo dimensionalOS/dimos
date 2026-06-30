@@ -1,7 +1,7 @@
-"""Headless aioquic WebTransport client for servers/webtransport.py — a browser stand-in that opens a
-session, receives datagrams (small frames) + unidirectional streams (large frames), and counts frames
-over DUR seconds. Verifies the full server path (gateway → webtransport.py → QUIC) without a browser
-and without the cert-hash dance (verify_mode=CERT_NONE). Each frame is [f64 BE send-ms][LC02], so we
+"""Headless aioquic WebTransport client for the dimoscope QUIC endpoint (serve.py) — a browser
+stand-in that opens a session, receives datagrams (small frames) + unidirectional streams (large
+frames), and counts frames over DUR seconds. Verifies the full path (serve.py bus → QUIC) without a
+browser and without the cert-hash dance (verify_mode=CERT_NONE). Each frame is [f64 BE send-ms][LC02], so we
 also derive per-frame latency (now − send-ms) → p50/p95, which the loss bench (bench/loss.sh) uses to
 show datagram latency stays flat under loss (no TCP head-of-line blocking). Run with a gateway +
 bench_source up:

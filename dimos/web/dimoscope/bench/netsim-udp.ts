@@ -2,7 +2,7 @@
 //
 // netsim.ts is a TCP proxy: it can shape the WS-family mechanisms but it CANNOT carry QUIC (UDP) and
 // CANNOT inject real loss (on TCP, loss just becomes retransmit→latency). This relays raw UDP datagrams
-// between a single QUIC client (the probe or a browser) and the aioquic server (servers/webtransport.py),
+// between a single QUIC client (the probe or a browser) and the dimoscope service's QUIC (serve.py),
 // and drops a configurable fraction of packets — REAL loss — plus latency/jitter. That's the lever that
 // shows WebTransport's win: lost datagrams just don't arrive (no head-of-line blocking), so delivered-
 // datagram latency stays flat while a TCP stream would stall. No sudo, no dummynet, cross-platform.
@@ -18,7 +18,7 @@
 //   NETSIM_PROFILE=lossy NETSIM_UDP_LISTEN=8193 NETSIM_UDP_TARGET=localhost:8093 \
 //     deno run -A --unstable-net bench/netsim-udp.ts
 const LISTEN = Number(Deno.env.get("NETSIM_UDP_LISTEN") ?? 8193);
-const [THOST, TPORT] = (Deno.env.get("NETSIM_UDP_TARGET") ?? "localhost:8093").split(":");
+const [THOST, TPORT] = (Deno.env.get("NETSIM_UDP_TARGET") ?? "localhost:8443").split(":");
 
 // latency ms, jitter ±ms, plr = packet-loss rate (0..1). Rough but representative.
 interface Profile {

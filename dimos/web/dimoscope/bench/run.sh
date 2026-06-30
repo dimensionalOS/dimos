@@ -1,21 +1,17 @@
 #!/usr/bin/env bash
 # Reproducible transport benchmark: start the relevant server(s) + bench publisher, run
 # the headless bench, tear everything down. Modes:
-#   bench/run.sh            # Deno↔LCM gateway (:8090)
-#   bench/run.sh zenoh      # Python↔Zenoh gateway (:8091)
-#   bench/run.sh ts         # zenoh-ts direct via the :10000 bridge
-#   bench/run.sh all        # all three, sequentially → combined bench/RESULTS.md
-# Everything runs headless under Deno. The gateway rows go through bench/bench.ts; the
-# zenoh-ts direct row has its own runner (bench/bench_deno.ts). `all` measures end-to-end
-# latency (BENCH_E2E) so every transport — including the gateway-less zenoh-ts — is
-# compared the same way.
+#   bench/run.sh            # dimoscope service, LCM source (:8090)
+#   bench/run.sh zenoh      # dimoscope service, Zenoh source (:8090)
+#   bench/run.sh all        # both, sequentially → combined bench/RESULTS.md
+# Everything runs headless: the dimoscope service (serve.py) + bench_publisher on the chosen
+# bus; the client rows go through bench/bench.ts. `all` measures end-to-end latency (BENCH_E2E).
 set -uo pipefail
 MODE="${1:-lcm}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"   # dimoscope/
 REPO="$(cd "$HERE/../../.." && pwd)"        # dimos repo root
 PY="$REPO/.venv/bin/python"
 DENO="$(command -v deno || echo "$HOME/.deno/bin/deno")"
-BRIDGE="$(command -v zenoh-bridge-remote-api || echo "$HOME/.cargo/bin/zenoh-bridge-remote-api")"
 cd "$HERE"
 
 pids=()
@@ -26,28 +22,15 @@ trap cleanup EXIT
 run_one() {
   local mode="$1" port label start=${#pids[@]} rc
   local stamp; stamp="$(date '+%Y-%m-%d %H:%M')"
-  if [ "$mode" = ts ]; then
-    "$BRIDGE" --ws-port 10000 >/dev/null 2>&1 & pids+=($!)
-    DIMOS_TRANSPORT=zenoh BENCH_HZ=100 "$PY" bench/bench_publisher.py & pids+=($!)
-    sleep 3
-    BENCH_DUR_MS="${BENCH_DUR_MS:-4000}" BENCH_STAMP="$stamp" \
-      "$DENO" run -A --node-modules-dir bench/bench_deno.ts
-    rc=$?
-  else
-    if [ "$mode" = zenoh ]; then
-      port="${GATEWAY_PORT:-8091}"; label="Python↔Zenoh gateway"
-      DIMOS_TRANSPORT=zenoh GATEWAY_PORT="$port" "$PY" servers/gateway_zenoh.py & pids+=($!)
-      DIMOS_TRANSPORT=zenoh BENCH_HZ=100 "$PY" bench/bench_publisher.py & pids+=($!)
-    else
-      port="${GATEWAY_PORT:-8090}"; label="Deno↔LCM gateway"
-      GATEWAY_PORT="$port" "$DENO" run -A servers/gateway.ts & pids+=($!)
-      DIMOS_TRANSPORT=lcm BENCH_HZ=100 "$PY" bench/bench_publisher.py & pids+=($!)
-    fi
-    sleep 2.5
-    GATEWAY_URL="ws://localhost:$port" BENCH_LABEL="$label" BENCH_E2E="${BENCH_E2E:-}" \
-      BENCH_DUR_MS="${BENCH_DUR_MS:-4000}" BENCH_STAMP="$stamp" "$DENO" run -A bench/bench.ts
-    rc=$?
-  fi
+  local bus
+  port="${GATEWAY_PORT:-8090}"
+  if [ "$mode" = zenoh ]; then bus=zenoh; label="dimoscope (Zenoh source)"; else bus=lcm; label="dimoscope (LCM source)"; fi
+  PORT="$port" "$PY" serve.py & pids+=($!)
+  DIMOS_TRANSPORT="$bus" BENCH_HZ=100 "$PY" bench/bench_publisher.py & pids+=($!)
+  sleep 4
+  GATEWAY_URL="ws://localhost:$port/ws" BENCH_LABEL="$label" BENCH_E2E="${BENCH_E2E:-}" \
+    BENCH_DUR_MS="${BENCH_DUR_MS:-4000}" BENCH_STAMP="$stamp" "$DENO" run -A bench/bench.ts
+  rc=$?
   # tear down just this run's procs so the next mode's ports/bus are free
   for ((i = start; i < ${#pids[@]}; i++)); do kill "${pids[$i]}" 2>/dev/null || true; done
   sleep 1
@@ -58,18 +41,16 @@ if [ "$MODE" = all ]; then
   stamp="$(date '+%Y-%m-%d %H:%M')"
   BENCH_E2E=1 run_one lcm;   lcm_md="$(cat bench/last_run.md)"
   BENCH_E2E=1 run_one zenoh; zenoh_md="$(cat bench/last_run.md)"
-  run_one ts;                ts_md="$(cat bench/last_run.md)"   # bench_deno.ts is always end-to-end
   {
-    echo "# dimoscope transport benchmark — all transports"
+    echo "# dimoscope transport benchmark — LCM vs Zenoh source (one service)"
     echo
-    echo "_Generated $stamp · headless · **end-to-end latency** (publish→client) · synthetic \`bench_publisher.py\` source (no sim)._"
+    echo "_Generated $stamp · headless · **end-to-end latency** (publish→client) · synthetic \`bench_publisher.py\` source (no sim) · single dimoscope service ingesting both buses._"
     echo
     echo "$lcm_md"; echo; echo "---"; echo
-    echo "$zenoh_md"; echo; echo "---"; echo
-    echo "$ts_md"; echo
-    echo "> All three measured end-to-end (publish→client) for a fair compare, all headless under **Deno**. zenoh-ts has no gateway in the read path → true per-client on-demand."
+    echo "$zenoh_md"; echo
+    echo "> Both measured end-to-end (publish→client) against the one dimoscope service, which ingests LCM and Zenoh at once."
   } > bench/RESULTS.md
-  echo "→ wrote combined bench/RESULTS.md (all 3 transports)"
+  echo "→ wrote combined bench/RESULTS.md (LCM + Zenoh source)"
 else
   run_one "$MODE"
 fi

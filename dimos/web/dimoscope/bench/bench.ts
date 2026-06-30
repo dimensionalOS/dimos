@@ -14,7 +14,7 @@ import {
   onDemandSaving,
 } from "../packages/topics/src/bench.ts";
 
-const WS_URL = Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8090";
+const WS_URL = Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8080/ws";
 const LABEL = Deno.env.get("BENCH_LABEL") ?? "Deno↔LCM gateway";
 const DUR = Number(Deno.env.get("BENCH_DUR_MS") ?? 5000);
 const TRANSPORT = Deno.env.get("BENCH_TRANSPORT"); // "ts" → zenoh-ts direct

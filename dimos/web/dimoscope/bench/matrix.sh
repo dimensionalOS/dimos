@@ -33,8 +33,8 @@ pids=()
 cleanup() { for p in "${pids[@]:-}"; do kill "$p" 2>/dev/null || true; done; }
 trap cleanup EXIT
 
-echo "[matrix] starting gateway (:$GW_PORT) + bench_source (LCM)…"
-GATEWAY_PORT="$GW_PORT" "$DENO" run -A servers/gateway.ts >"$LOG/gw.log" 2>&1 &
+echo "[matrix] starting dimoscope service (:$GW_PORT) + bench_source (LCM)…"
+PORT="$GW_PORT" "$PY" serve.py >"$LOG/gw.log" 2>&1 &
 pids+=($!)
 DIMOS_TRANSPORT=lcm BENCH_HZ="$S_HZ" BENCH_GRID_HZ="$S_GRID" \
   BENCH_IMG_HZ="$S_IMGHZ" BENCH_IMG_BYTES="$S_IMGB" \

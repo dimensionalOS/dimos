@@ -18,12 +18,12 @@ pids=()
 cleanup() { for p in "${pids[@]:-}"; do kill "$p" 2>/dev/null || true; done; }
 trap cleanup EXIT
 
-echo "[decode] starting gateway (:$GW_PORT) + load generator (LCM)…"
-GATEWAY_PORT="$GW_PORT" "$DENO" run -A --unstable-sloppy-imports servers/gateway.ts >"$LOG/gw.log" 2>&1 &
+echo "[decode] starting dimoscope service (:$GW_PORT) + load generator (LCM)…"
+PORT="$GW_PORT" "$PY" serve.py >"$LOG/gw.log" 2>&1 &
 pids+=($!)
 DIMOS_TRANSPORT=lcm BENCH_HZ="${BENCH_HZ:-100}" BENCH_GRID_HZ="${BENCH_GRID_HZ:-20}" \
   PYTHONPATH=bench "$PY" bench/bench_source.py >"$LOG/pub.log" 2>&1 &
 pids+=($!)
 
 sleep 2 # let the gateway bind; decode_bench.ts then warms up on its own (cold dimos import)
-GATEWAY_URL="ws://localhost:$GW_PORT" DUR="$DUR" "$DENO" run -A --unstable-sloppy-imports bench/decode_bench.ts
+GATEWAY_URL="ws://localhost:$GW_PORT/ws" DUR="$DUR" "$DENO" run -A --unstable-sloppy-imports bench/decode_bench.ts
