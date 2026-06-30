@@ -23,7 +23,7 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-from dimos.memory.db_tf import DbTf, TfGraphWriter
+from dimos.memory.db_tf import DbTf
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -51,18 +51,16 @@ def _static(parent: str, child: str, xyz: tuple[float, float, float], ts: float)
     )
 
 
-def _append(
-    store: SqliteStore, graph: TfGraphWriter, transform: Transform, is_static: bool
-) -> None:
-    """Record one transform exactly as the live recorder does: one row, tagged
-    child_frame, plus a topology-change row when the structure changes."""
+def _append(store: SqliteStore, transform: Transform) -> None:
+    """Record one transform as the recorder does: one row tagged with its child_frame.
+    The graph stream is built lazily by DbTf on first lookup (static-ness inferred
+    from whether a frame's pose ever changes), so tests exercise that migration."""
     store.stream("tf", TFMessage).append(
         TFMessage(transform),
         ts=transform.ts,
         pose=None,
         tags={"child_frame": transform.child_frame_id},
     )
-    graph.record(transform.child_frame_id, transform.frame_id, is_static, transform.ts)
 
 
 def _ref(transforms: list[Transform]) -> MultiTBuffer:
@@ -87,7 +85,6 @@ def _record_single_robot(path: Path, *, static_repeat: bool) -> list[Transform]:
     """world->map->odom->base_link->sensor. Statics emitted once (latched) unless
     static_repeat, in which case they're re-emitted each second."""
     store = SqliteStore(path=str(path))
-    graph = TfGraphWriter(store)
     written: list[Transform] = []
 
     statics = [
@@ -99,7 +96,7 @@ def _record_single_robot(path: Path, *, static_repeat: bool) -> list[Transform]:
     for ts in static_times:
         for parent, child, xyz in statics:
             transform = _static(parent, child, xyz, ts)
-            _append(store, graph, transform, is_static=True)
+            _append(store, transform)
             written.append(transform)
 
     for i in range(int(_DURATION * _DYN_RATE)):
@@ -111,10 +108,9 @@ def _record_single_robot(path: Path, *, static_repeat: bool) -> list[Transform]:
             child_frame_id="base_link",
             ts=ts,
         )
-        _append(store, graph, transform, is_static=False)
+        _append(store, transform)
         written.append(transform)
 
-    graph.close()
     store.stop()
     return written
 
@@ -156,9 +152,8 @@ def test_reparent_midrun_uses_graph_as_of_query_time(tmp_path: Path) -> None:
     ~100. Exercises time-varying / multi-robot topology."""
     path = tmp_path / "reparent.db"
     store = SqliteStore(path=str(path))
-    graph = TfGraphWriter(store)
-    _append(store, graph, _static("world", "map", (10.0, 0, 0), _T0), is_static=True)
-    _append(store, graph, _static("map", "odom", (100.0, 0, 0), _T0), is_static=True)
+    _append(store, _static("world", "map", (10.0, 0, 0), _T0))
+    _append(store, _static("map", "odom", (100.0, 0, 0), _T0))
 
     era1: list[Transform] = []
     for i in range(150):  # [t0, t0+5)
@@ -170,7 +165,7 @@ def test_reparent_midrun_uses_graph_as_of_query_time(tmp_path: Path) -> None:
             child_frame_id="base_link",
             ts=ts,
         )
-        _append(store, graph, transform, is_static=False)
+        _append(store, transform)
         era1.append(transform)
     switch = _T0 + 5.0
     era2: list[Transform] = []
@@ -183,9 +178,8 @@ def test_reparent_midrun_uses_graph_as_of_query_time(tmp_path: Path) -> None:
             child_frame_id="base_link",
             ts=ts,
         )
-        _append(store, graph, transform, is_static=False)
+        _append(store, transform)
         era2.append(transform)
-    graph.close()
     store.stop()
 
     store = SqliteStore(path=str(path), must_exist=True)
@@ -220,12 +214,10 @@ def test_disjoint_multirobot_returns_none(tmp_path: Path) -> None:
     query is None, an in-component query resolves."""
     path = tmp_path / "two.db"
     store = SqliteStore(path=str(path))
-    graph = TfGraphWriter(store)
     for i in range(20):
         ts = _T0 + i / _DYN_RATE
         _append(
             store,
-            graph,
             Transform(
                 translation=Vector3(i * 0.1, 0, 0),
                 rotation=_yaw(0),
@@ -233,11 +225,9 @@ def test_disjoint_multirobot_returns_none(tmp_path: Path) -> None:
                 child_frame_id="baseA",
                 ts=ts,
             ),
-            is_static=False,
         )
         _append(
             store,
-            graph,
             Transform(
                 translation=Vector3(0, i * 0.1, 0),
                 rotation=_yaw(0),
@@ -245,9 +235,7 @@ def test_disjoint_multirobot_returns_none(tmp_path: Path) -> None:
                 child_frame_id="baseB",
                 ts=ts,
             ),
-            is_static=False,
         )
-    graph.close()
     store.stop()
 
     store = SqliteStore(path=str(path), must_exist=True)

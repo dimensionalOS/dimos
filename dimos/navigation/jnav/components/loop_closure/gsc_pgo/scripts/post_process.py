@@ -131,7 +131,16 @@ if RAW_STREAM not in store.list_streams():
     sys.exit(
         f"!! {RAW_STREAM} missing -- run detect_tags.py first to build the unfiltered tag stream."
     )
-from dimos.memory2.db_tf import transform_matrix
+
+
+def transform_matrix(transform):
+    """``(R, t)`` (3x3, 3) for a Transform so ``p_target = p_source @ R.T + t``."""
+    rotation = np.asarray(transform.rotation.to_rotation_matrix(), float).reshape(3, 3)
+    translation = np.array(
+        [transform.translation.x, transform.translation.y, transform.translation.z], float
+    )
+    return rotation, translation
+
 
 _TF_AVAILABLE = USE_TF and store.tf.has_transforms()
 
