@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 
 import { createTopic } from "./topic.ts";
-import type { MessageMeta } from "./types.ts";
+import type { MessageMeta, Qos } from "./types.ts";
 
 const meta = (recvTs: number): MessageMeta => ({
   topic: "/t",
@@ -50,12 +50,26 @@ Deno.test("qos: rateLimit 'server' passes maxHz to the wire; 'client' withholds 
   const t = createTopic({
     name: "/t",
     type: "x",
-    wiring: { subscribe: (_n, hz) => wired.push(hz), unsubscribe: () => {} },
+    wiring: { subscribe: (_n, qos) => wired.push(qos?.maxHz), unsubscribe: () => {} },
   });
   t.subscribe(() => {}); // first handler → wired with no cap yet
   t.setQos({ maxHz: 5, rateLimit: "server" }); // ask the gateway to downsample
   t.setQos({ maxHz: 5, rateLimit: "client" }); // gateway keeps sending; drop locally
   assert.deepEqual(wired, [undefined, 5, undefined]);
+});
+
+Deno.test("qos: declared priority/reliability flow to the transport (client override)", () => {
+  const seen: (Qos | undefined)[] = [];
+  const t = createTopic({
+    name: "/lidar",
+    type: "sensor_msgs.PointCloud2",
+    wiring: { subscribe: (_n, qos) => seen.push(qos), unsubscribe: () => {} },
+  });
+  t.subscribe(() => {});
+  t.setQos({ priority: "critical", reliability: "reliable" }); // override the server default
+  const last = seen.at(-1);
+  assert.equal(last?.priority, "critical");
+  assert.equal(last?.reliability, "reliable");
 });
 
 Deno.test("qos: client-side rateLimit still drops in _deliver (bytes flow, delivery capped)", () => {

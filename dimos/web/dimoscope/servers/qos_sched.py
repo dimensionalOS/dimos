@@ -52,6 +52,23 @@ def default_priority(topic: str, typ: str = "") -> tuple[int, bool, int]:
     return LANE_DEFAULT
 
 
+_RANK_OF = {"low": 0, "normal": 1, "high": 2, "critical": 3}  # mirror of qos.ts PRIORITY_RANK
+
+
+def declared_to_class(
+    priority: str | None,
+    reliability: str | None,
+    depth: int | None,
+    default: tuple[int, bool, int],
+) -> tuple[int, bool, int]:
+    """A client's declared QoS (from the subscribe op) → (rank, conflate, depth), merged onto the topic's
+    default — only the fields the client set are overridden. `best-effort` → conflate (latest-wins)."""
+    rank = _RANK_OF.get(priority, default[0]) if priority is not None else default[0]
+    conflate = (reliability == "best-effort") if reliability is not None else default[1]
+    d = int(depth) if depth else default[2]
+    return (rank, conflate, d)
+
+
 class PriorityOutbox:
     """A per-client outbox the writer drains. `fifo=True` reproduces the old single bounded FIFO (the A/B
     baseline); otherwise it's the priority + conflation + WRR scheduler above. Never blocks on put."""

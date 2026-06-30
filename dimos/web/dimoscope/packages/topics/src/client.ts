@@ -105,7 +105,7 @@ export const createDimosClient = (deps: DimosClientDeps): DimosClient => {
         name,
         type: topicsMap.get(name) ?? "?",
         wiring: {
-          subscribe: (topicName, maxHz) => transport.subscribe(topicName, maxHz),
+          subscribe: (topicName, qos) => transport.subscribe(topicName, qos),
           unsubscribe: (topicName) => transport.unsubscribe(topicName),
         },
       });
@@ -145,6 +145,7 @@ export const createDimosClient = (deps: DimosClientDeps): DimosClient => {
     status: "connecting",
     topic,
     listTopics,
+    // TODO what are these get $funcstion thingies? let's ultrathink and explore all the exports on the client and see how we can simplify it...
     get gatewayLabel() {
       return transport.label;
     },

@@ -41,7 +41,7 @@ esac
 pids+=($!)
 echo "[qos-demo] warming up load (cold dimos import)…"; sleep 16
 
-run_mode() { # $1 label  $2 QOS_SCHED
+run_mode() { # $1 label  $2 QOS_SCHED  [$3 LIGHT_LANE  $4 HEAVY_LANE] (client-declared overrides)
   for port in 8080 8443; do lsof -ti :$port 2>/dev/null | xargs -r kill -9 2>/dev/null; done
   # EGRESS_KBPS paces serve.py's writer to the client's link budget → the backlog (and so the priority
   # decision) stays in the gateway outbox instead of bloating kernel/proxy buffers (which would FIFO it).
@@ -50,6 +50,7 @@ run_mode() { # $1 label  $2 QOS_SCHED
   until curl -s --max-time 1 http://localhost:8080/health >/dev/null 2>&1; do sleep 0.5; done
   sleep 2 # let it re-tap the bus + discover topics
   GW_URL="ws://localhost:8080/ws" LIGHT_TOPIC="$LIGHT" HEAVY_TOPIC="$HEAVY" DUR_MS="$DUR" MODE="$1" \
+    LIGHT_LANE="${3:-}" HEAVY_LANE="${4:-}" \
     "$DENO" run -A bench/qos_demo_run.ts || true
   kill "$sp" 2>/dev/null || true; sleep 1
 }
@@ -57,7 +58,9 @@ run_mode() { # $1 label  $2 QOS_SCHED
 echo
 echo "=== QoS A/B — sim → serve.py (egress-paced ${BW}kbps) → SDK · light vs heavy under contention ==="
 run_mode OFF 0
-run_mode ON 1
+run_mode ON-default 1
+run_mode ON-invert 1 bulk command # CLIENT declares pose=bulk(low) + lidar=command(critical) over the wire
 echo
-echo "OFF = gateway FIFO (today's baseline) · ON = per-client priority outbox (pose/teleop wins, lidar"
-echo "conflates to latest). Under the saturated link the LIGHT topic's hz/latency should hold ON vs starve OFF."
+echo "OFF = FIFO baseline · ON-default = priority outbox, server default (pose/teleop wins, lidar conflates)"
+echo "ON-invert = the CLIENT overrides per topic over the wire (pose→bulk/low, lidar→command/critical), so"
+echo "the heavy stream now wins and pose starves — the OPPOSITE of the default. Proves client override works."

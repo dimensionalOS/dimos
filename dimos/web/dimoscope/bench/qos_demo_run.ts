@@ -8,6 +8,7 @@
 import { connect } from "../packages/topics/src/index.ts";
 import { measureScenario } from "../packages/topics/src/bench.ts";
 import { resolveQos } from "../packages/topics/src/qos.ts";
+import type { Lane } from "../packages/topics/src/qos.ts";
 
 const GW = Deno.env.get("GW_URL") ?? "ws://localhost:8080/ws";
 const LIGHT = Deno.env.get("LIGHT_TOPIC") ?? "/bench/p0";
@@ -16,8 +17,9 @@ const DUR = Number(Deno.env.get("DUR_MS") ?? 4000);
 const MODE = Deno.env.get("MODE") ?? "?";
 // Declare the lanes (sensor for the light topic, bulk for the heavy) — what a real client would do; the
 // gateway also derives this server-side via defaultLane, so either path enforces priority.
-const lightLane = Deno.env.get("LIGHT_LANE") as "sensor" | "command" | undefined;
-const heavyLane = Deno.env.get("HEAVY_LANE") as "bulk" | undefined;
+// the client can declare any lane per topic — these flow over the wire and override the server default
+const lightLane = (Deno.env.get("LIGHT_LANE") || undefined) as Lane | undefined;
+const heavyLane = (Deno.env.get("HEAVY_LANE") || undefined) as Lane | undefined;
 
 const client = await connect({ url: GW, reconnect: false });
 await new Promise((r) => setTimeout(r, 300));

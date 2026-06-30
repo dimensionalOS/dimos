@@ -14,7 +14,7 @@
 // zenoh-ts is browser-only (no Bun/Node target) and the heavy client loads lazily inside
 // connect(), so importing this module is cheap and a load failure can't break other paths.
 import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../transport.ts";
-import type { TopicInfo } from "../types.ts";
+import type { Qos, TopicInfo } from "../types.ts";
 
 const SCOUT_MS = 1800; // one-time discovery burst on the discovery key (then undeclared)
 
@@ -102,7 +102,8 @@ export const createZenohTsTransport = (deps: ZenohTsDeps): Transport => {
     }
   }
 
-  function subscribe(topic: string, maxHz?: number) {
+  function subscribe(topic: string, qos?: Qos) {
+    const maxHz = qos?.maxHz; // zenoh-ts is client-side rate only (no server priority outbox)
     if (maxHz) rates.set(topic, maxHz);
     if (subs.has(topic) || !session) return;
     subs.set(topic, "pending"); // guard against double-declare races

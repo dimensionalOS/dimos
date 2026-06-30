@@ -1,7 +1,7 @@
 // The transport abstraction — mirrors DimOS's Python Transport layer.
 // Implementations: GatewayWsTransport (Bun/LCM or Python/Zenoh gateway, primary),
 // and (future) a direct zenoh-ts adapter. The client is transport-agnostic.
-import type { QosCaps, TopicInfo } from "./types.ts";
+import type { Qos, QosCaps, TopicInfo } from "./types.ts";
 
 export type Status = "connecting" | "open" | "closed";
 
@@ -36,12 +36,16 @@ export interface CommandInfo {
 export interface Transport {
   connect(): Promise<void>;
   close(): void;
-  subscribe(topic: string, maxHz?: number): void;
+  /** Subscribe to `topic`, optionally declaring per-subscription QoS. The gateway honors the fields its
+   *  `caps.qos` advertises (maxHz/priority/reliability/depth) and ignores the rest. Re-subscribing with a
+   *  new `qos` updates it (this is how `setQos` propagates) — no separate op needed. */
+  subscribe(topic: string, qos?: Qos): void;
   unsubscribe(topic: string): void;
   publishTeleop(linearX: number, angularZ: number, ttlMs?: number): void;
   /** Send a navigation goal (world metres) — gateway publishes a PointStamped to clicked_point. */
   publishGoal(x: number, y: number, z?: number): void;
   /** Invoke a whitelisted dimos `@rpc` command via the gateway; resolves with its return value. */
+  // TODO should be strongly typed and extensible by the consumer depending on the blueprint could be defined per provider (zenoh, webrtc, etc.)
   rpc(target: string, method: string, args?: unknown[]): Promise<unknown>;
   requestList(): void;
   onSample(cb: (s: RawSample) => void): void;

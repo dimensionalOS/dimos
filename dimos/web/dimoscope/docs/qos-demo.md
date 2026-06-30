@@ -93,6 +93,23 @@ queue — and thus the priority decision — stays in the outbox. This is the sa
 QoS. (A large single frame also head-of-line-blocks the writer, so bulk streams are fragmented — which is
 why heavy data belongs on its own lane/transport, e.g. WebTransport streams.)
 
+## Client override — the client decides
+
+The lanes are *defaults*; a client overrides any topic's QoS per subscription and it flows over the wire
+(the `subscribe` op carries `priority`/`reliability`/`depth`, resolved client-side from
+`topic.setQos({lane})` or explicit fields). The server applies the override when present, else
+`default_priority`. Proof — same load, scheduler ON, **server default vs the client inverting the
+priorities** (`HEAVY_LANE=command LIGHT_LANE=bulk deno task demo:qos`):
+
+| run | pose hz | pose p50 | lidar hz | lidar p50 | winner |
+|---|--:|--:|--:|--:|---|
+| **server default** | 120 | 55 ms | 121 | 24 ms | pose (sensor > bulk) |
+| **client-inverted** | 15 | — | 123 | **1.9 ms** | lidar (client declared it `command`) |
+
+Declaring `pose=bulk` (low) + `lidar=command` (critical) **flips** which stream survives the saturated
+link — the opposite of the default. The client owns the lane vocabulary (`qos.ts`); only the resolved
+primitives cross the wire, so the server never needs the lane table for client-declared topics.
+
 ## Honest caveats
 - Priority only matters under saturation — on a fat link both modes look identical (correctly).
 - The loss-shedding is at the gateway egress (the browser-link bottleneck); the bus (Zenoh) does its own

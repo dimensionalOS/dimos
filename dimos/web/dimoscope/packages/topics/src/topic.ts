@@ -4,7 +4,7 @@
 import type { Handler, MessageMeta, Qos, Subscription, TopicStats } from "./types.ts";
 
 export interface TopicWiring {
-  subscribe(topic: string, maxHz?: number): void;
+  subscribe(topic: string, qos?: Qos): void;
   unsubscribe(topic: string): void;
 }
 
@@ -52,10 +52,14 @@ export const createTopic = <T = unknown>(deps: TopicDeps): Topic<T> => {
   // The maxHz we ask the gateway for: only when the rate limit is enforced server-side
   // (rateLimit:"client" leaves the wire alone — bytes still flow, we drop locally below).
   const serverHz = () => (qos.rateLimit === "client" ? undefined : (maxHz || undefined));
+  // What we declare to the transport: the stored QoS with maxHz resolved to its wire value
+  // (rateLimit:"client" → undefined, so the gateway keeps sending and we drop locally). The transport
+  // forwards the fields its caps.qos honors (priority/reliability/depth) to the server.
+  const effectiveQos = (): Qos => ({ ...qos, maxHz: serverHz() });
 
   function subscribe(handler: Handler<T>): Subscription {
     handlers.add(handler);
-    if (handlers.size === 1) wiring.subscribe(name, serverHz());
+    if (handlers.size === 1) wiring.subscribe(name, effectiveQos());
     return {
       unsubscribe: () => {
         handlers.delete(handler);
@@ -68,7 +72,7 @@ export const createTopic = <T = unknown>(deps: TopicDeps): Topic<T> => {
     qos = { rateLimit: "server", ...next };
     // conflation "all" = deliver every message (unlimited); otherwise the maxHz cap.
     maxHz = qos.conflation === "all" ? 0 : (qos.maxHz ?? 0);
-    if (handlers.size > 0) wiring.subscribe(name, serverHz());
+    if (handlers.size > 0) wiring.subscribe(name, effectiveQos()); // re-subscribe = propagate the new QoS
   }
 
   function setRateLimit(hz: number) {

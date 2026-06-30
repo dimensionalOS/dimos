@@ -3,8 +3,9 @@
 // Runs unchanged in the browser and in Bun (both have a global WebSocket).
 import { decodeChannel } from "@dimos/msgs";
 import { splitChannel } from "../decode.ts";
+import { applyCaps } from "../qos.ts";
 import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../transport.ts";
-import type { TopicInfo } from "../types.ts";
+import type { Qos, TopicInfo } from "../types.ts";
 
 export interface GatewayWsDeps {
   url: string;
@@ -17,13 +18,18 @@ export interface GatewayWsDeps {
 export const createGatewayWsTransport = (deps: GatewayWsDeps): Transport => {
   // qos.maxHz "server": the gateway downsamples per subscriber+topic (op:"subscribe" maxHz),
   // so a rate cap actually removes bytes from the wire — not just client-side filtering.
-  const caps: TransportCaps = { onDemand: true, discovery: "live", qos: { maxHz: "server" } };
+  // The gateway's per-client priority outbox honors these declared QoS fields (else default_priority).
+  const caps: TransportCaps = {
+    onDemand: true,
+    discovery: "live",
+    qos: { maxHz: "server", transport: ["priority", "reliability", "depth"] },
+  };
   let ws: WebSocket | undefined;
   let sampleCb: ((s: RawSample) => void) | undefined;
   let topicsCb: ((t: TopicInfo[]) => void) | undefined;
   let statusCb: ((s: Status) => void) | undefined;
   const wantSubs = new Set<string>(); // desired subs, re-sent on reconnect
-  const rates = new Map<string, number>();
+  const subQos = new Map<string, Qos>(); // declared QoS per topic, re-sent on reconnect
   let topics: TopicInfo[] = [];
   let commands: CommandInfo[] = [];
   let commandsCb: ((c: CommandInfo[]) => void) | undefined;
@@ -59,9 +65,7 @@ export const createGatewayWsTransport = (deps: GatewayWsDeps): Transport => {
       statusCb?.("connecting");
       sock.onopen = () => {
         statusCb?.("open");
-        for (const t of wantSubs) {
-          send({ op: "subscribe", topic: t, maxHz: rates.get(t), decode: deps.decode });
-        }
+        for (const t of wantSubs) sendSub(t, subQos.get(t));
         send({ op: "list" });
         resolve();
       };
@@ -135,14 +139,28 @@ export const createGatewayWsTransport = (deps: GatewayWsDeps): Transport => {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
   }
 
-  function subscribe(topic: string, maxHz?: number) {
+  // Send a subscribe op carrying the QoS fields the gateway honors (applyCaps strips the rest). Re-
+  // sending with a new qos updates the server's per-client override — that's how setQos propagates.
+  function sendSub(topic: string, qos?: Qos) {
+    const q = qos ? applyCaps(qos, caps.qos!) : undefined;
+    send({
+      op: "subscribe",
+      topic,
+      decode: deps.decode,
+      maxHz: q?.maxHz,
+      priority: q?.priority,
+      reliability: q?.reliability,
+      depth: q?.depth,
+    });
+  }
+  function subscribe(topic: string, qos?: Qos) {
     wantSubs.add(topic);
-    if (maxHz) rates.set(topic, maxHz);
-    send({ op: "subscribe", topic, maxHz, decode: deps.decode });
+    if (qos) subQos.set(topic, qos);
+    sendSub(topic, qos);
   }
   function unsubscribe(topic: string) {
     wantSubs.delete(topic);
-    rates.delete(topic);
+    subQos.delete(topic);
     send({ op: "unsubscribe", topic });
   }
   function publishTeleop(linearX: number, angularZ: number, ttlMs?: number) {
