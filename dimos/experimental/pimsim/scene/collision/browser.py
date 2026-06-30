@@ -24,13 +24,13 @@ from typing import Any
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 
-from dimos.experimental.pimsim.scene.inspect import inspect_scene_asset
-from dimos.simulation.mujoco.collision_spec import CollisionSpec
-from dimos.simulation.scene_assets.mesh_scene import (
+from dimos.experimental.pimsim.scene.assets.mesh import (
     ScenePrimMesh,
     load_scene_prims,
     split_disconnected_scene_prims,
 )
+from dimos.experimental.pimsim.scene.collision.mujoco.spec import CollisionSpec
+from dimos.experimental.pimsim.scene.inspect import inspect_scene_asset
 from dimos.simulation.scene_assets.spec import BrowserCollisionSpec, SceneMeshAlignment
 from dimos.utils.logging_config import setup_logger
 

@@ -28,19 +28,19 @@ from pathlib import Path
 import time
 from typing import Any
 
-from dimos.experimental.pimsim.scene.browser_collision import cook_browser_collision
-from dimos.experimental.pimsim.scene.entity_collision import (
+from dimos.experimental.pimsim.scene.assets.source import prepare_scene_source
+from dimos.experimental.pimsim.scene.collision.browser import cook_browser_collision
+from dimos.experimental.pimsim.scene.collision.entity import (
     COLLISION_DIR_NAME,
     cook_entity_collision_hulls,
 )
+from dimos.experimental.pimsim.scene.collision.mujoco.export import load_or_bake
+from dimos.experimental.pimsim.scene.collision.mujoco.spec import CollisionSpec
 from dimos.experimental.pimsim.scene.inspect import inspect_scene_asset
 from dimos.experimental.pimsim.scene.plan import EntityPrototypePlan, build_scene_cook_plan
 from dimos.experimental.pimsim.scene.sidecar import SceneCookSidecar
-from dimos.experimental.pimsim.scene.source_asset import prepare_scene_source
-from dimos.experimental.pimsim.scene.visual_blender import cook_plan_visual_assets
-from dimos.experimental.pimsim.scene.visual_glb import cook_browser_visual
-from dimos.simulation.mujoco.collision_spec import CollisionSpec
-from dimos.simulation.mujoco.scene_mesh_to_mjcf import load_or_bake
+from dimos.experimental.pimsim.scene.visuals.blender import cook_plan_visual_assets
+from dimos.experimental.pimsim.scene.visuals.glb import cook_browser_visual
 from dimos.simulation.scene_assets.spec import (
     BROWSER_VISUAL_TARGETS,
     BrowserCollisionSpec,

@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from dimos.experimental.pimsim.scene import source_asset
+from dimos.experimental.pimsim.scene.assets import source as source_asset
 
 
 def test_prepare_scene_source_passes_through_direct_mesh_source(tmp_path: Path) -> None:

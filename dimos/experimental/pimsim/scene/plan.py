@@ -30,15 +30,15 @@ from typing import Any
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
+from dimos.experimental.pimsim.scene.assets.mesh import (
+    ScenePrimMesh,
+    load_scene_prims,
+)
+from dimos.experimental.pimsim.scene.collision.mujoco.spec import CollisionSpec
 from dimos.experimental.pimsim.scene.sidecar import (
     EntityGroupSpec,
     InteractableSpec,
     SceneCookSidecar,
-)
-from dimos.simulation.mujoco.collision_spec import CollisionSpec
-from dimos.simulation.scene_assets.mesh_scene import (
-    ScenePrimMesh,
-    load_scene_prims,
 )
 from dimos.simulation.scene_assets.spec import SceneMeshAlignment
 

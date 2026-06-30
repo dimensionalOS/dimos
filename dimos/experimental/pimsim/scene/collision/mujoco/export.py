@@ -15,7 +15,7 @@
 """Bake a scene mesh into an MJCF wrapper around a robot MJCF.
 
 The bake walks every prim returned by :func:`load_scene_prims` and asks
-:func:`dimos.simulation.mujoco.collision_spec.decide_for_prim` what to
+:func:`dimos.experimental.pimsim.scene.collision.mujoco.spec.decide_for_prim` what to
 emit for it.  The dispatcher returns one of three modes:
 
 - ``"primitive"`` -- a single MuJoCo primitive ``<geom>`` (box / sphere /
@@ -72,14 +72,14 @@ from typing import Any
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 
-from dimos.simulation.mujoco.collision_spec import (
-    CollisionSpec,
-    decide_for_prim,
-)
-from dimos.simulation.scene_assets.mesh_scene import (
+from dimos.experimental.pimsim.scene.assets.mesh import (
     ScenePrimMesh,
     load_scene_prims,
     split_disconnected_scene_prims,
+)
+from dimos.experimental.pimsim.scene.collision.mujoco.spec import (
+    CollisionSpec,
+    decide_for_prim,
 )
 from dimos.simulation.scene_assets.spec import SceneMeshAlignment
 from dimos.utils.logging_config import setup_logger
@@ -216,7 +216,7 @@ def bake_scene_mjcf(
 
     Args:
         scene_mesh_path: ``.usdz`` / ``.usda`` / ``.glb`` / ``.obj`` /
-            etc.  Anything ``mesh_scene.load_scene_prims`` accepts.
+            etc. Anything ``assets.mesh.load_scene_prims`` accepts.
         alignment: scale / translation / rotation / y-up swap to bake
             into world frame before any geom is emitted.
         cache_root: override the cache root (defaults to
@@ -969,12 +969,12 @@ def _write_wrapper(
 
 
 def cli_main() -> None:
-    """``python -m dimos.simulation.mujoco.scene_mesh_to_mjcf <scene> <robot> [opts]``.
+    """``python -m dimos.experimental.pimsim.scene.collision.mujoco.export <scene> <robot> [opts]``.
 
     Bake (or load from cache), optionally launch the MuJoCo viewer.
     """
     p = argparse.ArgumentParser(
-        prog="python -m dimos.simulation.mujoco.scene_mesh_to_mjcf",
+        prog="python -m dimos.experimental.pimsim.scene.collision.mujoco.export",
         description="Bake a USD/GLB/OBJ scene into a robot-agnostic scene-only MJCF wrapper.",
     )
     p.add_argument("scene", type=Path, help="scene mesh path (.usda, .usdz, .glb, ...)")

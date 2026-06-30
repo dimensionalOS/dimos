@@ -23,15 +23,15 @@ import shutil
 import tempfile
 from typing import Any
 
+from dimos.experimental.pimsim.scene.assets.glb import (
+    demote_required_extensions,
+    normalize_embedded_textures,
+)
 from dimos.experimental.pimsim.scene.command import (
     blender_output_line_is_interesting,
     run_logged_command,
 )
 from dimos.experimental.pimsim.scene.inspect import inspect_scene_asset
-from dimos.simulation.scene_assets.glb import (
-    demote_required_extensions,
-    normalize_embedded_textures,
-)
 from dimos.simulation.scene_assets.spec import BrowserVisualSpec
 from dimos.utils.logging_config import setup_logger
 

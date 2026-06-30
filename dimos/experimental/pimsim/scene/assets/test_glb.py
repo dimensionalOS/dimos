@@ -21,7 +21,7 @@ import struct
 
 from PIL import Image
 
-from dimos.simulation.scene_assets.glb import (
+from dimos.experimental.pimsim.scene.assets.glb import (
     buffer_view_bytes,
     demote_required_extensions,
     normalize_embedded_textures,
