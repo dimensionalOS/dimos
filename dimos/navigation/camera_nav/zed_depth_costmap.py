@@ -563,16 +563,26 @@ class DepthStreamer:
     def _log_map(self) -> None:
         sure_pts = self._vox.stable_xyz(min_obs=2)
         bg_pts   = self._vox_bg.stable_xyz(min_obs=10)
-        pts = np.concatenate([sure_pts, bg_pts]) if len(bg_pts) > 0 else sure_pts
-        if len(pts) == 0:
-            return
-        n   = min(len(pts), self.MAX_MAP)
-        idx = np.random.choice(len(pts), n, replace=False) if len(pts) > n else np.arange(n)
-        rr.log("world/map", rr.Points3D(
-            positions=pts[idx],
-            colors=_height_color(pts[idx, 2] - self._cam_z),
-            radii=0.005,
-        ))
+
+        # Log tiers separately so each gets the right display radius.
+        # Sure tier: 8 cm voxels → 0.5 cm dots (dense enough to look solid).
+        # Wall tier: 30 cm voxels → 14 cm radius to fill the gap between centres.
+        if len(sure_pts) > 0:
+            n   = min(len(sure_pts), self.MAX_MAP)
+            idx = np.random.choice(len(sure_pts), n, replace=False) if len(sure_pts) > n else np.arange(n)
+            rr.log("world/map", rr.Points3D(
+                positions=sure_pts[idx],
+                colors=_height_color(sure_pts[idx, 2] - self._cam_z),
+                radii=0.005,
+            ))
+        if len(bg_pts) > 0:
+            n   = min(len(bg_pts), self.MAX_MAP)
+            idx = np.random.choice(len(bg_pts), n, replace=False) if len(bg_pts) > n else np.arange(n)
+            rr.log("world/walls", rr.Points3D(
+                positions=bg_pts[idx],
+                colors=_height_color(bg_pts[idx, 2] - self._cam_z),
+                radii=0.14,
+            ))
 
     def log_stdout(self, pkt: DepthFramePacket, frame: int, fps: float) -> None:
         lock   = "LOCKED" if self._pose.locked else "searching"
@@ -596,7 +606,7 @@ def main() -> None:
             rrb.Spatial3DView(name="live cloud", origin="world",
                               contents=["world/cloud", "world/camera/**"]),
             rrb.Spatial3DView(name="map", origin="world",
-                              contents=["world/map"]),
+                              contents=["world/map", "world/walls"]),
         )
     ))
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
