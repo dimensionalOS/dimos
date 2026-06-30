@@ -14,7 +14,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 |------|------|---------|-------------|
 | `--robot-ip` | TEXT | `None` | Robot IP address |
 | `--robot-ips` | TEXT | `None` | Multiple robot IPs |
-| `--simulation` / `--no-simulation` | bool | `False` | Enable MuJoCo simulation |
+| `--simulation` | `mujoco\|dimsim` | `""` (off) | Simulator backend. Bare `--simulation` defaults to `mujoco`; pass `--simulation dimsim` for the DimSim backend. Omit to target a real robot (WebRTC). |
 | `--replay` / `--no-replay` | bool | `False` | Use recorded replay data |
 | `--replay-db` | TEXT | `go2_bigoffice` | Replay memory2 SQLite database name |
 | `--new-memory` / `--no-new-memory` | bool | `False` | Clear persistent memory on start |
