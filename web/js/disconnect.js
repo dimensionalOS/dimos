@@ -25,6 +25,7 @@ export async function disconnect() {
     stopVideoStats();
     unmountHud();
     if (state.xrSession) { await state.xrSession.end().catch(() => {}); state.xrSession = null; }
+    state.xrRefSpace = null;  // belongs to the ended XR session; can't be reused
     if (state.cmdChannel) { try { state.cmdChannel.close(); } catch (_) {} state.cmdChannel = null; }
     if (state.stateChannel) { try { state.stateChannel.close(); } catch (_) {} state.stateChannel = null; }
     if (state.stateBackChannel) { try { state.stateBackChannel.close(); } catch (_) {} state.stateBackChannel = null; }

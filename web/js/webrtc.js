@@ -242,6 +242,9 @@ async function _setupWebRTCInner(sessionId) {
 // ─── Clock sync ──────────────────────────────────────────────────────────
 // Burst of N pings to converge fast, then one every 30s to track drift.
 export function startClockSync(channel) {
+    // Reset bestRttMs decay state so the first pong of a new session is
+    // compared against a fresh Infinity, not the previous session's floor.
+    _lastBestUpdateMs = 0;
     let sent = 0;
     const sendPing = () => {
         if (!channel || channel.readyState !== 'open') return;
