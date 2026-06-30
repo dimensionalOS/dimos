@@ -136,6 +136,11 @@ function updateKeyVisuals() {
 }
 
 export function startKeyboardLoop() {
+    // Idempotent: callers (Go2 cockpit on every render, keyboard view on
+    // reconnect) used to stack window listeners and orphan the prior interval,
+    // tripling key counts and ramping CPU after a few reconnects. Tear down
+    // any prior state first.
+    stopKeyboardLoop();
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
     bindTouchKeys();  // on-screen keys → same kbKeys set (phone/mouse)
