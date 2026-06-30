@@ -264,7 +264,11 @@ def test_real_backend_native_reset_runs_lerobot_noops_and_use_delta(
     monkeypatch.setattr(
         "dimos_libero_pro_sidecar.server.require_libero",
         lambda *, visualize=False: (
-            type("BenchmarkModule", (), {"get_benchmark": lambda self, name: lambda order: FakeBenchmark()})(),
+            type(
+                "BenchmarkModule",
+                (),
+                {"get_benchmark": lambda self, name: lambda order: FakeBenchmark()},
+            )(),
             fake_env_cls,
         ),
     )
