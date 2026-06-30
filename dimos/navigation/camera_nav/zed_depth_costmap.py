@@ -185,7 +185,7 @@ class DepthFilter:
     Pixels below CONF_MIN are set to NaN and discarded entirely.
     """
 
-    CONF_MIN:   float = 25.0   # discard below this — too noisy to use at all
+    CONF_MIN:   float = 10.0   # discard below this — too noisy to use at all
     MIN_DEPTH:  float = 0.3
     MAX_DEPTH:  float = 8.0
 
@@ -703,7 +703,7 @@ def main() -> None:
     #   depth-discontinuity edges — exactly where flying pixels form.
     # remove_saturated_areas: invalidate pixels over-exposed by bright ceiling
     #   lights, where stereo matching is unreliable.
-    rt.texture_confidence_threshold = 80  # cuts depth bleeding and specular noise; walls pass via weak tier
+    rt.texture_confidence_threshold = 40  # lower → more wall depth passes; gradient filter handles edge artifacts
     rt.remove_saturated_areas       = True
 
     frame = 0
