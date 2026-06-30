@@ -50,6 +50,13 @@ def _session_lock(session_id: str) -> asyncio.Lock:
     return _session_locks.setdefault(session_id, asyncio.Lock())
 
 
+# session_ids with a video-pull offer awaiting the operator's answer. Set by
+# bridge_datachannel when _pull_robot_video returns a video_offer; consumed by
+# renegotiate_answer. Without this, a replayed or fabricated answer would be
+# forwarded to CF and could 4xx the session mid-stream.
+_pending_video_renegotiations: set[str] = set()
+
+
 # ─── Request/Response schemas ────────────────────────────────────────
 
 
@@ -386,6 +393,7 @@ async def delete_session(
         session.operator_cf_session_id = None
         session.state_back_channel_id = None
         _robot_channel_ids.pop(session_id, None)
+        _pending_video_renegotiations.discard(session_id)
         await db.commit()
 
 
@@ -786,6 +794,12 @@ async def _bridge_datachannel_locked(
     # Pull the robot's video onto the operator session (best-effort: a failure
     # degrades to no-video, never 502s the now-working datachannel bridge).
     video_offer, video_status = await _pull_robot_video(session)
+    # Track the pending renegotiation so a stale/forged answer can't reach CF
+    # via /renegotiate-answer; clear any leftover from a prior bridge.
+    if video_offer:
+        _pending_video_renegotiations.add(session.id)
+    else:
+        _pending_video_renegotiations.discard(session.id)
 
     return BridgeDatachannelResponse(
         cmd_channel_id=op_pub_ids[CMD_CHANNEL_NAME],
@@ -814,7 +828,15 @@ async def renegotiate_answer(
         raise HTTPException(status_code=403, detail="Not the bound operator")
     if not session.operator_cf_session_id:
         raise HTTPException(status_code=409, detail="Operator CF session not ready")
+    if session_id not in _pending_video_renegotiations:
+        raise HTTPException(
+            status_code=409,
+            detail="No pending video renegotiation — re-bridge to get a fresh offer",
+        )
 
+    # Consume the pending marker either way: a failed renegotiate shouldn't
+    # let the client retry the same stale answer (CF would reject again).
+    _pending_video_renegotiations.discard(session_id)
     try:
         await cf_client.renegotiate(session.operator_cf_session_id, body.sdp_answer)
     except CloudflareRealtimeError as e:
