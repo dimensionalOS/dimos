@@ -79,6 +79,7 @@ from dimos.robot.unitree.g1.g1_rerun import (
     g1_urdf_joint_state,
     g1_urdf_static_robot,
 )
+from dimos.simulation.scene_assets.spec import ScenePackage
 from dimos.utils.data import LfsPath
 from dimos.visualization.rerun.scene_package import scene_package_static_entities
 from dimos.visualization.vis_module import vis_module
@@ -118,9 +119,9 @@ _MUJOCO_LIDAR_BASE_KWARGS: dict[str, Any] = {
     "mujoco_lidar_raycast_height": 32,
     "mujoco_lidar_robot_exclusion_radius": G1.width_clearance,
 }
-_G1_SUPERMARKET_COMPOSED_MJB = (
-    "mujoco/composed/unitree-g1-groot-wbc_spawn_9p2_11p8_yaw_m1p57_static_only_lidar.mjb"
-)
+_G1_COMPOSED_MJB_KEY = "unitree-g1-groot-wbc_spawn_9p2_11p8_yaw_m1p57_static_only_lidar"
+_G1_COMPOSED_MJB_ROBOT = "unitree-g1-groot-wbc"
+_G1_COMPOSED_MJB_ENTITY_POLICY = "static-only"
 _G1_NAV_VOXEL_RESOLUTION = 0.05
 _G1_NAV_OVERHEAD_SAFETY_MARGIN = 0.2
 _G1_NAV_MAX_STEP_HEIGHT = 0.10
@@ -209,7 +210,7 @@ if global_config.simulation == "mujoco":
         if package.mujoco_scene_path is None:
             raise ValueError(f"scene package has no MuJoCo scene artifact: {package.metadata_path}")
 
-        composed_scene = _precomposed_g1_scene(package.package_dir)
+        composed_scene = _precomposed_g1_scene(package)
         if composed_scene is not None:
             return (
                 MujocoSimModule.blueprint(
@@ -237,9 +238,19 @@ if global_config.simulation == "mujoco":
             _ROBOT_ONLY_MJCF_PATH,
         )
 
-    def _precomposed_g1_scene(package_dir: Path) -> Path | None:
-        candidate = package_dir / _G1_SUPERMARKET_COMPOSED_MJB
-        return candidate if candidate.exists() else None
+    def _precomposed_g1_scene(package: ScenePackage) -> Path | None:
+        candidate = package.mujoco_composed_binary_path(
+            key=_G1_COMPOSED_MJB_KEY,
+            robot=_G1_COMPOSED_MJB_ROBOT,
+            entity_policy=_G1_COMPOSED_MJB_ENTITY_POLICY,
+        )
+        if candidate is None:
+            return None
+        if not candidate.exists():
+            raise FileNotFoundError(
+                f"scene package declares a composed MuJoCo binary that is missing: {candidate}"
+            )
+        return candidate
 
     # Sim backend: MuJoCo engine via SHM.
     _backend, _adapter_address = _scene_mujoco_backend()

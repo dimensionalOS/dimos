@@ -95,11 +95,10 @@ def _validate_package_artifacts(
     rerun_visual_path = package.browser_visual_path("rerun")
     if (
         rerun_visual_path is not None
-        and package.browser_collision_path is not None
         and package.mujoco_scene_path is not None
         and rerun_visual_path.exists()
-        and package.browser_collision_path.exists()
         and package.mujoco_scene_path.exists()
+        and (package.browser_collision_path is None or package.browser_collision_path.exists())
     ):
         return
 

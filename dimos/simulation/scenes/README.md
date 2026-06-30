@@ -63,6 +63,7 @@ scene-specific paths:
 ```python
 if package is not None:
     mujoco_xml = package.mujoco_scene_path
+    scene_only_mjb = package.mujoco_binary_path
     rerun_visual = package.browser_visual_path("rerun")
     browser_collision = package.browser_collision_path
     objects_json = package.objects_path
@@ -105,6 +106,20 @@ wrapper.xml + robot MJCF + spawn/entity selection -> composed/<name>.mjb
 Loading a composed `.mjb` is faster, but that file is specific to one robot,
 spawn pose, entity selection, and scene revision. Keep the scene package
 metadata as the source of truth and treat composed binaries as cache artifacts.
+
+Runtime code should look up declared composed binaries through the package API:
+
+```python
+composed_mjb = package.mujoco_composed_binary_path(
+    key="unitree-g1-groot-wbc_spawn_9p2_11p8_yaw_m1p57_static_only_lidar",
+    robot="unitree-g1-groot-wbc",
+    entity_policy="static-only",
+)
+```
+
+If the lookup returns `None`, the consumer can fall back to the robot-agnostic
+`wrapper.xml` flow above. If it returns a path that is missing on disk, the
+package is stale or incomplete.
 
 ## Run G1 With A Scene
 
