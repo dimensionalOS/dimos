@@ -1,11 +1,17 @@
 // Shared mutable state — every other module imports from here.
 
+// Only honor ?broker= when served from localhost. In production it would let a
+// phishing link redirect every api() call (and the Cognito bearer token) to an
+// attacker-controlled origin — same TLS, same address bar, no warning.
+const isLocalDev = ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname);
+const brokerParam = new URLSearchParams(window.location.search).get('broker') || '';
+
 export const state = {
     // Auth (Cognito ID + refresh tokens)
     token: localStorage.getItem('teleop_token') || '',
     refreshToken: localStorage.getItem('teleop_refresh') || '',
     userEmail: localStorage.getItem('teleop_email') || '',
-    brokerOverride: new URLSearchParams(window.location.search).get('broker') || '',
+    brokerOverride: isLocalDev ? brokerParam : '',
 
     // WebRTC + WebXR
     pc: null,
@@ -69,7 +75,6 @@ export const state = {
 };
 
 // Dev-only: behave like a logged-in user on localhost.
-const isLocalDev = ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname);
 if (isLocalDev && !state.token) {
     state.token = 'dev-token';
     state.userEmail = 'dev@local';
