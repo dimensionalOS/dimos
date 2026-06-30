@@ -657,6 +657,8 @@ def test_restart_module_basic(dynamic_coordinator) -> None:
     assert new_proxy is not old_proxy
     assert dynamic_coordinator.get_instance(ModuleA) is new_proxy
     assert new_proxy.get_name() == "A, Module A"
+    assert "g" in dynamic_coordinator._resolved_module_plans[ModuleA].final_kwargs
+    assert "g" not in dynamic_coordinator._deployed_atoms[ModuleA].kwargs
 
 
 def test_restart_module_preserves_stream_wiring(dynamic_coordinator) -> None:

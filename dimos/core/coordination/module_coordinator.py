@@ -531,7 +531,8 @@ class ModuleCoordinator(Resource):
         new_proxy = python_wm.deploy_fresh(new_class, self._global_config, kwargs)
         self._deployed_modules[new_class] = new_proxy
 
-        new_bp = new_class.blueprint(**kwargs)
+        blueprint_kwargs = {k: v for k, v in kwargs.items() if k != "g"}
+        new_bp = new_class.blueprint(**blueprint_kwargs)
         new_atom = new_bp.active_blueprints[0]
         self._deployed_atoms[new_class] = new_atom
         config = new_class.resolve_config(kwargs)
