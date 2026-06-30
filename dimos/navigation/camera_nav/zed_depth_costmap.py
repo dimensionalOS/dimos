@@ -562,11 +562,8 @@ class DepthStreamer:
 
     def _log_map(self) -> None:
         sure_pts = self._vox.stable_xyz(min_obs=2)
-        bg_pts   = self._vox_bg.stable_xyz(min_obs=10)
+        bg_pts   = self._vox_bg.stable_xyz(min_obs=5)   # match stdout counter threshold
 
-        # Log tiers separately so each gets the right display radius.
-        # Sure tier: 8 cm voxels → 0.5 cm dots (dense enough to look solid).
-        # Wall tier: 30 cm voxels → 14 cm radius to fill the gap between centres.
         if len(sure_pts) > 0:
             n   = min(len(sure_pts), self.MAX_MAP)
             idx = np.random.choice(len(sure_pts), n, replace=False) if len(sure_pts) > n else np.arange(n)
@@ -578,10 +575,11 @@ class DepthStreamer:
         if len(bg_pts) > 0:
             n   = min(len(bg_pts), self.MAX_MAP)
             idx = np.random.choice(len(bg_pts), n, replace=False) if len(bg_pts) > n else np.arange(n)
+            cyan = np.full((n, 3), [0, 200, 220], dtype=np.uint8)
             rr.log("world/walls", rr.Points3D(
                 positions=bg_pts[idx],
-                colors=_height_color(bg_pts[idx, 2] - self._cam_z),
-                radii=0.14,
+                colors=cyan,
+                radii=0.02,
             ))
 
     def log_stdout(self, pkt: DepthFramePacket, frame: int, fps: float) -> None:
