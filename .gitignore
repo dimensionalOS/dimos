@@ -4,7 +4,7 @@
 
 # Default output of `dimos apriltag`
 /apriltags.pdf
-
+.idea
 .vscode/
 
 # Ignore Python cache files
@@ -39,9 +39,7 @@ __pycache__
 
 # node env (used by devcontainers cli)
 node_modules
-package.json
 package-lock.json
-!docs/package.json
 !docs/package-lock.json
 
 # Ignore build artifacts
