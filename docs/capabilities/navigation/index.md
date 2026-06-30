@@ -1,12 +1,13 @@
 ---
 title: "Navigation"
 ---
-Note: in the future these will be merged into one system.
 
-## Cmu Nav Stack
+![output](assets/noros_nav.gif)
 
-- [Nav Stack](/docs/capabilities/navigation/cmu_nav.md) — modular navigation stack with terrain analysis, local/global planning, PGO, and exploration
+The Go2 navigation stack uses simple **column-carving voxel map** strategy: each new LiDAR frame replaces the corresponding region of the global map entirely, ensuring the map always reflects the latest observations.
 
-## Simple Nav
+[Navigation Deep Dive](/docs/capabilities/navigation/deep_dive.md)
 
-- [Simple Navigation](/docs/capabilities/navigation/native/index.md) — column-carving voxel mapping + slope-based costmap
+We also have a simple relocalization system on previously stored and reconstructed maps.
+
+[Relocalization](/docs/capabilities/navigation/relocalization.md)
