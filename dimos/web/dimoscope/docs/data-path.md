@@ -157,7 +157,9 @@ TCP netsim proxy can't shape QUIC/UDP); that loss measurement is the remaining P
 
 ## Bad-network tooling — options (researched)
 
-DevTools throttling does **not** affect WebSocket/WebRTC; `tc/netem` is Linux-only (host is macOS).
+DevTools throttling *can* shape WebSockets (Chrome 99+) and WebRTC (124+), but **manual-only** — the
+CDP automation API (`Network.emulateNetworkConditions`, used by Playwright/Puppeteer) still skips
+WS/WebRTC, so it's no good for reproducible/CI runs. `tc/netem` is Linux-only (host is macOS).
 
 | tool | layer | platforms | UDP/QUIC | scriptable | role here |
 |---|---|---|---|---|---|
@@ -170,6 +172,29 @@ DevTools throttling does **not** affect WebSocket/WebRTC; `tc/netem` is Linux-on
 We built `netsim.ts` because it's zero-install, fully scriptable from the matrix, and impairs
 every TCP mechanism uniformly. For the Phase-2 UDP/QUIC mechanisms we'll add **dummynet**
 (macOS-native) or **netem-in-a-container**, since a TCP proxy can't shape QUIC.
+
+### Simulating bad networks in the browser (not just the headless bench)
+
+`netsim.ts` shapes at the TCP layer, so the **same proxy impairs a real browser** — point the app
+through it with the `?gw=host:port` override (added to `main.tsx` + `bench.tsx`):
+
+```bash
+deno task gateway                                                    # or `deno task servers`
+NETSIM_PROFILE=3g NETSIM_LISTEN=8099 NETSIM_TARGET=localhost:8089 \
+  deno run -A bench/netsim.ts                                        # impair the LCM gateway
+deno task app                                                        # Vite → :5173
+# open http://localhost:5173/?gw=localhost:8099  (or /bench.html?gw=localhost:8099) and pick the
+# matching transport — the whole WS/SSE/poll data path now degrades like the bench:matrix 3g column.
+```
+
+| want | use |
+|---|---|
+| reproducible WS/SSE/poll impairment (app or `bench.html`) | **`?gw=` → netsim** (above) — scriptable, CI-able |
+| quick manual "feel on 3G" | **Chrome DevTools → Slow 3G** (throttles WS since Chrome 99) |
+| impair **WebRTC** camera/datachannel (UDP) | **Network Link Conditioner / dummynet** — system-wide; `?gw=`/DevTools can't shape UDP |
+
+The media plane (`:8092`, WebRTC) and `?gw=` are independent: the override only reroutes the data
+gateway, so the camera stays direct (use NLC for it).
 
 ---
 

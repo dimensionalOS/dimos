@@ -19,7 +19,11 @@ import {
 import "./styles.css";
 
 const host = location.hostname || "localhost";
-const DUR = Number(new URLSearchParams(location.search).get("dur") ?? 4000);
+const params = new URLSearchParams(location.search);
+const DUR = Number(params.get("dur") ?? 4000);
+// `?gw=host:port` runs the bench through a netsim proxy (bad-network testing); see bench/netsim.ts.
+const gwOverride = params.get("gw");
+const gw = (port: number) => gwOverride ?? `${host}:${port}`;
 
 interface TransportDef {
   id: string;
@@ -31,24 +35,24 @@ const TRANSPORTS: TransportDef[] = [
   {
     id: "zenoh",
     label: "Python↔Zenoh",
-    url: `ws://${host}:8088`,
-    open: () => connect({ url: `ws://${host}:8088`, reconnect: false }),
+    url: `ws://${gw(8088)}`,
+    open: () => connect({ url: `ws://${gw(8088)}`, reconnect: false }),
   },
   {
     id: "lcm",
     label: "Bun↔LCM",
-    url: `ws://${host}:8089`,
-    open: () => connect({ url: `ws://${host}:8089`, reconnect: false }),
+    url: `ws://${gw(8089)}`,
+    open: () => connect({ url: `ws://${gw(8089)}`, reconnect: false }),
   },
   {
     id: "zenoh-ts",
     label: "zenoh-ts (direct)",
-    url: `ws://${host}:10000`,
+    url: `ws://${gw(10000)}`,
     open: async () => {
       const { createZenohTsTransport } = await import("@dimos/topics");
       // discoveryKey "" → no scout; the bench subscribes explicit /bench/* keys.
       return connect({
-        transport: createZenohTsTransport({ remoteApiUrl: `ws://${host}:10000`, discoveryKey: "" }),
+        transport: createZenohTsTransport({ remoteApiUrl: `ws://${gw(10000)}`, discoveryKey: "" }),
       });
     },
   },
