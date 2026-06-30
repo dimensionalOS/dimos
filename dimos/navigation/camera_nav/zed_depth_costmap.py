@@ -595,6 +595,12 @@ class DepthStreamer:
 
         rr.log("world/camera/depth", rr.DepthImage(pkt.depth, meter=1.0))
 
+        # Log camera world-frame pose so Rerun centres the 3D view on the camera.
+        rr.log("world/camera", rr.Transform3D(
+            translation=pkt.pose_t,
+            mat3x3=pkt.pose_R,
+        ))
+
         conf = pkt.confidence if pkt.confidence is not None else np.full(
             pkt.depth.shape, 100.0, dtype=np.float32
         )
@@ -679,8 +685,8 @@ def main() -> None:
         rrb.Tabs(
             rrb.Spatial3DView(name="live cloud", origin="world",
                               contents=["world/cloud", "world/camera/**"]),
-            rrb.Spatial3DView(name="map", origin="world",
-                              contents=["world/map"]),
+            rrb.Spatial3DView(name="map", origin="world/camera",
+                              contents=["world/map", "world/camera"]),
         )
     ))
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
