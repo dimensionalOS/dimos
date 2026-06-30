@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -95,4 +95,4 @@ def scene_alignment_matrix(alignment: SceneMeshAlignment) -> list[list[float]]:
     matrix = Rotation.from_euler("ZYX", alignment.rotation_zyx_deg, degrees=True).as_matrix()
     if alignment.y_up:
         matrix = matrix @ np.array([[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]])
-    return matrix.tolist()
+    return cast("list[list[float]]", matrix.tolist())
