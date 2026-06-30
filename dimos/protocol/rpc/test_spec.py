@@ -147,8 +147,8 @@ def test_basic_sync_call(rpc_context, impl_name: str) -> None:
             unsub()
 
 
+@pytest.mark.self_hosted
 @pytest.mark.parametrize("rpc_context, impl_name", testdata)
-@pytest.mark.asyncio
 async def test_async_call(rpc_context, impl_name: str) -> None:
     """Test asynchronous RPC calls."""
     with rpc_context() as (server, client):
