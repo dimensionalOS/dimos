@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,12 @@ import numpy as np
 from dimos.utils.data import get_data
 
 JointNameMapper = Callable[[str], str]
+RERUN_URDF_INSTALL_HINT = (
+    "Rerun URDF robot visualization requires yourdfpy. Install it with: "
+    "uv sync --extra visualization. Linux aarch64 is currently unsupported "
+    "because yourdfpy depends on embreex, which does not publish Linux "
+    "aarch64 wheels."
+)
 
 
 def default_joint_name_mapper(name: str) -> str:
@@ -75,6 +82,15 @@ def _mesh_to_rerun(rr: Any, mesh: Any) -> Any:
 
 def _rerun_path_part(name: str) -> str:
     return name.replace("/", "_").replace(" ", "_")
+
+
+def _yourdfpy_urdf() -> Any:
+    try:
+        return import_module("yourdfpy").URDF
+    except ModuleNotFoundError as e:
+        if e.name not in {"yourdfpy", "trimesh", "embreex"}:
+            raise
+        raise ModuleNotFoundError(RERUN_URDF_INSTALL_HINT) from e
 
 
 def _build_link_paths(
@@ -146,8 +162,7 @@ class UrdfRobotStaticRerunFactory:
 
     def _load_robot(self) -> Any:
         if self._robot is None:
-            from yourdfpy import URDF
-
+            URDF = _yourdfpy_urdf()
             self._robot = URDF.load(str(_resolve_urdf_path(self.urdf_path)))
         return self._robot
 
@@ -192,8 +207,8 @@ class UrdfRobotJointStateRerunFactory:
     def _load_tree(self) -> None:
         if self._tree is None:
             import rerun.urdf as rr_urdf
-            from yourdfpy import URDF
 
+            URDF = _yourdfpy_urdf()
             urdf_path = _resolve_urdf_path(self.urdf_path)
             robot = URDF.load(str(urdf_path))
             link_paths = _build_link_paths(

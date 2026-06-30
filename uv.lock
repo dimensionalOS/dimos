@@ -1999,7 +1999,6 @@ dependencies = [
     { name = "typer" },
     { name = "typing-extensions", marker = "python_full_version < '3.11'" },
     { name = "websocket-client" },
-    { name = "yourdfpy" },
 ]
 
 [package.optional-dependencies]
@@ -2077,6 +2076,7 @@ all = [
     { name = "viser", extra = ["urdf"] },
     { name = "xacro" },
     { name = "xarm-python-sdk" },
+    { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
 apriltag = [
     { name = "opencv-contrib-python" },
@@ -2109,6 +2109,7 @@ base = [
     { name = "transformers", extra = ["torch"] },
     { name = "ultralytics" },
     { name = "uvicorn" },
+    { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
 cpu = [
     { name = "onnxruntime" },
@@ -2207,6 +2208,7 @@ unitree = [
     { name = "ultralytics" },
     { name = "unitree-webrtc-connect" },
     { name = "uvicorn" },
+    { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
 unitree-dds = [
     { name = "chromadb" },
@@ -2240,10 +2242,12 @@ unitree-dds = [
     { name = "unitree-sdk2py-dimos" },
     { name = "unitree-webrtc-connect" },
     { name = "uvicorn" },
+    { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
 visualization = [
     { name = "dimos-viewer" },
     { name = "rerun-sdk" },
+    { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
 web = [
     { name = "fastapi" },
@@ -2520,7 +2524,7 @@ requires-dist = [
     { name = "xacro", marker = "extra == 'manipulation'" },
     { name = "xarm-python-sdk", marker = "extra == 'manipulation'", specifier = ">=1.17.0" },
     { name = "xarm-python-sdk", marker = "extra == 'misc'", specifier = ">=1.17.0" },
-    { name = "yourdfpy", specifier = ">=0.0.60" },
+    { name = "yourdfpy", marker = "(platform_machine != 'aarch64' and extra == 'visualization') or (sys_platform != 'linux' and extra == 'visualization')", specifier = ">=0.0.60" },
 ]
 provides-extras = ["misc", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "sim", "mapping", "drone", "dds", "base", "apriltag", "all"]
 

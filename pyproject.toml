@@ -98,7 +98,6 @@ dependencies = [
     # Core
     "numpy>=1.26.4",
     "scipy>=1.15.1",
-    "yourdfpy>=0.0.60",
     "pin>=3.3.0", # Pinocchio IK library
     "reactivex",
     "sortedcontainers==2.4.0",
@@ -186,6 +185,9 @@ misc = [
 visualization = [
     "rerun-sdk==0.32.0a1",
     "dimos-viewer==0.32.0a1",
+    # Rerun URDF robot visualization. yourdfpy depends on trimesh[easy],
+    # which pulls embreex; embreex has no Linux aarch64 wheel.
+    "yourdfpy>=0.0.60; sys_platform != 'linux' or platform_machine != 'aarch64'",
 ]
 
 learning = [
