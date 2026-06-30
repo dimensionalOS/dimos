@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Mapping, MutableMapping
+from dataclasses import dataclass
 import importlib
 import inspect
 import shutil
@@ -24,11 +25,17 @@ import threading
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
+from dimos.core.coordination.worker_launcher import CommandWorkerLauncher, VenvWorkerLauncher
 from dimos.core.coordination.worker_manager import WorkerManager
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.module import ModuleBase, ModuleSpec
+from dimos.core.module import ModuleBase, ModuleConfig, ModuleIOContract, ModuleSpec, StreamDecl
 from dimos.core.resource import Resource
+from dimos.core.runtime_environment import (
+    PythonProjectRuntimeEnvironment,
+    PythonProjectRuntimeEnvironmentError,
+    RuntimeEnvironmentRegistry,
+)
 from dimos.core.transport import LCMTransport, PubSubTransport, pLCMTransport
 from dimos.spec.utils import is_spec, spec_annotation_compliance, spec_structural_compliance
 from dimos.utils.generic import short_id
@@ -50,6 +57,19 @@ class ModuleDescriptor(NamedTuple):
     rpc_names: list[str]
 
 
+@dataclass(frozen=True)
+class ResolvedModulePlan:
+    atom: BlueprintAtom
+    module: type[ModuleBase]
+    final_kwargs: dict[str, Any]
+    config: ModuleConfig
+    io_contract: ModuleIOContract
+
+    @property
+    def streams(self) -> tuple[StreamDecl, ...]:
+        return self.io_contract.streams
+
+
 class ModuleCoordinator(Resource):
     _managers: dict[str, WorkerManager]
     _global_config: GlobalConfig
@@ -64,10 +84,14 @@ class ModuleCoordinator(Resource):
         self._managers = {cls.deployment_identifier: cls(g=g) for cls in manager_types}
         self._deployed_modules = {}
         self._deployed_atoms: dict[type[ModuleBase], BlueprintAtom] = {}
+        self._resolved_module_plans: dict[type[ModuleBase], ResolvedModulePlan] = {}
         self._resolved_module_refs: dict[tuple[type[ModuleBase], str], type[ModuleBase]] = {}
         self._transport_registry: dict[tuple[str, type], PubSubTransport[Any]] = {}
         self._class_aliases: dict[type[ModuleBase], type[ModuleBase]] = {}
         self._module_transports: dict[type[ModuleBase], dict[str, PubSubTransport[Any]]] = {}
+        self._runtime_environment_registry = RuntimeEnvironmentRegistry.with_current_process()
+        self._runtime_placement_map: dict[type[ModuleBase], str] = {}
+        self._module_manager_keys: dict[type[ModuleBase], str] = {}
         self._started = False
         self._modules_lock = threading.RLock()
         self._coordinator_rpc: CoordinatorRPC | None = None
@@ -147,7 +171,15 @@ class ModuleCoordinator(Resource):
             return [cls.__name__ for cls in self._deployed_modules]
 
     def health_check(self) -> bool:
-        return all(m.health_check() for m in self._managers.values())
+        return all(m.health_check() for m in self._active_managers().values())
+
+    def _active_managers(self) -> dict[str, WorkerManager]:
+        return {
+            key: manager
+            for key, manager in self._managers.items()
+            if key in self._module_manager_keys.values()
+            or (key == "python" and bool(cast("WorkerManagerPython", manager).workers))
+        }
 
     @property
     def n_modules(self) -> int:
@@ -166,32 +198,183 @@ class ModuleCoordinator(Resource):
         if not self._managers:
             raise ValueError("Trying to dimos.deploy before the client has started")
 
-        deployed_module = self._managers[module_class.deployment].deploy(
-            module_class, global_config, kwargs
-        )
+        manager_key = self._manager_key_for_module(module_class)
+        kwargs = self._inject_native_runtime_registry(module_class, kwargs)
+        deployed_module = self._managers[manager_key].deploy(module_class, global_config, kwargs)
         with self._modules_lock:
             self._deployed_modules[module_class] = deployed_module
+            self._module_manager_keys[module_class] = manager_key
         return deployed_module  # type: ignore[return-value]
 
+    def _manager_key_for_module(self, module_class: type[ModuleBase]) -> str:
+        if module_class.deployment != "python":
+            return module_class.deployment
+        env_name = self._runtime_placement_map.get(module_class)
+        if env_name is None:
+            return "python"
+        return self._ensure_venv_manager(env_name)
+
+    def _ensure_venv_manager(self, env_name: str) -> str:
+        manager_key = f"python:{env_name}"
+        if manager_key in self._managers:
+            return manager_key
+        try:
+            environment = self._runtime_environment_registry.resolve(env_name)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Module placement references runtime environment {env_name!r}, but it could not "
+                "be resolved as a Python runtime capability. Register a Python runtime environment on the "
+                "blueprint with .runtime_environments(...)."
+            ) from exc
+        if isinstance(environment, PythonProjectRuntimeEnvironment):
+            return self._ensure_project_manager(env_name, environment, manager_key)
+        try:
+            material = environment.resolve_python()
+        except Exception as exc:
+            raise RuntimeError(
+                f"Module placement references runtime environment {env_name!r}, but it could not "
+                "be resolved as a Python runtime capability. Register a Python runtime environment on the "
+                "blueprint with .runtime_environments(...)."
+            ) from exc
+        executable = str(material.python_executable)
+        if material.python_executable.is_absolute():
+            executable_found = material.python_executable.exists()
+        else:
+            executable_found = shutil.which(executable) is not None
+        if not executable_found:
+            raise RuntimeError(
+                f"Runtime environment {env_name!r} Python capability references missing "
+                f"executable {executable!r}."
+            )
+        manager = WorkerManagerPython(
+            g=self._global_config,
+            worker_launcher=VenvWorkerLauncher(python_executable=executable, env=material.env),
+        )
+        if self._started:
+            try:
+                manager.start()
+            except Exception as exc:
+                manager.stop()
+                raise RuntimeError(
+                    f"Failed to start runtime environment {env_name!r} Python capability "
+                    f"with executable {executable!r}."
+                ) from exc
+        self._managers[manager_key] = manager
+        return manager_key
+
+    def _ensure_project_manager(
+        self,
+        env_name: str,
+        environment: PythonProjectRuntimeEnvironment,
+        manager_key: str,
+    ) -> str:
+        try:
+            material = environment.resolve_python_project()
+        except PythonProjectRuntimeEnvironmentError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(
+                f"Module placement references runtime environment {env_name!r}, but it could not "
+                "be resolved as a Python project runtime capability. Register a Python project runtime "
+                "environment on the blueprint with .runtime_environments(...)."
+            ) from exc
+        manager = WorkerManagerPython(
+            g=self._global_config,
+            worker_launcher=CommandWorkerLauncher(material=material),
+        )
+        if self._started:
+            try:
+                manager.start()
+            except Exception as exc:
+                manager.stop()
+                raise RuntimeError(
+                    f"Failed to start runtime environment {env_name!r} Python project capability "
+                    f"with command prefix {material.argv_prefix!r} in project {material.cwd!s}."
+                ) from exc
+        self._managers[manager_key] = manager
+        return manager_key
+
+    def _inject_native_runtime_registry(
+        self, module_class: type[ModuleBase], kwargs: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        from dimos.core.native_module import NativeModule
+
+        result = dict(kwargs)
+        if issubclass(module_class, NativeModule):
+            result["runtime_environment_registry"] = self._runtime_environment_registry
+        return result
+
     def deploy_parallel(
-        self, module_specs: list[ModuleSpec], blueprint_args: Mapping[str, Mapping[str, Any]]
+        self,
+        module_specs: list[ModuleSpec],
+        runtime_environment_registry: RuntimeEnvironmentRegistry | None = None,
+        runtime_placement_map: Mapping[type[ModuleBase], str] | None = None,
     ) -> list[ModuleProxy]:
         if not self._managers:
             raise ValueError("Not started")
 
-        # Group specs by deployment type, tracking original indices for reassembly
-        indices_by_deployment: dict[str, list[int]] = {}
-        specs_by_deployment: dict[str, list[ModuleSpec]] = {}
-        for index, spec in enumerate(module_specs):
-            # spec = (module_class, global_config, kwargs)
-            dep = spec[0].deployment
-            indices_by_deployment.setdefault(dep, []).append(index)
-            specs_by_deployment.setdefault(dep, []).append(spec)
+        if runtime_environment_registry is not None:
+            self._runtime_environment_registry = self._runtime_environment_registry.merge(
+                runtime_environment_registry
+            )
+        previous_placements = dict(self._runtime_placement_map)
+        existing_manager_keys = set(self._managers)
+        module_classes = {spec[0] for spec in module_specs}
+        active_runtime_placement_map = (
+            {
+                module_class: env_name
+                for module_class, env_name in runtime_placement_map.items()
+                if module_class in module_classes
+            }
+            if runtime_placement_map is not None
+            else None
+        )
+        if active_runtime_placement_map is not None:
+            self._runtime_placement_map.update(active_runtime_placement_map)
+
+        try:
+            # Group specs by deployment manager, tracking original indices for reassembly
+            indices_by_deployment: dict[str, list[int]] = {}
+            specs_by_deployment: dict[str, list[ModuleSpec]] = {}
+            effective_module_specs: list[ModuleSpec] = []
+            for index, spec in enumerate(module_specs):
+                module_class, spec_global_config, kwargs = spec
+                dep = self._manager_key_for_module(module_class)
+                effective_kwargs = dict(kwargs)
+                effective_kwargs = self._inject_native_runtime_registry(
+                    module_class, effective_kwargs
+                )
+                spec = (module_class, spec_global_config, effective_kwargs)
+                effective_module_specs.append(spec)
+                indices_by_deployment.setdefault(dep, []).append(index)
+                specs_by_deployment.setdefault(dep, []).append(spec)
+        except Exception:
+            self._runtime_placement_map = previous_placements
+            for key in set(self._managers) - existing_manager_keys:
+                self._stop_and_remove_manager(key)
+            raise
 
         results: list[Any] = [None] * len(module_specs)
 
         def _deploy_group(dep: str) -> None:
-            deployed = self._managers[dep].deploy_parallel(specs_by_deployment[dep], blueprint_args)
+            try:
+                deployed = self._managers[dep].deploy_parallel(specs_by_deployment[dep])
+            except Exception as exc:
+                if dep.startswith("python:"):
+                    env_name = dep.removeprefix("python:")
+                    try:
+                        environment = self._runtime_environment_registry.resolve(env_name)
+                        if isinstance(environment, PythonProjectRuntimeEnvironment):
+                            executable = " ".join(environment.resolve_python_project().argv_prefix)
+                        else:
+                            executable = str(environment.resolve_python().python_executable)
+                    except Exception:
+                        executable = "<unresolved>"
+                    raise RuntimeError(
+                        f"Failed to deploy with runtime environment {env_name!r} Python "
+                        f"capability using executable {executable!r}."
+                    ) from exc
+                raise
             for index, module in zip(indices_by_deployment[dep], deployed, strict=True):
                 results[index] = module
 
@@ -199,16 +382,22 @@ class ModuleCoordinator(Resource):
             safe_thread_map(list(specs_by_deployment.keys()), _deploy_group)
         except:
             self.stop()
+            self._runtime_placement_map = previous_placements
+            for key in set(self._managers) - existing_manager_keys:
+                self._stop_and_remove_manager(key)
             raise
 
         with self._modules_lock:
             self._deployed_modules.update(
                 {
                     cls: mod
-                    for (cls, _, _), mod in zip(module_specs, results, strict=True)
+                    for (cls, _, _), mod in zip(effective_module_specs, results, strict=True)
                     if mod is not None
                 }
             )
+            for (cls, _, _), mod in zip(effective_module_specs, results, strict=True):
+                if mod is not None:
+                    self._module_manager_keys[cls] = self._manager_key_for_module(cls)
         return results
 
     def build_all_modules(self) -> None:
@@ -249,21 +438,21 @@ class ModuleCoordinator(Resource):
             if hasattr(module, "on_system_modules"):
                 module.on_system_modules(modules)
 
-    def _connect_streams(self, blueprint: Blueprint) -> None:
+    def _connect_streams(self, blueprint: Blueprint, plans: tuple[ResolvedModulePlan, ...]) -> None:
         streams: dict[tuple[str, type], list[tuple[type, str]]] = defaultdict(list)
 
-        for bp in blueprint.active_blueprints:
-            for conn in bp.streams:
-                remapped_name = blueprint.remapping_map.get((bp.module, conn.name), conn.name)
+        for plan in plans:
+            for conn in plan.streams:
+                remapped_name = blueprint.remapping_map.get((plan.module, conn.name), conn.name)
                 if isinstance(remapped_name, str):
-                    streams[remapped_name, conn.type].append((bp.module, conn.name))
+                    streams[remapped_name, conn.type].append((plan.module, conn.name))
 
         for remapped_name, stream_type in streams.keys():
             key = (remapped_name, stream_type)
             if key in self._transport_registry:
                 transport = self._transport_registry[key]
             else:
-                transport = _get_transport_for(blueprint, remapped_name, stream_type)
+                transport = _get_transport_for(blueprint, plans, remapped_name, stream_type)
             self._transport_registry[key] = transport
             for module, original_name in streams[key]:
                 instance = self.get_instance(module)  # type: ignore[assignment]
@@ -289,24 +478,30 @@ class ModuleCoordinator(Resource):
         global_config.update(**dict(blueprint.global_config_overrides))
         blueprint_args = blueprint_args or {}
         if "g" in blueprint_args:
-            global_config.update(**blueprint_args.pop("g"))
+            global_config.update(**dict(blueprint_args["g"]))
 
         _run_configurators(blueprint)
         _check_requirements(blueprint)
-        _verify_no_name_conflicts(blueprint)
+        plans = _resolve_module_plans(blueprint, global_config, blueprint_args)
+        _verify_stream_remappings(blueprint, plans)
+        _verify_no_name_conflicts(blueprint, plans)
 
         logger.info("Starting the modules")
         coordinator = cls(g=global_config)
         coordinator.start()
 
-        _deploy_all_modules(blueprint, coordinator, global_config, blueprint_args)
-        coordinator._connect_streams(blueprint)
-        _connect_module_refs(blueprint, coordinator)
+        try:
+            _deploy_all_modules(plans, coordinator, global_config, blueprint)
+            coordinator._connect_streams(blueprint, plans)
+            _connect_module_refs(blueprint, coordinator)
 
-        coordinator.build_all_modules()
-        coordinator.start_all_modules()
+            coordinator.build_all_modules()
+            coordinator.start_all_modules()
 
-        _log_blueprint_graph(blueprint, coordinator)
+            _log_blueprint_graph(blueprint, coordinator, plans)
+        except Exception:
+            coordinator.stop()
+            raise
 
         return coordinator
 
@@ -336,7 +531,7 @@ class ModuleCoordinator(Resource):
         self._global_config.update(**dict(blueprint.global_config_overrides))
         blueprint_args = blueprint_args or {}
         if "g" in blueprint_args:
-            self._global_config.update(**blueprint_args.pop("g"))
+            self._global_config.update(**dict(blueprint_args["g"]))
 
         # Scale worker pool.
         n_extra = int(blueprint.global_config_overrides.get("n_workers", 0))
@@ -348,8 +543,10 @@ class ModuleCoordinator(Resource):
 
         _run_configurators(blueprint)
         _check_requirements(blueprint)
-        _verify_no_name_conflicts(blueprint)
-        _verify_no_conflicts_with_existing(blueprint, self._transport_registry)
+        plans = _resolve_module_plans(blueprint, self._global_config, blueprint_args)
+        _verify_stream_remappings(blueprint, plans)
+        _verify_no_name_conflicts(blueprint, plans)
+        _verify_no_conflicts_with_existing(blueprint, self._transport_registry, plans)
 
         # Reject duplicate modules.
         for bp in blueprint.active_blueprints:
@@ -360,8 +557,8 @@ class ModuleCoordinator(Resource):
 
         before = set(self._deployed_modules)
 
-        _deploy_all_modules(blueprint, self, self._global_config, blueprint_args)
-        self._connect_streams(blueprint)
+        _deploy_all_modules(plans, self, self._global_config, blueprint)
+        self._connect_streams(blueprint, plans)
         _connect_module_refs(blueprint, self, existing_modules=before)
 
         new_modules = [proxy for cls, proxy in self._deployed_modules.items() if cls not in before]
@@ -392,6 +589,11 @@ class ModuleCoordinator(Resource):
             self._unload_module(module_class)
 
     def _unload_module(self, module_class: type[ModuleBase]) -> None:
+        self._unload_module_impl(module_class, preserve_placement=False)
+
+    def _unload_module_impl(
+        self, module_class: type[ModuleBase], *, preserve_placement: bool
+    ) -> None:
         module_class = self._resolve_class(module_class)
         if module_class not in self._deployed_modules:
             raise ValueError(f"{module_class.__name__} is not deployed")
@@ -411,7 +613,10 @@ class ModuleCoordinator(Resource):
                 exc_info=True,
             )
 
-        python_wm = cast("WorkerManagerPython", self._managers["python"])
+        manager_key = self._module_manager_keys.get(
+            module_class, self._manager_key_for_module(module_class)
+        )
+        python_wm = cast("WorkerManagerPython", self._managers[manager_key])
         try:
             python_wm.undeploy(proxy)
         except Exception:
@@ -422,7 +627,11 @@ class ModuleCoordinator(Resource):
             )
 
         del self._deployed_modules[module_class]
+        self._module_manager_keys.pop(module_class, None)
+        if not preserve_placement:
+            self._clear_runtime_placement_aliases(module_class)
         self._deployed_atoms.pop(module_class, None)
+        self._resolved_module_plans.pop(module_class, None)
         self._module_transports.pop(module_class, None)
         self._class_aliases = {
             k: v for k, v in self._class_aliases.items() if v is not module_class
@@ -432,6 +641,27 @@ class ModuleCoordinator(Resource):
             for key, target in self._resolved_module_refs.items()
             if key[0] is not module_class and target is not module_class
         }
+        if (
+            manager_key.startswith("python:")
+            and manager_key not in self._module_manager_keys.values()
+        ):
+            self._stop_and_remove_manager(manager_key)
+
+    def _clear_runtime_placement_aliases(self, module_class: type[ModuleBase]) -> None:
+        """Clear placement for a class and stale handles that alias to it."""
+        self._runtime_placement_map.pop(module_class, None)
+        for alias_class, resolved_class in list(self._class_aliases.items()):
+            if resolved_class is module_class:
+                self._runtime_placement_map.pop(alias_class, None)
+
+    def _stop_and_remove_manager(self, manager_key: str) -> None:
+        manager = self._managers.pop(manager_key, None)
+        if manager is None:
+            return
+        try:
+            manager.stop()
+        except Exception:
+            logger.error("Error stopping manager", manager=manager_key, exc_info=True)
 
     def restart_module_by_class_name(
         self,
@@ -477,8 +707,10 @@ class ModuleCoordinator(Resource):
                 f"restart_module only supports python deployment, got {module_class.deployment!r}"
             )
 
-        old_atom = self._deployed_atoms[module_class]
-        kwargs = dict(old_atom.kwargs)
+        old_plan = self._resolved_module_plans[module_class]
+        kwargs = dict(old_plan.final_kwargs)
+        kwargs["g"] = self._global_config
+        runtime_env_name = self._runtime_placement_map.get(module_class)
         saved_transports = dict(self._module_transports.get(module_class, {}))
         inbound_refs = [
             (consumer, ref_name)
@@ -491,7 +723,7 @@ class ModuleCoordinator(Resource):
             if consumer is module_class
         ]
 
-        self.unload_module(module_class)
+        self._unload_module_impl(module_class, preserve_placement=True)
 
         if reload_source:
             source_mod = sys.modules.get(module_class.__module__)
@@ -507,21 +739,39 @@ class ModuleCoordinator(Resource):
                 if self._class_aliases[old_cls] is module_class:
                     self._class_aliases[old_cls] = new_class
             self._class_aliases[module_class] = new_class
+            if runtime_env_name is not None:
+                self._runtime_placement_map.pop(module_class, None)
+                self._runtime_placement_map[new_class] = runtime_env_name
 
-        python_wm = cast("WorkerManagerPython", self._managers["python"])
-        new_proxy = python_wm.deploy_fresh(new_class, self._global_config, kwargs)
+        manager_key = self._module_manager_keys.get(new_class) or self._manager_key_for_module(
+            new_class
+        )
+        python_wm = cast("WorkerManagerPython", self._managers[manager_key])
+        deployment_kwargs = self._inject_native_runtime_registry(new_class, kwargs)
+        new_proxy = python_wm.deploy_fresh(new_class, self._global_config, deployment_kwargs)
         self._deployed_modules[new_class] = new_proxy
+        self._module_manager_keys[new_class] = manager_key
 
-        new_bp = new_class.blueprint(**kwargs)
+        blueprint_kwargs = {k: v for k, v in kwargs.items() if k != "g"}
+        new_bp = new_class.blueprint(**blueprint_kwargs)
         new_atom = new_bp.active_blueprints[0]
         self._deployed_atoms[new_class] = new_atom
+        config = new_class.resolve_config(kwargs)
+        new_plan = ResolvedModulePlan(
+            atom=new_atom,
+            module=new_class,
+            final_kwargs=kwargs,
+            config=config,
+            io_contract=new_class.io_contract(config),
+        )
+        self._resolved_module_plans[new_class] = new_plan
 
-        for stream_ref in new_atom.streams:
+        for stream_ref in new_plan.streams:
             transport = saved_transports.get(stream_ref.name)
             if transport is not None:
                 new_proxy.set_transport(stream_ref.name, transport)
         self._module_transports[new_class] = {
-            s.name: t for s in new_atom.streams if (t := saved_transports.get(s.name)) is not None
+            s.name: t for s in new_plan.streams if (t := saved_transports.get(s.name)) is not None
         }
 
         for consumer_class, ref_name in inbound_refs:
@@ -557,41 +807,101 @@ class ModuleCoordinator(Resource):
             self.stop()
 
 
-def _all_name_types(blueprint: Blueprint) -> set[tuple[str, type]]:
-    result = set()
+def _resolve_module_plans(
+    blueprint: Blueprint,
+    gc: GlobalConfig,
+    blueprint_args: Mapping[str, Any],
+) -> tuple[ResolvedModulePlan, ...]:
+    plans: list[ResolvedModulePlan] = []
     for bp in blueprint.active_blueprints:
-        for conn in bp.streams:
-            remapped_name = blueprint.remapping_map.get((bp.module, conn.name), conn.name)
+        module_overrides = blueprint_args.get(bp.module.name, {})
+        if module_overrides is None:
+            module_overrides = {}
+        if not isinstance(module_overrides, Mapping):
+            raise TypeError(
+                f"Blueprint args for {bp.module.name} must be a mapping, got "
+                f"{type(module_overrides).__name__}"
+            )
+        final_kwargs = {**bp.kwargs, **dict(module_overrides)}
+        final_kwargs["g"] = gc
+        config = bp.module.resolve_config(final_kwargs)
+        io_contract = bp.module.io_contract(config)
+        plans.append(
+            ResolvedModulePlan(
+                atom=bp,
+                module=bp.module,
+                final_kwargs=final_kwargs,
+                config=config,
+                io_contract=io_contract,
+            )
+        )
+    return tuple(plans)
+
+
+def _verify_stream_remappings(blueprint: Blueprint, plans: tuple[ResolvedModulePlan, ...]) -> None:
+    plans_by_module = {plan.module: plan for plan in plans}
+    for (module, name), replacement in blueprint.remapping_map.items():
+        if not isinstance(replacement, str):
+            continue
+        plan = plans_by_module.get(module)
+        if plan is None:
+            continue
+        resolved_names = {stream.name for stream in plan.streams}
+        if name not in resolved_names:
+            raise ValueError(
+                f"Stream remapping for {module.__name__}.{name} references a stream absent "
+                "from the resolved IO contract"
+            )
+
+
+def _all_name_types(
+    blueprint: Blueprint, plans: tuple[ResolvedModulePlan, ...] | None = None
+) -> set[tuple[str, type]]:
+    plans = plans or _resolve_module_plans(blueprint, global_config, {})
+    result = set()
+    for plan in plans:
+        for conn in plan.streams:
+            remapped_name = blueprint.remapping_map.get((plan.module, conn.name), conn.name)
             if isinstance(remapped_name, str):
                 result.add((remapped_name, conn.type))
     return result
 
 
-def _is_name_unique(blueprint: Blueprint, name: str) -> bool:
-    return sum(1 for n, _ in _all_name_types(blueprint) if n == name) == 1
+def _is_name_unique(blueprint: Blueprint, plans: tuple[ResolvedModulePlan, ...], name: str) -> bool:
+    return sum(1 for n, _ in _all_name_types(blueprint, plans) if n == name) == 1
 
 
-def _get_transport_for(blueprint: Blueprint, name: str, stream_type: type) -> PubSubTransport[Any]:
+def _get_transport_for(
+    blueprint: Blueprint,
+    plans: tuple[ResolvedModulePlan, ...],
+    name: str,
+    stream_type: type,
+) -> PubSubTransport[Any]:
     transport = blueprint.transport_map.get((name, stream_type), None)
     if transport:
         return transport
 
     use_pickled = getattr(stream_type, "lcm_encode", None) is None
-    topic = f"/{name}" if _is_name_unique(blueprint, name) else f"/{short_id()}"
+    topic = f"/{name}" if _is_name_unique(blueprint, plans, name) else f"/{short_id()}"
     transport = pLCMTransport(topic) if use_pickled else LCMTransport(topic, stream_type)
 
     return transport
 
 
-def _verify_no_name_conflicts(blueprint: Blueprint) -> None:
+def _verify_no_name_conflicts(
+    blueprint: Blueprint, plans: tuple[ResolvedModulePlan, ...] | None = None
+) -> None:
+    plans = plans or _resolve_module_plans(blueprint, global_config, {})
     name_to_types: dict[Any, set[type]] = defaultdict(set)
     name_to_modules: dict[Any, list[tuple[type, type]]] = defaultdict(list)
 
-    for bp in blueprint.active_blueprints:
-        for conn in bp.streams:
-            stream_name = blueprint.remapping_map.get((bp.module, conn.name), conn.name)
+    for plan in plans:
+        for conn in plan.streams:
+            stream_name = blueprint.remapping_map.get((plan.module, conn.name), conn.name)
+            if not isinstance(stream_name, str):
+                continue
             name_to_types[stream_name].add(conn.type)
-            name_to_modules[stream_name].append((bp.module, conn.type))
+            name_to_modules[stream_name].append((plan.module, conn.type))
 
     conflicts: dict[Any, dict[type, list[type]]] = {}
     for conn_name, types in name_to_types.items():
@@ -622,6 +932,7 @@ def _verify_no_name_conflicts(blueprint: Blueprint) -> None:
 def _verify_no_conflicts_with_existing(
     blueprint: Blueprint,
     existing_registry: dict[tuple[str, type], PubSubTransport[Any]],
+    plans: tuple[ResolvedModulePlan, ...] | None = None,
 ) -> None:
     """Check that a new blueprint's streams don't conflict with already-registered transports."""
     if not existing_registry:
@@ -631,14 +942,15 @@ def _verify_no_conflicts_with_existing(
     for name, stream_type in existing_registry:
         existing_names[name].add(stream_type)
 
-    for bp in blueprint.active_blueprints:
-        for conn in bp.streams:
-            remapped_name = blueprint.remapping_map.get((bp.module, conn.name), conn.name)
+    plans = plans or _resolve_module_plans(blueprint, global_config, {})
+    for plan in plans:
+        for conn in plan.streams:
+            remapped_name = blueprint.remapping_map.get((plan.module, conn.name), conn.name)
             if isinstance(remapped_name, str) and remapped_name in existing_names:
                 for existing_type in existing_names[remapped_name]:
                     if existing_type != conn.type:
                         raise ValueError(
-                            f"Stream '{remapped_name}' in {bp.module.__name__} has type "
+                            f"Stream '{remapped_name}' in {plan.module.__name__} has type "
                             f"{conn.type.__module__}.{conn.type.__name__} but an existing "
                             f"transport uses {existing_type.__module__}.{existing_type.__name__}"
                         )
@@ -678,19 +990,24 @@ def _check_requirements(blueprint: Blueprint) -> None:
 
 
 def _deploy_all_modules(
-    blueprint: Blueprint,
+    plans: tuple[ResolvedModulePlan, ...],
     module_coordinator: ModuleCoordinator,
     gc: GlobalConfig,
-    blueprint_args: Mapping[str, Mapping[str, Any]],
+    blueprint: Blueprint,
 ) -> None:
     module_specs: list[ModuleSpec] = []
-    for bp in blueprint.active_blueprints:
-        module_specs.append((bp.module, gc, bp.kwargs.copy()))
+    for plan in plans:
+        module_specs.append((plan.module, gc, plan.final_kwargs.copy()))
 
-    module_coordinator.deploy_parallel(module_specs, blueprint_args)
+    module_coordinator.deploy_parallel(
+        module_specs,
+        runtime_environment_registry=blueprint.runtime_environment_registry,
+        runtime_placement_map=blueprint.runtime_placement_map,
+    )
 
-    for bp in blueprint.active_blueprints:
-        module_coordinator._deployed_atoms[bp.module] = bp
+    for plan in plans:
+        module_coordinator._deployed_atoms[plan.module] = plan.atom
+        module_coordinator._resolved_module_plans[plan.module] = plan
 
 
 def _ref_msg(module_name: str, ref: object, spec_name: str, detail: str) -> str:
@@ -870,7 +1187,11 @@ def _async_methods_of_spec(spec: Any) -> frozenset[str]:
     return frozenset(names)
 
 
-def _log_blueprint_graph(blueprint: Blueprint, module_coordinator: ModuleCoordinator) -> None:
+def _log_blueprint_graph(
+    blueprint: Blueprint,
+    module_coordinator: ModuleCoordinator,
+    plans: tuple[ResolvedModulePlan, ...],
+) -> None:
     """Log the module graph to Rerun if a RerunBridgeModule is active."""
     from dimos.visualization.rerun.bridge import RerunBridgeModule
 
@@ -886,8 +1207,8 @@ def _log_blueprint_graph(blueprint: Blueprint, module_coordinator: ModuleCoordin
     try:
         from dimos.core.introspection.blueprint.dot import render
 
-        dot_code = render(blueprint)
-        module_names = [bp.module.__name__ for bp in blueprint.active_blueprints]
+        dot_code = render(blueprint, plans)
+        module_names = [plan.module.__name__ for plan in plans]
         bridge = module_coordinator.get_instance(RerunBridgeModule)  # type: ignore[arg-type]
         bridge.log_blueprint_graph(dot_code, module_names)
     except Exception:

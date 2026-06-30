@@ -60,6 +60,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.runtime_environment import RuntimeEnvironmentRegistry
 from dimos.utils.logging_config import setup_logger
 
 if sys.platform.startswith("linux"):
@@ -115,9 +116,13 @@ _PYTHON_TO_RUST_LEVELS = {
 class NativeModuleConfig(ModuleConfig):
     """Configuration for a native (C/C++) subprocess module."""
 
-    executable: str
+    executable: str | None = None
     build_command: str | None = None
     cwd: str | None = None
+    runtime_environment: str | None = None
+    runtime_environment_registry: RuntimeEnvironmentRegistry | None = Field(
+        default=None, exclude=True, repr=False
+    )
     extra_args: list[str] = Field(default_factory=list)
     extra_env: dict[str, str] = Field(default_factory=dict)
     shutdown_timeout: float = DEFAULT_THREAD_JOIN_TIMEOUT
@@ -195,12 +200,59 @@ class NativeModule(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._stop_lock = threading.Lock()
+        try:
+            self._apply_runtime_environment()
 
-        if self.config.cwd is not None and not Path(self.config.cwd).is_absolute():
-            base_dir = Path(inspect.getfile(type(self))).resolve().parent
-            self.config.cwd = str(base_dir / self.config.cwd)
-        if not Path(self.config.executable).is_absolute() and self.config.cwd is not None:
-            self.config.executable = str(Path(self.config.cwd) / self.config.executable)
+            if self.config.executable is None:
+                raise ValueError(
+                    f"{type(self).__name__} requires an executable or a native "
+                    "runtime_environment that provides one."
+                )
+
+            if self.config.cwd is not None and not Path(self.config.cwd).is_absolute():
+                base_dir = Path(inspect.getfile(type(self))).resolve().parent
+                self.config.cwd = str(base_dir / self.config.cwd)
+            if not Path(self.config.executable).is_absolute() and self.config.cwd is not None:
+                self.config.executable = str(Path(self.config.cwd) / self.config.executable)
+        except Exception:
+            self._close_module()
+            raise
+
+    def _apply_runtime_environment(self) -> None:
+        env_name = self.config.runtime_environment
+        if env_name is None:
+            return
+        registry = self.config.runtime_environment_registry
+        if registry is None:
+            raise RuntimeError(
+                f"Native runtime environment {env_name!r} requested by {type(self).__name__}, "
+                "but no RuntimeEnvironmentRegistry was provided. Register it on the blueprint "
+                "with .runtime_environments(...)."
+            )
+        try:
+            material = registry.resolve(env_name).resolve_native()
+        except Exception as exc:
+            raise RuntimeError(
+                f"Native runtime environment {env_name!r} requested by {type(self).__name__} "
+                "could not be resolved as a native capability. Register a native runtime "
+                "environment on the blueprint with .runtime_environments(...)."
+            ) from exc
+
+        concrete_executable = self.config.executable
+        concrete_build_command = self.config.build_command
+        concrete_cwd = self.config.cwd
+        self.config.executable = (
+            concrete_executable if concrete_executable is not None else material.executable
+        )
+        self.config.build_command = (
+            concrete_build_command if concrete_build_command is not None else material.build_command
+        )
+        self.config.cwd = (
+            concrete_cwd
+            if concrete_cwd is not None
+            else (str(material.cwd) if material.cwd is not None else None)
+        )
+        self.config.extra_env = {**material.env, **self.config.extra_env}
 
     @rpc
     def build(self) -> None:
@@ -220,6 +272,8 @@ class NativeModule(Module):
 
         topics = self._collect_topics()
 
+        if self.config.executable is None:
+            raise ValueError(f"[{self._module_label}] No executable configured")
         cmd = [self.config.executable]
         for name, topic_str in topics.items():
             cmd.extend([f"--{name}", topic_str])
@@ -398,6 +452,8 @@ class NativeModule(Module):
         stream.close()
 
     def _maybe_build(self) -> None:
+        if self.config.executable is None:
+            raise ValueError(f"[{self._module_label}] No executable configured")
         exe = Path(self.config.executable)
 
         if self.config.build_command is None:
@@ -457,10 +513,7 @@ class NativeModule(Module):
 
     def _collect_topics(self) -> dict[str, str]:
         topics: dict[str, str] = {}
-        for name in list(self.inputs) + list(self.outputs):
-            stream = getattr(self, name, None)
-            if stream is None:
-                continue
+        for name, stream in {**self.inputs, **self.outputs}.items():
             transport = getattr(stream, "_transport", None)
             if transport is None:
                 continue

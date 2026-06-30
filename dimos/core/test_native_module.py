@@ -31,8 +31,14 @@ from dimos.core import native_module as native_module_mod
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
+from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
+from dimos.core.runtime_environment import (
+    NixNativeRuntimeEnvironment,
+    PythonVenvRuntimeEnvironment,
+    RuntimeEnvironmentRegistry,
+)
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -74,6 +80,42 @@ class StubNativeModule(NativeModule):
     pointcloud: Out[PointCloud2]
     imu: Out[Imu]
     cmd_vel: In[Twist]
+
+
+class RuntimeOnlyNativeConfig(NativeModuleConfig):
+    runtime_environment: str | None = "native-env"
+
+
+class RuntimeOnlyNativeModule(NativeModule):
+    config: RuntimeOnlyNativeConfig
+
+
+class RuntimeBlueprintArgNativeConfig(NativeModuleConfig):
+    pass
+
+
+class RuntimeBlueprintArgNativeModule(NativeModule):
+    config: RuntimeBlueprintArgNativeConfig
+
+
+class RuntimeMixedNativeConfig(NativeModuleConfig):
+    runtime_environment: str | None = "native-env"
+    build_command: str | None = "config build"
+    cwd: str | None = "config-cwd"
+    output_file: str | None = None
+
+
+class RuntimeMixedNativeModule(NativeModule):
+    config: RuntimeMixedNativeConfig
+
+
+class RuntimeSubclassExecutableConfig(NativeModuleConfig):
+    runtime_environment: str | None = "native-env"
+    executable: str | None = _ECHO
+
+
+class RuntimeSubclassExecutableModule(NativeModule):
+    config: RuntimeSubclassExecutableConfig
 
 
 class StubConsumer(Module):
@@ -147,6 +189,151 @@ def test_manual(dimos_cluster: ModuleCoordinator, args_file: str) -> None:
         "output_file": args_file,
         "some_param": "2.5",
     }
+
+
+def _native_registry(tmp_path: Path) -> RuntimeEnvironmentRegistry:
+    return RuntimeEnvironmentRegistry.with_current_process().register(
+        NixNativeRuntimeEnvironment(
+            name="native-env",
+            executable=_ECHO,
+            build_command="env build",
+            cwd=tmp_path,
+            env={"ENV_VALUE": "runtime", "OVERLAY": "runtime"},
+        )
+    )
+
+
+def test_native_runtime_env_only_resolves_material(tmp_path: Path) -> None:
+    module = RuntimeOnlyNativeModule(runtime_environment_registry=_native_registry(tmp_path))
+    try:
+        assert module.config.executable == str(tmp_path / _ECHO)
+        assert module.config.build_command == "env build"
+        assert module.config.cwd == str(tmp_path)
+        assert module.config.extra_env == {"ENV_VALUE": "runtime", "OVERLAY": "runtime"}
+    finally:
+        module.stop()
+
+
+def test_native_runtime_mixed_precedence_and_env_overlay(tmp_path: Path) -> None:
+    module = RuntimeMixedNativeModule(
+        runtime_environment_registry=_native_registry(tmp_path),
+        executable=_ECHO,
+        extra_env={"OVERLAY": "config", "CONFIG_ONLY": "1"},
+    )
+
+    try:
+        assert module.config.executable == _ECHO
+        assert module.config.build_command == "config build"
+        assert module.config.cwd == str(Path(__file__).resolve().parent / "config-cwd")
+        assert module.config.extra_env == {
+            "ENV_VALUE": "runtime",
+            "OVERLAY": "config",
+            "CONFIG_ONLY": "1",
+        }
+    finally:
+        module.stop()
+
+
+def test_native_subclass_default_executable_overrides_runtime(tmp_path: Path) -> None:
+    module = RuntimeSubclassExecutableModule(
+        runtime_environment_registry=_native_registry(tmp_path)
+    )
+    try:
+        assert module.config.executable == _ECHO
+    finally:
+        module.stop()
+
+
+def test_native_runtime_missing_name_raises_clear_error() -> None:
+    with pytest.raises(RuntimeError, match="missing-env.*native capability"):
+        RuntimeOnlyNativeModule(
+            runtime_environment="missing-env",
+            runtime_environment_registry=RuntimeEnvironmentRegistry.with_current_process(),
+        )
+
+
+def test_native_runtime_wrong_capability_raises_clear_error() -> None:
+    registry = RuntimeEnvironmentRegistry.with_current_process().register(
+        PythonVenvRuntimeEnvironment(name="native-env", python_executable=Path("python"))
+    )
+
+    with pytest.raises(RuntimeError, match="native-env.*native capability"):
+        RuntimeOnlyNativeModule(runtime_environment_registry=registry)
+
+
+def test_native_no_executable_without_runtime_raises_clear_error() -> None:
+    with pytest.raises(ValueError, match="requires an executable"):
+        RuntimeOnlyNativeModule(runtime_environment=None)
+
+
+def test_native_runtime_registry_does_not_leak_to_cli_or_stdin_config(tmp_path: Path) -> None:
+    module = RuntimeMixedNativeModule(
+        runtime_environment_registry=_native_registry(tmp_path),
+        executable=_ECHO,
+        output_file="out.json",
+    )
+
+    try:
+        assert "runtime_environment_registry" not in module.config.to_cli_args()
+        assert "runtime_environment_registry" not in module.config.to_config_dict()
+        assert module.config.to_config_dict() == {"output_file": "out.json"}
+    finally:
+        module.stop()
+
+
+def test_coordinator_injects_native_runtime_registry_from_blueprint(
+    args_file: str, tmp_path: Path
+) -> None:
+    blueprint = RuntimeOnlyNativeModule.blueprint(
+        extra_args=["--output_file", args_file]
+    ).runtime_environments(
+        NixNativeRuntimeEnvironment(name="native-env", executable=_ECHO, cwd=tmp_path)
+    )
+
+    coordinator = ModuleCoordinator.build(blueprint.global_config(viewer="none"))
+    try:
+        module = coordinator.get_instance(RuntimeOnlyNativeModule)
+        assert module.config.runtime_environment_registry is not None
+        assert module.config.executable == _ECHO
+        for _ in range(50):
+            if Path(args_file).exists():
+                break
+            time.sleep(_WATCHDOG_POLL_INTERVAL)
+    finally:
+        coordinator.stop()
+
+    assert read_json_file(args_file)["output_file"] == args_file
+
+
+def test_coordinator_injects_native_runtime_registry_for_blueprint_args_and_restart(
+    args_file: str, tmp_path: Path
+) -> None:
+    blueprint = RuntimeBlueprintArgNativeModule.blueprint().runtime_environments(
+        NixNativeRuntimeEnvironment(name="native-env", executable=_ECHO, cwd=tmp_path)
+    )
+    coordinator = ModuleCoordinator(g=GlobalConfig(n_workers=0, viewer="none"))
+    coordinator.start()
+    try:
+        coordinator.load_blueprint(
+            blueprint,
+            {
+                RuntimeBlueprintArgNativeModule.name: {
+                    "runtime_environment": "native-env",
+                    "extra_args": ["--output_file", args_file],
+                }
+            },
+        )
+        module = coordinator.get_instance(RuntimeBlueprintArgNativeModule)
+        assert module.config.runtime_environment_registry is not None
+        assert module.config.runtime_environment == "native-env"
+        assert module.config.executable == _ECHO
+
+        restarted = coordinator.restart_module(RuntimeBlueprintArgNativeModule, reload_source=False)
+        assert restarted.config.runtime_environment_registry is not None
+        assert restarted.config.runtime_environment == "native-env"
+        assert restarted.config.executable == _ECHO
+    finally:
+        coordinator.stop()
 
 
 def test_autoconnect(args_file: str) -> None:

@@ -27,7 +27,6 @@ Centralized control system for multi-arm robots with per-joint arbitration.
 ```bash
 # Terminal 1: Run coordinator
 dimos run coordinator-mock          # Single 7-DOF mock arm
-dimos run coordinator-dual-mock     # Dual arms (7+6 DOF)
 dimos run coordinator-piper-xarm    # Real hardware
 
 # Terminal 2: Control via CLI

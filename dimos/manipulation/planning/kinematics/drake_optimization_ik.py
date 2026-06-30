@@ -16,10 +16,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
 
+from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.spec.enums import IKStatus
 from dimos.manipulation.planning.spec.models import IKResult, WorldRobotID
 from dimos.manipulation.planning.spec.protocols import WorldSpec
@@ -76,10 +78,9 @@ class DrakeOptimizationIK:
         seed: JointState | None = None,
         position_tolerance: float = 0.001,
         orientation_tolerance: float = 0.01,
-        check_collision: bool = True,
         max_attempts: int = 10,
     ) -> IKResult:
-        """Solve IK with multiple random restarts, returning the best collision-free solution."""
+        """Solve IK with multiple random restarts, returning the best solution."""
         error = self._validate_world(world)
         if error is not None:
             return error
@@ -130,11 +131,6 @@ class DrakeOptimizationIK:
             )
 
             if result.is_success() and result.joint_state is not None:
-                # Check collision if requested
-                if check_collision:
-                    if not world.check_config_collision_free(robot_id, result.joint_state):
-                        continue  # Try another seed
-
                 # Check error
                 total_error = result.position_error + result.orientation_error
                 if total_error < best_error:
@@ -154,6 +150,44 @@ class DrakeOptimizationIK:
         return _create_failure_result(
             IKStatus.NO_SOLUTION,
             f"IK failed after {max_attempts} attempts",
+        )
+
+    def solve_pose_targets(
+        self,
+        world: WorldSpec,
+        pose_targets: Mapping[PlanningGroup, PoseStamped],
+        auxiliary_groups: Sequence[PlanningGroup] = (),
+        seed: JointState | None = None,
+        position_tolerance: float = 0.001,
+        orientation_tolerance: float = 0.01,
+        max_attempts: int = 10,
+    ) -> IKResult:
+        """Solve a single planning-group pose target for protocol compatibility."""
+        if auxiliary_groups:
+            return _create_failure_result(
+                IKStatus.NO_SOLUTION,
+                "DrakeOptimizationIK does not support auxiliary planning groups",
+            )
+        if len(pose_targets) != 1:
+            return _create_failure_result(
+                IKStatus.NO_SOLUTION,
+                "DrakeOptimizationIK supports exactly one pose target",
+            )
+        group, target_pose = next(iter(pose_targets.items()))
+        robot_id = _robot_id_for_name(world, group.robot_name)
+        if robot_id is None:
+            return _create_failure_result(
+                IKStatus.NO_SOLUTION,
+                f"No robot named '{group.robot_name}'",
+            )
+        return self.solve(
+            world=world,
+            robot_id=robot_id,
+            target_pose=target_pose,
+            seed=seed,
+            position_tolerance=position_tolerance,
+            orientation_tolerance=orientation_tolerance,
+            max_attempts=max_attempts,
         )
 
     def _solve_single(
@@ -257,6 +291,13 @@ def _create_success_result(
         iterations=iterations,
         message="IK solution found",
     )
+
+
+def _robot_id_for_name(world: WorldSpec, robot_name: str) -> WorldRobotID | None:
+    for robot_id in world.get_robot_ids():
+        if world.get_robot_config(robot_id).name == robot_name:
+            return robot_id
+    return None
 
 
 def _create_failure_result(

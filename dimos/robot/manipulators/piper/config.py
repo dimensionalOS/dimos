@@ -23,7 +23,6 @@ from dimos.core.global_config import global_config
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.manipulators._modeling import (
     base_pose,
-    coordinator_joint_mapping,
     joint_names,
 )
 from dimos.utils.data import LfsPath
@@ -109,6 +108,7 @@ def make_piper_model_config(
     coordinator_task_name: str | None = None,
     home_joints: list[float] | None = None,
 ) -> RobotModelConfig:
+    _ = joint_prefix
     dof = 6
     return RobotModelConfig(
         name=name,
@@ -120,11 +120,6 @@ def make_piper_model_config(
         package_paths=PIPER_PACKAGE_PATHS,
         auto_convert_meshes=True,
         collision_exclusion_pairs=PIPER_GRIPPER_COLLISION_EXCLUSIONS,
-        joint_name_mapping=coordinator_joint_mapping(
-            name,
-            dof,
-            joint_prefix=joint_prefix,
-        ),
         coordinator_task_name=coordinator_task_name or f"traj_{name}",
         gripper_hardware_id=name,
         home_joints=home_joints or [0.0] * dof,

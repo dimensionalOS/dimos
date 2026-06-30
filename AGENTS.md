@@ -44,7 +44,7 @@ dimos restart          # stop + re-run with same original args
 | `xarm-perception-sim-agent` | xArm | sim | GPT-4o | — | Manipulation + perception + agent, sim |
 | `xarm7-planner-coordinator` | xArm7 | real | — | — | Trajectory planner coordinator |
 | `teleop-quest-xarm7` | xArm7 | real | — | — | Quest VR teleop |
-| `dual-xarm6-planner` | xArm6×2 | real | — | — | Dual-arm motion planner |
+| `dual-xarm6-planner-coordinator` | xArm6×2 | real | — | — | Dual-arm motion planner + coordinator |
 
 Run `dimos list` for the full list.
 

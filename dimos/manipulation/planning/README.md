@@ -70,7 +70,6 @@ config = RobotModelConfig(
     joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
     end_effector_link="link7",
     base_link="link_base",
-    joint_name_mapping={"arm_joint1": "joint1", ...},  # coordinator <-> URDF
     coordinator_task_name="traj_arm",
 )
 
@@ -93,12 +92,11 @@ module.execute()  # Sends to coordinator
 | `name` | Robot identifier |
 | `model_path` | Path to URDF/XACRO file |
 | `base_pose` | PoseStamped for robot base in world frame |
-| `joint_names` | Joint names in URDF |
+| `joint_names` | Ordered controllable local model joint names |
 | `end_effector_link` | EE link name |
 | `base_link` | Base link name |
 | `max_velocity` | Max joint velocity (rad/s) |
 | `max_acceleration` | Max acceleration (rad/s²) |
-| `joint_name_mapping` | Coordinator → URDF name mapping |
 | `coordinator_task_name` | Task name for execution RPC |
 | `package_paths` | ROS package paths for meshes |
 | `xacro_args` | Xacro arguments (e.g., `{"dof": "7"}`) |
@@ -141,7 +139,7 @@ accepted.
 |-----------|-------------|
 | `xarm6_planner_only` | XArm 6-DOF standalone (no coordinator) |
 | `xarm7-planner-coordinator` | XArm 7-DOF with coordinator |
-| `dual-xarm6-planner` | Dual XArm 6-DOF |
+| `dual-xarm6-planner-coordinator` | Dual XArm 6-DOF with coordinator |
 | `xarm-perception-sim` | XArm 7-DOF simulation perception stack |
 
 ## Directory Structure

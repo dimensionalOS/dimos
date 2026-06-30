@@ -237,10 +237,35 @@ visualization backend.
 | `keyboard-teleop-xarm7` | XArm7 7-DOF keyboard teleop with Drake viz |
 | `xarm6-planner-only` | XArm6 standalone planner (no coordinator) |
 | `xarm7-planner-coordinator` | XArm7 planner with coordinator integration |
-| `dual-xarm6-planner` | Dual XArm6 planning |
+| `dual-xarm6-planner-coordinator` | Dual XArm6 planning and execution with Viser |
 | `xarm-perception` | XArm7 + RealSense camera for perception |
 | `xarm-perception-agent` | XArm7 perception + LLM agent |
 | `xarm-perception-sim` | XArm7 simulation perception stack |
+
+### Dual XArm6 RoboPlan + Viser QA
+
+Run the coupled dual-arm RoboPlan backend with Viser using:
+
+```bash
+uv run dimos run dual-xarm6-planner-coordinator \
+  -o manipulationmodule.world_backend=roboplan \
+  -o manipulationmodule.planner_name=roboplan \
+  -o manipulationmodule.visualization.backend=viser
+```
+
+RoboPlan builds one generated Composite RoboPlan model for the registered arms,
+keeps DimOS public joint names in `robot/joint` form, and returns planned paths in
+the caller's selected planning-group order.
+
+When RoboPlan trajectory parametrization is selected, conservative smoothing is
+enabled by default for eligible dense paths. The smoothing stage validates any
+refined path before TOPP-RA and falls back to the original geometric path if
+smoothing or validation fails, so the expected worst case is a slower valid
+trajectory rather than a failed preview. Disable it for debugging with:
+
+```bash
+-o manipulationmodule.trajectory_parametrization.roboplan_smoothing_enabled=false
+```
 
 ## Supported Robots
 
@@ -254,6 +279,14 @@ visualization backend.
 ## Adding a Custom Arm
 
 [guide is here](/docs/capabilities/manipulation/adding_a_custom_arm.md)
+
+## Planning Groups
+
+Manipulation planning uses explicit planning group IDs such as
+`arm/manipulator` and global joint names such as `arm/joint1`. See
+[Planning Groups](/docs/capabilities/manipulation/planning_groups.md) for SRDF
+support, fallback generation, auxiliary groups, generated plans, and execution
+projection.
 
 ## Key Files
 

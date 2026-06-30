@@ -22,7 +22,9 @@ when one output fans out to multiple consumers:
 """
 
 from collections import defaultdict
+from collections.abc import Sequence
 from enum import Enum, auto
+from typing import TYPE_CHECKING
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.introspection.utils import (
@@ -33,6 +35,9 @@ from dimos.core.introspection.utils import (
 )
 from dimos.core.module import ModuleBase
 from dimos.utils.cli import theme
+
+if TYPE_CHECKING:
+    from dimos.core.coordination.module_coordinator import ResolvedModulePlan
 
 
 class LayoutAlgo(Enum):
@@ -53,6 +58,7 @@ DEFAULT_IGNORED_MODULES = {
 
 def render(
     blueprint_set: Blueprint,
+    plans: Sequence["ResolvedModulePlan"] | None = None,
     *,
     layout: set[LayoutAlgo] | None = None,
     ignored_streams: set[tuple[str, str]] | None = None,
@@ -87,11 +93,14 @@ def render(
     # Module name -> module class (for getting package info)
     module_classes: dict[str, type[ModuleBase]] = {}
 
-    for bp in blueprint_set.blueprints:
+    stream_sources = plans if plans is not None else blueprint_set.blueprints
+    for bp in stream_sources:
         module_classes[bp.module.__name__] = bp.module
         for conn in bp.streams:
             # Apply remapping
             remapped_name = blueprint_set.remapping_map.get((bp.module, conn.name), conn.name)
+            if not isinstance(remapped_name, str):
+                continue
             key = (remapped_name, conn.type)
             if conn.direction == "out":
                 producers[key].append(bp.module)  # type: ignore[index]

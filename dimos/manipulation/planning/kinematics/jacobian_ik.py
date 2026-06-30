@@ -24,12 +24,20 @@ For full nonlinear optimization IK with Drake, use DrakeOptimizationIK.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
+import warnings
 
 import numpy as np
 
+from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
+from dimos.manipulation.planning.groups.utils import filter_joint_state_to_selected_joints
 from dimos.manipulation.planning.spec.enums import IKStatus
-from dimos.manipulation.planning.spec.models import IKResult, WorldRobotID
+from dimos.manipulation.planning.spec.models import (
+    IKResult,
+    RobotName,
+    WorldRobotID,
+)
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.kinematics_utils import (
     check_singularity,
@@ -53,7 +61,11 @@ logger = setup_logger()
 
 
 class JacobianIK:
-    """Backend-agnostic Jacobian-based IK solver.
+    """Deprecated backend-agnostic Jacobian-based IK solver.
+
+    Prefer PinkIK or DrakeOptimizationIK for new planning-group-aware code.
+    This class is retained as a compatibility/smoke-test backend and only
+    supports one directly pose-targeted planning group with no auxiliary groups.
 
     This class provides iterative and differential IK methods using only
     the standard WorldSpec interface. It works with any physics backend
@@ -89,6 +101,11 @@ class JacobianIK:
             max_iterations: Default maximum iterations for iterative IK
             singularity_threshold: Manipulability threshold for singularity detection
         """
+        warnings.warn(
+            "JacobianIK is deprecated; use PinkIK or DrakeOptimizationIK for new code.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._damping = damping
         self._max_iterations = max_iterations
         self._singularity_threshold = singularity_threshold
@@ -101,7 +118,6 @@ class JacobianIK:
         seed: JointState | None = None,
         position_tolerance: float = 0.001,
         orientation_tolerance: float = 0.01,
-        check_collision: bool = True,
         max_attempts: int = 10,
     ) -> IKResult:
         """Solve IK with multiple random restarts.
@@ -116,7 +132,6 @@ class JacobianIK:
             seed: Initial guess (uses current state if None)
             position_tolerance: Required position accuracy (meters)
             orientation_tolerance: Required orientation accuracy (radians)
-            check_collision: Whether to check collision of solution
             max_attempts: Maximum random restart attempts
 
         Returns:
@@ -159,11 +174,6 @@ class JacobianIK:
             )
 
             if result.is_success() and result.joint_state is not None:
-                # Check collision if requested
-                if check_collision:
-                    if not world.check_config_collision_free(robot_id, result.joint_state):
-                        continue  # Try another seed
-
                 # Check error
                 total_error = result.position_error + result.orientation_error
                 if total_error < best_error:
@@ -184,6 +194,82 @@ class JacobianIK:
             IKStatus.NO_SOLUTION,
             f"IK failed after {max_attempts} attempts",
         )
+
+    def solve_pose_targets(
+        self,
+        world: WorldSpec,
+        pose_targets: Mapping[PlanningGroup, PoseStamped],
+        auxiliary_groups: Sequence[PlanningGroup] = (),
+        seed: JointState | None = None,
+        position_tolerance: float = 0.001,
+        orientation_tolerance: float = 0.01,
+        max_attempts: int = 10,
+    ) -> IKResult:
+        """Solve pose targets keyed by planning group with request-scoped auxiliaries.
+
+        This backend currently supports exactly one directly pose-targeted planning group.
+        """
+        if not pose_targets:
+            return _create_failure_result(
+                IKStatus.NO_SOLUTION, "At least one pose target is required"
+            )
+
+        pose_groups = tuple(pose_targets.keys())
+        if len(pose_groups) != 1 or auxiliary_groups:
+            return _create_failure_result(
+                IKStatus.NO_SOLUTION,
+                "JacobianIK supports exactly one pose target and no auxiliary planning groups",
+            )
+
+        try:
+            selection = PlanningGroupSelection.from_groups(pose_groups + tuple(auxiliary_groups))
+            robot_ids_by_name = _robot_ids_by_name(world, selection.robot_names)
+        except (KeyError, ValueError) as exc:
+            return _create_failure_result(IKStatus.NO_SOLUTION, str(exc))
+
+        target_group = pose_groups[0]
+        if not target_group.has_pose_target:
+            return _create_failure_result(
+                IKStatus.NO_SOLUTION,
+                f"Planning group '{target_group.id}' has no pose target frame",
+            )
+
+        robot_ids = {robot_ids_by_name[group.robot_name] for group in selection.groups}
+        if len(robot_ids) != 1:
+            return _create_failure_result(
+                IKStatus.NO_SOLUTION,
+                "JacobianIK does not support cross-robot pose IK",
+            )
+
+        robot_id = robot_ids_by_name[target_group.robot_name]
+        full_seed = seed
+        if full_seed is None:
+            with world.scratch_context() as ctx:
+                full_seed = world.get_joint_state(ctx, robot_id)
+
+        target_pose = pose_targets[next(iter(pose_targets.keys()))]
+        result = self.solve(
+            world=world,
+            robot_id=robot_id,
+            target_pose=target_pose,
+            seed=full_seed,
+            position_tolerance=position_tolerance,
+            orientation_tolerance=orientation_tolerance,
+            max_attempts=max_attempts,
+        )
+        if not result.is_success() or result.joint_state is None:
+            return result
+
+        selected_joint_names: list[str] = []
+        for group in selection.groups:
+            selected_joint_names.extend(group.joint_names)
+        try:
+            result.joint_state = filter_joint_state_to_selected_joints(
+                result.joint_state, selected_joint_names
+            )
+        except ValueError as exc:
+            return _create_failure_result(IKStatus.NO_SOLUTION, str(exc))
+        return result
 
     def solve_iterative(
         self,
@@ -433,3 +519,21 @@ def _create_failure_result(
         iterations=iterations,
         message=message,
     )
+
+
+def _robot_ids_by_name(
+    world: WorldSpec, robot_names: tuple[RobotName, ...]
+) -> dict[RobotName, WorldRobotID]:
+    robot_ids_by_name: dict[RobotName, WorldRobotID] = {}
+    for robot_name in robot_names:
+        matches = [
+            robot_id
+            for robot_id in world.get_robot_ids()
+            if world.get_robot_config(robot_id).name == robot_name
+        ]
+        if not matches:
+            raise KeyError(f"Robot '{robot_name}' not found")
+        if len(matches) > 1:
+            raise ValueError(f"Robot name '{robot_name}' is not unique in planning world")
+        robot_ids_by_name[robot_name] = matches[0]
+    return robot_ids_by_name

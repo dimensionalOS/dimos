@@ -14,10 +14,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
-from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
+from dimos.manipulation.planning.groups.identifiers import make_global_joint_name
+from dimos.manipulation.visualization.viser.animation import (
+    GroupPreviewAnimation,
+    PreviewTrack,
+)
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
 from dimos.manipulation.visualization.viser.runtime import (
@@ -27,6 +32,7 @@ from dimos.manipulation.visualization.viser.runtime import (
 )
 from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
 from dimos.manipulation.visualization.viser.theme import apply_dimos_theme
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
 try:
@@ -43,10 +49,11 @@ except ImportError as e:
 if TYPE_CHECKING:
     from dimos.manipulation.manipulation_module import ManipulationModule
     from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
+    from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.manipulation.planning.spec.models import (
-        JointPath,
+        GeneratedPlan,
+        PlanningGroupID,
         PlanningSceneInfo,
-        WorldRobotID,
     )
 
 logger = setup_logger()
@@ -67,7 +74,6 @@ class ViserManipulationVisualizer:
         self.config = config or ViserVisualizationConfig()
         self._runtime: ViserRuntime | None = None
         self._server: ViserServer | None = None
-        self._adapter: InProcessViserAdapter | None = None
         self._scene: ViserManipulationScene | None = None
         self._gui: ViserPanelGui | None = None
         self._closed = False
@@ -81,17 +87,19 @@ class ViserManipulationVisualizer:
         try:
             server = runtime.start()
             apply_dimos_theme(server)
-            adapter = InProcessViserAdapter(
-                world_monitor=self._world_monitor,
-                manipulation_module=self._manipulation_module,
-            )
             scene = ViserManipulationScene(
                 server,
                 ViserUrdf,
                 preview_fps=self.config.preview_fps,
             )
             gui = (
-                ViserPanelGui(server, adapter, self.config, scene)
+                ViserPanelGui(
+                    server,
+                    self._world_monitor,
+                    self._manipulation_module,
+                    self.config,
+                    scene,
+                )
                 if self.config.panel_enabled
                 else None
             )
@@ -108,14 +116,12 @@ class ViserManipulationVisualizer:
                 runtime.close()
             self._runtime = None
             self._server = None
-            self._adapter = None
             self._scene = None
             self._gui = None
             self._closed = True
             raise
         self._runtime = runtime
         self._server = server
-        self._adapter = adapter
         self._scene = scene
         self._gui = gui
         self._closed = False
@@ -145,40 +151,140 @@ class ViserManipulationVisualizer:
         if self._closed:
             return
         self._ensure_started()
-        if self._adapter is None or self._scene is None:
+        if self._scene is None:
             return
-        for _robot_name, robot_id, _config in self._adapter.robot_items():
-            current = self._adapter.get_current_joint_state(_robot_name)
+        for robot_name, robot_id, _config in self._manipulation_module.robot_items():
+            get_current_joint_state = getattr(
+                self._manipulation_module, "get_current_joint_state", None
+            )
+            current = (
+                get_current_joint_state(robot_name)
+                if callable(get_current_joint_state)
+                else self._world_monitor.get_current_joint_state(robot_id)
+            )
             self._scene.update_current_robot(str(robot_id), current)
         if self._gui is not None:
             self._gui.refresh()
 
-    def show_preview(self, robot_id: WorldRobotID) -> None:
+    def show_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
         if not self._closed:
             self._ensure_started()
             if self._scene is None:
                 return
-            self._scene.show_preview(str(robot_id))
+            for robot_id in self._robot_ids_for_groups(group_ids):
+                self._scene.show_preview(str(robot_id))
 
-    def hide_preview(self, robot_id: WorldRobotID) -> None:
+    def hide_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
         if not self._closed:
             self._ensure_started()
             if self._scene is None:
                 return
-            self._scene.hide_preview(str(robot_id))
+            for robot_id in self._robot_ids_for_groups(group_ids):
+                self._scene.hide_preview(str(robot_id))
 
-    def animate_path(
-        self,
-        robot_id: WorldRobotID,
-        path: JointPath,
-        duration: float = 3.0,
-    ) -> None:
+    def animate_plan(self, plan: GeneratedPlan, duration: float = 3.0) -> None:
         if self._closed:
             return
         self._ensure_started()
         if self._scene is None:
             return
-        self._scene.animate_path(str(robot_id), list(path), duration)
+        preview = self._build_group_preview_animation(plan)
+        if preview is not None:
+            self._scene.animate_preview(preview, duration)
+
+    def _build_group_preview_animation(self, plan: GeneratedPlan) -> GroupPreviewAnimation | None:
+        selection = self._world_monitor.planning_groups.select(plan.group_ids)
+        tracks: list[PreviewTrack] = []
+        for robot_name in selection.robot_names:
+            robot_id = self._manipulation_module.robot_id_for_name(robot_name)
+            config = self._manipulation_module.get_robot_config(robot_name)
+            get_current_joint_state = getattr(
+                self._manipulation_module, "get_current_joint_state", None
+            )
+            current = (
+                get_current_joint_state(robot_name)
+                if callable(get_current_joint_state)
+                else self._world_monitor.get_current_joint_state(robot_id)
+                if robot_id is not None
+                else None
+            )
+            if robot_id is None or config is None or current is None:
+                logger.warning(
+                    "Cannot build group preview for robot '%s': missing id, config, or state",
+                    robot_name,
+                )
+                return None
+            path = self._robot_path_for_plan(robot_name, config, current, plan)
+            if not path:
+                logger.warning("Cannot project generated plan for robot '%s'", robot_name)
+                return None
+            tracks.append(
+                PreviewTrack(
+                    robot_id=str(robot_id),
+                    group_ids=tuple(
+                        group.id for group in selection.groups if group.robot_name == robot_name
+                    ),
+                    joint_names=tuple(config.joint_names),
+                    path=tuple(path),
+                )
+            )
+        if not tracks:
+            return None
+        return GroupPreviewAnimation(group_ids=plan.group_ids, tracks=tuple(tracks))
+
+    def _robot_ids_for_groups(self, group_ids: Sequence[PlanningGroupID]) -> list[str]:
+        selection = self._world_monitor.planning_groups.select(group_ids)
+        robot_ids: list[str] = []
+        for robot_name in selection.robot_names:
+            robot_id = self._manipulation_module.robot_id_for_name(robot_name)
+            if robot_id is not None:
+                robot_ids.append(str(robot_id))
+        return robot_ids
+
+    def _robot_path_for_plan(
+        self,
+        robot_name: str,
+        config: RobotModelConfig,
+        current: JointState,
+        plan: GeneratedPlan,
+    ) -> list[JointState]:
+        current_by_name = self._current_positions_by_name(config, current)
+        if current_by_name is None:
+            return []
+        path: list[JointState] = []
+        for waypoint in plan.path:
+            if len(waypoint.name) != len(waypoint.position):
+                return []
+            selected = dict(zip(waypoint.name, waypoint.position, strict=True))
+            positions: list[float] = []
+            for local_name in config.joint_names:
+                global_name = make_global_joint_name(robot_name, local_name)
+                if global_name in selected:
+                    positions.append(float(selected[global_name]))
+                    continue
+                if local_name not in current_by_name:
+                    return []
+                positions.append(current_by_name[local_name])
+            path.append(JointState(name=list(config.joint_names), position=positions))
+        return path
+
+    @staticmethod
+    def _current_positions_by_name(
+        config: RobotModelConfig, current: JointState
+    ) -> dict[str, float] | None:
+        if current.name:
+            if len(current.name) != len(current.position):
+                return None
+            return {
+                str(name): float(position)
+                for name, position in zip(current.name, current.position, strict=True)
+            }
+        if len(current.position) != len(config.joint_names):
+            return None
+        return {
+            str(name): float(position)
+            for name, position in zip(config.joint_names, current.position, strict=True)
+        }
 
     def close(self) -> None:
         if self._closed:
@@ -204,7 +310,6 @@ class ViserManipulationVisualizer:
                     errors.append(e)
             self._runtime = None
             self._server = None
-            self._adapter = None
             self._scene = None
             self._gui = None
         if errors:

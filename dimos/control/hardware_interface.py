@@ -281,16 +281,17 @@ class ConnectedTwistBase(ConnectedHardware):
             for i, name in enumerate(self._joint_names)
         }
 
-    def write_command(self, commands: dict[str, float], _mode: ControlMode) -> bool:
+    def write_command(self, commands: dict[str, float], mode: ControlMode) -> bool:
         """Write velocity commands — always sends velocities regardless of mode.
 
         Args:
             commands: {joint_name: velocity} - can be partial
-            _mode: Control mode (ignored — twist bases always use velocity)
+            mode: Control mode (ignored — twist bases always use velocity)
 
         Returns:
             True if command was sent successfully
         """
+        del mode
         # Update last commanded for joints we received
         for joint_name, value in commands.items():
             if joint_name in self._last_commanded:
@@ -390,15 +391,7 @@ class ConnectedWholeBody(ConnectedHardware):
         }
 
     def write_command(self, commands: dict[str, float], mode: ControlMode) -> bool:
-        """Write position commands — converts to MotorCommand with per-joint PD gains.
-
-        Only POSITION / SERVO_POSITION are supported; other modes are warned
-        and dropped (matches ConnectedHardware's warn-and-skip pattern).
-        Per-joint kp/kd come from ``component.wb_config`` (resolved in
-        ``__init__``); fall back to ``_DEFAULT_KP``/``_DEFAULT_KD`` when
-        the blueprint didn't supply gains.
-        """
-        from dimos.hardware.whole_body.spec import MotorCommand
+        """Dispatch coordinator joint-position commands by control mode."""
 
         if mode not in (ControlMode.POSITION, ControlMode.SERVO_POSITION):
             logger.warning(
@@ -406,13 +399,23 @@ class ConnectedWholeBody(ConnectedHardware):
                 f"got {mode.name} — skipping"
             )
             return False
+        return self.write_position(commands)
+
+    def write_position(self, commands: dict[str, float]) -> bool:
+        """Write named position commands using native adapter position IO when available.
+
+        Unknown joints are warned once and ignored. Partial commands hold the
+        previous commanded value for omitted joints. The hold-last cache is
+        committed only after the underlying adapter accepts the full frame.
+        """
 
         if not self._initialized and not self._try_initialize_last_commanded():
             return False
 
+        candidate = dict(self._last_commanded)
         for joint_name, value in commands.items():
             if joint_name in self._joint_names:
-                self._last_commanded[joint_name] = value
+                candidate[joint_name] = value
             elif joint_name not in self._warned_unknown_joints:
                 logger.warning(
                     f"WholeBody {self.hardware_id} received command for unknown joint "
@@ -420,9 +423,19 @@ class ConnectedWholeBody(ConnectedHardware):
                 )
                 self._warned_unknown_joints.add(joint_name)
 
+        positions = [candidate[name] for name in self._joint_names]
+        write_joint_positions = getattr(self._wb_adapter, "write_joint_positions", None)
+        if callable(write_joint_positions):
+            ok = bool(write_joint_positions(positions))
+            if ok:
+                self._last_commanded = candidate
+            return ok
+
+        from dimos.hardware.whole_body.spec import MotorCommand
+
         motor_cmds = [
             MotorCommand(
-                q=self._last_commanded[name],
+                q=candidate[name],
                 dq=0.0,
                 kp=self._kp_by_name[name],
                 kd=self._kd_by_name[name],
@@ -430,7 +443,10 @@ class ConnectedWholeBody(ConnectedHardware):
             )
             for name in self._joint_names
         ]
-        return self._wb_adapter.write_motor_commands(motor_cmds)
+        ok = self._wb_adapter.write_motor_commands(motor_cmds)
+        if ok:
+            self._last_commanded = candidate
+        return ok
 
     def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
         """Direct pass-through to adapter for full MotorCommand control."""
@@ -441,6 +457,12 @@ class ConnectedWholeBody(ConnectedHardware):
         if not self._wb_adapter.has_motor_states():
             return False
         states = self._wb_adapter.read_motor_states()
+        if len(states) != len(self._joint_names):
+            logger.warning(
+                f"WholeBody {self.hardware_id} read {len(states)} motor states for "
+                f"{len(self._joint_names)} joints; skipping command initialization"
+            )
+            return False
         for i, name in enumerate(self._joint_names):
             self._last_commanded[name] = states[i].q
         self._initialized = True

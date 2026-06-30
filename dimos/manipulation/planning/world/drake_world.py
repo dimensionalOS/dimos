@@ -25,11 +25,17 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from dimos.manipulation.planning.groups.identifiers import (
+    assert_local_joint_names,
+    make_global_joint_name,
+)
+from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import (
-    JointPath,
+    GeneratedPlan,
     Obstacle,
+    PlanningGroupID,
     PlanningSceneInfo,
     WorldRobotID,
 )
@@ -38,7 +44,7 @@ from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Generator, Sequence
 
     from numpy.typing import NDArray
 
@@ -84,6 +90,22 @@ except ImportError:
 logger = setup_logger()
 
 
+def _pose_stamped_from_drake_transform(transform: RigidTransform) -> PoseStamped:
+    """Convert a Drake RigidTransform-like object to a world-frame pose."""
+    position = transform.translation()
+    quaternion = transform.rotation().ToQuaternion()
+    return PoseStamped(
+        frame_id="world",
+        position=[float(position[0]), float(position[1]), float(position[2])],
+        orientation=[
+            float(quaternion.x()),
+            float(quaternion.y()),
+            float(quaternion.z()),
+            float(quaternion.w()),
+        ],
+    )
+
+
 @dataclass
 class _RobotData:
     """Internal data for tracking a robot in the world."""
@@ -92,8 +114,8 @@ class _RobotData:
     config: RobotModelConfig
     model_instance: Any  # ModelInstanceIndex
     joint_indices: list[int]  # Indices into plant's position vector
-    ee_frame: Any  # BodyFrame for end-effector
-    base_frame: Any  # BodyFrame for base
+    ee_frame: Any | None  # Compatibility robot-scoped end-effector frame
+    base_frame: Any  # Compatibility robot-scoped base frame
     preview_model_instance: Any = None  # ModelInstanceIndex for preview (yellow) robot
     preview_joint_indices: list[int] = field(default_factory=list)
 
@@ -184,6 +206,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
         # Tracking data
         self._robots: dict[WorldRobotID, _RobotData] = {}
+        self._planning_groups = PlanningGroupRegistry()
         self._obstacles: dict[str, _ObstacleData] = {}
         self._robot_counter = 0
         self._obstacle_counter = 0
@@ -202,6 +225,9 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         """Add a robot to the world. Returns robot_id.
 
         Same model_path + base_pose reuses the model instance (e.g. two arms in one URDF).
+        base_pose/base_link/end_effector_link remain compatibility fields for
+        placement and robot-scoped helpers; group-aware planning should use
+        planning group base/tip links.
         """
         if self._finalized:
             raise RuntimeError("Cannot add robot after world is finalized")
@@ -215,9 +241,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
             self._validate_joints(config, model_instance)
 
-            ee_frame = self._plant.GetBodyByName(
-                config.end_effector_link, model_instance
-            ).body_frame()
+            ee_frame = self._legacy_ee_frame(config, model_instance)
             base_frame = self._plant.GetBodyByName(config.base_link, model_instance).body_frame()
 
             # Preview (yellow ghost) — always a separate instance per robot
@@ -235,9 +259,16 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                 base_frame=base_frame,
                 preview_model_instance=preview_model_instance,
             )
+            self._planning_groups.add_robot(config)
 
             logger.info(f"Added robot '{robot_id}' ({config.name})")
             return robot_id
+
+    def _legacy_ee_frame(self, config: RobotModelConfig, model_instance: Any) -> Any | None:
+        """Resolve compatibility robot-scoped EE frame, if available."""
+        if config.end_effector_link is None:
+            return None
+        return self._plant.GetBodyByName(config.end_effector_link, model_instance).body_frame()
 
     def _load_model(self, config: RobotModelConfig) -> Any:
         """Load robot model (URDF/xacro/MJCF) and return model instance."""
@@ -255,6 +286,9 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                 package_paths=config.package_paths,
                 xacro_args=config.xacro_args,
                 convert_meshes=config.auto_convert_meshes,
+                strip_world_joint_child_link=config.base_link
+                if config.strip_model_world_joint
+                else None,
             )
             prepared_path_obj = Path(prepared_path)
 
@@ -316,6 +350,18 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         if robot_id not in self._robots:
             raise KeyError(f"Robot '{robot_id}' not found")
         return self._robots[robot_id].config
+
+    def _get_robot_data_by_name(self, robot_name: str) -> _RobotData:
+        matches = [
+            robot_data
+            for robot_data in self._robots.values()
+            if robot_data.config.name == robot_name
+        ]
+        if not matches:
+            raise KeyError(f"Robot '{robot_name}' not found for planning group resolution")
+        if len(matches) > 1:
+            raise ValueError(f"Robot name '{robot_name}' is not unique in planning world")
+        return matches[0]
 
     def get_joint_limits(
         self, robot_id: WorldRobotID
@@ -686,7 +732,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                 self.publish_visualization()
                 # Hide all preview robots initially
                 for robot_id in self._robots:
-                    self.hide_preview(robot_id)
+                    self._hide_preview_robot(robot_id)
 
     @property
     def is_finalized(self) -> bool:
@@ -768,8 +814,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         if not self._finalized or self._plant_context is None:
             return  # Silently ignore before finalization
 
-        # Extract positions as numpy array for internal use
-        positions = np.array(joint_state.position, dtype=np.float64)
+        positions = self._positions_for_robot_state(robot_id, joint_state)
 
         with self._lock:
             self._set_positions_internal(self._plant_context, robot_id, positions)
@@ -787,8 +832,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         if not self._finalized:
             raise RuntimeError("World must be finalized first")
 
-        # Extract positions as numpy array for internal use
-        positions = np.array(joint_state.position, dtype=np.float64)
+        positions = self._positions_for_robot_state(robot_id, joint_state)
 
         # Get plant context from diagram context
         plant_ctx = self._diagram.GetMutableSubsystemContext(self._plant, ctx)
@@ -809,6 +853,37 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
         self._plant.SetPositions(plant_ctx, full_positions)
 
+    def _positions_for_robot_state(
+        self, robot_id: WorldRobotID, joint_state: JointState
+    ) -> NDArray[np.float64]:
+        if robot_id not in self._robots:
+            raise KeyError(f"Robot '{robot_id}' not found")
+        robot_data = self._robots[robot_id]
+        local_joint_names = robot_data.config.joint_names
+
+        if not joint_state.name:
+            if len(joint_state.position) != len(local_joint_names):
+                raise ValueError(
+                    f"JointState position length {len(joint_state.position)} does not match "
+                    f"robot {robot_data.config.name} joint count {len(local_joint_names)}"
+                )
+            return np.array(joint_state.position, dtype=np.float64)
+
+        state_by_local_name: dict[str, float] = {}
+        if len(joint_state.name) != len(joint_state.position):
+            raise ValueError("JointState name and position lengths must match")
+
+        assert_local_joint_names(joint_state.name)
+        for name, position in zip(joint_state.name, joint_state.position, strict=False):
+            state_by_local_name[name] = float(position)
+
+        missing = [name for name in local_joint_names if name not in state_by_local_name]
+        if missing:
+            raise ValueError(
+                f"JointState for robot {robot_data.config.name} is missing joints: {missing}"
+            )
+        return np.array([state_by_local_name[name] for name in local_joint_names], dtype=np.float64)
+
     def get_joint_state(self, ctx: Context, robot_id: WorldRobotID) -> JointState:
         """Get robot joint state from given context."""
         if not self._finalized:
@@ -818,11 +893,19 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             raise KeyError(f"Robot '{robot_id}' not found")
 
         robot_data = self._robots[robot_id]
+        if robot_data.ee_frame is None:
+            raise ValueError(
+                f"Robot '{robot_id}' has no robot-scoped end-effector link; "
+                "use get_group_ee_pose() with an explicit planning group ID"
+            )
         plant_ctx = self._diagram.GetSubsystemContext(self._plant, ctx)
         full_positions = self._plant.GetPositions(plant_ctx)
 
         positions = [float(full_positions[idx]) for idx in robot_data.joint_indices]
-        return JointState(name=robot_data.config.joint_names, position=positions)
+        return JointState(
+            name=list(robot_data.config.joint_names),
+            position=positions,
+        )
 
     # Collision Checking (context-based)
 
@@ -903,8 +986,28 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
     # Forward Kinematics (context-based)
 
+    def get_group_ee_pose(self, ctx: Context, group_id: PlanningGroupID) -> PoseStamped:
+        """Get pose for a planning group's target frame."""
+        if not self._finalized:
+            raise RuntimeError("World must be finalized first")
+
+        group = self._planning_groups.get(group_id)
+        if group.tip_link is None:
+            raise ValueError(f"Planning group '{group_id}' has no pose target frame")
+
+        robot_data = self._get_robot_data_by_name(group.robot_name)
+        plant_ctx = self._diagram.GetSubsystemContext(self._plant, ctx)
+
+        try:
+            tip_body = self._plant.GetBodyByName(group.tip_link, robot_data.model_instance)
+        except RuntimeError:
+            raise KeyError(f"Planning group '{group_id}' target link '{group.tip_link}' not found")
+
+        tip_pose = self._plant.EvalBodyPoseInWorld(plant_ctx, tip_body)
+        return _pose_stamped_from_drake_transform(tip_pose)
+
     def get_ee_pose(self, ctx: Context, robot_id: WorldRobotID) -> PoseStamped:
-        """Get end-effector pose."""
+        """Get pose for a robot's compatibility end-effector frame."""
         if not self._finalized:
             raise RuntimeError("World must be finalized first")
 
@@ -912,20 +1015,16 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             raise KeyError(f"Robot '{robot_id}' not found")
 
         robot_data = self._robots[robot_id]
+        if robot_data.ee_frame is None:
+            raise ValueError(
+                f"Robot '{robot_id}' has no robot-scoped end-effector link; "
+                "use get_group_jacobian() with an explicit planning group ID"
+            )
         plant_ctx = self._diagram.GetSubsystemContext(self._plant, ctx)
 
         ee_body = robot_data.ee_frame.body()
         X_WE = self._plant.EvalBodyPoseInWorld(plant_ctx, ee_body)
-
-        # Extract position and quaternion from Drake transform
-        pos = X_WE.translation()
-        quat = X_WE.rotation().ToQuaternion()  # Drake returns [w, x, y, z]
-
-        return PoseStamped(
-            frame_id="world",
-            position=[float(pos[0]), float(pos[1]), float(pos[2])],
-            orientation=[float(quat.x()), float(quat.y()), float(quat.z()), float(quat.w())],
-        )
+        return _pose_stamped_from_drake_transform(X_WE)
 
     def get_link_pose(
         self, ctx: Context, robot_id: WorldRobotID, link_name: str
@@ -951,7 +1050,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         return result  # type: ignore[no-any-return]
 
     def get_jacobian(self, ctx: Context, robot_id: WorldRobotID) -> NDArray[np.float64]:
-        """Get geometric Jacobian (6 x n_joints).
+        """Get robot-scoped geometric Jacobian for the compatibility EE frame.
 
         Rows: [vx, vy, vz, wx, wy, wz] (linear, then angular)
         """
@@ -985,6 +1084,52 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         J_reordered = np.vstack([J_robot[3:6, :], J_robot[0:3, :]])
 
         return J_reordered
+
+    def get_group_jacobian(self, ctx: Context, group_id: PlanningGroupID) -> NDArray[np.float64]:
+        """Get geometric Jacobian for a planning group's target frame.
+
+        Rows: [vx, vy, vz, wx, wy, wz] (linear, then angular). Columns follow
+        the resolved planning group's joint order.
+        """
+        if not self._finalized:
+            raise RuntimeError("World must be finalized first")
+
+        group = self._planning_groups.get(group_id)
+        if group.tip_link is None:
+            raise ValueError(f"Planning group '{group_id}' has no pose target frame")
+
+        robot_data = self._get_robot_data_by_name(group.robot_name)
+        plant_ctx = self._diagram.GetSubsystemContext(self._plant, ctx)
+
+        try:
+            tip_body = self._plant.GetBodyByName(group.tip_link, robot_data.model_instance)
+        except RuntimeError:
+            raise KeyError(f"Planning group '{group_id}' target link '{group.tip_link}' not found")
+
+        jacobian_full = self._plant.CalcJacobianSpatialVelocity(
+            plant_ctx,
+            JacobianWrtVariable.kQDot,
+            tip_body.body_frame(),
+            np.array([0.0, 0.0, 0.0]),  # type: ignore[arg-type]
+            self._plant.world_frame(),
+            self._plant.world_frame(),
+        )
+
+        joint_indices_by_name = dict(
+            zip(robot_data.config.joint_names, robot_data.joint_indices, strict=False)
+        )
+        jacobian_group = np.zeros((6, len(group.local_joint_names)))
+        for index, local_joint_name in enumerate(group.local_joint_names):
+            try:
+                joint_index = joint_indices_by_name[local_joint_name]
+            except KeyError:
+                raise ValueError(
+                    f"Planning group '{group_id}' references non-controllable joint "
+                    f"'{local_joint_name}'"
+                )
+            jacobian_group[:, index] = jacobian_full[:, joint_index]
+
+        return np.vstack([jacobian_group[3:6, :], jacobian_group[0:3, :]])
 
     # Visualization
 
@@ -1021,8 +1166,19 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             full_positions[idx] = positions[i]
         self._plant.SetPositions(plant_ctx, full_positions)
 
-    def show_preview(self, robot_id: WorldRobotID) -> None:
-        """Show the preview (yellow ghost) robot in Meshcat."""
+    def _preview_robot_ids_for_groups(
+        self, group_ids: Sequence[PlanningGroupID]
+    ) -> list[WorldRobotID]:
+        """Resolve planning groups to stable preview robot IDs."""
+        robot_ids: list[WorldRobotID] = []
+        for group in self._planning_groups.select(tuple(group_ids)).groups:
+            robot_id = self._get_robot_data_by_name(group.robot_name).robot_id
+            if robot_id not in robot_ids:
+                robot_ids.append(robot_id)
+        return robot_ids
+
+    def _show_preview_robot(self, robot_id: WorldRobotID) -> None:
+        """Show one preview (yellow ghost) robot in Meshcat."""
         if self._meshcat is None:
             return
         robot_data = self._robots.get(robot_id)
@@ -1031,8 +1187,13 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         model_name = self._plant.GetModelInstanceName(robot_data.preview_model_instance)
         self._meshcat.SetProperty(f"visualizer/{model_name}", "visible", True)
 
-    def hide_preview(self, robot_id: WorldRobotID) -> None:
-        """Hide the preview (yellow ghost) robot in Meshcat."""
+    def show_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
+        """Show preview robots affected by planning groups."""
+        for robot_id in self._preview_robot_ids_for_groups(group_ids):
+            self._show_preview_robot(robot_id)
+
+    def _hide_preview_robot(self, robot_id: WorldRobotID) -> None:
+        """Hide one preview (yellow ghost) robot in Meshcat."""
         if self._meshcat is None:
             return
         robot_data = self._robots.get(robot_id)
@@ -1041,32 +1202,63 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         model_name = self._plant.GetModelInstanceName(robot_data.preview_model_instance)
         self._meshcat.SetProperty(f"visualizer/{model_name}", "visible", False)
 
-    def animate_path(
+    def hide_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
+        """Hide preview robots affected by planning groups."""
+        for robot_id in self._preview_robot_ids_for_groups(group_ids):
+            self._hide_preview_robot(robot_id)
+
+    def _preview_positions_for_waypoint(
         self,
         robot_id: WorldRobotID,
-        path: JointPath,
-        duration: float = 3.0,
-    ) -> None:
-        """Animate a path using the preview (yellow ghost) robot.
+        selected_positions_by_name: dict[str, float],
+        current_positions: NDArray[np.float64],
+    ) -> NDArray[np.float64]:
+        """Build full local preview positions for one robot from selected globals."""
+        robot_data = self._robots[robot_id]
+        positions = current_positions.copy()
+        for index, local_name in enumerate(robot_data.config.joint_names):
+            global_name = make_global_joint_name(robot_data.config.name, local_name)
+            if global_name in selected_positions_by_name:
+                positions[index] = selected_positions_by_name[global_name]
+        return positions
+
+    def animate_plan(self, plan: GeneratedPlan, duration: float = 3.0) -> None:
+        """Animate a generated plan using preview (yellow ghost) robots.
 
         The preview stays visible after animation completes.
         """
-        if self._meshcat is None or len(path) < 2:
+        if self._meshcat is None or len(plan.path) < 2:
             return
 
-        robot_data = self._robots.get(robot_id)
-        if robot_data is None or robot_data.preview_model_instance is None:
+        robot_ids = [
+            robot_id
+            for robot_id in self._preview_robot_ids_for_groups(plan.group_ids)
+            if self._robots[robot_id].preview_model_instance is not None
+        ]
+        if not robot_ids:
             return
 
         import time
 
-        self.show_preview(robot_id)
-        dt = duration / (len(path) - 1)
-        for joint_state in path:
-            positions = np.array(joint_state.position, dtype=np.float64)
+        self.show_preview(plan.group_ids)
+        dt = duration / (len(plan.path) - 1)
+        for joint_state in plan.path:
+            selected_positions_by_name = dict(
+                zip(joint_state.name, joint_state.position, strict=True)
+            )
             with self._lock:
                 assert self._plant_context is not None
-                self._set_preview_positions(self._plant_context, robot_id, positions)
+                for robot_id in robot_ids:
+                    robot_data = self._robots[robot_id]
+                    current_positions = self._plant.GetPositions(
+                        self._plant_context, robot_data.model_instance
+                    )
+                    positions = self._preview_positions_for_waypoint(
+                        robot_id,
+                        selected_positions_by_name,
+                        np.array(current_positions, dtype=np.float64),
+                    )
+                    self._set_preview_positions(self._plant_context, robot_id, positions)
             self.publish_visualization()
             time.sleep(dt)
 

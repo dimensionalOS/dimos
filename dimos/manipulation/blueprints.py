@@ -24,6 +24,7 @@ from dimos.robot.manipulators.xarm.blueprints.agentic import (
 )
 from dimos.robot.manipulators.xarm.blueprints.basic import (
     dual_xarm6_planner as dual_xarm6_planner,
+    dual_xarm6_planner_coordinator as dual_xarm6_planner_coordinator,
     xarm6_planner_only as xarm6_planner_only,
     xarm7_planner_coordinator as xarm7_planner_coordinator,
 )

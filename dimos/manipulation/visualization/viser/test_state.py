@@ -20,11 +20,14 @@ from dimos.manipulation.visualization.viser.state import (
     PanelState,
     TargetStatus,
 )
+from dimos.msgs.sensor_msgs.JointState import JointState
 
 
 def test_panel_can_plan_from_fault_after_planning_failure() -> None:
     state = PanelState(
         selected_robot="arm",
+        selected_group_ids=("arm:manipulator",),
+        target_joints=JointState({"name": ["arm/j1"], "position": [1.0]}),
         runtime=PanelRuntime.RUNNING,
         backend_status=BackendConnectionStatus.READY,
         target_status=TargetStatus.FEASIBLE,

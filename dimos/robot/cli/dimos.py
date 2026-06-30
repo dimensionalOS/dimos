@@ -37,6 +37,10 @@ from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
+from dimos.core.runtime_environment import (
+    MissingPreparedPythonProjectError,
+    PythonProjectRuntimeEnvironmentError,
+)
 from dimos.mapping.utils.cli.map import main as _map_main
 from dimos.mapping.utils.cli.pose_fill import main as _map_pose_fill_main
 from dimos.mapping.utils.cli.rename import main as _map_rename_main
@@ -145,6 +149,9 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 
 main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 main.add_typer(go2tool_app, name="go2tool")
+
+runtime_app = typer.Typer(help="Runtime environment commands")
+main.add_typer(runtime_app, name="runtime")
 
 
 def arg_help(
@@ -288,7 +295,19 @@ def run(
     if cli_config_overrides:
         kwargs["g"] = cli_config_overrides
 
-    coordinator = ModuleCoordinator.build(blueprint, kwargs)
+    try:
+        coordinator = ModuleCoordinator.build(blueprint, kwargs)
+    except MissingPreparedPythonProjectError as exc:
+        raise typer.BadParameter(
+            f"Blueprint '{blueprint_name}' uses unprepared Python project runtime "
+            f"'{exc.runtime_name}' at '{exc.project}'; missing executable "
+            f"'{exc.missing_executable}'. Prepare it with: "
+            f"dimos runtime prepare {blueprint_name} --runtime {exc.runtime_name}"
+        ) from exc
+    except PythonProjectRuntimeEnvironmentError as exc:
+        raise typer.BadParameter(
+            f"Blueprint '{blueprint_name}' uses an invalid Python project runtime: {exc}"
+        ) from exc
 
     if daemon:
         # Health check before daemonizing — catch early crashes
@@ -347,6 +366,43 @@ def run(
             coordinator.loop()
         finally:
             entry.remove()
+
+
+@runtime_app.command("prepare")
+def runtime_prepare(
+    ctx: typer.Context,
+    robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to prepare"),
+    runtime_name: str | None = typer.Option(None, "--runtime", help="Runtime name to prepare"),
+    disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
+    blueprint_args: list[str] = typer.Option((), "--option", "-o"),
+    config_path: Path = typer.Option(
+        CONFIG_DIR / "dimos", "--config", "-c", help="Path to config file"
+    ),
+) -> None:
+    """Prepare active Python project runtime environments for a blueprint."""
+    from dimos.core.coordination.blueprints import autoconnect
+    from dimos.core.runtime_prepare import RuntimePrepareError, prepare_blueprint_runtimes
+    from dimos.robot.get_all_blueprints import get_by_name_or_exit, get_module_by_name_or_exit
+
+    cli_config_overrides: dict[str, Any] = ctx.obj
+    global_config.update(**cli_config_overrides)
+
+    blueprint_name = "-".join(robot_types)
+    blueprint = autoconnect(*map(get_by_name_or_exit, robot_types))
+
+    if disable:
+        disabled_classes = tuple(
+            get_module_by_name_or_exit(name).blueprints[0].module for name in disable
+        )
+        blueprint = blueprint.disabled_modules(*disabled_classes)
+
+    blueprint_config = blueprint.config()
+    load_config_args(blueprint_config, blueprint_args, config_path)
+
+    try:
+        prepare_blueprint_runtimes(blueprint, runtime_name, output=typer.echo)
+    except RuntimePrepareError as exc:
+        raise typer.BadParameter(f"Blueprint '{blueprint_name}': {exc}") from exc
 
 
 @main.command()

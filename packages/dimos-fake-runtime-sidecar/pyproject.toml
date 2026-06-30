@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dimos-fake-runtime-sidecar"
+version = "0.1.0"
+description = "Fake DimOS runtime sidecar for benchmark smoke demos"
+requires-python = ">=3.10"
+dependencies = [
+    "dimos-runtime-protocol",
+]
+
+[project.scripts]
+dimos-fake-runtime-sidecar = "dimos_fake_runtime_sidecar.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dimos_fake_runtime_sidecar"]

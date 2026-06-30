@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dimos-robosuite-sidecar"
+version = "0.1.0"
+description = "Robosuite runtime sidecar for DimOS benchmark plumbing demos"
+requires-python = ">=3.10"
+dependencies = [
+    "dimos-runtime-protocol",
+]
+
+[project.optional-dependencies]
+robosuite = ["robosuite>=1.5"]
+
+[project.scripts]
+dimos-robosuite-sidecar = "dimos_robosuite_sidecar.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dimos_robosuite_sidecar"]

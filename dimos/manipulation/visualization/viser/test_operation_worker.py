@@ -22,8 +22,7 @@ import pytest
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
-from dimos.manipulation.visualization.types import RobotInfo
-from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
+from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
 from dimos.manipulation.visualization.viser.state import (
@@ -35,11 +34,20 @@ from dimos.manipulation.visualization.viser.state import (
     TargetEvaluationWorker,
     TargetStatus,
 )
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 
 class EmptyServer:
     pass
+
+
+class EmptyWorldMonitor:
+    def get_current_joint_state(self, robot_id: str) -> None:
+        return None
+
+    def is_state_stale(self, robot_id: str, max_age: float = 1.0) -> bool:
+        return False
 
 
 @dataclass
@@ -106,18 +114,21 @@ class FakeRestartableOperationWorker(FakeOperationSubmitWorker):
         self.stop_calls.append(timeout)
 
 
-class FakeOperationAdapter(InProcessViserAdapter):
+class FakeOperationAdapter:
     def __init__(self) -> None:
         self.cancel_calls = 0
 
     def list_robots(self) -> list[str]:
         return []
 
-    def get_module_state(self) -> str:
+    def robot_id_for_name(self, robot_name: str) -> str | None:
+        return None
+
+    def get_state(self) -> str:
         return "IDLE"
 
-    def get_robot_info(self, robot_name: str) -> RobotInfo | None:
-        return None
+    def list_planning_groups(self) -> list[PlanningGroup]:
+        return []
 
     def get_current_joint_state(self, robot_name: str) -> None:
         return None
@@ -139,6 +150,18 @@ class FakeOperationAdapter(InProcessViserAdapter):
         return True
 
     def plan_to_joints(self, joints: JointState, robot_name: str | None = None) -> bool:
+        return True
+
+    def robot_items(self) -> list[tuple[str, str, object]]:
+        return []
+
+    def plan_to_joint_targets(self, joint_targets: dict[str, JointState]) -> bool:
+        return True
+
+    def plan_linear_to_pose_targets(
+        self, pose_targets: dict[str, Pose], auxiliary_groups: tuple[str, ...] = ()
+    ) -> bool:
+        del pose_targets, auxiliary_groups
         return True
 
 
@@ -181,6 +204,7 @@ def test_gui_close_uses_bounded_operation_worker_stop(monkeypatch: pytest.Monkey
     stop_timeouts: list[float | None] = []
     gui = ViserPanelGui(
         EmptyServer(),
+        EmptyWorldMonitor(),
         FakeOperationAdapter(),
         ViserVisualizationConfig(),
     )
@@ -198,6 +222,7 @@ def test_gui_only_preview_submits_timeout_override(monkeypatch: pytest.MonkeyPat
     submissions: list[dict[str, float]] = []
     gui = ViserPanelGui(
         EmptyServer(),
+        EmptyWorldMonitor(),
         FakeOperationAdapter(),
         ViserVisualizationConfig(preview_request_timeout=0.25),
     )
@@ -205,7 +230,8 @@ def test_gui_only_preview_submits_timeout_override(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(gui, "_operation_worker", FakeTimeoutSubmitWorker(submissions))
     gui.state.runtime = PanelRuntime.RUNNING
     gui.state.backend_status = BackendConnectionStatus.READY
-    gui.state.selected_robot = "arm"
+    gui.state.selected_group_ids = ("arm:manipulator",)
+    gui.state.target_joints = JointState({"name": ["arm/j1"], "position": [1.0]})
     gui.state.target_status = TargetStatus.FEASIBLE
     gui.state.manipulation_state = "IDLE"
 
@@ -223,6 +249,7 @@ def test_gui_cancel_bypasses_operation_worker(monkeypatch: pytest.MonkeyPatch) -
     adapter = FakeOperationAdapter()
     gui = ViserPanelGui(
         EmptyServer(),
+        EmptyWorldMonitor(),
         adapter,
         ViserVisualizationConfig(),
     )
@@ -248,6 +275,7 @@ def test_gui_cancelled_planning_clears_active_plan_state(monkeypatch: pytest.Mon
     adapter = FakeOperationAdapter()
     gui = ViserPanelGui(
         EmptyServer(),
+        EmptyWorldMonitor(),
         adapter,
         ViserVisualizationConfig(),
     )
@@ -289,6 +317,7 @@ def test_gui_guard_errors_keep_action_idle(
     submissions: list[Callable[[], None]] = []
     gui = ViserPanelGui(
         EmptyServer(),
+        EmptyWorldMonitor(),
         FakeOperationAdapter(),
         ViserVisualizationConfig(),
     )
@@ -309,6 +338,7 @@ def test_gui_guard_errors_keep_action_idle(
 def test_gui_ignores_stale_timed_out_operation_finish() -> None:
     gui = ViserPanelGui(
         EmptyServer(),
+        EmptyWorldMonitor(),
         FakeOperationAdapter(),
         ViserVisualizationConfig(),
     )

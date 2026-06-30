@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import TypedDict
 
-from dimos.manipulation.planning.spec.models import RobotName, WorldRobotID
+from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -33,16 +33,14 @@ class TargetEvaluation(TypedDict, total=False):
     orientation_error: float
 
 
-class RobotInfo(TypedDict):
-    name: RobotName
-    world_robot_id: WorldRobotID
-    joint_names: list[str]
-    end_effector_link: str
-    base_link: str
-    max_velocity: float
-    max_acceleration: float
-    has_joint_name_mapping: bool
-    coordinator_task_name: str | None
-    home_joints: list[float] | None
-    pre_grasp_offset: float
-    init_joints: list[float] | None
+class TargetSetEvaluation(TypedDict, total=False):
+    success: bool
+    status: str
+    message: str
+    collision_free: bool
+    group_ids: tuple[PlanningGroupID, ...]
+    target_joints: JointState | None
+    group_diagnostics: dict[PlanningGroupID, str]
+    group_poses: dict[PlanningGroupID, PoseStamped | Pose | None]
+    position_error: float
+    orientation_error: float

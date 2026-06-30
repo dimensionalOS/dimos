@@ -69,15 +69,6 @@ def _get_xarm7_config() -> RobotModelConfig:
         auto_convert_meshes=True,
         max_velocity=1.0,
         max_acceleration=2.0,
-        joint_name_mapping={
-            "arm/joint1": "joint1",
-            "arm/joint2": "joint2",
-            "arm/joint3": "joint3",
-            "arm/joint4": "joint4",
-            "arm/joint5": "joint5",
-            "arm/joint6": "joint6",
-            "arm/joint7": "joint7",
-        },
         coordinator_task_name="traj_arm",
     )
 
@@ -92,13 +83,13 @@ def joint_state_zeros():
     """Create a JointState message with zeros for XArm7."""
     return JointState(
         name=[
-            "arm/joint1",
-            "arm/joint2",
-            "arm/joint3",
-            "arm/joint4",
-            "arm/joint5",
-            "arm/joint6",
-            "arm/joint7",
+            "test_arm/joint1",
+            "test_arm/joint2",
+            "test_arm/joint3",
+            "test_arm/joint4",
+            "test_arm/joint5",
+            "test_arm/joint6",
+            "test_arm/joint7",
         ],
         position=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         velocity=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
@@ -160,11 +151,8 @@ class TestManipulationModuleIntegration:
         assert success is True
         assert module._state == ManipulationState.COMPLETED
         assert module.has_planned_path() is True
-
-        assert "test_arm" in module._planned_trajectories
-        traj = module._planned_trajectories["test_arm"]
-        assert len(traj.points) > 1
-        assert traj.duration > 0
+        assert module._last_plan is not None
+        assert len(module._last_plan.path) > 1
 
     def test_add_and_remove_obstacle(self, module, joint_state_zeros):
         """Test adding and removing obstacles."""
@@ -191,7 +179,6 @@ class TestManipulationModuleIntegration:
         assert len(info["joint_names"]) == 7
         assert info["end_effector_link"] == "link7"
         assert info["coordinator_task_name"] == "traj_arm"
-        assert info["has_joint_name_mapping"] is True
 
     def test_ee_pose(self, module, joint_state_zeros):
         """Test getting end-effector pose."""
@@ -204,20 +191,21 @@ class TestManipulationModuleIntegration:
         assert hasattr(pose, "y")
         assert hasattr(pose, "z")
 
-    def test_trajectory_name_translation(self, module, joint_state_zeros):
-        """Test that trajectory joint names are translated for coordinator."""
+    def test_planned_trajectory_uses_global_joint_names(self, module, joint_state_zeros):
+        """Test that planned trajectory joint names are global for coordinator."""
         module._on_joint_state(joint_state_zeros)
 
         success = module.plan_to_joints(JointState(position=[0.05] * 7))
         assert success is True
 
-        traj = module._planned_trajectories["test_arm"]
-        robot_config = module._robots["test_arm"][1]
+        mock_client = MagicMock()
+        mock_client.task_invoke.return_value = True
+        module._coordinator_client = mock_client
 
-        translated = module._translate_trajectory_to_coordinator(traj, robot_config)
+        assert module.execute() is True
 
-        for name in translated.joint_names:
-            assert name.startswith("arm_")  # Should have arm_ prefix
+        trajectory = mock_client.task_invoke.call_args.args[2]["trajectory"]
+        assert trajectory.joint_names == [f"test_arm/joint{i}" for i in range(1, 8)]
 
 
 @pytest.mark.skipif(not _drake_available(), reason="Drake not installed")
@@ -251,8 +239,7 @@ class TestCoordinatorIntegration:
         assert method_name == "execute"
         trajectory = kwargs["trajectory"]
         assert len(trajectory.points) > 1
-        # Joint names should be translated
-        assert all(n.startswith("arm_") for n in trajectory.joint_names)
+        assert trajectory.joint_names == [f"test_arm/joint{i}" for i in range(1, 8)]
 
     def test_execute_rejected_by_coordinator(self, module, joint_state_zeros):
         """Test handling of coordinator rejection."""

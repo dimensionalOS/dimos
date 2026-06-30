@@ -1,0 +1,27 @@
+{
+  "backend": "libero-pro",
+  "episode_id": "libero-pro-goal-task0",
+  "task_id": "libero_goal_task/0",
+  "runtime_host": "127.0.0.1",
+  "runtime_port": 8767,
+  "robot_id": "panda",
+  "dof": 8,
+  "control_step_hz": 20,
+  "ticks": 200,
+  "target_position": 0.03,
+  "seed": 7,
+  "artifact_dir": "artifacts/benchmark/libero-pro-goal-task0",
+  "backend_options": {
+    "benchmark_name": "libero_goal_task",
+    "task_order_index": 0,
+    "task_index": 0,
+    "init_state_index": 0,
+    "controller": "JOINT_POSITION",
+    "camera_names": [
+      "agentview"
+    ],
+    "horizon": 1000,
+    "bddl_root": "libero/libero/bddl_files",
+    "init_states_root": "libero/libero/init_files"
+  }
+}

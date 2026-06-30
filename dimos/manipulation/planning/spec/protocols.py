@@ -22,17 +22,25 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from dimos.spec.utils import Spec
+
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
     from contextlib import AbstractContextManager
 
     import numpy as np
     from numpy.typing import NDArray
 
+    from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.manipulation.planning.spec.models import (
+        CartesianDelta,
+        CartesianPathMode,
+        GeneratedPlan,
+        GeneratedTrajectory,
         IKResult,
-        JointPath,
         Obstacle,
+        PlanningGroupID,
         PlanningResult,
         PlanningSceneInfo,
         WorldRobotID,
@@ -156,8 +164,19 @@ class WorldSpec(Protocol):
         ...
 
     # Forward Kinematics (require context)
+    def get_group_ee_pose(self, ctx: Any, group_id: PlanningGroupID) -> PoseStamped:
+        """Get pose for a planning group's target frame."""
+        ...
+
+    def get_group_jacobian(self, ctx: Any, group_id: PlanningGroupID) -> NDArray[np.float64]:
+        """Get planning group target-frame Jacobian over the group's selected joints."""
+        ...
+
     def get_ee_pose(self, ctx: Any, robot_id: WorldRobotID) -> PoseStamped:
-        """Get end-effector pose."""
+        """Get pose for a robot's unique pose-targetable planning group.
+
+        TODO: deprecate this.
+        """
         ...
 
     def get_link_pose(
@@ -167,7 +186,7 @@ class WorldSpec(Protocol):
         ...
 
     def get_jacobian(self, ctx: Any, robot_id: WorldRobotID) -> NDArray[np.float64]:
-        """Get end-effector Jacobian (6 x n_joints)."""
+        """Get Jacobian for a robot's unique pose-targetable planning group."""
         ...
 
 
@@ -194,16 +213,16 @@ class VisualizationSpec(Protocol):
         """Publish current state to visualization."""
         ...
 
-    def show_preview(self, robot_id: WorldRobotID) -> None:
-        """Show the preview representation for a robot."""
+    def show_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
+        """Show preview representations for the selected planning groups."""
         ...
 
-    def hide_preview(self, robot_id: WorldRobotID) -> None:
-        """Hide the preview representation for a robot."""
+    def hide_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
+        """Hide preview representations for the selected planning groups."""
         ...
 
-    def animate_path(self, robot_id: WorldRobotID, path: JointPath, duration: float = 3.0) -> None:
-        """Animate a path in visualization."""
+    def animate_plan(self, plan: GeneratedPlan, duration: float = 3.0) -> None:
+        """Animate a generated plan in visualization."""
         ...
 
     def close(self) -> None:
@@ -213,7 +232,7 @@ class VisualizationSpec(Protocol):
 
 @runtime_checkable
 class KinematicsSpec(Protocol):
-    """Protocol for inverse kinematics solvers. Stateless, uses WorldSpec for FK/collision."""
+    """Protocol for inverse kinematics solvers. Stateless and IK-only."""
 
     def solve(
         self,
@@ -223,10 +242,22 @@ class KinematicsSpec(Protocol):
         seed: JointState | None = None,
         position_tolerance: float = 0.001,
         orientation_tolerance: float = 0.01,
-        check_collision: bool = True,
         max_attempts: int = 10,
     ) -> IKResult:
-        """Solve IK with optional collision checking."""
+        """Solve a single robot-scoped IK target."""
+        ...
+
+    def solve_pose_targets(
+        self,
+        world: WorldSpec,
+        pose_targets: dict[PlanningGroup, PoseStamped],
+        auxiliary_groups: list[PlanningGroup] | tuple[PlanningGroup, ...] = (),
+        seed: JointState | None = None,
+        position_tolerance: float = 0.001,
+        orientation_tolerance: float = 0.01,
+        max_attempts: int = 10,
+    ) -> IKResult:
+        """Solve pose targets over planning groups plus request-scoped auxiliaries."""
         ...
 
 
@@ -254,6 +285,69 @@ class PlannerSpec(Protocol):
         """Plan a collision-free joint-space path."""
         ...
 
+    def plan_selected_joint_path(
+        self,
+        world: WorldSpec,
+        selection: PlanningGroupSelection,
+        start: JointState,
+        goal: JointState,
+        timeout: float = 10.0,
+    ) -> PlanningResult:
+        """Plan over an explicit planning-group selection."""
+        ...
+
+    def plan_cartesian_path(
+        self,
+        world: WorldSpec,
+        selection: PlanningGroupSelection,
+        start: JointState,
+        pose_targets: Mapping[PlanningGroupID, PoseStamped],
+        *,
+        auxiliary_groups: Sequence[PlanningGroupID] = (),
+        path_mode: CartesianPathMode = "free",
+        timeout: float = 10.0,
+    ) -> PlanningResult:
+        """Plan over absolute Cartesian TCP targets for a selected group set."""
+        ...
+
+    def plan_relative_cartesian_path(
+        self,
+        world: WorldSpec,
+        selection: PlanningGroupSelection,
+        start: JointState,
+        delta_targets: Mapping[PlanningGroupID, CartesianDelta],
+        *,
+        auxiliary_groups: Sequence[PlanningGroupID] = (),
+        path_mode: CartesianPathMode = "free",
+        timeout: float = 10.0,
+    ) -> PlanningResult:
+        """Plan over relative Cartesian TCP deltas for a selected group set."""
+        ...
+
     def get_name(self) -> str:
         """Get planner name."""
+        ...
+
+
+@runtime_checkable
+class TrajectoryParametrizerSpec(Spec, Protocol):
+    """Protocol for converting a geometric plan into a timed global trajectory."""
+
+    def parametrize(
+        self,
+        plan: GeneratedPlan,
+        *,
+        speed_scale: float = 1.0,
+    ) -> GeneratedTrajectory:
+        """Parametrize a successful geometric generated plan.
+
+        Args:
+            plan: Geometric plan to time-parametrize.
+            speed_scale: Runtime speed multiplier applied to velocity and acceleration
+                policy for this parametrization only.
+        """
+        ...
+
+    def get_name(self) -> str:
+        """Get trajectory parametrizer backend name."""
         ...

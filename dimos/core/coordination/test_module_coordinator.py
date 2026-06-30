@@ -12,9 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
+import os
+from pathlib import Path
+import sys
 from types import MappingProxyType
 from typing import Protocol
 
+import psutil
 import pytest
 
 from dimos.core._test_future_annotations_helper import (
@@ -30,13 +35,22 @@ from dimos.core.coordination.module_coordinator import (
     ModuleCoordinator,
     _all_name_types,
     _check_requirements,
+    _resolve_module_plans,
     _verify_no_conflicts_with_existing,
     _verify_no_name_conflicts,
+    _verify_stream_remappings,
 )
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig, ModuleIOContract, StreamDecl
+from dimos.core.runtime_environment import (
+    MissingPythonProjectFileError,
+    PythonLaunchMaterial,
+    PythonProjectRuntimeEnvironment,
+    PythonVenvRuntimeEnvironment,
+    RuntimeEnvironment,
+)
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.spec.utils import Spec
@@ -92,6 +106,21 @@ class SourceModule(Module):
 
 class TargetModule(Module):
     remapped_data: In[Data1]
+
+
+class DynamicIOConfig(ModuleConfig):
+    emit_data2: bool = False
+
+
+class ConfiguredIOModule(Module):
+    config: DynamicIOConfig  # type: ignore[assignment]
+
+    @classmethod
+    def io_contract(cls, config: DynamicIOConfig) -> ModuleIOContract:
+        stream_type = Data2 if config.emit_data2 else Data1
+        return ModuleIOContract(
+            streams=(StreamDecl(name="configured", type=stream_type, direction="out"),)
+        )
 
 
 # ModuleRef / RPC tests
@@ -269,6 +298,40 @@ def test_that_remapping_can_resolve_conflicts() -> None:
     _verify_no_name_conflicts(blueprint_set_remapped)
 
 
+def test_resolved_module_plans_honor_blueprint_args_before_wiring() -> None:
+    blueprint_set = ConfiguredIOModule.blueprint()
+
+    default_plans = _resolve_module_plans(blueprint_set, GlobalConfig(viewer="none"), {})
+    override_plans = _resolve_module_plans(
+        blueprint_set,
+        GlobalConfig(viewer="none"),
+        {ConfiguredIOModule.name: {"emit_data2": True}},
+    )
+
+    assert default_plans[0].streams == (StreamDecl(name="configured", type=Data1, direction="out"),)
+    assert override_plans[0].streams == (
+        StreamDecl(name="configured", type=Data2, direction="out"),
+    )
+    assert override_plans[0].final_kwargs["emit_data2"] is True
+
+
+def test_verify_stream_remappings_uses_resolved_io_contract() -> None:
+    blueprint_set = ConfiguredIOModule.blueprint().remappings(
+        [(ConfiguredIOModule, "configured", "renamed")]
+    )
+    plans = _resolve_module_plans(blueprint_set, GlobalConfig(viewer="none"), {})
+
+    _verify_stream_remappings(blueprint_set, plans)
+    assert _all_name_types(blueprint_set, plans) == {("renamed", Data1)}
+
+    stale_blueprint = ConfiguredIOModule.blueprint().remappings(
+        [(ConfiguredIOModule, "missing", "renamed")]
+    )
+    stale_plans = _resolve_module_plans(stale_blueprint, GlobalConfig(viewer="none"), {})
+    with pytest.raises(ValueError, match="absent from the resolved IO contract"):
+        _verify_stream_remappings(stale_blueprint, stale_plans)
+
+
 def test_remapping() -> None:
     """Test that remapping streams works correctly."""
 
@@ -305,6 +368,8 @@ def test_remapping() -> None:
         # Both should have transports set
         assert source_instance.color_image.transport is not None
         assert target_instance.remapped_data.transport is not None
+        assert set(source_instance.outputs) == {"color_image"}
+        assert source_instance.outputs["color_image"].name == "color_image"
 
         # They should be using the same transport (connected)
         assert (
@@ -582,6 +647,382 @@ def test_load_blueprint_auto_scales_empty_pool(dynamic_coordinator) -> None:
     assert dynamic_coordinator.get_instance(ModuleA).data1.transport is not None
 
 
+def _sys_python_env(name: str) -> PythonVenvRuntimeEnvironment:
+    return PythonVenvRuntimeEnvironment(name=name, python_executable=Path(sys.executable))
+
+
+def _prepared_project(tmp_path: Path) -> PythonProjectRuntimeEnvironment:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.0.0'\n")
+    python_path = project / ".venv" / "bin" / "python"
+    python_path.parent.mkdir(parents=True)
+    python_path.write_text("prepared")
+    return PythonProjectRuntimeEnvironment(name="project-env", project=project)
+
+
+def _write_fake_uv(path: Path) -> None:
+    path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import subprocess, sys\n"
+        "assert sys.argv[1:4] == ['run', '--no-sync', 'python']\n"
+        f"raise SystemExit(subprocess.call([{sys.executable!r}, *sys.argv[4:]]))\n"
+    )
+    path.chmod(0o755)
+
+
+def test_unplaced_modules_use_default_pool(build_coordinator) -> None:
+    coordinator = build_coordinator(ModuleA.blueprint())
+
+    assert coordinator._module_manager_keys[ModuleA] == "python"
+    assert "python:env-a" not in coordinator._managers
+
+
+def test_same_named_env_modules_share_venv_pool(build_coordinator) -> None:
+    blueprint = (
+        autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
+        .global_config(n_workers=1)
+        .runtime_environments(_sys_python_env("env-a"))
+        .runtime_placements({ModuleA: "env-a", ModuleB: "env-a"})
+    )
+
+    coordinator = build_coordinator(blueprint)
+
+    assert coordinator._module_manager_keys[ModuleA] == "python:env-a"
+    assert coordinator._module_manager_keys[ModuleB] == "python:env-a"
+    manager = coordinator._managers["python:env-a"]
+    assert isinstance(manager, WorkerManagerPython)
+    assert len(manager.workers) == 1
+
+
+def test_direct_venv_uses_venv_worker_launcher(dynamic_coordinator) -> None:
+    blueprint = (
+        ModuleA.blueprint()
+        .runtime_environments(_sys_python_env("env-a"))
+        .runtime_placements({ModuleA: "env-a"})
+    )
+
+    dynamic_coordinator.load_blueprint(blueprint)
+
+    manager = dynamic_coordinator._managers["python:env-a"]
+    assert isinstance(manager, WorkerManagerPython)
+    worker = manager.workers[0]
+    assert type(worker._launcher).__name__ == "VenvWorkerLauncher"
+
+
+def test_current_runtime_placement_uses_python_launcher(dynamic_coordinator) -> None:
+    blueprint = ModuleA.blueprint().runtime_placements({ModuleA: "current"})
+
+    dynamic_coordinator.load_blueprint(blueprint)
+
+    manager = dynamic_coordinator._managers["python:current"]
+    assert isinstance(manager, WorkerManagerPython)
+    worker = manager.workers[0]
+    assert type(worker._launcher).__name__ == "VenvWorkerLauncher"
+
+
+@dataclass(frozen=True)
+class CustomPythonRuntimeEnvironment(RuntimeEnvironment):
+    name: str = "custom-python"
+
+    def resolve_python(self) -> PythonLaunchMaterial:
+        return PythonLaunchMaterial(
+            python_executable=Path(sys.executable),
+            env={"DIMOS_TEST_CUSTOM_RUNTIME": "1"},
+        )
+
+
+def test_custom_python_capability_runtime_uses_python_launcher(dynamic_coordinator) -> None:
+    blueprint = (
+        ModuleA.blueprint()
+        .runtime_environments(CustomPythonRuntimeEnvironment())
+        .runtime_placements({ModuleA: "custom-python"})
+    )
+
+    dynamic_coordinator.load_blueprint(blueprint)
+
+    manager = dynamic_coordinator._managers["python:custom-python"]
+    assert isinstance(manager, WorkerManagerPython)
+    worker = manager.workers[0]
+    assert type(worker._launcher).__name__ == "VenvWorkerLauncher"
+
+
+def test_project_runtime_uses_command_worker_launcher(
+    dynamic_coordinator, tmp_path, monkeypatch
+) -> None:
+    _write_fake_uv(tmp_path / "uv")
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ.get('PATH', '')}")
+    blueprint = (
+        ModuleA.blueprint()
+        .runtime_environments(_prepared_project(tmp_path))
+        .runtime_placements({ModuleA: "project-env"})
+    )
+
+    dynamic_coordinator.load_blueprint(blueprint)
+
+    manager = dynamic_coordinator._managers["python:project-env"]
+    assert isinstance(manager, WorkerManagerPython)
+    worker = manager.workers[0]
+    assert type(worker._launcher).__name__ == "CommandWorkerLauncher"
+
+
+def test_distinct_named_env_modules_use_distinct_venv_pools(build_coordinator) -> None:
+    blueprint = (
+        autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
+        .runtime_environments(_sys_python_env("env-a"), _sys_python_env("env-b"))
+        .runtime_placements({ModuleA: "env-a", ModuleB: "env-b"})
+    )
+
+    coordinator = build_coordinator(blueprint)
+
+    assert coordinator._module_manager_keys[ModuleA] == "python:env-a"
+    assert coordinator._module_manager_keys[ModuleB] == "python:env-b"
+    assert coordinator._managers["python:env-a"] is not coordinator._managers["python:env-b"]
+
+
+def test_placed_modules_preserve_stream_refs_and_rpc(build_coordinator) -> None:
+    blueprint = (
+        autoconnect(ModuleA.blueprint(), ModuleB.blueprint(), ModuleC.blueprint())
+        .runtime_environments(_sys_python_env("env-a"))
+        .runtime_placements({ModuleA: "env-a", ModuleB: "env-a"})
+    )
+
+    coordinator = build_coordinator(blueprint)
+    module_a = coordinator.get_instance(ModuleA)
+    module_b = coordinator.get_instance(ModuleB)
+    module_c = coordinator.get_instance(ModuleC)
+
+    assert module_a.data1.transport.topic == module_b.data1.transport.topic
+    assert module_b.data3.transport.topic == module_c.data3.transport.topic
+    assert module_b.what_is_as_name() == "A, Module A"
+
+
+def test_dynamic_load_unload_restart_preserves_placement(dynamic_coordinator) -> None:
+    blueprint = (
+        ModuleA.blueprint()
+        .runtime_environments(_sys_python_env("env-a"))
+        .runtime_placements({ModuleA: "env-a"})
+    )
+
+    dynamic_coordinator.load_blueprint(blueprint)
+    assert dynamic_coordinator._module_manager_keys[ModuleA] == "python:env-a"
+
+    dynamic_coordinator.restart_module(ModuleA, reload_source=False)
+    assert dynamic_coordinator._module_manager_keys[ModuleA] == "python:env-a"
+
+    dynamic_coordinator.unload_module(ModuleA)
+    assert ModuleA not in dynamic_coordinator._module_manager_keys
+
+
+def test_unload_clears_placement_for_later_unplaced_load(dynamic_coordinator) -> None:
+    blueprint = (
+        ModuleA.blueprint()
+        .runtime_environments(_sys_python_env("env-a"))
+        .runtime_placements({ModuleA: "env-a"})
+    )
+
+    dynamic_coordinator.load_blueprint(blueprint)
+    assert dynamic_coordinator._module_manager_keys[ModuleA] == "python:env-a"
+
+    dynamic_coordinator.unload_module(ModuleA)
+    dynamic_coordinator.load_blueprint(ModuleA.blueprint())
+
+    assert dynamic_coordinator._module_manager_keys[ModuleA] == "python"
+
+
+def test_unloading_last_venv_module_leaves_health_check_healthy(dynamic_coordinator) -> None:
+    blueprint = (
+        autoconnect(ModuleA.blueprint(), ModuleC.blueprint())
+        .runtime_environments(_sys_python_env("env-a"))
+        .runtime_placements({ModuleA: "env-a"})
+    )
+
+    dynamic_coordinator.load_blueprint(blueprint)
+    dynamic_coordinator.unload_module(ModuleA)
+
+    assert "python:env-a" not in dynamic_coordinator._managers
+    assert dynamic_coordinator.health_check() is True
+
+
+def test_unloading_last_venv_module_removes_idle_worker_manager() -> None:
+    coordinator = ModuleCoordinator(g=GlobalConfig(n_workers=2, viewer="none"))
+    coordinator.start()
+    try:
+        blueprint = (
+            ModuleA.blueprint()
+            .runtime_environments(_sys_python_env("env-a"))
+            .runtime_placements({ModuleA: "env-a"})
+        )
+
+        coordinator.load_blueprint(blueprint)
+        manager = coordinator._managers["python:env-a"]
+        assert isinstance(manager, WorkerManagerPython)
+        assert len(manager.workers) == 2
+
+        coordinator.unload_module(ModuleA)
+
+        assert "python:env-a" not in coordinator._managers
+        assert coordinator.health_check() is True
+    finally:
+        coordinator.stop()
+
+
+def test_absent_placement_does_not_affect_later_unplaced_load(dynamic_coordinator) -> None:
+    blueprint = (
+        ModuleA.blueprint()
+        .runtime_environments(_sys_python_env("env-a"))
+        .runtime_placements({ModuleB: "env-a"})
+    )
+
+    dynamic_coordinator.load_blueprint(blueprint)
+    dynamic_coordinator.load_blueprint(ModuleB.blueprint())
+
+    assert dynamic_coordinator._module_manager_keys[ModuleB] == "python"
+    assert "python:env-a" not in dynamic_coordinator._managers
+
+
+def test_disabled_placement_does_not_affect_later_unplaced_load(dynamic_coordinator) -> None:
+    blueprint = (
+        autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
+        .disabled_modules(ModuleB)
+        .runtime_environments(_sys_python_env("env-a"))
+        .runtime_placements({ModuleB: "env-a"})
+    )
+
+    dynamic_coordinator.load_blueprint(blueprint)
+    dynamic_coordinator.load_blueprint(ModuleB.blueprint())
+
+    assert dynamic_coordinator._module_manager_keys[ModuleB] == "python"
+    assert "python:env-a" not in dynamic_coordinator._managers
+
+
+def test_placed_module_unknown_env_raises_clear_error(dynamic_coordinator) -> None:
+    blueprint = ModuleA.blueprint().runtime_placements({ModuleA: "missing-env"})
+
+    with pytest.raises(RuntimeError, match="Register a Python runtime environment"):
+        dynamic_coordinator.load_blueprint(blueprint)
+
+
+def test_missing_venv_executable_error_includes_env_and_does_not_linger(
+    dynamic_coordinator, tmp_path
+) -> None:
+    missing_python = tmp_path / "missing-python"
+    blueprint = (
+        ModuleA.blueprint()
+        .runtime_environments(
+            PythonVenvRuntimeEnvironment(name="bad-env", python_executable=missing_python)
+        )
+        .runtime_placements({ModuleA: "bad-env"})
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        dynamic_coordinator.load_blueprint(blueprint)
+
+    message = str(exc_info.value)
+    assert "bad-env" in message
+    assert str(missing_python) in message
+    assert "Python capability" in message
+    assert "python:bad-env" not in dynamic_coordinator._managers
+
+
+def test_missing_project_prepared_python_fails_before_manager_and_popen(
+    dynamic_coordinator, tmp_path, mocker
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.0.0'\n")
+    env = PythonProjectRuntimeEnvironment(name="project-env", project=project)
+    popen = mocker.patch("dimos.core.coordination.worker_launcher.subprocess.Popen")
+    blueprint = (
+        ModuleA.blueprint().runtime_environments(env).runtime_placements({ModuleA: "project-env"})
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        dynamic_coordinator.load_blueprint(blueprint)
+
+    message = str(exc_info.value)
+    assert "project-env" in message
+    assert str(project) in message
+    assert str(project / ".venv" / "bin" / "python") in message
+    assert "dimos runtime prepare <blueprint> --runtime project-env" in message
+    assert "python:project-env" not in dynamic_coordinator._managers
+    popen.assert_not_called()
+
+
+def test_missing_project_pyproject_fails_actionably_before_manager_and_popen(
+    dynamic_coordinator, tmp_path, mocker
+) -> None:
+    project = tmp_path / "project-without-pyproject"
+    project.mkdir()
+    env = PythonProjectRuntimeEnvironment(name="project-env", project=project)
+    popen = mocker.patch("dimos.core.coordination.worker_launcher.subprocess.Popen")
+    blueprint = (
+        ModuleA.blueprint().runtime_environments(env).runtime_placements({ModuleA: "project-env"})
+    )
+
+    with pytest.raises(MissingPythonProjectFileError) as exc_info:
+        dynamic_coordinator.load_blueprint(blueprint)
+
+    message = str(exc_info.value)
+    assert "project-env" in message
+    assert str(project) in message
+    assert "pyproject.toml" in message
+    assert "python:project-env" not in dynamic_coordinator._managers
+    popen.assert_not_called()
+
+
+@pytest.mark.skipif_macos_bug
+def test_build_missing_project_prepared_python_stops_default_workers_and_no_popen(
+    tmp_path, mocker
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.0.0'\n")
+    env = PythonProjectRuntimeEnvironment(name="project-env", project=project)
+    blueprint = (
+        ModuleA.blueprint()
+        .global_config(n_workers=1)
+        .runtime_environments(env)
+        .runtime_placements({ModuleA: "project-env"})
+    )
+    constructed: list[ModuleCoordinator] = []
+    original_init = ModuleCoordinator.__init__
+
+    def track_init(self: ModuleCoordinator, g: GlobalConfig) -> None:
+        original_init(self, g)
+        constructed.append(self)
+
+    mocker.patch.object(ModuleCoordinator, "__init__", track_init)
+    popen = mocker.patch("dimos.core.coordination.worker_launcher.subprocess.Popen")
+
+    with pytest.raises(Exception) as exc_info:
+        ModuleCoordinator.build(blueprint, _BUILD_WITHOUT_RERUN.copy())
+
+    assert "project-env" in str(exc_info.value)
+    popen.assert_not_called()
+    assert len(constructed) == 1
+    assert "python:project-env" not in constructed[0]._managers
+    python_manager = constructed[0]._managers["python"]
+    assert isinstance(python_manager, WorkerManagerPython)
+    worker_pids = [worker.pid for worker in python_manager.workers if worker.pid is not None]
+    assert all(not psutil.pid_exists(pid) for pid in worker_pids)
+
+
+def test_disabled_unused_project_runtime_placement_does_not_allocate_pool(
+    dynamic_coordinator, tmp_path
+) -> None:
+    blueprint = (
+        autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
+        .disabled_modules(ModuleB)
+        .runtime_environments(_prepared_project(tmp_path))
+        .runtime_placements({ModuleB: "project-env"})
+    )
+
+    dynamic_coordinator.load_blueprint(blueprint)
+
+    assert "python:project-env" not in dynamic_coordinator._managers
+
+
 def test_check_requirements_failure(mocker) -> None:
     """A failing requirement check causes sys.exit."""
     mocker.patch("dimos.core.coordination.module_coordinator.sys.exit", side_effect=SystemExit(1))
@@ -604,6 +1045,8 @@ def test_restart_module_basic(dynamic_coordinator) -> None:
     assert new_proxy is not old_proxy
     assert dynamic_coordinator.get_instance(ModuleA) is new_proxy
     assert new_proxy.get_name() == "A, Module A"
+    assert "g" in dynamic_coordinator._resolved_module_plans[ModuleA].final_kwargs
+    assert "g" not in dynamic_coordinator._deployed_atoms[ModuleA].kwargs
 
 
 def test_restart_module_preserves_stream_wiring(dynamic_coordinator) -> None:
@@ -752,6 +1195,37 @@ def test_unload_after_reload_restart(dynamic_coordinator, mocker) -> None:
 
     dynamic_coordinator.unload_module(ModuleA)
     assert dynamic_coordinator.get_instance(ModuleA) is None
+
+
+def test_placed_reload_restart_unload_clears_old_class_placement(
+    dynamic_coordinator, mocker
+) -> None:
+    """A reload restart must not leave stale placement on the old class handle."""
+    original_class = ModuleA
+    blueprint = (
+        original_class.blueprint()
+        .runtime_environments(_sys_python_env("env-a"))
+        .runtime_placements({original_class: "env-a"})
+    )
+    dynamic_coordinator.load_blueprint(blueprint)
+
+    side_effect, new_class = _mock_reload_producing_new_class(original_class)
+    mocker.patch(
+        "dimos.core.coordination.module_coordinator.importlib.reload",
+        side_effect=side_effect,
+    )
+
+    dynamic_coordinator.restart_module(original_class, reload_source=True)
+    assert all(cls is not original_class for cls in dynamic_coordinator._runtime_placement_map)
+    assert dynamic_coordinator._runtime_placement_map[new_class] == "env-a"
+
+    dynamic_coordinator.unload_module(original_class)
+    assert all(cls is not original_class for cls in dynamic_coordinator._runtime_placement_map)
+    assert all(cls is not new_class for cls in dynamic_coordinator._runtime_placement_map)
+
+    setattr(sys.modules[original_class.__module__], original_class.__name__, original_class)
+    dynamic_coordinator.load_blueprint(original_class.blueprint())
+    assert dynamic_coordinator._module_manager_keys[original_class] == "python"
 
 
 def test_restart_preserves_remapped_streams(dynamic_coordinator) -> None:

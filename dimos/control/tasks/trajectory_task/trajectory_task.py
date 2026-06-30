@@ -191,6 +191,23 @@ class JointTrajectoryTask(BaseControlTask):
             logger.warning(f"Empty trajectory for {self._name}")
             return False
 
+        if trajectory.joint_names and trajectory.joint_names != self._joint_names_list:
+            logger.warning(
+                f"Joint name mismatch for {self._name}: "
+                f"expected={self._joint_names_list}, received={trajectory.joint_names}"
+            )
+            return False
+
+        if not trajectory.joint_names:
+            expected_joint_count = len(self._joint_names_list)
+            for point in trajectory.points:
+                if len(point.positions) != expected_joint_count:
+                    logger.warning(
+                        f"Trajectory point dimension mismatch for {self._name}: "
+                        f"expected={expected_joint_count}, received={len(point.positions)}"
+                    )
+                    return False
+
         # Preempt any active trajectory
         if self._state == TrajectoryState.EXECUTING:
             logger.info(f"Preempting active trajectory on {self._name}")

@@ -24,6 +24,8 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.perception_msgs.RegisteredObject import RegisteredObject
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -44,6 +46,11 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
 
 logger = setup_logger()
+
+_REGISTERED_BOUNDS_LOW_PERCENTILE = 5.0
+_REGISTERED_BOUNDS_HIGH_PERCENTILE = 95.0
+_REGISTERED_BOUNDS_MIN_POINTS = 20
+_REGISTERED_BOUNDS_MIN_EXTENT_M = 0.01
 
 
 class ObjectSceneRegistrationModule(Module):
@@ -153,6 +160,20 @@ class ObjectSceneRegistrationModule(Module):
     def get_detected_objects(self) -> list[dict[str, Any]]:
         """Get all detected objects with object_id (UUID) and name."""
         return [obj.agent_encode() for obj in self._object_db.get_all_objects()]
+
+    @rpc
+    def get_registered_objects(self) -> list[RegisteredObject]:
+        """Get all runtime registered objects with target-bounds metadata."""
+        return [_to_registered_object(obj) for obj in self._object_db.get_all_objects()]
+
+    @rpc
+    def get_object_by_object_id(self, object_id: str) -> RegisteredObject | None:
+        """Get registered object metadata by stable object_id."""
+        obj = self._object_db.find_by_object_id(object_id)
+        if obj is None:
+            logger.warning(f"No object found with object_id='{object_id}'")
+            return None
+        return _to_registered_object(obj)
 
     @rpc
     def get_object_pointcloud_by_name(self, name: str) -> PointCloud2 | None:
@@ -370,3 +391,54 @@ class ObjectSceneRegistrationModule(Module):
         aggregated_pc = aggregate_pointclouds(objects_for_pc)
         self.pointcloud.publish(aggregated_pc)
         return
+
+
+def _to_registered_object(obj: Object) -> RegisteredObject:
+    """Convert an internal detection Object to frame-axis-aligned bounds."""
+    pointcloud = obj.pointcloud.pointcloud if obj.pointcloud is not None else None
+    if pointcloud is not None and len(pointcloud.points) > 0:
+        center, extent = _registered_bounds_from_points(np.asarray(pointcloud.points))
+        return RegisteredObject(
+            object_id=obj.object_id,
+            name=obj.name,
+            center=Vector3(center[0], center[1], center[2]),
+            size=Vector3(float(extent[0]), float(extent[1]), float(extent[2])),
+            frame_id=obj.pointcloud.frame_id or obj.frame_id,
+            ts=obj.ts,
+        )
+
+    return RegisteredObject(
+        object_id=obj.object_id,
+        name=obj.name,
+        center=obj.center,
+        size=obj.size,
+        frame_id=obj.frame_id,
+        ts=obj.ts,
+    )
+
+
+def _registered_bounds_from_points(
+    points: NDArray[np.float64],
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Return robust frame-axis-aligned bounds for a registered object pointcloud.
+
+    Object pointclouds may contain a few table/background/depth outliers after
+    mask projection or database aggregation. Percentile bounds keep the target
+    bounds useful for grasp attention without letting isolated outliers dominate
+    the AABB. Small point sets fall back to the exact AABB to avoid cutting away
+    sparse objects.
+    """
+    finite_points = points[np.isfinite(points).all(axis=1)]
+    if len(finite_points) == 0:
+        return np.zeros(3, dtype=np.float64), np.zeros(3, dtype=np.float64)
+
+    if len(finite_points) >= _REGISTERED_BOUNDS_MIN_POINTS:
+        min_bound = np.percentile(finite_points, _REGISTERED_BOUNDS_LOW_PERCENTILE, axis=0)
+        max_bound = np.percentile(finite_points, _REGISTERED_BOUNDS_HIGH_PERCENTILE, axis=0)
+    else:
+        min_bound = finite_points.min(axis=0)
+        max_bound = finite_points.max(axis=0)
+
+    extent = np.maximum(max_bound - min_bound, _REGISTERED_BOUNDS_MIN_EXTENT_M)
+    center = (min_bound + max_bound) / 2.0
+    return center.astype(np.float64), extent.astype(np.float64)

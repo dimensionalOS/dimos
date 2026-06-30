@@ -37,6 +37,7 @@ import re
 import shutil
 import tempfile
 from typing import TYPE_CHECKING
+import xml.etree.ElementTree as ET
 
 from dimos.utils.logging_config import setup_logger
 
@@ -55,6 +56,7 @@ def prepare_urdf_for_drake(
     package_paths: dict[str, Path] | None = None,
     xacro_args: dict[str, str] | None = None,
     convert_meshes: bool = False,
+    strip_world_joint_child_link: str | None = None,
 ) -> str:
     """Prepare a URDF/xacro file for use with Drake.
 
@@ -68,6 +70,9 @@ def prepare_urdf_for_drake(
         package_paths: Dict mapping package names to filesystem paths
         xacro_args: Arguments to pass to xacro processor
         convert_meshes: Convert DAE/STL meshes to OBJ for Drake compatibility
+        strip_world_joint_child_link: If set, remove a fixed URDF joint from
+            world to this child link so callers can apply instance placement via
+            RobotModelConfig.base_pose instead of model-authored placement.
 
     Returns:
         Path to the prepared URDF file (may be cached)
@@ -77,7 +82,9 @@ def prepare_urdf_for_drake(
     xacro_args = xacro_args or {}
 
     # Generate cache key
-    cache_key = _generate_cache_key(urdf_path, package_paths, xacro_args, convert_meshes)
+    cache_key = _generate_cache_key(
+        urdf_path, package_paths, xacro_args, convert_meshes, strip_world_joint_child_link
+    )
     cache_path = _CACHE_DIR / cache_key / urdf_path.stem
     cache_path.mkdir(parents=True, exist_ok=True)
     cached_urdf = cache_path / f"{urdf_path.stem}.urdf"
@@ -95,6 +102,9 @@ def prepare_urdf_for_drake(
 
     # Strip transmission blocks (Drake doesn't need them, and they can cause issues)
     urdf_content = _strip_transmission_blocks(urdf_content)
+
+    if strip_world_joint_child_link is not None:
+        urdf_content = _strip_fixed_world_joint(urdf_content, strip_world_joint_child_link)
 
     # Resolve package:// URIs
     urdf_content = _resolve_package_uris(urdf_content, package_paths, cache_path)
@@ -115,6 +125,7 @@ def _generate_cache_key(
     package_paths: dict[str, Path],
     xacro_args: dict[str, str],
     convert_meshes: bool,
+    strip_world_joint_child_link: str | None,
 ) -> str:
     """Generate a cache key for the URDF configuration.
 
@@ -125,9 +136,12 @@ def _generate_cache_key(
 
     # Version number to invalidate cache when processing logic changes
     # Increment this when adding new processing steps (e.g., stripping transmission blocks)
-    processing_version = "v2"
+    processing_version = "v3"
 
-    key_data = f"{processing_version}:{urdf_path}:{mtime}:{sorted(package_paths.items())}:{sorted(xacro_args.items())}:{convert_meshes}"
+    key_data = (
+        f"{processing_version}:{urdf_path}:{mtime}:{sorted(package_paths.items())}:"
+        f"{sorted(xacro_args.items())}:{convert_meshes}:{strip_world_joint_child_link}"
+    )
     return hashlib.md5(key_data.encode()).hexdigest()[:16]
 
 
@@ -173,6 +187,52 @@ def _strip_transmission_blocks(urdf_content: str) -> str:
     result = re.sub(gazebo_pattern, "", result, flags=re.DOTALL | re.MULTILINE)
 
     return result
+
+
+def _strip_fixed_world_joint(urdf_content: str, child_link: str) -> str:
+    """Remove a fixed world-to-base joint so base_pose can own placement.
+
+    ``RobotModelConfig.base_pose`` is the canonical planning-world placement.
+    Some URDF/xacro models also include a fixed ``world -> base`` joint; if Drake
+    loads that joint and the caller applies ``base_pose``, placement can be
+    double-applied or constrained by a model-authored weld. Strip only the fixed
+    world joint to the configured child link and then remove an unreferenced
+    ``world`` link.
+    """
+    try:
+        root = ET.fromstring(urdf_content)
+    except ET.ParseError:
+        logger.warning("Could not parse URDF while stripping world joint", exc_info=True)
+        return urdf_content
+
+    removed = False
+    for joint in list(root.findall("joint")):
+        if joint.attrib.get("type") != "fixed":
+            continue
+        parent = joint.find("parent")
+        child = joint.find("child")
+        if parent is None or child is None:
+            continue
+        if parent.attrib.get("link") == "world" and child.attrib.get("link") == child_link:
+            root.remove(joint)
+            removed = True
+
+    if not removed:
+        return urdf_content
+
+    referenced_links = set()
+    for joint in root.findall("joint"):
+        parent = joint.find("parent")
+        child = joint.find("child")
+        if parent is not None:
+            referenced_links.add(parent.attrib.get("link"))
+        if child is not None:
+            referenced_links.add(child.attrib.get("link"))
+    for link in list(root.findall("link")):
+        if link.attrib.get("name") == "world" and "world" not in referenced_links:
+            root.remove(link)
+
+    return ET.tostring(root, encoding="unicode")
 
 
 def _resolve_package_uris(

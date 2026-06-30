@@ -21,8 +21,12 @@ build-backend = "setuptools.build_meta"
 include-package-data = false
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["dimos*"]
+where = [
+    ".",
+    "packages/dimos-runtime-protocol/src",
+    "packages/dimos-gpd-grasp-demo/src",
+]
+include = ["dimos*", "dimos_runtime_protocol*", "dimos_gpd_grasp_demo*"]
 # Web frontends / vendored node_modules: not part of the Python runtime
 # (MANIFEST.in already prunes these from the sdist; this keeps their stray
 # .py modules out of the wheel too).
@@ -243,13 +247,15 @@ unitree-dds = [
 ]
 
 manipulation = [
-    # Planning (Drake)
+    # Planning
     "drake==1.45.0; sys_platform == 'darwin' and platform_machine != 'aarch64'",
     "drake>=1.40.0; sys_platform != 'darwin' and platform_machine != 'aarch64'",
     "pin-pink>=4.2.0",
     "qpsolvers[proxqp]>=4.12.0",
+    "roboplan>=0.0.100",
 
     # Hardware SDKs
+    "can-motor-control>=0.0.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "piper-sdk",
     "pyrealsense2-extended; sys_platform != 'darwin'",
     "xarm-python-sdk>=1.17.0",
@@ -266,7 +272,23 @@ manipulation = [
     # Other
     "matplotlib>=3.7.1",
     "pyyaml>=6.0",
-    "roboplan",
+
+]
+
+manipulation-toppra = [
+    # RoboPlan bundles Python 3.12-compatible TOPP-RA bindings; direct PyPI toppra is deferred.
+    "roboplan>=0.0.100",
+]
+
+grasp = [
+    # Experimental learned grasp proposal backend. VGN's catkin-style package
+    # metadata omits most Python runtime dependencies, so list the import-time
+    # dependencies needed by `vgn.detection`/`vgn.perception` here.
+    "vgn",
+    "catkin_pkg>=1.1.0",
+    "matplotlib>=3.7.1",
+    "torch",
+    "pytorch-ignite",
 ]
 
 cpu = [
@@ -321,7 +343,7 @@ apriltag = [
 ]
 
 all = [
-    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,sim,unitree,visualization,web]",
+    "dimos[agents,apriltag,base,cpu,cuda,drone,grasp,learning,manipulation,manipulation-toppra,misc,perception,sim,unitree,visualization,web]",
 ]
 
 [dependency-groups]
@@ -379,7 +401,7 @@ tests = [
 
     # Deps the lint job swaps for stubs (`stubs/<pkg>/` or `types-*`):
     # the real packages are needed at test time, stubs cover mypy.
-    "dimos[apriltag,mapping,drone,cpu,learning]",
+    "dimos[apriltag,mapping,drone,cpu,learning,manipulation-toppra]",
     "mujoco>=3.3.4",
     "pygame>=2.6.1",
     "python-can>=4",
@@ -432,7 +454,7 @@ tests-self-hosted = [
 required-version = ">=0.9.17"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false }
+exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, can-motor-control = false, roboplan = false }
 override-dependencies = [
     # moondream pins pillow<11 but we need >=12.2.0 for security fixes
     # (CVE-2026-25990, CVE-2026-40192, CVE-2026-42311).
@@ -446,6 +468,12 @@ override-dependencies = [
     # whose stale _pb2.py files crash with protobuf>=6.
     "importlib-metadata<8.8.0",
 ]
+
+[tool.uv.sources]
+vgn = { git = "https://github.com/ethz-asl/vgn.git", rev = "d7af0622433f52ae88ebe81533f12b46b33e951a" }
+
+[tool.uv.extra-build-dependencies]
+vgn = ["catkin_pkg>=1.1.0"]
 
 [tool.ruff]
 line-length = 100
@@ -603,10 +631,19 @@ exclude_also = [
 max_size_kb = 50
 ignore = [
     "uv.lock",
+    "packages/dimos-gpd-grasp-demo/pixi.lock",
+    "packages/dimos-gpd-grasp-demo/uv.lock",
+    "packages/dimos-gpd-worker-demo/pixi.lock",
+    "packages/dimos-gpd-worker-demo/uv.lock",
     "*/package-lock.json",
     "dimos/dashboard/dimos.rbl",
     "dimos/web/dimos_interface/themes.json",
     "dimos/manipulation/manipulation_module.py",
+    "dimos/manipulation/test_manipulation_unit.py",
+    "dimos/manipulation/planning/world/drake_world.py",
+    "dimos/manipulation/planning/world/roboplan_world.py",
+    "dimos/manipulation/test_roboplan_world.py",
+    "dimos/manipulation/visualization/viser/gui.py",
     "dimos/manipulation/visualization/viser/test_viser_visualization.py",
     "dimos/navigation/cmu_nav/modules/*/main.cpp",
     "dimos/navigation/cmu_nav/common/*.hpp",

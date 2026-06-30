@@ -21,16 +21,22 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.manipulation.planning.groups.identifiers import (
+    is_global_joint_name,
+    make_global_joint_names,
+)
+from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.monitor.robot_state_monitor import RobotStateMonitor
 from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
-from dimos.manipulation.planning.spec.models import PlanningSceneInfo
+from dimos.manipulation.planning.spec.models import CollisionCheckResult, PlanningSceneInfo
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec, WorldSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Generator, Sequence
 
     import numpy as np
     from numpy.typing import NDArray
@@ -38,8 +44,10 @@ if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.manipulation.planning.spec.models import (
         CollisionObjectMessage,
+        GeneratedPlan,
         JointPath,
         Obstacle,
+        PlanningGroupID,
         WorldRobotID,
     )
     from dimos.msgs.vision_msgs.Detection3D import Detection3D
@@ -60,6 +68,8 @@ class WorldMonitor:
         self._visualization = visualization
         self._lock = threading.RLock()
         self._robot_joints: dict[WorldRobotID, list[str]] = {}
+        self._robot_ids_by_name: dict[str, WorldRobotID] = {}
+        self._planning_groups = PlanningGroupRegistry()
         self._robot_configs: dict[WorldRobotID, RobotModelConfig] = {}
         self._state_monitors: dict[WorldRobotID, RobotStateMonitor] = {}
         self._obstacle_monitor: WorldObstacleMonitor | None = None
@@ -74,6 +84,10 @@ class WorldMonitor:
         with self._lock:
             robot_id = self._world.add_robot(config)
             self._robot_joints[robot_id] = config.joint_names
+            if config.name in self._robot_ids_by_name:
+                raise ValueError(f"Robot name '{config.name}' is already registered")
+            self._robot_ids_by_name[config.name] = robot_id
+            self._planning_groups.add_robot(config)
             self._robot_configs[robot_id] = config
             logger.info(f"Added robot '{config.name}' as '{robot_id}'")
         return robot_id
@@ -89,6 +103,11 @@ class WorldMonitor:
         if visualization is None:
             return
         visualization.initialize_scene(self.planning_scene_info())
+
+    @property
+    def planning_groups(self) -> PlanningGroupRegistry:
+        """Backend-independent planning-group registry for added robots."""
+        return self._planning_groups
 
     def get_robot_ids(self) -> list[WorldRobotID]:
         """Get all robot IDs."""
@@ -130,7 +149,6 @@ class WorldMonitor:
         self,
         robot_id: WorldRobotID,
         joint_names: list[str] | None = None,
-        joint_name_mapping: dict[str, str] | None = None,
     ) -> None:
         """Start monitoring joint states. Uses config defaults if args are None."""
         with self._lock:
@@ -148,16 +166,11 @@ class WorldMonitor:
                 else:
                     joint_names = config.joint_names
 
-            # Get joint name mapping from config if not provided
-            if joint_name_mapping is None and config.joint_name_mapping:
-                joint_name_mapping = config.joint_name_mapping
-
             monitor = RobotStateMonitor(
                 world=self._world,
                 lock=self._lock,
                 robot_id=robot_id,
                 joint_names=joint_names,
-                joint_name_mapping=joint_name_mapping,
             )
             monitor.start()
             self._state_monitors[robot_id] = monitor
@@ -294,6 +307,34 @@ class WorldMonitor:
             ctx = self._world.get_live_context()
             return self._world.get_joint_state(ctx, robot_id)
 
+    def current_global_joint_state(self, max_age: float = 1.0) -> JointState | None:
+        """Return fresh monitored state for every robot using global joint names.
+
+        This method is intentionally stricter than ``get_current_joint_state``:
+        it never falls back to backend live/default state. Callers use it when
+        stale or absent telemetry should stop a planning-world operation.
+        """
+        names: list[str] = []
+        positions: list[float] = []
+        for robot_id, config in self._robot_configs.items():
+            monitor = self._state_monitors.get(robot_id)
+            if monitor is None or monitor.is_state_stale(max_age):
+                return None
+            current = self.get_current_joint_state(robot_id)
+            if current is None or len(current.name) != len(current.position):
+                return None
+            positions_by_local_name = dict(zip(current.name, current.position, strict=True))
+            for local_name, global_name in zip(
+                config.joint_names,
+                make_global_joint_names(config.name, config.joint_names),
+                strict=True,
+            ):
+                if local_name not in positions_by_local_name:
+                    return None
+                names.append(global_name)
+                positions.append(float(positions_by_local_name[local_name]))
+        return JointState(name=names, position=positions)
+
     def get_current_velocities(self, robot_id: WorldRobotID) -> JointState | None:
         """Get current joint velocities as JointState. Returns None if not available."""
         if robot_id in self._state_monitors:
@@ -333,6 +374,94 @@ class WorldMonitor:
         """Check if configuration is collision-free."""
         return self._world.check_config_collision_free(robot_id, joint_state)
 
+    def check_collision(
+        self,
+        target_joints: JointState,
+        max_age: float = 1.0,
+    ) -> CollisionCheckResult:
+        """Check a partial global target against the full planning-world state."""
+        if not self._world.is_finalized:
+            return CollisionCheckResult(
+                status="UNAVAILABLE",
+                collision_free=None,
+                message="Planning world is not finalized",
+            )
+        if not target_joints.name:
+            return CollisionCheckResult(
+                status="INVALID",
+                collision_free=None,
+                message="Collision target must include global joint names",
+            )
+        if len(target_joints.name) != len(target_joints.position):
+            return CollisionCheckResult(
+                status="INVALID",
+                collision_free=None,
+                message="Collision target name and position lengths must match",
+            )
+        if len(set(target_joints.name)) != len(target_joints.name):
+            return CollisionCheckResult(
+                status="INVALID",
+                collision_free=None,
+                message="Collision target contains duplicate joint names",
+            )
+        invalid_names = [name for name in target_joints.name if not is_global_joint_name(name)]
+        if invalid_names:
+            return CollisionCheckResult(
+                status="INVALID",
+                collision_free=None,
+                message=f"Expected global joint names; got invalid names: {invalid_names}",
+            )
+
+        current = self.current_global_joint_state(max_age=max_age)
+        if current is None:
+            return CollisionCheckResult(
+                status="STALE_STATE",
+                collision_free=None,
+                message="Fresh monitored planning-world joint state is unavailable",
+            )
+
+        positions_by_global_name = dict(zip(current.name, current.position, strict=True))
+        unknown = [name for name in target_joints.name if name not in positions_by_global_name]
+        if unknown:
+            return CollisionCheckResult(
+                status="INVALID",
+                collision_free=None,
+                message=f"Unknown global joint names: {unknown}",
+            )
+        for name, position in zip(target_joints.name, target_joints.position, strict=True):
+            positions_by_global_name[name] = float(position)
+
+        try:
+            with self._world.scratch_context() as ctx:
+                for robot_id, config in self._robot_configs.items():
+                    global_names = make_global_joint_names(config.name, config.joint_names)
+                    local_state = JointState(
+                        name=list(config.joint_names),
+                        position=[positions_by_global_name[name] for name in global_names],
+                    )
+                    self._world.set_joint_state(ctx, robot_id, local_state)
+                collision_free = all(
+                    self._world.is_collision_free(ctx, robot_id) for robot_id in self._robot_configs
+                )
+        except Exception as exc:
+            return CollisionCheckResult(
+                status="UNAVAILABLE",
+                collision_free=None,
+                message=f"Collision check failed: {exc}",
+            )
+
+        if collision_free:
+            return CollisionCheckResult(
+                status="VALID",
+                collision_free=True,
+                message="Target is collision-free",
+            )
+        return CollisionCheckResult(
+            status="COLLISION",
+            collision_free=False,
+            message="Target is in collision",
+        )
+
     def is_path_valid(
         self, robot_id: WorldRobotID, path: JointPath, step_size: float = 0.05
     ) -> bool:
@@ -366,16 +495,24 @@ class WorldMonitor:
     def get_ee_pose(
         self, robot_id: WorldRobotID, joint_state: JointState | None = None
     ) -> PoseStamped:
-        """Get end-effector pose. Uses current state if joint_state is None."""
+        """Get end-effector pose for the robot's unique pose-targetable group."""
+        return self.get_group_ee_pose(
+            self._unique_pose_group_id_for_robot(robot_id),
+            joint_state=joint_state,
+        )
+
+    def get_group_ee_pose(
+        self, group_id: PlanningGroupID, joint_state: JointState | None = None
+    ) -> PoseStamped:
+        """Get planning group target-frame pose using current state by default."""
+        robot_id = self._robot_id_for_group(group_id)
         with self._world.scratch_context() as ctx:
-            # If no state provided, fetch current from state monitor
             if joint_state is None:
                 joint_state = self.get_current_joint_state(robot_id)
-
             if joint_state is not None:
                 self._world.set_joint_state(ctx, robot_id, joint_state)
 
-            return self._world.get_ee_pose(ctx, robot_id)
+            return self._world.get_group_ee_pose(ctx, group_id)
 
     def get_link_pose(
         self, robot_id: WorldRobotID, link_name: str, joint_state: JointState | None = None
@@ -387,8 +524,6 @@ class WorldMonitor:
             link_name: Name of the link in the URDF
             joint_state: Joint state to use (uses current if None)
         """
-        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-
         with self._world.scratch_context() as ctx:
             if joint_state is None:
                 joint_state = self.get_current_joint_state(robot_id)
@@ -410,10 +545,44 @@ class WorldMonitor:
             )
 
     def get_jacobian(self, robot_id: WorldRobotID, joint_state: JointState) -> NDArray[np.float64]:
-        """Get 6xN Jacobian matrix."""
+        """Get 6xN Jacobian for the robot's unique pose-targetable group."""
+        return self.get_group_jacobian(
+            self._unique_pose_group_id_for_robot(robot_id),
+            joint_state=joint_state,
+        )
+
+    def get_group_jacobian(
+        self, group_id: PlanningGroupID, joint_state: JointState
+    ) -> NDArray[np.float64]:
+        """Get planning group target-frame 6xN Jacobian matrix."""
+        self._planning_groups.get(group_id)
+        robot_id = self._robot_id_for_group(group_id)
         with self._world.scratch_context() as ctx:
             self._world.set_joint_state(ctx, robot_id, joint_state)
-            return self._world.get_jacobian(ctx, robot_id)
+            return self._world.get_group_jacobian(ctx, group_id)
+
+    def _unique_pose_group_id_for_robot(self, robot_id: WorldRobotID) -> PlanningGroupID:
+        robot_name = self._world.get_robot_config(robot_id).name
+        pose_group_ids = [
+            group.id
+            for group in self._planning_groups.groups_for_robot(robot_name)
+            if group.has_pose_target
+        ]
+        if len(pose_group_ids) != 1:
+            raise ValueError(
+                f"Robot '{robot_name}' has {len(pose_group_ids)} pose-targetable planning groups; "
+                "call get_group_ee_pose/get_group_jacobian with an explicit planning group ID"
+            )
+        return pose_group_ids[0]
+
+    def _robot_id_for_group(self, group_id: PlanningGroupID) -> WorldRobotID:
+        group = self._planning_groups.get(group_id)
+        try:
+            return self._robot_ids_by_name[group.robot_name]
+        except KeyError as exc:
+            raise KeyError(
+                f"Robot '{group.robot_name}' not found for planning group {group_id}"
+            ) from exc
 
     # Lifecycle
 
@@ -442,25 +611,20 @@ class WorldMonitor:
         if self._visualization is not None:
             self._visualization.publish_visualization()
 
-    def show_preview(self, robot_id: WorldRobotID) -> None:
-        """Show the preview representation for a robot if visualization is available."""
+    def show_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
+        """Show preview representation for planning groups if visualization is available."""
         if self._visualization is not None:
-            self._visualization.show_preview(robot_id)
+            self._visualization.show_preview(group_ids)
 
-    def hide_preview(self, robot_id: WorldRobotID) -> None:
-        """Hide the preview representation for a robot if visualization is available."""
+    def hide_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
+        """Hide preview representation for planning groups if visualization is available."""
         if self._visualization is not None:
-            self._visualization.hide_preview(robot_id)
+            self._visualization.hide_preview(group_ids)
 
-    def animate_path(
-        self,
-        robot_id: WorldRobotID,
-        path: JointPath,
-        duration: float = 3.0,
-    ) -> None:
-        """Animate a path if visualization is available."""
+    def animate_plan(self, plan: GeneratedPlan, duration: float = 3.0) -> None:
+        """Animate a generated plan if visualization is available."""
         if self._visualization is not None:
-            self._visualization.animate_path(robot_id, path, duration)
+            self._visualization.animate_plan(plan, duration)
 
     def start_visualization_thread(self, rate_hz: float = 10.0) -> None:
         """Start background thread for visualization updates at given rate."""

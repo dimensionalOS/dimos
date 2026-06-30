@@ -18,7 +18,10 @@ from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
+from dimos.core.transport import LCMTransport
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.xarm.config import (
@@ -26,9 +29,13 @@ from dimos.robot.manipulators.xarm.config import (
     XARM7_SIM_PATH,
     make_xarm6_model_config,
     make_xarm7_model_config,
+    make_xarm_hardware,
     xarm6_hardware,
     xarm7_hardware,
 )
+
+_DUAL_XARM6_LEFT_Y_OFFSET = 0.3
+_DUAL_XARM6_RIGHT_Y_OFFSET = -0.3
 
 xarm6_planner_only = ManipulationModule.blueprint(
     robots=[make_xarm6_model_config(name="arm")],
@@ -37,10 +44,48 @@ xarm6_planner_only = ManipulationModule.blueprint(
 
 dual_xarm6_planner = ManipulationModule.blueprint(
     robots=[
-        make_xarm6_model_config(name="left_arm", y_offset=0.5),
-        make_xarm6_model_config(name="right_arm", y_offset=-0.5),
+        make_xarm6_model_config(name="left_arm", y_offset=_DUAL_XARM6_LEFT_Y_OFFSET),
+        make_xarm6_model_config(name="right_arm", y_offset=_DUAL_XARM6_RIGHT_Y_OFFSET),
     ],
     planning_timeout=10.0,
+)
+
+_left_xarm6_hw = make_xarm_hardware(
+    "left_arm",
+    6,
+    adapter_type="xarm" if global_config.xarm6_ip else "mock",
+    address=global_config.xarm6_ip,
+)
+_right_xarm6_hw = make_xarm_hardware(
+    "right_arm",
+    6,
+    adapter_type="xarm" if global_config.xarm6_ip else "mock",
+    address=global_config.xarm6_ip,
+)
+
+dual_xarm6_planner_coordinator = autoconnect(
+    planner(
+        robots=[
+            make_xarm6_model_config(name="left_arm", y_offset=_DUAL_XARM6_LEFT_Y_OFFSET),
+            make_xarm6_model_config(name="right_arm", y_offset=_DUAL_XARM6_RIGHT_Y_OFFSET),
+        ],
+        planning_timeout=10.0,
+        visualization={"backend": "viser", "allow_plan_execute": True},
+    ),
+    coordinator(
+        hardware=[
+            _left_xarm6_hw,
+            _right_xarm6_hw,
+        ],
+        tasks=[
+            trajectory_task(_left_xarm6_hw),
+            trajectory_task(_right_xarm6_hw),
+        ],
+    ),
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+    }
 )
 
 _xarm7_hw = xarm7_hardware("arm", gripper=True, mock_without_address=True)

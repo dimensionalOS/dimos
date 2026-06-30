@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -26,8 +27,9 @@ import pytest
 from dimos.manipulation.manipulation_module import ManipulationModuleConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import (
-    JointPath,
+    GeneratedPlan,
     Obstacle,
+    PlanningGroupID,
     PlanningSceneInfo,
     WorldRobotID,
 )
@@ -52,13 +54,13 @@ class FakeVisualization:
     def publish_visualization(self, ctx: object | None = None) -> None:
         return None
 
-    def show_preview(self, robot_id: WorldRobotID) -> None:
+    def show_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
         return None
 
-    def hide_preview(self, robot_id: WorldRobotID) -> None:
+    def hide_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
         return None
 
-    def animate_path(self, robot_id: WorldRobotID, path: JointPath, duration: float = 3.0) -> None:
+    def animate_plan(self, plan: GeneratedPlan, duration: float = 3.0) -> None:
         return None
 
     def close(self) -> None:

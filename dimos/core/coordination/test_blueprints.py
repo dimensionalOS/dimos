@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+from pathlib import Path
 import pickle
 from types import MappingProxyType
 from typing import Protocol, get_type_hints
@@ -34,7 +35,8 @@ from dimos.core.coordination.blueprints import (
     autoconnect,
 )
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig, ModuleIOContract, StreamDecl
+from dimos.core.runtime_environment import PythonVenvRuntimeEnvironment
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.spec.utils import Spec
@@ -96,6 +98,75 @@ def test_get_connection_set() -> None:
         module_refs=(),
         kwargs={"k": "v"},
     )
+
+
+def test_default_io_contract_matches_blueprint_atom_streams() -> None:
+    atom = BlueprintAtom.create(CatModule, kwargs={})
+
+    assert (
+        tuple(
+            StreamRef(name=stream.name, type=stream.type, direction=stream.direction)
+            for stream in CatModule.io_contract(CatModule.resolve_config({})).streams
+        )
+        == atom.streams
+    )
+
+
+def test_module_io_contract_rejects_duplicate_stream_names() -> None:
+    with pytest.raises(ValueError, match="duplicate stream names: data"):
+        ModuleIOContract(
+            streams=(
+                StreamDecl(name="data", type=Data1, direction="in"),
+                StreamDecl(name="data", type=Data1, direction="in"),
+            )
+        )
+
+    with pytest.raises(ValueError, match="duplicate stream names: data"):
+        ModuleIOContract(
+            streams=(
+                StreamDecl(name="data", type=Data1, direction="in"),
+                StreamDecl(name="data", type=Data1, direction="out"),
+            )
+        )
+
+
+class EmptyContractModule(Module):
+    data1: In[Data1]
+
+    @classmethod
+    def io_contract(cls, config: ModuleConfig) -> ModuleIOContract:
+        return ModuleIOContract()
+
+
+class DynamicContractModule(Module):
+    annotated: In[Data1]
+
+    @classmethod
+    def io_contract(cls, config: ModuleConfig) -> ModuleIOContract:
+        return ModuleIOContract(streams=(StreamDecl(name="dynamic", type=Data2, direction="out"),))
+
+
+def test_custom_io_contract_replaces_annotations_and_dynamic_streams_use_registries() -> None:
+    empty = EmptyContractModule()
+    dynamic = DynamicContractModule()
+    annotated = CatModule()
+
+    try:
+        assert empty.inputs == {}
+        assert not hasattr(empty, "data1") or empty.data1 is None
+
+        assert set(dynamic.outputs) == {"dynamic"}
+        assert dynamic.outputs["dynamic"].name == "dynamic"
+        assert not hasattr(dynamic, "dynamic")
+        assert dynamic.inputs == {}
+        assert not hasattr(dynamic, "annotated") or dynamic.annotated is None
+
+        assert annotated.inputs["pet_cat"] is annotated.pet_cat
+        assert annotated.outputs["scratches"] is annotated.scratches
+    finally:
+        empty.stop()
+        dynamic.stop()
+        annotated.stop()
 
 
 def test_autoconnect() -> None:
@@ -175,6 +246,21 @@ def test_future_annotations_support() -> None:
     assert len(in_blueprint.streams) == 1
     assert in_blueprint.streams[0] == StreamRef(name="data", type=FutureData, direction="in")
 
+    assert (
+        tuple(
+            StreamRef(name=stream.name, type=stream.type, direction=stream.direction)
+            for stream in FutureModuleOut.io_contract(FutureModuleOut.resolve_config({})).streams
+        )
+        == out_blueprint.streams
+    )
+    assert (
+        tuple(
+            StreamRef(name=stream.name, type=stream.type, direction=stream.direction)
+            for stream in FutureModuleIn.io_contract(FutureModuleIn.resolve_config({})).streams
+        )
+        == in_blueprint.streams
+    )
+
 
 def test_autoconnect_merges_disabled_modules() -> None:
     bp_a = Blueprint(
@@ -237,12 +323,43 @@ def test_blueprint_pickle_roundtrip() -> None:
     restored = pickle.loads(pickle.dumps(blueprint))
 
     assert restored == blueprint
-    for name in ("transport_map", "global_config_overrides", "remapping_map"):
+    for name in (
+        "transport_map",
+        "global_config_overrides",
+        "remapping_map",
+        "runtime_placement_map",
+    ):
         assert isinstance(getattr(restored, name), MappingProxyType)
     assert dict(restored.global_config_overrides) == {"option1": True, "option2": 42}
     assert restored.remapping_map[(ModuleA, "module_a")] is ModuleB
     with pytest.raises(TypeError):
         restored.global_config_overrides["x"] = 1
+
+
+def test_runtime_environments_and_placements_merge_by_module_class() -> None:
+    sensors = PythonVenvRuntimeEnvironment(
+        name="sensors",
+        python_executable=Path("/opt/sensors/bin/python"),
+        env={"DIMOS_TEST": "1"},
+    )
+    cameras = PythonVenvRuntimeEnvironment(
+        name="cameras",
+        python_executable=Path("/opt/cameras/bin/python"),
+    )
+
+    first = (
+        ModuleA.blueprint().runtime_environments(sensors).runtime_placements({ModuleA: "sensors"})
+    )
+    second = (
+        ModuleB.blueprint().runtime_environments(cameras).runtime_placements({ModuleA: "cameras"})
+    )
+
+    merged = autoconnect(first, second)
+
+    assert merged.runtime_environment_registry.resolve("sensors") is sensors
+    assert merged.runtime_environment_registry.resolve("cameras") is cameras
+    assert merged.runtime_placement_map[ModuleA] == "cameras"
+    assert ModuleB not in merged.runtime_placement_map
 
 
 def test_active_blueprints_filters_disabled() -> None:

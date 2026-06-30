@@ -17,13 +17,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, get_args
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast, get_args
 
 from dimos.manipulation.planning.kinematics.config import (
     DrakeOptimizationKinematicsConfig,
     JacobianKinematicsConfig,
     ManipulationKinematicsConfig,
     PinkKinematicsConfig,
+    RoboPlanKinematicsConfig,
     kinematics_config_from_name,
 )
 from dimos.manipulation.planning.spec.protocols import PlannerSpec
@@ -51,7 +52,7 @@ class PlanningSpecs:
 
 WorldBackend: TypeAlias = Literal["drake", "roboplan"]
 PlannerName: TypeAlias = Literal["rrt_connect", "roboplan"]
-KinematicsName: TypeAlias = Literal["jacobian", "drake_optimization", "pink"]
+KinematicsName: TypeAlias = Literal["jacobian", "drake_optimization", "pink", "roboplan"]
 
 SUPPORTED_WORLD_BACKENDS = get_args(WorldBackend)
 SUPPORTED_PLANNERS = get_args(PlannerName)
@@ -86,6 +87,8 @@ def validate_backend_combination(
         raise ValueError(_ROBOPLAN_PLANNER_REQUIRES_ROBOPLAN_WORLD)
     if kinematics_name == "drake_optimization" and world_backend != "drake":
         raise ValueError('kinematics_name="drake_optimization" requires world_backend="drake"')
+    if kinematics_name == "roboplan" and world_backend != "roboplan":
+        raise ValueError('kinematics_name="roboplan" requires world_backend="roboplan"')
 
 
 def create_world(
@@ -104,7 +107,7 @@ def create_world(
     if backend == "roboplan":
         from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
 
-        return RoboPlanWorld(enable_viz=enable_viz, **kwargs)
+        return cast("WorldSpec", RoboPlanWorld(enable_viz=enable_viz, **kwargs))
 
     raise ValueError(f"Unknown backend: {backend}. Available: {list(SUPPORTED_WORLD_BACKENDS)}")
 
@@ -112,6 +115,8 @@ def create_world(
 def create_kinematics(
     name: str = DEFAULT_KINEMATICS_NAME,
     config: ManipulationKinematicsConfig | None = None,
+    world: WorldSpec | None = None,
+    world_backend: str | None = None,
     **kwargs: Any,
 ) -> KinematicsSpec:
     """Create IK solver from a backend name or typed kinematics config."""
@@ -132,6 +137,16 @@ def create_kinematics(
         from dimos.manipulation.planning.kinematics.pink_ik import PinkIK
 
         return PinkIK(config, **kwargs)
+    elif isinstance(config, RoboPlanKinematicsConfig):
+        if world_backend != "roboplan" or world is None:
+            raise ValueError('kinematics_name="roboplan" requires world_backend="roboplan"')
+        configure_kinematics = getattr(world, "configure_kinematics", None)
+        if configure_kinematics is None:
+            raise ValueError(
+                "RoboPlan kinematics requires a RoboPlan world with configure_kinematics(...)"
+            )
+        configure_kinematics(config)
+        return cast("KinematicsSpec", world)
     else:
         raise TypeError(f"Unsupported kinematics config: {type(config).__name__}")
 
@@ -184,7 +199,11 @@ def create_planning_specs(
 
     return PlanningSpecs(
         world_monitor=WorldMonitor(world=world),
-        kinematics=create_kinematics(config=kinematics),
+        kinematics=create_kinematics(
+            config=kinematics,
+            world=world,
+            world_backend=world_backend,
+        ),
         planner=create_planner(name=planner_name, world=world, world_backend=world_backend),
     )
 

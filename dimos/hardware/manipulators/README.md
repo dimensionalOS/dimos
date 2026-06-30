@@ -33,12 +33,15 @@ This module provides manipulator arm drivers: Protocol-only with injectable adap
 ```
 manipulators/
 ├── spec.py              # ManipulatorAdapter Protocol + shared types
-├── registry.py          # Adapter registry with auto-discovery
+├── registry.py          # Adapter registry with manifest-based discovery
 ├── mock/
+│   ├── __registry__.py  # Adapter key → implementation path
 │   └── adapter.py       # MockAdapter for testing
 ├── xarm/
+│   ├── __registry__.py
 │   ├── adapter.py       # XArmAdapter (SDK wrapper)
 └── piper/
+    ├── __registry__.py
     ├── adapter.py       # PiperAdapter (SDK wrapper)
 ```
 
@@ -93,7 +96,17 @@ class MyArmAdapter:  # No inheritance needed - just match the Protocol
     # ... implement other Protocol methods
 ```
 
-2. **Create the driver** (`arm.py`):
+2. **Create the registry manifest** (`__registry__.py`):
+
+```python
+ADAPTER_FACTORIES = {
+    "myarm": "dimos.hardware.manipulators.myarm.adapter:MyArmAdapter",
+}
+```
+
+The registry imports this lightweight manifest during discovery. The adapter implementation is imported only when selected with `adapter_registry.create("myarm", ...)`.
+
+3. **Create the driver** (`arm.py`):
 
 ```python
 from dimos.core.core import rpc
@@ -115,7 +128,7 @@ class MyArm(Module[MyArmConfig]):
         # ... setup control loops
 ```
 
-3. **Create blueprints** (`blueprints.py`) for common configurations.
+4. **Create blueprints** (`blueprints.py`) for common configurations.
 
 ## ManipulatorAdapter Protocol
 

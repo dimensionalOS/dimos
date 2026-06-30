@@ -18,15 +18,17 @@ from __future__ import annotations
 
 import threading
 import time
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.components import HardwareComponent, HardwareType, TaskName, make_joints
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.task import (
     ControlMode,
+    ControlTask,
     CoordinatorState,
     JointCommandOutput,
     JointStateSnapshot,
@@ -274,6 +276,29 @@ class TestJointTrajectoryTask:
         assert trajectory_task.is_active()
         assert trajectory_task.get_state() == TrajectoryState.EXECUTING
 
+    def test_execute_rejects_mismatched_joint_names(self, trajectory_task):
+        trajectory = JointTrajectory(
+            joint_names=["other/joint1", "other/joint2", "other/joint3"],
+            points=[
+                TrajectoryPoint(
+                    positions=[0.0, 0.0, 0.0],
+                    velocities=[0.0, 0.0, 0.0],
+                    time_from_start=0.0,
+                ),
+                TrajectoryPoint(
+                    positions=[1.0, 0.5, 0.25],
+                    velocities=[0.0, 0.0, 0.0],
+                    time_from_start=1.0,
+                ),
+            ],
+        )
+
+        result = trajectory_task.execute(trajectory)
+
+        assert result is False
+        assert not trajectory_task.is_active()
+        assert trajectory_task.get_state() == TrajectoryState.IDLE
+
     def test_compute_during_trajectory(self, trajectory_task, simple_trajectory, coordinator_state):
         t_start = time.perf_counter()
         trajectory_task.execute(simple_trajectory)
@@ -469,7 +494,7 @@ class TestTickLoop:
         )
         hw = ConnectedHardware(mock_adapter, component)
         hardware = {"arm": hw}
-        tasks: dict = {}
+        tasks: dict[TaskName, ControlTask] = {}
         joint_to_hardware = {f"arm/joint{i + 1}": "arm" for i in range(6)}
 
         tick_loop = TickLoop(
@@ -512,7 +537,7 @@ class TestTickLoop:
             mode=ControlMode.POSITION,
         )
 
-        tasks = {"test_task": mock_task}
+        tasks: dict[TaskName, ControlTask] = {"test_task": cast("ControlTask", mock_task)}
         joint_to_hardware = {f"arm/joint{i + 1}": "arm" for i in range(6)}
 
         tick_loop = TickLoop(
@@ -530,6 +555,28 @@ class TestTickLoop:
 
         assert mock_task.compute.call_count > 0
 
+    def test_write_all_hardware_logs_rejected_command(self, mocker):
+        hardware = {"arm": MagicMock()}
+        hardware["arm"].write_command.return_value = False
+        log_error = mocker.patch("dimos.control.tick_loop.logger.error")
+        tick_loop = TickLoop(
+            tick_rate=100.0,
+            hardware=hardware,
+            hardware_lock=threading.Lock(),
+            tasks={},
+            task_lock=threading.Lock(),
+            joint_to_hardware={},
+        )
+
+        tick_loop._write_all_hardware({"arm": ({"arm/joint1": 0.5}, ControlMode.SERVO_POSITION)})
+
+        hardware["arm"].write_command.assert_called_once_with(
+            {"arm/joint1": 0.5}, ControlMode.SERVO_POSITION
+        )
+        log_error.assert_called_once_with(
+            "Hardware %s rejected %d %s command(s)", "arm", 1, "SERVO_POSITION"
+        )
+
 
 class TestIntegration:
     def test_full_trajectory_execution(self, mock_adapter):
@@ -546,7 +593,7 @@ class TestIntegration:
             priority=10,
         )
         traj_task = JointTrajectoryTask(name="traj_arm", config=config)
-        tasks = {"traj_arm": traj_task}
+        tasks: dict[TaskName, ControlTask] = {"traj_arm": traj_task}
 
         joint_to_hardware = {f"arm/joint{i + 1}": "arm" for i in range(6)}
 

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable, Mapping
 from dataclasses import dataclass
 from functools import partial
 import inspect
@@ -114,6 +114,69 @@ class ModuleConfig(BaseConfig):
 
 ModuleConfigT = TypeVar("ModuleConfigT", bound=ModuleConfig, default=ModuleConfig)
 
+StreamDirection = Literal["in", "out"]
+
+
+@dataclass(frozen=True)
+class StreamDecl:
+    name: str
+    direction: StreamDirection
+    type: type
+
+
+@dataclass(frozen=True)
+class ModuleIOContract:
+    streams: tuple[StreamDecl, ...] = ()
+
+    def __post_init__(self) -> None:
+        _validate_unique_stream_names(self.streams)
+
+    @classmethod
+    def from_annotations(cls, module: type["ModuleBase"]) -> "ModuleIOContract":
+        return cls(streams=_stream_decls_from_annotations(module))
+
+
+def _validate_unique_stream_names(streams: tuple[StreamDecl, ...]) -> None:
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for stream in streams:
+        if stream.name in seen:
+            duplicates.add(stream.name)
+        seen.add(stream.name)
+    if duplicates:
+        names = ", ".join(sorted(duplicates))
+        raise ValueError(f"Module IO contract has duplicate stream names: {names}")
+
+
+def resolve_module_type_hints(module: type["ModuleBase"]) -> dict[str, Any]:
+    # Resolve annotations using namespaces from the full MRO chain so that
+    # In/Out behind TYPE_CHECKING + `from __future__ import annotations` work.
+    # Iterate reversed MRO so the most specific class's namespace wins when
+    # parent modules shadow names.
+    globalns: dict[str, Any] = {}
+    for c in reversed(module.__mro__):
+        if c.__module__ in sys.modules:
+            globalns.update(sys.modules[c.__module__].__dict__)
+    try:
+        return get_type_hints(module, globalns=globalns, include_extras=True)
+    except Exception:
+        all_annotations: dict[str, Any] = {}
+        for base_class in reversed(module.__mro__):
+            if hasattr(base_class, "__annotations__"):
+                all_annotations.update(base_class.__annotations__)
+        return all_annotations
+
+
+def _stream_decls_from_annotations(module: type["ModuleBase"]) -> tuple[StreamDecl, ...]:
+    streams: list[StreamDecl] = []
+    for name, annotation in resolve_module_type_hints(module).items():
+        origin = get_origin(annotation)
+        if origin in (In, Out):
+            direction: StreamDirection = "in" if origin == In else "out"
+            type_ = get_args(annotation)[0]
+            streams.append(StreamDecl(name=name, type=type_, direction=direction))
+    return tuple(streams)
+
 
 class _BlueprintPartial(Protocol):
     def __call__(self, **kwargs: Any) -> "Blueprint": ...
@@ -143,8 +206,25 @@ class ModuleBase(Configurable, CompositeResource):
     _tools: dict[str, Any]
     _tools_lock: threading.Lock
 
-    def __init__(self, config_args: dict[str, Any]) -> None:
-        super().__init__(**config_args)
+    @classmethod
+    def resolve_config(cls, config_args: Mapping[str, Any]) -> ModuleConfig:
+        config_type = resolve_module_type_hints(cls)["config"]
+        return config_type(**dict(config_args))
+
+    @classmethod
+    def io_contract(cls, config: ModuleConfig) -> ModuleIOContract:
+        del config
+        return ModuleIOContract.from_annotations(cls)
+
+    def __init__(
+        self,
+        config_args: dict[str, Any],
+        resolved_config: ModuleConfig | None = None,
+    ) -> None:
+        if resolved_config is None:
+            super().__init__(**config_args)
+        else:
+            self.config = resolved_config
         self._module_closed_lock = threading.Lock()
         self._tools = {}
         self._tools_lock = threading.Lock()
@@ -285,19 +365,11 @@ class ModuleBase(Configurable, CompositeResource):
 
     @property
     def outputs(self) -> dict[str, Out]:  # type: ignore[type-arg]
-        return {
-            name: s
-            for name, s in self.__dict__.items()
-            if isinstance(s, Out) and not name.startswith("_")
-        }
+        return dict(getattr(self, "_outputs", {}))
 
     @property
     def inputs(self) -> dict[str, In]:  # type: ignore[type-arg]
-        return {
-            name: s
-            for name, s in self.__dict__.items()
-            if isinstance(s, In) and not name.startswith("_")
-        }
+        return dict(getattr(self, "_inputs", {}))
 
     @classproperty
     def rpcs(self) -> dict[str, Callable[..., Any]]:
@@ -738,44 +810,48 @@ class Module(ModuleBase):
         """
         super().__init_subclass__(**kwargs)
 
-        try:
-            hints = get_type_hints(cls, include_extras=True)
-        except (NameError, AttributeError, TypeError):
-            hints = {}
-
-        for name, ann in hints.items():
-            origin = get_origin(ann)
-            if origin in (In, Out):
-                # Set class-level attribute if not already set.
-                if not hasattr(cls, name) or getattr(cls, name) is None:
-                    setattr(cls, name, None)
+        for stream in _stream_decls_from_annotations(cls):
+            # Set class-level attribute if not already set.
+            if not hasattr(cls, stream.name) or getattr(cls, stream.name) is None:
+                setattr(cls, stream.name, None)
 
     def __init__(self, **kwargs: Any) -> None:
         self.ref = None
+        self._inputs: dict[str, In[Any]] = {}
+        self._outputs: dict[str, Out[Any]] = {}
+        config = type(self).resolve_config(kwargs)
+        io_contract = type(self).io_contract(config)
+        default_contract = _uses_default_io_contract(type(self))
+        annotated_stream_keys = {
+            (decl.name, decl.direction) for decl in _stream_decls_from_annotations(type(self))
+        }
 
-        try:
-            hints = get_type_hints(self.__class__, include_extras=True)
-        except (NameError, AttributeError, TypeError):
-            hints = {}
+        for decl in io_contract.streams:
+            install_attribute = (
+                default_contract or (decl.name, decl.direction) in annotated_stream_keys
+            )
+            self._register_stream_decl(decl, install_attribute=install_attribute)
+        super().__init__(config_args=kwargs, resolved_config=config)
 
-        for name, ann in hints.items():
-            origin = get_origin(ann)
-            if origin is Out:
-                inner, *_ = get_args(ann) or (Any,)
-                stream = Out(inner, name, self)  # type: ignore[var-annotated]
-                setattr(self, name, stream)
-            elif origin is In:
-                inner, *_ = get_args(ann) or (Any,)
-                stream = In(inner, name, self)  # type: ignore[assignment]
-                setattr(self, name, stream)
-        super().__init__(config_args=kwargs)
+    def _register_stream_decl(self, decl: StreamDecl, *, install_attribute: bool) -> None:
+        if decl.direction == "out":
+            out_stream: Out[Any] = Out(decl.type, decl.name, self)
+            self._outputs[decl.name] = out_stream
+            if install_attribute:
+                setattr(self, decl.name, out_stream)
+            return
+
+        in_stream: In[Any] = In(decl.type, decl.name, self)
+        self._inputs[decl.name] = in_stream
+        if install_attribute:
+            setattr(self, decl.name, in_stream)
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}"
 
     @rpc
     def set_transport(self, stream_name: str, transport: Transport) -> bool:  # type: ignore[type-arg]
-        stream = getattr(self, stream_name, None)
+        stream = self.outputs.get(stream_name) or self.inputs.get(stream_name)
         if not stream:
             raise ValueError(f"{stream_name} not found in {self.__class__.__name__}")
 
@@ -802,7 +878,7 @@ class Module(ModuleBase):
 
     # called from remote
     def connect_stream(self, input_name: str, remote_stream: RemoteOut[T]):  # type: ignore[no-untyped-def]
-        input_stream = getattr(self, input_name, None)
+        input_stream = self.inputs.get(input_name)
         if not input_stream:
             raise ValueError(f"{input_name} not found in {self.__class__.__name__}")
         if not isinstance(input_stream, In):
@@ -811,6 +887,20 @@ class Module(ModuleBase):
 
 
 ModuleSpec = tuple[type[ModuleBase], GlobalConfig, dict[str, Any]]
+
+
+def _uses_default_io_contract(module: type[ModuleBase]) -> bool:
+    for cls in module.__mro__:
+        if "io_contract" not in cls.__dict__:
+            continue
+        io_contract = cls.__dict__["io_contract"]
+        default_io_contract = ModuleBase.__dict__["io_contract"]
+        return (
+            isinstance(io_contract, classmethod)
+            and isinstance(default_io_contract, classmethod)
+            and io_contract.__func__ is default_io_contract.__func__
+        )
+    return False
 
 
 def is_module_type(value: Any) -> bool:

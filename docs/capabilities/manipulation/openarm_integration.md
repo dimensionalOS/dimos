@@ -22,7 +22,16 @@ Every other arm in dimos wraps a vendor Python SDK:
 | Go2 / G1 | WebRTC | Unitree SDK |
 | Panda | FCI | `panda-py` |
 
-**OpenArm ships no Python SDK.** The only interface is raw CAN frames on the wire, speaking the Damiao MIT-mode protocol. So dimos includes a from-scratch driver that encodes/decodes the protocol directly on a SocketCAN bus. The reference implementation is the Enactic C++ library at [enactic/openarm_can](https://github.com/enactic/openarm_can) — we port the frame layout from there.
+**OpenArm historically shipped no stable Python SDK.** The default `openarm` adapter still uses dimos' in-tree raw-CAN driver and remains the existing production path, so users still select `adapter_type="openarm"` for OpenArm hardware. DimOS also provides an opt-in `openarm_rs` adapter for environments that install the Rust-backed `can-motor-control` Python binding through the manipulation extra.
+
+## Adapter paths
+
+| Adapter | Hardware API | Dependency expectation | Typical use |
+|---|---|---|---|
+| `openarm` | In-tree SocketCAN Damiao driver | `python-can` plus Pinocchio for gravity feed-forward | Existing OpenArm coordinator, planner, and teleop blueprints. |
+| `openarm_rs` | Rust-backed `can-motor-control` Python binding | Install `dimos[manipulation]` so `can_motor_control` is importable | OpenArm RS bring-up, binding-backed coordinator operation, and gravity-compensation-only validation. |
+
+Selecting `openarm_rs` is explicit through blueprint or hardware config. Registry discovery remains available without `can_motor_control`; selecting the adapter fails with a clear missing-binding error if the package is absent. Future Damiao-based arms should subclass the shared Damiao adapter base with their own typed motor/gain/limit metadata instead of relying on OpenArm defaults.
 
 ## Architecture
 
@@ -112,10 +121,12 @@ The register is persistent across power cycles, so you only need this once per m
 | `coordinator-openarm-bimanual` | Both arms, real hardware, no planner. |
 | `openarm-planner-coordinator` | **Main usable blueprint** — Drake planner + both arms on real hardware. |
 | `keyboard-teleop-openarm-mock` / `keyboard-teleop-openarm` | Single-arm Cartesian IK + pygame keyboard, mock / real. |
+| `coordinator-openarm-rs` | Opt-in single-arm coordinator path using the new `adapter_type="openarm_rs"` driver, without the planner. |
+| `openarm-rs-planner-coordinator` | **New driver usable blueprint** — `ManipulationModule` + `ControlCoordinator` + `openarm_rs` on one arm. |
 
 **Safety before hot-plugging hardware:** hold the arms before starting. On connect, the adapter enables all motors and sends gravity-comp holds — the arms go slightly stiff but don't leap. Ctrl-C to cleanly disable and exit.
 
-First-time recommendation: mock planner to verify everything wires up, then real single-arm, then bimanual.
+First-time recommendation for the existing `openarm` adapter: mock planner to verify everything wires up, then real single-arm, then bimanual.
 
 ```bash
 # smoke test (no hardware)
@@ -128,11 +139,26 @@ dimos run coordinator-openarm-left
 dimos run openarm-planner-coordinator
 ```
 
+For the `openarm_rs` binding path, stage validation before trajectory control: binding mock or vcan, one motor enable/read, full-arm state monitor, adapter gravity compensation, then trajectory-control validation.
+
+```bash
+# requires the can-motor-control binding from dimos[manipulation]
+sudo MODE=fd ./dimos/robot/manipulators/openarm/scripts/openarm_can_up.sh can0
+
+# low-level coordinator: enables the arm and sends one current-position hold frame
+dimos run coordinator-openarm-rs
+
+# manipulation workflow: startup hold, then plan, preview, and execute through the new driver
+dimos run openarm-rs-planner-coordinator
+```
+
+`OpenArmRSAdapter` opens CAN-FD by default (`canfd=True`) and computes model gravity feed-forward in-place when `gravity_comp=True` (the OpenArm blueprint default). It intentionally supports position and effort semantics only: position commands are sent as MIT commands with preset `kp/kd` gains and optional gravity feed-forward, while effort/gravity-only commands use `kp=0` so the arm does not hold a target pose. Velocity commands are rejected because nonzero gains make MIT commands maintain the supplied `q`. Set `gravity_comp=False` in adapter kwargs to keep position MIT commands but omit model feed-forward torque.
+
 Meshcat will appear at http://localhost:7000.
 
-### 5. Drive the arms from the manipulation client
+### 5. Drive the new driver from the manipulation client
 
-With `openarm-planner-coordinator` running in one terminal, open a second terminal and start the REPL client:
+With `openarm-rs-planner-coordinator` running in one terminal, open a second terminal and start the REPL client:
 
 ```bash
 python -i -m dimos.manipulation.planning.examples.manipulation_client
@@ -142,7 +168,7 @@ This gives you an interactive Python prompt with these functions:
 
 | Function | Purpose |
 |---|---|
-| `robots()` | List configured robots (here: `["left_arm", "right_arm"]`) |
+| `robots()` | List configured robots (for `openarm-rs-planner-coordinator`: `["arm"]`) |
 | `joints(robot_name)` | Read current joint positions (7 floats) |
 | `ee(robot_name)` | Read current end-effector pose |
 | `state()` | Module state: `IDLE`, `PLANNING`, `EXECUTING`, `FAULT`, etc. |
@@ -157,16 +183,16 @@ This gives you an interactive Python prompt with these functions:
 
 ```python skip
 >>> robots()
-['left_arm', 'right_arm']
+['arm']
 
->>> joints(robot_name="left_arm")
+>>> joints()
 [0.02, -0.01, -0.13, 0.15, 0.17, -0.07, 0.10]
 
 >>> # One-liner: plan → preview in Meshcat → execute on hardware
->>> plan([0.3, 0, 0, 0, 0, 0, 0], robot_name="left_arm") and preview(robot_name="left_arm") and execute(robot_name="left_arm")
+>>> plan([0.3, 0, 0, 0, 0, 0, 0]) and preview() and execute()
 True
 
->>> joints(robot_name="left_arm")
+>>> joints()
 [0.30, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00]   # arm is now at the commanded pose
 ```
 
@@ -179,7 +205,9 @@ If you ever get stuck in a `FAULT` state (e.g. an invalid plan was sent), reset 
 'Reset to IDLE — ready for new commands'
 ```
 
-#### Example session — bimanual
+#### Example session — bimanual legacy `openarm` blueprint
+
+Use this pattern with `openarm-planner-coordinator`, which configures `left_arm` and `right_arm`. The new `openarm-rs-planner-coordinator` blueprint is intentionally single-arm while the binding-backed driver path is being validated.
 
 ```python skip
 >>> # Move both arms to mirrored poses
@@ -194,10 +222,10 @@ Each arm plans and executes independently — the coordinator runs both trajecto
 #### Example session — Cartesian target
 
 ```python skip
->>> ee(robot_name="left_arm")           # see where the EE currently is
->>> plan_pose(0.1, 0.3, 0.5, robot_name="left_arm") and preview(robot_name="left_arm")
+>>> ee()           # see where the EE currently is
+>>> plan_pose(0.1, 0.3, 0.5) and preview()
 True
->>> execute(robot_name="left_arm")
+>>> execute()
 True
 ```
 
@@ -221,25 +249,21 @@ If you don't know which Cartesian targets are reachable, check first with the wo
 Linux assigns `can0`/`can1` in USB-enumeration order, which isn't guaranteed stable across reboots or cable swaps. If the arms come up "swapped" (commanding `left_arm` moves the physical right arm), flip these two constants in [config.py](/dimos/robot/manipulators/openarm/config.py):
 
 ```python
-LEFT_CAN = "can0"
-RIGHT_CAN = "can1"
+LEFT_CAN = "can1"
+RIGHT_CAN = "can0"
 ```
 
-No other code changes are needed.
+No other code changes are needed. The `coordinator-openarm-rs` and `openarm-rs-planner-coordinator` blueprints currently target `RIGHT_CAN` (`can0`) and pass `canfd=True`; use `sudo MODE=fd ... openarm_can_up.sh can0` before running either one.
 
 ### Gain tuning (MIT kp/kd)
 
-Defaults live in [adapter.py](/dimos/hardware/manipulators/openarm/adapter.py). Gains are per-joint because the shoulder motors (DM8006, 40 Nm) tolerate higher kp than the wrist motors (DM4310, 10 Nm):
-
-```python
-_DEFAULT_KP = [100.0, 100.0, 80.0, 80.0, 60.0, 60.0, 60.0]
-_DEFAULT_KD = [1.5, 1.5, 1.0, 1.0, 0.8, 0.8, 0.8]
-```
+Defaults live in the adapter implementations — pointing here instead of restating the numbers so docs can't drift from code. The binding-backed `openarm_rs` path uses the upstream OpenArm ROS2 hardware presets from `openarm_hardware/openarm_simple_hardware.hpp`; see `OpenArmRSAdapter._DEFAULT_KP` / `_DEFAULT_KD` in [openarm_rs/adapter.py](/dimos/hardware/manipulators/openarm_rs/adapter.py). The in-tree `openarm` adapter keeps its own `_DEFAULT_KP` / `_DEFAULT_KD` in [openarm/adapter.py](/dimos/hardware/manipulators/openarm/adapter.py).
 
 Guidelines:
 - `kp ∈ [0, 500]` in MIT mode. Higher kp = stiffer position tracking; too high → oscillation.
 - `kd ∈ [0, 5]`. Higher kd = more damping, but values above ~2 on these gearboxes cause high-frequency buzz/grinding.
-- Gravity compensation is on by default (`gravity_comp=True`) — the adapter uses Pinocchio to compute `G(q)` and adds it as feedforward torque. This removes the need for very high kp to fight gravity, so prefer low kp + gravity comp over high kp.
+- Gravity compensation is on by default (`gravity_comp=True`) for OpenArm-style adapters. The adapter uses Pinocchio to compute `G(q)` and adds it as feedforward torque in the same command path. This removes the need for very high kp to fight gravity, so prefer upstream-tuned kp/kd + gravity comp over increasing kp.
+- For `openarm_rs`, use position commands for trajectory/coordinator control and direct effort/gravity-only commands for torque bring-up. Velocity commands are intentionally unsupported.
 
 ### Physical joint limits
 
@@ -345,7 +369,7 @@ Persistent across power cycles.
 ## Design decisions
 
 - **Driver separate from adapter.** `driver.py` has zero dimos deps → unit-testable with a virtual CAN bus, reusable outside dimos.
-- **MIT mode for everything.** MIT can emulate position (high kp), velocity (kp=0, nonzero kd+dq), and torque (kp=kd=0, nonzero tau). One code path.
+- **MIT mode for OpenArm RS position/effort.** The binding-backed `openarm_rs` path intentionally rejects velocity commands; nonzero MIT gains hold `q`, so velocity semantics are not exposed. Position uses preset `kp/kd`; effort/gravity-only commands use `kp=0`.
 - **Gravity compensation on by default.** Eliminates steady-state position error without needing high kp. Needs Pinocchio + the per-side URDFs.
 - **One adapter per CAN bus, keyed by `address`.** Matches the Piper adapter pattern. Bimanual = two adapters with different `address` values.
 - **Per-side URDFs for Drake planning.** Loading the full 14-DOF bimanual URDF twice (once per robot instance) creates phantom-arm collisions with the "other" arm frozen at zero. The per-side URDFs keep only one arm's links + the torso, avoiding the phantom collisions while matching the bimanual kinematics exactly.

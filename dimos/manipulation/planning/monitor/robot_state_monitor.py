@@ -69,7 +69,6 @@ class RobotStateMonitor:
         lock: threading.RLock,
         robot_id: str,
         joint_names: list[str],
-        joint_name_mapping: dict[str, str] | None = None,
         timeout: float = 1.0,
     ) -> None:
         """Create a world state monitor.
@@ -78,10 +77,7 @@ class RobotStateMonitor:
             world: WorldSpec instance to sync state to
             lock: Shared lock for thread-safe access
             robot_id: ID of the robot to monitor
-            joint_names: Ordered list of joint names for this robot (URDF names)
-            joint_name_mapping: Maps coordinator joint names to URDF joint names.
-                Example: {"left/joint1": "joint1"} means messages with "left/joint1"
-                will be mapped to URDF "joint1". If None, names must match exactly.
+            joint_names: Ordered list of local model joint names for this robot
             timeout: Timeout for waiting for initial state (seconds)
         """
         self._world = world
@@ -89,11 +85,6 @@ class RobotStateMonitor:
         self._robot_id = robot_id
         self._joint_names = joint_names
         self._timeout = timeout
-
-        # Joint name mapping: coordinator name -> URDF name
-        self._joint_name_mapping = joint_name_mapping or {}
-        # Build reverse mapping: URDF name -> coordinator name
-        self._reverse_mapping = {v: k for k, v in self._joint_name_mapping.items()}
 
         # Latest state
         self._latest_positions: NDArray[np.float64] | None = None
@@ -190,30 +181,19 @@ class RobotStateMonitor:
     def _extract_positions(self, msg: JointState) -> NDArray[np.float64] | None:
         """Extract positions for our joints from JointState message.
 
-        Handles joint name translation from coordinator namespace to URDF namespace.
-        If joint_name_mapping is set, message names are looked up via the reverse mapping.
-
         Args:
-            msg: JointState message (may use coordinator joint names)
+            msg: Robot-scoped JointState message with local model joint names
 
         Returns:
             Array of joint positions or None if any joint is missing
         """
-        # Build name->index map from message (coordinator names)
         name_to_idx = {name: i for i, name in enumerate(msg.name)}
 
         positions = []
-        for urdf_joint_name in self._joint_names:
-            # Try direct match first (when no mapping or names already match)
-            if urdf_joint_name in name_to_idx:
-                idx = name_to_idx[urdf_joint_name]
-            else:
-                # Try reverse mapping: URDF name -> coordinator name -> msg index
-                orch_name = self._reverse_mapping.get(urdf_joint_name)
-                if orch_name is None or orch_name not in name_to_idx:
-                    return None  # Missing joint
-                idx = name_to_idx[orch_name]
-
+        for local_joint_name in self._joint_names:
+            idx = name_to_idx.get(local_joint_name)
+            if idx is None:
+                return None
             if idx >= len(msg.position):
                 return None  # Position not available
             positions.append(msg.position[idx])
@@ -223,7 +203,7 @@ class RobotStateMonitor:
     def _extract_velocities(self, msg: JointState) -> NDArray[np.float64] | None:
         """Extract velocities for our joints.
 
-        Uses same name translation as _extract_positions.
+        Uses the same local-name lookup as _extract_positions.
         """
         if not msg.velocity or len(msg.velocity) == 0:
             return None
@@ -231,17 +211,10 @@ class RobotStateMonitor:
         name_to_idx = {name: i for i, name in enumerate(msg.name)}
 
         velocities = []
-        for urdf_joint_name in self._joint_names:
-            # Try direct match first
-            if urdf_joint_name in name_to_idx:
-                idx = name_to_idx[urdf_joint_name]
-            else:
-                # Try reverse mapping
-                orch_name = self._reverse_mapping.get(urdf_joint_name)
-                if orch_name is None or orch_name not in name_to_idx:
-                    return None
-                idx = name_to_idx[orch_name]
-
+        for local_joint_name in self._joint_names:
+            idx = name_to_idx.get(local_joint_name)
+            if idx is None:
+                return None
             if idx >= len(msg.velocity):
                 return None
             velocities.append(msg.velocity[idx])

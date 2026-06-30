@@ -1,0 +1,14 @@
+{
+  "backend": "fake",
+  "episode_id": "fake-runtime-smoke",
+  "task_id": "fake-motor-smoke",
+  "runtime_host": "127.0.0.1",
+  "runtime_port": 8765,
+  "robot_id": "fakebot",
+  "dof": 3,
+  "control_step_hz": 100,
+  "ticks": 30,
+  "target_position": 0.2,
+  "seed": 7,
+  "artifact_dir": "artifacts/benchmark/fake-runtime-smoke"
+}

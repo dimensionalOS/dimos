@@ -44,6 +44,12 @@ RIGHT_CAN = "can0"
 # the expected CTRL_MODE=MIT mode at connect time.
 AUTO_SET_MIT_MODE = True
 OPENARM_ADAPTER_KWARGS = {"auto_set_mit_mode": AUTO_SET_MIT_MODE}
+OPENARM_RS_ADAPTER_KWARGS = {"gravity_model_path": OPENARM_RIGHT_MODEL}
+
+OPENARM_DUAL_WHOLE_BODY_JOINTS = [
+    *[f"openarm/openarm_left_joint{i}" for i in range(1, 8)],
+    *[f"openarm/openarm_right_joint{i}" for i in range(1, 8)],
+]
 
 
 def validate_side(side: str) -> None:
@@ -108,6 +114,16 @@ def openarm_single_hardware(
         name="arm",
         adapter_type=adapter_type,
         address=address,
+    )
+
+
+def openarm_rs_hardware() -> HardwareComponent:
+    return openarm_hardware(
+        "right",
+        name="arm",
+        adapter_type="openarm_rs",
+        address=RIGHT_CAN,
+        adapter_kwargs=OPENARM_RS_ADAPTER_KWARGS,
     )
 
 

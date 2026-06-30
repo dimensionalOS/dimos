@@ -27,7 +27,13 @@ if TYPE_CHECKING:
     from dimos.protocol.service.system_configurator.base import SystemConfigurator
 
 from dimos.core.global_config import GlobalConfig
-from dimos.core.module import ModuleBase, is_module_type
+from dimos.core.module import (
+    ModuleBase,
+    ModuleIOContract,
+    is_module_type,
+    resolve_module_type_hints,
+)
+from dimos.core.runtime_environment import RuntimeEnvironment, RuntimeEnvironmentRegistry
 from dimos.core.stream import In, Out
 from dimos.core.transport import PubSubTransport
 from dimos.spec.utils import Spec, is_spec
@@ -88,37 +94,21 @@ class BlueprintAtom:
 
     @classmethod
     def create(cls, module: type[ModuleBase], kwargs: dict[str, Any]) -> Self:
-        streams: list[StreamRef] = []
         module_refs: list[ModuleRef] = []
 
-        # Resolve annotations using namespaces from the full MRO chain so that
-        # In/Out behind TYPE_CHECKING + `from __future__ import annotations` work.
-        # Iterate reversed MRO so the most specific class's namespace wins when
-        # parent modules shadow names (e.g. spec.perception.Image vs sensor_msgs.Image).
-        globalns: dict[str, Any] = {}
-        for c in reversed(module.__mro__):
-            if c.__module__ in sys.modules:
-                globalns.update(sys.modules[c.__module__].__dict__)
-        try:
-            all_annotations = get_type_hints(module, globalns=globalns)
-        except Exception:
-            # Fallback to raw annotations if get_type_hints fails.
-            all_annotations = {}
-            for base_class in reversed(module.__mro__):
-                if hasattr(base_class, "__annotations__"):
-                    all_annotations.update(base_class.__annotations__)
+        annotation_contract = ModuleIOContract.from_annotations(module)
+        streams = [
+            StreamRef(name=stream.name, type=stream.type, direction=stream.direction)
+            for stream in annotation_contract.streams
+        ]
+        all_annotations = resolve_module_type_hints(module)
 
         for name, annotation in all_annotations.items():
             origin = get_origin(annotation)
-            # Streams
-            if origin in (In, Out):
-                direction = "in" if origin == In else "out"
-                type_ = get_args(annotation)[0]
-                streams.append(
-                    StreamRef(name=name, type=type_, direction=direction)  # type: ignore[arg-type]
-                )
             # linking to unknown module via Spec
-            elif is_spec(annotation):
+            if origin in (In, Out):
+                continue
+            if is_spec(annotation):
                 module_refs.append(ModuleRef(name=name, spec=annotation))
             # linking to specific/known module directly
             elif is_module_type(annotation):
@@ -142,7 +132,12 @@ class BlueprintAtom:
 
 
 # These fields cannot be pickled.
-_PROXY_FIELDS = ("transport_map", "global_config_overrides", "remapping_map")
+_PROXY_FIELDS = (
+    "transport_map",
+    "global_config_overrides",
+    "remapping_map",
+    "runtime_placement_map",
+)
 
 
 @dataclass(frozen=True)
@@ -155,6 +150,12 @@ class Blueprint:
     global_config_overrides: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     remapping_map: Mapping[tuple[type[ModuleBase], str], str | type[ModuleBase] | type[Spec]] = (
         field(default_factory=lambda: MappingProxyType({}))
+    )
+    runtime_environment_registry: RuntimeEnvironmentRegistry = field(
+        default_factory=RuntimeEnvironmentRegistry.with_current_process
+    )
+    runtime_placement_map: Mapping[type[ModuleBase], str] = field(
+        default_factory=lambda: MappingProxyType({})
     )
     requirement_checks: tuple[Callable[[], str | None], ...] = field(default_factory=tuple)
     configurator_checks: "tuple[SystemConfigurator, ...]" = field(default_factory=tuple)
@@ -205,6 +206,16 @@ class Blueprint:
             remappings_dict[(module, old)] = new
         return replace(self, remapping_map=MappingProxyType(remappings_dict))
 
+    def runtime_environments(self, *environments: RuntimeEnvironment) -> "Blueprint":
+        registry = self.runtime_environment_registry
+        for environment in environments:
+            registry = registry.register(environment)
+        return replace(self, runtime_environment_registry=registry)
+
+    def runtime_placements(self, placements: Mapping[type[ModuleBase], str]) -> "Blueprint":
+        placement_dict = {**self.runtime_placement_map, **placements}
+        return replace(self, runtime_placement_map=MappingProxyType(placement_dict))
+
     def requirements(self, *checks: Callable[[], str | None]) -> "Blueprint":
         return replace(self, requirement_checks=self.requirement_checks + tuple(checks))
 
@@ -230,6 +241,12 @@ def autoconnect(*blueprints: Blueprint) -> Blueprint:
     all_remappings = dict(  # type: ignore[var-annotated]
         reduce(operator.iadd, [list(x.remapping_map.items()) for x in blueprints], [])
     )
+    runtime_registry = RuntimeEnvironmentRegistry.with_current_process()
+    for blueprint in blueprints:
+        runtime_registry = runtime_registry.merge(blueprint.runtime_environment_registry)
+    all_runtime_placements = dict(
+        reduce(operator.iadd, [list(x.runtime_placement_map.items()) for x in blueprints], [])
+    )
     all_requirement_checks = tuple(check for bs in blueprints for check in bs.requirement_checks)
     all_configurator_checks = tuple(check for bs in blueprints for check in bs.configurator_checks)
 
@@ -241,6 +258,8 @@ def autoconnect(*blueprints: Blueprint) -> Blueprint:
         transport_map=MappingProxyType(all_transports),
         global_config_overrides=MappingProxyType(all_config_overrides),
         remapping_map=MappingProxyType(all_remappings),
+        runtime_environment_registry=runtime_registry,
+        runtime_placement_map=MappingProxyType(all_runtime_placements),
         requirement_checks=all_requirement_checks,
         configurator_checks=all_configurator_checks,
     )

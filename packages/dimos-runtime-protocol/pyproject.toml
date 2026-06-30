@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dimos-runtime-protocol"
+version = "0.1.0"
+description = "Lightweight DimOS benchmark runtime protocol models and codecs"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.0",
+    "typing-extensions>=4.12",
+]
+
+[project.optional-dependencies]
+msgpack = ["msgpack>=1.1"]
+test = ["pytest>=8"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dimos_runtime_protocol"]

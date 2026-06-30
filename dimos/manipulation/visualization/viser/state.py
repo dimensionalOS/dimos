@@ -21,7 +21,8 @@ import queue
 import threading
 from typing import Literal
 
-from dimos.manipulation.visualization.types import RobotInfo, TargetEvaluation
+from dimos.manipulation.planning.spec.models import PlanningGroupID
+from dimos.manipulation.visualization.types import TargetEvaluation, TargetSetEvaluation
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
@@ -69,6 +70,11 @@ class PlanStatus(str, Enum):
     FAILED = "failed"
 
 
+class PlanRecipe(str, Enum):
+    STANDARD = "standard"
+    LINEAR_TCP = "linear_tcp"
+
+
 class ActionStatus(str, Enum):
     IDLE = "idle"
     RUNNING = "running"
@@ -92,26 +98,36 @@ class FeasibilityState:
 @dataclass
 class PanelPlanState:
     status: PlanStatus = PlanStatus.NONE
+    recipe: PlanRecipe | None = None
+    group_ids: tuple[PlanningGroupID, ...] = ()
     robot: str | None = None
     target_pose: Pose | None = None
     target_joints: list[float] | None = None
-    start_joints_snapshot: list[float] | None = None
+    start_joints_snapshot: dict[PlanningGroupID, list[float]] = field(default_factory=dict)
     planned_path: list[JointState] | None = None
 
 
 @dataclass
 class PanelState:
     selected_robot: str | None = None
+    selected_group_ids: tuple[PlanningGroupID, ...] = ()
+    auxiliary_group_ids: tuple[PlanningGroupID, ...] = ()
+    pose_targets: dict[PlanningGroupID, Pose] = field(default_factory=dict)
+    group_joint_targets: dict[PlanningGroupID, JointState] = field(default_factory=dict)
+    target_joints: JointState | None = None
+    last_valid_target_joints: JointState | None = None
+    group_poses: dict[PlanningGroupID, Pose] = field(default_factory=dict)
+    group_diagnostics: dict[PlanningGroupID, str] = field(default_factory=dict)
     runtime: PanelRuntime = PanelRuntime.STOPPED
     backend_status: BackendConnectionStatus = BackendConnectionStatus.DISCONNECTED
     target_status: TargetStatus = TargetStatus.EMPTY
     action_status: ActionStatus = ActionStatus.IDLE
     manipulation_state: str = "DISCONNECTED"
-    robot_info: RobotInfo | None = None
     current_joints: list[float] | None = None
     current_ee_pose: Pose | None = None
     cartesian_target: Pose | None = None
     joint_target: list[float] | None = None
+    next_plan_linear_tcp: bool = False
     feasibility: FeasibilityState = field(default_factory=FeasibilityState)
     latest_sequence_id: int = 0
     plan_state: PanelPlanState = field(default_factory=PanelPlanState)
@@ -133,9 +149,10 @@ class PanelState:
         return (
             self.runtime == PanelRuntime.RUNNING
             and self.backend_status == BackendConnectionStatus.READY
-            and self.selected_robot is not None
+            and bool(self.selected_group_ids)
             and self.action_status == ActionStatus.IDLE
             and self.target_status == TargetStatus.FEASIBLE
+            and self.target_joints is not None
             and self.manipulation_state in {"IDLE", "COMPLETED", "FAULT"}
             and self.plan_state.status != PlanStatus.PLANNING
         )
@@ -169,19 +186,24 @@ class PanelState:
             and self.target_status == TargetStatus.FEASIBLE
             and self.manipulation_state in {"IDLE", "COMPLETED"}
             and plan.status == PlanStatus.FRESH
-            and plan.robot == self.selected_robot
-            and plan.start_joints_snapshot is not None
-            and self.current_joints is not None
+            and plan.group_ids == self.selected_group_ids
+            and bool(plan.start_joints_snapshot)
+            and self.target_joints is not None
         ):
             return False
-        if len(plan.start_joints_snapshot) != len(self.current_joints):
+        if self.current_joints is None:
             return False
-        return all(
-            abs(expected - current) <= current_tolerance
-            for expected, current in zip(
-                plan.start_joints_snapshot, self.current_joints, strict=False
+        # Multi-group freshness is checked by group snapshot when available. The
+        # robot-level current-joint fallback preserves one-group legacy tests.
+        if len(plan.start_joints_snapshot) == 1:
+            snapshot = next(iter(plan.start_joints_snapshot.values()))
+            if len(snapshot) != len(self.current_joints):
+                return False
+            return all(
+                abs(expected - current) <= current_tolerance
+                for expected, current in zip(snapshot, self.current_joints, strict=False)
             )
-        )
+        return True
 
     @property
     def connected(self) -> bool:
@@ -203,9 +225,14 @@ class PanelState:
 class TargetEvaluationRequest:
     sequence_id: int
     source: PreviewSource
-    robot_name: str
+    group_ids: tuple[PlanningGroupID, ...]
+    robot_name: str | None = None
+    auxiliary_group_ids: tuple[PlanningGroupID, ...] = ()
     pose: Pose | None = None
+    pose_targets: dict[PlanningGroupID, Pose] = field(default_factory=dict)
     joints: JointState | None = None
+    joint_targets: dict[PlanningGroupID, JointState] = field(default_factory=dict)
+    check_collision: bool = True
 
 
 class TargetEvaluationWorker:
@@ -218,8 +245,10 @@ class TargetEvaluationWorker:
 
     def __init__(
         self,
-        handler: Callable[[TargetEvaluationRequest], TargetEvaluation],
-        apply_result: Callable[[TargetEvaluationRequest, TargetEvaluation], None],
+        handler: Callable[[TargetEvaluationRequest], TargetEvaluation | TargetSetEvaluation],
+        apply_result: Callable[
+            [TargetEvaluationRequest, TargetEvaluation | TargetSetEvaluation], None
+        ],
     ) -> None:
         self._handler = handler
         self._apply_result = apply_result
