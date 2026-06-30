@@ -9,7 +9,7 @@ Classes:
   DepthStreamer            main thread (live cloud) + async map thread
 
 To support a new camera, implement DepthSource and write a thin entry-point
-module (see zed_depth_costmap.py and realsense_depth_costmap.py for examples).
+module (see zed_depth_map.py and realsense_depth_map.py for examples).
 """
 
 from __future__ import annotations

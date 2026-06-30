@@ -1,11 +1,11 @@
 """RealSense depth source + entry point for the depth pipeline.
 
 Usage:
-  python -m dimos.navigation.camera_nav.realsense_depth_costmap
+  python -m dimos.navigation.camera_nav.realsense_depth_map
 
 Camera-specific parts (pyrealsense2 pipeline, depth scale, align) are here.
 The pipeline (gradient filter → backproject → voxel map → Rerun) lives in
-depth_costmap.py and is camera-agnostic.
+depth_map.py and is camera-agnostic.
 
 No VIO: RealSense has no built-in positional tracking. pose_locked is always
 True and the map accumulates in the camera's starting frame. Add an external
@@ -22,7 +22,7 @@ import numpy as np
 if TYPE_CHECKING:
     import pyrealsense2 as rs
 
-from dimos.navigation.camera_nav.depth_costmap import (
+from dimos.navigation.camera_nav.depth_map import (
     DepthBackprojector,
     DepthFramePacket,
     DepthStreamer,
@@ -119,7 +119,7 @@ class RealSenseDepthSource:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
-    init_rerun("realsense_depth_costmap")
+    init_rerun("realsense_depth_map")
 
     src = RealSenseDepthSource(width=848, height=480, fps=15)
     print("RealSense open — Ctrl-C to quit.")

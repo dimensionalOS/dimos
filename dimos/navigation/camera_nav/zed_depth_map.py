@@ -1,11 +1,11 @@
 """ZED Mini depth source + entry point for the depth pipeline.
 
 Usage:
-  python -m dimos.navigation.camera_nav.zed_depth_costmap
+  python -m dimos.navigation.camera_nav.zed_depth_map
 
 Camera-specific parts (ZED SDK, VIO tracking, native XYZ retrieval) are here.
 The pipeline (gradient filter → backproject → voxel map → Rerun) lives in
-depth_costmap.py and is camera-agnostic.
+depth_map.py and is camera-agnostic.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import time
 import numpy as np
 import pyzed.sl as sl
 
-from dimos.navigation.camera_nav.depth_costmap import (
+from dimos.navigation.camera_nav.depth_map import (
     DepthBackprojector,
     DepthFramePacket,
     DepthStreamer,
@@ -173,7 +173,7 @@ class ZEDDepthSource:
 
 def main() -> None:
     # Spawn Rerun BEFORE zed.open() — ZED capture threads make post-open fork unsafe.
-    init_rerun("zed_depth_costmap")
+    init_rerun("zed_depth_map")
 
     zed = sl.Camera()
     ip  = sl.InitParameters()

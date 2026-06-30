@@ -33,7 +33,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.mapping.pointclouds.accumulators.general import GeneralPointCloudAccumulator
 from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
-from dimos.perception.depth.monocular_depth_module import MonocularDepthModule, _make_colored_cloud
+from dimos.perception.depth.monocular_depth_module import MonocularDepthModule
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -104,13 +104,12 @@ def main() -> None:
             image = Image(data=bgr, format=ImageFormat.BGR, frame_id="camera_optical", ts=ts)
 
             try:
-                depth_np, pts_cam, cols = depth_module._run_inference(image)
+                pts_cam, cols = depth_module._run_inference(image)
             except Exception:
                 logger.exception("Inference error")
                 time.sleep(0.1)
                 continue
 
-            _log_depth(depth_np)
             _log_cloud("/frame_cloud", pts_cam, cols)
 
             if len(pts_cam) > 0:
