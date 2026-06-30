@@ -27,6 +27,7 @@ from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.nav_msgs.DeformationNode import DeformationNode
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.jnav.msgs.Graph3D import Graph3D
@@ -44,7 +45,7 @@ class PGOConfig(NativeModuleConfig):
     cwd: str | None = str(Path(__file__).resolve().parent)
     executable: str = "result/bin/pgo"
     build_command: str | None = (
-        'nix build "github:jeff-hykin/gsc_pgo/e5f9165164e124df16535fa6b8616adfae1d10df#default"'
+        'nix build "github:jeff-hykin/gsc_pgo/e8d910f305719b81efabc6b8e1035ee7020369e9#default"'
         " --no-write-lock-file"
     )
 
@@ -179,6 +180,10 @@ class PGO(NativeModule):
     correction: Out[Transform]
     pose_graph: Out[Graph3D]
     loop_closure_event: Out[GraphDelta3D]
+    # Per-keyframe pose-graph nodes, published individually (un-batched) so a
+    # recorder can stream them. tf_id on each identifies the corrected edge
+    # (frame_id -> child_frame_id). Autoconnects to the Recorder's like-named port.
+    tf_deformation_nodes: Out[DeformationNode]
     # Internal/debug only (off by default) — see global_map_publish_rate. Named
     # with a leading underscore so autoconnect won't wire it to `global_map` Ins.
     _global_map: Out[PointCloud2]
