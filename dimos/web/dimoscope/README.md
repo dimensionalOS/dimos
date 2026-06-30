@@ -157,14 +157,21 @@ parts-bin this was extracted from.
 - ✅ **RPC bridge** — `client.call("GO2Connection","standup")` → whitelisted dimos `@rpc` (Commands panel).
 - ⚠️ **Rerun 3D panel** (`panels/RerunPanel.tsx`): the stock `@rerun-io/web-viewer-react@0.32.0-alpha.1`
   **embeds, loads (after a Vite `optimizeDeps.exclude` for the wasm MIME), connects to dimos
-  `serve_grpc` :9877, and streams** (console-confirmed) — but the viewport isn't painting geometry yet
-  (needs a blueprint/view config or a WebGL-in-embed nudge). Start the feed with:
+  `serve_grpc` :9877, and streams** (console-confirmed) — but **paints a black canvas**: the `RerunBridge` firehoses every
+  stream undecimated, so the browser WASM viewer blows its **128 MiB channel budget in ~1 s** and its
+  **~2.3 GiB heap ceiling in ~1 min**, then thrashes GC and never paints (root cause —
+  see [findings §8](./docs/findings.md#8-rerun-in-the-browser-the-firehose-ceiling)). **The native
+  `dimos-viewer` (:9876) handles the same feed fine — it's the 3D path; a browser-viable 3D would
+  need server-side decimation.** Start the feed with:
   `DIMOS_TRANSPORT=lcm python -c "from dimos.visualization.rerun.bridge import run_bridge; run_bridge(rerun_open='web', rerun_web=True)"`.
 - ✅ **Forked `dimos-viewer` WASM: BUILT.** `cargo run -p re_dev_tools -- build-web-viewer --debug`
   with Homebrew LLVM (`CC_wasm32_unknown_unknown=$(brew --prefix llvm)/bin/clang` — Apple clang lacks
   the wasm32 target) produces `web_viewer/re_viewer_bg.wasm` (128 MB *debug*; `--release` shrinks ~3×).
   ⏭ Next: serve that `web_viewer/` dir + iframe it (gRPC proxy URL) for in-3D teleop/click-to-nav via
-  `RerunWebSocketServer` :3030 — the fork's edge over the stock viewer.
+  `RerunWebSocketServer` :3030 — the fork's edge over the stock viewer. **But the fork's WASM build
+  inherits the same browser heap ceiling** (the firehose above), so it won't survive the feed either;
+  the **native** `dimos-viewer` is what holds it, and a browser-viable 3D still needs server-side
+  decimation.
 - ✅ **True end-to-end on-demand** — the **zenoh-ts (direct)** transport: the browser
   `declareSubscriber`s Zenoh keys itself via the remote-api bridge, so only subscribed keys transit
   (verified in-app; teleop/goal kept on the gateway for the safety boundary).

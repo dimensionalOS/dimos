@@ -50,6 +50,12 @@ Users who invent their own message types can't see them in the browser today: th
 - Zenoh QoS is **publisher-side only** (`SubscriberOptions` carries none) → the browser is a subscriber, so reliability/durability have no subscriber-side home; the QoS fruit is **gateway-side**, not zenoh-ts. #2502's `setQos` is ~10% built.
 - The compelling demo (build later): an in-app network selector (LAN/4G/3G/2G → gateway injects latency/bw-cap/loss) + per-topic rate sliders beside live stats → "pick 3G, rate-limit lidar, keep camera/teleop responsive." (Chrome DevTools throttling does **not** affect WebSocket/WebRTC — use gateway netsim or toxiproxy.)
 
+## 8. Rerun in the browser: the firehose ceiling
+- The dimoscope **Rerun 3D panel** embeds the **stock** `@rerun-io/web-viewer-react@0.32.0-alpha.1` against the bridge's gRPC proxy (`:9877`). It connects and streams (`Streaming messages from gRPC endpoint :9877` ✓) but renders a **black canvas with no UI chrome** — never paints geometry.
+- **Root cause is data volume, not view config.** Live console: **+1 s** `Channel byte budget (128 MiB) exceeded. Cannot block on web; sending anyway.` → **~1 min** `Reached memory limit of 2.3 GiB. Freeing up data…` with GC reclaiming **<1% per pass**. The `RerunBridge` `subscribe_all`s and `rr.log`s every stream **undecimated** — lidar + global_map + costmap `PointCloud2` + camera — so the browser WASM viewer blows its 128 MiB channel budget in ~1 s and its ~2.3 GiB heap ceiling in ~1 min, then thrashes GC and never reaches a paint. (The earlier `RuntimeError: unreachable` was the *same* cause: an arrow allocation failing under that pressure.)
+- **The native `dimos-viewer` (`:9876`) eats the identical feed fine** — real process, no browser heap cap, faster arrow handling. This is *why* dimos defaults to and ships the native fork (see "forks" below); it isn't a nicety.
+- **Implication:** in a browser tab the stock viewer can't survive this rate as-is, and **giving it the full page doesn't help** — the blank screen was never a sizing issue. **3D belongs in the native viewer**; a browser-viable 3D path would need **server-side decimation** of what the bridge logs to gRPC (rate/voxel caps, or a "lite" log set) — unbuilt.
+
 ---
 
 ## You're not running upstream (forks)
