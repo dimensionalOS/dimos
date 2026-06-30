@@ -607,24 +607,28 @@ class DepthStreamer:
         b_pts = self._vox_tb.stable_xyz(min_obs=4)
         c_pts = self._vox_tc.stable_xyz(min_obs=12)
 
-        parts, cols = [], []
-        if len(a_pts) > 0:
-            parts.append(a_pts)
-            cols.append(np.full((len(a_pts), 3), [255, 140,   0], dtype=np.uint8))  # orange
-        if len(b_pts) > 0:
-            parts.append(b_pts)
-            cols.append(np.full((len(b_pts), 3), [100, 220,  50], dtype=np.uint8))  # lime
-        if len(c_pts) > 0:
-            parts.append(c_pts)
-            cols.append(np.full((len(c_pts), 3), [  0, 200, 220], dtype=np.uint8))  # cyan
-        if not parts:
+        if not (len(a_pts) or len(b_pts) or len(c_pts)):
             return
 
-        pts = np.concatenate(parts)
-        col = np.concatenate(cols)
-        n   = min(len(pts), self.MAX_MAP)
-        idx = np.random.choice(len(pts), n, replace=False) if len(pts) > n else np.arange(n)
-        rr.log("world/tier_map", rr.Points3D(positions=pts[idx], colors=col[idx], radii=0.005))
+        # Each tier gets a radius proportional to its voxel size so dots fill the grid.
+        if len(a_pts) > 0:
+            rr.log("world/tier_map/a", rr.Points3D(
+                positions=a_pts,
+                colors=np.full((len(a_pts), 3), [255, 140,  0], dtype=np.uint8),  # orange
+                radii=0.005,   # 8 cm voxels — tight dots, dense enough to look solid
+            ))
+        if len(b_pts) > 0:
+            rr.log("world/tier_map/b", rr.Points3D(
+                positions=b_pts,
+                colors=np.full((len(b_pts), 3), [100, 220, 50], dtype=np.uint8),  # lime
+                radii=0.010,   # 12 cm voxels
+            ))
+        if len(c_pts) > 0:
+            rr.log("world/tier_map/c", rr.Points3D(
+                positions=c_pts,
+                colors=np.full((len(c_pts), 3), [  0, 200, 220], dtype=np.uint8),  # cyan
+                radii=0.08,    # 25 cm voxels — needs large dots to be visible
+            ))
 
     def log_stdout(self, pkt: DepthFramePacket, frame: int, fps: float) -> None:
         lock   = "LOCKED" if self._pose.locked else "searching"
@@ -653,7 +657,7 @@ def main() -> None:
             rrb.Spatial3DView(name="map", origin="world",
                               contents=["world/map"]),
             rrb.Spatial3DView(name="tier map", origin="world",
-                              contents=["world/tier_map"]),
+                              contents=["world/tier_map/**"]),
         )
     ))
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
