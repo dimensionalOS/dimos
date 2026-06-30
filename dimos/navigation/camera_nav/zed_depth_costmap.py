@@ -2,27 +2,23 @@
 
 Pipeline stages:
 
-  DepthFilter           sl.MEASURE.DEPTH + CONFIDENCE → depth H×W (NaN where bad)
-  IntrinsicsReader      reads + caches ZED left-camera K matrix
-  PoseReader            ZED VIO pose, camera→world (R, t)
-  DepthFramePacket      one complete frame: depth + intrinsics + pose + confidence
-  ConfidenceWeighter    confidence score → evidence weight (0.0–1.0) per pixel
-  ConsistencyEstimator  image-space neighbourhood depth agreement → boost multiplier per pixel
-  DepthBackprojector    depth image → world-frame XYZ + per-point evidence (N×3, N)
-  VoxelAccumulator      unified persistent world-frame map: score-based evidence accumulation
-  DepthStreamer         assembles packets, drives accumulation, logs to Rerun
+  DepthFilter        sl.MEASURE.DEPTH + CONFIDENCE → depth H×W (NaN where bad)
+  IntrinsicsReader   reads + caches ZED left-camera K matrix
+  PoseReader         ZED VIO pose, camera→world (R, t)
+  DepthFramePacket   one complete frame: depth + intrinsics + pose + confidence
+  DepthBackprojector depth image → world-frame XYZ + per-point confidence (N×3, N)
+  VoxelAccumulator   persistent world-frame map: deduplicates + refines across frames
+  DepthStreamer      assembles packets, drives accumulation, logs to Rerun
 
-Evidence pipeline (replaces binary fg/bg classification):
+Filtering before any point enters the map:
   1. NaN / out-of-range depth removed by DepthFilter
-  2. conf → weight via ConfidenceWeighter  (below conf_min → weight = 0, excluded)
-  3. weight × consistency_boost → final per-pixel evidence
-  4. Voxels accumulate evidence_score across frames
-  5. stable map = voxels with score >= min_score
+  2. Low-confidence stereo (conf < CONF_SURE=60) kept only in live cloud, not the map
+  3. Isolated single-pixel artifacts removed per-frame before accumulation
 
 Rerun entities:
   world/camera        Pinhole model (static)
   world/camera/depth  filtered depth image (float32, auto-colorised)
-  world/cloud         current-frame scan coloured by evidence weight (blue=low, red=high)
+  world/cloud         current-frame scan: red = sure (≥60)  yellow = unsure (25–60)
   world/map           persistent accumulated map, height-colored:
                         blue  = ankle / low clutter  (0.05–0.5 m)
                         green = knee / waist          (0.5–1.0 m)
@@ -41,7 +37,6 @@ import numpy as np
 import pyzed.sl as sl
 import rerun as rr
 import rerun.blueprint as rrb
-from scipy.ndimage import median_filter, uniform_filter
 
 
 # ── Voxel key packing ────────────────────────────────────────────────────────
@@ -90,6 +85,19 @@ def _pack(vkeys: np.ndarray) -> np.ndarray:
     return (v[:, 0] << 36) | (v[:, 1] << 18) | v[:, 2]
 
 
+def _filter_isolated(xyz: np.ndarray, voxel: float = 0.05, min_pts: int = 2) -> np.ndarray:
+    """Remove points that are the only hit in their voxel — stereo flying-pixel filter.
+
+    A real surface produces many pixels per voxel; a stereo edge artifact produces one.
+    voxel=5 cm gives enough area to catch the artifact without merging adjacent surfaces.
+    """
+    if len(xyz) < min_pts:
+        return np.zeros((0, 3), dtype=np.float32)
+    vk  = np.floor(xyz / voxel).astype(np.int32)
+    _, inv, cnt = np.unique(_pack(vk), return_inverse=True, return_counts=True)
+    return xyz[cnt[inv] >= min_pts]
+
+
 # ── Optical-frame → camera_link rotation ─────────────────────────────────────
 # ZED get_position() returns camera_link pose in world (X=fwd, Y=left, Z=up).
 # Pinhole backproject gives camera-OPTICAL frame (X=right, Y=down, Z=depth).
@@ -97,245 +105,6 @@ def _pack(vkeys: np.ndarray) -> np.ndarray:
 _R_OPT_TO_LINK = np.array(
     [[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=np.float32
 )
-
-
-# ── Evidence weighting ────────────────────────────────────────────────────────
-
-@dataclass
-class ConfidenceConfig:
-    conf_min: float = 25.0   # below this → zero weight, point excluded
-    conf_full: float = 85.0  # above this → full weight (1.0)
-    curve: float = 0.7       # exponent applied after linear rescale;
-                             # < 1 lifts medium-confidence weights closer to 1.0
-
-
-class ConfidenceWeighter:
-    """Converts ZED stereo confidence (0–100) to an evidence weight (0.0–1.0).
-
-    Weight = ((conf - conf_min) / (conf_full - conf_min)) ** curve, clamped to [0, 1].
-    Pixels below conf_min are assigned weight 0 and excluded from backprojection.
-    """
-
-    def __init__(self, cfg: ConfidenceConfig | None = None) -> None:
-        self.cfg = cfg or ConfidenceConfig()
-
-    def compute(self, conf: np.ndarray) -> np.ndarray:
-        """Return per-pixel weight H×W (float32, 0.0 where conf < conf_min)."""
-        c = self.cfg
-        ratio = (conf - c.conf_min) / (c.conf_full - c.conf_min)
-        weight = np.clip(ratio, 0.0, 1.0) ** c.curve
-        weight[conf < c.conf_min] = 0.0
-        return weight.astype(np.float32)
-
-
-# ── Spatial consistency ───────────────────────────────────────────────────────
-
-@dataclass
-class ConsistencyConfig:
-    window_radius: int = 3         # pixels each side; 3 → 7×7 neighbourhood
-    depth_tolerance: float = 0.15  # metres; neighbours within this → consistent
-    min_valid_fraction: float = 0.25  # fraction of window that must be valid
-    boost_max: float = 1.5         # multiplier at full consistency (isolated = 1.0)
-
-
-class ConsistencyEstimator:
-    """Image-space neighbourhood depth agreement → per-pixel boost multiplier.
-
-    For each pixel, compares its depth to the local median across a square window.
-    Pixels that agree with their neighbourhood (|depth - local_median| < depth_tolerance)
-    AND whose neighbourhood has enough valid readings receive a boost > 1.0.
-    Isolated mismatches stay at 1.0 (no boost, no penalty — evidence weight handles them).
-    """
-
-    def __init__(self, cfg: ConsistencyConfig | None = None) -> None:
-        self.cfg = cfg or ConsistencyConfig()
-
-    def compute(self, depth: np.ndarray, weight: np.ndarray) -> np.ndarray:
-        """Return per-pixel boost multiplier H×W (float32, ≥ 1.0).
-
-        Only pixels with weight > 0 can receive a boost; the rest return 1.0.
-        """
-        cfg = self.cfg
-        w = 2 * cfg.window_radius + 1
-        valid = np.isfinite(depth) & (weight > 0)
-
-        depth_filled = np.where(valid, depth, 0.0).astype(np.float32)
-
-        # Fraction of window that is valid
-        valid_fraction = uniform_filter(valid.astype(np.float32), size=w)
-
-        # Local median depth (approximate via median_filter on filled image)
-        local_median = median_filter(depth_filled, size=w).astype(np.float32)
-
-        # Depth agreement: pixel is consistent if it matches local median
-        depth_diff = np.abs(depth_filled - local_median)
-        is_consistent = (
-            valid
-            & (depth_diff < cfg.depth_tolerance)
-            & (valid_fraction >= cfg.min_valid_fraction)
-        )
-
-        boost = np.where(is_consistent, cfg.boost_max, 1.0).astype(np.float32)
-        boost[~valid] = 1.0
-        return boost
-
-
-# ── Unified voxel accumulator ─────────────────────────────────────────────────
-
-@dataclass
-class AccumulatorConfig:
-    voxel_size: float = 0.08    # metres; coarser = faster, less precise
-    capacity: int = 500_000     # pre-allocated voxel slots
-    min_score: float = 1.2      # export threshold: voxels below this are hidden
-    carve_penalty: float = 0.3  # score decrement per frame a ray passes through
-
-
-class VoxelAccumulator:
-    """Unified persistent world-frame voxel map with score-based evidence accumulation.
-
-    Each voxel maintains:
-        occupied_score    – cumulative evidence (weighted sum across frames)
-        observation_count – number of frames that contributed any evidence
-        last_seen         – monotonic timestamp of most recent observation
-        mean_position     – running mean of observed 3D positions (sub-voxel precision)
-
-    Replaces the previous _vox / _vox_bg split.  All observations go through
-    the same path; walls earn their score via consistent medium-confidence returns
-    rather than being assigned a separate accumulator with relaxed thresholds.
-    """
-
-    def __init__(self, cfg: AccumulatorConfig | None = None) -> None:
-        self.cfg = cfg or AccumulatorConfig()
-        cap = self.cfg.capacity
-        self._idx: dict[int, int] = {}
-        self._score = np.zeros(cap, dtype=np.float32)       # occupied_score
-        self._obs   = np.zeros(cap, dtype=np.uint16)        # observation_count
-        self._seen  = np.zeros(cap, dtype=np.float64)       # last_seen (monotonic)
-        self._xyz   = np.empty((cap, 3), dtype=np.float32)  # mean_position
-        self._n     = 0
-
-    def add(self, xyz: np.ndarray, evidence: np.ndarray, ts: float) -> None:
-        """Merge world-frame points with per-point evidence into the map.
-
-        One entry per unique voxel per call — the point with the highest evidence
-        in each voxel represents that frame's contribution for that voxel.
-        """
-        if len(xyz) == 0:
-            return
-
-        vk   = np.floor(xyz / self.cfg.voxel_size).astype(np.int32)
-        keys = _pack(vk)
-
-        # One representative point per voxel: highest evidence wins
-        unique_keys, first_idx = np.unique(keys, return_index=True)
-        xyz      = xyz[first_idx]
-        evidence = evidence[first_idx]
-        key_list = unique_keys.tolist()
-
-        exists = np.array([k in self._idx for k in key_list], dtype=bool)
-
-        if exists.any():
-            rows = np.array(
-                [self._idx[int(k)] for k in unique_keys[exists].tolist()],
-                dtype=np.int32,
-            )
-            n = self._obs[rows].astype(np.float32)
-            # Running mean position
-            self._xyz[rows]   = (self._xyz[rows] * n[:, None] + xyz[exists]) / (n[:, None] + 1)
-            self._score[rows] += evidence[exists]
-            self._obs[rows]    = np.minimum(self._obs[rows] + 1, 65_535).astype(np.uint16)
-            self._seen[rows]   = ts
-
-        new_xyz  = xyz[~exists]
-        new_keys = unique_keys[~exists]
-        new_ev   = evidence[~exists]
-        n_new    = len(new_xyz)
-        if n_new == 0:
-            return
-        if self._n + n_new > self.cfg.capacity:
-            self._grow()
-        sl = slice(self._n, self._n + n_new)
-        self._xyz[sl]   = new_xyz
-        self._score[sl] = new_ev
-        self._obs[sl]   = 1
-        self._seen[sl]  = ts
-        for i, k in enumerate(new_keys.tolist()):
-            self._idx[int(k)] = self._n + i
-        self._n += n_new
-
-    def carve(self, xyz: np.ndarray, cam_pos: np.ndarray) -> None:
-        """Decrement score for voxels along free-space rays toward each surface point.
-
-        The segment (cam_pos → surface - ε) is known free space. Any voxel there
-        is a stereo ghost; penalising it drives its score below min_score.
-        Surface voxels observed this same frame are excluded from carving.
-        """
-        if self._n == 0 or len(xyz) == 0:
-            return
-        v = self.cfg.voxel_size
-
-        vk = np.floor(xyz / v).astype(np.int32)
-        raw_keys = _pack(vk)
-        _, first = np.unique(raw_keys, return_index=True)
-        xyz = xyz[first]
-        surface_keys = set(raw_keys[first].tolist())
-
-        rays  = xyz - cam_pos
-        dists = np.linalg.norm(rays, axis=1)
-        ok    = dists > v * 2
-        if not ok.any():
-            return
-        dirs = rays[ok] / dists[ok, None]
-        d    = dists[ok]
-
-        max_t = int(d.max() / v)
-        if max_t < 2:
-            return
-        t   = (np.arange(1, max_t) * v).astype(np.float32)
-        pts = cam_pos + dirs[:, None, :] * t[None, :, None]
-        valid = t[None, :] < (d[:, None] - v)
-        pts = pts[valid]
-        if len(pts) == 0:
-            return
-
-        free_keys = set(_pack(np.floor(pts / v).astype(np.int32)).tolist())
-        free_keys -= surface_keys
-        for k in free_keys:
-            row = self._idx.get(int(k))
-            if row is not None and self._score[row] > 0:
-                self._score[row] = max(0.0, self._score[row] - self.cfg.carve_penalty)
-
-    def stable_xyz(self) -> np.ndarray:
-        """Points whose accumulated score meets the export threshold."""
-        if self._n == 0:
-            return np.zeros((0, 3), dtype=np.float32)
-        mask = self._score[:self._n] >= self.cfg.min_score
-        return self._xyz[:self._n][mask]
-
-    @property
-    def count(self) -> int:
-        return self._n
-
-    def _grow(self) -> None:
-        cap2    = self.cfg.capacity * 2
-        new_score = np.zeros(cap2, dtype=np.float32)
-        new_obs   = np.zeros(cap2, dtype=np.uint16)
-        new_seen  = np.zeros(cap2, dtype=np.float64)
-        new_xyz   = np.empty((cap2, 3), dtype=np.float32)
-        new_score[:self._n] = self._score[:self._n]
-        new_obs[:self._n]   = self._obs[:self._n]
-        new_seen[:self._n]  = self._seen[:self._n]
-        new_xyz[:self._n]   = self._xyz[:self._n]
-        self._score = new_score
-        self._obs   = new_obs
-        self._seen  = new_seen
-        self._xyz   = new_xyz
-        self.cfg = AccumulatorConfig(
-            voxel_size=self.cfg.voxel_size,
-            capacity=cap2,
-            min_score=self.cfg.min_score,
-            carve_penalty=self.cfg.carve_penalty,
-        )
 
 
 # ── Packet contract ────────────────────────────────────────────────────────────
@@ -370,13 +139,15 @@ class DepthFramePacket:
 class DepthFilter:
     """sl.MEASURE.DEPTH + CONFIDENCE → clean H×W float32 depth.
 
-    Only the hard floor on usability is applied here (conf < CONF_MIN → NaN).
-    Further evidence weighting is handled by ConfidenceWeighter downstream.
+    Two confidence tiers are exposed downstream:
+      CONF_SURE (≥60): high-confidence stereo match → shown red
+      CONF_MIN  (≥25): lower-confidence but still usable → shown yellow
+    Pixels below CONF_MIN are set to NaN and discarded entirely.
     """
 
-    CONF_MIN:  float = 25.0
-    MIN_DEPTH: float = 0.3
-    MAX_DEPTH: float = 8.0
+    CONF_MIN:   float = 25.0   # discard below this — too noisy to use at all
+    MIN_DEPTH:  float = 0.3
+    MAX_DEPTH:  float = 8.0
 
     def __init__(self) -> None:
         self._depth_mat = sl.Mat()
@@ -502,21 +273,19 @@ class PoseReader:
 # ── Stage 4: Backprojector ────────────────────────────────────────────────────
 
 class DepthBackprojector:
-    """DepthFramePacket + per-pixel evidence H×W → (xyz N×3, evidence N) in world frame.
+    """DepthFramePacket → (xyz N×3, conf N) in camera-link frame.
 
     Three-step transform:
       1. Pinhole backproject (u,v,d) → camera-optical frame
       2. _R_OPT_TO_LINK            → camera_link frame (X=fwd, Y=left, Z=up)
       3. VIO pose_R / pose_t        → world frame  (identity before VIO locks)
 
-    Only pixels with evidence > 0 are projected, so zero-weight pixels are
-    dropped here rather than being filtered later.
+    Also returns per-point confidence (same order as xyz rows) so the caller
+    can color points by stereo reliability without a separate lookup.
     """
 
-    def project(
-        self, pkt: DepthFramePacket, evidence: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Return (xyz (N,3) float32, evidence (N,) float32) for pixels with evidence > 0."""
+    def project(self, pkt: DepthFramePacket) -> tuple[np.ndarray, np.ndarray]:
+        """Return (xyz (N,3) float32, conf (N,) float32)."""
         d = pkt.depth
         H, W = d.shape
         fx, fy, cx, cy = pkt.intrinsics
@@ -526,48 +295,191 @@ class DepthBackprojector:
             np.arange(H, dtype=np.float32),
         )
 
-        valid = np.isfinite(d) & (evidence > 0)
+        valid = np.isfinite(d)
         dd    = d[valid]
-        ev    = evidence[valid]
-
         x_opt = (uu[valid] - cx) * dd / fx
         y_opt = (vv[valid] - cy) * dd / fy
         z_opt = dd
 
-        xyz_opt   = np.column_stack([x_opt, y_opt, z_opt]).astype(np.float32)
-        xyz_link  = xyz_opt @ _R_OPT_TO_LINK.T
+        xyz_opt  = np.column_stack([x_opt, y_opt, z_opt]).astype(np.float32)
+        xyz_link = xyz_opt @ _R_OPT_TO_LINK.T
         xyz_world = xyz_link @ pkt.pose_R.T + pkt.pose_t
 
-        return xyz_world, ev
+        conf = (
+            pkt.confidence[valid].astype(np.float32)
+            if pkt.confidence is not None
+            else np.full(len(xyz_world), 100.0, dtype=np.float32)
+        )
+        return xyz_world, conf
 
 
-# ── Stage 5: Streamer ─────────────────────────────────────────────────────────
+# ── Stage 5: Voxel accumulator ────────────────────────────────────────────────
+
+class VoxelAccumulator:
+    """Persistent world-frame 3D map.
+
+    Identity layer (2 cm voxel hash): decides new voxel vs revisit in O(1).
+    Fine layer (actual stereo positions): stored and refined via running average
+    so geometry converges toward the true surface without collapsing to a grid centre.
+
+    A voxel must be observed in at least min_obs separate frames to be exported —
+    this is the cross-frame equivalent of the per-frame isolation filter.
+    """
+
+    def __init__(self, voxel_size: float = 0.02, capacity: int = 500_000) -> None:
+        self._v   = voxel_size
+        self._cap = capacity
+        self._idx: dict[int, int] = {}
+        self._xyz  = np.empty((capacity, 3), dtype=np.float32)
+        self._obs  = np.zeros(capacity, dtype=np.uint16)   # frame observation count
+        self._n    = 0
+
+    def add(self, xyz: np.ndarray) -> None:
+        """Merge one filtered, world-frame point array into the map."""
+        if len(xyz) == 0:
+            return
+        vk   = np.floor(xyz / self._v).astype(np.int32)
+        keys = _pack(vk)
+        # One representative point per voxel within this batch
+        _, first = np.unique(keys, return_index=True)
+        keys = keys[first];  xyz = xyz[first]
+
+        key_list = keys.tolist()
+        exists   = np.array([k in self._idx for k in key_list], dtype=bool)
+
+        if exists.any():
+            rows  = np.array([self._idx[int(k)] for k in keys[exists].tolist()], dtype=np.int32)
+            old_n = self._obs[rows].astype(np.float32)
+            new_n = np.minimum(old_n + 1, 65_535)
+            w     = (old_n / new_n)[:, None]          # weight of stored observation
+            self._xyz[rows] = self._xyz[rows] * w + xyz[exists] * (1 - w)
+            self._obs[rows] = new_n.astype(np.uint16)
+
+        new_xyz  = xyz[~exists]
+        new_keys = keys[~exists]
+        n_new    = len(new_xyz)
+        if n_new == 0:
+            return
+        if self._n + n_new > self._cap:
+            self._grow()
+        sl = slice(self._n, self._n + n_new)
+        self._xyz[sl] = new_xyz
+        self._obs[sl] = 1
+        for i, k in enumerate(new_keys.tolist()):
+            self._idx[int(k)] = self._n + i
+        self._n += n_new
+
+    def carve(self, xyz: np.ndarray, cam_pos: np.ndarray) -> None:
+        """Decrement obs for voxels along rays from cam_pos to each surface point.
+
+        The segment (cam_pos → surface - ε) is known free space.  Any accumulated
+        voxel there is a stereo ghost — weakening it drops it below min_obs=2 and
+        it disappears from stable_xyz on the next map update.
+
+        Surface voxels observed this same frame are excluded from carving so they
+        can accumulate obs counts normally across frames.
+        """
+        if self._n == 0 or len(xyz) == 0:
+            return
+        # One ray per unique surface voxel; keep those keys to protect from carving
+        vk = np.floor(xyz / self._v).astype(np.int32)
+        raw_keys = _pack(vk)
+        _, first = np.unique(raw_keys, return_index=True)
+        xyz = xyz[first]
+        surface_keys = set(raw_keys[first].tolist())   # protect these from carving
+
+        rays  = xyz - cam_pos                                      # (M, 3)
+        dists = np.linalg.norm(rays, axis=1)                       # (M,)
+        ok    = dists > self._v * 2
+        if not ok.any():
+            return
+        dirs = rays[ok] / dists[ok, None]                         # unit vecs (M', 3)
+        d    = dists[ok]                                           # depths (M',)
+
+        max_t = int(d.max() / self._v)
+        if max_t < 2:
+            return
+        t   = (np.arange(1, max_t) * self._v).astype(np.float32)  # (T,)
+        pts = cam_pos + dirs[:, None, :] * t[None, :, None]        # (M', T, 3)
+        valid = t[None, :] < (d[:, None] - self._v)                # (M', T)
+        pts = pts[valid]                                            # (K, 3)
+        if len(pts) == 0:
+            return
+
+        free_keys = set(_pack(np.floor(pts / self._v).astype(np.int32)).tolist())
+        free_keys -= surface_keys   # never carve what we're also observing this frame
+        for k in free_keys:
+            row = self._idx.get(int(k))
+            if row is not None and self._obs[row] > 0:
+                self._obs[row] -= 1
+
+    def filter_occluded(self, xyz: np.ndarray, cam_pos: np.ndarray) -> np.ndarray:
+        """Boolean mask: True = not blocked by an existing closer solid surface.
+
+        Samples each ray at 33% and 67% depth.  If either sample hits a confirmed
+        voxel (obs ≥ 2) the new point lies behind a known surface → reject it.
+        This implements "block accumulation beyond first hit."
+        """
+        if self._n == 0:
+            return np.ones(len(xyz), dtype=bool)
+        solid = {k for k, i in self._idx.items() if self._obs[i] >= 2}
+        if not solid:
+            return np.ones(len(xyz), dtype=bool)
+        solid_arr = np.array(list(solid), dtype=np.int64)
+
+        rays = xyz - cam_pos
+        s1   = (cam_pos + rays * 0.33).astype(np.float32)
+        s2   = (cam_pos + rays * 0.67).astype(np.float32)
+        k1   = _pack(np.floor(s1 / self._v).astype(np.int32))
+        k2   = _pack(np.floor(s2 / self._v).astype(np.int32))
+        blocked = np.isin(k1, solid_arr) | np.isin(k2, solid_arr)
+        return ~blocked
+
+    def stable_xyz(self, min_obs: int = 2) -> np.ndarray:
+        """Points seen in at least min_obs frames — cross-frame noise filter."""
+        if self._n == 0:
+            return np.zeros((0, 3), dtype=np.float32)
+        mask = self._obs[:self._n] >= min_obs
+        return self._xyz[:self._n][mask]
+
+    @property
+    def count(self) -> int:
+        return self._n
+
+    def _grow(self) -> None:
+        cap2     = self._cap * 2
+        new_xyz  = np.empty((cap2, 3), dtype=np.float32)
+        new_obs  = np.zeros(cap2, dtype=np.uint16)
+        new_xyz[:self._n] = self._xyz[:self._n]
+        new_obs[:self._n] = self._obs[:self._n]
+        self._xyz = new_xyz;  self._obs = new_obs;  self._cap = cap2
+
+
+# ── Stage 6: Streamer ─────────────────────────────────────────────────────────
 
 class DepthStreamer:
-    """Assembles packets, runs the evidence pipeline, builds the world map, logs to Rerun."""
+    """Assembles packets, builds persistent world-frame map, logs to Rerun."""
 
+    CONF_SURE = 65       # confidence ≥ this → sure obstacle layer (min_obs=2)
+    CONF_WEAK = 25       # confidence ≥ this → background layer (min_obs=5); catches walls
     MAX_CLOUD = 50_000   # Rerun per-frame point cap
     MAX_MAP   = 100_000  # Rerun map point cap
     MAP_EVERY = 10       # frames between map updates
 
     def __init__(
         self,
-        depth_filter:  DepthFilter,
-        intrinsics:    IntrinsicsReader,
-        pose:          PoseReader,
-        backproj:      DepthBackprojector,
-        conf_cfg:      ConfidenceConfig | None = None,
-        consist_cfg:   ConsistencyConfig | None = None,
-        accum_cfg:     AccumulatorConfig | None = None,
+        depth_filter: DepthFilter,
+        intrinsics:   IntrinsicsReader,
+        pose:         PoseReader,
+        backproj:     DepthBackprojector,
     ) -> None:
-        self._filt    = depth_filter
-        self._intr    = intrinsics
-        self._pose    = pose
-        self._bp      = backproj
-        self._weighter   = ConfidenceWeighter(conf_cfg)
-        self._consist    = ConsistencyEstimator(consist_cfg)
-        self._vox        = VoxelAccumulator(accum_cfg)
-        self._cam_z      = 0.0
+        self._filt           = depth_filter
+        self._intr           = intrinsics
+        self._pose           = pose
+        self._bp             = backproj
+        self._vox            = VoxelAccumulator(voxel_size=0.08)  # sure obstacles
+        self._vox_bg         = VoxelAccumulator(voxel_size=0.08)  # weak hits: walls, low-confidence surfaces
+        self._cam_z          = 0.0
         self._pinhole_logged = False
 
     def assemble(self, zed: sl.Camera, ts: float) -> DepthFramePacket:
@@ -595,59 +507,62 @@ class DepthStreamer:
 
         rr.log("world/camera/depth", rr.DepthImage(pkt.depth, meter=1.0))
 
-        conf = pkt.confidence if pkt.confidence is not None else np.full(
-            pkt.depth.shape, 100.0, dtype=np.float32
+        xyz, conf = self._bp.project(pkt)
+        if len(xyz) == 0:
+            return
+
+        # ── Live cloud: both tiers, every frame ──────────────────────────────
+        n   = min(len(xyz), self.MAX_CLOUD)
+        idx = np.random.choice(len(xyz), n, replace=False) if len(xyz) > n else np.arange(n)
+        sure   = conf[idx] >= self.CONF_SURE
+        colors = np.where(
+            sure[:, None],
+            np.array([[220,  50,  50]], dtype=np.uint8),   # red    = sure
+            np.array([[200, 180,   0]], dtype=np.uint8),   # yellow = unsure
         )
-
-        # Evidence pipeline: confidence → weight → consistency boost → final evidence
-        weight    = self._weighter.compute(conf)           # H×W, 0 where unusable
-        boost     = self._consist.compute(pkt.depth, weight)  # H×W, ≥ 1.0
-        evidence  = (weight * boost).astype(np.float32)        # H×W, final per-pixel
-
-        xyz, ev = self._bp.project(pkt, evidence)
-
-        # ── Live cloud: colour by evidence weight (blue=low, red=high) ──────
-        if len(xyz) > 0:
-            n   = min(len(xyz), self.MAX_CLOUD)
-            idx = np.random.choice(len(xyz), n, replace=False) if len(xyz) > n else np.arange(n)
-            t   = np.clip(ev[idx], 0.0, 1.5) / 1.5           # normalise to [0, 1]
-            colors = np.column_stack([
-                np.clip(2 * t - 1, 0, 1),       # red:   high evidence
-                np.clip(1 - 2 * np.abs(t - 0.5), 0, 1),  # green: medium
-                np.clip(1 - 2 * t, 0, 1),       # blue:  low evidence
-            ])
-            rr.log("world/cloud", rr.Points3D(
-                positions=xyz[idx],
-                colors=(colors * 255).astype(np.uint8),
-                radii=0.003,
-            ))
+        rr.log("world/cloud", rr.Points3D(positions=xyz[idx], colors=colors, radii=0.003))
 
         # ── Persistent map ────────────────────────────────────────────────────
         self._cam_z = float(pkt.pose_t[2])
-        if self._pose.locked and len(xyz) > 0:
+        if self._pose.locked:
             cam_pos = pkt.pose_t
 
-            # Height band + floor-angle filter (camera-relative, VIO-drift-safe)
-            h_rel    = xyz[:, 2] - self._cam_z
-            rays     = xyz - cam_pos
-            dist     = np.linalg.norm(rays, axis=1)
-            d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0)
-            keep = (
-                (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI)
-                & (d_z_norm > _FLOOR_RAY_Z)
-            )
-            xyz_filt = xyz[keep]
-            ev_filt  = ev[keep]
+            def _obs_filter(pts: np.ndarray) -> np.ndarray:
+                """Height band + floor-angle filter, shared by both tiers."""
+                if len(pts) == 0:
+                    return pts
+                h_rel    = pts[:, 2] - self._cam_z
+                rays     = pts - cam_pos
+                dist     = np.linalg.norm(rays, axis=1)
+                d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0)
+                return pts[
+                    (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI)
+                    & (d_z_norm > _FLOOR_RAY_Z)
+                ]
 
-            if len(xyz_filt) > 0:
-                self._vox.carve(xyz_filt, cam_pos)
-                self._vox.add(xyz_filt, ev_filt, pkt.timestamp)
+            # Sure tier — high-confidence obstacles (chairs, people, boxes)
+            xyz_sure = _obs_filter(_filter_isolated(xyz[conf >= self.CONF_SURE]))
+            if len(xyz_sure) > 0:
+                self._vox.carve(xyz_sure, cam_pos)
+                self._vox.add(xyz_sure)
+
+            # Weak tier — low-confidence surfaces (walls, smooth/distant geometry)
+            # min_pts=8: walls produce dense returns across large areas; displays and
+            # specular reflections are smaller and sparser — they fail this threshold
+            xyz_weak = _obs_filter(_filter_isolated(
+                xyz[(conf >= self.CONF_WEAK) & (conf < self.CONF_SURE)],
+                min_pts=8,
+            ))
+            if len(xyz_weak) > 0:
+                self._vox_bg.add(xyz_weak)
 
         if frame % self.MAP_EVERY == 0:
             self._log_map()
 
     def _log_map(self) -> None:
-        pts = self._vox.stable_xyz()
+        sure_pts = self._vox.stable_xyz(min_obs=2)
+        bg_pts   = self._vox_bg.stable_xyz(min_obs=10)
+        pts = np.concatenate([sure_pts, bg_pts]) if len(bg_pts) > 0 else sure_pts
         if len(pts) == 0:
             return
         n   = min(len(pts), self.MAX_MAP)
@@ -660,11 +575,11 @@ class DepthStreamer:
 
     def log_stdout(self, pkt: DepthFramePacket, frame: int, fps: float) -> None:
         lock   = "LOCKED" if self._pose.locked else "searching"
-        stable = len(self._vox.stable_xyz())
-        total  = self._vox.count
+        stable = len(self._vox.stable_xyz(min_obs=2))
+        walls  = len(self._vox_bg.stable_xyz(min_obs=5))
         print(
             f"frame={frame:5d}  "
-            f"stable={stable:6d}  total_voxels={total:6d}  "
+            f"stable={stable:6d}  walls={walls:6d}  "
             f"cam_z={self._cam_z:+.2f}m  vio={lock}  fps={fps:.1f}",
             flush=True,
         )
@@ -684,7 +599,7 @@ def main() -> None:
         )
     ))
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
-    rr.log("world/cloud", rr.Points3D([[0, 0, 0]]), static=True)
+    rr.log("world/cloud", rr.Points3D([[0, 0, 0]]), static=True)  # anchor 3D view before camera opens
 
     zed = sl.Camera()
     ip  = sl.InitParameters()
@@ -698,6 +613,10 @@ def main() -> None:
     if zed.open(ip) != sl.ERROR_CODE.SUCCESS:
         print("ZED failed to open"); return
 
+    # Cap exposure to prevent bright light (windows, lamps) from washing out stereo
+    # texture. Auto-exposure chases the bright source and under-exposes the scene;
+    # a fixed value keeps geometry well-textured for stereo matching.
+    # Range 0-100; lower = faster shutter. Tune up if the scene is too dark.
     zed.set_camera_settings(sl.VIDEO_SETTINGS.EXPOSURE, 50)
 
     print("camera open — Ctrl-C to quit.")
@@ -707,16 +626,18 @@ def main() -> None:
         IntrinsicsReader(),
         PoseReader(),
         DepthBackprojector(),
-        # Tune these configs independently:
-        conf_cfg=ConfidenceConfig(conf_min=25.0, conf_full=85.0, curve=0.7),
-        consist_cfg=ConsistencyConfig(window_radius=3, depth_tolerance=0.15, boost_max=1.5),
-        accum_cfg=AccumulatorConfig(voxel_size=0.08, min_score=1.2, carve_penalty=0.3),
     )
 
     streamer._pose.enable(zed)
 
     rt = sl.RuntimeParameters()
-    rt.texture_confidence_threshold = 80
+    # Suppress flying pixels and ceiling-light saturation at the SDK level,
+    # before depth reaches our pipeline.
+    # texture_confidence_threshold: reject depth at textureless regions and
+    #   depth-discontinuity edges — exactly where flying pixels form.
+    # remove_saturated_areas: invalidate pixels over-exposed by bright ceiling
+    #   lights, where stereo matching is unreliable.
+    rt.texture_confidence_threshold = 80  # cuts depth bleeding and specular noise; walls pass via weak tier
     rt.remove_saturated_areas       = True
 
     frame = 0
