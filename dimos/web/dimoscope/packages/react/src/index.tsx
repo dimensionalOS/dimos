@@ -21,7 +21,7 @@ export interface ServerOpt {
   connect: () => Promise<DimosClient>;
   /** Media-plane config for this server: where the camera can come from (WebRTC gateway +
    *  which kinds it can serve). Absent/jpeg-only → the camera uses the Image-topic floor. */
-  media?: { gatewayUrl?: string; kinds?: MediaKind[] };
+  media?: { gatewayUrl?: string; kinds?: readonly MediaKind[] };
 }
 
 interface DimosCtx {
@@ -119,7 +119,10 @@ export function useTopics(): TopicInfo[] {
   useEffect(() => {
     if (!client) return;
     setTopics(client.listTopics());
-    return client.onTopics(setTopics);
+    const unsub = client.onTopics(setTopics);
+    return () => {
+      unsub();
+    };
   }, [client]);
   return topics;
 }
@@ -282,7 +285,7 @@ export function useImageTopic(topic: string | null, opts?: { maxFps?: number }) 
         decoding = true;
         drawn = img;
         lastDraw = ts;
-        createImageBitmap(new Blob([img.data], { type: "image/jpeg" }))
+        createImageBitmap(new Blob([img.data as BlobPart], { type: "image/jpeg" }))
           .then((bmp) => {
             fit(bmp.width, bmp.height);
             ctx.drawImage(bmp, 0, 0);

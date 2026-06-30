@@ -61,8 +61,8 @@ export function browserSupports(kind: MediaKind): boolean {
 
 export interface MediaDeps {
   client: DimosClient; // for the jpeg-topic floor (subscribes via client.topic)
-  gatewayUrl?: string; // WebRTC signaling WS (the aiortc gateway, e.g. ws://host:8088)
-  serverMedia?: MediaKind[]; // what the gateway advertises it can serve; floor = ["jpeg"]
+  gatewayUrl?: string; // media node WS (WebRTC signaling / WebCodecs chunks, e.g. ws://host:8092)
+  serverMedia?: readonly MediaKind[]; // what the media node serves; floor = ["jpeg"]
   prefer?: MediaKind[]; // preference order; default ["webrtc","jpeg"] (webcodecs lands later)
 }
 
