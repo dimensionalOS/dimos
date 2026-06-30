@@ -255,6 +255,7 @@ with `./bin/lfs_push` when the package is ready to ship.
 
 ```text
 dimos/experimental/pimsim/scene/cook.py              cook CLI
+dimos/experimental/pimsim/scene/spec.py              cook-time artifact policy
 dimos/experimental/pimsim/scene/sidecar.py           cook sidecar schema
 dimos/experimental/pimsim/scene/plan.py              sidecar to entity/collision plan
 dimos/experimental/pimsim/scene/assets/source.py     .blend normalization
@@ -266,6 +267,6 @@ dimos/experimental/pimsim/scene/collision/browser.py browser collision mesh
 dimos/experimental/pimsim/scene/collision/entity.py  entity collision hulls
 dimos/experimental/pimsim/scene/collision/mujoco/export.py MuJoCo XML bake
 dimos/experimental/pimsim/scene/collision/mujoco/spec.py   static collision policy
-dimos/simulation/scene_assets/spec.py                package contract
+dimos/simulation/scene_assets/spec.py                runtime package metadata contract
 dimos/simulation/scenes/catalog.py                   runtime name/path resolution
 ```

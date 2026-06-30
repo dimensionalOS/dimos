@@ -23,10 +23,10 @@ import pytest
 from dimos.experimental.pimsim.scene import plan as plan_module
 from dimos.experimental.pimsim.scene.assets.mesh import SceneMeshAlignment, ScenePrimMesh
 from dimos.experimental.pimsim.scene.sidecar import SceneCookSidecar
+from dimos.experimental.pimsim.scene.spec import browser_visual_spec_for_target
 from dimos.simulation.scene_assets.spec import (
     ARTIFACT_FRAMES,
     ScenePackage,
-    browser_visual_spec_for_target,
     load_scene_package,
 )
 

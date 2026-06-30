@@ -39,17 +39,19 @@ from dimos.experimental.pimsim.scene.collision.mujoco.spec import CollisionSpec
 from dimos.experimental.pimsim.scene.inspect import inspect_scene_asset
 from dimos.experimental.pimsim.scene.plan import EntityPrototypePlan, build_scene_cook_plan
 from dimos.experimental.pimsim.scene.sidecar import SceneCookSidecar
-from dimos.experimental.pimsim.scene.visuals.blender import cook_plan_visual_assets
-from dimos.experimental.pimsim.scene.visuals.glb import cook_browser_visual
-from dimos.simulation.scene_assets.spec import (
+from dimos.experimental.pimsim.scene.spec import (
     BROWSER_VISUAL_TARGETS,
     BrowserCollisionSpec,
     BrowserVisualSpec,
     MujocoSceneSpec,
     SceneCookSpec,
+    browser_visual_spec_for_target,
+)
+from dimos.experimental.pimsim.scene.visuals.blender import cook_plan_visual_assets
+from dimos.experimental.pimsim.scene.visuals.glb import cook_browser_visual
+from dimos.simulation.scene_assets.spec import (
     SceneMeshAlignment,
     ScenePackage,
-    browser_visual_spec_for_target,
 )
 from dimos.utils.data import get_data_dir
 from dimos.utils.logging_config import setup_logger
