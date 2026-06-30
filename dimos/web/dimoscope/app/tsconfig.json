@@ -13,7 +13,18 @@
     "jsx": "react-jsx",
     "strict": true,
     "noUnusedLocals": false,
-    "types": []
+    "types": [],
+    // The library lives in ../packages and is consumed via the vite aliases (see
+    // vite.config.ts). Mirror those aliases here so `tsc` resolves them too; react/jsx-runtime
+    // point at @types (tsc --noEmit only needs declarations, and the app's own react/react-dom
+    // resolution stays untouched).
+    "baseUrl": ".",
+    "paths": {
+      "@dimos/topics": ["../packages/topics/src/index.ts"],
+      "@dimos/react": ["../packages/react/src/index.tsx"],
+      "react": ["./node_modules/@types/react"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"]
+    }
   },
   "include": ["src"]
 }

@@ -35,9 +35,11 @@ const TRANSPORTS: TransportDef[] = [
     label: "zenoh-ts (direct)",
     url: `ws://${host}:10000`,
     open: async () => {
-      const { ZenohTsTransport } = await import("@dimos/topics");
+      const { createZenohTsTransport } = await import("@dimos/topics");
       // discoveryKey "" → no scout; the bench subscribes explicit /bench/* keys.
-      return connect({ transport: new ZenohTsTransport(`ws://${host}:10000`, undefined, "") });
+      return connect({
+        transport: createZenohTsTransport({ remoteApiUrl: `ws://${host}:10000`, discoveryKey: "" }),
+      });
     },
   },
 ];

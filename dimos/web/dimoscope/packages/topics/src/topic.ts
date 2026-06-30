@@ -8,87 +8,103 @@ export interface TopicWiring {
   unsubscribe(topic: string): void;
 }
 
-export class Topic<T = unknown> {
-  private handlers = new Set<Handler<T>>();
-  private latest?: T;
-  private paused = false;
-  private maxHz = 0;
-  private lastDeliver = 0;
-  private dropped = 0;
-  private count = 0;
-  private lastLatencyMs?: number;
-  private recent: number[] = [];
-  private recentBytes: number[] = [];
-
-  constructor(
-    public readonly name: string,
-    public type: string,
-    private wiring: TopicWiring,
-  ) {}
-
+export interface Topic<T = unknown> {
+  readonly name: string;
+  type: string;
   /** Subscribe to every message (subject to rate-limit). Returns an unsubscribe handle. */
-  subscribe(handler: Handler<T>): Subscription {
-    this.handlers.add(handler);
-    if (this.handlers.size === 1) this.wiring.subscribe(this.name, this.maxHz || undefined);
+  subscribe(handler: Handler<T>): Subscription;
+  /** Same wire behavior — delivery is always newest-first (we never queue). */
+  subscribeLatest(handler: Handler<T>): Subscription;
+  getLatest(): T | undefined;
+  /** Cap delivery to `hz` (also asks the gateway to downsample → saves bandwidth). */
+  setRateLimit(hz: number): void;
+  pause(): void;
+  resume(): void;
+  stats(): TopicStats;
+  /** @internal — the client calls this with each decoded message. */
+  _deliver(data: T, meta: MessageMeta): void;
+}
+
+export interface TopicDeps {
+  name: string;
+  type: string;
+  wiring: TopicWiring;
+}
+
+export const createTopic = <T = unknown>(deps: TopicDeps): Topic<T> => {
+  const { name, wiring } = deps;
+  const handlers = new Set<Handler<T>>();
+  let latest: T | undefined;
+  let paused = false;
+  let maxHz = 0;
+  let lastDeliver = 0;
+  let dropped = 0;
+  let count = 0;
+  let lastLatencyMs: number | undefined;
+  const recent: number[] = [];
+  const recentBytes: number[] = [];
+
+  function subscribe(handler: Handler<T>): Subscription {
+    handlers.add(handler);
+    if (handlers.size === 1) wiring.subscribe(name, maxHz || undefined);
     return {
       unsubscribe: () => {
-        this.handlers.delete(handler);
-        if (this.handlers.size === 0) this.wiring.unsubscribe(this.name);
+        handlers.delete(handler);
+        if (handlers.size === 0) wiring.unsubscribe(name);
       },
     };
   }
 
-  /** Same wire behavior — delivery is always newest-first (we never queue). */
-  subscribeLatest(handler: Handler<T>): Subscription {
-    return this.subscribe(handler);
+  function setRateLimit(hz: number) {
+    maxHz = hz;
+    if (handlers.size > 0) wiring.subscribe(name, hz || undefined);
   }
 
-  getLatest(): T | undefined {
-    return this.latest;
-  }
-
-  /** Cap delivery to `hz` (also asks the gateway to downsample → saves bandwidth). */
-  setRateLimit(hz: number) {
-    this.maxHz = hz;
-    if (this.handlers.size > 0) this.wiring.subscribe(this.name, hz || undefined);
-  }
-
-  pause() {
-    this.paused = true;
-  }
-  resume() {
-    this.paused = false;
-  }
-
-  stats(): TopicStats {
+  function stats(): TopicStats {
     const now = Date.now();
     let i = 0;
-    while (i < this.recent.length && now - this.recent[i] > 1000) i++;
-    const hz = this.recent.length - i;
+    while (i < recent.length && now - recent[i] > 1000) i++;
+    const hz = recent.length - i;
     let bytes = 0;
-    for (let j = i; j < this.recentBytes.length; j++) bytes += this.recentBytes[j];
-    return { hz, bytesPerSec: bytes, dropped: this.dropped, lastLatencyMs: this.lastLatencyMs, count: this.count };
+    for (let j = i; j < recentBytes.length; j++) bytes += recentBytes[j];
+    return { hz, bytesPerSec: bytes, dropped, lastLatencyMs, count };
   }
 
-  /** @internal — the client calls this with each decoded message. */
-  _deliver(data: T, meta: MessageMeta) {
-    this.count++;
-    this.latest = data;
-    this.lastLatencyMs = meta.latencyMs;
+  function _deliver(data: T, meta: MessageMeta) {
+    count++;
+    latest = data;
+    lastLatencyMs = meta.latencyMs;
     const now = meta.recvTs;
-    this.recent.push(now);
-    this.recentBytes.push(meta.sizeBytes);
-    if (this.recent.length > 256) {
-      this.recent.shift();
-      this.recentBytes.shift();
+    recent.push(now);
+    recentBytes.push(meta.sizeBytes);
+    if (recent.length > 256) {
+      recent.shift();
+      recentBytes.shift();
     }
-    if (this.paused) return;
-    if (this.maxHz > 0 && now - this.lastDeliver < 1000 / this.maxHz) {
-      this.dropped++;
+    if (paused) return;
+    if (maxHz > 0 && now - lastDeliver < 1000 / maxHz) {
+      dropped++;
       return;
     }
-    this.lastDeliver = now;
-    const m = { ...meta, dropped: this.dropped };
-    this.handlers.forEach((h) => h(data, m));
+    lastDeliver = now;
+    const m = { ...meta, dropped };
+    handlers.forEach((h) => h(data, m));
   }
-}
+
+  return {
+    name,
+    type: deps.type,
+    subscribe,
+    subscribeLatest: subscribe,
+    getLatest: () => latest,
+    setRateLimit,
+    pause: () => {
+      paused = true;
+    },
+    resume: () => {
+      paused = false;
+    },
+    stats,
+    _deliver,
+  };
+};

@@ -1,4 +1,4 @@
-// ZenohTsTransport — the browser talks DIRECTLY to a Zenoh network via the official
+// createZenohTsTransport — the browser talks DIRECTLY to a Zenoh network via the official
 // zenoh-ts client + a `zenoh-bridge-remote-api` WebSocket (default :10000). No gateway
 // in the read path, so subscribe is TRUE per-client end-to-end on-demand: only the keys
 // you declare ever transit to the browser (vs the LCM gateway, which receives every
@@ -9,7 +9,7 @@
 // SAFETY: teleop/goal do NOT go out as raw Zenoh `put`s (that would bypass the velocity
 // clamp + deadman + stop-on-disconnect the gateways enforce). Instead this adapter holds
 // a thin control WS to a gateway and forwards {op:teleop|goal|stop} — the trust boundary
-// stays server-side. Pass the gateway URL as the 2nd ctor arg to enable driving.
+// stays server-side. Pass `controlUrl` to enable driving.
 //
 // zenoh-ts is browser-only (no Bun/Node target) and the heavy client loads lazily inside
 // connect(), so importing this module is cheap and a load failure can't break other paths.
@@ -29,112 +29,114 @@ function parseKey(key: string): { topic: string; type: string } | null {
 // dimos topic "/dimos/lidar" → zenoh subscribe key "dimos/lidar/**" (any type suffix)
 const topicToKey = (topic: string) => topic.replace(/^\//, "") + "/**";
 
-export class ZenohTsTransport implements Transport {
-  readonly caps: TransportCaps = { onDemand: true, discovery: "passive" };
-  label = "zenoh-ts (direct)";
-  private session: any;
-  private subs = new Map<string, any>(); // topic -> zenoh Subscriber
-  private rates = new Map<string, number>();
-  private lastSent = new Map<string, number>();
-  private topics = new Map<string, string>(); // topic -> type
-  private control?: WebSocket;
-  private sampleCb?: (s: RawSample) => void;
-  private topicsCb?: (t: TopicInfo[]) => void;
-  private statusCb?: (s: Status) => void;
-  commands: CommandInfo[] = [];
-  private commandsCb?: (c: CommandInfo[]) => void;
-  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
-  private rpcId = 1;
+export interface ZenohTsDeps {
+  /** zenoh-bridge-remote-api WS (e.g. ws://localhost:10000) */
+  remoteApiUrl: string;
+  /** optional gateway WS for safe teleop/goal (e.g. ws://localhost:8088) */
+  controlUrl?: string;
+  /** wildcard scouted once for the topic list; "" disables discovery (e.g. the bench,
+   *  which subscribes explicit keys). Defaults to "dimos/**". */
+  discoveryKey?: string;
+}
 
-  /** @param remoteApiUrl zenoh-bridge-remote-api WS (e.g. ws://localhost:10000)
-   *  @param controlUrl   optional gateway WS for safe teleop/goal (e.g. ws://localhost:8088)
-   *  @param discoveryKey wildcard scouted once for the topic list; "" disables discovery
-   *                      (e.g. the bench, which subscribes explicit keys). */
-  constructor(
-    private remoteApiUrl: string,
-    private controlUrl?: string,
-    private discoveryKey: string = "dimos/**",
-  ) {}
+export const createZenohTsTransport = (deps: ZenohTsDeps): Transport => {
+  const { remoteApiUrl, controlUrl } = deps;
+  const discoveryKey = deps.discoveryKey ?? "dimos/**";
 
-  async connect(): Promise<void> {
-    this.statusCb?.("connecting");
+  const caps: TransportCaps = { onDemand: true, discovery: "passive" };
+  let session: any;
+  const subs = new Map<string, any>(); // topic -> zenoh Subscriber
+  const rates = new Map<string, number>();
+  const lastSent = new Map<string, number>();
+  const topics = new Map<string, string>(); // topic -> type
+  let control: WebSocket | undefined;
+  let sampleCb: ((s: RawSample) => void) | undefined;
+  let topicsCb: ((t: TopicInfo[]) => void) | undefined;
+  let statusCb: ((s: Status) => void) | undefined;
+  let commands: CommandInfo[] = [];
+  let commandsCb: ((c: CommandInfo[]) => void) | undefined;
+  const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  let rpcId = 1;
+
+  async function connect(): Promise<void> {
+    statusCb?.("connecting");
     const zenoh = await import("@eclipse-zenoh/zenoh-ts"); // lazy: only loads on this path
-    this.session = await zenoh.Session.open(new zenoh.Config(this.remoteApiUrl));
-    this.statusCb?.("open");
+    session = await zenoh.Session.open(new zenoh.Config(remoteApiUrl));
+    statusCb?.("open");
     // Discovery: Zenoh has no gateway "hello/list", so briefly scout the discovery key to
     // learn which (topic,type) keys exist, then undeclare it. Data subscriptions below are
     // the steady-state on-demand path; this is a one-time burst. discoveryKey "" disables it.
-    if (this.discoveryKey) {
+    if (discoveryKey) {
       try {
-        const scout = await this.session.declareSubscriber(this.discoveryKey, {
-          handler: (s: any) => this.note(String(s.keyexpr())),
+        const scout = await session.declareSubscriber(discoveryKey, {
+          handler: (s: any) => note(String(s.keyexpr())),
         });
         setTimeout(() => scout.undeclare?.().catch(() => {}), SCOUT_MS);
       } catch {
         /* discovery is best-effort */
       }
     }
-    this.ctrl(); // open the control WS now so the gateway's hello (rpc commands) arrives
+    ctrl(); // open the control WS now so the gateway's hello (rpc commands) arrives
   }
 
-  private note(key: string) {
+  function note(key: string) {
     const m = parseKey(key);
     if (!m || m.type === "?" || m.topic.includes("/rpc/")) return;
-    if (this.topics.get(m.topic) !== m.type) {
-      this.topics.set(m.topic, m.type);
-      this.topicsCb?.([...this.topics].map(([topic, type]) => ({ topic, type })));
+    if (topics.get(m.topic) !== m.type) {
+      topics.set(m.topic, m.type);
+      topicsCb?.([...topics].map(([topic, type]) => ({ topic, type })));
     }
   }
 
-  subscribe(topic: string, maxHz?: number) {
-    if (maxHz) this.rates.set(topic, maxHz);
-    if (this.subs.has(topic) || !this.session) return;
-    this.subs.set(topic, "pending"); // guard against double-declare races
-    this.session
-      .declareSubscriber(topicToKey(topic), { handler: (s: any) => this.onSampleZ(topic, s) })
+  function subscribe(topic: string, maxHz?: number) {
+    if (maxHz) rates.set(topic, maxHz);
+    if (subs.has(topic) || !session) return;
+    subs.set(topic, "pending"); // guard against double-declare races
+    session
+      .declareSubscriber(topicToKey(topic), { handler: (s: any) => onSampleZ(topic, s) })
       .then((sub: any) => {
-        if (this.subs.get(topic) === "pending") this.subs.set(topic, sub);
+        if (subs.get(topic) === "pending") subs.set(topic, sub);
         else sub.undeclare?.().catch(() => {}); // unsubscribed while declaring
       })
-      .catch(() => this.subs.delete(topic));
+      .catch(() => subs.delete(topic));
   }
 
-  private onSampleZ(topic: string, s: any) {
+  function onSampleZ(topic: string, s: any) {
     const key = String(s.keyexpr());
     const m = parseKey(key);
     if (!m) return;
-    this.note(key);
+    note(key);
     const now = Date.now();
-    const hz = this.rates.get(topic) ?? 0;
+    const hz = rates.get(topic) ?? 0;
     if (hz > 0) {
       // Zenoh has no per-subscriber downsample, so throttle client-side.
-      if (now - (this.lastSent.get(topic) ?? 0) < 1000 / hz) return;
-      this.lastSent.set(topic, now);
+      if (now - (lastSent.get(topic) ?? 0) < 1000 / hz) return;
+      lastSent.set(topic, now);
     }
     const payload: Uint8Array = s.payload().toBytes(); // bare lcm_encode body (8-byte hash head)
     // No gatewaySendMs (no gateway hop) → DimosClient falls back to source-stamp latency.
-    this.sampleCb?.({ topic: m.topic, type: m.type, payload, recvTs: now });
+    sampleCb?.({ topic: m.topic, type: m.type, payload, recvTs: now });
   }
 
-  unsubscribe(topic: string) {
-    const sub = this.subs.get(topic);
-    this.subs.delete(topic);
-    this.rates.delete(topic);
-    this.lastSent.delete(topic);
+  function unsubscribe(topic: string) {
+    const sub = subs.get(topic);
+    subs.delete(topic);
+    rates.delete(topic);
+    lastSent.delete(topic);
     if (sub && sub !== "pending") sub.undeclare?.().catch(() => {});
   }
 
   // ── teleop / goal: forwarded to a gateway so its clamp + deadman + stop-on-disconnect
   //    still apply (a browser doing raw Zenoh put would bypass all of that) ──────────────
-  private ctrl(): WebSocket | undefined {
-    if (!this.controlUrl) return undefined;
-    const st = this.control?.readyState;
-    if (this.control && (st === WebSocket.OPEN || st === WebSocket.CONNECTING)) return this.control;
-    this.control = new WebSocket(this.controlUrl);
-    this.control.onmessage = (e) => this.onControl(e); // rpc-res + the gateway hello (commands)
-    return this.control;
+  function ctrl(): WebSocket | undefined {
+    if (!controlUrl) return undefined;
+    const st = control?.readyState;
+    if (control && (st === WebSocket.OPEN || st === WebSocket.CONNECTING)) return control;
+    control = new WebSocket(controlUrl);
+    control.onmessage = (e) => onControl(e); // rpc-res + the gateway hello (commands)
+    return control;
   }
-  private onControl(e: MessageEvent) {
+  function onControl(e: MessageEvent) {
     if (typeof e.data !== "string") return;
     let m: any;
     try {
@@ -143,59 +145,79 @@ export class ZenohTsTransport implements Transport {
       return;
     }
     if (m.op === "hello" && Array.isArray(m.rpc)) {
-      this.commands = m.rpc;
-      this.commandsCb?.(this.commands);
+      commands = m.rpc;
+      commandsCb?.(commands);
     } else if (m.op === "rpc-res") {
-      const p = this.pending.get(m.id);
+      const p = pending.get(m.id);
       if (p) {
-        this.pending.delete(m.id);
+        pending.delete(m.id);
         if (m.error) p.reject(new Error(m.error));
         else p.resolve(m.res);
       }
     }
   }
-  private ctrlSend(obj: unknown) {
-    const ws = this.ctrl();
+  function ctrlSend(obj: unknown) {
+    const ws = ctrl();
     if (!ws) return;
     const s = JSON.stringify(obj);
     if (ws.readyState === WebSocket.OPEN) ws.send(s);
     else ws.addEventListener("open", () => ws.send(s), { once: true });
   }
-  publishTeleop(linearX: number, angularZ: number, ttlMs?: number) {
-    this.ctrlSend({ op: "teleop", linearX, angularZ, ttlMs });
+  function publishTeleop(linearX: number, angularZ: number, ttlMs?: number) {
+    ctrlSend({ op: "teleop", linearX, angularZ, ttlMs });
   }
-  publishGoal(x: number, y: number, z = 0) {
-    this.ctrlSend({ op: "goal", x, y, z });
+  function publishGoal(x: number, y: number, z = 0) {
+    ctrlSend({ op: "goal", x, y, z });
   }
-  rpc(target: string, method: string, args: unknown[] = []): Promise<unknown> {
-    const id = this.rpcId++;
+  function rpc(target: string, method: string, args: unknown[] = []): Promise<unknown> {
+    const id = rpcId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.ctrlSend({ op: "rpc", id, target, method, args }); // routed to the gateway's RPC bridge
+      pending.set(id, { resolve, reject });
+      ctrlSend({ op: "rpc", id, target, method, args }); // routed to the gateway's RPC bridge
       setTimeout(() => {
-        if (this.pending.delete(id)) reject(new Error(`rpc ${target}/${method} timed out`));
+        if (pending.delete(id)) reject(new Error(`rpc ${target}/${method} timed out`));
       }, 8000);
     });
   }
 
-  requestList() {} // discovery is the passive scout; nothing to request
-  onSample(cb: (s: RawSample) => void) {
-    this.sampleCb = cb;
+  function requestList() {} // discovery is the passive scout; nothing to request
+  function onSample(cb: (s: RawSample) => void) {
+    sampleCb = cb;
   }
-  onTopics(cb: (t: TopicInfo[]) => void) {
-    this.topicsCb = cb;
+  function onTopics(cb: (t: TopicInfo[]) => void) {
+    topicsCb = cb;
   }
-  onStatus(cb: (s: Status) => void) {
-    this.statusCb = cb;
+  function onStatus(cb: (s: Status) => void) {
+    statusCb = cb;
   }
-  onCommands(cb: (c: CommandInfo[]) => void) {
-    this.commandsCb = cb;
+  function onCommands(cb: (c: CommandInfo[]) => void) {
+    commandsCb = cb;
   }
-  close() {
-    for (const sub of this.subs.values()) if (sub !== "pending") sub.undeclare?.().catch(() => {});
-    this.subs.clear();
-    this.control?.close();
-    this.session?.close?.().catch?.(() => {});
-    this.statusCb?.("closed");
+  function close() {
+    for (const sub of subs.values()) if (sub !== "pending") sub.undeclare?.().catch(() => {});
+    subs.clear();
+    control?.close();
+    session?.close?.().catch?.(() => {});
+    statusCb?.("closed");
   }
-}
+
+  return {
+    caps,
+    label: "zenoh-ts (direct)",
+    get commands() {
+      return commands;
+    },
+    connect,
+    subscribe,
+    unsubscribe,
+    publishTeleop,
+    publishGoal,
+    rpc,
+    requestList,
+    onSample,
+    onTopics,
+    onStatus,
+    onCommands,
+    close,
+  };
+};

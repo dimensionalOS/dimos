@@ -26,9 +26,9 @@ const E2E = process.env.BENCH_E2E === "1";
 
 async function buildClient() {
   if (TRANSPORT === "ts") {
-    const { ZenohTsTransport } = await import("../packages/topics/src/adapters/zenohTs");
+    const { createZenohTsTransport } = await import("../packages/topics/src/adapters/zenohTs");
     // read via the remote-api bridge; no scout (bench subscribes explicit /bench/* topics).
-    return connect({ transport: new ZenohTsTransport(TS_URL, undefined, "") });
+    return connect({ transport: createZenohTsTransport({ remoteApiUrl: TS_URL, discoveryKey: "" }) });
   }
   return connect({ url: WS_URL, reconnect: false });
 }
