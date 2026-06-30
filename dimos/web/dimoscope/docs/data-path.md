@@ -44,6 +44,11 @@ bridge in C++ and moved to Protobuf/FlatBuffers to cope. We **measured** Axis 2 
 
 ## What's built (this pass)
 
+> Note: the per-transport servers named below (`gateway.ts`, `webrtc_data.py`, `webtransport.py`, the
+> media node) were later **consolidated into one Python process** — `serve.py` (`servers/{bus,data,
+> media,bench}.py`) serving the app `/` + `/ws /sse /poll /rtc /media /cert` on `:8080` and QUIC on
+> `:8443`. The mechanisms and measurements are unchanged; only the deployment is one process now.
+
 - **Load generator** — `bench/bench_source.py`, a configurable dimos `Module` (`BenchSource`)
   emitting small (PoseStamped), medium (OccupancyGrid) and large (Image, up to ~10 MB) streams
   at chosen rates, each stamped with a publish time (one-way latency) + a per-topic sequence
@@ -207,9 +212,9 @@ symmetric raw-drop test on the TCP mechanisms too).
 through it with the `?gw=host:port` override (added to `main.tsx` + `bench.tsx`):
 
 ```bash
-deno task gateway                                                    # or `deno task servers`
-NETSIM_PROFILE=3g NETSIM_LISTEN=8099 NETSIM_TARGET=localhost:8089 \
-  deno run -A bench/netsim.ts                                        # impair the LCM gateway
+deno task serve                                                     # the single service → :8080
+NETSIM_PROFILE=3g NETSIM_LISTEN=8099 NETSIM_TARGET=localhost:8080 \
+  deno run -A bench/netsim.ts                                        # impair the service
 deno task app                                                        # Vite → :5173
 # open http://localhost:5173/?gw=localhost:8099  (or /bench.html?gw=localhost:8099) and pick the
 # matching transport — the whole WS/SSE/poll data path now degrades like the bench:matrix 3g column.
@@ -221,8 +226,8 @@ deno task app                                                        # Vite → 
 | quick manual "feel on 3G" | **Chrome DevTools → Slow 3G** (throttles WS since Chrome 99) |
 | impair **WebRTC** camera/datachannel (UDP) | **Network Link Conditioner / dummynet** — system-wide; `?gw=`/DevTools can't shape UDP |
 
-The media plane (`:8092`, WebRTC) and `?gw=` are independent: the override only reroutes the data
-gateway, so the camera stays direct (use NLC for it).
+The camera (`/media`) and `?gw=` are independent: the override reroutes the whole origin, but a TCP
+proxy can't shape the WebRTC camera (UDP) — use NLC for that.
 
 ---
 

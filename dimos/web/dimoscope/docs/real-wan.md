@@ -33,14 +33,14 @@ cd ~/code/dimos && git fetch && git checkout kris/research-29-06-2026 && git pul
 uv sync --extra web        # light: zenoh + aioquic + aiortc (WS/SSE/poll/WebRTC/WebTransport).
                            # do NOT `uv sync --all-extras` — that pulls torch/mujoco (GBs, not needed).
 
-# run the single service  ── FILL when serve.py lands (imminent); placeholder shape:
+# run the single service — ONE process: the app + every transport
 cd dimos/web/dimoscope
-DIMOS_TRANSPORT=zenoh uv run python servers/serve.py     # bus + /ws /sse /poll /rtc /media /cert + WT :8443
-# + a synthetic data source so there's something to stream (until serve.py grows a --synthetic flag):
-DIMOS_TRANSPORT=zenoh BENCH_HZ=100 uv run python bench/bench_publisher.py
+uv run python serve.py        # http://0.0.0.0:8080  (app / + /ws /sse /poll /rtc /media /cert) · QUIC UDP :8443
+# + a synthetic data source so there's something to stream (or run a real robot / a sim):
+DIMOS_TRANSPORT=lcm BENCH_HZ=100 uv run python bench/bench_publisher.py
 ```
-<!-- TODO when serve.py exists: confirm the exact entrypoint, the HTTP/WS origin port, and whether it
-self-generates load (a --synthetic flag) so bench_publisher isn't needed. -->
+(No deno needed on the VPS — the server is all Python now. `serve.py` taps **both** LCM and Zenoh, so
+either `DIMOS_TRANSPORT` for the source works.)
 
 ### Open the firewall (the part people forget)
 - **TCP**: the HTTP/WS origin port (serves `/ws` `/sse` `/poll` `/media` `/cert`).
@@ -51,13 +51,14 @@ self-generates load (a --synthetic flag) so bench_publisher isn't needed. -->
 ## 2. Mac — point the existing tools at the VPS (zero new code)
 
 ```bash
-# headless numbers (any transport the URL implies; WS shown):
-GATEWAY_URL=ws://37.60.232.68:<PORT> deno task bench
+# headless numbers (WS data plane is on the /ws path now):
+GATEWAY_URL=ws://37.60.232.68:8080/ws deno task bench
 
 # real browser, all 5 transports (Chrome):
-deno task app                                   # Vite on :5173
-#   open  http://localhost:5173/?gw=37.60.232.68:<PORT>
+deno task app                                   # Vite on :5173 (the app is served from your Mac)
+#   open  http://localhost:5173/?gw=37.60.232.68:8080
 #   then flip the topbar dropdown: WebSocket · SSE · HTTP poll · WebRTC data · WebTransport
+# (or, if app/dist was built on the VPS, just open http://37.60.232.68:8080/ directly — same-origin)
 ```
 
 ## 3. Read it
@@ -80,14 +81,6 @@ is the client-credible result. (Save it as `bench/RESULTS-realwan.md`.)
 
 ## Appendix — optional public endpoint via Coolify + Caddy
 Only if you want clients to hit a real `wss://dimos.<domain>` (app over https, valid CA cert, no
-hash-pinning): a small Dockerfile (`uv sync --extra web` → `python servers/serve.py`) deployed as a
+hash-pinning): a small Dockerfile (`uv sync --extra web` → `python serve.py`) deployed as a
 Coolify app; Caddy fronts TCP with auto Let's Encrypt; map **UDP :8443** through for QUIC. Not required
 for the testing above.
-
-## Status / TODO
-- `serve.py` is landing now (the consolidation retires `gateway.ts` / `gateway_zenoh.py` /
-  `media_server.py` into one Python service). **Fill the exact `serve.py` command + origin port above
-  once it exists**, and drop the `gateway_zenoh.py` interim note below.
-- *Interim before serve.py (WS only):* `DIMOS_TRANSPORT=zenoh GATEWAY_PORT=8088 uv run python
-  servers/gateway_zenoh.py` + `bench_publisher.py`; Mac `GATEWAY_URL=ws://37.60.232.68:8088 deno task
-  bench`. (May be removed by the consolidation — prefer `serve.py`.)
