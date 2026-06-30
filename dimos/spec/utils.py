@@ -13,10 +13,14 @@
 # limitations under the License.
 
 import inspect
-from typing import Any, Protocol, runtime_checkable
+import sys
+from types import UnionType
+from typing import Any, Protocol, Union, get_args, get_origin, runtime_checkable
 
-from annotation_protocol import AnnotationProtocol
-from typing_extensions import is_protocol
+if sys.version_info >= (3, 13):
+    from typing import get_protocol_members, is_protocol
+else:
+    from typing_extensions import get_protocol_members, is_protocol
 
 
 # Allows us to differentiate plain Protocols from Module-Spec Protocols
@@ -89,14 +93,106 @@ def spec_annotation_compliance(
     if not is_spec(proto):
         raise TypeError("Not a Spec")
 
-    # Build a *strict* runtime protocol dynamically
-    strict_proto = type(
-        f"Strict{proto.__name__}",
-        (AnnotationProtocol,),
-        dict(proto.__dict__),
-    )
+    # Structural compliance (every member present) is a prerequisite.
+    if not isinstance(obj, runtime_checkable(proto)):
+        return False
 
-    return isinstance(obj, strict_proto)
+    # On top of structure, every method the spec declares must match by signature
+    # (return + argument annotations). Data attributes are not signature-able, so
+    # only their presence -- already verified above -- is required.
+    obj_cls = obj if isinstance(obj, type) else type(obj)
+    for name in get_protocol_members(proto):
+        try:
+            spec_sig = inspect.signature(getattr(proto, name), eval_str=True)
+        except (AttributeError, TypeError, ValueError):
+            continue  # data attribute, not a method -- only its presence matters
+        try:
+            impl_sig = inspect.signature(getattr(obj_cls, name), eval_str=True)
+        except (AttributeError, TypeError, ValueError):
+            return False  # spec declares a method here but the impl has no callable
+        if not _signatures_compatible(spec_sig, impl_sig):
+            return False
+    return True
+
+
+def _annotation_compatible(spec_ann: Any, impl_ann: Any) -> bool:
+    """Return True if an implementation's ``impl_ann`` satisfies the spec's ``spec_ann``.
+
+    Missing (``empty``), ``Any`` and ``None`` spec annotations accept any implementation
+    type, and an ``Any`` implementation annotation satisfies any spec. A union spec
+    annotation is satisfied by any subset of its members.
+    """
+    if spec_ann is inspect.Parameter.empty or spec_ann is Any or spec_ann is None:
+        return True
+    if impl_ann is Any:
+        return True
+
+    spec_origin = get_origin(spec_ann)
+    if spec_origin is Union or spec_origin is UnionType:
+        spec_types = set(get_args(spec_ann))
+        impl_origin = get_origin(impl_ann)
+        if impl_origin is Union or impl_origin is UnionType:
+            impl_types = set(get_args(impl_ann))
+        else:
+            impl_types = {impl_ann}
+        return spec_types >= impl_types
+
+    return bool(spec_ann == impl_ann)
+
+
+def _signatures_compatible(spec_sig: inspect.Signature, impl_sig: inspect.Signature) -> bool:
+    """Return True if ``impl_sig`` satisfies ``spec_sig`` by return and argument annotations."""
+    if not _annotation_compatible(spec_sig.return_annotation, impl_sig.return_annotation):
+        return False
+
+    # Re-shape the implementation parameters into positional/keyword arguments and bind
+    # them against the spec signature, which validates arity and parameter names.
+    has_var_args = any(
+        p.kind is inspect.Parameter.VAR_POSITIONAL for p in spec_sig.parameters.values()
+    )
+    args: list[inspect.Parameter] = []
+    kwargs: dict[str, inspect.Parameter] = {}
+    for p in impl_sig.parameters.values():
+        # An extra *optional* impl parameter (not declared by the spec, has a default)
+        # does not break substitutability -- a spec-driven caller never passes it -- so
+        # ignore it. Extra *required* params are kept, so binding fails and the impl is
+        # rejected.
+        if p.default is not inspect.Parameter.empty and p.name not in spec_sig.parameters:
+            continue
+        if p.kind is inspect.Parameter.POSITIONAL_ONLY:
+            args.append(p)
+        elif p.kind is inspect.Parameter.KEYWORD_ONLY:
+            kwargs[p.name] = p
+        elif p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD:
+            if has_var_args:
+                args.append(p)
+            else:
+                kwargs[p.name] = p
+
+    try:
+        bound = spec_sig.bind(*args, **kwargs)
+    except TypeError:
+        return False
+
+    for spec_param in spec_sig.parameters.values():
+        if spec_param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            continue
+        if spec_param.name not in bound.arguments:
+            return False  # spec declares this parameter but the impl does not provide it
+        impl_param = bound.arguments[spec_param.name]
+        if (
+            spec_param.kind is not inspect.Parameter.POSITIONAL_ONLY
+            and spec_param.name != impl_param.name
+        ):
+            return False
+        if (
+            spec_param.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+            and impl_param.kind is inspect.Parameter.POSITIONAL_ONLY
+        ):
+            return False
+        if not _annotation_compatible(spec_param.annotation, impl_param.annotation):
+            return False
+    return True
 
 
 def get_protocol_method_signatures(proto: type[object]) -> dict[str, inspect.Signature]:

@@ -114,12 +114,14 @@ def planner(
     visualization: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> Blueprint:
-    return ManipulationModule.blueprint(
-        robots=list(robots),
-        planning_timeout=planning_timeout,
-        visualization=visualization or {"backend": "meshcat"},
+    module_kwargs: dict[str, Any] = {
+        "robots": list(robots),
+        "planning_timeout": planning_timeout,
         **kwargs,
-    )
+    }
+    if visualization is not None:
+        module_kwargs["visualization"] = visualization
+    return ManipulationModule.blueprint(**module_kwargs)
 
 
 def default_trajectory_task_name(hardware_id: str) -> str:
