@@ -157,8 +157,25 @@ arrays like lidar/pointcloud, ~negligible on small structured pose). Keep decode
 _pending Stage 1._
 
 ### B — Browser / real runtime + cross-browser — `bench/RESULTS-browser.md`
-_pending Stage 2 (Playwright Chromium/Firefox/WebKit). Includes the browser×mechanism support matrix
-and the CLI-stand-in-vs-browser-real agreement check._
+
+**Cross-browser *support* matrix** (factual — the `bench.html` rewrite records unsupported mechanisms
+as NaN rows, confirming this empirically when run):
+
+| mechanism | Chromium/Edge | Firefox | Safari/WebKit |
+|---|:-:|:-:|:-:|
+| WebSocket | ✅ | ✅ | ✅ |
+| SSE | ✅ | ✅ | ✅ |
+| HTTP poll | ✅ | ✅ | ✅ |
+| WebRTC data | ✅ | ✅ | ✅ (quirks) |
+| **WebTransport** | ✅ | ❌ (in progress) | ❌ | 
+→ **the SDK must fall back to WS** for WebTransport on Firefox/Safari — already handled (the dropdown
+just won't offer it / it errors into a NaN row). WS/SSE/poll/WebRTC are universal.
+
+_Empirical browser *performance* numbers (real Chrome via the claude-in-chrome MCP, or Playwright
+cross-browser) are **pending** — and should be collected **after** the `serve.py` dup fix so browser
+throughput is trustworthy. Run: `deno task serve` (with `ZENOH_KEY=nomatch` until fixed) + a source +
+`netsim`, open `bench.html?gw=localhost:8099`, Run, export. The key cross-check is whether the CLI
+aiortc/aioquic stand-in latencies match the real-browser WebRTC/WebTransport latencies._
 
 ### Kernel `tc/netem` on the VPS — `bench/RESULTS-vps.md`
 _pending Stage 3._
@@ -168,9 +185,8 @@ _pending Stage 4 (needs the VPS firewall port open)._
 
 ---
 
-## Recommendations (consolidated)
+## Recommendations (consolidated — backed by the CLI run)
 
-> Finalized after the runs; the prior single-host findings already point here:
 - **Default to WebSocket** for the data + control plane: lowest overhead, duplex, the trust boundary.
 - **Heavy streams (MB/s) under loss/cellular → WebRTC-data or WebTransport** (UDP, no HoL): WS stalls
   with TCP head-of-line blocking where these stay smooth. WebTransport additionally has clean QUIC
@@ -190,3 +206,23 @@ deno task bench:browser                       # (Stage 2) Playwright Chromium/Fi
 # Real WAN: serve.py on the VPS, then from the Mac:
 GATEWAY_URL=ws://<vps>:8080/ws deno task bench    # see docs/real-wan.md
 ```
+
+## Status & remaining work (handoff)
+
+**Done & committed:** `bench.tsx` fixed to the 5 mechanisms · this report (methodology + CLI-vs-browser
+can/can't + simulation hierarchy + cross-browser support matrix) · the **dual-delivery bug finding** ·
+the **clean CLI numbers** (light/heavy/WT-loss/QoS/decode) via the `ZENOH_KEY=nomatch` workaround.
+
+**Blocked on your decision — fix `serve.py`'s dual-bus tap** (dedup, or a `BUS_BACKENDS`/single-tap env;
+see the BLOCKER section). Until then, absolute **throughput/loss** on any layer is bug-affected; latency
++ relative ordering are valid. **Once fixed,** drop the workaround and the numbers become real everywhere.
+
+**Teed up (run after the fix — each is one command, infra exists):**
+- **Browser perf** (real Chrome via claude-in-chrome MCP, or `npx playwright` cross-browser) →
+  `RESULTS-browser.md` + the CLI-stand-in-vs-real-browser latency cross-check.
+- **VPS / kernel netem** — `docs/real-wan.md` runbook: `uv sync --extra web` + `serve.py` on the VPS,
+  the CLI suite there, and `tc/netem` (a Mac can't) for the kernel-accurate cross-check.
+- **Real WAN** — Mac → VPS by IP; **needs you to open the VPS firewall port** (TCP 8080 + UDP 8443).
+
+**Other CLI gaps to retry:** the aiortc/aioquic **WebRTC-data e2e** + **WebTransport-e2e** probes hit
+connection errors this run (WebTransport itself is proven by the loss bench).
