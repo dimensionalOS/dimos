@@ -40,8 +40,8 @@ app` gives hot reload and connects to `:8080`.
 
 The app auto-discovers topics, draws the map + robot + trail in **WorldView**, shows a live camera
 + pose readout + a **Stats** panel (hz / kB/s / latency), and drives the robot with **WASD / arrows**
-(the service clamps velocity + deadman-stops). Headless checks: `deno task probe`,
-`deno task smoke`, `deno task teleop:test`.
+(the service clamps velocity + deadman-stops). Headless checks: `deno task smoke`,
+`deno task teleop:test`.
 
 ## Transports — pick a delivery mechanism from the topbar dropdown
 
@@ -142,7 +142,7 @@ costs **2.64× the bytes** of the binary relay; **~75% on-demand** bandwidth cut
 | `servers/bench.py` | the `/sse` `/poll` `/rtc` + WebTransport bench transports |
 | `bench/` | publisher + headless bench + `run.sh`/`matrix.sh`/… + `test_bench.py` + RESULTS.md |
 
-The original prototype (`bridge.ts`, `app/src/bus.ts`, `app/src/widgets/`, `WALKTHROUGH.md`) is the
+The original teaching prototype (`app/src/bus.ts`, `app/src/widgets/`, `WALKTHROUGH.md`) is the
 parts-bin this was extracted from.
 
 ## Status / next
