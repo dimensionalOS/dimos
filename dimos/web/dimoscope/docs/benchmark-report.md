@@ -101,12 +101,57 @@ centerpiece another agent owns + the fix is a design choice). Below: the metrics
 > Filled in by the run. Each table notes its layer + date; raw data in `bench/RESULTS-*.md`.
 > **Throughput/loss are bug-affected (see BLOCKER above) — read latency + relative ordering only.**
 
-### A — CLI / headless (single host), LAN sanity (zenoh tap disabled for single delivery)
-| mechanism | hz (lcm-only) | lat p50 | lat p95 | lat max |
-|---|--:|--:|--:|--:|
-| WebSocket | 297 (4× pose) | 0 ms | 0.27 | 0.6 |
-_Latency is sub-ms on LAN as expected; the full mechanism × profile latency matrix is pending the
-`serve.py` fix so throughput/loss are also valid. WebRTC/WebTransport via aiortc/aioquic stand-ins._
+### A — CLI / headless (single host), clean (`ZENOH_KEY=nomatch` workaround → single delivery, loss%=0)
+_2026-07-01 · netsim TCP profiles · one-way latency (ms) · loss%=0 across all clean rows (the workaround
+neutralises the dup bug)._
+
+**Light stream (4× PoseStamped @100Hz, ~24 kB/s) — `RESULTS-mechanisms.md`:**
+
+| profile | ws p50 / p95 | sse p50 / p95 | poll p50 / p95 |
+|---|--:|--:|--:|
+| lan | 0.45 / 0.92 | 0.52 / 0.95 | 1.17 / 1.9 |
+| 4g  | 83 / 116 | 81 / 113 | 112 / 166 |
+| 3g  | 276 / 385 | 287 / 401 | **448 / 874** |
+| lossy | 153 / 263 | 166 / 274 | 193 / 338 |
+→ **ws ≈ sse < poll**; at light load all three are usable even on 3g, but **poll's per-cycle RTT
+roughly doubles latency** as the link degrades. (loss%=0 everywhere — clean.)
+
+**Heavy stream (dense ~17 MB/s) — `RESULTS-mechanisms-dense.md`:**
+
+| profile | ws | sse | poll |
+|---|--:|--:|--:|
+| lan | 17.3 Hz, p50 21 ms | 17.3 Hz, p50 **26** (max 71) | 17.3 Hz, p50 21 ms |
+| 4g · 3g | **0 (dead)** | **0 (dead)** | **0 (dead)** |
+→ **MB/s saturates cellular** — 17 MB/s is impossible on 4g(12Mbps)/3g(2Mbps): every TCP mechanism
+collapses to 0. On LAN, **SSE's base64 inflates latency** (p50 26 vs 21; max 71). Heavy streams need a
+fat pipe, compression/decimation, or the media plane — not a raw topic relay.
+
+**WebTransport (QUIC datagrams) under REAL packet loss — `bench:loss` (netsim-udp drops real datagrams):**
+
+| drop % | datagrams/s | dgram p50 | dgram **p95** |
+|---|--:|--:|--:|
+| 0% | 297 | 0 | 0 |
+| 5% | 282 | 14 | **23** |
+| 10% | 269 | 14 | **24** |
+| 20% | 227 | 14 | **25** |
+→ **the headline:** delivered-datagram **p95 stays flat (~23–25 ms) as loss rises to 20%** — a dropped
+datagram simply doesn't arrive (**no head-of-line blocking**); throughput falls ~linearly with drop
+rate. A reliable WS/TCP stream instead converts loss into retransmit→latency/stall. **This is the
+teleop-under-bad-network case for WebRTC/WebTransport.**
+
+**QoS — `bench:qos` (mixed load, saturated link):** rate-limit the heavy lidar `setRateLimit(2)` →
+**4.67× less bandwidth** (client-driven); on-demand (1 of 4 topics) → **75% reduction**; prioritization
+→ capping lidar at 2 Hz keeps **pose alive at 169 Hz, loss 0** on a saturated link.
+
+**Decode location — `bench:decode`:** for the small PoseStamped + grid load, server→JSON moved **~1×**
+the bytes of the binary relay (the rosbridge tax is **payload-dependent** — it balloons on large packed
+arrays like lidar/pointcloud, ~negligible on small structured pose). Keep decode on the client.
+
+> **Gaps in this CLI run:** the **WebRTC-data e2e** and **WebTransport-e2e** *aiortc/aioquic probes*
+> hit connection errors (`webrtc_client_probe.py` / `webtransport_client_probe.py`) — environmental,
+> to retry; WebTransport itself is proven by the loss bench above. The dual-delivery bug means absolute
+> **throughput** is the publisher's real ~75%-of-nominal single rate; the *relative ordering + latency*
+> are what to read.
 
 ### A — CLI / headless (single host) — `bench/RESULTS-*.md`
 _pending Stage 1._
