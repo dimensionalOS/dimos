@@ -35,9 +35,9 @@ Sim (``--simulation``):
 Usage:
     dimos run unitree-g1-groot-wbc                 # real hardware
     dimos --simulation mujoco run unitree-g1-groot-wbc    # sim
-    dimos --simulation mujoco --scene none run unitree-g1-groot-wbc
-    dimos --simulation mujoco --scene office run unitree-g1-groot-wbc
-    dimos --simulation mujoco --scene supermarket run unitree-g1-groot-wbc
+    dimos --simulation mujoco --scene-package none run unitree-g1-groot-wbc
+    dimos --simulation mujoco --scene-package office run unitree-g1-groot-wbc
+    dimos --simulation mujoco --scene-package supermarket run unitree-g1-groot-wbc
 
 Overrides (replace the old env-var dance):
     dimos run unitree-g1-groot-wbc \\
@@ -79,6 +79,7 @@ from dimos.robot.unitree.g1.g1_rerun import (
     g1_urdf_joint_state,
     g1_urdf_static_robot,
 )
+from dimos.simulation.scene_assets.spec import ScenePackage
 from dimos.utils.data import LfsPath
 from dimos.visualization.rerun.scene_package import scene_package_static_entities
 from dimos.visualization.vis_module import vis_module
@@ -99,6 +100,7 @@ _MUJOCO_LIDAR_CAMERAS = (
     "lidar_right_camera",
 )
 _MUJOCO_LIDAR_CAMERA = _MUJOCO_LIDAR_CAMERAS[0]
+_G1_NUM_MOTORS = len(g1_joints)
 # Robot geoms occupy groups 0/1. The legacy floor uses group 2, and cooked
 # scene packages/entities use group 3, so lidar should render world geometry.
 _MUJOCO_LIDAR_GEOM_GROUPS = (2, 3)
@@ -117,9 +119,9 @@ _MUJOCO_LIDAR_BASE_KWARGS: dict[str, Any] = {
     "mujoco_lidar_raycast_height": 32,
     "mujoco_lidar_robot_exclusion_radius": G1.width_clearance,
 }
-_G1_SUPERMARKET_COMPOSED_MJB = (
-    "mujoco/composed/unitree-g1-groot-wbc_spawn_9p2_11p8_yaw_m1p57_static_only_lidar.mjb"
-)
+_G1_COMPOSED_MJB_KEY = "unitree-g1-groot-wbc_spawn_9p2_11p8_yaw_m1p57_static_only_lidar"
+_G1_COMPOSED_MJB_ROBOT = "unitree-g1-groot-wbc"
+_G1_COMPOSED_MJB_ENTITY_POLICY = "static-only"
 _G1_NAV_VOXEL_RESOLUTION = 0.05
 _G1_NAV_OVERHEAD_SAFETY_MARGIN = 0.2
 _G1_NAV_MAX_STEP_HEIGHT = 0.10
@@ -175,17 +177,17 @@ if global_config.simulation == "mujoco":
         return MujocoSimModule.blueprint(
             address=_MJCF_PATH,
             headless=True,
-            dof=29,
+            dof=_G1_NUM_MOTORS,
             **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),
             inject_legacy_assets=True,
             robot_sim_spec=_g1_sim_spec,
         )
 
     def _scene_mujoco_backend() -> tuple[Any, str | Path]:
-        if global_config.scene is None:
+        if global_config.scene_package is None:
             return _legacy_mujoco_backend(), _MJCF_PATH
 
-        scene_path = Path(str(global_config.scene)).expanduser()
+        scene_path = Path(str(global_config.scene_package)).expanduser()
         if scene_path.suffix.lower() == ".mjb":
             if not scene_path.exists():
                 raise FileNotFoundError(f"MuJoCo binary scene not found: {scene_path}")
@@ -193,7 +195,7 @@ if global_config.simulation == "mujoco":
                 MujocoSimModule.blueprint(
                     address=scene_path,
                     headless=True,
-                    dof=29,
+                    dof=_G1_NUM_MOTORS,
                     **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),
                     robot_sim_spec=_g1_sim_spec,
                 ),
@@ -202,19 +204,19 @@ if global_config.simulation == "mujoco":
 
         from dimos.simulation.scenes.catalog import resolve_scene_package
 
-        package = resolve_scene_package(global_config.scene)
+        package = resolve_scene_package(global_config.scene_package)
         if package is None:
             return _legacy_mujoco_backend(), _MJCF_PATH
         if package.mujoco_scene_path is None:
             raise ValueError(f"scene package has no MuJoCo scene artifact: {package.metadata_path}")
 
-        composed_scene = _precomposed_g1_scene(package.package_dir)
+        composed_scene = _precomposed_g1_scene(package)
         if composed_scene is not None:
             return (
                 MujocoSimModule.blueprint(
                     address=composed_scene,
                     headless=True,
-                    dof=29,
+                    dof=_G1_NUM_MOTORS,
                     **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),
                     robot_sim_spec=_g1_sim_spec,
                 ),
@@ -229,18 +231,26 @@ if global_config.simulation == "mujoco":
                 robot_id="",
                 scene_entities=package.entities,
                 headless=True,
-                dof=29,
+                dof=_G1_NUM_MOTORS,
                 **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),
                 robot_sim_spec=_g1_sim_spec,
             ),
             _ROBOT_ONLY_MJCF_PATH,
         )
 
-    def _precomposed_g1_scene(package_dir: Path) -> Path | None:
-        if "supermarket" not in package_dir.name:
+    def _precomposed_g1_scene(package: ScenePackage) -> Path | None:
+        candidate = package.mujoco_composed_binary_path(
+            key=_G1_COMPOSED_MJB_KEY,
+            robot=_G1_COMPOSED_MJB_ROBOT,
+            entity_policy=_G1_COMPOSED_MJB_ENTITY_POLICY,
+        )
+        if candidate is None:
             return None
-        candidate = package_dir / _G1_SUPERMARKET_COMPOSED_MJB
-        return candidate if candidate.exists() else None
+        if not candidate.exists():
+            raise FileNotFoundError(
+                f"scene package declares a composed MuJoCo binary that is missing: {candidate}"
+            )
+        return candidate
 
     # Sim backend: MuJoCo engine via SHM.
     _backend, _adapter_address = _scene_mujoco_backend()
@@ -337,7 +347,7 @@ _static_rerun_entities: dict[str, Any] = {
     # mesh lives underneath and link transforms are driven by joint state.
     G1_RERUN_ROOT: g1_urdf_static_robot(root_path=G1_RERUN_ROOT),
 }
-_static_rerun_entities.update(scene_package_static_entities(global_config.scene))
+_static_rerun_entities.update(scene_package_static_entities(global_config.scene_package))
 
 _rerun_config = {
     "blueprint": _g1_groot_rerun_blueprint,

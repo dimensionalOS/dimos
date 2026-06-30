@@ -28,9 +28,9 @@ def _write_box_mesh(path: Path) -> None:
 
 
 def test_cook_entity_collision_hulls(tmp_path: Path) -> None:
-    pytest.importorskip("coacd")
     source = tmp_path / "visual.obj"
     _write_box_mesh(source)
+    pytest.importorskip("coacd")
     out_dir = tmp_path / "mujoco_collision"
 
     hulls = cook_entity_collision_hulls(source, out_dir)
@@ -42,9 +42,9 @@ def test_cook_entity_collision_hulls(tmp_path: Path) -> None:
 
 
 def test_cook_entity_collision_hulls_is_idempotent(tmp_path: Path) -> None:
-    pytest.importorskip("coacd")
     source = tmp_path / "visual.obj"
     _write_box_mesh(source)
+    pytest.importorskip("coacd")
     out_dir = tmp_path / "mujoco_collision"
 
     first = cook_entity_collision_hulls(source, out_dir)

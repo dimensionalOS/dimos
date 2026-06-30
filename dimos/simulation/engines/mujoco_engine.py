@@ -214,8 +214,8 @@ class MujocoEngine(SimulationEngine):
 
         self._connected = False
         self._lock = threading.Lock()
-        self._reset_requested = threading.Event()
-        self._reset_done_event: threading.Event | None = None
+        self._reset_requested = False
+        self._reset_done_events: list[threading.Event] = []
         self._stop_event = threading.Event()
         self._sim_thread: threading.Thread | None = None
 
@@ -585,15 +585,15 @@ class MujocoEngine(SimulationEngine):
 
         def _step_once(sync_viewer: bool) -> None:
             loop_start = time.time()
-            reset_done_event = None
-            if self._reset_requested.is_set():
-                with self._lock:
-                    self._reset_requested.clear()
+            reset_done_events: list[threading.Event] = []
+            with self._lock:
+                if self._reset_requested:
+                    self._reset_requested = False
                     self._reset_unlocked()
-                    reset_done_event = self._reset_done_event
-                    self._reset_done_event = None
-                if reset_done_event is not None:
-                    reset_done_event.set()
+                    reset_done_events = self._reset_done_events
+                    self._reset_done_events = []
+            for reset_done_event in reset_done_events:
+                reset_done_event.set()
             if self._on_before_step is not None:
                 try:
                     self._on_before_step(self)
@@ -766,8 +766,9 @@ class MujocoEngine(SimulationEngine):
     ) -> bool:
         done_event = threading.Event() if wait else None
         with self._lock:
-            self._reset_done_event = done_event
-            self._reset_requested.set()
+            if done_event is not None:
+                self._reset_done_events.append(done_event)
+            self._reset_requested = True
         if done_event is None:
             return True
         return done_event.wait(timeout)
@@ -788,8 +789,9 @@ class MujocoEngine(SimulationEngine):
                 self._spawn_z = spawn_z
             if spawn_yaw is not None:
                 self._spawn_yaw = spawn_yaw
-            self._reset_done_event = done_event
-            self._reset_requested.set()
+            if done_event is not None:
+                self._reset_done_events.append(done_event)
+            self._reset_requested = True
         if done_event is None:
             return True
         return done_event.wait(timeout)

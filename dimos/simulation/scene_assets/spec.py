@@ -179,6 +179,22 @@ class SceneCookSpec:
 
 
 @dataclass(frozen=True)
+class MujocoComposedBinary:
+    """A precompiled robot+scene MuJoCo model.
+
+    These binaries are cache artifacts. They are specific to the robot, spawn
+    pose, entity policy, scene revision, and MuJoCo version used by the cooker.
+    """
+
+    key: str
+    path: Path
+    robot: str | None = None
+    spawn: dict[str, Any] = field(default_factory=dict)
+    entity_policy: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ScenePackage:
     """Cooked scene outputs for runtime modules."""
 
@@ -191,6 +207,7 @@ class ScenePackage:
     objects_path: Path | None = None
     mujoco_scene_path: Path | None = None
     mujoco_binary_path: Path | None = None
+    mujoco_composed_binaries: dict[str, MujocoComposedBinary] = field(default_factory=dict)
     metadata_path: Path | None = None
     entities: list[dict[str, Any]] = field(default_factory=list)
     stats: dict[str, Any] = field(default_factory=dict)
@@ -215,8 +232,9 @@ class ScenePackage:
                 ),
                 "objects": _serialize_package_path(self.objects_path, package_dir),
                 "mujoco_scene": _serialize_package_path(self.mujoco_scene_path, package_dir),
-                "mujoco_binary": _serialize_package_path(
-                    self.mujoco_binary_path,
+                "mujoco_binary": _serialize_package_path(self.mujoco_binary_path, package_dir),
+                "mujoco_composed_binaries": _serialize_mujoco_composed_binaries(
+                    self.mujoco_composed_binaries,
                     package_dir,
                 ),
             },
@@ -240,6 +258,57 @@ class ScenePackage:
         if target_key == "rerun":
             return self.browser_visuals.get("default") or self.visual_path
         return self.browser_visuals.get("default")
+
+    def mujoco_composed_binary(
+        self,
+        key: str | None = None,
+        *,
+        robot: str | None = None,
+        entity_policy: str | None = None,
+    ) -> MujocoComposedBinary | None:
+        """Return a declared robot+scene MuJoCo binary matching the request."""
+        if key is not None:
+            candidate = self.mujoco_composed_binaries.get(key)
+            if candidate is None:
+                return None
+            return (
+                candidate
+                if _mujoco_composed_binary_matches(
+                    candidate,
+                    robot=robot,
+                    entity_policy=entity_policy,
+                )
+                else None
+            )
+
+        matches = [
+            binary
+            for binary in self.mujoco_composed_binaries.values()
+            if _mujoco_composed_binary_matches(
+                binary,
+                robot=robot,
+                entity_policy=entity_policy,
+            )
+        ]
+        if len(matches) > 1:
+            keys = ", ".join(sorted(binary.key for binary in matches))
+            raise ValueError(f"multiple composed MuJoCo binaries match; choose one key: {keys}")
+        return matches[0] if matches else None
+
+    def mujoco_composed_binary_path(
+        self,
+        key: str | None = None,
+        *,
+        robot: str | None = None,
+        entity_policy: str | None = None,
+    ) -> Path | None:
+        """Return a robot+scene MuJoCo binary path matching the request."""
+        binary = self.mujoco_composed_binary(
+            key,
+            robot=robot,
+            entity_policy=entity_policy,
+        )
+        return binary.path if binary is not None else None
 
     def write_metadata(self, path: Path | None = None) -> Path:
         metadata_path = path or self.metadata_path or (self.package_dir / "scene.meta.json")
@@ -270,6 +339,10 @@ def load_scene_package(path: str | Path) -> ScenePackage:
         objects_path=_resolve_package_path(artifacts.get("objects"), package_dir),
         mujoco_scene_path=_resolve_package_path(artifacts.get("mujoco_scene"), package_dir),
         mujoco_binary_path=_resolve_package_path(artifacts.get("mujoco_binary"), package_dir),
+        mujoco_composed_binaries=_resolve_mujoco_composed_binaries(
+            artifacts.get("mujoco_composed_binaries"),
+            package_dir,
+        ),
         metadata_path=metadata_path,
         entities=_resolve_entity_paths(raw.get("entities", []), package_dir),
         stats=raw.get("stats", {}),
@@ -298,6 +371,16 @@ def _validate_artifact_frames(raw: dict[str, Any], metadata_path: Path) -> None:
                 f"{frame_name}={frames.get(frame_name)!r}, "
                 f"expected {ARTIFACT_FRAMES[frame_name]!r}. Recook the scene package."
             )
+
+    if (
+        artifacts.get("mujoco_composed_binaries")
+        and frames.get("mujoco_binary") != ARTIFACT_FRAMES["mujoco_binary"]
+    ):
+        raise ValueError(
+            f"scene package artifact frame mismatch in {metadata_path}: "
+            f"mujoco_binary={frames.get('mujoco_binary')!r}, "
+            f"expected {ARTIFACT_FRAMES['mujoco_binary']!r}. Recook the scene package."
+        )
 
 
 def _serialize_package_path(path: Path | None, package_dir: Path) -> str | None:
@@ -350,6 +433,97 @@ def _resolve_browser_visuals(raw: Any, package_dir: Path) -> dict[str, Path]:
         if visual_path is not None:
             resolved[target.strip().lower()] = visual_path
     return resolved
+
+
+def _serialize_mujoco_composed_binaries(
+    binaries: dict[str, MujocoComposedBinary],
+    package_dir: Path,
+) -> dict[str, dict[str, Any]]:
+    serialized: dict[str, dict[str, Any]] = {}
+    for key, binary in sorted(binaries.items()):
+        path = _serialize_package_path(binary.path, package_dir)
+        if path is None:
+            continue
+        payload: dict[str, Any] = {"path": path}
+        if binary.robot is not None:
+            payload["robot"] = binary.robot
+        if binary.spawn:
+            payload["spawn"] = binary.spawn
+        if binary.entity_policy is not None:
+            payload["entity_policy"] = binary.entity_policy
+        if binary.metadata:
+            payload["metadata"] = binary.metadata
+        serialized[key] = payload
+    return serialized
+
+
+def _resolve_mujoco_composed_binaries(
+    raw: Any,
+    package_dir: Path,
+) -> dict[str, MujocoComposedBinary]:
+    if isinstance(raw, dict):
+        items: list[tuple[Any, Any]] = list(raw.items())
+    elif isinstance(raw, list):
+        items = [(item.get("key"), item) for item in raw if isinstance(item, dict)]
+    else:
+        return {}
+
+    resolved: dict[str, MujocoComposedBinary] = {}
+    for raw_key, raw_value in items:
+        if raw_key is None:
+            continue
+        key = str(raw_key).strip()
+        if not key:
+            continue
+
+        if isinstance(raw_value, str):
+            path = _resolve_package_path(raw_value, package_dir)
+            robot = None
+            spawn: dict[str, Any] = {}
+            entity_policy = None
+            metadata: dict[str, Any] = {}
+        elif isinstance(raw_value, dict):
+            key = str(raw_value.get("key") or key).strip()
+            path = _resolve_package_path(raw_value.get("path"), package_dir)
+            robot = _optional_str(raw_value.get("robot"))
+            spawn = _dict_or_empty(raw_value.get("spawn"))
+            entity_policy = _optional_str(raw_value.get("entity_policy"))
+            metadata = _dict_or_empty(raw_value.get("metadata"))
+        else:
+            continue
+
+        if not key or path is None:
+            continue
+        resolved[key] = MujocoComposedBinary(
+            key=key,
+            path=path,
+            robot=robot,
+            spawn=spawn,
+            entity_policy=entity_policy,
+            metadata=metadata,
+        )
+    return resolved
+
+
+def _mujoco_composed_binary_matches(
+    binary: MujocoComposedBinary,
+    *,
+    robot: str | None,
+    entity_policy: str | None,
+) -> bool:
+    return (robot is None or binary.robot == robot) and (
+        entity_policy is None or binary.entity_policy == entity_policy
+    )
+
+
+def _optional_str(raw: Any) -> str | None:
+    if raw is None:
+        return None
+    return str(raw)
+
+
+def _dict_or_empty(raw: Any) -> dict[str, Any]:
+    return dict(raw) if isinstance(raw, dict) else {}
 
 
 _ENTITY_PATH_KEYS = ("visual_path", "collision_path", "mesh_path")

@@ -21,6 +21,7 @@ on the actual GR00T weights.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 import math
 from typing import Any
 from unittest.mock import MagicMock
@@ -112,9 +113,11 @@ def joints_29() -> list[str]:
 
 
 @pytest.fixture
-def task(patched_ort: list[str], stub_adapter: MagicMock, joints_29: list[str]) -> G1GrootWBCTask:
+def task(
+    patched_ort: list[str], stub_adapter: MagicMock, joints_29: list[str]
+) -> Iterator[G1GrootWBCTask]:
     _ = patched_ort
-    return G1GrootWBCTask(
+    task = G1GrootWBCTask(
         name="groot_wbc",
         config=G1GrootWBCTaskConfig(
             balance_onnx="/fake/balance.onnx",
@@ -127,14 +130,18 @@ def task(patched_ort: list[str], stub_adapter: MagicMock, joints_29: list[str]) 
         ),
         adapter=stub_adapter,
     )
+    try:
+        yield task
+    finally:
+        task.stop()
 
 
 @pytest.fixture
 def unarmed_task(
     patched_ort: list[str], stub_adapter: MagicMock, joints_29: list[str]
-) -> G1GrootWBCTask:
+) -> Iterator[G1GrootWBCTask]:
     _ = patched_ort
-    return G1GrootWBCTask(
+    task = G1GrootWBCTask(
         name="groot_wbc",
         config=G1GrootWBCTaskConfig(
             balance_onnx="/fake/balance.onnx",
@@ -147,6 +154,10 @@ def unarmed_task(
         ),
         adapter=stub_adapter,
     )
+    try:
+        yield task
+    finally:
+        task.stop()
 
 
 def _state_at(t_now: float, joint_names: list[str]) -> CoordinatorState:
@@ -180,8 +191,8 @@ def test_observation_layout_matches_policy_contract(task: G1GrootWBCTask) -> Non
     cmd = np.array([1.0, 0.5, 0.25], dtype=np.float32)
     gyro = np.array([0.1, 0.2, 0.3], dtype=np.float32)
     gravity = np.array([0.0, 0.0, -1.0], dtype=np.float32)
-    q = np.zeros(29, dtype=np.float32)
-    dq = np.ones(29, dtype=np.float32)
+    q = np.zeros(g1_groot_wbc_task._NUM_MOTORS, dtype=np.float32)
+    dq = np.ones(g1_groot_wbc_task._NUM_MOTORS, dtype=np.float32)
 
     obs = task._build_obs(cmd=cmd, gyro=gyro, gravity=gravity, q=q, dq=dq)
 

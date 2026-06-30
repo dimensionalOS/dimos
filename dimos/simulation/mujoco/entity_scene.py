@@ -50,8 +50,6 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     import mujoco
 
-    from dimos.simulation.scene_assets.spec import ScenePackage
-
 logger = setup_logger()
 
 ENTITY_BODY_PREFIX = "entity:"
@@ -315,47 +313,3 @@ def spawn_penetrators(model: mujoco.MjModel) -> frozenset[str]:
             if entity_id is not None:
                 bad.add(entity_id)
     return frozenset(bad)
-
-
-def compose_entity_model(scene_package: ScenePackage) -> Path | None:
-    """Legacy entry point — pre-compose a scene+entities ``.mjb`` from a
-    package wrapper.
-
-    The new runtime path (``MujocoSimModule._compose_model``) calls
-    :func:`add_entities_to_spec` directly on the ``MjSpec`` and never
-    materialises a separate ``.mjb``. This function is retained for the
-    few callers that still want a precompiled binary; it returns ``None``
-    when the package has no MuJoCo scene artifact.
-    """
-    if scene_package.mujoco_scene_path is None:
-        return None
-    wrapper = Path(scene_package.mujoco_scene_path)
-    if not wrapper.exists():
-        return None
-
-    import mujoco
-
-    entities = _initial_entities(scene_package.entities)
-    if not entities:
-        return wrapper
-
-    spec = mujoco.MjSpec.from_file(str(wrapper))
-    add_entities_to_spec(spec, entities)
-    model = spec.compile()
-
-    penetrators = spawn_penetrators(model)
-    if penetrators:
-        logger.warning(
-            "%d entities spawn in deep contact and are welded static: %s",
-            len(penetrators),
-            ", ".join(sorted(penetrators)),
-        )
-        spec = mujoco.MjSpec.from_file(str(wrapper))
-        add_entities_to_spec(spec, entities, force_static=penetrators)
-        model = spec.compile()
-
-    out_dir = wrapper.parent
-    key = hashlib.sha256(repr(entities).encode()).hexdigest()[:12]
-    mjb_path = out_dir / f"entities_{key}.mjb"
-    mujoco.mj_saveModel(model, str(mjb_path))
-    return mjb_path

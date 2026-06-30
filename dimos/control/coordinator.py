@@ -26,7 +26,6 @@ Features:
 """
 
 from dataclasses import dataclass, field
-import inspect
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -563,16 +562,8 @@ class ControlCoordinator(Module):
         results: dict[str, bool] = {}
         with self._task_lock:
             for task in self._tasks.values():
-                handler = getattr(task, "reset_runtime_state", None)
-                if not callable(handler):
-                    results[task.name] = False
-                    continue
                 try:
-                    params = inspect.signature(handler).parameters
-                    if "reactivate" in params:
-                        results[task.name] = bool(handler(reactivate=reactivate))
-                    else:
-                        results[task.name] = bool(handler())
+                    results[task.name] = bool(task.reset_runtime_state(reactivate=reactivate))
                 except Exception:
                     logger.exception(f"reset_runtime_state() raised on task {task.name!r}")
                     results[task.name] = False

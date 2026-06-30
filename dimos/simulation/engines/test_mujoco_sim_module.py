@@ -14,7 +14,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
+import threading
+import time
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -140,6 +143,64 @@ def test_respawn_at_uses_ground_height_plus_initial_root_clearance() -> None:
     assert hooks.cleared is True
 
 
+def test_reset_waiters_are_released_when_reset_requests_are_coalesced() -> None:
+    engine = object.__new__(MujocoEngine)
+    engine._lock = threading.Lock()
+    engine._reset_requested = False
+    engine._reset_done_events = []
+    engine._spawn_xy = None
+    engine._spawn_z = None
+    engine._spawn_yaw = None
+    results: list[bool] = []
+
+    def _wait_until_waiters_ready() -> None:
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            with engine._lock:
+                if len(engine._reset_done_events) == 2:
+                    return
+            time.sleep(0.001)
+        raise TimeoutError("reset waiters were not registered")
+
+    def _request_reset() -> None:
+        results.append(engine.request_reset(wait=True, timeout=1.0))
+
+    def _request_reset_to() -> None:
+        results.append(
+            engine.request_reset_to(
+                spawn_xy=(1.0, 2.0),
+                spawn_z=0.5,
+                spawn_yaw=0.25,
+                wait=True,
+                timeout=1.0,
+            )
+        )
+
+    threads = [
+        threading.Thread(target=_request_reset),
+        threading.Thread(target=_request_reset_to),
+    ]
+    for thread in threads:
+        thread.start()
+
+    _wait_until_waiters_ready()
+    with engine._lock:
+        assert engine._reset_requested
+        assert engine._spawn_xy == (1.0, 2.0)
+        assert engine._spawn_z == 0.5
+        assert engine._spawn_yaw == 0.25
+        done_events = engine._reset_done_events
+        engine._reset_done_events = []
+        engine._reset_requested = False
+    for done_event in done_events:
+        done_event.set()
+
+    for thread in threads:
+        thread.join(timeout=1.0)
+        assert not thread.is_alive()
+    assert results == [True, True]
+
+
 def _write_scene_xml(path: Path) -> None:
     path.write_text(
         """
@@ -243,7 +304,8 @@ def _mesh_scene_entity(entity_id: str, hull_path: Path) -> dict[str, object]:
 
 @pytest.mark.mujoco
 def test_compose_model_attaches_robot_before_scene_entities(tmp_path: Path) -> None:
-    mujoco = pytest.importorskip("mujoco")
+    import mujoco
+
     scene_xml = tmp_path / "scene.xml"
     robot_xml = tmp_path / "robot.xml"
     _write_scene_xml(scene_xml)
@@ -284,7 +346,8 @@ def test_compose_model_attaches_robot_before_scene_entities(tmp_path: Path) -> N
 
 @pytest.mark.mujoco
 def test_compose_model_reuses_entity_mesh_assets(tmp_path: Path) -> None:
-    mujoco = pytest.importorskip("mujoco")
+    import mujoco
+
     scene_xml = tmp_path / "scene.xml"
     robot_xml = tmp_path / "robot.xml"
     hull_obj = tmp_path / "shared_hull.obj"
@@ -310,28 +373,32 @@ def test_compose_model_reuses_entity_mesh_assets(tmp_path: Path) -> None:
     assert model.nmesh == 1
 
 
-@pytest.mark.mujoco
-def test_engine_request_reset_to_applies_pose_in_sim_loop(tmp_path: Path) -> None:
+@pytest.fixture
+def freejoint_engine(tmp_path: Path) -> Iterator[MujocoEngine]:
     robot_xml = tmp_path / "freejoint.xml"
     _write_freejoint_xml(robot_xml)
-
     engine = MujocoEngine(config_path=robot_xml, headless=True)
     assert engine.connect() is True
     try:
-        assert engine.request_reset_to(
-            spawn_xy=(1.25, -0.5),
-            spawn_z=0.9,
-            spawn_yaw=0.3,
-            wait=True,
-        )
-        pose = engine.get_root_pose()
-        assert pose is not None
-        position, quat_xyzw = pose
-        np.testing.assert_allclose(position, [1.25, -0.5, 0.9], atol=1e-8)
-        np.testing.assert_allclose(
-            quat_xyzw,
-            [0.0, 0.0, np.sin(0.15), np.cos(0.15)],
-            atol=1e-8,
-        )
+        yield engine
     finally:
         engine.disconnect()
+
+
+@pytest.mark.mujoco
+def test_engine_request_reset_to_applies_pose_in_sim_loop(freejoint_engine: MujocoEngine) -> None:
+    assert freejoint_engine.request_reset_to(
+        spawn_xy=(1.25, -0.5),
+        spawn_z=0.9,
+        spawn_yaw=0.3,
+        wait=True,
+    )
+    pose = freejoint_engine.get_root_pose()
+    assert pose is not None
+    position, quat_xyzw = pose
+    np.testing.assert_allclose(position, [1.25, -0.5, 0.9], atol=1e-8)
+    np.testing.assert_allclose(
+        quat_xyzw,
+        [0.0, 0.0, np.sin(0.15), np.cos(0.15)],
+        atol=1e-8,
+    )
