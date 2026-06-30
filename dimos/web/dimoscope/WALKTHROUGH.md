@@ -22,20 +22,22 @@ it has never seen — that's what makes a *generic* viewer possible. `@dimos/msg
 holds a hash→class registry and does this for us in the browser.
 
 The browser can't speak UDP multicast, so we need **one** native process to
-relay bus↔browser. That's the only "hard" part, and it's ~50 lines.
+relay bus↔browser. That's the only "hard" part — today it lives in `servers/bus.py`
+(the LCM multicast tap + fragment reassembly) inside the one `serve.py` service.
 
 ---
 
-## Rung 1 — Module, Stream, Transport, the bus  ·  `bridge.ts`
+## Rung 1 — Module, Stream, Transport, the bus  ·  `servers/bus.py`
 
-Read `bridge.ts`. The realization that shaped the whole project: the dimos
-TS example uses `@dimos/lcm`, but it only uses it to *receive* and *send* UDP
-packets. `node:dgram` does multicast UDP in Deno (and Node), and **all** LCM
-framing happens in `@dimos/msgs` — so the bridge is a **dumb byte relay** that
-never parses a packet, and needs no `@dimos/lcm` at all.
+Read `servers/bus.py`. The realization that shaped the whole project: a relay only
+needs to *receive* and *send* bus packets — **all** LCM framing lives in the codec —
+so the relay is a **dumb byte relay** that never parses a payload. Python's `socket`
+does multicast UDP; `bus.py` taps the LCM bus (and a Zenoh subscriber), reassembles
+`LC03` fragments into `LC02`, and fans the raw packets out. The browser decodes them
+with `@dimos/msgs` (the 8-byte hash is self-describing).
 
-- bus → browser: `udp.on("message", buf => clients.forEach(ws => ws.send(buf)))`
-- browser → bus: `message(ws, m) => udp.send(m)`
+- bus → browser: each datagram is reassembled, normalized, and pushed to every subscriber
+- browser → bus: structured teleop/goal/rpc on `/ws` (never raw bytes — the trust boundary)
 
 > **LeRobot bridge:** a dimos *Module* (`In[T]`/`Out[T]` ports) is the unit of
 > computation, like a LeRobot `Robot` with `get_observation`/`send_action` —
@@ -43,7 +45,7 @@ never parses a packet, and needs no `@dimos/lcm` at all.
 
 **Run & observe:**
 ```bash
-deno install && deno task bridge      # [lcm] listening … [ws] serving ws://localhost:8080
+deno install && deno task build && deno task serve   # one process → http://localhost:8080
 ```
 
 ---
@@ -63,18 +65,19 @@ object to subscribers. The 8-byte type hash inside the payload is what lets
 **Run & observe (headless, no browser):**
 ```bash
 .venv/bin/python examples/simplerobot/simplerobot.py --headless   # real dimos robot
-deno task bridge                                                  # the relay
-deno task wsprobe                                                 # prints /odom seen in 3s
+deno task serve                                                  # the one service (relay + app)
+deno task smoke                                                  # connects to /ws, prints topics seen
 ```
 This is exactly how the pipe was verified against real dimos. ✅
 
-## Bridge note — LCM fragmentation
+## Relay note — LCM fragmentation
 
 dimos fragments any LCM message over ~1.4KB into multiple `LC03` datagrams.
-`@dimos/msgs.decodePacket` only handles single `LC02` packets, so `bridge.ts`
+`@dimos/msgs.decodePacket` only handles single `LC02` packets, so `servers/bus.py`
 **reassembles fragments** (keyed by LCM sequence number) into a synthetic `LC02`
 packet before forwarding — the browser is unchanged. This is why `/map`
-(OccupancyGrid, ~3.7KB → 3 fragments) shows up at all.
+(OccupancyGrid, ~3.7KB → 3 fragments) shows up at all. (`servers/test_bus.py`
+unit-tests this reassembly.)
 
 ---
 
@@ -129,11 +132,11 @@ in the registry — that's the difference between a demo and a *framework*.
 
 ## What's verified vs. what's next
 
-**Verified against REAL dimos on this machine (no Deno, no mocks):**
+**Verified against REAL dimos on this machine (no mocks):**
 - `dimos` wheel installs (`uv pip install dimos`) and `dimos.core`/`dimos.msgs` import — no torch/CUDA (✅)
-- real `simplerobot.py` `/odom` → bridge → WebSocket → `@dimos/msgs` decode (wsprobe ✅)
-- real `fakesensors.py` `/map` (OccupancyGrid, fragmented) → reassembled by the bridge → decoded (✅)
-- teleop reverse path: browser `/cmd_vel` → bridge → bus → simplerobot moves (✅)
+- real `simplerobot.py` `/odom` → `serve.py` → WebSocket → `@dimos/msgs` decode (`deno task smoke` ✅)
+- real `fakesensors.py` `/map` (OccupancyGrid, fragmented) → reassembled by `servers/bus.py` → decoded (✅)
+- teleop reverse path: browser `/cmd_vel` → `serve.py` → bus → simplerobot moves (✅)
 - the React app type-checks (`tsc --noEmit` ✅) and builds (`vite build` ✅)
 
 **Left / next sessions:**

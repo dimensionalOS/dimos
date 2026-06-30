@@ -72,7 +72,7 @@ The `@dimos/msgs` in-browser binary decode is an **optimization for the hot, kno
 Browser decodes binary via `@dimos/msgs`. Fast, typed, zero gateway CPU.
 
 ### Tier 1 — server-side decode → self-describing payload (the no-rebuild answer)
-For any topic whose type the browser can't decode, the **Python gateway** (`servers/gateway_zenoh.py`) calls `lcm_decode` (it has the class), walks the message into a plain dict recursively (using `__slots__`/`__typenames__`/`_get_field_type`; numpy arrays → lists), and ships it as a self-describing payload. The browser delivers it through the unchanged `Topic._deliver` path as a plain object, and `widgetForType` → **`JsonInspector`** renders it. **The user does nothing beyond defining their Python message.**
+For any topic whose type the browser can't decode, the **Python service** (`servers/data.py`) calls `lcm_decode` (it has the class), walks the message into a plain dict recursively (using `__slots__`/`__typenames__`/`_get_field_type`; numpy arrays → lists), and ships it as a self-describing payload. The browser delivers it through the unchanged `Topic._deliver` path as a plain object, and `widgetForType` → **`JsonInspector`** renders it. **The user does nothing beyond defining their Python message.**
 
 **Negotiation (lazy):** keep sending raw binary; when the browser's `decode()` throws `Unknown message hash`, the SDK sends a new control message `{op:"decode", topic}`; the gateway thereafter emits that topic decoded. Only the long tail of unknown types pays the decode cost; known topics stay on the binary fast path.
 
