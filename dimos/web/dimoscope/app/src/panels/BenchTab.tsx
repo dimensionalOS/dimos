@@ -7,7 +7,15 @@
 // conflation, + an optional server-json decode A/B via a sibling client). Heavy streams (img/grid) are
 // opt-in so opening the tab never floods the active transport.
 import { useEffect, useRef, useState } from "react";
-import { useCaps, useDimosClient, useServers, useTopics, useTopicStats } from "@dimos/react";
+import {
+  useCaps,
+  useCommands,
+  useDimosClient,
+  useRpc,
+  useServers,
+  useTopics,
+  useTopicStats,
+} from "@dimos/react";
 import {
   type BenchRow,
   connect,
@@ -21,7 +29,26 @@ import {
 import { Sparkline } from "../widgets/Sparkline";
 
 const HZ_PRESETS = [0, 5, 20, 60, 120];
-const HEAVY = (t: string) => t.includes("/img") || t.includes("/grid");
+const HEAVY = (t: string) => t.includes("/img") || t.includes("/grid") || t.includes("/cloud");
+
+// Large-stream tiers — sustained THROUGHPUT (bytes/frame × rate), grounded in real robot sensor
+// bitrates. Frames stay ≤10 MB; high MB/s comes from the rate, not one giant packet. Drives the
+// BenchLoad blueprint over RPC (start_bench heavy_hz/heavy_bytes). See docs/benchmarks.md.
+interface StreamTier {
+  id: string;
+  bytes: number;
+  hz: number;
+  note: string;
+}
+const STREAM_TIERS: StreamTier[] = [
+  { id: "light", bytes: 200_000, hz: 10, note: "2D lidar ~2 MB/s" },
+  { id: "camera", bytes: 550_000, hz: 20, note: "1080p ~11 MB/s" },
+  { id: "dense", bytes: 1_000_000, hz: 20, note: "depth ~20 MB/s" },
+  { id: "depth-hd", bytes: 2_500_000, hz: 20, note: "RealSense/Ouster ~50 MB/s" },
+  { id: "raw-1080p", bytes: 6_000_000, hz: 30, note: "raw RGB ~180 MB/s" },
+  { id: "firehose", bytes: 10_000_000, hz: 30, note: "raw 4K / multi-cam ~300 MB/s" },
+];
+const mbps = (bytes: number, hz: number) => (bytes * hz) / 1e6;
 
 function qosLabel(q: Qos): string {
   const hz = q.maxHz ? `${q.maxHz}Hz` : "∞";
@@ -75,10 +102,37 @@ function MonitorRow({ topic, qos, enabled }: { topic: string; qos: Qos; enabled:
 export function BenchTab() {
   const client = useDimosClient();
   const caps = useCaps();
+  const commands = useCommands();
+  const { call } = useRpc();
   const { servers, activeId } = useServers();
   const discovered = useTopics();
   const activeUrl = servers.find((s) => s.id === activeId)?.url;
   const activeLabel = servers.find((s) => s.id === activeId)?.label ?? "active";
+
+  // ── load generator (BenchLoad RPC): drive the large stream from the browser ──
+  const hasRpc = commands.some((c) => c.target === "BenchLoad");
+  const [heavyKind, setHeavyKind] = useState<"image" | "cloud">("image");
+  const [heavyHz, setHeavyHz] = useState(20);
+  const [heavyBytes, setHeavyBytes] = useState(1_000_000);
+  const [heavyOn, setHeavyOn] = useState(false);
+  const [genMsg, setGenMsg] = useState<string>();
+  const [genBusy, setGenBusy] = useState(false);
+  const heavyTopic = heavyKind === "cloud" ? "/bench/cloud" : "/bench/img";
+
+  async function applyGen(on: boolean) {
+    setGenBusy(true);
+    try {
+      const res = on
+        ? await call<string>("BenchLoad", "start_bench", 100, 20, heavyHz, heavyBytes, heavyKind)
+        : await call<string>("BenchLoad", "stop_bench");
+      setHeavyOn(on);
+      setGenMsg(String(res));
+    } catch (e) {
+      setGenMsg(`✗ ${(e as Error).message}`);
+    } finally {
+      setGenBusy(false);
+    }
+  }
 
   // QoS knobs
   const [maxHz, setMaxHz] = useState(0);
@@ -102,8 +156,14 @@ export function BenchTab() {
   }, []);
 
   const profiles = STREAM_PROFILES.filter((p) => picked.includes(p.id));
-  // Topics to live-monitor = union of picked profiles' topics (dedup), heavy ones gated.
-  const monitorTopics = [...new Set(profiles.flatMap((p) => p.topics))];
+  // The large stream the generator is currently emitting, added as its own measure scenario.
+  const offeredMbps = mbps(heavyBytes, heavyHz);
+  const runScenarios = [
+    ...profiles.map((p) => ({ name: p.id, topics: p.topics })),
+    ...(heavyOn ? [{ name: `heavy:${heavyKind} (≈${offeredMbps.toFixed(0)}MB/s offered)`, topics: [heavyTopic] }] : []),
+  ];
+  // Topics to live-monitor = union of run scenarios' topics (dedup), heavy ones gated.
+  const monitorTopics = [...new Set(runScenarios.flatMap((s) => s.topics))];
   const qosHonored = caps?.qos?.maxHz; // "server" | "client" | undefined
   const serverIgnored = rateLimit === "server" && qosHonored === "client";
 
@@ -113,21 +173,20 @@ export function BenchTab() {
     aborted.current = false;
     setRows([]);
     const out: { label: string; row: BenchRow }[] = [];
-    for (const p of profiles) {
+    for (const scenario of runScenarios) {
       if (aborted.current) break;
-      const scenario = { name: p.id, topics: p.topics };
       // 1) the live active transport under the chosen QoS
-      setProgress(`${activeLabel} · ${p.id} · ${qosLabel(qos)}…`);
+      setProgress(`${activeLabel} · ${scenario.name} · ${qosLabel(qos)}…`);
       try {
         const r = await measureScenario(client, scenario, dur, true, qos);
-        out.push({ label: `${activeLabel} · ${qosLabel(qos)}`, row: { ...r, scenario: p.id } });
+        out.push({ label: `${activeLabel} · ${qosLabel(qos)}`, row: { ...r, scenario: scenario.name } });
         setRows([...out]);
       } catch (e) {
-        setProgress(`${p.id} failed: ${String(e).slice(0, 80)}`);
+        setProgress(`${scenario.name} failed: ${String(e).slice(0, 80)}`);
       }
       // 2) optional decode A/B — a sibling client to the SAME gateway with server-json decode.
       if (decodeAb && activeUrl && !aborted.current) {
-        setProgress(`${activeLabel} · ${p.id} · server-json decode…`);
+        setProgress(`${activeLabel} · ${scenario.name} · server-json decode…`);
         let sib: DimosClient | undefined;
         try {
           sib = await connect({
@@ -135,7 +194,7 @@ export function BenchTab() {
           });
           await new Promise((r) => setTimeout(r, 250));
           const r = await measureScenario(sib, scenario, dur, true, qos);
-          out.push({ label: `${activeLabel} · server-json`, row: { ...r, scenario: p.id } });
+          out.push({ label: `${activeLabel} · server-json`, row: { ...r, scenario: scenario.name } });
           setRows([...out]);
         } catch (e) {
           setProgress(`server-json failed: ${String(e).slice(0, 80)}`);
@@ -183,9 +242,89 @@ export function BenchTab() {
               {profiles.map((p) => `${p.id}: ${p.hint}`).join("  ·  ") || "pick ≥1 workload"}
             </div>
             <div className="muted small" style={{ marginTop: 4 }}>
-              Heavy classes (lidar/camera/dense) are the same <span className="mono">/bench/img</span>{" "}
-              topic at different publisher rates/sizes — set those via{" "}
-              <span className="mono">bench/matrix.sh STREAM=…</span> or bench_source env (not from here).
+              The lidar/camera/dense profiles measure <span className="mono">/bench/img</span>. To make
+              that topic flow at a chosen size/rate, drive the generator below (or run a headless{" "}
+              <span className="mono">bench_source.py</span>).
+            </div>
+          </div>
+
+          {/* ── load generator: drive the BenchLoad blueprint's large stream over RPC ── */}
+          <div className="bench-section">
+            <div className="bench-label">Load generator · large stream (BenchLoad RPC)</div>
+            {!hasRpc && (
+              <div className="muted small">
+                No <span className="mono">BenchLoad</span> RPC advertised — run{" "}
+                <span className="mono">go2-bench</span> / <span className="mono">bench-load</span> on this
+                transport to drive the stream from here.
+              </div>
+            )}
+            <div className="bench-row">
+              <span className="muted small">kind</span>
+              {(["image", "cloud"] as const).map((k) => (
+                <button
+                  key={k}
+                  className={`tab ${heavyKind === k ? "tab-active" : ""}`}
+                  disabled={!hasRpc}
+                  onClick={() => setHeavyKind(k)}
+                  title={k === "cloud" ? "PointCloud2 (lidar/depth)" : "raw RGB Image (camera frame)"}
+                >
+                  {k}
+                </button>
+              ))}
+            </div>
+            <div className="bench-chips">
+              {STREAM_TIERS.map((t) => (
+                <button
+                  key={t.id}
+                  className={`tab ${heavyBytes === t.bytes && heavyHz === t.hz ? "tab-active" : ""}`}
+                  disabled={!hasRpc}
+                  title={`${t.note} — ${(t.bytes / 1e6).toFixed(2)}MB × ${t.hz}Hz`}
+                  onClick={() => {
+                    setHeavyBytes(t.bytes);
+                    setHeavyHz(t.hz);
+                  }}
+                >
+                  {t.id}
+                </button>
+              ))}
+            </div>
+            <div className="bench-row">
+              <span className="muted small">frame</span>
+              <input
+                type="number"
+                min={1000}
+                step={100_000}
+                value={heavyBytes}
+                disabled={!hasRpc}
+                onChange={(e) => setHeavyBytes(Math.min(Number(e.target.value) || 1000, 12_000_000))}
+                style={{ width: 110 }}
+              />
+              <span className="muted small">B ×</span>
+              <input
+                type="number"
+                min={0}
+                step={5}
+                value={heavyHz}
+                disabled={!hasRpc}
+                onChange={(e) => setHeavyHz(Math.max(0, Number(e.target.value) || 0))}
+                style={{ width: 64 }}
+              />
+              <span className="muted small">Hz ⇒ ≈{offeredMbps.toFixed(1)} MB/s offered</span>
+            </div>
+            <div className="bench-row">
+              <button className="tab" disabled={!hasRpc || genBusy} onClick={() => applyGen(true)}>
+                {heavyOn ? "Re-apply" : "▶ Apply"}
+              </button>
+              <button className="tab" disabled={!hasRpc || genBusy || !heavyOn} onClick={() => applyGen(false)}>
+                Stop stream
+              </button>
+              {heavyOn && <span className="badge">{heavyTopic} live</span>}
+              {genMsg && <span className="muted small" title={genMsg}>{genMsg.slice(0, 60)}</span>}
+            </div>
+            <div className="muted small">
+              Throughput = frame × rate (frames capped 12 MB; reach high MB/s via rate, not one giant
+              packet). Ramp tiers and watch <em>delivered</em> kB/s plateau below <em>offered</em> — that
+              gap is the pipeline ceiling.
             </div>
           </div>
 
@@ -274,7 +413,7 @@ export function BenchTab() {
               <span className="muted small">ms</span>
             </div>
             <div className="bench-row">
-              <button className="tab" onClick={run} disabled={running || !client || !profiles.length}>
+              <button className="tab" onClick={run} disabled={running || !client || !runScenarios.length}>
                 {running ? "running…" : "▶ Run sweep"}
               </button>
               <button className="tab" disabled={!running} onClick={() => (aborted.current = true)}>
@@ -293,7 +432,7 @@ export function BenchTab() {
           <div className="panel-title">Live · {activeLabel}</div>
           <label className="muted small bench-row">
             <input type="checkbox" checked={showHeavy} onChange={(e) => setShowHeavy(e.target.checked)} />
-            monitor heavy streams (/bench/img, /bench/grid) — off by default (can be ≫10 MB/s)
+            monitor heavy streams (/bench/img, /bench/cloud, /bench/grid) — off by default (can be ≫10 MB/s)
           </label>
           <table className="stats" style={{ width: "100%", marginTop: 8 }}>
             <thead>

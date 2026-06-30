@@ -54,15 +54,48 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 
 _GRID = ((np.random.rand(60, 60) > 0.85).astype(np.int8)) * 100
 _IDENT = Quaternion.from_euler(Vector3(0.0, 0.0, 0.0))
 
+# Per-frame size hard cap. The "large stream" axis is sustained THROUGHPUT (heavy_hz * heavy_bytes),
+# not one giant packet -- keep individual frames realistic (<= a raw 4K-ish frame) and reach high MB/s
+# via the rate, so we exercise the pipeline, not a single-message pathology.
+_MAX_HEAVY_BYTES = 12_000_000
+
+
+def _make_image(nbytes: int) -> Image:
+    """A raw RGB Image of ~nbytes. Built memory-safe: a single uint8 buffer (NOT
+    np.arange(int64)%256, which allocs 8x and would blow up at large sizes)."""
+    nbytes = max(3, min(int(nbytes), _MAX_HEAVY_BYTES))
+    px = max(1, nbytes // 3)
+    h = max(1, int(px**0.5))
+    w = max(1, px // h)
+    data = np.zeros((h, w, 3), dtype=np.uint8)
+    return Image(data=data, format=ImageFormat.RGB)
+
+
+def _make_cloud(nbytes: int) -> PointCloud2:
+    """A PointCloud2 of ~nbytes -- the realistic lidar/depth firehose. Sized by point
+    count (xyz float32 = 12 B/point; this is what the wire encode serializes). Built once."""
+    import open3d as o3d  # lazy: only the cloud path needs Open3D
+
+    nbytes = max(12, min(int(nbytes), _MAX_HEAVY_BYTES))
+    n = max(1, nbytes // 12)
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(np.zeros((n, 3), dtype=np.float64))
+    return PointCloud2(pointcloud=pcd)
+
 
 class BenchLoadConfig(ModuleConfig):
     hz: float = 100.0  # PoseStamped rate (per topic)
     grid_hz: float = 20.0  # OccupancyGrid rate
+    heavy_hz: float = 0.0  # large-stream rate (0 = off); throughput = heavy_hz * heavy_bytes
+    heavy_bytes: int = 1_000_000  # per-frame size of the large stream (<= _MAX_HEAVY_BYTES)
+    heavy_kind: str = "image"  # "image" (raw RGB frame) | "cloud" (PointCloud2 lidar)
     autostart: bool = False  # start flooding on module start (else wait for start_bench)
 
 
@@ -76,6 +109,8 @@ class BenchLoad(Module):
     p2: Out[PoseStamped]
     p3: Out[PoseStamped]
     grid: Out[OccupancyGrid]
+    img: Out[Image]  # large stream -- raw RGB frame (heavy_kind="image")
+    cloud: Out[PointCloud2]  # large stream -- lidar/depth cloud (heavy_kind="cloud")
 
     @rpc
     def start(self) -> None:
@@ -92,11 +127,26 @@ class BenchLoad(Module):
         super().stop()
 
     @rpc
-    def start_bench(self, hz: float | None = None, grid_hz: float | None = None) -> str:
-        """(Re)start the synthetic flood, optionally overriding rates at runtime."""
+    def start_bench(
+        self,
+        hz: float | None = None,
+        grid_hz: float | None = None,
+        heavy_hz: float | None = None,
+        heavy_bytes: int | None = None,
+        heavy_kind: str | None = None,
+    ) -> str:
+        """(Re)start the synthetic flood, optionally overriding rates/sizes at runtime.
+
+        The large stream (`heavy_*`) is OFF unless `heavy_hz > 0`. Throughput is
+        `heavy_hz * heavy_bytes` -- keep frames realistic (<= _MAX_HEAVY_BYTES) and reach
+        high MB/s via the rate. `heavy_kind`: "image" (raw RGB frame) | "cloud" (PointCloud2).
+        """
         self.stop_bench()  # idempotent — never double-subscribe
         h = float(hz) if hz else self.config.hz
         gh = float(grid_hz) if grid_hz else self.config.grid_hz
+        hh = float(heavy_hz) if heavy_hz is not None else self.config.heavy_hz
+        hb = int(heavy_bytes) if heavy_bytes else self.config.heavy_bytes
+        hk = (heavy_kind or self.config.heavy_kind).lower()
         ports = [self.p0, self.p1, self.p2, self.p3]
 
         def tick(_: int) -> None:
@@ -106,7 +156,9 @@ class BenchLoad(Module):
                 p.publish(
                     PoseStamped(
                         ts=now,  # source timestamp → end-to-end latency
-                        frame_id=str(self._seq),  # per-topic seq → SDK loss detection (matches bench/bench_source.py)
+                        frame_id=str(
+                            self._seq
+                        ),  # per-topic seq → SDK loss detection (matches bench/bench_source.py)
                         position=(self._seq * 0.001, float(i), 0.0),
                         orientation=_IDENT,
                     )
@@ -116,7 +168,10 @@ class BenchLoad(Module):
             self._grid_seq += 1
             self.grid.publish(
                 OccupancyGrid(
-                    grid=_GRID, resolution=0.1, origin=Pose(-3.0, -3.0, 0.0), frame_id=str(self._grid_seq)
+                    grid=_GRID,
+                    resolution=0.1,
+                    origin=Pose(-3.0, -3.0, 0.0),
+                    frame_id=str(self._grid_seq),
                 )
             )
 
@@ -124,7 +179,37 @@ class BenchLoad(Module):
             rx.interval(1.0 / h).subscribe(tick),
             rx.interval(1.0 / gh).subscribe(grid_tick),
         ]
-        return f"bench started: 4x PoseStamped @ {h}Hz + grid @ {gh}Hz"
+
+        heavy_msg = ""
+        if hh > 0:
+            # Build the frame ONCE; only restamp ts/frame_id per publish so generation
+            # cost never dominates (mirrors bench/bench_source.py).
+            self._heavy_seq = 0
+            if hk == "cloud":
+                cloud = _make_cloud(hb)
+                port = self.cloud
+
+                def heavy_tick(_: int) -> None:
+                    self._heavy_seq += 1
+                    cloud.ts = time.time()
+                    cloud.frame_id = str(self._heavy_seq)
+                    port.publish(cloud)
+            else:
+                hk = "image"
+                image = _make_image(hb)
+                port = self.img
+
+                def heavy_tick(_: int) -> None:
+                    self._heavy_seq += 1
+                    image.ts = time.time()
+                    image.frame_id = str(self._heavy_seq)
+                    port.publish(image)
+
+            self._bench_disp.append(rx.interval(1.0 / hh).subscribe(heavy_tick))
+            mb_s = (hh * min(hb, _MAX_HEAVY_BYTES)) / 1e6
+            heavy_msg = f" + {hk} @ {hh}Hz x {hb}B (~{mb_s:.1f} MB/s)"
+
+        return f"bench started: 4x PoseStamped @ {h}Hz + grid @ {gh}Hz{heavy_msg}"
 
     @rpc
     def stop_bench(self) -> str:
@@ -151,6 +236,8 @@ _BENCH_TRANSPORTS = {
     ("p2", PoseStamped): _bench_transport("/bench/p2", PoseStamped),
     ("p3", PoseStamped): _bench_transport("/bench/p3", PoseStamped),
     ("grid", OccupancyGrid): _bench_transport("/bench/grid", OccupancyGrid),
+    ("img", Image): _bench_transport("/bench/img", Image),
+    ("cloud", PointCloud2): _bench_transport("/bench/cloud", PointCloud2),
 }
 
 # Standalone flood.
