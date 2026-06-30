@@ -8,10 +8,10 @@ import "./styles.css";
 // Bun↔LCM uses :8089 here (not :8090) — DimSim's internal bridge claims :8090 and
 // kills whatever holds it. start-all.sh launches all of these together.
 const host = location.hostname || "localhost";
-// The MEDIA plane always rides the Python aiortc gateway (:8088): it reads the same bus, so the
-// camera gets WebRTC / WebCodecs regardless of which transport carries the data plane. (Before,
-// only Python↔Zenoh advertised media, so picking webrtc on lcm/zenoh-ts silently fell to jpeg.)
-const MEDIA = { gatewayUrl: `ws://${host}:8088`, kinds: ["webcodecs", "webrtc", "jpeg"] as const };
+// The MEDIA plane always rides the standalone media node (:8092) — its own Zenoh peer, so the camera
+// gets WebRTC / WebCodecs regardless of which transport carries the data plane. Data + teleop/goal/RPC
+// stay on the gateway (:8088 / :8089 / zenoh-ts control), so the trust boundary is unchanged.
+const MEDIA = { gatewayUrl: `ws://${host}:8092`, kinds: ["webcodecs", "webrtc", "jpeg"] as const };
 const servers: ServerOpt[] = [
   {
     id: "zenoh",

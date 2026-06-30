@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Start every dimoscope transport at once, each on its own port, for the in-app
 # server dropdown:
-#   Python↔Zenoh gateway   ws://localhost:8088   (servers/gateway_zenoh.py)
+#   Python↔Zenoh gateway   ws://localhost:8088   (servers/gateway_zenoh.py — data + teleop/goal/rpc)
+#   media node             ws://localhost:8092   (servers/media_server.py — camera WebRTC/WebCodecs)
 #   Bun↔LCM gateway        ws://localhost:8089   (servers/gateway.ts; :8090 is DimSim's)
 #   zenoh-ts direct bridge ws://localhost:10000  (zenoh-bridge-remote-api, peer mode)
 #
@@ -22,6 +23,9 @@ cd "$HERE"
 
 echo "[start-all] Python↔Zenoh gateway  → ws://localhost:8088"
 DIMOS_TRANSPORT=zenoh GATEWAY_PORT=8088 ZENOH_KEY='**' "$PY" servers/gateway_zenoh.py & pids+=($!)
+
+echo "[start-all] media node            → ws://localhost:8092  (camera: WebRTC / WebCodecs)"
+DIMOS_TRANSPORT=zenoh MEDIA_PORT=8092 MEDIA_KEY='**' "$PY" servers/media_server.py & pids+=($!)
 
 echo "[start-all] Bun↔LCM gateway       → ws://localhost:8089"
 GATEWAY_PORT=8089 bun run servers/gateway.ts & pids+=($!)
