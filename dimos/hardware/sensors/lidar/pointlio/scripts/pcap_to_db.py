@@ -52,8 +52,8 @@ if TYPE_CHECKING:
 
 # Poll the db on this cadence while the replay drains the pcap.
 _POLL_SEC = 1.0
-# Stop after the odom stream has been stagnant this long (pcap fully drained).
-_STAGNANT_SEC = 5.0
+# Stop this long after the lidar stream stops advancing (pcap fully drained).
+_STAGNANT_SEC = 1.0
 # No odometry within this long after start = Point-LIO failed to come up (missing
 # artifact, bad pcap, SLAM-init crash); bounds the poll loop. Generous to cover
 # Point-LIO's IMU-init latency.
@@ -219,6 +219,18 @@ def _odom_stats(db_path: Path, table: str) -> tuple[int, float, float]:
         con.close()
 
 
+def _stream_exists(db_path: Path, name: str) -> bool:
+    """True if a memory2 stream of this name is registered in the db."""
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+    try:
+        row = con.execute("SELECT 1 FROM _streams WHERE name=?", (name,)).fetchone()
+        return row is not None
+    except sqlite3.OperationalError:
+        return False
+    finally:
+        con.close()
+
+
 def _quat_to_rot(qx: float, qy: float, qz: float, qw: float) -> Any:
     import numpy as np
 
@@ -344,7 +356,17 @@ def _build_blueprint(
                 setup_network=not args.no_network_setup,
             ),
             PointLio.blueprint(**pointlio_kwargs),
-            PointlioRecorder.blueprint(db_path=str(db_path)),
+            PointlioRecorder.blueprint(
+                db_path=str(db_path),
+                stream_remapping={
+                    _ODOM_STREAM: args.odom_stream,
+                    _LIDAR_STREAM: args.lidar_stream,
+                },
+                # No tf publisher in this replay, so the tf stream would be empty —
+                # and recording it would drop any existing tf in the target db.
+                record_tf=False,
+                skip_ports=frozenset({_LIDAR_STREAM}) if args.no_lidar else frozenset(),
+            ),
         )
         .remappings(
             [
@@ -356,18 +378,17 @@ def _build_blueprint(
     )
 
 
-def _poll_until_drained(
-    db_path: Path, odom_stream: str, lidar_stream: str, max_sensor_sec: float
-) -> bool:
+def _poll_until_drained(db_path: Path, odom_stream: str, max_sensor_sec: float) -> bool:
     """Block until the pcap drains or a cap is hit; False if Point-LIO never
     produced odometry within the startup timeout.
 
-    Drain is detected on the *lidar* stream's latest timestamp going flat: lidar
-    is input-driven, so it stops advancing the moment the pcap is exhausted. The
-    odometry stream can't be used for this — Point-LIO keeps publishing odometry
-    (dead-reckoning) at odom_freq after input stops, with ever-advancing
-    timestamps, so its stream never looks stagnant and the run would hang."""
-    last_lidar_max: float | None = None
+    Drain is detected on the *odometry* stream's latest timestamp going flat.
+    Output timestamps are derived from the packet sensor time of the most
+    recently drained frame, so once the pcap is exhausted no new frames drain
+    and odom_max stops advancing — even though odometry messages keep being
+    published. (This replaces the old lidar-based detection, which is gone now
+    that the lidar stream is optional.)"""
+    last_odom_max: float | None = None
     first_max: float | None = None
     stagnant_since: float | None = None
     start_time = time.time()
@@ -391,16 +412,13 @@ def _poll_until_drained(
         if max_sensor_sec > 0 and (odom_max - first_max) >= max_sensor_sec:
             print(f"[pcap_to_db] reached --max-sensor-sec={max_sensor_sec:.1f}s", flush=True)
             return True
-        _, _, lidar_max = _odom_stats(db_path, lidar_stream)
-        if lidar_max <= 0.0:
-            continue
-        if lidar_max == last_lidar_max:
+        if odom_max == last_odom_max:
             if stagnant_since is None:
                 stagnant_since = time.time()
             elif time.time() - stagnant_since > _STAGNANT_SEC:
                 return True
         else:
-            last_lidar_max = lidar_max
+            last_odom_max = odom_max
             stagnant_since = None
 
 
@@ -460,8 +478,26 @@ def _run(args: argparse.Namespace) -> int:
             return 2
     pcap_path = pcap_path.resolve()
     args.pcap_path = pcap_path
+    suffix = f"__{args.run_name}" if args.run_name else ""
+    args.odom_stream = f"{_ODOM_STREAM}{suffix}"
+    args.lidar_stream = f"{_LIDAR_STREAM}{suffix}"
     db_path = _resolve_db_path(args, pcap_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Never clobber existing data unless explicitly asked: refuse if a target
+    # stream is already present (and tf is left alone — see record_tf=False below).
+    if db_path.exists() and not args.replace:
+        targets = [args.odom_stream] + ([] if args.no_lidar else [args.lidar_stream])
+        clashing = [name for name in targets if _stream_exists(db_path, name)]
+        if clashing:
+            print(
+                f"[pcap_to_db] refusing to overwrite existing stream(s): "
+                f"{', '.join(clashing)}. Pass --run-name for a fresh name, or "
+                f"--replace to overwrite.",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 2
     overrides = _load_overrides(args.config)
     overrides.update(_cli_overrides(args))  # --tuning flags win over --config
 
@@ -478,6 +514,7 @@ def _run(args: argparse.Namespace) -> int:
     print(
         f"[pcap_to_db] pcap={pcap_path.name} db={db_path.name} "
         f"({'append' if db_path.exists() else 'new'}) rate={args.rate} "
+        f"streams={args.odom_stream}/{args.lidar_stream} "
         f"ips={args.host_ip}/{args.lidar_ip} stop_at={max_sensor_sec or 'drain'}",
         flush=True,
     )
@@ -485,12 +522,12 @@ def _run(args: argparse.Namespace) -> int:
     coord = None
     try:
         coord = ModuleCoordinator.build(_build_blueprint(args, db_path, overrides))
-        drained = _poll_until_drained(db_path, _ODOM_STREAM, _LIDAR_STREAM, max_sensor_sec)
+        drained = _poll_until_drained(db_path, args.odom_stream, max_sensor_sec)
     finally:
         if coord is not None:
             coord.stop()
 
-    o_cnt, o_min, o_max = _odom_stats(db_path, _ODOM_STREAM)
+    o_cnt, o_min, o_max = _odom_stats(db_path, args.odom_stream)
     if o_cnt == 0 or not drained:
         print("[pcap_to_db] no odometry recorded — check the run above", file=sys.stderr)
         return 1
@@ -500,7 +537,7 @@ def _run(args: argparse.Namespace) -> int:
     )
     if not args.no_rrd:
         try:
-            rrd = _write_rrd(db_path, _ODOM_STREAM, _LIDAR_STREAM, args.voxel)
+            rrd = _write_rrd(db_path, args.odom_stream, args.lidar_stream, args.voxel)
             if rrd is not None:
                 print(f"[pcap_to_db] wrote {rrd.name} (aggregated lidar + pose path)", flush=True)
         except Exception as exc:  # viz is a non-fatal bonus
@@ -519,6 +556,26 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument(
         "--rate", type=float, default=1.0, help="replay-speed multiplier (default 1.0)"
+    )
+    parser.add_argument(
+        "--run-name",
+        default="",
+        help="suffix the recorded streams as pointlio_odometry__<run-name> / "
+        "pointlio_lidar__<run-name>, so several runs can be added to one db side by "
+        "side (e.g. --run-name rate16). Omit for the bare pointlio_odometry / "
+        "pointlio_lidar names.",
+    )
+    parser.add_argument(
+        "--no-lidar",
+        action="store_true",
+        help="don't record the lidar stream (odometry only) — keeps the db small "
+        "when you only need the trajectory.",
+    )
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="overwrite target streams if they already exist in the db. Default is "
+        "to refuse, so an existing run is never clobbered.",
     )
     parser.add_argument(
         "--odom-freq", type=float, default=30.0, help="Point-LIO odometry rate Hz (default 30)"

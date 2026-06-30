@@ -53,8 +53,26 @@ static std::atomic<bool> g_running{true};
 static lcm::LCM* g_lcm = nullptr;
 static PointLio* g_point_lio = nullptr;
 
+// Sensor→system time anchor, locked once at the first published frame:
+// g_ts_offset = system_now − first_frame_sensor_time. Every output is then
+// stamped (frame_sensor_time + g_ts_offset), so timestamps follow the data's
+// real cadence no matter how fast packets are fed. On live hardware sensor time
+// already advances in real time, so the offset is effectively constant and this
+// is indistinguishable from wall-clock — Point-LIO and downstream consumers
+// behave identically online and offline.
+static uint64_t g_latest_pkt_ns = 0;   // newest point-packet sensor ts (under g_pc_mutex)
+static uint64_t g_publish_pkt_ns = 0;  // sensor ts of the latest drained frame (main thread)
+static double g_ts_offset = 0.0;
+static bool g_ts_offset_set = false;
+
 static double get_publish_ts() {
-    return std::chrono::duration<double>( std::chrono::system_clock::now().time_since_epoch()).count();
+    if (!g_ts_offset_set) {
+        const double system_now = std::chrono::duration<double>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        g_ts_offset = system_now - static_cast<double>(g_publish_pkt_ns) / 1e9;
+        g_ts_offset_set = true;
+    }
+    return static_cast<double>(g_publish_pkt_ns) / 1e9 + g_ts_offset;
 }
 
 // Parse a comma-separated list of doubles (CLI vector args); empty on bad input.
@@ -203,6 +221,7 @@ static void on_point_cloud(const uint32_t /*handle*/, const uint8_t /*dev_type*/
         g_frame_start_ns = ts_ns;
         g_frame_has_timestamp = true;
     }
+    if (ts_ns > g_latest_pkt_ns) { g_latest_pkt_ns = ts_ns; }
 
     if (data->data_type == DATA_TYPE_CARTESIAN_HIGH) {
         auto* pts = reinterpret_cast<const LivoxLidarCartesianHighRawPoint*>(data->data);
@@ -459,17 +478,69 @@ int main(int argc, char** argv) {
         // clock + accumulator are observed atomically (no packet slips between).
         std::vector<custom_messages::CustomPoint> points;
         uint64_t frame_start = 0;
+        uint64_t backlog_ns = 0;
+        double wall_elapsed_s = 0.0;
+        bool measured_backlog = false;
         {
             std::lock_guard<std::mutex> lock(g_pc_mutex);
             if (now - *last_emit >= frame_interval) {
                 if (!g_accumulated_points.empty()) {
                     points.swap(g_accumulated_points);
                     frame_start = g_frame_start_ns;
+                    // Sensor-time advanced since the previous drain (= span of data
+                    // this single frame swallows). Skip the first drain, where
+                    // g_publish_pkt_ns is still 0.
+                    if (g_publish_pkt_ns != 0) {
+                        backlog_ns = g_latest_pkt_ns - g_publish_pkt_ns;
+                        wall_elapsed_s = std::chrono::duration<double>(now - *last_emit).count();
+                        measured_backlog = true;
+                    }
+                    g_publish_pkt_ns = g_latest_pkt_ns;
                     g_frame_has_timestamp = false;
                 }
                 last_emit = now;
             }
         }
+
+        // Overload guard. backlog_ns is how much sensor-time this frame had to
+        // ingest; wall_elapsed_s is the real time it covered. Their ratio is how
+        // much faster than real-time packets are arriving. Live hardware sits at
+        // ~1; a fast replay (or a flooded link) pushes it up, and once the feed
+        // outpaces the fixed-rate drain the kernel UDP buffer overflows and drops
+        // packets — gappy LiDAR/IMU input is exactly what makes Point-LIO diverge.
+        // Surface it (throttled) so the overload is observable instead of silent.
+        if (measured_backlog && wall_elapsed_s > 0.0) {
+            const double overload_warn_ratio = 1.5;
+            const int warn_throttle_sec = 10;
+            const double realtime_ratio = (static_cast<double>(backlog_ns) / 1e9) / wall_elapsed_s;
+
+            // Overload happens every 10 Hz frame while a fast feed lasts, so warning
+            // per-frame is pure noise. Instead track the worst frame in each throttle
+            // window and emit one line for it — collapsing hundreds of lines to a few
+            // while still surfacing the spikes (stall-induced pile-ups) that matter
+            // most. Epoch-init last_warn (not ::min(), which overflows now - last_warn)
+            // so the first overload reports immediately.
+            static std::chrono::steady_clock::time_point last_warn{};
+            static double window_peak_ratio = 0.0;
+            static double window_peak_backlog_ms = 0.0;
+            static double window_peak_wall_ms = 0.0;
+            if (realtime_ratio > window_peak_ratio) {
+                window_peak_ratio = realtime_ratio;
+                window_peak_backlog_ms = static_cast<double>(backlog_ns) / 1e6;
+                window_peak_wall_ms = wall_elapsed_s * 1e3;
+            }
+            if (window_peak_ratio > overload_warn_ratio &&
+                now - last_warn >= std::chrono::seconds(warn_throttle_sec)) {
+                fprintf(stderr,
+                        "[pointlio] WARNING: input arriving up to %.1fx real-time "
+                        "(peak %.0f ms of data drained in %.0f ms over last %ds) — UDP "
+                        "packets may be dropping, expect odometry drift\n",
+                        window_peak_ratio, window_peak_backlog_ms, window_peak_wall_ms, warn_throttle_sec);
+                last_warn = now;
+                window_peak_ratio = 0.0;
+            }
+        }
+
         // Serialize EKF access against the SDK IMU callback (on_imu_data) for the
         // rest of the iteration — feed_lidar/process/get_* all touch the estimator.
         std::lock_guard<std::mutex> lio_lock(g_lio_mutex);
