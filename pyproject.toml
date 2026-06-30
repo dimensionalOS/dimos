@@ -69,7 +69,7 @@ authors = [
 ]
 version = "0.0.13"
 description = "Powering agentive generalist robotics"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 readme = {file = "README.md", content-type = "text/markdown"}
 license = {text = "Apache-2.0"}
 keywords = ["robotics", "ros", "agents", "dimos", "dimensional", "openclaw", "roboclaw", "humanoid", "unitree"]
