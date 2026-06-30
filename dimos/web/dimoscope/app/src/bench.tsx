@@ -1,10 +1,14 @@
-// In-browser transport benchmark — runs the SAME scenarios/measurement as the headless
-// Bun bench (bench/bench.ts), but in the real browser runtime across ALL THREE transports,
-// so zenoh-ts (browser-only) is benched apples-to-apples with the gateways. Latency is
-// measured end-to-end (publish → browser) for a fair compare. Reuses @dimos/topics/bench.
+// In-browser transport benchmark — runs the SAME scenarios/measurement as the headless CLI
+// bench (bench/bench.ts), but in the REAL browser runtime across all 5 delivery mechanisms
+// (WebSocket · SSE · HTTP-poll · WebRTC-data · WebTransport), so WebRTC/WebTransport are
+// benched on the real browser stacks (the CLI uses aiortc/aioquic stand-ins). Latency is
+// end-to-end (publish → browser). Reuses @dimos/topics/bench.
 //
-// Prereqs: `bash bench/serve-bench.sh` (3 servers + bench_publisher on both buses).
-// Open http://localhost:5173/bench.html · results also at window.__benchResults.
+// Prereqs: `deno task serve` (the one service on :8080) + a data source (bench_publisher.py
+// or a sim). Open http://localhost:5173/bench.html (or http://localhost:8080/bench.html).
+//   ?gw=host:port  → route through netsim or a remote VPS   ·   ?dur=ms  ·  ?wt=8443
+// Unsupported mechanisms (e.g. WebTransport on Safari/Firefox) fail gracefully → a NaN row,
+// which doubles as the cross-browser support matrix. Results also at window.__benchResults.
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -21,9 +25,15 @@ import "./styles.css";
 const host = location.hostname || "localhost";
 const params = new URLSearchParams(location.search);
 const DUR = Number(params.get("dur") ?? 4000);
-// `?gw=host:port` runs the bench through a netsim proxy (bad-network testing); see bench/netsim.ts.
-const gwOverride = params.get("gw");
-const gw = (port: number) => gwOverride ?? `${host}:${port}`;
+// Default origin = the single service on :8080. `?gw=host:port` overrides it (through netsim, or a
+// remote VPS) — mirrors app/src/main.tsx so the bench hits the same paths the app does.
+const origin = params.get("gw") ?? `${host}:8080`;
+const wsProto = location.protocol === "https:" ? "wss" : "ws";
+const httpProto = location.protocol === "https:" ? "https" : "http";
+const wsBase = `${wsProto}://${origin}`;
+const httpBase = `${httpProto}://${origin}`;
+const wtHost = origin.split(":")[0];
+const WT_PORT = Number(params.get("wt") ?? 8443);
 
 interface TransportDef {
   id: string;
@@ -31,28 +41,53 @@ interface TransportDef {
   url: string;
   open: () => Promise<DimosClient>;
 }
+// The 5 same-origin delivery mechanisms on serve.py. Lazy-imported so a browser-only API
+// (RTCPeerConnection / WebTransport) that a given engine lacks only fails when that row runs.
 const TRANSPORTS: TransportDef[] = [
   {
-    id: "zenoh",
-    label: "Python↔Zenoh",
-    url: `ws://${gw(8088)}`,
-    open: () => connect({ url: `ws://${gw(8088)}`, reconnect: false }),
+    id: "ws",
+    label: "WebSocket",
+    url: `${wsBase}/ws`,
+    open: () => connect({ url: `${wsBase}/ws`, reconnect: false }),
   },
   {
-    id: "lcm",
-    label: "Bun↔LCM",
-    url: `ws://${gw(8089)}`,
-    open: () => connect({ url: `ws://${gw(8089)}`, reconnect: false }),
-  },
-  {
-    id: "zenoh-ts",
-    label: "zenoh-ts (direct)",
-    url: `ws://${gw(10000)}`,
+    id: "sse",
+    label: "SSE",
+    url: `${httpBase}/sse`,
     open: async () => {
-      const { createZenohTsTransport } = await import("@dimos/topics");
-      // discoveryKey "" → no scout; the bench subscribes explicit /bench/* keys.
+      const { createSseTransport } = await import("@dimos/topics");
+      return connect({ transport: createSseTransport({ url: httpBase }) });
+    },
+  },
+  {
+    id: "poll",
+    label: "HTTP poll",
+    url: `${httpBase}/poll`,
+    open: async () => {
+      const { createHttpPollTransport } = await import("@dimos/topics");
+      return connect({ transport: createHttpPollTransport({ url: httpBase }) });
+    },
+  },
+  {
+    id: "webrtc",
+    label: "WebRTC data",
+    url: `${wsBase}/rtc`,
+    open: async () => {
+      const { createWebRtcDataTransport } = await import("@dimos/topics");
+      return connect({ transport: createWebRtcDataTransport({ url: `${wsBase}/rtc` }) });
+    },
+  },
+  {
+    id: "webtransport",
+    label: "WebTransport",
+    url: `https://${wtHost}:${WT_PORT}`,
+    open: async () => {
+      const { createWebTransportTransport } = await import("@dimos/topics");
       return connect({
-        transport: createZenohTsTransport({ remoteApiUrl: `ws://${gw(10000)}`, discoveryKey: "" }),
+        transport: createWebTransportTransport({
+          url: `https://${wtHost}:${WT_PORT}`,
+          certHashUrl: `${httpBase}/cert`,
+        }),
       });
     },
   },
@@ -111,19 +146,19 @@ function Bench() {
 
   const stamp = new Date().toISOString().slice(0, 16).replace("T", " ");
   const md =
-    `# dimoscope transport benchmark — in-browser (all 3 transports)\n\n_${stamp} · ${DUR}ms/scenario · end-to-end latency (publish→browser)_\n\n` +
+    `# dimoscope transport benchmark — in-browser (all 5 mechanisms)\n\n_${stamp} · ${DUR}ms/scenario · end-to-end latency (publish→browser) · origin ${origin}_\n\n` +
     results.map((r) => formatMarkdown(r.label, r.url, DUR, stamp, r.rows)).join("\n---\n\n");
 
   return (
     <div style={{ padding: 24, maxWidth: 1100, margin: "0 auto" }}>
       <h2 style={{ fontFamily: "ui-monospace, monospace" }}>
         dimoscope · transport benchmark{" "}
-        <span className="muted">(in-browser, all 3 transports)</span>
+        <span className="muted">(in-browser, all 5 mechanisms)</span>
       </h2>
       <p className="muted small">
-        Start the servers + source first: <code>bash bench/serve-bench.sh</code>{" "}
-        (3 servers + bench_publisher on both buses).{" "}
-        {DUR}ms/scenario · latency is end-to-end (publish→browser), comparable across transports.
+        Start the service + a source first: <code>deno task serve</code> +{" "}
+        <code>bench_publisher.py</code> (or a sim). Origin <code>{origin}</code> ·{" "}
+        {DUR}ms/scenario · latency is end-to-end (publish→browser), comparable across mechanisms.
       </p>
       <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
         <button className="tab" onClick={run} disabled={running}>
