@@ -28,18 +28,16 @@ from pathlib import Path
 import time
 from typing import Any
 
-from dimos.experimental.pimsim.scene.assets.source import prepare_scene_source
-from dimos.experimental.pimsim.scene.collision.browser import cook_browser_collision
-from dimos.experimental.pimsim.scene.collision.entity import (
+from dimos.experimental.scene_cooking.browser.collision import cook_browser_collision
+from dimos.experimental.scene_cooking.browser.visuals import cook_browser_visual
+from dimos.experimental.scene_cooking.entities.collision import (
     COLLISION_DIR_NAME,
     cook_entity_collision_hulls,
 )
-from dimos.experimental.pimsim.scene.collision.mujoco.export import load_or_bake
-from dimos.experimental.pimsim.scene.collision.mujoco.spec import CollisionSpec
-from dimos.experimental.pimsim.scene.inspect import inspect_scene_asset
-from dimos.experimental.pimsim.scene.plan import EntityPrototypePlan, build_scene_cook_plan
-from dimos.experimental.pimsim.scene.sidecar import SceneCookSidecar
-from dimos.experimental.pimsim.scene.spec import (
+from dimos.experimental.scene_cooking.entities.visuals import cook_plan_visual_assets
+from dimos.experimental.scene_cooking.mujoco.collision_export import load_or_bake
+from dimos.experimental.scene_cooking.mujoco.collision_policy import CollisionSpec
+from dimos.experimental.scene_cooking.package_config import (
     BROWSER_VISUAL_TARGETS,
     BrowserCollisionSpec,
     BrowserVisualSpec,
@@ -47,9 +45,11 @@ from dimos.experimental.pimsim.scene.spec import (
     SceneCookSpec,
     browser_visual_spec_for_target,
 )
-from dimos.experimental.pimsim.scene.visuals.blender import cook_plan_visual_assets
-from dimos.experimental.pimsim.scene.visuals.glb import cook_browser_visual
-from dimos.simulation.scene_assets.spec import (
+from dimos.experimental.scene_cooking.planning import EntityPrototypePlan, build_scene_cook_plan
+from dimos.experimental.scene_cooking.sidecar import SceneCookSidecar
+from dimos.experimental.scene_cooking.source_assets.inspect import inspect_scene_asset
+from dimos.experimental.scene_cooking.source_assets.normalize import prepare_scene_source
+from dimos.simulation.scene_assets.package import (
     SceneMeshAlignment,
     ScenePackage,
 )

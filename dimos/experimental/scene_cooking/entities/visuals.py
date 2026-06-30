@@ -21,11 +21,11 @@ from pathlib import Path
 import shutil
 import tempfile
 
-from dimos.experimental.pimsim.scene.command import (
+from dimos.experimental.scene_cooking.command import (
     blender_output_line_is_interesting,
     run_logged_command,
 )
-from dimos.experimental.pimsim.scene.plan import SceneCookPlan
+from dimos.experimental.scene_cooking.planning import SceneCookPlan
 
 _VISUAL_PLAN_VERSION = 2
 

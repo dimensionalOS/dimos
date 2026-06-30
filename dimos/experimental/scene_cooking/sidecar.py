@@ -28,8 +28,8 @@ import json
 from pathlib import Path
 from typing import Any, Literal
 
-from dimos.experimental.pimsim.scene.assets.mesh import ScenePrimMesh
-from dimos.experimental.pimsim.scene.collision.mujoco.spec import CollisionSpec
+from dimos.experimental.scene_cooking.mujoco.collision_policy import CollisionSpec
+from dimos.experimental.scene_cooking.source_assets.mesh import ScenePrimMesh
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

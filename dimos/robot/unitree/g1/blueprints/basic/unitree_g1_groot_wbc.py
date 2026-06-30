@@ -79,7 +79,7 @@ from dimos.robot.unitree.g1.g1_rerun import (
     g1_urdf_joint_state,
     g1_urdf_static_robot,
 )
-from dimos.simulation.scene_assets.spec import ScenePackage
+from dimos.simulation.scene_assets.package import ScenePackage
 from dimos.utils.data import LfsPath
 from dimos.visualization.rerun.scene_package import scene_package_static_entities
 from dimos.visualization.vis_module import vis_module

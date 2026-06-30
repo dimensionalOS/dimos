@@ -24,7 +24,7 @@ import shutil
 import tempfile
 from typing import Any
 
-from dimos.experimental.pimsim.scene.command import (
+from dimos.experimental.scene_cooking.command import (
     blender_output_line_is_interesting,
     run_logged_command,
 )

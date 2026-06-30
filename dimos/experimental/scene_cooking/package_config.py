@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from dimos.simulation.scene_assets.spec import SceneMeshAlignment
+from dimos.simulation.scene_assets.package import SceneMeshAlignment
 
 
 @dataclass(frozen=True)

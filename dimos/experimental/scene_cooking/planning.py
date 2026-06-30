@@ -30,17 +30,17 @@ from typing import Any
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from dimos.experimental.pimsim.scene.assets.mesh import (
-    ScenePrimMesh,
-    load_scene_prims,
-)
-from dimos.experimental.pimsim.scene.collision.mujoco.spec import CollisionSpec
-from dimos.experimental.pimsim.scene.sidecar import (
+from dimos.experimental.scene_cooking.mujoco.collision_policy import CollisionSpec
+from dimos.experimental.scene_cooking.sidecar import (
     EntityGroupSpec,
     InteractableSpec,
     SceneCookSidecar,
 )
-from dimos.simulation.scene_assets.spec import SceneMeshAlignment
+from dimos.experimental.scene_cooking.source_assets.mesh import (
+    ScenePrimMesh,
+    load_scene_prims,
+)
+from dimos.simulation.scene_assets.package import SceneMeshAlignment
 
 _HASH_SUFFIX_RE = re.compile(r"_[0-9a-fA-F]{6,}$")
 

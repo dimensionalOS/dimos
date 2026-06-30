@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from dimos.experimental.pimsim.scene.collision.entity import cook_entity_collision_hulls
+from dimos.experimental.scene_cooking.entities.collision import cook_entity_collision_hulls
 
 
 def _write_box_mesh(path: Path) -> None:

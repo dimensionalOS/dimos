@@ -48,8 +48,8 @@ from pathlib import Path
 
 import numpy as np
 
-from dimos.experimental.pimsim.scene.assets.source import prepare_scene_source
-from dimos.experimental.pimsim.scene.assets.mesh import SceneMeshAlignment, load_scene_prims
+from dimos.experimental.scene_cooking.source_assets.normalize import prepare_scene_source
+from dimos.experimental.scene_cooking.source_assets.mesh import SceneMeshAlignment, load_scene_prims
 
 source = Path("data/dimos_office_mesh/dimos_office_mesh.glb")
 prepared = prepare_scene_source(source)
@@ -138,7 +138,7 @@ If a target returns `None`, the package was not cooked for that viewer.
 Cook the office package for Rerun:
 
 ```bash
-python -m dimos.experimental.pimsim.scene.cook \
+python -m dimos.experimental.scene_cooking.cook \
   data/dimos_office_mesh/dimos_office_mesh.glb \
   --cook-spec data/dimos_office_mesh/dimos_office_mesh.cook.json \
   --output-dir data/scene_packages/dimos_office \
@@ -151,7 +151,7 @@ python -m dimos.experimental.pimsim.scene.cook \
 Cook a Babylon/PimSim visual instead:
 
 ```bash
-python -m dimos.experimental.pimsim.scene.cook \
+python -m dimos.experimental.scene_cooking.cook \
   data/my_scene/source.blend \
   --cook-spec data/my_scene/source.cook.json \
   --output-dir data/scene_packages/my_scene \
@@ -162,7 +162,7 @@ python -m dimos.experimental.pimsim.scene.cook \
 The target profile supplies defaults. Override only when needed:
 
 ```bash
-python -m dimos.experimental.pimsim.scene.cook \
+python -m dimos.experimental.scene_cooking.cook \
   data/my_scene/source.glb \
   --cook-spec data/my_scene/source.cook.json \
   --output-dir data/scene_packages/my_scene \
@@ -254,19 +254,20 @@ with `./bin/lfs_push` when the package is ready to ship.
 ## Reference Files
 
 ```text
-dimos/experimental/pimsim/scene/cook.py              cook CLI
-dimos/experimental/pimsim/scene/spec.py              cook-time artifact policy
-dimos/experimental/pimsim/scene/sidecar.py           cook sidecar schema
-dimos/experimental/pimsim/scene/plan.py              sidecar to entity/collision plan
-dimos/experimental/pimsim/scene/assets/source.py     .blend normalization
-dimos/experimental/pimsim/scene/assets/mesh.py       source mesh inspection
-dimos/experimental/pimsim/scene/assets/glb.py        GLB rewrite helpers
-dimos/experimental/pimsim/scene/visuals/glb.py       browser visual cooking
-dimos/experimental/pimsim/scene/visuals/blender.py   Blender visual extraction
-dimos/experimental/pimsim/scene/collision/browser.py browser collision mesh
-dimos/experimental/pimsim/scene/collision/entity.py  entity collision hulls
-dimos/experimental/pimsim/scene/collision/mujoco/export.py MuJoCo XML bake
-dimos/experimental/pimsim/scene/collision/mujoco/spec.py   static collision policy
-dimos/simulation/scene_assets/spec.py                runtime package metadata contract
+dimos/experimental/scene_cooking/cook.py              cook CLI
+dimos/experimental/scene_cooking/package_config.py    cook-time artifact policy
+dimos/experimental/scene_cooking/sidecar.py           cook sidecar schema
+dimos/experimental/scene_cooking/planning.py          sidecar to entity/collision plan
+dimos/experimental/scene_cooking/source_assets/normalize.py .blend normalization
+dimos/experimental/scene_cooking/source_assets/mesh.py source mesh loading
+dimos/experimental/scene_cooking/source_assets/inspect.py asset budget inspection
+dimos/experimental/scene_cooking/source_assets/glb.py GLB rewrite helpers
+dimos/experimental/scene_cooking/browser/visuals.py   browser visual cooking
+dimos/experimental/scene_cooking/browser/collision.py browser collision mesh
+dimos/experimental/scene_cooking/entities/visuals.py  entity visual extraction
+dimos/experimental/scene_cooking/entities/collision.py entity collision hulls
+dimos/experimental/scene_cooking/mujoco/collision_export.py MuJoCo XML bake
+dimos/experimental/scene_cooking/mujoco/collision_policy.py static collision policy
+dimos/simulation/scene_assets/package.py              runtime package metadata contract
 dimos/simulation/scenes/catalog.py                   runtime name/path resolution
 ```

@@ -15,7 +15,7 @@
 """Runtime scene package metadata contract.
 
 Runtime modules consume the artifacts described here; cook-time policy lives
-under ``dimos.experimental.pimsim.scene``.
+under ``dimos.experimental.scene_cooking``.
 """
 
 from __future__ import annotations
@@ -224,7 +224,7 @@ def _validate_artifact_frames(raw: dict[str, Any], metadata_path: Path) -> None:
     if frames is None:
         raise ValueError(
             f"scene package is missing artifact frame metadata: {metadata_path}. "
-            "Recook it with dimos.experimental.pimsim.scene.cook."
+            "Recook it with dimos.experimental.scene_cooking.cook."
         )
 
     artifacts = raw.get("artifacts", {})

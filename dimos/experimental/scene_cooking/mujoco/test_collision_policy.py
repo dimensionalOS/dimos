@@ -15,7 +15,7 @@
 import numpy as np
 import pytest
 
-from dimos.experimental.pimsim.scene.collision.mujoco.spec import CollisionSpec, decide_for_prim
+from dimos.experimental.scene_cooking.mujoco.collision_policy import CollisionSpec, decide_for_prim
 
 
 def _flat_square_floor() -> tuple[np.ndarray, np.ndarray]:

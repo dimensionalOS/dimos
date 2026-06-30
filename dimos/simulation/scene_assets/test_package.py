@@ -14,7 +14,7 @@
 
 from pathlib import Path
 
-from dimos.simulation.scene_assets.spec import (
+from dimos.simulation.scene_assets.package import (
     MujocoComposedBinary,
     SceneMeshAlignment,
     ScenePackage,

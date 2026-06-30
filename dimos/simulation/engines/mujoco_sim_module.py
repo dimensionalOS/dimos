@@ -571,7 +571,7 @@ class MujocoSimModule(
 
     def _compose_model(self) -> mujoco.MjModel:
         """Compose optional scene package MJCF + robot MJCF + entities."""
-        from dimos.simulation.mujoco.entity_scene import add_entities_to_spec, spawn_penetrators
+        from dimos.simulation.mujoco.scene_entities import add_entities_to_spec, spawn_penetrators
 
         if self.config.robot_mjcf is None:
             raise RuntimeError("MujocoSimModule: robot_mjcf is required for composition")

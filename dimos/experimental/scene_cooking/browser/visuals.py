@@ -23,16 +23,16 @@ import shutil
 import tempfile
 from typing import Any
 
-from dimos.experimental.pimsim.scene.assets.glb import (
-    demote_required_extensions,
-    normalize_embedded_textures,
-)
-from dimos.experimental.pimsim.scene.command import (
+from dimos.experimental.scene_cooking.command import (
     blender_output_line_is_interesting,
     run_logged_command,
 )
-from dimos.experimental.pimsim.scene.inspect import inspect_scene_asset
-from dimos.experimental.pimsim.scene.spec import BrowserVisualSpec
+from dimos.experimental.scene_cooking.package_config import BrowserVisualSpec
+from dimos.experimental.scene_cooking.source_assets.glb import (
+    demote_required_extensions,
+    normalize_embedded_textures,
+)
+from dimos.experimental.scene_cooking.source_assets.inspect import inspect_scene_asset
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

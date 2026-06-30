@@ -20,11 +20,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from dimos.experimental.pimsim.scene import plan as plan_module
-from dimos.experimental.pimsim.scene.assets.mesh import SceneMeshAlignment, ScenePrimMesh
-from dimos.experimental.pimsim.scene.sidecar import SceneCookSidecar
-from dimos.experimental.pimsim.scene.spec import browser_visual_spec_for_target
-from dimos.simulation.scene_assets.spec import (
+from dimos.experimental.scene_cooking import planning as plan_module
+from dimos.experimental.scene_cooking.package_config import browser_visual_spec_for_target
+from dimos.experimental.scene_cooking.sidecar import SceneCookSidecar
+from dimos.experimental.scene_cooking.source_assets.mesh import SceneMeshAlignment, ScenePrimMesh
+from dimos.simulation.scene_assets.package import (
     ARTIFACT_FRAMES,
     ScenePackage,
     load_scene_package,
@@ -201,7 +201,7 @@ def test_browser_visual_profiles_are_backend_specific() -> None:
 
 
 def test_extract_scene_objects_emits_per_prim_aabb() -> None:
-    from dimos.experimental.pimsim.scene.collision.browser import extract_scene_objects
+    from dimos.experimental.scene_cooking.browser.collision import extract_scene_objects
 
     triangles = np.array([[0, 1, 2]], dtype=np.int32)
     prims = [

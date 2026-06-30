@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Bake a scene mesh into an MJCF wrapper around a robot MJCF.
+"""Bake source scene geometry into a scene-only MuJoCo MJCF wrapper.
 
 The bake walks every prim returned by :func:`load_scene_prims` and asks
-:func:`dimos.experimental.pimsim.scene.collision.mujoco.spec.decide_for_prim` what to
+:func:`dimos.experimental.scene_cooking.mujoco.collision_policy.decide_for_prim` what to
 emit for it.  The dispatcher returns one of three modes:
 
 - ``"primitive"`` -- a single MuJoCo primitive ``<geom>`` (box / sphere /
@@ -47,14 +47,10 @@ CLI bakes use forked processes; in an already-threaded DimOS runtime we
 use ``forkserver`` so workers do not inherit the parent process's active
 threads.
 
-Output is cached at ``~/.cache/dimos/scene_meshes/<hash>/`` keyed on
-the SHA256 of (source mesh, robot MJCF, alignment, meshdir, sidecar
-spec, visual flag, schema version).  :func:`load_or_bake` is the
-recommended entry point -- it handles a three-tier cache:
-
-  1. ``compiled.mjb`` exists -> load directly (~1 s)
-  2. ``wrapper.xml`` + OBJs exist -> compile XML, save ``.mjb``
-  3. Nothing exists -> full bake, then compile + save ``.mjb``
+Output is cached under the package's MuJoCo artifact directory, keyed on
+the SHA256 of the source mesh, alignment, collision policy, visual flag, and
+schema version. :func:`load_or_bake` is the recommended entry point: it reuses
+``wrapper.xml`` when present and otherwise runs the full geometry bake.
 """
 
 from __future__ import annotations
@@ -72,16 +68,16 @@ from typing import Any
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 
-from dimos.experimental.pimsim.scene.assets.mesh import (
+from dimos.experimental.scene_cooking.mujoco.collision_policy import (
+    CollisionSpec,
+    decide_for_prim,
+)
+from dimos.experimental.scene_cooking.source_assets.mesh import (
     ScenePrimMesh,
     load_scene_prims,
     split_disconnected_scene_prims,
 )
-from dimos.experimental.pimsim.scene.collision.mujoco.spec import (
-    CollisionSpec,
-    decide_for_prim,
-)
-from dimos.simulation.scene_assets.spec import SceneMeshAlignment
+from dimos.simulation.scene_assets.package import SceneMeshAlignment
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -216,7 +212,7 @@ def bake_scene_mjcf(
 
     Args:
         scene_mesh_path: ``.usdz`` / ``.usda`` / ``.glb`` / ``.obj`` /
-            etc. Anything ``assets.mesh.load_scene_prims`` accepts.
+            etc. Anything ``source_assets.mesh.load_scene_prims`` accepts.
         alignment: scale / translation / rotation / y-up swap to bake
             into world frame before any geom is emitted.
         cache_root: override the cache root (defaults to
@@ -969,12 +965,12 @@ def _write_wrapper(
 
 
 def cli_main() -> None:
-    """``python -m dimos.experimental.pimsim.scene.collision.mujoco.export <scene> <robot> [opts]``.
+    """``python -m dimos.experimental.scene_cooking.mujoco.collision_export <scene> [opts]``.
 
-    Bake (or load from cache), optionally launch the MuJoCo viewer.
+    Bake (or load from cache) a scene-only MuJoCo wrapper.
     """
     p = argparse.ArgumentParser(
-        prog="python -m dimos.experimental.pimsim.scene.collision.mujoco.export",
+        prog="python -m dimos.experimental.scene_cooking.mujoco.collision_export",
         description="Bake a USD/GLB/OBJ scene into a robot-agnostic scene-only MJCF wrapper.",
     )
     p.add_argument("scene", type=Path, help="scene mesh path (.usda, .usdz, .glb, ...)")

@@ -29,7 +29,7 @@ entities/<safe_id>/
 
 The hull paths are recorded per entity as ``collision_paths`` in
 ``scene.meta.json`` and loaded verbatim by the runtime composer
-(``dimos/simulation/mujoco/entity_scene.py``) — there is no runtime
+(``dimos/simulation/mujoco/scene_entities.py``) — there is no runtime
 decomposition and no per-machine cache; the package is self-contained.
 """
 
