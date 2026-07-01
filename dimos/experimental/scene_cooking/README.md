@@ -1,9 +1,16 @@
 # Scene Cooking
 
 Scene cooking turns an authored 3D environment into a DimOS scene package. A
-package is the runtime contract for simulators and viewers: it contains a
-manifest, backend-specific browser assets, MuJoCo collision assets, optional
-runtime entities, and metadata about frames and alignment.
+scene package is one environment with the representations downstream systems
+need: a manifest, frame/alignment metadata, viewer-specific browser assets,
+MuJoCo collision assets, browser raycast assets, and optional runtime entities.
+
+The point is to keep source assets, cooking policy, and runtime loading cleanly
+separated. A downloaded `.blend`, `.glb`, or `.usd` can contain rich visual
+geometry, repeated product meshes, floors, walls, fixtures, and future asset
+types like splats or articulated objects. The cook decides which representations
+to build from that source; runtime consumers then load the package instead of
+relearning the source file layout.
 
 The robot is not baked into a normal scene package. Runtime code loads the
 package and attaches the robot it wants to simulate.

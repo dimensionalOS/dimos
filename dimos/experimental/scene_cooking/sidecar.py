@@ -17,7 +17,7 @@
 The existing ``<scene>.collision.json`` file remains the low-level collision
 contract.  ``<scene>.cook.json`` is the wider authored-scene contract: it can
 carry the same collision policy plus a small, explicit list of objects that
-should be removed from static cooks and respawned as pimsim entities.
+should be removed from static cooks and respawned as scene-package entities.
 """
 
 from __future__ import annotations
