@@ -55,15 +55,6 @@ def _matrix_to_rerun_transform(rr: Any, matrix: np.ndarray) -> Any:
     )
 
 
-def _rerun_transform_without_frames(rr: Any, transform: Any) -> Any:
-    translation = transform.translation.as_arrow_array().to_pylist()[0]
-    quaternion = transform.quaternion.as_arrow_array().to_pylist()[0]
-    return rr.Transform3D(
-        translation=translation,
-        rotation=rr.Quaternion(xyzw=quaternion),
-    )
-
-
 def _mesh_to_rerun(rr: Any, mesh: Any) -> Any:
     color: tuple[int, int, int, int] = (178, 178, 178, 255)
     face_colors = getattr(getattr(mesh, "visual", None), "face_colors", None)
@@ -190,19 +181,29 @@ class UrdfRobotJointStateRerunFactory:
 
         import rerun as rr
 
-        return [
-            (
-                self._joint_paths[joint.name],
-                _rerun_transform_without_frames(
-                    rr,
-                    joint.compute_transform(
-                        self._joint_values.get(joint.name, 0.0),
-                        clamp=self.clamp_joint_limits,
-                    ),
-                ),
+        # Build each link transform straight from the Rust FK result. The old
+        # path called joint.compute_transform() (which builds a Transform3D),
+        # round-tripped it through Arrow (as_arrow_array().to_pylist()) purely to
+        # strip the parent/child frames, then rebuilt a second Transform3D --
+        # ~3x the work per joint, per message, on the bridge's LCM thread. Going
+        # through the inner binding and building one frameless Transform3D from
+        # the raw arrays removes the Arrow round-trip and the duplicate build.
+        out: list[tuple[str, Any]] = []
+        for joint in self._joints:
+            result = joint._inner.compute_transform(
+                self._joint_values.get(joint.name, 0.0),
+                clamp=self.clamp_joint_limits,
             )
-            for joint in self._joints
-        ]
+            out.append(
+                (
+                    self._joint_paths[joint.name],
+                    rr.Transform3D(
+                        translation=result["translation"],
+                        rotation=rr.Quaternion(xyzw=result["quaternion_xyzw"]),
+                    ),
+                )
+            )
+        return out
 
     def _load_tree(self) -> None:
         if self._tree is None:
