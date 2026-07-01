@@ -375,6 +375,11 @@ _rerun_config = {
     },
     "max_hz": {
         "world/coordinator_joint_state": 20.0,
+        # Raw whole-body state streams arrive at ~440 Hz. The mesh animates
+        # from coordinator_joint_state (above); these are only useful as debug
+        # plots, so throttle them hard instead of flooding Rerun's store.
+        "world/g1/imu": 10.0,
+        "world/g1/motor_states": 10.0,
         "world/global_map": 1.0,
         "world/global_costmap": 2.0,
         "world/navigation_costmap": 2.0,
