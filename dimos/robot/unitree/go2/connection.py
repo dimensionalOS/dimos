@@ -283,7 +283,7 @@ class GO2Connection(Module, Camera, Pointcloud):
             )
             self._camera_info_thread.start()
 
-        if self.config.motion_mode and isinstance(self.connection, UnitreeWebRTCConnection):
+        if self.config.motion_mode and isinstance(self.connection, Go2WebRTCConnection):
             self.connection.set_motion_mode(self.config.motion_mode)
 
         self.standup()
