@@ -40,21 +40,31 @@ export interface TopicStats {
   count: number;
 }
 
+/** A discovery snapshot of one topic — the immutable `{topic, type}` metadata the SDK learns off
+ *  the bus. Distinct from `Topic<T>` (topic.ts), which is the stateful subscription handle
+ *  (handlers, rate-limit, stats) created on demand by `client.topic<T>(name)`. `client.topic()`
+ *  itself stays string-keyed; strong per-message typing is opt-in — the blueprint codegen
+ *  (`cli/genTypes.ts`) turns these pairs into a `DimosTopics` map a consumer annotates against
+ *  manually (`const p: DimosTopics["/odom"] = client.topic("/odom").getLatest()!`). */
 export interface TopicInfo {
   topic: string;
   type: string;
 }
 
 /**
- * Per-subscription Quality-of-Service. Two tiers:
+ * Per-subscription Quality-of-Service. Two tiers, both actually honored end-to-end:
  *
- *  • CLIENT-SIDE, TRANSPORT-AGNOSTIC (implemented) — `maxHz` + `rateLimit` location +
- *    `conflation`. These work identically on every transport (they live in topic.ts).
- *  • TRANSPORT-LEVEL (declared, not yet wired) — `reliability`/`priority`/`congestion`/
- *    `express` (zenoh) and `ordered`/`maxRetransmits`/`maxPacketLifetimeMs` (WebRTC
- *    DataChannel). Honored only where the active transport's `caps.qos` advertises it;
- *    elsewhere they're ignored (the UI greys them out). Wiring these through the Python
- *    gateways is the documented next phase — see docs/data-path.md.
+ *  • CLIENT-SIDE, TRANSPORT-AGNOSTIC — `maxHz` + `rateLimit` location + `conflation`. These work
+ *    identically on every transport (they live in topic.ts).
+ *  • GATEWAY-SCHEDULER — `priority` / `reliability` / `depth`. The gateway-WS adapter forwards these
+ *    in its subscribe op and the Python gateway's per-client priority outbox honors them
+ *    (servers/qos_sched.py `declared_to_class`), so important topics survive a saturated link.
+ *    Transports without that server outbox (zenoh-ts, webrtc, sse, http-poll) advertise no
+ *    `caps.qos.transport`, so `applyCaps` (qos.ts) strips these before they'd be sent.
+ *
+ * Per-provider QoS knobs that no transport honors yet (zenoh congestion/express, WebRTC
+ * ordered/maxRetransmits — the latter set per-channel via the adapter's deps, not per-subscription)
+ * are intentionally NOT modeled here; add them when a transport actually reads them.
  */
 export interface Qos {
   /** Cap delivery to at most this many Hz (0/undefined = unlimited). */
@@ -73,30 +83,15 @@ export interface Qos {
    * intermediates under a rate cap), "all" = deliver every message (forces maxHz=0).
    */
   conflation?: "latest" | "all";
-  // ── transport-level (declared; honored per caps.qos) ──────────────────────────
-  /** Delivery guarantee (DDS/ROS 2): "reliable" retries + keeps order; "best-effort" drops under
-   *  pressure (the gateway sheds it first). zenoh subscriber / WebRTC channel reliability. */
-  reliability?: "reliable" | "best-effort";
-  /** Late-joiner behavior (DDS durability): "transient_local" = the gateway replays the last value to a
-   *  new subscriber (latch); "volatile" = nothing persisted. */
-  durability?: "volatile" | "transient_local";
-  /** Buffering discipline (DDS history): "keep_last" bounds the outbox to `depth`; "keep_all" keeps all. */
-  history?: "keep_last" | "keep_all";
-  /** Outbox depth for "keep_last" (per topic). best-effort lanes use 1 (latest-wins / conflation). */
-  depth?: number;
-  /** Scheduler priority band — the gateway drains higher first and sheds lower first under contention
-   *  (the per-client priority outbox in servers/data.py). Also a zenoh priority band. */
+  // ── gateway-scheduler (honored where caps.qos.transport advertises them) ───────
+  /** Scheduler priority band — the gateway drains higher first and sheds lower first under
+   *  contention (the per-client priority outbox in servers/data.py). */
   priority?: "low" | "normal" | "high" | "critical";
-  /** zenoh congestion behavior: drop messages vs block the pipe. */
-  congestion?: "drop" | "block";
-  /** zenoh express (batching off → lower latency, more overhead). */
-  express?: boolean;
-  /** WebRTC DataChannel ordered delivery (set at channel creation). */
-  ordered?: boolean;
-  /** WebRTC DataChannel max retransmits (set at channel creation). */
-  maxRetransmits?: number;
-  /** WebRTC DataChannel max packet lifetime, ms (set at channel creation). */
-  maxPacketLifetimeMs?: number;
+  /** Delivery guarantee: "reliable" keeps a bounded keep_last deque; "best-effort" conflates to
+   *  the latest frame (the gateway sheds it first under load). */
+  reliability?: "reliable" | "best-effort";
+  /** Outbox depth for the gateway's keep_last deque (per topic). best-effort lanes use 1. */
+  depth?: number;
 }
 
 /** Which QoS fields a transport actually honors (the rest are ignored / client-emulated). */
@@ -104,6 +99,7 @@ export interface QosCaps {
   /** Where a `maxHz` request takes effect: "server" downsamples on the wire,
    *  "client" only throttles delivery locally. */
   maxHz: "server" | "client";
-  /** Transport-level QoS fields this transport can honor (none yet wired). */
+  /** Gateway-scheduler QoS fields this transport forwards + the server honors (the gateway-WS
+   *  adapter advertises ["priority","reliability","depth"]; client-only transports advertise none). */
   transport?: ReadonlyArray<keyof Qos>;
 }

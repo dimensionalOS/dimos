@@ -4,7 +4,7 @@
 // (every message, in order), status (latest value on connect). ROS 2 ships *named QoS profiles*
 // (SensorData / Default / Services) for exactly this — declare a sane default per topic, override when
 // you must. We mirror that as four **lanes**, each a preset over the `Qos` knobs (`reliability`,
-// `durability`, `history`/`depth`, `priority`). `defaultLane` auto-assigns by topic/type so zero-config
+// `depth`, `priority`, `conflation`). `defaultLane` auto-assigns by topic/type so zero-config
 // works; `resolveQos` merges per-topic overrides; `applyCaps` degrades to what a transport honors.
 //
 // Priority is what the gateway's per-client scheduler enforces under contention (see servers/data.py):
@@ -29,18 +29,13 @@ export const LANES: Record<Lane, Qos> = {
   command: {
     reliability: "reliable",
     priority: "critical",
-    durability: "volatile",
-    history: "keep_last",
     depth: 1,
-    ordered: true,
     conflation: "all",
   },
   // high-rate telemetry: latest-wins, droppable — pose/odom/imu/tf/joints (≈ ROS 2 SensorData).
   sensor: {
     reliability: "best-effort",
     priority: "high",
-    durability: "volatile",
-    history: "keep_last",
     depth: 5,
     conflation: "latest",
   },
@@ -48,8 +43,6 @@ export const LANES: Record<Lane, Qos> = {
   default: {
     reliability: "reliable",
     priority: "normal",
-    durability: "volatile",
-    history: "keep_last",
     depth: 10,
     conflation: "all",
   },
@@ -57,8 +50,6 @@ export const LANES: Record<Lane, Qos> = {
   bulk: {
     reliability: "best-effort",
     priority: "low",
-    durability: "volatile",
-    history: "keep_last",
     depth: 1,
     conflation: "latest",
   },
@@ -98,13 +89,13 @@ const GATEWAY_FIELDS: (keyof Qos)[] = [
   "rateLimit",
   "conflation",
   "priority",
-  "durability",
-  "history",
   "depth",
 ];
 
 /** Degrade a QoS to what a transport actually honors: keep the gateway-enforced fields, plus the
- *  transport-level fields the adapter advertises in `caps.transport`; drop the rest (UI greys them out). */
+ *  gateway-scheduler fields the adapter advertises in `caps.transport`; drop the rest. Called by the
+ *  gateway-WS adapter before each subscribe op (gatewayWs.ts) so a client-only transport doesn't send
+ *  priority/reliability/depth the server-less path can't honor. */
 export function applyCaps(qos: Qos, caps: QosCaps): Qos {
   const honored = new Set<keyof Qos>([...GATEWAY_FIELDS, ...(caps.transport ?? [])]);
   const out: Qos = {};

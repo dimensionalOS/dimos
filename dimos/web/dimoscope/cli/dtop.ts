@@ -22,7 +22,7 @@ import { createHttpPollTransport } from "../packages/topics/src/adapters/httpPol
 import { BENCH_SCENARIOS, formatMarkdown, measureScenario } from "../packages/topics/src/bench.ts";
 import type { Transport } from "../packages/topics/src/transport.ts";
 import type { TopicInfo } from "../packages/topics/src/types.ts";
-import { generateTypes } from "./genTypes.ts";
+import { generateCommandTypes, generateTypes } from "./genTypes.ts";
 
 const args = Deno.args;
 const cmd = args[0];
@@ -220,11 +220,12 @@ async function cmdGenTypes() {
   const known = new Set<string>(getTypeNames());
   const client = await makeClient();
   const topics = await discover(client, Math.min(dur, 2500));
-  const ts = generateTypes(topics, known);
+  const commands = client.commands; // advertised on the gateway hello (empty on read-only transports)
+  const ts = generateTypes(topics, known) + "\n" + generateCommandTypes(commands);
   client.close();
   if (out) {
     await Deno.writeTextFile(out, ts);
-    console.error(`dtop: wrote ${topics.length} topics → ${out}`);
+    console.error(`dtop: wrote ${topics.length} topics + ${commands.length} commands → ${out}`);
   } else {
     console.log(ts);
   }

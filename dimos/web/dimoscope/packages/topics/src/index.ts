@@ -53,6 +53,4 @@ export { createWebRtcMedia } from "./adapters/webRtcMedia.ts";
 export type { WebRtcMediaDeps } from "./adapters/webRtcMedia.ts";
 export { createWebCodecsMedia } from "./adapters/webCodecsMedia.ts";
 export type { WebCodecsMediaDeps } from "./adapters/webCodecsMedia.ts";
-export { decodeImageToBitmap } from "./image.ts";
 export type { MediaCaps, MediaChannel, MediaDeps, MediaKind, VideoMeta } from "./media.ts";
-export type { ImageMsg } from "./image.ts";

@@ -50,20 +50,19 @@ Deno.test("PRIORITY_RANK orders command > sensor > default > bulk", () => {
   assert.ok(rank("default") > rank("bulk"));
 });
 
-Deno.test("applyCaps: keeps gateway fields + advertised transport fields, drops the rest", () => {
-  const qos = resolveQos("/pose", "", { maxHz: 30, ordered: false, maxRetransmits: 0 });
-  // a WS-like transport: honors nothing transport-level
-  const ws: QosCaps = { maxHz: "server" };
+Deno.test("applyCaps: keeps gateway fields + advertised scheduler fields, drops the rest", () => {
+  const qos = resolveQos("/pose", "", { maxHz: 30 }); // sensor: priority high, reliability best-effort, depth 5
+  // a client-only transport (no server priority outbox): advertises no scheduler fields
+  const clientOnly: QosCaps = { maxHz: "client" };
+  const cq = applyCaps(qos, clientOnly);
+  assert.equal(cq.maxHz, 30); // gateway/client field kept
+  assert.equal(cq.priority, "high"); // priority is a GATEWAY_FIELD → always kept
+  assert.equal(cq.conflation, "latest");
+  assert.equal("reliability" in cq, false); // not advertised → dropped
+  // the gateway-WS transport advertises priority/reliability/depth
+  const ws: QosCaps = { maxHz: "server", transport: ["priority", "reliability", "depth"] };
   const wq = applyCaps(qos, ws);
-  assert.equal(wq.maxHz, 30); // gateway field kept
-  assert.equal(wq.priority, "high"); // scheduler field kept
-  assert.equal(wq.conflation, "latest");
-  assert.equal("ordered" in wq, false); // transport field dropped
-  assert.equal("reliability" in wq, false);
-  // a WebRTC-like transport: honors reliability + ordered + lifetime
-  const rtc: QosCaps = { maxHz: "client", transport: ["reliability", "ordered", "maxRetransmits"] };
-  const rq = applyCaps(qos, rtc);
-  assert.equal(rq.ordered, false); // now kept
-  assert.equal(rq.reliability, "best-effort");
-  assert.equal(rq.priority, "high"); // gateway field still kept
+  assert.equal(wq.reliability, "best-effort"); // now kept
+  assert.equal(wq.depth, 5);
+  assert.equal(wq.priority, "high"); // gateway field still kept
 });

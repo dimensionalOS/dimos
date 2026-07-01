@@ -44,8 +44,11 @@ export interface Transport {
   publishTeleop(linearX: number, angularZ: number, ttlMs?: number): void;
   /** Send a navigation goal (world metres) — gateway publishes a PointStamped to clicked_point. */
   publishGoal(x: number, y: number, z?: number): void;
-  /** Invoke a whitelisted dimos `@rpc` command via the gateway; resolves with its return value. */
-  // TODO should be strongly typed and extensible by the consumer depending on the blueprint could be defined per provider (zenoh, webrtc, etc.)
+  /** Invoke a whitelisted dimos `@rpc` command via the gateway; resolves with its return value.
+   *  Stays string-keyed at the transport layer (any blueprint, any provider). Consumers get typed
+   *  target+method by running `dtop gen-types` → the generated `DimosCommands` / `RpcTarget` /
+   *  `RpcMethod` (cli/genTypes.ts), checked against live discovery; full arg/return typing follows
+   *  when the static Python `@rpc`-annotation introspection pass lands. */
   rpc(target: string, method: string, args?: unknown[]): Promise<unknown>;
   requestList(): void;
   onSample(cb: (s: RawSample) => void): void;

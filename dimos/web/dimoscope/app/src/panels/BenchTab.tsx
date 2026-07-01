@@ -387,14 +387,16 @@ export function BenchTab() {
           </div>
 
           <div className="bench-section">
-            <div className="bench-label">QoS · transport-level (not yet wired)</div>
+            <div className="bench-label">QoS · gateway scheduler (auto, per-lane)</div>
             <div className="muted small">
-              zenoh reliability/priority/congestion/express and WebRTC ordered/maxRetransmits are real QoS
-              but live on the Python gateway / channel-creation — documented next phase (see docs/data-path.md).
+              priority/reliability/depth are wired end-to-end — the gateway-WS adapter forwards them and
+              the server's per-client priority outbox honors them (assigned automatically per lane; see
+              the QoS demo, not toggles here). Per-provider knobs (zenoh congestion/express, WebRTC
+              ordered/maxRetransmits — set at channel creation) aren't modeled yet.
             </div>
             <div className="bench-row" style={{ opacity: 0.5 }}>
-              {["reliability", "priority", "congestion"].map((k) => (
-                <button key={k} className="tab" disabled title="not wired this pass">{k}</button>
+              {["priority", "reliability", "depth"].map((k) => (
+                <button key={k} className="tab" disabled title="auto per lane (gateway scheduler)">{k}</button>
               ))}
             </div>
           </div>

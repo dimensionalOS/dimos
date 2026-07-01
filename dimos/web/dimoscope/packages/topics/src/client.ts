@@ -145,7 +145,10 @@ export const createDimosClient = (deps: DimosClientDeps): DimosClient => {
     status: "connecting",
     topic,
     listTopics,
-    // TODO what are these get $funcstion thingies? let's ultrathink and explore all the exports on the client and see how we can simplify it...
+    // These are getters, not plain fields, because their backing transport state is filled in
+    // asynchronously after construction: `label` + `commands` arrive on the gateway's `hello`,
+    // and `caps` is the (provider-specific) live transport capability set. A captured field would
+    // freeze the connecting-time values (undefined / []); a getter always reads the current one.
     get gatewayLabel() {
       return transport.label;
     },

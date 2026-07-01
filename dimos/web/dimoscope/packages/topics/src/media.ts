@@ -74,13 +74,18 @@ export interface MediaDeps {
 export function selectMediaChannel(d: MediaDeps): MediaChannel {
   const prefer = d.prefer ?? ["webrtc", "jpeg"];
   const offered = new Set<MediaKind>(d.serverMedia ?? ["jpeg"]);
+  const jpeg = () => createJpegTopicMedia({ client: d.client }); // the universal floor (no gatewayUrl)
+  // Each kind → how to build it; webcodecs/webrtc need the media node URL, so they return undefined
+  // (skip) without one. The loop just picks the first kind the SERVER offers AND the BROWSER supports.
+  const build: Record<MediaKind, () => MediaChannel | undefined> = {
+    webcodecs: () => d.gatewayUrl ? createWebCodecsMedia({ gatewayUrl: d.gatewayUrl }) : undefined,
+    webrtc: () => d.gatewayUrl ? createWebRtcMedia({ gatewayUrl: d.gatewayUrl }) : undefined,
+    jpeg,
+  };
   for (const kind of prefer) {
     if (!offered.has(kind) || !browserSupports(kind)) continue;
-    if (kind === "webcodecs" && d.gatewayUrl) {
-      return createWebCodecsMedia({ gatewayUrl: d.gatewayUrl });
-    }
-    if (kind === "webrtc" && d.gatewayUrl) return createWebRtcMedia({ gatewayUrl: d.gatewayUrl });
-    if (kind === "jpeg") return createJpegTopicMedia({ client: d.client });
+    const ch = build[kind]();
+    if (ch) return ch;
   }
-  return createJpegTopicMedia({ client: d.client }); // the device without webrtc still gets video
+  return jpeg(); // the device without webrtc still gets video
 }

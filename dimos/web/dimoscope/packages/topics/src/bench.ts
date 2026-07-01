@@ -4,7 +4,9 @@
 // on-demand WS-hop savings (subscribe 1 of N vs all N). No Bun/Node/file/DOM APIs here.
 import type { DimosClient } from "./client.ts";
 import type { Qos } from "./types.ts";
-
+// Not a test: this is the shared measurement *core*, imported by the app runtime (app/src/bench.tsx +
+// panels/BenchTab.tsx), the headless CLI runners (bench/*, cli/dtop.ts), and exported from the public
+// package API. Its own unit tests live beside it in bench.test.ts.
 export interface BenchScenario {
   name: string;
   topics: string[];

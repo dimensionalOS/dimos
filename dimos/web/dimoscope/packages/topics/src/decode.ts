@@ -1,6 +1,7 @@
-// Decoding helpers — the only place that touches @dimos/msgs.
-// The 8-byte hash at the head of every payload self-describes the type, so a
-// single decode() works for any transport (gateway LCM packets or Zenoh samples).
+// Decoding helpers for the client's hot path. The 8-byte hash at the head of every payload
+// self-describes the type, so a single decode() works for any transport (gateway LCM packets or
+// Zenoh samples). This is the client's decode seam; adapters that pre-split the channel
+// ("<topic>#<pkg>.<Type>") call @dimos/msgs' `decodeChannel` directly (gatewayFrame.ts, gatewayWs.ts).
 import { decode as msgsDecode } from "@dimos/msgs";
 
 /** Split a DimOS channel "<topic>#<pkg>.<Type>" into its parts. */
@@ -11,12 +12,17 @@ export function splitChannel(channel: string): { topic: string; type: string } {
     : { topic: channel, type: "?" };
 }
 
-/** Decode a message body (bytes starting with the 8-byte type hash). */
+/** Decode a message body (bytes starting with the 8-byte type hash). A one-line seam over
+ *  @dimos/msgs so the client never imports the codec directly and SDK consumers handling a raw
+ *  `RawSample.payload` have one public decode entry point. */
 export function decodeBody(payload: Uint8Array): unknown {
   return msgsDecode(payload);
 }
 
-/** Best-effort source timestamp (ms) from a std_msgs/Header on the message. */
+/** Best-effort source timestamp (ms) from a std_msgs/Header — the *fallback* latency input used
+ *  only when the gateway didn't stamp the WS hop (`gatewaySendMs`); see client.ts onSample. The
+ *  heuristics exist because there's no single canonical stamp field/epoch across message types
+ *  (ns vs ms vs s, `stamp` vs `ts`, `{sec,nsec}` variants). */
 export function srcTsMs(data: unknown): number | undefined {
   const stamp = (data as any)?.header?.stamp ?? (data as any)?.header?.ts ?? (data as any)?.ts;
   if (typeof stamp === "number") {
