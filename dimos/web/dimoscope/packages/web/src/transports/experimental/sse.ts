@@ -1,12 +1,6 @@
-// createSseTransport — read-only delivery over Server-Sent Events.
-//
-// The gateway streams `data: <base64(frame)>\n\n` on GET /sse?topics=<csv|*>. We parse
-// the event-stream with fetch + a stream reader (NOT EventSource), so the exact same
-// adapter runs in the browser AND headless under Deno/Bun. SSE is server→client only and
-// text-framed, so: (1) teleop/goal/rpc are not on this channel — like zenoh-ts, control
-// would route to a gateway; (2) binary frames ride as base64 (~33% larger) — a real cost
-// this benchmark is meant to expose. Subscriptions are the URL topic set; changing them
-// reopens the stream (the gateway then filters → true per-stream on-demand).
+// Read-only Server-Sent Events; gateway streams `data: <base64(frame)>` on GET /sse?topics=<csv|*>;
+// parsed with fetch+stream reader (NOT EventSource) so the same adapter runs in browser AND headless
+// (Deno/Bun); base64 ≈ 33% overhead; no per-subscriber downsample.
 import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../../transport.ts";
 import type { TopicInfo } from "../../types.ts";
 import { b64ToBytes, frameToSample } from "../frame.ts";
@@ -17,8 +11,8 @@ export interface SseDeps {
 }
 
 export const createSseTransport = (deps: SseDeps): Transport => {
-  // qos.maxHz "client": the /sse endpoint filters by topic set only — it has no per-subscriber
-  // downsample (that lives on the WS control channel), so a rate cap is enforced client-side.
+  // qos.maxHz "client": /sse filters by topic set only (no per-subscriber downsample — that's on the
+  // WS control channel), so a rate cap is client-side.
   const caps: TransportCaps = { onDemand: true, discovery: "passive", qos: { maxHz: "client" } };
   const base = deps.url.replace(/\/$/, "").replace(/^ws/, "http");
   let sampleCb: ((s: RawSample) => void) | undefined;

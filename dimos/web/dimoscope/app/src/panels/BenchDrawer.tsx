@@ -10,8 +10,7 @@ import { type BenchRow, formatMarkdown, measureScenario, type Qos, STREAM_PROFIL
 
 const HZ_PRESETS = [0, 5, 20, 60, 120];
 
-// Large-stream tiers — sustained THROUGHPUT (bytes/frame × rate), grounded in real sensor bitrates.
-// Frames stay ≤12 MB; high MB/s comes from the rate, not one giant packet.
+// Large-stream tiers grounded in real sensor bitrates; frames stay ≤12 MB, high MB/s comes from rate, not a giant packet.
 const STREAM_TIERS = [
   { id: "light", bytes: 200_000, hz: 10, note: "2D lidar ~2 MB/s" },
   { id: "camera", bytes: 550_000, hz: 20, note: "1080p ~11 MB/s" },
@@ -33,7 +32,6 @@ export function BenchDrawer() {
 
   const [open, setOpen] = useState(false);
 
-  // ── load generator (BenchLoad RPC): drive the large stream from the browser ──
   const hasRpc = commands.some((c) => c.target === "BenchLoad");
   const [heavyKind, setHeavyKind] = useState<"image" | "cloud">("image");
   const [heavyHz, setHeavyHz] = useState(20);
@@ -138,7 +136,6 @@ export function BenchDrawer() {
             </div>
           </div>
 
-          {/* ── optional load generator: drive the BenchLoad blueprint's large stream over RPC ── */}
           <div className="bench-section">
             <div className="bench-label">Load generator · large stream (BenchLoad RPC)</div>
             {!hasRpc

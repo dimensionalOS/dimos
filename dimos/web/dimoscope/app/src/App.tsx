@@ -143,7 +143,6 @@ export function App() {
       {tab === "2d" && (
         <main className="main">
           <div className="center-col">
-            {/* Camera is the PRIMARY view — you drive looking at it (⛶ fullscreen). */}
             <CameraView mode={mediaMode} primary />
           </div>
           <div className="side-col">

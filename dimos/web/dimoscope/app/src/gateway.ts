@@ -1,6 +1,4 @@
-// The gateway address (host:port) as a runtime-editable app setting, shared between main.tsx (which
-// builds the transport list from it) and the topbar input (App.tsx). Kept in its own module so
-// main.tsx ↔ App.tsx don't form a circular import.
+// Runtime-editable gateway address, shared between main.tsx and App.tsx — its own module to avoid a circular import.
 import { createContext, useContext } from "react";
 
 export interface GatewayCtx {

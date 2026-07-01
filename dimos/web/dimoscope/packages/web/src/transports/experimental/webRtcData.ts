@@ -1,12 +1,7 @@
 /// <reference lib="dom" />
-// createWebRtcDataTransport — read-only delivery over a WebRTC DataChannel (browser-only; Deno has
-// no RTCPeerConnection). Talks to gateway/transports/webrtc.py (a re-transmitter in front of the gateway):
-// the channel carries the same [f64 gateway-send-ms][LC02] BINARY frames as WS/SSE/poll, so we decode
-// through the shared `frameToSample` — identical typed messages + latency accounting. The channel is
-// unordered + lossy by default (`{ordered:false, maxRetransmits:0}`), so under packet loss it has no
-// TCP head-of-line blocking — the whole reason to compare it. Control (teleop/goal/rpc) is not on
-// this channel (like SSE/poll it is read-only); the server forwards all subscribed topics (v1: no
-// per-channel on-demand — the client still only delivers topics it subscribed).
+// Read-only WebRTC DataChannel (browser-only), via gateway/transports/webrtc.py re-transmitter;
+// carries the same [f64 gateway-send-ms][LC02] frames as WS/SSE/poll (decoded via shared
+// frameToSample); unordered + lossy by default ⇒ no TCP head-of-line blocking.
 import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../../transport.ts";
 import type { TopicInfo } from "../../types.ts";
 import { frameToSample } from "../frame.ts";
@@ -18,9 +13,8 @@ export interface WebRtcDataDeps {
 }
 
 export const createWebRtcDataTransport = (deps: WebRtcDataDeps): Transport => {
-  // qos.maxHz "client": the DataChannel re-transmitter forwards all subscribed topics (no per-channel
-  // downsample) → rate cap is client-side. ordered/maxRetransmits are real QoS but set at channel
-  // creation (deps), not per-subscription — see Qos / docs/benchmarks.md.
+  // qos.maxHz "client": DataChannel forwards all subscribed topics (no per-channel downsample) ⇒ rate
+  // cap client-side; ordered/maxRetransmits are set at channel creation, not per-subscription.
   const caps: TransportCaps = { onDemand: false, discovery: "passive", qos: { maxHz: "client" } };
   const sigUrl = deps.url.replace(/^http/, "ws");
   let sampleCb: ((s: RawSample) => void) | undefined;
@@ -58,9 +52,9 @@ export const createWebRtcDataTransport = (deps: WebRtcDataDeps): Transport => {
     };
     dc.onclose = () => statusCb?.("closed");
 
-    // Resolve only once the DataChannel is actually OPEN — not right after the offer is sent — otherwise
-    // a caller (e.g. the bench) begins measuring before any data can arrive (this was the browser "0"
-    // bug). Time out so a WAN failure (unreachable ICE/UDP) rejects instead of hanging forever.
+    // Resolve only once the DataChannel is actually OPEN (not right after the offer) — else a caller
+    // begins measuring before data arrives (the browser "0" bug); time out so an unreachable ICE/UDP
+    // rejects instead of hanging.
     return new Promise<void>((resolve, reject) => {
       let settled = false;
       const finish = (fn: () => void) => {

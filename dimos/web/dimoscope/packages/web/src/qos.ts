@@ -1,6 +1,5 @@
-// QoS lanes ≈ ROS 2 named profiles (command·sensor·default·bulk). defaultLane auto-assigns by
-// topic/type, resolveQos merges overrides, applyCaps degrades to what a transport honors. Priority
-// only matters because the gateway's per-client scheduler enforces it under load (gateway/data.py).
+// QoS lanes ~ ROS 2 named profiles. defaultLane auto-assigns by topic/type, resolveQos merges overrides,
+// applyCaps degrades to what a transport honors; the gateway enforces priority under load.
 import type { Qos } from "./types.ts";
 import type { QosCaps } from "./types.ts";
 

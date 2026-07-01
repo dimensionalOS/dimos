@@ -1,6 +1,4 @@
-// Sparkline — a dependency-free SVG line chart over a rolling number[] window. Used by the
-// Bench tab to show live hz / kB/s per topic. Auto-scales to the max in the window; renders
-// nothing meaningful until ≥2 samples. At ~4 Hz polling an SVG polyline is plenty (no canvas).
+// Dependency-free SVG over a rolling number[] window; auto-scales to the window max; needs ≥2 samples; polyline is enough at ~4 Hz (no canvas).
 interface SparklineProps {
   data: number[];
   width?: number;

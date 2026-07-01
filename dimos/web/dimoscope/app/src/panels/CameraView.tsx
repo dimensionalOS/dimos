@@ -1,5 +1,4 @@
-// CameraView — live camera via the media plane (useVideo): a WebRTC/WebCodecs <video>/<canvas>
-// when the gateway+browser support it, else the JPEG Image-topic floor. Auto-detects the topic.
+// Live camera via useVideo — WebRTC/WebCodecs <video>/<canvas> when available, else the JPEG Image-topic floor; auto-detects the topic.
 import { type CSSProperties } from "react";
 import type { MediaMode, TopicInfo } from "@dimos/react";
 import { useTopics, useVideo } from "../dimos";
@@ -17,14 +16,12 @@ export function CameraView({ mode, primary }: { mode?: MediaMode; primary?: bool
 
   const fellBack = requested && requested !== "auto" && active !== requested;
 
-  // Fullscreen the media element itself (not a CSS overlay — a fixed overlay broke against the
-  // column's stacking context; keeping the element alive preserves the live stream). Esc exits.
+  // Fullscreen the media element itself, not a CSS overlay — the overlay's stacking context would break the live stream.
   const fullscreen = () => {
     const el = (kind === "stream" ? videoRef.current : canvasRef.current) as HTMLElement | null;
     el?.requestFullscreen?.().catch(() => {});
   };
 
-  // primary = the big center view; secondary = a 16:9 side strip.
   const style: CSSProperties = primary
     ? {
       width: "100%",

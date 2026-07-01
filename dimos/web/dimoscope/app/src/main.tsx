@@ -6,33 +6,26 @@ import { App } from "./App";
 import { GatewayContext } from "./gateway";
 import "./styles.css";
 
-// The whole stack (serve.py) lives on ONE origin: the data plane, the camera /media, and the bench
-// transports are all paths of the same host:port. The gateway address (host:port) is a first-class,
-// user-editable setting (topbar input, `useGateway`) — the transport dropdown only switches the
-// DELIVERY MECHANISM (WS/SSE/poll/WebRTC/WebTransport), not the host. WebTransport is the one exception
-// to same-origin: QUIC is UDP and can't share the HTTP port, so it uses its own port (WT_PORT, 8443);
-// its cert hash is fetched from /cert on the gateway.
+// Data plane, camera /media, and bench transports share one host:port; the gateway (host:port) is a
+// user-editable setting. WebTransport is the exception — QUIC can't share the HTTP port, so it uses WT_PORT=8443.
 const GW_PORT = 8080; // gateway HTTP/WS port (serve.py default)
 const WT_PORT = 8443; // gateway WebTransport/QUIC port
 
-// Initial gateway: `?gw=host:port` seeds it (bad-network / remote-VPS testing), else the last value the
-// user typed (localStorage), else the page's hostname on the gateway port.
+// Initial gateway: ?gw=host:port seeds it, else localStorage, else hostname:GW_PORT.
 function initialGateway(): string {
   return new URLSearchParams(location.search).get("gw") ??
     localStorage.getItem("dimos.gw") ??
     `${location.hostname}:${GW_PORT}`;
 }
 
-// Build the transport-switcher servers for a given gateway `host:port`. Rebuilt whenever the gateway
-// input changes; DimosProvider reconnects when this list's identity changes.
+// Rebuilt whenever the gateway changes; DimosProvider reconnects on list-identity change.
 function buildServers(gateway: string): ServerOpt[] {
   const httpBase = `${location.protocol}//${gateway}`; // http(s)://host:port (SSE/poll/cert base)
   const wsProto = location.protocol === "https:" ? "wss" : "ws";
   const wsBase = `${wsProto}://${gateway}`;
   const media = { gatewayUrl: `${wsBase}/media`, kinds: ["webcodecs", "webrtc", "jpeg"] as const };
   return [
-    // Default: prefer ONE WebTransport connection (data + teleop/rpc over QUIC, no HoL), fall back to a
-    // plain WebSocket when WT is unavailable or can't connect (Safari, UDP-blocked). Teleop always works.
+    // Default: one WebTransport connection (data + teleop/rpc over QUIC), falls back to WebSocket.
     {
       id: "auto",
       label: "Auto (WT→WS)",
@@ -54,8 +47,7 @@ function buildServers(gateway: string): ServerOpt[] {
       },
       media: { ...media },
     },
-    // Bench delivery mechanisms (read-only) — same frames, same origin, different transport. Lazy so
-    // their browser-only APIs (RTCPeerConnection, WebTransport) load only when picked.
+    // Bench delivery mechanisms (read-only), lazily loaded so their browser-only APIs load only when picked.
     {
       id: "sse",
       label: "SSE",

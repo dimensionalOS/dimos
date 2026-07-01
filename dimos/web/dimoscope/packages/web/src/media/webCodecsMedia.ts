@@ -1,9 +1,6 @@
-// createWebCodecsMedia — the browser hardware-decodes the camera itself. The gateway H.264-encodes
-// the camera Image (PyAV libx264, Annex-B) and streams raw NAL chunks over its WebSocket; here a
-// WebCodecs VideoDecoder turns them into VideoFrames the canvas blits (onFrame). Same codec as
-// WebRTC, but NO ICE/SDP — it rides the WS (so it works behind any data transport), gives the app
-// frame-level access, and the gateway encodes ONCE for N viewers. selectMediaChannel falls back to
-// the jpeg floor when VideoDecoder is unavailable.
+// gateway H.264-encodes the camera (PyAV libx264, Annex-B), streams raw NAL chunks over its
+// WebSocket; browser hardware-decodes via WebCodecs; no ICE/SDP; falls back to jpeg when
+// VideoDecoder unavailable.
 //
 // Wire (gateway → browser): a JSON {op:"video-config", topic, codec} when a sub starts, then binary
 //   [u8 flags(bit0=keyframe)][u64 ts_us BE][u16 topic_len BE][topic utf8][H.264 Annex-B NAL]
@@ -97,9 +94,8 @@ export const createWebCodecsMedia = (deps: WebCodecsMediaDeps): MediaChannel => 
         if (d) d.sawKey = false; // resync on the next keyframe
       },
     });
-    // Don't force hardwareAcceleration:"prefer-hardware" — in some Chrome contexts configure()
-    // succeeds but the decoder then errors asynchronously (no frames ever output). Letting the
-    // browser choose (sw/hw) is what actually decodes; it still uses hardware when available.
+    // Don't force hardwareAcceleration:"prefer-hardware": some Chrome contexts configure() OK but then
+    // error async with no frames; let the browser choose (still uses hw when available).
     try {
       decoder.configure({ codec: c, optimizeForLatency: true });
     } catch {

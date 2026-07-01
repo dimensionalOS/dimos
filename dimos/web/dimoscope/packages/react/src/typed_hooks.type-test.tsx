@@ -1,6 +1,6 @@
-// Compile-only type test for createDimosHooks<TMap>() (no runtime; picked up by `deno task check`'s
-// packages/react/src/**/*.tsx glob). Proves the factory-bound hooks autocomplete the topic name and
-// infer the mapped message type, with the same runtime-string fallback as the client.
+// Compile-only type test for createDimosHooks<TMap>() (no runtime; picked up by `deno task check`).
+// Proves the factory-bound hooks autocomplete the topic name and infer the mapped message type,
+// with the same runtime-string fallback as the client.
 import { createDimosHooks } from "./index.tsx";
 
 type Fixture = { "/odom": { x: number } };

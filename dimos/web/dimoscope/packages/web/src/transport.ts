@@ -1,6 +1,5 @@
-// The transport abstraction — mirrors DimOS's Python Transport layer.
-// Implementations live in ./transports/ (gatewayWs = ws() default, webTransport, composite, and the
-// read-only benchmark transports under ./transports/experimental/). The client is transport-agnostic.
+// Transport implementations live in ./transports/ (default gatewayWs), with experimental ones under
+// ./transports/experimental/. The client is transport-agnostic.
 import type { Qos, QosCaps, TopicInfo } from "./types.ts";
 
 export type Status = "connecting" | "open" | "closed";

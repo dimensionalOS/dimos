@@ -1,13 +1,6 @@
-// createHttpPollTransport — read-only delivery over HTTP long-poll (the baseline/control).
-//
-// Loops GET /poll?since=<cursor>&topics=<csv|*>&max=<n>; the gateway holds the request
-// until matching frames arrive (or a timeout), then returns a binary batch:
-//   [u32 newCursor][u32 count] then count × ([u32 len][frame])
-// Each frame is the same [f64 gateway-send-ms][LC02] the WS/SSE paths send, so the decode
-// path and latency accounting are identical. Batching amortises request overhead (the
-// realistic HTTP pattern); the ring-buffer cursor means a client that falls behind sees a
-// seq gap (loss) rather than unbounded buffering — exactly what we want to measure. Like
-// SSE this is server→client only, so teleop/goal/rpc are not on this channel.
+// Read-only HTTP long-poll baseline; loops GET /poll?since=<cursor>&topics=<csv|*>&max=<n>; gateway
+// holds until frames arrive (or timeout) then returns a binary batch; ring-buffer cursor detects
+// loss; server→client only.
 import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../../transport.ts";
 import type { TopicInfo } from "../../types.ts";
 import { frameToSample } from "../frame.ts";

@@ -21,8 +21,8 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 export const createWebTransportTransport = (deps: WebTransportDeps): Transport => {
-  // maxHz "server": the gateway downsamples per subscriber+topic; priority/reliability/depth feed its
-  // per-client priority outbox (same fields the WS adapter declares) — so the QoS knobs actually bite.
+  // maxHz "server" ⇒ gateway downsamples per subscriber+topic; priority/reliability/depth feed its
+  // per-client priority outbox (same fields the WS adapter declares).
   const caps: TransportCaps = {
     onDemand: true,
     discovery: "passive",
@@ -86,7 +86,6 @@ export const createWebTransportTransport = (deps: WebTransportDeps): Transport =
     }
   }
 
-  // ── control plane (bidirectional stream: subscribe/list out, hello/topic in) ──
   function sendControl(obj: unknown) {
     ctlWriter?.write(enc.encode(JSON.stringify(obj) + "\n")).catch(() => {});
   }

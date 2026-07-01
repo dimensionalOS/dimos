@@ -1,5 +1,4 @@
-// Runtime-chosen topic → the base message-type-generic hook (from @dimos/react), not the name-keyed
-// typed one in ../dimos (whose generic is the LITERAL topic name). useTopics is map-agnostic → ../dimos.
+// Runtime-chosen topic uses the base message-type-generic hook, not the name-keyed typed one in ../dimos.
 import { useTopicLatest } from "@dimos/react";
 import { useTopics } from "../dimos";
 import type { geometry_msgs } from "@dimos/msgs";
@@ -8,8 +7,6 @@ export function PoseReadout({ topic }: { topic?: string }) {
   const topics = useTopics();
   const poseTopic = topic ?? topics.find((t) => t.type === "geometry_msgs.PoseStamped")?.topic ??
     "/odom";
-  // Topic is chosen at runtime, so the base hook takes the message type explicitly. (For a LITERAL
-  // known topic, `createDimosHooks<DimosTopics>().useTopicLatest("/odom")` infers it — see app/src/dimos.ts.)
   const { data, meta } = useTopicLatest<geometry_msgs.PoseStamped>(poseTopic, { maxHz: 15 });
   const p = data?.pose?.position;
   const o = data?.pose?.orientation;

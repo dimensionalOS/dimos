@@ -1,7 +1,5 @@
-// createJpegTopicMedia — the universal media FLOOR. The existing Image-topic path repackaged as a
-// MediaChannel, so the app consumes video uniformly (and "jpeg is just another MediaChannel").
-// Works on EVERY browser + EVERY transport: it just subscribes the camera topic on the normal
-// data plane and decodes each frame to an ImageBitmap. No gateway media support required.
+// jpeg is the universal media floor — the Image-topic path repackaged as a MediaChannel so the app
+// consumes video uniformly; needs no media gateway; works on all browsers/transports.
 import type { MediaCaps, MediaChannel, VideoMeta } from "../media.ts";
 import type { Status } from "../transport.ts";
 import type { Subscription } from "../types.ts";
@@ -11,10 +9,7 @@ export interface JpegTopicMediaDeps {
   client: DimosClient; // for the jpeg-topic floor (subscribes via client.topic)
 }
 
-// ── sensor_msgs.Image → ImageBitmap (this adapter's private decode) ───────────────────────────────
-// The only consumer of Image-frame decoding; kept internal so the media floor owns its pixel path.
-// (A parallel copy lives in @dimos/react's useImageTopic, intentionally — the React layer must not
-// depend on this package's media plane.) jpeg → native decode; raw rgb8/bgr8/mono8/rgba8/bgra8 → RGBA.
+// sensor_msgs.Image → ImageBitmap: jpeg → native decode; raw rgb8/bgr8/mono8/rgba8/bgra8 → RGBA.
 interface ImageMsg {
   width: number;
   height: number;

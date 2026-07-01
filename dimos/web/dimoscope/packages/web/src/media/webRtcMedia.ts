@@ -1,12 +1,7 @@
-// createWebRtcMedia — the browser receives the camera as a real WebRTC video track, encoded ONCE
-// server-side by the Python gateway (aiortc, reusing quest_hosted's CameraVideoTrack) and
-// decoded by the browser's <video> pipeline (GPU, ~zero JS/frame). ~20–40× less bandwidth than
-// the JPEG-topic path, and the main thread stays free. Works on every browser.
-//
-// Signaling rides a thin WS to the gateway (precedent: ZenohTsTransport opens its own control
-// WS too), next to teleop/goal. Non-trickle ICE (gather-then-send) — trivial + instant on a LAN.
-// Slice scope: ONE active camera per channel (CameraView shows one); the multi-cam grid will
-// hoist this to a shared multi-track PeerConnection.
+// browser receives camera as a real WebRTC video track, encoded once server-side (aiortc),
+// GPU-decoded by <video> (~20–40× less bandwidth than JPEG); signaling rides a thin WS to the
+// gateway; non-trickle ICE (gather-then-send); currently ONE active camera per channel (multi-cam
+// grid will share a PeerConnection).
 import type { MediaCaps, MediaChannel } from "../media.ts";
 import type { Status } from "../transport.ts";
 

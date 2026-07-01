@@ -1,12 +1,8 @@
-// Transport benchmark core — env-free measurement logic behind the in-browser bench page
-// (app/src/bench.tsx + panels/BenchTab.tsx). Latency (p50/p95/max), throughput (hz),
-// bandwidth (kB/s), and on-demand WS-hop savings (subscribe 1 of N vs all N). No
-// Bun/Node/file/DOM APIs here, so it runs identically in the browser and in tests.
+// Transport benchmark core: measures latency (p50/p95/max), throughput (hz), bandwidth (kB/s), and
+// on-demand WS-hop savings (subscribe 1 of N vs all N). Platform-agnostic — runs identically in the
+// browser and in tests. Unit tests in bench.test.ts.
 import type { DimosClient } from "./client.ts";
 import type { Qos } from "./types.ts";
-// Not a test: this is the shared measurement *core*, imported by the app runtime (app/src/bench.tsx +
-// panels/BenchTab.tsx) and exported from the public package API. Its own unit tests live beside it in
-// bench.test.ts.
 export interface BenchScenario {
   name: string;
   topics: string[];

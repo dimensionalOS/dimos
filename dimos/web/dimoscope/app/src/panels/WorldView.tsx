@@ -1,11 +1,6 @@
-// WorldView — fuses spatial streams into one 2D canvas, auto-detected by type:
-//   OccupancyGrid → grey cells · PointCloud2 → height-coloured lidar ·
-//   LaserScan → cyan points · Path → green line · PoseStamped → yellow robot + trail.
-// INTERACT: scroll = zoom (toward cursor) · drag = pan · click = nav goal
-//   (→ clicked_point → A* planner → robot drives) · double-click / ⊙ = recenter+follow.
-// A view transform (scale + center, in a ref) makes the map zoomable/pannable; the
-// canvas is responsive (ResizeObserver + devicePixelRatio). Uses useTopicRef + a
-// requestAnimationFrame loop: redraws at display rate, never re-rendering per message.
+// WorldView — fuses OccupancyGrid/PointCloud2/LaserScan/Path/PoseStamped into one 2D canvas.
+// scroll=zoom, drag=pan, click=nav-goal. Uses useTopicRef + rAF so it doesn't re-render per message.
+// View transform = scale+center held in a ref; responsive via ResizeObserver + devicePixelRatio.
 import { useEffect, useRef, useState } from "react";
 import type { TopicInfo } from "@dimos/react";
 import { useDimosClient, useTopicRef, useTopics, useTopicStats } from "../dimos";
@@ -29,8 +24,7 @@ function fmtBw(bps?: number): string {
   return kb >= 1000 ? `${(kb / 1000).toFixed(1)} MB/s` : kb >= 1 ? `${kb.toFixed(0)} kB/s` : "";
 }
 
-/** A layer toggle that ALSO shows the layer's live bandwidth — so turning lidar OFF visibly drops
- *  ~2 MB/s (true on-demand: OFF passes null to useTopicRef → unsubscribes the topic on the wire). */
+/** Layer toggle that also shows live bandwidth; OFF unsubscribes the topic on the wire — true on-demand. */
 function LayerChip({ name, topic, color, on, onToggle }: {
   name: string;
   topic: string;
@@ -71,8 +65,7 @@ export function WorldView() {
   const scanTopic = pick(topics, "sensor_msgs.LaserScan", ["/scan"]);
   const pathTopic = pick(topics, "nav_msgs.Path", ["/path"]);
 
-  // per-layer on/off → gates the subscription: a layer that's OFF passes null
-  // to useTopicRef, which ref-counts down and actually UNSUBSCRIBES on the wire.
+  // on/off gates the subscription — OFF passes null to useTopicRef, which ref-counts down and unsubscribes.
   const [layers, setLayers] = useState({
     pose: true,
     map: true,
@@ -89,8 +82,7 @@ export function WorldView() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const trail = useRef<[number, number][]>([]);
   const goal = useRef<[number, number] | null>(null);
-  // view transform: scale = px/m, (cx,cy) = world coords shown at canvas centre,
-  // follow = keep re-centring on the robot until the user pans/zooms.
+  // scale=px/m, (cx,cy)=world coords at canvas centre; follow=re-centre on the robot until the user pans/zooms.
   const view = useRef({ scale: DEFAULT_SCALE, cx: 0, cy: 0, follow: true });
 
   const recenter = () => {
@@ -98,7 +90,6 @@ export function WorldView() {
     view.current.scale = DEFAULT_SCALE;
   };
 
-  // ── interaction: wheel-zoom (to cursor), drag-pan, click→nav-goal ──────────
   useEffect(() => {
     const cvs = canvasRef.current;
     if (!cvs) return;
@@ -146,7 +137,7 @@ export function WorldView() {
       if (!dragging) return;
       dragging = false;
       if (moved < 4 && client) {
-        // a click (not a pan) → unproject at the current view → nav goal
+        // a click (not a pan), threshold <4px — unprojects at the current view to a nav goal.
         const { mx, my, cw, ch } = px(e);
         const S = view.current.scale;
         const wx = view.current.cx + (mx - cw / 2) / S;
@@ -170,7 +161,6 @@ export function WorldView() {
     };
   }, [client]);
 
-  // ── render loop (responsive + DPR-aware) ──────────────────────────────────
   useEffect(() => {
     const cvs = canvasRef.current;
     if (!cvs) return;
@@ -347,8 +337,7 @@ export function WorldView() {
     .filter(Boolean)
     .join("  ") || "auto-detecting…";
 
-  // toggle chips — one per DETECTED layer (absent streams get no chip); dot
-  // colour mirrors that layer's draw colour, active chip = currently subscribed.
+  // one chip per DETECTED layer (absent streams get none); dot colour mirrors the layer's draw colour; active chip = subscribed.
   const chips: [keyof typeof layers, string | null, string][] = [
     ["pose", poseTopic, "#ffcb47"],
     ["map", mapTopic, "#8b95a5"],
