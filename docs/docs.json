@@ -115,12 +115,6 @@
             ]
           },
           {
-            "group": "Mapping",
-            "pages": [
-              "capabilities/mapping/relocalization"
-            ]
-          },
-          {
             "group": "Memory",
             "pages": [
               "capabilities/memory/index",
