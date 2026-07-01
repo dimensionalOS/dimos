@@ -5,6 +5,7 @@ import { createGatewayWsTransport } from "./transports/gatewayWs.ts";
 import { decode as msgsDecode } from "@dimos/msgs";
 import { createTopic, type Topic } from "./topic.ts";
 import type {
+  ClockSample,
   CommandInfo,
   Message,
   MessageMeta,
@@ -117,6 +118,11 @@ export interface DimosClient<TMap = EmptyTopicMap, TCmds = EmptyModuleMap> {
   navigate(x: number, y: number, z?: number): void;
   /** Invoke a whitelisted dimos `@rpc` command, e.g. client.call("GO2Connection", "standup"). */
   call<T = unknown>(target: string, method: string, ...args: unknown[]): Promise<T>;
+  /** Estimate (gateway clock − client clock) from `samples` ping round-trips, keeping the
+   *  lowest-RTT sample (NTP discipline: least queueing → tightest offset bound). Lets the bench
+   *  correct cross-machine `recvTs − srcTs` latency over WAN, where raw clock skew swamps the
+   *  signal. Resolves undefined when the transport has no ping (read-only mechanisms). */
+  estimateClockOffset(samples?: number): Promise<ClockSample | undefined>;
   /** Typed Proxy over `call`: `client.modules.GO2Connection.standup(args)`. Pass the generated
    *  `DimosCommands` (second generic) → target + method are autocompleted + typo-checked (arg/return
    *  types stay `unknown` until `@rpc` introspection lands); untyped it accepts any module/method.
@@ -318,6 +324,19 @@ export const createDimosClient = <TMap = EmptyTopicMap, TCmds = EmptyModuleMap>(
     call<T = unknown>(target: string, method: string, ...args: unknown[]): Promise<T> {
       if (!transport) return Promise.reject(new Error("not connected"));
       return transport.rpc(target, method, args) as Promise<T>;
+    },
+    async estimateClockOffset(samples = 5): Promise<ClockSample | undefined> {
+      if (!transport?.ping) return undefined;
+      let best: ClockSample | undefined;
+      for (let i = 0; i < samples; i++) {
+        try {
+          const s = await transport.ping();
+          if (Number.isFinite(s.offsetMs) && (!best || s.rttMs < best.rttMs)) best = s;
+        } catch {
+          // timed-out probe — keep whatever samples we have
+        }
+      }
+      return best;
     },
     get modules() {
       return modulesProxy;

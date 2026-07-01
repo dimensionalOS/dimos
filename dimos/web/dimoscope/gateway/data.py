@@ -147,6 +147,10 @@ class DataPlane:
             st.rate[m["topic"]] = float(m.get("maxHz") or 0)
         elif op == "list":
             st.q.put_control(json.dumps({"op": "topics", "topics": self.bus.topic_list()}))
+        elif op == "ping":  # clock-sync probe: echo our clock so the client can estimate skew
+            st.q.put_control(
+                json.dumps({"op": "pong", "id": m.get("id"), "serverTs": time.time() * 1000.0})
+            )
         elif op == "teleop":
             self.egress.teleop(
                 ws,

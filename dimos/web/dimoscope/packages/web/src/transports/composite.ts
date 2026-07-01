@@ -104,6 +104,8 @@ function createAutoFallback(
     publishGoal: (x: number, y: number, z?: number) => active?.publishGoal(x, y, z),
     rpc: (target: string, method: string, args?: unknown[]) =>
       active ? active.rpc(target, method, args) : Promise.reject(new Error("not connected")),
+    ping: () =>
+      active?.ping ? active.ping() : Promise.reject(new Error("ping unsupported/not connected")),
     requestList: () => active?.requestList(),
     onSample: (cb) => void (sampleCb = cb),
     onTopics: (cb) => void (topicsCb = cb),

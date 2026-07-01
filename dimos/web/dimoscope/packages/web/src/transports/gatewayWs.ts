@@ -4,6 +4,7 @@
 import { frameToSample } from "./frame.ts";
 import { applyCaps } from "../qos.ts";
 import type {
+  ClockSample,
   CommandInfo,
   Qos,
   RawSample,
@@ -37,6 +38,7 @@ export const createGatewayWsTransport = (deps: GatewayWsDeps): Transport => {
   let commands: CommandInfo[] = [];
   let commandsCb: ((c: CommandInfo[]) => void) | undefined;
   const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  const pendingPings = new Map<number, (serverTs: number) => void>();
   let rpcId = 1;
   let reconnect = deps.reconnect ?? true;
 
@@ -52,6 +54,7 @@ export const createGatewayWsTransport = (deps: GatewayWsDeps): Transport => {
     publishTeleop,
     publishGoal,
     rpc,
+    ping,
     requestList,
     onSample,
     onTopics,
@@ -109,6 +112,12 @@ export const createGatewayWsTransport = (deps: GatewayWsDeps): Transport => {
           if (m.error) p.reject(new Error(m.error));
           else p.resolve(m.res);
         }
+      } else if (m.op === "pong") {
+        const f = pendingPings.get(m.id);
+        if (f) {
+          pendingPings.delete(m.id);
+          f(m.serverTs);
+        }
       }
       return;
     }
@@ -157,6 +166,21 @@ export const createGatewayWsTransport = (deps: GatewayWsDeps): Transport => {
       setTimeout(() => {
         if (pending.delete(id)) reject(new Error(`rpc ${target}/${method} timed out`));
       }, 8000);
+    });
+  }
+  // NTP-style clock probe: offset = serverTs − (tSend + rtt/2), assuming a symmetric path.
+  function ping(): Promise<ClockSample> {
+    const id = rpcId++;
+    const t0 = Date.now();
+    return new Promise((resolve, reject) => {
+      pendingPings.set(id, (serverTs) => {
+        const rttMs = Date.now() - t0;
+        resolve({ rttMs, offsetMs: serverTs - (t0 + rttMs / 2) });
+      });
+      send({ op: "ping", id });
+      setTimeout(() => {
+        if (pendingPings.delete(id)) reject(new Error("ping timed out"));
+      }, 3000);
     });
   }
   function requestList() {

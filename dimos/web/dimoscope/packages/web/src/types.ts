@@ -120,6 +120,14 @@ export interface TransportCaps {
   qos?: QosCaps;
 }
 
+/** One clock-sync round-trip to the gateway. `offsetMs` estimates (gateway clock − client clock)
+ *  NTP-style — `serverTs − (tSend + rtt/2)` — so a cross-machine `recvTs − srcTs` latency can be
+ *  corrected: true ≈ measured − offsetMs (gateway and source share a clock when co-located). */
+export interface ClockSample {
+  rttMs: number;
+  offsetMs: number;
+}
+
 /** A dimos `@rpc` command the gateway advertises as browser-callable (from its hello). */
 export interface CommandInfo {
   target: string; // module class, e.g. "GO2Connection"
@@ -144,6 +152,9 @@ export interface Transport {
    *  `RpcMethod` (packages/web/scripts/gen_types.py), checked against live discovery; full arg/return typing follows
    *  when the static Python `@rpc`-annotation introspection pass lands. */
   rpc(target: string, method: string, args?: unknown[]): Promise<unknown>;
+  /** Clock-sync probe: one `{op:"ping"}` round-trip echoing the gateway clock. Optional — only the
+   *  duplex control paths (ws / WebTransport) implement it; read-only mechanisms leave it undefined. */
+  ping?(): Promise<ClockSample>;
   requestList(): void;
   onSample(cb: (s: RawSample) => void): void;
   onTopics(cb: (topics: TopicInfo[]) => void): void;
