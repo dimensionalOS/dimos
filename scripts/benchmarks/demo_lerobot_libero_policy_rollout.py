@@ -238,6 +238,8 @@ def _start_sidecar(
     ]
     for camera_name in args.camera_names:
         command.extend(["--camera-name", camera_name])
+    command.extend(["--camera-height", str(args.camera_height)])
+    command.extend(["--camera-width", str(args.camera_width)])
     if args.allow_asset_bootstrap:
         command.append("--allow-asset-bootstrap")
     if args.visualize:
@@ -327,6 +329,8 @@ def _write_aggregate_artifacts(
             "save_videos": args.save_videos,
             "video_streams": list(args.camera_names) if args.save_videos else [],
             "camera_names": list(args.camera_names),
+            "camera_height": args.camera_height,
+            "camera_width": args.camera_width,
             "max_steps": args.max_steps,
             "bddl_root": str(args.bddl_root),
             "init_states_root": str(args.init_states_root),
@@ -369,6 +373,8 @@ def _write_setup_failure_artifacts(
             "save_videos": args.save_videos,
             "video_streams": list(args.camera_names) if args.save_videos else [],
             "camera_names": list(args.camera_names),
+            "camera_height": args.camera_height,
+            "camera_width": args.camera_width,
             "max_steps": args.max_steps,
             "bddl_root": str(args.bddl_root),
             "init_states_root": str(args.init_states_root),
@@ -473,6 +479,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--fake-backend", action="store_true")
     parser.add_argument("--fixed-action", default="0,0,0,0,0,0,0")
     parser.add_argument("--camera-name", action="append", dest="camera_names")
+    parser.add_argument("--camera-height", type=int, default=128)
+    parser.add_argument("--camera-width", type=int, default=128)
     parser.add_argument("--bddl-root", type=Path, default=None)
     parser.add_argument("--init-states-root", type=Path, default=None)
     parser.add_argument("--allow-asset-bootstrap", action="store_true")

@@ -103,6 +103,8 @@ class LiberoProRuntimeConfig:
     action_mode: ActionMode = "motor"
     controller: str = "JOINT_POSITION"
     camera_names: tuple[str, ...] = ("agentview",)
+    camera_height: int = 128
+    camera_width: int = 128
     control_freq: int = 20
     horizon: int = 1000
     seed: int | None = None
@@ -173,8 +175,8 @@ class RealLiberoBackend:
             use_camera_obs=True,
             has_renderer=config.visualize,
             has_offscreen_renderer=True,
-            camera_heights=128,
-            camera_widths=128,
+            camera_heights=config.camera_height,
+            camera_widths=config.camera_width,
             camera_names=list(config.camera_names),
             controller=_env_controller(config),
             control_freq=config.control_freq,
@@ -315,8 +317,8 @@ class LiberoProRuntimeState:
                 "camera_names": list(self.config.camera_names),
                 "camera_config": {
                     "names": list(self.config.camera_names),
-                    "height": 128,
-                    "width": 128,
+                    "height": self.config.camera_height,
+                    "width": self.config.camera_width,
                 },
                 "action_low": self._action_low,
                 "action_high": self._action_high,
@@ -682,6 +684,8 @@ def main() -> None:
     parser.add_argument("--horizon", type=int, default=1000)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--camera-name", action="append", dest="camera_names")
+    parser.add_argument("--camera-height", type=int, default=128)
+    parser.add_argument("--camera-width", type=int, default=128)
     parser.add_argument("--allow-asset-bootstrap", action="store_true")
     parser.add_argument("--visualize", action="store_true")
     args = parser.parse_args()
@@ -699,6 +703,8 @@ def main() -> None:
         action_mode=args.action_mode,
         controller=args.controller,
         camera_names=tuple(args.camera_names or ["agentview"]),
+        camera_height=args.camera_height,
+        camera_width=args.camera_width,
         control_freq=args.control_freq,
         horizon=args.horizon,
         seed=args.seed,
