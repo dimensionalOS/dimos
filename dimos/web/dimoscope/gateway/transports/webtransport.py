@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # WebTransport (HTTP/3 / QUIC) transport: small frames on datagrams (unreliable, no head-of-line
-# blocking), big frames on a unidirectional stream (reliable). Own UDP port (QUIC can't share the HTTP
-# TCP port). Optional (needs aioquic + cryptography). Fed from the shared Bus.
+# blocking), big frames length-prefixed on ONE persistent unidirectional stream (reliable). Own UDP
+# port (QUIC can't share the HTTP TCP port). Optional (needs aioquic + cryptography). Fed from the
+# shared Bus.
 #
 # Read-path (subs/rate/priority) mirrors the /ws data plane over a browser-opened bidirectional control
 # stream: subscribe/unsubscribe/rate/list in, hello/topic out, drained through the shared PriorityOutbox.
@@ -10,11 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import struct
 import time
 
 from dimos.utils.logging_config import setup_logger
 
 from ..bus import Bus, Sample
+from ..data import EGRESS_KBPS
 from ..egress import DEFAULT_TTL, SafetyEgress
 from ..qos import PriorityOutbox, declared_to_class, default_priority
 from ._common import frame, wants
@@ -146,6 +149,7 @@ class WebTransportServer:
                 self.qos: dict[str, tuple] = {}
                 self.outbox: PriorityOutbox | None = None
                 self.ctl_stream_id: int | None = None
+                self.bulk_sid: int | None = None  # the persistent uni stream all big frames ride
                 self._ctl_buf = b""
                 self._drain_task: asyncio.Future | None = None
                 self._rpc_tasks: set = set()  # keep refs so scheduled rpc coros aren't GC'd
@@ -218,6 +222,10 @@ class WebTransportServer:
                             "rpc": server.egress.commands,
                         }
                     )
+                elif op == "ping":  # clock-sync probe: echo our clock for client skew estimation
+                    self.send_control(
+                        {"op": "pong", "id": m.get("id"), "serverTs": time.time() * 1000.0}
+                    )
                 # write-path control → the shared SafetyEgress (same clamp/deadman/whitelist as /ws)
                 elif op == "teleop":
                     server.egress.teleop(
@@ -270,6 +278,12 @@ class WebTransportServer:
                     while True:
                         item = await self.outbox.get()
                         self.send_frame(item)
+                        # Same egress shaping as the /ws writer: pace this client's drain to its
+                        # link budget so backlog accumulates in the priority outbox (where the
+                        # scheduler + conflation act on it), not in QUIC/kernel buffers below —
+                        # without it the outbox never backs up and QoS priority is a no-op on WT.
+                        if EGRESS_KBPS > 0:
+                            await asyncio.sleep(len(item) * 8 / (EGRESS_KBPS * 1000.0))
                 except asyncio.CancelledError:
                     pass
 
@@ -280,13 +294,25 @@ class WebTransportServer:
                     if len(payload) <= DATAGRAM_MAX:
                         self._http.send_datagram(self._session_id, payload)  # unreliable, no HoL
                     else:
-                        sid = self._http.create_webtransport_stream(
-                            self._session_id, is_unidirectional=True
-                        )
-                        self._quic.send_stream_data(sid, payload, end_stream=True)  # reliable
+                        # ONE persistent uni stream, [u32be length][frame] per message — opening
+                        # and closing a QUIC stream per frame would be CPU-bound in pure-Python
+                        # aioquic and cap the bulk lane at ~1 Hz for 1 MB frames.
+                        if self.bulk_sid is None:
+                            self.bulk_sid = self._http.create_webtransport_stream(
+                                self._session_id, is_unidirectional=True
+                            )
+                        self._quic.send_stream_data(
+                            self.bulk_sid,
+                            struct.pack(">I", len(payload)) + payload,
+                            end_stream=False,
+                        )  # reliable, ordered within the bulk lane
                     self.transmit()
                 except Exception:
+                    logger.warning("webtransport send failed — dropping session", exc_info=True)
                     sessions.discard(self)
+                    server.egress.disconnect(self)  # safety: cancel deadman + stop the robot
+                    if self._drain_task is not None:
+                        self._drain_task.cancel()
 
         # Dual-stack the IPv4 wildcard: on macOS `localhost` resolves to ::1 (IPv6) first, and QUIC/UDP
         # has no Happy-Eyeballs fallback, so an IPv4-only 0.0.0.0 bind gives the browser a bare

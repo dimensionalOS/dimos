@@ -1,10 +1,12 @@
 /// <reference lib="dom" />
 // Delivery over WebTransport (HTTP/3 / QUIC; browser-only). Talks to gateway/transports/webtransport.py,
-// which size-routes frames (small → datagrams, large → uni streams). A bidirectional control stream
+// which size-routes frames (small → datagrams, large → length-prefixed messages on one persistent uni
+// stream). A bidirectional control stream
 // carries the full WS control protocol (subscribe/QoS + teleop/goal/rpc via the shared SafetyEgress),
 // so WT drives the robot alone. Cert: we fetch the server's self-signed SHA-256 for serverCertificateHashes.
 import { applyCaps } from "../qos.ts";
 import type {
+  ClockSample,
   CommandInfo,
   Qos,
   RawSample,
@@ -48,6 +50,7 @@ export const createWebTransportTransport = (deps: WebTransportDeps): Transport =
   let topics: TopicInfo[] = [];
   const enc = new TextEncoder();
   const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  const pendingPings = new Map<number, (serverTs: number) => void>();
   let rpcId = 1;
   let commands: CommandInfo[] = []; // @rpc commands the gateway advertises (from hello.rpc)
   let commandsCb: ((c: CommandInfo[]) => void) | undefined;
@@ -65,31 +68,58 @@ export const createWebTransportTransport = (deps: WebTransportDeps): Transport =
     }
   }
 
-  // Each large frame arrives as its own unidirectional stream; read it fully → one frame.
+  // Large frames arrive as [u32be length][frame]… on one persistent unidirectional stream (the
+  // gateway opens it on the first big frame). Reassemble across read chunks without concatenating
+  // the whole backlog per chunk.
+  async function readBulkStream(stream: ReadableStream<Uint8Array>) {
+    const sr = stream.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    const take = (n: number): Uint8Array => { // caller guarantees total >= n
+      const out = new Uint8Array(n);
+      let off = 0;
+      while (off < n) {
+        const c = chunks[0];
+        const want = n - off;
+        if (c.length <= want) {
+          out.set(c, off);
+          off += c.length;
+          chunks.shift();
+        } else {
+          out.set(c.subarray(0, want), off);
+          chunks[0] = c.subarray(want);
+          off = n;
+        }
+      }
+      total -= n;
+      return out;
+    };
+    let need = -1; // payload bytes of the frame being assembled; -1 = header not read yet
+    for (;;) {
+      const { value, done } = await sr.read();
+      if (done) break;
+      if (!value?.length) continue;
+      chunks.push(value);
+      total += value.length;
+      for (;;) {
+        if (need < 0) {
+          if (total < 4) break;
+          const h = take(4);
+          need = ((h[0] << 24) | (h[1] << 16) | (h[2] << 8) | h[3]) >>> 0;
+        }
+        if (total < need) break;
+        deliver(take(need));
+        need = -1;
+      }
+    }
+  }
+
   async function readStreams(streams: ReadableStream<ReadableStream<Uint8Array>>) {
     const reader = streams.getReader();
     for (;;) {
       const { value: stream, done } = await reader.read();
       if (done) break;
-      if (!stream) continue;
-      (async () => {
-        const sr = stream.getReader();
-        const chunks: Uint8Array[] = [];
-        for (;;) {
-          const { value, done: d } = await sr.read();
-          if (d) break;
-          if (value) chunks.push(value);
-        }
-        let len = 0;
-        for (const c of chunks) len += c.length;
-        const buf = new Uint8Array(len);
-        let off = 0;
-        for (const c of chunks) {
-          buf.set(c, off);
-          off += c.length;
-        }
-        deliver(buf);
-      })();
+      if (stream) readBulkStream(stream).catch(() => {});
     }
   }
 
@@ -120,6 +150,7 @@ export const createWebTransportTransport = (deps: WebTransportDeps): Transport =
       id?: number;
       res?: unknown;
       error?: string;
+      serverTs?: number;
     },
   ) {
     if (m.op === "hello" || m.op === "topics") {
@@ -141,6 +172,12 @@ export const createWebTransportTransport = (deps: WebTransportDeps): Transport =
         pending.delete(m.id);
         if (m.error) p.reject(new Error(m.error));
         else p.resolve(m.res);
+      }
+    } else if (m.op === "pong" && m.id != null) {
+      const f = pendingPings.get(m.id);
+      if (f) {
+        pendingPings.delete(m.id);
+        f(m.serverTs ?? NaN);
       }
     }
   }
@@ -220,6 +257,21 @@ export const createWebTransportTransport = (deps: WebTransportDeps): Transport =
         setTimeout(() => {
           if (pending.delete(id)) reject(new Error(`rpc ${target}/${method} timed out`));
         }, 8000);
+      });
+    },
+    // NTP-style clock probe: offset = serverTs − (tSend + rtt/2), assuming a symmetric path.
+    ping(): Promise<ClockSample> {
+      const id = rpcId++;
+      const t0 = Date.now();
+      return new Promise((resolve, reject) => {
+        pendingPings.set(id, (serverTs) => {
+          const rttMs = Date.now() - t0;
+          resolve({ rttMs, offsetMs: serverTs - (t0 + rttMs / 2) });
+        });
+        sendControl({ op: "ping", id });
+        setTimeout(() => {
+          if (pendingPings.delete(id)) reject(new Error("ping timed out"));
+        }, 3000);
       });
     },
     requestList() {
