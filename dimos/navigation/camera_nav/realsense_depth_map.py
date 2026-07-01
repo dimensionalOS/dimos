@@ -368,14 +368,27 @@ class RealSenseDepthSource:
         self._width  = width
         self._height = height
 
-        cfg = rs.config()
-        cfg.enable_stream(rs.stream.depth, width, height, rs.format.z16,           fps)
-        cfg.enable_stream(rs.stream.color, width, height, rs.format.bgr8,          fps)
-        cfg.enable_stream(rs.stream.accel, rs.format.motion_xyz32f, 250)
-        cfg.enable_stream(rs.stream.gyro,  rs.format.motion_xyz32f, 400)
-
         self._pipeline = rs.pipeline()
-        profile        = self._pipeline.start(cfg)
+
+        # Try to start with IMU streams (D435i).  Falls back to depth+colour only
+        # if the device has no IMU (D435) or the firmware rejects the request.
+        cfg = rs.config()
+        cfg.enable_stream(rs.stream.depth, width, height, rs.format.z16,  fps)
+        cfg.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
+        cfg.enable_stream(rs.stream.accel, rs.format.motion_xyz32f)   # let SDK pick fps
+        cfg.enable_stream(rs.stream.gyro,  rs.format.motion_xyz32f)
+
+        try:
+            profile       = self._pipeline.start(cfg)
+            self._has_imu = True
+            print("IMU streams enabled (D435i) — orientation tracking active")
+        except RuntimeError:
+            cfg2 = rs.config()
+            cfg2.enable_stream(rs.stream.depth, width, height, rs.format.z16,  fps)
+            cfg2.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
+            profile       = self._pipeline.start(cfg2)
+            self._has_imu = False
+            print("IMU not available (D435?) — world-frame tracking disabled, using identity pose")
 
         self._depth_scale = (
             profile.get_device().first_depth_sensor().get_depth_scale()
@@ -390,16 +403,23 @@ class RealSenseDepthSource:
             [intr.fx, intr.fy, intr.ppx, intr.ppy], dtype=np.float64
         )
 
-        # IMU-to-camera_link rotation for frame alignment
-        # accel → depth-optical → camera_link
-        ext             = (profile.get_stream(rs.stream.accel)
-                                  .get_extrinsics_to(profile.get_stream(rs.stream.depth)))
-        R_imu_to_depth  = np.array(ext.rotation, dtype=np.float32).reshape(3, 3)
-        self._R_imu_to_link = _R_OPT_TO_LINK @ R_imu_to_depth   # IMU → camera_link
+        # Store stream enum refs so read() can use them without re-importing
+        self._stream_gyro  = rs.stream.gyro
+        self._stream_accel = rs.stream.accel
 
-        self._madgwick = MadgwickFilter(beta=0.033)
-        self.odom      = PointCloudOdometry()    # translation; updated by map worker
-        self._pose_locked = False
+        if self._has_imu:
+            # IMU-to-camera_link rotation: accel → depth-optical → camera_link
+            ext            = (profile.get_stream(rs.stream.accel)
+                                     .get_extrinsics_to(profile.get_stream(rs.stream.depth)))
+            R_imu_to_depth = np.array(ext.rotation, dtype=np.float32).reshape(3, 3)
+            self._R_imu_to_link = _R_OPT_TO_LINK @ R_imu_to_depth
+            self._madgwick      = MadgwickFilter(beta=0.033)
+        else:
+            self._R_imu_to_link = None
+            self._madgwick      = None
+
+        self.odom         = PointCloudOdometry()
+        self._pose_locked = not self._has_imu   # no IMU → identity pose is always "locked"
 
     @property
     def pose_locked(self) -> bool:
@@ -410,20 +430,20 @@ class RealSenseDepthSource:
         aligned = self._align.process(frames)
 
         # ── IMU: update orientation ────────────────────────────────────
-        gyro_f  = frames.first_or_default(rs.stream.gyro)   # type: ignore[name-defined]
-        accel_f = frames.first_or_default(rs.stream.accel)  # type: ignore[name-defined]
-        if gyro_f and accel_f:
-            g = gyro_f.as_motion_frame().get_motion_data()
-            a = accel_f.as_motion_frame().get_motion_data()
-            gyro_imu  = np.array([g.x, g.y, g.z], dtype=np.float32)
-            accel_imu = np.array([a.x, a.y, a.z], dtype=np.float32)
-            # Rotate measurements to camera_link frame before filter
-            gyro_link  = self._R_imu_to_link @ gyro_imu
-            accel_link = self._R_imu_to_link @ accel_imu
-            self._madgwick.update(gyro_link, accel_link, ts)
-            if not self._pose_locked:
-                print("*** IMU locked ***")
-                self._pose_locked = True
+        if self._has_imu:
+            gyro_f  = frames.first_or_default(self._stream_gyro)
+            accel_f = frames.first_or_default(self._stream_accel)
+            if gyro_f and accel_f:
+                g = gyro_f.as_motion_frame().get_motion_data()
+                a = accel_f.as_motion_frame().get_motion_data()
+                gyro_imu  = np.array([g.x, g.y, g.z], dtype=np.float32)
+                accel_imu = np.array([a.x, a.y, a.z], dtype=np.float32)
+                gyro_link  = self._R_imu_to_link @ gyro_imu
+                accel_link = self._R_imu_to_link @ accel_imu
+                self._madgwick.update(gyro_link, accel_link, ts)
+                if not self._pose_locked:
+                    print("*** IMU locked ***")
+                    self._pose_locked = True
 
         R = self._madgwick.R.copy()
         t = self.odom.t                     # translation from previous ICP update
