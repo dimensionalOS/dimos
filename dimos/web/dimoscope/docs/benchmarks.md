@@ -170,34 +170,60 @@ empty `INSTALLATION_COMPLETE`+`DEPENDENCIES_VALIDATED` markers, or set the syste
 renders. Use **cam: jpeg** over WAN — the webrtc cam mode needs ICE, which doesn't establish over a raw IP.)*
 For a headless benchmark **without** the sim, the standalone `deno task load:flood` source is lighter.
 
-`pose` = the small `/load/{fast,mid,slow}` lanes; `dense` = a 20 MB/s `/load/img` flood. End-to-end
-latency works cross-machine because the sweep clock-syncs first (the `{op:"ping"}` probe corrects the
-Mac-vs-VPS skew — see the Methodology in §1).
+### Network profiles — simulate deployment conditions from the browser
 
-| transport | scenario | clean hz | clean loss% | @5% loss+40ms hz | @loss loss% |
-|---|---|--:|--:|--:|--:|
-| **WebSocket** | pose | 125 | 0 | 132 | **0** |
-| WebSocket | dense (20 MB/s) | 24 | 0 | 24 (~23 MB/s) | **0** |
-| **WebTransport** | pose | 133 | 0.19 | 116 | **4.9** |
+The BenchDrawer's **Network** section flips **server-side `tc netem` profiles on the gateway host** —
+`clean · wifi-normal (10mbit/40ms/0.3%) · wifi-crowded (2mbit/100ms/1.5% bursty) · wifi-edge
+(700kbit/200ms/5% bursty) · disaster (200kbit/500ms/8%) · loss-3/loss-5 (loss with no bw cap, the HoL
+isolation tiers)` — plus momentary UDP/all **outage** buttons. Every result row and the copied Markdown are
+stamped `net:<profile>`, so a table is self-describing across workload × transport × network condition.
 
-**What the WAN runs show:**
-- **WebSocket is the robust baseline.** TCP carries both the 20 MB/s bulk *and* the small lanes through
-  5% injected loss with **0% data loss** (retransmits absorb it; the cost is latency, not data). It "just
-  works" over a raw IP.
-- **WebTransport's datagram path (small lanes) works** — pose holds ~120–133 Hz; under 5% loss it drops
-  ~4.9% (datagrams shed lost packets instead of retransmitting — no HoL, but the data is gone).
-  Reliable-vs-unreliable is the real tradeoff; the *no-HoL latency* comparison under loss is the number to
-  sweep next (WT bulk rows too — run each transport through the drawer with the loss profile applied).
-- **The UDP transports are finicky over a raw IP.** WebTransport connects from a `localhost` page via
-  self-signed cert-hash pinning, but the QUIC handshake fails if packet loss hits *during* the handshake
-  (bring the connection up first, then apply loss). WebRTC-data does not establish (ICE needs a public host
-  candidate / STUN). **TCP transports (WS/SSE/poll) connect reliably by raw IP; the UDP ones want real infra**
-  — a domain + CA TLS for WebTransport (via Caddy/Let's Encrypt, no hash-pinning), STUN/TURN for WebRTC.
+Opt-in and scoped: the gateway needs `NETEM_CTL=1` + the root wrapper installed
+(`sudo install -m755 gateway/scripts/dimos-netem /usr/local/bin/ && echo '<user> ALL=(root) NOPASSWD:
+/usr/local/bin/dimos-netem' > /etc/sudoers.d/dimos-netem`). Shaping hits **only** the gateway's egress ports
+(8080/8443 via a prio+u32 band), so SSH and the rest of the box are untouched, and every apply self-heals
+after 15 min. Apply loss **after** the transport is connected — QUIC handshakes fail under loss.
 
-**Bottom line:** over a real WAN the byte-relay + **WebSocket sustains ~23 MB/s through 5% loss with zero
-data loss** and is the safe default; demonstrating WebTransport's no-HoL win cleanly needs a domain + CA
-TLS (and, for bulk beyond ~20 MB/s, a non-Python QUIC relay — see the §1 ceilings). Same takeaway as §1:
-transport choice is nuanced, and WS is a strong, robust baseline.
+**⚠ The compression trap (why the first numbers were wrong).** The load generators originally published
+all-zeros images; WebSocket **permessage-deflate** compresses those ~1000:1, so a "20 MB/s" WS flood was
+~20 kB/s on the wire and sailed through every rate cap — caught because the netem band counters didn't move
+while the browser reported 19 MB/s. QUIC/WT has no compression, so its numbers were real all along. The
+generators now publish **random (incompressible) payloads** ≈ real sensor entropy; all numbers below are
+post-fix. (Any bench payload that isn't incompressible is measuring the compressor, not the transport.)
+
+### The profile matrix (2026-07-02 · 20 MB/s offered flood · clock-synced end-to-end latency)
+
+| net profile | transport | pose hz / loss% / p50 / p99 (ms) | dense (1 MB frames) |
+|---|---|---|---|
+| clean | WS | 113 / 0 / **16.6** / 22 | **19.5 MB/s** / 0% / p50 85 ms |
+| clean | WT | 110 / 0 / **17.4** / 31 | 2.4 MB/s / 0% / p50 2.6 s *(aioquic ceiling)* |
+| wifi-normal | WS | 104 / 0.24 / 57 / 110 | **244 kB/s** / p50 2.6 s *(the Mathis limit — TCP at 0.3% loss × 80 ms RTT, not the 1.25 MB/s pipe)* |
+| wifi-normal | WT | 111 / 0.22 / 40 / ~61 | 975 kB/s *(≈ the 10 mbit cap)* |
+| wifi-crowded | WT | 100 / 1.2 / 298 / 330 | 244 kB/s *(≈ the 2 mbit cap)* |
+| wifi-edge | WT | 81 / 0 / **842** / 862 | starved (0) |
+| **loss-5** | **WS** | 107 / 0.9 / 44.6 / **184** | **0** *(Mathis at 5% ≈ 65 kB/s < one frame)* |
+| **loss-5** | **WT** | 98 / **8.6** / 40.4 / **63** | 0 *(aioquic + loss)* |
+
+**What the matrix shows:**
+- **The HoL headline (loss-5):** WT datagrams keep the pose tail flat — **p99 63 ms vs TCP's 184 ms (~3×)** —
+  at the cost of **shedding 8.6%** of frames; TCP delivers ~everything but with retransmit-tail stalls.
+  Freshness vs completeness, quantified: put teleop/pose on datagrams, commands/bulk on reliable.
+- **TCP bulk dies by Mathis, not by the pipe.** At wifi-normal the cap is 1.25 MB/s but TCP's congestion
+  control under 0.3% random loss yields ~244 kB/s; at 5% loss it can't move a single 1 MB frame. Random loss
+  is poison for reliable bulk regardless of bandwidth.
+- **WT bulk is implementation-capped (~2.4 MB/s over WAN)** — pure-Python aioquic, even on the persistent
+  uni-stream path. Under shaped caps it tracks the cap exactly (975/244 kB/s). For >2 MB/s bulk over QUIC,
+  the relay needs a native QUIC stack.
+- **wifi-edge: latency is the failure mode, not loss** — pose still arrives (0% loss) but ~850 ms stale.
+  Conflation/rate-limits (§2) matter more than transport choice there.
+- **UDP over raw IP remains finicky:** QUIC handshakes fail under loss (connect first, then apply);
+  WebRTC-data needs STUN/TURN; Auto correctly falls back to WS when WT can't establish (the wire tag in each
+  row shows which transport actually carried the run). Outage buttons (`UDP 3s/10s`, `all 10s`) exist for
+  fallback/reconnect timing — a follow-up sweep.
+
+**Bottom line:** WS is the robust default (connects anywhere, absorbs loss, real 19 MB/s bulk on a clean
+path); WT datagrams are the right lane for teleop/pose freshness under loss (3× flatter tail); reliable bulk
+under loss needs conflation + rate adaptation (§2), not a better transport.
 
 ### VPS — run the dog (Ubuntu; needs `uv`; `deno` only to build the app)
 
