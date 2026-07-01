@@ -17,7 +17,7 @@
 
 from typing import Any
 
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.mount_correction import mount_correction_matrix
@@ -34,21 +34,15 @@ from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.urdf_loader import UrdfLoader
 from dimos.visualization.vis_module import vis_module
 
-# Flip on only when the Mid-360 is physically mounted rotated; this un-rotates its
-# Point-LIO cloud + odometry back into the normal mount frame. Off = sensor mounted
-# normally, no correction (identity).
-USE_ROTATED_MID360_MOUNT = False
-
-_mount_correction = (
-    mount_correction_matrix(
-        original_static_tf=mid360_rotated_urdf_path, new_static_tf=mid360_urdf_path
-    )
-    if USE_ROTATED_MID360_MOUNT
-    else None
+# Correction that un-rotates a physically-rotated Mid-360's Point-LIO cloud +
+# odometry back into the normal mount frame. Used by the `_rotated` blueprint; the
+# plain blueprint passes None (identity — sensor mounted normally).
+_rotated_mount_correction = mount_correction_matrix(
+    original_static_tf=mid360_rotated_urdf_path, new_static_tf=mid360_urdf_path
 )
 
 # GO2Connection is a TfModule; feeding it the normal mount publishes those frames
-# on its static interval, matching the cloud the hack emits.
+# on its static interval, matching the corrected cloud both blueprints emit.
 go2_mid360_model = UrdfLoader(name="go2_mid360", model_path=mid360_urdf_path)
 
 voxel_size = 0.08
@@ -126,65 +120,81 @@ _nav_rerun_config = {
     },
 }
 
-unitree_go2_nav_3d = autoconnect(
-    vis_module(viewer_backend=global_config.viewer, rerun_config=_nav_rerun_config),
-    # "mcf" for stair traversal
-    GO2Connection.blueprint(
-        static_transforms=dict(go2_mid360_model.static_transforms),
-        lidar=False,
-        camera=False,
-        motion_mode="mcf",
-    ).remappings(
-        [
-            (GO2Connection, "lidar", "lidar_l1"),
-            (GO2Connection, "odom", "odom_go2"),
-        ]
-    ),
-    # gravity_align is off so pointlio runs in the raw mount frame. When the rotated
-    # mount is enabled, transform rewrites its cloud + odometry (and odom->body TF)
-    # into the normal mount; otherwise transform is identity. auto_build recompiles
-    # the native binary for the transform support.
-    PointLio.blueprint(
-        gravity_align=False,
-        space_down_sample=False,
-        auto_build=True,
-        transform=_mount_correction,
-    ),
-    # Record the corrected (normal-mount) cloud + odometry, not PointLio's raw
-    # tilted output, so a replay reproduces what the nav stack actually consumed.
-    # The remap only renames the wire topics to PointLio's lidar/odometry; the
-    # recorder's ports stay pointlio_lidar/pointlio_odometry, so that's what the
-    # db streams are named.
-    PointlioRecorder.blueprint().remappings(
-        [
-            (PointlioRecorder, "pointlio_lidar", "lidar"),
-            (PointlioRecorder, "pointlio_odometry", "odometry"),
-        ]
-    ),
-    # Raw Livox UDP capture (tcpdump). Pulls the lidar IP + iface from env
-    # (DIMOS_MID360_LIDAR_IP / DIMOS_MID360_PCAP_IFACE); pcap lands in recordings/.
-    Mid360PcapRecorder.blueprint(),
-    RayTracingVoxelMap.blueprint(
-        voxel_size=voxel_size,
-        emit_every=1,
-        global_emit_every=50,
-        max_health=10,
-        graze_cos=0.85,
-    ),
-    # global_map is remapped off so the planner runs purely on the
-    # incremental local_map + region_bounds pair.
-    MLSPlannerNative.blueprint(
-        world_frame="odom",
-        voxel_size=voxel_size,
-        robot_height=go2_lidar_height,
-        wall_clearance_m=0.2,
-        wall_buffer_m=0.75,
-        wall_buffer_weight=100.0,
-        step_threshold_m=0.16,
-        step_penalty_weight=1.0,
-        viz_publish_hz=2.0,
-    ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
-    GoalRelay.blueprint(),
-    BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6),
-    MovementManager.blueprint(),
-).global_config(n_workers=10, robot_model="unitree_go2", obstacle_avoidance=False)
+
+def _nav_3d(mount_correction: list[float] | None) -> Blueprint:
+    """Go2 3D nav + recording stack. ``mount_correction`` un-rotates a physically
+    rotated Mid-360 back into the normal mount frame; None = normal mount (no
+    correction)."""
+    return autoconnect(
+        vis_module(viewer_backend=global_config.viewer, rerun_config=_nav_rerun_config),
+        # "mcf" for stair traversal
+        GO2Connection.blueprint(
+            static_transforms=dict(go2_mid360_model.static_transforms),
+            lidar=False,
+            camera=False,
+            motion_mode="mcf",
+        ).remappings(
+            [
+                (GO2Connection, "lidar", "lidar_l1"),
+                (GO2Connection, "odom", "odom_go2"),
+            ]
+        ),
+        # gravity_align is off so pointlio runs in the raw mount frame. For the
+        # rotated blueprint, transform rewrites its cloud + odometry (and odom->body
+        # TF) into the normal mount; otherwise transform is None (identity).
+        # auto_build recompiles the native binary for the transform support.
+        PointLio.blueprint(
+            gravity_align=False,
+            space_down_sample=False,
+            auto_build=True,
+            transform=mount_correction,
+        ),
+        # Record the corrected (normal-mount) cloud + odometry, not PointLio's raw
+        # tilted output, so a replay reproduces what the nav stack actually consumed.
+        # The remap only renames the wire topics to PointLio's lidar/odometry; the
+        # recorder's ports stay pointlio_lidar/pointlio_odometry, so that's what the
+        # db streams are named.
+        PointlioRecorder.blueprint().remappings(
+            [
+                (PointlioRecorder, "pointlio_lidar", "lidar"),
+                (PointlioRecorder, "pointlio_odometry", "odometry"),
+            ]
+        ),
+        # Raw Livox UDP capture (tcpdump). Pulls the lidar IP + iface from env
+        # (DIMOS_MID360_LIDAR_IP / DIMOS_MID360_PCAP_IFACE); pcap lands in recordings/.
+        Mid360PcapRecorder.blueprint(),
+        RayTracingVoxelMap.blueprint(
+            voxel_size=voxel_size,
+            emit_every=1,
+            global_emit_every=50,
+            max_health=10,
+            graze_cos=0.85,
+        ),
+        # global_map is remapped off so the planner runs purely on the
+        # incremental local_map + region_bounds pair.
+        MLSPlannerNative.blueprint(
+            world_frame="odom",
+            voxel_size=voxel_size,
+            robot_height=go2_lidar_height,
+            wall_clearance_m=0.2,
+            wall_buffer_m=0.75,
+            wall_buffer_weight=100.0,
+            step_threshold_m=0.16,
+            step_penalty_weight=1.0,
+            viz_publish_hz=2.0,
+        ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
+        GoalRelay.blueprint(),
+        BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6),
+        MovementManager.blueprint(),
+    )
+
+
+# Standard mount (level, forward-facing): no correction.
+unitree_go2_nav_3d = _nav_3d(None).global_config(
+    n_workers=10, robot_model="unitree_go2", obstacle_avoidance=False
+)
+
+# Rotated mount: un-rotate the cloud + odometry back into the normal mount frame.
+unitree_go2_nav_3d_rotated = _nav_3d(_rotated_mount_correction).global_config(
+    n_workers=10, robot_model="unitree_go2", obstacle_avoidance=False
+)
