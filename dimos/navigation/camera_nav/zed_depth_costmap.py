@@ -1,7 +1,7 @@
-"""ZED Mini → live cloud + per-frame voxel map.
+"""ZED Mini → live cloud + persistent world map.
 
 world/cloud  nearest-per-ray denoised live cloud
-world/map    full-density cloud voxelised at VOX_SIZE — one point per occupied cell
+world/map    persistent obstacle map — accumulates across frames, one voxel per occupied cell
 
 Usage:
   python -m dimos.navigation.camera_nav.zed_depth_costmap
@@ -23,6 +23,7 @@ VOX_SIZE     = 0.020   # 2.0 cm final voxels
 _Z_REL_HI   =  0.5    # camera-relative ceiling (0.5 m above camera)
 _FLOOR_Z    =  0.03   # absolute world-Z floor cutoff (3 cm above gravity-aligned floor)
 _GRAD_THRESH =  0.30  # Sobel gradient magnitude threshold — pixels above this are edge artifacts
+MAP_EVERY   =  5      # log world/map every N frames (reduces Rerun overhead)
 
 # ── Voxel key packing ────────────────────────────────────────────────────────
 _VOFF  = np.int64(100_000)
@@ -39,6 +40,64 @@ def _filter_isolated(xyz: np.ndarray, voxel: float = 0.05, min_pts: int = 2) -> 
     vk = np.floor(xyz / voxel).astype(np.int32)
     _, inv, cnt = np.unique(_pack(vk), return_inverse=True, return_counts=True)
     return xyz[cnt[inv] >= min_pts]
+
+
+# ── Persistent world map ─────────────────────────────────────────────────────
+class FastVoxelMap:
+    """Append-only world-frame obstacle map backed by numpy arrays.
+
+    Each call to add() voxelizes the incoming points and appends only those
+    whose voxel key is new.  A periodic compact() pass removes duplicates that
+    sneak in between compactions, keeping memory bounded.
+    """
+
+    COMPACT_EVERY = 30
+
+    def __init__(self, voxel_size: float = VOX_SIZE, capacity: int = 500_000) -> None:
+        self._v      = voxel_size
+        self._cap    = capacity
+        self._pts    = np.empty((capacity, 3), dtype=np.float32)
+        self._n      = 0
+        self._n_adds = 0
+
+    def add(self, xyz: np.ndarray) -> None:
+        if len(xyz) == 0:
+            return
+        vk = np.floor(xyz / self._v).astype(np.int32)
+        _, first = np.unique(_pack(vk), return_index=True)
+        new_pts = xyz[first]
+        if self._n + len(new_pts) > self._cap:
+            self._compact()
+        if self._n + len(new_pts) > self._cap:
+            self._grow()
+        self._pts[self._n : self._n + len(new_pts)] = new_pts
+        self._n      += len(new_pts)
+        self._n_adds += 1
+        if self._n_adds % self.COMPACT_EVERY == 0:
+            self._compact()
+
+    def _compact(self) -> None:
+        if self._n == 0:
+            return
+        vk = np.floor(self._pts[: self._n] / self._v).astype(np.int32)
+        _, idx = np.unique(_pack(vk), return_index=True)
+        n_u = len(idx)
+        self._pts[:n_u] = self._pts[: self._n][idx]
+        self._n = n_u
+
+    def _grow(self) -> None:
+        cap2 = self._cap * 2
+        buf  = np.empty((cap2, 3), dtype=np.float32)
+        buf[: self._n] = self._pts[: self._n]
+        self._pts = buf
+        self._cap = cap2
+
+    def points(self) -> np.ndarray:
+        return self._pts[: self._n]
+
+    @property
+    def count(self) -> int:
+        return self._n
 
 
 # ── Nearest-per-ray filter (live cloud denoising only) ───────────────────────
@@ -252,7 +311,7 @@ def main() -> None:
         rrb.Tabs(
             rrb.Spatial3DView(name="live cloud", origin="world",
                               contents=["world/cloud", "world/camera/**"]),
-            rrb.Spatial3DView(name="voxel map", origin="world",
+            rrb.Spatial3DView(name="world map", origin="world",
                               contents=["world/map"]),
         )
     ))
@@ -274,8 +333,9 @@ def main() -> None:
     zed.set_camera_settings(sl.VIDEO_SETTINGS.EXPOSURE, 50)
     print("camera open — Ctrl-C to quit.")
 
-    src = ZEDDepthSource(zed)
+    src       = ZEDDepthSource(zed)
     src.enable_tracking()
+    world_map = FastVoxelMap()
 
     rt = sl.RuntimeParameters()
     rt.remove_saturated_areas = True
@@ -332,21 +392,20 @@ def main() -> None:
                 keep = (xyz[:, 2] > _FLOOR_Z) & (h_rel <= _Z_REL_HI)
             else:
                 keep = (h_rel >= -1.4) & (h_rel <= _Z_REL_HI)
-            xyz_obs  = _filter_isolated(xyz[keep])
-            xyz_vox  = np.empty((0, 3), dtype=np.float32)
-            if len(xyz_obs):
-                vk       = np.floor(xyz_obs / VOX_SIZE).astype(np.int32)
-                _, first = np.unique(_pack(vk), return_index=True)
-                xyz_vox  = xyz_obs[first]
+            xyz_obs = _filter_isolated(xyz[keep])
+            world_map.add(xyz_obs)
+
+            if frame % MAP_EVERY == 0 and world_map.count > 0:
+                pts = world_map.points()
                 rr.log("world/map", rr.Points3D(
-                    positions=xyz_vox,
-                    colors=_height_color(xyz_vox[:, 2] - cam_z),
+                    positions=pts,
+                    colors=_height_color(pts[:, 2] - cam_z),
                     radii=0.010,
                 ))
 
             fps = frame / max(ts - t0, 1e-6)
             print(
-                f"frame={frame:5d}  cloud={len(xyz_vis):5d}  vox={len(xyz_vox):6d}"
+                f"frame={frame:5d}  cloud={len(xyz_vis):5d}  map={world_map.count:6d}"
                 f"  vio={'LOCKED' if src.pose_locked else 'searching'}  fps={fps:.1f}",
                 flush=True,
             )
