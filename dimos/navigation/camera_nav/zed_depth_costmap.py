@@ -97,24 +97,24 @@ def _filter_isolated(xyz: np.ndarray, voxel: float = 0.05, min_pts: int = 2) -> 
     return xyz[cnt[inv] >= min_pts]
 
 
-def _nearest_per_ray(xyz: np.ndarray, cam_pos: np.ndarray, deg: float = 3.0) -> np.ndarray:
-    """Keep only the nearest point per angular ray bin — rejects behind-obstacle returns.
+def _nearest_per_ray_idx(xyz: np.ndarray, cam_pos: np.ndarray, deg: float = 3.0) -> np.ndarray:
+    """Return indices of the nearest point per angular ray bin.
 
     Stereo can return background depth for pixels near an obstacle edge (the two
     cameras see slightly different scenes).  These spurious points are in the same
     ~3° angular direction as the real obstacle surface but at greater depth.
     Sorting by depth and keeping one point per bin discards them.
 
-    3° ≈ 5 cm at 1 m, 15 cm at 3 m — coarse enough to catch background leakage
-    without merging distinct surfaces that are angularly separated.
+    Returns an index array into xyz — caller slices xyz and any aligned arrays
+    (e.g. colors) with the same indices.
     """
     if len(xyz) == 0:
-        return xyz
+        return np.empty(0, dtype=np.intp)
     rays  = xyz - cam_pos
     dists = np.linalg.norm(rays, axis=1)
     ok    = dists > 0
     if not ok.any():
-        return xyz[ok]
+        return np.empty(0, dtype=np.intp)
 
     idx_ok = np.where(ok)[0]
     dirs   = rays[ok] / dists[ok, None]
@@ -127,7 +127,7 @@ def _nearest_per_ray(xyz: np.ndarray, cam_pos: np.ndarray, deg: float = 3.0) -> 
     # sort ascending by depth; np.unique keeps first occurrence = nearest per bin
     order = np.argsort(dists[ok])
     _, first = np.unique(keys[order], return_index=True)
-    return xyz[idx_ok[order[first]]]
+    return idx_ok[order[first]]
 
 
 # ── Stage 2: Geometric stability filter ──────────────────────────────────────
@@ -520,17 +520,20 @@ class DepthStreamer:
 
         rr.log("world/camera/depth", rr.DepthImage(pkt.depth, meter=1.0))
 
-        # All valid depth → live cloud (RGB colored) + map accumulation.
-        # _filter_isolated in the map worker handles per-frame noise; no gradient
-        # filter needed here since it was killing stable=0 at NaN boundaries.
+        # Backproject all valid depth, then keep only the nearest hit per ray.
+        # This is the ray-termination step: each pixel direction keeps its closest
+        # surface and nothing behind it, for both the live cloud and the map.
         xyz, colors = self._bp.project(pkt, stable=None)
-        self._last_n_valid  = len(xyz)
-        self._last_n_stable = len(xyz)   # same source now; kept for stdout compat
-
         if len(xyz) == 0:
             return
+        near = _nearest_per_ray_idx(xyz, pkt.pose_t)
+        xyz    = xyz[near]
+        colors = colors[near] if colors is not None else None
 
+        self._last_n_valid  = len(xyz)
+        self._last_n_stable = len(xyz)
         self._cam_z = float(pkt.pose_t[2])
+
         n   = min(len(xyz), self.MAX_CLOUD)
         idx = np.random.choice(len(xyz), n, replace=False) if len(xyz) > n else np.arange(n)
         rr.log("world/cloud", rr.Points3D(
@@ -539,9 +542,6 @@ class DepthStreamer:
             radii=0.003,
         ))
 
-        # Hand to map worker — non-blocking, drop frame if worker is behind.
-        # Works before VIO locks (identity pose = camera frame); corrects to
-        # world frame automatically once VIO locks.
         try:
             self._map_queue.put_nowait((xyz, pkt.pose_t.copy(), self._cam_z, frame))
         except queue.Full:
@@ -559,13 +559,8 @@ class DepthStreamer:
                 return
             xyz_world, cam_pos, cam_z, frame = item
 
-            # Ray termination: keep only the nearest point per ~3° angular bin.
-            # Background pixels that stereo leaks behind an obstacle share the same
-            # ray direction as the real surface but are farther away — dropped here.
-            xyz_world = _nearest_per_ray(xyz_world, cam_pos)
-            if len(xyz_world) == 0:
-                continue
-
+            # Ray termination already applied in process() — xyz_world contains
+            # only nearest-per-ray points.  Height band + floor filter here.
             # Height band + floor-angle filter (all numpy)
             h_rel    = xyz_world[:, 2] - cam_z
             rays     = xyz_world - cam_pos
