@@ -18,9 +18,11 @@ import rerun as rr
 import rerun.blueprint as rrb
 
 
-VOX_SIZE:   float = 0.025  # 2.5 cm voxels for the map
-FLOOR_Z:    float = 0.05   # world_Z below this is floor — kept low so chair legs survive
-CEILING_Z:  float = 2.20   # world_Z above this is noise / ceiling — discard
+VOX_SIZE:    float = 0.025  # 2.5 cm final voxels
+FLOOR_Z:     float = 0.02   # world_Z floor cutoff — 2 cm so chair legs are not clipped
+CEILING_Z:   float = 2.20   # world_Z ceiling cutoff — removes floating NEURAL noise
+_ISO_CELL:   float = 0.05   # 5 cm counting cell for isolation filter
+_ISO_MINPTS: int   = 3      # real surfaces collect dozens of hits; artifacts collect 1–2
 
 # ── Voxel key packing ────────────────────────────────────────────────────────
 _VOFF  = np.int64(100_000)
@@ -293,15 +295,20 @@ def main() -> None:
             col_vis = colors[near] if colors is not None else _height_color(xyz_vis[:, 2] - cam_z)
             rr.log("world/cloud", rr.Points3D(positions=xyz_vis, colors=col_vis, radii=0.003))
 
-            # ── Voxel map: nearest-per-ray → height band → voxelise ─────────
-            # nearest-per-ray at 0.5° keeps only the closest surface in each
-            # direction, which eliminates NEURAL fill and stereo artifacts that
-            # would otherwise appear as voxels between the camera and obstacles.
-            # FLOOR_Z/CEILING_Z strip the floor plane and high-altitude noise.
-            near_map  = _nearest_per_ray_idx(xyz, pkt.pose_t, deg=0.5)
-            xyz_near  = xyz[near_map]
-            in_band   = (xyz_near[:, 2] > FLOOR_Z) & (xyz_near[:, 2] < CEILING_Z)
-            xyz_obs   = xyz_near[in_band]
+            # ── Voxel map: height band → isolation filter → voxelise ─────────
+            # No nearest-per-ray here: it discards real surfaces that share an
+            # angular bin with a closer artifact, causing incomplete obstacles.
+            # Instead: strip floor/ceiling by absolute height, then kill sparse
+            # NEURAL/stereo artifacts with an isolation filter — real surfaces
+            # collect dozens of pixel hits per 5 cm cell at any range ≤8 m;
+            # phantom depth estimates are 1–2 pixel splotches that don't survive.
+            in_band  = (xyz[:, 2] > FLOOR_Z) & (xyz[:, 2] < CEILING_Z)
+            xyz_obs  = xyz[in_band]
+            if len(xyz_obs) >= _ISO_MINPTS:
+                vk_c            = np.floor(xyz_obs / _ISO_CELL).astype(np.int32)
+                _, inv_c, cnt_c = np.unique(_pack(vk_c), return_inverse=True,
+                                            return_counts=True)
+                xyz_obs = xyz_obs[cnt_c[inv_c] >= _ISO_MINPTS]
             if len(xyz_obs):
                 vk       = np.floor(xyz_obs / VOX_SIZE).astype(np.int32)
                 _, first = np.unique(_pack(vk), return_index=True)
