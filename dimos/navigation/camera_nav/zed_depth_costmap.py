@@ -23,7 +23,8 @@ VOX_SIZE     = 0.020   # 2.0 cm final voxels
 _Z_REL_HI   =  0.5    # camera-relative ceiling (0.5 m above camera)
 _FLOOR_Z    =  0.03   # absolute world-Z floor cutoff (3 cm above gravity-aligned floor)
 _GRAD_THRESH =  0.30  # Sobel gradient magnitude threshold — pixels above this are edge artifacts
-MAP_EVERY   =  5      # log world/map every N frames (reduces Rerun overhead)
+MAP_EVERY    = 10      # log world/map every N frames (reduces Rerun overhead)
+MAP_LOG_CAP  = 200_000 # max points sent to Rerun per log (subsample above this)
 
 # ── Voxel key packing ────────────────────────────────────────────────────────
 _VOFF  = np.int64(100_000)
@@ -393,10 +394,18 @@ def main() -> None:
             else:
                 keep = (h_rel >= -1.4) & (h_rel <= _Z_REL_HI)
             xyz_obs = _filter_isolated(xyz[keep])
-            world_map.add(xyz_obs)
+
+            # Only accumulate once VIO is locked — before lock, pose_R=I and
+            # pose_t=0 so "world frame" is just camera frame.  Adding pre-lock
+            # points would pile camera-frame coordinates from multiple poses on
+            # top of each other and corrupt the map.
+            if src.pose_locked:
+                world_map.add(xyz_obs)
 
             if frame % MAP_EVERY == 0 and world_map.count > 0:
                 pts = world_map.points()
+                if len(pts) > MAP_LOG_CAP:
+                    pts = pts[np.random.choice(len(pts), MAP_LOG_CAP, replace=False)]
                 rr.log("world/map", rr.Points3D(
                     positions=pts,
                     colors=_height_color(pts[:, 2] - cam_z),
