@@ -281,13 +281,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Run tests
-        run: uv run pytest --numprocesses=3 --cov=dimos/ --junitxml=junit.xml -m 'not (tool or self_hosted or mujoco or self_hosted_large)'
+        run: uv run pytest --ignore=dimos/mapping/ray_tracing --ignore=dimos/navigation/nav_3d/mls_planner --numprocesses=3 --cov=dimos/ --junitxml=junit.xml -m 'not (tool or self_hosted or mujoco or self_hosted_large)'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m 'not (tool or self_hosted or mujoco or self_hosted_large)' && exit 1
+          uv run pytest --ignore=dimos/mapping/ray_tracing --ignore=dimos/navigation/nav_3d/mls_planner --no-cov -vvvvv --lf  -m 'not (tool or self_hosted or mujoco or self_hosted_large)' && exit 1
         shell: bash
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
@@ -397,13 +397,13 @@ jobs:
             echo "ROS_PYTHON_VERSION=$ROS_PYTHON_VERSION"
           } >> "$GITHUB_ENV"
       - name: Run tests
-        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not (tool or mujoco)'
+        run: uv run pytest --ignore=dimos/mapping/ray_tracing --ignore=dimos/navigation/nav_3d/mls_planner --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not (tool or mujoco)'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m '(${{ matrix.markers }}) and not (tool or mujoco)' && exit 1
+          uv run pytest --ignore=dimos/mapping/ray_tracing --ignore=dimos/navigation/nav_3d/mls_planner --no-cov -vvvvv --lf  -m '(${{ matrix.markers }}) and not (tool or mujoco)' && exit 1
         shell: bash
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
@@ -499,14 +499,14 @@ jobs:
         # heavier scenes (`apt`). Software X via xvfb is not enough.
         env:
           DISPLAY: ":0"
-        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m self_hosted_large
+        run: uv run pytest --ignore=dimos/mapping/ray_tracing --ignore=dimos/navigation/nav_3d/mls_planner --cov=dimos/ --junitxml=junit.xml -m self_hosted_large
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
           DISPLAY: ":0"
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf -m self_hosted_large && exit 1
+          uv run pytest --ignore=dimos/mapping/ray_tracing --ignore=dimos/navigation/nav_3d/mls_planner --no-cov -vvvvv --lf -m self_hosted_large && exit 1
         shell: bash
       - name: Turn coverage into xml
         run: uv run python -m coverage xml

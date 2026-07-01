@@ -15,8 +15,6 @@
 import numpy as np
 import pytest
 
-pytest.importorskip("dimos_mls_planner")
-
 from dimos.navigation.nav_3d.mls_planner.mls_planner import MLSPlanner
 
 

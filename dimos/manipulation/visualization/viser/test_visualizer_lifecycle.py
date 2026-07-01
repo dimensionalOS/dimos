@@ -19,8 +19,6 @@ from types import SimpleNamespace
 
 import pytest
 
-pytest.importorskip("viser", reason="Viser optional dependency is not installed")
-
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import PlanningSceneInfo
 from dimos.manipulation.visualization.viser import (

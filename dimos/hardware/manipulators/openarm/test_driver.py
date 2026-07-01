@@ -22,9 +22,8 @@ from __future__ import annotations
 import struct
 import time
 
+import can
 import pytest
-
-can = pytest.importorskip("can")
 
 from dimos.hardware.manipulators.openarm.driver import (
     CTRL_MODE_MIT,
