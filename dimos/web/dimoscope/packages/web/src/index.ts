@@ -6,6 +6,9 @@ export { createDimosClient, ws } from "./client.ts";
 export type { DimosClient, DimosClientDeps, ModuleMap, TransportFactory } from "./client.ts";
 export { webtransport } from "./transports/composite.ts";
 export type { WebtransportOpts } from "./transports/composite.ts";
+// hybrid() = BOTH wires at once: sensor lanes on WT datagrams, control/bulk on WS (lane-routed).
+export { hybrid, laneWire } from "./transports/hybrid.ts";
+export type { HybridOpts } from "./transports/hybrid.ts";
 export { createTopic } from "./topic.ts";
 export type { Topic, TopicDeps, TopicWiring } from "./topic.ts";
 export { createGatewayWsTransport } from "./transports/gatewayWs.ts";
