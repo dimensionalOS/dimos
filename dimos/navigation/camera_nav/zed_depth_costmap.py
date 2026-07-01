@@ -566,22 +566,9 @@ class DepthStreamer:
 
         n   = min(len(xyz_vis), self.MAX_CLOUD)
         idx = np.random.choice(len(xyz_vis), n, replace=False) if len(xyz_vis) > n else np.arange(n)
-        rr.log("world/cloud", rr.Points3D(
-            positions=xyz_vis[idx],
-            colors=colors_vis[idx] if colors_vis is not None else _height_color(xyz_vis[idx, 2] - self._cam_z),
-            radii=0.003,
-        ))
-
-        # Voxel map: same points and colours as live cloud, deduplicated to 5 cm grid.
-        vk = np.floor(xyz_vis / 0.05).astype(np.int32)
-        _, first = np.unique(_pack(vk), return_index=True)
-        xyz_vox    = xyz_vis[first]
-        colors_vox = colors_vis[first] if colors_vis is not None else _height_color(xyz_vox[:, 2] - self._cam_z)
-        rr.log("world/map", rr.Points3D(
-            positions=xyz_vox,
-            colors=colors_vox,
-            radii=0.003,
-        ))
+        c = colors_vis[idx] if colors_vis is not None else _height_color(xyz_vis[idx, 2] - self._cam_z)
+        rr.log("world/cloud", rr.Points3D(positions=xyz_vis[idx], colors=c, radii=0.003))
+        rr.log("world/map",   rr.Points3D(positions=xyz_vis[idx], colors=c, radii=0.003))
 
     def _map_worker(self) -> None:
         """Background thread: height+floor filter → voxelize → SaturatingVoxelMap → Rerun.
@@ -645,13 +632,10 @@ class DepthStreamer:
         n_valid: int = 0, n_stable: int = 0,
     ) -> None:
         lock = "LOCKED" if self._src.pose_locked else "searching"
-        with self._vox_lock:
-            n_map = self._vox.count
-        pct   = 100 * n_stable / n_valid if n_valid > 0 else 0.0
+        pct  = 100 * n_stable / n_valid if n_valid > 0 else 0.0
         print(
             f"frame={frame:5d}  "
-            f"stable={n_stable:5d}/{n_valid:5d} ({pct:.0f}%)  "
-            f"map_total={n_map:6d}  map_occ={self._last_n_occ:6d}  "
+            f"pts={n_valid:5d} ({pct:.0f}%)  "
             f"cam_z={self._cam_z:+.2f}m  vio={lock}  fps={fps:.1f}",
             flush=True,
         )
