@@ -10,7 +10,6 @@
   },
   "dependencies": {
     "@dimos/msgs": "npm:@jsr/dimos__msgs@0.1.4",
-    "@eclipse-zenoh/zenoh-ts": "1.9.0",
     "@rerun-io/web-viewer-react": "0.32.0-alpha.1",
     "@tensorflow-models/coco-ssd": "^2.2.3",
     "@tensorflow/tfjs": "^4.22.0",

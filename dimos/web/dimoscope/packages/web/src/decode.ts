@@ -1,7 +1,7 @@
 // Decoding helpers for the client's hot path. The 8-byte hash at the head of every payload
 // self-describes the type, so a single decode() works for any transport (gateway LCM packets or
-// Zenoh samples). This is the client's decode seam; adapters that pre-split the channel
-// ("<topic>#<pkg>.<Type>") call @dimos/msgs' `decodeChannel` directly (gatewayFrame.ts, gatewayWs.ts).
+// Zenoh samples). This is the client's decode seam; transports that pre-split the channel
+// ("<topic>#<pkg>.<Type>") call @dimos/msgs' `decodeChannel` directly (transports/frame.ts, gatewayWs.ts).
 import { decode as msgsDecode } from "@dimos/msgs";
 
 /** Split a DimOS channel "<topic>#<pkg>.<Type>" into its parts. */

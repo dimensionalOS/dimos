@@ -565,6 +565,37 @@ body {
 .qos-eff {
   font: 11px var(--mono);
 }
+/* contention demo banner + boosted-card highlight */
+.contention-bar {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.contention-on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--panel));
+}
+.contention-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.contention-title {
+  font: 500 12px var(--mono);
+  color: var(--text);
+}
+.contention-hint {
+  line-height: 1.5;
+}
+.stream-boosted {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent), var(--shadow);
+}
 /* block flow (NOT flex column) so rows keep their natural height + the box actually scrolls once
    full — a flex column would shrink every row to fit the height and clip the text to nothing.
    overflow-anchor:none keeps the newest (top) row in view instead of scroll-anchoring it away. */
@@ -706,4 +737,33 @@ body {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* Benchmark drawer — collapsed-by-default measurement panel folded under the Topics tab.
+   Reuses .bench-section / .bench-label / .bench-chips / .bench-row / .tab from the old bench styles. */
+.bench-drawer {
+  margin-top: 12px;
+}
+.bench-drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--fg);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.bench-drawer-caret {
+  color: var(--accent);
+}
+.bench-drawer-body {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }

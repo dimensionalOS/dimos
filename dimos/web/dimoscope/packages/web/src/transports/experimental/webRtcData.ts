@@ -7,9 +7,9 @@
 // TCP head-of-line blocking — the whole reason to compare it. Control (teleop/goal/rpc) is not on
 // this channel (like SSE/poll it is read-only); the server forwards all subscribed topics (v1: no
 // per-channel on-demand — the client still only delivers topics it subscribed).
-import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../transport.ts";
-import type { TopicInfo } from "../types.ts";
-import { frameToSample } from "./gatewayFrame.ts";
+import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../../transport.ts";
+import type { TopicInfo } from "../../types.ts";
+import { frameToSample } from "../frame.ts";
 
 export interface WebRtcDataDeps {
   url: string; // signaling WS/HTTP, e.g. ws://localhost:8093

@@ -1,6 +1,6 @@
 // The transport abstraction — mirrors DimOS's Python Transport layer.
-// Implementations: GatewayWsTransport (Bun/LCM or Python/Zenoh gateway, primary),
-// and (future) a direct zenoh-ts adapter. The client is transport-agnostic.
+// Implementations live in ./transports/ (gatewayWs = ws() default, webTransport, composite, and the
+// read-only benchmark transports under ./transports/experimental/). The client is transport-agnostic.
 import type { Qos, QosCaps, TopicInfo } from "./types.ts";
 
 export type Status = "connecting" | "open" | "closed";
@@ -47,7 +47,7 @@ export interface Transport {
   /** Invoke a whitelisted dimos `@rpc` command via the gateway; resolves with its return value.
    *  Stays string-keyed at the transport layer (any blueprint, any provider). Consumers get typed
    *  target+method from the generated `DimosCommands` / `RpcTarget` /
-   *  `RpcMethod` (packages/topics/scripts/genTypes.ts), checked against live discovery; full arg/return typing follows
+   *  `RpcMethod` (packages/web/scripts/genTypes.ts), checked against live discovery; full arg/return typing follows
    *  when the static Python `@rpc`-annotation introspection pass lands. */
   rpc(target: string, method: string, args?: unknown[]): Promise<unknown>;
   requestList(): void;

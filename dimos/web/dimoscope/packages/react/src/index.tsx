@@ -1,4 +1,4 @@
-// @dimos/react — thin React bindings over @dimos/topics.
+// @dimos/react — thin React bindings over @dimos/web.
 // High-rate topics: prefer useTopicRef (no re-render; read in a rAF loop) over
 // useTopicLatest (re-renders per message).
 import {
@@ -11,7 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { createDimosClient, type DimosClient, selectMediaChannel, ws } from "@dimos/topics";
+import { createDimosClient, type DimosClient, selectMediaChannel, ws } from "@dimos/web";
 import type {
   CommandInfo,
   MediaChannel,
@@ -22,7 +22,7 @@ import type {
   TopicStats,
   TransportCaps,
   VideoMeta,
-} from "@dimos/topics";
+} from "@dimos/web";
 
 /** One selectable transport/server: a label + a thunk that builds a connected client. */
 export interface ServerOpt {
@@ -218,7 +218,11 @@ export function useTopicStats(topic: string | null, pollMs = 500): TopicStats | 
 // useTopicStats window — this hook only samples the *content* (a human-readable feed) + tracks seq gaps.
 
 const _replacer = (_k: string, v: unknown) =>
-  typeof v === "bigint" ? v.toString() : v instanceof Uint8Array ? `<${v.length} bytes>` : v;
+  typeof v === "bigint"
+    ? v.toString()
+    : ArrayBuffer.isView(v)
+    ? `<${(v as ArrayBufferView).byteLength} bytes>` // any TypedArray/DataView → never stringify pixels
+    : v;
 /** A short one-line preview of a message value (Uint8Array/bigint-safe — never serializes pixels). */
 export function jsonPreview(v: unknown, max = 120): string {
   return JSON.stringify(v, _replacer)?.slice(0, max) ?? "";
@@ -266,14 +270,25 @@ export function useTopicFeed(
     let seqMin: number | undefined;
     let seqMax: number | undefined;
     let seqCount = 0;
+    let lastSeq: number | undefined;
     const sub = client.topic(topic).subscribe((m) => {
       latest = { data: m.data, meta: m.meta };
       pending = true;
       const s = m.meta.seq;
       if (s != null) {
-        if (seqMin === undefined || s < seqMin) seqMin = s;
-        if (seqMax === undefined || s > seqMax) seqMax = s;
-        seqCount++;
+        if (lastSeq !== undefined && s < lastSeq) {
+          // seq went backwards → the publisher restarted (frame_id resets to 0). Start a fresh gap
+          // window so gap% reflects the new run instead of pinning near 100% forever. (WS is ordered,
+          // so a decrease is a restart, not a reorder.)
+          seqMin = s;
+          seqMax = s;
+          seqCount = 1;
+        } else {
+          if (seqMin === undefined || s < seqMin) seqMin = s;
+          if (seqMax === undefined || s > seqMax) seqMax = s;
+          seqCount++;
+        }
+        lastSeq = s;
       }
     });
     const id = setInterval(() => {
@@ -722,7 +737,7 @@ export function useCommands(): CommandInfo[] {
 }
 
 /**
- * Typed hooks bound to a generated topic map (`DimosTopics` from packages/topics/scripts/genTypes.ts). Set it up once —
+ * Typed hooks bound to a generated topic map (`DimosTopics` from packages/web/scripts/genTypes.ts). Set it up once —
  *   export const { useTopicLatest, useTopicRef, useImageTopic, useTopicStats }
  *     = createDimosHooks<DimosTopics>();
  * — and every topic-name hook autocompletes the name + infers the message type, with NO per-call
@@ -766,4 +781,4 @@ export type {
   TopicStats,
   TransportCaps,
   VideoMeta,
-} from "@dimos/topics";
+} from "@dimos/web";

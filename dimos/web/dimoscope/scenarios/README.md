@@ -13,7 +13,7 @@ live topic set just follows whatever is publishing.
 | **scope-cam** — perception | `/cam/*` | `rgb` Image·30 Hz·~550 KB · `depth` Image·15 Hz · `points` PointCloud2·10 Hz·~1 MB · `detections` Detection2DArray·30 Hz | **bandwidth / bufferbloat** (the WebTransport story) | CameraView (rgb) + WorldView points |
 
 Each reuses **standard `dimos.msgs` types**, so the app auto-renders them by *type* (no app code per
-scenario) and the `packages/topics/scripts/genTypes.ts` codegen types every topic with **0 untyped**.
+scenario) and the `packages/web/scripts/genTypes.ts` codegen types every topic with **0 untyped**.
 
 ## Run it
 
@@ -65,7 +65,7 @@ deno task gen-types scenarios/nav.py --out app/src/dimos.topics.gen.ts
 ```
 
 Consume via `createDimosClient<DimosTopics, DimosCommands>()`. Details + the full type map:
-[`packages/topics/README.md`](../packages/topics/README.md).
+[`packages/web/README.md`](../packages/web/README.md).
 
 ## Benchmark them
 

@@ -1,5 +1,5 @@
 {
-  "name": "@dimos/topics",
+  "name": "@dimos/web",
   "version": "0.1.0",
   "description": "DimOS topics in the browser — transport-agnostic subscribe/visualize/teleop SDK",
   "type": "module",
@@ -10,7 +10,6 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@dimos/msgs": "npm:@jsr/dimos__msgs@0.1.4",
-    "@eclipse-zenoh/zenoh-ts": "1.9.0"
+    "@dimos/msgs": "npm:@jsr/dimos__msgs@0.1.4"
   }
 }

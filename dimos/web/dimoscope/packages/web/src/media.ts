@@ -8,9 +8,9 @@
 // by capability negotiation + graceful fallback — exactly like the transport dropdown.
 import type { Status } from "./transport.ts";
 import type { DimosClient } from "./client.ts";
-import { createJpegTopicMedia } from "./adapters/jpegTopicMedia.ts";
-import { createWebRtcMedia } from "./adapters/webRtcMedia.ts";
-import { createWebCodecsMedia } from "./adapters/webCodecsMedia.ts";
+import { createJpegTopicMedia } from "./media/jpegTopicMedia.ts";
+import { createWebRtcMedia } from "./media/webRtcMedia.ts";
+import { createWebCodecsMedia } from "./media/webCodecsMedia.ts";
 
 export type MediaKind = "webcodecs" | "webrtc" | "jpeg";
 

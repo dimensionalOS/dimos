@@ -5,17 +5,18 @@
 // blocking), large → unidirectional STREAMS. We decode both through the shared `frameToSample`, so the
 // typed messages + latency accounting are identical to every other mechanism.
 //
-// On-demand + QoS: a browser-opened BIDIRECTIONAL control stream carries the read-path subset of the WS
-// control protocol (subscribe/unsubscribe/rate/list) client→server, and hello/topic server→client for
-// discovery — so only subscribed topics transit (no firehose) and the server's per-client priority
-// outbox honors declared QoS. Teleop/goal/rpc stay on /ws (this transport is read-only for control).
+// On-demand + QoS + control: a browser-opened BIDIRECTIONAL control stream carries the full WS control
+// protocol (subscribe/unsubscribe/rate/list + teleop/goal/rpc) client→server, and hello/topic/rpc-res
+// server→client. Only subscribed topics transit (no firehose); the server's per-client priority outbox
+// honors declared QoS; teleop/goal/rpc go to the gateway's shared SafetyEgress (same clamp + TTL deadman
+// + whitelist as /ws), so WT drives the robot on its own — no separate WS needed.
 //
 // Cert: localhost QUIC needs TLS. The server generates a short-lived self-signed ECDSA cert and serves
 // its SHA-256 at `${certUrl}/cert-hash`; we fetch it and pass it as `serverCertificateHashes` (no CA).
 import { applyCaps } from "../qos.ts";
 import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../transport.ts";
 import type { Qos, TopicInfo } from "../types.ts";
-import { frameToSample } from "./gatewayFrame.ts";
+import { frameToSample } from "./frame.ts";
 
 export interface WebTransportDeps {
   url: string; // e.g. https://localhost:8093
@@ -49,6 +50,10 @@ export const createWebTransportTransport = (deps: WebTransportDeps): Transport =
   const subQos = new Map<string, Qos>(); // declared QoS per topic
   let topics: TopicInfo[] = [];
   const enc = new TextEncoder();
+  const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  let rpcId = 1;
+  let commands: CommandInfo[] = []; // @rpc commands the gateway advertises (from hello.rpc)
+  let commandsCb: ((c: CommandInfo[]) => void) | undefined;
 
   function deliver(bytes: Uint8Array) {
     const s = frameToSample(bytes, Date.now());
@@ -109,16 +114,37 @@ export const createWebTransportTransport = (deps: WebTransportDeps): Transport =
   }
 
   function handleControl(
-    m: { op?: string; topics?: TopicInfo[]; topic?: string; type?: string; label?: string },
+    m: {
+      op?: string;
+      topics?: TopicInfo[];
+      topic?: string;
+      type?: string;
+      label?: string;
+      rpc?: CommandInfo[];
+      id?: number;
+      res?: unknown;
+      error?: string;
+    },
   ) {
     if (m.op === "hello" || m.op === "topics") {
       if (m.label) transport.label = m.label;
       topics = m.topics ?? [];
       topicsCb?.(topics);
+      if (Array.isArray(m.rpc)) {
+        commands = m.rpc;
+        commandsCb?.(commands);
+      }
     } else if (m.op === "topic" && m.topic) {
       if (!topics.find((t) => t.topic === m.topic)) {
         topics.push({ topic: m.topic, type: m.type ?? "?" });
         topicsCb?.(topics);
+      }
+    } else if (m.op === "rpc-res" && m.id != null) {
+      const p = pending.get(m.id);
+      if (p) {
+        pending.delete(m.id);
+        if (m.error) p.reject(new Error(m.error));
+        else p.resolve(m.res);
       }
     }
   }
@@ -158,11 +184,11 @@ export const createWebTransportTransport = (deps: WebTransportDeps): Transport =
     // Bidirectional control stream: our subscribe/list ops out, the gateway's hello/topic in.
     const ctl = await wt.createBidirectionalStream();
     ctlWriter = ctl.writable.getWriter();
-    readControl(ctl.readable.getReader());
+    readControl(ctl.readable.getReader()).catch(() => {}); // loops end on close; swallow the drop
     for (const t of wantSubs) sendSub(t, subQos.get(t)); // replay any pre-connect subs
     sendControl({ op: "list" }); // triggers hello (topic list) for discovery
-    readDatagrams(wt.datagrams.readable.getReader());
-    readStreams(wt.incomingUnidirectionalStreams);
+    readDatagrams(wt.datagrams.readable.getReader()).catch(() => {});
+    readStreams(wt.incomingUnidirectionalStreams).catch(() => {});
     wt.closed.then(() => statusCb?.("closed")).catch(() => statusCb?.("closed"));
   }
 
@@ -170,7 +196,7 @@ export const createWebTransportTransport = (deps: WebTransportDeps): Transport =
     caps,
     label: "WebTransport",
     get commands(): CommandInfo[] {
-      return [];
+      return commands;
     },
     connect,
     subscribe(topic: string, qos?: Qos) {
@@ -183,10 +209,22 @@ export const createWebTransportTransport = (deps: WebTransportDeps): Transport =
       subQos.delete(topic);
       sendControl({ op: "unsubscribe", topic });
     },
-    publishTeleop() {}, // read-only channel (control routes to the /ws trust boundary)
-    publishGoal() {},
-    rpc() {
-      return Promise.reject(new Error("WebTransport transport is read-only"));
+    // Write-path control → the gateway's shared SafetyEgress over the same control stream (clamp+deadman).
+    publishTeleop(linearX: number, angularZ: number, ttlMs?: number) {
+      sendControl({ op: "teleop", linearX, angularZ, ttlMs });
+    },
+    publishGoal(x: number, y: number, z = 0) {
+      sendControl({ op: "goal", x, y, z });
+    },
+    rpc(target: string, method: string, args: unknown[] = []): Promise<unknown> {
+      const id = rpcId++;
+      return new Promise((resolve, reject) => {
+        pending.set(id, { resolve, reject });
+        sendControl({ op: "rpc", id, target, method, args });
+        setTimeout(() => {
+          if (pending.delete(id)) reject(new Error(`rpc ${target}/${method} timed out`));
+        }, 8000);
+      });
     },
     requestList() {
       sendControl({ op: "list" });
@@ -199,6 +237,9 @@ export const createWebTransportTransport = (deps: WebTransportDeps): Transport =
     },
     onStatus(cb: (s: Status) => void) {
       statusCb = cb;
+    },
+    onCommands(cb: (c: CommandInfo[]) => void) {
+      commandsCb = cb;
     },
     close() {
       try {

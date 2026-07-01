@@ -17,6 +17,7 @@ import time
 from dimos.utils.logging_config import setup_logger
 
 from ..bus import Bus, Sample
+from ..egress import DEFAULT_TTL, SafetyEgress
 from ..qos import PriorityOutbox, declared_to_class, default_priority
 from ._common import frame, wants
 
@@ -86,11 +87,15 @@ class WebTransportServer:
     """QUIC server on its own UDP port (QUIC can't share the HTTP TCP port); fed from the Bus.
 
     Per-session read-path (subs filter + rate downsample + priority/conflation outbox) mirrors the /ws
-    data plane, reusing `_common.wants` + the shared `PriorityOutbox` primitives — no `data.py` coupling.
+    data plane, reusing `_common.wants` + the shared `PriorityOutbox` primitives. Write-path control
+    (teleop/goal/rpc) is delegated to the shared `SafetyEgress` — the same clamp/deadman/whitelist as /ws.
     """
 
-    def __init__(self, bus: Bus) -> None:
+    def __init__(self, bus: Bus, egress: SafetyEgress) -> None:
         self.bus = bus
+        self.egress = (
+            egress  # shared teleop/goal/rpc trust boundary (same instance as the /ws plane)
+        )
         self.sessions: set = set()
         self.cert_hash = ""
         bus.subscribe(self._on_sample)
@@ -150,12 +155,14 @@ class WebTransportServer:
                 self.ctl_stream_id: int | None = None
                 self._ctl_buf = b""
                 self._drain_task: asyncio.Future | None = None
+                self._rpc_tasks: set = set()  # keep refs so scheduled rpc coros aren't GC'd
 
             def quic_event_received(self, event: QuicEvent) -> None:
                 if isinstance(event, ProtocolNegotiated):
                     self._http = H3Connection(self._quic, enable_webtransport=True)
                 elif isinstance(event, ConnectionTerminated):
                     sessions.discard(self)
+                    server.egress.disconnect(self)  # safety: cancel deadman + stop the robot
                     if self._drain_task is not None:
                         self._drain_task.cancel()
                 if self._http is not None:
@@ -179,17 +186,9 @@ class WebTransportServer:
                         sessions.add(self)
                         self.transmit()
                 elif isinstance(event, WebTransportStreamDataReceived):
-                    # the browser's bidirectional control stream: newline-delimited JSON control ops
-                    first = self.ctl_stream_id is None
+                    # the browser's bidirectional control stream: newline-delimited JSON control ops.
+                    # The client sends {op:"list"} on connect → _on_control replies hello (single source).
                     self.ctl_stream_id = event.stream_id
-                    if first:
-                        self.send_control(  # proactive discovery so on-demand isn't blind
-                            {
-                                "op": "hello",
-                                "topics": server.bus.topic_list(),
-                                "label": "dimoscope/WT",
-                            }
-                        )
                     self._ctl_buf += event.data
                     while b"\n" in self._ctl_buf:
                         line, self._ctl_buf = self._ctl_buf.split(b"\n", 1)
@@ -199,8 +198,10 @@ class WebTransportServer:
                             self._on_control(json.loads(line))
                         except (ValueError, KeyError):
                             pass
+                    if len(self._ctl_buf) > 65536:
+                        self._ctl_buf = b""  # runaway non-newline-terminated input → drop
 
-            # ── control ingress (read-path subset of the WS protocol) ────────
+            # ── control ingress (full WS control protocol over the bidi stream) ──
             def _on_control(self, m: dict) -> None:
                 op = m.get("op")
                 if op == "subscribe":
@@ -219,8 +220,39 @@ class WebTransportServer:
                     self.rate[m["topic"]] = float(m.get("maxHz") or 0)
                 elif op == "list":
                     self.send_control(
-                        {"op": "hello", "topics": server.bus.topic_list(), "label": "dimoscope/WT"}
+                        {
+                            "op": "hello",
+                            "topics": server.bus.topic_list(),
+                            "label": "dimoscope/WT",
+                            "rpc": server.egress.commands,
+                        }
                     )
+                # write-path control → the shared SafetyEgress (same clamp/deadman/whitelist as /ws)
+                elif op == "teleop":
+                    server.egress.teleop(
+                        self,
+                        float(m.get("linearX", 0)),
+                        float(m.get("angularZ", 0)),
+                        float(m.get("ttlMs", DEFAULT_TTL)),
+                        asyncio.get_running_loop(),
+                    )
+                elif op == "stop":
+                    server.egress.stop(self)
+                elif op == "goal":
+                    server.egress.goal(m.get("x", 0), m.get("y", 0), m.get("z", 0))
+                elif op == "rpc":  # async → schedule, reply on the ctl stream; keep a ref (RUF006)
+                    task = asyncio.ensure_future(self._do_rpc(m))
+                    self._rpc_tasks.add(task)
+                    task.add_done_callback(self._rpc_tasks.discard)
+
+            async def _do_rpc(self, m: dict) -> None:
+                res = await server.egress.rpc(
+                    m.get("target"),
+                    m.get("method"),
+                    m.get("args") or [],
+                    asyncio.get_running_loop(),
+                )
+                self.send_control({"op": "rpc-res", "id": m.get("id"), **res})
 
             def _apply_qos(self, topic: str, m: dict) -> None:
                 if any(m.get(k) is not None for k in ("priority", "reliability", "depth")):
@@ -267,7 +299,12 @@ class WebTransportServer:
                 except Exception:
                     sessions.discard(self)
 
-        await quic_serve(host, port, configuration=config, create_protocol=_Protocol)
+        # Dual-stack the IPv4 wildcard: `localhost` resolves to ::1 (IPv6) first on macOS, and
+        # QUIC/UDP has no Happy-Eyeballs fallback — an IPv4-only 0.0.0.0 bind gets the browser a
+        # bare ERR_CONNECTION_REFUSED on [::1]:port. Binding :: (V6ONLY=0 default) serves both
+        # families. Explicit HOST overrides are honoured verbatim.
+        bind_host = "::" if host == "0.0.0.0" else host
+        await quic_serve(bind_host, port, configuration=config, create_protocol=_Protocol)
         logger.info(
             "webtransport up",
             url=f"https://{host}:{port}",

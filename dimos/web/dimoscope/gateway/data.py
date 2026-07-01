@@ -21,10 +21,12 @@ import os
 import struct
 import time
 
-from dimos.utils.logging_config import setup_logger
 from fastapi import WebSocket, WebSocketDisconnect
 
+from dimos.utils.logging_config import setup_logger
+
 from .bus import Bus, Sample
+from .egress import DEFAULT_TTL, SafetyEgress
 from .qos import PriorityOutbox, declared_to_class, default_priority
 
 logger = setup_logger()
@@ -35,30 +37,12 @@ logger = setup_logger()
 # actually bites on a constrained link (otherwise the queue lives in the socket buffer, drained FIFO).
 EGRESS_KBPS = float(os.environ.get("EGRESS_KBPS", "0"))
 
-MAX_LIN = 1.0  # m/s clamp
-MAX_ANG = 1.5  # rad/s clamp
-DEFAULT_TTL = 400.0  # deadman timeout (ms)
-
-# RPC bridge: which dimos @rpc commands the browser may invoke (server-side AUTHORITATIVE whitelist).
-RPC_COMMANDS = [
-    {"target": "GO2Connection", "method": "standup", "label": "Stand up"},
-    {"target": "GO2Connection", "method": "liedown", "label": "Lie down"},
-    {"target": "BenchLoad", "method": "start_bench", "label": "Start bench"},
-    {"target": "BenchLoad", "method": "stop_bench", "label": "Stop bench"},
-]
-RPC_WHITELIST = {(c["target"], c["method"]) for c in RPC_COMMANDS}
-
-
-def _clamp(v: float, lo: float, hi: float) -> float:
-    return lo if v < lo else hi if v > hi else v
-
-
-def _jsonable(v: object) -> object:
-    return v if isinstance(v, (bool, int, float, str)) or v is None else str(v)
+# Velocity clamp + TTL deadman + stop-on-disconnect + the whitelisted @rpc bridge now live in the shared
+# SafetyEgress (gateway/egress.py) so /ws and WebTransport share one trust boundary.
 
 
 class _Client:
-    __slots__ = ("deadman", "last", "q", "qos", "rate", "subs")
+    __slots__ = ("last", "q", "qos", "rate", "subs")
 
     def __init__(self) -> None:
         self.subs: set[str] = set()  # subscribed topics; "*" = all
@@ -68,76 +52,18 @@ class _Client:
             str, tuple
         ] = {}  # topic -> (rank, conflate, depth) client override (else default)
         self.q = PriorityOutbox()  # per-client priority + conflation outbox
-        self.deadman: asyncio.TimerHandle | None = None
 
 
 class DataPlane:
-    """Holds the egress publishers + per-client state; one instance, created by build_app()."""
+    """The /ws data plane: per-client on-demand subs + priority outbox. Write-path control (teleop/goal/
+    rpc) is delegated to the shared SafetyEgress so /ws and WebTransport share one trust boundary."""
 
-    def __init__(self, bus: Bus) -> None:
+    def __init__(self, bus: Bus, egress: SafetyEgress) -> None:
         self.bus = bus
+        self.egress = egress
         self.clients: dict[WebSocket, _Client] = {}
-        self._cmd: list = []  # teleop Twist publishers (one per backend)
-        self._goal: list = []  # nav goal PointStamped publishers (one per backend)
-        self._rpc = None
-        self.has_rpc = False
         bus.subscribe(self._on_sample)
         bus.on_new_topic(self._on_new_topic)
-
-    # ── egress: publish teleop + goal to BOTH backends ──────────────────────
-    def start_egress(self) -> None:
-        from dimos.core.global_config import global_config
-        from dimos.core.transport_factory import make_transport, rpc_backend
-        from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-        from dimos.msgs.geometry_msgs.Twist import Twist
-        from dimos.msgs.geometry_msgs.Vector3 import Vector3
-
-        self._Twist, self._Point, self._Vector3 = Twist, PointStamped, Vector3
-        for backend in ("zenoh", "lcm"):
-            try:
-                g = global_config.model_copy(update={"transport": backend})
-                cmd = make_transport("/cmd_vel", Twist, g=g)
-                cmd.start()
-                goal = make_transport("/clicked_point", PointStamped, g=g)
-                goal.start()
-                self._cmd.append(cmd)
-                self._goal.append(goal)
-            except Exception as e:
-                logger.warning("egress backend unavailable", backend=backend, error=str(e))
-        # RPC bridge on the service's default backend (matches the robot's transport).
-        try:
-            self._rpc = rpc_backend()()
-            self._rpc.start()
-            self.has_rpc = True
-        except Exception as e:
-            logger.warning("rpc bridge unavailable", error=str(e))
-        logger.info(
-            "egress ready", backends=len(self._cmd), rpc="on" if self.has_rpc else "off"
-        )
-
-    def _publish_twist(self, lin: float, ang: float) -> None:
-        if not self._cmd:
-            return  # no egress backend (e.g. dimos transport unavailable)
-        Vector3 = self._Vector3
-        msg = self._Twist(
-            linear=Vector3(x=_clamp(lin, -MAX_LIN, MAX_LIN), y=0.0, z=0.0),
-            angular=Vector3(x=0.0, y=0.0, z=_clamp(ang, -MAX_ANG, MAX_ANG)),
-        )
-        for t in self._cmd:
-            try:
-                t.publish(msg)
-            except Exception:
-                pass
-
-    def _publish_goal(self, x: float, y: float, z: float) -> None:
-        if not self._goal:
-            return
-        msg = self._Point(x=float(x), y=float(y), z=float(z), ts=time.time(), frame_id="world")
-        for t in self._goal:
-            try:
-                t.publish(msg)
-            except Exception:
-                pass
 
     # ── bus fan-out (loop thread, must stay cheap) ──────────────────────────
     def _on_sample(self, s: Sample) -> None:
@@ -182,7 +108,7 @@ class DataPlane:
                     "op": "hello",
                     "topics": self.bus.topic_list(),
                     "label": "dimoscope",
-                    "rpc": RPC_COMMANDS if self.has_rpc else [],
+                    "rpc": self.egress.commands,
                 }
             )
         )
@@ -194,9 +120,7 @@ class DataPlane:
         except (WebSocketDisconnect, json.JSONDecodeError, RuntimeError):
             pass
         finally:
-            if st.deadman:
-                st.deadman.cancel()
-            self._publish_twist(0.0, 0.0)  # safety: stop the robot on operator disconnect
+            self.egress.disconnect(ws)  # safety: deadman-cancel + stop the robot on disconnect
             self.clients.pop(ws, None)
             writer.cancel()
 
@@ -234,15 +158,20 @@ class DataPlane:
         elif op == "list":
             st.q.put_control(json.dumps({"op": "topics", "topics": self.bus.topic_list()}))
         elif op == "teleop":
-            self._publish_twist(float(m.get("linearX", 0)), float(m.get("angularZ", 0)))
-            self._arm_deadman(st, float(m.get("ttlMs", DEFAULT_TTL)), loop)
+            self.egress.teleop(
+                ws,
+                float(m.get("linearX", 0)),
+                float(m.get("angularZ", 0)),
+                float(m.get("ttlMs", DEFAULT_TTL)),
+                loop,
+            )
         elif op == "stop":
-            self._cancel_deadman(st)
-            self._publish_twist(0.0, 0.0)
+            self.egress.stop(ws)
         elif op == "goal":
-            self._publish_goal(m.get("x", 0), m.get("y", 0), m.get("z", 0))
+            self.egress.goal(m.get("x", 0), m.get("y", 0), m.get("z", 0))
         elif op == "rpc":
-            await self._handle_rpc(st, m, loop)
+            res = await self.egress.rpc(m.get("target"), m.get("method"), m.get("args") or [], loop)
+            st.q.put_control(json.dumps({"op": "rpc-res", "id": m.get("id"), **res}))
 
     def _apply_qos(self, st: _Client, topic: str, m: dict) -> None:
         """Store the client's declared QoS override for `topic` (priority/reliability/depth merged onto
@@ -254,30 +183,3 @@ class DataPlane:
             )
         else:
             st.qos.pop(topic, None)
-
-    def _arm_deadman(self, st: _Client, ttl_ms: float, loop) -> None:
-        if st.deadman:
-            st.deadman.cancel()
-        st.deadman = loop.call_later(
-            max(0.05, ttl_ms / 1000.0), lambda: self._publish_twist(0.0, 0.0)
-        )
-
-    def _cancel_deadman(self, st: _Client) -> None:
-        if st.deadman:
-            st.deadman.cancel()
-            st.deadman = None
-
-    async def _handle_rpc(self, st: _Client, m: dict, loop) -> None:
-        rid, target, method = m.get("id"), m.get("target"), m.get("method")
-        args = m.get("args") or []
-        if (target, method) not in RPC_WHITELIST or self._rpc is None:
-            reason = "rpc unavailable" if self._rpc is None else f"not allowed: {target}/{method}"
-            st.q.put_control(json.dumps({"op": "rpc-res", "id": rid, "error": reason}))
-            return
-        try:
-            res = await loop.run_in_executor(
-                None, lambda: self._rpc.call_sync(f"{target}/{method}", (list(args), {}))[0]
-            )
-            st.q.put_control(json.dumps({"op": "rpc-res", "id": rid, "res": _jsonable(res)}))
-        except Exception as e:
-            st.q.put_control(json.dumps({"op": "rpc-res", "id": rid, "error": str(e)}))

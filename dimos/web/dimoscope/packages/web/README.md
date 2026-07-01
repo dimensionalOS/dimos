@@ -1,12 +1,12 @@
-# @dimos/topics
+# @dimos/web — Dimos JS
 
 DimOS robot topics in the browser — a transport-agnostic client for subscribing to topics, teleoperating,
 and calling `@rpc` commands over the internet.
 
 ```ts
-import { createDimosClient, ws } from "@dimos/topics";
+import { createDimosClient, ws } from "@dimos/web";
 
-const dimos = createDimosClient({ transport: ws() }); // or webtransport() — WS control + WT data
+const dimos = createDimosClient({ transport: ws() }); // or webtransport() — full-duplex QUIC, auto-falls back to WS
 await dimos.connect("ws://localhost:8080");
 dimos.subscribe("/nav/pose", (m) => use(m.data, m.ts)); // one { data, ts, meta } envelope everywhere
 ```
@@ -69,7 +69,7 @@ Pass the two maps as generics — topic names + message types and RPC target/met
 and autocompleted:
 
 ```ts
-import { createDimosClient } from "@dimos/topics";
+import { createDimosClient } from "@dimos/web";
 import type { DimosCommands, DimosTopics } from "./dimos.topics.gen.ts";
 import type { geometry_msgs } from "@dimos/msgs";
 
@@ -124,7 +124,7 @@ deno task gen-types scenarios/nav.py                                     # print
 deno task gen-types scenarios/nav.py --out app/src/dimos.topics.gen.ts   # write the app's map
 ```
 
-`deno task gen-types` = `uv run python packages/topics/scripts/gen_types.py`.
+`deno task gen-types` = `uv run python packages/web/scripts/gen_types.py`.
 
 **What it reads:**
 

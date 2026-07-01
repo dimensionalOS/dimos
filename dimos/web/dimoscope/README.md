@@ -1,6 +1,7 @@
-# dimoscope — DimOS topics in the browser
+# dimoscope — DimOS topics in the browser (Dimos JS)
 
-A **transport-agnostic browser SDK** to subscribe to DimOS topics, visualize them, and
+The **`@dimos/web`** package (product name **Dimos JS**) is a **transport-agnostic browser SDK** to
+subscribe to DimOS topics, visualize them, and
 teleoperate — plus a single backend service and a transport benchmark. The browser is a first-class
 bus client: it decodes messages itself with [`@dimos/msgs`](https://jsr.io/@dimos/msgs) (the 8-byte
 type hash is self-describing), so the service is a thin byte-relay and the **same SDK works over
@@ -18,7 +19,7 @@ robot / sim ─► DimOS bus (LCM | Zenoh)
            WS  /media       camera: webrtc / webcodecs / jpeg
            GET /cert        WebTransport self-signed cert hash
    ▼
-@dimos/topics  (decode via @dimos/msgs · on-demand · QoS · client.call RPC · useVideo media)
+@dimos/web  (decode via @dimos/msgs · on-demand · QoS · client.call RPC · useVideo media)
    ▼
 @dimos/react ─► app (WorldView · Camera · Rerun 3D · Pose · Stats · Commands) + teleop
 ```
@@ -45,7 +46,7 @@ The app auto-discovers topics, draws the map + robot + trail in **WorldView**, s
 
 ## Transports — pick a delivery mechanism from the topbar dropdown
 
-Same app, same `@dimos/topics` SDK, **five swappable delivery mechanisms — all on the one service,
+Same app, same `@dimos/web` SDK, **five swappable delivery mechanisms — all on the one service,
 same-origin** (the dropdown rebuilds the client; `?gw=host:port` overrides the origin, e.g. a remote
 VPS for real-WAN testing). They carry identical self-describing frames, so the codec is unchanged;
 only the wire differs:
@@ -58,8 +59,9 @@ only the wire differs:
 | **WebRTC data** | SCTP/DTLS/**UDP** | `/rtc` | configurable unordered/unreliable → no TCP head-of-line blocking |
 | **WebTransport** | HTTP/3 **QUIC** | UDP `:8443` | streams + datagrams, no HoL; cert hash from `/cert` (Chrome/Edge) |
 
-**Safety:** teleop/goal/rpc always ride the `/ws` control path (velocity clamp + TTL deadman +
-stop-on-disconnect); the read-only mechanisms (SSE/poll/WebRTC-data/WebTransport) can't bypass it.
+**Safety:** teleop/goal/rpc ride the `/ws` **and WebTransport** control paths, both funneled through
+one shared `SafetyEgress` (velocity clamp + TTL deadman + stop-on-disconnect); the read-only
+mechanisms (SSE/poll/WebRTC-data) can't bypass it.
 The gateway taps **both** LCM and Zenoh, so whichever bus the robot uses reaches the browser with no
 config. For data over both at once, run DimSim: `DIMOS_TRANSPORT=zenoh uv run dimos --simulation
 dimsim run unitree-go2`.
@@ -90,10 +92,10 @@ service holds a **server-side whitelist** (default `standup`/`liedown`; override
 button per advertised command. Velocity stays on the clamped/deadman teleop path — RPC is for discrete
 commands only.
 
-## The SDK (`@dimos/topics`)
+## The SDK (`@dimos/web`)
 
 ```ts
-import { createDimosClient, ws } from "@dimos/topics";
+import { createDimosClient, ws } from "@dimos/web";
 const client = createDimosClient();                   // transport defaults to ws(); connect is a method
 await client.connect("ws://localhost:8080/ws");
 // bad internet? one line: createDimosClient({ transport: webtransport() }) — WS control + WT data, no HoL
@@ -107,7 +109,7 @@ client.teleop(0.5, 0.0);                              // safe: the service clamp
 await client.modules.GO2Connection.standup();         // RPC via a typed Proxy over @rpc (from registered modules)
 ```
 Typed topics + modules: `createDimosClient<DimosTopics, DimosCommands>()` (maps from the codegen). The
-research/benchmark transports (`sse`/`poll`/`webrtc`/raw-WT/`zenohTs`) live in `@dimos/topics/experimental`.
+research/benchmark transports (`sse`/`poll`/`webrtc`/raw-WT) live in `@dimos/web/experimental`.
 React: `DimosProvider`, `useTopics`, `useTopicLatest`, `useTopicRef` (no re-render → rAF canvas),
 `useTopicStats`, `useTeleop`, `useVideo` (camera → `<video>`/`<canvas>`), `useRpc`/`useCommands`.
 **On-demand:** a topic is subscribed on the wire only while it has a live subscriber.
@@ -136,7 +138,7 @@ the binary relay; **~75% on-demand** bandwidth cut.
 ## Layout
 | Path | What |
 |---|---|
-| `packages/topics/` | `@dimos/topics` — transport iface + adapters (`gatewayWs`, `zenohTs`) + **media plane** (`media.ts`, `jpegTopicMedia`/`webRtcMedia`/`webCodecsMedia`) + client (incl. `call` RPC), topic, decode, stats |
+| `packages/web/` | `@dimos/web` (Dimos JS) — transport iface + `transports/` (`gatewayWs`=`ws()`, `webTransport`, `composite`=`webtransport()`, `experimental/` bench transports) + **media plane** (`media/`: `jpegTopicMedia`/`webRtcMedia`/`webCodecsMedia`) + client (incl. `call` RPC), topic, decode, stats |
 | `packages/react/` | `@dimos/react` — hooks (`useTopics`, `useVideo`, `useTeleop`, `useRpc`/`useCommands`, …) |
 | `app/` | Vite example app (`panels/`: WorldView, Camera, PoseReadout, TeleopPad, StatsBar, CommandsPanel, SubscribeBar) |
 | `gateway/app.py` | the single backend entrypoint (`python -m gateway`) — one process, all transports + the app |

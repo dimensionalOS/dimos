@@ -1,10 +1,9 @@
 {
-  "workspace": ["./app", "./packages/topics", "./packages/react"],
+  "workspace": ["./app", "./packages/web", "./packages/react"],
   "nodeModulesDir": "auto",
   "exclude": ["app", "node_modules", "dist"],
   "imports": {
     "@dimos/msgs": "npm:@jsr/dimos__msgs@0.1.4",
-    "@eclipse-zenoh/zenoh-ts": "npm:@eclipse-zenoh/zenoh-ts@1.9.0",
     "react": "npm:react@^18.3.1",
     "react-dom": "npm:react-dom@^18.3.1",
     "@types/react": "npm:@types/react@^18.3.12"
@@ -24,13 +23,13 @@
     "build": "cd app && deno run -A npm:vite build",
     "preview": "cd app && deno run -A npm:vite preview",
     "serve": "uv run python -m gateway",
-    "check": "deno check packages/topics/src/**/*.ts packages/react/src/**/*.tsx && cd app && deno run -A npm:typescript/tsc --noEmit -p tsconfig.json",
+    "check": "deno check packages/web/src/**/*.ts packages/react/src/**/*.tsx && cd app && deno run -A npm:typescript/tsc --noEmit -p tsconfig.json",
     "scope:nav": "DIMOS_TRANSPORT=zenoh uv run python scenarios/nav.py",
     "scope:arm": "DIMOS_TRANSPORT=zenoh uv run python scenarios/arm.py",
     "scope:cam": "DIMOS_TRANSPORT=zenoh uv run python scenarios/cam.py",
     "scope:bench": "DIMOS_TRANSPORT=zenoh uv run python scenarios/bench.py",
-    "test": "deno test -A --node-modules-dir packages/topics/src/",
-    "gen-types": "uv run python packages/topics/scripts/gen_types.py",
+    "test": "deno test -A --node-modules-dir packages/web/src/",
+    "gen-types": "uv run python packages/web/scripts/gen_types.py",
     "fmt": "deno fmt",
     "lint": "deno lint",
     "sim": "DIMOS_TRANSPORT=zenoh uv run dimos --simulation mujoco run unitree-go2",

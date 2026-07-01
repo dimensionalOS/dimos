@@ -1,6 +1,6 @@
 # dimoscope docs
 
-**dimoscope** is a research effort to build a solid JavaScript SDK/framework for integrating with the DimOS stack from the browser: a transport-agnostic topics SDK (`@dimos/topics`), the gateways behind it, a media plane for the camera, teleoperation, and benchmarks. It lives at `dimos/web/dimoscope/`.
+**dimoscope** is a research effort to build a solid JavaScript SDK/framework for integrating with the DimOS stack from the browser: a transport-agnostic topics SDK (`@dimos/web`), the gateways behind it, a media plane for the camera, teleoperation, and benchmarks. It lives at `dimos/web/dimoscope/`.
 
 The thesis: **"DimOS topics in the browser", not "Zenoh in the browser."** A small `Transport` interface + the self-describing 8-byte `@dimos/msgs` codec means the *same* app and SDK code runs over LCM or Zenoh, and the gateway stays a thin byte-relay.
 

@@ -1,7 +1,7 @@
 {
   "name": "@dimos/react",
   "version": "0.1.0",
-  "description": "React bindings for @dimos/topics",
+  "description": "React bindings for @dimos/web",
   "type": "module",
   "main": "./src/index.tsx",
   "module": "./src/index.tsx",
@@ -10,7 +10,7 @@
     ".": "./src/index.tsx"
   },
   "peerDependencies": {
-    "@dimos/topics": "*",
+    "@dimos/web": "*",
     "react": ">=18"
   }
 }

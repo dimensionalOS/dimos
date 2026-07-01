@@ -8,9 +8,9 @@
 // realistic HTTP pattern); the ring-buffer cursor means a client that falls behind sees a
 // seq gap (loss) rather than unbounded buffering — exactly what we want to measure. Like
 // SSE this is server→client only, so teleop/goal/rpc are not on this channel.
-import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../transport.ts";
-import type { TopicInfo } from "../types.ts";
-import { frameToSample } from "./gatewayFrame.ts";
+import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../../transport.ts";
+import type { TopicInfo } from "../../types.ts";
+import { frameToSample } from "../frame.ts";
 
 export interface HttpPollDeps {
   url: string; // gateway base, e.g. http://localhost:8090

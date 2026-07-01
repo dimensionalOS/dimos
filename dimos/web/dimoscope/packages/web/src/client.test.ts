@@ -115,7 +115,7 @@ async function _untyped() {
 
 // Modules/RPC-write side: a real `DimosCommands`-shaped map makes `client.modules.<Target>.<method>`
 // autocompleted + typo-checked and lifted to a callable, while an untyped client stays permissive (the
-// `client.call` escape hatch). Mirrors what `generateCommandTypes` (packages/topics/scripts/genTypes.ts)
+// `client.call` escape hatch). Mirrors what `generateCommandTypes` (packages/web/scripts/genTypes.ts)
 // emits: target → method → RpcCall descriptor.
 type Commands = {
   ScopeNav: {

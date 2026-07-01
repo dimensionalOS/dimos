@@ -1,4 +1,4 @@
-// dimoscope — the example app for @dimos/topics + @dimos/react.
+// dimoscope — the example app for @dimos/web + @dimos/react.
 // Shows: live topic discovery, a fused 2D WorldView, a Pose readout, safe
 // teleop, and a live StatsBar (hz / bandwidth / latency per topic).
 import { useState } from "react";
@@ -18,9 +18,8 @@ import { TeleopPad } from "./panels/TeleopPad";
 import { StatsBar } from "./panels/StatsBar";
 import { RerunPanel } from "./panels/RerunPanel";
 import { CommandsPanel } from "./panels/CommandsPanel";
-import { BenchPanel } from "./panels/BenchPanel";
-import { BenchTab } from "./panels/BenchTab";
 import { StreamsTab } from "./panels/streams/StreamsTab";
+import { BenchDrawer } from "./panels/BenchDrawer";
 
 function Inspector({ topic }: { topic: string }) {
   const { data, meta } = useTopicLatest<any>(topic, { maxHz: 4 });
@@ -52,7 +51,7 @@ export function App() {
   const label = useDimosClient()?.gatewayLabel;
   const { servers, activeId, setActiveId } = useServers();
   const [selected, setSelected] = useState<string | null>(null);
-  const [tab, setTab] = useState<"2d" | "3d" | "bench" | "streams">("2d");
+  const [tab, setTab] = useState<"2d" | "3d" | "streams">("2d");
   const [mediaMode, setMediaMode] = useState<MediaMode>("auto");
 
   return (
@@ -80,16 +79,10 @@ export function App() {
             Rerun · 3D
           </button>
           <button
-            className={`tab ${tab === "bench" ? "tab-active" : ""}`}
-            onClick={() => setTab("bench")}
-          >
-            Bench
-          </button>
-          <button
             className={`tab ${tab === "streams" ? "tab-active" : ""}`}
             onClick={() => setTab("streams")}
           >
-            Streams
+            Topics
           </button>
         </div>
         <div className="topbar-right">
@@ -161,7 +154,6 @@ export function App() {
             <PoseReadout />
             <TeleopPad />
             <CommandsPanel />
-            <BenchPanel />
             <SubscribeBar />
             {selected ? <Inspector topic={selected} /> : <StatsBar />}
           </div>
@@ -177,23 +169,14 @@ export function App() {
       </div>
 
       {
-        /* ── Bench = full-page interactive benchmark. MOUNT/UNMOUNT (unlike Rerun): leaving the tab
-          drops its monitor subscriptions + aborts an in-flight sweep, so it never floods in the
-          background. ── */
-      }
-      {tab === "bench" && (
-        <div className="bench-full">
-          <BenchTab />
-        </div>
-      )}
-
-      {
-        /* ── Streams = full-page live feed + per-topic QoS. MOUNT/UNMOUNT like Bench: leaving the tab
-          drops every card's subscription so it never streams in the background. ── */
+        /* ── Topics = full-page live feed + per-topic QoS (StreamsTab) with a collapsed Benchmark
+          drawer folded in below. MOUNT/UNMOUNT: leaving the tab drops every card's subscription (and
+          the drawer only measures on demand), so it never streams in the background. ── */
       }
       {tab === "streams" && (
         <div className="streams-full">
           <StreamsTab />
+          <BenchDrawer />
         </div>
       )}
     </div>

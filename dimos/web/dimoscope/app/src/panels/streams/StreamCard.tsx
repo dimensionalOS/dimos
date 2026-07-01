@@ -3,7 +3,7 @@
 // (expandable to full JSON), AND per-topic QoS controls wired the idiomatic way (resolveQos → setQos).
 import { useEffect, useState } from "react";
 import { jsonPretty, useCaps, useDimosClient, useTopicFeed, useTopicStats } from "@dimos/react";
-import { defaultLane, type Lane, LANES, resolveQos } from "@dimos/topics";
+import { defaultLane, type Lane, LANES, resolveQos } from "@dimos/web";
 import { Sparkline } from "../../widgets/Sparkline";
 
 const LANE_OPTS: Lane[] = ["command", "sensor", "default", "bulk"];
@@ -17,10 +17,12 @@ const fmtTime = (ms: number) => {
 const fmtSize = (b: number) =>
   b >= 1e6 ? `${(b / 1e6).toFixed(1)}MB` : b >= 1000 ? `${(b / 1000).toFixed(b >= 1e5 ? 0 : 1)}kB` : `${b}B`;
 
-export function StreamCard({ topic, type, onRemove }: {
+export function StreamCard({ topic, type, onRemove, boost = false }: {
   topic: string;
   type: string;
   onRemove: () => void;
+  /** Contention mode: bump non-bulk lanes to `critical` so they win the scheduler under load. */
+  boost?: boolean;
 }) {
   const client = useDimosClient();
   const caps = useCaps();
@@ -39,13 +41,20 @@ export function StreamCard({ topic, type, onRemove }: {
   const schedHonored = (caps?.qos?.transport?.length ?? 0) > 0;
   const live = !!stats && stats.hz > 0;
 
+  // Contention mode boosts non-bulk lanes to `critical` (bulk stays low → it sheds first under load).
+  const boosted = boost && lane !== "bulk";
+  const effPrio = boosted ? "critical" : preset.priority;
+
   // Declare this topic's QoS the way the framework intends: resolveQos(lane preset + overrides) → setQos.
   // Runs on mount and whenever a knob changes; the shared Topic handle re-issues the wire subscribe.
   useEffect(() => {
     if (!client) return;
-    const q = maxHz > 0 ? resolveQos(topic, type, { lane, maxHz }) : resolveQos(topic, type, { lane });
-    client.topic(topic).setQos(q);
-  }, [client, topic, type, lane, maxHz]);
+    client.topic(topic).setQos(resolveQos(topic, type, {
+      lane,
+      ...(maxHz > 0 ? { maxHz } : {}),
+      ...(boosted ? { priority: "critical" as const } : {}),
+    }));
+  }, [client, topic, type, lane, maxHz, boosted]);
 
   useEffect(() => {
     if (!stats) return;
@@ -54,7 +63,7 @@ export function StreamCard({ topic, type, onRemove }: {
 
   const kb = stats ? stats.bytesPerSec / 1000 : 0;
   return (
-    <div className="panel stream-card">
+    <div className={`panel stream-card ${boosted ? "stream-boosted" : ""}`}>
       <div className="stream-head">
         <span
           className="stream-dot"
@@ -120,7 +129,7 @@ export function StreamCard({ topic, type, onRemove }: {
           </div>
         </div>
         <div className="qos-eff muted small">
-          {schedHonored ? `prio ${preset.priority} · ${preset.conflation}` : `client-only · maxHz`}
+          {schedHonored ? `prio ${effPrio}${boosted ? " ⚡" : ""} · ${preset.conflation}` : `client-only · maxHz`}
           {stats && stats.dropped > 0 ? ` · ${stats.dropped} dropped` : ""}
         </div>
       </div>

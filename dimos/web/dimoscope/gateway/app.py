@@ -22,15 +22,17 @@ from contextlib import asynccontextmanager
 import os
 from pathlib import Path
 
-from dimos.utils.logging_config import setup_logger
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
+from dimos.utils.logging_config import setup_logger
+
 from . import qos
 from .bus import Bus
 from .data import DataPlane
+from .egress import SafetyEgress
 from .media import MediaPlane
 from .transports import PollPlane, SsePlane, WebRtcDataPlane, WebTransportServer
 
@@ -56,18 +58,19 @@ QOS_RULES = Path(os.environ.get("QOS_RULES", Path(__file__).parent.parent / "qos
 def build_app() -> FastAPI:
     qos.load_qos_rules(QOS_RULES)
     bus = Bus()
-    data = DataPlane(bus)
+    egress = SafetyEgress()  # one teleop/goal/rpc trust boundary, shared by /ws + WebTransport
+    data = DataPlane(bus, egress)
     media = MediaPlane(bus)
     sse = SsePlane(bus)
     poll = PollPlane(bus)
     rtc = WebRtcDataPlane(bus)
-    wt = WebTransportServer(bus)
+    wt = WebTransportServer(bus, egress)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         bus.start_zenoh(ZENOH_KEY)
         await bus.start_lcm(LCM_HOST, LCM_PORT)
-        data.start_egress()
+        egress.start()
         tasks = [
             asyncio.create_task(media.run_encoder()),
             asyncio.create_task(media.run_fanout()),

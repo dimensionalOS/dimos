@@ -13,7 +13,7 @@
 // their message type, modules autocomplete target + method:
 //   const dimos = createDimosClient<DimosTopics, DimosCommands>();
 //   await dimos.modules.GO2Connection.standup();      // target + method typed; typos are errors
-import { createGatewayWsTransport } from "./adapters/gatewayWs.ts";
+import { createGatewayWsTransport } from "./transports/gatewayWs.ts";
 import { decodeBody, seqFrom, srcTsMs } from "./decode.ts";
 import { createTopic, type Topic } from "./topic.ts";
 import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "./transport.ts";

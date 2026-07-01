@@ -3,7 +3,7 @@
 The numbers behind [benchmark-report.md](./benchmark-report.md): **delivery mechanisms × stream ·
 decode location · load & realistic robot streams · QoS · WebRTC · WebTransport under loss**. Everything
 is measured in the real browser via `/bench.html` + the in-app Bench tab (both reuse the SDK's
-`@dimos/topics/bench` core).
+`@dimos/web/bench` core).
 
 > **What decides a mechanism is payload.** 4× PoseStamped @ 100 Hz ≈ **28 kB/s** — where *every*
 > mechanism looks identical and nothing is decided. **The interesting physics only appears at MB/s**
@@ -54,7 +54,7 @@ for a lidar/depth/camera frame):
 | **camera (JPEG)** | ~550 KB | 20 Hz | **~9.8 MB/s** |
 | **mixed** | pose 100 Hz + grid + lidar | — | concurrent fleet |
 
-(These are the `STREAM_PROFILES` the Bench tab exposes — `packages/topics/src/bench.ts`.)
+(These are the `STREAM_PROFILES` the Bench tab exposes — `packages/web/src/bench.ts`.)
 
 **What the heavy streams reveal (that pose hid):**
 1. **The mechanism finally matters** — at MB/s, SSE's base64 inflation makes it **1.5–2× the latency**

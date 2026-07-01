@@ -1,6 +1,6 @@
 import { createRoot } from "react-dom/client";
 import { DimosProvider, type ServerOpt } from "@dimos/react";
-import { createDimosClient, ws } from "@dimos/topics";
+import { createDimosClient, webtransport, ws } from "@dimos/web";
 import { App } from "./App";
 import "./styles.css";
 
@@ -24,6 +24,18 @@ const WT_PORT = 8443;
 const MEDIA = { gatewayUrl: `${wsBase}/media`, kinds: ["webcodecs", "webrtc", "jpeg"] as const };
 
 const servers: ServerOpt[] = [
+  // Default: prefer ONE WebTransport connection (data + teleop/rpc over QUIC, no HoL), fall back to a
+  // plain WebSocket when WT is unavailable or can't connect (Safari, UDP-blocked). Teleop always works.
+  {
+    id: "auto",
+    label: "Auto (WT→WS)",
+    connect: async () => {
+      const c = createDimosClient({ transport: webtransport() });
+      await c.connect(origin);
+      return c;
+    },
+    media: { ...MEDIA },
+  },
   {
     id: "ws",
     label: "WebSocket",
@@ -41,7 +53,7 @@ const servers: ServerOpt[] = [
     id: "sse",
     label: "SSE",
     connect: async () => {
-      const { sse } = await import("@dimos/topics/experimental");
+      const { sse } = await import("@dimos/web/experimental");
       const c = createDimosClient({ transport: sse() });
       await c.connect(httpBase);
       return c;
@@ -52,7 +64,7 @@ const servers: ServerOpt[] = [
     id: "poll",
     label: "HTTP poll",
     connect: async () => {
-      const { poll } = await import("@dimos/topics/experimental");
+      const { poll } = await import("@dimos/web/experimental");
       const c = createDimosClient({ transport: poll() });
       await c.connect(httpBase);
       return c;
@@ -63,7 +75,7 @@ const servers: ServerOpt[] = [
     id: "webrtc",
     label: "WebRTC data",
     connect: async () => {
-      const { webrtc } = await import("@dimos/topics/experimental");
+      const { webrtc } = await import("@dimos/web/experimental");
       const c = createDimosClient({ transport: webrtc() });
       await c.connect(`${wsBase}/rtc`);
       return c;
@@ -74,7 +86,7 @@ const servers: ServerOpt[] = [
     id: "webtransport",
     label: "WebTransport",
     connect: async () => {
-      const { webtransportData } = await import("@dimos/topics/experimental");
+      const { webtransportData } = await import("@dimos/web/experimental");
       const c = createDimosClient({
         transport: webtransportData({ certHashUrl: `${httpBase}/cert` }),
       });

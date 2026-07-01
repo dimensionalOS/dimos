@@ -16,8 +16,24 @@
 #
 # Run (from dimos/web/dimoscope):  DIMOS_TRANSPORT=zenoh uv run python scenarios/arm.py
 from common import (
-    IDENT, Imu, JointState, JointTrajectory, Module, ModuleConfig, Out, PoseStamped, Seq,
-    TrajectoryPoint, Vector3, env_f, env_i, math, rpc, run_standalone, rx, time,
+    IDENT,
+    Imu,
+    JointState,
+    JointTrajectory,
+    Module,
+    ModuleConfig,
+    Out,
+    PoseStamped,
+    Seq,
+    TrajectoryPoint,
+    Vector3,
+    env_f,
+    env_i,
+    math,
+    rpc,
+    run_standalone,
+    rx,
+    time,
 )
 
 
@@ -48,31 +64,51 @@ class ScopeArm(Module):
         def tick_joints(_: int) -> None:
             t = time.time() - t0
             pos = [0.5 * math.sin(0.5 * t + i) for i in range(c.n_joints)]
-            self.joint_states.publish(JointState(
-                ts=time.time(), frame_id=seq("joints"), name=names, position=pos,
-                velocity=[0.0] * c.n_joints, effort=[0.0] * c.n_joints,
-            ))
+            self.joint_states.publish(
+                JointState(
+                    ts=time.time(),
+                    frame_id=seq("joints"),
+                    name=names,
+                    position=pos,
+                    velocity=[0.0] * c.n_joints,
+                    effort=[0.0] * c.n_joints,
+                )
+            )
 
         def tick_ee(_: int) -> None:
             t = time.time() - t0
-            self.ee_pose.publish(PoseStamped(
-                ts=time.time(), frame_id=seq("ee"),
-                position=(0.5 + 0.1 * math.cos(t), 0.1 * math.sin(t), 0.3),
-                orientation=IDENT,
-            ))
+            self.ee_pose.publish(
+                PoseStamped(
+                    ts=time.time(),
+                    frame_id=seq("ee"),
+                    position=(0.5 + 0.1 * math.cos(t), 0.1 * math.sin(t), 0.3),
+                    orientation=IDENT,
+                )
+            )
 
         def tick_imu(_: int) -> None:
             t = time.time() - t0
-            self.imu.publish(Imu(
-                ts=time.time(), frame_id=seq("imu"),
-                angular_velocity=Vector3(0.0, 0.0, 0.2 * math.sin(t)),
-                linear_acceleration=Vector3(math.sin(t), math.cos(t), 9.8),
-            ))
+            self.imu.publish(
+                Imu(
+                    ts=time.time(),
+                    frame_id=seq("imu"),
+                    angular_velocity=Vector3(0.0, 0.0, 0.2 * math.sin(t)),
+                    linear_acceleration=Vector3(math.sin(t), math.cos(t), 9.8),
+                )
+            )
 
         def tick_traj(_: int) -> None:
-            pts = [TrajectoryPoint(time_from_start=0.1 * k, positions=[0.1 * k] * c.n_joints,
-                                   velocities=[0.0] * c.n_joints) for k in range(10)]
-            self.trajectory.publish(JointTrajectory(points=pts, joint_names=names, timestamp=time.time()))
+            pts = [
+                TrajectoryPoint(
+                    time_from_start=0.1 * k,
+                    positions=[0.1 * k] * c.n_joints,
+                    velocities=[0.0] * c.n_joints,
+                )
+                for k in range(10)
+            ]
+            self.trajectory.publish(
+                JointTrajectory(points=pts, joint_names=names, timestamp=time.time())
+            )
 
         if c.joint_hz > 0:
             self.register_disposable(rx.interval(1.0 / c.joint_hz).subscribe(tick_joints))

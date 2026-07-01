@@ -14,8 +14,23 @@
 #
 # Run (from dimos/web/dimoscope):  DIMOS_TRANSPORT=zenoh uv run python scenarios/cam.py
 from common import (
-    Detection2DArray, Image, ImageFormat, Module, ModuleConfig, Out, PointCloud2, Seq, env_f, env_i,
-    make_image, np, rpc, run_standalone, rx, stamp_header, time,
+    Detection2DArray,
+    Image,
+    ImageFormat,
+    Module,
+    ModuleConfig,
+    Out,
+    PointCloud2,
+    Seq,
+    env_f,
+    env_i,
+    make_image,
+    np,
+    rpc,
+    run_standalone,
+    rx,
+    stamp_header,
+    time,
 )
 
 
@@ -76,6 +91,7 @@ class ScopeCam(Module):
             self.register_disposable(rx.interval(1.0 / c.points_hz).subscribe(tick_points))
 
         if c.det_hz > 0:
+
             def tick_det(_: int) -> None:
                 d = Detection2DArray()
                 d.header = stamp_header(seq("det"))

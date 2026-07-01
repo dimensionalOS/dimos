@@ -22,7 +22,7 @@ On a fat LAN there's no contention, so priority never fires; it only matters (an
 
 So the chain is:
 
-1. **Client declares** a lane per topic (sane defaults, configurable) — `packages/topics/src/qos.ts`.
+1. **Client declares** a lane per topic (sane defaults, configurable) — `packages/web/src/qos.ts`.
 2. **Gateway enforces** at the per-client egress — `gateway/qos.py`'s priority outbox, wired into
    `gateway/data.py`. Under backpressure it drains high-priority topics first and **conflates/drops the
    lowest-priority `best_effort` topics first — never the high-priority ones.**

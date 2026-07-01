@@ -1,4 +1,4 @@
-// Public types for @dimos/topics.
+// Public types for @dimos/web.
 
 /** Metadata delivered alongside every decoded message. */
 export interface MessageMeta {
@@ -53,7 +53,7 @@ export interface TopicStats {
  *  the bus. Distinct from `Topic<T>` (topic.ts), which is the stateful subscription handle
  *  (handlers, rate-limit, stats) created on demand by `client.topic<T>(name)`. `client.topic()`
  *  itself stays string-keyed; strong per-message typing is opt-in — the blueprint codegen
- *  (`packages/topics/scripts/genTypes.ts`) turns these pairs into a `DimosTopics` map a consumer annotates against
+ *  (`packages/web/scripts/genTypes.ts`) turns these pairs into a `DimosTopics` map a consumer annotates against
  *  manually (`const p: DimosTopics["/odom"] = client.topic("/odom").getLatest()!`). */
 export interface TopicInfo {
   topic: string;

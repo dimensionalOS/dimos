@@ -13,8 +13,24 @@
 #
 # Run (from dimos/web/dimoscope):  DIMOS_TRANSPORT=zenoh uv run python scenarios/nav.py
 from common import (
-    IDENT, Module, ModuleConfig, OccupancyGrid, Out, Path, PointCloud2, Pose, PoseStamped, Seq,
-    env_f, env_i, math, np, rpc, run_standalone, rx, time,
+    IDENT,
+    Module,
+    ModuleConfig,
+    OccupancyGrid,
+    Out,
+    Path,
+    PointCloud2,
+    Pose,
+    PoseStamped,
+    Seq,
+    env_f,
+    env_i,
+    math,
+    np,
+    rpc,
+    run_standalone,
+    rx,
+    time,
 )
 
 
@@ -44,15 +60,22 @@ class ScopeNav(Module):
 
         def tick_pose(_: int) -> None:
             t = time.time() - t0
-            self.pose.publish(PoseStamped(
-                ts=time.time(), frame_id=seq("pose"),
-                position=(3.0 * math.cos(0.2 * t), 3.0 * math.sin(0.2 * t), 0.0),
-                orientation=IDENT,
-            ))
+            self.pose.publish(
+                PoseStamped(
+                    ts=time.time(),
+                    frame_id=seq("pose"),
+                    position=(3.0 * math.cos(0.2 * t), 3.0 * math.sin(0.2 * t), 0.0),
+                    orientation=IDENT,
+                )
+            )
 
         def tick_path(_: int) -> None:
-            poses = [PoseStamped(ts=time.time(), frame_id="p", position=(0.3 * i, 0.0, 0.0),
-                                 orientation=IDENT) for i in range(20)]
+            poses = [
+                PoseStamped(
+                    ts=time.time(), frame_id="p", position=(0.3 * i, 0.0, 0.0), orientation=IDENT
+                )
+                for i in range(20)
+            ]
             self.path.publish(Path(ts=time.time(), frame_id=seq("path"), poses=poses))
 
         if c.pose_hz > 0:
@@ -78,10 +101,15 @@ class ScopeNav(Module):
             grid = (np.random.rand(n, n) > 0.85).astype(np.int8) * 100
 
             def tick_map(_: int) -> None:
-                self.map.publish(OccupancyGrid(
-                    grid=grid, resolution=0.1, origin=Pose(-n * 0.05, -n * 0.05, 0.0),
-                    frame_id=seq("map"), ts=time.time(),
-                ))
+                self.map.publish(
+                    OccupancyGrid(
+                        grid=grid,
+                        resolution=0.1,
+                        origin=Pose(-n * 0.05, -n * 0.05, 0.0),
+                        frame_id=seq("map"),
+                        ts=time.time(),
+                    )
+                )
 
             self.register_disposable(rx.interval(1.0 / c.map_hz).subscribe(tick_map))
 

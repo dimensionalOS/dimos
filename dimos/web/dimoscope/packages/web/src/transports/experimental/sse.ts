@@ -7,9 +7,9 @@
 // would route to a gateway; (2) binary frames ride as base64 (~33% larger) — a real cost
 // this benchmark is meant to expose. Subscriptions are the URL topic set; changing them
 // reopens the stream (the gateway then filters → true per-stream on-demand).
-import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../transport.ts";
-import type { TopicInfo } from "../types.ts";
-import { b64ToBytes, frameToSample } from "./gatewayFrame.ts";
+import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../../transport.ts";
+import type { TopicInfo } from "../../types.ts";
+import { b64ToBytes, frameToSample } from "../frame.ts";
 
 export interface SseDeps {
   url: string; // gateway base, e.g. http://localhost:8090

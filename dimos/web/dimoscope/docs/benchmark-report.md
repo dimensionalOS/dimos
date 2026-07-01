@@ -24,7 +24,7 @@ The five same-origin delivery mechanisms on the gateway, plus two orthogonal axe
 
 ## Methodology — measure in the real browser
 
-Two harnesses, both reusing the SDK's measurement core (`@dimos/topics/bench`), so they measure
+Two harnesses, both reusing the SDK's measurement core (`@dimos/web/bench`), so they measure
 identically:
 
 - **`/bench.html`** — the full-page sweep. Opens a client per mechanism and runs the same scenarios
