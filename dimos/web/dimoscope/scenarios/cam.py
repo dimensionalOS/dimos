@@ -6,11 +6,9 @@
 #   /cam/points      PointCloud2      @10 Hz   ~1 MB     dense cloud       (≈10 MB/s)
 #   /cam/detections  Detection2DArray @30 Hz   tiny      per-frame metadata
 #
-# Data-path axis: BANDWIDTH / BUFFERBLOAT — sustained ~30 MB/s of bulk. This is the WebTransport /
-# head-of-line story (big frames must not stall the small /cam/detections topic). /cam/rgb renders
-# in the CameraView; /cam/points renders as points in WorldView; /cam/detections + depth appear in
-# the Inspector + Bench monitor. detections carries only a stamped header (payload minimal by
-# design) — it's the "small important topic that must survive the bulk".
+# Data-path axis: BANDWIDTH / BUFFERBLOAT (~30 MB/s of bulk) — the WebTransport head-of-line story,
+# where big frames must not stall the small /cam/detections topic (the "important topic that must
+# survive the bulk", so its payload is minimal by design).
 #
 # Run (from dimos/web/dimoscope):  DIMOS_TRANSPORT=zenoh uv run python scenarios/cam.py
 from common import (

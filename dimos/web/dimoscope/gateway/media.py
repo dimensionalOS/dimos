@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
-# dimoscope media plane — camera Image → WebRTC / WebCodecs / JPEG, served on /media.
+# dimoscope media plane — camera Image → WebRTC / WebCodecs / JPEG, served on /media. Reads frames
+# from the shared Bus. Encoding is CPU-heavy (PyAV/libx264, aiortc) so it runs in a single-worker
+# executor (never two encoders at once) and hands NAL chunks back to the loop.
 #
-# Reads camera frames from the shared Bus (LCM+Zenoh merged) rather than opening its own Zenoh peer —
-# so there is ONE bus session for the whole service. Encoding is CPU-heavy (PyAV/libx264, aiortc), so it
-# runs in a single-worker executor
-# (NOT on the event loop, and never two encoders at once) and hands NAL chunks back to the loop.
-#
-# Two delivery paths (the browser negotiates; both encode ONCE and fan out to N viewers):
+# Two delivery paths (browser negotiates; both encode ONCE and fan out to N viewers):
 #   • WebRTC  (aiortc)             — recvonly offer/answer; browser HW-decodes a <video>.
 #   • WebCodecs (libx264 Annex-B)  — {video-config} JSON then binary
 #       [u8 flags(bit0=keyframe)][u64 ts_us BE][u16 topic_len BE][topic utf8][H.264 Annex-B NAL]
-# JPEG is the floor — decoded in the browser straight off the data plane, so it needs nothing here.
+# JPEG is the floor — decoded in the browser off the data plane, so it needs nothing here.
 from __future__ import annotations
 
 import asyncio

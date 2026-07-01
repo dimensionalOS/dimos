@@ -59,16 +59,6 @@ export interface BenchRow {
   lossPct: number;
 }
 
-/** The standard load fed by scenarios/bench.py (topic names match every transport). */
-export const BENCH_SCENARIOS: BenchScenario[] = [
-  {
-    name: "4x PoseStamped (throughput)",
-    topics: ["/bench/p0", "/bench/p1", "/bench/p2", "/bench/p3"],
-  },
-  { name: "1x PoseStamped (on-demand)", topics: ["/bench/p0"] },
-  { name: "1x OccupancyGrid (large)", topics: ["/bench/grid"] },
-];
-
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
 /**

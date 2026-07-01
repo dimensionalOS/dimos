@@ -13,8 +13,8 @@ export interface RawSample {
   recvTs: number;
   /** Gateway send time (ms) from the frame prefix — for true transport latency. */
   gatewaySendMs?: number;
-  /** Pre-decoded message (server-side decode mode): when set, the client uses it directly
-   *  instead of decoding `payload` itself — the "where to decode" axis (rosbridge-style). */
+  /** Pre-decoded message: a test-injection seam (unit tests deliver a message without a real
+   *  @dimos/msgs frame). No production transport sets this; the client decodes `payload` itself. */
   decoded?: unknown;
 }
 
@@ -47,7 +47,7 @@ export interface Transport {
   /** Invoke a whitelisted dimos `@rpc` command via the gateway; resolves with its return value.
    *  Stays string-keyed at the transport layer (any blueprint, any provider). Consumers get typed
    *  target+method from the generated `DimosCommands` / `RpcTarget` /
-   *  `RpcMethod` (packages/web/scripts/genTypes.ts), checked against live discovery; full arg/return typing follows
+   *  `RpcMethod` (packages/web/scripts/gen_types.py), checked against live discovery; full arg/return typing follows
    *  when the static Python `@rpc`-annotation introspection pass lands. */
   rpc(target: string, method: string, args?: unknown[]): Promise<unknown>;
   requestList(): void;

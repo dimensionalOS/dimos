@@ -1,18 +1,11 @@
 #!/usr/bin/env python3
-# Per-client priority outbox — the QoS enforcement point. The browser link (wifi/cellular) is the
-# bottleneck where the fast bus meets the slow client; declaring a topic "important" only matters if
-# something *enforces* it here. This replaces the data plane's single FIFO queue (which tail-drops
-# indiscriminately under a slow client) with a priority + conflation + weighted-round-robin discipline:
-#
+# Per-client priority outbox — the QoS enforcement point at the browser-link bottleneck. Replaces the
+# data plane's single FIFO queue with priority + conflation + weighted round-robin:
 #   • each topic lands in a priority CLASS (command > sensor > default > bulk), via default_priority()
-#   • best_effort topics keep only the LATEST frame (conflation — a backed-up lidar collapses, never grows)
-#   • reliable topics keep a bounded deque (DDS keep_last depth)
-#   • the writer drains by WEIGHTED round-robin: high classes get most of the budget, low classes keep a
-#     floor (so pose/teleop win under contention but lidar never starves to exactly zero)
-#
-# This is not novel — it's Foxglove's per-client bounded drop-queue + Reactive-Streams onBackpressureLatest
-# (conflation) + DDS/Zenoh priority-with-drop, composed at the per-client egress. The shedding is explicit
-# (bounded memory) so it does not rely on ws.send() blocking.
+#   • best_effort topics keep only the LATEST frame (conflation); reliable topics keep a bounded deque
+#   • the writer drains by WEIGHTED round-robin: high classes get most of the budget, low keeps a floor
+#     (pose/teleop win under contention but lidar never starves to zero)
+# Shedding is explicit (bounded memory), so it does not rely on ws.send() blocking.
 from __future__ import annotations
 
 import asyncio
@@ -27,7 +20,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# lane → (priority rank, conflate?, keep_last depth). Mirrors packages/topics/src/qos.ts LANES + defaultLane.
+# lane → (priority rank, conflate?, keep_last depth). Mirrors packages/web/src/qos.ts LANES + defaultLane.
 _CMD = re.compile(r"(^|/)(cmd_vel|cmd|teleop|goal|clicked_point|move_base|nav_goal)(/|$)", re.I)
 _BULK = re.compile(
     r"(^|/)(lidar|laser|scan|points?|point_?cloud|cloud|camera|image|img|depth|rgb|map|costmap|occupancy|grid)(/|$)",

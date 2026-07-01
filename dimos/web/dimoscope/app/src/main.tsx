@@ -13,8 +13,11 @@ import "./styles.css";
 // WebTransport QUIC listener is the one exception to same-origin: QUIC is UDP and can't share the HTTP
 // TCP port, so it has its own port (serve.py WT_PORT, default 8443); its cert hash is fetched from
 // /cert on the main origin.
+// Gateway HTTP/WS port is hard-coded (serve.py default 8080) so every transport hits the gateway
+// regardless of where the app is served — Vite dev (:5173), prod (:8080), or a LAN IP. `?gw` overrides.
+const GW_PORT = 8080;
 const gwOverride = new URLSearchParams(location.search).get("gw");
-const origin = gwOverride ?? location.host; // host:port the page was served from
+const origin = gwOverride ?? `${location.hostname}:${GW_PORT}`; // gateway host:port (NOT location.host)
 const httpBase = `${location.protocol}//${origin}`; // http(s)://host:port (SSE/poll base)
 const wsProto = location.protocol === "https:" ? "wss" : "ws";
 const wsBase = `${wsProto}://${origin}`;
@@ -53,8 +56,8 @@ const servers: ServerOpt[] = [
     id: "sse",
     label: "SSE",
     connect: async () => {
-      const { sse } = await import("@dimos/web/experimental");
-      const c = createDimosClient({ transport: sse() });
+      const { createSseTransport } = await import("@dimos/web/experimental");
+      const c = createDimosClient({ transport: (url) => createSseTransport({ url }) });
       await c.connect(httpBase);
       return c;
     },
@@ -64,8 +67,8 @@ const servers: ServerOpt[] = [
     id: "poll",
     label: "HTTP poll",
     connect: async () => {
-      const { poll } = await import("@dimos/web/experimental");
-      const c = createDimosClient({ transport: poll() });
+      const { createHttpPollTransport } = await import("@dimos/web/experimental");
+      const c = createDimosClient({ transport: (url) => createHttpPollTransport({ url }) });
       await c.connect(httpBase);
       return c;
     },
@@ -75,8 +78,8 @@ const servers: ServerOpt[] = [
     id: "webrtc",
     label: "WebRTC data",
     connect: async () => {
-      const { webrtc } = await import("@dimos/web/experimental");
-      const c = createDimosClient({ transport: webrtc() });
+      const { createWebRtcDataTransport } = await import("@dimos/web/experimental");
+      const c = createDimosClient({ transport: (url) => createWebRtcDataTransport({ url }) });
       await c.connect(`${wsBase}/rtc`);
       return c;
     },
@@ -86,9 +89,9 @@ const servers: ServerOpt[] = [
     id: "webtransport",
     label: "WebTransport",
     connect: async () => {
-      const { webtransportData } = await import("@dimos/web/experimental");
+      const { createWebTransportTransport } = await import("@dimos/web/experimental");
       const c = createDimosClient({
-        transport: webtransportData({ certHashUrl: `${httpBase}/cert` }),
+        transport: (url) => createWebTransportTransport({ url, certHashUrl: `${httpBase}/cert` }),
       });
       await c.connect(`https://${origin.split(":")[0]}:${WT_PORT}`);
       return c;

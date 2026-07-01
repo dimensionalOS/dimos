@@ -1,6 +1,4 @@
 // dimoscope — the example app for @dimos/web + @dimos/react.
-// Shows: live topic discovery, a fused 2D WorldView, a Pose readout, safe
-// teleop, and a live StatsBar (hz / bandwidth / latency per topic).
 import { useState } from "react";
 import { type MediaMode, SubscribeBar } from "@dimos/react";
 import {
@@ -15,7 +13,6 @@ import { CameraView } from "./panels/CameraView";
 import { PoseReadout } from "./panels/PoseReadout";
 import { TeleopPad } from "./panels/TeleopPad";
 import { StatsBar } from "./panels/StatsBar";
-import { RerunPanel } from "./panels/RerunPanel";
 import { CommandsPanel } from "./panels/CommandsPanel";
 import { StreamsTab } from "./panels/streams/StreamsTab";
 import { BenchDrawer } from "./panels/BenchDrawer";
@@ -50,7 +47,7 @@ export function App() {
   const label = useDimosClient()?.gatewayLabel;
   const { servers, activeId, setActiveId } = useServers();
   const [selected, setSelected] = useState<string | null>(null);
-  const [tab, setTab] = useState<"2d" | "3d" | "streams">("2d");
+  const [tab, setTab] = useState<"2d" | "streams">("2d");
   const [mediaMode, setMediaMode] = useState<MediaMode>("auto");
 
   return (
@@ -63,19 +60,12 @@ export function App() {
           dimo<span>scope</span>
         </span>
         <span className={`status status-${status}`}>{status}</span>
-        {/* mode switch — console (WorldView) ⇄ full-page 3D (Rerun) */}
         <div className="tabs" style={{ marginLeft: 6 }}>
           <button
             className={`tab ${tab === "2d" ? "tab-active" : ""}`}
             onClick={() => setTab("2d")}
           >
             WorldView
-          </button>
-          <button
-            className={`tab ${tab === "3d" ? "tab-active" : ""}`}
-            onClick={() => setTab("3d")}
-          >
-            Rerun · 3D
           </button>
           <button
             className={`tab ${tab === "streams" ? "tab-active" : ""}`}
@@ -114,10 +104,6 @@ export function App() {
         </div>
       </header>
 
-      {
-        /* ── WorldView mode = the operator console (camera center + side panels). It UNMOUNTS in Rerun
-          mode → frees its camera + lidar/odom/map subscriptions (Rerun has its own gRPC feed). ── */
-      }
       {tab === "2d" && (
         <aside className="sidebar">
           <div className="sidebar-title">Topics ({topics.length})</div>
@@ -143,10 +129,6 @@ export function App() {
             <CameraView mode={mediaMode} primary />
           </div>
           <div className="side-col">
-            {
-              /* Spatial 2D (lidar/map): per-layer on/off + live bandwidth (toggle lidar off → drop
-                ~2 MB/s). The WorldView/Rerun mode switch lives in the topbar now. */
-            }
             <div className="spatial-viz">
               <WorldView />
             </div>
@@ -159,19 +141,6 @@ export function App() {
         </main>
       )}
 
-      {
-        /* ── Rerun = full-page 3D. Always mounted (warm) so switching is instant + avoids a cold gRPC
-          re-stream; shown only when the topbar mode = Rerun. ── */
-      }
-      <div className="rerun-full" style={tab === "3d" ? undefined : { display: "none" }}>
-        <RerunPanel active={tab === "3d"} />
-      </div>
-
-      {
-        /* ── Topics = full-page live feed + per-topic QoS (StreamsTab) with a collapsed Benchmark
-          drawer folded in below. MOUNT/UNMOUNT: leaving the tab drops every card's subscription (and
-          the drawer only measures on demand), so it never streams in the background. ── */
-      }
       {tab === "streams" && (
         <div className="streams-full">
           <StreamsTab />

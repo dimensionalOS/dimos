@@ -1,22 +1,12 @@
 #!/usr/bin/env python3
-# dimoscope bus — the single in-process tap that every transport reads from.
-#
-# It ingests the robot/sim bus over BOTH backends at once, by default:
-#   • Zenoh  — one peer session, declare_subscriber("**") over the whole keyspace
-#   • LCM    — a UDP-multicast tap with LC03→LC02 fragment reassembly
-# whichever transport the robot/sim actually uses, its topics reach the browser with no config. (If
-# both buses ever carry the same topic you'd see it twice — normally only one is active.)
-#
-# Each sample is normalised to one shape and fanned out to every registered consumer (the data WS,
-# media node, SSE/poll, WebRTC-data, WebTransport):
-#       Sample(topic, type, lc02, payload)
+# dimoscope bus — the single in-process tap every transport reads from. Ingests both backends at once
+# (Zenoh declare_subscriber("**"); LCM UDP-multicast with LC03→LC02 reassembly) and normalises each
+# sample to Sample(topic, type, lc02, payload) fanned out to every consumer:
 #   • lc02    — the self-describing "LC02"<seq><channel>\0<payload> packet the browser decodes
-#   • payload — the bare lcm_encode bytes (what the media node feeds to Image.lcm_decode)
+#   • payload — the bare lcm_encode bytes (fed to Image.lcm_decode by the media node)
 #
-# Consumers register a sync callback; it runs ON the event loop and must be cheap (enqueue, don't
-# await). Zenoh delivers on its own thread, so its samples cross to the loop via call_soon_threadsafe;
-# the LCM tap already runs on the loop. There is no global state — a single Bus instance is created by
-# app.py's build_app() and passed to the handlers.
+# Consumer callbacks run ON the event loop and must be cheap (enqueue, don't await). Zenoh delivers on
+# its own thread → call_soon_threadsafe; the LCM tap already runs on the loop.
 from __future__ import annotations
 
 import asyncio

@@ -29,12 +29,10 @@ export interface ServerOpt {
   id: string;
   label: string;
   connect: () => Promise<DimosClient>;
-  /** The gateway WS URL, when this server is a plain gateway transport (ws/sse/poll). Lets a
-   *  panel open a sibling client to the same gateway (e.g. the Bench tab's server-json decode A/B).
-   *  Absent for zenoh-ts/webrtc, which have no single gateway URL. */
+  /** Gateway WS URL, when this server is a plain gateway transport (lets a panel open a sibling
+   *  client to the same gateway). Absent for webrtc, which has no single gateway URL. */
   url?: string;
-  /** Media-plane config for this server: where the camera can come from (WebRTC gateway +
-   *  which kinds it can serve). Absent/jpeg-only → the camera uses the Image-topic floor. */
+  /** Media-plane config: WebRTC gateway + which kinds it serves. Absent → the Image-topic floor. */
   media?: { gatewayUrl?: string; kinds?: readonly MediaKind[] };
 }
 
@@ -53,11 +51,8 @@ const Ctx = createContext<DimosCtx>({
   setActiveId: () => {},
 });
 
-/**
- * Provides a DimosClient to the tree. Pass `servers` (a list of selectable
- * transports) to expose a switcher — the client is rebuilt (old one closed) when
- * the active server changes. A bare `url` is accepted as a one-server shorthand.
- */
+/** Provides a DimosClient to the tree. Pass `servers` to expose a switcher (the client is rebuilt on
+ *  change); a bare `url` is a one-server shorthand. */
 export function DimosProvider({
   servers,
   url,
@@ -192,13 +187,8 @@ export function useTopicRef<T = unknown>(
   return ref;
 }
 
-/**
- * Live stats for a topic (polled, PASSIVE). `Topic.stats()` is a pure read of a
- * rolling 1s window, so this does NOT subscribe — it never forces the gateway to
- * stream a topic just to measure it. It reports the rate of whatever is already
- * flowing (subscribed by some panel); topics nobody subscribes read 0. This is what
- * keeps the StatsBar from pulling every topic (incl. the ~11 MB/s camera) at once.
- */
+/** Live stats for a topic, polled + PASSIVE: `Topic.stats()` reads a rolling window without
+ *  subscribing, so it never forces the gateway to stream a topic just to measure it. */
 export function useTopicStats(topic: string | null, pollMs = 500): TopicStats | null {
   const client = useDimosClient();
   const [stats, setStats] = useState<TopicStats | null>(null);
@@ -211,11 +201,8 @@ export function useTopicStats(topic: string | null, pollMs = 500): TopicStats | 
   return stats;
 }
 
-// ── live message feed: a rolling, display-throttled sample of a topic's messages ────────────
-// Subscribing at the source rate (imu @500 Hz, rgb @30 Hz × 550 KB) must never re-render React per
-// message. We keep only the latest message in a closure and flush ONE compact row at `displayHz`, so
-// render cost is bounded regardless of the stream. Rates/latency still come from the passive
-// useTopicStats window — this hook only samples the *content* (a human-readable feed) + tracks seq gaps.
+// Live message feed: keep only the latest message in a closure and flush one compact row at
+// `displayHz`, so a high-rate stream (imu @500 Hz, rgb @30 Hz) never re-renders React per message.
 
 const _replacer = (_k: string, v: unknown) =>
   typeof v === "bigint"

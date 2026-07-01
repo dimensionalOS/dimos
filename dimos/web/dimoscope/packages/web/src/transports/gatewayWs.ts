@@ -10,9 +10,6 @@ import type { Qos, TopicInfo } from "../types.ts";
 export interface GatewayWsDeps {
   url: string;
   reconnect?: boolean;
-  /** "server-json": ask the gateway to decode and send JSON (rosbridge-style) instead of the
-   *  binary self-describing frame. Default "client" (the browser decodes via @dimos/msgs). */
-  decode?: "client" | "server-json";
 }
 
 export const createGatewayWsTransport = (deps: GatewayWsDeps): Transport => {
@@ -106,17 +103,6 @@ export const createGatewayWsTransport = (deps: GatewayWsDeps): Transport => {
           if (m.error) p.reject(new Error(m.error));
           else p.resolve(m.res);
         }
-      } else if (m.op === "sample") {
-        // server-json mode: the gateway decoded the message; deliver it directly. payload carries
-        // the JSON wire bytes so sizeBytes (bandwidth) reflects the JSON cost vs the binary frame.
-        sampleCb?.({
-          topic: m.topic,
-          type: m.type,
-          payload: new TextEncoder().encode(e.data),
-          recvTs: Date.now(),
-          gatewaySendMs: m.gatewaySendMs,
-          decoded: m.data,
-        });
       }
       return;
     }
@@ -146,7 +132,6 @@ export const createGatewayWsTransport = (deps: GatewayWsDeps): Transport => {
     send({
       op: "subscribe",
       topic,
-      decode: deps.decode,
       maxHz: q?.maxHz,
       priority: q?.priority,
       reliability: q?.reliability,

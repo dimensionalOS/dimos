@@ -1,18 +1,8 @@
 /// <reference lib="dom" />
-// createWebTransportTransport — delivery over WebTransport (HTTP/3 / QUIC; browser-only; Deno has no
-// stable WebTransport client). Talks to gateway/transports/webtransport.py, which size-routes the same
-// [f64 gateway-send-ms][LC02] frames: small → DATAGRAMS (unreliable/unordered, no TCP head-of-line
-// blocking), large → unidirectional STREAMS. We decode both through the shared `frameToSample`, so the
-// typed messages + latency accounting are identical to every other mechanism.
-//
-// On-demand + QoS + control: a browser-opened BIDIRECTIONAL control stream carries the full WS control
-// protocol (subscribe/unsubscribe/rate/list + teleop/goal/rpc) client→server, and hello/topic/rpc-res
-// server→client. Only subscribed topics transit (no firehose); the server's per-client priority outbox
-// honors declared QoS; teleop/goal/rpc go to the gateway's shared SafetyEgress (same clamp + TTL deadman
-// + whitelist as /ws), so WT drives the robot on its own — no separate WS needed.
-//
-// Cert: localhost QUIC needs TLS. The server generates a short-lived self-signed ECDSA cert and serves
-// its SHA-256 at `${certUrl}/cert-hash`; we fetch it and pass it as `serverCertificateHashes` (no CA).
+// Delivery over WebTransport (HTTP/3 / QUIC; browser-only). Talks to gateway/transports/webtransport.py,
+// which size-routes frames (small → datagrams, large → uni streams). A bidirectional control stream
+// carries the full WS control protocol (subscribe/QoS + teleop/goal/rpc via the shared SafetyEgress),
+// so WT drives the robot alone. Cert: we fetch the server's self-signed SHA-256 for serverCertificateHashes.
 import { applyCaps } from "../qos.ts";
 import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../transport.ts";
 import type { Qos, TopicInfo } from "../types.ts";

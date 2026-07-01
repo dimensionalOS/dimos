@@ -1,11 +1,10 @@
 # Real-WAN testing: MacBook (client) ↔ VPS (robot/gateway) over the actual internet
 
-This is the production topology in miniature: the **VPS** has a public IP and opens a port (= the
-robot), your **Mac browser** connects out to it over the real internet (= the operator). You measure the
-real path — real RTT, real reorder/drop — instead of trusting a network simulator.
+Run the gateway on a VPS with a public IP and connect your Mac browser to it over the real internet, so
+you measure the real path (RTT, reorder, drop) instead of a network simulator.
 
-The JS SDK does **not** change: the app + `/bench.html` read `?gw=host:port` (already wired). You only
-point them at the VPS.
+The JS SDK does not change: the app + `/bench.html` read `?gw=host:port` (already wired) — just point
+them at the VPS.
 
 > **All five transports work by raw IP — no domain, no CA-issued TLS.** See the table below. A domain
 > (via Coolify/Caddy) is only needed to serve the *app itself* over public `https`, not for testing.

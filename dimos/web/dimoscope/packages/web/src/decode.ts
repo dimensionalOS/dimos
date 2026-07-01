@@ -1,8 +1,4 @@
-// Decoding helpers for the client's hot path. The 8-byte hash at the head of every payload
-// self-describes the type, so a single decode() works for any transport (gateway LCM packets or
-// Zenoh samples). This is the client's decode seam; transports that pre-split the channel
-// ("<topic>#<pkg>.<Type>") call @dimos/msgs' `decodeChannel` directly (transports/frame.ts, gatewayWs.ts).
-import { decode as msgsDecode } from "@dimos/msgs";
+// Channel + header parsing helpers for the client's hot path.
 
 /** Split a DimOS channel "<topic>#<pkg>.<Type>" into its parts. */
 export function splitChannel(channel: string): { topic: string; type: string } {
@@ -10,13 +6,6 @@ export function splitChannel(channel: string): { topic: string; type: string } {
   return h >= 0
     ? { topic: channel.slice(0, h), type: channel.slice(h + 1) }
     : { topic: channel, type: "?" };
-}
-
-/** Decode a message body (bytes starting with the 8-byte type hash). A one-line seam over
- *  @dimos/msgs so the client never imports the codec directly and SDK consumers handling a raw
- *  `RawSample.payload` have one public decode entry point. */
-export function decodeBody(payload: Uint8Array): unknown {
-  return msgsDecode(payload);
 }
 
 /** Best-effort source timestamp (ms) from a std_msgs/Header — the *fallback* latency input used

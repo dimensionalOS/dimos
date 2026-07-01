@@ -13,14 +13,8 @@ deno task app           # open the in-app Bench tab, then toggle rate-limit / pr
 
 ## The model: declaration → enforcement → transport
 
-QoS is two things people conflate. **Declaration** (a topic's `reliability`/`priority`/`depth`) is
-cheap and does nothing on its own. **Enforcement** is the hard part: importance only matters at a
-**bottleneck**, where something must choose what to send and what to drop. For a browser, that bottleneck
-is the **gateway's per-client outbound loop** — where the robot's fast bus meets the slow browser link.
-On a fat LAN there's no contention, so priority never fires; it only matters (and is only testable) under
-**saturation**.
-
-So the chain is:
+Declaration is cheap; enforcement is the hard part and only fires at a bottleneck under saturation — for
+a browser, the gateway's per-client outbound loop where the fast bus meets the slow link. The chain:
 
 1. **Client declares** a lane per topic (sane defaults, configurable) — `packages/web/src/qos.ts`.
 2. **Gateway enforces** at the per-client egress — `gateway/qos.py`'s priority outbox, wired into
@@ -76,8 +70,7 @@ real-time while the heavy stream conflates to its latest frame:
 **Pose latency collapses 1294 ms → 4 ms (~300×) and its rate is restored to full (55 → 99.5 Hz) — while
 the lidar keeps flowing (120 → 116 Hz, now conflated to its freshest frame).** OFF, the heavy stream fills
 the per-client FIFO and pose queues ~1.3 s behind it; ON, pose drains first and the heavy stream conflates
-to latest instead of building a stale backlog. *Important data survives a bad link* — and nothing sits
-stale, because conflation keeps even the bulk lane fresh.
+to latest instead of building a stale backlog.
 
 ### The catch that makes it real: keep the queue AT the gateway
 

@@ -1,18 +1,10 @@
 #!/usr/bin/env python3
-# dimoscope data plane — the WebSocket the browser SDK (@dimos/topics) talks to.
-#
-# Speaks the gateway control protocol, so the SDK is byte-identical:
-#   • hello{topics,label,rpc}              on connect
-#   • subscribe / unsubscribe / list / rate   on-demand topic filtering + per-topic downsample
-#   • teleop / stop / goal                 structured + SAFE (velocity clamp + TTL deadman + stop-on-disconnect)
-#   • rpc                                  whitelisted dimos @rpc bridge
-# Reads samples from the shared Bus (LCM+Zenoh merged) — it taps no bus of its own. Each client gets
-# its own queue + writer task, so one slow browser can't head-of-line-block the others.
-#
-# EGRESS goes to BOTH backends: teleop Twist / nav goal PointStamped are published over Zenoh *and*
-# LCM (each via dimos make_transport with an explicit per-backend config), so whichever transport the
-# robot listens on receives them; the other publish is harmless. RPC uses the service's default backend
-# (DIMOS_TRANSPORT) — the robot answering RPC runs one transport, matched by how you launch the service.
+# dimoscope data plane — the WebSocket the browser SDK (@dimos/web) talks to. Speaks the gateway
+# control protocol (hello / subscribe / unsubscribe / list / rate / teleop / stop / goal / rpc).
+# teleop/goal are SAFE (velocity clamp + TTL deadman + stop-on-disconnect); rpc is a whitelisted bridge.
+# Reads from the shared Bus (LCM+Zenoh merged); each client gets its own queue + writer task so one slow
+# browser can't head-of-line-block the others. Egress publishes teleop/goal over BOTH backends (the
+# unused one is harmless); rpc uses the service's default backend (DIMOS_TRANSPORT).
 from __future__ import annotations
 
 import asyncio

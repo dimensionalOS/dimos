@@ -1,15 +1,6 @@
-// QoS lanes — "sane defaults but configurable", grounded in DDS / ROS 2 named profiles.
-//
-// A robot emits topics with very different needs: pose at 100 Hz (freshness > completeness), commands
-// (every message, in order), status (latest value on connect). ROS 2 ships *named QoS profiles*
-// (SensorData / Default / Services) for exactly this — declare a sane default per topic, override when
-// you must. We mirror that as four **lanes**, each a preset over the `Qos` knobs (`reliability`,
-// `depth`, `priority`, `conflation`). `defaultLane` auto-assigns by topic/type so zero-config
-// works; `resolveQos` merges per-topic overrides; `applyCaps` degrades to what a transport honors.
-//
-// Priority is what the gateway's per-client scheduler enforces under contention (see gateway/data.py):
-// it drains higher-priority lanes first and sheds the lowest-priority best_effort topics first — so the
-// declaration here is only meaningful because the gateway enforces it at the browser-link bottleneck.
+// QoS lanes ≈ ROS 2 named profiles (command·sensor·default·bulk). defaultLane auto-assigns by
+// topic/type, resolveQos merges overrides, applyCaps degrades to what a transport honors. Priority
+// only matters because the gateway's per-client scheduler enforces it under load (gateway/data.py).
 import type { Qos } from "./types.ts";
 import type { QosCaps } from "./types.ts";
 

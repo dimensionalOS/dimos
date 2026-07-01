@@ -1,33 +1,14 @@
 #!/usr/bin/env python3
-# Benchmark load generator — the data source for the in-browser bench (app/src/bench.tsx +
-# app/src/panels/BenchTab.tsx). A configurable dimos Module that emits timestamped,
-# sequence-tagged streams so the browser bench can measure latency, throughput, bandwidth,
-# jitter and loss across transports and delivery mechanisms. Publishes a large Image topic
-# (up to ~10 MB) and per-message seq tags, and is exposed as a blueprint.
+# Benchmark load generator for the in-browser bench: a configurable dimos Module emitting timestamped,
+# seq-tagged streams so the browser can measure latency/throughput/jitter/loss across transports.
+# Tuned by env (BENCH_HZ, BENCH_IMG_HZ, BENCH_IMG_BYTES, BENCH_POSE_TOPICS, ...); also a blueprint.
+# Twin of the coordinator-wired `bench-load` (dimos/robot/benchmark/bench_load.py) — same /bench/* wire.
 #
-# Run it:  deno task serve  (the one service on :8080)  +  deno task scope:bench  (this module),
-# then open http://localhost:5173/bench.html (or the in-app Bench tab).
-#
-# TWIN of the `bench-load` blueprint (dimos/robot/benchmark/bench_load.py): identical /bench/* wire
-# contract + per-topic frame_id=str(seq). bench-load is the coordinator-wired, RPC-controllable app
-# driver (BenchPanel Start/Stop); THIS standalone module avoids a full coordinator boot per run.
-#
-# Standalone (what `deno task scope:bench` drives), tuned by env:
-#   DIMOS_TRANSPORT=zenoh|lcm  BENCH_HZ=200  BENCH_GRID_HZ=20 \
-#   BENCH_IMG_HZ=10  BENCH_IMG_BYTES=1000000  BENCH_POSE_TOPICS=4 \
-#   .venv/bin/python scenarios/bench.py
-#
-# As a blueprint (after registering via the all_blueprints generator —
-# `pytest dimos/robot/test_all_blueprints_generation.py`):
-#   dimos run bench-source --option rate_hz=200 --option img_hz=10 --option img_bytes=1000000
-#
-# Topics (names match @dimos/topics/bench scenarios; leading "/" stripped on zenoh):
-#   /bench/p0../pN  PoseStamped   @ rate_hz   small, high-rate   (ts + seq stamped)
-#   /bench/grid     OccupancyGrid @ grid_hz   medium (~3.7 KB)   (ts + seq stamped)
-#   /bench/img      Image         @ img_hz    large (~img_bytes) (ts + seq stamped)
-#
-# Each message carries `ts` (publish wall-clock, seconds) → one-way latency, and
-# `frame_id=str(seq)` (per-topic monotonic counter) → exact drop/gap detection.
+# Topics (names match @dimos/web/bench; leading "/" stripped on zenoh). Each stamps `ts` (publish
+# wall-clock, seconds) → one-way latency, and `frame_id=str(seq)` (per-topic counter) → drop/gap detection:
+#   /bench/p0../pN  PoseStamped   @ rate_hz   small, high-rate
+#   /bench/grid     OccupancyGrid @ grid_hz   medium (~3.7 KB)
+#   /bench/img      Image         @ img_hz    large (~img_bytes)
 import os
 import time
 

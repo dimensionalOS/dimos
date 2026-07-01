@@ -1,56 +1,31 @@
-// DimosClient — the transport-agnostic browser API for DimOS topics.
-//
-//   const dimos = createDimosClient();                 // default transport = ws()
-//   await dimos.connect("ws://localhost:8080");
-//   dimos.subscribe("/odom", (m) => use(m.data, m.ts)); // one { data, ts, meta } envelope everywhere
-//   dimos.topic("/odom").getLatest();                   // rich per-topic handle
-//   dimos.teleop(0.5, 0.0);                             // structured + safe (gateway clamps/watchdogs)
-//   await dimos.modules.GO2Connection.standup();        // typed Proxy over @rpc
-//
-// The transport lives IN createDimosClient (default `ws()`), `connect(url)` is a METHOD, and the
-// combine (e.g. `webtransport()` = WS control + WT data) is encapsulated inside the adapter — the
-// client stays transport-agnostic. For typed topics + modules pass the generated maps — topics infer
-// their message type, modules autocomplete target + method:
-//   const dimos = createDimosClient<DimosTopics, DimosCommands>();
-//   await dimos.modules.GO2Connection.standup();      // target + method typed; typos are errors
+// Transport-agnostic browser API for DimOS topics. Transport is chosen at
+// createDimosClient({transport}) (default ws()) and wired at connect(url); pass the generated
+// <DimosTopics, DimosCommands> maps for typed topics + modules. Usage: see README.
 import { createGatewayWsTransport } from "./transports/gatewayWs.ts";
-import { decodeBody, seqFrom, srcTsMs } from "./decode.ts";
+import { decode as msgsDecode } from "@dimos/msgs";
+import { seqFrom, srcTsMs } from "./decode.ts";
 import { createTopic, type Topic } from "./topic.ts";
 import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "./transport.ts";
 import type { Message, MessageMeta, Qos, Subscription, TopicInfo, TopicStats } from "./types.ts";
 
-/** A transport built lazily from the connect() URL. `ws()` / `webtransport()` return one of these, so
- *  the transport is chosen at `createDimosClient({ transport })` time but wired at `connect(url)`. */
+/** A transport built lazily from the connect() URL. */
 export type TransportFactory = (url: string) => Transport;
 
-/** The default transport: one WebSocket for control + data. `connect("ws://host:8080")` (the `/ws`
- *  path is appended if missing). The universal production backbone + the duplex control plane. */
+/** Default transport: one WebSocket for control + data (appends `/ws` if missing). */
 export const ws = (opts?: { reconnect?: boolean }): TransportFactory => (url) =>
   createGatewayWsTransport({
     url: /\/ws$/.test(url) ? url : url.replace(/\/+$/, "") + "/ws",
     reconnect: opts?.reconnect,
   });
 
-/** Like `ws()`, but asks the gateway to decode + ship JSON (rosbridge-style) instead of the binary
- *  self-describing frame — so the client renders ANY type (incl. user messages not in @dimos/msgs) with
- *  zero rebuild. Costs ~2.6× the bytes on the wire vs the client-decode default (see docs/benchmarks.md §5). */
-export const wsServerJson = (opts?: { reconnect?: boolean }): TransportFactory => (url) =>
-  createGatewayWsTransport({
-    url: /\/ws$/.test(url) ? url : url.replace(/\/+$/, "") + "/ws",
-    reconnect: opts?.reconnect,
-    decode: "server-json",
-  });
-
-/** Default topic map for an untyped client: no known keys, so `keyof … & string` is `never` and the
- *  key-based overloads drop out — an untyped client accepts any string. */
+/** Untyped client topic map: no known keys, so the key-based overloads accept any string. */
 export type EmptyTopicMap = Record<never, never>;
 /** Shape of an untyped module/RPC surface: any module, any method, any args. */
 export type ModuleMap = Record<string, Record<string, (...args: any[]) => Promise<any>>>;
 export type EmptyModuleMap = Record<never, never>;
 
-/** A codegen RPC descriptor (`{ args, ret }`, i.e. `RpcCall`) → the callable it denotes. args/ret are
- *  `unknown` today (target + method are what's typed); they tighten for free if a descriptor ever carries
- *  real types (e.g. `{ args: [number]; ret: boolean }` → `(n: number) => Promise<boolean>`). */
+/** A codegen RPC descriptor (`{ args, ret }`) → the callable it denotes. args/ret are `unknown` today
+ *  (only target + method are typed) but tighten for free if a descriptor ever carries real types. */
 type RpcFn<C> = C extends { args: infer A extends unknown[]; ret: infer R }
   ? (...args: A) => Promise<R>
   : (...args: unknown[]) => Promise<unknown>;
@@ -147,10 +122,10 @@ export const createDimosClient = <TMap = EmptyTopicMap, TCmds = EmptyModuleMap>(
     if (!t && firehose.size === 0) return; // discovered but nobody listening
     let data: unknown;
     if (s.decoded !== undefined) {
-      data = s.decoded; // server already decoded it (server-json mode)
+      data = s.decoded; // pre-decoded injection (unit tests); no transport sets this
     } else {
       try {
-        data = decodeBody(s.payload);
+        data = msgsDecode(s.payload);
       } catch {
         return; // unknown type / fragment
       }

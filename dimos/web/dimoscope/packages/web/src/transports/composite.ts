@@ -1,10 +1,6 @@
 /// <reference lib="dom" />
-// webtransport() — the production "prefer the best wire" transport. It runs on ONE WebTransport
-// connection (data via QUIC datagrams/streams → no TCP head-of-line blocking, AND control —
-// subscribe/QoS/teleop/goal/rpc — over its bidirectional control stream), and **transparently falls
-// back to a plain WebSocket** when the browser lacks WebTransport (Safari/older) OR when WT can't
-// connect (e.g. UDP blocked by a firewall — common even in Chrome). WS does everything, so teleop
-// always works; when WT is available you simply get its no-HoL/lower-jitter behaviour on a bad link.
+// webtransport() — one WebTransport connection for data + control, with a transparent WebSocket
+// fallback when the browser lacks WT or UDP is blocked. WS always works; WT just adds no-HoL/lower jitter.
 import { createGatewayWsTransport } from "./gatewayWs.ts";
 import { createWebTransportTransport } from "./webTransport.ts";
 import type { TransportFactory } from "../client.ts";

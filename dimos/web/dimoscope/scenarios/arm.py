@@ -6,13 +6,9 @@
 #   /arm/imu           Imu              @500 Hz   wrist IMU, tiny, EXTREME rate
 #   /arm/trajectory    JointTrajectory  @  2 Hz   a 10-point plan, bursty
 #
-# Data-path axis: MESSAGE-RATE CEILING — ~850 tiny msgs/s. This stresses per-message overhead
-# (framing, wakeups) rather than bandwidth. /arm/ee_pose renders as an arrow in WorldView; the
-# high-rate telemetry is best seen in the Bench tab's live monitor (hz + latency sparkline) and the
-# Inspector (JSON). NOTE: JointTrajectory carries no ts/frame_id (it uses .timestamp), so the bench
-# reports n/a latency/loss for /arm/trajectory by design — it still streams + inspects. (A force/
-# torque WrenchStamped would be the natural F/T topic, but it has no LCM wire codec, so the 500 Hz
-# stream is a wrist Imu — the canonical high-rate arm telemetry.)
+# Data-path axis: MESSAGE-RATE CEILING (~850 tiny msgs/s) — stresses per-message overhead, not bandwidth.
+# JointTrajectory has no ts/frame_id (uses .timestamp), so the bench reports n/a latency/loss for
+# /arm/trajectory by design. Wrist Imu (not WrenchStamped, which lacks an LCM codec) is the 500 Hz stream.
 #
 # Run (from dimos/web/dimoscope):  DIMOS_TRANSPORT=zenoh uv run python scenarios/arm.py
 from common import (

@@ -260,15 +260,6 @@ body {
   display: flex;
   height: 320px;
 }
-/* Rerun = full-page 3D mode: spans the whole row below the topbar (sidebar + side-col unmounted) */
-.rerun-full {
-  grid-row: 2;
-  grid-column: 1 / -1;
-  display: flex;
-  padding: 16px;
-  min-height: 0;
-}
-
 /* Bench = full-page interactive benchmark: spans the row below the topbar, scrolls. */
 .bench-full {
   grid-row: 2;
@@ -516,85 +507,61 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-/* per-topic QoS controls (lane preset + maxHz) — declared idiomatically via resolveQos → setQos */
+/* per-topic QoS controls — the full Qos surface, grouped rate / delivery / scheduler */
 .stream-qos {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
   padding: 8px;
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
 }
-.qos-ctl {
+.qos-row {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 .qos-lbl {
   color: var(--muted);
   font: 600 10px var(--mono);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  width: 42px;
+  letter-spacing: 0.03em;
+  width: 58px;
   flex: none;
 }
-.qos-select {
-  appearance: none;
-  -webkit-appearance: none;
-  background: var(--elev);
-  color: var(--text);
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  padding: 3px 10px;
-  font: 500 11px var(--mono);
-  cursor: pointer;
+.qos-grp-lbl {
+  color: var(--muted);
+  font: 600 9px var(--sans);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-top: 4px;
+  opacity: 0.7;
 }
-.qos-select:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-}
-.qos-hz {
+.qos-seg {
   display: flex;
   gap: 4px;
-}
-.qos-hz .tab {
-  padding: 2px 8px;
-  min-width: 30px;
-}
-.qos-eff {
-  font: 11px var(--mono);
-}
-/* contention demo banner + boosted-card highlight */
-.contention-bar {
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  background: var(--panel);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.contention-on {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 6%, var(--panel));
-}
-.contention-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
   flex-wrap: wrap;
 }
-.contention-title {
-  font: 500 12px var(--mono);
-  color: var(--text);
+.qos-seg .tab {
+  padding: 2px 8px;
+  min-width: 28px;
+  font-size: 11px;
 }
-.contention-hint {
-  line-height: 1.5;
+.qos-seg .tab:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
-.stream-boosted {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent), var(--shadow);
+.qos-note {
+  font-style: italic;
+}
+.qos-summary {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  color: var(--signal);
+  line-height: 1.4;
 }
 /* block flow (NOT flex column) so rows keep their natural height + the box actually scrolls once
    full — a flex column would shrink every row to fit the height and clip the text to nothing.

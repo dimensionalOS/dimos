@@ -49,48 +49,28 @@ export interface TopicStats {
   count: number;
 }
 
-/** A discovery snapshot of one topic — the immutable `{topic, type}` metadata the SDK learns off
- *  the bus. Distinct from `Topic<T>` (topic.ts), which is the stateful subscription handle
- *  (handlers, rate-limit, stats) created on demand by `client.topic<T>(name)`. `client.topic()`
- *  itself stays string-keyed; strong per-message typing is opt-in — the blueprint codegen
- *  (`packages/web/scripts/genTypes.ts`) turns these pairs into a `DimosTopics` map a consumer annotates against
- *  manually (`const p: DimosTopics["/odom"] = client.topic("/odom").getLatest()!`). */
+/** Discovery snapshot of one topic — the immutable `{topic, type}` the SDK learns off the bus.
+ *  Distinct from the stateful `Topic<T>` handle (topic.ts). The blueprint codegen
+ *  (`packages/web/scripts/gen_types.py`) turns these pairs into the typed `DimosTopics` map. */
 export interface TopicInfo {
   topic: string;
   type: string;
 }
 
 /**
- * Per-subscription Quality-of-Service. Two tiers, both actually honored end-to-end:
- *
- *  • CLIENT-SIDE, TRANSPORT-AGNOSTIC — `maxHz` + `rateLimit` location + `conflation`. These work
- *    identically on every transport (they live in topic.ts).
- *  • GATEWAY-SCHEDULER — `priority` / `reliability` / `depth`. The gateway-WS adapter forwards these
- *    in its subscribe op and the Python gateway's per-client priority outbox honors them
- *    (gateway/qos.py `declared_to_class`), so important topics survive a saturated link.
- *    Transports without that server outbox (zenoh-ts, webrtc, sse, http-poll) advertise no
- *    `caps.qos.transport`, so `applyCaps` (qos.ts) strips these before they'd be sent.
- *
- * Per-provider QoS knobs that no transport honors yet (zenoh congestion/express, WebRTC
- * ordered/maxRetransmits — the latter set per-channel via the adapter's deps, not per-subscription)
- * are intentionally NOT modeled here; add them when a transport actually reads them.
+ * Per-subscription Quality-of-Service, honored in two tiers:
+ *  • client-side (transport-agnostic) — `maxHz` / `rateLimit` / `conflation` (see topic.ts).
+ *  • gateway-scheduler — `priority` / `reliability` / `depth`, forwarded only by transports whose
+ *    `caps.qos.transport` advertises them; `applyCaps` (qos.ts) strips them elsewhere.
  */
 export interface Qos {
   /** Cap delivery to at most this many Hz (0/undefined = unlimited). */
   maxHz?: number;
-  /**
-   * WHERE `maxHz` is enforced:
-   *  • "server" (default) — ask the gateway to downsample → fewer bytes on the wire.
-   *  • "client" — gateway keeps sending; the client drops locally → bytes unchanged,
-   *    only delivery/CPU is capped. (zenoh-ts/webrtc are always client-side: no
-   *    per-subscriber server downsample — see each adapter's `caps.qos`.)
-   */
+  /** Where `maxHz` is enforced: "server" (default) downsamples on the wire; "client" drops locally
+   *  (bytes unchanged). Client-only transports (zenoh-ts/webrtc) are always "client". */
   rateLimit?: "server" | "client";
-  /**
-   * Delivery discipline. The SDK never queues (delivery is synchronous, newest-wins),
-   * so this is a label over `maxHz`, not a buffer: "latest" = today's default (drop
-   * intermediates under a rate cap), "all" = deliver every message (forces maxHz=0).
-   */
+  /** Delivery discipline — a label over `maxHz`, not a buffer (delivery is synchronous, newest-wins):
+   *  "latest" (default) drops intermediates under a rate cap; "all" delivers every message (maxHz=0). */
   conflation?: "latest" | "all";
   // ── gateway-scheduler (honored where caps.qos.transport advertises them) ───────
   /** Scheduler priority band — the gateway drains higher first and sheds lower first under

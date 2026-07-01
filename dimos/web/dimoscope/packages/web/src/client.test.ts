@@ -1,8 +1,6 @@
 // Client tests — two kinds in one file:
-//   1. Runtime unit tests (Deno.test) for the decode-LOCATION axis: a server-json sample carries a
-//      pre-decoded `decoded` object (the gateway did the work); the client must deliver it directly and
-//      bill its bandwidth as the JSON wire size. The binary path (no `decoded`) still decodes via
-//      @dimos/msgs.
+//   1. Runtime unit tests (Deno.test): a sample with a pre-decoded `decoded` object (the test-injection
+//      seam) is delivered directly; the binary path (no `decoded`) decodes via @dimos/msgs.
 //   2. Compile-only type tests (the `_`-prefixed async functions at the bottom): no runtime — they're
 //      type-checked by `deno task check` and never executed. They prove the client generics bite:
 //      `createDimosClient<TMap, TCmds>()` gives typed topic handles (read) + a typed `client.modules`
@@ -36,7 +34,7 @@ function fakeTransport() {
   return { t, emit: (s: RawSample) => sampleCb?.(s) };
 }
 
-Deno.test("server-json: client delivers the pre-decoded object directly (skips decodeBody)", async () => {
+Deno.test("pre-decoded: client delivers an injected `decoded` object directly (no client decode)", async () => {
   const { t, emit } = fakeTransport();
   const client = createDimosClient({ transport: () => t });
   await client.connect("test");
@@ -73,7 +71,7 @@ Deno.test("client-binary: a sample with no `decoded` and an undecodable payload 
   client.topic("/x").subscribe(() => {
     calls++;
   });
-  // 3 bytes — too short for the 8-byte type hash, so decodeBody throws → silently dropped.
+  // 3 bytes — too short for the 8-byte type hash, so decode throws → silently dropped.
   emit({ topic: "/x", type: "?", payload: new Uint8Array([1, 2, 3]), recvTs: Date.now() });
   assert.equal(calls, 0);
 });
@@ -115,7 +113,7 @@ async function _untyped() {
 
 // Modules/RPC-write side: a real `DimosCommands`-shaped map makes `client.modules.<Target>.<method>`
 // autocompleted + typo-checked and lifted to a callable, while an untyped client stays permissive (the
-// `client.call` escape hatch). Mirrors what `generateCommandTypes` (packages/web/scripts/genTypes.ts)
+// `client.call` escape hatch). Mirrors what `generateCommandTypes` (packages/web/scripts/gen_types.py)
 // emits: target → method → RpcCall descriptor.
 type Commands = {
   ScopeNav: {

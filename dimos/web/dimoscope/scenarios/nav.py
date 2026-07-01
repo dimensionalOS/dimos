@@ -6,10 +6,9 @@
 #   /nav/cloud  PointCloud2    @ 10 Hz   ~200 KB           (a lidar-like sweep)
 #   /nav/map    OccupancyGrid  @  1 Hz   ~40 KB            (a 200×200 costmap)
 #
-# Data-path axis: SIZE-MIX — a tiny high-rate pose interleaved with a periodic big map/cloud. This
-# is the QoS-priority story (keep pose crisp while the bulk degrades). All four auto-render in the
-# app's WorldView 2D (arrow + trail, path, height-coloured points, grey grid) — by message TYPE, so
-# the topic names don't matter.
+# Data-path axis: SIZE-MIX — a tiny high-rate pose interleaved with a periodic big map/cloud (the
+# QoS-priority story: keep pose crisp while the bulk degrades). All four auto-render in WorldView by
+# message TYPE, so the topic names don't matter.
 #
 # Run (from dimos/web/dimoscope):  DIMOS_TRANSPORT=zenoh uv run python scenarios/nav.py
 from common import (

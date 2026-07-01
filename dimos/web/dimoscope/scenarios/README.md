@@ -1,10 +1,9 @@
 # Scenario blueprints — 3 real-world data profiles, end-to-end
 
-Three self-contained dimos publisher blueprints, each a **different real-world robot use-case** with a
-**completely different topic namespace, message-type set, and data profile**. They exist to show the
-whole dimoscope data path — discover → visualize → type → benchmark — working across *very* different
-workloads, and to demonstrate **run-one / stop / run-another**: the gateway taps the bus, so the browser's
-live topic set just follows whatever is publishing.
+Three self-contained dimos publisher blueprints — navigation, manipulation, perception — each with a
+different topic namespace and data profile, exercising the whole dimoscope path (discover → visualize →
+type → benchmark) across distinct workloads. The gateway taps the bus, so the browser's live topic set
+follows whatever is publishing (run one, stop, run another).
 
 | scenario | namespace | topics (type · rate · size) | data-path axis | primary viewer |
 |---|---|---|---|---|
@@ -12,8 +11,8 @@ live topic set just follows whatever is publishing.
 | **scope-arm** — manipulation | `/arm/*` | `joint_states` JointState·250 Hz · `ee_pose` PoseStamped·100 Hz · `imu` Imu·500 Hz·tiny · `trajectory` JointTrajectory·2 Hz | **message-rate ceiling** (~850 msg/s) | Bench monitor (hz/latency) + ee_pose arrow |
 | **scope-cam** — perception | `/cam/*` | `rgb` Image·30 Hz·~550 KB · `depth` Image·15 Hz · `points` PointCloud2·10 Hz·~1 MB · `detections` Detection2DArray·30 Hz | **bandwidth / bufferbloat** (the WebTransport story) | CameraView (rgb) + WorldView points |
 
-Each reuses **standard `dimos.msgs` types**, so the app auto-renders them by *type* (no app code per
-scenario) and the `packages/web/scripts/genTypes.ts` codegen types every topic with **0 untyped**.
+Each reuses standard `dimos.msgs` types, so the app auto-renders them by type (no app code per scenario)
+and the `packages/web/scripts/gen_types.py` codegen types every topic with 0 untyped.
 
 ## Run it
 
@@ -39,14 +38,12 @@ ones, **CameraView** shows `/cam/rgb`, and clicking any topic shows it as JSON i
 Transport is `DIMOS_TRANSPORT=zenoh` by default (matches `deno task serve`/`sim`); `DIMOS_TRANSPORT=lcm`
 also works — the gateway taps both.
 
-### Switching scenarios — what "just works" and one caveat
+### Switching scenarios
 
-Stop a scenario and start another: the **data** switches live (the previous topics go silent, the new
-ones flow — the Bench monitor, Inspector and CameraView follow immediately). **Caveat:** the gateway's
-discovery registry (`gateway/bus.py` `Bus.topics`) never evicts, so topic **names** accumulate for the
-life of the gateway process, and WorldView's "first topic of a type" pick can latch onto a now-stale
-name. For a pristine topic list / clean WorldView auto-pick, **restart `deno task serve`** between
-scenarios (a fresh bus registry). The data-level switch needs no restart.
+Stop a scenario and start another and the data switches live (Bench monitor, Inspector and CameraView
+follow immediately). The gateway's discovery registry (`gateway/bus.py` `Bus.topics`) never evicts, so
+topic names accumulate for the life of the process and WorldView's "first topic of a type" pick can
+latch onto a stale name — restart `deno task serve` for a pristine topic list. The data switch needs no restart.
 
 ## Types — generated from the blueprint (static, no gateway)
 
@@ -86,10 +83,9 @@ http://localhost:5173/?gw=<vps-host>:8080
 All five transports honor `?gw`; the page auto-uses `wss` when served over HTTPS. WebTransport
 additionally needs the QUIC port (`WT_PORT`, default 8443) reachable + the `/cert` hash endpoint.
 
-## Recommended QoS lanes (handoff to the QoS-rules map)
+## Recommended QoS lanes
 
-The scenario namespaces are exactly the "custom per-blueprint topics" the gateway's QoS rules classify.
-Suggested `qos.rules.json` entries (owned by the QoS work — this is a recommendation, not an edit):
+Suggested `qos.rules.json` entries for the scenario topics:
 
 ```jsonc
 {

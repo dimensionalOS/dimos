@@ -1,20 +1,16 @@
 #!/usr/bin/env python3
-# dimoscope gateway — the whole backend in ONE process.
+# dimoscope gateway — the whole backend in one process, everything on by default. Serves the built
+# frontend + every transport on one HTTP port (+ one UDP port for WebTransport/QUIC). Ingest taps both
+# LCM and Zenoh (gateway/bus.py). Run:  python -m gateway
 #
-# Serves the built frontend (the SDK consumer) AND every transport on one HTTP port (+ one UDP port
-# for WebTransport, which rides QUIC and can't share TCP). Everything is on by default — no flags:
-#
-#   GET  /                 the built web app (app/dist)            ← the SDK that consumes the server
-#   WS   /ws               data plane (topics + teleop/goal/rpc)   ← @dimos/topics default
+#   GET  /                 the built web app (app/dist)
+#   WS   /ws               data plane (topics + teleop/goal/rpc)   ← @dimos/web default
 #   WS   /media            camera: webrtc / webcodecs / jpeg
 #   WS   /rtc              WebRTC DataChannel (bench)
 #   GET  /sse              Server-Sent Events (bench)
 #   GET  /poll             HTTP long-poll (bench)
 #   GET  /cert             WebTransport cert SHA-256 (browser needs it before connecting)
 #   QUIC :WT_PORT/UDP      WebTransport (bench)
-#
-# Ingest taps BOTH LCM and Zenoh at once (see gateway/bus.py), so topics show up no matter which
-# transport the robot/sim uses. Run:  python -m gateway
 from __future__ import annotations
 
 import asyncio

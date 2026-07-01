@@ -46,19 +46,6 @@ export interface MediaChannel {
   label?: string;
 }
 
-/** Does THIS browser support a given delivery kind? (jpeg is the universal floor.) */
-export function browserSupports(kind: MediaKind): boolean {
-  switch (kind) {
-    case "webcodecs":
-      // Chunks ride the gateway WS (not WebTransport), so we only need the decoder + chunk types.
-      return "VideoDecoder" in globalThis && "EncodedVideoChunk" in globalThis;
-    case "webrtc":
-      return "RTCPeerConnection" in globalThis;
-    case "jpeg":
-      return true;
-  }
-}
-
 export interface MediaDeps {
   client: DimosClient; // for the jpeg-topic floor (subscribes via client.topic)
   gatewayUrl?: string; // media node WS (WebRTC signaling / WebCodecs chunks, e.g. ws://host:8092)
@@ -75,15 +62,21 @@ export function selectMediaChannel(d: MediaDeps): MediaChannel {
   const prefer = d.prefer ?? ["webrtc", "jpeg"];
   const offered = new Set<MediaKind>(d.serverMedia ?? ["jpeg"]);
   const jpeg = () => createJpegTopicMedia({ client: d.client }); // the universal floor (no gatewayUrl)
-  // Each kind → how to build it; webcodecs/webrtc need the media node URL, so they return undefined
-  // (skip) without one. The loop just picks the first kind the SERVER offers AND the BROWSER supports.
+  // Does this browser support the kind? (webcodecs chunks ride the WS, so decoder types suffice.)
+  const supported: Record<MediaKind, boolean> = {
+    webcodecs: "VideoDecoder" in globalThis && "EncodedVideoChunk" in globalThis,
+    webrtc: "RTCPeerConnection" in globalThis,
+    jpeg: true,
+  };
+  // webcodecs/webrtc need the media node URL, else they skip. Pick the first kind the SERVER offers
+  // AND the BROWSER supports.
   const build: Record<MediaKind, () => MediaChannel | undefined> = {
     webcodecs: () => d.gatewayUrl ? createWebCodecsMedia({ gatewayUrl: d.gatewayUrl }) : undefined,
     webrtc: () => d.gatewayUrl ? createWebRtcMedia({ gatewayUrl: d.gatewayUrl }) : undefined,
     jpeg,
   };
   for (const kind of prefer) {
-    if (!offered.has(kind) || !browserSupports(kind)) continue;
+    if (!offered.has(kind) || !supported[kind]) continue;
     const ch = build[kind]();
     if (ch) return ch;
   }
