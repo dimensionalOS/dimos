@@ -19,10 +19,13 @@ import rerun.blueprint as rrb
 from scipy.ndimage import sobel
 
 
-VOX_SIZE     = 0.020   # 2.0 cm final voxels
+VOX_SIZE     = 0.020   # 2.0 cm per-frame voxels (unchanged)
 _Z_REL_HI   =  0.5    # camera-relative ceiling (0.5 m above camera)
 _FLOOR_Z    =  0.03   # absolute world-Z floor cutoff (3 cm above gravity-aligned floor)
 _GRAD_THRESH =  0.30  # Sobel gradient magnitude threshold — pixels above this are edge artifacts
+_MAP_VOX    =  0.050  # 5 cm world-map cells — coarser than per-frame to absorb VIO pose noise
+_MIN_OBS    =  2      # observations in distinct frames before a cell is marked occupied
+_MAP_EVERY  =  5      # log world/world_map every N frames
 
 # ── Voxel key packing ────────────────────────────────────────────────────────
 _VOFF  = np.int64(100_000)
@@ -39,6 +42,92 @@ def _filter_isolated(xyz: np.ndarray, voxel: float = 0.05, min_pts: int = 2) -> 
     vk = np.floor(xyz / voxel).astype(np.int32)
     _, inv, cnt = np.unique(_pack(vk), return_inverse=True, return_counts=True)
     return xyz[cnt[inv] >= min_pts]
+
+
+# ── Persistent world map ─────────────────────────────────────────────────────
+class WorldMap:
+    """Pose-aligned incremental voxel map.
+
+    Each 5 cm cell stores:
+      xyz   — running-mean world position (converges to true surface on revisit)
+      count — number of distinct frames that observed this cell
+      last  — most recent frame index
+
+    A cell is only considered occupied once count >= _MIN_OBS, which filters
+    single-frame NEURAL/stereo artifacts that survive the per-frame pipeline.
+
+    update() is fully vectorised except for the Python dict inserts on new cells,
+    which shrink toward zero as the scene is explored.
+    """
+
+    def __init__(self) -> None:
+        self._cap   = 200_000
+        self._xyz   = np.empty((self._cap, 3), dtype=np.float32)
+        self._count = np.zeros(self._cap, dtype=np.int32)
+        self._last  = np.zeros(self._cap, dtype=np.int32)
+        self._n     = 0
+        self._idx: dict[int, int] = {}   # voxel_key → row
+
+    def update(self, xyz_world: np.ndarray, frame: int) -> None:
+        if len(xyz_world) == 0:
+            return
+        # Re-voxelise at map resolution and dedup within this frame
+        vk   = np.floor(xyz_world / _MAP_VOX).astype(np.int32)
+        keys = _pack(vk)
+        _, first = np.unique(keys, return_index=True)
+        keys = keys[first]
+        xyz  = xyz_world[first]
+
+        # Separate existing cells from new ones via dict lookup
+        rows = np.array([self._idx.get(int(k), -1) for k in keys], dtype=np.int32)
+        ex   = rows >= 0
+        nw   = ~ex
+
+        # Vectorised update for existing cells
+        if ex.any():
+            er  = rows[ex]
+            c   = self._count[er].astype(np.float32)
+            self._xyz[er]   = self._xyz[er] * (c / (c + 1))[:, None] + xyz[ex] / (c + 1)[:, None]
+            self._count[er] += 1
+            self._last[er]   = frame
+
+        # Batch insert new cells
+        if nw.any():
+            new_xyz  = xyz[nw]
+            new_keys = keys[nw]
+            n_new    = len(new_keys)
+            if self._n + n_new > self._cap:
+                self._grow()
+            s = slice(self._n, self._n + n_new)
+            self._xyz[s]   = new_xyz
+            self._count[s] = 1
+            self._last[s]  = frame
+            for i, k in enumerate(new_keys.tolist()):
+                self._idx[int(k)] = self._n + i
+            self._n += n_new
+
+    def occupied(self) -> np.ndarray:
+        if self._n == 0:
+            return np.empty((0, 3), dtype=np.float32)
+        mask = self._count[:self._n] >= _MIN_OBS
+        return self._xyz[:self._n][mask]
+
+    def _grow(self) -> None:
+        cap2              = self._cap * 2
+        new_xyz           = np.empty((cap2, 3), dtype=np.float32)
+        new_count         = np.zeros(cap2,       dtype=np.int32)
+        new_last          = np.zeros(cap2,       dtype=np.int32)
+        new_xyz[:self._n]   = self._xyz[:self._n]
+        new_count[:self._n] = self._count[:self._n]
+        new_last[:self._n]  = self._last[:self._n]
+        self._xyz   = new_xyz
+        self._count = new_count
+        self._last  = new_last
+        self._cap   = cap2
+
+    @property
+    def size(self) -> int:
+        return self._n
 
 
 # ── Nearest-per-ray filter (live cloud denoising only) ───────────────────────
@@ -254,6 +343,8 @@ def main() -> None:
                               contents=["world/cloud", "world/camera/**"]),
             rrb.Spatial3DView(name="voxel map", origin="world",
                               contents=["world/map"]),
+            rrb.Spatial3DView(name="world map", origin="world",
+                              contents=["world/world_map"]),
         )
     ))
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
@@ -274,8 +365,9 @@ def main() -> None:
     zed.set_camera_settings(sl.VIDEO_SETTINGS.EXPOSURE, 50)
     print("camera open — Ctrl-C to quit.")
 
-    src = ZEDDepthSource(zed)
+    src       = ZEDDepthSource(zed)
     src.enable_tracking()
+    world_map = WorldMap()
 
     rt = sl.RuntimeParameters()
     rt.remove_saturated_areas = True
@@ -344,9 +436,28 @@ def main() -> None:
                     radii=0.010,
                 ))
 
+            # ── Persistent world map ──────────────────────────────────────────
+            # Feed world-frame voxels into the accumulator only once VIO has
+            # locked — before lock, pose_R=I / pose_t=0 so points are in
+            # camera frame, not world frame, and would corrupt the map.
+            if src.pose_locked and len(xyz_vox):
+                world_map.update(xyz_vox, frame)
+
+            n_occ = 0
+            if frame % _MAP_EVERY == 0:
+                occ = world_map.occupied()
+                n_occ = len(occ)
+                if n_occ:
+                    rr.log("world/world_map", rr.Points3D(
+                        positions=occ,
+                        colors=_height_color(occ[:, 2] - cam_z),
+                        radii=0.025,
+                    ))
+
             fps = frame / max(ts - t0, 1e-6)
             print(
-                f"frame={frame:5d}  cloud={len(xyz_vis):5d}  vox={len(xyz_vox):6d}"
+                f"frame={frame:5d}  cloud={len(xyz_vis):5d}  vox={len(xyz_vox):5d}"
+                f"  world={world_map.size:6d}  occ={n_occ:5d}"
                 f"  vio={'LOCKED' if src.pose_locked else 'searching'}  fps={fps:.1f}",
                 flush=True,
             )
