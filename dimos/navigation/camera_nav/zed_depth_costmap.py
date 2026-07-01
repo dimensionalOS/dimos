@@ -16,17 +16,14 @@ import numpy as np
 import pyzed.sl as sl
 import rerun as rr
 import rerun.blueprint as rrb
+from scipy.ndimage import sobel
 
 
-VOX_SIZE:      float = 0.025  # 2.5 cm final voxels
-# Obstacle height band — absolute world-Z, valid only when VIO is locked.
-# VIO with set_floor_as_origin gravity-aligns the world frame: floor = 0 m,
-# independent of camera tilt, pitch, or mounting height.
-# These are physical room constants, not camera-relative magic numbers.
-_FLOOR_CLEAR: float = 0.05   # 5 cm above world floor — excludes floor plane
-_MAX_HEIGHT:  float = 2.50   # 2.5 m absolute ceiling — excludes ceiling and floating noise
-_ISO_CELL:    float = 0.08   # 8 cm counting cell — collects ≥4 px from any real surface ≤8 m
-_ISO_MINPTS:  int   = 4      # ghost rays are 1–3 px wide; real surfaces easily exceed this
+VOX_SIZE     = 0.020   # 2.0 cm final voxels
+_Z_REL_LO   = -1.4    # camera-relative lower bound  (same as RealSense)
+_Z_REL_HI   =  0.5    # camera-relative upper bound  (same as RealSense)
+_FLOOR_RAY_Z = -0.15  # reject world-frame rays whose Z component / dist < this (same as RealSense)
+_GRAD_THRESH =  0.30  # Sobel gradient magnitude threshold — pixels above this are edge artifacts
 
 # ── Voxel key packing ────────────────────────────────────────────────────────
 _VOFF  = np.int64(100_000)
@@ -35,6 +32,14 @@ _VMASK = np.int64(0x3FFFF)
 def _pack(vkeys: np.ndarray) -> np.ndarray:
     v = (vkeys.astype(np.int64) + _VOFF) & _VMASK
     return (v[:, 0] << 36) | (v[:, 1] << 18) | v[:, 2]
+
+
+def _filter_isolated(xyz: np.ndarray, voxel: float = 0.05, min_pts: int = 2) -> np.ndarray:
+    if len(xyz) < min_pts:
+        return np.zeros((0, 3), dtype=np.float32)
+    vk = np.floor(xyz / voxel).astype(np.int32)
+    _, inv, cnt = np.unique(_pack(vk), return_inverse=True, return_counts=True)
+    return xyz[cnt[inv] >= min_pts]
 
 
 # ── Nearest-per-ray filter (live cloud denoising only) ───────────────────────
@@ -214,9 +219,14 @@ class _PoseReader:
 # ── Backprojector ─────────────────────────────────────────────────────────────
 _R_OPT_TO_LINK = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=np.float32)
 
-def project(pkt: DepthFramePacket) -> tuple[np.ndarray, np.ndarray | None]:
+def project(
+    pkt: DepthFramePacket,
+    stable: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray | None]:
     """DepthFramePacket → (xyz world-frame N×3, colors N×3 uint8 or None)."""
     valid = np.isfinite(pkt.depth)
+    if stable is not None:
+        valid = valid & stable
     if not valid.any():
         return np.empty((0, 3), dtype=np.float32), None
 
@@ -286,36 +296,39 @@ def main() -> None:
                                                width=pkt.width, height=pkt.height), static=True)
             rr.log("world/camera/depth", rr.DepthImage(pkt.depth, meter=1.0))
 
-            xyz, colors = project(pkt)
+            # ── Gradient stability filter (same as RealSense) ─────────────────
+            # Pixels where depth changes abruptly are stereo edge artifacts.
+            # Remove them before backprojection so they never enter the map.
+            depth_f  = np.where(np.isfinite(pkt.depth), pkt.depth, 0.0).astype(np.float64)
+            grad_mag = np.hypot(sobel(depth_f, axis=1), sobel(depth_f, axis=0))
+            stable   = np.isfinite(pkt.depth) & (grad_mag < _GRAD_THRESH)
+
+            xyz, colors = project(pkt, stable)
             if len(xyz) == 0:
                 frame += 1
                 continue
 
-            cam_z = float(pkt.pose_t[2])
+            cam_z   = float(pkt.pose_t[2])
+            cam_pos = pkt.pose_t
 
             # ── Live cloud: nearest-per-ray denoised ──────────────────────────
-            near    = _nearest_per_ray_idx(xyz, pkt.pose_t)
+            near    = _nearest_per_ray_idx(xyz, cam_pos)
             xyz_vis = xyz[near]
             col_vis = colors[near] if colors is not None else _height_color(xyz_vis[:, 2] - cam_z)
             rr.log("world/cloud", rr.Points3D(positions=xyz_vis, colors=col_vis, radii=0.003))
 
-            # ── Voxel map: height band → isolation → voxelise ───────────────
-            # When VIO is locked, world Z is gravity-aligned (set_floor_as_origin
-            # puts floor at 0). Absolute world-Z thresholds are then stable under
-            # any camera tilt, roll, or height change — unlike camera-relative
-            # thresholds, which shift whenever cam_z moves.
-            # Before VIO lock, world = camera_link frame (not gravity-aligned),
-            # so skip the height filter and let isolation carry the load.
-            if src.pose_locked:
-                in_band = (xyz[:, 2] > _FLOOR_CLEAR) & (xyz[:, 2] < _MAX_HEIGHT)
-            else:
-                in_band = np.ones(len(xyz), dtype=bool)
-            xyz_obs  = xyz[in_band]
-            if len(xyz_obs) >= _ISO_MINPTS:
-                vk_c            = np.floor(xyz_obs / _ISO_CELL).astype(np.int32)
-                _, inv_c, cnt_c = np.unique(_pack(vk_c), return_inverse=True,
-                                            return_counts=True)
-                xyz_obs = xyz_obs[cnt_c[inv_c] >= _ISO_MINPTS]
+            # ── Voxel map: triple filter → isolation → voxelise ──────────────
+            # Mirror the RealSense pipeline exactly:
+            #   h_rel band   — camera-relative height (works pre- and post-VIO lock)
+            #   d_z_norm     — world-Z component of unit ray; rejects floor-pointing rays
+            #   isolation    — 5 cm cells, ≥2 pts; removes single-pixel stereo ghosts
+            rays     = xyz - cam_pos
+            dist     = np.linalg.norm(rays, axis=1)
+            d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0)
+            h_rel    = xyz[:, 2] - cam_z
+            keep     = (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI) & (d_z_norm > _FLOOR_RAY_Z)
+            xyz_obs  = _filter_isolated(xyz[keep])
+            xyz_vox  = np.empty((0, 3), dtype=np.float32)
             if len(xyz_obs):
                 vk       = np.floor(xyz_obs / VOX_SIZE).astype(np.int32)
                 _, first = np.unique(_pack(vk), return_index=True)
@@ -323,13 +336,12 @@ def main() -> None:
                 rr.log("world/map", rr.Points3D(
                     positions=xyz_vox,
                     colors=_height_color(xyz_vox[:, 2] - cam_z),
-                    radii=0.012,
+                    radii=0.010,
                 ))
 
-            n_vox = len(xyz_vox) if len(xyz_obs) else 0
-            fps   = frame / max(ts - t0, 1e-6)
+            fps = frame / max(ts - t0, 1e-6)
             print(
-                f"frame={frame:5d}  cloud={len(xyz_vis):5d}  vox={n_vox:6d}"
+                f"frame={frame:5d}  cloud={len(xyz_vis):5d}  vox={len(xyz_vox):6d}"
                 f"  vio={'LOCKED' if src.pose_locked else 'searching'}  fps={fps:.1f}",
                 flush=True,
             )
