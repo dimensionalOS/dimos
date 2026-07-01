@@ -572,7 +572,7 @@ class DepthStreamer:
             radii=0.003,
         ))
 
-        # Voxelized map: same cloud, deduplicated to 5 cm voxels, same colours.
+        # Voxel map: same points and colours as live cloud, deduplicated to 5 cm grid.
         vk = np.floor(xyz_vis / 0.05).astype(np.int32)
         _, first = np.unique(_pack(vk), return_index=True)
         xyz_vox    = xyz_vis[first]
@@ -580,7 +580,7 @@ class DepthStreamer:
         rr.log("world/map", rr.Points3D(
             positions=xyz_vox,
             colors=colors_vox,
-            radii=0.025,
+            radii=0.003,
         ))
 
     def _map_worker(self) -> None:
