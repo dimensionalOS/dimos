@@ -1,23 +1,7 @@
-"""ZED Mini → persistent world-frame 3D occupancy map.
+"""ZED Mini → live cloud + per-frame voxel map.
 
-Camera-agnostic pipeline:
-
-  ZEDDepthSource     all ZED SDK calls; returns raw float32 depth (metres)
-  DepthFramePacket   one frame: depth H×W + intrinsics + VIO pose
-  GradientStabilityFilter  rejects depth-discontinuity pixels (|∇d| ≥ threshold)
-  DepthBackprojector backprojects stable pixels → world-frame XYZ
-  VoxelAccumulator   persistent map: deduplicates and exports voxels seen ≥ 2 frames
-  DepthStreamer       drives the pipeline per frame, logs to Rerun
-
-Swap ZEDDepthSource for any other DepthSource implementation to support a
-different camera — no other changes required.
-
-Rerun entities:
-  world/camera        Pinhole model (static)
-  world/camera/depth  raw depth image (float32, metres)
-  world/camera/stable gradient stability mask (white = stable pixel)
-  world/cloud         current-frame scan, height-colored
-  world/map           persistent accumulated map, height-colored
+world/cloud  nearest-per-ray denoised live cloud
+world/map    full-density cloud voxelised at VOX_SIZE — one point per occupied cell
 
 Usage:
   python -m dimos.navigation.camera_nav.zed_depth_costmap
@@ -28,86 +12,25 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
-import queue
-import threading
-
 import numpy as np
 import pyzed.sl as sl
 import rerun as rr
 import rerun.blueprint as rrb
-from scipy.ndimage import sobel
 
+
+VOX_SIZE: float = 0.05   # 5 cm voxels for the map
 
 # ── Voxel key packing ────────────────────────────────────────────────────────
-# 18-bit per axis → supports ±100 000 voxels/axis (±2 km at 2 cm resolution).
-
 _VOFF  = np.int64(100_000)
 _VMASK = np.int64(0x3FFFF)
 
-# Camera-relative height band for obstacle accumulation.
-# VIO absolute translation is unreliable (set_floor_as_origin calibration drifts),
-# so all height filtering is camera-relative: h_rel = world_Z - cam_Z.
-_Z_REL_LO: float = -1.4   # 1.4 m below camera
-_Z_REL_HI: float =  0.5   # 0.5 m above camera
-
-# Floor exclusion via ray angle.
-# The floor is always below the camera, so rays to floor points point steeply
-# downward. Ray directions are reliable even when VIO translation drifts because
-# both the camera position and the surface point are in the same VIO frame —
-# the relative vector between them is unaffected by translation error.
-# _FLOOR_RAY_Z is the Z component of the normalised ray direction below which
-# we treat the point as a floor hit. -0.30 ≈ 17° below horizontal; tune up
-# (toward 0) to be more conservative, down (toward -1) to be more permissive.
-_FLOOR_RAY_Z: float = -0.15   # tighter: rejects rays >~9° below horizontal → removes distant floor
-
-
-def _height_color(z_rel: np.ndarray) -> np.ndarray:
-    """Jet colormap over camera-relative height band [_Z_REL_LO, _Z_REL_HI].
-
-    blue  = floor level   (z_rel ≈ _Z_REL_LO, ~1.4 m below camera)
-    green = mid-height    (z_rel ≈ halfway)
-    red   = camera level  (z_rel ≈ 0) and above
-
-    z_rel = world_Z − camera_world_Z so it is always valid even before
-    set_floor_as_origin has calibrated the absolute floor height.
-    """
-    t = np.clip((z_rel - _Z_REL_LO) / (_Z_REL_HI - _Z_REL_LO), 0.0, 1.0)
-    r = np.clip(1.5 - np.abs(4 * t - 3), 0.0, 1.0)
-    g = np.clip(1.5 - np.abs(4 * t - 2), 0.0, 1.0)
-    b = np.clip(1.5 - np.abs(4 * t - 1), 0.0, 1.0)
-    return (np.column_stack([r, g, b]) * 255).astype(np.uint8)
-
-
 def _pack(vkeys: np.ndarray) -> np.ndarray:
-    """(N, 3) int32 voxel indices → unique int64 keys."""
     v = (vkeys.astype(np.int64) + _VOFF) & _VMASK
     return (v[:, 0] << 36) | (v[:, 1] << 18) | v[:, 2]
 
 
-def _filter_isolated(xyz: np.ndarray, voxel: float = 0.05, min_pts: int = 2) -> np.ndarray:
-    """Remove points that are the only hit in their voxel — stereo flying-pixel filter.
-
-    A real surface produces many pixels per voxel; a stereo edge artifact produces one.
-    voxel=5 cm gives enough area to catch the artifact without merging adjacent surfaces.
-    """
-    if len(xyz) < min_pts:
-        return np.zeros((0, 3), dtype=np.float32)
-    vk  = np.floor(xyz / voxel).astype(np.int32)
-    _, inv, cnt = np.unique(_pack(vk), return_inverse=True, return_counts=True)
-    return xyz[cnt[inv] >= min_pts]
-
-
+# ── Nearest-per-ray filter (live cloud denoising only) ───────────────────────
 def _nearest_per_ray_idx(xyz: np.ndarray, cam_pos: np.ndarray, deg: float = 3.0) -> np.ndarray:
-    """Return indices of the nearest point per angular ray bin.
-
-    Stereo can return background depth for pixels near an obstacle edge (the two
-    cameras see slightly different scenes).  These spurious points are in the same
-    ~3° angular direction as the real obstacle surface but at greater depth.
-    Sorting by depth and keeping one point per bin discards them.
-
-    Returns an index array into xyz — caller slices xyz and any aligned arrays
-    (e.g. colors) with the same indices.
-    """
     if len(xyz) == 0:
         return np.empty(0, dtype=np.intp)
     rays  = xyz - cam_pos
@@ -115,94 +38,38 @@ def _nearest_per_ray_idx(xyz: np.ndarray, cam_pos: np.ndarray, deg: float = 3.0)
     ok    = dists > 0
     if not ok.any():
         return np.empty(0, dtype=np.intp)
-
     idx_ok = np.where(ok)[0]
     dirs   = rays[ok] / dists[ok, None]
-
-    rad  = np.radians(deg)
-    az   = np.floor(np.arctan2(dirs[:, 1], dirs[:, 0]) / rad).astype(np.int32)
-    el   = np.floor(np.arcsin(np.clip(dirs[:, 2], -1.0, 1.0)) / rad).astype(np.int32)
-    keys = az.astype(np.int64) * 100_000 + el.astype(np.int64)
-
-    # sort ascending by depth; np.unique keeps first occurrence = nearest per bin
-    order = np.argsort(dists[ok])
+    rad    = np.radians(deg)
+    az     = np.floor(np.arctan2(dirs[:, 1], dirs[:, 0]) / rad).astype(np.int32)
+    el     = np.floor(np.arcsin(np.clip(dirs[:, 2], -1.0, 1.0)) / rad).astype(np.int32)
+    keys   = az.astype(np.int64) * 100_000 + el.astype(np.int64)
+    order  = np.argsort(dists[ok])
     _, first = np.unique(keys[order], return_index=True)
     return idx_ok[order[first]]
 
 
-# ── Stage 2: Geometric stability filter ──────────────────────────────────────
-
-@dataclass
-class GradientStabilityConfig:
-    gradient_threshold: float = 0.10  # m/pixel; above this → depth discontinuity → reject
-
-
-class GradientStabilityFilter:
-    """Rejects depth pixels at geometric discontinuities via Sobel gradient magnitude.
-
-    Stereo depth errors concentrate at depth discontinuities — object edges,
-    foreground/background transitions — where the two cameras see different
-    surfaces in adjacent pixels and the matcher interpolates across them.
-
-    The Sobel gradient magnitude over the depth image directly measures this:
-
-        |∇d| = sqrt( sobel_x(d)² + sobel_y(d)² )   [metres / pixel]
-
-    Flat surfaces (walls, floors, tables) have |∇d| ≈ 0 and pass cleanly.
-    Depth edges have |∇d| >> 0 and are rejected.
-
-    This is deterministic and requires no probability, weighting, or smoothing.
-    """
-
-    def __init__(self, cfg: GradientStabilityConfig | None = None) -> None:
-        self.cfg = cfg or GradientStabilityConfig()
-
-    def compute(self, depth: np.ndarray) -> np.ndarray:
-        """Return stable mask H×W (bool). True = geometrically stable pixel."""
-        valid   = np.isfinite(depth)
-        depth_f = np.where(valid, depth, 0.0).astype(np.float64)
-
-        gx = sobel(depth_f, axis=1)
-        gy = sobel(depth_f, axis=0)
-        grad_mag = np.hypot(gx, gy)
-
-        return valid & (grad_mag < self.cfg.gradient_threshold)
+# ── Height colormap ──────────────────────────────────────────────────────────
+def _height_color(z_rel: np.ndarray) -> np.ndarray:
+    t = np.clip((z_rel + 1.4) / 1.9, 0.0, 1.0)
+    r = np.clip(1.5 - np.abs(4 * t - 3), 0.0, 1.0)
+    g = np.clip(1.5 - np.abs(4 * t - 2), 0.0, 1.0)
+    b = np.clip(1.5 - np.abs(4 * t - 1), 0.0, 1.0)
+    return (np.column_stack([r, g, b]) * 255).astype(np.uint8)
 
 
-# ── Optical-frame → camera_link rotation ─────────────────────────────────────
-# ZED get_position() returns camera_link pose in world (X=fwd, Y=left, Z=up).
-# Pinhole backproject gives camera-OPTICAL frame (X=right, Y=down, Z=depth).
-# Rotate optical→link before applying VIO pose so Z=up, not Z=depth.
-_R_OPT_TO_LINK = np.array(
-    [[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=np.float32
-)
-
-
-# ── Packet contract ────────────────────────────────────────────────────────────
-
+# ── ZED data packet ──────────────────────────────────────────────────────────
 @dataclass
 class DepthFramePacket:
-    """One complete depth frame.
-
-    depth:      H×W float32, metres (forward distance). NaN = invalid.
-    xyz_cam_hw: H×W×3 float32, SDK XYZ in camera_link frame (RIGHT_HANDED_Z_UP_X_FWD).
-                When present, DepthBackprojector uses it directly — no manual math.
-    colors_hw:  H×W×3 uint8 RGB. Optional; enables colored live cloud in Rerun.
-    """
     timestamp:  float
-    depth:      np.ndarray                    # H×W float32, NaN=invalid
-    intrinsics: np.ndarray                    # [fx, fy, cx, cy] float64
+    depth:      np.ndarray          # H×W float32, NaN=invalid
+    intrinsics: np.ndarray          # [fx, fy, cx, cy]
     width:      int
     height:     int
-    pose_R:     np.ndarray                    # 3×3 float32  camera→world
-    pose_t:     np.ndarray                    # (3,) float32 camera→world
-    confidence: np.ndarray | None = field(default=None)   # H×W float32 0-100
+    pose_R:     np.ndarray          # 3×3 float32 camera→world
+    pose_t:     np.ndarray          # (3,) float32 camera→world
     xyz_cam_hw: np.ndarray | None = field(default=None)   # H×W×3 float32
     colors_hw:  np.ndarray | None = field(default=None)   # H×W×3 uint8 RGB
-
-    @property
-    def valid_fraction(self) -> float:
-        return float(np.isfinite(self.depth).mean())
 
     @property
     def K(self) -> np.ndarray:
@@ -210,31 +77,17 @@ class DepthFramePacket:
         return np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float64)
 
 
-# ── Camera source protocol ────────────────────────────────────────────────────
-#
-# Any depth camera must implement `read(ts) -> DepthFramePacket` and expose
-# `pose_locked` so the pipeline stages below are camera-agnostic.
-# Swap ZEDDepthSource for a RealSenseDepthSource and nothing else changes.
-
-# ── ZED Mini source ───────────────────────────────────────────────────────────
-
+# ── ZED source ───────────────────────────────────────────────────────────────
 class ZEDDepthSource:
-    """ZED SDK → DepthFramePacket.  No confidence filtering — raw depth only.
-
-    Only physically impossible values (inf, below MIN_DEPTH, above MAX_DEPTH)
-    are set to NaN.  All quality filtering happens downstream in the pipeline
-    (GradientStabilityFilter, _filter_isolated, VoxelAccumulator).
-    """
-
     MIN_DEPTH: float = 0.3
     MAX_DEPTH: float = 8.0
 
     def __init__(self, zed: sl.Camera) -> None:
-        self._zed       = zed
-        self._xyz_mat   = sl.Mat()
-        self._img_mat   = sl.Mat()
-        self._intr      = _IntrinsicsReader()
-        self._pose      = _PoseReader()
+        self._zed     = zed
+        self._xyz_mat = sl.Mat()
+        self._img_mat = sl.Mat()
+        self._intr    = _IntrinsicsReader()
+        self._pose    = _PoseReader()
 
     def enable_tracking(self) -> bool:
         return self._pose.enable(self._zed)
@@ -247,21 +100,16 @@ class ZEDDepthSource:
         self._intr.read(self._zed)
         self._pose.update(self._zed)
 
-        # XYZ: H×W×4 float32 in camera_link frame (RIGHT_HANDED_Z_UP_X_FWD)
-        # Channel layout: [X=fwd, Y=left, Z=up, pad]
         self._zed.retrieve_measure(self._xyz_mat, sl.MEASURE.XYZ, sl.MEM.CPU)
         xyz_raw = self._xyz_mat.get_data()[:, :, :3].astype(np.float32)
 
-        # Depth = forward distance = X channel; NaN where ZED has no valid match
         depth = xyz_raw[:, :, 0].copy()
         invalid = ~np.isfinite(depth) | (depth <= self.MIN_DEPTH) | (depth > self.MAX_DEPTH)
-        depth[invalid] = np.nan
+        depth[invalid]   = np.nan
         xyz_raw[invalid] = np.nan
 
-        # Left image for colored live cloud (BGRA → RGB)
         self._zed.retrieve_image(self._img_mat, sl.VIEW.LEFT, sl.MEM.CPU)
-        img = self._img_mat.get_data()
-        colors_hw = img[:, :, 2::-1].copy()  # BGRA → RGB uint8
+        colors_hw = self._img_mat.get_data()[:, :, 2::-1].copy()  # BGRA→RGB
 
         return DepthFramePacket(
             timestamp  = ts,
@@ -276,11 +124,7 @@ class ZEDDepthSource:
         )
 
 
-# ── Internal ZED helpers (used only by ZEDDepthSource) ───────────────────────
-
 class _IntrinsicsReader:
-    """Reads and caches ZED left-camera calibration (fixed for the session)."""
-
     def __init__(self) -> None:
         self._fx = self._fy = self._cx = self._cy = 0.0
         self._w = self._h = 0
@@ -307,24 +151,15 @@ class _IntrinsicsReader:
     @property
     def height(self) -> int: return self._h
 
-    @property
-    def K(self) -> np.ndarray:
-        return np.array(
-            [[self._fx, 0, self._cx], [0, self._fy, self._cy], [0, 0, 1]],
-            dtype=np.float64,
-        )
-
 
 class _PoseReader:
-    """ZED VIO camera→world pose.  Identity passthrough until VIO locks."""
-
     def __init__(self) -> None:
-        self._R         = np.eye(3, dtype=np.float32)
-        self._t         = np.zeros(3, dtype=np.float32)
-        self._active    = False
-        self._locked    = False
-        self._pose      = sl.Pose()
-        self._t0        = time.monotonic()
+        self._R      = np.eye(3, dtype=np.float32)
+        self._t      = np.zeros(3, dtype=np.float32)
+        self._active = False
+        self._locked = False
+        self._pose   = sl.Pose()
+        self._t0     = time.monotonic()
         self._last_warn = 0.0
 
     def enable(self, zed: sl.Camera) -> bool:
@@ -333,7 +168,7 @@ class _PoseReader:
         tp.set_floor_as_origin = True
         ok = zed.enable_positional_tracking(tp) == sl.ERROR_CODE.SUCCESS
         self._active = ok
-        print("VIO tracking enabled" if ok else "VIO tracking failed — running in camera frame")
+        print("VIO tracking enabled" if ok else "VIO tracking failed")
         return ok
 
     def update(self, zed: sl.Camera) -> None:
@@ -368,283 +203,33 @@ class _PoseReader:
     def locked(self) -> bool: return self._locked
 
 
-# ── Stage 4: Backprojector ────────────────────────────────────────────────────
+# ── Backprojector ─────────────────────────────────────────────────────────────
+_R_OPT_TO_LINK = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=np.float32)
 
-class DepthBackprojector:
-    """DepthFramePacket → (xyz N×3 world-frame, colors N×3 uint8).
+def project(pkt: DepthFramePacket) -> tuple[np.ndarray, np.ndarray | None]:
+    """DepthFramePacket → (xyz world-frame N×3, colors N×3 uint8 or None)."""
+    valid = np.isfinite(pkt.depth)
+    if not valid.any():
+        return np.empty((0, 3), dtype=np.float32), None
 
-    Fast path (ZEDDepthSource): pkt.xyz_cam_hw is already SDK-computed in
-    camera_link frame (RIGHT_HANDED_Z_UP_X_FWD). Just apply the VIO transform.
+    if pkt.xyz_cam_hw is not None:
+        xyz_cam = pkt.xyz_cam_hw[valid]
+    else:
+        d = pkt.depth
+        H, W = d.shape
+        fx, fy, cx, cy = pkt.intrinsics
+        uu, vv = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32))
+        dd = d[valid]
+        xyz_opt = np.column_stack([(uu[valid]-cx)*dd/fx, (vv[valid]-cy)*dd/fy, dd]).astype(np.float32)
+        xyz_cam = xyz_opt @ _R_OPT_TO_LINK.T
 
-    Fallback (any other source): manual pinhole backproject + _R_OPT_TO_LINK.
-    """
-
-    def project(
-        self,
-        pkt:    DepthFramePacket,
-        stable: np.ndarray | None = None,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Return (xyz (N,3) float32 world-frame, colors (N,3) uint8 or None)."""
-        valid = np.isfinite(pkt.depth) if stable is None else (np.isfinite(pkt.depth) & stable)
-
-        if pkt.xyz_cam_hw is not None:
-            xyz_cam = pkt.xyz_cam_hw[valid]          # (N, 3), camera_link frame
-        else:
-            d = pkt.depth
-            H, W = d.shape
-            fx, fy, cx, cy = pkt.intrinsics
-            uu, vv = np.meshgrid(np.arange(W, dtype=np.float32),
-                                  np.arange(H, dtype=np.float32))
-            dd      = d[valid]
-            xyz_opt = np.column_stack([(uu[valid] - cx) * dd / fx,
-                                       (vv[valid] - cy) * dd / fy,
-                                       dd]).astype(np.float32)
-            xyz_cam = xyz_opt @ _R_OPT_TO_LINK.T
-
-        xyz_world = (xyz_cam @ pkt.pose_R.T + pkt.pose_t).astype(np.float32)
-
-        colors = pkt.colors_hw[valid] if pkt.colors_hw is not None else None
-        return xyz_world, colors
-
-
-# ── Stage 5: Voxel map ────────────────────────────────────────────────────────
-
-# Occupancy thresholds — tune these without touching the algorithm.
-_VOX_COUNT_MAX = np.uint8(20)   # saturating cap on hit counter
-_VOX_THRESHOLD = np.uint8(2)    # minimum hits before a voxel is occupied
-_VOX_STALENESS = np.uint16(300) # frames of non-observation before expiry (~20 s @ 15 Hz)
-
-
-class SaturatingVoxelMap:
-    """Persistent world-frame voxel occupancy map.
-
-    Per-voxel state (3 bytes):
-        uint8  count      — saturating hit counter; incremented once per frame per voxel
-        uint16 last_seen  — frame id of the most recent hit (mod 65 535)
-
-    A voxel is occupied on export when:
-        count >= _VOX_THRESHOLD  AND  frame − last_seen <= _VOX_STALENESS
-
-    Update:  O(N log N) via np.unique dedup, then O(N) numpy batch writes.
-    Export:  O(V) numpy mask; xyz recovered by unpacking the stored int64 key —
-             no centroid state, no running mean.
-    """
-
-    def __init__(self, voxel_size: float = 0.05, capacity: int = 500_000) -> None:
-        self._v         = voxel_size
-        self._cap       = capacity
-        self._keys      = np.empty(capacity, dtype=np.int64)
-        self._counts    = np.zeros(capacity,  dtype=np.uint8)
-        self._last_seen = np.zeros(capacity,  dtype=np.uint16)
-        self._n         = 0
-        self._idx: dict[int, int] = {}   # packed key → row index (lookup only)
-
-    def update(self, xyz: np.ndarray, frame: int) -> None:
-        if len(xyz) == 0:
-            return
-        vk   = np.floor(xyz / self._v).astype(np.int32)
-        keys = _pack(vk)
-        keys, _ = np.unique(keys, return_index=True)   # one vote per voxel per frame
-
-        # Dict lookup: classify each unique key as existing or new.
-        rows = np.array([self._idx.get(int(k), -1) for k in keys], dtype=np.int32)
-        existing = rows >= 0
-
-        # Batch-update existing voxels — no Python loop.
-        if existing.any():
-            r = rows[existing]
-            np.minimum(self._counts[r] + 1, _VOX_COUNT_MAX, out=self._counts[r])
-            self._last_seen[r] = np.uint16(frame & 0xFFFF)
-
-        # Append new voxels.
-        new_keys = keys[~existing]
-        if len(new_keys):
-            n_new = len(new_keys)
-            if self._n + n_new > self._cap:
-                self._grow()
-            sl = slice(self._n, self._n + n_new)
-            self._keys[sl]      = new_keys
-            self._counts[sl]    = np.uint8(1)
-            self._last_seen[sl] = np.uint16(frame & 0xFFFF)
-            for i, k in enumerate(new_keys.tolist()):
-                self._idx[k] = self._n + i
-            self._n += n_new
-
-    def export_stable(self, frame: int) -> np.ndarray:
-        """Return (M, 3) float32 world-frame voxel centres — occupied, non-stale only."""
-        n = self._n
-        if n == 0:
-            return np.empty((0, 3), dtype=np.float32)
-        age  = np.uint16(frame & 0xFFFF) - self._last_seen[:n]   # uint16 wraparound is correct
-        mask = (self._counts[:n] >= _VOX_THRESHOLD) & (age <= _VOX_STALENESS)
-        stable = self._keys[:n][mask]
-        vx = ((stable >> 36) & _VMASK).astype(np.int32) - int(_VOFF)
-        vy = ((stable >> 18) & _VMASK).astype(np.int32) - int(_VOFF)
-        vz = ( stable        & _VMASK).astype(np.int32) - int(_VOFF)
-        return (np.column_stack([vx, vy, vz]).astype(np.float32) + 0.5) * self._v
-
-    def _grow(self) -> None:
-        cap2 = self._cap * 2
-        k2   = np.empty(cap2, dtype=np.int64)
-        c2   = np.zeros(cap2,  dtype=np.uint8)
-        ls2  = np.zeros(cap2,  dtype=np.uint16)
-        k2[:self._n]  = self._keys[:self._n]
-        c2[:self._n]  = self._counts[:self._n]
-        ls2[:self._n] = self._last_seen[:self._n]
-        self._keys      = k2
-        self._counts    = c2
-        self._last_seen = ls2
-        self._cap       = cap2
-
-    @property
-    def count(self) -> int:
-        return self._n
-
-
-# ── Stage 6: Streamer ─────────────────────────────────────────────────────────
-
-class DepthStreamer:
-    """Two-layer pipeline:
-    - Main thread (fast):  gradient filter → backproject → live Rerun cloud
-    - Map thread  (async): height filter → isolation filter → SaturatingVoxelMap → map Rerun
-
-    Map worker cost is O(N log N) numpy only — same order as the live cloud.
-    """
-
-    MAX_CLOUD = 50_000   # Rerun per-frame point cap
-    MAX_MAP   = 200_000  # Rerun map point cap
-    MAP_EVERY = 5        # map-thread frames between map Rerun updates
-
-    def __init__(
-        self,
-        source:      ZEDDepthSource,
-        backproj:    DepthBackprojector,
-        grad_filter: GradientStabilityFilter | None = None,
-    ) -> None:
-        self._src            = source
-        self._bp             = backproj
-        self._grad           = grad_filter or GradientStabilityFilter()
-        self._vox            = SaturatingVoxelMap(voxel_size=0.05)
-        self._vox_lock       = threading.Lock()
-        self._cam_z          = 0.0
-        self._pinhole_logged = False
-        self._last_n_valid   = 0
-        self._last_n_stable  = 0
-        self._last_n_occ     = 0   # stable voxels exported last map update
-        self._map_queue: queue.Queue = queue.Queue(maxsize=16)
-        self._map_thread = threading.Thread(target=self._map_worker, daemon=True)
-        self._map_thread.start()
-
-    def assemble(self, ts: float) -> DepthFramePacket:
-        return self._src.read(ts)
-
-    def process(self, pkt: DepthFramePacket, frame: int) -> None:
-        """Fast path — target <10 ms. No voxel ops, no world-frame dict work."""
-        rr.set_time("frame", sequence=frame)
-        if not self._pinhole_logged:
-            rr.log("world/camera", rr.Pinhole(
-                image_from_camera=pkt.K, width=pkt.width, height=pkt.height,
-            ), static=True)
-            self._pinhole_logged = True
-
-        rr.log("world/camera/depth", rr.DepthImage(pkt.depth, meter=1.0))
-
-        # Backproject all valid depth pixels into world-frame XYZ.
-        xyz, colors = self._bp.project(pkt, stable=None)
-        if len(xyz) == 0:
-            return
-
-        self._cam_z = float(pkt.pose_t[2])
-
-        # Live cloud: nearest-per-ray subsample for clean Rerun display.
-        near       = _nearest_per_ray_idx(xyz, pkt.pose_t)
-        xyz_vis    = xyz[near]
-        colors_vis = colors[near] if colors is not None else None
-
-        self._last_n_valid  = len(xyz_vis)
-        self._last_n_stable = len(xyz_vis)
-
-        n   = min(len(xyz_vis), self.MAX_CLOUD)
-        idx = np.random.choice(len(xyz_vis), n, replace=False) if len(xyz_vis) > n else np.arange(n)
-        c = colors_vis[idx] if colors_vis is not None else _height_color(xyz_vis[idx, 2] - self._cam_z)
-        rr.log("world/cloud", rr.Points3D(positions=xyz_vis[idx], colors=c, radii=0.003))
-        rr.log("world/map",   rr.Points3D(positions=xyz_vis[idx], colors=c, radii=0.003))
-
-    def _map_worker(self) -> None:
-        """Background thread: height+floor filter → voxelize → SaturatingVoxelMap → Rerun.
-
-        Receives the full-density cloud from process() (before nearest_per_ray subsampling)
-        so the voxel grid gets adequate point density per cell.
-        """
-        while True:
-            item = self._map_queue.get()
-            if item is None:
-                return
-            xyz_world, cam_pos, cam_z, frame = item
-
-            # Height band + floor-angle filter (camera-relative, all numpy).
-            h_rel    = xyz_world[:, 2] - cam_z
-            rays     = xyz_world - cam_pos
-            dist     = np.linalg.norm(rays, axis=1)
-            d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0)
-            keep     = (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI) & (d_z_norm > _FLOOR_RAY_Z)
-            xyz_map  = xyz_world[keep]
-            if len(xyz_map) == 0:
-                continue
-
-            # Per-frame voxelized obstacle cloud → Rerun (debug: confirms filter is working).
-            if frame % self.MAP_EVERY == 0:
-                rr.set_time("frame", sequence=frame)
-                vk = np.floor(xyz_map / self._vox._v).astype(np.int32)
-                _, first = np.unique(_pack(vk), return_index=True)
-                xyz_vox = xyz_map[first]
-                rr.log("world/obstacles", rr.Points3D(
-                    positions=xyz_vox,
-                    colors=_height_color(xyz_vox[:, 2] - cam_z),
-                    radii=0.006,
-                ))
-
-            with self._vox_lock:
-                self._vox.update(xyz_map, frame)
-
-            if frame % self.MAP_EVERY == 0:
-                rr.set_time("frame", sequence=frame)
-                self._log_map(frame, cam_z)
-
-    def _log_map(self, frame: int, cam_z: float | None = None) -> None:
-        if cam_z is None:
-            cam_z = self._cam_z
-        with self._vox_lock:
-            pts = self._vox.export_stable(frame)
-        self._last_n_occ = len(pts)
-        if len(pts) == 0:
-            return
-        n   = min(len(pts), self.MAX_MAP)
-        idx = np.random.choice(len(pts), n, replace=False) if len(pts) > n else np.arange(n)
-        rr.log("world/map", rr.Points3D(
-            positions=pts[idx],
-            colors=_height_color(pts[idx, 2] - cam_z),
-            radii=0.005,
-        ))
-
-    def log_stdout(
-        self, pkt: DepthFramePacket, frame: int, fps: float,
-        n_valid: int = 0, n_stable: int = 0,
-    ) -> None:
-        lock = "LOCKED" if self._src.pose_locked else "searching"
-        pct  = 100 * n_stable / n_valid if n_valid > 0 else 0.0
-        print(
-            f"frame={frame:5d}  "
-            f"pts={n_valid:5d} ({pct:.0f}%)  "
-            f"cam_z={self._cam_z:+.2f}m  vio={lock}  fps={fps:.1f}",
-            flush=True,
-        )
+    xyz_world = (xyz_cam @ pkt.pose_R.T + pkt.pose_t).astype(np.float32)
+    colors    = pkt.colors_hw[valid] if pkt.colors_hw is not None else None
+    return xyz_world, colors
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
-
 def main() -> None:
-    # Fork Rerun BEFORE zed.open() — ZED capture threads make post-open fork unsafe.
     rr.init("zed_depth_costmap", spawn=True)
     rr.send_blueprint(rrb.Blueprint(
         rrb.Tabs(
@@ -655,7 +240,7 @@ def main() -> None:
         )
     ))
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
-    rr.log("world/cloud", rr.Points3D([[0, 0, 0]]), static=True)  # anchor 3D view before camera opens
+    rr.log("world/cloud", rr.Points3D([[0, 0, 0]]), static=True)
 
     zed = sl.Camera()
     ip  = sl.InitParameters()
@@ -669,26 +254,14 @@ def main() -> None:
     if zed.open(ip) != sl.ERROR_CODE.SUCCESS:
         print("ZED failed to open"); return
 
-    # Cap exposure to prevent bright light (windows, lamps) from washing out stereo
-    # texture. Auto-exposure chases the bright source and under-exposes the scene;
-    # a fixed value keeps geometry well-textured for stereo matching.
-    # Range 0-100; lower = faster shutter. Tune up if the scene is too dark.
     zed.set_camera_settings(sl.VIDEO_SETTINGS.EXPOSURE, 50)
-
     print("camera open — Ctrl-C to quit.")
 
     src = ZEDDepthSource(zed)
     src.enable_tracking()
 
-    streamer = DepthStreamer(
-        src,
-        DepthBackprojector(),
-        GradientStabilityFilter(GradientStabilityConfig(gradient_threshold=0.30)),
-    )
-
     rt = sl.RuntimeParameters()
-    rt.texture_confidence_threshold = 100    # keep all depth; gradient filter handles quality downstream
-    rt.remove_saturated_areas       = True  # pixels overexposed by bright lights have no valid signal
+    rt.remove_saturated_areas = True
 
     frame = 0
     t0    = time.monotonic()
@@ -698,12 +271,41 @@ def main() -> None:
             if zed.grab(rt) != sl.ERROR_CODE.SUCCESS:
                 continue
             ts  = time.monotonic()
-            pkt = streamer.assemble(ts)
-            streamer.process(pkt, frame)
-            streamer.log_stdout(pkt, frame, frame / max(ts - t0, 1e-6),
-                                n_valid=streamer._last_n_valid,
-                                n_stable=streamer._last_n_stable)
+            pkt = src.read(ts)
+
+            rr.set_time("frame", sequence=frame)
+            rr.log("world/camera", rr.Pinhole(image_from_camera=pkt.K,
+                                               width=pkt.width, height=pkt.height), static=True)
+            rr.log("world/camera/depth", rr.DepthImage(pkt.depth, meter=1.0))
+
+            xyz, colors = project(pkt)
+            if len(xyz) == 0:
+                frame += 1
+                continue
+
+            cam_z = float(pkt.pose_t[2])
+
+            # ── Live cloud: nearest-per-ray denoised ──────────────────────────
+            near    = _nearest_per_ray_idx(xyz, pkt.pose_t)
+            xyz_vis = xyz[near]
+            col_vis = colors[near] if colors is not None else _height_color(xyz_vis[:, 2] - cam_z)
+            rr.log("world/cloud", rr.Points3D(positions=xyz_vis, colors=col_vis, radii=0.003))
+
+            # ── Voxel map: full-density cloud, one point per 5 cm cell ────────
+            vk      = np.floor(xyz / VOX_SIZE).astype(np.int32)
+            _, first = np.unique(_pack(vk), return_index=True)
+            xyz_vox = xyz[first]
+            col_vox = colors[first] if colors is not None else _height_color(xyz_vox[:, 2] - cam_z)
+            rr.log("world/map", rr.Points3D(positions=xyz_vox, colors=col_vox, radii=0.01))
+
+            fps = frame / max(ts - t0, 1e-6)
+            print(
+                f"frame={frame:5d}  cloud={len(xyz_vis):5d}  vox={len(xyz_vox):6d}"
+                f"  vio={'LOCKED' if src.pose_locked else 'searching'}  fps={fps:.1f}",
+                flush=True,
+            )
             frame += 1
+
     except KeyboardInterrupt:
         pass
 
