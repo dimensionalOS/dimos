@@ -536,10 +536,20 @@ class DepthStreamer:
                         else _height_color(xyz[idx, 2] - cam_z))
         rr.log("world/cloud", rr.Points3D(positions=xyz[idx], colors=cloud_colors, radii=0.003))
 
-        # Live cloud map — same points as live cloud, accumulated into persistent world map.
-        # Logged every frame so Rerun always has the latest snapshot regardless of scrubber pos.
-        self._live_vox.add(xyz)
-        self._log_live_map(cam_z, frame)
+        # Live cloud map — ZED-style filtering then accumulate into persistent world map.
+        # Height band + floor-ray filter removes floor/ceiling; what remains is obstacle geometry.
+        # This makes the map visually distinct from the live cloud and grows as new areas are seen.
+        cam_pos  = pkt.pose_t.copy()
+        h_rel    = xyz[:, 2] - cam_z
+        rays     = xyz - cam_pos
+        dist     = np.linalg.norm(rays, axis=1)
+        d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0)
+        keep     = (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI) & (d_z_norm > _FLOOR_RAY_Z)
+        xyz_map  = xyz[keep]
+        if len(xyz_map) > 0:
+            self._live_vox.add(xyz_map)
+        if frame % self.MAP_EVERY == 0:
+            self._log_live_map(cam_z, frame)
 
         # Hand world-frame pts + pose to map worker (same payload shape as ZED)
         if self._src.pose_locked:
@@ -580,19 +590,27 @@ class DepthStreamer:
             self._src.odom.update(xyz_cam_filt, R)
 
     def _log_live_map(self, cam_z: float = 0.0, frame: int = 0) -> None:
-        """Log accumulated live cloud as persistent world map (main-thread, no lag)."""
+        """Log accumulated filtered world map (main-thread). Distinct from live cloud."""
         pts = self._live_vox.points()
         if len(pts) == 0:
             return
         n   = min(len(pts), self.MAX_MAP)
         idx = np.random.choice(len(pts), n, replace=False) if len(pts) > n else np.arange(n)
+        sub = pts[idx].copy()
         rr.log("world/live_cloud_map", rr.Points3D(
-            positions=pts[idx].copy(),
-            colors=_height_color(pts[idx, 2] - cam_z),
-            radii=0.005,
+            positions=sub,
+            colors=_height_color(sub[:, 2] - cam_z),
+            radii=0.006,
         ))
         if frame % 30 == 0:
-            print(f"  → Rerun world/live_cloud_map: {n} pts (vox={len(pts)})", flush=True)
+            mn, mx = pts.min(axis=0), pts.max(axis=0)
+            print(
+                f"  → map: {len(pts):6d} vox  "
+                f"x=[{mn[0]:+.1f},{mx[0]:+.1f}] "
+                f"y=[{mn[1]:+.1f},{mx[1]:+.1f}] "
+                f"z=[{mn[2]:+.1f},{mx[2]:+.1f}]",
+                flush=True,
+            )
 
     def _log_map(self, cam_z: float = 0.0) -> None:
         with self._vox_lock:
