@@ -470,6 +470,79 @@ body {
   outline: none;
   border-color: var(--accent);
 }
+/* topic chips — click to enable/disable a subscription; live dot + hz echo the on-wire state */
+.topic-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.topic-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--elev);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--muted);
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease,
+    transform 0.06s ease;
+  animation: chip-in 0.22s ease both;
+}
+.topic-chip:hover {
+  color: var(--text);
+  border-color: var(--line-hi);
+  background: color-mix(in srgb, var(--line-hi) 22%, var(--elev));
+}
+.topic-chip:active {
+  transform: translateY(1px);
+}
+.topic-chip.on,
+.topic-chip.on:hover {
+  border-color: var(--accent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 8%, var(--elev));
+}
+.topic-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid var(--line-hi);
+  flex: none;
+}
+.topic-chip-dot.live {
+  animation: chip-pulse 1.6s ease-in-out infinite;
+}
+.topic-chip-name {
+  font: 500 12px var(--mono);
+}
+.topic-chip-hz {
+  font: 500 10px var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ok);
+  opacity: 0.85;
+}
+@keyframes chip-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes chip-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 0%, transparent);
+  }
+}
 .stream-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
