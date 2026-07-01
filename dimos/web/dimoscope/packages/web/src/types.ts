@@ -6,9 +6,10 @@ export interface MessageMeta {
   type: string;
   /** Client receive time (ms since epoch). */
   recvTs: number;
-  /** Source timestamp (ms) parsed from a std_msgs/Header, if present. */
+  /** Source timestamp (ms) parsed from a std_msgs/Header, if present (feeds the bench's
+   *  end-to-end latency mode). */
   srcTs?: number;
-  /** recvTs - srcTs, when a source stamp is available (same-host meaningful). */
+  /** The gateway→browser transport hop: recvTs - gatewaySendMs (same-host meaningful). */
   latencyMs?: number;
   /** Encoded payload size in bytes. */
   sizeBytes: number;
@@ -22,8 +23,8 @@ export interface MessageMeta {
 }
 
 /** The one message envelope delivered to every subscriber (topic().subscribe, client.subscribe,
- *  subscribeAll, peek, and the react hooks). `ts` is the source publish time (ms), falling back to
- *  the client receive time; `meta` carries type/latency/seq/size. */
+ *  subscribeAll, peek, and the react hooks). `ts` is the client receive time (ms); `meta` carries
+ *  type/latency/seq/size (and the source stamp as `meta.srcTs`). */
 export interface Message<T = unknown> {
   data: T;
   ts: number;

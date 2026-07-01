@@ -3,10 +3,41 @@
 // <DimosTopics, DimosCommands> maps for typed topics + modules. Usage: see README.
 import { createGatewayWsTransport } from "./transports/gatewayWs.ts";
 import { decode as msgsDecode } from "@dimos/msgs";
-import { seqFrom, srcTsMs } from "./decode.ts";
 import { createTopic, type Topic } from "./topic.ts";
 import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "./transport.ts";
 import type { Message, MessageMeta, Qos, Subscription, TopicInfo, TopicStats } from "./types.ts";
+
+/** Best-effort source timestamp (ms) from a std_msgs/Header — the data's origin-publish time,
+ *  surfaced as `meta.srcTs` and used by the bench's end-to-end latency mode (`recvTs − srcTs`). The
+ *  heuristics exist because there's no single canonical stamp field/epoch across message types (ns vs
+ *  ms vs s, `stamp` vs `ts`, `{sec,nsec}` variants). */
+export function srcTsMs(data: unknown): number | undefined {
+  const stamp = (data as any)?.header?.stamp ?? (data as any)?.header?.ts ?? (data as any)?.ts;
+  if (typeof stamp === "number") {
+    // Heuristic: ns (>1e15) | ms (>1e12) | s (else).
+    if (stamp > 1e15) return stamp / 1e6;
+    if (stamp > 1e12) return stamp;
+    return stamp * 1000;
+  }
+  if (stamp && typeof stamp === "object") {
+    const sec = (stamp as any).sec ?? (stamp as any).secs ?? 0;
+    const nsec = (stamp as any).nsec ?? (stamp as any).nanosec ?? (stamp as any).nanos ?? 0;
+    return sec * 1000 + nsec / 1e6;
+  }
+  return undefined;
+}
+
+/** Best-effort per-topic sequence number, for wire drop/gap detection. The bench source stamps
+ *  `frame_id = str(seq)`, so a purely-numeric frame_id is read as a counter; real frames
+ *  ("base_link", "odom") are not numeric and yield undefined. Falls back to a `header.seq` field. */
+export function seqFrom(data: unknown): number | undefined {
+  const fid = (data as any)?.frame_id ?? (data as any)?.header?.frame_id;
+  if (typeof fid === "string" && fid.length > 0 && fid.length < 16 && /^\d+$/.test(fid)) {
+    return Number(fid);
+  }
+  const seq = (data as any)?.header?.seq;
+  return typeof seq === "number" ? seq : undefined;
+}
 
 /** A transport built lazily from the connect() URL. */
 export type TransportFactory = (url: string) => Transport;
@@ -130,11 +161,9 @@ export const createDimosClient = <TMap = EmptyTopicMap, TCmds = EmptyModuleMap>(
         return; // unknown type / fragment
       }
     }
-    const srcTs = srcTsMs(data);
+    const srcTs = srcTsMs(data); // for meta.srcTs (the bench's end-to-end latency)
     const latencyMs = s.gatewaySendMs != null
       ? Math.max(0, s.recvTs - s.gatewaySendMs)
-      : srcTs != null
-      ? s.recvTs - srcTs
       : undefined;
     const meta: MessageMeta = {
       topic: s.topic,
@@ -149,7 +178,7 @@ export const createDimosClient = <TMap = EmptyTopicMap, TCmds = EmptyModuleMap>(
     latestData.set(s.topic, data);
     t?._deliver(data, meta);
     if (firehose.size) {
-      const m: Message = { data, ts: srcTs ?? s.recvTs, meta };
+      const m: Message = { data, ts: s.recvTs, meta };
       firehose.forEach((f) => f(m));
     }
   }

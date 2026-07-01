@@ -1,11 +1,16 @@
-// Shared gateway-frame decoder. Every gateway-fed delivery mechanism (ws, sse,
-// httpPoll) carries the same wire frame — [f64 BE gateway-send-ms][LC02 packet] —
-// so they all decode through here and emit identical RawSamples (same gatewaySendMs
-// ⇒ identical latency accounting, the whole point of comparing mechanisms fairly).
+// Shared decoder for the common gateway wire frame [f64 BE gateway-send-ms][LC02 packet] used by
+// ws/sse/httpPoll, so all mechanisms emit identical RawSamples + gatewaySendMs for fair latency comparison.
 import { decodeChannel } from "@dimos/msgs";
 
-import { splitChannel } from "../decode.ts";
 import type { RawSample } from "../transport.ts";
+
+/** Split a DimOS channel "<topic>#<pkg>.<Type>" into its parts. */
+export function splitChannel(channel: string): { topic: string; type: string } {
+  const h = channel.indexOf("#");
+  return h >= 0
+    ? { topic: channel.slice(0, h), type: channel.slice(h + 1) }
+    : { topic: channel, type: "?" };
+}
 
 /** Decode one gateway frame ([f64 gateway-send-ms][LC02]) into a RawSample. */
 export function frameToSample(frame: Uint8Array, recvTs: number): RawSample | undefined {

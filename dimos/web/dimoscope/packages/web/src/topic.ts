@@ -107,7 +107,7 @@ export const createTopic = <T = unknown>(deps: TopicDeps): Topic<T> => {
     }
     lastDeliver = now;
     const m = { ...meta, dropped };
-    const message: Message<T> = { data, ts: m.srcTs ?? m.recvTs, meta: m };
+    const message: Message<T> = { data, ts: m.recvTs, meta: m };
     handlers.forEach((h) => h(message));
   }
 

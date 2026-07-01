@@ -1,16 +1,32 @@
-// Client tests — two kinds in one file:
-//   1. Runtime unit tests (Deno.test): a sample with a pre-decoded `decoded` object (the test-injection
-//      seam) is delivered directly; the binary path (no `decoded`) decodes via @dimos/msgs.
-//   2. Compile-only type tests (the `_`-prefixed async functions at the bottom): no runtime — they're
-//      type-checked by `deno task check` and never executed. They prove the client generics bite:
-//      `createDimosClient<TMap, TCmds>()` gives typed topic handles (read) + a typed `client.modules`
-//      RPC surface (write), while an untyped client stays permissive. The `@ts-expect-error` lines fail
-//      the build if the types stop constraining (a positives-only test would pass even if all were
-//      `any`). `_`-prefixed so deno-lint's no-unused-vars leaves them alone.
+// Two kinds of test: (1) runtime unit tests (Deno.test) via a pre-decoded `decoded` test-injection seam
+// (binary path decodes via @dimos/msgs); (2) compile-only type tests (`_`-prefixed async fns, checked by
+// `deno task check`, never run) using `@ts-expect-error` to prove the generics constrain. `_`-prefix
+// dodges no-unused-vars.
 import assert from "node:assert/strict";
 
-import { createDimosClient } from "./client.ts";
+import { createDimosClient, seqFrom, srcTsMs } from "./client.ts";
 import type { RawSample, Transport } from "./transport.ts";
+
+// ── Message-metadata heuristics (the seq/timestamp parsing the bench relies on) ──────────────────
+Deno.test("seqFrom: numeric frame_id → counter; names/garbage → undefined", () => {
+  assert.equal(seqFrom({ frame_id: "42" }), 42);
+  assert.equal(seqFrom({ frame_id: "0" }), 0);
+  assert.equal(seqFrom({ frame_id: "base_link" }), undefined);
+  assert.equal(seqFrom({ frame_id: "" }), undefined);
+  assert.equal(seqFrom({ frame_id: "12345678901234567890" }), undefined); // >=16 chars guarded
+  assert.equal(seqFrom({ header: { seq: 7 } }), 7); // header.seq fallback
+  assert.equal(seqFrom({}), undefined);
+  assert.equal(seqFrom(null), undefined);
+  assert.equal(seqFrom(undefined), undefined);
+});
+
+Deno.test("srcTsMs: seconds / ms / ns heuristics + {sec,nsec} struct", () => {
+  assert.equal(srcTsMs({ ts: 1_750_000_000 }), 1_750_000_000_000); // seconds → ms
+  assert.equal(srcTsMs({ ts: 1_750_000_000_000 }), 1_750_000_000_000); // already ms
+  assert.equal(srcTsMs({ ts: 1_750_000_000_000_000_000 }), 1_750_000_000_000); // ns → ms
+  assert.equal(srcTsMs({ header: { stamp: { sec: 2, nsec: 500_000_000 } } }), 2500);
+  assert.equal(srcTsMs({}), undefined);
+});
 
 // Minimal fake transport: captures the client's onSample callback so a test can push raw samples.
 function fakeTransport() {

@@ -1,8 +1,7 @@
 // createGatewayWsTransport — talks to the dimos-web-gateway (Bun/LCM or Python/Zenoh)
 // over WebSocket. Binary frames are raw LCM packets; JSON frames are control.
 // Runs unchanged in the browser and in Bun (both have a global WebSocket).
-import { decodeChannel } from "@dimos/msgs";
-import { splitChannel } from "../decode.ts";
+import { frameToSample } from "./frame.ts";
 import { applyCaps } from "../qos.ts";
 import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../transport.ts";
 import type { Qos, TopicInfo } from "../types.ts";
@@ -13,9 +12,9 @@ export interface GatewayWsDeps {
 }
 
 export const createGatewayWsTransport = (deps: GatewayWsDeps): Transport => {
-  // qos.maxHz "server": the gateway downsamples per subscriber+topic (op:"subscribe" maxHz),
-  // so a rate cap actually removes bytes from the wire — not just client-side filtering.
-  // The gateway's per-client priority outbox honors these declared QoS fields (else default_priority).
+  // qos.maxHz "server" ⇒ the gateway downsamples per subscriber+topic (op:"subscribe" maxHz), so a
+  // rate cap removes bytes from the wire (not just client-side filtering); its per-client priority
+  // outbox honors declared QoS.
   const caps: TransportCaps = {
     onDemand: true,
     discovery: "live",
@@ -106,27 +105,16 @@ export const createGatewayWsTransport = (deps: GatewayWsDeps): Transport => {
       }
       return;
     }
-    // Frame = [f64 BE gateway-send-ms][LC02 packet]
-    const buf = e.data as ArrayBuffer;
-    if (buf.byteLength < 8) return;
-    const gatewaySendMs = new DataView(buf).getFloat64(0, false);
-    const packet = new Uint8Array(buf, 8);
-    let channel: string, payload: Uint8Array;
-    try {
-      ({ channel, payload } = decodeChannel(packet));
-    } catch {
-      return; // not an LC02 packet we can split
-    }
-    const { topic, type } = splitChannel(channel);
-    sampleCb?.({ topic, type, payload, recvTs: Date.now(), gatewaySendMs });
+    // Frame = [f64 BE gateway-send-ms][LC02 packet] — same wire format frameToSample decodes.
+    const s = frameToSample(new Uint8Array(e.data as ArrayBuffer), Date.now());
+    if (s) sampleCb?.(s);
   }
 
   function send(obj: unknown) {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
   }
 
-  // Send a subscribe op carrying the QoS fields the gateway honors (applyCaps strips the rest). Re-
-  // sending with a new qos updates the server's per-client override — that's how setQos propagates.
+  // Re-sending subscribe with new qos updates the server's per-client override — how setQos propagates.
   function sendSub(topic: string, qos?: Qos) {
     const q = qos ? applyCaps(qos, caps.qos!) : undefined;
     send({

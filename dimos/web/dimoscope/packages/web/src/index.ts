@@ -1,10 +1,7 @@
-// @dimos/web — DimOS topics in the browser (framework-agnostic core).
-//
-// Entry: `createDimosClient({ transport? }).connect(url)`. Production transports are `ws()` (default,
-// the universal WS backbone + control plane) and `webtransport()` (one WebTransport connection —
-// data AND control over QUIC, no head-of-line blocking under loss — with a transparent WebSocket
-// fallback when WT is unavailable or can't connect). The research/benchmark transports (raw WebRTC-data,
-// SSE, HTTP-poll, raw WebTransport) live in "@dimos/web/experimental".
+// @dimos/web — DimOS topics in the browser. Entry: `createDimosClient({ transport? }).connect(url)`.
+// ws() = default (universal WS backbone + control plane); webtransport() = data+control over QUIC with a
+// transparent WS fallback. Research/bench transports (WebRTC-data, SSE, HTTP-poll, raw WebTransport) live
+// in "@dimos/web/experimental".
 export { createDimosClient, ws } from "./client.ts";
 export type { DimosClient, DimosClientDeps, ModuleMap, TransportFactory } from "./client.ts";
 export { webtransport } from "./transports/composite.ts";
@@ -14,7 +11,6 @@ export type { Topic, TopicDeps, TopicWiring } from "./topic.ts";
 export { createGatewayWsTransport } from "./transports/gatewayWs.ts";
 export type { GatewayWsDeps } from "./transports/gatewayWs.ts";
 export { b64ToBytes, frameToSample } from "./transports/frame.ts";
-export { splitChannel, srcTsMs } from "./decode.ts";
 export { formatMarkdown, measureScenario, onDemandSaving, STREAM_PROFILES } from "./bench.ts";
 export type { BenchRow, BenchScenario, StreamProfile } from "./bench.ts";
 export type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "./transport.ts";
