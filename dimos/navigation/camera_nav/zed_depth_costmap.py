@@ -19,14 +19,14 @@ import rerun.blueprint as rrb
 
 
 VOX_SIZE:      float = 0.025  # 2.5 cm final voxels
-# Height band is camera-relative so it works identically before and after VIO lock.
-# Before VIO: identity pose → world = camera_link frame → floor sits at -(camera_height).
-# After VIO:  set_floor_as_origin → floor at world_Z=0, camera at world_Z≈0.9 m.
-# In both cases h_rel = world_Z − cam_Z puts the floor at ≈ −0.90 m.
-_H_FLOOR:    float = -0.88  # drop everything >88 cm below camera (~floor level)
-_H_CEIL:     float =  0.50  # drop everything >50 cm above camera (floating noise)
-_ISO_CELL:   float =  0.08  # 8 cm counting cell — large enough to collect 4+ px from any real surface at ≤8 m
-_ISO_MINPTS: int   =  4     # ghost rays are 1–3 px wide; real surfaces easily exceed this
+# Obstacle height band — absolute world-Z, valid only when VIO is locked.
+# VIO with set_floor_as_origin gravity-aligns the world frame: floor = 0 m,
+# independent of camera tilt, pitch, or mounting height.
+# These are physical room constants, not camera-relative magic numbers.
+_FLOOR_CLEAR: float = 0.05   # 5 cm above world floor — excludes floor plane
+_MAX_HEIGHT:  float = 2.50   # 2.5 m absolute ceiling — excludes ceiling and floating noise
+_ISO_CELL:    float = 0.08   # 8 cm counting cell — collects ≥4 px from any real surface ≤8 m
+_ISO_MINPTS:  int   = 4      # ghost rays are 1–3 px wide; real surfaces easily exceed this
 
 # ── Voxel key packing ────────────────────────────────────────────────────────
 _VOFF  = np.int64(100_000)
@@ -299,12 +299,17 @@ def main() -> None:
             col_vis = colors[near] if colors is not None else _height_color(xyz_vis[:, 2] - cam_z)
             rr.log("world/cloud", rr.Points3D(positions=xyz_vis, colors=col_vis, radii=0.003))
 
-            # ── Voxel map: cam-relative height band → isolation → voxelise ──
-            # h_rel is camera-relative so the same thresholds work before VIO
-            # lock (identity pose, world = camera_link frame, floor at ~-0.9 m)
-            # and after (set_floor_as_origin, floor at world_Z=0, cam_z≈0.9 m).
-            h_rel    = xyz[:, 2] - cam_z
-            in_band  = (h_rel > _H_FLOOR) & (h_rel < _H_CEIL)
+            # ── Voxel map: height band → isolation → voxelise ───────────────
+            # When VIO is locked, world Z is gravity-aligned (set_floor_as_origin
+            # puts floor at 0). Absolute world-Z thresholds are then stable under
+            # any camera tilt, roll, or height change — unlike camera-relative
+            # thresholds, which shift whenever cam_z moves.
+            # Before VIO lock, world = camera_link frame (not gravity-aligned),
+            # so skip the height filter and let isolation carry the load.
+            if src.pose_locked:
+                in_band = (xyz[:, 2] > _FLOOR_CLEAR) & (xyz[:, 2] < _MAX_HEIGHT)
+            else:
+                in_band = np.ones(len(xyz), dtype=bool)
             xyz_obs  = xyz[in_band]
             if len(xyz_obs) >= _ISO_MINPTS:
                 vk_c            = np.floor(xyz_obs / _ISO_CELL).astype(np.int32)
