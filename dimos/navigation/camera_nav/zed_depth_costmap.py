@@ -411,7 +411,7 @@ class DepthBackprojector:
 
 # Occupancy thresholds — tune these without touching the algorithm.
 _VOX_COUNT_MAX = np.uint8(20)   # saturating cap on hit counter
-_VOX_THRESHOLD = np.uint8(3)    # minimum hits before a voxel is occupied
+_VOX_THRESHOLD = np.uint8(2)    # minimum hits before a voxel is occupied
 _VOX_STALENESS = np.uint16(300) # frames of non-observation before expiry (~20 s @ 15 Hz)
 
 
