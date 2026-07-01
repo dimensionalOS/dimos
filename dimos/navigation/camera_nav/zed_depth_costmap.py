@@ -45,53 +45,55 @@ def _filter_isolated(xyz: np.ndarray, voxel: float = 0.05, min_pts: int = 2) -> 
 
 # ── Persistent world map ─────────────────────────────────────────────────────
 class FastVoxelMap:
-    """Append-only world-frame obstacle map backed by numpy arrays.
+    """Persistent world-frame obstacle map with strict per-add deduplication.
 
-    Each call to add() voxelizes the incoming points and appends only those
-    whose voxel key is new.  A periodic compact() pass removes duplicates that
-    sneak in between compactions, keeping memory bounded.
+    Maintains a sorted int64 key array alongside the point buffer.  Every add()
+    call uses np.searchsorted (vectorised O(M log N)) to check which incoming
+    voxels are genuinely new before touching the buffer — no periodic compaction,
+    no between-frame duplicates, no stacking.
     """
 
-    COMPACT_EVERY = 30
-
-    def __init__(self, voxel_size: float = VOX_SIZE, capacity: int = 500_000) -> None:
-        self._v      = voxel_size
-        self._cap    = capacity
-        self._pts    = np.empty((capacity, 3), dtype=np.float32)
-        self._n      = 0
-        self._n_adds = 0
+    def __init__(self, voxel_size: float = VOX_SIZE) -> None:
+        self._v     = voxel_size
+        self._cap   = 500_000
+        self._pts   = np.empty((self._cap, 3), dtype=np.float32)
+        self._n     = 0
+        self._skeys = np.empty(0, dtype=np.int64)   # sorted unique occupied keys
 
     def add(self, xyz: np.ndarray) -> None:
         if len(xyz) == 0:
             return
-        vk = np.floor(xyz / self._v).astype(np.int32)
-        _, first = np.unique(_pack(vk), return_index=True)
-        new_pts = xyz[first]
-        if self._n + len(new_pts) > self._cap:
-            self._compact()
-        if self._n + len(new_pts) > self._cap:
-            self._grow()
-        self._pts[self._n : self._n + len(new_pts)] = new_pts
-        self._n      += len(new_pts)
-        self._n_adds += 1
-        if self._n_adds % self.COMPACT_EVERY == 0:
-            self._compact()
+        vk   = np.floor(xyz / self._v).astype(np.int32)
+        keys = _pack(vk)
+        # dedup within this frame first
+        _, first = np.unique(keys, return_index=True)
+        keys = keys[first]
+        xyz  = xyz[first]
 
-    def _compact(self) -> None:
-        if self._n == 0:
+        # vectorised membership check — no Python loops
+        if len(self._skeys):
+            ins    = np.searchsorted(self._skeys, keys)
+            ins_c  = np.clip(ins, 0, len(self._skeys) - 1)
+            is_new = self._skeys[ins_c] != keys
+        else:
+            is_new = np.ones(len(keys), dtype=bool)
+
+        if not is_new.any():
             return
-        vk = np.floor(self._pts[: self._n] / self._v).astype(np.int32)
-        _, idx = np.unique(_pack(vk), return_index=True)
-        n_u = len(idx)
-        self._pts[:n_u] = self._pts[: self._n][idx]
-        self._n = n_u
 
-    def _grow(self) -> None:
-        cap2 = self._cap * 2
-        buf  = np.empty((cap2, 3), dtype=np.float32)
-        buf[: self._n] = self._pts[: self._n]
-        self._pts = buf
-        self._cap = cap2
+        new_pts  = xyz[is_new]
+        new_keys = keys[is_new]
+        n_new    = len(new_pts)
+
+        if self._n + n_new > self._cap:
+            self._cap *= 2
+            buf = np.empty((self._cap, 3), dtype=np.float32)
+            buf[: self._n] = self._pts[: self._n]
+            self._pts = buf
+
+        self._pts[self._n : self._n + n_new] = new_pts
+        self._n += n_new
+        self._skeys = np.union1d(self._skeys, new_keys)   # O(N) merge of sorted arrays
 
     def points(self) -> np.ndarray:
         return self._pts[: self._n]
