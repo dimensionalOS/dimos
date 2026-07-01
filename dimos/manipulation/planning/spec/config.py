@@ -37,13 +37,11 @@ class RobotModelConfig(ModuleConfig):
         model_path: Path to robot model file (.urdf, .xacro, or .xml/MJCF)
         srdf_path: Optional path to SRDF file containing planning group definitions
         base_pose: Placement transform. This is the canonical world placement for
-            robot instances; model-authored world/base attach joints are
-            stripped when strip_model_world_joint is true.
+            robot instances.
         joint_names: Ordered list of controllable joints in the local model
             namespace. This is not a planning group.
         base_link: Robot-scoped link that base_pose places in the world and
-            current backends use for weld/placement and optional model-authored
-            world-joint stripping.
+            current backends use for weld/placement.
         package_paths: Dict mapping package names to filesystem Paths
         joint_limits_lower: Lower joint limits (radians)
         joint_limits_upper: Upper joint limits (radians)
@@ -66,7 +64,6 @@ class RobotModelConfig(ModuleConfig):
     model_path: Path
     srdf_path: Path | None = None
     base_pose: PoseStamped = Field(default_factory=PoseStamped)
-    strip_model_world_joint: bool = False
     joint_names: list[str]
     base_link: str = "base_link"
     planning_groups: list[PlanningGroupDefinition] = Field(default_factory=list)
