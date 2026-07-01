@@ -19,7 +19,7 @@ robot / sim ─► DimOS bus (LCM | Zenoh)
    ▼
 @dimos/web  (decode via @dimos/msgs · on-demand · QoS · client.call RPC · useVideo media)
    ▼
-@dimos/react ─► app (WorldView · Camera · Pose · Stats · Commands · Streams) + teleop
+@dimos/react ─► app (WorldView · Camera · Pose · Stats · Commands · Topics) + teleop
 ```
 
 
@@ -70,7 +70,7 @@ deno task app     # http://localhost:5173  (or just open http://localhost:8080/)
 `start_all`/`stop_all`/`enable`/`disable`/`set_rate` `@rpc`, **plus** a crankable `/load/img` flood
 (`start_bench`/`stop_bench`) for the benchmark. In the browser (connected on **Auto → WebTransport**):
 
-- **Streams tab →** `load` **preset** → five cards at their distinct Hz, each with its QoS lane + live metrics;
+- **Topics tab →** click the `/load/*` chips (or **all discovered**) → five cards at their distinct Hz, each with its QoS lane + live metrics;
 **remove/add a card = on-demand off/on** (bytes stop/start on the wire while the sim keeps running).
 - **WASD** drives the robot over WebTransport; release → deadman stop; close the tab → stop-on-disconnect.
 - **Commands** → *Start/Stop streams* + *Start/Stop bench* (`GO2Load`) + *Stand up* (`GO2Connection`), RPC over WT.
@@ -168,18 +168,21 @@ WebRTC-data · WebTransport), so WebRTC/WebTransport are measured on the actual 
 ```bash
 deno task serve   # the one service on :8080
 deno task dog     # the dog exposes the /load/img flood (GO2Load start_bench/stop_bench @rpc)
-deno task app     # then open http://localhost:8080/ → Streams tab → BenchDrawer
+deno task app     # then open http://localhost:8080/ → Topics tab → Benchmark drawer
 ```
 
-Open the **Streams tab → BenchDrawer**: drive the load generator up the ladder (light 2 MB/s →
+Open the **Topics tab → Benchmark drawer**: drive the load generator up the ladder (light 2 MB/s →
 firehose ~300 MB/s), sweep each transport, and copy the results as Markdown. The top tiers can stress or
 crash the tab — that's the case being measured, so sweep light→heavy. Route through a remote VPS with
 `?gw=host:port` for real-WAN numbers; tune duration with `?dur=ms`.
 
-Headlines: the service is a byte-relay, so **language/transport isn't the bottleneck** (throughput
-parity, sub-ms p50 on LAN); the differences appear at **MB/s under loss**, where **WS (TCP HoL) stalls**
-while **WebRTC/WebTransport (UDP, no HoL) stay smooth**; server-JSON decode costs **2.64× the bytes** of
-the binary relay; **~75% on-demand** bandwidth cut.
+Headlines: the service is a byte-relay, so **language isn't the bottleneck** (one Python process relays
+~255 MB/s over WS; ~1 ms p50 on loopback); at robot-realistic bulk (≤20 MB/s) **WebTransport and
+WebSocket deliver identical throughput at 0% loss**, and WT's datagram lanes stay at 1 ms even when its
+bulk stream is saturated (no head-of-line blocking between lanes); **WebSocket is the robust WAN
+baseline** — it carries 20 MB/s through 5% injected loss with **0% data loss**; WT's no-HoL win is
+measured *under loss* and wants a domain + CA TLS (see [docs/benchmarks.md](docs/benchmarks.md));
+server-JSON decode costs **2.64× the bytes** of the binary relay; **~75% on-demand** bandwidth cut.
 
 ## Layout
 
@@ -188,13 +191,13 @@ the binary relay; **~75% on-demand** bandwidth cut.
 | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `packages/web/`                             | `@dimos/web` (Dimos JS) — transport iface + `transports/` (`gatewayWs`=`ws()`, `webTransport`, `composite`=`webtransport()`, `experimental/` bench transports) + **media plane** (`media/`: `jpegTopicMedia`/`webRtcMedia`/`webCodecsMedia`) + client (incl. `call` RPC), topic, stats |
 | `packages/react/`                           | `@dimos/react` — hooks (`useTopics`, `useVideo`, `useTeleop`, `useRpc`/`useCommands`, …)                                                                                                                                                                                                       |
-| `app/`                                      | Vite example app (`panels/`: WorldView, Camera, PoseReadout, TeleopPad, StatsBar, CommandsPanel, SubscribeBar, `streams/` Streams tab)                                                                                                                                                         |
+| `app/`                                      | Vite example app (`panels/`: WorldView, Camera, PoseReadout, TeleopPad, StatsBar, CommandsPanel, SubscribeBar, `streams/` the Topics tab)                                                                                                                                                         |
 | `gateway/app.py`                            | the single backend entrypoint (`python -m gateway`) — one process, all transports + the app                                                                                                                                                                                                    |
 | `gateway/bus.py`                            | the LCM+Zenoh bus tap → one normalized stream every transport reads from                                                                                                                                                                                                                       |
 | `gateway/{data,media}.py`                   | `/ws` data plane (topics + teleop/goal/rpc) · `/media` camera plane                                                                                                                                                                                                                            |
 | `gateway/transports/`                       | the `/sse` `/poll` `/rtc` + WebTransport bench transports                                                                                                                                                                                                                                      |
 | `scenarios/`                                | dimos publisher blueprints — live data sources (`nav`/`arm`/`cam`) + `bench.py` (the browser-bench `/bench/*` source)                                                                                                                                                                          |
-| `packages/web/bench.ts` · `panels/BenchDrawer.tsx` | the in-browser benchmark core (`STREAM_PROFILES`, `measureScenario`) + the Streams-tab BenchDrawer UI                                                                                                                                                                                    |
+| `packages/web/bench.ts` · `panels/BenchDrawer.tsx` | the in-browser benchmark core (`STREAM_PROFILES`, `measureScenario`) + the Topics-tab Benchmark drawer UI                                                                                                                                                                                    |
 
 
 The original teaching prototype (`app/src/bus.ts`, `app/src/widgets/`, `WALKTHROUGH.md`) is the
@@ -211,7 +214,7 @@ Done:
 - RPC bridge: `client.call("GO2Connection","standup")` → whitelisted dimos `@rpc` (Commands panel).
 - WebTransport teleop + Auto (WT→WS) default: one QUIC connection carries data and control through the
   shared `SafetyEgress` (clamp + deadman + stop-on-disconnect), with a WebSocket fallback. Plus the
-  `go2-load` demo blueprint (teleop go2 dimsim + multi-rate `/load/*` lanes + crankable flood + Streams-tab preset).
+  `go2-load` demo blueprint (teleop go2 dimsim + multi-rate `/load/*` lanes + crankable flood + Topics-tab chips).
 - No head-of-line blocking under loss: WebRTC-data / WebTransport (UDP) stay smooth where WS (TCP)
   stalls; plus on-demand subscribe + a QoS layer (rate-limit / conflation / priority).
 

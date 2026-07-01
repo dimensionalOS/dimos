@@ -24,6 +24,16 @@ crank the **load generator** up the ladder (`light 2 → camera 11 → dense 20 
 → firehose 300` MB/s on `/load/img`), and sweep. The `pose` profile measures the small `/load/{fast,mid,slow}`
 lanes (always live); the heavy profiles measure `/load/img` at whatever the generator is emitting.
 
+**Methodology** (`packages/web/src/bench.ts`): each scenario discards a **warmup** window (subscribe
+ramp-up and QoS negotiation never pollute the stats), measures for `durMs`, then drains a **grace**
+window so a frame that was merely delayed past the window counts as **late**, not **lost** — loss% is
+only what never arrived (and is NaN on client-rate-limited runs, where gaps are intentional). Rates
+divide by the wall clock actually elapsed, not the nominal window. Before each sweep the client runs an
+NTP-style `{op:"ping"}` **clock probe** (`client.estimateClockOffset()`, lowest-RTT of 5) and corrects
+`recvTs − srcTs` by the offset, so end-to-end latency is meaningful even when the gateway is on another
+machine. Each result row is stamped with the **wire that actually carried it** (Auto → `(wire: …)` — the
+WT→WS fallback is silent otherwise), and the Markdown export carries the offered load, page origin, and UA.
+
 ### Results (localhost loopback · end-to-end · maxHz=∞ · 2026-07-01)
 
 These are **loopback** numbers (no network loss) — they characterize the *relay/browser pipeline ceiling*
@@ -31,48 +41,50 @@ and the *small-vs-bulk isolation*, not WAN behavior (for that see §3).
 
 **Small lanes + a 20 MB/s bulk stream — WebTransport vs WebSocket:**
 
-| transport | scenario | hz | MB/s | p50 ms | p95 ms | p99 ms | loss% |
-|---|---|--:|--:|--:|--:|--:|--:|
-| **Auto → WebTransport** | pose (fast+mid+slow) | 98 | 0.008 | **2.14** | 7.45 | 15.84 | 0.25 |
-| Auto → WebTransport | dense (img @20 MB/s) | 1 | 0.95 | 1612 | 2660 | 2660 | **73.3** |
-| Auto → WebTransport | mixed | 16 | 0.01 | 165 | 344 | 430 | 78.0 |
-| **WebSocket** | pose (fast+mid+slow) | 104 | 0.009 | **0.57** | 1.70 | 4.0 | 0 |
-| WebSocket | dense (img @20 MB/s) | 18.5 | **17.6** | 6.3 | 8.8 | 12.3 | **0** |
-| WebSocket | mixed | 128 | 17.9 | 0.73 | 7.3 | 8.8 | 0 |
+| transport | scenario | hz | MB/s | p50 ms | p95 ms | p99 ms | loss% | late% |
+|---|---|--:|--:|--:|--:|--:|--:|--:|
+| **WebTransport** | pose (fast+mid+slow) | 103 | 0.008 | **1.32** | 3.56 | 5.4 | 0 | 0 |
+| WebTransport | dense (img @20 MB/s) | 18.8 | **17.9** | 53.7 | 62.4 | 72.3 | **0** | 0 |
+| WebTransport | mixed | 132 | 18.1 | 1.27 | 79.2 | 89.2 | 0 | 0 |
+| **WebSocket** | pose (fast+mid+slow) | 101 | 0.008 | **1.45** | 4.73 | 9.9 | 0 | 0 |
+| WebSocket | dense (img @20 MB/s) | 18.4 | **17.5** | 6.45 | 14.1 | 39.3 | **0** | 0 |
+| WebSocket | mixed | 127 | 17.6 | 0.93 | 6.6 | 9.6 | 0 | 0 |
 
-**WebSocket up the overload ladder (small lanes stay alongside the bulk):**
+**Up the overload ladder (the small lanes ride alongside the bulk flood):**
 
-| offered | scenario | hz | MB/s delivered | p50 ms | p95 ms | p99 ms | loss% |
-|---|---|--:|--:|--:|--:|--:|--:|
-| 180 MB/s | pose | 107 | 0.009 | **0.68** | 5.8 | 23.1 | 0 |
-| 180 MB/s | raw-1080p (img) | 33.5 | **192** | 29 | 37 | 40 | 0 |
-| 300 MB/s | pose | 106 | 0.009 | **0.97** | 8.6 | 14.2 | 0 |
-| 300 MB/s | firehose (img) | 28.5 | **272** | 77 | 104 | 122 | **13.6** |
+| offered | transport | scenario | hz | MB/s delivered | p50 ms | p95 ms | p99 ms | loss% | late% |
+|---|---|---|--:|--:|--:|--:|--:|--:|--:|
+| 180 MB/s | WebSocket | pose | 103 | 0.008 | **1.08** | 4.7 | 6.5 | 0 | 0 |
+| 180 MB/s | WebSocket | raw-1080p (img) | 27 | **154** | 25.5 | 30.7 | 33 | 0 | 0 |
+| 180 MB/s | WebTransport | pose | 103 | 0.008 | **1.01** | 3.8 | 6.7 | 0 | 0 |
+| 180 MB/s | WebTransport | raw-1080p (img) | 2 | 11.4 | 2535 | 3770 | 3770 | 0 | 0 |
+| 300 MB/s | WebSocket | pose | 102 | 0.008 | **1.23** | 6.1 | 8.3 | 0 | 0 |
+| 300 MB/s | WebSocket | firehose (img) | 26.8 | **255** | 42.6 | 49.3 | 51.4 | 0 | 0 |
+| 300 MB/s | WebSocket | firehose, sustained | 22.8 | 217 | 61 | 112 | 230 | **12.5** | 0 |
 
 ### What the numbers say
 
-- **The small high-rate lanes stay crisp under any bulk load.** `pose` holds ~100 Hz at **0.6–2 ms p50 and
-  ~0% loss** on both transports — even with a 20–300 MB/s stream running beside it. The important topic
-  survives the firehose.
-- **On loopback, WebSocket wins bulk handily — but read *why* before concluding anything about WT.** WS
-  sustains **~18 / 192 / 272 MB/s** at 20 / 180 / 300 offered with 0% loss up to ~190 MB/s. The WT bulk row
-  looks terrible (dense: 1 Hz, 1.6 s, "73% loss"), but that is **not** datagram shedding: the transport
-  size-routes frames (small ≤1100 B → datagrams; larger → a *new reliable unidirectional QUIC stream per
-  frame*, `gateway/transports/webtransport.py`), so the 1 MB images ride reliable streams through **aioquic
-  (pure-Python QUIC)** — a CPU-bound per-message-stream path that is the real loopback bottleneck. The
-  "73% loss" is the SDK's seq-gap metric misreading a *backlog of delayed-but-not-dropped* frames (reliable
-  streams don't drop). WS wins here because the browser + uvicorn use C-optimized TCP, not because WT is
-  fundamentally worse. WT's *small-frame* datagram path is fine locally (pose: 98 Hz, 2 ms).
-- **WebTransport's real advantage — no head-of-line blocking — only appears under packet loss**, which
-  loopback doesn't have (so TCP/WS never stalls and looks perfect). Measure it under loss: a real WAN (§3),
-  or inject loss locally on the link (Linux `tc qdisc add dev lo root netem loss 5%`; macOS `dnctl`/dummynet
-  via `pfctl`). That, not a fat lossless link, is where WT (UDP, no HoL) pulls ahead of WS (TCP HoL).
-- **The Python byte-relay is not the bottleneck.** One gateway process + WS sustains **~280–290 MB/s** before
-  saturating; latency climbs 0.7 → 77 ms and loss 0 → 14% only as offered load goes 20 → 300 MB/s. That's
-  the pipeline ceiling, and the tab survives it (WS backpressure, ~44 MB heap — no hard crash).
-- **The crash/ceiling case is real and visible.** At 300 MB/s the bulk lane plateaus (~272 MB/s) with
-  double-digit loss and 10–100× latency — exactly the "big data that stresses the browser" tier, recorded
-  rather than hidden. Push higher / add real loss to force an actual stall.
+- **The small high-rate lanes stay crisp under any bulk load.** `pose` holds ~100 Hz at **1–1.5 ms p50 and
+  0% loss** on both transports — even with a 20–300 MB/s stream running beside it. On WebTransport this is
+  structural: pose rides QUIC **datagrams**, so even a bulk stream backlogged by *seconds* (the 180 MB/s WT
+  row) leaves the pose lane at 1 ms — no head-of-line blocking between the lanes of one connection.
+- **At robot-realistic bulk (≤20 MB/s), the transports deliver identical throughput.** Both carry the full
+  dense flood at ~18 MB/s with 0% loss. WT's bulk rides **one persistent reliable uni-stream** (big frames
+  length-prefixed; small ≤1100 B frames go as datagrams — `gateway/transports/webtransport.py`); its higher
+  bulk p50 (54 vs 6.5 ms) is the **aioquic (pure-Python QUIC)** per-byte CPU cost — the browser + uvicorn
+  TCP path is C-optimized. A non-Python QUIC relay closes that gap.
+- **The ceilings differ: WS relays ~255 MB/s, WT bulk ~20 MB/s on this box.** Offered 180–300 MB/s, the WS
+  path keeps shipping (154 → 255 MB/s delivered; sustained saturation eventually costs 12.5% loss and
+  100–230 ms tails — the "big data stresses the browser" tier, recorded rather than hidden). The WT bulk
+  lane saturates at its aioquic CPU ceiling and backlogs (reliable = delayed, not dropped: loss stays 0) —
+  past ~20 MB/s of bulk, pick WS or put the bulk topic on a `bulk` QoS lane so it conflates to the freshest
+  frame instead of queueing.
+- **WebTransport's headline advantage — no HoL blocking *under packet loss* — doesn't show on loopback**
+  (no loss, so TCP/WS never stalls and looks perfect). Measure it on a real WAN (§3), or inject loss locally
+  (Linux `tc qdisc add dev lo root netem loss 5%`; macOS `dnctl`/dummynet via `pfctl`). That, not a fat
+  lossless link, is where UDP/no-HoL pulls ahead of TCP.
+- **The Python byte-relay is not the bottleneck for robot workloads.** One gateway process sustains
+  hundreds of MB/s over WS; the tab survives the firehose (WS backpressure — no hard crash).
 
 Re-run any of this yourself: `deno task dog`, open the Benchmark drawer, set the generator tier, pick the
 matching workload profile, **Run sweep**, **copy Markdown**. `?gw=host:port` points it at a remote VPS;
@@ -121,7 +133,8 @@ via `EGRESS_KBPS`), scheduler **OFF (FIFO)** vs **ON (priority outbox)**:
 Pose latency collapses **1294 ms → 4 ms (~300×)** and rate is restored (55 → 99.5 Hz) while the heavy stream
 keeps flowing (conflated to its freshest frame). **The catch that makes it real:** priority only bites if the
 backlog sits *in the gateway outbox* — so the gateway paces each client's writer to its link budget
-(**egress shaping**, `EGRESS_KBPS`); without it, kernel/proxy socket buffers absorb the backlog downstream
+(**egress shaping**, `EGRESS_KBPS` — applied to both the `/ws` writer and the WebTransport drain, so QoS
+engages on either wire); without it, kernel/proxy socket buffers absorb the backlog downstream
 and FIFO it (bufferbloat defeats any gateway QoS). Same discipline as WebRTC's `bufferedAmount` watermark.
 
 **Client override** — lanes are *defaults*; a subscriber overrides any topic's QoS and it flows over the wire
@@ -157,39 +170,34 @@ empty `INSTALLATION_COMPLETE`+`DEPENDENCIES_VALIDATED` markers, or set the syste
 renders. Use **cam: jpeg** over WAN — the webrtc cam mode needs ICE, which doesn't establish over a raw IP.)*
 For a headless benchmark **without** the sim, the standalone `deno task load:flood` source is lighter.
 
-`pose` = the small `/load/{fast,mid,slow}` lanes; `dense` = a 20 MB/s `/load/img` flood. **Latency is NaN /
-unreliable over WAN** — end-to-end latency compares a VPS timestamp to a Mac timestamp, and the cross-machine
-**clock skew** swamps the signal (only *relative*, same-clock comparisons are meaningful). So read **hz +
-loss%**:
+`pose` = the small `/load/{fast,mid,slow}` lanes; `dense` = a 20 MB/s `/load/img` flood. End-to-end
+latency works cross-machine because the sweep clock-syncs first (the `{op:"ping"}` probe corrects the
+Mac-vs-VPS skew — see the Methodology in §1).
 
 | transport | scenario | clean hz | clean loss% | @5% loss+40ms hz | @loss loss% |
 |---|---|--:|--:|--:|--:|
 | **WebSocket** | pose | 125 | 0 | 132 | **0** |
 | WebSocket | dense (20 MB/s) | 24 | 0 | 24 (~23 MB/s) | **0** |
 | **WebTransport** | pose | 133 | 0.19 | 116 | **4.9** |
-| WebTransport | dense (20 MB/s) | **0.75** | **77** | **0** | — |
 
-**What the WAN test actually showed (honestly):**
-- **WebSocket is the more robust transport here.** TCP carries both the 20 MB/s bulk *and* the small lanes
-  through 5% loss with **0% data loss** (retransmits absorb it; latency rises, which we can't quantify over
-  WAN). It "just works" over a raw IP.
-- **WebTransport's bulk path collapses** — `/load/img` gets **0.75 Hz / 77%** even on the clean path and **0
-  Hz** under loss. This is the **aioquic (pure-Python QUIC) per-message-stream** bottleneck (each >1100 B
-  frame opens a new reliable uni-stream), the same ceiling seen on loopback — *not* a WAN effect.
-- **WebTransport's datagram path (small lanes) works** — pose holds ~120–133 Hz; under 5% loss it drops ~4.9%
-  (datagrams shed lost packets instead of retransmitting — no HoL, but the data is gone). Reliable-vs-unreliable
-  is the real tradeoff; the theoretical *no-HoL latency* win couldn't be shown here because latency is
-  unmeasurable over WAN (clock skew).
+**What the WAN runs show:**
+- **WebSocket is the robust baseline.** TCP carries both the 20 MB/s bulk *and* the small lanes through
+  5% injected loss with **0% data loss** (retransmits absorb it; the cost is latency, not data). It "just
+  works" over a raw IP.
+- **WebTransport's datagram path (small lanes) works** — pose holds ~120–133 Hz; under 5% loss it drops
+  ~4.9% (datagrams shed lost packets instead of retransmitting — no HoL, but the data is gone).
+  Reliable-vs-unreliable is the real tradeoff; the *no-HoL latency* comparison under loss is the number to
+  sweep next (WT bulk rows too — run each transport through the drawer with the loss profile applied).
 - **The UDP transports are finicky over a raw IP.** WebTransport connects from a `localhost` page via
   self-signed cert-hash pinning, but the QUIC handshake fails if packet loss hits *during* the handshake
-  (bring the connection up first, then apply loss). WebRTC-data did not establish (ICE needs a public host
+  (bring the connection up first, then apply loss). WebRTC-data does not establish (ICE needs a public host
   candidate / STUN). **TCP transports (WS/SSE/poll) connect reliably by raw IP; the UDP ones want real infra**
   — a domain + CA TLS for WebTransport (via Caddy/Let's Encrypt, no hash-pinning), STUN/TURN for WebRTC.
 
-**Bottom line:** over this real WAN, the byte-relay + **WebSocket sustains ~23 MB/s through 5% loss with zero
-data loss** and is the safe default; WebTransport's win needs (a) a non-Python QUIC bulk path and (b) a domain
-+ TLS to be demonstrated cleanly. The honest takeaway matches §1: transport choice is nuanced, and WS is a
-strong, robust baseline.
+**Bottom line:** over a real WAN the byte-relay + **WebSocket sustains ~23 MB/s through 5% loss with zero
+data loss** and is the safe default; demonstrating WebTransport's no-HoL win cleanly needs a domain + CA
+TLS (and, for bulk beyond ~20 MB/s, a non-Python QUIC relay — see the §1 ceilings). Same takeaway as §1:
+transport choice is nuanced, and WS is a strong, robust baseline.
 
 ### VPS — run the dog (Ubuntu; needs `uv`; `deno` only to build the app)
 
