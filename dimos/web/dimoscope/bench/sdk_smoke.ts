@@ -1,14 +1,17 @@
 // Headless SDK smoke test (M2 verify): use @dimos/topics against the live gateway.
 // RUN:  deno run -A bench/sdk_smoke.ts
-import { connect } from "../packages/topics/src/index.ts";
+import { createDimosClient, ws } from "../packages/topics/src/index.ts";
 
 const url = Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8080/ws";
-const client = await connect({ url, reconnect: false });
+const client = createDimosClient({ transport: ws({ reconnect: false }) });
+await client.connect(url);
 console.log("[smoke] connected", url);
 
 let firstOdom = true;
 const odom = client.topic("/odom");
-odom.subscribeLatest((data: any, meta) => {
+odom.subscribeLatest((m) => {
+  const data = m.data as any;
+  const meta = m.meta;
   if (firstOdom) {
     firstOdom = false;
     console.log(
@@ -23,7 +26,8 @@ odom.subscribeLatest((data: any, meta) => {
 
 const map = client.topic("/map");
 let gotMap = false;
-map.subscribeLatest((data: any) => {
+map.subscribeLatest((m) => {
+  const data = m.data as any;
   if (!gotMap) {
     gotMap = true;
     console.log(

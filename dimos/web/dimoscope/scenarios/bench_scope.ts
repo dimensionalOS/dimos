@@ -3,7 +3,7 @@
 //
 // Driven by scenarios/bench.sh (which starts the matching publisher first). Or directly:
 //   deno run -A scenarios/bench_scope.ts nav 6000 ws://localhost:8080/ws
-import { connect } from "../packages/topics/src/client.ts";
+import { createDimosClient, ws } from "../packages/topics/src/client.ts";
 import { measureScenario } from "../packages/topics/src/bench.ts";
 
 const SCENARIOS: Record<string, string[]> = {
@@ -21,7 +21,8 @@ if (!topics) {
   Deno.exit(2);
 }
 
-const client = await connect({ url });
+const client = createDimosClient({ transport: ws() });
+await client.connect(url);
 const r = await measureScenario(client, { name, topics }, durMs, true);
 // | scenario | topics | msgs | hz | kB/s | p50 | p95 | p99 | loss% |
 console.log(

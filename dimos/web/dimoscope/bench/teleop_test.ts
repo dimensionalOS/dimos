@@ -1,16 +1,15 @@
 // Verify the full teleop loop: browser SDK → gateway → /cmd_vel → simplerobot
 // moves → /odom updates. Drives forward at 0.5 m/s for `DRIVE_MS`, prints the
 // robot's x before/after. RUN: deno run -A bench/teleop_test.ts
-import { connect } from "../packages/topics/src/index.ts";
+import { createDimosClient, ws } from "../packages/topics/src/index.ts";
 
 const DRIVE_MS = Number(Deno.env.get("DRIVE_MS") ?? 4000);
-const client = await connect({
-  url: Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8080/ws",
-  reconnect: false,
-});
+const client = createDimosClient({ transport: ws({ reconnect: false }) });
+await client.connect(Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8080/ws");
 let x = 0,
   y = 0;
-client.topic(Deno.env.get("ODOM_TOPIC") ?? "/odom").subscribeLatest((d: any) => {
+client.topic(Deno.env.get("ODOM_TOPIC") ?? "/odom").subscribeLatest((m) => {
+  const d = m.data as any;
   x = d?.pose?.position?.x ?? 0;
   y = d?.pose?.position?.y ?? 0;
 });

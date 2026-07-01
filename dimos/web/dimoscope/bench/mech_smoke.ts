@@ -3,14 +3,11 @@
 // Run the gateway + bench_source first (see bench/run.sh / matrix). A building block
 // for the full matrix runner.
 //   GATEWAY_URL=ws://localhost:8090 DUR=2000 deno run -A bench/mech_smoke.ts
-import { createGatewayWsTransport } from "../packages/topics/src/adapters/gatewayWs.ts";
-import { createHttpPollTransport } from "../packages/topics/src/adapters/httpPoll.ts";
-import { createSseTransport } from "../packages/topics/src/adapters/sse.ts";
 import { measureScenario } from "../packages/topics/src/bench.ts";
-import { createDimosClient } from "../packages/topics/src/client.ts";
-import type { Transport } from "../packages/topics/src/transport.ts";
+import { createDimosClient, type TransportFactory, ws } from "../packages/topics/src/client.ts";
+import { poll, sse } from "../packages/topics/src/experimental.ts";
 
-// serve.py serves WS at /ws, SSE at /sse, poll at /poll on one origin. BASE is the origin; WS_URL adds /ws.
+// the gateway serves WS at /ws, SSE at /sse, poll at /poll on one origin. BASE is the origin; WS_URL adds /ws.
 const BASE = (Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8080").replace(/\/ws$/, "");
 const WS_URL = `${BASE}/ws`;
 const DUR = Number(Deno.env.get("DUR") ?? 2000);
@@ -23,9 +20,8 @@ const SCENARIO = {
 // Wait until the publisher+gateway are actually flowing (or give up), so the first
 // measured mechanism isn't penalised by cold-start import lag.
 async function warmup() {
-  const t = createGatewayWsTransport({ url: WS_URL, reconnect: false });
-  const client = createDimosClient({ transport: t });
-  await t.connect();
+  const client = createDimosClient({ transport: ws({ reconnect: false }) });
+  await client.connect(WS_URL);
   await new Promise<void>((res) => {
     let done = false;
     const fin = () => {
@@ -40,24 +36,24 @@ async function warmup() {
       fin();
     });
   });
-  t.close();
+  client.close();
 }
 
-async function run(label: string, transport: Transport) {
+async function run(label: string, transport: TransportFactory, url: string) {
   const client = createDimosClient({ transport });
-  await transport.connect();
+  await client.connect(url);
   const r = await measureScenario(client, SCENARIO, DUR, true); // end-to-end (publish→recv)
   console.log(
     `${
       label.padEnd(10)
     } hz=${r.hz}  kB/s=${r.kbps}  p50=${r.latP50}  p95=${r.latP95}  p99=${r.latP99}  max=${r.latMax}  std=${r.latStd}  loss%=${r.lossPct}`,
   );
-  transport.close();
+  client.close();
 }
 
 console.log(`[mech_smoke] warming up (≤${WARMUP_MS}ms)…`);
 await warmup();
-await run("ws", createGatewayWsTransport({ url: WS_URL, reconnect: false }));
-await run("sse", createSseTransport({ url: BASE, reconnect: false }));
-await run("poll", createHttpPollTransport({ url: BASE }));
+await run("ws", ws({ reconnect: false }), WS_URL);
+await run("sse", sse({ reconnect: false }), BASE);
+await run("poll", poll(), BASE);
 Deno.exit(0);

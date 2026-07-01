@@ -2,9 +2,8 @@
 // describing byte-relay, dimos today) vs server-side decode→JSON (the rosbridge model). Same gateway,
 // same scenario, two decode modes — prints the bandwidth + latency cost of moving decode to the server.
 //   GATEWAY_URL=ws://localhost:8090 DUR=3000 deno run -A --unstable-sloppy-imports bench/decode_bench.ts
-import { createGatewayWsTransport } from "../packages/topics/src/adapters/gatewayWs.ts";
 import { measureScenario } from "../packages/topics/src/bench.ts";
-import { createDimosClient } from "../packages/topics/src/client.ts";
+import { createDimosClient, ws, wsServerJson } from "../packages/topics/src/client.ts";
 import type { BenchRow } from "../packages/topics/src/bench.ts";
 
 const URL = Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8080/ws";
@@ -15,19 +14,19 @@ const SCEN = {
 };
 
 async function run(mode: "client" | "server-json"): Promise<BenchRow> {
-  const t = createGatewayWsTransport({ url: URL, reconnect: false, decode: mode });
-  const client = createDimosClient({ transport: t });
-  await t.connect();
+  const client = createDimosClient({
+    transport: mode === "server-json" ? wsServerJson({ reconnect: false }) : ws({ reconnect: false }),
+  });
+  await client.connect(URL);
   const r = await measureScenario(client, SCEN, DUR, true); // end-to-end (publish→recv)
-  t.close();
+  client.close();
   return r;
 }
 
 // Warm up (wait for the publisher) so neither mode eats the cold start.
 {
-  const t = createGatewayWsTransport({ url: URL, reconnect: false });
-  const c = createDimosClient({ transport: t });
-  await t.connect();
+  const c = createDimosClient({ transport: ws({ reconnect: false }) });
+  await c.connect(URL);
   await new Promise<void>((res) => {
     const to = setTimeout(res, 15000);
     const s = c.topic("/bench/p0").subscribe(() => {
@@ -36,7 +35,7 @@ async function run(mode: "client" | "server-json"): Promise<BenchRow> {
       res();
     });
   });
-  t.close();
+  c.close();
 }
 
 const bin = await run("client");

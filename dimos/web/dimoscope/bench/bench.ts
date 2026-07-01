@@ -5,7 +5,7 @@
 // RUN (with bench_publisher.py + the relevant server running):
 //   GATEWAY_URL=ws://localhost:8090 BENCH_LABEL="Deno↔LCM" deno run -A bench/bench.ts
 //   BENCH_TRANSPORT=ts deno run -A bench/bench.ts        # zenoh-ts direct (needs the :10000 bridge)
-import { connect } from "../packages/topics/src/index.ts";
+import { createDimosClient, ws } from "../packages/topics/src/index.ts";
 import {
   BENCH_SCENARIOS,
   type BenchRow,
@@ -21,18 +21,20 @@ const TRANSPORT = Deno.env.get("BENCH_TRANSPORT"); // "ts" → zenoh-ts direct
 const TS_URL = Deno.env.get("ZENOH_TS_URL") ?? "ws://localhost:10000";
 const url = TRANSPORT === "ts" ? TS_URL : WS_URL;
 // BENCH_E2E=1 → end-to-end latency (publish→client) instead of the gateway WS-hop, so a
-// combined all-transport table (incl. the gateway-less zenoh-ts) compares the same thing.
+// combined all-transport table (incl. The gateway-less zenoh-ts) compares the same thing.
 const E2E = Deno.env.get("BENCH_E2E") === "1";
 
 async function buildClient() {
   if (TRANSPORT === "ts") {
-    const { createZenohTsTransport } = await import("../packages/topics/src/adapters/zenohTs.ts");
+    const { zenohTs } = await import("../packages/topics/src/experimental.ts");
     // read via the remote-api bridge; no scout (bench subscribes explicit /bench/* topics).
-    return connect({
-      transport: createZenohTsTransport({ remoteApiUrl: TS_URL, discoveryKey: "" }),
-    });
+    const c = createDimosClient({ transport: zenohTs({ discoveryKey: "" }) });
+    await c.connect(TS_URL);
+    return c;
   }
-  return connect({ url: WS_URL, reconnect: false });
+  const c = createDimosClient({ transport: ws({ reconnect: false }) });
+  await c.connect(WS_URL);
+  return c;
 }
 
 console.log(`\n=== Benchmark: ${LABEL}  (${DUR}ms/scenario, ${url}) ===`);

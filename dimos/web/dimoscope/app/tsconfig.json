@@ -20,6 +20,7 @@
     // resolution stays untouched).
     "baseUrl": ".",
     "paths": {
+      "@dimos/topics/experimental": ["../packages/topics/src/experimental.ts"],
       "@dimos/topics": ["../packages/topics/src/index.ts"],
       "@dimos/react": ["../packages/react/src/index.tsx"],
       "react": ["./node_modules/@types/react"],

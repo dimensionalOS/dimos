@@ -1,7 +1,7 @@
 // Topic<T> — a typed handle to one DimOS topic. Manages subscribers, the latest
 // value, rate-limiting (backpressure), and live stats. On-demand: it tells the
 // transport to subscribe only while it has ≥1 subscriber, and unsubscribe at 0.
-import type { Handler, MessageMeta, Qos, Subscription, TopicStats } from "./types.ts";
+import type { Handler, Message, MessageMeta, Qos, Subscription, TopicStats } from "./types.ts";
 
 export interface TopicWiring {
   subscribe(topic: string, qos?: Qos): void;
@@ -107,7 +107,8 @@ export const createTopic = <T = unknown>(deps: TopicDeps): Topic<T> => {
     }
     lastDeliver = now;
     const m = { ...meta, dropped };
-    handlers.forEach((h) => h(data, m));
+    const message: Message<T> = { data, ts: m.srcTs ?? m.recvTs, meta: m };
+    handlers.forEach((h) => h(message));
   }
 
   return {

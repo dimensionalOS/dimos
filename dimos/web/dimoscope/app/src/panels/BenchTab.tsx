@@ -18,13 +18,13 @@ import {
 } from "@dimos/react";
 import {
   type BenchRow,
-  connect,
-  createGatewayWsTransport,
+  createDimosClient,
   type DimosClient,
   formatMarkdown,
   measureScenario,
   type Qos,
   STREAM_PROFILES,
+  wsServerJson,
 } from "@dimos/topics";
 import { Sparkline } from "../widgets/Sparkline";
 
@@ -191,9 +191,8 @@ export function BenchTab() {
         setProgress(`${activeLabel} · ${scenario.name} · server-json decode…`);
         let sib: DimosClient | undefined;
         try {
-          sib = await connect({
-            transport: createGatewayWsTransport({ url: activeUrl, reconnect: false, decode: "server-json" }),
-          });
+          sib = createDimosClient({ transport: wsServerJson({ reconnect: false }) });
+          await sib.connect(activeUrl);
           await new Promise((r) => setTimeout(r, 250));
           const r = await measureScenario(sib, scenario, dur, true, qos);
           out.push({ label: `${activeLabel} · server-json`, row: { ...r, scenario: scenario.name } });

@@ -9,7 +9,7 @@ any transport**.
 ```
 robot / sim ─► DimOS bus (LCM | Zenoh)
    │
-   └─► serve.py — ONE Python process (`deno task serve`), http://0.0.0.0:8080
+   └─► the gateway — ONE Python process (`deno task serve`), http://0.0.0.0:8080
          taps BOTH LCM + Zenoh → one normalized stream, fanned out over every transport:
            GET /            the built web app  (the SDK consumer itself)
            WS  /ws          data plane: topics + teleop/goal/rpc  (the trust boundary)
@@ -31,11 +31,11 @@ packages); the backend is **one Python service** (`uv sync --extra web`). Two ta
 ```bash
 cd dimos/web/dimoscope && deno install        # frontend deps (one-time)
 
-deno task serve     # the whole backend in one process → http://localhost:8080  (= uv run python serve.py)
+deno task serve     # the whole backend in one process → http://localhost:8080  (= uv run python -m gateway)
 deno task sim       # a data source: mujoco go2;  or  sim:dimsim / sim:replay  (or a real robot)
 deno task app       # the Vite app → http://localhost:5173  (or just open http://localhost:8080/)
 ```
-`serve.py` serves the app at `/` too, so a built deploy needs only the one process; in dev, `deno task
+The gateway serves the app at `/` too, so a built deploy needs only the one process; in dev, `deno task
 app` gives hot reload and connects to `:8080`.
 
 The app auto-discovers topics, draws the map + robot + trail in **WorldView**, shows a live camera
@@ -60,14 +60,14 @@ only the wire differs:
 
 **Safety:** teleop/goal/rpc always ride the `/ws` control path (velocity clamp + TTL deadman +
 stop-on-disconnect); the read-only mechanisms (SSE/poll/WebRTC-data/WebTransport) can't bypass it.
-`serve.py` taps **both** LCM and Zenoh, so whichever bus the robot uses reaches the browser with no
+The gateway taps **both** LCM and Zenoh, so whichever bus the robot uses reaches the browser with no
 config. For data over both at once, run DimSim: `DIMOS_TRANSPORT=zenoh uv run dimos --simulation
 dimsim run unitree-go2`.
 
 ## Media plane (camera)
 
 The camera is the one heavy stream (~11 MB/s JPEG, ~55 MB/s raw), so it rides its **own plane** beside
-the topic data — the **`/media` WebSocket** on the same service (`servers/media.py`). `useVideo(topic)`
+the topic data — the **`/media` WebSocket** on the same service (`gateway/media.py`). `useVideo(topic)`
 negotiates the best available delivery (capability + graceful fallback), picked by the topbar **cam:**
 toggle:
 
@@ -78,7 +78,7 @@ toggle:
 | **jpeg** | the Image topic itself, decoded in-browser (universal floor) | the data plane (`/ws` etc.) |
 
 Encode-once-per-topic → fan out to N viewers; multiple cameras = multiple topics. The jpeg floor works
-over any data mechanism; webrtc/webcodecs need a camera source on the bus (`serve.py` taps both LCM and
+over any data mechanism; webrtc/webcodecs need a camera source on the bus (the gateway taps both LCM and
 Zenoh).
 
 ## Commands (RPC)
@@ -93,25 +93,28 @@ commands only.
 ## The SDK (`@dimos/topics`)
 
 ```ts
-import { connect } from "@dimos/topics";
-const client = await connect({ url: "ws://localhost:8080/ws" });
+import { createDimosClient, ws } from "@dimos/topics";
+const client = createDimosClient();                   // transport defaults to ws(); connect is a method
+await client.connect("ws://localhost:8080/ws");
+// bad internet? one line: createDimosClient({ transport: webtransport() }) — WS control + WT data, no HoL
 
+client.subscribe("/odom", (m) => { … m.data … m.ts … m.meta.latencyMs … }); // one { data, ts, meta } envelope
 client.listTopics();                                  // [{topic, type}, …] (live discovery)
-const odom = client.topic<PoseStamped>("/odom");
-odom.subscribeLatest((pose, meta) => { … meta.latencyMs … });
+const odom = client.topic("/odom");                   // rich per-topic handle
 odom.setRateLimit(15);                                // backpressure (also asks the service to downsample)
 odom.stats();                                         // { hz, bytesPerSec, dropped, lastLatencyMs }
 client.teleop(0.5, 0.0);                              // safe: the service clamps + TTL/deadman watchdog
-await client.call("GO2Connection", "standup");        // RPC: invoke a whitelisted dimos @rpc command
-client.commands;                                      // [{target, method, label}] the gateway advertises
+await client.modules.GO2Connection.standup();         // RPC via a typed Proxy over @rpc (from registered modules)
 ```
+Typed topics + modules: `createDimosClient<DimosTopics, DimosCommands>()` (maps from the codegen). The
+research/benchmark transports (`sse`/`poll`/`webrtc`/raw-WT/`zenohTs`) live in `@dimos/topics/experimental`.
 React: `DimosProvider`, `useTopics`, `useTopicLatest`, `useTopicRef` (no re-render → rAF canvas),
 `useTopicStats`, `useTeleop`, `useVideo` (camera → `<video>`/`<canvas>`), `useRpc`/`useCommands`.
 **On-demand:** a topic is subscribed on the wire only while it has a live subscriber.
 
 ## Benchmark
 
-Each is one self-contained command (starts `serve.py` + a load source + teardown). See
+Each is one self-contained command (starts the gateway + a load source + teardown). See
 **[docs/data-path.md](docs/data-path.md)** for the methodology and full tables.
 
 ```bash
@@ -136,10 +139,10 @@ costs **2.64× the bytes** of the binary relay; **~75% on-demand** bandwidth cut
 | `packages/topics/` | `@dimos/topics` — transport iface + adapters (`gatewayWs`, `zenohTs`) + **media plane** (`media.ts`, `jpegTopicMedia`/`webRtcMedia`/`webCodecsMedia`) + client (incl. `call` RPC), topic, decode, stats |
 | `packages/react/` | `@dimos/react` — hooks (`useTopics`, `useVideo`, `useTeleop`, `useRpc`/`useCommands`, …) |
 | `app/` | Vite example app (`panels/`: WorldView, Camera, PoseReadout, TeleopPad, StatsBar, CommandsPanel, SubscribeBar) |
-| `serve.py` | the single backend entrypoint — one process, all transports + the app |
-| `servers/bus.py` | the LCM+Zenoh bus tap → one normalized stream every transport reads from |
-| `servers/{data,media}.py` | `/ws` data plane (topics + teleop/goal/rpc) · `/media` camera plane |
-| `servers/bench.py` | the `/sse` `/poll` `/rtc` + WebTransport bench transports |
+| `gateway/app.py` | the single backend entrypoint (`python -m gateway`) — one process, all transports + the app |
+| `gateway/bus.py` | the LCM+Zenoh bus tap → one normalized stream every transport reads from |
+| `gateway/{data,media}.py` | `/ws` data plane (topics + teleop/goal/rpc) · `/media` camera plane |
+| `gateway/transports/` | the `/sse` `/poll` `/rtc` + WebTransport bench transports |
 | `bench/` | publisher + headless bench + `run.sh`/`matrix.sh`/… + `test_bench.py` + RESULTS.md |
 
 The original teaching prototype (`app/src/bus.ts`, `app/src/widgets/`, `WALKTHROUGH.md`) is the
@@ -147,7 +150,7 @@ parts-bin this was extracted from.
 
 ## Status / next
 - ✅ SDK + React app + teleop (verified in Chrome incl. driving the robot) + transport benchmark.
-- ✅ **Single service** — `serve.py`: one Python process taps **LCM + Zenoh** and serves the app +
+- ✅ **Single service** — the gateway: one Python process taps **LCM + Zenoh** and serves the app +
   all five delivery mechanisms (WS · SSE · poll · WebRTC-data · WebTransport) + the camera; the old
   per-transport gateways (Deno↔LCM / Python↔Zenoh / media node / zenoh-ts bridge) are **retired**.
 - ✅ **Media plane** — camera over WebRTC / WebCodecs / JPEG, capability-negotiated (`useVideo` +

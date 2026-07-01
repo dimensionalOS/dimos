@@ -33,6 +33,7 @@ export default defineConfig({
   resolve: {
     dedupe: ["react", "react-dom"],
     alias: {
+      "@dimos/topics/experimental": r("../packages/topics/src/experimental.ts"),
       "@dimos/topics": r("../packages/topics/src/index.ts"),
       "@dimos/react": r("../packages/react/src/index.tsx"),
     },

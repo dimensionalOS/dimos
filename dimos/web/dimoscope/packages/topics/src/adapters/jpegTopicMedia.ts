@@ -85,7 +85,7 @@ export const createJpegTopicMedia = (deps: JpegTopicMediaDeps): MediaChannel => 
   function subscribe(streamId: string): void {
     if (subs.has(streamId)) return;
     const sub = client.topic(streamId).subscribeLatest((raw) => {
-      const img = raw as ImageMsg;
+      const img = raw.data as ImageMsg;
       decodeImageToBitmap(img)
         .then((bmp) =>
           frameCb?.(streamId, bmp, {

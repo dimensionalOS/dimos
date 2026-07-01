@@ -11,7 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { connect, type DimosClient, selectMediaChannel } from "@dimos/topics";
+import { createDimosClient, type DimosClient, selectMediaChannel, ws } from "@dimos/topics";
 import type {
   CommandInfo,
   MediaChannel,
@@ -68,7 +68,17 @@ export function DimosProvider({
   children: ReactNode;
 }) {
   const list = useMemo<ServerOpt[]>(
-    () => servers ?? (url ? [{ id: url, label: url, connect: () => connect({ url }) }] : []),
+    () =>
+      servers ?? (url
+        ? [{
+          id: url,
+          label: url,
+          connect: () => {
+            const c = createDimosClient({ transport: ws() });
+            return c.connect(url).then(() => c);
+          },
+        }]
+        : []),
     [servers, url],
   );
   const [activeId, setActiveId] = useState<string | null>(list[0]?.id ?? null);
@@ -159,7 +169,7 @@ export function useTopicLatest<T = unknown>(
     if (!client || !topic) return;
     const t = client.topic(topic);
     if (maxHz) t.setRateLimit(maxHz);
-    const sub = t.subscribeLatest((data, meta) => setState({ data: data as T, meta }));
+    const sub = t.subscribeLatest((m) => setState({ data: m.data as T, meta: m.meta }));
     return () => sub.unsubscribe();
   }, [client, topic, maxHz]);
   return state;
@@ -174,8 +184,8 @@ export function useTopicRef<T = unknown>(
   useEffect(() => {
     ref.current = {}; // clear stale data from the previous topic on switch
     if (!client || !topic) return;
-    const sub = client.topic(topic).subscribe((data, meta) => {
-      ref.current = { data: data as T, meta };
+    const sub = client.topic(topic).subscribe((m) => {
+      ref.current = { data: m.data as T, meta: m.meta };
     });
     return () => sub.unsubscribe();
   }, [client, topic]);
@@ -273,8 +283,8 @@ export function useImageTopic(topic: string | null, opts?: { maxFps?: number }) 
     let fpsT = 0;
     const minMs = maxFps ? 1000 / maxFps : 0;
 
-    const sub = client.topic(topic).subscribe((data) => {
-      latest = data as ImageMsg;
+    const sub = client.topic(topic).subscribe((m) => {
+      latest = m.data as ImageMsg;
     });
     const fit = (w: number, h: number) => {
       if (cvs.width !== w || cvs.height !== h) {

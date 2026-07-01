@@ -14,13 +14,15 @@
 //   gen-types [--out F]  emit a typed DimosTopics map from live discovery
 // Import the specific data-plane modules (not the index.ts barrel) so the DOM-only media
 // plane never enters the graph — this CLI is headless/Deno, no DOM.
-import { connect, type DimosClient } from "../packages/topics/src/client.ts";
-import { createGatewayWsTransport } from "../packages/topics/src/adapters/gatewayWs.ts";
-import { createZenohTsTransport } from "../packages/topics/src/adapters/zenohTs.ts";
-import { createSseTransport } from "../packages/topics/src/adapters/sse.ts";
-import { createHttpPollTransport } from "../packages/topics/src/adapters/httpPoll.ts";
+import {
+  createDimosClient,
+  type DimosClient,
+  type TransportFactory,
+  ws,
+  wsServerJson,
+} from "../packages/topics/src/client.ts";
+import { poll, sse, zenohTs } from "../packages/topics/src/experimental.ts";
 import { BENCH_SCENARIOS, formatMarkdown, measureScenario } from "../packages/topics/src/bench.ts";
-import type { Transport } from "../packages/topics/src/transport.ts";
 import type { TopicInfo } from "../packages/topics/src/types.ts";
 import { generateCommandTypes, generateTypes } from "./genTypes.ts";
 
@@ -45,16 +47,16 @@ const url = flag("url") ??
 // renders ANY type — incl. user-defined messages not in @dimos/msgs — with zero rebuild.
 const decodeMode = flag("decode") === "server-json" ? ("server-json" as const) : undefined;
 
-function buildTransport(): Transport {
+function buildTransport(): TransportFactory {
   switch (transport) {
     case "gatewayWs":
-      return createGatewayWsTransport({ url, reconnect: false, decode: decodeMode });
+      return decodeMode ? wsServerJson({ reconnect: false }) : ws({ reconnect: false });
     case "zenohTs":
-      return createZenohTsTransport({ remoteApiUrl: url, discoveryKey: flag("key", "dimos/**") });
+      return zenohTs({ discoveryKey: flag("key", "dimos/**") });
     case "sse":
-      return createSseTransport({ url });
+      return sse();
     case "httpPoll":
-      return createHttpPollTransport({ url });
+      return poll();
     default:
       console.error(`dtop: unknown --transport "${transport}" (gatewayWs|zenohTs|sse|httpPoll)`);
       Deno.exit(2);
@@ -62,7 +64,8 @@ function buildTransport(): Transport {
 }
 
 function makeClient(): Promise<DimosClient> {
-  return connect({ transport: buildTransport() });
+  const c = createDimosClient({ transport: buildTransport() });
+  return c.connect(url).then(() => c);
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -95,7 +98,7 @@ async function cmdEcho() {
   const max = Number(flag("count", "0")); // 0 = unbounded
   let n = 0;
   const client = await makeClient();
-  client.topic(topic).subscribe((data, m) => {
+  client.topic(topic).subscribe(({ data, meta: m }) => {
     const body = JSON.stringify(data) ?? "undefined";
     const stamp = new Date().toISOString().slice(11, 23);
     const lat = m.latencyMs != null ? `${m.latencyMs.toFixed(1)}ms` : "?";
@@ -126,7 +129,7 @@ async function cmdStats() {
   const seqStat = new Map<string, { min: number; max: number; recv: number }>();
   const handles = names.map((name) => {
     const h = client.topic(name);
-    h.subscribe((_d, m) => {
+    h.subscribe(({ meta: m }) => {
       if (m.seq == null) return;
       const s = seqStat.get(name);
       if (!s) seqStat.set(name, { min: m.seq, max: m.seq, recv: 1 });

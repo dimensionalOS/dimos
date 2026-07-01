@@ -3,17 +3,17 @@
 import assert from "node:assert/strict";
 
 import { type BenchRow, measureScenario, onDemandSaving } from "./bench.ts";
-import type { MessageMeta } from "./types.ts";
+import type { Message, MessageMeta } from "./types.ts";
 
 // Records per-topic handlers so a test can push synthetic samples during the
 // measure window. measureScenario registers its subscribers synchronously (before
 // its first await), so delivering right after the call lands inside the window.
 function fakeClient() {
-  const handlers = new Map<string, Array<(d: unknown, m: MessageMeta) => void>>();
+  const handlers = new Map<string, Array<(message: Message<unknown>) => void>>();
   const client = {
     topic(name: string) {
       return {
-        subscribe(h: (d: unknown, m: MessageMeta) => void) {
+        subscribe(h: (message: Message<unknown>) => void) {
           const arr = handlers.get(name) ?? [];
           arr.push(h);
           handlers.set(name, arr);
@@ -22,10 +22,10 @@ function fakeClient() {
       };
     },
   };
-  const deliver = (name: string, m: Partial<MessageMeta>) =>
-    (handlers.get(name) ?? []).forEach((h) =>
-      h({}, { topic: name, type: "x", recvTs: 0, sizeBytes: 100, dropped: 0, ...m })
-    );
+  const deliver = (name: string, over: Partial<MessageMeta>) => {
+    const meta: MessageMeta = { topic: name, type: "x", recvTs: 0, sizeBytes: 100, dropped: 0, ...over };
+    (handlers.get(name) ?? []).forEach((h) => h({ data: {}, ts: meta.srcTs ?? meta.recvTs, meta }));
+  };
   return { client: client as never, deliver };
 }
 

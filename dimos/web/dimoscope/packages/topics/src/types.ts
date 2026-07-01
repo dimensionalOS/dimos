@@ -21,7 +21,16 @@ export interface MessageMeta {
   seq?: number;
 }
 
-export type Handler<T> = (data: T, meta: MessageMeta) => void;
+/** The one message envelope delivered to every subscriber (topic().subscribe, client.subscribe,
+ *  subscribeAll, peek, and the react hooks). `ts` is the source publish time (ms), falling back to
+ *  the client receive time; `meta` carries type/latency/seq/size. */
+export interface Message<T = unknown> {
+  data: T;
+  ts: number;
+  meta: MessageMeta;
+}
+
+export type Handler<T> = (message: Message<T>) => void;
 
 export interface Subscription {
   unsubscribe(): void;
@@ -58,7 +67,7 @@ export interface TopicInfo {
  *    identically on every transport (they live in topic.ts).
  *  • GATEWAY-SCHEDULER — `priority` / `reliability` / `depth`. The gateway-WS adapter forwards these
  *    in its subscribe op and the Python gateway's per-client priority outbox honors them
- *    (servers/qos_sched.py `declared_to_class`), so important topics survive a saturated link.
+ *    (gateway/qos.py `declared_to_class`), so important topics survive a saturated link.
  *    Transports without that server outbox (zenoh-ts, webrtc, sse, http-poll) advertise no
  *    `caps.qos.transport`, so `applyCaps` (qos.ts) strips these before they'd be sent.
  *
@@ -85,7 +94,7 @@ export interface Qos {
   conflation?: "latest" | "all";
   // ── gateway-scheduler (honored where caps.qos.transport advertises them) ───────
   /** Scheduler priority band — the gateway drains higher first and sheds lower first under
-   *  contention (the per-client priority outbox in servers/data.py). */
+   *  contention (the per-client priority outbox in gateway/data.py). */
   priority?: "low" | "normal" | "high" | "critical";
   /** Delivery guarantee: "reliable" keeps a bounded keep_last deque; "best-effort" conflates to
    *  the latest frame (the gateway sheds it first under load). */

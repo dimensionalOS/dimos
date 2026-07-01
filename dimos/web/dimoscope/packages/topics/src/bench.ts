@@ -97,7 +97,7 @@ export async function measureScenario(
     // Apply QoS before subscribing so the gateway downsample (rateLimit:"server") is requested
     // on the first subscribe. Optional-chained so test fakes without setQos don't throw.
     if (qos) topic.setQos?.(qos);
-    return topic.subscribe((_d, m) => {
+    return topic.subscribe(({ meta: m }) => {
       count++;
       bytes += m.sizeBytes;
       const l = endToEnd ? (m.srcTs != null ? m.recvTs - m.srcTs : undefined) : m.latencyMs;

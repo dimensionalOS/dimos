@@ -1,6 +1,6 @@
 import { createRoot } from "react-dom/client";
 import { DimosProvider, type ServerOpt } from "@dimos/react";
-import { connect } from "@dimos/topics";
+import { createDimosClient, ws } from "@dimos/topics";
 import { App } from "./App";
 import "./styles.css";
 
@@ -28,7 +28,11 @@ const servers: ServerOpt[] = [
     id: "ws",
     label: "WebSocket",
     url: `${wsBase}/ws`,
-    connect: () => connect({ url: `${wsBase}/ws` }),
+    connect: async () => {
+      const c = createDimosClient({ transport: ws() });
+      await c.connect(`${wsBase}/ws`);
+      return c;
+    },
     media: { ...MEDIA },
   },
   // Bench delivery mechanisms (read-only) — same frames, same origin, different transport. Lazy so
@@ -37,8 +41,10 @@ const servers: ServerOpt[] = [
     id: "sse",
     label: "SSE",
     connect: async () => {
-      const { createSseTransport } = await import("@dimos/topics");
-      return connect({ transport: createSseTransport({ url: httpBase }) });
+      const { sse } = await import("@dimos/topics/experimental");
+      const c = createDimosClient({ transport: sse() });
+      await c.connect(httpBase);
+      return c;
     },
     media: { ...MEDIA },
   },
@@ -46,8 +52,10 @@ const servers: ServerOpt[] = [
     id: "poll",
     label: "HTTP poll",
     connect: async () => {
-      const { createHttpPollTransport } = await import("@dimos/topics");
-      return connect({ transport: createHttpPollTransport({ url: httpBase }) });
+      const { poll } = await import("@dimos/topics/experimental");
+      const c = createDimosClient({ transport: poll() });
+      await c.connect(httpBase);
+      return c;
     },
     media: { ...MEDIA },
   },
@@ -55,8 +63,10 @@ const servers: ServerOpt[] = [
     id: "webrtc",
     label: "WebRTC data",
     connect: async () => {
-      const { createWebRtcDataTransport } = await import("@dimos/topics");
-      return connect({ transport: createWebRtcDataTransport({ url: `${wsBase}/rtc` }) });
+      const { webrtc } = await import("@dimos/topics/experimental");
+      const c = createDimosClient({ transport: webrtc() });
+      await c.connect(`${wsBase}/rtc`);
+      return c;
     },
     media: { ...MEDIA },
   },
@@ -64,13 +74,12 @@ const servers: ServerOpt[] = [
     id: "webtransport",
     label: "WebTransport",
     connect: async () => {
-      const { createWebTransportTransport } = await import("@dimos/topics");
-      return connect({
-        transport: createWebTransportTransport({
-          url: `https://${origin.split(":")[0]}:${WT_PORT}`,
-          certHashUrl: `${httpBase}/cert`,
-        }),
+      const { webtransportData } = await import("@dimos/topics/experimental");
+      const c = createDimosClient({
+        transport: webtransportData({ certHashUrl: `${httpBase}/cert` }),
       });
+      await c.connect(`https://${origin.split(":")[0]}:${WT_PORT}`);
+      return c;
     },
     media: { ...MEDIA },
   },

@@ -14,13 +14,22 @@ import { createRoot } from "react-dom/client";
 import {
   BENCH_SCENARIOS,
   type BenchRow,
-  connect,
+  createDimosClient,
   type DimosClient,
   formatMarkdown,
   measureScenario,
   onDemandSaving,
+  type TransportFactory,
+  ws,
 } from "@dimos/topics";
 import "./styles.css";
+
+/** Build + connect a client for one transport factory at `url` (the bench's per-mechanism endpoint). */
+async function openClient(transport: TransportFactory, url: string): Promise<DimosClient> {
+  const c = createDimosClient({ transport });
+  await c.connect(url);
+  return c;
+}
 
 const host = location.hostname || "localhost";
 const params = new URLSearchParams(location.search);
@@ -48,15 +57,15 @@ const TRANSPORTS: TransportDef[] = [
     id: "ws",
     label: "WebSocket",
     url: `${wsBase}/ws`,
-    open: () => connect({ url: `${wsBase}/ws`, reconnect: false }),
+    open: () => openClient(ws({ reconnect: false }), `${wsBase}/ws`),
   },
   {
     id: "sse",
     label: "SSE",
     url: `${httpBase}/sse`,
     open: async () => {
-      const { createSseTransport } = await import("@dimos/topics");
-      return connect({ transport: createSseTransport({ url: httpBase }) });
+      const { sse } = await import("@dimos/topics/experimental");
+      return openClient(sse(), httpBase);
     },
   },
   {
@@ -64,8 +73,8 @@ const TRANSPORTS: TransportDef[] = [
     label: "HTTP poll",
     url: `${httpBase}/poll`,
     open: async () => {
-      const { createHttpPollTransport } = await import("@dimos/topics");
-      return connect({ transport: createHttpPollTransport({ url: httpBase }) });
+      const { poll } = await import("@dimos/topics/experimental");
+      return openClient(poll(), httpBase);
     },
   },
   {
@@ -73,8 +82,8 @@ const TRANSPORTS: TransportDef[] = [
     label: "WebRTC data",
     url: `${wsBase}/rtc`,
     open: async () => {
-      const { createWebRtcDataTransport } = await import("@dimos/topics");
-      return connect({ transport: createWebRtcDataTransport({ url: `${wsBase}/rtc` }) });
+      const { webrtc } = await import("@dimos/topics/experimental");
+      return openClient(webrtc(), `${wsBase}/rtc`);
     },
   },
   {
@@ -82,13 +91,11 @@ const TRANSPORTS: TransportDef[] = [
     label: "WebTransport",
     url: `https://${wtHost}:${WT_PORT}`,
     open: async () => {
-      const { createWebTransportTransport } = await import("@dimos/topics");
-      return connect({
-        transport: createWebTransportTransport({
-          url: `https://${wtHost}:${WT_PORT}`,
-          certHashUrl: `${httpBase}/cert`,
-        }),
-      });
+      const { webtransportData } = await import("@dimos/topics/experimental");
+      return openClient(
+        webtransportData({ certHashUrl: `${httpBase}/cert` }),
+        `https://${wtHost}:${WT_PORT}`,
+      );
     },
   },
 ];

@@ -1,27 +1,22 @@
 // @dimos/topics — DimOS topics in the browser (framework-agnostic core).
-export { connect, createDimosClient } from "./client.ts";
-export type { ConnectOpts, DimosClient, DimosClientDeps } from "./client.ts";
+//
+// Entry: `createDimosClient({ transport? }).connect(url)`. Production transports are `ws()` (default,
+// the universal WS backbone + control plane) and `webtransport()` (WS control + WebTransport data — no
+// head-of-line blocking under loss). The research/benchmark transports (raw WebRTC-data, SSE, HTTP-poll,
+// raw WebTransport, zenoh-ts) live in "@dimos/topics/experimental".
+export { createDimosClient, ws, wsServerJson } from "./client.ts";
+export type {
+  DimosClient,
+  DimosClientDeps,
+  ModuleMap,
+  TransportFactory,
+} from "./client.ts";
+export { webtransport } from "./adapters/composite.ts";
+export type { WebtransportOpts } from "./adapters/composite.ts";
 export { createTopic } from "./topic.ts";
 export type { Topic, TopicDeps, TopicWiring } from "./topic.ts";
 export { createGatewayWsTransport } from "./adapters/gatewayWs.ts";
 export type { GatewayWsDeps } from "./adapters/gatewayWs.ts";
-// zenoh-ts is browser-only + heavy; the adapter lazy-imports it inside connect(), so
-// re-exporting the factory here stays cheap (no eager @eclipse-zenoh/zenoh-ts load).
-export { createZenohTsTransport } from "./adapters/zenohTs.ts";
-export type { ZenohTsDeps } from "./adapters/zenohTs.ts";
-// Read-only delivery mechanisms over the same gateway bus tap — for the data-path
-// benchmark (WebSocket vs SSE vs HTTP long-poll, same frames, different transport).
-export { createSseTransport } from "./adapters/sse.ts";
-export type { SseDeps } from "./adapters/sse.ts";
-export { createHttpPollTransport } from "./adapters/httpPoll.ts";
-export type { HttpPollDeps } from "./adapters/httpPoll.ts";
-// WebRTC DataChannel (browser-only): unordered/lossy delivery via servers/webrtc_data.py — no TCP
-// head-of-line blocking. Lazy browser-API use inside connect(), so importing this stays cheap.
-export { createWebRtcDataTransport } from "./adapters/webRtcData.ts";
-export type { WebRtcDataDeps } from "./adapters/webRtcData.ts";
-// WebTransport (HTTP/3 / QUIC, browser-only): datagrams (small) + streams (large), no TCP HoL.
-export { createWebTransportTransport } from "./adapters/webTransport.ts";
-export type { WebTransportDeps } from "./adapters/webTransport.ts";
 export { b64ToBytes, frameToSample } from "./adapters/gatewayFrame.ts";
 export { decodeBody, splitChannel, srcTsMs } from "./decode.ts";
 export {
@@ -35,6 +30,7 @@ export type { BenchRow, BenchScenario, StreamProfile } from "./bench.ts";
 export type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "./transport.ts";
 export type {
   Handler,
+  Message,
   MessageMeta,
   Qos,
   QosCaps,

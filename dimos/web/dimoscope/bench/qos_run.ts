@@ -2,8 +2,7 @@
 //   MODE=basic (direct gateway): rate-limit (setRateLimit downsamples a topic) + on-demand (1 of N)
 //   MODE=prio  (through a 4G netsim link): rate-limit the heavy lidar → the light pose stream recovers
 // Driven by bench/qos.sh. Measured by delivered hz / kB/s / seq-loss.
-import { createDimosClient, type DimosClient } from "../packages/topics/src/client.ts";
-import { createGatewayWsTransport } from "../packages/topics/src/adapters/gatewayWs.ts";
+import { createDimosClient, type DimosClient, ws } from "../packages/topics/src/client.ts";
 
 const URL = Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8080/ws";
 const DUR = Number(Deno.env.get("DUR") ?? 3000);
@@ -22,12 +21,11 @@ async function measure(
   durMs: number,
   setup?: (c: DimosClient) => void,
 ): Promise<Map<string, Stat>> {
-  const t = createGatewayWsTransport({ url: URL, reconnect: false });
-  const c = createDimosClient({ transport: t });
-  await t.connect();
+  const c = createDimosClient({ transport: ws({ reconnect: false }) });
+  await c.connect(URL);
   const stat = new Map<string, Stat>();
   const subs = topics.map((tp) =>
-    c.topic(tp).subscribe((_d, m) => {
+    c.topic(tp).subscribe(({ meta: m }) => {
       let s = stat.get(m.topic);
       if (!s) {
         s = { count: 0, bytes: 0, min: m.seq ?? 0, max: m.seq ?? 0, recv: 0 };
@@ -45,7 +43,7 @@ async function measure(
   if (setup) setup(c);
   await new Promise((r) => setTimeout(r, durMs));
   subs.forEach((s) => s.unsubscribe());
-  t.close();
+  c.close();
   return stat;
 }
 

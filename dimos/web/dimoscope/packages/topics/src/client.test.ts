@@ -28,16 +28,17 @@ function fakeTransport() {
   return { t, emit: (s: RawSample) => sampleCb?.(s) };
 }
 
-Deno.test("server-json: client delivers the pre-decoded object directly (skips decodeBody)", () => {
+Deno.test("server-json: client delivers the pre-decoded object directly (skips decodeBody)", async () => {
   const { t, emit } = fakeTransport();
-  const client = createDimosClient({ transport: t });
+  const client = createDimosClient({ transport: () => t });
+  await client.connect("test");
   let got: unknown;
   let size = -1;
   let seq = -1;
-  client.topic("/bench/p0").subscribe((d, m) => {
-    got = d;
-    size = m.sizeBytes;
-    seq = m.seq ?? -1;
+  client.topic("/bench/p0").subscribe((msg) => {
+    got = msg.data;
+    size = msg.meta.sizeBytes;
+    seq = msg.meta.seq ?? -1;
   });
   const decoded = { frame_id: "7", ts: 1_750_000_000, position: [1, 2, 3] };
   const wire = new TextEncoder().encode(
@@ -56,9 +57,10 @@ Deno.test("server-json: client delivers the pre-decoded object directly (skips d
   assert.equal(seq, 7); // seqFrom read the decoded frame_id → loss detection still works
 });
 
-Deno.test("client-binary: a sample with no `decoded` and an undecodable payload is dropped", () => {
+Deno.test("client-binary: a sample with no `decoded` and an undecodable payload is dropped", async () => {
   const { t, emit } = fakeTransport();
-  const client = createDimosClient({ transport: t });
+  const client = createDimosClient({ transport: () => t });
+  await client.connect("test");
   let calls = 0;
   client.topic("/x").subscribe(() => {
     calls++;
