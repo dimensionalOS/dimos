@@ -25,7 +25,7 @@ import time
 from fastapi import WebSocket, WebSocketDisconnect
 
 from .bus import Bus, Sample
-from .qos_sched import PriorityOutbox, default_priority
+from .qos_sched import PriorityOutbox, declared_to_class, default_priority
 
 # QOS_SCHED=0 → the old single FIFO outbox (the A/B baseline); default on → per-client priority outbox
 # that drains by priority + conflation so important topics (pose/teleop) survive a saturated browser link.
@@ -60,12 +60,13 @@ def _jsonable(v: object) -> object:
 
 
 class _Client:
-    __slots__ = ("deadman", "last", "q", "rate", "subs")
+    __slots__ = ("deadman", "last", "q", "qos", "rate", "subs")
 
     def __init__(self) -> None:
         self.subs: set[str] = set()  # subscribed topics; "*" = all
         self.rate: dict[str, float] = {}  # topic -> maxHz (0/absent = unlimited)
         self.last: dict[str, float] = {}  # topic -> last forward time (ms)
+        self.qos: dict[str, tuple] = {}  # topic -> (rank, conflate, depth) client override (else default)
         self.q = PriorityOutbox(
             fifo=not QOS_SCHED, fifo_max=CLIENT_QUEUE_MAX
         )  # priority/conflation outbox
@@ -146,7 +147,7 @@ class DataPlane:
         if not self.clients:
             return
         now = time.time() * 1000.0
-        prio, conflate, depth = default_priority(s.topic, s.type)  # lane → scheduler class
+        default = default_priority(s.topic, s.type)  # server default; clients may override per subscription
         frame: bytes | None = None
         for st in self.clients.values():
             if not ("*" in st.subs or s.topic in st.subs):
@@ -158,6 +159,7 @@ class DataPlane:
                 st.last[s.topic] = now
             if frame is None:
                 frame = struct.pack(">d", now) + s.lc02  # [f64 gateway-send-ms][LC02]
+            prio, conflate, depth = st.qos.get(s.topic, default)  # client override else server default
             st.q.put_data(
                 s.topic, prio, conflate, depth, frame
             )  # priority outbox; never blocks/raises
@@ -218,10 +220,12 @@ class DataPlane:
             st.subs.add(m["topic"])
             if m.get("maxHz"):
                 st.rate[m["topic"]] = float(m["maxHz"])
+            self._apply_qos(st, m["topic"], m)  # client-declared priority/reliability/depth (overrides default)
         elif op == "unsubscribe":
             st.subs.discard(m["topic"])
             st.rate.pop(m["topic"], None)
             st.last.pop(m["topic"], None)
+            st.qos.pop(m["topic"], None)
         elif op == "rate":
             st.rate[m["topic"]] = float(m.get("maxHz") or 0)
         elif op == "list":
@@ -236,6 +240,17 @@ class DataPlane:
             self._publish_goal(m.get("x", 0), m.get("y", 0), m.get("z", 0))
         elif op == "rpc":
             await self._handle_rpc(st, m, loop)
+
+    def _apply_qos(self, st: _Client, topic: str, m: dict) -> None:
+        """Store the client's declared QoS override for `topic` (priority/reliability/depth merged onto
+        the server default), or clear it back to the default if the client declared none."""
+        if any(m.get(k) is not None for k in ("priority", "reliability", "depth")):
+            default = default_priority(topic, self.bus.topics.get(topic, ""))
+            st.qos[topic] = declared_to_class(
+                m.get("priority"), m.get("reliability"), m.get("depth"), default
+            )
+        else:
+            st.qos.pop(topic, None)
 
     def _arm_deadman(self, st: _Client, ttl_ms: float, loop) -> None:
         if st.deadman:
