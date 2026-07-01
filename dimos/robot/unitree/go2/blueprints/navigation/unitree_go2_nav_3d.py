@@ -41,6 +41,9 @@ go2_lidar_height = 0.5
 # base_link <- lidar mount rotation, so nav reads odometry in the level body frame.
 _sensor_mount_rotation = list(base_link_from_mid360().rotation.to_tuple())
 
+# Body-frame axis-triad length (m).
+_axis_len = 0.5
+
 
 def _render_global_map(msg: Any) -> Any:
     return msg.to_rerun()
@@ -65,18 +68,37 @@ def _static_robot_body(rr: Any) -> list[Any]:
     ]
 
 
+def _static_body_axes(rr: Any) -> Any:
+    """XYZ axis triad riding the robot body."""
+    return rr.Arrows3D(
+        origins=[[0.0, 0.0, 0.0]] * 3,
+        vectors=[
+            [_axis_len, 0.0, 0.0],
+            [0.0, _axis_len, 0.0],
+            [0.0, 0.0, _axis_len],
+        ],
+        colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]],
+        radii=_axis_len / 25,
+    )
+
+
 _nav_rerun_config = {
     **rerun_config,
     "max_hz": {
         **rerun_config["max_hz"],
-        "world/global_map": 1.0,
-        "world/local_map": 1.0,
+        # Rate-limited at the source by global_emit_every, roughly every 5s.
+        "world/global_map": 0,
+        "world/local_map": 0.5,
     },
-    "memory_limit": "256MB",
+    # Ring buffer replayed to a connecting viewer. Small so connect catches up fast.
+    "memory_limit": "64MB",
     # base_link tf comes from the go2 internal odometry, which is not the map
     # frame. Anchor the robot box to pointlio's body frame instead and hide the
     # camera frustum that rides base_link.
-    "static": {"world/tf/body": _static_robot_body},
+    "static": {
+        "world/tf/body": _static_robot_body,
+        "world/tf/body/axes": _static_body_axes,
+    },
     "visual_override": {
         **rerun_config["visual_override"],
         "world/global_map": _render_global_map,
