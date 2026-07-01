@@ -51,6 +51,7 @@ nav_config: dict[str, Any] = dict(
 
 alfred_nav = (
     autoconnect(
+        # FIXME: need alfred static transform publisher
         FastLio2.blueprint(
             host_ip=os.getenv("LIDAR_HOST_IP", "192.168.1.5"),
             lidar_ip=os.getenv("LIDAR_IP", "192.168.1.189"),

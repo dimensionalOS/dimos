@@ -24,10 +24,11 @@ from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSd
 
 # Underscore-prefixed: a shared sub-blueprint, not a runnable blueprint of its own.
 _unitree_g1_onboard = autoconnect(
+    # FIXME: need g1 static transform publisher
     FastLio2.blueprint(
         host_ip=os.getenv("LIDAR_HOST_IP", "192.168.123.164"),
         lidar_ip=os.getenv("LIDAR_IP", "192.168.123.120"),
-    ),
+    ).remappings([(FastLio2, "global_map", "global_map_fastlio")]),
     G1HighLevelDdsSdk.blueprint(),
     unitree_g1_vis,
 ).global_config(n_workers=12, robot_model="unitree_g1")

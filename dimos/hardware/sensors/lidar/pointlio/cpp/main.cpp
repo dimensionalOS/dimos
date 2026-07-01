@@ -16,6 +16,8 @@
 
 #include <lcm/lcm-cpp.hpp>
 
+#include <Eigen/Dense>
+
 #include <atomic>
 #include <boost/make_shared.hpp>
 #include <chrono>
@@ -81,6 +83,17 @@ static std::string g_child_frame_id;     // required via --child_frame_id
 static std::string g_sensor_frame_id;    // required via --sensor_frame_id
 static float g_frequency = 10.0f;
 
+// Optional rigid transform applied to the published cloud + odometry (and, via
+// the Python TF republisher that reads the odometry, the odom->body TF). Lets a
+// physically-tilted mount be reported as a different mount without touching the
+// SLAM core. Identity unless --transform supplies a row-major 4x4 (16 doubles).
+// Cloud points are moved p' = C @ p; the body pose is conjugated T' = C @ T @
+// inv(C) and the twist rotated by C's rotation, so cloud and odometry stay
+// mutually consistent.
+static bool g_has_transform = false;
+static Eigen::Matrix4d g_transform = Eigen::Matrix4d::Identity();
+static Eigen::Matrix4d g_transform_inv = Eigen::Matrix4d::Identity();
+
 // Frame accumulator (Livox SDK raw → CustomMsg)
 static std::mutex g_pc_mutex;
 // Serializes all Point-LIO EKF access. The SDK delivers IMU on its own callback
@@ -142,11 +155,22 @@ static void publish_lidar(PointCloudXYZI::Ptr cloud, double timestamp, const std
     pc.data_length = pc.row_step;
     pc.data.resize(pc.data_length);
 
+    const Eigen::Matrix3d transform_rotation = g_transform.block<3, 3>(0, 0);
+    const Eigen::Vector3d transform_translation = g_transform.block<3, 1>(0, 3);
     for (int point_idx = 0; point_idx < num_points; ++point_idx) {
         float* dst = reinterpret_cast<float*>(pc.data.data() + point_idx * 16);
-        dst[0] = cloud->points[point_idx].x;
-        dst[1] = cloud->points[point_idx].y;
-        dst[2] = cloud->points[point_idx].z;
+        double x = cloud->points[point_idx].x;
+        double y = cloud->points[point_idx].y;
+        double z = cloud->points[point_idx].z;
+        if (g_has_transform) {
+            const Eigen::Vector3d moved = transform_rotation * Eigen::Vector3d(x, y, z) + transform_translation;
+            x = moved.x();
+            y = moved.y();
+            z = moved.z();
+        }
+        dst[0] = static_cast<float>(x);
+        dst[1] = static_cast<float>(y);
+        dst[2] = static_cast<float>(z);
         dst[3] = cloud->points[point_idx].intensity;
     }
 
@@ -161,25 +185,48 @@ static void publish_odometry(const custom_messages::Odometry& odom, double times
     msg.child_frame_id = g_child_frame_id;
 
     // Pose in the SLAM/sensor frame.
-    msg.pose.pose.position.x = odom.pose.pose.position.x;
-    msg.pose.pose.position.y = odom.pose.pose.position.y;
-    msg.pose.pose.position.z = odom.pose.pose.position.z;
-    msg.pose.pose.orientation.x = odom.pose.pose.orientation.x;
-    msg.pose.pose.orientation.y = odom.pose.pose.orientation.y;
-    msg.pose.pose.orientation.z = odom.pose.pose.orientation.z;
-    msg.pose.pose.orientation.w = odom.pose.pose.orientation.w;
+    Eigen::Vector3d position(
+        odom.pose.pose.position.x, odom.pose.pose.position.y, odom.pose.pose.position.z);
+    Eigen::Quaterniond orientation(
+        odom.pose.pose.orientation.w, odom.pose.pose.orientation.x,
+        odom.pose.pose.orientation.y, odom.pose.pose.orientation.z);
+    Eigen::Vector3d linear(
+        odom.twist.twist.linear.x, odom.twist.twist.linear.y, odom.twist.twist.linear.z);
+    Eigen::Vector3d angular(
+        odom.twist.twist.angular.x, odom.twist.twist.angular.y, odom.twist.twist.angular.z);
+
+    if (g_has_transform) {
+        Eigen::Matrix4d pose = Eigen::Matrix4d::Identity();
+        pose.block<3, 3>(0, 0) = orientation.toRotationMatrix();
+        pose.block<3, 1>(0, 3) = position;
+        const Eigen::Matrix4d faked = g_transform * pose * g_transform_inv;
+        const Eigen::Matrix3d transform_rotation = g_transform.block<3, 3>(0, 0);
+        position = faked.block<3, 1>(0, 3);
+        orientation = Eigen::Quaterniond(faked.block<3, 3>(0, 0));
+        orientation.normalize();
+        linear = transform_rotation * linear;
+        angular = transform_rotation * angular;
+    }
+
+    msg.pose.pose.position.x = position.x();
+    msg.pose.pose.position.y = position.y();
+    msg.pose.pose.position.z = position.z();
+    msg.pose.pose.orientation.x = orientation.x();
+    msg.pose.pose.orientation.y = orientation.y();
+    msg.pose.pose.orientation.z = orientation.z();
+    msg.pose.pose.orientation.w = orientation.w();
 
     for (int idx = 0; idx < 36; ++idx) {
         msg.pose.covariance[idx] = odom.pose.covariance[idx];
     }
 
     // Velocity from Point-LIO's IESKF state (its key output over FAST-LIO).
-    msg.twist.twist.linear.x = odom.twist.twist.linear.x;
-    msg.twist.twist.linear.y = odom.twist.twist.linear.y;
-    msg.twist.twist.linear.z = odom.twist.twist.linear.z;
-    msg.twist.twist.angular.x = odom.twist.twist.angular.x;
-    msg.twist.twist.angular.y = odom.twist.twist.angular.y;
-    msg.twist.twist.angular.z = odom.twist.twist.angular.z;
+    msg.twist.twist.linear.x = linear.x();
+    msg.twist.twist.linear.y = linear.y();
+    msg.twist.twist.linear.z = linear.z();
+    msg.twist.twist.angular.x = angular.x();
+    msg.twist.twist.angular.y = angular.y();
+    msg.twist.twist.angular.z = angular.z();
     std::memset(msg.twist.covariance, 0, sizeof(msg.twist.covariance));
 
     g_lcm->publish(g_odometry_topic, &msg);
@@ -368,6 +415,16 @@ int main(int argc, char** argv) {
     if (auto gi = parse_doubles(mod.arg("gravity_init", "")); !gi.empty()) params.gravity_init = gi;
     if (auto et = parse_doubles(mod.arg("extrinsic_t", "")); !et.empty()) params.extrinsic_T = et;
     if (auto er = parse_doubles(mod.arg("extrinsic_r", "")); !er.empty()) params.extrinsic_R = er;
+    // Optional post-SLAM mount correction (row-major 4x4); identity when absent.
+    if (auto transform = parse_doubles(mod.arg("transform", "")); transform.size() == 16) {
+        g_has_transform = true;
+        for (int row = 0; row < 4; ++row) {
+            for (int col = 0; col < 4; ++col) {
+                g_transform(row, col) = transform[row * 4 + col];
+            }
+        }
+        g_transform_inv = g_transform.inverse();
+    }
     // odometry
     params.publish_odometry_without_downsample =
         mod.arg_bool("publish_odometry_without_downsample", params.publish_odometry_without_downsample);

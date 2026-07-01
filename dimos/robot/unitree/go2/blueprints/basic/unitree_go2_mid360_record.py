@@ -20,11 +20,10 @@ and the front camera are recorded into a memory2 db. The Go2/Mid-360 mount frame
 published continuously onto tf so they're captured in the recording. Raw Livox capture
 is opt-in: set ``RECORD_PCAP=1`` to also record a .pcap of the Mid-360 UDP stream.
 
-The lidar IPs come from each module's own config (``DIMOS_MID360_LIDAR_IP`` for the
-Mid-360 / pcap capture, ``DIMOS_POINTLIO_LIDAR_IP`` for Point-LIO). Run it for a
-timestamped ``recordings/`` folder::
+The lidar IP comes from ``DIMOS_MID360_LIDAR_IP`` (shared by the Mid-360 / pcap
+capture and Point-LIO). Run it for a timestamped ``recordings/`` folder::
 
-    export DIMOS_MID360_LIDAR_IP=192.168.1.171 DIMOS_POINTLIO_LIDAR_IP=192.168.1.171
+    export DIMOS_MID360_LIDAR_IP=192.168.1.171
     uv run python dimos/robot/unitree/go2/blueprints/basic/unitree_go2_mid360_record.py
 """
 
@@ -38,6 +37,7 @@ from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.livox.module import Mid360
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
+from dimos.navigation.cmu_nav.frames import FRAME_ODOM
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.go2.go2_mid360_recorder import Go2Mid360Recorder
@@ -77,7 +77,7 @@ unitree_go2_mid360_record = autoconnect(
             (Mid360, "imu", "livox_imu"),
         ]
     ),
-    PointLio.blueprint(frame_id="world").remappings(
+    PointLio.blueprint(frame_mapping={FRAME_ODOM: "world"}).remappings(
         [
             (PointLio, "lidar", "pointlio_lidar"),
             (PointLio, "odometry", "pointlio_odometry"),

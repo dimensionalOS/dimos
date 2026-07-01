@@ -27,7 +27,7 @@ from pydantic import Field, field_validator
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
-from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.constants import DEFAULT_ROBOT_FRAME, DEFAULT_WORLD_FRAME, DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.memory2.embed import EmbedImages
@@ -261,9 +261,10 @@ class OnExisting(str, enum.Enum):
 class RecorderConfig(MemoryModuleConfig):
     on_existing: OnExisting = OnExisting.BACKUP
     backup_keep_last: int = Field(default=10, ge=0)
-    root_frame: str = "world"
-    default_frame_id: str = "base_link"
+    root_frame: str = DEFAULT_WORLD_FRAME
+    default_frame_id: str = DEFAULT_ROBOT_FRAME
     tf_tolerance: float = 0.5
+    tf_warning_interval: float = 5.0
     db_path: str | Path = "recording.db"
     # Also record the live tf stream (under "tf") alongside the In ports.
     record_tf: bool = True

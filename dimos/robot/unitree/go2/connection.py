@@ -13,9 +13,6 @@
 # limitations under the License.
 
 from enum import Enum
-from importlib import resources
-import sys
-from threading import Thread
 import time
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -26,13 +23,16 @@ from reactivex.observable import Observable
 import rerun.blueprint as rrb
 
 from dimos.agents.annotation import skill
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.constants import (
+    DEFAULT_CAPACITY_COLOR_IMAGE,
+    DEFAULT_WORLD_FRAME,
+)
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
-from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
+from dimos.core.tf_module import TfModule, TfModuleConfig
 from dimos.core.transport import LCMTransport, pSHMTransport
 from dimos.spec.perception import Camera, Pointcloud
 from dimos.utils.logging_config import setup_logger
@@ -42,21 +42,15 @@ if TYPE_CHECKING:
 from dimos.memory2.replay import Replay, resolve_db_path
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree.go2.config import Go2Config, camera_info_static
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.utils.decorators.decorators import cached_property, simple_mcache
-
-if sys.version_info < (3, 13):
-    from typing_extensions import TypeVar
-else:
-    from typing import TypeVar
 
 logger = setup_logger()
 
@@ -66,7 +60,7 @@ class Go2Mode(str, Enum):
     RAGE = "rage"
 
 
-class ConnectionConfig(ModuleConfig):
+class ConnectionConfig(TfModuleConfig):
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
     mode: Go2Mode = Go2Mode.DEFAULT
     lidar: bool = True
@@ -75,6 +69,17 @@ class ConnectionConfig(ModuleConfig):
     motion_mode: str | None = None
     # Per-device AES-128 key (Go2 fw >=1.1.15); defaults from GlobalConfig.
     aes_128_key: str | None = Field(default_factory=lambda m: m["g"].unitree_aes_128_key)
+    frame_mapping: dict[str, str] = Field(
+        default_factory=lambda: dict(
+            body=Go2Config.body_frame,
+            parent=DEFAULT_WORLD_FRAME,
+            camera_link="camera_link",
+            camera_optical="camera_optical",
+        )
+    )
+    static_transforms: dict[str, Transform] = Field(
+        default_factory=lambda: dict(Go2Config.static_transforms)
+    )
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -93,31 +98,6 @@ class Go2ConnectionProtocol(Protocol):
     def set_obstacle_avoidance(self, enabled: bool = True) -> None: ...
     def set_rage_mode(self, enable: bool) -> bool: ...
     def publish_request(self, topic: str, data: dict) -> dict: ...  # type: ignore[type-arg]
-
-
-_FRONT_CAMERA_720_YAML = resources.files("dimos.robot.unitree.go2").joinpath(
-    "front_camera_720.yaml"
-)
-
-
-def _camera_info_static() -> CameraInfo:
-    with resources.as_file(_FRONT_CAMERA_720_YAML) as yaml_path:
-        return CameraInfo.from_yaml(str(yaml_path))
-
-
-# Static camera mount chain: base_link -> camera_link -> camera_optical.
-# TODO we need a standardized way to specify this for all cameras in dimos
-BASE_TO_OPTICAL: Transform = Transform(
-    translation=Vector3(0.3, 0.0, 0.0),
-    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-    frame_id="base_link",
-    child_frame_id="camera_link",
-) + Transform(
-    translation=Vector3(0.0, 0.0, 0.0),
-    rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-    frame_id="camera_link",
-    child_frame_id="camera_optical",
-)
 
 
 def make_connection(
@@ -215,10 +195,7 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
         return {"status": "ok", "message": "Fake publish"}
 
 
-_Config = TypeVar("_Config", bound=ConnectionConfig, default=ConnectionConfig)
-
-
-class GO2Connection(Module, Camera, Pointcloud):
+class GO2Connection(TfModule, Camera, Pointcloud):
     dedicated_worker = True
 
     config: ConnectionConfig
@@ -230,8 +207,7 @@ class GO2Connection(Module, Camera, Pointcloud):
     camera_info: Out[CameraInfo]
 
     connection: Go2ConnectionProtocol
-    camera_info_static: CameraInfo = _camera_info_static()
-    _camera_info_thread: Thread | None = None
+    camera_info_static: CameraInfo = camera_info_static()
     _latest_video_frame: Image | None = None
     _latest_lowstate: LowStateMsg | None = None
 
@@ -250,9 +226,10 @@ class GO2Connection(Module, Camera, Pointcloud):
         self.connection = make_connection(
             self.config.ip, self.config.g, aes_128_key=self.config.aes_128_key
         )
+        self._camera_info_static = camera_info_static()
 
         if hasattr(self.connection, "camera_info_static"):
-            self.camera_info_static = self.connection.camera_info_static
+            self._camera_info_static = self.connection.camera_info_static
 
     @rpc
     def start(self) -> None:
@@ -261,7 +238,8 @@ class GO2Connection(Module, Camera, Pointcloud):
             return
         self.connection.start()
 
-        def onimage(image: Image) -> None:
+        def on_image(image: Image) -> None:
+            image.frame_id = self.frame_mapping["camera_optical"]
             self.color_image.publish(image)
             self._latest_video_frame = image
 
@@ -272,12 +250,7 @@ class GO2Connection(Module, Camera, Pointcloud):
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
 
         if self.config.camera:
-            self.register_disposable(self.connection.video_stream().subscribe(onimage))
-            self._camera_info_thread = Thread(
-                target=self.publish_camera_info,
-                daemon=True,
-            )
-            self._camera_info_thread.start()
+            self.register_disposable(self.connection.video_stream().subscribe(on_image))
 
         if self.config.motion_mode and isinstance(self.connection, UnitreeWebRTCConnection):
             self.connection.set_motion_mode(self.config.motion_mode)
@@ -298,45 +271,25 @@ class GO2Connection(Module, Camera, Pointcloud):
         if self.connection:
             self.connection.stop()
 
-        if self._camera_info_thread and self._camera_info_thread.is_alive():
-            self._camera_info_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-
         super().stop()
 
-    @classmethod
-    def _odom_to_tf(cls, odom: PoseStamped) -> list[Transform]:
-        camera_link = Transform(
-            translation=Vector3(0.3, 0.0, 0.0),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id="base_link",
-            child_frame_id="camera_link",
-            ts=odom.ts,
-        )
-
-        camera_optical = Transform(
-            translation=Vector3(0.0, 0.0, 0.0),
-            rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-            frame_id="camera_link",
-            child_frame_id="camera_optical",
-            ts=odom.ts,
-        )
-
-        return [
-            Transform.from_pose("base_link", odom),
-            camera_link,
-            camera_optical,
-        ]
+    def _on_static_publish(self) -> None:
+        self._camera_info_static.frame_id = self.frame_mapping["camera_optical"]
+        self.camera_info.publish(self._camera_info_static)
 
     def _publish_tf(self, msg: PoseStamped) -> None:
-        transforms = self._odom_to_tf(msg)
-        self.tf.publish(*transforms)
+        self.tf.publish(
+            Transform(
+                translation=msg.position,
+                rotation=msg.orientation,
+                frame_id=self.frame_mapping["parent"],
+                child_frame_id=self.frame_mapping["body"],
+                ts=msg.ts,
+            )
+        )
         if self.odom.transport:
+            msg.frame_id = self.frame_mapping["parent"]
             self.odom.publish(msg)
-
-    def publish_camera_info(self) -> None:
-        while True:
-            self.camera_info.publish(self.camera_info_static)
-            time.sleep(1.0)
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
@@ -406,8 +359,6 @@ class GO2Connection(Module, Camera, Pointcloud):
 
 
 def deploy(dimos: ModuleCoordinator, ip: str, prefix: str = "") -> "ModuleProxy":
-    from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
-
     connection = dimos.deploy(GO2Connection, ip=ip)
 
     connection.pointcloud.transport = pSHMTransport(

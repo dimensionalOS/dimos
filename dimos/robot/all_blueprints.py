@@ -121,6 +121,7 @@ all_blueprints = {
     "unitree-go2-memory": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2:unitree_go2_memory",
     "unitree-go2-mid360-record": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_mid360_record:unitree_go2_mid360_record",
     "unitree-go2-nav-3d": "dimos.robot.unitree.go2.blueprints.navigation.unitree_go2_nav_3d:unitree_go2_nav_3d",
+    "unitree-go2-nav-3d-rotated": "dimos.robot.unitree.go2.blueprints.navigation.unitree_go2_nav_3d:unitree_go2_nav_3d_rotated",
     "unitree-go2-relocalization": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2:unitree_go2_relocalization",
     "unitree-go2-ros": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2_ros:unitree_go2_ros",
     "unitree-go2-security": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_security:unitree_go2_security",

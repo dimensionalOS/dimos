@@ -34,7 +34,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
@@ -58,7 +58,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.cmu_nav.frames import FRAME_BODY, FRAME_ODOM
+from dimos.navigation.cmu_nav.frames import FRAME_BODY, FRAME_ODOM, FRAME_SENSOR
 from dimos.spec import perception
 
 # Human-readable enums; the C++ binary (main.cpp) maps these strings to
@@ -76,18 +76,37 @@ class PointLioConfig(NativeModuleConfig):
     executable: str = "result/bin/pointlio_native"
     build_command: str | None = "nix build .#pointlio_native"
     # lidar_ip required; host_ip optional (auto-derived from lidar_ip's subnet).
-    # Both fall back to DIMOS_POINTLIO_LIDAR_IP / DIMOS_POINTLIO_HOST_IP.
+    # Fall back to DIMOS_MID360_LIDAR_IP / DIMOS_POINTLIO_HOST_IP.
     host_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_POINTLIO_HOST_IP"))
-    lidar_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_POINTLIO_LIDAR_IP"))
+    lidar_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_MID360_LIDAR_IP"))
     frequency: float = 10.0
 
-    # Odometry is published as frame_id (fixed) -> child_frame_id (moving body),
-    # and also broadcast on TF. The point cloud is stamped with sensor_frame_id
-    # (the lidar's own frame — get_body_cloud is the undistorted scan, not yet
-    # transformed into the body frame).
-    frame_id: str = FRAME_ODOM
-    child_frame_id: str = FRAME_BODY
-    sensor_frame_id: str = "mid360_link"
+    # Optional rigid mount correction applied to the published cloud, odometry,
+    # and TF before they leave the binary: row-major 4x4 (16 floats), None =
+    # identity. The cloud is moved p' = C @ p; the body pose is conjugated
+    # T' = C @ T @ inv(C) and the twist rotated by C's rotation, so the cloud and
+    # odometry stay mutually consistent and a forward walk stays forward.
+    transform: list[float] | None = None
+
+    @field_validator("transform")
+    @classmethod
+    def _validate_transform(cls, value: list[float] | None) -> list[float] | None:
+        if value is not None and len(value) != 16:
+            raise ValueError(f"transform must be a row-major 4x4 (16 floats), got {len(value)}")
+        return value
+
+    # Common-name -> real-frame map. Odometry is published as odom (fixed) ->
+    # body (moving) and broadcast on TF; the cloud is stamped with the sensor
+    # frame. A blueprint can rename any of these (e.g. send body to a dead leaf
+    # when a downstream shim republishes the real odom->body) without touching
+    # this code. These names are also handed to the C++ binary as CLI args.
+    frame_mapping: dict[str, str] = Field(
+        default_factory=lambda: {
+            FRAME_ODOM: FRAME_ODOM,
+            FRAME_BODY: FRAME_BODY,
+            FRAME_SENSOR: "mid360_link",
+        }
+    )
 
     # Point-LIO internal processing rates (Hz)
     msr_freq: float = 50.0
@@ -177,6 +196,18 @@ class PointLio(NativeModule, perception.Lidar, perception.Odometry):
     @rpc
     def start(self) -> None:
         self._validate_network()
+        # The C++ binary stamps its cloud/odometry/TF with these frames. They live
+        # in frame_mapping (so a blueprint can rename any of them) and are not
+        # auto-emitted by to_cli_args, so hand them over explicitly.
+        self.config.extra_args = [
+            *self.config.extra_args,
+            "--frame_id",
+            self.frame_mapping[FRAME_ODOM],
+            "--child_frame_id",
+            self.frame_mapping[FRAME_BODY],
+            "--sensor_frame_id",
+            self.frame_mapping[FRAME_SENSOR],
+        ]
         super().start()
         self.register_disposable(
             Disposable(self.odometry.transport.subscribe(self._on_odom_for_tf, self.odometry))
@@ -185,8 +216,8 @@ class PointLio(NativeModule, perception.Lidar, perception.Odometry):
     def _on_odom_for_tf(self, msg: Odometry) -> None:
         self.tf.publish(
             Transform(
-                frame_id=self.frame_id,
-                child_frame_id=self.config.child_frame_id,
+                frame_id=self.frame_mapping[FRAME_ODOM],
+                child_frame_id=self.frame_mapping[FRAME_BODY],
                 translation=Vector3(
                     msg.pose.position.x,
                     msg.pose.position.y,
@@ -213,7 +244,7 @@ class PointLio(NativeModule, perception.Lidar, perception.Odometry):
         if not lidar_ip:
             raise RuntimeError(
                 "PointLio: lidar_ip not set — it's network-specific. Set it in the config "
-                "or via the DIMOS_POINTLIO_LIDAR_IP env var."
+                "or via the DIMOS_MID360_LIDAR_IP env var."
             )
         # host_ip optional: derive the local NIC on lidar_ip's /24 when unset or
         # not one of our IPs (shared with the Mid360 driver).

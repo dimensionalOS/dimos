@@ -14,11 +14,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree.g1.config import G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
 
@@ -35,15 +34,27 @@ class AlfredConfig:
     name: str
     height_clearance: float
     width_clearance: float
-    internal_odom_offsets: dict[str, Any] = field(default_factory=dict)
+    # Lidar mount pose relative to base (used as the LIO init pose). Alfred has no
+    # URDF, so the static transform below is defined manually from this mount.
+    sensor_mount: Pose
+
+    @property
+    def static_transforms(self) -> dict[str, Transform]:
+        mount = self.sensor_mount
+        return {
+            "mid360_link": Transform(
+                translation=Vector3(mount.x, mount.y, mount.z),
+                rotation=mount.orientation,
+                frame_id="base_link",
+                child_frame_id="mid360_link",
+            ),
+        }
 
 
 ALFRED = AlfredConfig(
     name="alfred",
     height_clearance=2.0,  # meters
     width_clearance=1.0,
-    internal_odom_offsets={
-        # Mid-360 lidar: a bit forward, and a bit to the right of base center, above ground.
-        "mid360_link": Pose(0.20, -0.20, 0.30, *Quaternion.from_euler(Vector3(0, 0, 0))),
-    },
+    # Mid-360 lidar: a bit forward, and a bit to the right of base center, above ground.
+    sensor_mount=Pose(0.20, -0.20, 0.30),
 )
