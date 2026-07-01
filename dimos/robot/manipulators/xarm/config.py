@@ -177,7 +177,6 @@ def make_xarm_model_config(
         name=name,
         model_path=XARM_MODEL_PATH,
         base_pose=base_pose(x_offset, y_offset, z_offset, pitch),
-        strip_model_world_joint=True,
         joint_names=local_joint_names,
         base_link="link_base",
         planning_groups=[
