@@ -530,6 +530,7 @@ class DepthStreamer:
         self._pinhole_logged = False
         self._last_n_valid   = 0
         self._last_n_stable  = 0
+        self._last_n_occ     = 0   # stable voxels exported last map update
         self._map_queue: queue.Queue = queue.Queue(maxsize=16)
         self._map_thread = threading.Thread(target=self._map_worker, daemon=True)
         self._map_thread.start()
@@ -611,6 +612,7 @@ class DepthStreamer:
             cam_z = self._cam_z
         with self._vox_lock:
             pts = self._vox.export_stable(frame)
+        self._last_n_occ = len(pts)
         if len(pts) == 0:
             return
         n   = min(len(pts), self.MAX_MAP)
@@ -632,7 +634,7 @@ class DepthStreamer:
         print(
             f"frame={frame:5d}  "
             f"stable={n_stable:5d}/{n_valid:5d} ({pct:.0f}%)  "
-            f"map={n_map:6d}  "
+            f"map_total={n_map:6d}  map_occ={self._last_n_occ:6d}  "
             f"cam_z={self._cam_z:+.2f}m  vio={lock}  fps={fps:.1f}",
             flush=True,
         )
