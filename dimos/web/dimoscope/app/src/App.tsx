@@ -16,6 +16,7 @@ import { StatsBar } from "./panels/StatsBar";
 import { CommandsPanel } from "./panels/CommandsPanel";
 import { StreamsTab } from "./panels/streams/StreamsTab";
 import { BenchDrawer } from "./panels/BenchDrawer";
+import { useGateway } from "./gateway";
 
 function Inspector({ topic }: { topic: string }) {
   const { data, meta } = useTopicLatest<any>(topic, { maxHz: 4 });
@@ -49,6 +50,8 @@ export function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [tab, setTab] = useState<"2d" | "streams">("2d");
   const [mediaMode, setMediaMode] = useState<MediaMode>("auto");
+  const { gateway, setGateway } = useGateway();
+  const [gwText, setGwText] = useState(gateway);
 
   return (
     <div className="layout">
@@ -100,6 +103,21 @@ export function App() {
             <option value="webcodecs">cam: webcodecs</option>
             <option value="jpeg">cam: jpeg</option>
           </select>
+          <input
+            className="gw-input"
+            value={gwText}
+            onChange={(e) => setGwText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                setGateway(gwText);
+                (e.target as HTMLInputElement).blur();
+              }
+            }}
+            onBlur={() => setGateway(gwText)}
+            placeholder="host:port"
+            title="gateway server (host:port) — reconnects on change; saved to this browser"
+            spellCheck={false}
+          />
           <span className="badge">gateway · {label ?? "connecting…"}</span>
         </div>
       </header>

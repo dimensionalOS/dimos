@@ -149,6 +149,25 @@ body {
   border-color: var(--accent);
 }
 
+/* gateway address input — set the server (host:port) at runtime; reconnects on change */
+.gw-input {
+  width: 140px;
+  background-color: var(--elev);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 5px 10px;
+  font: 500 12px var(--mono);
+  transition: border-color 0.15s ease;
+}
+.gw-input:hover {
+  border-color: var(--line-hi);
+}
+.gw-input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
 /* ── sidebar — channel list (inherits the refined look; no JSX change) ────── */
 .sidebar {
   grid-area: side;
