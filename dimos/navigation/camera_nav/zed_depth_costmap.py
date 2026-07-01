@@ -70,8 +70,11 @@ class WorldMap:
     def update(self, xyz_world: np.ndarray, frame: int) -> None:
         if len(xyz_world) == 0:
             return
-        # Same 2 cm voxel keys as the per-frame pipeline — no re-discretization
-        vk   = np.floor(xyz_world / VOX_SIZE).astype(np.int32)
+        # 5 cm dedup keys absorb VIO drift + stereo measurement noise (~5mm at 1-3m).
+        # Same wall measured at 2.003m vs 1.997m → same 5cm cell → same entry.
+        # Stored positions are running-mean of actual observations (not cell centres)
+        # so display quality remains close to per-frame precision.
+        vk   = np.floor(xyz_world / 0.050).astype(np.int32)
         keys = _pack(vk)
         _, first = np.unique(keys, return_index=True)
         keys = keys[first]
@@ -429,14 +432,11 @@ def main() -> None:
                 vk       = np.floor(xyz_obs / VOX_SIZE).astype(np.int32)
                 _, first = np.unique(_pack(vk), return_index=True)
                 xyz_vox  = xyz_obs[first]
-                # Only log world/map once VIO is locked — before lock the points
-                # are in camera frame, causing a jarring jump at lock time.
-                if src.pose_locked:
-                    rr.log("world/map", rr.Points3D(
-                        positions=xyz_vox,
-                        colors=_height_color(xyz_vox[:, 2] - cam_z),
-                        radii=0.010,
-                    ))
+                rr.log("world/map", rr.Points3D(
+                    positions=xyz_vox,
+                    colors=_height_color(xyz_vox[:, 2] - cam_z),
+                    radii=0.010,
+                ))
 
             # ── Persistent world map ──────────────────────────────────────────
             # Feed world-frame voxels into the accumulator only once VIO has
