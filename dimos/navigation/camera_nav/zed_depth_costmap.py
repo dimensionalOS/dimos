@@ -423,12 +423,13 @@ def main() -> None:
             # it cuts everything below ~0.65 m at typical ranges, destroying low obstacles.
             # Gradient filter + isolation filter handle ghost pixels instead.
             h_rel = xyz[:, 2] - cam_z   # camera-relative height (used for colormap)
-            if src.pose_locked:
-                # Use absolute world-Z bounds — independent of cam_z being correct.
-                # h_rel <= _Z_REL_HI would silently empty the map if cam_z is
-                # temporarily wrong at lock time; pure world-Z band is robust.
+            if src.pose_locked and cam_z > 0.3:
+                # VIO height is plausible — use absolute world-Z so the floor at
+                # world_Z=0 is cleanly removed regardless of camera tilt.
                 keep = (xyz[:, 2] > _FLOOR_Z) & (xyz[:, 2] < _CEIL_Z)
             else:
+                # Pre-VIO or cam_z not yet stable: camera-relative band.
+                # Includes some floor but guarantees non-empty output.
                 keep = (h_rel >= -1.4) & (h_rel <= _Z_REL_HI)
             xyz_obs  = _filter_isolated(xyz[keep])
             xyz_vox  = np.empty((0, 3), dtype=np.float32)
@@ -468,7 +469,7 @@ def main() -> None:
             print(
                 f"frame={frame:5d}  cloud={len(xyz_vis):5d}  vox={len(xyz_vox):5d}"
                 f"  world={world_map.size:6d}  occ={n_occ:5d}"
-                f"  vio={'LOCKED' if src.pose_locked else 'searching'}  fps={fps:.1f}",
+                f"  cam_z={cam_z:.2f}  vio={'LOCKED' if src.pose_locked else 'searching'}  fps={fps:.1f}",
                 flush=True,
             )
             frame += 1
