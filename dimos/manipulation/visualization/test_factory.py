@@ -24,6 +24,7 @@ from pydantic import ValidationError
 import pytest
 
 from dimos.manipulation.manipulation_module import ManipulationModuleConfig
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import (
     JointPath,
@@ -78,7 +79,11 @@ class FakeWorld:
             model_path=Path("fake.urdf"),
             base_pose=PoseStamped(),
             joint_names=[],
-            end_effector_link="ee_link",
+            planning_groups=[
+                PlanningGroupDefinition(
+                    name="manipulator", joint_names=(), base_link="base_link", tip_link="ee_link"
+                )
+            ],
         )
 
     def get_joint_limits(

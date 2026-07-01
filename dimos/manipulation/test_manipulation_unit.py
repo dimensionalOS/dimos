@@ -28,6 +28,7 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModuleConfig,
     ManipulationState,
 )
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -51,8 +52,15 @@ def robot_config():
         model_path=Path("/path/to/robot.urdf"),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3"],
-        end_effector_link="link_tcp",
         base_link="link_base",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="manipulator",
+                joint_names=("joint1", "joint2", "joint3"),
+                base_link="link_base",
+                tip_link="link_tcp",
+            )
+        ],
         max_velocity=1.0,
         max_acceleration=2.0,
         coordinator_task_name="traj_arm",
@@ -67,8 +75,15 @@ def robot_config_with_mapping():
         model_path=Path("/path/to/robot.urdf"),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3"],
-        end_effector_link="link_tcp",
         base_link="link_base",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="manipulator",
+                joint_names=("joint1", "joint2", "joint3"),
+                base_link="link_base",
+                tip_link="link_tcp",
+            )
+        ],
         joint_name_mapping={
             "left/joint1": "joint1",
             "left/joint2": "joint2",
@@ -415,7 +430,11 @@ class TestExecute:
             model_path=Path("/path"),
             base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
             joint_names=["j1"],
-            end_effector_link="ee",
+            planning_groups=[
+                PlanningGroupDefinition(
+                    name="manipulator", joint_names=("j1",), base_link="base_link", tip_link="ee"
+                )
+            ],
         )
         module._robots = {"arm": ("id", config_no_task, MagicMock())}
         module._planned_trajectories = {"arm": MagicMock()}
@@ -598,8 +617,12 @@ class TestOnJointState:
             model_path=Path("/path/to/robot.urdf"),
             base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
             joint_names=["j1", "j2"],
-            end_effector_link="ee",
             base_link="base",
+            planning_groups=[
+                PlanningGroupDefinition(
+                    name="manipulator", joint_names=("j1", "j2"), base_link="base", tip_link="ee"
+                )
+            ],
             joint_name_mapping={"left/j1": "j1", "left/j2": "j2"},
             coordinator_task_name="traj_left",
         )
@@ -608,8 +631,12 @@ class TestOnJointState:
             model_path=Path("/path/to/robot.urdf"),
             base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
             joint_names=["j1", "j2"],
-            end_effector_link="ee",
             base_link="base",
+            planning_groups=[
+                PlanningGroupDefinition(
+                    name="manipulator", joint_names=("j1", "j2"), base_link="base", tip_link="ee"
+                )
+            ],
             joint_name_mapping={"right/j1": "j1", "right/j2": "j2"},
             coordinator_task_name="traj_right",
         )

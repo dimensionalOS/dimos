@@ -21,6 +21,7 @@ import pytest
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import PlanningSceneInfo
 from dimos.manipulation.visualization.viser import (
@@ -63,7 +64,11 @@ def fake_robot_config(name: str) -> RobotModelConfig:
         model_path=Path(f"{name}.urdf"),
         base_pose=PoseStamped(),
         joint_names=[],
-        end_effector_link="ee_link",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="manipulator", joint_names=(), base_link="base_link", tip_link="ee_link"
+            )
+        ],
     )
 
 

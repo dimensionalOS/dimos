@@ -483,6 +483,7 @@ Place your URDF/xacro files under LFS data so they can be resolved via `LfsPath`
 from dimos.utils.data import LfsPath
 from dimos.manipulation.manipulation_module import manipulation_module
 from dimos.manipulation.planning.spec import RobotModelConfig
+from dimos.manipulation.planning.spec.models import PlanningGroupDefinition
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -506,7 +507,6 @@ def _make_base_pose(x=0.0, y=0.0, z=0.0) -> PoseStamped:
 def _make_yourarm_config(
     name: str = "arm",
     y_offset: float = 0.0,
-    joint_prefix: str = "",
     coordinator_task: str | None = None,
 ) -> RobotModelConfig:
     """Create YourArm robot config for planning.
@@ -514,27 +514,31 @@ def _make_yourarm_config(
     Args:
         name: Robot name in the Drake planning world.
         y_offset: Y-axis offset for multi-arm setups.
-        joint_prefix: Prefix for joint name mapping to coordinator namespace.
         coordinator_task: Coordinator task name for trajectory execution via RPC.
     """
     # These must match the joint names in your URDF
     joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
-    joint_mapping = {f"{joint_prefix}{j}": j for j in joint_names} if joint_prefix else {}
 
     return RobotModelConfig(
         name=name,
         model_path=_YOURARM_URDF_PATH,
-        base_pose=_make_base_pose(y=y_offset),
         joint_names=joint_names,
-        end_effector_link="link6",      # Last link in your URDF's kinematic chain
-        base_link="base_link",          # Root link of your URDF
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="manipulator",
+                joint_names=tuple(joint_names),
+                base_link="base_link",
+                tip_link="link6",
+            )
+        ],
+        base_pose=_make_base_pose(y=y_offset),  # world -> base_link placement
+        base_link="base_link",                 # Robot-scoped placement/weld/strip link
         package_paths={"yourarm_description": _YOURARM_PACKAGE_PATH},
         xacro_args={},                  # Xacro arguments if using .xacro files
         collision_exclusion_pairs=[],   # Pairs of links that can touch (e.g., gripper fingers)
         auto_convert_meshes=True,       # Convert DAE/STL meshes for Drake
         max_velocity=1.0,               # Max velocity scaling factor
         max_acceleration=2.0,           # Max acceleration scaling factor
-        joint_name_mapping=joint_mapping,
         coordinator_task_name=coordinator_task,
     )
 ```
@@ -546,7 +550,7 @@ Add this to your `dimos/robot/yourarm/blueprints.py` alongside the coordinator b
 ```python skip
 
 yourarm_planner = manipulation_module(
-    robots=[_make_yourarm_config("arm", joint_prefix="arm_", coordinator_task="traj_arm")],
+    robots=[_make_yourarm_config("arm", coordinator_task="traj_arm")],
     planning_timeout=10.0,
     visualization={"backend": "meshcat"},
 )
@@ -560,13 +564,22 @@ yourarm_planner = manipulation_module(
 | Field | Description |
 |-------|-------------|
 | `model_path` | Path to `.urdf` or `.xacro` file |
-| `joint_names` | Ordered list of controlled joints (must match URDF) |
-| `end_effector_link` | Link to use as the end-effector for IK |
-| `base_link` | Root link of the robot model |
+| `joint_names` | Ordered controllable local model joint set (must match URDF); not itself a planning group |
+| `planning_groups` / `srdf_path` | Explicit planning groups or SRDF source; direct `RobotModelConfig(...)` helpers should pass explicit groups, while shared config helpers can discover groups from SRDF/fallback |
+| `base_pose` / `base_link` | Optional robot placement: `base_pose` places `base_link` in the world for weld/strip behavior |
 | `package_paths` | Maps `package://` URIs to filesystem paths (for xacro) |
-| `joint_name_mapping` | Maps coordinator names (e.g., `"arm_joint1"`) to URDF names (e.g., `"joint1"`) |
 | `coordinator_task_name` | Must match the `TaskConfig.name` in your coordinator blueprint |
 | `collision_exclusion_pairs` | List of `(link_a, link_b)` tuples for links that may legitimately touch (e.g., gripper fingers) |
+
+Coordinator-facing joint states and trajectories use global joint names derived
+mechanically as `{robot_name}/{local_joint_name}` (for example, `arm/joint1`).
+Keep hardware-native name translation inside the hardware adapter; manipulation
+planning config uses local model joint names.
+
+Planning-group `base_link`/`tip_link` values define kinematic chains and pose
+target frames. `base_link` is only the robot-scoped link placed by
+`base_pose`; do not use it as a substitute for planning-group chain metadata.
+See [Planning Groups](/docs/capabilities/manipulation/planning_groups.md).
 
 ## Step 5: Register Blueprints
 

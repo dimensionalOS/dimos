@@ -41,6 +41,15 @@ RobotName: TypeAlias = str
 WorldRobotID: TypeAlias = str
 """Internal Drake world robot ID"""
 
+PlanningGroupID: TypeAlias = str
+"""Public planning group ID of the form {robot_name}/{group_name}."""
+
+LocalModelJointName: TypeAlias = str
+"""Joint name as it appears in URDF/SRDF before world binding."""
+
+GlobalJointName: TypeAlias = str
+"""Public joint name of the form {robot_name}/{local_joint_name}."""
+
 JointPath: TypeAlias = "list[JointState]"
 """List of joint states forming a path (each waypoint has names + positions)"""
 
