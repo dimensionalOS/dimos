@@ -29,7 +29,9 @@ import {
 import { Sparkline } from "../widgets/Sparkline";
 
 const HZ_PRESETS = [0, 5, 20, 60, 120];
-const HEAVY = (t: string) => t.includes("/img") || t.includes("/grid") || t.includes("/cloud");
+const HEAVY = (t: string) =>
+  t.includes("/img") || t.includes("/grid") || t.includes("/cloud") ||
+  t.includes("/points") || t.includes("/map") || t.includes("/rgb") || t.includes("/depth");
 
 // Large-stream tiers — sustained THROUGHPUT (bytes/frame × rate), grounded in real robot sensor
 // bitrates. Frames stay ≤10 MB; high MB/s comes from the rate, not one giant packet. Drives the
