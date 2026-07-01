@@ -135,6 +135,7 @@ all_blueprints = {
     "xarm-perception-sim": "dimos.robot.manipulators.xarm.blueprints.simulation:xarm_perception_sim",
     "xarm-perception-sim-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm_perception_sim_agent",
     "xarm6-planner-only": "dimos.robot.manipulators.xarm.blueprints.basic:xarm6_planner_only",
+    "xarm6-worldbelief": "dimos.robot.manipulators.xarm.blueprints.worldbelief:xarm6_worldbelief",
     "xarm7-planner-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic:xarm7_planner_coordinator",
     "xarm7-planner-coordinator-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm7_planner_coordinator_agent",
 }
@@ -263,5 +264,6 @@ all_modules = {
     "wavefront-frontier-explorer": "dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector.WavefrontFrontierExplorer",
     "web-input": "dimos.agents.web_human_input.WebInput",
     "websocket-vis-module": "dimos.web.websocket_vis.websocket_vis_module.WebsocketVisModule",
+    "x-arm6-world-belief-recorder": "dimos.robot.manipulators.xarm.worldbelief_recorder.XArm6WorldBeliefRecorder",
     "zed-camera": "dimos.hardware.sensors.camera.zed.camera.ZEDCamera",
 }

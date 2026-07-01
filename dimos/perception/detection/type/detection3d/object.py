@@ -21,6 +21,7 @@ import uuid
 
 import cv2
 from dimos_lcm.geometry_msgs import Pose
+from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 
@@ -58,6 +59,20 @@ class Object(Detection3D):
     camera_transform: Transform | None = None
     mask: np.ndarray[Any, np.dtype[np.uint8]] | None = None
     detections_count: int = 1
+    embedding: np.ndarray[Any, np.dtype[np.float32]] | None = None
+    visual_embedding: np.ndarray[Any, np.dtype[np.float32]] | None = None
+    visual_embedding_model: str | None = None
+    visual_embedding_device: str | None = None
+    visual_embedding_dim: int | None = None
+    observation_partial: bool = False
+    observation_partial_from_camera_motion: bool = False
+    detector_id: str | None = None
+    detector_model: str | None = None
+    tracker_source: str | None = None
+    embedding_model: str | None = None
+    embedding_device: str | None = None
+    embedding_dim: int | None = None
+    observation_source: str | None = None
 
     def update_object(self, other: Object) -> None:
         """Update this object with data from another detection.
@@ -92,11 +107,49 @@ class Object(Detection3D):
         self.ts = other.ts
         self.frame_id = other.frame_id
         self.image = other.image
+        if other.embedding is not None:
+            self.embedding = other.embedding
+            self.embedding_model = other.embedding_model
+            self.embedding_device = other.embedding_device
+            self.embedding_dim = other.embedding_dim
+        if other.visual_embedding is not None:
+            self.visual_embedding = other.visual_embedding
+            self.visual_embedding_model = other.visual_embedding_model
+            self.visual_embedding_device = other.visual_embedding_device
+            self.visual_embedding_dim = other.visual_embedding_dim
+        self.observation_partial = other.observation_partial
+        self.observation_partial_from_camera_motion = other.observation_partial_from_camera_motion
+        self.detector_id = other.detector_id
+        self.detector_model = other.detector_model
+        self.tracker_source = other.tracker_source
+        self.observation_source = other.observation_source
         self.detections_count += 1
 
     def get_oriented_bounding_box(self) -> Any:
         """Get oriented bounding box of the pointcloud."""
         return self.pointcloud.oriented_bounding_box
+
+    def _detection3d_bbox_components(self) -> tuple[Vector3, Quaternion, Vector3]:
+        """Return the fitted object geometry selected by ObjectSceneRegistration.
+
+        The object point cloud is raw evidence. The stored center/size/pose are the
+        fitted planner-facing geometry after OSR has applied its box policy, such
+        as AABB/clamping. Publishing must not recompute a second OBB from raw
+        points, because a few table/background outliers can stretch the visible
+        Detection3D box and diverge from the geometry used by WorldBelief.
+        """
+        center = self.center
+        size = self.size
+        orientation = getattr(self.pose, "orientation", Quaternion(0.0, 0.0, 0.0, 1.0))
+        return (
+            Vector3(center.x, center.y, center.z),
+            Quaternion(orientation.x, orientation.y, orientation.z, orientation.w),
+            Vector3(
+                max(float(size.x), 1e-3),
+                max(float(size.y), 1e-3),
+                max(float(size.z), 1e-3),
+            ),
+        )
 
     def scene_entity_label(self) -> str:
         """Get label for scene visualization."""
@@ -105,18 +158,33 @@ class Object(Detection3D):
         return f"{self.track_id}/{self.name} ({self.confidence:.0%})"
 
     def to_detection3d_msg(self) -> ROSDetection3D:
-        """Convert to ROS Detection3D message."""
-        obb = self.get_oriented_bounding_box()
-        orientation = Quaternion.from_rotation_matrix(obb.R)
+        """Convert to ROS Detection3D message.
+
+        ``Detection3D.id`` is the stable object_id. The detector's frame-local
+        track id remains available on the Object stream, but downstream obstacle
+        consumers need this message id to survive tracker resets.
+        """
+        center, orientation, size = self._detection3d_bbox_components()
 
         msg = ROSDetection3D()
         msg.header = Header(self.ts, self.frame_id)
-        msg.id = str(self.track_id)
-        msg.bbox.center = Pose(
-            position=Vector3(obb.center[0], obb.center[1], obb.center[2]),
-            orientation=orientation,
+        msg.id = self.object_id
+        msg.results = [
+            ObjectHypothesisWithPose(
+                hypothesis=ObjectHypothesis(
+                    class_id=str(self.class_id),
+                    score=self.confidence,
+                )
+            )
+        ]
+        msg.results_length = len(msg.results)
+        msg.bbox = BoundingBox3D(
+            center=Pose(
+                position=center,
+                orientation=orientation,
+            ),
+            size=size,
         )
-        msg.bbox.size = Vector3(obb.extent[0], obb.extent[1], obb.extent[2])
 
         return msg
 
@@ -159,6 +227,10 @@ class Object(Detection3D):
         max_distance: float = 0.0,
         use_aabb: bool = False,
         max_obstacle_width: float = 0.0,
+        detector_id: str | None = None,
+        detector_model: str | None = None,
+        tracker_source: str | None = None,
+        observation_source: str | None = None,
     ) -> list[Object]:
         """Create 3D Objects from 2D detections and RGBD images.
 
@@ -184,6 +256,10 @@ class Object(Detection3D):
                 Produces upright obstacles with identity orientation.
             max_obstacle_width: Clamp X/Y size to this value (meters). Useful for
                 manipulation where obstacles must fit within the gripper. 0 disables.
+            detector_id: Optional detector implementation identifier for provenance.
+            detector_model: Optional model/checkpoint identifier for provenance.
+            tracker_source: Optional tracker implementation/source identifier.
+            observation_source: Optional producer module/source identifier.
 
         Returns:
             List of Object instances with pointclouds
@@ -310,6 +386,10 @@ class Object(Detection3D):
                     pose=pose,
                     camera_transform=camera_transform,
                     mask=store_mask,
+                    detector_id=detector_id,
+                    detector_model=detector_model,
+                    tracker_source=tracker_source,
+                    observation_source=observation_source,
                 )
             )
 
@@ -319,7 +399,7 @@ class Object(Detection3D):
 def aggregate_pointclouds(objects: list[Object]) -> PointCloud2:
     """Aggregate all object pointclouds into a single colored pointcloud.
 
-    Each object's points are colored based on its track_id.
+    Each object's points are colored based on its object_id.
 
     Args:
         objects: List of Object instances with pointclouds
@@ -373,21 +453,22 @@ def aggregate_pointclouds(objects: list[Object]) -> PointCloud2:
     return pc
 
 
-def to_detection3d_array(objects: list[Object]) -> Detection3DArray:
-    """Convert a list of Objects to a ROS Detection3DArray message.
-
-    Args:
-        objects: List of Object instances
-
-    Returns:
-        Detection3DArray ROS message
-    """
-    array = Detection3DArray()
-
-    if objects:
-        array.header = Header(objects[0].ts, objects[0].frame_id)
-
-    for obj in objects:
-        array.detections.append(obj.to_detection3d_msg())
-
-    return array
+def to_detection3d_array(
+    objects: list[Object],
+    *,
+    frame_id: str | None = None,
+    ts: float | None = None,
+) -> Detection3DArray:
+    """Convert a list of Objects to a ROS Detection3DArray message."""
+    detections = [obj.to_detection3d_msg() for obj in objects]
+    resolved_frame_id = frame_id
+    if resolved_frame_id is None:
+        resolved_frame_id = objects[0].frame_id if objects else ""
+    resolved_ts = ts
+    if resolved_ts is None:
+        resolved_ts = objects[0].ts if objects else 0.0
+    return Detection3DArray(
+        detections_length=len(detections),
+        header=Header(resolved_ts, resolved_frame_id),
+        detections=detections,
+    )
