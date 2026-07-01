@@ -211,6 +211,94 @@ export function useTopicStats(topic: string | null, pollMs = 500): TopicStats | 
   return stats;
 }
 
+// ── live message feed: a rolling, display-throttled sample of a topic's messages ────────────
+// Subscribing at the source rate (imu @500 Hz, rgb @30 Hz × 550 KB) must never re-render React per
+// message. We keep only the latest message in a closure and flush ONE compact row at `displayHz`, so
+// render cost is bounded regardless of the stream. Rates/latency still come from the passive
+// useTopicStats window — this hook only samples the *content* (a human-readable feed) + tracks seq gaps.
+
+const _replacer = (_k: string, v: unknown) =>
+  typeof v === "bigint" ? v.toString() : v instanceof Uint8Array ? `<${v.length} bytes>` : v;
+/** A short one-line preview of a message value (Uint8Array/bigint-safe — never serializes pixels). */
+export function jsonPreview(v: unknown, max = 120): string {
+  return JSON.stringify(v, _replacer)?.slice(0, max) ?? "";
+}
+/** A pretty, size-capped JSON dump of a message value (Uint8Array/bigint-safe). */
+export function jsonPretty(v: unknown, max = 4000): string {
+  return JSON.stringify(v, _replacer, 2)?.slice(0, max) ?? "";
+}
+
+/** One compact feed row — enough to render a line without retaining the (possibly MB-sized) payload. */
+export interface FeedRow {
+  /** Stable, monotonic per-subscription id — use as the React key so the list doesn't remount each flush. */
+  id: number;
+  recvTs: number;
+  sizeBytes: number;
+  seq?: number;
+  preview: string;
+}
+export interface TopicFeed {
+  /** Oldest→newest sampled rows (≤ maxRows). */
+  rows: FeedRow[];
+  /** The most recent full message (for an expand-to-JSON view). */
+  latest?: { data: unknown; meta: MessageMeta };
+  /** Source-sequence gap over the delivered stream, %: rises when the gateway sheds (or a client
+   *  rate-limit drops) messages. null when the topic carries no numeric seq (named frame_id). */
+  lossPct: number | null;
+}
+
+/** Subscribe to a topic and expose a rolling, display-throttled feed of its recent messages. */
+export function useTopicFeed(
+  topic: string | null,
+  opts?: { maxRows?: number; displayHz?: number },
+): TopicFeed {
+  const client = useDimosClient();
+  const maxRows = opts?.maxRows ?? 50;
+  const displayHz = opts?.displayHz ?? 12;
+  const [feed, setFeed] = useState<TopicFeed>({ rows: [], lossPct: null });
+  useEffect(() => {
+    setFeed({ rows: [], lossPct: null }); // clear on topic switch
+    if (!client || !topic) return;
+    const ring: FeedRow[] = [];
+    let nextId = 0; // stable, monotonic row id → a steady React key (no per-flush remount)
+    let latest: { data: unknown; meta: MessageMeta } | undefined;
+    let pending = false; // a new message arrived since the last flush
+    let seqMin: number | undefined;
+    let seqMax: number | undefined;
+    let seqCount = 0;
+    const sub = client.topic(topic).subscribe((m) => {
+      latest = { data: m.data, meta: m.meta };
+      pending = true;
+      const s = m.meta.seq;
+      if (s != null) {
+        if (seqMin === undefined || s < seqMin) seqMin = s;
+        if (seqMax === undefined || s > seqMax) seqMax = s;
+        seqCount++;
+      }
+    });
+    const id = setInterval(() => {
+      if (!pending || !latest) return; // nothing new → no re-render (silent topics stay quiet)
+      ring.push({
+        id: nextId++,
+        recvTs: latest.meta.recvTs,
+        sizeBytes: latest.meta.sizeBytes,
+        seq: latest.meta.seq,
+        preview: jsonPreview(latest.data, 140),
+      });
+      while (ring.length > maxRows) ring.shift();
+      pending = false;
+      const span = seqMin != null && seqMax != null ? seqMax - seqMin + 1 : 0;
+      const lossPct = span > 1 ? Math.max(0, (1 - seqCount / span) * 100) : null;
+      setFeed({ rows: ring.slice(), latest, lossPct });
+    }, Math.max(1, Math.round(1000 / displayHz)));
+    return () => {
+      sub.unsubscribe();
+      clearInterval(id);
+    };
+  }, [client, topic, maxRows, displayHz]);
+  return feed;
+}
+
 // ── camera: decode sensor_msgs.Image → canvas ──────────────────────────────
 interface ImageMsg {
   width: number;

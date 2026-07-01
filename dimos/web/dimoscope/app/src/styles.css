@@ -430,6 +430,211 @@ body {
   background: var(--elev);
 }
 
+/* ── Streams tab — full-page live feed + per-topic QoS ─────────────────────── */
+.streams-full {
+  grid-row: 2;
+  grid-column: 1 / -1;
+  padding: 16px;
+  min-height: 0;
+  overflow: auto;
+}
+.streams-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.stream-subscribe {
+  display: flex;
+  gap: 6px;
+}
+.stream-subscribe input {
+  flex: 1;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 5px 10px;
+  font: 12px var(--mono);
+}
+.stream-subscribe input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+.stream-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+.stream-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.stream-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.stream-dot {
+  font-size: 10px;
+  flex: none;
+}
+.stream-topic {
+  flex: 1;
+  font: 500 13px var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stream-x {
+  padding: 0 8px;
+}
+.stream-type {
+  margin-top: -4px;
+}
+.stream-metrics {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.metric {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font: 12px var(--mono);
+}
+.metric b {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 14px;
+}
+.metric span {
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+/* per-topic QoS controls (lane preset + maxHz) — declared idiomatically via resolveQos → setQos */
+.stream-qos {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+.qos-ctl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.qos-lbl {
+  color: var(--muted);
+  font: 600 10px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  width: 42px;
+  flex: none;
+}
+.qos-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--elev);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 3px 10px;
+  font: 500 11px var(--mono);
+  cursor: pointer;
+}
+.qos-select:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+.qos-hz {
+  display: flex;
+  gap: 4px;
+}
+.qos-hz .tab {
+  padding: 2px 8px;
+  min-width: 30px;
+}
+.qos-eff {
+  font: 11px var(--mono);
+}
+/* block flow (NOT flex column) so rows keep their natural height + the box actually scrolls once
+   full — a flex column would shrink every row to fit the height and clip the text to nothing.
+   overflow-anchor:none keeps the newest (top) row in view instead of scroll-anchoring it away. */
+.stream-feed {
+  height: 196px;
+  overflow-y: auto;
+  overflow-anchor: none;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 6px 8px;
+}
+.feed-row {
+  display: flex;
+  gap: 8px;
+  font: 11px/1.5 var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.feed-t {
+  color: var(--muted);
+  flex: none;
+}
+.feed-sz {
+  color: var(--signal);
+  flex: none;
+  width: 52px;
+  text-align: right;
+}
+.feed-seq {
+  color: var(--muted);
+  flex: none;
+}
+.feed-body {
+  color: #b9c6d6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stream-json-btn {
+  align-self: flex-start;
+}
+
+/* QoS lane tags — cyan sensor · amber command · grey default · red bulk (mirrors qos.ts LANES). */
+.lane {
+  font: 600 10px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-radius: var(--r-sm);
+  padding: 2px 7px;
+  border: 1px solid currentColor;
+  flex: none;
+}
+.lane-sensor {
+  color: var(--signal);
+  background: color-mix(in srgb, var(--signal) 10%, transparent);
+}
+.lane-command {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.lane-default {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+}
+.lane-bulk {
+  color: var(--err);
+  background: color-mix(in srgb, var(--err) 10%, transparent);
+}
+
 /* ── motion — one orchestrated page-load reveal + the live status pulse ───── */
 @keyframes rise {
   from {

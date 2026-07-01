@@ -114,18 +114,6 @@ voxel_mapper(voxel_size=0.1),   # 10cm voxels
 - Larger voxels = fewer voxels = faster updates
 - But slightly less detail in the map
 
-### Symptom: Web viewer blank / GC-thrashing on large scenes
-
-The **native viewer is preferred for 3D and large scenes.** The browser/web Rerun viewer
-(`--rerun-open web`, or an embedded `@rerun-io/web-viewer`) runs as WASM under the browser's heap
-cap (~2.3 GiB). High-rate point-cloud streams (lidar / costmap / global map, logged undecimated) can
-exhaust it: the viewer overruns its in-memory channel budget within seconds and its heap within
-~a minute, then thrashes GC and stops painting (observed with the embedded stock viewer against
-`serve_grpc :9877`). The native `dimos-viewer` has no such cap and handles the same feed.
-
-If you must use the web viewer on a heavy scene, **cut the logged volume**: raise the voxel size
-(above) and/or lower the publish rate of the heaviest streams so less data reaches the viewer.
-
 ---
 
 ## Direct Visualization from a Module

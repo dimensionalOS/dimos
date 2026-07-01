@@ -20,6 +20,7 @@ import { RerunPanel } from "./panels/RerunPanel";
 import { CommandsPanel } from "./panels/CommandsPanel";
 import { BenchPanel } from "./panels/BenchPanel";
 import { BenchTab } from "./panels/BenchTab";
+import { StreamsTab } from "./panels/streams/StreamsTab";
 
 function Inspector({ topic }: { topic: string }) {
   const { data, meta } = useTopicLatest<any>(topic, { maxHz: 4 });
@@ -51,7 +52,7 @@ export function App() {
   const label = useDimosClient()?.gatewayLabel;
   const { servers, activeId, setActiveId } = useServers();
   const [selected, setSelected] = useState<string | null>(null);
-  const [tab, setTab] = useState<"2d" | "3d" | "bench">("2d");
+  const [tab, setTab] = useState<"2d" | "3d" | "bench" | "streams">("2d");
   const [mediaMode, setMediaMode] = useState<MediaMode>("auto");
 
   return (
@@ -83,6 +84,12 @@ export function App() {
             onClick={() => setTab("bench")}
           >
             Bench
+          </button>
+          <button
+            className={`tab ${tab === "streams" ? "tab-active" : ""}`}
+            onClick={() => setTab("streams")}
+          >
+            Streams
           </button>
         </div>
         <div className="topbar-right">
@@ -177,6 +184,16 @@ export function App() {
       {tab === "bench" && (
         <div className="bench-full">
           <BenchTab />
+        </div>
+      )}
+
+      {
+        /* ── Streams = full-page live feed + per-topic QoS. MOUNT/UNMOUNT like Bench: leaving the tab
+          drops every card's subscription so it never streams in the background. ── */
+      }
+      {tab === "streams" && (
+        <div className="streams-full">
+          <StreamsTab />
         </div>
       )}
     </div>

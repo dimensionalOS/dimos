@@ -175,5 +175,3 @@ To create a new message type:
 3. Add `lcm_encode()` and `lcm_decode()` methods if custom serialization is needed
 
 See [`PointCloud2.py`](/dimos/msgs/sensor_msgs/PointCloud2.py) and [`Vector3.py`](/dimos/msgs/geometry_msgs/Vector3.py) for examples.
-
-**Seeing custom types in the browser:** the `@dimos/topics` web SDK decodes only the message types baked into its published `@dimos/msgs` registry, so a brand-new custom type won't render there yet. The zero-rebuild path for this is described in the dimoscope design proposal [`custom-messages-in-the-browser.md`](/dimos/web/dimoscope/docs/custom-messages-in-the-browser.md).
