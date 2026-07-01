@@ -290,7 +290,7 @@ class _PoseReader:
                 [2*(x*z-y*w),   2*(y*z+x*w),   1-2*(x*x+y*y)],
             ], dtype=np.float32)
             if not self._locked:
-                print(f"*** VIO LOCKED after {now - self._t0:.1f}s ***")
+                print(f"*** VIO LOCKED after {now - self._t0:.1f}s  pose_t={self._t.tolist()} ***")
             self._locked = True
         else:
             if now - max(self._last_warn, self._t0) >= 15.0:
@@ -424,14 +424,15 @@ def main() -> None:
             # Gradient filter + isolation filter handle ghost pixels instead.
             h_rel = xyz[:, 2] - cam_z   # camera-relative height (used for colormap)
             if src.pose_locked and cam_z > 0.3:
-                # VIO height is plausible — use absolute world-Z so the floor at
-                # world_Z=0 is cleanly removed regardless of camera tilt.
                 keep = (xyz[:, 2] > _FLOOR_Z) & (xyz[:, 2] < _CEIL_Z)
             else:
-                # Pre-VIO or cam_z not yet stable: camera-relative band.
-                # Includes some floor but guarantees non-empty output.
                 keep = (h_rel >= -1.4) & (h_rel <= _Z_REL_HI)
-            xyz_obs  = _filter_isolated(xyz[keep])
+            xyz_kept = xyz[keep]
+            # _filter_isolated needs ≥2 pts per 5 cm cell to keep anything.
+            # When VIO is tracking, ZED depth output gets sparser (compute competition)
+            # and most cells end up with 1 point → everything is filtered → vox=0.
+            # The gradient filter already removes edge artifacts; isolation is redundant.
+            xyz_obs = xyz_kept if len(xyz_kept) < 4000 else _filter_isolated(xyz_kept)
             xyz_vox  = np.empty((0, 3), dtype=np.float32)
             if len(xyz_obs):
                 vk       = np.floor(xyz_obs / VOX_SIZE).astype(np.int32)
@@ -467,9 +468,10 @@ def main() -> None:
 
             fps = frame / max(ts - t0, 1e-6)
             print(
-                f"frame={frame:5d}  cloud={len(xyz_vis):5d}  vox={len(xyz_vox):5d}"
-                f"  world={world_map.size:6d}  occ={n_occ:5d}"
-                f"  cam_z={cam_z:.2f}  vio={'LOCKED' if src.pose_locked else 'searching'}  fps={fps:.1f}",
+                f"frame={frame:5d}  raw={len(xyz):6d}  keep={keep.sum():6d}"
+                f"  iso={len(xyz_obs):6d}  vox={len(xyz_vox):5d}"
+                f"  cloud={len(xyz_vis):5d}  world={world_map.size:6d}"
+                f"  cam_z={cam_z:.2f}  vio={'LOCKED' if src.pose_locked else 'search'}  fps={fps:.1f}",
                 flush=True,
             )
             frame += 1
