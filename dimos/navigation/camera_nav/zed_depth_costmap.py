@@ -20,8 +20,9 @@ from scipy.ndimage import sobel
 
 
 VOX_SIZE     = 0.020   # 2.0 cm per-frame voxels (unchanged)
-_Z_REL_HI   =  0.5    # camera-relative ceiling (0.5 m above camera)
+_Z_REL_HI   =  0.5    # camera-relative ceiling used pre-VIO (0.5 m above camera)
 _FLOOR_Z    =  0.03   # absolute world-Z floor cutoff (3 cm above gravity-aligned floor)
+_CEIL_Z     =  2.00   # absolute world-Z ceiling when VIO locked — no cam_z dependence
 _GRAD_THRESH =  0.30  # Sobel gradient magnitude threshold — pixels above this are edge artifacts
 _MIN_OBS    =  1      # min frame hits to mark a cell occupied (>1 adds latency without gain at 2cm)
 _MAP_EVERY  =  30     # log world/world_map every N frames (~2 s at 15 fps)
@@ -422,9 +423,12 @@ def main() -> None:
             # Ray-angle (d_z_norm) filter is intentionally absent: at 0.9 m camera height
             # it cuts everything below ~0.65 m at typical ranges, destroying low obstacles.
             # Gradient filter + isolation filter handle ghost pixels instead.
-            h_rel = xyz[:, 2] - cam_z
+            h_rel = xyz[:, 2] - cam_z   # camera-relative height (used for colormap)
             if src.pose_locked:
-                keep = (xyz[:, 2] > _FLOOR_Z) & (h_rel <= _Z_REL_HI)
+                # Use absolute world-Z bounds — independent of cam_z being correct.
+                # h_rel <= _Z_REL_HI would silently empty the map if cam_z is
+                # temporarily wrong at lock time; pure world-Z band is robust.
+                keep = (xyz[:, 2] > _FLOOR_Z) & (xyz[:, 2] < _CEIL_Z)
             else:
                 keep = (h_rel >= -1.4) & (h_rel <= _Z_REL_HI)
             xyz_obs  = _filter_isolated(xyz[keep])
