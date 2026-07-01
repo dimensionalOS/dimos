@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
-# Shared scaffolding for the 3 "real-world" scenario blueprints (nav / arm / cam).
+# Shared scaffolding for the 3 "real-world" scenario blueprints (nav / arm / cam). Each scenario is a
+# standalone dimos Module publishing a distinct topic namespace at a distinct data profile, so the browser
+# SDK can discover → visualize → type → benchmark it; run one, Ctrl-C, run another (the gateway taps the
+# bus, so the topic set just swaps). Twin of scenarios/bench.py's scaffolding, factored out so
+# nav/arm/cam.py stay to just their topic definitions.
 #
-# Each scenario is a standalone dimos Module that publishes a distinct namespace of topics at a
-# distinct data profile, so the browser SDK can discover → visualize → type → benchmark them, and
-# you can run one, Ctrl-C, run another (the gateway taps the bus, so the topic set just swaps).
+# Per-message stamping: ts (publish wall-clock, seconds) → one-way latency; frame_id (per-topic monotonic
+# seq) → exact drop/gap detection in the bench.
 #
-# This module is a TWIN of scenarios/bench.py's scaffolding (same _tn/_mk transport helpers,
-# same "build the big payload once, restamp ts+frame_id per publish" trick, same __main__ runner)
-# — factored out here so nav.py/arm.py/cam.py stay to just their topic definitions.
-#
-#   ts        (publish wall-clock, seconds)  → one-way latency in the bench
-#   frame_id  (per-topic monotonic seq)      → exact drop/gap detection in the bench
-#
-# Launch (from dimos/web/dimoscope):  DIMOS_TRANSPORT=zenoh uv run python scenarios/nav.py
+# Launch (from dimos/web/dimoscope): DIMOS_TRANSPORT=zenoh uv run python scenarios/nav.py
 import math
 import os
 import time
@@ -90,8 +86,8 @@ def env_i(key: str, default: int) -> int:
 
 
 def tn(topic: str) -> str:
-    # Zenoh key-exprs cannot start with "/"; LCM channels keep it. The Zenoh gateway re-adds the
-    # leading "/" so the browser sees "/nav/pose" either way. (verbatim from scenarios/bench.py)
+    # Zenoh key-exprs cannot start with "/"; LCM channels keep it. The Zenoh gateway re-adds the leading
+    # "/" so the browser sees "/nav/pose" either way.
     return topic[1:] if (TRANSPORT == "zenoh" and topic.startswith("/")) else topic
 
 
@@ -118,8 +114,8 @@ class Seq:
 
 
 def make_image(nbytes: int, fmt: ImageFormat = ImageFormat.RGB) -> Image:
-    """An Image of ~nbytes bytes (RGB=3ch, GRAY=1ch). Built ONCE then restamped per publish so
-    generation cost never dominates the send loop."""
+    """An Image of ~nbytes bytes (RGB=3ch, GRAY=1ch). Built once then restamped per publish so generation
+    cost never dominates the send loop."""
     ch = 1 if fmt in (ImageFormat.GRAY, ImageFormat.GRAY16) else 3
     px = max(1, nbytes // ch)
     h = max(1, int(px**0.5))

@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
-# WebTransport (HTTP/3 / QUIC) transport — small frames on datagrams (unreliable, no head-of-line
-# blocking), big frames on a unidirectional stream (reliable). Runs on its own UDP port (QUIC can't
-# share the HTTP TCP port). Optional (needs aioquic + cryptography). Fed from the shared Bus.
+# WebTransport (HTTP/3 / QUIC) transport: small frames on datagrams (unreliable, no head-of-line
+# blocking), big frames on a unidirectional stream (reliable). Own UDP port (QUIC can't share the HTTP
+# TCP port). Optional (needs aioquic + cryptography). Fed from the shared Bus.
 #
-# On-demand + QoS parity with the /ws data plane: each session gets a browser-opened BIDIRECTIONAL
-# control stream carrying the read-path subset of the WS control protocol (subscribe/unsubscribe/rate/
-# list) client→server, and hello/topic server→client for discovery. Egress is per-session filtered
-# (`wants`), rate-limited, and drained through the same `PriorityOutbox` the WS plane uses — so
-# important lanes survive and unsubscribed topics never transit. Teleop/goal/rpc stay on /ws.
+# Read-path (subs/rate/priority) mirrors the /ws data plane over a browser-opened bidirectional control
+# stream: subscribe/unsubscribe/rate/list in, hello/topic out, drained through the shared PriorityOutbox.
+# Teleop/goal/rpc stay on /ws.
 from __future__ import annotations
 
 import asyncio
@@ -84,24 +82,19 @@ def _make_cert() -> tuple[str, str, str]:
 
 
 class WebTransportServer:
-    """QUIC server on its own UDP port (QUIC can't share the HTTP TCP port); fed from the Bus.
-
-    Per-session read-path (subs filter + rate downsample + priority/conflation outbox) mirrors the /ws
-    data plane, reusing `_common.wants` + the shared `PriorityOutbox` primitives. Write-path control
-    (teleop/goal/rpc) is delegated to the shared `SafetyEgress` — the same clamp/deadman/whitelist as /ws.
-    """
+    """QUIC server on its own UDP port, fed from the Bus. Per-session read-path (subs/rate/priority
+    outbox) mirrors the /ws data plane; write-path (teleop/goal/rpc) is delegated to the shared
+    SafetyEgress (same clamp/deadman/whitelist as /ws)."""
 
     def __init__(self, bus: Bus, egress: SafetyEgress) -> None:
         self.bus = bus
-        self.egress = (
-            egress  # shared teleop/goal/rpc trust boundary (same instance as the /ws plane)
-        )
+        self.egress = egress  # same SafetyEgress instance as the /ws plane
         self.sessions: set = set()
         self.cert_hash = ""
         bus.subscribe(self._on_sample)
         bus.on_new_topic(self._on_new_topic)
 
-    # ── bus fan-out (loop thread, must stay cheap) ──────────────────────────
+    # bus fan-out (loop thread, keep cheap)
     def _on_sample(self, s: Sample) -> None:
         if not self.sessions:
             return
@@ -186,8 +179,7 @@ class WebTransportServer:
                         sessions.add(self)
                         self.transmit()
                 elif isinstance(event, WebTransportStreamDataReceived):
-                    # the browser's bidirectional control stream: newline-delimited JSON control ops.
-                    # The client sends {op:"list"} on connect → _on_control replies hello (single source).
+                    # browser's bidi control stream: newline-delimited JSON ops (client {op:"list"} → hello reply)
                     self.ctl_stream_id = event.stream_id
                     self._ctl_buf += event.data
                     while b"\n" in self._ctl_buf:
@@ -201,7 +193,6 @@ class WebTransportServer:
                     if len(self._ctl_buf) > 65536:
                         self._ctl_buf = b""  # runaway non-newline-terminated input → drop
 
-            # ── control ingress (full WS control protocol over the bidi stream) ──
             def _on_control(self, m: dict) -> None:
                 op = m.get("op")
                 if op == "subscribe":
@@ -263,7 +254,6 @@ class WebTransportServer:
                 else:
                     self.qos.pop(topic, None)
 
-            # ── control egress (hello / topic, over the client's bidi stream) ─
             def send_control(self, obj: dict) -> None:
                 if self._http is None or self.ctl_stream_id is None:
                     return
@@ -275,7 +265,6 @@ class WebTransportServer:
                 except Exception:
                     pass
 
-            # ── data egress (priority-ordered drain → size-routed send) ──────
             async def _drain(self) -> None:
                 try:
                     while True:
@@ -299,10 +288,10 @@ class WebTransportServer:
                 except Exception:
                     sessions.discard(self)
 
-        # Dual-stack the IPv4 wildcard: `localhost` resolves to ::1 (IPv6) first on macOS, and
-        # QUIC/UDP has no Happy-Eyeballs fallback — an IPv4-only 0.0.0.0 bind gets the browser a
-        # bare ERR_CONNECTION_REFUSED on [::1]:port. Binding :: (V6ONLY=0 default) serves both
-        # families. Explicit HOST overrides are honoured verbatim.
+        # Dual-stack the IPv4 wildcard: on macOS `localhost` resolves to ::1 (IPv6) first, and QUIC/UDP
+        # has no Happy-Eyeballs fallback, so an IPv4-only 0.0.0.0 bind gives the browser a bare
+        # ERR_CONNECTION_REFUSED on [::1]:port. Binding :: (V6ONLY=0 default) serves both families;
+        # explicit HOST overrides are honoured verbatim.
         bind_host = "::" if host == "0.0.0.0" else host
         await quic_serve(bind_host, port, configuration=config, create_protocol=_Protocol)
         logger.info(

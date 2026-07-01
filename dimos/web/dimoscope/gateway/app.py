@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# dimoscope gateway — the whole backend in one process, everything on by default. Serves the built
-# frontend + every transport on one HTTP port (+ one UDP port for WebTransport/QUIC). Ingest taps both
-# LCM and Zenoh (gateway/bus.py). Run:  python -m gateway
+# dimoscope gateway: the whole backend in one process. Serves the built frontend + every transport on one
+# HTTP port (+ one UDP port for WebTransport/QUIC); ingest taps both LCM and Zenoh (gateway/bus.py).
+# Run: python -m gateway
 #
 #   GET  /                 the built web app (app/dist)
 #   WS   /ws               data plane (topics + teleop/goal/rpc)   ← @dimos/web default
@@ -34,20 +34,18 @@ from .transports import PollPlane, SsePlane, WebRtcDataPlane, WebTransportServer
 
 logger = setup_logger()
 
-# 0.0.0.0 so you can open the app from another device on the LAN (e.g. a phone, for camera tests).
-# That also exposes teleop on the LAN — the data plane clamps velocity + runs a deadman, but set
-# HOST=127.0.0.1 if you want it loopback-only.
+# 0.0.0.0 so another device on the LAN (e.g. a phone) can open the app; this also exposes teleop on the
+# LAN (the data plane clamps velocity + runs a deadman). Set HOST=127.0.0.1 for loopback-only.
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", 8080))
 WT_PORT = int(os.environ.get("WT_PORT", 8443))  # WebTransport QUIC/UDP (separate listener)
 ZENOH_KEY = os.environ.get("ZENOH_KEY", "**")
 LCM_HOST = os.environ.get("DIMOS_LCM_HOST", "239.255.76.67")
 LCM_PORT = int(os.environ.get("DIMOS_LCM_PORT", 7667))
-# app.py lives in gateway/, so the frontend build + optional QoS rules sit one level up, at the
-# dimoscope root — hence parent.parent.
+# app.py lives in gateway/, so the build + QoS rules sit one level up at the dimoscope root (parent.parent).
 DIST = Path(os.environ.get("STATIC_DIR", Path(__file__).parent.parent / "app" / "dist"))
-# Optional operator QoS map (topic-glob → scheduler lane) for custom per-blueprint topics the name/type
-# heuristic can't classify. Absent = no rules = pure heuristic. Copy qos.rules.example.json to enable.
+# Optional operator QoS map (topic-glob → scheduler lane) for topics the name/type heuristic can't
+# classify. Absent = pure heuristic. Copy qos.rules.example.json to enable.
 QOS_RULES = Path(os.environ.get("QOS_RULES", Path(__file__).parent.parent / "qos.rules.json"))
 
 
@@ -82,15 +80,14 @@ def build_app() -> FastAPI:
 
     app = FastAPI(lifespan=lifespan)
 
-    # CORS: allow the SDK to be served from a different origin than the gateway (the real-WAN topology —
-    # app on http://localhost, gateway on the VPS by IP). Needed so the browser can fetch /cert (the
-    # WebTransport cert hash) cross-origin; /sse and /poll already set their own header. WS/WebRTC/QUIC
-    # are not subject to CORS. Read-only data + safe teleop, so `*` is acceptable for this bench service.
+    # CORS: the SDK may be served from a different origin than the gateway (real-WAN: app on localhost,
+    # gateway on the VPS by IP), so the browser can fetch /cert (the WebTransport cert hash) cross-origin.
+    # WS/WebRTC/QUIC aren't subject to CORS; `*` is acceptable for a read-only + safe-teleop bench service.
     app.add_middleware(
         CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
     )
 
-    # Data + media + bench websockets. Registered BEFORE the static mount so "/" doesn't shadow them.
+    # Data + media + bench websockets. Registered before the static mount so "/" doesn't shadow them.
     app.add_api_websocket_route("/ws", data.handle)
     app.add_api_websocket_route("/media", media.handle)
     app.add_api_websocket_route("/rtc", rtc.handle)

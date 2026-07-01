@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
-# dimoscope media plane — camera Image → WebRTC / WebCodecs / JPEG, served on /media. Reads frames
-# from the shared Bus. Encoding is CPU-heavy (PyAV/libx264, aiortc) so it runs in a single-worker
-# executor (never two encoders at once) and hands NAL chunks back to the loop.
-#
-# Two delivery paths (browser negotiates; both encode ONCE and fan out to N viewers):
-#   • WebRTC  (aiortc)             — recvonly offer/answer; browser HW-decodes a <video>.
-#   • WebCodecs (libx264 Annex-B)  — {video-config} JSON then binary
-#       [u8 flags(bit0=keyframe)][u64 ts_us BE][u16 topic_len BE][topic utf8][H.264 Annex-B NAL]
-# JPEG is the floor — decoded in the browser off the data plane, so it needs nothing here.
+# dimoscope media plane: camera Image → WebRTC / WebCodecs / JPEG, served on /media from the shared Bus.
+# Encoding is CPU-heavy (PyAV/libx264, aiortc) so it runs in a single-worker executor (never two encoders
+# at once). Both paths encode once and fan out to N viewers:
+#   WebRTC (aiortc): recvonly offer/answer; browser HW-decodes a <video>.
+#   WebCodecs (libx264 Annex-B): {video-config} JSON then binary
+#     [u8 flags(bit0=keyframe)][u64 ts_us BE][u16 topic_len BE][topic utf8][H.264 Annex-B NAL]
+# JPEG floor: decoded in the browser off the data plane, needs nothing here.
 from __future__ import annotations
 
 import asyncio
@@ -69,7 +67,7 @@ class MediaPlane:
         )  # serialise encode → encoders stay single-thread
         bus.subscribe(self._on_sample)
 
-    # ── bus tap (loop thread, cheap): only camera topics with live viewers ──
+    # bus tap (loop thread, cheap): only camera topics with live viewers
     def _on_sample(self, s: Sample) -> None:
         if "Image" not in (s.type or ""):  # camera frames are sensor_msgs.Image
             return
@@ -82,7 +80,7 @@ class MediaPlane:
         except asyncio.QueueFull:
             pass  # camera is freshest-wins; drop under backpressure
 
-    # ── background tasks (started in app.py's lifespan) ─────────────────────
+    # background tasks (started in app.py's lifespan)
     async def run_encoder(self) -> None:
         loop = asyncio.get_running_loop()
         while True:
@@ -161,7 +159,6 @@ class MediaPlane:
                 except Exception:
                     subs.discard(ws)
 
-    # ── WebRTC helpers ──────────────────────────────────────────────────────
     def _add_track(self, topic: str, track) -> None:
         self.webrtc_tracks.setdefault(topic, set()).add(track)
 
@@ -211,7 +208,6 @@ class MediaPlane:
             await fut
         await ws.send_text(json.dumps({"op": "webrtc-answer", "sdp": pc.localDescription.sdp}))
 
-    # ── per-client connection ───────────────────────────────────────────────
     async def handle(self, ws: WebSocket) -> None:
         await ws.accept()
         await ws.send_text(json.dumps({"op": "hello", "label": "media", "media": MEDIA_KINDS}))

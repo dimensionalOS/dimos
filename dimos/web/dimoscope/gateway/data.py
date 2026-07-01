@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-# dimoscope data plane — the WebSocket the browser SDK (@dimos/web) talks to. Speaks the gateway
-# control protocol (hello / subscribe / unsubscribe / list / rate / teleop / stop / goal / rpc).
-# teleop/goal are SAFE (velocity clamp + TTL deadman + stop-on-disconnect); rpc is a whitelisted bridge.
-# Reads from the shared Bus (LCM+Zenoh merged); each client gets its own queue + writer task so one slow
-# browser can't head-of-line-block the others. Egress publishes teleop/goal over BOTH backends (the
-# unused one is harmless); rpc uses the service's default backend (DIMOS_TRANSPORT).
+# dimoscope data plane: the WebSocket the browser SDK (@dimos/web) talks to. Speaks the gateway control
+# protocol (hello/subscribe/unsubscribe/list/rate/teleop/stop/goal/rpc). teleop/goal are safe (velocity
+# clamp + TTL deadman + stop-on-disconnect); rpc is a whitelisted bridge. Reads from the shared Bus
+# (LCM+Zenoh merged); each client gets its own queue + writer task so one slow browser can't
+# head-of-line-block the others.
 from __future__ import annotations
 
 import asyncio
@@ -23,14 +22,14 @@ from .qos import PriorityOutbox, declared_to_class, default_priority
 
 logger = setup_logger()
 
-# EGRESS_KBPS>0 → pace each client's writer to this bitrate (egress shaping to the client's link budget).
-# This keeps the backlog in the priority outbox — where the scheduler enforces priority — instead of
-# letting it bloat the kernel/proxy buffers downstream, which is the only way gateway-egress priority
-# actually bites on a constrained link (otherwise the queue lives in the socket buffer, drained FIFO).
+# EGRESS_KBPS>0 → pace each client's writer to this bitrate. This keeps the backlog in the priority outbox
+# (where the scheduler enforces priority) instead of bloating downstream kernel/proxy buffers — the only
+# way gateway-egress priority actually bites on a constrained link (else the queue lives in the socket
+# buffer, drained FIFO).
 EGRESS_KBPS = float(os.environ.get("EGRESS_KBPS", "0"))
 
-# Velocity clamp + TTL deadman + stop-on-disconnect + the whitelisted @rpc bridge now live in the shared
-# SafetyEgress (gateway/egress.py) so /ws and WebTransport share one trust boundary.
+# Velocity clamp + TTL deadman + stop-on-disconnect + the @rpc whitelist live in the shared SafetyEgress
+# (gateway/egress.py) so /ws and WebTransport share one trust boundary.
 
 
 class _Client:
@@ -57,7 +56,7 @@ class DataPlane:
         bus.subscribe(self._on_sample)
         bus.on_new_topic(self._on_new_topic)
 
-    # ── bus fan-out (loop thread, must stay cheap) ──────────────────────────
+    # bus fan-out (loop thread, keep cheap)
     def _on_sample(self, s: Sample) -> None:
         if not self.clients:
             return
@@ -88,7 +87,6 @@ class DataPlane:
         for st in self.clients.values():
             st.q.put_control(msg)  # control → top priority, generously buffered
 
-    # ── per-client connection ───────────────────────────────────────────────
     async def handle(self, ws: WebSocket) -> None:
         await ws.accept()
         st = _Client()

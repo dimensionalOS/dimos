@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-# scope-cam — a perception (multi-camera) scenario. Namespace: /cam/*
+# scope-cam: a perception (multi-camera) scenario. Namespace: /cam/*
 #
 #   /cam/rgb         Image            @30 Hz   ~550 KB   RGB camera        (≈16 MB/s)
 #   /cam/depth       Image            @15 Hz   ~300 KB   GRAY depth        (≈4.5 MB/s)
 #   /cam/points      PointCloud2      @10 Hz   ~1 MB     dense cloud       (≈10 MB/s)
 #   /cam/detections  Detection2DArray @30 Hz   tiny      per-frame metadata
 #
-# Data-path axis: BANDWIDTH / BUFFERBLOAT (~30 MB/s of bulk) — the WebTransport head-of-line story,
-# where big frames must not stall the small /cam/detections topic (the "important topic that must
-# survive the bulk", so its payload is minimal by design).
+# Data-path axis: bandwidth / bufferbloat (~30 MB/s of bulk), the WebTransport head-of-line story where
+# big frames must not stall the small /cam/detections topic (the important topic that must survive the
+# bulk, so its payload is minimal by design).
 #
-# Run (from dimos/web/dimoscope):  DIMOS_TRANSPORT=zenoh uv run python scenarios/cam.py
+# Run (from dimos/web/dimoscope): DIMOS_TRANSPORT=zenoh uv run python scenarios/cam.py
 from common import (
     Detection2DArray,
     Image,

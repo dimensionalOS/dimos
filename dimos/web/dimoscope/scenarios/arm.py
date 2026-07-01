@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-# scope-arm — a manipulation (robot arm) scenario. Namespace: /arm/*
+# scope-arm: a manipulation (robot arm) scenario. Namespace: /arm/*
 #
 #   /arm/joint_states  JointState       @250 Hz   7-DOF telemetry, small
 #   /arm/ee_pose       PoseStamped      @100 Hz   end-effector pose, tiny
-#   /arm/imu           Imu              @500 Hz   wrist IMU, tiny, EXTREME rate
+#   /arm/imu           Imu              @500 Hz   wrist IMU, tiny, extreme rate
 #   /arm/trajectory    JointTrajectory  @  2 Hz   a 10-point plan, bursty
 #
-# Data-path axis: MESSAGE-RATE CEILING (~850 tiny msgs/s) — stresses per-message overhead, not bandwidth.
+# Data-path axis: message-rate ceiling (~850 tiny msgs/s), stressing per-message overhead not bandwidth.
 # JointTrajectory has no ts/frame_id (uses .timestamp), so the bench reports n/a latency/loss for
 # /arm/trajectory by design. Wrist Imu (not WrenchStamped, which lacks an LCM codec) is the 500 Hz stream.
 #
-# Run (from dimos/web/dimoscope):  DIMOS_TRANSPORT=zenoh uv run python scenarios/arm.py
+# Run (from dimos/web/dimoscope): DIMOS_TRANSPORT=zenoh uv run python scenarios/arm.py
 from common import (
     IDENT,
     Imu,

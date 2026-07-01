@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-# Per-client priority outbox — the QoS enforcement point at the browser-link bottleneck. Replaces the
-# data plane's single FIFO queue with priority + conflation + weighted round-robin:
-#   • each topic lands in a priority CLASS (command > sensor > default > bulk), via default_priority()
-#   • best_effort topics keep only the LATEST frame (conflation); reliable topics keep a bounded deque
-#   • the writer drains by WEIGHTED round-robin: high classes get most of the budget, low keeps a floor
-#     (pose/teleop win under contention but lidar never starves to zero)
-# Shedding is explicit (bounded memory), so it does not rely on ws.send() blocking.
+# Per-client priority outbox: the QoS enforcement point at the browser-link bottleneck. Replaces the data
+# plane's single FIFO with priority + conflation + weighted round-robin: each topic lands in a priority
+# class (command > sensor > default > bulk) via default_priority(); best-effort topics keep only the latest
+# frame (conflation) while reliable topics keep a bounded deque; the writer drains by weighted round-robin
+# (high classes get most of the budget, low keeps a floor, so pose/teleop win under contention but lidar
+# never starves). Shedding is explicit (bounded memory), not reliant on ws.send() blocking.
 from __future__ import annotations
 
 import asyncio
@@ -49,11 +48,10 @@ _WEIGHTS = {
 }  # weighted round-robin budget per class (low keeps a floor of 1)
 
 
-# ── optional operator config map: topic-glob → lane ─────────────────────────────────────────────
-# dimos itself does QoS as a first-match glob→rule list (global_config.zenoh_qos / ZenohQoS); this is the
-# dimoscope-lane analogue for the long tail of custom per-blueprint topics the name/type heuristic below
-# can't classify. Off by default (no rules file → empty). It slots BETWEEN the client override and the
-# heuristic — final precedence at the data plane: client override > these rules > heuristic > LANE_DEFAULT.
+# Optional operator config map (topic-glob → lane). dimos itself does QoS as a first-match glob→rule list
+# (global_config.zenoh_qos / ZenohQoS); this is the dimoscope-lane analogue for custom per-blueprint topics
+# the heuristic below can't classify. Off by default (no rules file → empty). Final precedence at the data
+# plane: client override > these rules > heuristic > LANE_DEFAULT.
 LANE_BY_NAME = {
     "command": LANE_COMMAND,
     "sensor": LANE_SENSOR,
@@ -151,7 +149,7 @@ class PriorityOutbox:
         self._credits = dict(_WEIGHTS)
         self._event = asyncio.Event()
 
-    # ── put (loop thread, cheap, never blocks) ──────────────────────────────
+    # put (loop thread, cheap, never blocks)
     def put_control(self, item) -> None:  # type: ignore[no-untyped-def]
         self._put("\x00ctl", CONTROL[0], CONTROL[1], CONTROL[2], item)
 
@@ -166,7 +164,7 @@ class PriorityOutbox:
         bucket.append(item)  # conflate → maxlen=1 overwrites; reliable → bounded keep_last
         self._event.set()
 
-    # ── get (writer) ────────────────────────────────────────────────────────
+    # get (writer)
     async def get(self):  # type: ignore[no-untyped-def]
         while True:
             item = self._pick()

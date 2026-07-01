@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
-# dimoscope bus — the single in-process tap every transport reads from. Ingests both backends at once
-# (Zenoh declare_subscriber("**"); LCM UDP-multicast with LC03→LC02 reassembly) and normalises each
-# sample to Sample(topic, type, lc02, payload) fanned out to every consumer:
-#   • lc02    — the self-describing "LC02"<seq><channel>\0<payload> packet the browser decodes
-#   • payload — the bare lcm_encode bytes (fed to Image.lcm_decode by the media node)
-#
-# Consumer callbacks run ON the event loop and must be cheap (enqueue, don't await). Zenoh delivers on
-# its own thread → call_soon_threadsafe; the LCM tap already runs on the loop.
+# dimoscope bus: the single in-process tap every transport reads from. Ingests both backends at once
+# (Zenoh declare_subscriber("**"); LCM UDP-multicast with LC03→LC02 reassembly) and normalises each sample
+# to Sample(topic, type, lc02, payload). lc02 is the self-describing "LC02"<seq><channel>\0<payload> packet
+# the browser decodes; payload is the bare lcm_encode bytes (fed to Image.lcm_decode by the media node).
+# Consumer callbacks run on the loop and must be cheap (enqueue, don't await); Zenoh delivers on its own
+# thread → call_soon_threadsafe, the LCM tap already runs on the loop.
 from __future__ import annotations
 
 import asyncio
@@ -53,7 +51,6 @@ class Bus:
         # LC03 reassembly, keyed by sequence number → partial message
         self._pending: dict[int, _Assembly] = {}
 
-    # ── consumer registration ───────────────────────────────────────────────
     def subscribe(self, cb: Consumer) -> Callable[[], None]:
         """Register a fan-out consumer. Returns an unsubscribe callable."""
         self._consumers.append(cb)
@@ -66,12 +63,11 @@ class Bus:
     def topic_list(self) -> list[dict]:
         return [{"topic": t, "type": ty} for t, ty in self.topics.items()]
 
-    # ── framing ─────────────────────────────────────────────────────────────
     def _make_lc02(self, channel: str, payload: bytes) -> bytes:
         self._seq = (self._seq + 1) & 0xFFFFFFFF
         return struct.pack(">II", LC02, self._seq) + channel.encode() + b"\x00" + payload
 
-    # ── publish (loop thread) ───────────────────────────────────────────────
+    # publish (loop thread)
     def _publish(self, topic: str, typ: str, lc02: bytes, payload: bytes) -> None:
         if topic not in self.topics:
             self.topics[topic] = typ
@@ -81,7 +77,6 @@ class Bus:
         for cb in self._consumers:
             cb(s)  # cheap + sync (enqueue); never await here
 
-    # ── Zenoh ingest ────────────────────────────────────────────────────────
     def start_zenoh(self, key: str = "**") -> None:
         self._loop = asyncio.get_running_loop()
         import zenoh
@@ -103,7 +98,7 @@ class Bus:
         self._zenoh_session.declare_subscriber(key, on_sample)
         logger.info("zenoh subscriber declared", key=key)
 
-    # ── LCM ingest (UDP multicast + LC03→LC02 reassembly) ───────────────────
+    # LCM ingest: UDP multicast + LC03→LC02 reassembly
     async def start_lcm(self, host: str = "239.255.76.67", port: int = 7667) -> None:
         self._loop = asyncio.get_running_loop()
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)

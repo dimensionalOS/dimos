@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
-# The teleop/goal/rpc trust boundary — shared by every transport that carries write-path control.
+# The teleop/goal/rpc trust boundary, shared by every transport that carries write-path control.
+# Velocity clamp + per-connection TTL deadman + stop-on-disconnect + a whitelisted @rpc bridge. One
+# instance per service, used by both the /ws DataPlane and the WebTransport server, keyed by a
+# per-connection object (WebSocket or WT session) so each connection gets its own deadman timer.
 #
-# Velocity clamp + per-connection TTL deadman + stop-on-disconnect + a whitelisted @rpc bridge. ONE
-# instance per service (created by build_app), used by BOTH the /ws DataPlane and the WebTransport
-# server — so the safety logic lives in exactly one place regardless of which wire drives the robot.
-# Keyed by an arbitrary per-connection object (the WebSocket, or the WT protocol session) so each
-# connection gets its own deadman timer.
-#
-# EGRESS goes to BOTH backends: teleop Twist / nav goal PointStamped are published over Zenoh *and* LCM
-# (each via dimos make_transport with an explicit per-backend config), so whichever transport the robot
-# listens on receives them; the other publish is harmless. RPC uses the service's default backend.
+# Egress goes to both backends: teleop Twist / nav goal PointStamped publish over Zenoh *and* LCM (each
+# via dimos make_transport), so whichever the robot listens on receives them; the other is harmless.
+# RPC uses the service's default backend.
 from __future__ import annotations
 
 import asyncio
@@ -23,7 +20,7 @@ MAX_LIN = 1.0  # m/s clamp
 MAX_ANG = 1.5  # rad/s clamp
 DEFAULT_TTL = 400.0  # deadman timeout (ms)
 
-# RPC bridge: which dimos @rpc commands the browser may invoke (server-side AUTHORITATIVE whitelist).
+# RPC bridge: which dimos @rpc commands the browser may invoke (server-side authoritative whitelist).
 RPC_COMMANDS = [
     {"target": "GO2Connection", "method": "standup", "label": "Stand up"},
     {"target": "GO2Connection", "method": "liedown", "label": "Lie down"},
@@ -57,7 +54,7 @@ class SafetyEgress:
     def commands(self) -> list:
         return RPC_COMMANDS if self.has_rpc else []
 
-    # ── setup: publishers to BOTH backends + the rpc bridge ─────────────────
+    # setup: publishers to both backends + the rpc bridge
     def start(self) -> None:
         from dimos.core.global_config import global_config
         from dimos.core.transport_factory import make_transport, rpc_backend
@@ -100,7 +97,6 @@ class SafetyEgress:
             except Exception:
                 pass
 
-    # ── write-path control (keyed per connection) ──────────────────────────
     def teleop(self, key: object, lin: float, ang: float, ttl_ms: float, loop) -> None:
         self._publish_twist(lin, ang)
         self._arm_deadman(key, ttl_ms, loop)
