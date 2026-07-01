@@ -51,7 +51,8 @@ _VMASK = np.int64(0x3FFFF)
 # unaffected by absolute position error in the translation estimate.
 _Z_REL_LO:    float = -1.4
 _Z_REL_HI:    float =  0.5
-_FLOOR_RAY_Z: float = -0.30
+_FLOOR_RAY_Z: float = -0.15   # tighter than ZED default: rejects rays >~9° below horizontal
+_MAP_MAX_DEPTH: float = 4.5   # D435i stereo accuracy degrades beyond ~5 m — cap map pts here
 
 # Optical frame (X=right, Y=down, Z=depth) → camera_link (X=fwd, Y=left, Z=up)
 _R_OPT_TO_LINK = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=np.float32)
@@ -566,22 +567,22 @@ class DepthStreamer:
                         else _height_color(xyz[idx, 2] - cam_z))
         rr.log("world/cloud", rr.Points3D(positions=xyz[idx], colors=cloud_colors, radii=0.003))
 
-        # Live cloud map — mirrors ZED costmap pipeline exactly:
-        #   nearest-per-ray (drop behind-surface leakage)
-        #   → height + floor-ray filter
-        #   → isolation filter (removes stereo edge noise)
-        #   → FastVoxelMap accumulate
+        # Live cloud map: depth cap → height/floor filter → isolation → accumulate.
+        # Depth camera already gives nearest surface per ray; gradient filter above
+        # already removes stereo edge artifacts. No angular ray-binning needed.
         cam_pos  = pkt.pose_t.copy()
-        xyz_surf = _nearest_per_ray(xyz, cam_pos)
-        if len(xyz_surf) > 0:
-            h_rel    = xyz_surf[:, 2] - cam_z
-            rays     = xyz_surf - cam_pos
-            dist     = np.linalg.norm(rays, axis=1)
-            d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0)
-            keep     = (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI) & (d_z_norm > _FLOOR_RAY_Z)
-            xyz_map  = _filter_isolated(xyz_surf[keep])
-            if len(xyz_map) > 0:
-                self._live_vox.add(xyz_map)
+        rays     = xyz - cam_pos
+        dist     = np.linalg.norm(rays, axis=1)
+        d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0)
+        h_rel    = xyz[:, 2] - cam_z
+        keep     = (
+            (dist <= _MAP_MAX_DEPTH) &
+            (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI) &
+            (d_z_norm > _FLOOR_RAY_Z)
+        )
+        xyz_map = _filter_isolated(xyz[keep])
+        if len(xyz_map) > 0:
+            self._live_vox.add(xyz_map)
         if frame % self.MAP_EVERY == 0:
             self._log_live_map(cam_z, frame)
 
