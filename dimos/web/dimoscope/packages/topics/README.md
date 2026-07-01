@@ -9,38 +9,129 @@ import { createDimosClient, ws } from "@dimos/topics";
 const dimos = createDimosClient({ transport: ws() }); // or webtransport() — WS control + WT data
 await dimos.connect("ws://localhost:8080");
 dimos.subscribe("/nav/pose", (m) => use(m.data, m.ts)); // one { data, ts, meta } envelope everywhere
-await dimos.modules.ScopeNav.navigate_to(goal);         // typed @rpc call
 ```
 
-Pass the generated maps for full type-safety — topic names + message types autocomplete, and
-`modules.<Target>.<method>()` gets real arg/return types:
+Untyped, that works — but every topic is `unknown` and any module/method is accepted. The type-safety
+below makes the browser match the robot.
 
-```ts
-import type { DimosCommands, DimosTopics } from "./dimos.topics.gen.ts";
-const dimos = createDimosClient<DimosTopics, DimosCommands>();
+## Type-safety, end to end
+
+Types are **generated from the dimos blueprint** — the Python `Module` that defines the robot's topics and
+commands. The blueprint is the single source of truth, so the browser types can't drift from what the robot
+actually publishes and accepts.
+
+```
+scenarios/nav.py  ──►  deno task gen-types  ──►  dimos.topics.gen.ts  ──►  createDimosClient<DimosTopics, DimosCommands>()
+  (Out[] + @rpc)          (static, offline)         (DimosTopics/Commands)        (typed subscribe + typed modules)
 ```
 
-## Typed codegen — `scripts/gen_types.py`
+### 1. The blueprint declares topics + commands (Python)
 
-Generates the `DimosTopics` + `DimosCommands` TypeScript **statically** from a dimos blueprint (a `Module`
-subclass) — no gateway, no robot, no running bus. The import is side-effect-free (class-definition
-reflection only; the blueprint is never instantiated). It's the only way to type RPC args/returns — the
-wire only advertises `{target, method}`, never signatures.
+```python
+# scenarios/nav.py
+class ScopeNav(Module):
+    pose:  Out[PoseStamped]      # a published topic + its message type
+    cloud: Out[PointCloud2]
+
+    @rpc
+    def navigate_to(self, goal: PoseStamped) -> bool: ...   # a callable command + its signature
+
+# the ports list gen_types reads for topic names (also wires the __main__ runner)
+PORTS = [("pose", "/nav/pose", PoseStamped), ("cloud", "/nav/cloud", PointCloud2), ...]
+```
+
+### 2. Generate the maps (static — no gateway, no robot)
 
 ```bash
-deno task gen-types scenarios/nav.py                              # print to stdout
+deno task gen-types scenarios/nav.py --out app/src/dimos.topics.gen.ts
+```
+
+### 3. …which emits `dimos.topics.gen.ts`
+
+```ts
+export interface DimosTopics {
+  "/nav/pose": geometry_msgs.PoseStamped;
+  "/nav/cloud": sensor_msgs.PointCloud2;
+  // …
+}
+
+export interface DimosCommands {
+  "ScopeNav": {
+    "navigate_to": { args: [geometry_msgs.PoseStamped]; ret: boolean };
+    "start": { args: []; ret: void };
+  };
+}
+```
+
+### 4. Consume with a typed client
+
+Pass the two maps as generics — topic names + message types and RPC target/method/args all become checked
+and autocompleted:
+
+```ts
+import { createDimosClient } from "@dimos/topics";
+import type { DimosCommands, DimosTopics } from "./dimos.topics.gen.ts";
+import type { geometry_msgs } from "@dimos/msgs";
+
+const dimos = createDimosClient<DimosTopics, DimosCommands>();
+await dimos.connect("ws://localhost:8080");
+
+// ── topics: the name autocompletes, and `m.data` is inferred from the blueprint's Out[] type ──
+dimos.subscribe("/nav/pose", (m) => {
+  m.data.position;          // ✅ geometry_msgs.PoseStamped — fields autocomplete
+});
+const latest = dimos.latest("/nav/pose"); // latest?: geometry_msgs.PoseStamped
+dimos.subscribe("/nav/psoe", () => {});   // ❌ compile error — not a topic on this robot
+
+// ── commands: target, method, args and the return type are all typed ──
+const goal = {} as geometry_msgs.PoseStamped;
+const ok: boolean = await dimos.modules.ScopeNav.navigate_to(goal); // (goal: PoseStamped) => Promise<boolean>
+await dimos.modules.ScopeNav.start();                               // () => Promise<void>
+
+dimos.modules.ScopeNav.navigate_to(42);   // ❌ arg must be a PoseStamped
+dimos.modules.ScopeNav.liftoff();         // ❌ no such @rpc method on ScopeNav
+dimos.modules.Roomba.start();             // ❌ no such module
+```
+
+In React, bind the map once and every topic hook is typed (see `app/src/dimos.ts`):
+
+```ts
+export const { useTopicLatest } = createDimosHooks<DimosTopics>();   // from @dimos/react
+const { data } = useTopicLatest("/nav/pose");                       // data?: geometry_msgs.PoseStamped
+```
+
+### How it works
+
+- **`DimosTopics`** (topic → message type) drives `subscribe` / `topic` / `peek` / `latest`: the name is
+  checked against the map and the message type is inferred.
+- **`DimosCommands`** (target → method → `{ args; ret }`) drives `modules`: the client lifts each
+  `{ args; ret }` descriptor into a callable `(...args) => Promise<ret>` (`RpcFn` / `TypedModules` in
+  `src/client.ts`), so `navigate_to(goal: PoseStamped): Promise<boolean>`.
+- **Escape hatch:** a bare `createDimosClient()` (no generics) accepts any topic/module and returns
+  `unknown` — and `dimos.call(target, method, …)` is always available for dynamic, ungenerated commands.
+- **Fidelity:** an `@rpc` arg/return the mapper can't type (a non-scalar, non-message type) stays
+  `unknown`; regenerate whenever the blueprint's topics or `@rpc` methods change.
+
+## Typed codegen reference — `scripts/gen_types.py`
+
+Generates the `DimosTopics` + `DimosCommands` TypeScript **statically** from a blueprint — no gateway, no
+robot, no running bus. The import is side-effect-free (class-definition reflection only; the blueprint is
+never instantiated). It's the only way to type RPC args/returns — the wire only advertises
+`{target, method}`, never signatures.
+
+```bash
+deno task gen-types scenarios/nav.py                                     # print to stdout
 deno task gen-types scenarios/nav.py --out app/src/dimos.topics.gen.ts   # write the app's map
 ```
 
-`deno task gen-types` = `uv run python packages/topics/scripts/gen_types.py`. Regenerate whenever a
-blueprint's topics or `@rpc` methods change.
+`deno task gen-types` = `uv run python packages/topics/scripts/gen_types.py`.
 
 **What it reads:**
 
-- **Topics** — the blueprint's module-level `PORTS = [(attr, topic, MsgClass), …]` list (the same list its
-  `__main__` wires to transports). Each → `"<topic>": <pkg>.<Name>` from `MsgClass.msg_name`.
-- **Commands** — each `@rpc` method declared on the `Module` subclass → a typed descriptor
-  `"<method>": { args: [...]; ret: ... }` from its signature.
+- **Topics** — the blueprint's module-level `PORTS = [(attr, topic, MsgClass), …]` list. Each →
+  `"<topic>": <pkg>.<Name>` from `MsgClass.msg_name`.
+- **Commands** — each `@rpc` method declared on the `Module` subclass → `"<method>": { args: [...]; ret: ... }`
+  from its signature.
 
 **Type mapping (`@rpc` args + returns):**
 
@@ -54,5 +145,3 @@ blueprint's topics or `@rpc` methods change.
 | `Optional[X]` / `X \| None` | `X \| null` |
 | `-> None` / unannotated | `void` |
 | anything else | `unknown` |
-
-Unknown target/method or a wrong-typed arg is a compile error.
