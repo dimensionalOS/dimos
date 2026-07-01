@@ -65,7 +65,7 @@ deno task gen-types scenarios/nav.py --out app/src/dimos.topics.gen.ts
 ```
 
 Consume via `createDimosClient<DimosTopics, DimosCommands>()`. Details + the full type map:
-[`packages/topics/scripts/README.md`](../packages/topics/scripts/README.md).
+[`packages/topics/README.md`](../packages/topics/README.md).
 
 ## Benchmark them
 
