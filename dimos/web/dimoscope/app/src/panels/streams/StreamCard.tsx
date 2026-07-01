@@ -1,13 +1,11 @@
-// StreamCard — one subscribed topic, live. Shows its QoS lane, live hz/kB·s/latency/gap + a rate
-// sparkline, a rolling display-throttled feed of the actual messages (expandable to full JSON), AND
-// the FULL per-topic QoS control surface the SDK exposes, wired the idiomatic way (resolveQos → setQos).
+// One subscribed topic, live — QoS lane, hz/kB·s/latency/gap, rate sparkline, display-throttled feed; full per-topic QoS surface via resolveQos→setQos.
 import { useEffect, useState } from "react";
 import { jsonPretty, useTopicFeed } from "@dimos/react";
 import { useCaps, useDimosClient, useTopicStats } from "../../dimos";
 import { defaultLane, type Lane, LANES, type Qos, resolveQos } from "@dimos/web";
 import { Sparkline } from "../../widgets/Sparkline";
 
-// The knobs the SDK's `Qos` exposes (packages/web/src/types.ts) — every one is controllable here.
+// The QoS knobs the SDK's `Qos` exposes (packages/web/src/types.ts).
 const LANE_OPTS: (Lane | "")[] = ["", "command", "sensor", "default", "bulk"];
 const HZ_OPTS = [0, 5, 20, 60, 120];
 const RATELIMIT_OPTS = ["server", "client"] as const;
@@ -24,7 +22,7 @@ const fmtTime = (ms: number) => {
 const fmtSize = (b: number) =>
   b >= 1e6 ? `${(b / 1e6).toFixed(1)}MB` : b >= 1000 ? `${(b / 1000).toFixed(b >= 1e5 ? 0 : 1)}kB` : `${b}B`;
 
-// A compact segmented button group — one row of a QoS knob's options; highlights the active value.
+// Compact segmented button group highlighting the active value.
 function Seg<T extends string | number>({ options, value, onChange, disabled, render }: {
   options: readonly T[];
   value: T | undefined;
@@ -62,8 +60,7 @@ export function StreamCard({ topic, type, onRemove }: {
   const [peakHz, setPeakHz] = useState(0);
   const [expanded, setExpanded] = useState(false);
 
-  // Control state: a base `lane` preset + explicit per-knob overrides on top of it (`over`), plus the
-  // rate cap which is independent of the lane. eff = resolveQos merges LANES[lane] with the overrides.
+  // Base lane preset + per-knob overrides (`over`) + an independent rate cap; eff=resolveQos merges LANES[lane] with overrides.
   const [laneOverride, setLaneOverride] = useState<Lane | "">("");
   const [maxHz, setMaxHz] = useState(0);
   const [rateLimit, setRateLimit] = useState<NonNullable<Qos["rateLimit"]>>("server");
@@ -78,14 +75,12 @@ export function StreamCard({ topic, type, onRemove }: {
     rateLimit,
   });
 
-  // Which fields the active transport actually honors (WS/WebTransport = scheduler + server downsample;
-  // sse/poll/zenoh-ts advertise none → priority/reliability/depth/server-rateLimit are client-emulated).
+  // WS/WebTransport honor scheduler + server downsample; sse/poll/zenoh-ts advertise none → client-emulated.
   const serverRate = caps?.qos?.maxHz === "server";
   const schedHonored = (caps?.qos?.transport?.length ?? 0) > 0;
   const live = !!stats && stats.hz > 0;
 
-  // Declare QoS the way the framework intends: resolveQos(lane preset + overrides) → setQos. Re-applied
-  // whenever any knob changes; the shared Topic handle re-issues the wire subscribe with the new QoS.
+  // Declare via resolveQos(lane+overrides)→setQos, re-applied on knob change; the shared Topic re-issues the wire subscribe.
   useEffect(() => {
     if (!client) return;
     client.topic(topic).setQos(resolveQos(topic, type, {
@@ -99,8 +94,8 @@ export function StreamCard({ topic, type, onRemove }: {
   useEffect(() => {
     if (!stats) return;
     setHist((h) => [...h.slice(-59), stats.bytesPerSec / 1000]);
-    if (stats.hz > peakHz) setPeakHz(stats.hz);
-  }, [stats, peakHz]);
+    setPeakHz((prev) => Math.max(prev, stats.hz));
+  }, [stats]);
 
   const pickLane = (l: Lane | "") => {
     setLaneOverride(l);

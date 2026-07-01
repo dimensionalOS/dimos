@@ -1,6 +1,5 @@
-// @dimos/react — thin React bindings over @dimos/web.
-// High-rate topics: prefer useTopicRef (no re-render; read in a rAF loop) over
-// useTopicLatest (re-renders per message).
+// @dimos/react — thin React bindings over @dimos/web. For high-rate topics prefer
+// useTopicRef (no re-render; read in a rAF loop) over useTopicLatest.
 import {
   createContext,
   type MutableRefObject,
@@ -10,6 +9,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { createDimosClient, type DimosClient, selectMediaChannel, ws } from "@dimos/web";
 import type {
@@ -30,7 +30,7 @@ export interface ServerOpt {
   label: string;
   connect: () => Promise<DimosClient>;
   /** Gateway WS URL, when this server is a plain gateway transport (lets a panel open a sibling
-   *  client to the same gateway). Absent for webrtc, which has no single gateway URL. */
+   *  client to the same gateway). Absent for webrtc. */
   url?: string;
   /** Media-plane config: WebRTC gateway + which kinds it serves. Absent → the Image-topic floor. */
   media?: { gatewayUrl?: string; kinds?: readonly MediaKind[] };
@@ -136,19 +136,46 @@ export function useCaps(): TransportCaps | null {
   return useDimosClient()?.caps ?? null;
 }
 
+// Stable empty snapshots for the disconnected case — useSyncExternalStore compares snapshots by
+// reference, so returning a fresh `[]` each call would loop.
+const NO_TOPICS: TopicInfo[] = [];
+const NO_COMMANDS: CommandInfo[] = [];
+
+/**
+ * Bridge a client-level push store (an `onX` subscribe + a snapshot getter) into React via
+ * useSyncExternalStore — the idiomatic replacement for mirroring the store into useState+useEffect.
+ * Null-safe (client is null before connect / mid server-switch). The snapshot is cached in a closure
+ * updated on every notification (so getSnapshot returns a stable ref between changes), and re-read once
+ * at subscribe time to catch anything that changed between render and subscription.
+ */
+function useClientStore<T>(
+  read: (c: DimosClient) => T,
+  listen: (c: DimosClient, onChange: () => void) => () => void,
+  empty: T,
+): T {
+  const client = useDimosClient();
+  const [subscribe, getSnapshot] = useMemo(() => {
+    if (!client) return [(_: () => void) => () => {}, () => empty] as const;
+    let snap = read(client);
+    return [
+      (onChange: () => void) => {
+        const unsub = listen(client, () => {
+          snap = read(client);
+          onChange();
+        });
+        snap = read(client); // catch anything that changed before we subscribed
+        return unsub;
+      },
+      () => snap,
+    ] as const;
+    // read/listen/empty are stable across renders — only re-key on the client.
+  }, [client]);
+  return useSyncExternalStore(subscribe, getSnapshot);
+}
+
 /** Live list of discovered topics. */
 export function useTopics(): TopicInfo[] {
-  const client = useDimosClient();
-  const [topics, setTopics] = useState<TopicInfo[]>(() => client?.listTopics() ?? []);
-  useEffect(() => {
-    if (!client) return;
-    setTopics(client.listTopics());
-    const unsub = client.onTopics(setTopics);
-    return () => {
-      unsub();
-    };
-  }, [client]);
-  return topics;
+  return useClientStore((c) => c.listTopics(), (c, cb) => c.onTopics(cb), NO_TOPICS);
 }
 
 /** Latest message for a topic; re-renders on each delivery (use maxHz for high-rate). */
@@ -202,7 +229,7 @@ export function useTopicStats(topic: string | null, pollMs = 500): TopicStats | 
 }
 
 // Live message feed: keep only the latest message in a closure and flush one compact row at
-// `displayHz`, so a high-rate stream (imu @500 Hz, rgb @30 Hz) never re-renders React per message.
+// `displayHz`, so a high-rate stream never re-renders React per message.
 
 const _replacer = (_k: string, v: unknown) =>
   typeof v === "bigint"
@@ -234,7 +261,7 @@ export interface TopicFeed {
   /** The most recent full message (for an expand-to-JSON view). */
   latest?: { data: unknown; meta: MessageMeta };
   /** Source-sequence gap over the delivered stream, %: rises when the gateway sheds (or a client
-   *  rate-limit drops) messages. null when the topic carries no numeric seq (named frame_id). */
+   *  rate-limit drops) messages. null when the topic carries no numeric seq. */
   lossPct: number | null;
 }
 
@@ -264,9 +291,8 @@ export function useTopicFeed(
       const s = m.meta.seq;
       if (s != null) {
         if (lastSeq !== undefined && s < lastSeq) {
-          // seq went backwards → the publisher restarted (frame_id resets to 0). Start a fresh gap
-          // window so gap% reflects the new run instead of pinning near 100% forever. (WS is ordered,
-          // so a decrease is a restart, not a reorder.)
+          // seq went backwards → the publisher restarted; start a fresh gap window
+          // (WS is ordered, so a decrease is a restart, not a reorder).
           seqMin = s;
           seqMax = s;
           seqCount = 1;
@@ -301,7 +327,6 @@ export function useTopicFeed(
   return feed;
 }
 
-// ── camera: decode sensor_msgs.Image → canvas ──────────────────────────────
 interface ImageMsg {
   width: number;
   height: number;
@@ -437,7 +462,6 @@ export function useImageTopic(topic: string | null, opts?: { maxFps?: number }) 
   return { canvasRef, info };
 }
 
-// ── media plane: the camera as a negotiated, pluggable stream ───────────────
 /** Forced media mode (the topbar toggle). "auto" = best available, falling back to jpeg. */
 export type MediaMode = "auto" | "jpeg" | "webrtc" | "webcodecs";
 const MODE_PREFER: Record<MediaMode, MediaKind[]> = {
@@ -450,7 +474,7 @@ const MODE_PREFER: Record<MediaMode, MediaKind[]> = {
 /**
  * Subscribe a camera topic via the negotiated media plane: a <video> fed by a WebRTC MediaStream
  * when available, else the JPEG Image-topic floor on a <canvas>. Caller attaches both refs and shows
- * the one matching `kind`. One MediaChannel per hook instance (a multi-cam grid would share one).
+ * the one matching `kind`. One MediaChannel per hook instance.
  */
 export function useVideo(
   topic: string | null,
@@ -458,7 +482,7 @@ export function useVideo(
     mode?: MediaMode;
     /** Per-frame tap (frames channels only — webcodecs/jpeg, NOT webrtc): called after the canvas
      *  draw, before the frame is closed. The seam for in-browser CV/overlays. Must NOT retain the
-     *  frame past the call (it's closed right after) — copy it synchronously if you need it async. */
+     *  frame past the call (it's closed right after). */
     onFrame?: (
       frame: VideoFrame | ImageBitmap,
       meta: VideoMeta,
@@ -550,7 +574,7 @@ export function useVideo(
 /**
  * Subscribe to ANY topic by name from the UI — proves the on-demand machinery (topic.ts is
  * ref-counted, so a pin = a subscribe, an unpin = an unsubscribe). Works for not-yet-discovered
- * topics (the gateway forwards on first publish) and on every transport.
+ * topics on every transport.
  */
 export function SubscribeBar() {
   const topics = useTopics();
@@ -703,31 +727,16 @@ export function useRpc() {
 
 /** Commands the connected gateway advertises as browser-callable (empty if none / unsupported). */
 export function useCommands(): CommandInfo[] {
-  const client = useDimosClient();
-  const [cmds, setCmds] = useState<CommandInfo[]>(() => client?.commands ?? []);
-  useEffect(() => {
-    if (!client) {
-      setCmds([]);
-      return;
-    }
-    setCmds(client.commands);
-    const unsub = client.onCommands(setCmds);
-    return () => {
-      unsub();
-    };
-  }, [client]);
-  return cmds;
+  return useClientStore((c) => c.commands, (c, cb) => c.onCommands(cb), NO_COMMANDS);
 }
 
 /**
  * Typed hooks bound to a generated topic + command map (`DimosTopics`/`DimosCommands` from
- * packages/web/scripts/gen_types.py):
- *   export const { useDimosClient, useTopicLatest, useTopicRef, useImageTopic, useTopicStats, useModules }
- *     = createDimosHooks<DimosTopics, DimosCommands>();
- * Every topic-name hook then autocompletes the name + infers the message type, `useDimosClient()` returns
- * a typed `DimosClient<TMap, TCmds>`, and `useModules().Target.method(...)` is a typed RPC callable. Pure
- * type-level wrapper (zero runtime cost); map-agnostic hooks (useTeleop/useRpc/useCommands/…) don't need
- * the map. Runtime-discovered names still work (the `string & {}` fallback → `unknown`).
+ * packages/web/scripts/gen_types.py). Every topic-name hook autocompletes the name + infers the
+ * message type, `useDimosClient()` returns a typed `DimosClient<TMap, TCmds>`, and
+ * `useModules().Target.method(...)` is a typed RPC callable. Pure type-level wrapper (zero runtime
+ * cost); map-agnostic hooks (useTeleop/useRpc/useCommands/…) don't need the map. Runtime-discovered
+ * names still work (the `string & {}` fallback → `unknown`).
  */
 // Topic-name key: a known key of TMap (autocompletes) OR any string (→ unknown). `string & Record<never,
 // never>` keeps literal autocomplete alive while accepting arbitrary strings (and dodges the `{}` lint).

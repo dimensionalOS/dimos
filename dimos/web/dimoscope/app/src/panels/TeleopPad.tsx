@@ -30,12 +30,8 @@ export function TeleopPad() {
       if (k.has("s") || k.has("ArrowDown")) lin -= LIN;
       if (k.has("a") || k.has("ArrowLeft")) ang += ANG;
       if (k.has("d") || k.has("ArrowRight")) ang -= ANG;
-      if (lin || ang) {
-        drive(lin, ang, 400);
-        setActive(true);
-      } else if (active) {
-        setActive(false);
-      }
+      if (lin || ang) drive(lin, ang, 400);
+      setActive(lin !== 0 || ang !== 0); // React bails out when the value is unchanged
     }, 100);
     return () => {
       window.removeEventListener("keydown", down);
@@ -43,7 +39,7 @@ export function TeleopPad() {
       clearInterval(id);
       stop();
     };
-  }, [drive, stop, active]);
+  }, [drive, stop]);
 
   const hold = (lin: number, ang: number) => ({
     onMouseDown: () => drive(lin, ang, 500),
