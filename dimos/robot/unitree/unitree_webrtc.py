@@ -44,12 +44,11 @@ class UnitreeWebRTCConnection(Resource):
     ) -> None:
         self.ip = ip
         self.mode = mode
-        self.loop: asyncio.AbstractEventLoop | None = None
-        self.thread: threading.Thread | None = None
         # Per-device AES-128 key for new Unitree firmware (data2=3 handshake); omitted when unset.
         self.conn = LegionConnection(
             WebRTCConnectionMethod.LocalSTA, ip=self.ip, aes_128_key=aes_128_key
         )
+        # self.loop / self.thread are created in connect() (called below).
         self.connect()
 
     def connect(self) -> None:
@@ -92,7 +91,7 @@ class UnitreeWebRTCConnection(Resource):
             except Exception:
                 pass
 
-        if self.loop is not None and self.loop.is_running():
+        if self.loop.is_running():
             # Let the disconnect actually run (bounded) before killing the loop.
             future = asyncio.run_coroutine_threadsafe(async_disconnect(), self.loop)
             try:
@@ -101,7 +100,7 @@ class UnitreeWebRTCConnection(Resource):
                 pass
             self.loop.call_soon_threadsafe(self.loop.stop)
 
-        if self.thread is not None and self.thread.is_alive():
+        if self.thread.is_alive():
             self.thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
     def publish(self, topic: str, data: dict[Any, Any], msg_type: str | None = None) -> None:

@@ -82,8 +82,16 @@ class SerializableVideoFrame:
             format=frame.format.name if hasattr(frame, "format") and frame.format else None,
         )
 
-    def to_ndarray(self, format=None):  # type: ignore[no-untyped-def]
+    def to_ndarray(self, format: str | None = None) -> np.ndarray:
         return self.data
+
+
+def _frame_to_image(frame: SerializableVideoFrame) -> Image:
+    return Image.from_numpy(
+        frame.to_ndarray(format="rgb24"),
+        format=ImageFormat.RGB,  # frame is RGB24, not BGR
+        frame_id="camera_optical",
+    )
 
 
 class TwistMode(str, Enum):
@@ -312,13 +320,7 @@ class Go2WebRTCConnection(UnitreeWebRTCConnection):
         return backpressure(
             self.raw_video_stream().pipe(
                 ops.filter(lambda frame: frame is not None),
-                ops.map(
-                    lambda frame: Image.from_numpy(
-                        frame.to_ndarray(format="rgb24"),
-                        format=ImageFormat.RGB,  # Frame is RGB24, not BGR
-                        frame_id="camera_optical",
-                    ),
-                ),
+                ops.map(_frame_to_image),
                 ops.map(time_is_now),
             )
         )
