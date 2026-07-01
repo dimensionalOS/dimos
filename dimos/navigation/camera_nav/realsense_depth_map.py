@@ -276,7 +276,7 @@ class DepthBackprojector:
         self,
         pkt:    DepthFramePacket,
         stable: np.ndarray | None = None,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    ) -> tuple[np.ndarray, np.ndarray | None]:
         valid = np.isfinite(pkt.depth) if stable is None else (np.isfinite(pkt.depth) & stable)
         d = pkt.depth
         H, W = d.shape
@@ -287,10 +287,10 @@ class DepthBackprojector:
         xyz_opt = np.column_stack([(uu[valid] - cx) * dd / fx,
                                    (vv[valid] - cy) * dd / fy,
                                    dd]).astype(np.float32)
-        xyz_cam   = xyz_opt @ _R_OPT_TO_LINK.T                           # optical → camera_link
+        xyz_cam   = xyz_opt @ _R_OPT_TO_LINK.T                                # optical → camera_link
         xyz_world = (xyz_cam @ pkt.pose_R.T + pkt.pose_t).astype(np.float32)  # → world
         colors    = pkt.colors_hw[valid] if pkt.colors_hw is not None else None
-        return xyz_world, xyz_cam, colors
+        return xyz_world, colors
 
 
 # ── Voxel map (same as ZED — the one that works) ─────────────────────────────
@@ -523,22 +523,24 @@ class DepthStreamer:
         self._last_n_valid  = int(np.isfinite(pkt.depth).sum())
         self._last_n_stable = int(stable_mask.sum())
 
-        xyz_world, xyz_cam, colors = self._bp.project(pkt, stable_mask)
-        if len(xyz_world) == 0:
+        xyz, colors = self._bp.project(pkt, stable_mask)
+        if len(xyz) == 0:
             return
 
         # Live cloud — instant, no map ops
-        n   = min(len(xyz_world), self.MAX_CLOUD)
-        idx = np.random.choice(len(xyz_world), n, replace=False) if len(xyz_world) > n else np.arange(n)
         cam_z = float(pkt.pose_t[2])
+        n     = min(len(xyz), self.MAX_CLOUD)
+        idx   = np.random.choice(len(xyz), n, replace=False) if len(xyz) > n else np.arange(n)
         cloud_colors = (colors[idx] if colors is not None
-                        else _height_color(xyz_world[idx, 2] - cam_z))
-        rr.log("world/cloud", rr.Points3D(positions=xyz_world[idx], colors=cloud_colors, radii=0.003))
+                        else _height_color(xyz[idx, 2] - cam_z))
+        rr.log("world/cloud", rr.Points3D(positions=xyz[idx], colors=cloud_colors, radii=0.003))
 
-        # Hand xyz_cam + R to map worker for ICP + accumulation
+        # Hand world-frame pts + pose to map worker (same payload shape as ZED)
         if self._src.pose_locked:
             try:
-                self._map_queue.put_nowait((xyz_cam, pkt.pose_R.copy(), frame))
+                self._map_queue.put_nowait(
+                    (xyz, pkt.pose_t.copy(), cam_z, pkt.pose_R.copy(), frame)
+                )
             except queue.Full:
                 pass
 
@@ -547,32 +549,29 @@ class DepthStreamer:
             item = self._map_queue.get()
             if item is None:
                 return
-            xyz_cam, R, frame = item
+            xyz_world, cam_pos, cam_z, R, frame = item
 
-            # Height band + floor-angle filter — all in camera_link frame.
-            # Z in camera_link = up direction (from IMU), so h_rel = xyz_cam[:,2]
-            # is height relative to camera regardless of world translation.
-            h_rel    = xyz_cam[:, 2]
-            dist     = np.linalg.norm(xyz_cam, axis=1)
-            d_z_norm = np.where(dist > 0, xyz_cam[:, 2] / dist, 0.0)
-            keep     = (
-                (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI)
-                & (d_z_norm > _FLOOR_RAY_Z)
-            )
-            xyz_filt = _filter_isolated(xyz_cam[keep])
-            if len(xyz_filt) == 0:
+            # ── Identical to ZED map worker ───────────────────────────
+            h_rel    = xyz_world[:, 2] - cam_z
+            rays     = xyz_world - cam_pos
+            dist     = np.linalg.norm(rays, axis=1)
+            d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0)
+            keep     = (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI) & (d_z_norm > _FLOOR_RAY_Z)
+            xyz_map  = _filter_isolated(xyz_world[keep])
+            if len(xyz_map) == 0:
                 continue
 
-            # ICP → updated translation; project filtered pts to world frame
-            t = self._src.odom.update(xyz_filt, R)
-            xyz_world = (xyz_filt @ R.T + t).astype(np.float32)
-
             with self._vox_lock:
-                self._vox.add(xyz_world)
+                self._vox.add(xyz_map)
 
             if frame % self.MAP_EVERY == 0:
                 rr.set_time("frame", sequence=frame)
-                self._log_map(cam_z=float(t[2]))
+                self._log_map(cam_z)
+
+            # ── ICP: update translation estimate for next frame ───────
+            # Recover camera-link pts from world-frame: xyz_cam = (xyz_world - t) @ R
+            xyz_cam_filt = (xyz_map - cam_pos) @ R
+            self._src.odom.update(xyz_cam_filt, R)
 
     def _log_map(self, cam_z: float = 0.0) -> None:
         with self._vox_lock:
