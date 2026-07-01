@@ -97,6 +97,39 @@ def _filter_isolated(xyz: np.ndarray, voxel: float = 0.05, min_pts: int = 2) -> 
     return xyz[cnt[inv] >= min_pts]
 
 
+def _nearest_per_ray(xyz: np.ndarray, cam_pos: np.ndarray, deg: float = 3.0) -> np.ndarray:
+    """Keep only the nearest point per angular ray bin — rejects behind-obstacle returns.
+
+    Stereo can return background depth for pixels near an obstacle edge (the two
+    cameras see slightly different scenes).  These spurious points are in the same
+    ~3° angular direction as the real obstacle surface but at greater depth.
+    Sorting by depth and keeping one point per bin discards them.
+
+    3° ≈ 5 cm at 1 m, 15 cm at 3 m — coarse enough to catch background leakage
+    without merging distinct surfaces that are angularly separated.
+    """
+    if len(xyz) == 0:
+        return xyz
+    rays  = xyz - cam_pos
+    dists = np.linalg.norm(rays, axis=1)
+    ok    = dists > 0
+    if not ok.any():
+        return xyz[ok]
+
+    idx_ok = np.where(ok)[0]
+    dirs   = rays[ok] / dists[ok, None]
+
+    rad  = np.radians(deg)
+    az   = np.floor(np.arctan2(dirs[:, 1], dirs[:, 0]) / rad).astype(np.int32)
+    el   = np.floor(np.arcsin(np.clip(dirs[:, 2], -1.0, 1.0)) / rad).astype(np.int32)
+    keys = az.astype(np.int64) * 100_000 + el.astype(np.int64)
+
+    # sort ascending by depth; np.unique keeps first occurrence = nearest per bin
+    order = np.argsort(dists[ok])
+    _, first = np.unique(keys[order], return_index=True)
+    return xyz[idx_ok[order[first]]]
+
+
 # ── Stage 2: Geometric stability filter ──────────────────────────────────────
 
 @dataclass
@@ -525,6 +558,13 @@ class DepthStreamer:
             if item is None:
                 return
             xyz_world, cam_pos, cam_z, frame = item
+
+            # Ray termination: keep only the nearest point per ~3° angular bin.
+            # Background pixels that stereo leaks behind an obstacle share the same
+            # ray direction as the real surface but are farther away — dropped here.
+            xyz_world = _nearest_per_ray(xyz_world, cam_pos)
+            if len(xyz_world) == 0:
+                continue
 
             # Height band + floor-angle filter (all numpy)
             h_rel    = xyz_world[:, 2] - cam_z
