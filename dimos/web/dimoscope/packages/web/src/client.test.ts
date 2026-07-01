@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { createDimosClient, seqFrom, srcTsMs } from "./client.ts";
 import type { RawSample, Transport } from "./types.ts";
 
-// ── Message-metadata heuristics (the seq/timestamp parsing the bench relies on) ──────────────────
+// Message-metadata heuristics (the seq/timestamp parsing the bench relies on)
 Deno.test("seqFrom: numeric frame_id → counter; names/garbage → undefined", () => {
   assert.equal(seqFrom({ frame_id: "42" }), 42);
   assert.equal(seqFrom({ frame_id: "0" }), 0);
@@ -92,7 +92,7 @@ Deno.test("client-binary: a sample with no `decoded` and an undecodable payload 
   assert.equal(calls, 0);
 });
 
-// ── Compile-only type tests (no runtime; picked up by `deno task check`, not by `deno test`) ──────────
+// Compile-only type tests (no runtime; picked up by `deno task check`, not by `deno test`)
 
 // Topics/read side: `createDimosClient<TMap>()` gives typed + autocompleting topic handles for known
 // names, yields Topic<unknown> for runtime names, and leaves an untyped client behaving as before.

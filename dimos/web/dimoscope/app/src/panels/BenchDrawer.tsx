@@ -1,9 +1,8 @@
 // BenchDrawer — the quantitative benchmark, folded into the Topics tab as a collapsed drawer. Measures
 // the live active transport across the STREAM_PROFILES workloads → a results table you can copy as Markdown.
 //
-// The optional Start/Stop control drives the GO2Load blueprint's large stream over its already-
-// whitelisted @rpc so a sweep can generate its own flow; it's a thin client of that contract, not a
-// re-implementation of the load-gen backend.
+// The optional Start/Stop control drives the GO2Load blueprint's large stream over its already-whitelisted
+// @rpc, so a sweep can generate its own flow without re-implementing the load-gen backend.
 import { useEffect, useRef, useState } from "react";
 import { useCommands, useDimosClient, useRpc, useServers, useTopics } from "../dimos";
 import { type BenchRow, formatMarkdown, measureScenario, type Qos, STREAM_PROFILES } from "@dimos/web";

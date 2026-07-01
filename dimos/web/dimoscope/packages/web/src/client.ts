@@ -89,7 +89,7 @@ export interface DimosClient<TMap = EmptyTopicMap, TCmds = EmptyModuleMap> {
     handler: (m: Message<K extends keyof TMap ? TMap[K] : unknown>) => void,
     qos?: Qos,
   ): Subscription;
-  /** Firehose — one callback per update across ALL topics (asks the gateway for the `*` wildcard). */
+  /** Firehose — one callback per update across all topics (asks the gateway for the `*` wildcard). */
   subscribeAll(handler: (m: Message) => void): Subscription;
   /** One-shot: resolve with the next message on `name` (or reject after `timeoutMs`). */
   peek<K extends (keyof TMap & string) | (string & Record<never, never>)>(
@@ -141,7 +141,7 @@ export const createDimosClient = <TMap = EmptyTopicMap, TCmds = EmptyModuleMap>(
   let transport: Transport | undefined;
   const topicsMap = new Map<string, string>();
   const topicObjs = new Map<string, Topic<any>>();
-  // Last value per topic across ALL samples — incl. firehose/subscribeAll topics that have no `topic()`
+  // Last value per topic across all samples — incl. firehose/subscribeAll topics that have no `topic()`
   // handle. `latest(name)` reads this; `topic(name).getLatest()` only tracks explicitly-subscribed ones.
   const latestData = new Map<string, unknown>();
   const topicsListeners = new Set<(t: TopicInfo[]) => void>();

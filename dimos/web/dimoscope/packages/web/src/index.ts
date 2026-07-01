@@ -27,7 +27,7 @@ export type {
 // QoS lanes — ROS 2-grounded named profiles (sane defaults, configurable) + the scheduler priority map.
 export { applyCaps, defaultLane, LANES, PRIORITY_RANK, resolveQos } from "./qos.ts";
 export type { Lane } from "./qos.ts";
-// Media plane — pluggable, negotiated video delivery (beside Transport).
+// Media plane — pluggable, negotiated video delivery.
 export { selectMediaChannel } from "./media.ts";
 export { createJpegTopicMedia } from "./media/jpegTopicMedia.ts";
 export type { JpegTopicMediaDeps } from "./media/jpegTopicMedia.ts";

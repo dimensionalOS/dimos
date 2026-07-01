@@ -1,5 +1,5 @@
 // Read-only Server-Sent Events; gateway streams `data: <base64(frame)>` on GET /sse?topics=<csv|*>;
-// parsed with fetch+stream reader (NOT EventSource) so the same adapter runs in browser AND headless
+// parsed with fetch+stream reader (not EventSource) so the same adapter runs in browser and headless
 // (Deno/Bun); base64 ≈ 33% overhead; no per-subscriber downsample.
 import type {
   CommandInfo,

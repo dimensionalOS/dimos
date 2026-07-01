@@ -73,7 +73,7 @@ export interface Qos {
   /** Delivery discipline — a label over `maxHz`, not a buffer (delivery is synchronous, newest-wins):
    *  "latest" (default) drops intermediates under a rate cap; "all" delivers every message (maxHz=0). */
   conflation?: "latest" | "all";
-  // ── gateway-scheduler (honored where caps.qos.transport advertises them) ───────
+  // gateway-scheduler (honored where caps.qos.transport advertises them)
   /** Scheduler priority band — the gateway drains higher first and sheds lower first under
    *  contention (the per-client priority outbox in gateway/data.py). */
   priority?: "low" | "normal" | "high" | "critical";
@@ -94,7 +94,6 @@ export interface QosCaps {
   transport?: ReadonlyArray<keyof Qos>;
 }
 
-// ── Transport contract ────────────────────────────────────────────────────────
 // Transport implementations live in ./transports/ (default gatewayWs), with experimental ones under
 // ./transports/experimental/. The client is transport-agnostic.
 
@@ -157,9 +156,8 @@ export interface Transport {
   label?: string;
 }
 
-// ── Media contract ─────────────────────────────────────────────────────────────
-// Pluggable opaque-video delivery (jpeg floor / webrtc / webcodecs), chosen by capability negotiation
-// (selectMediaChannel, media.ts). Unlike Transport it carries no decodable RawSamples — video is shown.
+// Media contract: pluggable opaque-video delivery (jpeg floor / webrtc / webcodecs), chosen by capability
+// negotiation (selectMediaChannel, media.ts). Unlike Transport it carries no decodable RawSamples.
 
 export type MediaKind = "webcodecs" | "webrtc" | "jpeg";
 

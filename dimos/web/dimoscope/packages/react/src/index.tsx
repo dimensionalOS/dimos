@@ -143,10 +143,9 @@ const NO_COMMANDS: CommandInfo[] = [];
 
 /**
  * Bridge a client-level push store (an `onX` subscribe + a snapshot getter) into React via
- * useSyncExternalStore — the idiomatic replacement for mirroring the store into useState+useEffect.
- * Null-safe (client is null before connect / mid server-switch). The snapshot is cached in a closure
- * updated on every notification (so getSnapshot returns a stable ref between changes), and re-read once
- * at subscribe time to catch anything that changed between render and subscription.
+ * useSyncExternalStore. Null-safe (client is null before connect / mid server-switch). The snapshot is
+ * cached in a closure updated on each notification (stable ref between changes) and re-read at subscribe
+ * time to catch anything that changed between render and subscription.
  */
 function useClientStore<T>(
   read: (c: DimosClient) => T,
@@ -480,8 +479,8 @@ export function useVideo(
   topic: string | null,
   opts?: {
     mode?: MediaMode;
-    /** Per-frame tap (frames channels only — webcodecs/jpeg, NOT webrtc): called after the canvas
-     *  draw, before the frame is closed. The seam for in-browser CV/overlays. Must NOT retain the
+    /** Per-frame tap (frames channels only — webcodecs/jpeg, not webrtc): called after the canvas
+     *  draw, before the frame is closed. The seam for in-browser CV/overlays. Must not retain the
      *  frame past the call (it's closed right after). */
     onFrame?: (
       frame: VideoFrame | ImageBitmap,
@@ -572,9 +571,8 @@ export function useVideo(
 }
 
 /**
- * Subscribe to ANY topic by name from the UI — proves the on-demand machinery (topic.ts is
- * ref-counted, so a pin = a subscribe, an unpin = an unsubscribe). Works for not-yet-discovered
- * topics on every transport.
+ * Subscribe to any topic by name from the UI — exercises the on-demand machinery (topic.ts is
+ * ref-counted: a pin = a subscribe, an unpin = an unsubscribe). Works for not-yet-discovered topics.
  */
 export function SubscribeBar() {
   const topics = useTopics();
@@ -633,7 +631,7 @@ function PinnedTopic({ topic, onRemove }: { topic: string; onRemove: () => void 
   const { data, meta } = useTopicLatest<unknown>(topic, { maxHz: 4 });
   const stats = useTopicStats(topic);
   const live = !!meta;
-  // a short, human one-liner of the latest value so "subscribed" obviously means "data flowing".
+  // short one-line preview of the latest value.
   const preview = data == null
     ? ""
     : JSON.stringify(data, (_k, v) =>

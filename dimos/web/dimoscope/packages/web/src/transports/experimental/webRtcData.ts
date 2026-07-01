@@ -85,7 +85,7 @@ export const createWebRtcDataTransport = (deps: WebRtcDataDeps): Transport => {
         await pc!.setLocalDescription(await pc!.createOffer());
         await waitIce(pc!);
         ws.send(JSON.stringify({ op: "offer", sdp: pc!.localDescription!.sdp }));
-        // wait for dc.onopen above — do NOT resolve here
+        // wait for dc.onopen above — do not resolve here
       };
       ws.onmessage = async (e: MessageEvent) => {
         const m = JSON.parse(e.data as string);
