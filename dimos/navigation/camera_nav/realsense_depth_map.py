@@ -499,6 +499,7 @@ class DepthStreamer:
         self._grad           = grad_filter or GradientStabilityFilter()
         self._vox            = FastVoxelMap(voxel_size=0.05)
         self._vox_lock       = threading.Lock()
+        self._live_vox       = FastVoxelMap(voxel_size=0.05)   # live_cloud_map accumulator
         self._last_n_valid   = 0
         self._last_n_stable  = 0
         self._pinhole_logged = False
@@ -534,6 +535,12 @@ class DepthStreamer:
         cloud_colors = (colors[idx] if colors is not None
                         else _height_color(xyz[idx, 2] - cam_z))
         rr.log("world/cloud", rr.Points3D(positions=xyz[idx], colors=cloud_colors, radii=0.003))
+
+        # Live cloud map — same points as live cloud, accumulated into persistent world map.
+        # Runs in main thread (no threading lag, no ICP dependency).
+        self._live_vox.add(xyz)
+        if frame % self.MAP_EVERY == 0:
+            self._log_live_map(cam_z)
 
         # Hand world-frame pts + pose to map worker (same payload shape as ZED)
         if self._src.pose_locked:
@@ -573,6 +580,19 @@ class DepthStreamer:
             xyz_cam_filt = (xyz_map - cam_pos) @ R
             self._src.odom.update(xyz_cam_filt, R)
 
+    def _log_live_map(self, cam_z: float = 0.0) -> None:
+        """Log accumulated live cloud as persistent world map (main-thread, no lag)."""
+        pts = self._live_vox.points()
+        if len(pts) == 0:
+            return
+        n   = min(len(pts), self.MAX_MAP)
+        idx = np.random.choice(len(pts), n, replace=False) if len(pts) > n else np.arange(n)
+        rr.log("world/live_cloud_map", rr.Points3D(
+            positions=pts[idx],
+            colors=_height_color(pts[idx, 2] - cam_z),
+            radii=0.005,
+        ))
+
     def _log_map(self, cam_z: float = 0.0) -> None:
         with self._vox_lock:
             pts = self._vox.points().copy()
@@ -580,11 +600,12 @@ class DepthStreamer:
             return
         n   = min(len(pts), self.MAX_MAP)
         idx = np.random.choice(len(pts), n, replace=False) if len(pts) > n else np.arange(n)
-        rr.log("world/map", rr.Points3D(
-            positions=pts[idx],
-            colors=_height_color(pts[idx, 2] - cam_z),
-            radii=0.005,
-        ))
+        # world/map disabled — replaced by world/live_cloud_map above
+        # rr.log("world/map", rr.Points3D(
+        #     positions=pts[idx],
+        #     colors=_height_color(pts[idx, 2] - cam_z),
+        #     radii=0.005,
+        # ))
 
     def log_stdout(self, pkt: DepthFramePacket, frame: int, fps: float) -> None:
         with self._vox_lock:
@@ -595,7 +616,7 @@ class DepthStreamer:
         print(
             f"frame={frame:5d}  "
             f"stable={self._last_n_stable:6d}/{self._last_n_valid:6d} ({pct:.0f}%)  "
-            f"map={n_map:6d}  "
+            f"live_map={self._live_vox.count:6d}  "
             f"t=[{t[0]:+.2f},{t[1]:+.2f},{t[2]:+.2f}]  "
             f"vio={vio}  fps={fps:.1f}",
             flush=True,
@@ -609,13 +630,14 @@ def main() -> None:
     rr.send_blueprint(rrb.Blueprint(
         rrb.Tabs(
             rrb.Spatial3DView(name="live cloud + map", origin="world",
-                              contents=["world/cloud", "world/map", "world/camera/**"]),
+                              contents=["world/cloud", "world/live_cloud_map", "world/camera/**"]),
             rrb.Spatial3DView(name="map only", origin="world",
-                              contents=["world/map"]),
+                              contents=["world/live_cloud_map"]),
         )
     ))
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
     rr.log("world/cloud", rr.Points3D([[0, 0, 0]]), static=True)
+    rr.log("world/live_cloud_map", rr.Points3D([[0, 0, 0]]), static=True)
 
     src = RealSenseDepthSource(width=848, height=480, fps=15)
     print("RealSense open — Ctrl-C to quit.")
