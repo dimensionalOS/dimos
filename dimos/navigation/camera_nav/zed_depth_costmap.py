@@ -18,7 +18,8 @@ import rerun as rr
 import rerun.blueprint as rrb
 
 
-VOX_SIZE: float = 0.05   # 5 cm voxels for the map
+VOX_SIZE: float    = 0.025  # 2.5 cm voxels for the map
+FLOOR_Z:  float    = 0.10   # metres above world floor to start showing obstacles
 
 # ── Voxel key packing ────────────────────────────────────────────────────────
 _VOFF  = np.int64(100_000)
@@ -291,20 +292,24 @@ def main() -> None:
             col_vis = colors[near] if colors is not None else _height_color(xyz_vis[:, 2] - cam_z)
             rr.log("world/cloud", rr.Points3D(positions=xyz_vis, colors=col_vis, radii=0.003))
 
-            # ── Voxel map: nearest-per-ray (0.5°) → voxelise → height colour ──
-            # 0.5° bins: one surface hit per ray direction, removes all fill
-            # voxels behind the closest obstacle in each direction.
-            near_map  = _nearest_per_ray_idx(xyz, pkt.pose_t, deg=0.5)
+            # ── Voxel map: nearest-per-ray (0.25°) → floor strip → voxelise ──
+            near_map  = _nearest_per_ray_idx(xyz, pkt.pose_t, deg=0.25)
             xyz_near  = xyz[near_map]
-            vk        = np.floor(xyz_near / VOX_SIZE).astype(np.int32)
-            _, first  = np.unique(_pack(vk), return_index=True)
-            xyz_vox   = xyz_near[first]
-            col_vox   = _height_color(xyz_vox[:, 2] - cam_z)
-            rr.log("world/map", rr.Points3D(positions=xyz_vox, colors=col_vox, radii=0.01))
+            xyz_obs   = xyz_near[xyz_near[:, 2] > FLOOR_Z]   # drop floor
+            if len(xyz_obs):
+                vk       = np.floor(xyz_obs / VOX_SIZE).astype(np.int32)
+                _, first = np.unique(_pack(vk), return_index=True)
+                xyz_vox  = xyz_obs[first]
+                rr.log("world/map", rr.Points3D(
+                    positions=xyz_vox,
+                    colors=_height_color(xyz_vox[:, 2] - cam_z),
+                    radii=0.012,
+                ))
 
-            fps = frame / max(ts - t0, 1e-6)
+            n_vox = len(xyz_vox) if len(xyz_obs) else 0
+            fps   = frame / max(ts - t0, 1e-6)
             print(
-                f"frame={frame:5d}  cloud={len(xyz_vis):5d}  map_rays={len(xyz_near):5d}  vox={len(xyz_vox):6d}"
+                f"frame={frame:5d}  cloud={len(xyz_vis):5d}  rays={len(xyz_near):6d}  vox={n_vox:6d}"
                 f"  vio={'LOCKED' if src.pose_locked else 'searching'}  fps={fps:.1f}",
                 flush=True,
             )
