@@ -1,4 +1,4 @@
-// Unit tests for the blueprint→TS codegen. Pure (no network). Run: `deno test -A cli/`.
+// Unit tests for the blueprint→TS codegen. Pure (no network). Run: `deno test -A packages/topics/scripts/`.
 import assert from "node:assert/strict";
 
 import { generateCommandTypes, generateTypes } from "./genTypes.ts";

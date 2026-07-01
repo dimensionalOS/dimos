@@ -2,8 +2,7 @@
 // 3 dedicated clients), this measures the LIVE active transport (whatever the topbar dropdown picked)
 // while you vary client-side QoS knobs, with live sparklines + a results table you can copy as Markdown.
 //
-// Two axes meet here: the workload (canonical STREAM_PROFILES, matching the headless bench/matrix STREAM
-// axis so rows line up with RESULTS-mechanisms-<id>.md) × QoS (maxHz, server-vs-client rate limit,
+// Two axes meet here: the workload (canonical STREAM_PROFILES) × QoS (maxHz, server-vs-client rate limit,
 // conflation, + an optional server-json decode A/B via a sibling client). Heavy streams (img/grid) are
 // opt-in so opening the tab never floods the active transport.
 import { useEffect, useRef, useState } from "react";
@@ -244,8 +243,8 @@ export function BenchTab() {
             </div>
             <div className="muted small" style={{ marginTop: 4 }}>
               The lidar/camera/dense profiles measure <span className="mono">/bench/img</span>. To make
-              that topic flow at a chosen size/rate, drive the generator below (or run a headless{" "}
-              <span className="mono">bench_source.py</span>).
+              that topic flow at a chosen size/rate, drive the generator below (or run{" "}
+              <span className="mono">deno task scope:bench</span>).
             </div>
           </div>
 

@@ -20,7 +20,7 @@ export interface WebRtcDataDeps {
 export const createWebRtcDataTransport = (deps: WebRtcDataDeps): Transport => {
   // qos.maxHz "client": the DataChannel re-transmitter forwards all subscribed topics (no per-channel
   // downsample) → rate cap is client-side. ordered/maxRetransmits are real QoS but set at channel
-  // creation (deps), not per-subscription — see Qos / docs/data-path.md.
+  // creation (deps), not per-subscription — see Qos / docs/benchmarks.md.
   const caps: TransportCaps = { onDemand: false, discovery: "passive", qos: { maxHz: "client" } };
   const sigUrl = deps.url.replace(/^http/, "ws");
   let sampleCb: ((s: RawSample) => void) | undefined;

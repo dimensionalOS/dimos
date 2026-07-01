@@ -9,7 +9,7 @@ import "./styles.css";
 // default; the topbar dropdown only switches the DELIVERY MECHANISM (WebSocket vs SSE vs poll vs
 // WebRTC-data vs WebTransport), not the host.
 //
-// `?gw=host:port` still overrides the origin for bad-network testing through a netsim proxy. The
+// `?gw=host:port` still overrides the origin for bad-network testing against a remote VPS. The
 // WebTransport QUIC listener is the one exception to same-origin: QUIC is UDP and can't share the HTTP
 // TCP port, so it has its own port (serve.py WT_PORT, default 8443); its cert hash is fetched from
 // /cert on the main origin.

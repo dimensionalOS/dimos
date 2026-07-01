@@ -1,24 +1,22 @@
-// Transport benchmark core — env-free measurement logic shared by the headless Bun
-// runner (bench/bench.ts) and the in-browser bench page (app/src/bench.tsx), so both
-// measure identically. Latency (p50/p95/max), throughput (hz), bandwidth (kB/s), and
-// on-demand WS-hop savings (subscribe 1 of N vs all N). No Bun/Node/file/DOM APIs here.
+// Transport benchmark core — env-free measurement logic behind the in-browser bench page
+// (app/src/bench.tsx + panels/BenchTab.tsx). Latency (p50/p95/max), throughput (hz),
+// bandwidth (kB/s), and on-demand WS-hop savings (subscribe 1 of N vs all N). No
+// Bun/Node/file/DOM APIs here, so it runs identically in the browser and in tests.
 import type { DimosClient } from "./client.ts";
 import type { Qos } from "./types.ts";
 // Not a test: this is the shared measurement *core*, imported by the app runtime (app/src/bench.tsx +
-// panels/BenchTab.tsx), the headless CLI runners (bench/*, cli/dtop.ts), and exported from the public
-// package API. Its own unit tests live beside it in bench.test.ts.
+// panels/BenchTab.tsx) and exported from the public package API. Its own unit tests live beside it in
+// bench.test.ts.
 export interface BenchScenario {
   name: string;
   topics: string[];
 }
 
 /**
- * A named workload class — mirrors the headless matrix's STREAM axis
- * (bench/matrix_run.ts + bench/matrix.sh) so in-browser results label-match the
- * RESULTS-mechanisms-<id>.md tables. The heavy classes (lidar/camera/dense) all
- * ride the SAME /bench/img topic; the class is a *publisher* config (hz × bytes),
- * not a distinct topic — so the browser measures whatever the source is emitting
- * and the `hint` is just what bench/matrix.sh would set the generator to.
+ * A named workload class. The heavy classes (lidar/camera/dense) all ride the SAME
+ * /bench/img topic; the class is a *publisher* config (hz × bytes), not a distinct
+ * topic — so the browser measures whatever the source is emitting and the `hint` is
+ * just what scenarios/bench.py would set the generator to.
  */
 export interface StreamProfile {
   id: string;
@@ -28,7 +26,7 @@ export interface StreamProfile {
   hint: string;
 }
 
-/** Canonical workload classes — keep `id` + `topics` in sync with bench/matrix_run.ts STREAMS. */
+/** Canonical workload classes — keep `id` + `topics` in sync with scenarios/bench.py. */
 export const STREAM_PROFILES: StreamProfile[] = [
   {
     id: "pose",
@@ -61,7 +59,7 @@ export interface BenchRow {
   lossPct: number;
 }
 
-/** The standard load fed by bench/bench_publisher.py (topic names match every transport). */
+/** The standard load fed by scenarios/bench.py (topic names match every transport). */
 export const BENCH_SCENARIOS: BenchScenario[] = [
   {
     name: "4x PoseStamped (throughput)",

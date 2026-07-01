@@ -11,7 +11,7 @@
   },
   "fmt": {
     "lineWidth": 100,
-    "exclude": ["node_modules", "dist", "app/dist", "**/*.md", "bench/results*.json"]
+    "exclude": ["node_modules", "dist", "app/dist", "**/*.md"]
   },
   "lint": {
     "rules": {
@@ -24,26 +24,12 @@
     "build": "cd app && deno run -A npm:vite build",
     "preview": "cd app && deno run -A npm:vite preview",
     "serve": "uv run python -m gateway",
-    "dtop": "deno run -A cli/dtop.ts",
-    "check": "deno check cli/*.ts bench/*.ts packages/topics/src/**/*.ts packages/react/src/**/*.tsx && cd app && deno run -A npm:typescript/tsc --noEmit -p tsconfig.json",
-    "bench": "deno run -A bench/bench.ts",
-    "bench:deno": "deno run -A --node-modules-dir bench/bench_deno.ts",
-    "bench:matrix": "bash bench/matrix.sh",
-    "bench:decode": "bash bench/decode.sh",
-    "bench:webrtc": "bash bench/webrtc.sh",
-    "bench:qos": "bash bench/qos.sh",
-    "bench:webtransport": "bash bench/webtransport.sh",
-    "bench:loss": "bash bench/loss.sh",
-    "demo:qos": "bash bench/qos_demo.sh",
+    "check": "deno check packages/topics/scripts/*.ts packages/topics/src/**/*.ts packages/react/src/**/*.tsx && cd app && deno run -A npm:typescript/tsc --noEmit -p tsconfig.json",
     "scope:nav": "DIMOS_TRANSPORT=zenoh uv run python scenarios/nav.py",
     "scope:arm": "DIMOS_TRANSPORT=zenoh uv run python scenarios/arm.py",
     "scope:cam": "DIMOS_TRANSPORT=zenoh uv run python scenarios/cam.py",
-    "scope:bench": "bash scenarios/bench.sh",
-    "bench:all": "deno task test && deno task bench:matrix && deno task bench:decode && deno task bench:webrtc && deno task bench:qos && deno task bench:webtransport && deno task bench:loss",
-    "netsim": "deno run -A bench/netsim.ts",
-    "smoke": "deno run -A bench/sdk_smoke.ts",
-    "teleop:test": "deno run -A bench/teleop_test.ts",
-    "test": "deno test -A --node-modules-dir packages/topics/src/ cli/",
+    "scope:bench": "DIMOS_TRANSPORT=zenoh uv run python scenarios/bench.py",
+    "test": "deno test -A --node-modules-dir packages/topics/src/ packages/topics/scripts/",
     "fmt": "deno fmt",
     "lint": "deno lint",
     "sim": "DIMOS_TRANSPORT=zenoh uv run dimos --simulation mujoco run unitree-go2",

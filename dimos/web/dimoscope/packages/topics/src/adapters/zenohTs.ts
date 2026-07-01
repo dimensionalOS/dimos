@@ -47,7 +47,7 @@ export const createZenohTsTransport = (deps: ZenohTsDeps): Transport => {
 
   // qos.maxHz "client": Zenoh has no per-subscriber server downsample, so a rate cap throttles
   // client-side. Native zenoh QoS (reliability/priority/congestion/express) is declarable on the
-  // subscriber but not yet wired through this adapter — see Qos / docs/data-path.md.
+  // subscriber but not yet wired through this adapter — see Qos / docs/benchmarks.md.
   const caps: TransportCaps = { onDemand: true, discovery: "passive", qos: { maxHz: "client" } };
   let session: any;
   const subs = new Map<string, any>(); // topic -> zenoh Subscriber

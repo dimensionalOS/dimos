@@ -634,7 +634,7 @@ export function useCommands(): CommandInfo[] {
 }
 
 /**
- * Typed hooks bound to a generated topic map (`DimosTopics` from `dtop gen-types`). Set it up once —
+ * Typed hooks bound to a generated topic map (`DimosTopics` from packages/topics/scripts/genTypes.ts). Set it up once —
  *   export const { useTopicLatest, useTopicRef, useImageTopic, useTopicStats }
  *     = createDimosHooks<DimosTopics>();
  * — and every topic-name hook autocompletes the name + infers the message type, with NO per-call

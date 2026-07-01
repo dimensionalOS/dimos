@@ -9,8 +9,10 @@
 //
 // The transport lives IN createDimosClient (default `ws()`), `connect(url)` is a METHOD, and the
 // combine (e.g. `webtransport()` = WS control + WT data) is encapsulated inside the adapter — the
-// client stays transport-agnostic. For typed topics + modules pass the generated maps:
+// client stays transport-agnostic. For typed topics + modules pass the generated maps — topics infer
+// their message type, modules autocomplete target + method:
 //   const dimos = createDimosClient<DimosTopics, DimosCommands>();
+//   await dimos.modules.GO2Connection.standup();      // target + method typed; typos are errors
 import { createGatewayWsTransport } from "./adapters/gatewayWs.ts";
 import { decodeBody, seqFrom, srcTsMs } from "./decode.ts";
 import { createTopic, type Topic } from "./topic.ts";
@@ -31,7 +33,7 @@ export const ws = (opts?: { reconnect?: boolean }): TransportFactory => (url) =>
 
 /** Like `ws()`, but asks the gateway to decode + ship JSON (rosbridge-style) instead of the binary
  *  self-describing frame — so the client renders ANY type (incl. user messages not in @dimos/msgs) with
- *  zero rebuild. Costs ~2.6× the bytes on the wire vs the client-decode default (see `bench:decode`). */
+ *  zero rebuild. Costs ~2.6× the bytes on the wire vs the client-decode default (see docs/benchmarks.md §5). */
 export const wsServerJson = (opts?: { reconnect?: boolean }): TransportFactory => (url) =>
   createGatewayWsTransport({
     url: /\/ws$/.test(url) ? url : url.replace(/\/+$/, "") + "/ws",
@@ -42,9 +44,18 @@ export const wsServerJson = (opts?: { reconnect?: boolean }): TransportFactory =
 /** Default topic map for an untyped client: no known keys, so `keyof … & string` is `never` and the
  *  key-based overloads drop out — an untyped client accepts any string. */
 export type EmptyTopicMap = Record<never, never>;
-/** Shape of a codegen module/RPC map: `{ ModuleName: { method: (...args) => Promise<ret> } }`. */
+/** Shape of an untyped module/RPC surface: any module, any method, any args. */
 export type ModuleMap = Record<string, Record<string, (...args: any[]) => Promise<any>>>;
 export type EmptyModuleMap = Record<never, never>;
+
+/** A codegen RPC descriptor (`{ args, ret }`, i.e. `RpcCall`) → the callable it denotes. args/ret are
+ *  `unknown` today (target + method are what's typed); they tighten for free if a descriptor ever carries
+ *  real types (e.g. `{ args: [number]; ret: boolean }` → `(n: number) => Promise<boolean>`). */
+type RpcFn<C> = C extends { args: infer A extends unknown[]; ret: infer R }
+  ? (...args: A) => Promise<R>
+  : (...args: unknown[]) => Promise<unknown>;
+/** Lift a generated `DimosCommands` descriptor map into the callable `modules` surface. */
+type TypedModules<TCmds> = { [T in keyof TCmds]: { [M in keyof TCmds[T]]: RpcFn<TCmds[T][M]> } };
 
 export interface DimosClient<TMap = EmptyTopicMap, TCmds = EmptyModuleMap> {
   status: Status;
@@ -89,9 +100,12 @@ export interface DimosClient<TMap = EmptyTopicMap, TCmds = EmptyModuleMap> {
   navigate(x: number, y: number, z?: number): void;
   /** Invoke a whitelisted dimos `@rpc` command, e.g. client.call("GO2Connection", "standup"). */
   call<T = unknown>(target: string, method: string, ...args: unknown[]): Promise<T>;
-  /** Typed Proxy over `call`: `client.modules.GO2Connection.standup(args)`. Types come from the
-   *  generated command map (second generic); untyped it accepts any module/method. */
-  readonly modules: TCmds extends EmptyModuleMap ? ModuleMap : TCmds;
+  /** Typed Proxy over `call`: `client.modules.GO2Connection.standup(args)`. Pass the generated
+   *  `DimosCommands` (second generic) → target + method are autocompleted + typo-checked (arg/return
+   *  types stay `unknown` until `@rpc` introspection lands); untyped it accepts any module/method.
+   *  The `[keyof …]` tuple-wrap disables distribution so an empty map (keyof = never) → the permissive
+   *  `ModuleMap` and a real map → the typed callable surface. */
+  readonly modules: [keyof TCmds] extends [never] ? ModuleMap : TypedModules<TCmds>;
   readonly commands: CommandInfo[];
   onCommands(cb: (c: CommandInfo[]) => void): () => void;
   close(): void;

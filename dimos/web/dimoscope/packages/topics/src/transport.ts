@@ -46,8 +46,8 @@ export interface Transport {
   publishGoal(x: number, y: number, z?: number): void;
   /** Invoke a whitelisted dimos `@rpc` command via the gateway; resolves with its return value.
    *  Stays string-keyed at the transport layer (any blueprint, any provider). Consumers get typed
-   *  target+method by running `dtop gen-types` → the generated `DimosCommands` / `RpcTarget` /
-   *  `RpcMethod` (cli/genTypes.ts), checked against live discovery; full arg/return typing follows
+   *  target+method from the generated `DimosCommands` / `RpcTarget` /
+   *  `RpcMethod` (packages/topics/scripts/genTypes.ts), checked against live discovery; full arg/return typing follows
    *  when the static Python `@rpc`-annotation introspection pass lands. */
   rpc(target: string, method: string, args?: unknown[]): Promise<unknown>;
   requestList(): void;

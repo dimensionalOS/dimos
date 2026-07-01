@@ -2,11 +2,13 @@
 
 **The one claim this proves:** on a constrained browser link, *declaring* some topics more important than
 others and *enforcing* it at the gateway keeps pose/teleop crisp while bulk (lidar/camera) degrades
-gracefully — instead of everything getting equally janky. Run it:
+gracefully — instead of everything getting equally janky. See it in the browser:
 
 ```bash
-deno task demo:qos                 # synthetic load (deterministic, no sim stack)
-SIM=replay deno task demo:qos      # a real DimOS sim robot (also: mujoco, dimsim)
+deno task serve         # the gateway (egress shaping enabled)
+deno task scope:bench   # a light pose stream + a heavy /bench/img stream (scenarios/bench.py)
+deno task app           # open the in-app Bench tab, then toggle rate-limit / priority on the
+                        # heavy stream and watch pose latency recover live (or a real sim as the source)
 ```
 
 ## The model: declaration → enforcement → transport
@@ -61,10 +63,10 @@ Refinements over a naive version: **DRR not strict priority** (no starvation), *
 
 ## The A/B result
 
-Same sim load (pose @ 100 Hz, light + high-priority · a ~2 MB/s lidar/img stream, heavy + low-priority),
+Same load (pose @ 100 Hz, light + high-priority · a ~2 MB/s lidar/img stream, heavy + low-priority),
 the same constrained link, gateway scheduler **OFF (FIFO, today's baseline)** vs **ON (priority outbox)**.
-From `deno task demo:qos` (synthetic, link paced to 4 Mbps) — OFF, pose queues seconds behind the heavy
-stream; ON, pose stays real-time while the heavy stream conflates to its latest frame:
+With the link paced to ~4 Mbps — OFF, pose queues seconds behind the heavy stream; ON, pose stays
+real-time while the heavy stream conflates to its latest frame:
 
 | mode | pose hz | **pose p50** | pose p95 | lidar hz |
 |---|--:|--:|--:|--:|
@@ -80,9 +82,9 @@ stale, because conflation keeps even the bulk lane fresh.
 ### The catch that makes it real: keep the queue AT the gateway
 
 Gateway-egress priority only bites if the backlog actually sits in the gateway outbox. Our first attempt
-shaped the link with an external TCP proxy (`netsim`) — and **ON ≈ OFF (both ~1700 ms)**, because the
-kernel/proxy socket buffers (~256 KB ≈ 0.5 s) absorbed the backlog *downstream* of the outbox and FIFO-ed
-it. The fix is **egress shaping**: pace each client's writer to its link budget (`EGRESS_KBPS`), so the
+shaped the link with an external TCP proxy — and **ON ≈ OFF (both ~1700 ms)**, because the kernel/proxy
+socket buffers (~256 KB ≈ 0.5 s) absorbed the backlog *downstream* of the outbox and FIFO-ed it. The fix
+is **egress shaping**: pace each client's writer to its link budget (`EGRESS_KBPS`), so the
 queue — and thus the priority decision — stays in the outbox. This is the same discipline as WebRTC's
 `bufferedAmount` watermark (don't overfill the transport); without it, bufferbloat defeats any gateway
 QoS. (A large single frame also head-of-line-blocks the writer, so bulk streams are fragmented — which is
@@ -94,7 +96,7 @@ The lanes are *defaults*; a client overrides any topic's QoS per subscription an
 (the `subscribe` op carries `priority`/`reliability`/`depth`, resolved client-side from
 `topic.setQos({lane})` or explicit fields). The server applies the override when present, else
 `default_priority`. Proof — same load, scheduler ON, **server default vs the client inverting the
-priorities** (`HEAVY_LANE=command LIGHT_LANE=bulk deno task demo:qos`):
+priorities** (declaring `pose=bulk` + `lidar=command` from the client):
 
 | run | pose hz | pose p50 | lidar hz | lidar p50 | winner |
 |---|--:|--:|--:|--:|---|
@@ -125,8 +127,8 @@ same operator control with zero core changes.
 - Priority only matters under saturation — on a fat link both modes look identical (correctly).
 - The loss-shedding is at the gateway egress (the browser-link bottleneck); the bus (Zenoh) does its own
   priority upstream, which this mirrors at the new boundary.
-- `netsim` shapes the TCP byte stream; the per-client outbox is what reorders/sheds by priority *before*
-  the bytes hit it. For a raw-drop UDP comparison see `bench/netsim-udp.ts` + `docs/benchmarks.md` §8.
+- The per-client outbox reorders/sheds by priority *before* the bytes hit the link. For the raw-drop UDP
+  behaviour (WebTransport datagrams, no HoL) see [benchmarks.md](./benchmarks.md) §8.
 
 Sources: [ROS 2 QoS](https://design.ros2.org/articles/qos.html) ·
 [Zenoh QoS](https://docs.rs/zenoh/latest/zenoh/qos/index.html) ·

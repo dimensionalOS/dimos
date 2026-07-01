@@ -6,10 +6,10 @@ The thesis: **"DimOS topics in the browser", not "Zenoh in the browser."** A sma
 
 ## Docs
 
-- **[findings.md](./findings.md)** — the research summary: transports & the browser story, the `@dimos/topics` SDK + three gateways, the media plane, multi-robot/multi-camera, the #2502 web-API direction, QoS, forks, side-fixes, and the open questions for the team.
-- **[benchmarks.md](./benchmarks.md)** — throughput / latency / bandwidth across all three transports (headless + in-browser), with takeaways. Curated from the raw runs in [`../bench/RESULTS.md`](../bench/RESULTS.md) and [`../bench/RESULTS-browser.md`](../bench/RESULTS-browser.md).
-- **[custom-messages-in-the-browser.md](./custom-messages-in-the-browser.md)** — a zero-rebuild design proposal: how a user's *custom* message type can render in the browser without regenerating/republishing a codec package.
-- **[data-path.md](./data-path.md)** — the data-path benchmark: every delivery mechanism (WebSocket / SSE / HTTP-poll / WebRTC) × network condition × decode location, with one-command CLI runners (`deno task bench:matrix` / `bench:decode` / `bench:webrtc`) and the findings.
+- **[benchmark-report.md](./benchmark-report.md)** — the transport benchmark: the five delivery mechanisms measured in the real browser (`/bench.html` + the in-app Bench tab), the cross-browser support matrix, real-WAN (Mac → VPS) results, and which transport to use for what.
+- **[benchmarks.md](./benchmarks.md)** — the detailed numbers behind the report: throughput / latency / bandwidth per mechanism × stream, decode location, QoS, WebTransport under loss — with takeaways.
+- **[qos-demo.md](./qos-demo.md)** — the QoS story: client-declares → gateway-enforces → transport-reinforces, the priority-outbox design, and the A/B that keeps pose/teleop crisp under a saturated link.
+- **[real-wan.md](./real-wan.md)** — runbook for measuring the real internet path (MacBook browser ↔ VPS gateway) via `?gw=host:port`, all five transports over a raw IP.
 
 ## The five delivery mechanisms (all on one service, behind one SDK)
 
@@ -29,7 +29,7 @@ The camera rides the same service on `/media` (webrtc / webcodecs / jpeg, encode
 ## Run it
 
 ```bash
-# 1. a data source (dimsim go2, a real go2, or bench_publisher.py)
+# 1. a data source (dimsim go2, a real go2, or the synthetic bench source `deno task scope:bench`)
 DIMOS_TRANSPORT=zenoh uv run dimos --simulation dimsim run unitree-go2
 
 # 2. the whole backend — one process, all transports + the app

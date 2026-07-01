@@ -1,12 +1,12 @@
-// In-browser transport benchmark — runs the SAME scenarios/measurement as the headless CLI
-// bench (bench/bench.ts), but in the REAL browser runtime across all 5 delivery mechanisms
-// (WebSocket · SSE · HTTP-poll · WebRTC-data · WebTransport), so WebRTC/WebTransport are
-// benched on the real browser stacks (the CLI uses aiortc/aioquic stand-ins). Latency is
-// end-to-end (publish → browser). Reuses @dimos/topics/bench.
+// In-browser transport benchmark — measures the @dimos/topics SDK in the REAL browser
+// runtime across all 5 delivery mechanisms (WebSocket · SSE · HTTP-poll · WebRTC-data ·
+// WebTransport), so WebRTC/WebTransport are benched on the real browser stacks. Latency is
+// end-to-end (publish → browser). Reuses the measurement core in @dimos/topics/bench.
 //
-// Prereqs: `deno task serve` (the one service on :8080) + a data source (bench_publisher.py
-// or a sim). Open http://localhost:5173/bench.html (or http://localhost:8080/bench.html).
-//   ?gw=host:port  → route through netsim or a remote VPS   ·   ?dur=ms  ·  ?wt=8443
+// Prereqs: `deno task serve` (the one service on :8080) + a data source
+// (`deno task scope:bench` → scenarios/bench.py, or a sim). Open
+// http://localhost:5173/bench.html (or http://localhost:8080/bench.html).
+//   ?gw=host:port  → route through a remote VPS (real-WAN)   ·   ?dur=ms  ·  ?wt=8443
 // Unsupported mechanisms (e.g. WebTransport on Safari/Firefox) fail gracefully → a NaN row,
 // which doubles as the cross-browser support matrix. Results also at window.__benchResults.
 import { useState } from "react";
@@ -34,8 +34,8 @@ async function openClient(transport: TransportFactory, url: string): Promise<Dim
 const host = location.hostname || "localhost";
 const params = new URLSearchParams(location.search);
 const DUR = Number(params.get("dur") ?? 4000);
-// Default origin = the single service on :8080. `?gw=host:port` overrides it (through netsim, or a
-// remote VPS) — mirrors app/src/main.tsx so the bench hits the same paths the app does.
+// Default origin = the single service on :8080. `?gw=host:port` overrides it (a remote VPS for
+// real-WAN) — mirrors app/src/main.tsx so the bench hits the same paths the app does.
 const origin = params.get("gw") ?? `${host}:8080`;
 const wsProto = location.protocol === "https:" ? "wss" : "ws";
 const httpProto = location.protocol === "https:" ? "https" : "http";
@@ -164,7 +164,7 @@ function Bench() {
       </h2>
       <p className="muted small">
         Start the service + a source first: <code>deno task serve</code> +{" "}
-        <code>bench_publisher.py</code> (or a sim). Origin <code>{origin}</code> ·{" "}
+        <code>deno task scope:bench</code> (or a sim). Origin <code>{origin}</code> ·{" "}
         {DUR}ms/scenario · latency is end-to-end (publish→browser), comparable across mechanisms.
       </p>
       <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>

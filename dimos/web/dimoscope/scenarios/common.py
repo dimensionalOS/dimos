@@ -5,7 +5,7 @@
 # distinct data profile, so the browser SDK can discover → visualize → type → benchmark them, and
 # you can run one, Ctrl-C, run another (the gateway taps the bus, so the topic set just swaps).
 #
-# This module is a TWIN of bench/bench_source.py's scaffolding (same _tn/_mk transport helpers,
+# This module is a TWIN of scenarios/bench.py's scaffolding (same _tn/_mk transport helpers,
 # same "build the big payload once, restamp ts+frame_id per publish" trick, same __main__ runner)
 # — factored out here so nav.py/arm.py/cam.py stay to just their topic definitions.
 #
@@ -63,7 +63,7 @@ def env_i(key: str, default: int) -> int:
 
 def tn(topic: str) -> str:
     # Zenoh key-exprs cannot start with "/"; LCM channels keep it. The Zenoh gateway re-adds the
-    # leading "/" so the browser sees "/nav/pose" either way. (verbatim from bench_source.py)
+    # leading "/" so the browser sees "/nav/pose" either way. (verbatim from scenarios/bench.py)
     return topic[1:] if (TRANSPORT == "zenoh" and topic.startswith("/")) else topic
 
 

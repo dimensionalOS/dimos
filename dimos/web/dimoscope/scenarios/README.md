@@ -13,7 +13,7 @@ live topic set just follows whatever is publishing.
 | **scope-cam** — perception | `/cam/*` | `rgb` Image·30 Hz·~550 KB · `depth` Image·15 Hz · `points` PointCloud2·10 Hz·~1 MB · `detections` Detection2DArray·30 Hz | **bandwidth / bufferbloat** (the WebTransport story) | CameraView (rgb) + WorldView points |
 
 Each reuses **standard `dimos.msgs` types**, so the app auto-renders them by *type* (no app code per
-scenario) and `dtop gen-types` types every topic with **0 untyped**.
+scenario) and the `packages/topics/scripts/genTypes.ts` codegen types every topic with **0 untyped**.
 
 ## Run it
 
@@ -50,16 +50,9 @@ scenarios (a fresh bus registry). The data-level switch needs no restart.
 
 ## Types — one typed map per blueprint
 
-Each scenario generates its own typed topic map with the SDK's codegen (run the matching scenario first
-so it's live on the bus). Note the gateway port: the gateway is `:8080`, so pass `--url`:
-
-```bash
-./scenarios/run.sh nav &                                             # publish /nav/* on the bus
-deno task dtop gen-types --url ws://localhost:8080/ws --out app/src/topics/nav.gen.ts
-```
-
-Repeat with `arm` → `app/src/topics/arm.gen.ts`, `cam` → `app/src/topics/cam.gen.ts`. Each is a clean
-`DimosTopics` map (0 untyped) — verified live:
+Each scenario can be turned into its own typed topic map via the SDK's codegen (`generateTypes()` in
+`packages/topics/scripts/genTypes.ts`), fed the topic/type pairs discovered while the matching scenario is live on the bus.
+Each is a clean `DimosTopics` map (0 untyped) — verified live:
 
 ```ts
 "/nav/pose": geometry_msgs.PoseStamped;   "/arm/imu": sensor_msgs.Imu;
@@ -68,31 +61,16 @@ Repeat with `arm` → `app/src/topics/arm.gen.ts`, `cam` → `app/src/topics/cam
 ```
 
 > **Coordination:** naming each map distinctly (`NavTopics`/`ArmTopics`/`CamTopics`) and binding them
-> into the app hooks belongs to the typed-client work (a `--name` flag on `cli/genTypes.ts` + an
+> into the app hooks belongs to the typed-client work (a `--name` flag on `packages/topics/scripts/genTypes.ts` + an
 > `app/src/topics/index.ts` barrel). This scenario deliverable only produces the *inputs* — it doesn't
 > edit the type pipeline. The disjoint namespaces mean the three maps union cleanly (no shared key).
 
 ## Benchmark them
 
-`scenarios/bench.sh` measures each scenario's live topics over the WS transport and writes
-`scenarios/RESULTS.md` (starts/stops only its own publisher processes):
-
-```bash
-bash scenarios/bench.sh          # → scenarios/RESULTS.md  (one row per scenario)
-# Env: GW_URL=ws://localhost:8080/ws · DUR_MS=6000 · WARM_S=18 · DIMOS_TRANSPORT=zenoh
-```
-
-Run it against a freshly-started gateway on a quiet bus for the cleanest numbers. Sample run (WS,
-6 s/scenario) — the three profiles are clearly distinct:
-
-| scenario | topics | msgs | hz | kB/s | p50 | p95 | p99 | loss% |
-|---|--:|--:|--:|--:|--:|--:|--:|--:|
-| **nav** | 4 | 528 | 88 | **1876** | 0.66 | 3.72 | 5.34 | 0 |
-| **arm** | 4 | 3396 | **566** | 157 | 0.43 | 2.77 | 4.18 | 0.06 |
-| **cam** | 4 | 433 | 72 | **26357** | 0.98 | 5.28 | 15.02 | 0 |
-
-`nav` = size-mix (~1.9 MB/s), `arm` = message-rate ceiling (**566 msg/s**, tiny bytes), `cam` = bandwidth
-(**26 MB/s**) — each stresses a different axis of the data path, at sub-ms–15 ms p50–p99 latency.
+Run a scenario, then open the app's **Bench** tab (or `/bench.html`) to measure its live topics across
+transports — the three profiles are clearly distinct: `nav` = size-mix (~1.9 MB/s), `arm` = message-rate
+ceiling (~566 msg/s, tiny bytes), `cam` = bandwidth (~26 MB/s), each stressing a different axis of the
+data path. For the standard `/bench/*` synthetic load, use `deno task scope:bench` (see `bench.py`).
 
 ## Remote / VPS
 
@@ -127,8 +105,7 @@ Suggested `qos.rules.json` entries (owned by the QoS work — this is a recommen
 scenarios/common.py       shared scaffolding (transport helpers, seq/ts stamping, make_image, runner)
 scenarios/nav.py|arm.py|cam.py   the 3 blueprints (Module + Out[T] streams + __main__ launcher)
 scenarios/run.sh          launch one:  ./scenarios/run.sh <nav|arm|cam>
-scenarios/bench_scope.ts  measure one scenario's topics (reuses the SDK's measureScenario)
-scenarios/bench.sh        benchmark all 3 → RESULTS.md
+scenarios/bench.py        the /bench/* synthetic load source for the in-browser bench (deno task scope:bench)
 ```
 
 ## Notes on message choices
@@ -136,8 +113,8 @@ scenarios/bench.sh        benchmark all 3 → RESULTS.md
 - **`/arm/imu` (not a force/torque wrench):** `geometry_msgs.WrenchStamped` is a plain dataclass with no
   LCM wire codec, so it can't cross the bus. A wrist `sensor_msgs.Imu` is the canonical high-rate arm
   telemetry and encodes cleanly — same "tiny, extreme-rate" role.
-- **PointCloud2** wraps Open3D, so `nav`/`cam` have a slightly slower cold start (the `bench.sh` warm-up
-  accounts for it). Built once via `from_numpy`, then restamped per publish.
+- **PointCloud2** wraps Open3D, so `nav`/`cam` have a slightly slower cold start (allow a brief warm-up
+  before measuring). Built once via `from_numpy`, then restamped per publish.
 - **`/cam/detections`** carries only a stamped header (empty detection list) by design — it's the small
   "must survive the bulk" topic in the bandwidth scenario; the payload isn't the point.
 - **`/arm/trajectory`** (`JointTrajectory`) has no `ts`/`frame_id` (it uses `.timestamp`), so the bench

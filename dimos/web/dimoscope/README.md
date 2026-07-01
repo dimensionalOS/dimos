@@ -46,8 +46,8 @@ The app auto-discovers topics, draws the map + robot + trail in **WorldView**, s
 ## Transports — pick a delivery mechanism from the topbar dropdown
 
 Same app, same `@dimos/topics` SDK, **five swappable delivery mechanisms — all on the one service,
-same-origin** (the dropdown rebuilds the client; `?gw=host:port` overrides the origin, e.g. through
-`netsim` or a remote VPS). They carry identical self-describing frames, so the codec is unchanged;
+same-origin** (the dropdown rebuilds the client; `?gw=host:port` overrides the origin, e.g. a remote
+VPS for real-WAN testing). They carry identical self-describing frames, so the codec is unchanged;
 only the wire differs:
 
 | Mechanism | Wire | Path | Notes |
@@ -114,24 +114,24 @@ React: `DimosProvider`, `useTopics`, `useTopicLatest`, `useTopicRef` (no re-rend
 
 ## Benchmark
 
-Each is one self-contained command (starts the gateway + a load source + teardown). See
-**[docs/data-path.md](docs/data-path.md)** for the methodology and full tables.
+The benchmark runs **in the real browser** across all 5 delivery mechanisms (WS · SSE · poll ·
+WebRTC-data · WebTransport), so WebRTC/WebTransport are measured on the actual browser stacks. See
+**[docs/benchmark-report.md](docs/benchmark-report.md)** for the methodology and full tables.
 
 ```bash
-deno task bench:matrix        # WS/SSE/poll × lan/wifi/4g/3g/2g  → bench/RESULTS-mechanisms.md
-deno task bench:decode        # client-binary vs server-JSON decode (the rosbridge tax)
-deno task bench:webrtc        # WebRTC DataChannel e2e
-deno task bench:webtransport  # WebTransport (HTTP/3 / QUIC) e2e
-deno task bench:loss          # WebTransport datagrams under real packet loss (netsim-udp)
-deno task bench:qos           # QoS: rate-limit / on-demand / prioritization
-deno task bench:all           # the lot, in sequence
-pytest bench/test_bench.py -s
+deno task serve         # the one service on :8080
+deno task scope:bench   # data source → publishes /bench/* (scenarios/bench.py)
+deno task app           # then open http://localhost:5173/bench.html
 ```
 
-Headlines (`bench/RESULTS-*.md`): the service is a byte-relay, so **language/transport isn't the
-bottleneck** (throughput parity, sub-ms p50 on LAN); the differences appear at **MB/s under loss**,
-where **WS (TCP HoL) stalls** while **WebRTC/WebTransport (UDP, no HoL) stay smooth**; server-JSON decode
-costs **2.64× the bytes** of the binary relay; **~75% on-demand** bandwidth cut.
+Then open **`/bench.html`** for the full 5-mechanism sweep, or the in-app **Bench** tab to vary QoS
+knobs against the live transport (live sparklines + copy-as-Markdown). Route through a remote VPS with
+`?gw=host:port` for real-WAN numbers; tune duration with `?dur=ms`.
+
+Headlines: the service is a byte-relay, so **language/transport isn't the bottleneck** (throughput
+parity, sub-ms p50 on LAN); the differences appear at **MB/s under loss**, where **WS (TCP HoL) stalls**
+while **WebRTC/WebTransport (UDP, no HoL) stay smooth**; server-JSON decode costs **2.64× the bytes** of
+the binary relay; **~75% on-demand** bandwidth cut.
 
 ## Layout
 | Path | What |
@@ -143,7 +143,8 @@ costs **2.64× the bytes** of the binary relay; **~75% on-demand** bandwidth cut
 | `gateway/bus.py` | the LCM+Zenoh bus tap → one normalized stream every transport reads from |
 | `gateway/{data,media}.py` | `/ws` data plane (topics + teleop/goal/rpc) · `/media` camera plane |
 | `gateway/transports/` | the `/sse` `/poll` `/rtc` + WebTransport bench transports |
-| `bench/` | publisher + headless bench + `run.sh`/`matrix.sh`/… + `test_bench.py` + RESULTS.md |
+| `scenarios/` | dimos publisher blueprints — live data sources (`nav`/`arm`/`cam`) + `bench.py` (the browser-bench `/bench/*` source) |
+| `app/src/bench.tsx` · `panels/BenchTab.tsx` | the in-browser benchmark (`/bench.html`) + in-app Bench tab |
 
 The original teaching prototype (`app/src/bus.ts`, `app/src/widgets/`, `WALKTHROUGH.md`) is the
 parts-bin this was extracted from.
@@ -160,8 +161,8 @@ parts-bin this was extracted from.
   **embeds, loads (after a Vite `optimizeDeps.exclude` for the wasm MIME), connects to dimos
   `serve_grpc` :9877, and streams** (console-confirmed) — but **paints a black canvas**: the `RerunBridge` firehoses every
   stream undecimated, so the browser WASM viewer blows its **128 MiB channel budget in ~1 s** and its
-  **~2.3 GiB heap ceiling in ~1 min**, then thrashes GC and never paints (root cause —
-  see [findings §8](./docs/findings.md#8-rerun-in-the-browser-the-firehose-ceiling)). **The native
+  **~2.3 GiB heap ceiling in ~1 min**, then thrashes GC and never paints (root cause: the undecimated
+  firehose ceiling). **The native
   `dimos-viewer` (:9876) handles the same feed fine — it's the 3D path; a browser-viable 3D would
   need server-side decimation.** Start the feed with:
   `DIMOS_TRANSPORT=lcm python -c "from dimos.visualization.rerun.bridge import run_bridge; run_bridge(rerun_open='web', rerun_web=True)"`.

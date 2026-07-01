@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-# Benchmark load generator — a configurable dimos Module that emits timestamped,
-# sequence-tagged streams so the headless/browser bench can measure latency,
-# throughput, bandwidth, jitter and loss across transports and delivery mechanisms.
-# A superset of the original bench_publisher.py: adds a configurable large Image
-# topic (up to ~10 MB) and per-message seq tags, and is exposed as a blueprint.
+# Benchmark load generator — the data source for the in-browser bench (app/src/bench.tsx +
+# app/src/panels/BenchTab.tsx). A configurable dimos Module that emits timestamped,
+# sequence-tagged streams so the browser bench can measure latency, throughput, bandwidth,
+# jitter and loss across transports and delivery mechanisms. Publishes a large Image topic
+# (up to ~10 MB) and per-message seq tags, and is exposed as a blueprint.
+#
+# Run it:  deno task serve  (the one service on :8080)  +  deno task scope:bench  (this module),
+# then open http://localhost:5173/bench.html (or the in-app Bench tab).
 #
 # TWIN of the `bench-load` blueprint (dimos/robot/benchmark/bench_load.py): identical /bench/* wire
 # contract + per-topic frame_id=str(seq). bench-load is the coordinator-wired, RPC-controllable app
-# driver (BenchPanel Start/Stop); THIS standalone module is what bench/matrix.sh runs headlessly,
-# avoiding a full coordinator boot per benchmark run.
+# driver (BenchPanel Start/Stop); THIS standalone module avoids a full coordinator boot per run.
 #
-# Standalone (what bench/run.sh drives), tuned by env:
+# Standalone (what `deno task scope:bench` drives), tuned by env:
 #   DIMOS_TRANSPORT=zenoh|lcm  BENCH_HZ=200  BENCH_GRID_HZ=20 \
 #   BENCH_IMG_HZ=10  BENCH_IMG_BYTES=1000000  BENCH_POSE_TOPICS=4 \
-#   .venv/bin/python bench/bench_source.py
+#   .venv/bin/python scenarios/bench.py
 #
 # As a blueprint (after registering via the all_blueprints generator —
 # `pytest dimos/robot/test_all_blueprints_generation.py`):
