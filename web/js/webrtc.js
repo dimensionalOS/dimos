@@ -316,10 +316,12 @@ export function startVideoStats(channel) {
         inFlight = true;
         let inbound = null;
         let report = null;
+        let remoteInbound = null;  // TEMP(video-latency-probe): media-path RTT
         try {
             report = await state.pc.getStats();
             report.forEach((r) => {
                 if (r.type === 'inbound-rtp' && r.kind === 'video') inbound = r;
+                if (r.type === 'remote-inbound-rtp' && r.kind === 'video') remoteInbound = r;
             });
             state.liveStats.iceType = selectedIceType(report);  // direct/stun/turn
         } catch (_) {
@@ -327,6 +329,21 @@ export function startVideoStats(channel) {
             return;
         }
         if (!inbound) { inFlight = false; return; }
+
+        // TEMP(video-latency-probe): dump the fields that would feed an e2e
+        // latency estimate so we can see which are actually populated on this
+        // sender/transport before designing. Remove after one live session.
+        console.log('[vlat-probe]', JSON.stringify({
+            captureTimestamp: inbound.captureTimestamp,             // NTP capture (sender SR)
+            estimatedPlayoutTimestamp: inbound.estimatedPlayoutTimestamp,
+            jitterBufferDelay: inbound.jitterBufferDelay,
+            jitterBufferEmittedCount: inbound.jitterBufferEmittedCount,
+            totalDecodeTime: inbound.totalDecodeTime,
+            framesDecoded: inbound.framesDecoded,
+            media_rtt_s: remoteInbound ? remoteInbound.roundTripTime : null,
+            media_rtt_present: remoteInbound != null,
+            dc_rtt_ms: state.bestRttMs ?? null,                     // datachannel RTT for contrast
+        }));
 
         const now = inbound.timestamp;  // ms, getStats clock
         const prev = state.videoStatsPrev;
