@@ -24,7 +24,8 @@ _Z_REL_HI   =  0.5    # camera-relative ceiling (0.5 m above camera)
 _FLOOR_Z    =  0.03   # absolute world-Z floor cutoff (3 cm above gravity-aligned floor)
 _GRAD_THRESH =  0.30  # Sobel gradient magnitude threshold — pixels above this are edge artifacts
 _MIN_OBS    =  1      # min frame hits to mark a cell occupied (>1 adds latency without gain at 2cm)
-_MAP_EVERY  =  5      # log world/world_map every N frames
+_MAP_EVERY  =  30     # log world/world_map every N frames (~2 s at 15 fps)
+_MAP_MAX_PTS = 40_000 # Rerun point cap — keeps TCP message size bounded
 
 # ── Voxel key packing ────────────────────────────────────────────────────────
 _VOFF  = np.int64(100_000)
@@ -439,20 +440,22 @@ def main() -> None:
                 ))
 
             # ── Persistent world map ──────────────────────────────────────────
-            # Feed world-frame voxels into the accumulator only once VIO has
-            # locked — before lock, pose_R=I / pose_t=0 so points are in
-            # camera frame, not world frame, and would corrupt the map.
-            if src.pose_locked and len(xyz_vox):
-                world_map.update(xyz_vox, frame)
-
+            # Only accumulate on the frames that will also log — the Python dict
+            # loop in update() is the hot cost; running it every frame while Rerun
+            # receives a growing message every 5 frames caused TCP backpressure
+            # that stalled the main loop after VIO lock.
             n_occ = 0
-            if frame % _MAP_EVERY == 0:
+            if src.pose_locked and len(xyz_vox) and frame % _MAP_EVERY == 0:
+                world_map.update(xyz_vox, frame)
                 occ = world_map.occupied()
                 n_occ = len(occ)
                 if n_occ:
+                    pts = occ
+                    if len(pts) > _MAP_MAX_PTS:
+                        pts = pts[np.random.choice(len(pts), _MAP_MAX_PTS, replace=False)]
                     rr.log("world/world_map", rr.Points3D(
-                        positions=occ,
-                        colors=_height_color(occ[:, 2] - cam_z),
+                        positions=pts,
+                        colors=_height_color(pts[:, 2] - cam_z),
                         radii=0.010,
                     ))
 
