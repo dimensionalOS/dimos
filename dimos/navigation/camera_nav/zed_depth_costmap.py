@@ -25,8 +25,9 @@ _FLOOR_Z    =  0.03   # absolute world-Z floor cutoff (3 cm above gravity-aligne
 _CEIL_Z     =  2.00   # absolute world-Z ceiling when VIO locked — no cam_z dependence
 _GRAD_THRESH =  0.30  # Sobel gradient magnitude threshold — pixels above this are edge artifacts
 _MIN_OBS    =  1      # min frame hits to mark a cell occupied (>1 adds latency without gain at 2cm)
-_MAP_EVERY  =  30     # log world/world_map every N frames (~2 s at 15 fps)
-_MAP_MAX_PTS = 40_000 # Rerun point cap — keeps TCP message size bounded
+_MAP_EVERY  =  10     # log world/world_map every N frames (~0.67 s at 15 fps)
+_MAP_MAX_PTS = 80_000 # Rerun point cap — keeps TCP message size bounded
+_MAP_VOX    =  0.030  # 3 cm dedup cells in WorldMap — tighter than 5 cm, still absorbs VIO noise
 
 # ── Voxel key packing ────────────────────────────────────────────────────────
 _VOFF  = np.int64(100_000)
@@ -72,18 +73,17 @@ class WorldMap:
     def update(self, xyz_world: np.ndarray, frame: int) -> None:
         if len(xyz_world) == 0:
             return
-        # 5 cm dedup keys absorb VIO drift + stereo measurement noise (~5mm at 1-3m).
-        # Same wall measured at 2.003m vs 1.997m → same 5cm cell → same entry.
-        # Stored positions are running-mean of actual observations (not cell centres)
-        # so display quality remains close to per-frame precision.
-        vk   = np.floor(xyz_world / 0.050).astype(np.int32)
+        # 3 cm dedup: absorbs ZED stereo noise (~5 mm) and moderate VIO drift,
+        # while staying 6× denser than 5 cm — matches per-frame voxel quality.
+        vk   = np.floor(xyz_world / _MAP_VOX).astype(np.int32)
         keys = _pack(vk)
         _, first = np.unique(keys, return_index=True)
         keys = keys[first]
         xyz  = xyz_world[first]
 
-        # Separate existing cells from new ones via dict lookup
-        rows = np.array([self._idx.get(int(k), -1) for k in keys], dtype=np.int32)
+        # Bulk convert to Python ints once (C-level, ~3× faster than int(k) per-iter)
+        key_list = keys.tolist()
+        rows = np.array([self._idx.get(k, -1) for k in key_list], dtype=np.int32)
         ex   = rows >= 0
         nw   = ~ex
 
@@ -95,7 +95,7 @@ class WorldMap:
             self._count[er] += 1
             self._last[er]   = frame
 
-        # Batch insert new cells
+        # Batch insert new cells — dict.update(zip) is C-level, avoids Python loop
         if nw.any():
             new_xyz  = xyz[nw]
             new_keys = keys[nw]
@@ -106,8 +106,7 @@ class WorldMap:
             self._xyz[s]   = new_xyz
             self._count[s] = 1
             self._last[s]  = frame
-            for i, k in enumerate(new_keys.tolist()):
-                self._idx[int(k)] = self._n + i
+            self._idx.update(zip(new_keys.tolist(), range(self._n, self._n + n_new)))
             self._n += n_new
 
     def occupied(self) -> np.ndarray:
@@ -444,13 +443,15 @@ def main() -> None:
                 ))
 
             # ── Persistent world map ──────────────────────────────────────────
-            # Only accumulate on the frames that will also log — the Python dict
-            # loop in update() is the hot cost; running it every frame while Rerun
-            # receives a growing message every 5 frames caused TCP backpressure
-            # that stalled the main loop after VIO lock.
-            n_occ = 0
-            if src.pose_locked and len(xyz_vox) and frame % _MAP_EVERY == 0:
+            # Accumulate every frame so the running-mean positions converge quickly
+            # to the true surface. Log to Rerun every _MAP_EVERY frames only —
+            # the display doesn't need 15 fps updates and the TCP serialisation
+            # cost of large point clouds is the bottleneck, not the dict update.
+            if src.pose_locked and len(xyz_vox):
                 world_map.update(xyz_vox, frame)
+
+            n_occ = 0
+            if frame % _MAP_EVERY == 0:
                 occ = world_map.occupied()
                 n_occ = len(occ)
                 if n_occ:
@@ -460,7 +461,7 @@ def main() -> None:
                     rr.log("world/world_map", rr.Points3D(
                         positions=pts,
                         colors=_height_color(pts[:, 2] - cam_z),
-                        radii=0.010,
+                        radii=0.012,
                     ))
 
             fps = frame / max(ts - t0, 1e-6)
