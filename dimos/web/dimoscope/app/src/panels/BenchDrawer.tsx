@@ -9,7 +9,7 @@
 // whitelisted @rpc so a sweep can generate its own flow; it's a thin client of that contract, not a
 // re-implementation of the load-gen backend.
 import { useEffect, useRef, useState } from "react";
-import { useCommands, useDimosClient, useRpc, useServers, useTopics } from "@dimos/react";
+import { useCommands, useDimosClient, useRpc, useServers, useTopics } from "../dimos";
 import { type BenchRow, formatMarkdown, measureScenario, type Qos, STREAM_PROFILES } from "@dimos/web";
 
 const HZ_PRESETS = [0, 5, 20, 60, 120];

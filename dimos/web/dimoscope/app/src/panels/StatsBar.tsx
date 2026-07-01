@@ -1,6 +1,6 @@
 // StatsBar — live per-topic hz / bandwidth / latency. Demonstrates the SDK's
 // observability surface (each row keeps its topic subscribed while visible).
-import { useTopics, useTopicStats } from "@dimos/react";
+import { useTopics, useTopicStats } from "../dimos";
 
 function Row({ topic }: { topic: string }) {
   const s = useTopicStats(topic);

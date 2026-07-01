@@ -29,7 +29,7 @@
     "scope:cam": "DIMOS_TRANSPORT=zenoh uv run python scenarios/cam.py",
     "scope:bench": "DIMOS_TRANSPORT=zenoh uv run python scenarios/bench.py",
     "test": "deno test -A --node-modules-dir packages/web/src/",
-    "gen-types": "uv run python packages/web/scripts/gen_types.py",
+    "gen-types": "uv run python packages/web/scripts/gen_types.py scenarios/nav.py scenarios/arm.py scenarios/cam.py scenarios/bench.py --out app/src/dimos.topics.gen.ts",
     "fmt": "deno fmt",
     "lint": "deno lint",
     "sim": "DIMOS_TRANSPORT=zenoh uv run dimos --simulation mujoco run unitree-go2",

@@ -2,15 +2,14 @@
 // Shows: live topic discovery, a fused 2D WorldView, a Pose readout, safe
 // teleop, and a live StatsBar (hz / bandwidth / latency per topic).
 import { useState } from "react";
+import { type MediaMode, SubscribeBar } from "@dimos/react";
 import {
-  type MediaMode,
-  SubscribeBar,
   useDimosClient,
   useServers,
   useStatus,
   useTopicLatest,
   useTopics,
-} from "@dimos/react";
+} from "./dimos";
 import { WorldView } from "./panels/WorldView";
 import { CameraView } from "./panels/CameraView";
 import { PoseReadout } from "./panels/PoseReadout";

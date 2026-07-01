@@ -1,7 +1,8 @@
 // CameraView — live camera via the media plane (useVideo): a WebRTC/WebCodecs <video>/<canvas>
 // when the gateway+browser support it, else the JPEG Image-topic floor. Auto-detects the topic.
 import { type CSSProperties } from "react";
-import { type MediaMode, type TopicInfo, useTopics, useVideo } from "@dimos/react";
+import type { MediaMode, TopicInfo } from "@dimos/react";
+import { useTopics, useVideo } from "../dimos";
 import { useCvOverlay } from "../cv/useCvOverlay";
 
 function pickImage(topics: TopicInfo[]): string | null {

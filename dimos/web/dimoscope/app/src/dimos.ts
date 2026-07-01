@@ -8,7 +8,30 @@
 // dimos.topics.gen.ts is generated STATICALLY from a dimos blueprint (no gateway) — regenerate after the
 // blueprint changes:  deno task gen-types scenarios/nav.py --out app/src/dimos.topics.gen.ts
 import { createDimosHooks } from "@dimos/react";
-import type { DimosTopics } from "./dimos.topics.gen.ts";
+import type { DimosCommands, DimosTopics } from "./dimos.topics.gen.ts";
 
-export const { useTopicLatest, useTopicRef, useImageTopic, useTopicStats } =
-  createDimosHooks<DimosTopics>();
+// The typed surface: `useDimosClient()` → DimosClient<DimosTopics, DimosCommands>, topic hooks
+// autocomplete the name + infer the message, and `useModules().ScopeNav.navigate_to(goal)` is a typed
+// RPC call. Panels import ALL dimos hooks from here (not @dimos/react) so the whole app is typed.
+export const {
+  useDimosClient,
+  useTopicLatest,
+  useTopicRef,
+  useImageTopic,
+  useTopicStats,
+  useModules,
+} = createDimosHooks<DimosTopics, DimosCommands>();
+
+// Map-agnostic hooks (don't depend on the generated map) re-exported so `../dimos` is the one import
+// site for every panel. useRpc/useCommands stay for the gateway's DYNAMIC (author-time-unknown)
+// command list; useModules is for known commands.
+export {
+  useCaps,
+  useCommands,
+  useRpc,
+  useServers,
+  useStatus,
+  useTeleop,
+  useTopics,
+  useVideo,
+} from "@dimos/react";

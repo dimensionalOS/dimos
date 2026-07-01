@@ -7,13 +7,8 @@
 // canvas is responsive (ResizeObserver + devicePixelRatio). Uses useTopicRef + a
 // requestAnimationFrame loop: redraws at display rate, never re-rendering per message.
 import { useEffect, useRef, useState } from "react";
-import {
-  type TopicInfo,
-  useDimosClient,
-  useTopicRef,
-  useTopics,
-  useTopicStats,
-} from "@dimos/react";
+import type { TopicInfo } from "@dimos/react";
+import { useDimosClient, useTopicRef, useTopics, useTopicStats } from "../dimos";
 
 const LIDAR_CAP = 4000; // max points rendered per frame (stride-decimated)
 const DEFAULT_SCALE = 64; // px per metre at rest

@@ -461,13 +461,9 @@ const MODE_PREFER: Record<MediaMode, MediaKind[]> = {
 };
 
 /**
- * Subscribe a camera topic via the negotiated media plane and render it — a <video> fed by a
- * WebRTC MediaStream when available, else the JPEG Image-topic floor painted to a <canvas>. The
- * caller attaches BOTH refs and shows the one matching `kind`. Negotiation uses the active
- * server's `media` config, so the data plane (topics) is untouched when the mode changes.
- *
- * Slice note: builds its own MediaChannel per hook instance (fine for one camera). A multi-cam
- * grid would hoist the channel to a provider to share one PeerConnection.
+ * Subscribe a camera topic via the negotiated media plane: a <video> fed by a WebRTC MediaStream
+ * when available, else the JPEG Image-topic floor on a <canvas>. Caller attaches both refs and shows
+ * the one matching `kind`. One MediaChannel per hook instance (a multi-cam grid would share one).
  */
 export function useVideo(
   topic: string | null,
@@ -737,23 +733,30 @@ export function useCommands(): CommandInfo[] {
 }
 
 /**
- * Typed hooks bound to a generated topic map (`DimosTopics` from packages/web/scripts/genTypes.ts). Set it up once —
- *   export const { useTopicLatest, useTopicRef, useImageTopic, useTopicStats }
- *     = createDimosHooks<DimosTopics>();
- * — and every topic-name hook autocompletes the name + infers the message type, with NO per-call
- * generic. Pure type-level wrapper: it returns the SAME hook functions cast to typed overloads (zero
- * runtime cost); the `DimosProvider`/context stay untyped, so nothing else changes. Runtime-discovered
- * names still work (the `string & {}` fallback → `unknown`). Non-keyed hooks (`useTeleop`/`useRpc`/
- * `useCommands`/`useTopics`/`useCaps`/`useStatus`) don't depend on the map — import them directly.
+ * Typed hooks bound to a generated topic + command map (`DimosTopics`/`DimosCommands` from
+ * packages/web/scripts/gen_types.py):
+ *   export const { useDimosClient, useTopicLatest, useTopicRef, useImageTopic, useTopicStats, useModules }
+ *     = createDimosHooks<DimosTopics, DimosCommands>();
+ * Every topic-name hook then autocompletes the name + infers the message type, `useDimosClient()` returns
+ * a typed `DimosClient<TMap, TCmds>`, and `useModules().Target.method(...)` is a typed RPC callable. Pure
+ * type-level wrapper (zero runtime cost); map-agnostic hooks (useTeleop/useRpc/useCommands/…) don't need
+ * the map. Runtime-discovered names still work (the `string & {}` fallback → `unknown`).
  */
-// A topic-name key: a known key of TMap (autocompletes) OR any other string (→ unknown message type).
-// Mirrors the client's `topic()` signature. `string & Record<never, never>` keeps literal
-// autocomplete alive while accepting arbitrary strings (and avoids the `{}` ban-types lint).
+// Topic-name key: a known key of TMap (autocompletes) OR any string (→ unknown). `string & Record<never,
+// never>` keeps literal autocomplete alive while accepting arbitrary strings (and dodges the `{}` lint).
 type NameKey<TMap> = (keyof TMap & string) | (string & Record<never, never>);
 type MsgFor<TMap, K> = K extends keyof TMap ? TMap[K] : unknown;
 
-export function createDimosHooks<TMap>() {
+export function createDimosHooks<TMap, TCmds = Record<never, never>>() {
   return {
+    // Typed client: `subscribe`/`topic`/`peek`/`latest` autocomplete over TMap and
+    // `modules.Target.method()` is typed over TCmds — we just cast the untyped context value to shape.
+    useDimosClient: useDimosClient as unknown as () => DimosClient<TMap, TCmds> | null,
+    // Typed RPC surface: `useModules().ScopeNav.navigate_to(goal)`. Null until connected. The `modules`
+    // proxy is runtime-generic, so this is safe; the type comes straight off the typed client.
+    useModules: (() => useDimosClient()?.modules ?? null) as unknown as () =>
+      | DimosClient<TMap, TCmds>["modules"]
+      | null,
     useTopicLatest: useTopicLatest as unknown as <K extends NameKey<TMap>>(
       topic: K | null,
       opts?: { maxHz?: number },

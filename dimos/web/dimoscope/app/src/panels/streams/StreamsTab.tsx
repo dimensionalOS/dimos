@@ -2,7 +2,7 @@
 // scenario preset) and watch its messages stream in, each with its QoS lane and live metrics.
 // This is the "watch it live / tune QoS" companion to the Bench tab's quantitative sweep.
 import { useState } from "react";
-import { useTopics } from "@dimos/react";
+import { useTopics } from "../../dimos";
 import { StreamCard } from "./StreamCard";
 
 // The scenario namespaces (scenarios/{nav,arm,cam}.py) + the go2-scope blueprint — subscribe a whole
@@ -19,7 +19,6 @@ export function StreamsTab() {
   const topics = useTopics();
   const [subs, setSubs] = useState<string[]>([]);
   const [text, setText] = useState("");
-  const [contention, setContention] = useState(false);
   const typeOf = (t: string) => topics.find((x) => x.topic === t)?.type ?? "";
   const add = (names: string[]) =>
     setSubs((prev) => {
@@ -75,38 +74,11 @@ export function StreamsTab() {
           </div>
         )
         : (
-          <>
-            <div className={`contention-bar ${contention ? "contention-on" : ""}`}>
-              <div className="contention-head">
-                <button
-                  type="button"
-                  className={`tab ${contention ? "tab-active" : ""}`}
-                  onClick={() => setContention((c) => !c)}
-                >
-                  ⚡ Contention {contention ? "ON" : "OFF"}
-                </button>
-                <span className="contention-title">
-                  priority scheduler — high-priority lanes drain first, bulk sheds under load
-                </span>
-              </div>
-              <div className="muted small contention-hint">
-                {contention
-                  ? "SENSOR / COMMAND / DEFAULT topics boosted to critical ⚡ (bulk stays low). Now throttle the link to see the scheduler shed: DevTools → Network → add a custom profile (~300 kb/s) → refresh. Watch the BULK cards (cloud/map) collapse toward 0 Hz with rising gap% while the boosted cards stay crisp."
-                  : "Loopback is unconstrained, so the scheduler rarely needs to shed. Turn this on to boost non-bulk topics to critical, then throttle the link (DevTools → Network → custom ~300 kb/s → refresh) to watch bulk shed first while sensors survive."}
-              </div>
-            </div>
-            <div className="stream-grid">
-              {subs.map((t) => (
-                <StreamCard
-                  key={t}
-                  topic={t}
-                  type={typeOf(t)}
-                  onRemove={() => remove(t)}
-                  boost={contention}
-                />
-              ))}
-            </div>
-          </>
+          <div className="stream-grid">
+            {subs.map((t) => (
+              <StreamCard key={t} topic={t} type={typeOf(t)} onRemove={() => remove(t)} />
+            ))}
+          </div>
         )}
     </div>
   );

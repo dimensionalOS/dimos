@@ -1,4 +1,7 @@
-import { useTopicLatest, useTopics } from "@dimos/react";
+// Runtime-chosen topic → the base message-type-generic hook (from @dimos/react), not the name-keyed
+// typed one in ../dimos (whose generic is the LITERAL topic name). useTopics is map-agnostic → ../dimos.
+import { useTopicLatest } from "@dimos/react";
+import { useTopics } from "../dimos";
 import type { geometry_msgs } from "@dimos/msgs";
 
 export function PoseReadout({ topic }: { topic?: string }) {

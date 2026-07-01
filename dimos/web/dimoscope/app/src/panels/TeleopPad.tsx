@@ -2,7 +2,7 @@
 // Sends at 10 Hz while a key is held; each command carries ttlMs, so the gateway
 // deadman-stops the robot if input ceases or the socket drops.
 import { useEffect, useRef, useState } from "react";
-import { useTeleop } from "@dimos/react";
+import { useTeleop } from "../dimos";
 
 const LIN = 0.6; // m/s
 const ANG = 1.0; // rad/s

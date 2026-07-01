@@ -3,7 +3,7 @@
 // return value. Renders NOTHING when no commands are advertised (e.g. Bun↔LCM has no RPC bridge),
 // so the panel only appears where the framework's command registry is actually reachable.
 import { useState } from "react";
-import { useCommands, useRpc } from "@dimos/react";
+import { useCommands, useRpc } from "../dimos";
 
 export function CommandsPanel() {
   const commands = useCommands();

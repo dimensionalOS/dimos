@@ -14,7 +14,7 @@
 // Pin matters: @rerun-io/web-viewer-react must match rerun-sdk (0.32.0-alpha.1).
 import { useEffect } from "react";
 import WebViewer from "@rerun-io/web-viewer-react";
-import { useDimosClient } from "@dimos/react";
+import { useDimosClient } from "../dimos";
 
 const PROXY = import.meta.env.VITE_RERUN_PROXY ?? "rerun+http://127.0.0.1:9877/proxy";
 
