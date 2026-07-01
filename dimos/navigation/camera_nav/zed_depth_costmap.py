@@ -409,64 +409,92 @@ class DepthBackprojector:
 
 # ── Stage 5: Voxel map ────────────────────────────────────────────────────────
 
-class FastVoxelMap:
-    """Append-only world-frame point map backed entirely by numpy arrays.
+# Occupancy thresholds — tune these without touching the algorithm.
+_VOX_COUNT_MAX = np.uint8(20)   # saturating cap on hit counter
+_VOX_THRESHOLD = np.uint8(3)    # minimum hits before a voxel is occupied
+_VOX_STALENESS = np.uint16(300) # frames of non-observation before expiry (~20 s @ 15 Hz)
 
-    No Python dicts, no per-key loops.  All deduplication uses np.unique — a
-    single vectorised C call — so throughput matches the live cloud pipeline.
 
-    add() deduplicates the incoming batch and appends.
-    Every COMPACT_EVERY adds, a full global dedup runs to bound memory.
+class SaturatingVoxelMap:
+    """Persistent world-frame voxel occupancy map.
+
+    Per-voxel state (3 bytes):
+        uint8  count      — saturating hit counter; incremented once per frame per voxel
+        uint16 last_seen  — frame id of the most recent hit (mod 65 535)
+
+    A voxel is occupied on export when:
+        count >= _VOX_THRESHOLD  AND  frame − last_seen <= _VOX_STALENESS
+
+    Update:  O(N log N) via np.unique dedup, then O(N) numpy batch writes.
+    Export:  O(V) numpy mask; xyz recovered by unpacking the stored int64 key —
+             no centroid state, no running mean.
     """
 
-    COMPACT_EVERY: int = 30
-
     def __init__(self, voxel_size: float = 0.05, capacity: int = 500_000) -> None:
-        self._v      = voxel_size
-        self._cap    = capacity
-        self._pts    = np.empty((capacity, 3), dtype=np.float32)
-        self._n      = 0
-        self._n_adds = 0
+        self._v         = voxel_size
+        self._cap       = capacity
+        self._keys      = np.empty(capacity, dtype=np.int64)
+        self._counts    = np.zeros(capacity,  dtype=np.uint8)
+        self._last_seen = np.zeros(capacity,  dtype=np.uint16)
+        self._n         = 0
+        self._idx: dict[int, int] = {}   # packed key → row index (lookup only)
 
-    def add(self, xyz: np.ndarray) -> None:
+    def update(self, xyz: np.ndarray, frame: int) -> None:
         if len(xyz) == 0:
             return
-        # Dedup the incoming batch first
-        vk = np.floor(xyz / self._v).astype(np.int32)
-        _, first = np.unique(_pack(vk), return_index=True)
-        new_pts = xyz[first]
+        vk   = np.floor(xyz / self._v).astype(np.int32)
+        keys = _pack(vk)
+        keys, _ = np.unique(keys, return_index=True)   # one vote per voxel per frame
 
-        if self._n + len(new_pts) > self._cap:
-            self._compact()
-        if self._n + len(new_pts) > self._cap:
-            self._grow()
+        # Dict lookup: classify each unique key as existing or new.
+        rows = np.array([self._idx.get(int(k), -1) for k in keys], dtype=np.int32)
+        existing = rows >= 0
 
-        sl = slice(self._n, self._n + len(new_pts))
-        self._pts[sl] = new_pts
-        self._n += len(new_pts)
+        # Batch-update existing voxels — no Python loop.
+        if existing.any():
+            r = rows[existing]
+            np.minimum(self._counts[r] + 1, _VOX_COUNT_MAX, out=self._counts[r])
+            self._last_seen[r] = np.uint16(frame & 0xFFFF)
 
-        self._n_adds += 1
-        if self._n_adds % self.COMPACT_EVERY == 0:
-            self._compact()
+        # Append new voxels.
+        new_keys = keys[~existing]
+        if len(new_keys):
+            n_new = len(new_keys)
+            if self._n + n_new > self._cap:
+                self._grow()
+            sl = slice(self._n, self._n + n_new)
+            self._keys[sl]      = new_keys
+            self._counts[sl]    = np.uint8(1)
+            self._last_seen[sl] = np.uint16(frame & 0xFFFF)
+            for i, k in enumerate(new_keys.tolist()):
+                self._idx[k] = self._n + i
+            self._n += n_new
 
-    def _compact(self) -> None:
-        if self._n == 0:
-            return
-        vk = np.floor(self._pts[:self._n] / self._v).astype(np.int32)
-        _, idx = np.unique(_pack(vk), return_index=True)
-        n_u = len(idx)
-        self._pts[:n_u] = self._pts[:self._n][idx]
-        self._n = n_u
+    def export_stable(self, frame: int) -> np.ndarray:
+        """Return (M, 3) float32 world-frame voxel centres — occupied, non-stale only."""
+        n = self._n
+        if n == 0:
+            return np.empty((0, 3), dtype=np.float32)
+        age  = np.uint16(frame & 0xFFFF) - self._last_seen[:n]   # uint16 wraparound is correct
+        mask = (self._counts[:n] >= _VOX_THRESHOLD) & (age <= _VOX_STALENESS)
+        stable = self._keys[:n][mask]
+        vx = ((stable >> 36) & _VMASK).astype(np.int32) - int(_VOFF)
+        vy = ((stable >> 18) & _VMASK).astype(np.int32) - int(_VOFF)
+        vz = ( stable        & _VMASK).astype(np.int32) - int(_VOFF)
+        return (np.column_stack([vx, vy, vz]).astype(np.float32) + 0.5) * self._v
 
     def _grow(self) -> None:
         cap2 = self._cap * 2
-        buf  = np.empty((cap2, 3), dtype=np.float32)
-        buf[:self._n] = self._pts[:self._n]
-        self._pts = buf
-        self._cap = cap2
-
-    def points(self) -> np.ndarray:
-        return self._pts[:self._n]
+        k2   = np.empty(cap2, dtype=np.int64)
+        c2   = np.zeros(cap2,  dtype=np.uint8)
+        ls2  = np.zeros(cap2,  dtype=np.uint16)
+        k2[:self._n]  = self._keys[:self._n]
+        c2[:self._n]  = self._counts[:self._n]
+        ls2[:self._n] = self._last_seen[:self._n]
+        self._keys      = k2
+        self._counts    = c2
+        self._last_seen = ls2
+        self._cap       = cap2
 
     @property
     def count(self) -> int:
@@ -478,9 +506,9 @@ class FastVoxelMap:
 class DepthStreamer:
     """Two-layer pipeline:
     - Main thread (fast):  gradient filter → backproject → live Rerun cloud
-    - Map thread  (async): height filter → isolation filter → FastVoxelMap → map Rerun
+    - Map thread  (async): height filter → isolation filter → SaturatingVoxelMap → map Rerun
 
-    Map worker cost is now O(N log N) numpy only — same order as the live cloud.
+    Map worker cost is O(N log N) numpy only — same order as the live cloud.
     """
 
     MAX_CLOUD = 50_000   # Rerun per-frame point cap
@@ -496,7 +524,7 @@ class DepthStreamer:
         self._src            = source
         self._bp             = backproj
         self._grad           = grad_filter or GradientStabilityFilter()
-        self._vox            = FastVoxelMap(voxel_size=0.05)
+        self._vox            = SaturatingVoxelMap(voxel_size=0.05)
         self._vox_lock       = threading.Lock()
         self._cam_z          = 0.0
         self._pinhole_logged = False
@@ -548,7 +576,7 @@ class DepthStreamer:
             pass
 
     def _map_worker(self) -> None:
-        """Background thread: height filter → isolation → FastVoxelMap → Rerun.
+        """Background thread: height filter → isolation → SaturatingVoxelMap → Rerun.
 
         All operations are vectorised numpy — cost is O(N log N), same order as
         the live cloud pipeline.  No Python loops, no ray carving.
@@ -572,17 +600,17 @@ class DepthStreamer:
                 continue
 
             with self._vox_lock:
-                self._vox.add(xyz_map)
+                self._vox.update(xyz_map, frame)
 
             if frame % self.MAP_EVERY == 0:
                 rr.set_time("frame", sequence=frame)
-                self._log_map(cam_z)
+                self._log_map(frame, cam_z)
 
-    def _log_map(self, cam_z: float | None = None) -> None:
+    def _log_map(self, frame: int, cam_z: float | None = None) -> None:
         if cam_z is None:
             cam_z = self._cam_z
         with self._vox_lock:
-            pts = self._vox.points().copy()
+            pts = self._vox.export_stable(frame)
         if len(pts) == 0:
             return
         n   = min(len(pts), self.MAX_MAP)
