@@ -167,17 +167,33 @@ as NaN rows, confirming this empirically when run):
 → **the SDK must fall back to WS** for WebTransport on Firefox/Safari — already handled (the dropdown
 just won't offer it / it errors into a NaN row). WS/SSE/poll/WebRTC are universal.
 
-_Empirical browser *performance* numbers (real Chrome via the claude-in-chrome MCP, or Playwright
-cross-browser) are **pending**. Run: `deno task serve` + a single source + `netsim`, open
-`bench.html?gw=localhost:8099`, Run, export (first `ps aux | grep bench` and kill any stray publisher so
-one source hits the topic). The key cross-check is whether the CLI aiortc/aioquic stand-in latencies
-match the real-browser WebRTC/WebTransport latencies._
+**Empirical — real Chrome, all 5 mechanisms, over the real WAN (Mac → VPS by IP)** — `RESULTS-realwan.md`:
+
+| transport | 4×Pose hz | grid hz | loss% |
+|---|--:|--:|--:|
+| WebSocket | 385 | 23.5 | ~0 |
+| SSE | 335 | 18.5 | 0 |
+| HTTP poll | 412 | 22.5 | 0 |
+| WebRTC data | 352 | 19.25 | 0 |
+| WebTransport | 356 | 19.25 | 0 |
+→ **all 5 deliver ~335–412 Hz browser→VPS over the public internet**, loss ~0. Getting there took: server
+**CORS** on `/cert` (cross-origin cert fetch for WT); a **`/rtc` 403 fix** (the WebRTC WS handler param
+was untyped → FastAPI rejected the handshake); a **WebRTC client-adapter fix** (resolve on
+`dc.onopen`, not on offer-sent); and ufw `8080/tcp + 8443/udp + 32768:60999/udp` (aiortc ICE range; the
+VPS public-IP host candidate needs no TURN). Same-origin local Chrome confirms SSE/poll too; a "WS 0"
+seen locally was a **stale serve process**, not a bug. _(Latency is omitted — Mac/VPS clocks unsynced.)_
 
 ### Kernel `tc/netem` on the VPS — `bench/RESULTS-vps.md`
-_pending Stage 3._
+Applied to `lo` (delay 100 ms · loss 3% · reorder 20%), `netsim` profile `lan` → **netem-only** effect:
+ws p50 **409 ms** / loss **7.86%**, sse 442 ms / 7.66%, poll 702 ms / 5.26%. Real reorder+drop becomes
+**seq-gap loss (5–8%) + latency blowup** — impairment userspace `netsim` can't reproduce (it models loss
+as jitter; TCP can't raw-drop). Validates the netsim profiles against kernel-accurate ground truth.
 
 ### C — Real WAN (Mac ↔ VPS) — `bench/RESULTS-realwan.md`
-_pending Stage 4 (needs the VPS firewall port open)._
+**Done.** `ufw allow 8080/tcp + 8443/udp` was sufficient (no external cloud firewall → no provider
+console needed). Deno CLI WS = **354 Hz** full delivery over the internet; the real-Chrome **all-5** table
+above is browser→VPS over the same path. Domain-free (raw IP + self-signed WT cert), app on
+`http://localhost`. Live self-test recipe + bring-up/teardown in `RESULTS-realwan.md` / `docs/real-wan.md`.
 
 ---
 

@@ -23,6 +23,7 @@ import os
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from servers.bench import PollPlane, SsePlane, WebRtcDataPlane, WebTransportServer
@@ -77,6 +78,14 @@ def build_app() -> FastAPI:
             bus.close()
 
     app = FastAPI(lifespan=lifespan)
+
+    # CORS: allow the SDK to be served from a different origin than the gateway (the real-WAN topology —
+    # app on http://localhost, gateway on the VPS by IP). Needed so the browser can fetch /cert (the
+    # WebTransport cert hash) cross-origin; /sse and /poll already set their own header. WS/WebRTC/QUIC
+    # are not subject to CORS. Read-only data + safe teleop, so `*` is acceptable for this bench service.
+    app.add_middleware(
+        CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
+    )
 
     # Data + media + bench websockets. Registered BEFORE the static mount so "/" doesn't shadow them.
     app.add_api_websocket_route("/ws", data.handle)

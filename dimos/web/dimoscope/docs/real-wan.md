@@ -84,3 +84,43 @@ Only if you want clients to hit a real `wss://dimos.<domain>` (app over https, v
 hash-pinning): a small Dockerfile (`uv sync --extra web` → `python serve.py`) deployed as a
 Coolify app; Caddy fronts TCP with auto Let's Encrypt; map **UDP :8443** through for QUIC. Not required
 for the testing above.
+
+---
+
+## Currently deployed (2026-07-01 benchmark session) + TEARDOWN
+
+A live benchmark deployment is running on the VPS so you can open it in a browser. **Close it with the
+steps below when done.**
+
+**What's deployed (VPS `37.60.232.68`, user `kristjan`):**
+- Isolated clone `~/dimos-bench` (branch `kris/research-29-06-2026`) — nothing else on the box touched.
+- `serve.py` + a single `bench_source` running in **tmux session `dimos-realwan-65329`** (serve on
+  `:8080`, WT on `:8443`); source PID in `~/realwan-source.pid`; logs `~/realwan-serve.log` /
+  `~/realwan-source.log`.
+- **ufw** rules added: `8080/tcp` + `8443/udp` (only these two — other rules e.g. 6001/6002/2222 belong
+  to other work, leave them).
+- Results in `~/dimos-bench/dimos/web/dimoscope/bench/RESULTS-*.md`; agent status file
+  `~/DIMOS-BENCH-AGENT-65329a9d.md`.
+- Inspect anytime: `ssh -i ~/.ssh/vps-coolify kristjan@37.60.232.68` then `tmux ls` /
+  `tmux attach -t dimos-realwan-65329`.
+
+**Open it in your browser now:**
+- Local same-origin (works fully): `http://localhost:8080/bench.html` (needs the local serve; or the VPS
+  one via the line below).
+- Real-WAN (SSE/poll today): `deno task app` on the Mac → `http://localhost:5173/?gw=37.60.232.68:8080`.
+
+**TEARDOWN (one block, reversible, non-destructive):**
+```bash
+ssh -i ~/.ssh/vps-coolify kristjan@37.60.232.68 '
+  tmux kill-session -t dimos-realwan-65329 2>/dev/null   # stop serve.py
+  kill $(cat ~/realwan-source.pid) 2>/dev/null           # stop the source
+  pkill -f "dimos-bench.*serve.py"; pkill -f "dimos-bench.*bench_source"   # belt-and-suspenders (scoped to ~/dimos-bench)
+  sudo tc qdisc del dev lo root 2>/dev/null               # remove any leftover netem
+  sudo ufw delete allow 8080/tcp; sudo ufw delete allow 8443/udp; sudo ufw delete allow 32768:60999/udp   # close the ports (incl. WebRTC ICE range)
+  rm -rf ~/dimos-bench ~/realwan-*.log ~/realwan-source.pid ~/DIMOS-BENCH-AGENT-65329a9d.md
+  cd ~/code/dimos && git checkout -- . 2>/dev/null       # undo the earlier v1 rsync overlay on main
+'
+# uv + deno installs on the VPS are harmless to leave; remove with: rm -rf ~/.local/bin/uv ~/.deno
+```
+Nothing here touches the Coolify containers. `kill`/`pkill` are scoped to `~/dimos-bench` so they won't
+hit other agents' processes.

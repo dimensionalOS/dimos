@@ -14,6 +14,7 @@ from collections import deque
 import struct
 import time
 
+from fastapi import WebSocket
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 
@@ -190,7 +191,10 @@ class WebRtcDataPlane:
             except Exception:
                 self.channels.discard(ch)
 
-    async def handle(self, ws) -> None:
+    async def handle(self, ws: WebSocket) -> None:
+        # `ws: WebSocket` MUST be annotated — without the type, FastAPI treats it as a query-param
+        # dependency, fails to resolve it, and rejects the /rtc handshake with HTTP 403 (the reason
+        # WebRTC-data never connected). /ws and /media annotate their param the same way.
         import json
 
         from fastapi import WebSocketDisconnect

@@ -1,39 +1,55 @@
-# dimoscope transport benchmark — in-browser (all 3 transports)
+# dimoscope transport benchmark — REAL browser (Chrome, same-origin)
 
-_2026-06-29 21:29 · Chrome · 4000 ms/scenario · **end-to-end latency** (publish→browser), comparable across transports · synthetic `bench_publisher.py` source (no sim)._
+> **UPDATE (resolved):** the WS/WebRTC/WebTransport "0" rows below were **not** real failures. WS=0 was a
+> **stale local serve process**; WebRTC needed a `/rtc` handshake fix (untyped `ws` param → 403) + a
+> client-adapter fix (resolve on `dc.onopen`); WebTransport needed server **CORS** on `/cert`. After
+> those, **all 5 transports work in real Chrome — including browser→VPS over the real WAN** (see
+> `RESULTS-realwan.md`). The same-origin table below is kept as the original diagnostic record.
 
-Run via `app/bench.html` (`bash bench/serve-bench.sh` first → 3 servers + `bench_publisher` on both buses). Reuses the same `@dimos/topics/bench` scenarios + measurement as the headless Deno bench (`bench/bench.ts`), but in the **real browser runtime** — so **zenoh-ts (browser-only) is benched apples-to-apples** with the gateways.
 
-## Python↔Zenoh — `ws://localhost:8088`
-| scenario | hz | kB/s | lat p50 | lat p95 | lat max |
-|---|--:|--:|--:|--:|--:|
-| 4x PoseStamped (throughput) | 419 | 35.19 | 1.96 | 7.25 | 29.05 |
-| 1x PoseStamped (on-demand) | 104.25 | 8.76 | 1.83 | 7.13 | 23.69 |
-| 1x OccupancyGrid (large) | 23.25 | 84.24 | 1.85 | 5.3 | 6.86 |
 
-On-demand saving: **75%**.
+_2026-07-01 · real Chrome via claude-in-chrome MCP · page served same-origin from `serve.py` at
+`http://localhost:8080/bench.html` · single `bench_source` (LCM) · 4000 ms/scenario · end-to-end
+latency (publish→browser)._
 
-## Deno↔LCM — `ws://localhost:8089`
-| scenario | hz | kB/s | lat p50 | lat p95 | lat max |
-|---|--:|--:|--:|--:|--:|
-| 4x PoseStamped (throughput) | 415.25 | 34.87 | 1.21 | 4.79 | 15.85 |
-| 1x PoseStamped (on-demand) | 103.5 | 8.69 | 1.3 | 6.36 | 20.04 |
-| 1x OccupancyGrid (large) | 23.25 | 84.24 | 1.9 | 5.64 | 7.01 |
+This is the **real browser runtime** (not the CLI aiortc/aioquic stand-ins) — the actual `@dimos/topics`
+SDK running in Chrome's JS engine, hitting the live `serve.py`.
 
-On-demand saving: **75%**.
+## Results (Chrome)
 
-## zenoh-ts (direct) — `ws://localhost:10000`
-| scenario | hz | kB/s | lat p50 | lat p95 | lat max |
-|---|--:|--:|--:|--:|--:|
-| 4x PoseStamped (throughput) | 417 | 35.02 | 1.83 | 6.15 | 24.18 |
-| 1x PoseStamped (on-demand) | 104 | 8.73 | 1.48 | 6.97 | 19.43 |
-| 1x OccupancyGrid (large) | 23.5 | 85.14 | 2.46 | 6.29 | 10.72 |
+| mechanism | throughput hz | p50 (ms) | p95 (ms) | large/grid hz | status |
+|---|--:|--:|--:|--:|---|
+| **SSE** | 240.8 | 2.47 | 4.76 | 18.25 | ✅ works |
+| **HTTP poll** | 246.0 | 3.90 | 8.60 | 18.50 | ✅ works |
+| WebSocket | 0 | — | — | 0 | ⚠ harness 0 (see note) |
+| WebRTC data | 0 | — | — | 0 | ⚠ harness 0 (see note) |
+| WebTransport | 0 | — | — | 0 | ⚠ harness 0 (see note) |
 
-On-demand saving: **75%** — here it's **true per-client on-demand** (the browser `declareSubscriber`s the key; unsubscribed keys never transit), vs the gateways filtering on the WS hop.
+SSE ≈ HTTP-poll in real Chrome (~240–246 Hz for 4× pose, ~18 Hz for the large grid), consistent with the
+CLI/VPS numbers for those two mechanisms.
 
-## Takeaways
-- **Throughput parity** — all three deliver ~417 hz / ~35 kB/s on the 4× PoseStamped load; **zenoh-ts keeps up with the gateways** (no penalty for the direct path).
-- **End-to-end latency** (publish→browser) is comparable across all three: p50 ~1.2–2.5 ms, p95 ~5–7 ms. (This differs from `RESULTS.md`'s headless numbers, which measure only the gateway→browser WS hop via the gateway send-stamp; here every transport is measured the same publish→browser way for fairness.)
-- **75% on-demand** on each.
+## ⚠ The WS/WebRTC/WebTransport zeros are a **harness bug, not a server/transport limit**
 
-> The headless CLI bench `bench/run.sh all` covers **all three** transports under **Deno** (gateways via `bench/bench.ts`, zenoh-ts direct via `bench/bench_deno.ts`), see [RESULTS.md](RESULTS.md). This page is the in-browser cross-check — the app's real runtime, naturally a bit higher latency under display load.
+Direct probing proves the server + browser path work; the `bench.tsx` measurement adapters don't record
+them:
+
+- **Raw `WebSocket('ws://localhost:8080/ws')` from the same page, with the correct subscribe frame
+  (`{type:"subscribe",topics:["/bench/p0"]}`), received real data** (799-byte binary message). The
+  browser *can* consume the `/ws` data plane; the SDK's default WebSocket transport adapter inside the
+  `bench.tsx` measure loop is what fails to count it (SSE/poll use different adapters and work).
+- The **Deno CLI client** hits the same `/ws` fine (VPS matrix: WS ≈ 354 Hz) — `/ws` is healthy.
+- WebTransport: same-origin `/cert` returns 200 and `localhost` is a secure context, so the API is
+  available — the 0 is again the harness adapter, not a capability gap.
+
+**Cross-origin caveat found:** serving the page from vite (`:5175`) → transports at `:8080` makes
+`fetch()` to `/cert` + `/health` fail — only `/sse` + `/poll` set `access-control-allow-origin: *`
+(`servers/bench.py:93,128`). So **run the browser bench SAME-ORIGIN** (from `serve.py`'s `:8080`), or add
+CORS to `/cert` for a cross-origin / real-WAN browser run.
+
+## Follow-ups (flagged; do not affect the CLI/VPS numbers)
+1. Fix the `bench.tsx` WebSocket/WebRTC/WebTransport **measurement adapters** (raw WS works → the bug is
+   in the measure loop: subscribe timing / `reconnect:false` race), then re-run for real all-5 numbers.
+2. Add `access-control-allow-origin` to `/cert` (+ `/health`) so the SDK can be served from a different
+   origin than the gateway — required for the real-WAN "app on localhost → gateway on VPS IP" topology.
+3. Authoritative transport numbers = the CLI/VPS ones (`RESULTS-vps.md`, `RESULTS-mechanisms*.md`,
+   `bench:loss`). This page confirms **SSE/poll** in real Chrome and proves **/ws delivers to the browser**.

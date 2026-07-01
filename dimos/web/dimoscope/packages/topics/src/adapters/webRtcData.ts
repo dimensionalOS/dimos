@@ -56,23 +56,46 @@ export const createWebRtcDataTransport = (deps: WebRtcDataDeps): Transport => {
       const s = frameToSample(new Uint8Array(e.data as ArrayBuffer), Date.now());
       if (s) sampleCb?.(s);
     };
-    dc.onopen = () => statusCb?.("open");
     dc.onclose = () => statusCb?.("closed");
 
+    // Resolve only once the DataChannel is actually OPEN — not right after the offer is sent — otherwise
+    // a caller (e.g. the bench) begins measuring before any data can arrive (this was the browser "0"
+    // bug). Time out so a WAN failure (unreachable ICE/UDP) rejects instead of hanging forever.
     return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        fn();
+      };
+      const timer = setTimeout(
+        () => finish(() => reject(new Error("webrtc datachannel open timeout"))),
+        15000,
+      );
+      dc!.onopen = () => {
+        statusCb?.("open");
+        finish(() => {
+          clearTimeout(timer);
+          resolve();
+        });
+      };
       const ws = new WebSocket(sigUrl);
       sig = ws;
       ws.onopen = async () => {
         await pc!.setLocalDescription(await pc!.createOffer());
         await waitIce(pc!);
         ws.send(JSON.stringify({ op: "offer", sdp: pc!.localDescription!.sdp }));
-        resolve(); // channel opens shortly after the answer; samples flow on dc.onmessage
+        // wait for dc.onopen above — do NOT resolve here
       };
       ws.onmessage = async (e: MessageEvent) => {
         const m = JSON.parse(e.data as string);
         if (m.op === "answer") await pc!.setRemoteDescription({ type: "answer", sdp: m.sdp });
       };
-      ws.onerror = () => reject(new Error("webrtc signaling failed"));
+      ws.onerror = () =>
+        finish(() => {
+          clearTimeout(timer);
+          reject(new Error("webrtc signaling failed"));
+        });
     });
   }
 
