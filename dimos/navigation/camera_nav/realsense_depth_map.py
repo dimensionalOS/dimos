@@ -537,10 +537,9 @@ class DepthStreamer:
         rr.log("world/cloud", rr.Points3D(positions=xyz[idx], colors=cloud_colors, radii=0.003))
 
         # Live cloud map — same points as live cloud, accumulated into persistent world map.
-        # Runs in main thread (no threading lag, no ICP dependency).
+        # Logged every frame so Rerun always has the latest snapshot regardless of scrubber pos.
         self._live_vox.add(xyz)
-        if frame % self.MAP_EVERY == 0:
-            self._log_live_map(cam_z)
+        self._log_live_map(cam_z, frame)
 
         # Hand world-frame pts + pose to map worker (same payload shape as ZED)
         if self._src.pose_locked:
@@ -580,7 +579,7 @@ class DepthStreamer:
             xyz_cam_filt = (xyz_map - cam_pos) @ R
             self._src.odom.update(xyz_cam_filt, R)
 
-    def _log_live_map(self, cam_z: float = 0.0) -> None:
+    def _log_live_map(self, cam_z: float = 0.0, frame: int = 0) -> None:
         """Log accumulated live cloud as persistent world map (main-thread, no lag)."""
         pts = self._live_vox.points()
         if len(pts) == 0:
@@ -588,10 +587,12 @@ class DepthStreamer:
         n   = min(len(pts), self.MAX_MAP)
         idx = np.random.choice(len(pts), n, replace=False) if len(pts) > n else np.arange(n)
         rr.log("world/live_cloud_map", rr.Points3D(
-            positions=pts[idx],
+            positions=pts[idx].copy(),
             colors=_height_color(pts[idx, 2] - cam_z),
             radii=0.005,
         ))
+        if frame % 30 == 0:
+            print(f"  → Rerun world/live_cloud_map: {n} pts (vox={len(pts)})", flush=True)
 
     def _log_map(self, cam_z: float = 0.0) -> None:
         with self._vox_lock:
@@ -637,7 +638,7 @@ def main() -> None:
     ))
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
     rr.log("world/cloud", rr.Points3D([[0, 0, 0]]), static=True)
-    rr.log("world/live_cloud_map", rr.Points3D([[0, 0, 0]]), static=True)
+    # live_cloud_map is logged temporally every frame — no static seed needed
 
     src = RealSenseDepthSource(width=848, height=480, fps=15)
     print("RealSense open — Ctrl-C to quit.")
