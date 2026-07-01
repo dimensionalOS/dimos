@@ -509,8 +509,10 @@ class DepthStreamer:
 
         xyz_stable, _ = self._bp.project(pkt, stable_mask)
 
-        # Hand off stable points to map thread — non-blocking; drop if worker is behind
-        if self._src.pose_locked and len(xyz_stable) > 0:
+        # Hand off stable points to map thread — non-blocking; drop if worker is behind.
+        # Accumulate even before VIO locks: pose_R=I, pose_t=0 → camera frame.
+        # Once VIO locks the world-frame transform corrects automatically.
+        if len(xyz_stable) > 0:
             try:
                 self._map_queue.put_nowait(
                     (xyz_stable, pkt.pose_t.copy(), self._cam_z, frame)
@@ -544,6 +546,7 @@ class DepthStreamer:
                 self._vox.add(xyz_map)
 
             if frame % self.MAP_EVERY == 0:
+                rr.set_time("frame", sequence=frame)
                 self._log_map(cam_z)
 
     def _log_map(self, cam_z: float | None = None) -> None:
