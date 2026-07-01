@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from dimos.simulation.scene_assets.package import SceneMeshAlignment, ScenePackage
+from dimos.simulation.scene_assets.spec import SceneMeshAlignment, ScenePackage
 from dimos.visualization.rerun.scene_package import (
     resolve_scene_package_for_rerun,
     scene_alignment_matrix,

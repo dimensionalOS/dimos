@@ -268,6 +268,6 @@ dimos/experimental/scene_cooking/entities/visuals.py  entity visual extraction
 dimos/experimental/scene_cooking/entities/collision.py entity collision hulls
 dimos/experimental/scene_cooking/mujoco/collision_export.py MuJoCo XML bake
 dimos/experimental/scene_cooking/mujoco/collision_policy.py static collision policy
-dimos/simulation/scene_assets/package.py              runtime package metadata contract
+dimos/simulation/scene_assets/spec.py              runtime package metadata contract
 dimos/simulation/scenes/catalog.py                   runtime name/path resolution
 ```

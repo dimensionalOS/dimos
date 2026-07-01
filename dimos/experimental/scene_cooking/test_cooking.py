@@ -24,7 +24,7 @@ from dimos.experimental.scene_cooking import planning as plan_module
 from dimos.experimental.scene_cooking.package_config import browser_visual_spec_for_target
 from dimos.experimental.scene_cooking.sidecar import SceneCookSidecar
 from dimos.experimental.scene_cooking.source_assets.mesh import SceneMeshAlignment, ScenePrimMesh
-from dimos.simulation.scene_assets.package import (
+from dimos.simulation.scene_assets.spec import (
     ARTIFACT_FRAMES,
     ScenePackage,
     load_scene_package,

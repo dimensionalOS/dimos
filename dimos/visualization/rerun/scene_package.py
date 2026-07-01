@@ -24,7 +24,7 @@ from typing import Any, cast
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from dimos.simulation.scene_assets.package import (
+from dimos.simulation.scene_assets.spec import (
     SceneMeshAlignment,
     ScenePackage,
     load_scene_package,

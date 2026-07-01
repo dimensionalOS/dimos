@@ -39,7 +39,7 @@ from typing import Any
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 
-from dimos.simulation.scene_assets.package import SceneMeshAlignment
+from dimos.simulation.scene_assets.spec import SceneMeshAlignment
 
 _TRIMESH_DUPLICATE_SUFFIX_RE = re.compile(r"_[0-9a-f]{6}$", re.IGNORECASE)
 

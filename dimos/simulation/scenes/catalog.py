@@ -19,7 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from dimos.simulation.scene_assets.package import ScenePackage, load_scene_package
+from dimos.simulation.scene_assets.spec import ScenePackage, load_scene_package
 from dimos.utils.data import get_data
 
 DEFAULT_SCENE = "office"

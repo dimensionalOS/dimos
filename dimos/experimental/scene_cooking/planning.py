@@ -40,7 +40,7 @@ from dimos.experimental.scene_cooking.source_assets.mesh import (
     ScenePrimMesh,
     load_scene_prims,
 )
-from dimos.simulation.scene_assets.package import SceneMeshAlignment
+from dimos.simulation.scene_assets.spec import SceneMeshAlignment
 
 _HASH_SUFFIX_RE = re.compile(r"_[0-9a-fA-F]{6,}$")
 

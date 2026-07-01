@@ -52,7 +52,7 @@ Supported inputs:
 Use `load_scene_package()` when you already have the exact metadata path:
 
 ```python
-from dimos.simulation.scene_assets.package import load_scene_package
+from dimos.simulation.scene_assets.spec import load_scene_package
 
 package = load_scene_package("data/scene_packages/dimos_office/scene.meta.json")
 ```

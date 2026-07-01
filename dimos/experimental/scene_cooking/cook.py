@@ -49,7 +49,7 @@ from dimos.experimental.scene_cooking.planning import EntityPrototypePlan, build
 from dimos.experimental.scene_cooking.sidecar import SceneCookSidecar
 from dimos.experimental.scene_cooking.source_assets.inspect import inspect_scene_asset
 from dimos.experimental.scene_cooking.source_assets.normalize import prepare_scene_source
-from dimos.simulation.scene_assets.package import (
+from dimos.simulation.scene_assets.spec import (
     SceneMeshAlignment,
     ScenePackage,
 )

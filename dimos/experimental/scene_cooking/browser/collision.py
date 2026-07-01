@@ -32,7 +32,7 @@ from dimos.experimental.scene_cooking.source_assets.mesh import (
     load_scene_prims,
     split_disconnected_scene_prims,
 )
-from dimos.simulation.scene_assets.package import SceneMeshAlignment
+from dimos.simulation.scene_assets.spec import SceneMeshAlignment
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
