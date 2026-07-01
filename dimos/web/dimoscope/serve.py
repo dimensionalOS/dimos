@@ -41,9 +41,15 @@ ZENOH_KEY = os.environ.get("ZENOH_KEY", "**")
 LCM_HOST = os.environ.get("DIMOS_LCM_HOST", "239.255.76.67")
 LCM_PORT = int(os.environ.get("DIMOS_LCM_PORT", 7667))
 DIST = Path(os.environ.get("STATIC_DIR", Path(__file__).parent / "app" / "dist"))
+# Optional operator QoS map (topic-glob → scheduler lane) for custom per-blueprint topics the name/type
+# heuristic can't classify. Absent = no rules = pure heuristic. Copy qos.rules.example.json to enable.
+QOS_RULES = Path(os.environ.get("QOS_RULES", Path(__file__).parent / "qos.rules.json"))
 
 
 def build_app() -> FastAPI:
+    from servers import qos_sched
+
+    qos_sched.load_qos_rules(QOS_RULES)
     bus = Bus()
     data = DataPlane(bus)
     media = MediaPlane(bus)

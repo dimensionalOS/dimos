@@ -110,6 +110,22 @@ Declaring `pose=bulk` (low) + `lidar=command` (critical) **flips** which stream 
 link — the opposite of the default. The client owns the lane vocabulary (`qos.ts`); only the resolved
 primitives cross the wire, so the server never needs the lane table for client-declared topics.
 
+## Custom / per-blueprint topics
+Topics are authored per blueprint, so their names aren't known ahead of time. A topic gets its lane from
+three layers, in order:
+1. **Client-declared** QoS on the `subscribe` op (`st.qos[topic]`) — the subscriber wins, always.
+2. **Operator config map** — an optional `qos.rules.json` (copy `qos.rules.example.json`) of
+   `{"topic": "<glob>", "lane": "command|sensor|default|bulk"}`, first match wins. A `#` in the glob
+   matches `"<topic>#<type>"`, so you can classify by message type (e.g. `*#my_msgs.DriveCommand`).
+   This mirrors how dimos itself declares QoS (`global_config.zenoh_qos`).
+3. **Name/type heuristic** (`default_priority` / `qos.ts` `defaultLane`) — keyword match on name + type;
+   anything unrecognised lands in `default` (safe middle), never starved.
+
+Blueprint-*declared* QoS (a priority hint on the `Out` port) was considered but isn't simple today: dimos
+ports carry no QoS field and the gateway is a decoupled wire relay with no manifest channel to read one
+from — it would need a dimos-core port change plus a new in-band manifest topic. The config map gets the
+same operator control with zero core changes.
+
 ## Honest caveats
 - Priority only matters under saturation — on a fat link both modes look identical (correctly).
 - The loss-shedding is at the gateway egress (the browser-link bottleneck); the bus (Zenoh) does its own

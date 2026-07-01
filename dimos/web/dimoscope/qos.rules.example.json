@@ -1,0 +1,7 @@
+[
+  {"_comment": "Optional QoS map: topic-glob -> scheduler lane. Copy this file to qos.rules.json to enable. First match wins. Lanes: command|sensor|default|bulk. A '#' in a pattern matches '<topic>#<type>' so you can classify by message type. This only sets the SERVER DEFAULT for a topic; a client's declared QoS still overrides it. dimoscope reads the '_comment' key harmlessly (only 'topic' + 'lane' are used)."},
+
+  {"topic": "/blueprintX/status", "lane": "sensor"},
+  {"topic": "/blueprintX/debug/*", "lane": "bulk"},
+  {"topic": "*#my_msgs.DriveCommand", "lane": "command"}
+]

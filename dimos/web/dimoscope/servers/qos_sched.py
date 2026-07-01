@@ -16,8 +16,12 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from collections import OrderedDict, deque
+from dataclasses import dataclass
+import fnmatch
+import json
+from pathlib import Path
+import re
 
 # lane → (priority rank, conflate?, keep_last depth). Mirrors packages/topics/src/qos.ts LANES + defaultLane.
 _CMD = re.compile(r"(^|/)(cmd_vel|cmd|teleop|goal|clicked_point|move_base|nav_goal)(/|$)", re.I)
@@ -25,7 +29,9 @@ _BULK = re.compile(
     r"(^|/)(lidar|laser|scan|points?|point_?cloud|cloud|camera|image|img|depth|rgb|map|costmap|occupancy|grid)(/|$)",
     re.I,
 )
-_SENSOR = re.compile(r"(^|/)(pose|odom|imu|tf|joint|battery|twist|velocity|state|wrench|p\d+)(/|$)", re.I)
+_SENSOR = re.compile(
+    r"(^|/)(pose|odom|imu|tf|joint|battery|twist|velocity|state|wrench|p\d+)(/|$)", re.I
+)
 _CMD_T = re.compile(r"(Twist|Goal)", re.I)
 _BULK_T = re.compile(r"(PointCloud|LaserScan|Image|OccupancyGrid|CompressedImage)", re.I)
 _SENSOR_T = re.compile(r"(Pose|Odometry|Imu|Transform|JointState|Quaternion|Vector3)", re.I)
@@ -38,11 +44,80 @@ LANE_BULK = (0, True, 1)
 CONTROL = (3, False, 256)  # json control (hello/topic/rpc-res) — top priority, generously buffered
 
 _RANK = 4  # number of priority classes (0..3)
-_WEIGHTS = {3: 8, 2: 4, 1: 2, 0: 1}  # weighted round-robin budget per class (low keeps a floor of 1)
+_WEIGHTS = {
+    3: 8,
+    2: 4,
+    1: 2,
+    0: 1,
+}  # weighted round-robin budget per class (low keeps a floor of 1)
+
+
+# ── optional operator config map: topic-glob → lane ─────────────────────────────────────────────
+# dimos itself does QoS as a first-match glob→rule list (global_config.zenoh_qos / ZenohQoS); this is the
+# dimoscope-lane analogue for the long tail of custom per-blueprint topics the name/type heuristic below
+# can't classify. Off by default (no rules file → empty). It slots BETWEEN the client override and the
+# heuristic — final precedence at the data plane: client override > these rules > heuristic > LANE_DEFAULT.
+LANE_BY_NAME = {
+    "command": LANE_COMMAND,
+    "sensor": LANE_SENSOR,
+    "default": LANE_DEFAULT,
+    "bulk": LANE_BULK,
+}
+
+
+@dataclass(frozen=True)
+class QosRule:
+    pattern: str  # fnmatch glob vs the topic — or vs "<topic>#<type>" when the pattern contains '#'
+    lane: str  # one of LANE_BY_NAME
+
+
+_RULES: list[QosRule] = []
+
+
+def set_qos_rules(rules: list[QosRule]) -> None:
+    """Replace the active rule list (first match wins). Empty → pure name/type heuristic. Rules naming an
+    unknown lane are dropped."""
+    global _RULES
+    _RULES = [r for r in rules if r.lane in LANE_BY_NAME]
+
+
+def load_qos_rules(path) -> int:  # type: ignore[no-untyped-def]
+    """Load an optional JSON rule file: `[{"topic": "/foo/**", "lane": "sensor"}, ...]`. Missing file →
+    no-op; malformed → warn and skip (never crash the service). Returns the count of rules applied."""
+    p = Path(path)
+    if not p.is_file():
+        return 0
+    try:
+        raw = json.loads(p.read_text())
+        rules = [
+            QosRule(str(r["topic"]), str(r["lane"]))
+            for r in raw
+            if isinstance(r, dict) and "topic" in r and "lane" in r  # skip comment/partial entries
+        ]
+    except (OSError, ValueError, TypeError) as e:
+        print(f"[qos] ignoring bad rules file {p}: {e}", flush=True)
+        return 0
+    set_qos_rules(rules)
+    print(f"[qos] loaded {len(_RULES)} topic→lane rule(s) from {p}", flush=True)
+    return len(_RULES)
+
+
+def _rule_lane(topic: str, typ: str) -> tuple[int, bool, int] | None:
+    """First matching config rule → its lane tuple, else None. A '#' in the pattern matches "<topic>#<type>"."""
+    for r in _RULES:
+        target = f"{topic}#{typ}" if "#" in r.pattern else topic
+        if fnmatch.fnmatch(target, r.pattern):
+            return LANE_BY_NAME[r.lane]
+    return None
 
 
 def default_priority(topic: str, typ: str = "") -> tuple[int, bool, int]:
-    """Server-side mirror of qos.ts defaultLane → (rank, conflate, depth)."""
+    """Server default → (rank, conflate, depth). Precedence: operator config rules (set_qos_rules /
+    load_qos_rules) first, then the name/type heuristic (mirror of qos.ts defaultLane), then LANE_DEFAULT.
+    A client's declared QoS still overrides all of this at the data plane (see data.py)."""
+    ruled = _rule_lane(topic, typ)
+    if ruled is not None:
+        return ruled
     if _CMD.search(topic) or _CMD_T.search(typ):
         return LANE_COMMAND
     if _BULK.search(topic) or _BULK_T.search(typ):
@@ -70,13 +145,10 @@ def declared_to_class(
 
 
 class PriorityOutbox:
-    """A per-client outbox the writer drains. `fifo=True` reproduces the old single bounded FIFO (the A/B
-    baseline); otherwise it's the priority + conflation + WRR scheduler above. Never blocks on put."""
+    """A per-client outbox the writer drains: the priority + conflation + WRR scheduler above.
+    Never blocks on put."""
 
-    def __init__(self, fifo: bool = False, fifo_max: int = 4096) -> None:
-        self.fifo = fifo
-        self._fifo_max = fifo_max
-        self._fifo: deque = deque()
+    def __init__(self) -> None:
         # per class: OrderedDict[topic -> deque(frames)]; ordered for round-robin across topics
         self._cls: list[OrderedDict[str, deque]] = [OrderedDict() for _ in range(_RANK)]
         self._credits = dict(_WEIGHTS)
@@ -90,16 +162,11 @@ class PriorityOutbox:
         self._put(topic, prio, conflate, depth, item)
 
     def _put(self, topic: str, prio: int, conflate: bool, depth: int, item) -> None:  # type: ignore[no-untyped-def]
-        if self.fifo:
-            self._fifo.append(item)
-            while len(self._fifo) > self._fifo_max:
-                self._fifo.popleft()  # bounded: drop oldest (Foxglove-style)
-        else:
-            bucket = self._cls[prio].get(topic)
-            if bucket is None:
-                bucket = deque(maxlen=1 if conflate else max(1, depth))
-                self._cls[prio][topic] = bucket
-            bucket.append(item)  # conflate → maxlen=1 overwrites; reliable → bounded keep_last
+        bucket = self._cls[prio].get(topic)
+        if bucket is None:
+            bucket = deque(maxlen=1 if conflate else max(1, depth))
+            self._cls[prio][topic] = bucket
+        bucket.append(item)  # conflate → maxlen=1 overwrites; reliable → bounded keep_last
         self._event.set()
 
     # ── get (writer) ────────────────────────────────────────────────────────
@@ -112,8 +179,6 @@ class PriorityOutbox:
             await self._event.wait()
 
     def _pick(self):  # type: ignore[no-untyped-def]
-        if self.fifo:
-            return self._fifo.popleft() if self._fifo else None
         # weighted round-robin: serve a class while it has credit; refill when all credited classes drained
         for _ in range(2):  # at most one refill pass
             for c in range(_RANK - 1, -1, -1):

@@ -27,19 +27,15 @@ from fastapi import WebSocket, WebSocketDisconnect
 from .bus import Bus, Sample
 from .qos_sched import PriorityOutbox, declared_to_class, default_priority
 
-# QOS_SCHED=0 → the old single FIFO outbox (the A/B baseline); default on → per-client priority outbox
-# that drains by priority + conflation so important topics (pose/teleop) survive a saturated browser link.
-QOS_SCHED = os.environ.get("QOS_SCHED", "1") != "0"
 # EGRESS_KBPS>0 → pace each client's writer to this bitrate (egress shaping to the client's link budget).
 # This keeps the backlog in the priority outbox — where the scheduler enforces priority — instead of
 # letting it bloat the kernel/proxy buffers downstream, which is the only way gateway-egress priority
-# actually bites on a constrained link (otherwise the queue, and thus the FIFO, lives in the socket buffer).
+# actually bites on a constrained link (otherwise the queue lives in the socket buffer, drained FIFO).
 EGRESS_KBPS = float(os.environ.get("EGRESS_KBPS", "0"))
 
 MAX_LIN = 1.0  # m/s clamp
 MAX_ANG = 1.5  # rad/s clamp
 DEFAULT_TTL = 400.0  # deadman timeout (ms)
-CLIENT_QUEUE_MAX = 4096  # frames buffered per client before we drop (slow-client backpressure)
 
 # RPC bridge: which dimos @rpc commands the browser may invoke (server-side AUTHORITATIVE whitelist).
 RPC_COMMANDS = [
@@ -66,10 +62,10 @@ class _Client:
         self.subs: set[str] = set()  # subscribed topics; "*" = all
         self.rate: dict[str, float] = {}  # topic -> maxHz (0/absent = unlimited)
         self.last: dict[str, float] = {}  # topic -> last forward time (ms)
-        self.qos: dict[str, tuple] = {}  # topic -> (rank, conflate, depth) client override (else default)
-        self.q = PriorityOutbox(
-            fifo=not QOS_SCHED, fifo_max=CLIENT_QUEUE_MAX
-        )  # priority/conflation outbox
+        self.qos: dict[
+            str, tuple
+        ] = {}  # topic -> (rank, conflate, depth) client override (else default)
+        self.q = PriorityOutbox()  # per-client priority + conflation outbox
         self.deadman: asyncio.TimerHandle | None = None
 
 
@@ -147,7 +143,9 @@ class DataPlane:
         if not self.clients:
             return
         now = time.time() * 1000.0
-        default = default_priority(s.topic, s.type)  # server default; clients may override per subscription
+        default = default_priority(
+            s.topic, s.type
+        )  # server default; clients may override per subscription
         frame: bytes | None = None
         for st in self.clients.values():
             if not ("*" in st.subs or s.topic in st.subs):
@@ -159,7 +157,9 @@ class DataPlane:
                 st.last[s.topic] = now
             if frame is None:
                 frame = struct.pack(">d", now) + s.lc02  # [f64 gateway-send-ms][LC02]
-            prio, conflate, depth = st.qos.get(s.topic, default)  # client override else server default
+            prio, conflate, depth = st.qos.get(
+                s.topic, default
+            )  # client override else server default
             st.q.put_data(
                 s.topic, prio, conflate, depth, frame
             )  # priority outbox; never blocks/raises
@@ -220,7 +220,9 @@ class DataPlane:
             st.subs.add(m["topic"])
             if m.get("maxHz"):
                 st.rate[m["topic"]] = float(m["maxHz"])
-            self._apply_qos(st, m["topic"], m)  # client-declared priority/reliability/depth (overrides default)
+            self._apply_qos(
+                st, m["topic"], m
+            )  # client-declared priority/reliability/depth (overrides default)
         elif op == "unsubscribe":
             st.subs.discard(m["topic"])
             st.rate.pop(m["topic"], None)
