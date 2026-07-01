@@ -24,7 +24,7 @@ Throughout this document, replace `X.Y.Z` with the version you are releasing (e.
 1. Run the full test suite locally on the release branch.
 
    ```bash
-   uv run pytest -m 'not tool' --error-for-skips
+   uv run pytest -m '' --error-for-skips
    ```
 
 2. [Run](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow#running-a-workflow) the `release` workflow on the `release/X.Y.Z` branch.
