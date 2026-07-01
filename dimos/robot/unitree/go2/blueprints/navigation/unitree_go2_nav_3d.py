@@ -91,7 +91,7 @@ unitree_go2_nav_3d = autoconnect(
             (GO2Connection, "odom", "odom_go2"),
         ]
     ),
-    PointLio.blueprint(body_frame_id="body"),
+    PointLio.blueprint(child_frame_id="body"),
     RayTracingVoxelMap.blueprint(
         voxel_size=voxel_size,
         emit_every=1,
