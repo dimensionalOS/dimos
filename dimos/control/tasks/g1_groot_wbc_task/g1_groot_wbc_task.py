@@ -171,6 +171,26 @@ _NUM_ACTIONS = 15
 _NUM_MOTORS = 29
 
 
+def _preferred_onnx_providers() -> list[str]:
+    available = ort.get_available_providers()
+    providers: list[str] = []
+
+    if "CUDAExecutionProvider" in available:
+        preload_dlls = getattr(ort, "preload_dlls", None)
+        if preload_dlls is not None:
+            try:
+                preload_dlls(cuda=True, cudnn=True, msvc=False)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to preload ONNXRuntime CUDA/cuDNN libraries",
+                    error=repr(exc),
+                )
+        providers.append("CUDAExecutionProvider")
+
+    providers.append("CPUExecutionProvider")
+    return providers
+
+
 @dataclass
 class G1GrootWBCTaskConfig:
     """Configuration for the GR00T WBC task.
@@ -289,7 +309,7 @@ class G1GrootWBCTask(BaseControlTask):
         self._joint_names_set = frozenset(config.joint_names)
         self._all_joint_names = list(config.all_joint_names)
 
-        providers = ort.get_available_providers()
+        providers = _preferred_onnx_providers()
         self._balance_session = ort.InferenceSession(str(config.balance_onnx), providers=providers)
         self._walk_session = ort.InferenceSession(str(config.walk_onnx), providers=providers)
         self._balance_input = self._balance_session.get_inputs()[0].name
@@ -299,7 +319,9 @@ class G1GrootWBCTask(BaseControlTask):
             task=name,
             balance=str(config.balance_onnx),
             walk=str(config.walk_onnx),
-            providers=providers,
+            requested_providers=providers,
+            balance_providers=self._balance_session.get_providers(),
+            walk_providers=self._walk_session.get_providers(),
         )
 
         self._default_29 = np.asarray(config.default_positions_29, dtype=np.float32)
@@ -661,6 +683,42 @@ class G1GrootWBCTask(BaseControlTask):
         self._ramp_start = None
         self._reset_policy_state()
         logger.info("G1GrootWBCTask disarmed (holding current pose)", task=self._name)
+        return True
+
+    def reset_runtime_state(self, reactivate: bool | None = None) -> bool:
+        """Clear runtime policy state after a simulation discontinuity.
+
+        ``reactivate=None`` preserves whether the task was armed/arming before
+        reset. Passing ``True`` forces a clean immediate re-arm on the next
+        coordinator tick, which is useful after MuJoCo respawn.
+        """
+        was_armed = self._armed or self._arming or self._arm_pending
+        should_reactivate = was_armed if reactivate is None else bool(reactivate)
+
+        self._armed = False
+        self._arming = False
+        self._arm_pending = False
+        self._ramp_start = None
+        self._arming_start_t = 0.0
+        self._last_targets = None
+        self._state_seen = False
+        self._cached_q_29[:] = self._default_29
+        self._cached_dq_29[:] = 0.0
+        self._cached_q_15[:] = self._default_15
+        self._reset_policy_state()
+        with self._cmd_lock:
+            self._cmd[:] = 0.0
+            self._last_cmd_time = 0.0
+
+        if self._active and should_reactivate:
+            self._arming_duration = 0.0
+            self._arm_pending = True
+
+        logger.info(
+            "G1GrootWBCTask runtime state reset",
+            task=self._name,
+            reactivate=should_reactivate,
+        )
         return True
 
     def set_dry_run(self, enabled: bool) -> None:

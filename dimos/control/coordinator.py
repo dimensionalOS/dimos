@@ -552,6 +552,24 @@ class ControlCoordinator(Module):
                         logger.exception(f"set_dry_run() raised on task {task.name!r}")
 
     @rpc
+    def reset_runtime_state(self, reactivate: bool | None = None) -> dict[str, bool]:
+        """Reset transient state on tasks that expose ``reset_runtime_state``.
+
+        This is meant for simulation/runtime discontinuities such as MuJoCo
+        respawn, where task histories and latched commands must be cleared
+        without tearing down the coordinator.
+        """
+        results: dict[str, bool] = {}
+        with self._task_lock:
+            for task in self._tasks.values():
+                try:
+                    results[task.name] = bool(task.reset_runtime_state(reactivate=reactivate))
+                except Exception:
+                    logger.exception(f"reset_runtime_state() raised on task {task.name!r}")
+                    results[task.name] = False
+        return results
+
+    @rpc
     def task_invoke(
         self, task_name: TaskName, method: str, kwargs: dict[str, Any] | None = None
     ) -> Any:
