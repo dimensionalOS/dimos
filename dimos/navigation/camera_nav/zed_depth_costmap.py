@@ -23,7 +23,6 @@ VOX_SIZE     = 0.020   # 2.0 cm per-frame voxels (unchanged)
 _Z_REL_HI   =  0.5    # camera-relative ceiling (0.5 m above camera)
 _FLOOR_Z    =  0.03   # absolute world-Z floor cutoff (3 cm above gravity-aligned floor)
 _GRAD_THRESH =  0.30  # Sobel gradient magnitude threshold — pixels above this are edge artifacts
-_MAP_VOX    =  0.050  # 5 cm world-map cells — coarser than per-frame to absorb VIO pose noise
 _MIN_OBS    =  2      # observations in distinct frames before a cell is marked occupied
 _MAP_EVERY  =  5      # log world/world_map every N frames
 
@@ -71,8 +70,8 @@ class WorldMap:
     def update(self, xyz_world: np.ndarray, frame: int) -> None:
         if len(xyz_world) == 0:
             return
-        # Re-voxelise at map resolution and dedup within this frame
-        vk   = np.floor(xyz_world / _MAP_VOX).astype(np.int32)
+        # Same 2 cm voxel keys as the per-frame pipeline — no re-discretization
+        vk   = np.floor(xyz_world / VOX_SIZE).astype(np.int32)
         keys = _pack(vk)
         _, first = np.unique(keys, return_index=True)
         keys = keys[first]
@@ -451,7 +450,7 @@ def main() -> None:
                     rr.log("world/world_map", rr.Points3D(
                         positions=occ,
                         colors=_height_color(occ[:, 2] - cam_z),
-                        radii=0.025,
+                        radii=0.010,
                     ))
 
             fps = frame / max(ts - t0, 1e-6)
