@@ -26,7 +26,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-06-22T17:24:07.182083Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -1505,7 +1505,7 @@ wheels = [
 
 [[package]]
 name = "dimos"
-version = "0.0.13"
+version = "0.0.13.post1"
 source = { editable = "." }
 dependencies = [
     { name = "bleak" },
@@ -1620,6 +1620,7 @@ all = [
     { name = "viser", extra = ["urdf"] },
     { name = "xacro" },
     { name = "xarm-python-sdk" },
+    { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
 apriltag = [
     { name = "opencv-contrib-python" },
@@ -1652,6 +1653,7 @@ base = [
     { name = "transformers", extra = ["torch"] },
     { name = "ultralytics" },
     { name = "uvicorn" },
+    { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
 cpu = [
     { name = "onnxruntime" },
@@ -1750,6 +1752,7 @@ unitree = [
     { name = "ultralytics" },
     { name = "unitree-webrtc-connect" },
     { name = "uvicorn" },
+    { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
 unitree-dds = [
     { name = "chromadb" },
@@ -1783,10 +1786,12 @@ unitree-dds = [
     { name = "unitree-sdk2py-dimos" },
     { name = "unitree-webrtc-connect" },
     { name = "uvicorn" },
+    { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
 visualization = [
     { name = "dimos-viewer" },
     { name = "rerun-sdk" },
+    { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
 web = [
     { name = "fastapi" },
@@ -2032,8 +2037,8 @@ requires-dist = [
     { name = "qpsolvers", extras = ["proxqp"], marker = "extra == 'manipulation'", specifier = ">=4.12.0" },
     { name = "reactivex" },
     { name = "reportlab", marker = "extra == 'apriltag'", specifier = ">=4.5.0" },
-    { name = "rerun-sdk", specifier = "==0.32.0a1" },
-    { name = "rerun-sdk", marker = "extra == 'visualization'", specifier = "==0.32.0a1" },
+    { name = "rerun-sdk", specifier = "==0.32.0" },
+    { name = "rerun-sdk", marker = "extra == 'visualization'", specifier = "==0.32.0" },
     { name = "roboplan", marker = "extra == 'manipulation'" },
     { name = "scipy", specifier = ">=1.15.1" },
     { name = "sortedcontainers", specifier = "==2.4.0" },
@@ -2062,6 +2067,7 @@ requires-dist = [
     { name = "xacro", marker = "extra == 'manipulation'" },
     { name = "xarm-python-sdk", marker = "extra == 'manipulation'", specifier = ">=1.17.0" },
     { name = "xarm-python-sdk", marker = "extra == 'misc'", specifier = ">=1.17.0" },
+    { name = "yourdfpy", marker = "(platform_machine != 'aarch64' and extra == 'visualization') or (sys_platform != 'linux' and extra == 'visualization')", specifier = ">=0.0.60" },
 ]
 provides-extras = ["misc", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "sim", "mapping", "drone", "dds", "base", "apriltag", "all"]
 
@@ -7551,21 +7557,22 @@ wheels = [
 
 [[package]]
 name = "rerun-sdk"
-version = "0.32.0a1"
+version = "0.32.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pillow" },
+    { name = "psutil" },
     { name = "pyarrow" },
     { name = "typing-extensions" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c7/e0/5d92c02d6ca63b5692e72ad3c5b89e32d44c3a6a99a74be3cb9a9d2c9741/rerun_sdk-0.32.0a1-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:704e031c4ed3eb83837ce37b73741082ab669a2b4c88348a08ba61e3ba6d8656", size = 123843351, upload-time = "2026-04-29T18:59:44.469Z" },
-    { url = "https://files.pythonhosted.org/packages/ab/97/1daa4751a281bdb6cda3473229b2746779093ffaba70dd868a3074ef3392/rerun_sdk-0.32.0a1-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:0a821b30f287dabbf694aa1715e4dad0e31990cf4b612757c895f096885512e9", size = 133447478, upload-time = "2026-04-29T18:59:49.946Z" },
-    { url = "https://files.pythonhosted.org/packages/06/9d/84170e6722a09294b57d578fc1d01266c6e78408a544876f5271ecfa66a9/rerun_sdk-0.32.0a1-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:8045beb820372e092a6cf100fb87091fa804168e5cf8a0c29f97cdee56b134d8", size = 137724590, upload-time = "2026-04-29T18:59:55.238Z" },
-    { url = "https://files.pythonhosted.org/packages/ba/2f/09845dcdf14047cc8118566572628c533f57f6a232ee0b3fd61283b153e8/rerun_sdk-0.32.0a1-cp310-abi3-win_amd64.whl", hash = "sha256:1d6f8c3d50699ae075551a62e971730870a685cb74189b550a348561f37f9fe5", size = 118766780, upload-time = "2026-04-29T19:00:00.121Z" },
+    { url = "https://files.pythonhosted.org/packages/bd/c5/456bf0f0d08da33c4d8e6d1cc4d8b37ae0a6d9f7b0c8b8f9933fbf9ddde2/rerun_sdk-0.32.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:f61eda2cc87ec279ad3a16c8cc1f74a99f93002d834aae05db84df8f49a2094e", size = 125148629, upload-time = "2026-05-12T22:15:27.523Z" },
+    { url = "https://files.pythonhosted.org/packages/67/b8/3ee028b0306f718abd1f08140fdc6cdd090e4fcf6989005876f93f49f394/rerun_sdk-0.32.0-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:f6652ad052712cd50621893d022bfbf9b4d6b9fb2afb32a9b0c674b0f64dccef", size = 134646228, upload-time = "2026-05-12T22:15:35.365Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/a6/1d63b51f2fb9b1f4153ac7c1e2c6d12da37fef1600d045ba1771c396d17f/rerun_sdk-0.32.0-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:5ba3f389065c9ec303445a9ba23ec59c711e5a0fd1327aa327733ff54d9d09b4", size = 138941516, upload-time = "2026-05-12T22:15:40.87Z" },
+    { url = "https://files.pythonhosted.org/packages/83/a2/4e090ddb35af23d1ab6f57d957b0fd641b5d07976805e0730bbf8512b3d8/rerun_sdk-0.32.0-cp310-abi3-win_amd64.whl", hash = "sha256:381a77e2c368475715e1c34f01419fa928cc2b99c9c570e36543298711c42669", size = 119822233, upload-time = "2026-05-12T22:15:46.728Z" },
 ]
 
 [[package]]
