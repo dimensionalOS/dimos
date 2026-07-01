@@ -496,7 +496,7 @@ class DepthStreamer:
         self._src            = source
         self._bp             = backproj
         self._grad           = grad_filter or GradientStabilityFilter()
-        self._vox            = FastVoxelMap(voxel_size=0.02)
+        self._vox            = FastVoxelMap(voxel_size=0.05)
         self._vox_lock       = threading.Lock()
         self._cam_z          = 0.0
         self._pinhole_logged = False
@@ -559,14 +559,20 @@ class DepthStreamer:
                 return
             xyz_world, cam_pos, cam_z, frame = item
 
-            # Floor filter only — live cloud already has the right points,
-            # just exclude floor (navigable free space) and ceiling.
+            # Ray termination: keep only the nearest point per ~3° angular bin.
+            # Background pixels that stereo leaks behind an obstacle share the same
+            # ray direction as the real surface but are farther away — dropped here.
+            xyz_world = _nearest_per_ray(xyz_world, cam_pos)
+            if len(xyz_world) == 0:
+                continue
+
+            # Height band + floor-angle filter (all numpy)
             h_rel    = xyz_world[:, 2] - cam_z
             rays     = xyz_world - cam_pos
             dist     = np.linalg.norm(rays, axis=1)
             d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0)
             keep     = (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI) & (d_z_norm > _FLOOR_RAY_Z)
-            xyz_map  = xyz_world[keep]
+            xyz_map  = _filter_isolated(xyz_world[keep])
             if len(xyz_map) == 0:
                 continue
 
@@ -589,7 +595,7 @@ class DepthStreamer:
         rr.log("world/map", rr.Points3D(
             positions=pts[idx],
             colors=_height_color(pts[idx, 2] - cam_z),
-            radii=0.01,   # 1 cm radius tiles flush with 2 cm voxels
+            radii=0.005,
         ))
 
     def log_stdout(
