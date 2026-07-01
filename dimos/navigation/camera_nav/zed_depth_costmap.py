@@ -1,7 +1,7 @@
-"""ZED Mini → live cloud + persistent world map.
+"""ZED Mini → live cloud + per-frame voxel map.
 
 world/cloud  nearest-per-ray denoised live cloud
-world/map    persistent obstacle map — accumulates across frames, one voxel per occupied cell
+world/map    full-density cloud voxelised at VOX_SIZE — one point per occupied cell
 
 Usage:
   python -m dimos.navigation.camera_nav.zed_depth_costmap
@@ -19,13 +19,10 @@ import rerun.blueprint as rrb
 from scipy.ndimage import sobel
 
 
-VOX_SIZE     = 0.020   # 2.0 cm — per-frame filtering resolution
-_MAP_VOX    = 0.050   # 5.0 cm — world map voxels; coarser than per-frame to absorb VIO pose noise
+VOX_SIZE     = 0.020   # 2.0 cm final voxels
 _Z_REL_HI   =  0.5    # camera-relative ceiling (0.5 m above camera)
 _FLOOR_Z    =  0.03   # absolute world-Z floor cutoff (3 cm above gravity-aligned floor)
 _GRAD_THRESH =  0.30  # Sobel gradient magnitude threshold — pixels above this are edge artifacts
-MAP_EVERY    = 10      # log world/map every N frames (reduces Rerun overhead)
-MAP_LOG_CAP  = 200_000 # max points sent to Rerun per log (subsample above this)
 
 # ── Voxel key packing ────────────────────────────────────────────────────────
 _VOFF  = np.int64(100_000)
@@ -42,66 +39,6 @@ def _filter_isolated(xyz: np.ndarray, voxel: float = 0.05, min_pts: int = 2) -> 
     vk = np.floor(xyz / voxel).astype(np.int32)
     _, inv, cnt = np.unique(_pack(vk), return_inverse=True, return_counts=True)
     return xyz[cnt[inv] >= min_pts]
-
-
-# ── Persistent world map ─────────────────────────────────────────────────────
-class FastVoxelMap:
-    """Persistent world-frame obstacle map with strict per-add deduplication.
-
-    Maintains a sorted int64 key array alongside the point buffer.  Every add()
-    call uses np.searchsorted (vectorised O(M log N)) to check which incoming
-    voxels are genuinely new before touching the buffer — no periodic compaction,
-    no between-frame duplicates, no stacking.
-    """
-
-    def __init__(self, voxel_size: float = _MAP_VOX) -> None:
-        self._v     = voxel_size
-        self._cap   = 500_000
-        self._pts   = np.empty((self._cap, 3), dtype=np.float32)
-        self._n     = 0
-        self._skeys = np.empty(0, dtype=np.int64)   # sorted unique occupied keys
-
-    def add(self, xyz: np.ndarray) -> None:
-        if len(xyz) == 0:
-            return
-        vk   = np.floor(xyz / self._v).astype(np.int32)
-        keys = _pack(vk)
-        # dedup within this frame first
-        _, first = np.unique(keys, return_index=True)
-        keys = keys[first]
-        xyz  = xyz[first]
-
-        # vectorised membership check — no Python loops
-        if len(self._skeys):
-            ins    = np.searchsorted(self._skeys, keys)
-            ins_c  = np.clip(ins, 0, len(self._skeys) - 1)
-            is_new = self._skeys[ins_c] != keys
-        else:
-            is_new = np.ones(len(keys), dtype=bool)
-
-        if not is_new.any():
-            return
-
-        new_pts  = xyz[is_new]
-        new_keys = keys[is_new]
-        n_new    = len(new_pts)
-
-        if self._n + n_new > self._cap:
-            self._cap *= 2
-            buf = np.empty((self._cap, 3), dtype=np.float32)
-            buf[: self._n] = self._pts[: self._n]
-            self._pts = buf
-
-        self._pts[self._n : self._n + n_new] = new_pts
-        self._n += n_new
-        self._skeys = np.union1d(self._skeys, new_keys)   # O(N) merge of sorted arrays
-
-    def points(self) -> np.ndarray:
-        return self._pts[: self._n]
-
-    @property
-    def count(self) -> int:
-        return self._n
 
 
 # ── Nearest-per-ray filter (live cloud denoising only) ───────────────────────
@@ -315,7 +252,7 @@ def main() -> None:
         rrb.Tabs(
             rrb.Spatial3DView(name="live cloud", origin="world",
                               contents=["world/cloud", "world/camera/**"]),
-            rrb.Spatial3DView(name="world map", origin="world",
+            rrb.Spatial3DView(name="voxel map", origin="world",
                               contents=["world/map"]),
         )
     ))
@@ -337,9 +274,8 @@ def main() -> None:
     zed.set_camera_settings(sl.VIDEO_SETTINGS.EXPOSURE, 50)
     print("camera open — Ctrl-C to quit.")
 
-    src       = ZEDDepthSource(zed)
+    src = ZEDDepthSource(zed)
     src.enable_tracking()
-    world_map = FastVoxelMap()
 
     rt = sl.RuntimeParameters()
     rt.remove_saturated_areas = True
@@ -396,28 +332,21 @@ def main() -> None:
                 keep = (xyz[:, 2] > _FLOOR_Z) & (h_rel <= _Z_REL_HI)
             else:
                 keep = (h_rel >= -1.4) & (h_rel <= _Z_REL_HI)
-            xyz_obs = _filter_isolated(xyz[keep])
-
-            # Only accumulate once VIO is locked — before lock, pose_R=I and
-            # pose_t=0 so "world frame" is just camera frame.  Adding pre-lock
-            # points would pile camera-frame coordinates from multiple poses on
-            # top of each other and corrupt the map.
-            if src.pose_locked:
-                world_map.add(xyz_obs)
-
-            if frame % MAP_EVERY == 0 and world_map.count > 0:
-                pts = world_map.points()
-                if len(pts) > MAP_LOG_CAP:
-                    pts = pts[np.random.choice(len(pts), MAP_LOG_CAP, replace=False)]
+            xyz_obs  = _filter_isolated(xyz[keep])
+            xyz_vox  = np.empty((0, 3), dtype=np.float32)
+            if len(xyz_obs):
+                vk       = np.floor(xyz_obs / VOX_SIZE).astype(np.int32)
+                _, first = np.unique(_pack(vk), return_index=True)
+                xyz_vox  = xyz_obs[first]
                 rr.log("world/map", rr.Points3D(
-                    positions=pts,
-                    colors=_height_color(pts[:, 2] - cam_z),
-                    radii=0.025,
+                    positions=xyz_vox,
+                    colors=_height_color(xyz_vox[:, 2] - cam_z),
+                    radii=0.010,
                 ))
 
             fps = frame / max(ts - t0, 1e-6)
             print(
-                f"frame={frame:5d}  cloud={len(xyz_vis):5d}  map={world_map.count:6d}"
+                f"frame={frame:5d}  cloud={len(xyz_vis):5d}  vox={len(xyz_vox):6d}"
                 f"  vio={'LOCKED' if src.pose_locked else 'searching'}  fps={fps:.1f}",
                 flush=True,
             )
