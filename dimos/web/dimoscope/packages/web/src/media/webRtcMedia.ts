@@ -2,8 +2,7 @@
 // GPU-decoded by <video> (~20–40× less bandwidth than JPEG); signaling rides a thin WS to the
 // gateway; non-trickle ICE (gather-then-send); currently ONE active camera per channel (multi-cam
 // grid will share a PeerConnection).
-import type { MediaCaps, MediaChannel } from "../media.ts";
-import type { Status } from "../transport.ts";
+import type { MediaCaps, MediaChannel, Status } from "../types.ts";
 
 export interface WebRtcMediaDeps {
   gatewayUrl: string; // media node WS for WebRTC signaling (e.g. ws://host:8092)
@@ -11,13 +10,7 @@ export interface WebRtcMediaDeps {
 
 export const createWebRtcMedia = (deps: WebRtcMediaDeps): MediaChannel => {
   const { gatewayUrl } = deps;
-  const caps: MediaCaps = {
-    output: "stream",
-    codec: "h264",
-    onDemand: true,
-    multiStream: false,
-    hardwareDecode: true,
-  };
+  const caps: MediaCaps = { output: "stream", codec: "h264" };
   let ws: WebSocket | undefined;
   let pc: RTCPeerConnection | undefined;
   let active: string | undefined; // the one subscribed camera topic

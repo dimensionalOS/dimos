@@ -1,44 +1,10 @@
-// Media plane: pluggable opaque-video delivery (jpeg floor / webrtc / webcodecs), chosen by
-// capability negotiation. Unlike Transport it carries no decodable RawSamples — video is just shown.
-import type { Status } from "./transport.ts";
+// Media plane selector: picks the best pluggable video channel (jpeg floor / webrtc / webcodecs) by
+// capability negotiation. The channel types live in types.ts; the impls in ./media/.
+import type { MediaChannel, MediaKind } from "./types.ts";
 import type { DimosClient } from "./client.ts";
 import { createJpegTopicMedia } from "./media/jpegTopicMedia.ts";
 import { createWebRtcMedia } from "./media/webRtcMedia.ts";
 import { createWebCodecsMedia } from "./media/webCodecsMedia.ts";
-
-export type MediaKind = "webcodecs" | "webrtc" | "jpeg";
-
-export interface VideoMeta {
-  width: number;
-  height: number;
-  fps: number;
-  codec: string;
-}
-
-export interface MediaCaps {
-  /** How the app renders: a GPU-composited MediaStream (<video>) vs decoded frames (canvas). */
-  output: "stream" | "frames";
-  codec: "h264" | "vp8" | "av1" | "jpeg";
-  /** Subscribing actually starts/stops bytes (jpeg maps to topic on-demand). */
-  onDemand: boolean;
-  /** Can carry many concurrent streams (the multi-cam grid). */
-  multiStream: boolean;
-  hardwareDecode: boolean;
-}
-
-/** streamId is the camera topic, e.g. "/dimos/color_image". */
-export interface MediaChannel {
-  connect(): Promise<void>;
-  close(): void;
-  subscribe(streamId: string): void;
-  unsubscribe(streamId: string): void;
-  // An impl fires exactly one of these, per caps.output.
-  onStream(cb: (streamId: string, stream: MediaStream) => void): void; // "stream"
-  onFrame(cb: (streamId: string, frame: VideoFrame | ImageBitmap, m: VideoMeta) => void): void; // "frames"
-  onStatus(cb: (s: Status) => void): void;
-  readonly caps: MediaCaps;
-  label?: string;
-}
 
 export interface MediaDeps {
   client: DimosClient; // for the jpeg-topic floor (subscribes via client.topic)

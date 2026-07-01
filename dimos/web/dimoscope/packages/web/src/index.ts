@@ -13,7 +13,7 @@ export type { GatewayWsDeps } from "./transports/gatewayWs.ts";
 export { b64ToBytes, frameToSample } from "./transports/frame.ts";
 export { formatMarkdown, measureScenario, onDemandSaving, STREAM_PROFILES } from "./bench.ts";
 export type { BenchRow, BenchScenario, StreamProfile } from "./bench.ts";
-export type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "./transport.ts";
+export type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "./types.ts";
 export type {
   Handler,
   Message,
@@ -35,4 +35,5 @@ export { createWebRtcMedia } from "./media/webRtcMedia.ts";
 export type { WebRtcMediaDeps } from "./media/webRtcMedia.ts";
 export { createWebCodecsMedia } from "./media/webCodecsMedia.ts";
 export type { WebCodecsMediaDeps } from "./media/webCodecsMedia.ts";
-export type { MediaCaps, MediaChannel, MediaDeps, MediaKind, VideoMeta } from "./media.ts";
+export type { MediaCaps, MediaChannel, MediaKind, VideoMeta } from "./types.ts";
+export type { MediaDeps } from "./media.ts";

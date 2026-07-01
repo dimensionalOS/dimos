@@ -4,8 +4,15 @@
 import { createGatewayWsTransport } from "./gatewayWs.ts";
 import { createWebTransportTransport } from "./webTransport.ts";
 import type { TransportFactory } from "../client.ts";
-import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../transport.ts";
-import type { Qos, TopicInfo } from "../types.ts";
+import type {
+  CommandInfo,
+  Qos,
+  RawSample,
+  Status,
+  TopicInfo,
+  Transport,
+  TransportCaps,
+} from "../types.ts";
 
 export interface WebtransportOpts {
   /** WebSocket (control + fallback) port on the gateway host. Default 8080. */

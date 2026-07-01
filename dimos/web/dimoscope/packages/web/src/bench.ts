@@ -9,10 +9,10 @@ export interface BenchScenario {
 }
 
 /**
- * A named workload class. The heavy classes (lidar/camera/dense) all ride the SAME
- * /bench/img topic; the class is a *publisher* config (hz × bytes), not a distinct
+ * A named workload class. The heavy classes (lidar/camera/dense/…) all ride the SAME
+ * /load/img topic; the class is a *publisher* config (hz × bytes), not a distinct
  * topic — so the browser measures whatever the source is emitting and the `hint` is
- * just what scenarios/bench.py would set the generator to.
+ * just what the GO2Load flood (start_bench) would be set to.
  */
 export interface StreamProfile {
   id: string;
@@ -22,20 +22,30 @@ export interface StreamProfile {
   hint: string;
 }
 
-/** Canonical workload classes — keep `id` + `topics` in sync with scenarios/bench.py. */
+/** Canonical workload classes — keep `id` + `topics` in sync with the GO2Load `/load/*` ports. */
 export const STREAM_PROFILES: StreamProfile[] = [
   {
     id: "pose",
-    topics: ["/bench/p0", "/bench/p1", "/bench/p2", "/bench/p3"],
-    hint: "4×Pose@100Hz — small, high-rate",
+    topics: ["/load/fast", "/load/mid", "/load/slow"],
+    hint: "fast@100 + mid@20 + slow@2 Hz — small, high-rate lanes",
   },
-  { id: "lidar", topics: ["/bench/img"], hint: "img@10Hz × 200KB ≈ 2 MB/s" },
-  { id: "camera", topics: ["/bench/img"], hint: "img@20Hz × 550KB ≈ 11 MB/s" },
-  { id: "dense", topics: ["/bench/img"], hint: "img@20Hz × 1MB ≈ 20 MB/s" },
+  { id: "lidar", topics: ["/load/img"], hint: "img@10Hz × 200KB ≈ 2 MB/s" },
+  { id: "camera", topics: ["/load/img"], hint: "img@20Hz × 550KB ≈ 11 MB/s" },
+  { id: "dense", topics: ["/load/img"], hint: "img@20Hz × 1MB ≈ 20 MB/s" },
+  // Overload tiers — mirror the BenchDrawer generator ladder (STREAM_TIERS) so a sweep *records*
+  // the big-data cases that stress/crash the tab, not just up to ~20 MB/s. Run light→heavy: the top
+  // tiers may degrade or kill the tab (expected — that's the case being measured).
+  { id: "depth-hd", topics: ["/load/img"], hint: "img@20Hz × 2.5MB ≈ 50 MB/s (RealSense/Ouster)" },
+  { id: "raw-1080p", topics: ["/load/img"], hint: "img@30Hz × 6MB ≈ 180 MB/s (raw RGB)" },
+  {
+    id: "firehose",
+    topics: ["/load/img"],
+    hint: "img@30Hz × 10MB ≈ 300 MB/s (raw 4K / multi-cam)",
+  },
   {
     id: "mixed",
-    topics: ["/bench/p0", "/bench/p1", "/bench/p2", "/bench/p3", "/bench/grid", "/bench/img"],
-    hint: "pose@100 + grid@20 + img@10×200KB",
+    topics: ["/load/fast", "/load/mid", "/load/slow", "/load/grid", "/load/img"],
+    hint: "fast@100 + mid@20 + slow@2 + grid@5 + img flood",
   },
 ];
 export interface BenchRow {

@@ -4,8 +4,19 @@
 import { createGatewayWsTransport } from "./transports/gatewayWs.ts";
 import { decode as msgsDecode } from "@dimos/msgs";
 import { createTopic, type Topic } from "./topic.ts";
-import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "./transport.ts";
-import type { Message, MessageMeta, Qos, Subscription, TopicInfo, TopicStats } from "./types.ts";
+import type {
+  CommandInfo,
+  Message,
+  MessageMeta,
+  Qos,
+  RawSample,
+  Status,
+  Subscription,
+  TopicInfo,
+  TopicStats,
+  Transport,
+  TransportCaps,
+} from "./types.ts";
 
 /** Best-effort source timestamp (ms) from a std_msgs/Header — the data's origin-publish time,
  *  surfaced as `meta.srcTs` and used by the bench's end-to-end latency mode (`recvTs − srcTs`). The
@@ -162,9 +173,7 @@ export const createDimosClient = <TMap = EmptyTopicMap, TCmds = EmptyModuleMap>(
       }
     }
     const srcTs = srcTsMs(data); // for meta.srcTs (the bench's end-to-end latency)
-    const latencyMs = s.gatewaySendMs != null
-      ? Math.max(0, s.recvTs - s.gatewaySendMs)
-      : undefined;
+    const latencyMs = s.gatewaySendMs != null ? Math.max(0, s.recvTs - s.gatewaySendMs) : undefined;
     const meta: MessageMeta = {
       topic: s.topic,
       type: s.type,

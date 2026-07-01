@@ -17,7 +17,6 @@
 
 all_blueprints = {
     "alfred-nav": "dimos.robot.diy.alfred.blueprints.alfred_nav:alfred_nav",
-    "bench-load": "dimos.robot.benchmark.bench_load:bench_load",
     "bench-source": "dimos.web.dimoscope.scenarios.bench:bench_source",
     "coordinator-basic": "dimos.control.blueprints.basic:coordinator_basic",
     "coordinator-cartesian-ik-mock": "dimos.robot.manipulators.piper.blueprints.teleop:coordinator_cartesian_ik_mock",
@@ -62,8 +61,7 @@ all_blueprints = {
     "drone-agentic": "dimos.robot.drone.blueprints.agentic.drone_agentic:drone_agentic",
     "drone-basic": "dimos.robot.drone.blueprints.basic.drone_basic:drone_basic",
     "dual-xarm6-planner": "dimos.robot.manipulators.xarm.blueprints.basic:dual_xarm6_planner",
-    "go2-bench": "dimos.robot.benchmark.bench_load:go2_bench",
-    "go2-scope": "dimos.robot.benchmark.scope_bench:go2_scope",
+    "go2-load": "dimos.robot.benchmark.go2_load:go2_load",
     "keyboard-teleop-a750": "dimos.robot.manipulators.a750.blueprints.teleop:keyboard_teleop_a750",
     "keyboard-teleop-openarm": "dimos.robot.manipulators.openarm.blueprints.teleop:keyboard_teleop_openarm",
     "keyboard-teleop-openarm-mock": "dimos.robot.manipulators.openarm.blueprints.teleop:keyboard_teleop_openarm_mock",
@@ -72,6 +70,7 @@ all_blueprints = {
     "keyboard-teleop-xarm7": "dimos.robot.manipulators.xarm.blueprints.teleop:keyboard_teleop_xarm7",
     "learning-collect-quest-piper": "dimos.learning.collection.blueprint:learning_collect_quest_piper",
     "learning-collect-quest-xarm7": "dimos.learning.collection.blueprint:learning_collect_quest_xarm7",
+    "load": "dimos.robot.benchmark.go2_load:load",
     "mid360": "dimos.hardware.sensors.lidar.livox.livox_blueprints:mid360",
     "mid360-fastlio": "dimos.hardware.sensors.lidar.fastlio2.fastlio_blueprints:mid360_fastlio",
     "mid360-fastlio-ray-trace": "dimos.hardware.sensors.lidar.fastlio2.fastlio_blueprints:mid360_fastlio_ray_trace",
@@ -246,7 +245,6 @@ all_modules = {
     "replanning-a-star-planner": "dimos.navigation.replanning_a_star.module.ReplanningAStarPlanner",
     "rerun-bridge-module": "dimos.visualization.rerun.bridge.RerunBridgeModule",
     "rerun-web-socket-server": "dimos.visualization.rerun.websocket_server.RerunWebSocketServer",
-    "scope-bench": "dimos.robot.benchmark.scope_bench.ScopeBench",
     "security-module": "dimos.experimental.security_demo.security_module.SecurityModule",
     "semantic-search": "dimos.memory2.module.SemanticSearch",
     "simple-phone-teleop": "dimos.teleop.phone.phone_extensions.SimplePhoneTeleop",

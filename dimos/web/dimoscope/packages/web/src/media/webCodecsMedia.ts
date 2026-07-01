@@ -4,8 +4,7 @@
 //
 // Wire (gateway → browser): a JSON {op:"video-config", topic, codec} when a sub starts, then binary
 //   [u8 flags(bit0=keyframe)][u64 ts_us BE][u16 topic_len BE][topic utf8][H.264 Annex-B NAL]
-import type { MediaCaps, MediaChannel, VideoMeta } from "../media.ts";
-import type { Status } from "../transport.ts";
+import type { MediaCaps, MediaChannel, Status, VideoMeta } from "../types.ts";
 
 interface Decoding {
   decoder: VideoDecoder;
@@ -17,15 +16,18 @@ export interface WebCodecsMediaDeps {
   gatewayUrl: string; // media node WS that streams H.264 chunks (e.g. ws://host:8092)
 }
 
+/** Close a decoder, swallowing the throw if it's already closed. */
+const safeClose = (d: VideoDecoder): void => {
+  try {
+    d.close();
+  } catch {
+    /* already closed */
+  }
+};
+
 export const createWebCodecsMedia = (deps: WebCodecsMediaDeps): MediaChannel => {
   const { gatewayUrl } = deps;
-  const caps: MediaCaps = {
-    output: "frames",
-    codec: "h264",
-    onDemand: true,
-    multiStream: true,
-    hardwareDecode: true,
-  };
+  const caps: MediaCaps = { output: "frames", codec: "h264" };
   let ws: WebSocket | undefined;
   const decoders = new Map<string, Decoding>();
   const wanted = new Set<string>(); // (re)start these once the ws opens / reopens
@@ -75,13 +77,7 @@ export const createWebCodecsMedia = (deps: WebCodecsMediaDeps): MediaChannel => 
   function configure(topic: string, codec?: string): void {
     const c = codec || "avc1.42E01F";
     const prev = decoders.get(topic);
-    if (prev) {
-      try {
-        prev.decoder.close();
-      } catch {
-        /* already closed */
-      }
-    }
+    if (prev) safeClose(prev.decoder);
     const meta: VideoMeta = { width: 0, height: 0, fps: 0, codec: c };
     const decoder = new VideoDecoder({
       output: (frame: VideoFrame) => {
@@ -132,11 +128,7 @@ export const createWebCodecsMedia = (deps: WebCodecsMediaDeps): MediaChannel => 
     send({ op: "webcodecs-stop", topic: streamId });
     const d = decoders.get(streamId);
     if (d) {
-      try {
-        d.decoder.close();
-      } catch {
-        /* already closed */
-      }
+      safeClose(d.decoder);
       decoders.delete(streamId);
     }
   }
@@ -146,13 +138,7 @@ export const createWebCodecsMedia = (deps: WebCodecsMediaDeps): MediaChannel => 
   }
 
   function close(): void {
-    for (const d of decoders.values()) {
-      try {
-        d.decoder.close();
-      } catch {
-        /* already closed */
-      }
-    }
+    for (const d of decoders.values()) safeClose(d.decoder);
     decoders.clear();
     wanted.clear();
     ws?.close();

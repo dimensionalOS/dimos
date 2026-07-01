@@ -1,7 +1,7 @@
 // BenchDrawer — the quantitative benchmark, folded into the Topics tab as a collapsed drawer. Measures
 // the live active transport across the STREAM_PROFILES workloads → a results table you can copy as Markdown.
 //
-// The optional Start/Stop control drives the BenchLoad blueprint's large stream over its already-
+// The optional Start/Stop control drives the GO2Load blueprint's large stream over its already-
 // whitelisted @rpc so a sweep can generate its own flow; it's a thin client of that contract, not a
 // re-implementation of the load-gen backend.
 import { useEffect, useRef, useState } from "react";
@@ -32,22 +32,22 @@ export function BenchDrawer() {
 
   const [open, setOpen] = useState(false);
 
-  const hasRpc = commands.some((c) => c.target === "BenchLoad");
+  const hasRpc = commands.some((c) => c.target === "GO2Load");
   const [heavyKind, setHeavyKind] = useState<"image" | "cloud">("image");
   const [heavyHz, setHeavyHz] = useState(20);
   const [heavyBytes, setHeavyBytes] = useState(1_000_000);
   const [heavyOn, setHeavyOn] = useState(false);
   const [genMsg, setGenMsg] = useState<string>();
   const [genBusy, setGenBusy] = useState(false);
-  const heavyTopic = heavyKind === "cloud" ? "/bench/cloud" : "/bench/img";
+  const heavyTopic = heavyKind === "cloud" ? "/load/cloud" : "/load/img";
   const offeredMbps = mbps(heavyBytes, heavyHz);
 
   async function applyGen(on: boolean) {
     setGenBusy(true);
     try {
       const res = on
-        ? await call<string>("BenchLoad", "start_bench", 100, 20, heavyHz, heavyBytes, heavyKind)
-        : await call<string>("BenchLoad", "stop_bench");
+        ? await call<string>("GO2Load", "start_bench", heavyHz, heavyBytes, heavyKind)
+        : await call<string>("GO2Load", "stop_bench");
       setHeavyOn(on);
       setGenMsg(String(res));
     } catch (e) {
@@ -77,7 +77,7 @@ export function BenchDrawer() {
     ...profiles.map((p) => ({ name: p.id, topics: p.topics })),
     ...(heavyOn ? [{ name: `heavy:${heavyKind} (≈${offeredMbps.toFixed(0)}MB/s offered)`, topics: [heavyTopic] }] : []),
   ];
-  const benchFlowing = discovered.some((t) => t.topic.startsWith("/bench/"));
+  const benchFlowing = discovered.some((t) => t.topic.startsWith("/load/"));
 
   async function run() {
     if (!client) return;
@@ -137,14 +137,13 @@ export function BenchDrawer() {
           </div>
 
           <div className="bench-section">
-            <div className="bench-label">Load generator · large stream (BenchLoad RPC)</div>
+            <div className="bench-label">Load generator · large stream (GO2Load RPC)</div>
             {!hasRpc
               ? (
                 <div className="muted small">
-                  No <span className="mono">BenchLoad</span> RPC advertised — run{" "}
-                  <span className="mono">go2-bench</span> / <span className="mono">bench-load</span>, or{" "}
-                  <span className="mono">deno task scope:bench</span>, to make <span className="mono">/bench/*</span>{" "}
-                  flow.
+                  No <span className="mono">GO2Load</span> RPC advertised — run{" "}
+                  <span className="mono">deno task dog</span> (or <span className="mono">load</span>), to make{" "}
+                  <span className="mono">/load/*</span> flow.
                 </div>
               )
               : (
@@ -239,8 +238,8 @@ export function BenchDrawer() {
             </div>
             {!benchFlowing && !heavyOn && (
               <div className="muted small">
-                No <span className="mono">/bench/*</span> flowing — Start load above, or run{" "}
-                <span className="mono">deno task scope:bench</span>, so the sweep has data to measure.
+                No <span className="mono">/load/*</span> flowing — Start load above, or run{" "}
+                <span className="mono">deno task dog</span>, so the sweep has data to measure.
               </div>
             )}
           </div>

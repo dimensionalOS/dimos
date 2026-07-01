@@ -1,8 +1,6 @@
 // jpeg is the universal media floor — the Image-topic path repackaged as a MediaChannel so the app
 // consumes video uniformly; needs no media gateway; works on all browsers/transports.
-import type { MediaCaps, MediaChannel, VideoMeta } from "../media.ts";
-import type { Status } from "../transport.ts";
-import type { Subscription } from "../types.ts";
+import type { MediaCaps, MediaChannel, Status, Subscription, VideoMeta } from "../types.ts";
 import type { DimosClient } from "../client.ts";
 
 export interface JpegTopicMediaDeps {
@@ -61,13 +59,7 @@ function decodeImageToBitmap(img: ImageMsg): Promise<ImageBitmap> {
 
 export const createJpegTopicMedia = (deps: JpegTopicMediaDeps): MediaChannel => {
   const { client } = deps;
-  const caps: MediaCaps = {
-    output: "frames",
-    codec: "jpeg",
-    onDemand: true,
-    multiStream: true,
-    hardwareDecode: false,
-  };
+  const caps: MediaCaps = { output: "frames", codec: "jpeg" };
   const subs = new Map<string, Subscription>();
   let frameCb: ((id: string, f: ImageBitmap, m: VideoMeta) => void) | undefined;
   let statusCb: ((s: Status) => void) | undefined;

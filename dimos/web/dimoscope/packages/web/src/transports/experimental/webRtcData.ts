@@ -2,8 +2,14 @@
 // Read-only WebRTC DataChannel (browser-only), via gateway/transports/webrtc.py re-transmitter;
 // carries the same [f64 gateway-send-ms][LC02] frames as WS/SSE/poll (decoded via shared
 // frameToSample); unordered + lossy by default ⇒ no TCP head-of-line blocking.
-import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../../transport.ts";
-import type { TopicInfo } from "../../types.ts";
+import type {
+  CommandInfo,
+  RawSample,
+  Status,
+  TopicInfo,
+  Transport,
+  TransportCaps,
+} from "../../types.ts";
 import { frameToSample } from "../frame.ts";
 
 export interface WebRtcDataDeps {

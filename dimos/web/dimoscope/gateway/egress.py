@@ -27,10 +27,10 @@ DEFAULT_TTL = 400.0  # deadman timeout (ms)
 RPC_COMMANDS = [
     {"target": "GO2Connection", "method": "standup", "label": "Stand up"},
     {"target": "GO2Connection", "method": "liedown", "label": "Lie down"},
-    {"target": "BenchLoad", "method": "start_bench", "label": "Start bench"},
-    {"target": "BenchLoad", "method": "stop_bench", "label": "Stop bench"},
-    {"target": "ScopeBench", "method": "start_all", "label": "Start streams"},
-    {"target": "ScopeBench", "method": "stop_all", "label": "Stop streams"},
+    {"target": "GO2Load", "method": "start_all", "label": "Start streams"},
+    {"target": "GO2Load", "method": "stop_all", "label": "Stop streams"},
+    {"target": "GO2Load", "method": "start_bench", "label": "Start bench"},
+    {"target": "GO2Load", "method": "stop_bench", "label": "Stop bench"},
 ]
 RPC_WHITELIST = {(c["target"], c["method"]) for c in RPC_COMMANDS}
 

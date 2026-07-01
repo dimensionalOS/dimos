@@ -3,8 +3,15 @@
 // Runs unchanged in the browser and in Bun (both have a global WebSocket).
 import { frameToSample } from "./frame.ts";
 import { applyCaps } from "../qos.ts";
-import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../transport.ts";
-import type { Qos, TopicInfo } from "../types.ts";
+import type {
+  CommandInfo,
+  Qos,
+  RawSample,
+  Status,
+  TopicInfo,
+  Transport,
+  TransportCaps,
+} from "../types.ts";
 
 export interface GatewayWsDeps {
   url: string;

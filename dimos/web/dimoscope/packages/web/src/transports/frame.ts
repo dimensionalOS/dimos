@@ -2,7 +2,7 @@
 // ws/sse/httpPoll, so all mechanisms emit identical RawSamples + gatewaySendMs for fair latency comparison.
 import { decodeChannel } from "@dimos/msgs";
 
-import type { RawSample } from "../transport.ts";
+import type { RawSample } from "../types.ts";
 
 /** Split a DimOS channel "<topic>#<pkg>.<Type>" into its parts. */
 export function splitChannel(channel: string): { topic: string; type: string } {

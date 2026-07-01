@@ -1,8 +1,14 @@
 // Read-only HTTP long-poll baseline; loops GET /poll?since=<cursor>&topics=<csv|*>&max=<n>; gateway
 // holds until frames arrive (or timeout) then returns a binary batch; ring-buffer cursor detects
 // loss; server→client only.
-import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../../transport.ts";
-import type { TopicInfo } from "../../types.ts";
+import type {
+  CommandInfo,
+  RawSample,
+  Status,
+  TopicInfo,
+  Transport,
+  TransportCaps,
+} from "../../types.ts";
 import { frameToSample } from "../frame.ts";
 
 export interface HttpPollDeps {

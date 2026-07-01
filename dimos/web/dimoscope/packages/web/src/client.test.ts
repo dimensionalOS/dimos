@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 
 import { createDimosClient, seqFrom, srcTsMs } from "./client.ts";
-import type { RawSample, Transport } from "./transport.ts";
+import type { RawSample, Transport } from "./types.ts";
 
 // ── Message-metadata heuristics (the seq/timestamp parsing the bench relies on) ──────────────────
 Deno.test("seqFrom: numeric frame_id → counter; names/garbage → undefined", () => {
@@ -57,17 +57,17 @@ Deno.test("pre-decoded: client delivers an injected `decoded` object directly (n
   let got: unknown;
   let size = -1;
   let seq = -1;
-  client.topic("/bench/p0").subscribe((msg) => {
+  client.topic("/load/fast").subscribe((msg) => {
     got = msg.data;
     size = msg.meta.sizeBytes;
     seq = msg.meta.seq ?? -1;
   });
   const decoded = { frame_id: "7", ts: 1_750_000_000, position: [1, 2, 3] };
   const wire = new TextEncoder().encode(
-    JSON.stringify({ op: "sample", topic: "/bench/p0", data: decoded }),
+    JSON.stringify({ op: "sample", topic: "/load/fast", data: decoded }),
   );
   emit({
-    topic: "/bench/p0",
+    topic: "/load/fast",
     type: "geometry_msgs.PoseStamped",
     payload: wire,
     recvTs: Date.now(),

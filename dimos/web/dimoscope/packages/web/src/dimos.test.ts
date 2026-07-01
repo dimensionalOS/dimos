@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 
 import { createDimosClient } from "./client.ts";
-import type { RawSample, Transport } from "./transport.ts";
+import type { RawSample, Transport } from "./types.ts";
 
 function fakeTransport() {
   let sampleCb: ((s: RawSample) => void) | undefined;

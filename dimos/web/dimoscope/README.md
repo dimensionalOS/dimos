@@ -37,9 +37,13 @@ cd dimos/web/dimoscope && deno install         # frontend workspace deps
 
 # run (each in its own tab)
 deno task serve     # the whole backend in one process → http://localhost:8080  (= uv run python -m gateway)
-deno task sim       # a data source: mujoco go2;  or  sim:dimsim / sim:replay  (or a real robot)
+deno task dog       # THE demo: teleoperable go2 dimsim + camera + multi-rate /load/* streams (go2-load)
 deno task app       # the Vite app → http://localhost:5173  (or just open http://localhost:8080/)
 ```
+
+`deno task dog` is the headline (see below) — the dog's `/load/*` lanes auto-run *and* the same blueprint
+exposes the benchmark flood knob. Other data sources: `deno task sim` / `sim:dimsim` / `sim:replay` (plain
+go2), or `deno task scope:{nav,arm,cam,bench}`.
 
 The gateway serves the app at `/` too, so a built deploy needs only the one process; in dev, `deno task app` gives hot reload and connects to `:8080`.
 
@@ -50,25 +54,26 @@ pose readout + a **Stats** panel (hz / kB/s / latency), and drives the robot wit
 
 
 
-## Teleop demo — `go2-scope`
+## The demo — `go2-load` (the dog)
 
 One command runs the **teleoperable go2 dimsim** *and* a multi-rate stream source, so you can drive the
-robot and exercise on-demand + QoS at once (use it in place of `deno task sim`):
+robot and exercise on-demand + QoS at once:
 
 ```bash
-deno task serve                                                       # the gateway (:8080 + WT QUIC :8443)
-DIMOS_TRANSPORT=zenoh uv run dimos --simulation dimsim run go2-scope   # go2 dimsim + /scope/* streams
-deno task app                                                         # http://localhost:5173 (or open :8080)
+deno task serve   # the gateway (:8080 + WT QUIC :8443)
+deno task dog     # go2 dimsim: teleop + camera + /load/* streams  (= dimos --simulation dimsim run go2-load)
+deno task app     # http://localhost:5173  (or just open http://localhost:8080/)
 ```
 
-`go2-scope` (`dimos/robot/benchmark/scope_bench.py`) is `autoconnect(unitree_go2, ScopeBench)`: the go2 plus
-`/scope/{fast,mid,slow,grid,cloud}` published at **distinct rates** (100 / 20 / 2 / 5 / 10 Hz) with
-`start_all`/`stop_all`/`enable`/`disable`/`set_rate` `@rpc`. In the browser (connected on **Auto → WebTransport**):
+`go2-load` (`dimos/robot/benchmark/go2_load.py`) is `autoconnect(unitree_go2, GO2Load)`: the go2 plus
+`/load/{fast,mid,slow,grid,cloud}` published at **distinct rates** (100 / 20 / 2 / 5 / 10 Hz) with
+`start_all`/`stop_all`/`enable`/`disable`/`set_rate` `@rpc`, **plus** a crankable `/load/img` flood
+(`start_bench`/`stop_bench`) for the benchmark. In the browser (connected on **Auto → WebTransport**):
 
-- **Streams tab →** `scope` **preset** → five cards at their distinct Hz, each with its QoS lane + live metrics;
+- **Streams tab →** `load` **preset** → five cards at their distinct Hz, each with its QoS lane + live metrics;
 **remove/add a card = on-demand off/on** (bytes stop/start on the wire while the sim keeps running).
 - **WASD** drives the robot over WebTransport; release → deadman stop; close the tab → stop-on-disconnect.
-- **Commands** → *Start/Stop streams* (`ScopeBench`) + *Stand up* (`GO2Connection`), RPC over WT.
+- **Commands** → *Start/Stop streams* + *Start/Stop bench* (`GO2Load`) + *Stand up* (`GO2Connection`), RPC over WT.
 - **Fallback:** open in Safari (no WT) or with UDP `:8443` blocked → Auto lands on WebSocket; teleop still works.
 
 
@@ -158,16 +163,17 @@ React: `DimosProvider`, `useTopics`, `useTopicLatest`, `useTopicRef` (no re-rend
 
 The benchmark runs **in the real browser** across all 5 delivery mechanisms (WS · SSE · poll ·
 WebRTC-data · WebTransport), so WebRTC/WebTransport are measured on the actual browser stacks. See
-**[docs/benchmark-report.md](docs/benchmark-report.md)** for the methodology and full tables.
+**[docs/benchmarks.md](docs/benchmarks.md)** for the methodology, QoS, real-WAN runbook, and full tables.
 
 ```bash
-deno task serve         # the one service on :8080
-deno task scope:bench   # data source → publishes /bench/* (scenarios/bench.py)
-deno task app           # then open http://localhost:5173/bench.html
+deno task serve   # the one service on :8080
+deno task dog     # the dog exposes the /load/img flood (GO2Load start_bench/stop_bench @rpc)
+deno task app     # then open http://localhost:8080/ → Streams tab → BenchDrawer
 ```
 
-Then open `/bench.html` for the full 5-mechanism sweep, or the in-app **Bench** tab to vary QoS
-knobs against the live transport (live sparklines + copy-as-Markdown). Route through a remote VPS with
+Open the **Streams tab → BenchDrawer**: drive the load generator up the ladder (light 2 MB/s →
+firehose ~300 MB/s), sweep each transport, and copy the results as Markdown. The top tiers can stress or
+crash the tab — that's the case being measured, so sweep light→heavy. Route through a remote VPS with
 `?gw=host:port` for real-WAN numbers; tune duration with `?dur=ms`.
 
 Headlines: the service is a byte-relay, so **language/transport isn't the bottleneck** (throughput
@@ -180,7 +186,7 @@ the binary relay; **~75% on-demand** bandwidth cut.
 
 | Path                                        | What                                                                                                                                                                                                                                                                                           |
 | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/web/`                             | `@dimos/web` (Dimos JS) — transport iface + `transports/` (`gatewayWs`=`ws()`, `webTransport`, `composite`=`webtransport()`, `experimental/` bench transports) + **media plane** (`media/`: `jpegTopicMedia`/`webRtcMedia`/`webCodecsMedia`) + client (incl. `call` RPC), topic, decode, stats |
+| `packages/web/`                             | `@dimos/web` (Dimos JS) — transport iface + `transports/` (`gatewayWs`=`ws()`, `webTransport`, `composite`=`webtransport()`, `experimental/` bench transports) + **media plane** (`media/`: `jpegTopicMedia`/`webRtcMedia`/`webCodecsMedia`) + client (incl. `call` RPC), topic, stats |
 | `packages/react/`                           | `@dimos/react` — hooks (`useTopics`, `useVideo`, `useTeleop`, `useRpc`/`useCommands`, …)                                                                                                                                                                                                       |
 | `app/`                                      | Vite example app (`panels/`: WorldView, Camera, PoseReadout, TeleopPad, StatsBar, CommandsPanel, SubscribeBar, `streams/` Streams tab)                                                                                                                                                         |
 | `gateway/app.py`                            | the single backend entrypoint (`python -m gateway`) — one process, all transports + the app                                                                                                                                                                                                    |
@@ -188,7 +194,7 @@ the binary relay; **~75% on-demand** bandwidth cut.
 | `gateway/{data,media}.py`                   | `/ws` data plane (topics + teleop/goal/rpc) · `/media` camera plane                                                                                                                                                                                                                            |
 | `gateway/transports/`                       | the `/sse` `/poll` `/rtc` + WebTransport bench transports                                                                                                                                                                                                                                      |
 | `scenarios/`                                | dimos publisher blueprints — live data sources (`nav`/`arm`/`cam`) + `bench.py` (the browser-bench `/bench/*` source)                                                                                                                                                                          |
-| `app/src/bench.tsx` · `panels/BenchTab.tsx` | the in-browser benchmark (`/bench.html`) + in-app Bench tab                                                                                                                                                                                                                                    |
+| `packages/web/bench.ts` · `panels/BenchDrawer.tsx` | the in-browser benchmark core (`STREAM_PROFILES`, `measureScenario`) + the Streams-tab BenchDrawer UI                                                                                                                                                                                    |
 
 
 The original teaching prototype (`app/src/bus.ts`, `app/src/widgets/`, `WALKTHROUGH.md`) is the
@@ -205,7 +211,7 @@ Done:
 - RPC bridge: `client.call("GO2Connection","standup")` → whitelisted dimos `@rpc` (Commands panel).
 - WebTransport teleop + Auto (WT→WS) default: one QUIC connection carries data and control through the
   shared `SafetyEgress` (clamp + deadman + stop-on-disconnect), with a WebSocket fallback. Plus the
-  `go2-scope` demo blueprint (teleop go2 dimsim + multi-rate `/scope/*` + Streams-tab preset).
+  `go2-load` demo blueprint (teleop go2 dimsim + multi-rate `/load/*` lanes + crankable flood + Streams-tab preset).
 - No head-of-line blocking under loss: WebRTC-data / WebTransport (UDP) stay smooth where WS (TCP)
   stalls; plus on-demand subscribe + a QoS layer (rate-limit / conflation / priority).
 

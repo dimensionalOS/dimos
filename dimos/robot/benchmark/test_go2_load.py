@@ -14,8 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Functional test: boot the bench-load blueprint via the real coordinator and assert the
-custom /bench/* topics actually flow on the bus. Complements the import-only validation in
+"""Functional test: boot the `load` blueprint via the real coordinator and assert the custom
+/load/* topics actually flow on the bus. Complements the import-only validation in
 test_all_blueprints.py. Marked self_hosted because it spawns the coordinator + worker pool.
 
 Uses LCM (deterministic, no router) regardless of the platform default transport.
@@ -31,11 +31,11 @@ import pytest
 
 
 @pytest.mark.self_hosted
-def test_bench_load_topics_flow() -> None:
+def test_load_lanes_flow() -> None:
     env = {**os.environ, "DIMOS_TRANSPORT": "lcm"}
     # Invoke the CLI in a child interpreter so we don't depend on `dimos` being on PATH.
     code = (
-        "import sys; sys.argv=['dimos','run','bench-load','-o','benchload.autostart=true'];"
+        "import sys; sys.argv=['dimos','run','load'];"
         "from dimos.robot.cli.dimos import cli_main; cli_main()"
     )
     proc = subprocess.Popen(
@@ -46,17 +46,17 @@ def test_bench_load_topics_flow() -> None:
         stderr=subprocess.DEVNULL,
     )
 
-    counts = {"/bench/p0": 0, "/bench/grid": 0}
+    counts = {"/load/fast": 0, "/load/grid": 0}
     subs: list = []
     try:
-        time.sleep(14)  # coordinator boot + worker spawn + autostart
-        assert proc.poll() is None, "bench-load process exited before publishing"
+        time.sleep(14)  # coordinator boot + worker spawn + autostart lanes
+        assert proc.poll() is None, "load process exited before publishing"
 
         from dimos.core.transport import LCMTransport
         from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
         from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 
-        for name, typ in (("/bench/p0", PoseStamped), ("/bench/grid", OccupancyGrid)):
+        for name, typ in (("/load/fast", PoseStamped), ("/load/grid", OccupancyGrid)):
             t = LCMTransport(name, typ)
             t.start()
             t.subscribe(lambda _m, n=name: counts.__setitem__(n, counts[n] + 1))
@@ -72,19 +72,19 @@ def test_bench_load_topics_flow() -> None:
             pass
         proc.wait(timeout=15)
 
-    # 100Hz pose / 20Hz grid over a 4s window, minus startup slack.
-    assert counts["/bench/p0"] > 50, f"too few PoseStamped on /bench/p0: {counts}"
-    assert counts["/bench/grid"] > 2, f"too few OccupancyGrid on /bench/grid: {counts}"
+    # 100Hz fast lane / 5Hz grid over a 4s window, minus startup slack.
+    assert counts["/load/fast"] > 50, f"too few PoseStamped on /load/fast: {counts}"
+    assert counts["/load/grid"] > 2, f"too few OccupancyGrid on /load/grid: {counts}"
 
 
 @pytest.mark.self_hosted
-def test_bench_load_heavy_stream_flows() -> None:
-    """The configurable large stream (heavy_hz>0) publishes a sized Image on /bench/img."""
+def test_load_heavy_stream_flows() -> None:
+    """The configurable flood (heavy_hz>0) publishes a sized Image on /load/img."""
     env = {**os.environ, "DIMOS_TRANSPORT": "lcm"}
-    # Modest 500KB @ 10Hz so the test stays light; heavy stream is off unless heavy_hz>0.
+    # Modest 500KB @ 10Hz so the test stays light; flood is off unless heavy_hz>0.
     code = (
-        "import sys; sys.argv=['dimos','run','bench-load','-o','benchload.autostart=true',"
-        "'-o','benchload.heavy_hz=10','-o','benchload.heavy_bytes=500000'];"
+        "import sys; sys.argv=['dimos','run','load',"
+        "'-o','go2load.heavy_hz=10','-o','go2load.heavy_bytes=500000'];"
         "from dimos.robot.cli.dimos import cli_main; cli_main()"
     )
     proc = subprocess.Popen(
@@ -95,18 +95,18 @@ def test_bench_load_heavy_stream_flows() -> None:
         stderr=subprocess.DEVNULL,
     )
 
-    counts = {"/bench/img": 0}
+    counts = {"/load/img": 0}
     subs: list = []
     try:
         time.sleep(14)  # coordinator boot + worker spawn + autostart
-        assert proc.poll() is None, "bench-load process exited before publishing"
+        assert proc.poll() is None, "load process exited before publishing"
 
         from dimos.core.transport import LCMTransport
         from dimos.msgs.sensor_msgs.Image import Image
 
-        t = LCMTransport("/bench/img", Image)
+        t = LCMTransport("/load/img", Image)
         t.start()
-        t.subscribe(lambda _m: counts.__setitem__("/bench/img", counts["/bench/img"] + 1))
+        t.subscribe(lambda _m: counts.__setitem__("/load/img", counts["/load/img"] + 1))
         subs.append(t)
 
         time.sleep(4)  # sample window
@@ -120,4 +120,4 @@ def test_bench_load_heavy_stream_flows() -> None:
         proc.wait(timeout=15)
 
     # 10Hz over a 4s window, minus startup slack.
-    assert counts["/bench/img"] > 5, f"too few Image on /bench/img: {counts}"
+    assert counts["/load/img"] > 5, f"too few Image on /load/img: {counts}"

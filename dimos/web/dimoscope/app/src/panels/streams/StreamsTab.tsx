@@ -4,14 +4,14 @@ import { useState } from "react";
 import { useTopics } from "../../dimos";
 import { StreamCard } from "./StreamCard";
 
-// The scenario namespaces (scenarios/{nav,arm,cam}.py) + the go2-scope blueprint — subscribe a whole
+// The scenario namespaces (scenarios/{nav,arm,cam}.py) + the go2-load blueprint — subscribe a whole
 // profile in one click. Listed by name so a preset works even before the publisher is discovered.
 const PRESETS: Record<string, string[]> = {
   nav: ["/nav/pose", "/nav/path", "/nav/cloud", "/nav/map"],
   arm: ["/arm/joint_states", "/arm/ee_pose", "/arm/imu", "/arm/trajectory"],
   cam: ["/cam/rgb", "/cam/depth", "/cam/points", "/cam/detections"],
-  // go2-scope: multi-rate streams alongside the teleoperable go2 dimsim (distinct Hz per lane).
-  scope: ["/scope/fast", "/scope/mid", "/scope/slow", "/scope/grid", "/scope/cloud"],
+  // go2-load: multi-rate streams alongside the teleoperable go2 dimsim (distinct Hz per lane).
+  load: ["/load/fast", "/load/mid", "/load/slow", "/load/grid", "/load/cloud"],
 };
 
 export function StreamsTab() {

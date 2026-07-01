@@ -4,8 +4,15 @@
 // carries the full WS control protocol (subscribe/QoS + teleop/goal/rpc via the shared SafetyEgress),
 // so WT drives the robot alone. Cert: we fetch the server's self-signed SHA-256 for serverCertificateHashes.
 import { applyCaps } from "../qos.ts";
-import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../transport.ts";
-import type { Qos, TopicInfo } from "../types.ts";
+import type {
+  CommandInfo,
+  Qos,
+  RawSample,
+  Status,
+  TopicInfo,
+  Transport,
+  TransportCaps,
+} from "../types.ts";
 import { frameToSample } from "./frame.ts";
 
 export interface WebTransportDeps {

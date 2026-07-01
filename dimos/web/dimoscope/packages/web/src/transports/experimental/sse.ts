@@ -1,8 +1,14 @@
 // Read-only Server-Sent Events; gateway streams `data: <base64(frame)>` on GET /sse?topics=<csv|*>;
 // parsed with fetch+stream reader (NOT EventSource) so the same adapter runs in browser AND headless
 // (Deno/Bun); base64 ≈ 33% overhead; no per-subscriber downsample.
-import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../../transport.ts";
-import type { TopicInfo } from "../../types.ts";
+import type {
+  CommandInfo,
+  RawSample,
+  Status,
+  TopicInfo,
+  Transport,
+  TransportCaps,
+} from "../../types.ts";
 import { b64ToBytes, frameToSample } from "../frame.ts";
 
 export interface SseDeps {

@@ -2,13 +2,14 @@
 # Benchmark load generator for the in-browser bench: a configurable dimos Module emitting timestamped,
 # seq-tagged streams so the browser can measure latency/throughput/jitter/loss across transports.
 # Tuned by env (BENCH_HZ, BENCH_IMG_HZ, BENCH_IMG_BYTES, BENCH_POSE_TOPICS, ...); also a blueprint.
-# Twin of the coordinator-wired `bench-load` (dimos/robot/benchmark/bench_load.py) — same /bench/* wire.
+# Ultra-light (no coordinator) twin of the `load`/`go2-load` blueprint (dimos/robot/benchmark/go2_load.py):
+# same /load/* wire, env-tuned. For interactive start_bench control use `dimos run load` / `deno task dog`.
 #
 # Topics (names match @dimos/web/bench; leading "/" stripped on zenoh). Each stamps `ts` (publish
 # wall-clock, seconds) → one-way latency, and `frame_id=str(seq)` (per-topic counter) → drop/gap detection:
-#   /bench/p0../pN  PoseStamped   @ rate_hz   small, high-rate
-#   /bench/grid     OccupancyGrid @ grid_hz   medium (~3.7 KB)
-#   /bench/img      Image         @ img_hz    large (~img_bytes)
+#   /load/p0../pN  PoseStamped   @ rate_hz   small, high-rate
+#   /load/grid     OccupancyGrid @ grid_hz   medium (~3.7 KB)
+#   /load/img      Image         @ img_hz    large (~img_bytes)
 import os
 import time
 
@@ -90,7 +91,7 @@ class BenchSource(Module):
                 port.publish(
                     PoseStamped(
                         ts=now,
-                        frame_id=seq(f"/bench/p{i}"),
+                        frame_id=seq(f"/load/p{i}"),
                         position=(0.0, float(i), 0.0),
                         orientation=IDENT,
                     )
@@ -107,7 +108,7 @@ class BenchSource(Module):
                             grid=GRID,
                             resolution=0.1,
                             origin=Pose(-3.0, -3.0, 0.0),
-                            frame_id=seq("/bench/grid"),
+                            frame_id=seq("/load/grid"),
                             ts=time.time(),
                         )
                     )
@@ -119,7 +120,7 @@ class BenchSource(Module):
 
             def tick_img(_: int) -> None:
                 self._img.ts = time.time()
-                self._img.frame_id = seq("/bench/img")
+                self._img.frame_id = seq("/load/img")
                 self.img.publish(self._img)
 
             self.register_disposable(rx.interval(1.0 / c.img_hz).subscribe(tick_img))
@@ -148,12 +149,12 @@ def _mk(topic: str, typ: type):  # type: ignore[no-untyped-def]
 if __name__ == "__main__":
     mod = BenchSource()
     c = mod.config
-    mod.p0.transport = _mk(_tn("/bench/p0"), PoseStamped)
-    mod.p1.transport = _mk(_tn("/bench/p1"), PoseStamped)
-    mod.p2.transport = _mk(_tn("/bench/p2"), PoseStamped)
-    mod.p3.transport = _mk(_tn("/bench/p3"), PoseStamped)
-    mod.grid.transport = _mk(_tn("/bench/grid"), OccupancyGrid)
-    mod.img.transport = _mk(_tn("/bench/img"), Image)
+    mod.p0.transport = _mk(_tn("/load/p0"), PoseStamped)
+    mod.p1.transport = _mk(_tn("/load/p1"), PoseStamped)
+    mod.p2.transport = _mk(_tn("/load/p2"), PoseStamped)
+    mod.p3.transport = _mk(_tn("/load/p3"), PoseStamped)
+    mod.grid.transport = _mk(_tn("/load/grid"), OccupancyGrid)
+    mod.img.transport = _mk(_tn("/load/img"), Image)
     mod.start()
     print(
         f"bench_source: {max(1, min(4, c.n_pose_topics))}×PoseStamped @ {c.rate_hz}Hz "
