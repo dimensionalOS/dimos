@@ -5,9 +5,25 @@
 // @rpc, so a sweep can generate its own flow without re-implementing the load-gen backend.
 import { useEffect, useRef, useState } from "react";
 import { useCommands, useDimosClient, useRpc, useServers, useTopics } from "../dimos";
+import { useGateway } from "../gateway";
 import { type BenchRow, formatMarkdown, measureScenario, type Qos, STREAM_PROFILES } from "@dimos/web";
 
 const HZ_PRESETS = [0, 5, 20, 60, 120];
+
+// Server-side network conditions (GET/POST /netem — gateway/netem.py, opt-in via NETEM_CTL=1 on a
+// Linux gateway). The section renders only when the gateway reports it enabled.
+interface NetemChip {
+  id: string;
+  label: string;
+  desc: string;
+}
+interface NetemState {
+  enabled: boolean;
+  active: string;
+  healsInS: number;
+  profiles: NetemChip[];
+  outages: NetemChip[];
+}
 
 // Large-stream tiers grounded in real sensor bitrates; frames stay ≤12 MB, high MB/s comes from rate, not a giant packet.
 const STREAM_TIERS = [
@@ -56,6 +72,46 @@ export function BenchDrawer() {
     }
   }
 
+  // Network conditions (server-side netem via the gateway; hidden unless the gateway enables it).
+  const { gateway } = useGateway();
+  const httpBase = `${location.protocol}//${gateway}`;
+  const [netem, setNetem] = useState<NetemState | null>(null);
+  const [netBusy, setNetBusy] = useState(false);
+  const [netMsg, setNetMsg] = useState<string>();
+
+  async function fetchNetem(): Promise<NetemState | null> {
+    try {
+      const st: NetemState = await (await fetch(`${httpBase}/netem`)).json();
+      setNetem(st);
+      return st;
+    } catch {
+      setNetem(null); // older gateway without /netem → section absent
+      return null;
+    }
+  }
+  useEffect(() => {
+    if (open) fetchNetem();
+  }, [open, httpBase]);
+
+  async function applyNetem(id: string) {
+    setNetBusy(true);
+    setNetMsg(undefined);
+    try {
+      const res = await fetch(`${httpBase}/netem`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ profile: id }),
+      });
+      const body = await res.json();
+      if (!res.ok) setNetMsg(`✗ ${body.error ?? res.status}`);
+      else setNetem(body);
+    } catch (e) {
+      setNetMsg(`✗ ${(e as Error).message}`);
+    } finally {
+      setNetBusy(false);
+    }
+  }
+
   // Workload + sweep knobs. maxHz is the one client-side QoS applied to the sweep.
   const [picked, setPicked] = useState<string[]>(["pose"]);
   const [maxHz, setMaxHz] = useState(0);
@@ -89,6 +145,9 @@ export function BenchDrawer() {
     setProgress("clock sync…");
     const off = await client.estimateClockOffset().catch(() => undefined);
     setClock(off);
+    // Stamp the network condition too — refresh at sweep start (a profile may have self-healed).
+    const net = netem?.enabled ? await fetchNetem() : null;
+    const netTag = net?.enabled ? ` · net:${net.active}` : "";
     const out: { label: string; row: BenchRow }[] = [];
     for (const scenario of runScenarios) {
       if (aborted.current) break;
@@ -102,7 +161,7 @@ export function BenchDrawer() {
         const wire = client.gatewayLabel;
         const wireTag = wire && wire !== activeLabel ? ` (wire: ${wire})` : "";
         out.push({
-          label: `${activeLabel}${wireTag} · ${qosLabel}`,
+          label: `${activeLabel}${wireTag}${netTag} · ${qosLabel}`,
           row: { ...r, scenario: scenario.name },
         });
         setRows([...out]);
@@ -210,6 +269,47 @@ export function BenchDrawer() {
                 </>
               )}
           </div>
+
+          {netem?.enabled && (
+            <div className="bench-section">
+              <div className="bench-label">
+                Network · server-side netem ({gateway})
+              </div>
+              <div className="bench-chips">
+                {netem.profiles.map((p) => (
+                  <button
+                    key={p.id}
+                    className={`tab ${netem.active === p.id ? "tab-active" : ""}`}
+                    title={p.desc}
+                    disabled={netBusy}
+                    onClick={() => applyNetem(p.id)}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              <div className="bench-row">
+                <span className="muted small">outage</span>
+                {netem.outages.map((o) => (
+                  <button
+                    key={o.id}
+                    className="tab"
+                    title={o.desc}
+                    disabled={netBusy}
+                    onClick={() => applyNetem(o.id)}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+                {netMsg && <span className="muted small" title={netMsg}>{netMsg.slice(0, 60)}</span>}
+              </div>
+              <div className="muted small">
+                tc on the gateway egress (ports 8080/8443 only) · self-heals in{" "}
+                {Math.round(netem.healsInS / 60)} min · apply loss <em>after</em>{" "}
+                the transport is connected — QUIC handshakes fail under loss
+              </div>
+            </div>
+          )}
 
           <div className="bench-section">
             <div className="bench-label">QoS · client-side (applied to the sweep)</div>

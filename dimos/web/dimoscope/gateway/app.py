@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 
 from dimos.utils.logging_config import setup_logger
 
-from . import qos
+from . import netem, qos
 from .bus import Bus
 from .data import DataPlane
 from .egress import SafetyEgress
@@ -95,6 +95,9 @@ def build_app() -> FastAPI:
     app.add_api_route("/poll", poll.handle, methods=["GET"])
     app.add_api_route("/cert", lambda: PlainTextResponse(wt.cert_hash), methods=["GET"])
     app.add_api_route("/health", lambda: PlainTextResponse("ok"), methods=["GET"])
+    # Browser-controlled network conditions (bench): OFF unless NETEM_CTL=1 (gateway/netem.py).
+    app.add_api_route("/netem", netem.get_state, methods=["GET"])
+    app.add_api_route("/netem", netem.set_profile, methods=["POST"])
 
     # Frontend last: catch-all static serve of the Vite build (index.html at /).
     if DIST.is_dir():

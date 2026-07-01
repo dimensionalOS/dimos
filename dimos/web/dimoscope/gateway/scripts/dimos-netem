@@ -1,0 +1,92 @@
+#!/bin/bash
+# dimos-netem — scoped network-condition profiles for the dimoscope benchmark (Linux, root).
+#
+# Applies tc netem ONLY to the gateway's egress flows (sport 8080/tcp + 8443/udp via a prio qdisc +
+# u32 filters), so SSH and everything else on the box stay untouched even at the harshest profile.
+# Every apply arms a self-heal timer that clears the shaping after $HEAL_S, so a crashed caller can
+# never leave the box degraded. Outage profiles drop the gateway ports via iptables for a few seconds
+# and always auto-restore.
+#
+# Profile names are HARDCODED here — the gateway endpoint (gateway/netem.py) passes a name, never tc
+# arguments, so there is no injection surface. Install (one-time, as root):
+#   install -m755 gateway/scripts/dimos-netem /usr/local/bin/dimos-netem
+#   echo 'kristjan ALL=(root) NOPASSWD: /usr/local/bin/dimos-netem' > /etc/sudoers.d/dimos-netem
+#
+# Usage: dimos-netem <profile>|clear|status
+set -u
+
+IFACE="${DIMOS_NETEM_IFACE:-eth0}"
+HEAL_S="${DIMOS_NETEM_HEAL_S:-900}"
+STATE_DIR=/run/dimos-netem
+PROFILE_F="$STATE_DIR/profile"
+TIMER_F="$STATE_DIR/timer.pid"
+
+mkdir -p "$STATE_DIR"
+
+kill_timer() {
+  [ -f "$TIMER_F" ] && kill "$(cat "$TIMER_F")" 2>/dev/null
+  rm -f "$TIMER_F"
+}
+
+clear_all() {
+  kill_timer
+  tc qdisc del dev "$IFACE" root 2>/dev/null
+  # Remove any outage rules we added (fixed forms; -D is a no-op if absent).
+  iptables -D OUTPUT -p udp --sport 8443 -j DROP 2>/dev/null
+  iptables -D OUTPUT -p tcp --sport 8080 -j DROP 2>/dev/null
+  rm -f "$PROFILE_F"
+}
+
+# apply <name> <rate> <delay> <jitter> <loss> [corr]
+apply() {
+  local name="$1" rate="$2" delay="$3" jitter="$4" loss="$5" corr="${6:-}"
+  clear_all
+  tc qdisc add dev "$IFACE" root handle 1: prio bands 4 \
+    priomap 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 || exit 1
+  # shellcheck disable=SC2086 — corr is an optional extra token for netem loss correlation
+  tc qdisc add dev "$IFACE" parent 1:4 handle 40: netem \
+    rate "$rate" delay "$delay" "$jitter" loss "$loss" $corr || { clear_all; exit 1; }
+  # Steer only the gateway's egress into the shaped band (server→browser data direction).
+  tc filter add dev "$IFACE" parent 1: protocol ip u32 match ip sport 8080 0xffff flowid 1:4
+  tc filter add dev "$IFACE" parent 1: protocol ip u32 match ip sport 8443 0xffff flowid 1:4
+  echo "$name" > "$PROFILE_F"
+  ( sleep "$HEAL_S"; "$0" clear ) >/dev/null 2>&1 &
+  echo $! > "$TIMER_F"
+  echo "applied $name (self-heals in ${HEAL_S}s)"
+}
+
+# outage <secs> <udp-only|all>  — drop gateway egress for N seconds, then auto-restore.
+outage() {
+  local secs="$1" scope="$2"
+  iptables -I OUTPUT -p udp --sport 8443 -j DROP
+  [ "$scope" = all ] && iptables -I OUTPUT -p tcp --sport 8080 -j DROP
+  (
+    sleep "$secs"
+    iptables -D OUTPUT -p udp --sport 8443 -j DROP 2>/dev/null
+    iptables -D OUTPUT -p tcp --sport 8080 -j DROP 2>/dev/null
+  ) >/dev/null 2>&1 &
+  echo "outage $scope for ${secs}s (auto-restores)"
+}
+
+case "${1:-}" in
+  clean|clear)     clear_all; echo "clean" ;;
+  wifi-normal)     apply wifi-normal  10mbit  40ms  20ms  0.3% ;;
+  wifi-crowded)    apply wifi-crowded 2mbit   100ms 60ms  1.5% 50% ;;
+  wifi-edge)       apply wifi-edge    700kbit 200ms 150ms 5%   70% ;;
+  disaster)        apply disaster     200kbit 500ms 300ms 8% ;;
+  loss-3)          apply loss-3       100mbit 40ms  10ms  3% ;;
+  loss-5)          apply loss-5       100mbit 40ms  10ms  5% ;;
+  outage-udp-3s)   outage 3 udp ;;
+  outage-udp-10s)  outage 10 udp ;;
+  outage-all-10s)  outage 10 all ;;
+  status)
+    prof=$(cat "$PROFILE_F" 2>/dev/null || echo clean)
+    q=$(tc qdisc show dev "$IFACE" 2>/dev/null | grep -c netem)
+    [ "$q" -eq 0 ] && prof=clean
+    echo "$prof"
+    ;;
+  *)
+    echo "usage: dimos-netem <clean|wifi-normal|wifi-crowded|wifi-edge|disaster|loss-3|loss-5|outage-udp-3s|outage-udp-10s|outage-all-10s|clear|status>" >&2
+    exit 2
+    ;;
+esac
