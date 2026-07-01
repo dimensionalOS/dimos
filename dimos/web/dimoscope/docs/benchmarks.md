@@ -197,12 +197,16 @@ post-fix. (Any bench payload that isn't incompressible is measuring the compress
 |---|---|---|---|
 | clean | WS | 113 / 0 / **16.6** / 22 | **19.5 MB/s** / 0% / p50 85 ms |
 | clean | WT | 110 / 0 / **17.4** / 31 | 2.4 MB/s / 0% / p50 2.6 s *(aioquic ceiling)* |
+| clean | **Hybrid** | 114 / 0 / **13.8** / 27 | **19.5 MB/s** / 0% / p50 73 ms |
 | wifi-normal | WS | 104 / 0.24 / 57 / 110 | **244 kB/s** / p50 2.6 s *(the Mathis limit — TCP at 0.3% loss × 80 ms RTT, not the 1.25 MB/s pipe)* |
 | wifi-normal | WT | 111 / 0.22 / 40 / ~61 | 975 kB/s *(≈ the 10 mbit cap)* |
+| wifi-normal | **Hybrid** | 113 / 0.22 / 50 / **67** | 975 kB/s *(≈ the cap; single-window Mathis variance — see note)* |
 | wifi-crowded | WT | 100 / 1.2 / 298 / 330 | 244 kB/s *(≈ the 2 mbit cap)* |
+| wifi-crowded | **Hybrid** | 112 / 0.22 / 105 / **138** | 0 in-window *(TCP Mathis-dead at 1.5% bursty)* |
 | wifi-edge | WT | 81 / 0 / **842** / 862 | starved (0) |
 | **loss-5** | **WS** | 107 / 0.9 / 44.6 / **184** | **0** *(Mathis at 5% ≈ 65 kB/s < one frame)* |
 | **loss-5** | **WT** | 98 / **8.6** / 40.4 / **63** | 0 *(aioquic + loss)* |
+| **loss-5** | **Hybrid** | 85 / 6.1 / 46 / **91** | 0 *(bulk rides TCP — Mathis)* |
 
 **What the matrix shows:**
 - **The HoL headline (loss-5):** WT datagrams keep the pose tail flat — **p99 63 ms vs TCP's 184 ms (~3×)** —
@@ -221,9 +225,28 @@ post-fix. (Any bench payload that isn't incompressible is measuring the compress
   row shows which transport actually carried the run). Outage buttons (`UDP 3s/10s`, `all 10s`) exist for
   fallback/reconnect timing — a follow-up sweep.
 
-**Bottom line:** WS is the robust default (connects anywhere, absorbs loss, real 19 MB/s bulk on a clean
-path); WT datagrams are the right lane for teleop/pose freshness under loss (3× flatter tail); reliable bulk
-under loss needs conflation + rate adaptation (§2), not a better transport.
+### The hybrid transport — `hybrid()`: both wires, lane-routed
+
+`hybrid()` (`packages/web/src/transports/hybrid.ts`, the **Hybrid (WS+WT)** dropdown entry) opens **both
+connections** and routes each subscription by its QoS lane: **sensor lanes → WT datagrams**, command /
+default / bulk — and all teleop/goal/rpc control — **→ WS**. WT is opportunistic: if it can't connect or
+dies mid-session, its topics rebind to WS and the wire tag reports `HYB(WS-only)`.
+
+The matrix rows above show it **takes the best cell of both columns simultaneously**:
+- **clean:** pose **13.8 ms** (fastest of all three — datagrams never queue behind bulk, and bulk isn't on
+  the QUIC connection starving them) *plus* the full **19.5 MB/s** WS bulk.
+- **wifi-crowded:** pose p99 **138 ms vs pure-WT's 330 ms** — bulk rides TCP, whose congestion control backs
+  off and keeps the bottleneck queue shallow for the datagrams; on pure WT the aioquic bulk stream bloated
+  the same queue.
+- **loss-5:** the WT-datagram tail (p99 91 ms vs WS's 184) with ~6% shed — freshness where it matters.
+- Bulk inherits TCP's physics: full pipe on clean/low-loss links, Mathis-limited under real loss (single
+  4 s windows at low loss rates have real variance — treat ±30% on the bulk numbers).
+
+**Bottom line:** **Hybrid is the recommended default for robot UIs** — teleop/pose freshness of WT datagrams,
+bulk/commands on reliable WS, graceful WS-only degradation. Remaining caveats: two connections still share
+one bottleneck queue (gateway QoS — priority outbox + egress pacing across both sockets — stays the
+first-line defense, a follow-up), and reliable bulk under real loss needs conflation + rate adaptation (§2),
+not a better transport.
 
 ### VPS — run the dog (Ubuntu; needs `uv`; `deno` only to build the app)
 
