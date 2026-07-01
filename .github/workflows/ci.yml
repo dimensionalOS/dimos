@@ -281,13 +281,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Run tests
-        run: uv run pytest --numprocesses=3 --cov=dimos/ --junitxml=junit.xml -m 'not (tool or self_hosted or mujoco or self_hosted_large)'
+        run: uv run pytest --numprocesses=3 --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large)'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m 'not (tool or self_hosted or mujoco or self_hosted_large)' && exit 1
+          uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or mujoco or self_hosted_large)' && exit 1
         shell: bash
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
@@ -397,13 +397,13 @@ jobs:
             echo "ROS_PYTHON_VERSION=$ROS_PYTHON_VERSION"
           } >> "$GITHUB_ENV"
       - name: Run tests
-        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not (tool or mujoco)'
+        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not mujoco'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m '(${{ matrix.markers }}) and not (tool or mujoco)' && exit 1
+          uv run pytest --no-cov -vvvvv --lf  -m '(${{ matrix.markers }}) and not mujoco' && exit 1
         shell: bash
       - name: Turn coverage into xml
         run: uv run python -m coverage xml

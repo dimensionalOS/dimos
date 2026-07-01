@@ -147,14 +147,9 @@ def test_basic_sync_call(rpc_context, impl_name: str) -> None:
             unsub()
 
 
-@pytest.mark.parametrize("rpc_context, impl_name", testdata)
-@pytest.mark.asyncio
-@pytest.mark.skip(
-    reason="Async RPC calls have a deadlock issue when run in the full test suite (works in isolation)"
-)
-async def test_async_call(rpc_context, impl_name: str) -> None:
+async def test_async_call() -> None:
     """Test asynchronous RPC calls."""
-    with rpc_context() as (server, client):
+    with lcm_rpc_context() as (server, client):
         # Serve the function
         unsub = server.serve_rpc(add_function, "add_async")
 
