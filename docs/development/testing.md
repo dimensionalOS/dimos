@@ -1,4 +1,6 @@
-# Testing
+---
+title: "Testing"
+---
 
 `uv run` syncs the project deps + `tests` group on demand, so the default test suite needs no upfront install — just `uv run pytest --numprocesses=auto dimos` (xdist parallelizes across cores).
 
