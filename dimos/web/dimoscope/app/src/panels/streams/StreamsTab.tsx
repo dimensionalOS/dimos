@@ -1,6 +1,5 @@
-// StreamsTab — the full-page live-stream + QoS showcase. Subscribe to any topic (by name or a
-// scenario preset) and watch its messages stream in, each with its QoS lane and live metrics.
-// This is the "watch it live / tune QoS" companion to the Bench tab's quantitative sweep.
+// StreamsTab — subscribe to any topic (by name or a scenario preset) and watch its messages stream in
+// with per-topic QoS controls. The live companion to the Bench tab's quantitative sweep.
 import { useState } from "react";
 import { useTopics } from "../../dimos";
 import { StreamCard } from "./StreamCard";

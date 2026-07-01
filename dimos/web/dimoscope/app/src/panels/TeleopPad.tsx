@@ -1,6 +1,5 @@
-// TeleopPad — WASD / arrows (and buttons) → safe velocity commands.
-// Sends at 10 Hz while a key is held; each command carries ttlMs, so the gateway
-// deadman-stops the robot if input ceases or the socket drops.
+// TeleopPad — WASD / arrows / buttons → safe velocity commands at 10 Hz. Each carries ttlMs, so the
+// gateway deadman-stops the robot if input ceases or the socket drops.
 import { useEffect, useRef, useState } from "react";
 import { useTeleop } from "../dimos";
 

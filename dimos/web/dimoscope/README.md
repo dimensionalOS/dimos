@@ -19,7 +19,7 @@ robot / sim ─► DimOS bus (LCM | Zenoh)
    ▼
 @dimos/web  (decode via @dimos/msgs · on-demand · QoS · client.call RPC · useVideo media)
    ▼
-@dimos/react ─► app (WorldView · Camera · Rerun 3D · Pose · Stats · Commands · Streams) + teleop
+@dimos/react ─► app (WorldView · Camera · Pose · Stats · Commands · Streams) + teleop
 ```
 
 
@@ -208,9 +208,4 @@ Done:
   `go2-scope` demo blueprint (teleop go2 dimsim + multi-rate `/scope/*` + Streams-tab preset).
 - No head-of-line blocking under loss: WebRTC-data / WebTransport (UDP) stay smooth where WS (TCP)
   stalls; plus on-demand subscribe + a QoS layer (rate-limit / conflation / priority).
-
-Known limitation:
-- Rerun 3D panel (`panels/RerunPanel.tsx`): the stock web viewer embeds and streams but paints a black
-  canvas — the undecimated `RerunBridge` firehose blows the browser WASM viewer's heap ceiling. The
-  native `dimos-viewer` (:9876) handles the same feed; a browser-viable 3D needs server-side decimation.
 

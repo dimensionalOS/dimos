@@ -1,7 +1,5 @@
-// CommandsPanel — buttons for the dimos @rpc commands the gateway advertises as browser-callable
-// (useCommands ← the gateway's `hello` whitelist). Click → client.call(target, method) → show the
-// return value. Renders NOTHING when no commands are advertised (e.g. Bun↔LCM has no RPC bridge),
-// so the panel only appears where the framework's command registry is actually reachable.
+// CommandsPanel — buttons for the dimos @rpc commands the gateway advertises (via its `hello`
+// whitelist). Renders nothing when none are advertised.
 import { useState } from "react";
 import { useCommands, useRpc } from "../dimos";
 

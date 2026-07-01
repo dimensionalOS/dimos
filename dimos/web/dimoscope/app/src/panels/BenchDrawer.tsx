@@ -1,9 +1,5 @@
-// BenchDrawer — the quantitative benchmark, folded into the Topics tab as a collapsed drawer.
-//
-// It measures the LIVE active transport (whatever the topbar dropdown picked) across the canonical
-// STREAM_PROFILES workloads and prints a results table you can copy as Markdown. The *live* QoS story
-// (priority scheduler, bulk-sheds-first) lives in the Streams cards' ⚡ Contention mode + the gateway's
-// egress scheduler — this drawer is deliberately just "pick a workload → sweep → export numbers".
+// BenchDrawer — the quantitative benchmark, folded into the Topics tab as a collapsed drawer. Measures
+// the live active transport across the STREAM_PROFILES workloads → a results table you can copy as Markdown.
 //
 // The optional Start/Stop control drives the BenchLoad blueprint's large stream over its already-
 // whitelisted @rpc so a sweep can generate its own flow; it's a thin client of that contract, not a
