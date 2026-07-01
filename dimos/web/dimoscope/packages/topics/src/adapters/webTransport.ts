@@ -78,7 +78,10 @@ export const createWebTransportTransport = (deps: WebTransportDeps): Transport =
     statusCb?.("connecting");
     const hashHex = await (await fetch(certHashUrl)).text();
     wt = new WebTransport(url, {
-      serverCertificateHashes: [{ algorithm: "sha-256", value: hexToBytes(hashHex) as BufferSource }],
+      serverCertificateHashes: [{
+        algorithm: "sha-256",
+        value: hexToBytes(hashHex) as BufferSource,
+      }],
     });
     await wt.ready;
     statusCb?.("open");

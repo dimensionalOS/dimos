@@ -75,7 +75,7 @@ export function generateCommandTypes(commands: readonly CommandInfo[]): string {
   for (const c of commands) {
     if (!c.target || !c.method) continue;
     let methods = byTarget.get(c.target);
-    if (!methods) byTarget.set(c.target, (methods = new Set()));
+    if (!methods) byTarget.set(c.target, methods = new Set());
     methods.add(c.method);
   }
   const targets = [...byTarget.keys()].sort();

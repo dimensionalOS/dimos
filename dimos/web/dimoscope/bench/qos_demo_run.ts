@@ -25,8 +25,20 @@ const client = await connect({ url: GW, reconnect: false });
 await new Promise((r) => setTimeout(r, 300));
 // both at once → they share (and contend for) the one link
 const [light, heavy] = await Promise.all([
-  measureScenario(client, { name: "light", topics: [LIGHT] }, DUR, true, resolveQos(LIGHT, "", lightLane ? { lane: lightLane } : undefined)),
-  measureScenario(client, { name: "heavy", topics: [HEAVY] }, DUR, true, resolveQos(HEAVY, "", heavyLane ? { lane: heavyLane } : undefined)),
+  measureScenario(
+    client,
+    { name: "light", topics: [LIGHT] },
+    DUR,
+    true,
+    resolveQos(LIGHT, "", lightLane ? { lane: lightLane } : undefined),
+  ),
+  measureScenario(
+    client,
+    { name: "heavy", topics: [HEAVY] },
+    DUR,
+    true,
+    resolveQos(HEAVY, "", heavyLane ? { lane: heavyLane } : undefined),
+  ),
 ]);
 client.close();
 console.log(

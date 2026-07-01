@@ -58,7 +58,8 @@ export const LANES: Record<Lane, Qos> = {
 // topic-name / message-type keyword → lane. Checked in priority order (command → bulk → sensor → default).
 const CMD = /(^|\/)(cmd_vel|cmd|teleop|goal|clicked_point|move_base|nav_goal)(\/|$)/i;
 const CMD_TYPE = /(Twist|Goal)/i;
-const BULK = /(^|\/)(lidar|laser|scan|points?|point_?cloud|cloud|camera|image|depth|rgb|map|costmap|occupancy|grid)(\/|$)/i;
+const BULK =
+  /(^|\/)(lidar|laser|scan|points?|point_?cloud|cloud|camera|image|depth|rgb|map|costmap|occupancy|grid)(\/|$)/i;
 const BULK_TYPE = /(PointCloud|LaserScan|Image|OccupancyGrid|CompressedImage)/i;
 const SENSOR = /(^|\/)(pose|odom|imu|tf|joint|battery|twist|velocity|state|wrench)(\/|$)/i;
 const SENSOR_TYPE = /(Pose|Odometry|Imu|Transform|JointState|Quaternion|Vector3)/i;
