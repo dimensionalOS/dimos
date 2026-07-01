@@ -139,6 +139,9 @@ dependencies = [
     # DimSim scene client (dimos/simulation/dimsim/scene_client.py) imports `websocket`
     # at module load; DimSim is a non-extra-gated robot connection backend.
     "websocket-client>=1.8",
+    # Policy rollout video artifacts.
+    "imageio>=2.37.0",
+    "imageio-ffmpeg>=0.6.0",
 ]
 
 
@@ -634,6 +637,7 @@ ignore = [
     "packages/dimos-gpd-grasp-demo/pixi.lock",
     "packages/dimos-gpd-grasp-demo/uv.lock",
     "packages/dimos-robosuite-sidecar/uv.lock",
+    "packages/dimos-libero-pro-sidecar/uv.lock",
     "packages/dimos-gpd-worker-demo/pixi.lock",
     "packages/dimos-gpd-worker-demo/uv.lock",
     "*/package-lock.json",

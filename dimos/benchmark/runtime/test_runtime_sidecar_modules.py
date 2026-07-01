@@ -224,6 +224,7 @@ def test_libero_pro_runtime_module_rpc_and_stream_outputs(mocker: _Mocker, tmp_p
     reset = module.reset(EpisodeResetRequest(episode_id="episode", task_id="task"))
     step = module.step(_step_request())
     score = module.score()
+    snapshot_observations, snapshot_values = module.observation_snapshot()
 
     assert description.observation_streams == ["color_image", "camera_info", "runtime_event"]
     assert description.metadata["backend_camera_streams"] == ["agentview"]
@@ -231,6 +232,16 @@ def test_libero_pro_runtime_module_rpc_and_stream_outputs(mocker: _Mocker, tmp_p
     assert "sync-http" not in reset.runtime_description.capabilities
     assert step.observations == []
     assert score.score == 1.0
+    assert {observation.stream for observation in snapshot_observations} >= {
+        "agentview",
+        "runtime_event",
+    }
+    image_snapshot = next(
+        observation for observation in snapshot_observations if observation.stream == "agentview"
+    )
+    assert image_snapshot.data_ref == "/payloads/agentview-000001-000001.npy"
+    assert image_snapshot.metadata == {"camera_name": "agentview", "fov_y_deg": 45.0}
+    np.testing.assert_array_equal(snapshot_values["agentview"], _image())
     _assert_published_native_types(module, expected_image=_image())
     assert module._state is not None
     assert _StubLiberoState.init_count == 1

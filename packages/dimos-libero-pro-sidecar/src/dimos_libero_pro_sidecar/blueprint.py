@@ -21,6 +21,7 @@ from pathlib import Path
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.runtime_environment import PythonProjectRuntimeEnvironment
 from dimos_libero_pro_sidecar.module import LiberoProRuntimeModule
+from dimos_libero_pro_sidecar.server import ActionMode
 
 LIBERO_PRO_RUNTIME_ENV_NAME = "dimos-libero-pro-runtime"
 LIBERO_PRO_RUNTIME_PROJECT = Path(__file__).resolve().parents[2]
@@ -36,8 +37,11 @@ def libero_pro_runtime_blueprint(
     task_order_index: int = 0,
     task_index: int = 0,
     init_state_index: int = 0,
+    action_mode: ActionMode = "motor",
     controller: str = "JOINT_POSITION",
     camera_names: tuple[str, ...] = ("agentview",),
+    camera_height: int = 128,
+    camera_width: int = 128,
     control_freq: int = 20,
     horizon: int = 1000,
     seed: int | None = None,
@@ -60,8 +64,11 @@ def libero_pro_runtime_blueprint(
                 task_order_index=task_order_index,
                 task_index=task_index,
                 init_state_index=init_state_index,
+                action_mode=action_mode,
                 controller=controller,
                 camera_names=camera_names,
+                camera_height=camera_height,
+                camera_width=camera_width,
                 control_freq=control_freq,
                 horizon=horizon,
                 seed=seed,

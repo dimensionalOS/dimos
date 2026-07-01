@@ -64,6 +64,90 @@ _Avoid_: independent per-robot timing, per-arm retiming when referring to coordi
 An execution-preparation artifact that derives control-task-specific joint trajectory messages from a generated trajectory without changing the generated trajectory's canonical global timing.
 _Avoid_: generated trajectory projection, execution-time parametrization, per-task generated trajectory
 
+**Policy trajectory dispatch**:
+An execution-preparation artifact that derives control-task-specific joint trajectory messages from policy action chunks while leaving control authority with the configured control task.
+_Avoid_: direct policy control, policy motor write, learned controller bypass
+
+**Joint-trajectory policy chunk**:
+A v1 robot-learning action chunk shaped to become the `JointTrajectory` argument accepted by a joint trajectory control task.
+_Avoid_: generic policy action, direct motor command, backend-native tensor
+
+**Contract-assigned trajectory timing**:
+A v1 policy rollout convention where the robot policy contract assigns simple relative timing to backend action rows when constructing a joint trajectory for dispatch, starting the first action row at `time_from_start = 0`.
+_Avoid_: controller-side chunk timing inference, untimed policy positions, trajectory parametrization
+
+**Dispatch-owned trajectory timestamp**:
+A policy rollout convention where the rollout module assigns the absolute intended start time for the whole contract-built trajectory chunk when submitting it to the control system.
+_Avoid_: contract-owned dispatch time, backend inference timestamp as control timestamp, trajectory creation time
+
+**Subchunk trajectory dispatch**:
+A policy rollout convention where the rollout module generates a larger policy action chunk but dispatches only a configured leading subset of action rows to the joint trajectory control task before replanning.
+_Avoid_: executing the entire policy horizon by default, deep policy command queue, hidden action-horizon truncation
+
+**Completion-gated policy rollout**:
+A simple rollout cadence where the policy module waits for the dispatched trajectory subset to finish before fetching the latest observations and generating the next backend action chunk.
+_Avoid_: asynchronous continuous inference, speculative trajectory queueing, wall-clock-only rollout loop
+
+**Sleep-gated policy rollout**:
+A v1 completion-gated policy rollout implementation where the policy module waits for the expected row coverage duration of the dispatched trajectory subset using the rollout clock before fetching observations and replanning.
+_Avoid_: task-completion dependency, signal-based rollout synchronization, speculative inference
+
+**Policy action representation**:
+The robot-learning action form a policy is trained or configured to produce before it is adapted for a DimOS control task.
+_Avoid_: assuming all policy actions are joint positions, opaque policy output
+
+**Robot policy action**:
+A runtime-independent robot-learning action emitted by a robot policy module after backend inference and contract conversion, before adaptation to benchmark runtime frames or real robot control commands.
+_Avoid_: runtime action frame, motor command, backend tensor
+
+**Native benchmark action surface**:
+A benchmark runtime action interface whose command values are defined by the benchmark environment itself rather than by a DimOS motor or joint surface.
+_Avoid_: motor command alias, hidden joint target, controller-specific shortcut
+
+**LIBERO action mode**:
+The simulator-side interpretation of `env.step(action)` in LIBERO, defining whether the action vector represents joint positions, relative end-effector deltas, or another environment-supported action form.
+_Avoid_: DimOS controller, ControlCoordinator task, policy output type
+
+**Native LIBERO action mode**:
+A LIBERO runtime mode, matching the official LeRobot LIBERO environment setup, that accepts the environment's own relative end-effector delta plus gripper action vector instead of a DimOS whole-body motor-position command.
+_Avoid_: joint-position LIBERO profile, fake motor command, end-effector action as motor q
+
+**Runtime action frame**:
+A runtime protocol command envelope for a named non-motor action surface, carrying action values and semantic identity without pretending they are joint positions or motor commands.
+_Avoid_: overloaded motor frame, unnamed action vector, backend tensor leak
+
+**Action-surface control task**:
+A control-coordinator task that accepts and validates commands for a semantic action surface while leaving the concrete runtime or robot mapping to the task implementation.
+_Avoid_: joint trajectory task, motor adapter, policy bypass
+
+**Robot policy contract**:
+A robot-learning boundary that declares a specific robot/runtime and policy-backend input-output convention, including how aligned robot-native samples become backend-ready batches and how backend outputs become robot-native policy action chunks.
+_Avoid_: execution contract, control-task adapter, universal robot contract
+
+**Robot learning sample**:
+A runtime-independent policy observation artifact that carries semantically named observation roles, task context, timestamps, and metadata for robot-learning inference or training.
+_Avoid_: benchmark sidecar response, runtime observation frame, backend-ready batch
+
+**Backend-ready batch**:
+The policy-backend-specific inference or training input produced from an aligned robot-native sample by a robot policy contract.
+_Avoid_: universal DimOS batch, raw observation bundle, synchronized sample
+
+**Backend output**:
+The policy-backend-specific action result that a robot policy contract converts into a robot-native policy action chunk.
+_Avoid_: control command, joint trajectory, final actuator target
+
+**Backend output envelope**:
+A small rollout artifact that carries a backend-native action result together with inference metadata needed for validation, tracing, and contract conversion.
+_Avoid_: policy action chunk, control command, backend internals leak
+
+**Temporal sample readiness**:
+The rollout-time check that the observation roles needed for a policy sample are available with acceptable freshness for the current inference tick, without requiring perfect cross-sensor timestamp equality.
+_Avoid_: exact timestamp match, strict synchronization gate, semantic policy validation
+
+**Contract conversion failure**:
+A fail-fast result when a robot policy contract receives a supposedly ready sample or backend output that violates the contract's declared semantic input-output convention.
+_Avoid_: not-ready sample, silent coercion, best-effort backend batch
+
 **Robokin kinematics backend**:
 A DimOS kinematics backend that presents multiple robokin-supported inverse-kinematics engines through one robotics-facing capability.
 _Avoid_: Oink backend, RoboKin world backend, single-engine Oink solver
