@@ -24,7 +24,11 @@ from typing import Any, cast
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from dimos.simulation.scene_assets.spec import SceneMeshAlignment, ScenePackage, load_scene_package
+from dimos.simulation.scene_assets.spec import (
+    SceneMeshAlignment,
+    ScenePackage,
+    load_scene_package,
+)
 from dimos.simulation.scenes.catalog import resolve_scene_package
 
 StaticRerunFactory = Callable[[Any], Any]

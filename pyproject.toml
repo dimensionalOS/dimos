@@ -323,8 +323,18 @@ apriltag = [
     "reportlab>=4.5.0",
 ]
 
+# Offline scene-package cooking + loading: mesh/USD import (open3d, usd-core),
+# convex decomposition for collision (coacd), and mesh ops (trimesh). The
+# Blender visual bake is an optional external `blender` binary, not a wheel.
+scene = [
+    "open3d>=0.18.0",
+    "trimesh>=4.0.0",
+    "coacd>=1.0.0",
+    "usd-core>=23.11",
+]
+
 all = [
-    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,sim,unitree,visualization,web]",
+    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,scene,sim,unitree,visualization,web]",
 ]
 
 [dependency-groups]
@@ -563,6 +573,13 @@ module = [
     "websocket",
     "xarm.*",
     "ament_index_python.*",
+    "coacd",
+    "open3d",
+    "open3d.*",
+    "pxr",
+    "pxr.*",
+    "trimesh",
+    "trimesh.*",
 ]
 ignore_missing_imports = true
 
