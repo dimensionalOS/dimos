@@ -177,6 +177,7 @@ def _build_planners(
     configs: list[tuple[float, float, float]],
     voxel_size: float,
     robot_height: float,
+    max_overhead: float,
     surface_closing_radius: float,
     node_spacing: float,
     step_height: float,
@@ -187,6 +188,7 @@ def _build_planners(
         planner = MLSPlanner(
             voxel_size=voxel_size,
             robot_height=robot_height,
+            max_overhead_m=max_overhead,
             surface_closing_radius=surface_closing_radius,
             node_spacing_m=node_spacing,
             wall_clearance_m=clr,
@@ -224,7 +226,7 @@ def _process_frame(
     surface = nodes = edges = np.empty((0,), dtype=np.float32)
     for j, (label, color, planner) in enumerate(planners):
         t0 = perf_counter()
-        planner.update_region(pts, (ox, oy), radius, z_min, z_max)
+        planner.update_region(pts, (ox, oy), radius, z_min, z_max, float(pz))
         t1 = perf_counter()
         waypoints = planner.plan(start, goal)
         t2 = perf_counter()
@@ -275,6 +277,9 @@ def main(
     ),
     max_health: int = typer.Option(1, "--max-health", help="Voxel health ceiling"),
     robot_height: float = typer.Option(0.3, "--robot-height", help="Robot height (m)"),
+    max_overhead: float = typer.Option(
+        2.0, "--max-overhead", help="Ignore surface more than this far above the sensor (m)"
+    ),
     surface_closing_radius: float = typer.Option(
         0.8,
         "--surface-closing-radius",
@@ -355,6 +360,7 @@ def main(
             configs,
             voxel_size,
             robot_height,
+            max_overhead,
             surface_closing_radius,
             node_spacing,
             step_height,

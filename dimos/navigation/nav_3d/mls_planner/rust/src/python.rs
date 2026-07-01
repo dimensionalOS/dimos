@@ -50,6 +50,7 @@ impl MLSPlanner {
         *,
         voxel_size,
         robot_height,
+        max_overhead_m = 2.0,
         surface_closing_radius = 0.8,
         node_spacing_m = 1.0,
         wall_clearance_m = 0.3,
@@ -61,6 +62,7 @@ impl MLSPlanner {
     fn new(
         voxel_size: f32,
         robot_height: f32,
+        max_overhead_m: f32,
         surface_closing_radius: f32,
         node_spacing_m: f32,
         wall_clearance_m: f32,
@@ -73,6 +75,7 @@ impl MLSPlanner {
             world_frame: String::new(),
             voxel_size,
             robot_height,
+            max_overhead_m,
             surface_closing_radius,
             node_spacing_m,
             wall_clearance_m,
@@ -102,7 +105,8 @@ impl MLSPlanner {
         Ok(())
     }
 
-    #[pyo3(signature = (points, origin, radius, z_min, z_max))]
+    #[pyo3(signature = (points, origin, radius, z_min, z_max, sensor_z))]
+    #[allow(clippy::too_many_arguments)]
     fn update_region(
         &mut self,
         py: Python<'_>,
@@ -111,6 +115,7 @@ impl MLSPlanner {
         radius: f32,
         z_min: f32,
         z_max: f32,
+        sensor_z: f32,
     ) -> PyResult<()> {
         let pts = extract_points(points)?;
         let bounds = RegionBounds {
@@ -118,7 +123,7 @@ impl MLSPlanner {
             origin_y: origin.1,
             radius,
             z_min,
-            z_max,
+            z_max: z_max.min(sensor_z + self.config.max_overhead_m),
         };
         let config = &self.config;
         let planner = &mut self.planner;

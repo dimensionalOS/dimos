@@ -23,6 +23,7 @@ class MLSPlanner:
         *,
         voxel_size: float,
         robot_height: float,
+        max_overhead_m: float = 2.0,
         surface_closing_radius: float = 0.8,
         node_spacing_m: float = 1.0,
         wall_clearance_m: float = 0.3,
@@ -42,10 +43,11 @@ class MLSPlanner:
         radius: float,
         z_min: float,
         z_max: float,
+        sensor_z: float,
     ) -> None:
         """Replace the cylindrical region with a local map slice and rebuild.
 
-        Points are (N, 3) float32.
+        Points are (N, 3) float32. z_max is capped at sensor_z + max_overhead_m.
         """
         ...
 

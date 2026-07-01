@@ -234,12 +234,18 @@ impl Worker {
                         return false;
                     }
                 };
+                let z_max = bounds.pose.orientation.z as f32;
+                let sensor_z = self
+                    .latest_start
+                    .lock()
+                    .expect("start mutex")
+                    .map_or(z_max, |(_, _, z)| z);
                 let bounds = RegionBounds {
                     origin_x: bounds.pose.position.x as f32,
                     origin_y: bounds.pose.position.y as f32,
                     radius: bounds.pose.orientation.x as f32,
                     z_min: bounds.pose.orientation.y as f32,
-                    z_max: bounds.pose.orientation.z as f32,
+                    z_max: z_max.min(sensor_z + self.config.max_overhead_m),
                 };
 
                 let update_start = Instant::now();

@@ -26,6 +26,10 @@ pub struct Config {
     pub voxel_size: f32,
     #[validate(range(exclusive_min = 0.0))]
     pub robot_height: f32,
+    /// Ignore surface more than this far above the sensor. Overhead beyond a
+    /// climbable reach cannot be walked on and only inflates the graph.
+    #[validate(range(min = 0.0))]
+    pub max_overhead_m: f32,
     /// Radius in meters of the morphological closing that fills small holes in
     /// the extracted surface. Fills holes up to twice this wide.
     #[validate(range(min = 0.0))]
@@ -593,6 +597,7 @@ mod region_tests {
             world_frame: String::new(),
             voxel_size: 0.1,
             robot_height: 0.5,
+            max_overhead_m: 2.0,
             surface_closing_radius: 0.3,
             node_spacing_m: 1.0,
             wall_clearance_m: 0.0,
