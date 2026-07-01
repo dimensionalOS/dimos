@@ -8,8 +8,8 @@ use pyo3::prelude::*;
 use validator::Validate;
 
 use crate::edges::edges_to_segments;
-use crate::mls_planner::{Config, Planner};
-use crate::voxel::surface_point_xyz;
+use crate::mls_planner::{Config, Planner, RegionBounds};
+use crate::voxel::{surface_point_xyz, VoxelKey};
 
 #[pyclass]
 pub struct MLSPlanner {
@@ -17,37 +17,73 @@ pub struct MLSPlanner {
     planner: Planner,
 }
 
+/// Extract a (N, 3) float32 numpy array into xyz tuples, dropping any row with
+/// a non-finite coordinate.
+fn extract_points(points: &Bound<'_, PyAny>) -> PyResult<Vec<(f32, f32, f32)>> {
+    let points: PyReadonlyArray2<'_, f32> = points
+        .extract()
+        .map_err(|_| PyValueError::new_err("points must be a (N, 3) float32 numpy array"))?;
+    let shape = points.shape();
+    if shape[1] != 3 {
+        return Err(PyValueError::new_err(format!(
+            "points must be (N, 3) float32, got shape {:?}",
+            shape
+        )));
+    }
+    let arr = points.as_array();
+    let n = shape[0];
+    Ok((0..n)
+        .filter_map(|i| {
+            let x = arr[[i, 0]];
+            let y = arr[[i, 1]];
+            let z = arr[[i, 2]];
+            (x.is_finite() && y.is_finite() && z.is_finite()).then_some((x, y, z))
+        })
+        .collect())
+}
+
 #[pymethods]
 impl MLSPlanner {
     #[new]
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         *,
         voxel_size,
         robot_height,
-        surface_dilation_passes = 3,
-        surface_erosion_passes = 3,
+        surface_closing_radius = 0.3,
         node_spacing_m = 1.0,
-        node_wall_buffer_m = 0.3,
-        node_step_threshold_m = 0.25,
+        wall_clearance_m = 0.3,
+        wall_buffer_m = 0.75,
+        wall_buffer_weight = 100.0,
+        step_threshold_m = 0.25,
+        step_penalty_weight = 4.0,
     ))]
     fn new(
         voxel_size: f32,
         robot_height: f32,
-        surface_dilation_passes: u32,
-        surface_erosion_passes: u32,
+        surface_closing_radius: f32,
         node_spacing_m: f32,
-        node_wall_buffer_m: f32,
-        node_step_threshold_m: f32,
+        wall_clearance_m: f32,
+        wall_buffer_m: f32,
+        wall_buffer_weight: f32,
+        step_threshold_m: f32,
+        step_penalty_weight: f32,
     ) -> PyResult<Self> {
         let config = Config {
             world_frame: String::new(),
             voxel_size,
             robot_height,
-            surface_dilation_passes,
-            surface_erosion_passes,
+            surface_closing_radius,
             node_spacing_m,
-            node_wall_buffer_m,
-            node_step_threshold_m,
+            wall_clearance_m,
+            wall_buffer_m,
+            wall_buffer_weight,
+            step_threshold_m,
+            step_penalty_weight,
+            // Unused here. Only the binary's replan loop reads goal_tolerance.
+            goal_tolerance: 1.0,
+            // Unused here. Only the binary's worker publishes viz artifacts.
+            viz_publish_hz: 1.0,
         };
         config
             .validate()
@@ -59,39 +95,43 @@ impl MLSPlanner {
     }
 
     fn update_global_map(&mut self, py: Python<'_>, points: &Bound<'_, PyAny>) -> PyResult<()> {
-        let points: PyReadonlyArray2<'_, f32> = points
-            .extract()
-            .map_err(|_| PyValueError::new_err("points must be a (N, 3) float32 numpy array"))?;
-        let shape = points.shape();
-        if shape[1] != 3 {
-            return Err(PyValueError::new_err(format!(
-                "points must be (N, 3) float32, got shape {:?}",
-                shape
-            )));
-        }
-        let arr = points.as_array();
-        let n = shape[0];
-        let pts: Vec<(f32, f32, f32)> = (0..n)
-            .filter_map(|i| {
-                let x = arr[[i, 0]];
-                let y = arr[[i, 1]];
-                let z = arr[[i, 2]];
-                (x.is_finite() && y.is_finite() && z.is_finite()).then_some((x, y, z))
-            })
-            .collect();
-
+        let pts = extract_points(points)?;
         let config = &self.config;
         let planner = &mut self.planner;
         py.allow_threads(move || planner.update_global_map(&pts, config));
         Ok(())
     }
 
+    #[pyo3(signature = (points, origin, radius, z_min, z_max))]
+    fn update_region(
+        &mut self,
+        py: Python<'_>,
+        points: &Bound<'_, PyAny>,
+        origin: (f32, f32),
+        radius: f32,
+        z_min: f32,
+        z_max: f32,
+    ) -> PyResult<()> {
+        let pts = extract_points(points)?;
+        let bounds = RegionBounds {
+            origin_x: origin.0,
+            origin_y: origin.1,
+            radius,
+            z_min,
+            z_max,
+        };
+        let config = &self.config;
+        let planner = &mut self.planner;
+        py.allow_threads(move || planner.update_region(&pts, &bounds, config));
+        Ok(())
+    }
+
     fn surface_map<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
         let voxel_size = self.config.voxel_size;
-        let surface = self.planner.surface();
+        let surface: Vec<VoxelKey> = self.planner.surface().collect();
         let positions: Vec<f32> = py.allow_threads(|| {
             let mut out: Vec<f32> = Vec::with_capacity(surface.len() * 3);
-            for &(ix, iy, iz) in surface {
+            for (ix, iy, iz) in surface {
                 let (x, y, z) = surface_point_xyz(ix, iy, iz, voxel_size);
                 out.push(x);
                 out.push(y);
@@ -102,6 +142,28 @@ impl MLSPlanner {
         let n = positions.len() / 3;
         Array2::from_shape_vec((n, 3), positions)
             .expect("3 elements pushed per cell")
+            .into_pyarray(py)
+    }
+
+    /// Surface cells as (M, 4) float32 rows of x, y, z, clearance, where
+    /// clearance is the distance to the nearest untraversable edge.
+    fn surface_clearance_map<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
+        let voxel_size = self.config.voxel_size;
+        let cells = self.planner.surface_clearance();
+        let values: Vec<f32> = py.allow_threads(|| {
+            let mut out: Vec<f32> = Vec::with_capacity(cells.len() * 4);
+            for ((ix, iy, iz), clearance) in cells {
+                let (x, y, z) = surface_point_xyz(ix, iy, iz, voxel_size);
+                out.push(x);
+                out.push(y);
+                out.push(z);
+                out.push(clearance);
+            }
+            out
+        });
+        let n = values.len() / 4;
+        Array2::from_shape_vec((n, 4), values)
+            .expect("4 elements pushed per cell")
             .into_pyarray(py)
     }
 
@@ -142,7 +204,7 @@ impl MLSPlanner {
             .into_pyarray(py)
     }
 
-    /// Returns `(W, 3)` float32 waypoints or `None` if no path exists.
+    /// Returns `(W, 3)` float32 waypoints or `None` if no full path exists.
     fn plan<'py>(
         &self,
         py: Python<'py>,
@@ -164,6 +226,30 @@ impl MLSPlanner {
         )
     }
 
+    fn voxel_count(&self) -> usize {
+        self.planner.voxel_count()
+    }
+
+    /// Accumulated occupied voxel centers as (N, 3) float32, for visualization.
+    fn voxel_map<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
+        let vs = self.config.voxel_size;
+        let half = vs * 0.5;
+        let keys: Vec<(i32, i32, i32)> = self.planner.voxel_keys().collect();
+        let positions: Vec<f32> = py.allow_threads(|| {
+            let mut out: Vec<f32> = Vec::with_capacity(keys.len() * 3);
+            for (kx, ky, kz) in keys {
+                out.push(kx as f32 * vs + half);
+                out.push(ky as f32 * vs + half);
+                out.push(kz as f32 * vs + half);
+            }
+            out
+        });
+        let n = positions.len() / 3;
+        Array2::from_shape_vec((n, 3), positions)
+            .expect("3 elements pushed per voxel")
+            .into_pyarray(py)
+    }
+
     fn clear(&mut self) {
         self.planner = Planner::default();
     }
@@ -173,7 +259,7 @@ impl MLSPlanner {
         format!(
             "MLSPlanner(voxel_size={}, surface_cells={}, nodes={}, edges={})",
             self.config.voxel_size,
-            self.planner.surface().len(),
+            self.planner.surface().count(),
             graph.nodes.len(),
             graph.node_edges.len(),
         )

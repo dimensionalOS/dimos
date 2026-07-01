@@ -99,5 +99,3 @@ class TwistBaseAdapterRegistry:
 
 twist_base_adapter_registry = TwistBaseAdapterRegistry()
 twist_base_adapter_registry.discover()
-
-__all__ = ["TwistBaseAdapterRegistry", "twist_base_adapter_registry"]

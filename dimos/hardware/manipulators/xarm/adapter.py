@@ -404,6 +404,3 @@ class XArmAdapter(ManipulatorAdapter):
 def register(registry: AdapterRegistry) -> None:
     """Register this adapter with the registry."""
     registry.register("xarm", XArmAdapter)
-
-
-__all__ = ["XArmAdapter"]

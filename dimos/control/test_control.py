@@ -26,6 +26,7 @@ from dimos.control.components import HardwareComponent, HardwareType, make_joint
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.task import (
+    BaseControlTask,
     ControlMode,
     CoordinatorState,
     JointCommandOutput,
@@ -35,12 +36,12 @@ from dimos.control.task import (
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     JointTrajectoryTask,
     JointTrajectoryTaskConfig,
-    TrajectoryState,
 )
 from dimos.control.tick_loop import TickLoop
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
 
 
 @pytest.fixture
@@ -190,6 +191,43 @@ class TestConnectedHardware:
 
 
 class TestControlCoordinatorLifecycle:
+    def test_reset_runtime_state_calls_task_hooks(self):
+        class ResettableTask(BaseControlTask):
+            def __init__(self) -> None:
+                self.reset_reactivate_args: list[bool | None] = []
+
+            @property
+            def name(self) -> str:
+                return "resettable"
+
+            def claim(self) -> ResourceClaim:
+                return ResourceClaim(joints=frozenset())
+
+            def is_active(self) -> bool:
+                return True
+
+            def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
+                _ = state
+                return None
+
+            def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
+                _ = by_task, joints
+
+            def reset_runtime_state(self, reactivate: bool | None = None) -> bool:
+                self.reset_reactivate_args.append(reactivate)
+                return True
+
+        coordinator = ControlCoordinator(publish_joint_state=False)
+        task = ResettableTask()
+
+        try:
+            assert coordinator.add_task(task)
+
+            assert coordinator.reset_runtime_state(reactivate=True) == {"resettable": True}
+            assert task.reset_reactivate_args == [True]
+        finally:
+            coordinator.stop()
+
     def test_start_stop_calls_adapter_activate_and_deactivate(self):
         from dimos.hardware.manipulators.mock.adapter import MockAdapter
         from dimos.hardware.manipulators.registry import adapter_registry

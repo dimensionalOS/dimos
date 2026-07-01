@@ -102,7 +102,6 @@ jobs:
         include:
           - { os: ubuntu-latest,    arch: x86_64 }
           - { os: ubuntu-24.04-arm, arch: aarch64 }
-          - { os: macos-13,         arch: x86_64 }
           - { os: macos-14,         arch: arm64 }
     runs-on: ${{ matrix.os }}
     permissions:
@@ -112,6 +111,11 @@ jobs:
     env:
       CIBW_ENABLE: "cpython-freethreading"
       CIBW_ARCHS: ${{ matrix.arch }}
+      # Skip musllinux (Alpine) — Pinocchio's build ecosystem (pin/coal/cmeel-*)
+      # is glibc-only; cmeel-assimp >= 6.0.5 has no musllinux wheels.
+      CIBW_SKIP: "*-musllinux_*"
+      CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_34  # open3d>=0.19 requires glibc 2.31+
+      CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_34  # open3d>=0.19 requires glibc 2.31+
       CIBW_TEST_COMMAND: "python -c 'from dimos.navigation.replanning_a_star.min_cost_astar_ext import min_cost_astar_cpp'"
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
@@ -182,73 +186,111 @@ jobs:
     if: ${{ ! inputs.dry-run }}
     needs: [validate, publish-pypi]
     runs-on: ubuntu-latest
+    environment: release-tag
     permissions:
-      contents: write  # For pushing the signed release tag and creating the GitHub Release
+      contents: read       # Writes come from the release-bot App token
+      attestations: write  # Release-asset attestations
     steps:
-      - name: Checkout
+      - name: Mint release-bot token
+        uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_APP_PRIVATE_KEY }}
+      - name: Checkout (pinned to dispatch SHA)
         uses: actions/checkout@v6
         with:
+          token: ${{ steps.app-token.outputs.token }}
+          # Pin to dispatch SHA so commits pushed to the release branch
+          # after dispatch can't shift the tag onto unpublished commits.
+          ref: ${{ github.sha }}
           fetch-depth: 0
+      - name: Import GPG signing key into runner-scoped GNUPGHOME
+        env:
+          GPG_KEY: ${{ secrets.RELEASE_BOT_GPG_PRIVATE_KEY }}
+        run: |
+          export GNUPGHOME="${RUNNER_TEMP}/gnupg"
+          mkdir -p "$GNUPGHOME" && chmod 700 "$GNUPGHOME"
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          echo "$GPG_KEY" | gpg --batch --import
+          echo "trust-model always" >> "$GNUPGHOME/gpg.conf"
+      - name: Configure git identity and signing
+        env:
+          APP_ID: ${{ vars.RELEASE_BOT_APP_ID }}
+          KEY_ID: ${{ vars.RELEASE_BOT_GPG_KEY_ID }}
+        run: |
+          git config user.name       "dimos-release-bot[bot]"
+          git config user.email      "${APP_ID}+dimos-release-bot[bot]@users.noreply.github.com"
+          git config user.signingkey "$KEY_ID"
+          git config tag.gpgsign     true
+          git config commit.gpgsign  true
+      - name: Create signed annotated tag and push
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          git tag -s -a "v$VERSION" -m "Release v$VERSION"
+          git push origin "v$VERSION"
       - name: Download wheels/sdist
         uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
-      - name: Import signing key
-        uses: crazy-max/ghaction-import-gpg@v6
-        with:
-          gpg_private_key: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
-          passphrase: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
-          git_user_signingkey: true
-          git_tag_gpgsign: true
-      - name: Create and push signed tag
-        run: |
-          tag="v${{ needs.validate.outputs.version }}"
-          git tag -s -a "$tag" -m "Release $tag"
-          git push origin "$tag"
       - name: Create GitHub Release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          gh release create "v${{ needs.validate.outputs.version }}" \
-            --verify-tag \
-            --title "v${{ needs.validate.outputs.version }}" \
-            --notes "See CHANGELOG / commit history for changes." \
-            dist/*
+          gh release create "v$VERSION" --verify-tag --notes-from-tag dist/*
 
   merge-back:
     if: ${{ ! inputs.dry-run }}
     needs: [validate, tag-and-release]
     runs-on: ubuntu-latest
+    environment: release-tag
     permissions:
-      contents: write       # For pushing the merge-back/* branch
-      pull-requests: write  # For opening the merge-back PR via gh pr create
+      contents: read  # Writes come from the release-bot App token
     steps:
+      - name: Mint release-bot token
+        uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_APP_PRIVATE_KEY }}
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          token: ${{ steps.app-token.outputs.token }}
           ref: main
           fetch-depth: 0
-      - name: Open empty-diff merge-back PR
+      - name: Import GPG signing key into runner-scoped GNUPGHOME
         env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_BRANCH: ${{ github.ref_name }}
-          VERSION: ${{ needs.validate.outputs.version }}
+          GPG_KEY: ${{ secrets.RELEASE_BOT_GPG_PRIVATE_KEY }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin "$RELEASE_BRANCH"
-          branch="merge-back/v$VERSION"
-          git checkout -b "$branch" main
+          export GNUPGHOME="${RUNNER_TEMP}/gnupg"
+          mkdir -p "$GNUPGHOME" && chmod 700 "$GNUPGHOME"
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          echo "$GPG_KEY" | gpg --batch --import
+          echo "trust-model always" >> "$GNUPGHOME/gpg.conf"
+      - name: Configure git identity and signing
+        env:
+          APP_ID: ${{ vars.RELEASE_BOT_APP_ID }}
+          KEY_ID: ${{ vars.RELEASE_BOT_GPG_KEY_ID }}
+        run: |
+          git config user.name       "dimos-release-bot[bot]"
+          git config user.email      "${APP_ID}+dimos-release-bot[bot]@users.noreply.github.com"
+          git config user.signingkey "$KEY_ID"
+          git config commit.gpgsign  true
+      - name: Push signed merge-back commit to main
+        env:
+          # Pin to dispatch SHA so commits pushed to the release branch
+          # after dispatch can't sneak into main via this merge.
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_BRANCH: ${{ github.ref_name }}
+        run: |
+          git fetch origin "$RELEASE_SHA"
           # -s ours: take only main's content, preserve two-parent topology so
           # `git log --first-parent main` can reach the release tag via the merge commit.
-          git merge --no-ff -s ours "origin/$RELEASE_BRANCH" -m "Merge $RELEASE_BRANCH to main"
-          git push -u origin "$branch"
-          gh pr create \
-            --base main \
-            --head "$branch" \
-            --title "Merge $RELEASE_BRANCH back to main (DO NOT SQUASH)" \
-            --body "**Merge with \"Create a merge commit\" — NOT squash, NOT rebase.**
-
-          This PR keeps the release branch/tag history synced into main.
-          It contains no file changes."
+          git merge --no-ff -s ours --gpg-sign "$RELEASE_SHA" \
+            -m "Merge $RELEASE_BRANCH back to main"
+          git push origin main

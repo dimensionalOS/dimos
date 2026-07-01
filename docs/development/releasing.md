@@ -8,7 +8,7 @@ Throughout this document, replace `X.Y.Z` with the version you are releasing (e.
 
 1. Check for an existing `release/*` branch on the remote (`git ls-remote --heads origin 'release/*'`, or the Branches page). If one is still around from a previous release, complete section 3 for that branch before continuing.
 2. Bump the version on `main`. `uv version --bump patch` (or `minor` / `major`). Open a PR, squash-merge.
-3. Create the temporary release branch from the version-bump commit:
+3. Create the temporary release branch from the version-bump commit (need CI to complete on main before push will succeed):
 
    ```bash
    git fetch origin
@@ -24,16 +24,12 @@ Throughout this document, replace `X.Y.Z` with the version you are releasing (e.
 1. Run the full test suite locally on the release branch.
 
    ```bash
-   uv run pytest -m 'not tool' --error-for-skips
+   uv run pytest -m '' --error-for-skips
    ```
 
 2. [Run](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow#running-a-workflow) the `release` workflow on the `release/X.Y.Z` branch.
 3. Monitor the CI run. When it reaches the publish-pypi step, you'll need other team members to approve the release.
-4. After completion, a merge-back PR will have been created. Find the PR titled `Merge release/X.Y.Z back to main` and merge-commit.
-
-    > **Warning** — pick **"Create a merge commit"** from the merge-button dropdown. NOT "Squash and merge", NOT "Rebase and merge". Squashing collapses the two-parent topology and the tag stops being reachable from main.
-
-5. Confirm `vX.Y.Z` shows on https://github.com/dimensionalOS/dimos/releases and on https://pypi.org/project/dimos/.
+4. After completion, the bot will have pushed a signed merge-back commit directly to `main`. Confirm with `git log --first-parent main -1` — the tip should be `Merge release/X.Y.Z back to main`. Then verify `vX.Y.Z` shows on https://github.com/dimensionalOS/dimos/releases and on https://pypi.org/project/dimos/.
 
 ## 3. Cleanup
 
@@ -68,3 +64,52 @@ When you need to ship a patch fix:
 
 2. Apply a patch version bump: `uv version --bump patch`
 3. Apply any fixes and follow sections 2 and 3 as before.
+
+### Verifying a release tag
+
+```bash
+gpg --import docs/release-signing-key.asc
+git fetch --tags
+git tag -v vX.Y.Z
+```
+
+`git tag -v` exits 0 and reports a good signature from `dimos-release-bot` when the tag is valid. GitHub's web UI shows "Unverified" because the GPG key isn't bound to a GitHub user account — this is expected.
+
+### Rotating the App private key
+
+Rotate immediately on suspected compromise.
+
+1. App settings → **Private keys → Generate a private key** → download the new `.pem`.
+2. Update the `RELEASE_BOT_APP_PRIVATE_KEY` secret in the `release-tag` environment with the new key contents.
+3. App settings → **Private keys** → delete the old key.
+
+### Rotating the GPG signing key
+
+Rotate immediately on suspected compromise.
+Sam/Stash have revocation certificates which can be published to revoke the old key.
+
+Regenerate the key in memory on Linux (private material never touches persistent storage — `/dev/shm` is always `tmpfs`):
+
+```bash
+export GNUPGHOME=/dev/shm/gnupg-release-bot
+mkdir -p "$GNUPGHOME" && chmod 700 "$GNUPGHOME"
+
+gpg --batch --pinentry-mode loopback --passphrase '' \
+    --quick-generate-key 'dimos-release-bot <build@dimensionalOS.com>' ed25519 sign 2y
+
+KEY_ID=$(gpg --list-secret-keys --keyid-format=long --with-colons dimos-release-bot \
+         | awk -F: '/^sec/{print $5; exit}')
+echo "RELEASE_BOT_GPG_KEY_ID: $KEY_ID"
+
+# Wayland uses `wl-copy`; on X11 replace with `xclip -i -selection clipboard`
+# (and `wl-copy --clear` with `echo -n | xclip -i -selection clipboard`).
+gpg --armor --export-secret-keys "$KEY_ID" | wl-copy   # paste into RELEASE_BOT_GPG_PRIVATE_KEY secret
+wl-copy --clear
+gpg --armor --export "$KEY_ID" | wl-copy               # paste into docs/release-signing-key.asc
+wl-copy --clear
+
+rm -rf "$GNUPGHOME"
+unset GNUPGHOME
+```
+
+Then update the `RELEASE_BOT_GPG_PRIVATE_KEY` secret in the `release-tag` environment, repo variable `RELEASE_BOT_GPG_KEY_ID`, and commit the replacement `docs/release-signing-key.asc`.
