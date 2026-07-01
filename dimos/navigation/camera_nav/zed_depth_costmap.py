@@ -20,9 +20,8 @@ from scipy.ndimage import sobel
 
 
 VOX_SIZE     = 0.020   # 2.0 cm final voxels
-_Z_REL_LO   = -1.4    # camera-relative lower bound  (same as RealSense)
-_Z_REL_HI   =  0.5    # camera-relative upper bound  (same as RealSense)
-_FLOOR_RAY_Z = -0.15  # reject world-frame rays whose Z component / dist < this (same as RealSense)
+_Z_REL_HI   =  0.5    # camera-relative ceiling (0.5 m above camera)
+_FLOOR_Z    =  0.03   # absolute world-Z floor cutoff (3 cm above gravity-aligned floor)
 _GRAD_THRESH =  0.30  # Sobel gradient magnitude threshold — pixels above this are edge artifacts
 
 # ── Voxel key packing ────────────────────────────────────────────────────────
@@ -317,16 +316,22 @@ def main() -> None:
             col_vis = colors[near] if colors is not None else _height_color(xyz_vis[:, 2] - cam_z)
             rr.log("world/cloud", rr.Points3D(positions=xyz_vis, colors=col_vis, radii=0.003))
 
-            # ── Voxel map: triple filter → isolation → voxelise ──────────────
-            # Mirror the RealSense pipeline exactly:
-            #   h_rel band   — camera-relative height (works pre- and post-VIO lock)
-            #   d_z_norm     — world-Z component of unit ray; rejects floor-pointing rays
-            #   isolation    — 5 cm cells, ≥2 pts; removes single-pixel stereo ghosts
-            rays     = xyz - cam_pos
-            dist     = np.linalg.norm(rays, axis=1)
-            d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0)
-            h_rel    = xyz[:, 2] - cam_z
-            keep     = (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI) & (d_z_norm > _FLOOR_RAY_Z)
+            # ── Voxel map: height filter → isolation → voxelise ─────────────
+            # Floor removal strategy:
+            #   VIO locked   → world Z is gravity-aligned (set_floor_as_origin puts floor
+            #                  at 0). Absolute threshold world_Z > _FLOOR_Z keeps anything
+            #                  3 cm above the floor — including chair legs and low boxes —
+            #                  while removing the floor plane itself.
+            #   VIO unlocked → world = camera-link frame, not gravity-aligned; fall back
+            #                  to camera-relative band.
+            # Ray-angle (d_z_norm) filter is intentionally absent: at 0.9 m camera height
+            # it cuts everything below ~0.65 m at typical ranges, destroying low obstacles.
+            # Gradient filter + isolation filter handle ghost pixels instead.
+            h_rel = xyz[:, 2] - cam_z
+            if src.pose_locked:
+                keep = (xyz[:, 2] > _FLOOR_Z) & (h_rel <= _Z_REL_HI)
+            else:
+                keep = (h_rel >= -1.4) & (h_rel <= _Z_REL_HI)
             xyz_obs  = _filter_isolated(xyz[keep])
             xyz_vox  = np.empty((0, 3), dtype=np.float32)
             if len(xyz_obs):
