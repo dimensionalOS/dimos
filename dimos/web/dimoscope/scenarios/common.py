@@ -115,13 +115,14 @@ class Seq:
 
 def make_image(nbytes: int, fmt: ImageFormat = ImageFormat.RGB) -> Image:
     """An Image of ~nbytes bytes (RGB=3ch, GRAY=1ch). Built once then restamped per publish so generation
-    cost never dominates the send loop."""
+    cost never dominates the send loop. RANDOM bytes, not a ramp: WS permessage-deflate compresses regular
+    payloads ~1000:1 and fakes every throughput number (random ≈ real sensor entropy)."""
     ch = 1 if fmt in (ImageFormat.GRAY, ImageFormat.GRAY16) else 3
     px = max(1, nbytes // ch)
     h = max(1, int(px**0.5))
     w = max(1, px // h)
     shape = (h, w) if ch == 1 else (h, w, ch)
-    data = (np.arange(h * w * ch, dtype=np.int64) % 256).astype(np.uint8).reshape(shape)
+    data = np.random.default_rng(0).integers(0, 256, shape, dtype=np.uint8)
     return Image(data=data, format=fmt)
 
 

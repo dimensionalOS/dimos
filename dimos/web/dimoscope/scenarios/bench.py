@@ -48,12 +48,13 @@ class BenchSourceConfig(ModuleConfig):
 
 
 def make_image(nbytes: int) -> Image:
-    """An RGB Image of ~nbytes bytes. Built once with a fast numpy fill, then reused
-    (only `ts`/`frame_id` are restamped per publish) so generation cost never dominates."""
+    """An RGB Image of ~nbytes bytes. Built once, then reused (only `ts`/`frame_id` restamped per
+    publish). RANDOM bytes, not a pattern: WS permessage-deflate compresses regular payloads ~1000:1,
+    which turns any throughput measurement into fiction (random ≈ real camera/lidar entropy)."""
     px = max(1, nbytes // 3)
     h = max(1, int(px**0.5))
     w = max(1, px // h)
-    data = (np.arange(h * w * 3, dtype=np.int64) % 256).astype(np.uint8).reshape(h, w, 3)
+    data = np.random.default_rng(0).integers(0, 256, (h, w, 3), dtype=np.uint8)
     return Image(data=data, format=ImageFormat.RGB)
 
 

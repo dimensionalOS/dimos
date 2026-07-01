@@ -69,12 +69,16 @@ _GRID = ((np.random.rand(60, 60) > 0.85).astype(np.int8)) * 100
 _MAX_HEAVY_BYTES = 12_000_000
 
 
+# Payloads must be INCOMPRESSIBLE (random), not zeros: WebSocket permessage-deflate squeezes an
+# all-zeros 1 MB frame ~1000:1, so a "20 MB/s" flood becomes ~20 kB/s on the wire and every
+# WS-throughput number is fiction. Random bytes ≈ real camera/lidar entropy → honest wire load.
 def _make_cloud(n_points: int) -> PointCloud2:
     """A PointCloud2 of ~n_points (xyz float32). Built once; only ts/frame_id restamped per publish."""
     import open3d as o3d  # lazy: only the cloud path needs Open3D
 
+    pts = np.random.default_rng(0).random((max(1, int(n_points)), 3)) * 10.0
     pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(np.zeros((max(1, int(n_points)), 3), dtype=np.float64))
+    pcd.points = o3d.utility.Vector3dVector(pts)
     return PointCloud2(pointcloud=pcd)
 
 
@@ -85,7 +89,7 @@ def _make_image(nbytes: int) -> Image:
     px = max(1, nbytes // 3)
     h = max(1, int(px**0.5))
     w = max(1, px // h)
-    data = np.zeros((h, w, 3), dtype=np.uint8)
+    data = np.random.default_rng(0).integers(0, 256, (h, w, 3), dtype=np.uint8)
     return Image(data=data, format=ImageFormat.RGB)
 
 
