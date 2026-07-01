@@ -3,10 +3,10 @@
 // per-call generic:
 //
 //   import { useTopicLatest } from "../dimos";
-//   const { data } = useTopicLatest("/odom");   // data?: geometry_msgs.PoseStamped  (autocompletes "/odom")
+//   const { data } = useTopicLatest("/nav/pose");  // data?: geometry_msgs.PoseStamped (autocompletes the name)
 //
-// The map in dimos.topics.gen.ts is a small checked-in sample — after topics change, hand-edit it or
-// regenerate from a live gateway:  deno task gen-types --out app/src/dimos.topics.gen.ts
+// dimos.topics.gen.ts is generated STATICALLY from a dimos blueprint (no gateway) — regenerate after the
+// blueprint changes:  deno task gen-types scenarios/nav.py --out app/src/dimos.topics.gen.ts
 import { createDimosHooks } from "@dimos/react";
 import type { DimosTopics } from "./dimos.topics.gen.ts";
 

@@ -88,10 +88,13 @@ class ScopeCam(Module):
 
 scope_cam = ScopeCam.blueprint()
 
+# (attr, topic, MsgType) — the shared topic↔type source of truth (runtime wiring + `gen_types.py`).
+PORTS = [
+    ("rgb", "/cam/rgb", Image),
+    ("depth", "/cam/depth", Image),
+    ("points", "/cam/points", PointCloud2),
+    ("detections", "/cam/detections", Detection2DArray),
+]
+
 if __name__ == "__main__":
-    run_standalone(ScopeCam(), [
-        ("rgb", "/cam/rgb", Image),
-        ("depth", "/cam/depth", Image),
-        ("points", "/cam/points", PointCloud2),
-        ("detections", "/cam/detections", Detection2DArray),
-    ], "scope-cam")
+    run_standalone(ScopeCam(), PORTS, "scope-cam")

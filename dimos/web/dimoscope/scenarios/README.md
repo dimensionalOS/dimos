@@ -48,22 +48,24 @@ life of the gateway process, and WorldView's "first topic of a type" pick can la
 name. For a pristine topic list / clean WorldView auto-pick, **restart `deno task serve`** between
 scenarios (a fresh bus registry). The data-level switch needs no restart.
 
-## Types — one typed map per blueprint
+## Types — generated from the blueprint (static, no gateway)
 
-Each scenario can be turned into its own typed topic map via the SDK's codegen (`generateTypes()` in
-`packages/topics/scripts/genTypes.ts`), fed the topic/type pairs discovered while the matching scenario is live on the bus.
-Each is a clean `DimosTopics` map (0 untyped) — verified live:
+Each scenario's typed maps are generated **directly from its Python source** — topics from the
+module-level `PORTS` list, RPC commands from its `@rpc` method signatures — with nothing running:
 
-```ts
-"/nav/pose": geometry_msgs.PoseStamped;   "/arm/imu": sensor_msgs.Imu;
-"/nav/cloud": sensor_msgs.PointCloud2;     "/arm/trajectory": trajectory_msgs.JointTrajectory;
-"/cam/points": sensor_msgs.PointCloud2;    "/cam/detections": vision_msgs.Detection2DArray;
+```bash
+deno task gen-types scenarios/nav.py --out app/src/dimos.topics.gen.ts
 ```
 
-> **Coordination:** naming each map distinctly (`NavTopics`/`ArmTopics`/`CamTopics`) and binding them
-> into the app hooks belongs to the typed-client work (a `--name` flag on `packages/topics/scripts/genTypes.ts` + an
-> `app/src/topics/index.ts` barrel). This scenario deliverable only produces the *inputs* — it doesn't
-> edit the type pipeline. The disjoint namespaces mean the three maps union cleanly (no shared key).
+→ a `DimosTopics` map (0 untyped) + a strongly-typed `DimosCommands`:
+
+```ts
+"/nav/pose": geometry_msgs.PoseStamped;   // topic → message type
+"ScopeNav": { "navigate_to": { args: [geometry_msgs.PoseStamped]; ret: boolean } };  // @rpc → typed call
+```
+
+Consume via `createDimosClient<DimosTopics, DimosCommands>()`. Details + the full type map:
+[`packages/topics/scripts/README.md`](../packages/topics/scripts/README.md).
 
 ## Benchmark them
 

@@ -86,10 +86,13 @@ class ScopeArm(Module):
 
 scope_arm = ScopeArm.blueprint()
 
+# (attr, topic, MsgType) — the shared topic↔type source of truth (runtime wiring + `gen_types.py`).
+PORTS = [
+    ("joint_states", "/arm/joint_states", JointState),
+    ("ee_pose", "/arm/ee_pose", PoseStamped),
+    ("imu", "/arm/imu", Imu),
+    ("trajectory", "/arm/trajectory", JointTrajectory),
+]
+
 if __name__ == "__main__":
-    run_standalone(ScopeArm(), [
-        ("joint_states", "/arm/joint_states", JointState),
-        ("ee_pose", "/arm/ee_pose", PoseStamped),
-        ("imu", "/arm/imu", Imu),
-        ("trajectory", "/arm/trajectory", JointTrajectory),
-    ], "scope-arm")
+    run_standalone(ScopeArm(), PORTS, "scope-arm")

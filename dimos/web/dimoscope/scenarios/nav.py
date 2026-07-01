@@ -85,13 +85,23 @@ class ScopeNav(Module):
 
             self.register_disposable(rx.interval(1.0 / c.map_hz).subscribe(tick_map))
 
+    @rpc
+    def navigate_to(self, goal: PoseStamped) -> bool:
+        """Demo command with a typed message arg — codegen emits
+        `navigate_to(goal: geometry_msgs.PoseStamped): Promise<boolean>`."""
+        self.pose.publish(goal)
+        return True
+
 
 scope_nav = ScopeNav.blueprint()
 
+# (attr, topic, MsgType) — the shared topic↔type source of truth (runtime wiring + `gen_types.py`).
+PORTS = [
+    ("pose", "/nav/pose", PoseStamped),
+    ("path", "/nav/path", Path),
+    ("cloud", "/nav/cloud", PointCloud2),
+    ("map", "/nav/map", OccupancyGrid),
+]
+
 if __name__ == "__main__":
-    run_standalone(ScopeNav(), [
-        ("pose", "/nav/pose", PoseStamped),
-        ("path", "/nav/path", Path),
-        ("cloud", "/nav/cloud", PointCloud2),
-        ("map", "/nav/map", OccupancyGrid),
-    ], "scope-nav")
+    run_standalone(ScopeNav(), PORTS, "scope-nav")
