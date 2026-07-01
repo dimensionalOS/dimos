@@ -6,7 +6,7 @@ import { navigate } from './router.js';
 import { state } from './state.js';
 import { stopTick } from './views/go2.js';
 import { stopKeyboardLoop } from './views/keyboard.js';
-import { stopClockSync, stopVideoStats } from './webrtc.js';
+import { stopClockSync, stopOpHeartbeat, stopVideoStats } from './webrtc.js';
 
 export async function disconnect() {
     // Await leave so the broker clears operator_id before any re-connect —
@@ -23,6 +23,7 @@ export async function disconnect() {
     stopTick();  // go2 cockpit: clear telemetry tick + cmd-ack hook
     stopClockSync();
     stopVideoStats();
+    stopOpHeartbeat();
     unmountHud();
     if (state.xrSession) { await state.xrSession.end().catch(() => {}); state.xrSession = null; }
     state.xrRefSpace = null;  // belongs to the ended XR session; can't be reused

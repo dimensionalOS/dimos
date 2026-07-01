@@ -7,7 +7,7 @@
 import { api } from './api.js';
 import { ensureRobotCam, setStatus } from './dom.js';
 import { state } from './state.js';
-import { startClockSync, handleStateMessage, timeout } from './webrtc.js';
+import { startClockSync, handleStateMessage, startOpHeartbeat, timeout } from './webrtc.js';
 
 const CMD_TOPIC = 'cmd_unreliable';
 const STATE_TOPIC = 'state_reliable';
@@ -102,6 +102,7 @@ export async function setupLiveKit(sessionId) {
     };
 
     startClockSync(state.stateChannel);
+    startOpHeartbeat(sessionId);
     // Video-stats reporter is skipped on LiveKit: it samples state.pc.getStats(),
     // which the SDK owns internally. (HUD video health is a follow-up.)
 }

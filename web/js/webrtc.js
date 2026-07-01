@@ -6,6 +6,7 @@ import {
     CLOCK_SYNC_BURST_COUNT,
     CLOCK_SYNC_BURST_INTERVAL_MS,
     CLOCK_SYNC_DRIFT_INTERVAL_MS,
+    OP_HEARTBEAT_INTERVAL_MS,
     VIDEO_STATS_INTERVAL_MS,
     state,
 } from './state.js';
@@ -185,6 +186,7 @@ async function _setupWebRTCInner(sessionId) {
     if (bridge.cmd_channel_id == null) {
         throw new Error('Broker did not return cmd_channel_id');
     }
+    startOpHeartbeat(sessionId);
 
     state.cmdChannel = pc.createDataChannel('cmd_unreliable', {
         negotiated: true,
@@ -368,6 +370,32 @@ export function startVideoStats(channel) {
 export function stopVideoStats() {
     if (state.videoStatsTimer) { clearInterval(state.videoStatsTimer); state.videoStatsTimer = null; }
     state.videoStatsPrev = null;
+}
+
+// ─── Operator liveness heartbeat ─────────────────────────────────────────
+// Keeps broker's last_operator_heartbeat fresh so the reaper doesn't evict
+// us. Covers silent drops (browser crash, iOS backgrounding) that pagehide
+// misses. Stops on terminal auth/not-found — nothing to be gained by spam.
+export function startOpHeartbeat(sessionId) {
+    stopOpHeartbeat();
+    state.opHeartbeatTimer = setInterval(async () => {
+        try {
+            await api('POST', `/sessions/${sessionId}/op-heartbeat`);
+        } catch (err) {
+            const msg = err.message || '';
+            if (msg === 'Unauthorized' || msg.startsWith('HTTP 4') || /Not the bound|Session not found/.test(msg)) {
+                console.warn('[op-heartbeat] terminal:', msg);
+                stopOpHeartbeat();
+            }
+        }
+    }, OP_HEARTBEAT_INTERVAL_MS);
+}
+
+export function stopOpHeartbeat() {
+    if (state.opHeartbeatTimer) {
+        clearInterval(state.opHeartbeatTimer);
+        state.opHeartbeatTimer = null;
+    }
 }
 
 export function handleStateMessage(data) {

@@ -28,6 +28,7 @@ _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     # DEFAULT backfills existing rows as cloudflare (the only backend before
     # this); NOT NULL matches the ORM so migrated and fresh schemas agree.
     ("teleop_sessions", "transport", "VARCHAR DEFAULT 'cloudflare' NOT NULL"),
+    ("teleop_sessions", "last_operator_heartbeat", "TIMESTAMP"),
 ]
 
 

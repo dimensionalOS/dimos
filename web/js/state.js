@@ -35,6 +35,9 @@ export const state = {
     videoStatsTimer: null,
     videoStatsPrev: null,
 
+    // Operator liveness heartbeat to broker
+    opHeartbeatTimer: null,
+
     // Keyboard
     kbInterval: null,
     kbKeys: new Set(),
@@ -85,6 +88,7 @@ export const CLOCK_SYNC_BURST_COUNT = 5;
 export const CLOCK_SYNC_BURST_INTERVAL_MS = 400;
 export const CLOCK_SYNC_DRIFT_INTERVAL_MS = 30000;  // post-burst drift cadence
 export const VIDEO_STATS_INTERVAL_MS = 1000;
+export const OP_HEARTBEAT_INTERVAL_MS = 5000;  // matches broker's ~20s reap window
 
 // Probed once at boot; awaited by loadRobots() to pick the right Connect handler.
 // immersive-vr only: headsets (Quest) support it, phones don't

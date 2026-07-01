@@ -1,5 +1,6 @@
 """dimos-teleop: Session microservice for hosted teleoperation."""
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -20,6 +21,7 @@ logging.basicConfig(
 from config import settings
 from models.database import init_db
 from routers import auth, keys, sessions
+from routers.sessions import operator_reaper_loop
 from services.auth import register_robot_key
 
 
@@ -33,8 +35,11 @@ async def lifespan(app: FastAPI):
         register_robot_key(dev_key, "dev-robot")
         print(f"[dev] robot key registered: {dev_key} → dev-robot")
 
-    yield
-    # Shutdown
+    reaper = asyncio.create_task(operator_reaper_loop())
+    try:
+        yield
+    finally:
+        reaper.cancel()
 
 
 app = FastAPI(

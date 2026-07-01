@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,7 +12,7 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
-from models.database import get_db
+from models.database import async_session, get_db
 from models.session import TeleopSession
 from services import livekit
 from services.auth import get_current_user, get_operator_or_robot, get_robot_owner
@@ -48,6 +48,11 @@ def _session_lock(session_id: str) -> asyncio.Lock:
 
 # session_ids awaiting the operator's video-pull SDP answer.
 _pending_video_renegotiations: set[str] = set()
+
+# Operator liveness: client heartbeats every 5s; reaper drops binding after 20s
+# silent (covers ~4 missed heartbeats).
+OP_HEARTBEAT_TIMEOUT_SEC = 20
+OP_REAPER_INTERVAL_SEC = 10
 
 
 # ─── Request/Response schemas ────────────────────────────────────────
@@ -423,7 +428,11 @@ async def _claim_operator_slot(db: AsyncSession, session_id: str, user_id: str) 
                 TeleopSession.operator_id == user_id,
             ),
         )
-        .values(operator_id=user_id, state="active")
+        .values(
+            operator_id=user_id,
+            state="active",
+            last_operator_heartbeat=datetime.now(timezone.utc),
+        )
     )
     result = await db.execute(stmt)
     await db.commit()
@@ -818,6 +827,23 @@ async def renegotiate_answer(
     return {"ok": True}
 
 
+@router.post("/{session_id}/op-heartbeat")
+async def op_heartbeat(
+    session_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Operator liveness ping; refreshes last_operator_heartbeat."""
+    session = await db.get(TeleopSession, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.operator_id != user["sub"]:
+        raise HTTPException(status_code=403, detail="Not the bound operator")
+    session.last_operator_heartbeat = datetime.now(timezone.utc)
+    await db.commit()
+    return {"ack": True}
+
+
 @router.post("/{session_id}/leave")
 async def leave_session(
     session_id: str,
@@ -866,3 +892,42 @@ async def session_status(
         packet_loss_pct=session.packet_loss_pct,
         created_at=session.created_at,
     )
+
+
+# ─── Operator liveness reaper ────────────────────────────────────
+
+async def _reap_stale_operators() -> None:
+    """Evict operators whose last heartbeat is older than the timeout."""
+    threshold = datetime.now(timezone.utc) - timedelta(seconds=OP_HEARTBEAT_TIMEOUT_SEC)
+    async with async_session() as db:
+        stale = (await db.execute(
+            select(TeleopSession).where(
+                TeleopSession.state == "active",
+                TeleopSession.last_operator_heartbeat.is_not(None),
+                TeleopSession.last_operator_heartbeat < threshold,
+            )
+        )).scalars().all()
+        for s in stale:
+            async with _session_lock(s.id):
+                idle = (datetime.now(timezone.utc) - s.last_operator_heartbeat).total_seconds()
+                log.warning(
+                    "reaping stale operator session=%s operator=%s idle_for=%.1fs",
+                    s.id, s.operator_id, idle,
+                )
+                s.operator_id = None
+                s.operator_cf_session_id = None
+                s.state = "idle"
+                s.last_operator_heartbeat = None
+                _robot_channel_ids.pop(s.id, None)
+                _pending_video_renegotiations.discard(s.id)
+                await db.commit()
+
+
+async def operator_reaper_loop() -> None:
+    """Background task; launched from main.py lifespan."""
+    while True:
+        try:
+            await _reap_stale_operators()
+        except Exception:
+            log.exception("operator reaper failed")
+        await asyncio.sleep(OP_REAPER_INTERVAL_SEC)

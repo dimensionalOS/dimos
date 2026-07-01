@@ -53,3 +53,5 @@ class TeleopSession(Base):
 
     created_at: Mapped[datetime] = Column(DateTime(timezone=True), default=_utcnow)
     last_heartbeat: Mapped[datetime | None] = Column(DateTime(timezone=True), nullable=True)
+    # Refreshed by /op-heartbeat; a reaper evicts silent-drop operators.
+    last_operator_heartbeat: Mapped[datetime | None] = Column(DateTime(timezone=True), nullable=True)
