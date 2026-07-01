@@ -487,38 +487,32 @@ class DepthStreamer:
 
         rr.log("world/camera/depth", rr.DepthImage(pkt.depth, meter=1.0))
 
-        # Stage 1: all valid depth pixels → live cloud (always show something)
-        xyz_all, colors_all = self._bp.project(pkt, stable=None)
-        self._last_n_valid = len(xyz_all)
+        # All valid depth → live cloud (RGB colored) + map accumulation.
+        # _filter_isolated in the map worker handles per-frame noise; no gradient
+        # filter needed here since it was killing stable=0 at NaN boundaries.
+        xyz, colors = self._bp.project(pkt, stable=None)
+        self._last_n_valid  = len(xyz)
+        self._last_n_stable = len(xyz)   # same source now; kept for stdout compat
 
-        if len(xyz_all) > 0:
-            self._cam_z = float(pkt.pose_t[2])
-            n   = min(len(xyz_all), self.MAX_CLOUD)
-            idx = np.random.choice(len(xyz_all), n, replace=False) if len(xyz_all) > n else np.arange(n)
-            cloud_colors = colors_all[idx] if colors_all is not None else _height_color(xyz_all[idx, 2] - self._cam_z)
-            rr.log("world/cloud", rr.Points3D(
-                positions=xyz_all[idx],
-                colors=cloud_colors,
-                radii=0.003,
-            ))
+        if len(xyz) == 0:
+            return
 
-        # Stage 2: gradient filter — only for map quality (not live cloud)
-        stable_mask = self._grad.compute(pkt.depth)
-        self._last_n_stable = int(stable_mask.sum())
-        rr.log("world/camera/stable", rr.Image(stable_mask.astype(np.uint8) * 255))
+        self._cam_z = float(pkt.pose_t[2])
+        n   = min(len(xyz), self.MAX_CLOUD)
+        idx = np.random.choice(len(xyz), n, replace=False) if len(xyz) > n else np.arange(n)
+        rr.log("world/cloud", rr.Points3D(
+            positions=xyz[idx],
+            colors=colors[idx] if colors is not None else _height_color(xyz[idx, 2] - self._cam_z),
+            radii=0.003,
+        ))
 
-        xyz_stable, _ = self._bp.project(pkt, stable_mask)
-
-        # Hand off stable points to map thread — non-blocking; drop if worker is behind.
-        # Accumulate even before VIO locks: pose_R=I, pose_t=0 → camera frame.
-        # Once VIO locks the world-frame transform corrects automatically.
-        if len(xyz_stable) > 0:
-            try:
-                self._map_queue.put_nowait(
-                    (xyz_stable, pkt.pose_t.copy(), self._cam_z, frame)
-                )
-            except queue.Full:
-                pass
+        # Hand to map worker — non-blocking, drop frame if worker is behind.
+        # Works before VIO locks (identity pose = camera frame); corrects to
+        # world frame automatically once VIO locks.
+        try:
+            self._map_queue.put_nowait((xyz, pkt.pose_t.copy(), self._cam_z, frame))
+        except queue.Full:
+            pass
 
     def _map_worker(self) -> None:
         """Background thread: height filter → isolation → FastVoxelMap → Rerun.
