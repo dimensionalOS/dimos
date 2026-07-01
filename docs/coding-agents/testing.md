@@ -109,7 +109,7 @@ assert obj._disposables.is_disposed
 ## Print statements
 
 - **Unit tests**: no prints. Use assertions.
-- **`@pytest.mark.tool` tests** (integration/exploration): prints are fine for progress and inspection output.
+- **`tool_*.py` files** (integration/exploration tools): prints are fine for progress and inspection output.
 
 ## Avoid unnecessary sleeps
 
