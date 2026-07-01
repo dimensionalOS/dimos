@@ -556,16 +556,8 @@ class DepthStreamer:
 
         self._cam_z = float(pkt.pose_t[2])
 
-        # Map worker gets the full-density cloud BEFORE ray subsampling.
-        # _nearest_per_ray_idx reduces to ~600 pts (3° bins) which is too sparse
-        # for 5 cm voxels — most voxels end up with 1 pt and get filtered away.
-        try:
-            self._map_queue.put_nowait((xyz, pkt.pose_t.copy(), self._cam_z, frame))
-        except queue.Full:
-            pass
-
-        # Live cloud: subsample to nearest-per-ray for clean Rerun display only.
-        near   = _nearest_per_ray_idx(xyz, pkt.pose_t)
+        # Live cloud: nearest-per-ray subsample for clean Rerun display.
+        near       = _nearest_per_ray_idx(xyz, pkt.pose_t)
         xyz_vis    = xyz[near]
         colors_vis = colors[near] if colors is not None else None
 
@@ -578,6 +570,17 @@ class DepthStreamer:
             positions=xyz_vis[idx],
             colors=colors_vis[idx] if colors_vis is not None else _height_color(xyz_vis[idx, 2] - self._cam_z),
             radii=0.003,
+        ))
+
+        # Voxelized map: same cloud, deduplicated to 5 cm voxels, same colours.
+        vk = np.floor(xyz_vis / 0.05).astype(np.int32)
+        _, first = np.unique(_pack(vk), return_index=True)
+        xyz_vox    = xyz_vis[first]
+        colors_vox = colors_vis[first] if colors_vis is not None else _height_color(xyz_vox[:, 2] - self._cam_z)
+        rr.log("world/map", rr.Points3D(
+            positions=xyz_vox,
+            colors=colors_vox,
+            radii=0.025,
         ))
 
     def _map_worker(self) -> None:
@@ -663,9 +666,7 @@ def main() -> None:
         rrb.Tabs(
             rrb.Spatial3DView(name="live cloud", origin="world",
                               contents=["world/cloud", "world/camera/**"]),
-            rrb.Spatial3DView(name="obstacles (per-frame)", origin="world",
-                              contents=["world/obstacles"]),
-            rrb.Spatial3DView(name="map (persistent)", origin="world",
+            rrb.Spatial3DView(name="voxel map", origin="world",
                               contents=["world/map"]),
         )
     ))
