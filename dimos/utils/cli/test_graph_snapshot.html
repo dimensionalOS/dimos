@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>Blueprint Diagrams</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.ico">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #1e1e1e; color: #ccc; font-family: sans-serif; overflow: hidden; height: 100vh; }
+.tab-bar {
+    display: flex; gap: 0; border-bottom: 1px solid #444; background: #252525;
+    position: relative; z-index: 2;
+}
+.tab-btn {
+    background: transparent; color: #888; border: none; border-bottom: 2px solid transparent;
+    padding: 0.6em 1.4em; font-size: 0.95em; cursor: pointer; white-space: nowrap;
+}
+.tab-btn:hover { color: #ccc; background: #2a2a2a; }
+.tab-btn.active { color: #eee; border-bottom-color: #60a5fa; background: #1e1e1e; }
+.tab-panel.hidden { display: none; }
+.viewport {
+    width: 100%; height: calc(100vh - 2.6em);
+    overflow: hidden; cursor: grab; position: relative;
+}
+.viewport.grabbing { cursor: grabbing; }
+.canvas {
+    transform-origin: 0 0;
+    position: absolute;
+    padding: 2em;
+}
+.controls {
+    position: fixed; bottom: 1.2em; right: 1.2em; z-index: 10;
+    display: flex; gap: 0.4em; background: #2a2a2a; border-radius: 6px;
+    padding: 0.3em; border: 1px solid #444;
+}
+.controls button {
+    background: #333; color: #ccc; border: 1px solid #555; border-radius: 4px;
+    width: 2.2em; height: 2.2em; font-size: 1em; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+}
+.controls button:hover { background: #2a2a2a; }
+.edgeLabel rect, .edgeLabel polygon { fill: rgba(30,30,30,0.7) !important; stroke: none !important; rx: 6; ry: 6; }
+.edgeLabel .label-container { background: rgba(30,30,30,0.7) !important; border-radius: 6px; }
+.edgeLabel foreignObject div, .edgeLabel foreignObject span, .edgeLabel foreignObject p {
+    background: rgba(30,30,30,0.7) !important; background-color: rgba(30,30,30,0.7) !important;
+    border-radius: 6px; padding: 2px 6px;
+}
+.moduleNode .nodeLabel { font-size: 38px !important; font-weight: 600 !important; display: block !important; transform: scale(0.7) !important; }
+.streamNode .nodeLabel { font-size: 18px !important; }
+.warnings-container {
+    position: fixed; bottom: 1.2em; left: 1.2em; z-index: 10;
+    display: flex; flex-direction: column; gap: 0.6em; max-width: 30em;
+}
+.warnings-container:empty { display: none; }
+.warning-box {
+    background: #2a2a2a; border: 1px solid #e57373; border-radius: 6px;
+    padding: 0.7em 1em; font-size: 0.85em; color: #ccc;
+}
+.warning-title { color: #e57373; font-weight: 600; margin-bottom: 0.3em; }
+.warning-item { margin: 0.25em 0; padding-top: 0.4em; border-top: 1px solid #444; }
+.warning-item:first-of-type { border-top: none; padding-top: 0; }
+.warning-module {
+    display: inline-block; padding: 3px 10px; border-radius: 10px;
+    color: #eee; font-size: 0.92em; margin: 2px 2px;
+}
+.warning-stream {
+    display: inline-block; padding: 3px 8px; border: 1px solid;
+    border-radius: 3px; font-size: 0.92em; margin: 2px 2px;
+}
+.typo-arrow { color: #888; margin: 0 2px; }
+</style>
+</head><body>
+
+<div class="tab-bar">
+
+    <button class="tab-btn active" data-idx="0">_blueprint3</button>
+
+    <button class="tab-btn" data-idx="1">_blueprint2</button>
+
+    <button class="tab-btn" data-idx="2">_blueprint1</button>
+
+</div>
+
+
+<div class="tab-panel active" data-idx="0">
+    <div class="viewport"><div class="canvas">
+        <pre class="mermaid">
+graph LR
+    CameraModule([CameraModule]):::moduleNode
+    ControllerModule([ControllerModule]):::moduleNode
+    ControllerModule2([ControllerModule2]):::moduleNode
+    OdometryModule([OdometryModule]):::moduleNode
+    PerceptionModule([PerceptionModule]):::moduleNode
+    PlannerModule([PlannerModule]):::moduleNode
+    PlannerModule2([PlannerModule2]):::moduleNode
+    VisualizerModule([VisualizerModule]):::moduleNode
+
+    %% Stream nodes and edges
+    CameraModule_depth_image_DepthData[depth_image:DepthData]:::streamNode
+    CameraModule --- CameraModule_depth_image_DepthData
+    CameraModule_depth_image_DepthData --> PerceptionModule
+    OdometryModule_odometry_OdometryData[odometry:OdometryData]:::streamNode
+    OdometryModule --- OdometryModule_odometry_OdometryData
+    OdometryModule_odometry_OdometryData --> PerceptionModule
+    OdometryModule_odometry_OdometryData --> PlannerModule
+    OdometryModule_odometry_OdometryData --> PlannerModule2
+    OdometryModule_odometry_OdometryData --> ControllerModule
+    OdometryModule_odometry_OdometryData --> ControllerModule2
+    PlannerModule_plan_PlanData[plan:PlanData]:::streamNode
+    PlannerModule --- PlannerModule_plan_PlanData
+    PlannerModule_plan_PlanData --> ControllerModule
+    PlannerModule_plan_PlanData --> ControllerModule2
+    PlannerModule2_plan_PlanData[plan:PlanData]:::streamNode
+    PlannerModule2 --- PlannerModule2_plan_PlanData
+    PlannerModule2_plan_PlanData --> ControllerModule
+    PlannerModule2_plan_PlanData --> ControllerModule2
+    CameraModule_point_cloud_PointCloudData[point_cloud:PointCloudData]:::streamNode
+    CameraModule --- CameraModule_point_cloud_PointCloudData
+    CameraModule_point_cloud_PointCloudData --> VisualizerModule
+
+    %% Disconnected streams
+    ControllerModule_cmd_vel_CmdVelData[cmd_vel:CmdVelData]:::streamNode
+    ControllerModule -.- ControllerModule_cmd_vel_CmdVelData
+    ControllerModule2_cmd_vel_CmdVelData[cmd_vel:CmdVelData]:::streamNode
+    ControllerModule2 -.- ControllerModule2_cmd_vel_CmdVelData
+    dangling_color_image_ImageData[color_image:ImageData]:::streamNode
+    dangling_color_image_ImageData -.-> PerceptionModule
+    dangling_color_image_ImageData -.-> VisualizerModule
+    CameraModule_color_img_ImageData[color_img:ImageData]:::streamNode
+    CameraModule -.- CameraModule_color_img_ImageData
+
+    style CameraModule fill:#3b82f6bf,stroke:#3b82f6,color:#eee,stroke-width:2px
+    style ControllerModule fill:#f97316bf,stroke:#f97316,color:#eee,stroke-width:2px
+    style ControllerModule2 fill:#06b6d4bf,stroke:#06b6d4,color:#eee,stroke-width:2px
+    style OdometryModule fill:#ef4444bf,stroke:#ef4444,color:#eee,stroke-width:2px
+    style PerceptionModule fill:#ec4899bf,stroke:#ec4899,color:#eee,stroke-width:2px
+    style PlannerModule fill:#22c55ebf,stroke:#22c55e,color:#eee,stroke-width:2px
+    style PlannerModule2 fill:#8b5cf6bf,stroke:#8b5cf6,color:#eee,stroke-width:2px
+    style VisualizerModule fill:#6366f1bf,stroke:#6366f1,color:#eee,stroke-width:2px
+    style CameraModule_depth_image_DepthData fill:transparent,stroke:#60a5fa,color:#60a5fa,stroke-width:1px
+    style OdometryModule_odometry_OdometryData fill:transparent,stroke:#f87171,color:#f87171,stroke-width:1px
+    style PlannerModule_plan_PlanData fill:transparent,stroke:#4ade80,color:#4ade80,stroke-width:1px
+    style PlannerModule2_plan_PlanData fill:transparent,stroke:#4ade80,color:#4ade80,stroke-width:1px
+    style CameraModule_point_cloud_PointCloudData fill:transparent,stroke:#a78bfa,color:#a78bfa,stroke-width:1px
+    style ControllerModule_cmd_vel_CmdVelData fill:transparent,stroke:#fb923c,color:#fb923c,stroke-width:1px
+    style ControllerModule2_cmd_vel_CmdVelData fill:transparent,stroke:#fb923c,color:#fb923c,stroke-width:1px
+    style dangling_color_image_ImageData fill:transparent,stroke:#22d3ee,color:#22d3ee,stroke-width:1px
+    style CameraModule_color_img_ImageData fill:transparent,stroke:#f472b6,color:#f472b6,stroke-width:1px
+
+    linkStyle 0 stroke:#3b82f6,stroke-width:2px
+    linkStyle 1 stroke:#60a5fa,stroke-width:2px
+    linkStyle 2 stroke:#ef4444,stroke-width:2px
+    linkStyle 3 stroke:#f87171,stroke-width:2px
+    linkStyle 4 stroke:#f87171,stroke-width:2px
+    linkStyle 5 stroke:#f87171,stroke-width:2px
+    linkStyle 6 stroke:#f87171,stroke-width:2px
+    linkStyle 7 stroke:#f87171,stroke-width:2px
+    linkStyle 8 stroke:#22c55e,stroke-width:2px
+    linkStyle 9 stroke:#4ade80,stroke-width:2px
+    linkStyle 10 stroke:#4ade80,stroke-width:2px
+    linkStyle 11 stroke:#8b5cf6,stroke-width:2px
+    linkStyle 12 stroke:#4ade80,stroke-width:2px
+    linkStyle 13 stroke:#4ade80,stroke-width:2px
+    linkStyle 14 stroke:#3b82f6,stroke-width:2px
+    linkStyle 15 stroke:#a78bfa,stroke-width:2px
+    linkStyle 16 stroke:#f97316,stroke-width:2px
+    linkStyle 17 stroke:#06b6d4,stroke-width:2px
+    linkStyle 18 stroke:#22d3ee,stroke-width:2px
+    linkStyle 19 stroke:#22d3ee,stroke-width:2px
+    linkStyle 20 stroke:#3b82f6,stroke-width:2px
+</pre>
+    </div></div>
+</div>
+
+<div class="tab-panel" data-idx="1">
+    <div class="viewport"><div class="canvas">
+        <pre class="mermaid">
+graph LR
+    CameraModule([CameraModule]):::moduleNode
+    ControllerModule([ControllerModule]):::moduleNode
+    PlannerModule([PlannerModule]):::moduleNode
+    VisualizerModule([VisualizerModule]):::moduleNode
+
+    %% Stream nodes and edges
+    PlannerModule_plan_PlanData[plan:PlanData]:::streamNode
+    PlannerModule --- PlannerModule_plan_PlanData
+    PlannerModule_plan_PlanData --> ControllerModule
+    CameraModule_point_cloud_PointCloudData[point_cloud:PointCloudData]:::streamNode
+    CameraModule --- CameraModule_point_cloud_PointCloudData
+    CameraModule_point_cloud_PointCloudData --> VisualizerModule
+
+    %% Disconnected streams
+    ControllerModule_cmd_vel_CmdVelData[cmd_vel:CmdVelData]:::streamNode
+    ControllerModule -.- ControllerModule_cmd_vel_CmdVelData
+    dangling_color_image_ImageData[color_image:ImageData]:::streamNode
+    dangling_color_image_ImageData -.-> VisualizerModule
+    CameraModule_color_img_ImageData[color_img:ImageData]:::streamNode
+    CameraModule -.- CameraModule_color_img_ImageData
+    CameraModule_depth_image_DepthData[depth_image:DepthData]:::streamNode
+    CameraModule -.- CameraModule_depth_image_DepthData
+    dangling_odometry_OdometryData[odometry:OdometryData]:::streamNode
+    dangling_odometry_OdometryData -.-> PlannerModule
+    dangling_odometry_OdometryData -.-> ControllerModule
+
+    style CameraModule fill:#ef4444bf,stroke:#ef4444,color:#eee,stroke-width:2px
+    style ControllerModule fill:#22c55ebf,stroke:#22c55e,color:#eee,stroke-width:2px
+    style PlannerModule fill:#3b82f6bf,stroke:#3b82f6,color:#eee,stroke-width:2px
+    style VisualizerModule fill:#8b5cf6bf,stroke:#8b5cf6,color:#eee,stroke-width:2px
+    style PlannerModule_plan_PlanData fill:transparent,stroke:#60a5fa,color:#60a5fa,stroke-width:1px
+    style CameraModule_point_cloud_PointCloudData fill:transparent,stroke:#f87171,color:#f87171,stroke-width:1px
+    style ControllerModule_cmd_vel_CmdVelData fill:transparent,stroke:#4ade80,color:#4ade80,stroke-width:1px
+    style dangling_color_image_ImageData fill:transparent,stroke:#a78bfa,color:#a78bfa,stroke-width:1px
+    style CameraModule_color_img_ImageData fill:transparent,stroke:#fb923c,color:#fb923c,stroke-width:1px
+    style CameraModule_depth_image_DepthData fill:transparent,stroke:#22d3ee,color:#22d3ee,stroke-width:1px
+    style dangling_odometry_OdometryData fill:transparent,stroke:#f472b6,color:#f472b6,stroke-width:1px
+
+    linkStyle 0 stroke:#3b82f6,stroke-width:2px
+    linkStyle 1 stroke:#60a5fa,stroke-width:2px
+    linkStyle 2 stroke:#ef4444,stroke-width:2px
+    linkStyle 3 stroke:#f87171,stroke-width:2px
+    linkStyle 4 stroke:#22c55e,stroke-width:2px
+    linkStyle 5 stroke:#a78bfa,stroke-width:2px
+    linkStyle 6 stroke:#ef4444,stroke-width:2px
+    linkStyle 7 stroke:#ef4444,stroke-width:2px
+    linkStyle 8 stroke:#f472b6,stroke-width:2px
+    linkStyle 9 stroke:#f472b6,stroke-width:2px
+</pre>
+    </div></div>
+</div>
+
+<div class="tab-panel" data-idx="2">
+    <div class="viewport"><div class="canvas">
+        <pre class="mermaid">
+graph LR
+    CameraModule([CameraModule]):::moduleNode
+    ControllerModule([ControllerModule]):::moduleNode
+    OdometryModule([OdometryModule]):::moduleNode
+    PerceptionModule([PerceptionModule]):::moduleNode
+    PlannerModule([PlannerModule]):::moduleNode
+    VisualizerModule([VisualizerModule]):::moduleNode
+
+    %% Stream nodes and edges
+    CameraModule_depth_image_DepthData[depth_image:DepthData]:::streamNode
+    CameraModule --- CameraModule_depth_image_DepthData
+    CameraModule_depth_image_DepthData --> PerceptionModule
+    OdometryModule_odometry_OdometryData[odometry:OdometryData]:::streamNode
+    OdometryModule --- OdometryModule_odometry_OdometryData
+    OdometryModule_odometry_OdometryData --> PerceptionModule
+    OdometryModule_odometry_OdometryData --> PlannerModule
+    OdometryModule_odometry_OdometryData --> ControllerModule
+    PlannerModule_plan_PlanData[plan:PlanData]:::streamNode
+    PlannerModule --- PlannerModule_plan_PlanData
+    PlannerModule_plan_PlanData --> ControllerModule
+    CameraModule_point_cloud_PointCloudData[point_cloud:PointCloudData]:::streamNode
+    CameraModule --- CameraModule_point_cloud_PointCloudData
+    CameraModule_point_cloud_PointCloudData --> VisualizerModule
+
+    %% Disconnected streams
+    ControllerModule_cmd_vel_CmdVelData[cmd_vel:CmdVelData]:::streamNode
+    ControllerModule -.- ControllerModule_cmd_vel_CmdVelData
+    dangling_color_image_ImageData[color_image:ImageData]:::streamNode
+    dangling_color_image_ImageData -.-> PerceptionModule
+    dangling_color_image_ImageData -.-> VisualizerModule
+    CameraModule_color_img_ImageData[color_img:ImageData]:::streamNode
+    CameraModule -.- CameraModule_color_img_ImageData
+
+    style CameraModule fill:#3b82f6bf,stroke:#3b82f6,color:#eee,stroke-width:2px
+    style ControllerModule fill:#8b5cf6bf,stroke:#8b5cf6,color:#eee,stroke-width:2px
+    style OdometryModule fill:#ef4444bf,stroke:#ef4444,color:#eee,stroke-width:2px
+    style PerceptionModule fill:#f97316bf,stroke:#f97316,color:#eee,stroke-width:2px
+    style PlannerModule fill:#22c55ebf,stroke:#22c55e,color:#eee,stroke-width:2px
+    style VisualizerModule fill:#06b6d4bf,stroke:#06b6d4,color:#eee,stroke-width:2px
+    style CameraModule_depth_image_DepthData fill:transparent,stroke:#60a5fa,color:#60a5fa,stroke-width:1px
+    style OdometryModule_odometry_OdometryData fill:transparent,stroke:#f87171,color:#f87171,stroke-width:1px
+    style PlannerModule_plan_PlanData fill:transparent,stroke:#4ade80,color:#4ade80,stroke-width:1px
+    style CameraModule_point_cloud_PointCloudData fill:transparent,stroke:#a78bfa,color:#a78bfa,stroke-width:1px
+    style ControllerModule_cmd_vel_CmdVelData fill:transparent,stroke:#fb923c,color:#fb923c,stroke-width:1px
+    style dangling_color_image_ImageData fill:transparent,stroke:#22d3ee,color:#22d3ee,stroke-width:1px
+    style CameraModule_color_img_ImageData fill:transparent,stroke:#f472b6,color:#f472b6,stroke-width:1px
+
+    linkStyle 0 stroke:#3b82f6,stroke-width:2px
+    linkStyle 1 stroke:#60a5fa,stroke-width:2px
+    linkStyle 2 stroke:#ef4444,stroke-width:2px
+    linkStyle 3 stroke:#f87171,stroke-width:2px
+    linkStyle 4 stroke:#f87171,stroke-width:2px
+    linkStyle 5 stroke:#f87171,stroke-width:2px
+    linkStyle 6 stroke:#22c55e,stroke-width:2px
+    linkStyle 7 stroke:#4ade80,stroke-width:2px
+    linkStyle 8 stroke:#3b82f6,stroke-width:2px
+    linkStyle 9 stroke:#a78bfa,stroke-width:2px
+    linkStyle 10 stroke:#8b5cf6,stroke-width:2px
+    linkStyle 11 stroke:#22d3ee,stroke-width:2px
+    linkStyle 12 stroke:#22d3ee,stroke-width:2px
+    linkStyle 13 stroke:#3b82f6,stroke-width:2px
+</pre>
+    </div></div>
+</div>
+
+<div class="warnings-container" id="warningsContainer"></div>
+<div class="controls">
+    <button id="zoomIn" title="Zoom in">+</button>
+    <button id="zoomOut" title="Zoom out">&minus;</button>
+    <button id="resetView" title="Reset view">&#8634;</button>
+</div>
+<script>/* mermaid.min.js */</script>
+<script>(async () => {
+mermaid.initialize({
+    startOnLoad: false,
+    theme: 'dark',
+    flowchart: {
+        curve: 'basis',
+        padding: 8,
+        nodeSpacing: 60,
+        rankSpacing: 80,
+    },
+});
+
+await mermaid.run();
+
+const arrowScale = 2.3;
+const arrowGap = 6;
+document.querySelectorAll('marker').forEach(marker => {
+    const width = parseFloat(marker.getAttribute('markerWidth')) || 8;
+    const height = parseFloat(marker.getAttribute('markerHeight')) || 8;
+    marker.setAttribute('markerWidth', width * arrowScale);
+    marker.setAttribute('markerHeight', height * arrowScale);
+    const refX = parseFloat(marker.getAttribute('refX')) || 0;
+    marker.setAttribute('refX', refX + arrowGap);
+});
+
+const allLabelColors = [{"depth_image:DepthData": "#60a5fa", "odometry:OdometryData": "#f87171", "plan:PlanData": "#4ade80", "point_cloud:PointCloudData": "#a78bfa", "cmd_vel:CmdVelData": "#fb923c", "color_image:ImageData": "#22d3ee", "color_img:ImageData": "#f472b6"}, {"plan:PlanData": "#60a5fa", "point_cloud:PointCloudData": "#f87171", "cmd_vel:CmdVelData": "#4ade80", "color_image:ImageData": "#a78bfa", "color_img:ImageData": "#fb923c", "depth_image:DepthData": "#22d3ee", "odometry:OdometryData": "#f472b6"}, {"depth_image:DepthData": "#60a5fa", "odometry:OdometryData": "#f87171", "plan:PlanData": "#4ade80", "point_cloud:PointCloudData": "#a78bfa", "cmd_vel:CmdVelData": "#fb923c", "color_image:ImageData": "#22d3ee", "color_img:ImageData": "#f472b6"}];
+const allDisconnected = [["cmd_vel:CmdVelData", "color_image:ImageData", "color_img:ImageData"], ["cmd_vel:CmdVelData", "color_image:ImageData", "color_img:ImageData", "depth_image:DepthData", "odometry:OdometryData"], ["cmd_vel:CmdVelData", "color_image:ImageData", "color_img:ImageData"]];
+const allConflicts = [[{"topic": "plan:PlanData", "topicColor": "#4ade80", "modules": [{"name": "PlannerModule", "color": "#22c55e"}, {"name": "PlannerModule2", "color": "#8b5cf6"}]}, {"topic": "cmd_vel:CmdVelData", "topicColor": "#fb923c", "modules": [{"name": "ControllerModule", "color": "#f97316"}, {"name": "ControllerModule2", "color": "#06b6d4"}]}], [], []];
+const allTypos = [[{"outLabel": "color_img:ImageData", "inLabel": "color_image:ImageData", "outColor": "#f472b6", "inColor": "#22d3ee", "outModules": [{"name": "CameraModule", "color": "#3b82f6"}], "inModules": [{"name": "PerceptionModule", "color": "#ec4899"}, {"name": "VisualizerModule", "color": "#6366f1"}]}], [{"outLabel": "color_img:ImageData", "inLabel": "color_image:ImageData", "outColor": "#fb923c", "inColor": "#a78bfa", "outModules": [{"name": "CameraModule", "color": "#ef4444"}], "inModules": [{"name": "VisualizerModule", "color": "#8b5cf6"}]}], [{"outLabel": "color_img:ImageData", "inLabel": "color_image:ImageData", "outColor": "#f472b6", "inColor": "#22d3ee", "outModules": [{"name": "CameraModule", "color": "#3b82f6"}], "inModules": [{"name": "PerceptionModule", "color": "#f97316"}, {"name": "VisualizerModule", "color": "#06b6d4"}]}]];
+
+function renderWarnings(idx) {
+    const container = document.getElementById('warningsContainer');
+    let html = '';
+    const conflicts = allConflicts[idx] || [];
+    if (conflicts.length > 0) {
+        html += '<div class="warning-box"><div class="warning-title">⚠ Possible Stream Fighting</div>' +
+            conflicts.map(c =>
+                `<div class="warning-item">` +
+                `<span class="warning-stream" style="border-color:${c.topicColor};color:${c.topicColor}">${c.topic}</span> ` +
+                c.modules.map(m => `<span class="warning-module" style="background:${m.color}bf">${m.name}</span>`).join(' ') +
+                `</div>`
+            ).join('') + '</div>';
+    }
+    const typos = allTypos[idx] || [];
+    if (typos.length > 0) {
+        html += '<div class="warning-box"><div class="warning-title">⚠ Possible Typos</div>' +
+            typos.map(t =>
+                `<div class="warning-item">` +
+                `<span class="warning-stream" style="border-color:${t.outColor};color:${t.outColor}">${t.outLabel}</span>` +
+                `<span class="typo-arrow">≠</span>` +
+                `<span class="warning-stream" style="border-color:${t.inColor};color:${t.inColor}">${t.inLabel}</span>` +
+                `<div>` +
+                t.outModules.map(m => `<span class="warning-module" style="background:${m.color}bf">${m.name}</span>`).join(' ') +
+                `<span class="typo-arrow">→</span>` +
+                t.inModules.map(m => `<span class="warning-module" style="background:${m.color}bf">${m.name}</span>`).join(' ') +
+                `</div></div>`
+            ).join('') + '</div>';
+    }
+    container.innerHTML = html;
+}
+
+function setupViewport(vp, labelColors, disconnectedList) {
+    const canvas = vp.querySelector('.canvas');
+    const svg = canvas.querySelector('svg');
+    if (!svg) return;
+    let scale, panX, panY;
+    let dragging = false, startX, startY;
+
+    svg.querySelectorAll('.node').forEach(node => {
+        const rect = node.querySelector('rect');
+        if (!rect) return;
+        const w = parseFloat(rect.getAttribute('width'));
+        const h = parseFloat(rect.getAttribute('height'));
+        const x = parseFloat(rect.getAttribute('x'));
+        const y = parseFloat(rect.getAttribute('y'));
+        if (!w || !h) return;
+        const isStream = rect.getAttribute('style')?.includes('fill: transparent') ||
+                         rect.style.fill === 'transparent';
+        if (isStream) {
+            const gx = 4, gy = 2;
+            rect.setAttribute('width', w + gx * 2);
+            rect.setAttribute('height', h + gy * 2);
+            rect.setAttribute('x', x - gx);
+            rect.setAttribute('y', y - gy);
+            node.querySelectorAll('span, text, div').forEach(el => {
+                el.style.fontSize = '14px';
+            });
+        } else {
+            const gx = 30, gy = 18;
+            rect.setAttribute('width', w + gx * 2);
+            rect.setAttribute('height', h + gy * 2);
+            rect.setAttribute('x', x - gx);
+            rect.setAttribute('y', y - gy);
+        }
+    });
+
+    svg.querySelectorAll('.edgeLabel').forEach(label => {
+        const fo = label.querySelector('foreignObject');
+        if (fo) {
+            fo.setAttribute('height', '35');
+            const div = fo.querySelector('div');
+            if (div) {
+                const span = document.createElement('span');
+                span.textContent = div.textContent;
+                span.style.cssText = div.querySelector('span')?.style.cssText || '';
+                span.style.display = 'inline-flex';
+                span.style.alignItems = 'center';
+                span.style.height = '100%';
+                div.replaceWith(span);
+            }
+        }
+        const rect = label.querySelector('rect');
+        if (rect) { rect.setAttribute('rx', '6'); rect.setAttribute('ry', '6'); }
+    });
+
+    const disconnectedLabels = new Set(disconnectedList);
+    svg.querySelectorAll('.edgeLabel').forEach(label => {
+        const text = (label.textContent || '').trim();
+        const color = labelColors[text];
+        if (!color) return;
+        label.querySelectorAll('span, p, text').forEach(el => {
+            if (el.tagName === 'text') el.setAttribute('fill', color);
+            else el.style.color = color;
+        });
+        if (disconnectedLabels.has(text)) {
+            label.querySelectorAll('span').forEach(span => {
+                span.style.border = `dashed ${color} 1px`;
+                span.style.borderRadius = '4px';
+                span.style.padding = '2px 6px';
+            });
+        }
+    });
+
+    function fitToView() {
+        const vpRect = vp.getBoundingClientRect();
+        canvas.style.transform = 'none';
+        const svgRect = svg.getBoundingClientRect();
+        const svgW = svgRect.width;
+        const svgH = svgRect.height;
+        const pad = 40;
+        scale = Math.min((vpRect.width - pad) / svgW, (vpRect.height - pad) / svgH);
+        scale = Math.max(scale * 0.8, 0.2);
+        panX = (vpRect.width - svgW * scale) / 2;
+        panY = (vpRect.height - svgH * scale) / 2;
+        apply();
+    }
+
+    function apply() {
+        canvas.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+    }
+
+    fitToView();
+
+    vp.addEventListener('wheel', e => {
+        e.preventDefault();
+        const rect = vp.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+        const newScale = Math.min(Math.max(scale * factor, 0.05), 50);
+        panX = mx - (mx - panX) * (newScale / scale);
+        panY = my - (my - panY) * (newScale / scale);
+        scale = newScale;
+        apply();
+    }, { passive: false });
+
+    vp.addEventListener('mousedown', e => {
+        if (e.button !== 0) return;
+        dragging = true; startX = e.clientX - panX; startY = e.clientY - panY;
+        vp.classList.add('grabbing');
+    });
+    window.addEventListener('mousemove', e => {
+        if (!dragging) return;
+        panX = e.clientX - startX; panY = e.clientY - startY;
+        apply();
+    });
+    window.addEventListener('mouseup', () => {
+        dragging = false;
+        vp.classList.remove('grabbing');
+    });
+
+    vp._fitToView = fitToView;
+    vp._zoomBy = (factor) => {
+        const rect = vp.getBoundingClientRect();
+        const cx = rect.width / 2, cy = rect.height / 2;
+        const newScale = Math.min(Math.max(scale * factor, 0.05), 50);
+        panX = cx - (cx - panX) * (newScale / scale);
+        panY = cy - (cy - panY) * (newScale / scale);
+        scale = newScale; apply();
+    };
+}
+
+let activeViewport = null;
+document.querySelectorAll('.tab-panel').forEach((panel, idx) => {
+    const vp = panel.querySelector('.viewport');
+    if (vp) {
+        setupViewport(vp, allLabelColors[idx] || {}, allDisconnected[idx] || []);
+        if (panel.classList.contains('active')) activeViewport = vp;
+    }
+});
+
+document.getElementById('zoomIn').addEventListener('click', () => {
+    if (activeViewport?._zoomBy) activeViewport._zoomBy(1.3);
+});
+document.getElementById('zoomOut').addEventListener('click', () => {
+    if (activeViewport?._zoomBy) activeViewport._zoomBy(1 / 1.3);
+});
+document.getElementById('resetView').addEventListener('click', () => {
+    if (activeViewport?._fitToView) activeViewport._fitToView();
+});
+
+renderWarnings(0);
+
+document.querySelectorAll('.tab-panel:not(.active)').forEach(p => p.classList.add('hidden'));
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const idx = btn.dataset.idx;
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-panel').forEach(p => {
+            p.classList.remove('active');
+            p.classList.add('hidden');
+        });
+        btn.classList.add('active');
+        const panel = document.querySelector(`.tab-panel[data-idx="${idx}"]`);
+        panel.classList.add('active');
+        panel.classList.remove('hidden');
+        const vp = panel.querySelector('.viewport');
+        if (vp) {
+            activeViewport = vp;
+            if (vp._fitToView) setTimeout(() => vp._fitToView(), 0);
+        }
+        renderWarnings(parseInt(idx));
+    });
+});
+})()</script>
+</body></html>

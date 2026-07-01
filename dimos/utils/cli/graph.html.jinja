@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>Blueprint Diagrams</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.ico">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: {{ background }}; color: {{ text_color }}; font-family: sans-serif; overflow: hidden; height: 100vh; }
+.tab-bar {
+    display: flex; gap: 0; border-bottom: 1px solid {{ border_color }}; background: {{ surface }};
+    position: relative; z-index: 2;
+}
+.tab-btn {
+    background: transparent; color: {{ text_muted }}; border: none; border-bottom: 2px solid transparent;
+    padding: 0.6em 1.4em; font-size: 0.95em; cursor: pointer; white-space: nowrap;
+}
+.tab-btn:hover { color: {{ text_color }}; background: {{ surface_hover }}; }
+.tab-btn.active { color: {{ text_bright }}; border-bottom-color: #60a5fa; background: {{ background }}; }
+.tab-panel.hidden { display: none; }
+.viewport {
+    width: 100%; height: calc(100vh - 2.6em);
+    overflow: hidden; cursor: grab; position: relative;
+}
+.viewport.grabbing { cursor: grabbing; }
+.canvas {
+    transform-origin: 0 0;
+    position: absolute;
+    padding: 2em;
+}
+.controls {
+    position: fixed; bottom: 1.2em; right: 1.2em; z-index: 10;
+    display: flex; gap: 0.4em; background: {{ controls_bg }}; border-radius: 6px;
+    padding: 0.3em; border: 1px solid {{ border_color }};
+}
+.controls button {
+    background: {{ controls_btn }}; color: {{ text_color }}; border: 1px solid {{ controls_border }}; border-radius: 4px;
+    width: 2.2em; height: 2.2em; font-size: 1em; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+}
+.controls button:hover { background: {{ surface_hover }}; }
+.edgeLabel rect, .edgeLabel polygon { fill: {{ label_bg }} !important; stroke: none !important; rx: 6; ry: 6; }
+.edgeLabel .label-container { background: {{ label_bg }} !important; border-radius: 6px; }
+.edgeLabel foreignObject div, .edgeLabel foreignObject span, .edgeLabel foreignObject p {
+    background: {{ label_bg }} !important; background-color: {{ label_bg }} !important;
+    border-radius: 6px; padding: 2px 6px;
+}
+.moduleNode .nodeLabel { font-size: 38px !important; font-weight: 600 !important; display: block !important; transform: scale(0.7) !important; }
+.streamNode .nodeLabel { font-size: 18px !important; }
+.warnings-container {
+    position: fixed; bottom: 1.2em; left: 1.2em; z-index: 10;
+    display: flex; flex-direction: column; gap: 0.6em; max-width: 30em;
+}
+.warnings-container:empty { display: none; }
+.warning-box {
+    background: {{ controls_bg }}; border: 1px solid #e57373; border-radius: 6px;
+    padding: 0.7em 1em; font-size: 0.85em; color: {{ text_color }};
+}
+.warning-title { color: #e57373; font-weight: 600; margin-bottom: 0.3em; }
+.warning-item { margin: 0.25em 0; padding-top: 0.4em; border-top: 1px solid {{ border_color }}; }
+.warning-item:first-of-type { border-top: none; padding-top: 0; }
+.warning-module {
+    display: inline-block; padding: 3px 10px; border-radius: 10px;
+    color: #eee; font-size: 0.92em; margin: 2px 2px;
+}
+.warning-stream {
+    display: inline-block; padding: 3px 8px; border: 1px solid;
+    border-radius: 3px; font-size: 0.92em; margin: 2px 2px;
+}
+.typo-arrow { color: {{ text_muted }}; margin: 0 2px; }
+</style>
+</head><body>
+{% if tab_buttons | length > 1 %}
+<div class="tab-bar">
+    {% for button in tab_buttons %}
+    <button class="tab-btn{{ ' active' if loop.first }}" data-idx="{{ loop.index0 }}">{{ button.name }}</button>
+    {% endfor %}
+</div>
+{% endif %}
+{% for panel in tab_panels %}
+<div class="tab-panel{{ ' active' if loop.first }}" data-idx="{{ loop.index0 }}">
+    <div class="viewport"><div class="canvas">
+        <pre class="mermaid">
+{{ panel.mermaid_code }}
+</pre>
+    </div></div>
+</div>
+{% endfor %}
+<div class="warnings-container" id="warningsContainer"></div>
+<div class="controls">
+    <button id="zoomIn" title="Zoom in">+</button>
+    <button id="zoomOut" title="Zoom out">&minus;</button>
+    <button id="resetView" title="Reset view">&#8634;</button>
+</div>
+<script>{{ mermaid_js }}</script>
+<script>(async () => {
+mermaid.initialize({
+    startOnLoad: false,
+    theme: '{{ mermaid_theme }}',
+    flowchart: {
+        curve: 'basis',
+        padding: 8,
+        nodeSpacing: 60,
+        rankSpacing: 80,
+    },
+});
+
+await mermaid.run();
+
+const arrowScale = 2.3;
+const arrowGap = 6;
+document.querySelectorAll('marker').forEach(marker => {
+    const width = parseFloat(marker.getAttribute('markerWidth')) || 8;
+    const height = parseFloat(marker.getAttribute('markerHeight')) || 8;
+    marker.setAttribute('markerWidth', width * arrowScale);
+    marker.setAttribute('markerHeight', height * arrowScale);
+    const refX = parseFloat(marker.getAttribute('refX')) || 0;
+    marker.setAttribute('refX', refX + arrowGap);
+});
+
+const allLabelColors = {{ all_label_colors_json }};
+const allDisconnected = {{ all_disconnected_json }};
+const allConflicts = {{ all_conflicts_json }};
+const allTypos = {{ all_typos_json }};
+
+function renderWarnings(idx) {
+    const container = document.getElementById('warningsContainer');
+    let html = '';
+    const conflicts = allConflicts[idx] || [];
+    if (conflicts.length > 0) {
+        html += '<div class="warning-box"><div class="warning-title">⚠ Possible Stream Fighting</div>' +
+            conflicts.map(c =>
+                `<div class="warning-item">` +
+                `<span class="warning-stream" style="border-color:${c.topicColor};color:${c.topicColor}">${c.topic}</span> ` +
+                c.modules.map(m => `<span class="warning-module" style="background:${m.color}bf">${m.name}</span>`).join(' ') +
+                `</div>`
+            ).join('') + '</div>';
+    }
+    const typos = allTypos[idx] || [];
+    if (typos.length > 0) {
+        html += '<div class="warning-box"><div class="warning-title">⚠ Possible Typos</div>' +
+            typos.map(t =>
+                `<div class="warning-item">` +
+                `<span class="warning-stream" style="border-color:${t.outColor};color:${t.outColor}">${t.outLabel}</span>` +
+                `<span class="typo-arrow">≠</span>` +
+                `<span class="warning-stream" style="border-color:${t.inColor};color:${t.inColor}">${t.inLabel}</span>` +
+                `<div>` +
+                t.outModules.map(m => `<span class="warning-module" style="background:${m.color}bf">${m.name}</span>`).join(' ') +
+                `<span class="typo-arrow">→</span>` +
+                t.inModules.map(m => `<span class="warning-module" style="background:${m.color}bf">${m.name}</span>`).join(' ') +
+                `</div></div>`
+            ).join('') + '</div>';
+    }
+    container.innerHTML = html;
+}
+
+function setupViewport(vp, labelColors, disconnectedList) {
+    const canvas = vp.querySelector('.canvas');
+    const svg = canvas.querySelector('svg');
+    if (!svg) return;
+    let scale, panX, panY;
+    let dragging = false, startX, startY;
+
+    svg.querySelectorAll('.node').forEach(node => {
+        const rect = node.querySelector('rect');
+        if (!rect) return;
+        const w = parseFloat(rect.getAttribute('width'));
+        const h = parseFloat(rect.getAttribute('height'));
+        const x = parseFloat(rect.getAttribute('x'));
+        const y = parseFloat(rect.getAttribute('y'));
+        if (!w || !h) return;
+        const isStream = rect.getAttribute('style')?.includes('fill: transparent') ||
+                         rect.style.fill === 'transparent';
+        if (isStream) {
+            const gx = 4, gy = 2;
+            rect.setAttribute('width', w + gx * 2);
+            rect.setAttribute('height', h + gy * 2);
+            rect.setAttribute('x', x - gx);
+            rect.setAttribute('y', y - gy);
+            node.querySelectorAll('span, text, div').forEach(el => {
+                el.style.fontSize = '14px';
+            });
+        } else {
+            const gx = 30, gy = 18;
+            rect.setAttribute('width', w + gx * 2);
+            rect.setAttribute('height', h + gy * 2);
+            rect.setAttribute('x', x - gx);
+            rect.setAttribute('y', y - gy);
+        }
+    });
+
+    svg.querySelectorAll('.edgeLabel').forEach(label => {
+        const fo = label.querySelector('foreignObject');
+        if (fo) {
+            fo.setAttribute('height', '35');
+            const div = fo.querySelector('div');
+            if (div) {
+                const span = document.createElement('span');
+                span.textContent = div.textContent;
+                span.style.cssText = div.querySelector('span')?.style.cssText || '';
+                span.style.display = 'inline-flex';
+                span.style.alignItems = 'center';
+                span.style.height = '100%';
+                div.replaceWith(span);
+            }
+        }
+        const rect = label.querySelector('rect');
+        if (rect) { rect.setAttribute('rx', '6'); rect.setAttribute('ry', '6'); }
+    });
+
+    const disconnectedLabels = new Set(disconnectedList);
+    svg.querySelectorAll('.edgeLabel').forEach(label => {
+        const text = (label.textContent || '').trim();
+        const color = labelColors[text];
+        if (!color) return;
+        label.querySelectorAll('span, p, text').forEach(el => {
+            if (el.tagName === 'text') el.setAttribute('fill', color);
+            else el.style.color = color;
+        });
+        if (disconnectedLabels.has(text)) {
+            label.querySelectorAll('span').forEach(span => {
+                span.style.border = `dashed ${color} 1px`;
+                span.style.borderRadius = '4px';
+                span.style.padding = '2px 6px';
+            });
+        }
+    });
+
+    function fitToView() {
+        const vpRect = vp.getBoundingClientRect();
+        canvas.style.transform = 'none';
+        const svgRect = svg.getBoundingClientRect();
+        const svgW = svgRect.width;
+        const svgH = svgRect.height;
+        const pad = 40;
+        scale = Math.min((vpRect.width - pad) / svgW, (vpRect.height - pad) / svgH);
+        scale = Math.max(scale * 0.8, 0.2);
+        panX = (vpRect.width - svgW * scale) / 2;
+        panY = (vpRect.height - svgH * scale) / 2;
+        apply();
+    }
+
+    function apply() {
+        canvas.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+    }
+
+    fitToView();
+
+    vp.addEventListener('wheel', e => {
+        e.preventDefault();
+        const rect = vp.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+        const newScale = Math.min(Math.max(scale * factor, 0.05), 50);
+        panX = mx - (mx - panX) * (newScale / scale);
+        panY = my - (my - panY) * (newScale / scale);
+        scale = newScale;
+        apply();
+    }, { passive: false });
+
+    vp.addEventListener('mousedown', e => {
+        if (e.button !== 0) return;
+        dragging = true; startX = e.clientX - panX; startY = e.clientY - panY;
+        vp.classList.add('grabbing');
+    });
+    window.addEventListener('mousemove', e => {
+        if (!dragging) return;
+        panX = e.clientX - startX; panY = e.clientY - startY;
+        apply();
+    });
+    window.addEventListener('mouseup', () => {
+        dragging = false;
+        vp.classList.remove('grabbing');
+    });
+
+    vp._fitToView = fitToView;
+    vp._zoomBy = (factor) => {
+        const rect = vp.getBoundingClientRect();
+        const cx = rect.width / 2, cy = rect.height / 2;
+        const newScale = Math.min(Math.max(scale * factor, 0.05), 50);
+        panX = cx - (cx - panX) * (newScale / scale);
+        panY = cy - (cy - panY) * (newScale / scale);
+        scale = newScale; apply();
+    };
+}
+
+let activeViewport = null;
+document.querySelectorAll('.tab-panel').forEach((panel, idx) => {
+    const vp = panel.querySelector('.viewport');
+    if (vp) {
+        setupViewport(vp, allLabelColors[idx] || {}, allDisconnected[idx] || []);
+        if (panel.classList.contains('active')) activeViewport = vp;
+    }
+});
+
+document.getElementById('zoomIn').addEventListener('click', () => {
+    if (activeViewport?._zoomBy) activeViewport._zoomBy(1.3);
+});
+document.getElementById('zoomOut').addEventListener('click', () => {
+    if (activeViewport?._zoomBy) activeViewport._zoomBy(1 / 1.3);
+});
+document.getElementById('resetView').addEventListener('click', () => {
+    if (activeViewport?._fitToView) activeViewport._fitToView();
+});
+
+renderWarnings(0);
+
+document.querySelectorAll('.tab-panel:not(.active)').forEach(p => p.classList.add('hidden'));
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const idx = btn.dataset.idx;
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-panel').forEach(p => {
+            p.classList.remove('active');
+            p.classList.add('hidden');
+        });
+        btn.classList.add('active');
+        const panel = document.querySelector(`.tab-panel[data-idx="${idx}"]`);
+        panel.classList.add('active');
+        panel.classList.remove('hidden');
+        const vp = panel.querySelector('.viewport');
+        if (vp) {
+            activeViewport = vp;
+            if (vp._fitToView) setTimeout(() => vp._fitToView(), 0);
+        }
+        renderWarnings(parseInt(idx));
+    });
+});
+})()</script>
+</body></html>
