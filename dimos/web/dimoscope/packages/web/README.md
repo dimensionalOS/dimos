@@ -70,14 +70,14 @@ import type { geometry_msgs } from "@dimos/msgs";
 const dimos = createDimosClient<DimosTopics, DimosCommands>();
 await dimos.connect("ws://localhost:8080");
 
-// ── topics: the name autocompletes, and `m.data` is inferred from the blueprint's Out[] type ──
+// topics: the name autocompletes, and `m.data` is inferred from the blueprint's Out[] type
 dimos.subscribe("/nav/pose", (m) => {
   m.data.position;          // ✅ geometry_msgs.PoseStamped — fields autocomplete
 });
 const latest = dimos.latest("/nav/pose"); // latest?: geometry_msgs.PoseStamped
 dimos.subscribe("/nav/psoe", () => {});   // ❌ compile error — not a topic on this robot
 
-// ── commands: target, method, args and the return type are all typed ──
+// commands: target, method, args and the return type are all typed
 const goal = {} as geometry_msgs.PoseStamped;
 const ok: boolean = await dimos.modules.ScopeNav.navigate_to(goal); // (goal: PoseStamped) => Promise<boolean>
 await dimos.modules.ScopeNav.start();                               // () => Promise<void>
