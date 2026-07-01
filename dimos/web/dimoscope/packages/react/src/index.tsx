@@ -157,9 +157,9 @@ export function useTopicLatest<T = unknown>(
   useEffect(() => {
     setState({}); // clear stale data from the previous topic on switch
     if (!client || !topic) return;
-    const t = client.topic<T>(topic);
+    const t = client.topic(topic);
     if (maxHz) t.setRateLimit(maxHz);
-    const sub = t.subscribeLatest((data, meta) => setState({ data, meta }));
+    const sub = t.subscribeLatest((data, meta) => setState({ data: data as T, meta }));
     return () => sub.unsubscribe();
   }, [client, topic, maxHz]);
   return state;
@@ -174,8 +174,8 @@ export function useTopicRef<T = unknown>(
   useEffect(() => {
     ref.current = {}; // clear stale data from the previous topic on switch
     if (!client || !topic) return;
-    const sub = client.topic<T>(topic).subscribe((data, meta) => {
-      ref.current = { data, meta };
+    const sub = client.topic(topic).subscribe((data, meta) => {
+      ref.current = { data: data as T, meta };
     });
     return () => sub.unsubscribe();
   }, [client, topic]);
@@ -273,8 +273,8 @@ export function useImageTopic(topic: string | null, opts?: { maxFps?: number }) 
     let fpsT = 0;
     const minMs = maxFps ? 1000 / maxFps : 0;
 
-    const sub = client.topic<ImageMsg>(topic).subscribe((data) => {
-      latest = data;
+    const sub = client.topic(topic).subscribe((data) => {
+      latest = data as ImageMsg;
     });
     const fit = (w: number, h: number) => {
       if (cvs.width !== w || cvs.height !== h) {
@@ -633,35 +633,29 @@ export function useCommands(): CommandInfo[] {
  * names still work (the `string & {}` fallback → `unknown`). Non-keyed hooks (`useTeleop`/`useRpc`/
  * `useCommands`/`useTopics`/`useCaps`/`useStatus`) don't depend on the map — import them directly.
  */
+// A topic-name key: a known key of TMap (autocompletes) OR any other string (→ unknown message type).
+// Mirrors the client's `topic()` signature. `string & Record<never, never>` keeps literal
+// autocomplete alive while accepting arbitrary strings (and avoids the `{}` ban-types lint).
+type NameKey<TMap> = (keyof TMap & string) | (string & Record<never, never>);
+type MsgFor<TMap, K> = K extends keyof TMap ? TMap[K] : unknown;
+
 export function createDimosHooks<TMap>() {
   return {
-    useTopicLatest: useTopicLatest as unknown as {
-      <K extends keyof TMap & string>(
-        topic: K | null,
-        opts?: { maxHz?: number },
-      ): { data?: TMap[K]; meta?: MessageMeta };
-      <T = unknown>(
-        topic: (string & {}) | null,
-        opts?: { maxHz?: number },
-      ): { data?: T; meta?: MessageMeta };
-    },
-    useTopicRef: useTopicRef as unknown as {
-      <K extends keyof TMap & string>(
-        topic: K | null,
-      ): MutableRefObject<{ data?: TMap[K]; meta?: MessageMeta }>;
-      <T = unknown>(topic: (string & {}) | null): MutableRefObject<{ data?: T; meta?: MessageMeta }>;
-    },
-    useTopicStats: useTopicStats as unknown as {
-      <K extends keyof TMap & string>(topic: K | null, pollMs?: number): TopicStats | null;
-      (topic: (string & {}) | null, pollMs?: number): TopicStats | null;
-    },
-    useImageTopic: useImageTopic as unknown as {
-      <K extends keyof TMap & string>(
-        topic: K | null,
-        opts?: { maxFps?: number },
-      ): ReturnType<typeof useImageTopic>;
-      (topic: (string & {}) | null, opts?: { maxFps?: number }): ReturnType<typeof useImageTopic>;
-    },
+    useTopicLatest: useTopicLatest as unknown as <K extends NameKey<TMap>>(
+      topic: K | null,
+      opts?: { maxHz?: number },
+    ) => { data?: MsgFor<TMap, K>; meta?: MessageMeta },
+    useTopicRef: useTopicRef as unknown as <K extends NameKey<TMap>>(
+      topic: K | null,
+    ) => MutableRefObject<{ data?: MsgFor<TMap, K>; meta?: MessageMeta }>,
+    useTopicStats: useTopicStats as unknown as <K extends NameKey<TMap>>(
+      topic: K | null,
+      pollMs?: number,
+    ) => TopicStats | null,
+    useImageTopic: useImageTopic as unknown as <K extends NameKey<TMap>>(
+      topic: K | null,
+      opts?: { maxFps?: number },
+    ) => ReturnType<typeof useImageTopic>,
   };
 }
 

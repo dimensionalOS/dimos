@@ -2,7 +2,7 @@
 //   MODE=basic (direct gateway): rate-limit (setRateLimit downsamples a topic) + on-demand (1 of N)
 //   MODE=prio  (through a 4G netsim link): rate-limit the heavy lidar → the light pose stream recovers
 // Driven by bench/qos.sh. Measured by delivered hz / kB/s / seq-loss.
-import { createDimosClient } from "../packages/topics/src/client.ts";
+import { createDimosClient, type DimosClient } from "../packages/topics/src/client.ts";
 import { createGatewayWsTransport } from "../packages/topics/src/adapters/gatewayWs.ts";
 
 const URL = Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8080/ws";
@@ -20,7 +20,7 @@ interface Stat {
 async function measure(
   topics: string[],
   durMs: number,
-  setup?: (c: ReturnType<typeof createDimosClient>) => void,
+  setup?: (c: DimosClient) => void,
 ): Promise<Map<string, Stat>> {
   const t = createGatewayWsTransport({ url: URL, reconnect: false });
   const c = createDimosClient({ transport: t });

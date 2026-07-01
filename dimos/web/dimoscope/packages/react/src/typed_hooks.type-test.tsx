@@ -7,7 +7,6 @@ type Fixture = { "/odom": { x: number } };
 
 const { useTopicLatest, useTopicRef } = createDimosHooks<Fixture>();
 
-// deno-lint-ignore no-unused-vars
 function _component() {
   // ① known key → data inferred as the mapped message type
   const { data } = useTopicLatest("/odom");

@@ -1,7 +1,7 @@
 // DimosClient — the stable, transport-agnostic browser API for DimOS topics.
 //
 //   const client = await connect({ url: "ws://localhost:8090" });
-//   client.topic<PoseStamped>("/odom").subscribeLatest((p, meta) => ...);
+//   client.topic("/odom").subscribeLatest((p, meta) => ...);   // Topic<unknown> (untyped client)
 //   client.teleop(0.5, 0.0);            // structured + safe (gateway clamps/watchdogs)
 //
 // For typed topics + autocomplete, pass the generated map (`dtop gen-types`):
@@ -28,13 +28,14 @@ export type EmptyTopicMap = Record<never, never>;
 
 export interface DimosClient<TMap = EmptyTopicMap> {
   status: Status;
-  /** Get (or create) a typed handle to a KNOWN topic — autocompletes the name from `TMap`
-   *  (the generated `DimosTopics` map) and returns the mapped message type. */
-  topic<K extends keyof TMap & string>(name: K): Topic<TMap[K]>;
-  /** Get (or create) a handle to any (runtime-discovered) topic — pass the message type
-   *  explicitly (`topic<Pose>(name)`) or get `Topic<unknown>`. The `string & {}` keeps the
-   *  known-name autocomplete above alive while still accepting arbitrary strings. */
-  topic<T = unknown>(name: string & {}): Topic<T>;
+  /** Get (or create) a typed handle to a topic. On a `connect<DimosTopics>()` client a KNOWN name
+   *  autocompletes and infers its mapped message type; any other (runtime-discovered) name is
+   *  accepted and yields `Topic<unknown>`. Types come from the generated map — there is no
+   *  hand-typed `topic<Msg>()` form. The `string & Record<never, never>` in the key union keeps the
+   *  known-name autocomplete alive while still accepting arbitrary strings. */
+  topic<K extends (keyof TMap & string) | (string & Record<never, never>)>(
+    name: K,
+  ): Topic<K extends keyof TMap ? TMap[K] : unknown>;
   /** All discovered topics (real ones; skips untyped LCM internals). */
   listTopics(): TopicInfo[];
   /** The label the connected gateway reports (e.g. "Bun↔LCM", "Python↔Zenoh"). */

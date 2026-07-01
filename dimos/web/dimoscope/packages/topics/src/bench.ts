@@ -93,7 +93,7 @@ export async function measureScenario(
   // carries its own counter, so loss is computed per topic then pooled.
   const seqStat = new Map<string, { min: number; max: number; recv: number }>();
   const subs = scenario.topics.map((t) => {
-    const topic = client.topic<unknown>(t);
+    const topic = client.topic(t);
     // Apply QoS before subscribing so the gateway downsample (rateLimit:"server") is requested
     // on the first subscribe. Optional-chained so test fakes without setQos don't throw.
     if (qos) topic.setQos?.(qos);

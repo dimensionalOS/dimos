@@ -7,8 +7,8 @@ const client = await connect({ url, reconnect: false });
 console.log("[smoke] connected", url);
 
 let firstOdom = true;
-const odom = client.topic<any>("/odom");
-odom.subscribeLatest((data, meta) => {
+const odom = client.topic("/odom");
+odom.subscribeLatest((data: any, meta) => {
   if (firstOdom) {
     firstOdom = false;
     console.log(
@@ -21,9 +21,9 @@ odom.subscribeLatest((data, meta) => {
   }
 });
 
-const map = client.topic<any>("/map");
+const map = client.topic("/map");
 let gotMap = false;
-map.subscribeLatest((data) => {
+map.subscribeLatest((data: any) => {
   if (!gotMap) {
     gotMap = true;
     console.log(

@@ -95,7 +95,7 @@ async function cmdEcho() {
   const max = Number(flag("count", "0")); // 0 = unbounded
   let n = 0;
   const client = await makeClient();
-  client.topic<unknown>(topic).subscribe((data, m) => {
+  client.topic(topic).subscribe((data, m) => {
     const body = JSON.stringify(data) ?? "undefined";
     const stamp = new Date().toISOString().slice(11, 23);
     const lat = m.latencyMs != null ? `${m.latencyMs.toFixed(1)}ms` : "?";
@@ -125,7 +125,7 @@ async function cmdStats() {
   // so track it here from the message meta. `n/a` when the source stamps no numeric seq.
   const seqStat = new Map<string, { min: number; max: number; recv: number }>();
   const handles = names.map((name) => {
-    const h = client.topic<unknown>(name);
+    const h = client.topic(name);
     h.subscribe((_d, m) => {
       if (m.seq == null) return;
       const s = seqStat.get(name);
@@ -179,7 +179,7 @@ async function cmdProbe() {
   const topics = await discover(client, 2000);
   const seen = new Map<string, number>();
   for (const t of topics) {
-    client.topic<unknown>(t.topic).subscribe(() => seen.set(t.topic, (seen.get(t.topic) ?? 0) + 1));
+    client.topic(t.topic).subscribe(() => seen.set(t.topic, (seen.get(t.topic) ?? 0) + 1));
   }
   await sleep(dur);
   for (const [t, c] of [...seen].sort()) console.log(`  ${t}: ${c}`);

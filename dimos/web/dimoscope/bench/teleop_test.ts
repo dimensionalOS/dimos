@@ -10,7 +10,7 @@ const client = await connect({
 });
 let x = 0,
   y = 0;
-client.topic<any>(Deno.env.get("ODOM_TOPIC") ?? "/odom").subscribeLatest((d) => {
+client.topic(Deno.env.get("ODOM_TOPIC") ?? "/odom").subscribeLatest((d: any) => {
   x = d?.pose?.position?.x ?? 0;
   y = d?.pose?.position?.y ?? 0;
 });
