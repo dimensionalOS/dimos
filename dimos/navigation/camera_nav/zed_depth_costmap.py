@@ -291,16 +291,20 @@ def main() -> None:
             col_vis = colors[near] if colors is not None else _height_color(xyz_vis[:, 2] - cam_z)
             rr.log("world/cloud", rr.Points3D(positions=xyz_vis, colors=col_vis, radii=0.003))
 
-            # ── Voxel map: full-density cloud, one point per 5 cm cell ────────
-            vk      = np.floor(xyz / VOX_SIZE).astype(np.int32)
-            _, first = np.unique(_pack(vk), return_index=True)
-            xyz_vox = xyz[first]
-            col_vox = colors[first] if colors is not None else _height_color(xyz_vox[:, 2] - cam_z)
+            # ── Voxel map: nearest-per-ray (0.5°) → voxelise → height colour ──
+            # 0.5° bins: one surface hit per ray direction, removes all fill
+            # voxels behind the closest obstacle in each direction.
+            near_map  = _nearest_per_ray_idx(xyz, pkt.pose_t, deg=0.5)
+            xyz_near  = xyz[near_map]
+            vk        = np.floor(xyz_near / VOX_SIZE).astype(np.int32)
+            _, first  = np.unique(_pack(vk), return_index=True)
+            xyz_vox   = xyz_near[first]
+            col_vox   = _height_color(xyz_vox[:, 2] - cam_z)
             rr.log("world/map", rr.Points3D(positions=xyz_vox, colors=col_vox, radii=0.01))
 
             fps = frame / max(ts - t0, 1e-6)
             print(
-                f"frame={frame:5d}  cloud={len(xyz_vis):5d}  vox={len(xyz_vox):6d}"
+                f"frame={frame:5d}  cloud={len(xyz_vis):5d}  map_rays={len(xyz_near):5d}  vox={len(xyz_vox):6d}"
                 f"  vio={'LOCKED' if src.pose_locked else 'searching'}  fps={fps:.1f}",
                 flush=True,
             )
