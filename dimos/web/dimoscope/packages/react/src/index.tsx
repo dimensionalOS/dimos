@@ -623,6 +623,48 @@ export function useCommands(): CommandInfo[] {
   return cmds;
 }
 
+/**
+ * Typed hooks bound to a generated topic map (`DimosTopics` from `dtop gen-types`). Set it up once —
+ *   export const { useTopicLatest, useTopicRef, useImageTopic, useTopicStats }
+ *     = createDimosHooks<DimosTopics>();
+ * — and every topic-name hook autocompletes the name + infers the message type, with NO per-call
+ * generic. Pure type-level wrapper: it returns the SAME hook functions cast to typed overloads (zero
+ * runtime cost); the `DimosProvider`/context stay untyped, so nothing else changes. Runtime-discovered
+ * names still work (the `string & {}` fallback → `unknown`). Non-keyed hooks (`useTeleop`/`useRpc`/
+ * `useCommands`/`useTopics`/`useCaps`/`useStatus`) don't depend on the map — import them directly.
+ */
+export function createDimosHooks<TMap>() {
+  return {
+    useTopicLatest: useTopicLatest as unknown as {
+      <K extends keyof TMap & string>(
+        topic: K | null,
+        opts?: { maxHz?: number },
+      ): { data?: TMap[K]; meta?: MessageMeta };
+      <T = unknown>(
+        topic: (string & {}) | null,
+        opts?: { maxHz?: number },
+      ): { data?: T; meta?: MessageMeta };
+    },
+    useTopicRef: useTopicRef as unknown as {
+      <K extends keyof TMap & string>(
+        topic: K | null,
+      ): MutableRefObject<{ data?: TMap[K]; meta?: MessageMeta }>;
+      <T = unknown>(topic: (string & {}) | null): MutableRefObject<{ data?: T; meta?: MessageMeta }>;
+    },
+    useTopicStats: useTopicStats as unknown as {
+      <K extends keyof TMap & string>(topic: K | null, pollMs?: number): TopicStats | null;
+      (topic: (string & {}) | null, pollMs?: number): TopicStats | null;
+    },
+    useImageTopic: useImageTopic as unknown as {
+      <K extends keyof TMap & string>(
+        topic: K | null,
+        opts?: { maxFps?: number },
+      ): ReturnType<typeof useImageTopic>;
+      (topic: (string & {}) | null, opts?: { maxFps?: number }): ReturnType<typeof useImageTopic>;
+    },
+  };
+}
+
 export type {
   CommandInfo,
   MessageMeta,

@@ -1,10 +1,14 @@
-import { useTopicLatest, useTopics } from "@dimos/react";
+import { useTopics } from "@dimos/react";
+import { useTopicLatest } from "../dimos"; // typed hooks bound to the generated DimosTopics map
+import type { geometry_msgs } from "@dimos/msgs";
 
 export function PoseReadout({ topic }: { topic?: string }) {
   const topics = useTopics();
   const poseTopic = topic ?? topics.find((t) => t.type === "geometry_msgs.PoseStamped")?.topic ??
     "/odom";
-  const { data, meta } = useTopicLatest<any>(poseTopic, { maxHz: 15 });
+  // The topic is chosen at runtime (→ the string overload), so name the message type; for a literal
+  // known topic — e.g. useTopicLatest("/odom") — the type is inferred and the name autocompletes.
+  const { data, meta } = useTopicLatest<geometry_msgs.PoseStamped>(poseTopic, { maxHz: 15 });
   const p = data?.pose?.position;
   const o = data?.pose?.orientation;
   const yaw = o

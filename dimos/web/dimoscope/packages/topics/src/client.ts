@@ -3,6 +3,11 @@
 //   const client = await connect({ url: "ws://localhost:8090" });
 //   client.topic<PoseStamped>("/odom").subscribeLatest((p, meta) => ...);
 //   client.teleop(0.5, 0.0);            // structured + safe (gateway clamps/watchdogs)
+//
+// For typed topics + autocomplete, pass the generated map (`dtop gen-types`):
+//   import type { DimosTopics } from "./dimos.topics.gen.ts";
+//   const client = await connect<DimosTopics>({ url: "ws://localhost:8090" });
+//   client.topic("/odom");             // ← autocompletes names, inferred Topic<PoseStamped>
 import { createGatewayWsTransport } from "./adapters/gatewayWs.ts";
 import { decodeBody, seqFrom, srcTsMs } from "./decode.ts";
 import { createTopic, type Topic } from "./topic.ts";
@@ -15,10 +20,21 @@ export interface ConnectOpts {
   reconnect?: boolean;
 }
 
-export interface DimosClient {
+/** Default topic map for an untyped client: no known keys, so `keyof … & string` is `never` and the
+ *  key-based `topic` overload drops out — an untyped `connect()` behaves exactly as before.
+ *  (Must be `Record<never, never>`, NOT `Record<string, never>`: the latter's `keyof` is `string`,
+ *  which would resolve the key overload and hand back `Topic<never>`.) */
+export type EmptyTopicMap = Record<never, never>;
+
+export interface DimosClient<TMap = EmptyTopicMap> {
   status: Status;
-  /** Get (or create) a typed handle to a topic. Subscribing is on-demand. */
-  topic<T = unknown>(name: string): Topic<T>;
+  /** Get (or create) a typed handle to a KNOWN topic — autocompletes the name from `TMap`
+   *  (the generated `DimosTopics` map) and returns the mapped message type. */
+  topic<K extends keyof TMap & string>(name: K): Topic<TMap[K]>;
+  /** Get (or create) a handle to any (runtime-discovered) topic — pass the message type
+   *  explicitly (`topic<Pose>(name)`) or get `Topic<unknown>`. The `string & {}` keeps the
+   *  known-name autocomplete above alive while still accepting arbitrary strings. */
+  topic<T = unknown>(name: string & {}): Topic<T>;
   /** All discovered topics (real ones; skips untyped LCM internals). */
   listTopics(): TopicInfo[];
   /** The label the connected gateway reports (e.g. "Bun↔LCM", "Python↔Zenoh"). */
@@ -44,7 +60,9 @@ export interface DimosClientDeps {
   transport: Transport;
 }
 
-export const createDimosClient = (deps: DimosClientDeps): DimosClient => {
+export const createDimosClient = <TMap = EmptyTopicMap>(
+  deps: DimosClientDeps,
+): DimosClient<TMap> => {
   const { transport } = deps;
   const topicsMap = new Map<string, string>();
   const topicObjs = new Map<string, Topic<any>>();
@@ -188,13 +206,17 @@ export const createDimosClient = (deps: DimosClientDeps): DimosClient => {
     },
   };
 
-  return client;
+  // TMap is a compile-time phantom — the runtime map is `Map<string, Topic<any>>`, so the typed
+  // (key-based) and untyped views share one implementation. Cast once here.
+  return client as unknown as DimosClient<TMap>;
 };
 
-export async function connect(opts: ConnectOpts = {}): Promise<DimosClient> {
+export async function connect<TMap = EmptyTopicMap>(
+  opts: ConnectOpts = {},
+): Promise<DimosClient<TMap>> {
   const transport = opts.transport ??
     createGatewayWsTransport({ url: opts.url ?? "ws://localhost:8090", reconnect: opts.reconnect });
-  const client = createDimosClient({ transport });
+  const client = createDimosClient<TMap>({ transport });
   await transport.connect();
   return client;
 }
