@@ -66,6 +66,7 @@ export function BenchDrawer() {
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState("idle");
   const [rows, setRows] = useState<{ label: string; row: BenchRow }[]>([]);
+  const [clock, setClock] = useState<{ offsetMs: number; rttMs: number }>();
   const aborted = useRef(false);
   useEffect(() => () => {
     aborted.current = true;
@@ -83,13 +84,27 @@ export function BenchDrawer() {
     setRunning(true);
     aborted.current = false;
     setRows([]);
+    // Clock-sync probe first: over WAN the raw recvTs−srcTs is dominated by machine skew; the
+    // ping offset (gateway ≈ source clock) makes end-to-end latency meaningful cross-machine.
+    setProgress("clock sync…");
+    const off = await client.estimateClockOffset().catch(() => undefined);
+    setClock(off);
     const out: { label: string; row: BenchRow }[] = [];
     for (const scenario of runScenarios) {
       if (aborted.current) break;
       setProgress(`${activeLabel} · ${scenario.name} · ${qosLabel}…`);
       try {
-        const r = await measureScenario(client, scenario, dur, true, qos);
-        out.push({ label: `${activeLabel} · ${qosLabel}`, row: { ...r, scenario: scenario.name } });
+        const r = await measureScenario(client, scenario, dur, true, qos, {
+          offsetMs: off?.offsetMs,
+        });
+        // Stamp the wire that actually carried the run — Auto silently falls back WT→WS, and a
+        // result table that doesn't say which wire won isn't reproducible.
+        const wire = client.gatewayLabel;
+        const wireTag = wire && wire !== activeLabel ? ` (wire: ${wire})` : "";
+        out.push({
+          label: `${activeLabel}${wireTag} · ${qosLabel}`,
+          row: { ...r, scenario: scenario.name },
+        });
         setRows([...out]);
       } catch (e) {
         setProgress(`${scenario.name} failed: ${String(e).slice(0, 80)}`);
@@ -103,7 +118,13 @@ export function BenchDrawer() {
   const stamp = new Date().toISOString().slice(0, 16).replace("T", " ");
   const byLabel = new Map<string, BenchRow[]>();
   for (const { label, row } of rows) (byLabel.get(label) ?? byLabel.set(label, []).get(label)!).push(row);
-  const md = `# dimoscope in-app bench — ${activeLabel}\n\n_${stamp} · ${dur}ms/scenario · end-to-end latency · QoS: ${qosLabel}_\n\n` +
+  const offeredLabel = heavyOn ? `${offeredMbps.toFixed(1)} MB/s offered (${heavyTopic})` : "no generator";
+  const clockLabel = clock
+    ? `clock offset ${clock.offsetMs.toFixed(1)}ms (rtt ${clock.rttMs.toFixed(1)}ms) corrected`
+    : "no clock sync (latency raw)";
+  const md = `# dimoscope in-app bench — ${activeLabel}\n\n` +
+    `_${stamp} · ${dur}ms/scenario · end-to-end latency · ${clockLabel} · QoS: ${qosLabel} · ${offeredLabel}_\n` +
+    `_${globalThis.location?.origin ?? "?"} · ${globalThis.navigator?.userAgent ?? "?"}_\n\n` +
     [...byLabel].map(([label, rs]) => formatMarkdown(label, activeUrl ?? activeLabel, dur, stamp, rs)).join("\n---\n\n");
 
   return (
@@ -257,6 +278,7 @@ export function BenchDrawer() {
                     <th>p95</th>
                     <th>p99</th>
                     <th>loss%</th>
+                    <th>late%</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -270,6 +292,7 @@ export function BenchDrawer() {
                       <td>{row.latP95}</td>
                       <td>{row.latP99}</td>
                       <td>{row.lossPct}</td>
+                      <td>{row.latePct}</td>
                     </tr>
                   ))}
                 </tbody>

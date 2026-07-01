@@ -60,15 +60,35 @@ export interface BenchRow {
   latMax: number;
   /** Latency standard deviation (ms) — the jitter the tail (p95/p99) hints at. */
   latStd: number;
-  /** Wire loss % from sequence gaps (received vs the seq span seen). NaN if the
-   *  source doesn't stamp a numeric seq. Rate-limited scenarios are excluded. */
+  /** Wire loss % from sequence gaps: frames in the measured seq span that never arrived,
+   *  even after the grace drain. NaN if the source doesn't stamp a numeric seq, or if the
+   *  run is client-rate-limited (`qos.maxHz` > 0 — gaps are then intentional downsampling). */
   lossPct: number;
+  /** % of the seq span delivered only during the grace drain (delayed past the window but
+   *  not dropped — e.g. a backlog of reliable-stream frames). Same NaN rules as lossPct. */
+  latePct: number;
+}
+
+export interface BenchOpts {
+  /** Discard samples for this long after subscribe, so ramp-up (QoS negotiation, first-frame
+   *  setup) doesn't pollute the window. Default min(500, durMs/5). */
+  warmupMs?: number;
+  /** Keep listening after the window so in-flight frames count as "late", not "lost".
+   *  Default min(750, durMs/2). */
+  graceMs?: number;
+  /** Clock correction for end-to-end latency across machines: (source clock − client clock) in ms,
+   *  e.g. from `client.estimateClockOffset()` (the gateway is assumed co-located with the source).
+   *  The raw `recvTs − srcTs` measures (latency − offset), so the offset is added back; without
+   *  it, cross-machine skew swamps WAN latency. */
+  offsetMs?: number;
 }
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
+const now = () => performance.now();
 
 /**
- * Subscribe `scenario.topics` on `client`, collect for `durMs`, return aggregated stats.
+ * Subscribe `scenario.topics` on `client`, warm up, collect for `durMs`, then drain a grace
+ * period to split delayed frames ("late") from dropped ones ("lost").
  * `endToEnd`: measure latency as source-publish → browser-recv (`recvTs - srcTs`, available
  * on every transport) instead of the SDK default (gateways stamp the WS hop, zenoh-ts the
  * full path) — use it for a fair cross-transport browser compare.
@@ -79,35 +99,67 @@ export async function measureScenario(
   durMs: number,
   endToEnd = false,
   qos?: Qos,
+  opts?: BenchOpts,
 ): Promise<BenchRow> {
+  const warmupMs = opts?.warmupMs ?? Math.min(500, durMs / 5);
+  const graceMs = opts?.graceMs ?? Math.min(750, durMs / 2);
+  const offsetMs = opts?.offsetMs ?? 0;
   const lat: number[] = [];
   let count = 0;
   let bytes = 0;
-  // Per-topic seq span (first/last seen) + received count → wire loss. Each topic
-  // carries its own counter, so loss is computed per topic then pooled.
-  const seqStat = new Map<string, { min: number; max: number; recv: number }>();
+  // Per-topic seq span + the set of seqs received in-window; grace arrivals inside the span
+  // are "late". Per topic, then pooled — each topic carries its own counter.
+  const span = new Map<string, { min: number; max: number }>();
+  const seqs = new Map<string, Set<number>>();
+  const lateSeqs = new Map<string, Set<number>>();
+  let phase: "warmup" | "measure" | "grace" = warmupMs > 0 ? "warmup" : "measure";
   const subs = scenario.topics.map((t) => {
     const topic = client.topic(t);
     // Apply QoS before subscribing so the gateway downsample (rateLimit:"server") is requested
     // on the first subscribe. Optional-chained so test fakes without setQos don't throw.
     if (qos) topic.setQos?.(qos);
     return topic.subscribe(({ meta: m }) => {
+      if (phase === "warmup") return;
+      if (phase === "grace") {
+        // Only reclassify frames the window already expected (inside the measured span).
+        if (m.seq == null) return;
+        const sp = span.get(m.topic);
+        if (!sp || m.seq < sp.min || m.seq > sp.max || seqs.get(m.topic)?.has(m.seq)) return;
+        let late = lateSeqs.get(m.topic);
+        if (!late) lateSeqs.set(m.topic, late = new Set());
+        late.add(m.seq);
+        return;
+      }
       count++;
       bytes += m.sizeBytes;
-      const l = endToEnd ? (m.srcTs != null ? m.recvTs - m.srcTs : undefined) : m.latencyMs;
-      if (l != null && l >= 0 && l < 10000) lat.push(l);
+      const l = endToEnd
+        ? (m.srcTs != null ? m.recvTs - m.srcTs + offsetMs : undefined)
+        : m.latencyMs;
+      // Small negatives are residual offset-estimation error (clamp to 0); large ones are
+      // uncorrected skew and would poison the stats (drop, as before).
+      if (l != null && l >= -50 && l < 10000) lat.push(Math.max(0, l));
       if (m.seq != null) {
-        const s = seqStat.get(m.topic);
-        if (!s) seqStat.set(m.topic, { min: m.seq, max: m.seq, recv: 1 });
+        const sp = span.get(m.topic);
+        if (!sp) span.set(m.topic, { min: m.seq, max: m.seq });
         else {
-          if (m.seq < s.min) s.min = m.seq;
-          if (m.seq > s.max) s.max = m.seq;
-          s.recv++;
+          if (m.seq < sp.min) sp.min = m.seq;
+          if (m.seq > sp.max) sp.max = m.seq;
         }
+        let set = seqs.get(m.topic);
+        if (!set) seqs.set(m.topic, set = new Set());
+        set.add(m.seq);
       }
     });
   });
+  if (warmupMs > 0) await new Promise((r) => setTimeout(r, warmupMs));
+  phase = "measure";
+  const t0 = now();
   await new Promise((r) => setTimeout(r, durMs));
+  // Divide rates by the wall clock actually elapsed — a GC pause or tab throttle stretches
+  // the window, and dividing by nominal durMs would over-report.
+  const elapsed = Math.max(now() - t0, 1);
+  phase = "grace";
+  if (graceMs > 0) await new Promise((r) => setTimeout(r, graceMs));
   subs.forEach((s) => s.unsubscribe());
   lat.sort((a, b) => a - b);
   const q = (
@@ -117,26 +169,34 @@ export async function measureScenario(
   const std = lat.length
     ? Math.sqrt(lat.reduce((a, b) => a + (b - mean) * (b - mean), 0) / lat.length)
     : NaN;
-  // Pool the per-topic spans: expected = Σ(max-min+1), received = Σrecv.
+  // Pool the per-topic spans: expected = Σ(max-min+1); anything not received in-window or
+  // during grace is lost. A client-rate-limited run gaps by design → NaN, not loss.
   let expected = 0;
   let received = 0;
-  for (const s of seqStat.values()) {
-    expected += s.max - s.min + 1;
-    received += s.recv;
+  let late = 0;
+  for (const [t, sp] of span) {
+    expected += sp.max - sp.min + 1;
+    received += seqs.get(t)?.size ?? 0;
+    late += lateSeqs.get(t)?.size ?? 0;
   }
-  const lossPct = expected > 0 ? r2(Math.max(0, (1 - received / expected) * 100)) : NaN;
+  const rateLimited = !!qos?.maxHz;
+  const lossPct = expected > 0 && !rateLimited
+    ? r2(Math.max(0, (1 - (received + late) / expected) * 100))
+    : NaN;
+  const latePct = expected > 0 && !rateLimited ? r2((late / expected) * 100) : NaN;
   return {
     scenario: scenario.name,
     topics: scenario.topics.length,
     msgs: count,
-    hz: r2(count / (durMs / 1000)),
-    kbps: r2(bytes / 1024 / (durMs / 1000)),
+    hz: r2(count / (elapsed / 1000)),
+    kbps: r2(bytes / 1024 / (elapsed / 1000)),
     latP50: r2(q(0.5)),
     latP95: r2(q(0.95)),
     latP99: r2(q(0.99)),
     latMax: r2(lat[lat.length - 1] ?? NaN),
     latStd: r2(std),
     lossPct,
+    latePct,
   };
 }
 
@@ -158,21 +218,27 @@ export function formatMarkdown(
 ): string {
   const all4 = rows.find((r) => r.topics === 4);
   const one = rows.find((r) => r.scenario.includes("on-demand"));
-  return [
+  const lines = [
     `# Transport benchmark — ${label}`,
     ``,
     `_${durMs}ms per scenario · ${url} · ${stamp}_`,
     ``,
-    `| scenario | topics | msgs | hz | kB/s | p50 | p95 | p99 | max | std | loss% |`,
-    `|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|`,
+    `| scenario | topics | msgs | hz | kB/s | p50 | p95 | p99 | max | std | loss% | late% |`,
+    `|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|`,
     ...rows.map(
       (r) =>
-        `| ${r.scenario} | ${r.topics} | ${r.msgs} | ${r.hz} | ${r.kbps} | ${r.latP50} | ${r.latP95} | ${r.latP99} | ${r.latMax} | ${r.latStd} | ${r.lossPct} |`,
+        `| ${r.scenario} | ${r.topics} | ${r.msgs} | ${r.hz} | ${r.kbps} | ${r.latP50} | ${r.latP95} | ${r.latP99} | ${r.latMax} | ${r.latStd} | ${r.lossPct} | ${r.latePct} |`,
     ),
     ``,
-    `**On-demand bandwidth:** subscribing 1 of 4 topics delivered **${one?.kbps ?? 0} kB/s** vs **${
-      all4?.kbps ?? 0
-    } kB/s** for all 4 — a **${onDemandSaving(rows)}% reduction** on the WS hop.`,
-    ``,
-  ].join("\n");
+  ];
+  // Only meaningful when the sweep actually ran an on-demand pair (1-of-4 vs all-4).
+  if (one && all4) {
+    lines.push(
+      `**On-demand bandwidth:** subscribing 1 of 4 topics delivered **${one.kbps} kB/s** vs **${all4.kbps} kB/s** for all 4 — a **${
+        onDemandSaving(rows)
+      }% reduction** on the WS hop.`,
+      ``,
+    );
+  }
+  return lines.join("\n");
 }
