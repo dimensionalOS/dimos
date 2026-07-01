@@ -1,238 +1,510 @@
 # Scene Cooking Architecture
 
-Scene cooking is an offline pipeline. It takes an authored environment and
-builds the package artifacts that runtime systems can load directly.
+This is a concrete map of the current implementation. The main entry point is:
+
+```python
+dimos.experimental.scene_cooking.cook.cook_scene_package()
+```
+
+It turns these inputs:
+
+```text
+source_path
+SceneMeshAlignment
+SceneCookSidecar
+BrowserVisualSpec
+BrowserCollisionSpec
+MujocoSceneSpec
+```
+
+into a runtime `ScenePackage` and writes `scene.meta.json`.
+
+## Core Data Flow
 
 ```text
 source asset
-  -> normalized source
-  -> inspected scene prims
-  -> sidecar policy
-  -> cook plan
-  -> backend artifacts
+  -> PreparedSceneSource
+  -> SceneCookSidecar
+  -> SceneCookPlan
+  -> artifact writers
+  -> ScenePackage
   -> scene.meta.json
-  -> runtime consumers
 ```
 
-## Concepts
+The important boundary is `SceneCookPlan`.
+
+The sidecar is authored intent. The plan is resolved scene membership: exactly
+which source prims become runtime entities, which prims should be skipped from
+static collision, which repeated entities share a prototype, and which collision
+policy every backend writer should use.
+
+## Main Types
 
 ```text
-source asset   The authored file: .blend, .glb, .usd, .obj, .ply, .stl, ...
-sidecar        Scene-specific intent: collision policy, entities, groups.
-cook plan      Resolved instructions after applying the sidecar to source prims.
-artifact       A backend-specific file generated from the plan.
-package        The manifest plus all artifacts for one environment.
-runtime        A simulator, viewer, browser app, or future consumer.
+SceneMeshAlignment
+  dimos/simulation/scene_assets/spec.py
+  Scale, rotation, translation, and y-up conversion from source frame to
+  DimOS world frame.
+
+SceneCookSpec
+  package_config.py
+  Complete cook input: source path, alignment, browser visual policy,
+  browser collision policy, and MuJoCo policy.
+
+SceneCookSidecar
+  sidecar.py
+  Authored per-scene policy loaded from <scene>.cook.json, <scene>.scene.json,
+  or legacy <scene>.collision.json.
+
+CollisionSpec
+  mujoco/collision_policy.py
+  Shared static collision policy. It currently lives under mujoco because
+  that code existed first, but browser collision consumes it too.
+
+SceneCookPlan
+  planning.py
+  Resolved cook instructions shared by artifact writers.
+
+ScenePackage
+  dimos/simulation/scene_assets/spec.py
+  Runtime metadata object. This is what simulators and viewers consume.
 ```
 
-The source asset is not the runtime contract. The scene package is.
+## `cook_scene_package()` Call Order
 
-## Stage 1: Normalize Source
+The top-level cook is intentionally boring. It normalizes the source, resolves a
+plan, runs artifact writers, then serializes a runtime manifest.
 
-Entry points:
+```text
+1. source = Path(source_path).resolve()
+
+2. align = alignment or SceneMeshAlignment()
+   visual = visual_spec or BrowserVisualSpec()
+   browser_collision = browser_collision_spec or BrowserCollisionSpec()
+   mujoco = mujoco_spec or MujocoSceneSpec()
+
+3. cook_spec = SceneCookSpec(...)
+   sidecar = cook_sidecar or SceneCookSidecar.auto_discover(source)
+
+4. prepared_source = prepare_scene_source(source, rebake=rebake)
+   cook_source = prepared_source.cook_path
+
+5. stats["source"] = inspect_scene_asset(cook_source)
+
+6. plan = build_scene_cook_plan(
+       cook_source,
+       sidecar=sidecar,
+       alignment=align,
+       output_dir=package_dir,
+       collision_spec=collision_spec,
+   )
+
+7. entities = plan.entities_metadata()
+
+8. If source-backed entity visuals are needed:
+       visual_source = cook_plan_visual_assets(cook_source, package_dir, plan=plan)
+   else:
+       visual_source = cook_source
+
+9. If MuJoCo is enabled:
+       _cook_entity_prototype_collision(plan.prototypes, entities)
+       _cook_entity_collision(entities)
+
+10. visual_result = cook_browser_visual(visual_source, browser_dir, spec=visual)
+
+11. browser_collision_result = cook_browser_collision(
+        cook_source,
+        browser_dir,
+        spec=browser_collision,
+        collision_spec=plan.collision_spec,
+    )
+
+12. If MuJoCo is enabled:
+        mujoco_scene_path = load_or_bake(
+            scene_mesh_path=cook_source,
+            alignment=align,
+            cache_root=mujoco_dir,
+            collision_spec=plan.collision_spec,
+        )
+        optionally compile wrapper.mjb
+
+13. package = ScenePackage(...)
+    package.write_metadata()
+```
+
+## Source Normalization
+
+Code:
 
 ```text
 source_assets/normalize.py
 source_assets/glb.py
 ```
 
-The cooker first converts source files into a form that the rest of the
-pipeline can read consistently. For `.blend` files this means running Blender
-headlessly, evaluating Geometry Nodes and instances, and exporting a cached GLB.
+`prepare_scene_source()` returns the file that the rest of the cook should read.
+For `.blend`, it runs Blender headlessly and exports the evaluated dependency
+graph to GLB so Geometry Nodes and collection instances are realized. For
+direct mesh formats, it returns the original file or a cached normalized file.
 
-This stage should preserve authored geometry. It should not decide physics
-policy.
+This stage should not make semantic decisions. It exists to make source loading
+predictable.
 
-## Stage 2: Inspect Source Prims
+## Source Inspection
 
-Entry points:
+Code:
 
 ```text
 source_assets/mesh.py
 source_assets/inspect.py
 ```
 
-The cooker reads source prims in the aligned scene frame. This is the point
-where users should inspect names, bounds, triangle counts, and repeated assets
-before writing a sidecar.
+`load_scene_prims()` reads source prims and applies `SceneMeshAlignment` when
+requested. The returned `ScenePrimMesh` objects carry names, prim paths, visual
+node names, vertices, and triangles.
 
-Inspection answers questions like:
+`inspect_scene_asset()` records counts and size budgets for cooked stats and
+for user inspection.
 
-```text
-Which prims are floors?
-Which prims are walls?
-Which objects are repeated products?
-Which objects should become runtime entities?
-Which meshes are too large or too detailed for direct collision?
-```
+## Sidecar Schema
 
-## Stage 3: Load Sidecar Policy
-
-Entry point:
+Code:
 
 ```text
 sidecar.py
 ```
 
-The sidecar is authored per scene. It maps source prim names or paths to cook
-intent:
+`SceneCookSidecar.auto_discover(source)` checks, in order:
 
 ```text
-collision overrides
-support-surface rules
-objects to remove from static geometry
-explicit interactables
-repeated entity groups
-prototype sharing keys
+<scene>.cook.json
+<scene>.scene.json
+<scene>.collision.json
 ```
 
-The sidecar is deliberately scene-specific. Heuristics are useful defaults, but
-the important decisions about floors, shelves, fixtures, and products should be
-visible in authored data.
+The sidecar can contain:
 
-## Stage 4: Build The Cook Plan
+```text
+collision
+  CollisionSpec-compatible static collision policy.
 
-Entry point:
+interactables
+  Explicit runtime entities. Each item either matches source prims through
+  source_prim_paths or defines a synthetic entity with pose + physics.extents.
+
+entity_groups
+  Pattern-expanded runtime entities. Current mode is per_prim. Used for many
+  repeated objects, with prototype_key controlling collision reuse.
+```
+
+## Plan Resolution
+
+Code:
 
 ```text
 planning.py
 ```
 
-The cook plan applies the sidecar to the inspected source prims. It decides
-which prims remain static, which become package entities, and which repeated
-entities can share prototypes.
+`build_scene_cook_plan()` does the expensive semantic matching once.
 
-This stage is the boundary between authored intent and backend output. Backends
-should consume the plan instead of rediscovering source-scene meaning.
+It produces:
 
-## Stage 5: Cook Browser Artifacts
+```text
+SceneCookPlan.collision_spec
+  The effective static collision policy after entity removals are inserted as
+  skip overrides.
 
-Entry points:
+SceneCookPlan.entities
+  Tuple[EntityCookPlan]. Each item has id, matched source prim paths,
+  visual-node deletion patterns, AABB, initial pose, physics descriptor,
+  visual output path, and optional prototype id.
+
+SceneCookPlan.prototypes
+  Tuple[EntityPrototypePlan]. Shared source meshes cooked once and referenced
+  by repeated entity instances.
+
+SceneCookPlan.stats
+  Counts for source prims, entities, and prototypes.
+```
+
+Important behavior:
+
+```text
+interactable with source_prim_paths
+  -> matched against ScenePrimMesh candidates
+  -> AABB and initial pose come from the matched geometry
+  -> visual.glb path is assigned under entities/<id>/
+
+synthetic interactable
+  -> no source prim lookup
+  -> pose comes from sidecar
+  -> extents come from physics.extents
+
+entity group
+  -> one EntityCookPlan per matched prim
+  -> one EntityPrototypePlan per prototype key
+  -> prototype collision hulls are reused by instances
+
+remove_from_static
+  -> inserts type=skip overrides into the effective CollisionSpec
+  -> inserted before broad user collision overrides so extracted entities are
+     not duplicated in static collision
+```
+
+## Browser Visual Writer
+
+Code:
 
 ```text
 browser/visuals.py
+package_config.py
+```
+
+`cook_browser_visual()` writes:
+
+```text
+browser/visual.<target>.glb
+```
+
+The target comes from `BrowserVisualSpec.target`. Built-in profiles are:
+
+```text
+rerun
+babylon
+generic
+```
+
+The visual writer optimizes or converts the source using `gltfpack`, Blender,
+or copy mode, then validates budget limits such as mesh count, material count,
+texture count, and vertex count.
+
+When entity visuals need to be removed from the static visual, `cook.py` first
+calls `cook_plan_visual_assets()`. That function uses the plan's visual-node
+patterns to extract per-entity GLBs and produce the filtered source passed to
+`cook_browser_visual()`.
+
+## Browser Collision Writer
+
+Code:
+
+```text
 browser/collision.py
 ```
 
-Browser artifacts are split by purpose:
+`cook_browser_collision()` writes:
 
 ```text
-visual GLB      what a viewer renders
-collision GLB   simplified geometry for raycasts, picking, and browser queries
-objects.json    object metadata keyed by source prim
+browser/collision.glb
+browser/objects.json
 ```
 
-Visual GLBs are target-specific. Rerun, Babylon, and generic web consumers do
-not accept the same optimization choices. The cook therefore records named
-visual targets instead of assuming one GLB is universal.
+It loads source prims, applies the effective `CollisionSpec`, optionally splits
+disconnected components, simplifies to `BrowserCollisionSpec.target_faces`, and
+exports one fused GLB for browser-side raycasts and picking.
 
-## Stage 6: Cook Entity Artifacts
+`objects.json` is separate from the fused mesh. It stores per-prim ids, prim
+paths, and AABBs so browser consumers can answer object queries without
+building one physics object per source prim.
 
-Entry points:
+## Entity Collision Writer
+
+Code:
 
 ```text
-entities/visuals.py
 entities/collision.py
+cook.py
 ```
 
-Entities are objects removed from the static scene and represented separately in
-the package manifest. They may be dynamic, kinematic, or static at runtime.
+Mesh entities need collision hulls before runtime. Runtime does not run CoACD.
 
-Repeated entities can share prototypes. For example, hundreds of repeated store
-products should not require hundreds of independent collision decompositions
-when they are instances of the same source asset.
+Two paths exist:
 
-## Stage 7: Cook MuJoCo Artifacts
+```text
+entity prototype collision
+  _cook_entity_prototype_collision()
+  Writes one hull set for each EntityPrototypePlan and assigns those hull paths
+  to every entity instance using that prototype.
 
-Entry points:
+individual entity collision
+  _cook_entity_collision()
+  Decomposes an entity visual.glb when the entity has no shared prototype.
+```
+
+The resulting paths are written into each entity metadata dict as
+`collision_paths`.
+
+## MuJoCo Static Scene Writer
+
+Code:
 
 ```text
 mujoco/collision_policy.py
 mujoco/collision_export.py
 ```
 
-MuJoCo artifacts are collision-first. The normal output is scene-only:
+`load_or_bake()` / `bake_scene_mjcf()` writes:
 
 ```text
-wrapper.xml + collision meshes
+mujoco/<cache-key>/wrapper.xml
+mujoco/<cache-key>/*.obj
 ```
 
-Runtime attaches the robot MJCF later. This keeps the package usable with more
-than one robot.
+The wrapper is scene-only. It contains a static `dimos_scene` body and no robot.
+The robot is attached later by runtime code.
 
-Large scenes can also ship composed `.mjb` files:
+For every source prim, `collision_policy.decide_for_prim()` chooses one of:
 
 ```text
-wrapper.xml + robot MJCF + spawn/entity selection -> composed .mjb
+primitive  box, sphere, cylinder, capsule, or plane geom
+hulls      convex hull or CoACD decomposition written as mesh geoms
+skip       no static collision geom
 ```
 
-Composed `.mjb` files load quickly, but they are specific to one robot, spawn
-pose, entity selection, and scene revision. Rebuild them when any of those
-inputs change.
+`include_visual_mesh=True` additionally writes non-colliding visual geoms for
+MuJoCo debugging. Normal packages should not rely on MuJoCo visuals for the
+browser/Rerun view; those use browser visual artifacts.
 
-## Stage 8: Write The Manifest
+`--compile-mujoco-binary` also writes `wrapper.mjb`. That is a scene-only binary
+cache. It is fast to load, but by itself it is not where robot attachment
+happens.
 
-Runtime contract:
+## Runtime Manifest
+
+Code:
 
 ```text
 dimos/simulation/scene_assets/spec.py
 ```
 
-The manifest is `scene.meta.json`. It stores package-relative artifact paths,
-frame metadata, entities, browser visual targets, MuJoCo paths, and cook stats.
+`ScenePackage.write_metadata()` writes `scene.meta.json`.
 
-Runtime code should use:
+The manifest stores:
+
+```text
+source_path
+package_dir
+alignment
+artifact_frames
+artifacts.browser_visual
+artifacts.browser_visuals
+artifacts.browser_collision
+artifacts.objects
+artifacts.mujoco_scene
+artifacts.mujoco_binary
+artifacts.mujoco_composed_binaries
+entities
+stats
+```
+
+All artifact paths are serialized package-relative when possible. At runtime,
+`load_scene_package()` resolves them back to absolute paths and validates
+`artifact_frames`.
+
+Current frame contract:
+
+```text
+browser_visual     source
+browser_collision  source
+mujoco             dimos_world
+mujoco_binary      dimos_world
+```
+
+## Runtime Consumers
+
+Runtime code should not import cook internals.
+
+Use:
 
 ```python
 from dimos.simulation.scene_assets.spec import load_scene_package
 from dimos.simulation.scenes.catalog import resolve_scene_package
 ```
 
-Consumers then ask for the representation they support:
+### Rerun
 
-```python
-package.browser_visual_path("rerun")
-package.browser_visual_path("babylon")
-package.mujoco_scene_path
-package.entities
-```
-
-## Runtime Boundary
-
-Cooking code lives under:
+Code:
 
 ```text
-dimos/experimental/scene_cooking/
+dimos/visualization/rerun/scene_package.py
 ```
 
-Runtime package loading lives under:
+`scene_package_static_entities()` resolves the package, picks
+`package.browser_visual_path("rerun")`, and returns a static Rerun factory. The
+factory logs:
 
 ```text
-dimos/simulation/scene_assets/
-dimos/simulation/scenes/
-dimos/visualization/rerun/
-dimos/simulation/engines/
+rr.Transform3D(alignment)
+rr.Asset3D(GLB bytes)
 ```
 
-The cooker may change as new asset types are added. Runtime consumers should
-depend on the scene package manifest, not on cook internals.
+The GLB is sent as bytes so native and browser Rerun viewers do not need direct
+filesystem access.
+
+### MuJoCo
+
+Code:
+
+```text
+dimos/simulation/engines/mujoco_sim_module.py
+dimos/simulation/mujoco/scene_package_entity_composer.py
+```
+
+The normal MuJoCo path uses `package.mujoco_scene_path` (`wrapper.xml`), attaches
+the robot MJCF, then appends initial scene-package entities.
+
+`add_scene_package_entities_to_spec()` turns each `spawn=="initial"` entity into
+a MuJoCo body:
+
+```text
+kind == dynamic and mass > 0
+  -> body with freejoint
+
+otherwise
+  -> welded/static body
+
+shape_hint == mesh
+  -> uses pre-cooked collision_paths
+  -> falls back to AABB box with a warning if hulls are missing
+
+primitive shape hints
+  -> box/sphere/cylinder from descriptor extents
+```
+
+Composed robot+scene `.mjb` artifacts can be declared in the manifest for large
+scenes, but they are specific to robot, spawn pose, entity policy, scene
+revision, and MuJoCo version.
+
+## Adding A Backend Artifact
+
+A new backend should follow this shape:
+
+```text
+1. Add a cook-time spec dataclass to package_config.py if it needs options.
+2. Add an artifact writer that consumes cook_source and/or SceneCookPlan.
+3. Add package metadata fields only if runtime needs to discover the artifact.
+4. Serialize paths package-relative in ScenePackage.to_json_dict().
+5. Resolve paths in load_scene_package().
+6. Keep runtime consumers dependent on ScenePackage, not cook internals.
+```
+
+Use `SceneCookPlan` for any backend that needs entity removals, collision
+policy, prototype sharing, or source-prim membership.
 
 ## File Map
 
 ```text
 cook.py                         CLI and top-level orchestration
-command.py                      command helpers
+command.py                      subprocess helpers with filtered logs
 package_config.py               cook-time artifact options
 sidecar.py                      authored sidecar schema
-planning.py                     source prims + sidecar -> cook plan
+planning.py                     sidecar + source prims -> SceneCookPlan
 source_assets/normalize.py      source normalization and .blend export
 source_assets/mesh.py           source prim loading and alignment
-source_assets/inspect.py        source budget inspection
-source_assets/glb.py            GLB rewrite helpers
+source_assets/inspect.py        asset budget inspection
+source_assets/glb.py            GLB JSON/BIN rewrite helpers
 browser/visuals.py              target-specific browser visual cooking
-browser/collision.py            browser collision and objects.json
-entities/visuals.py             entity visual extraction
-entities/collision.py           entity collision hulls
-mujoco/collision_policy.py      static collision policy
+browser/collision.py            browser collision GLB and objects.json
+entities/visuals.py             entity visual extraction/filtering
+entities/collision.py           entity CoACD hulls
+mujoco/collision_policy.py      shared static collision policy
 mujoco/collision_export.py      MuJoCo XML and mesh export
 ```
