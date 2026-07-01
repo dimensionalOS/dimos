@@ -2,13 +2,13 @@
 # Unit tests for the dimoscope bus pure-logic — the trickiest ported code (LC03→LC02 reassembly),
 # plus topic canonicalization + channel parse + LC02 framing. No network, no zenoh, no event loop.
 #
-# bus.py is stdlib-only, so we import it directly off its own directory (it isn't a published package).
-# Run: uv run pytest dimos/web/dimoscope/servers/test_bus.py -q
+# bus.py's logic is import-light; we import it directly off the gateway dir (not a published package).
+# Run: uv run pytest dimos/web/dimoscope/gateway/tests/test_bus.py -q
 import pathlib
 import struct
 import sys
 
-sys.path.insert(0, str(pathlib.Path(__file__).parent))
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
 from bus import LC02, LC03, Bus, _canonical, _parse_channel
 

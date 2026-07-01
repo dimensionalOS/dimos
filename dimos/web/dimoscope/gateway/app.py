@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# dimoscope — the whole thing in ONE process.
+# dimoscope gateway — the whole backend in ONE process.
 #
 # Serves the built frontend (the SDK consumer) AND every transport on one HTTP port (+ one UDP port
 # for WebTransport, which rides QUIC and can't share TCP). Everything is on by default — no flags:
@@ -13,8 +13,8 @@
 #   GET  /cert             WebTransport cert SHA-256 (browser needs it before connecting)
 #   QUIC :WT_PORT/UDP      WebTransport (bench)
 #
-# Ingest taps BOTH LCM and Zenoh at once (see servers/bus.py), so topics show up no matter which
-# transport the robot/sim uses. Run:  uv run dimoscope   (or  python serve.py)
+# Ingest taps BOTH LCM and Zenoh at once (see gateway/bus.py), so topics show up no matter which
+# transport the robot/sim uses. Run:  python -m gateway
 from __future__ import annotations
 
 import asyncio
@@ -22,15 +22,19 @@ from contextlib import asynccontextmanager
 import os
 from pathlib import Path
 
+from dimos.utils.logging_config import setup_logger
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from servers.bench import PollPlane, SsePlane, WebRtcDataPlane, WebTransportServer
-from servers.bus import Bus
-from servers.data import DataPlane
-from servers.media import MediaPlane
-import uvicorn
+
+from . import qos
+from .bus import Bus
+from .data import DataPlane
+from .media import MediaPlane
+from .transports import PollPlane, SsePlane, WebRtcDataPlane, WebTransportServer
+
+logger = setup_logger()
 
 # 0.0.0.0 so you can open the app from another device on the LAN (e.g. a phone, for camera tests).
 # That also exposes teleop on the LAN — the data plane clamps velocity + runs a deadman, but set
@@ -41,16 +45,16 @@ WT_PORT = int(os.environ.get("WT_PORT", 8443))  # WebTransport QUIC/UDP (separat
 ZENOH_KEY = os.environ.get("ZENOH_KEY", "**")
 LCM_HOST = os.environ.get("DIMOS_LCM_HOST", "239.255.76.67")
 LCM_PORT = int(os.environ.get("DIMOS_LCM_PORT", 7667))
-DIST = Path(os.environ.get("STATIC_DIR", Path(__file__).parent / "app" / "dist"))
+# app.py lives in gateway/, so the frontend build + optional QoS rules sit one level up, at the
+# dimoscope root — hence parent.parent.
+DIST = Path(os.environ.get("STATIC_DIR", Path(__file__).parent.parent / "app" / "dist"))
 # Optional operator QoS map (topic-glob → scheduler lane) for custom per-blueprint topics the name/type
 # heuristic can't classify. Absent = no rules = pure heuristic. Copy qos.rules.example.json to enable.
-QOS_RULES = Path(os.environ.get("QOS_RULES", Path(__file__).parent / "qos.rules.json"))
+QOS_RULES = Path(os.environ.get("QOS_RULES", Path(__file__).parent.parent / "qos.rules.json"))
 
 
 def build_app() -> FastAPI:
-    from servers import qos_sched
-
-    qos_sched.load_qos_rules(QOS_RULES)
+    qos.load_qos_rules(QOS_RULES)
     bus = Bus()
     data = DataPlane(bus)
     media = MediaPlane(bus)
@@ -69,7 +73,7 @@ def build_app() -> FastAPI:
             asyncio.create_task(media.run_fanout()),
             asyncio.create_task(wt.start(HOST, WT_PORT)),
         ]
-        print(f"[dimoscope] http://localhost:{PORT}  ·  all transports live", flush=True)
+        logger.info("dimoscope up", url=f"http://localhost:{PORT}", transports="all")
         try:
             yield
         finally:
@@ -108,11 +112,3 @@ def build_app() -> FastAPI:
             )
 
     return app
-
-
-def cli() -> None:
-    uvicorn.run(build_app(), host=HOST, port=PORT, log_level="info")
-
-
-if __name__ == "__main__":
-    cli()

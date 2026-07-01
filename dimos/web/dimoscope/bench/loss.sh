@@ -30,7 +30,7 @@ cleanup() { for p in "${pids[@]:-}"; do kill "$p" 2>/dev/null || true; done; }
 trap cleanup EXIT
 
 echo "[loss] dimoscope service (QUIC 127.0.0.1:$WT_PORT) + pose-only load (4×PoseStamped @ 100Hz → ~400 datagrams/s, no streams)…"
-PORT="$GW_PORT" WT_PORT="$WT_PORT" HOST=127.0.0.1 "$PY" serve.py >"$LOG/gw.log" 2>&1 &
+PORT="$GW_PORT" WT_PORT="$WT_PORT" HOST=127.0.0.1 "$PY" -m gateway >"$LOG/gw.log" 2>&1 &
 pids+=($!)
 DIMOS_TRANSPORT=lcm BENCH_HZ=100 BENCH_IMG_HZ=0 BENCH_GRID_HZ=0 \
   PYTHONPATH=bench "$PY" bench/bench_source.py >"$LOG/pub.log" 2>&1 &

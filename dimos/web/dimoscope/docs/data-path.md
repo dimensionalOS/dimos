@@ -45,8 +45,8 @@ bridge in C++ and moved to Protobuf/FlatBuffers to cope. We **measured** Axis 2 
 ## What's built (this pass)
 
 > Note: the per-transport servers named below (`gateway.ts`, `webrtc_data.py`, `webtransport.py`, the
-> media node) were later **consolidated into one Python process** — `serve.py` (`servers/{bus,data,
-> media,bench}.py`) serving the app `/` + `/ws /sse /poll /rtc /media /cert` on `:8080` and QUIC on
+> media node) were later **consolidated into one Python process** — the gateway (`gateway/{bus,data,
+> media,transports}`) serving the app `/` + `/ws /sse /poll /rtc /media /cert` on `:8080` and QUIC on
 > `:8443`. The mechanisms and measurements are unchanged; only the deployment is one process now.
 
 - **Load generator** — `bench/bench_source.py`, a configurable dimos `Module` (`BenchSource`)

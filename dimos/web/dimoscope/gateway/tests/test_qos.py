@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-# Unit tests for the optional QoS config-map layer in qos_sched.py — the topic-glob → lane rules that
+# Unit tests for the optional QoS config-map layer in qos.py — the topic-glob → lane rules that
 # classify custom per-blueprint topics the name/type heuristic can't. Covers rule precedence, glob +
 # "#type" matching, the safe default, and a missing rules file.
 #
-# qos_sched.py is stdlib-only, so we import it directly off its own directory (not a published package).
-# Run: uv run pytest dimos/web/dimoscope/servers/test_qos.py -q
+# qos.py's logic is import-light; we import it directly off the gateway dir (not a published package).
+# Run: uv run pytest dimos/web/dimoscope/gateway/tests/test_qos.py -q
 import pathlib
 import sys
 
-sys.path.insert(0, str(pathlib.Path(__file__).parent))
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
-from qos_sched import (
+from qos import (
     LANE_BULK,
     LANE_COMMAND,
     LANE_DEFAULT,

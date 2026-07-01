@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # dimoscope data plane — the WebSocket the browser SDK (@dimos/topics) talks to.
 #
-# Speaks the gateway control protocol verbatim (the same one gateway_zenoh.py / the Deno gateway
-# used), so the SDK is byte-identical:
+# Speaks the gateway control protocol, so the SDK is byte-identical:
 #   • hello{topics,label,rpc}              on connect
 #   • subscribe / unsubscribe / list / rate   on-demand topic filtering + per-topic downsample
 #   • teleop / stop / goal                 structured + SAFE (velocity clamp + TTL deadman + stop-on-disconnect)
@@ -22,10 +21,13 @@ import os
 import struct
 import time
 
+from dimos.utils.logging_config import setup_logger
 from fastapi import WebSocket, WebSocketDisconnect
 
 from .bus import Bus, Sample
-from .qos_sched import PriorityOutbox, declared_to_class, default_priority
+from .qos import PriorityOutbox, declared_to_class, default_priority
+
+logger = setup_logger()
 
 # EGRESS_KBPS>0 → pace each client's writer to this bitrate (egress shaping to the client's link budget).
 # This keeps the backlog in the priority outbox — where the scheduler enforces priority — instead of
@@ -70,7 +72,7 @@ class _Client:
 
 
 class DataPlane:
-    """Holds the egress publishers + per-client state; one instance, created by serve.py."""
+    """Holds the egress publishers + per-client state; one instance, created by build_app()."""
 
     def __init__(self, bus: Bus) -> None:
         self.bus = bus
@@ -101,17 +103,16 @@ class DataPlane:
                 self._cmd.append(cmd)
                 self._goal.append(goal)
             except Exception as e:
-                print(f"[data] egress backend '{backend}' unavailable: {e}", flush=True)
+                logger.warning("egress backend unavailable", backend=backend, error=str(e))
         # RPC bridge on the service's default backend (matches the robot's transport).
         try:
             self._rpc = rpc_backend()()
             self._rpc.start()
             self.has_rpc = True
         except Exception as e:
-            print(f"[data] rpc bridge unavailable: {e}", flush=True)
-        print(
-            f"[data] egress backends={len(self._cmd)} · rpc={'on' if self.has_rpc else 'off'}",
-            flush=True,
+            logger.warning("rpc bridge unavailable", error=str(e))
+        logger.info(
+            "egress ready", backends=len(self._cmd), rpc="on" if self.has_rpc else "off"
         )
 
     def _publish_twist(self, lin: float, ang: float) -> None:

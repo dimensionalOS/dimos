@@ -23,7 +23,14 @@ function fakeClient() {
     },
   };
   const deliver = (name: string, over: Partial<MessageMeta>) => {
-    const meta: MessageMeta = { topic: name, type: "x", recvTs: 0, sizeBytes: 100, dropped: 0, ...over };
+    const meta: MessageMeta = {
+      topic: name,
+      type: "x",
+      recvTs: 0,
+      sizeBytes: 100,
+      dropped: 0,
+      ...over,
+    };
     (handlers.get(name) ?? []).forEach((h) => h({ data: {}, ts: meta.srcTs ?? meta.recvTs, meta }));
   };
   return { client: client as never, deliver };

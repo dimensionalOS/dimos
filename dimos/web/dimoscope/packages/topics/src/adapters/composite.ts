@@ -31,7 +31,9 @@ export const webtransport = (opts?: WebtransportOpts): TransportFactory => (url)
   const control = createGatewayWsTransport({ url: wsUrl, reconnect: true });
 
   // No WebTransport in this browser → the WS transport does everything (data + control).
-  if (typeof (globalThis as { WebTransport?: unknown }).WebTransport === "undefined") return control;
+  if (typeof (globalThis as { WebTransport?: unknown }).WebTransport === "undefined") {
+    return control;
+  }
 
   const data = createWebTransportTransport({ url: wtUrl, certHashUrl: certUrl });
   let sampleCb: ((s: RawSample) => void) | undefined;

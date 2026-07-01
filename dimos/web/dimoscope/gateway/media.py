@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # dimoscope media plane — camera Image → WebRTC / WebCodecs / JPEG, served on /media.
 #
-# Lifted from the standalone media_server.py, with one change: it reads camera frames from the shared
-# Bus (LCM+Zenoh merged) instead of opening its own Zenoh peer — so there is ONE bus session for the
-# whole service. Encoding is CPU-heavy (PyAV/libx264, aiortc), so it runs in a single-worker executor
+# Reads camera frames from the shared Bus (LCM+Zenoh merged) rather than opening its own Zenoh peer —
+# so there is ONE bus session for the whole service. Encoding is CPU-heavy (PyAV/libx264, aiortc), so it
+# runs in a single-worker executor
 # (NOT on the event loop, and never two encoders at once) and hands NAL chunks back to the loop.
 #
 # Two delivery paths (the browser negotiates; both encode ONCE and fan out to N viewers):
@@ -85,7 +85,7 @@ class MediaPlane:
         except asyncio.QueueFull:
             pass  # camera is freshest-wins; drop under backpressure
 
-    # ── background tasks (started by serve.py) ──────────────────────────────
+    # ── background tasks (started in app.py's lifespan) ─────────────────────
     async def run_encoder(self) -> None:
         loop = asyncio.get_running_loop()
         while True:

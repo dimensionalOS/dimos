@@ -1,15 +1,20 @@
 /// <reference lib="dom" />
-// createWebTransportTransport — read-only delivery over WebTransport (HTTP/3 / QUIC; browser-only;
-// Deno has no stable WebTransport client). Talks to servers/webtransport.py, which size-routes the
-// same [f64 gateway-send-ms][LC02] frames: small → DATAGRAMS (unreliable/unordered, no TCP head-of-
-// line blocking), large → unidirectional STREAMS. We decode both through the shared `frameToSample`,
-// so the typed messages + latency accounting are identical to every other mechanism. Read-only (like
-// SSE/poll/WebRTC); control would route to a gateway.
+// createWebTransportTransport — delivery over WebTransport (HTTP/3 / QUIC; browser-only; Deno has no
+// stable WebTransport client). Talks to gateway/transports/webtransport.py, which size-routes the same
+// [f64 gateway-send-ms][LC02] frames: small → DATAGRAMS (unreliable/unordered, no TCP head-of-line
+// blocking), large → unidirectional STREAMS. We decode both through the shared `frameToSample`, so the
+// typed messages + latency accounting are identical to every other mechanism.
+//
+// On-demand + QoS: a browser-opened BIDIRECTIONAL control stream carries the read-path subset of the WS
+// control protocol (subscribe/unsubscribe/rate/list) client→server, and hello/topic server→client for
+// discovery — so only subscribed topics transit (no firehose) and the server's per-client priority
+// outbox honors declared QoS. Teleop/goal/rpc stay on /ws (this transport is read-only for control).
 //
 // Cert: localhost QUIC needs TLS. The server generates a short-lived self-signed ECDSA cert and serves
 // its SHA-256 at `${certUrl}/cert-hash`; we fetch it and pass it as `serverCertificateHashes` (no CA).
+import { applyCaps } from "../qos.ts";
 import type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "../transport.ts";
-import type { TopicInfo } from "../types.ts";
+import type { Qos, TopicInfo } from "../types.ts";
 import { frameToSample } from "./gatewayFrame.ts";
 
 export interface WebTransportDeps {
@@ -25,13 +30,25 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 export const createWebTransportTransport = (deps: WebTransportDeps): Transport => {
-  const caps: TransportCaps = { onDemand: false, discovery: "passive" };
+  // maxHz "server": the gateway downsamples per subscriber+topic; priority/reliability/depth feed its
+  // per-client priority outbox (same fields the WS adapter declares) — so the QoS knobs actually bite.
+  const caps: TransportCaps = {
+    onDemand: true,
+    discovery: "passive",
+    qos: { maxHz: "server", transport: ["priority", "reliability", "depth"] },
+  };
   const url = deps.url.replace(/^ws/, "https");
   const host = new URL(url).hostname;
   const certHashUrl = deps.certHashUrl ?? `http://${host}:8094/cert-hash`;
   let sampleCb: ((s: RawSample) => void) | undefined;
+  let topicsCb: ((t: TopicInfo[]) => void) | undefined;
   let statusCb: ((s: Status) => void) | undefined;
   let wt: WebTransport | undefined;
+  let ctlWriter: WritableStreamDefaultWriter<Uint8Array> | undefined;
+  const wantSubs = new Set<string>(); // desired subs (re-sent when the control stream opens)
+  const subQos = new Map<string, Qos>(); // declared QoS per topic
+  let topics: TopicInfo[] = [];
+  const enc = new TextEncoder();
 
   function deliver(bytes: Uint8Array) {
     const s = frameToSample(bytes, Date.now());
@@ -74,6 +91,59 @@ export const createWebTransportTransport = (deps: WebTransportDeps): Transport =
     }
   }
 
+  // ── control plane (bidirectional stream: subscribe/list out, hello/topic in) ──
+  function sendControl(obj: unknown) {
+    ctlWriter?.write(enc.encode(JSON.stringify(obj) + "\n")).catch(() => {});
+  }
+
+  function sendSub(topic: string, qos?: Qos) {
+    const q = qos ? applyCaps(qos, caps.qos!) : undefined;
+    sendControl({
+      op: "subscribe",
+      topic,
+      maxHz: q?.maxHz,
+      priority: q?.priority,
+      reliability: q?.reliability,
+      depth: q?.depth,
+    });
+  }
+
+  function handleControl(
+    m: { op?: string; topics?: TopicInfo[]; topic?: string; type?: string; label?: string },
+  ) {
+    if (m.op === "hello" || m.op === "topics") {
+      if (m.label) transport.label = m.label;
+      topics = m.topics ?? [];
+      topicsCb?.(topics);
+    } else if (m.op === "topic" && m.topic) {
+      if (!topics.find((t) => t.topic === m.topic)) {
+        topics.push({ topic: m.topic, type: m.type ?? "?" });
+        topicsCb?.(topics);
+      }
+    }
+  }
+
+  async function readControl(r: ReadableStreamDefaultReader<Uint8Array>) {
+    const dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await r.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        if (!line.trim()) continue;
+        try {
+          handleControl(JSON.parse(line));
+        } catch {
+          // ignore malformed control line
+        }
+      }
+    }
+  }
+
   async function connect(): Promise<void> {
     statusCb?.("connecting");
     const hashHex = await (await fetch(certHashUrl)).text();
@@ -85,6 +155,12 @@ export const createWebTransportTransport = (deps: WebTransportDeps): Transport =
     });
     await wt.ready;
     statusCb?.("open");
+    // Bidirectional control stream: our subscribe/list ops out, the gateway's hello/topic in.
+    const ctl = await wt.createBidirectionalStream();
+    ctlWriter = ctl.writable.getWriter();
+    readControl(ctl.readable.getReader());
+    for (const t of wantSubs) sendSub(t, subQos.get(t)); // replay any pre-connect subs
+    sendControl({ op: "list" }); // triggers hello (topic list) for discovery
     readDatagrams(wt.datagrams.readable.getReader());
     readStreams(wt.incomingUnidirectionalStreams);
     wt.closed.then(() => statusCb?.("closed")).catch(() => statusCb?.("closed"));
@@ -97,18 +173,30 @@ export const createWebTransportTransport = (deps: WebTransportDeps): Transport =
       return [];
     },
     connect,
-    subscribe() {}, // server forwards all subscribed topics; client filters on delivery
-    unsubscribe() {},
-    publishTeleop() {}, // read-only channel
+    subscribe(topic: string, qos?: Qos) {
+      wantSubs.add(topic);
+      if (qos) subQos.set(topic, qos);
+      sendSub(topic, qos);
+    },
+    unsubscribe(topic: string) {
+      wantSubs.delete(topic);
+      subQos.delete(topic);
+      sendControl({ op: "unsubscribe", topic });
+    },
+    publishTeleop() {}, // read-only channel (control routes to the /ws trust boundary)
     publishGoal() {},
     rpc() {
       return Promise.reject(new Error("WebTransport transport is read-only"));
     },
-    requestList() {},
+    requestList() {
+      sendControl({ op: "list" });
+    },
     onSample(cb: (s: RawSample) => void) {
       sampleCb = cb;
     },
-    onTopics(_cb: (t: TopicInfo[]) => void) {},
+    onTopics(cb: (t: TopicInfo[]) => void) {
+      topicsCb = cb;
+    },
     onStatus(cb: (s: Status) => void) {
       statusCb = cb;
     },

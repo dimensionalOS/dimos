@@ -22,14 +22,14 @@ it has never seen — that's what makes a *generic* viewer possible. `@dimos/msg
 holds a hash→class registry and does this for us in the browser.
 
 The browser can't speak UDP multicast, so we need **one** native process to
-relay bus↔browser. That's the only "hard" part — today it lives in `servers/bus.py`
-(the LCM multicast tap + fragment reassembly) inside the one `serve.py` service.
+relay bus↔browser. That's the only "hard" part — today it lives in `gateway/bus.py`
+(the LCM multicast tap + fragment reassembly) inside the one gateway service.
 
 ---
 
-## Rung 1 — Module, Stream, Transport, the bus  ·  `servers/bus.py`
+## Rung 1 — Module, Stream, Transport, the bus  ·  `gateway/bus.py`
 
-Read `servers/bus.py`. The realization that shaped the whole project: a relay only
+Read `gateway/bus.py`. The realization that shaped the whole project: a relay only
 needs to *receive* and *send* bus packets — **all** LCM framing lives in the codec —
 so the relay is a **dumb byte relay** that never parses a payload. Python's `socket`
 does multicast UDP; `bus.py` taps the LCM bus (and a Zenoh subscriber), reassembles
@@ -73,10 +73,10 @@ This is exactly how the pipe was verified against real dimos. ✅
 ## Relay note — LCM fragmentation
 
 dimos fragments any LCM message over ~1.4KB into multiple `LC03` datagrams.
-`@dimos/msgs.decodePacket` only handles single `LC02` packets, so `servers/bus.py`
+`@dimos/msgs.decodePacket` only handles single `LC02` packets, so `gateway/bus.py`
 **reassembles fragments** (keyed by LCM sequence number) into a synthetic `LC02`
 packet before forwarding — the browser is unchanged. This is why `/map`
-(OccupancyGrid, ~3.7KB → 3 fragments) shows up at all. (`servers/test_bus.py`
+(OccupancyGrid, ~3.7KB → 3 fragments) shows up at all. (`gateway/tests/test_bus.py`
 unit-tests this reassembly.)
 
 ---
@@ -134,9 +134,9 @@ in the registry — that's the difference between a demo and a *framework*.
 
 **Verified against REAL dimos on this machine (no mocks):**
 - `dimos` wheel installs (`uv pip install dimos`) and `dimos.core`/`dimos.msgs` import — no torch/CUDA (✅)
-- real `simplerobot.py` `/odom` → `serve.py` → WebSocket → `@dimos/msgs` decode (`deno task smoke` ✅)
-- real `fakesensors.py` `/map` (OccupancyGrid, fragmented) → reassembled by `servers/bus.py` → decoded (✅)
-- teleop reverse path: browser `/cmd_vel` → `serve.py` → bus → simplerobot moves (✅)
+- real `simplerobot.py` `/odom` → the gateway → WebSocket → `@dimos/msgs` decode (`deno task smoke` ✅)
+- real `fakesensors.py` `/map` (OccupancyGrid, fragmented) → reassembled by `gateway/bus.py` → decoded (✅)
+- teleop reverse path: browser `/cmd_vel` → the gateway → bus → simplerobot moves (✅)
 - the React app type-checks (`tsc --noEmit` ✅) and builds (`vite build` ✅)
 
 **Left / next sessions:**

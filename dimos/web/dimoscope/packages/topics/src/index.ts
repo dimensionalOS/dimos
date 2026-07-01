@@ -5,12 +5,7 @@
 // head-of-line blocking under loss). The research/benchmark transports (raw WebRTC-data, SSE, HTTP-poll,
 // raw WebTransport, zenoh-ts) live in "@dimos/topics/experimental".
 export { createDimosClient, ws, wsServerJson } from "./client.ts";
-export type {
-  DimosClient,
-  DimosClientDeps,
-  ModuleMap,
-  TransportFactory,
-} from "./client.ts";
+export type { DimosClient, DimosClientDeps, ModuleMap, TransportFactory } from "./client.ts";
 export { webtransport } from "./adapters/composite.ts";
 export type { WebtransportOpts } from "./adapters/composite.ts";
 export { createTopic } from "./topic.ts";

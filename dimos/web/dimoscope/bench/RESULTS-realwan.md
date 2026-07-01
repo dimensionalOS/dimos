@@ -20,10 +20,10 @@ For real RTT-vs-loss behavior see the netsim/netem tables in `RESULTS-vps.md`.)_
 
 ## What it took (the fixes that made all 5 work over the WAN)
 
-1. **`serve.py` CORS** (`CORSMiddleware`, `allow_origins=*`): the SDK runs on `http://localhost` and the
+1. **The gateway CORS** (`CORSMiddleware`, `allow_origins=*`): the SDK runs on `http://localhost` and the
    gateway is on the VPS IP → cross-origin. Without CORS the browser couldn't `fetch('/cert')` → no
    WebTransport. Now `/cert` + `/health` are cross-origin-readable.
-2. **WebRTC `/rtc` 403 fix** (`servers/bench.py`): `WebRtcDataPlane.handle`'s `ws` param was **untyped**,
+2. **WebRTC `/rtc` 403 fix** (`gateway/transports/webrtc.py`): `WebRtcDataPlane.handle`'s `ws` param was **untyped**,
    so FastAPI treated it as a query-param dependency and rejected every `/rtc` handshake with 403 (WebRTC
    never connected — even the CLI aiortc probe). Annotating `ws: WebSocket` fixed it.
 3. **WebRTC client adapter** (`packages/topics/src/adapters/webRtcData.ts`): `connect()` resolved right
@@ -56,7 +56,7 @@ cd dimos/web/dimoscope && deno task app         # vite on :5173/:5175
 # VPS: gateway + source (if the tmux session died)
 ssh -i ~/.ssh/vps-coolify kristjan@37.60.232.68
 cd ~/dimos-bench/dimos/web/dimoscope
-tmux new-session -d -s dimos-realwan-65329 "PORT=8080 WT_PORT=8443 uv run python serve.py"
+tmux new-session -d -s dimos-realwan-65329 "PORT=8080 WT_PORT=8443 uv run python -m gateway"
 DIMOS_TRANSPORT=lcm BENCH_HZ=100 PYTHONPATH=bench nohup uv run python bench/bench_source.py &
 ```
 

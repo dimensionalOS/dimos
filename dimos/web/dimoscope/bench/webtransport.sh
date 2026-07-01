@@ -20,7 +20,7 @@ cleanup() { for p in "${pids[@]:-}"; do kill "$p" 2>/dev/null || true; done; }
 trap cleanup EXIT
 
 echo "[webtransport] dimoscope service (QUIC :$WT_PORT) + load (pose 100Hz → datagrams · lidar 200KB@10Hz → streams)…"
-PORT="$GW_PORT" WT_PORT="$WT_PORT" "$PY" serve.py >"$LOG/gw.log" 2>&1 &
+PORT="$GW_PORT" WT_PORT="$WT_PORT" "$PY" -m gateway >"$LOG/gw.log" 2>&1 &
 pids+=($!)
 DIMOS_TRANSPORT=lcm BENCH_HZ=100 BENCH_IMG_HZ=10 BENCH_IMG_BYTES=200000 \
   PYTHONPATH=bench "$PY" bench/bench_source.py >"$LOG/pub.log" 2>&1 &

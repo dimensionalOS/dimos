@@ -43,15 +43,15 @@ also works — the gateway taps both.
 
 Stop a scenario and start another: the **data** switches live (the previous topics go silent, the new
 ones flow — the Bench monitor, Inspector and CameraView follow immediately). **Caveat:** the gateway's
-discovery registry (`servers/bus.py` `Bus.topics`) never evicts, so topic **names** accumulate for the
-life of the `serve.py` process, and WorldView's "first topic of a type" pick can latch onto a now-stale
+discovery registry (`gateway/bus.py` `Bus.topics`) never evicts, so topic **names** accumulate for the
+life of the gateway process, and WorldView's "first topic of a type" pick can latch onto a now-stale
 name. For a pristine topic list / clean WorldView auto-pick, **restart `deno task serve`** between
 scenarios (a fresh bus registry). The data-level switch needs no restart.
 
 ## Types — one typed map per blueprint
 
 Each scenario generates its own typed topic map with the SDK's codegen (run the matching scenario first
-so it's live on the bus). Note the gateway port: `serve.py` is `:8080`, so pass `--url`:
+so it's live on the bus). Note the gateway port: the gateway is `:8080`, so pass `--url`:
 
 ```bash
 ./scenarios/run.sh nav &                                             # publish /nav/* on the bus
@@ -82,7 +82,7 @@ bash scenarios/bench.sh          # → scenarios/RESULTS.md  (one row per scenar
 # Env: GW_URL=ws://localhost:8080/ws · DUR_MS=6000 · WARM_S=18 · DIMOS_TRANSPORT=zenoh
 ```
 
-Run it against a freshly-started `serve.py` on a quiet bus for the cleanest numbers. Sample run (WS,
+Run it against a freshly-started gateway on a quiet bus for the cleanest numbers. Sample run (WS,
 6 s/scenario) — the three profiles are clearly distinct:
 
 | scenario | topics | msgs | hz | kB/s | p50 | p95 | p99 | loss% |
@@ -96,7 +96,7 @@ Run it against a freshly-started `serve.py` on a quiet bus for the cleanest numb
 
 ## Remote / VPS
 
-The scenarios are just bus publishers, so streaming from a VPS needs no code change: run `serve.py` + one
+The scenarios are just bus publishers, so streaming from a VPS needs no code change: run the gateway + one
 scenario **on the VPS**, then open the app pointed at it —
 
 ```
@@ -109,7 +109,7 @@ additionally needs the QUIC port (`WT_PORT`, default 8443) reachable + the `/cer
 ## Recommended QoS lanes (handoff to the QoS-rules map)
 
 The scenario namespaces are exactly the "custom per-blueprint topics" the gateway's QoS rules classify.
-Suggested `servers/qos.rules.json` entries (owned by the QoS work — this is a recommendation, not an edit):
+Suggested `qos.rules.json` entries (owned by the QoS work — this is a recommendation, not an edit):
 
 ```jsonc
 {

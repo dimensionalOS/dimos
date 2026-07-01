@@ -15,7 +15,9 @@ const SCEN = {
 
 async function run(mode: "client" | "server-json"): Promise<BenchRow> {
   const client = createDimosClient({
-    transport: mode === "server-json" ? wsServerJson({ reconnect: false }) : ws({ reconnect: false }),
+    transport: mode === "server-json"
+      ? wsServerJson({ reconnect: false })
+      : ws({ reconnect: false }),
   });
   await client.connect(URL);
   const r = await measureScenario(client, SCEN, DUR, true); // end-to-end (publish→recv)

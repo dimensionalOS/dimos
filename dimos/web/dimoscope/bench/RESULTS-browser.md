@@ -8,12 +8,12 @@
 
 
 
-_2026-07-01 · real Chrome via claude-in-chrome MCP · page served same-origin from `serve.py` at
+_2026-07-01 · real Chrome via claude-in-chrome MCP · page served same-origin from the gateway at
 `http://localhost:8080/bench.html` · single `bench_source` (LCM) · 4000 ms/scenario · end-to-end
 latency (publish→browser)._
 
 This is the **real browser runtime** (not the CLI aiortc/aioquic stand-ins) — the actual `@dimos/topics`
-SDK running in Chrome's JS engine, hitting the live `serve.py`.
+SDK running in Chrome's JS engine, hitting the live the gateway.
 
 ## Results (Chrome)
 
@@ -43,7 +43,7 @@ them:
 
 **Cross-origin caveat found:** serving the page from vite (`:5175`) → transports at `:8080` makes
 `fetch()` to `/cert` + `/health` fail — only `/sse` + `/poll` set `access-control-allow-origin: *`
-(`servers/bench.py:93,128`). So **run the browser bench SAME-ORIGIN** (from `serve.py`'s `:8080`), or add
+(`gateway/transports/{sse,poll}.py`). So **run the browser bench SAME-ORIGIN** (from the gateway's `:8080`), or add
 CORS to `/cert` for a cross-origin / real-WAN browser run.
 
 ## Follow-ups (flagged; do not affect the CLI/VPS numbers)

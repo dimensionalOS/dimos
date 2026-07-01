@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Benchmark harness: the one dimoscope service (serve.py — all transports on one port) + the
+# Benchmark harness: the one dimoscope service (the gateway — all transports on one port) + the
 # synthetic bench_publisher on BOTH buses (LCM + Zenoh) so /bench/p0..3 + /bench/grid flow.
 # No DimSim needed (controlled source, low noise). Then either:
 #   • open  http://localhost:8080/bench.html  → Run   (all transports, in-browser; needs `deno task build`)
@@ -15,7 +15,7 @@ trap cleanup EXIT INT TERM
 cd "$HERE"
 
 echo "[serve-bench] dimoscope service (:8080 — all transports on one port)"
-"$PY" serve.py & pids+=($!)
+"$PY" -m gateway & pids+=($!)
 
 sleep 5   # let the service come up (cold dimos import for egress + zenoh)
 echo "[serve-bench] bench_publisher → LCM bus  (/bench/* @ 100Hz)"

@@ -21,8 +21,8 @@ On a fat LAN there's no contention, so priority never fires; it only matters (an
 So the chain is:
 
 1. **Client declares** a lane per topic (sane defaults, configurable) — `packages/topics/src/qos.ts`.
-2. **Gateway enforces** at the per-client egress — `servers/qos_sched.py`'s priority outbox, wired into
-   `servers/data.py`. Under backpressure it drains high-priority topics first and **conflates/drops the
+2. **Gateway enforces** at the per-client egress — `gateway/qos.py`'s priority outbox, wired into
+   `gateway/data.py`. Under backpressure it drains high-priority topics first and **conflates/drops the
    lowest-priority `best_effort` topics first — never the high-priority ones.**
 3. **Transport reinforces** (optional): put high-priority small topics on a no-head-of-line primitive
    (WebTransport datagrams), so they can't queue behind bulk even within one connection.
@@ -42,7 +42,7 @@ overridable per-topic:
 
 ## How the enforcement works (the per-client priority outbox)
 
-`servers/qos_sched.py` replaces the data plane's single FIFO queue with `{priority-class → {topic →
+`gateway/qos.py` replaces the data plane's single FIFO queue with `{priority-class → {topic →
 slot}}`. `best_effort` topics get a **latest-only slot** (a backed-up lidar overwrites itself — it never
 grows a queue); `reliable` topics get a **bounded deque** (DDS `keep_last` depth). The writer drains by
 **weighted round-robin**: high classes get most of the budget, low classes keep a floor so they never

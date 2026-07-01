@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # QoS under stress — the A/B that proves the data-path prioritization is good tech. A sim robot publishes
-# pose (light, high-priority) + lidar/img (heavy, low-priority) onto the bus; the single service (serve.py)
+# pose (light, high-priority) + lidar/img (heavy, low-priority) onto the bus; the single service (the gateway)
 # fans it to a browser SDK client over a BANDWIDTH-CAPPED netsim link the heavy stream saturates. We run
 # the SAME load with the gateway scheduler OFF (FIFO — today's baseline) and ON (the per-client priority
 # outbox). ON, the light topic stays crisp while lidar conflates; OFF, the light topic starves.
@@ -43,9 +43,9 @@ echo "[qos-demo] warming up load (cold dimos import)…"; sleep 16
 
 run_mode() { # $1 label  [$2 LIGHT_LANE  $3 HEAVY_LANE] (client-declared overrides)
   for port in 8080 8443; do lsof -ti :$port 2>/dev/null | xargs -r kill -9 2>/dev/null; done
-  # EGRESS_KBPS paces serve.py's writer to the client's link budget → the backlog (and so the priority
+  # EGRESS_KBPS paces the gateway's writer to the client's link budget → the backlog (and so the priority
   # decision) stays in the gateway outbox instead of bloating kernel/proxy buffers (which would FIFO it).
-  EGRESS_KBPS="$BW" PORT=8080 "$PY" "$HERE/serve.py" >"$LOG/serve_$1.log" 2>&1 &
+  EGRESS_KBPS="$BW" PORT=8080 "$PY" -m gateway >"$LOG/serve_$1.log" 2>&1 &
   local sp=$!; pids+=("$sp")
   until curl -s --max-time 1 http://localhost:8080/health >/dev/null 2>&1; do sleep 0.5; done
   sleep 2 # let it re-tap the bus + discover topics
@@ -56,7 +56,7 @@ run_mode() { # $1 label  [$2 LIGHT_LANE  $3 HEAVY_LANE] (client-declared overrid
 }
 
 echo
-echo "=== QoS A/B — sim → serve.py (egress-paced ${BW}kbps) → SDK · light vs heavy under contention ==="
+echo "=== QoS A/B — sim → the gateway (egress-paced ${BW}kbps) → SDK · light vs heavy under contention ==="
 # The priority outbox is now unconditional (no QOS_SCHED toggle); the OFF/FIFO baseline is preserved in
 # the committed demo GIF (ba36735e7). This live run shows server-default vs client-override.
 run_mode ON-default

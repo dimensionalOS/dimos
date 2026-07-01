@@ -2,8 +2,8 @@
 # dimoscope bus — the single in-process tap that every transport reads from.
 #
 # It ingests the robot/sim bus over BOTH backends at once, by default:
-#   • Zenoh  — one peer session, declare_subscriber("**")          (gateway_zenoh.py did this)
-#   • LCM    — a UDP-multicast tap with LC03→LC02 fragment reassembly (the Deno gateway.ts did this)
+#   • Zenoh  — one peer session, declare_subscriber("**") over the whole keyspace
+#   • LCM    — a UDP-multicast tap with LC03→LC02 fragment reassembly
 # whichever transport the robot/sim actually uses, its topics reach the browser with no config. (If
 # both buses ever carry the same topic you'd see it twice — normally only one is active.)
 #
@@ -16,7 +16,7 @@
 # Consumers register a sync callback; it runs ON the event loop and must be cheap (enqueue, don't
 # await). Zenoh delivers on its own thread, so its samples cross to the loop via call_soon_threadsafe;
 # the LCM tap already runs on the loop. There is no global state — a single Bus instance is created by
-# serve.py and passed to the handlers.
+# app.py's build_app() and passed to the handlers.
 from __future__ import annotations
 
 import asyncio
@@ -25,9 +25,13 @@ from dataclasses import dataclass
 import socket
 import struct
 
+from dimos.utils.logging_config import setup_logger
+
 LC02 = 0x4C433032  # "LC02" — a single, complete packet
 LC03 = 0x4C433033  # "LC03" — one fragment of a larger message
 FRAG_HDR = 20  # LC03 fragment header length
+
+logger = setup_logger()
 
 
 @dataclass(frozen=True)
@@ -107,7 +111,7 @@ class Bus:
 
         self._zenoh_session = zenoh.open(zenoh.Config())
         self._zenoh_session.declare_subscriber(key, on_sample)
-        print(f"[bus] zenoh sub '{key}'", flush=True)
+        logger.info("zenoh subscriber declared", key=key)
 
     # ── LCM ingest (UDP multicast + LC03→LC02 reassembly) ───────────────────
     async def start_lcm(self, host: str = "239.255.76.67", port: int = 7667) -> None:
@@ -123,12 +127,12 @@ class Bus:
             mreq = struct.pack("=4sl", socket.inet_aton(host), socket.INADDR_ANY)
             sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
         except OSError as e:
-            print(f"[bus] lcm tap disabled ({host}:{port}): {e}", flush=True)
+            logger.warning("lcm tap disabled", host=host, port=port, error=str(e))
             sock.close()
             return
         sock.setblocking(False)
         await self._loop.create_datagram_endpoint(lambda: _LcmProtocol(self), sock=sock)
-        print(f"[bus] lcm tap {host}:{port}", flush=True)
+        logger.info("lcm tap listening", host=host, port=port)
 
     def _on_lcm_datagram(self, data: bytes) -> None:  # runs on the loop
         pkt = self._reassemble(data)
@@ -144,7 +148,7 @@ class Bus:
         self._publish(topic, typ, pkt, payload)
 
     def _reassemble(self, b: bytes) -> bytes | None:
-        """LC03 fragments → a synthetic LC02 packet; pass LC02 through. (ported from gateway.ts)"""
+        """LC03 fragments → a synthetic LC02 packet; pass LC02 through."""
         if len(b) < 8:
             return None
         magic = struct.unpack(">I", b[0:4])[0]

@@ -4,7 +4,7 @@
 #   bench/run.sh            # dimoscope service, LCM source (:8090)
 #   bench/run.sh zenoh      # dimoscope service, Zenoh source (:8090)
 #   bench/run.sh all        # both, sequentially → combined bench/RESULTS.md
-# Everything runs headless: the dimoscope service (serve.py) + bench_publisher on the chosen
+# Everything runs headless: the dimoscope service (the gateway) + bench_publisher on the chosen
 # bus; the client rows go through bench/bench.ts. `all` measures end-to-end latency (BENCH_E2E).
 set -uo pipefail
 MODE="${1:-lcm}"
@@ -25,7 +25,7 @@ run_one() {
   local bus
   port="${GATEWAY_PORT:-8090}"
   if [ "$mode" = zenoh ]; then bus=zenoh; label="dimoscope (Zenoh source)"; else bus=lcm; label="dimoscope (LCM source)"; fi
-  PORT="$port" "$PY" serve.py & pids+=($!)
+  PORT="$port" "$PY" -m gateway & pids+=($!)
   DIMOS_TRANSPORT="$bus" BENCH_HZ=100 "$PY" bench/bench_publisher.py & pids+=($!)
   sleep 4
   GATEWAY_URL="ws://localhost:$port/ws" BENCH_LABEL="$label" BENCH_E2E="${BENCH_E2E:-}" \

@@ -1,0 +1,276 @@
+#!/usr/bin/env python3
+# WebTransport (HTTP/3 / QUIC) transport — small frames on datagrams (unreliable, no head-of-line
+# blocking), big frames on a unidirectional stream (reliable). Runs on its own UDP port (QUIC can't
+# share the HTTP TCP port). Optional (needs aioquic + cryptography). Fed from the shared Bus.
+#
+# On-demand + QoS parity with the /ws data plane: each session gets a browser-opened BIDIRECTIONAL
+# control stream carrying the read-path subset of the WS control protocol (subscribe/unsubscribe/rate/
+# list) client→server, and hello/topic server→client for discovery. Egress is per-session filtered
+# (`wants`), rate-limited, and drained through the same `PriorityOutbox` the WS plane uses — so
+# important lanes survive and unsubscribed topics never transit. Teleop/goal/rpc stay on /ws.
+from __future__ import annotations
+
+import asyncio
+import json
+import time
+
+from dimos.utils.logging_config import setup_logger
+
+from ..bus import Bus, Sample
+from ..qos import PriorityOutbox, declared_to_class, default_priority
+from ._common import frame, wants
+
+logger = setup_logger()
+
+DATAGRAM_MAX = 1100  # QUIC datagrams are path-MTU-capped; bigger frames go on a stream
+
+try:
+    import datetime
+    import hashlib
+    import ipaddress
+    import tempfile
+
+    from aioquic.asyncio import QuicConnectionProtocol, serve as quic_serve
+    from aioquic.h3.connection import H3_ALPN, H3Connection
+    from aioquic.h3.events import H3Event, HeadersReceived, WebTransportStreamDataReceived
+    from aioquic.quic.configuration import QuicConfiguration
+    from aioquic.quic.events import ConnectionTerminated, ProtocolNegotiated, QuicEvent
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    HAS_WEBTRANSPORT = True
+except Exception:  # pragma: no cover
+    HAS_WEBTRANSPORT = False
+
+
+def _make_cert() -> tuple[str, str, str]:
+    """Self-signed ECDSA P-256 cert (≤10 days) so the browser accepts it via serverCertificateHashes."""
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(days=1))
+        .not_valid_after(now + datetime.timedelta(days=10))
+        .add_extension(
+            x509.SubjectAlternativeName(
+                [x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
+            ),
+            critical=False,
+        )
+        .sign(key, hashes.SHA256())
+    )
+    cf = tempfile.NamedTemporaryFile(suffix=".pem", delete=False)
+    kf = tempfile.NamedTemporaryFile(suffix=".pem", delete=False)
+    cf.write(cert.public_bytes(serialization.Encoding.PEM))
+    kf.write(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    cf.close()
+    kf.close()
+    sha = hashlib.sha256(cert.public_bytes(serialization.Encoding.DER)).hexdigest()
+    return cf.name, kf.name, sha
+
+
+class WebTransportServer:
+    """QUIC server on its own UDP port (QUIC can't share the HTTP TCP port); fed from the Bus.
+
+    Per-session read-path (subs filter + rate downsample + priority/conflation outbox) mirrors the /ws
+    data plane, reusing `_common.wants` + the shared `PriorityOutbox` primitives — no `data.py` coupling.
+    """
+
+    def __init__(self, bus: Bus) -> None:
+        self.bus = bus
+        self.sessions: set = set()
+        self.cert_hash = ""
+        bus.subscribe(self._on_sample)
+        bus.on_new_topic(self._on_new_topic)
+
+    # ── bus fan-out (loop thread, must stay cheap) ──────────────────────────
+    def _on_sample(self, s: Sample) -> None:
+        if not self.sessions:
+            return
+        now = time.time() * 1000.0
+        default = default_priority(s.topic, s.type)  # server default; clients may override per sub
+        f: bytes | None = None
+        for sess in list(self.sessions):
+            if not wants(sess.subs, s.topic):
+                continue  # on-demand: unsubscribed topics never transit
+            hz = sess.rate.get(s.topic, 0)
+            if hz > 0:
+                if now - sess.last.get(s.topic, 0) < 1000.0 / hz:
+                    continue  # per-topic downsample
+                sess.last[s.topic] = now
+            if sess.outbox is None:
+                continue
+            if f is None:
+                f = frame(s)  # [f64 gateway-send-ms][LC02], stamped once
+            prio, conflate, depth = sess.qos.get(s.topic, default)  # client override else default
+            sess.outbox.put_data(s.topic, prio, conflate, depth, f)  # priority outbox; never blocks
+
+    def _on_new_topic(self, topic: str, typ: str) -> None:
+        for sess in list(self.sessions):
+            sess.send_control(
+                {"op": "topic", "topic": topic, "type": typ}
+            )  # no-op until ctl stream up
+
+    async def start(self, host: str, port: int) -> None:
+        if not HAS_WEBTRANSPORT:
+            logger.warning("aioquic not available — WebTransport disabled")
+            return
+        certfile, keyfile, self.cert_hash = _make_cert()
+        config = QuicConfiguration(
+            is_client=False, alpn_protocols=H3_ALPN, max_datagram_frame_size=65536
+        )
+        config.load_cert_chain(certfile, keyfile)
+        server = self
+        sessions = self.sessions
+
+        class _Protocol(QuicConnectionProtocol):
+            def __init__(self, *a, **k) -> None:
+                super().__init__(*a, **k)
+                self._http: H3Connection | None = None
+                self._session_id: int | None = None
+                # per-session read-path state (mirror data.py::_Client)
+                self.subs: set[str] = set()
+                self.rate: dict[str, float] = {}
+                self.last: dict[str, float] = {}
+                self.qos: dict[str, tuple] = {}
+                self.outbox: PriorityOutbox | None = None
+                self.ctl_stream_id: int | None = None
+                self._ctl_buf = b""
+                self._drain_task: asyncio.Future | None = None
+
+            def quic_event_received(self, event: QuicEvent) -> None:
+                if isinstance(event, ProtocolNegotiated):
+                    self._http = H3Connection(self._quic, enable_webtransport=True)
+                elif isinstance(event, ConnectionTerminated):
+                    sessions.discard(self)
+                    if self._drain_task is not None:
+                        self._drain_task.cancel()
+                if self._http is not None:
+                    for h3 in self._http.handle_event(event):
+                        self._h3(h3)
+
+            def _h3(self, event: H3Event) -> None:
+                if isinstance(event, HeadersReceived):
+                    h = dict(event.headers)
+                    if h.get(b":method") == b"CONNECT" and h.get(b":protocol") == b"webtransport":
+                        self._session_id = event.stream_id
+                        self._http.send_headers(
+                            stream_id=event.stream_id,
+                            headers=[
+                                (b":status", b"200"),
+                                (b"sec-webtransport-http3-draft", b"draft02"),
+                            ],
+                        )
+                        self.outbox = PriorityOutbox()
+                        self._drain_task = asyncio.ensure_future(self._drain())
+                        sessions.add(self)
+                        self.transmit()
+                elif isinstance(event, WebTransportStreamDataReceived):
+                    # the browser's bidirectional control stream: newline-delimited JSON control ops
+                    first = self.ctl_stream_id is None
+                    self.ctl_stream_id = event.stream_id
+                    if first:
+                        self.send_control(  # proactive discovery so on-demand isn't blind
+                            {
+                                "op": "hello",
+                                "topics": server.bus.topic_list(),
+                                "label": "dimoscope/WT",
+                            }
+                        )
+                    self._ctl_buf += event.data
+                    while b"\n" in self._ctl_buf:
+                        line, self._ctl_buf = self._ctl_buf.split(b"\n", 1)
+                        if not line.strip():
+                            continue
+                        try:
+                            self._on_control(json.loads(line))
+                        except (ValueError, KeyError):
+                            pass
+
+            # ── control ingress (read-path subset of the WS protocol) ────────
+            def _on_control(self, m: dict) -> None:
+                op = m.get("op")
+                if op == "subscribe":
+                    t = m["topic"]
+                    self.subs.add(t)
+                    if m.get("maxHz"):
+                        self.rate[t] = float(m["maxHz"])
+                    self._apply_qos(t, m)
+                elif op == "unsubscribe":
+                    t = m["topic"]
+                    self.subs.discard(t)
+                    self.rate.pop(t, None)
+                    self.last.pop(t, None)
+                    self.qos.pop(t, None)
+                elif op == "rate":
+                    self.rate[m["topic"]] = float(m.get("maxHz") or 0)
+                elif op == "list":
+                    self.send_control(
+                        {"op": "hello", "topics": server.bus.topic_list(), "label": "dimoscope/WT"}
+                    )
+
+            def _apply_qos(self, topic: str, m: dict) -> None:
+                if any(m.get(k) is not None for k in ("priority", "reliability", "depth")):
+                    default = default_priority(topic, server.bus.topics.get(topic, ""))
+                    self.qos[topic] = declared_to_class(
+                        m.get("priority"), m.get("reliability"), m.get("depth"), default
+                    )
+                else:
+                    self.qos.pop(topic, None)
+
+            # ── control egress (hello / topic, over the client's bidi stream) ─
+            def send_control(self, obj: dict) -> None:
+                if self._http is None or self.ctl_stream_id is None:
+                    return
+                try:
+                    self._quic.send_stream_data(
+                        self.ctl_stream_id, (json.dumps(obj) + "\n").encode(), end_stream=False
+                    )
+                    self.transmit()
+                except Exception:
+                    pass
+
+            # ── data egress (priority-ordered drain → size-routed send) ──────
+            async def _drain(self) -> None:
+                try:
+                    while True:
+                        item = await self.outbox.get()
+                        self.send_frame(item)
+                except asyncio.CancelledError:
+                    pass
+
+            def send_frame(self, payload: bytes) -> None:
+                if self._http is None or self._session_id is None:
+                    return
+                try:
+                    if len(payload) <= DATAGRAM_MAX:
+                        self._http.send_datagram(self._session_id, payload)  # unreliable, no HoL
+                    else:
+                        sid = self._http.create_webtransport_stream(
+                            self._session_id, is_unidirectional=True
+                        )
+                        self._quic.send_stream_data(sid, payload, end_stream=True)  # reliable
+                    self.transmit()
+                except Exception:
+                    sessions.discard(self)
+
+        await quic_serve(host, port, configuration=config, create_protocol=_Protocol)
+        logger.info(
+            "webtransport up",
+            url=f"https://{host}:{port}",
+            transport="QUIC/UDP",
+            cert_sha256=self.cert_hash[:16],
+        )

@@ -23,6 +23,10 @@ import json
 from pathlib import Path
 import re
 
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
+
 # lane → (priority rank, conflate?, keep_last depth). Mirrors packages/topics/src/qos.ts LANES + defaultLane.
 _CMD = re.compile(r"(^|/)(cmd_vel|cmd|teleop|goal|clicked_point|move_base|nav_goal)(/|$)", re.I)
 _BULK = re.compile(
@@ -95,10 +99,10 @@ def load_qos_rules(path) -> int:  # type: ignore[no-untyped-def]
             if isinstance(r, dict) and "topic" in r and "lane" in r  # skip comment/partial entries
         ]
     except (OSError, ValueError, TypeError) as e:
-        print(f"[qos] ignoring bad rules file {p}: {e}", flush=True)
+        logger.warning("ignoring bad qos rules file", path=str(p), error=str(e))
         return 0
     set_qos_rules(rules)
-    print(f"[qos] loaded {len(_RULES)} topic→lane rule(s) from {p}", flush=True)
+    logger.info("loaded qos rules", count=len(_RULES), path=str(p))
     return len(_RULES)
 
 

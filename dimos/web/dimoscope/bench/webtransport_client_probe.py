@@ -1,13 +1,17 @@
-"""Headless aioquic WebTransport client for the dimoscope QUIC endpoint (serve.py) — a browser
-stand-in that opens a session, receives datagrams (small frames) + unidirectional streams (large
-frames), and counts frames over DUR seconds. Verifies the full path (serve.py bus → QUIC) without a
-browser and without the cert-hash dance (verify_mode=CERT_NONE). Each frame is [f64 BE send-ms][LC02], so we
-also derive per-frame latency (now − send-ms) → p50/p95, which the loss bench (bench/loss.sh) uses to
-show datagram latency stays flat under loss (no TCP head-of-line blocking). Run with a gateway +
-bench_source up:
+"""Headless aioquic WebTransport client for the dimoscope QUIC endpoint (the gateway) — a browser
+stand-in that opens a session, subscribes (on-demand), receives datagrams (small frames) +
+unidirectional streams (large frames), and counts frames over DUR seconds. Verifies the full path (the
+gateway bus → QUIC) without a browser and without the cert-hash dance (verify_mode=CERT_NONE). Each frame
+is [f64 BE send-ms][LC02], so we also derive per-frame latency (now - send-ms) → p50/p95, which the loss
+bench (bench/loss.sh) uses to show datagram latency stays flat under loss (no TCP head-of-line blocking).
+
+The gateway is on-demand: it forwards nothing until a client subscribes. We open a bidirectional control
+stream and send {op:"subscribe", topic:"*"} (the browser SDK does the same per topic) — mirroring the WS
+control protocol. Run with a gateway + bench_source up:
   WT_PORT=8093 DUR=3 .venv/bin/python bench/webtransport_client_probe.py
 """
 import asyncio
+import json
 import os
 import ssl
 import struct
@@ -33,7 +37,7 @@ def _pctl(xs: list[float], q: float) -> float:
 
 
 def _lat_ms(frame: bytes) -> float | None:
-    """now − the f64 BE send-ms prefix the server re-stamps at broadcast; None if no prefix."""
+    """now - the f64 BE send-ms prefix the server re-stamps at broadcast; None if no prefix."""
     if len(frame) < 8:
         return None
     return time.time() * 1000.0 - struct.unpack(">d", frame[:8])[0]
@@ -43,6 +47,8 @@ class ClientProto(QuicConnectionProtocol):
     def __init__(self, *a, **k) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*a, **k)
         self._http: H3Connection | None = None
+        self._session_id: int | None = None
+        self._ctl_stream_id: int | None = None
         self.count = 0
         self.nbytes = 0
         self.dg = 0
@@ -54,9 +60,9 @@ class ClientProto(QuicConnectionProtocol):
     def quic_event_received(self, event) -> None:  # type: ignore[no-untyped-def]
         if isinstance(event, ProtocolNegotiated):
             self._http = H3Connection(self._quic, enable_webtransport=True)
-            sid = self._quic.get_next_available_stream_id()
+            self._session_id = self._quic.get_next_available_stream_id()
             self._http.send_headers(
-                stream_id=sid,
+                stream_id=self._session_id,
                 headers=[
                     (b":method", b"CONNECT"),
                     (b":protocol", b"webtransport"),
@@ -72,7 +78,18 @@ class ClientProto(QuicConnectionProtocol):
 
     def _h3(self, ev) -> None:  # type: ignore[no-untyped-def]
         if isinstance(ev, HeadersReceived):
-            return  # 200 → session established
+            # 200 → session established. Open a bidi control stream and subscribe to everything
+            # (on-demand: the gateway sends nothing until we do). "*" = the old firehose behaviour.
+            self._ctl_stream_id = self._http.create_webtransport_stream(
+                self._session_id, is_unidirectional=False
+            )
+            self._quic.send_stream_data(
+                self._ctl_stream_id,
+                json.dumps({"op": "subscribe", "topic": "*"}).encode() + b"\n",
+                end_stream=False,
+            )
+            self.transmit()
+            return
         if isinstance(ev, DatagramReceived):
             self.count += 1
             self.dg += 1
@@ -81,6 +98,8 @@ class ClientProto(QuicConnectionProtocol):
             if lat is not None:
                 self.lat_dg.append(lat)
         elif isinstance(ev, WebTransportStreamDataReceived):
+            if ev.stream_id == self._ctl_stream_id:
+                return  # gateway hello/topic control JSON — not a data frame
             buf = self._streams.get(ev.stream_id, b"") + ev.data
             if ev.stream_ended:
                 self.count += 1

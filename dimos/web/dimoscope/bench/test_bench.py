@@ -1,4 +1,4 @@
-"""CI-checkable transport benchmark: start the dimoscope service (serve.py) + bench publisher,
+"""CI-checkable transport benchmark: start the dimoscope service (the gateway) + bench publisher,
 run the headless bench, and assert latency / throughput / on-demand are sane.
 
     pytest dimos/web/dimoscope/bench/test_bench.py -s
@@ -28,7 +28,7 @@ def test_bench_lcm() -> None:
     try:
         procs.append(
             subprocess.Popen(
-                [PY, "serve.py"],
+                [PY, "-m", "gateway"],
                 cwd=HERE,
                 # dedicated ports so a dev service on :8080/:8443 doesn't clash
                 env={**os.environ, "PORT": PORT, "WT_PORT": "8493", "DIMOS_LCM_PORT": "7667"},
@@ -41,7 +41,7 @@ def test_bench_lcm() -> None:
                 env={**os.environ, "DIMOS_TRANSPORT": "lcm", "BENCH_HZ": "100"},
             )
         )
-        time.sleep(8)  # serve.py cold start (dimos import for egress + zenoh) + publisher warmup
+        time.sleep(8)  # the gateway cold start (dimos import for egress + zenoh) + publisher warmup
         subprocess.run(
             ["bun", "run", "bench/bench.ts"],
             cwd=HERE,

@@ -21,7 +21,7 @@ cleanup() { for p in "${pids[@]:-}"; do kill "$p" 2>/dev/null || true; done; }
 trap cleanup EXIT
 
 echo "[qos] dimoscope service + bench_source (mixed: pose 100Hz + grid + lidar 200KB@10Hz)…"
-PORT="$GW_PORT" "$PY" serve.py >"$LOG/gw.log" 2>&1 &
+PORT="$GW_PORT" "$PY" -m gateway >"$LOG/gw.log" 2>&1 &
 pids+=($!)
 DIMOS_TRANSPORT=lcm BENCH_HZ=100 BENCH_GRID_HZ=20 BENCH_IMG_HZ=10 BENCH_IMG_BYTES=200000 \
   PYTHONPATH=bench "$PY" bench/bench_source.py >"$LOG/pub.log" 2>&1 &

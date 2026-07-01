@@ -7,9 +7,8 @@ import { createDimosClient, type TransportFactory, ws } from "../packages/topics
 import { poll, sse } from "../packages/topics/src/experimental.ts";
 
 // the gateway serves WS at /ws, SSE at /sse, poll at /poll (all one origin). Strip a trailing /ws so
-// the SSE/poll adapters get the base; build the WS url with /ws.
+// the SSE/poll adapters get the base URL; the ws() factory re-appends /ws itself.
 const URL = (Deno.env.get("GATEWAY_URL") ?? "ws://localhost:8099").replace(/\/ws$/, "");
-const WS = `${URL}/ws`;
 const PROFILE = Deno.env.get("PROFILE") ?? "lan";
 const STREAM = Deno.env.get("STREAM") ?? "pose";
 const DUR = Number(Deno.env.get("DUR") ?? 3000);

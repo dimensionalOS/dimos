@@ -5,7 +5,7 @@ A distilled, team-facing summary of a research pass on **DimOS web/JS integratio
 See also: [README](./README.md) · [benchmarks](./benchmarks.md) · [custom messages in the browser](./custom-messages-in-the-browser.md).
 
 > **Architecture note:** the three gateways + standalone media node described below were since
-> **consolidated into one `serve.py` service** (`servers/{bus,data,media,bench}.py`) that taps LCM
+> **consolidated into one gateway service** (`gateway/{bus,data,media,transports}`) that taps LCM
 > **and** Zenoh at once and serves every transport on one origin — see [README](./README.md). The
 > findings and tradeoffs below stand; only the deployment changed.
 
@@ -19,7 +19,7 @@ See also: [README](./README.md) · [benchmarks](./benchmarks.md) · [custom mess
 - **The codec is transport-agnostic** (`@dimos/msgs`): a self-describing **8-byte type hash** lets any client decode any topic with zero config — what makes a *generic* viewer and SDK possible in the first place.
 
 ## 2. The `@dimos/topics` SDK behind one contract
-**Thesis: "DimOS topics in the browser", not "Zenoh in the browser."** One small `Transport` interface (`packages/topics/src/transport.ts`); the app/SDK code is identical across every delivery mechanism, switchable live from the topbar dropdown. The research explored three backend approaches before folding them into the single `serve.py` (which taps LCM **and** Zenoh):
+**Thesis: "DimOS topics in the browser", not "Zenoh in the browser."** One small `Transport` interface (`packages/topics/src/transport.ts`); the app/SDK code is identical across every delivery mechanism, switchable live from the topbar dropdown. The research explored three backend approaches before folding them into the single gateway (which taps LCM **and** Zenoh):
 - **LCM relay** — read the LCM UDP-multicast bus, relay raw packets; the browser decodes. (A Node/Deno relay can't speak Zenoh natively — one reason the consolidated service is Python.)
 - **Zenoh relay** — subscribe Zenoh `**`, re-wrap as LC02; the practical way to put Zenoh behind a gateway.
 - **zenoh-ts (direct)** — `packages/topics/src/adapters/zenohTs.ts`. Browser ↔ `zenoh-bridge-remote-api`, **no gateway in the read path** → **true end-to-end on-demand**. Still shipped in the SDK as an option, but not wired into the app after consolidation.
@@ -32,7 +32,7 @@ Key properties:
 ## 3. Media plane (the camera is special)
 - The camera is the one heavy stream (`sensor_msgs.Image` 1280×720@20fps ≈ **55 MB/s raw / 11 MB/s JPEG**) and the only stream that gains nothing from "decode in the browser" — you just want to *see* it. So it belongs on its **own plane beside Transport**: opaque video, no 8-byte hash, no decode.
 - Built `MediaChannel` + `selectMediaChannel()` (`packages/topics/src/media.ts`) + `useVideo(topic)`; **pluggable + negotiated** like the transport dropdown — JPEG (universal floor) / WebRTC (aiortc; ~20–40× less bandwidth) / WebCodecs (deferred), chosen by capability + fallback.
-- Runs as its **own plane** (`servers/media.py`, the `/media` path of the one service): taps the shared bus, **encode-once-per-topic, fan-out to N viewers**, publishes nothing. (It began as a standalone Zenoh-peer node; consolidation folded it onto the unified bus, so webrtc/webcodecs now work on an LCM *or* Zenoh camera source.)
+- Runs as its **own plane** (`gateway/media.py`, the `/media` path of the one service): taps the shared bus, **encode-once-per-topic, fan-out to N viewers**, publishes nothing. (It began as a standalone Zenoh-peer node; consolidation folded it onto the unified bus, so webrtc/webcodecs now work on an LCM *or* Zenoh camera source.)
 - **Scaling keystones for many-cameras**: encode once / fan out; encode at the source and carry encoded video on the bus; on-demand by visibility; HW-decode per tile. Delivery future = WebRTC-SFU (LiveKit/mediasoup) vs WebCodecs+WebTransport (more native to the on-demand model; negotiate + fall back).
 
 ## 4. Custom messages in the browser (zero-rebuild)
@@ -51,7 +51,7 @@ Users who invent their own message types can't see them in the browser today: th
 - **The unifying lens:** a Module is just `In`(subscribe) / `Out`(publish) / `@rpc`(call) over one transport → **three primitives: subscribe · publish · call.** #2502's whole TS surface is those three over WS. "Nothing to invent, just consolidate." The browser is **just another module-consumer**, reached over WS only because browsers can't speak the bus.
 
 ## 7. QoS from the client (built)
-- Beyond rate-limiting (`topic.setRateLimit(hz)`), the data plane now runs a **priority + conflation outbox** (`servers/qos_sched.py`): pose/teleop lanes drain ahead of bulk lanes (lidar/camera), and freshest-wins conflation drops stale frames under backpressure instead of queueing them — so important data survives a saturated link. Client knobs live in `packages/topics/src/qos.ts`; see **[qos-demo.md](./qos-demo.md)**.
+- Beyond rate-limiting (`topic.setRateLimit(hz)`), the data plane now runs a **priority + conflation outbox** (`gateway/qos.py`): pose/teleop lanes drain ahead of bulk lanes (lidar/camera), and freshest-wins conflation drops stale frames under backpressure instead of queueing them — so important data survives a saturated link. Client knobs live in `packages/topics/src/qos.ts`; see **[qos-demo.md](./qos-demo.md)**.
 - Zenoh QoS is **publisher-side only** (`SubscriberOptions` carries none) → the browser is a subscriber, so the QoS fruit is **service-side** (where the outbox lives), not in the browser-direct path.
 - Network impairment for the demo rides the gateway `netsim` proxy (Chrome DevTools throttling does **not** affect WebSocket/WebRTC).
 

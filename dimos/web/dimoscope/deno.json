@@ -23,7 +23,7 @@
     "app": "cd app && deno run -A npm:vite",
     "build": "cd app && deno run -A npm:vite build",
     "preview": "cd app && deno run -A npm:vite preview",
-    "serve": "uv run python serve.py",
+    "serve": "uv run python -m gateway",
     "dtop": "deno run -A cli/dtop.ts",
     "check": "deno check cli/*.ts bench/*.ts packages/topics/src/**/*.ts packages/react/src/**/*.tsx && cd app && deno run -A npm:typescript/tsc --noEmit -p tsconfig.json",
     "bench": "deno run -A bench/bench.ts",

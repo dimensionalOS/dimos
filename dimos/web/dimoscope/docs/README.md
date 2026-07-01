@@ -13,7 +13,7 @@ The thesis: **"DimOS topics in the browser", not "Zenoh in the browser."** A sma
 
 ## The five delivery mechanisms (all on one service, behind one SDK)
 
-One Python process (`serve.py`, http://localhost:8080) taps **both LCM and Zenoh** and fans the same
+One Python process (the gateway, http://localhost:8080) taps **both LCM and Zenoh** and fans the same
 self-describing frames out over every mechanism — pick one live in the topbar dropdown:
 
 | Mechanism | Wire | Path | Notes |
@@ -33,7 +33,7 @@ The camera rides the same service on `/media` (webrtc / webcodecs / jpeg, encode
 DIMOS_TRANSPORT=zenoh uv run dimos --simulation dimsim run unitree-go2
 
 # 2. the whole backend — one process, all transports + the app
-deno task --cwd dimos/web/dimoscope serve            # = uv run python serve.py → http://localhost:8080
+deno task --cwd dimos/web/dimoscope serve            # = uv run python -m gateway → http://localhost:8080
 
 # 3. the app (dev, hot reload)  →  http://localhost:5173   (or just open http://localhost:8080/)
 deno task --cwd dimos/web/dimoscope app

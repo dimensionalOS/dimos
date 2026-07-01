@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 // createWebRtcDataTransport — read-only delivery over a WebRTC DataChannel (browser-only; Deno has
-// no RTCPeerConnection). Talks to servers/webrtc_data.py (a re-transmitter in front of the gateway):
+// no RTCPeerConnection). Talks to gateway/transports/webrtc.py (a re-transmitter in front of the gateway):
 // the channel carries the same [f64 gateway-send-ms][LC02] BINARY frames as WS/SSE/poll, so we decode
 // through the shared `frameToSample` — identical typed messages + latency accounting. The channel is
 // unordered + lossy by default (`{ordered:false, maxRetransmits:0}`), so under packet loss it has no

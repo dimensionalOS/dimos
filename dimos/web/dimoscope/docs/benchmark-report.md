@@ -2,11 +2,11 @@
 
 How we measure every way of getting a DimOS stream from the robot to a browser — across the **CLI**,
 the **real browser**, and a **real internet path** — and which transport to use for what. One backend
-(`serve.py`) is the single binary under test; only the *delivery mechanism* and the *network* change.
+(the gateway) is the single binary under test; only the *delivery mechanism* and the *network* change.
 
 ## What's under test
 
-The five same-origin delivery mechanisms on `serve.py`, plus two orthogonal axes:
+The five same-origin delivery mechanisms on the gateway, plus two orthogonal axes:
 
 | Mechanism | Wire | Path | Key property |
 |---|---|---|---|
@@ -26,10 +26,10 @@ The five same-origin delivery mechanisms on `serve.py`, plus two orthogonal axes
 |---|---|---|---|
 | **A — CLI / headless** | Deno (WS/SSE/poll, real client) + **Python `aiortc`/`aioquic` stand-ins** for WebRTC/WebTransport (Deno has no `RTCPeerConnection`/WebTransport) | `bench/netsim.ts` (TCP) + `bench/netsim-udp.ts` (UDP); **kernel `tc/netem` on the Linux VPS** | breadth, speed, 100s of reproducible iterations, CI, runs on a headless server, exact control |
 | **B — Browser / real runtime** | **real** Chromium / Firefox / WebKit via Playwright, driving `bench.html` (the actual SDK) | same `netsim` proxy (TCP-layer → runtime-agnostic) | the *real* WebRTC + WebTransport browser stacks (ICE/DTLS/QUIC + the `serverCertificateHashes` cert flow), WebCodecs, **cross-browser** behavior, the true UX |
-| **C — Real WAN** | `serve.py` on the **VPS**; Mac browser + CLI → VPS by IP | the real internet path (+ `tc/netem` on the VPS) | ground truth — does `netsim 3g/4g` predict reality |
+| **C — Real WAN** | the gateway on the **VPS**; Mac browser + CLI → VPS by IP | the real internet path (+ `tc/netem` on the VPS) | ground truth — does `netsim 3g/4g` predict reality |
 
 **Validation chain.** A number is trusted when **CLI-stand-in ≈ browser-real ≈ synthetic-netsim ≈
-kernel-netem ≈ real-WAN**. Because the same `serve.py` is the server in every layer, it's
+kernel-netem ≈ real-WAN**. Because the same gateway is the server in every layer, it's
 apples-to-apples; the layers cross-check each other — most importantly, **Layer B answers whether the
 cheap aiortc/aioquic CLI stand-ins actually predict the real browser stacks**.
 
@@ -71,22 +71,22 @@ cheap aiortc/aioquic CLI stand-ins actually predict the real browser stacks**.
 
 ---
 
-## Resolved: the earlier "double delivery" was a stray publisher, not a `serve.py` bug
+## Resolved: the earlier "double delivery" was a stray publisher, not a gateway bug
 
-An earlier pass reported `serve.py` "double-delivering" (`4× Pose` at ~576 msg/s ≈1.45×, `loss%` 99.98
+An earlier pass reported the gateway "double-delivering" (`4× Pose` at ~576 msg/s ≈1.45×, `loss%` 99.98
 on a clean LAN). That diagnosis was **wrong**. Root-caused and fixed:
 
 - **Actual cause:** a **stale `go2-bench` benchload process** (`dimos … run go2-bench --option
   benchload.autostart=true`) had been running for ~15 h, flooding **zenoh** with the same `/bench/p0..p3`
   topic *names* that the CLI's LCM `bench_publisher` uses. Two **independent** publishers on one topic
-  name (its seq counter had reached ~4.1 M) — `serve.py` faithfully delivered both. Not one message
+  name (its seq counter had reached ~4.1 M) — the gateway faithfully delivered both. Not one message
   duplicated; two different messages (proven by the payloads: LCM copy `frame_id="bench"`, zenoh copy
   `frame_id="<seq>"`).
-- **`serve.py`'s dual-tap is correct as designed** — tapping LCM **and** zenoh so a blueprint can switch
+- **The gateway's dual-tap is correct as designed** — tapping LCM **and** zenoh so a blueprint can switch
   transports with no restart. In normal use a topic is published on only one bus; nothing to reconcile.
 - **Proof:** after killing the stray process, a single publisher gives **`hz≈328`** (4× ~82 Hz, single
   delivery) and **`loss%=0`** across every profile — see the clean tables below. No code change to
-  `serve.py`/`bus.py` was needed (a content-dedup was prototyped, then reverted — it wouldn't even apply
+  `gateway/{app,bus}.py` was needed (a content-dedup was prototyped, then reverted — it wouldn't even apply
   here, since the two copies are genuinely different messages).
 - **Prevention:** benches must run in isolation. Before a run, `ps aux | grep -E "go2-bench|bench_source|
   bench_publisher"` and kill strays; never run two publishers on the same topic names at once.
@@ -141,9 +141,9 @@ teleop-under-bad-network case for WebRTC/WebTransport.**
 **4.67× less bandwidth** (client-driven); on-demand (1 of 4 topics) → **75% reduction**; prioritization
 → capping lidar at 2 Hz keeps **pose alive at 169 Hz, loss 0** on a saturated link.
 
-**Decode location — `bench:decode`:** for the small PoseStamped + grid load, server→JSON moved **~1×**
-the bytes of the binary relay (the rosbridge tax is **payload-dependent** — it balloons on large packed
-arrays like lidar/pointcloud, ~negligible on small structured pose). Keep decode on the client.
+**Decode location — `bench:decode`:** for the small PoseStamped + grid load, server→JSON moved **~2.64×**
+the bytes of the binary relay (247 vs 93 kB/s). The rosbridge tax is **payload-dependent** — it balloons
+further on large packed arrays like lidar/pointcloud. Keep decode on the client.
 
 > **Gaps in this CLI run:** the **WebRTC-data e2e** and **WebTransport-e2e** *aiortc/aioquic probes*
 > hit connection errors (`webrtc_client_probe.py` / `webtransport_client_probe.py`) — environmental,
@@ -215,7 +215,7 @@ above is browser→VPS over the same path. Domain-free (raw IP + self-signed WT 
 deno task bench:all                          # matrix · decode · webrtc · webtransport · loss · qos
 # Browser (real runtime, cross-browser):
 deno task bench:browser                       # (Stage 2) Playwright Chromium/Firefox/WebKit
-# Real WAN: serve.py on the VPS, then from the Mac:
+# Real WAN: the gateway on the VPS, then from the Mac:
 GATEWAY_URL=ws://<vps>:8080/ws deno task bench    # see docs/real-wan.md
 ```
 
@@ -223,13 +223,13 @@ GATEWAY_URL=ws://<vps>:8080/ws deno task bench    # see docs/real-wan.md
 
 **Done & committed:** `bench.tsx` fixed to the 5 mechanisms · this report (methodology + CLI-vs-browser
 can/can't + simulation hierarchy + cross-browser support matrix) · root-caused the earlier "double
-delivery" to a **stray `go2-bench` publisher** (killed; `serve.py` is correct — no code change) · the
+delivery" to a **stray `go2-bench` publisher** (killed; the gateway is correct — no code change) · the
 **clean CLI numbers** (light/heavy/WT-loss/QoS/decode), single-publisher, `loss%=0`.
 
 **Teed up (each is one command, infra exists):**
 - **Browser perf** (real Chrome via claude-in-chrome MCP, or `npx playwright` cross-browser) →
   `RESULTS-browser.md` + the CLI-stand-in-vs-real-browser latency cross-check.
-- **VPS / kernel netem** — `docs/real-wan.md` runbook: `uv sync --extra web` + `serve.py` on the VPS,
+- **VPS / kernel netem** — `docs/real-wan.md` runbook: `uv sync --extra web` + the gateway on the VPS,
   the CLI suite there, and `tc/netem` (a Mac can't) for the kernel-accurate cross-check.
 - **Real WAN** — Mac → VPS by IP; **needs you to open the VPS firewall port** (TCP 8080 + UDP 8443).
 

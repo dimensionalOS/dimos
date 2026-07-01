@@ -152,7 +152,7 @@ loss* — measured for the sibling QUIC datagram path in §8.
 ## 8. WebTransport (HTTP/3 / QUIC) — datagrams + streams, and the loss payoff ⭐
 
 `deno task bench:webtransport`: a headless aioquic client pulls ~**330 Hz** of `/bench/*` from
-the service's WebTransport server (`servers/bench.py`, QUIC on `:8443`), **size-routing** each frame —
+the service's WebTransport server (`gateway/transports/webtransport.py`, QUIC on `:8443`), **size-routing** each frame —
 small (pose/imu, ≤1100 B) over **datagrams** (unreliable/unordered, never retransmitted), large (lidar)
 over a per-frame **unidirectional stream** (reliable). Same `[f64 send-ms][LC02]` frames, same client
 `frameToSample` decode. Clean link: datagram p95 ≈ 2 ms, stream p95 ≈ 9 ms. **Verified in real Chrome**

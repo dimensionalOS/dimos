@@ -35,11 +35,11 @@ uv sync --extra web        # light: zenoh + aioquic + aiortc (WS/SSE/poll/WebRTC
 
 # run the single service — ONE process: the app + every transport
 cd dimos/web/dimoscope
-uv run python serve.py        # http://0.0.0.0:8080  (app / + /ws /sse /poll /rtc /media /cert) · QUIC UDP :8443
+uv run python -m gateway        # http://0.0.0.0:8080  (app / + /ws /sse /poll /rtc /media /cert) · QUIC UDP :8443
 # + a synthetic data source so there's something to stream (or run a real robot / a sim):
 DIMOS_TRANSPORT=lcm BENCH_HZ=100 uv run python bench/bench_publisher.py
 ```
-(No deno needed on the VPS — the server is all Python now. `serve.py` taps **both** LCM and Zenoh, so
+(No deno needed on the VPS — the server is all Python now. The gateway taps **both** LCM and Zenoh, so
 either `DIMOS_TRANSPORT` for the source works.)
 
 ### Open the firewall (the part people forget)
@@ -81,7 +81,7 @@ is the client-credible result. (Save it as `bench/RESULTS-realwan.md`.)
 
 ## Appendix — optional public endpoint via Coolify + Caddy
 Only if you want clients to hit a real `wss://dimos.<domain>` (app over https, valid CA cert, no
-hash-pinning): a small Dockerfile (`uv sync --extra web` → `python serve.py`) deployed as a
+hash-pinning): a small Dockerfile (`uv sync --extra web` → `python -m gateway`) deployed as a
 Coolify app; Caddy fronts TCP with auto Let's Encrypt; map **UDP :8443** through for QUIC. Not required
 for the testing above.
 
@@ -94,7 +94,7 @@ steps below when done.**
 
 **What's deployed (VPS `37.60.232.68`, user `kristjan`):**
 - Isolated clone `~/dimos-bench` (branch `kris/research-29-06-2026`) — nothing else on the box touched.
-- `serve.py` + a single `bench_source` running in **tmux session `dimos-realwan-65329`** (serve on
+- the gateway + a single `bench_source` running in **tmux session `dimos-realwan-65329`** (serve on
   `:8080`, WT on `:8443`); source PID in `~/realwan-source.pid`; logs `~/realwan-serve.log` /
   `~/realwan-source.log`.
 - **ufw** rules added: `8080/tcp` + `8443/udp` (only these two — other rules e.g. 6001/6002/2222 belong
@@ -112,9 +112,9 @@ steps below when done.**
 **TEARDOWN (one block, reversible, non-destructive):**
 ```bash
 ssh -i ~/.ssh/vps-coolify kristjan@37.60.232.68 '
-  tmux kill-session -t dimos-realwan-65329 2>/dev/null   # stop serve.py
+  tmux kill-session -t dimos-realwan-65329 2>/dev/null   # stop the gateway
   kill $(cat ~/realwan-source.pid) 2>/dev/null           # stop the source
-  pkill -f "dimos-bench.*serve.py"; pkill -f "dimos-bench.*bench_source"   # belt-and-suspenders (scoped to ~/dimos-bench)
+  pkill -f "dimos-bench.*gateway"; pkill -f "dimos-bench.*bench_source"   # belt-and-suspenders (scoped to ~/dimos-bench)
   sudo tc qdisc del dev lo root 2>/dev/null               # remove any leftover netem
   sudo ufw delete allow 8080/tcp; sudo ufw delete allow 8443/udp; sudo ufw delete allow 32768:60999/udp   # close the ports (incl. WebRTC ICE range)
   rm -rf ~/dimos-bench ~/realwan-*.log ~/realwan-source.pid ~/DIMOS-BENCH-AGENT-65329a9d.md
