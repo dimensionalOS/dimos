@@ -624,7 +624,7 @@ def main() -> None:
     )
 
     rt = sl.RuntimeParameters()
-    rt.texture_confidence_threshold = 0     # no SDK-level texture gate; pipeline handles quality
+    rt.texture_confidence_threshold = 100    # keep all depth; gradient filter handles quality downstream
     rt.remove_saturated_areas       = True  # pixels overexposed by bright lights have no valid signal
 
     frame = 0
