@@ -58,7 +58,7 @@ _Z_REL_HI: float =  0.5   # 0.5 m above camera
 # _FLOOR_RAY_Z is the Z component of the normalised ray direction below which
 # we treat the point as a floor hit. -0.30 ≈ 17° below horizontal; tune up
 # (toward 0) to be more conservative, down (toward -1) to be more permissive.
-_FLOOR_RAY_Z: float = -0.30
+_FLOOR_RAY_Z: float = -0.15   # tighter: rejects rays >~9° below horizontal → removes distant floor
 
 
 def _height_color(z_rel: np.ndarray) -> np.ndarray:
