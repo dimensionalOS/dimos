@@ -33,6 +33,8 @@
     "fmt": "deno fmt",
     "lint": "deno lint",
     "dog": "DIMOS_TRANSPORT=zenoh uv run dimos --simulation dimsim run go2-load",
+    "load": "DIMOS_TRANSPORT=zenoh uv run dimos run load",
+    "load:flood": "DIMOS_TRANSPORT=zenoh uv run dimos run load -o go2load.heavy_hz=20 -o go2load.heavy_bytes=1000000",
     "sim": "DIMOS_TRANSPORT=zenoh uv run dimos --simulation mujoco run unitree-go2",
     "sim:dimsim": "DIMOS_TRANSPORT=zenoh uv run dimos --simulation dimsim run unitree-go2",
     "sim:replay": "DIMOS_TRANSPORT=zenoh uv run dimos --replay run unitree-go2"
