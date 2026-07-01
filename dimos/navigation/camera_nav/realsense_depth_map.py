@@ -1,15 +1,23 @@
-"""RealSense D435i → probabilistic occupancy map.
+"""RealSense D435i → world-frame depth map using on-board IMU + point-cloud odometry.
 
-Live cloud:  gradient filter → backproject → Rerun (fast, same quality as ZED)
-Map:         log-odds occupancy with raycasting — rays clear free space,
-             depth measurements mark occupied. Voxels only appear in the map
-             once occupied evidence exceeds free evidence.
+VIO pipeline:
+  MadgwickFilter         — D435i accel + gyro → orientation R  (every frame, ~1 ms)
+  PointCloudOdometry     — translation-only ICP against previous world cloud
+                           (runs in the map thread; live cloud uses t from last frame)
 
-Difference from ZED: no built-in VIO. The map is built in the camera's
-starting frame (identity pose). Revisiting the same area updates the same
-voxels correctly so long as the camera returns near its starting pose.
-For a true world-frame map with arbitrary motion, add a T265 tracking
-camera — swap the identity pose below for T265 pose data.
+World-frame map:
+  Same FastVoxelMap as the working ZED implementation. Each frame contributes
+      xyz_world = xyz_cam @ R.T + t
+  with R from IMU and t from ICP. As the camera moves, new voxels are added and
+  previously seen areas receive additional observations at the same world positions.
+
+Notes:
+  - Accel + gyro require D435i firmware ≥ 5.12.  Both streams are enabled below.
+  - IMU extrinsics (accel → depth optical) are read from the SDK and applied so
+    Madgwick operates directly in camera_link frame (X-fwd, Y-left, Z-up).
+  - ICP tracks translation with a one-frame lag — negligible at 15 fps.
+  - For full drift-free world-frame mapping, pair with a T265 and swap in
+    rs.stream.pose; the rest of the pipeline is unchanged.
 
 Usage:
     python -m dimos.navigation.camera_nav.realsense_depth_map
@@ -27,37 +35,33 @@ import numpy as np
 import rerun as rr
 import rerun.blueprint as rrb
 from scipy.ndimage import sobel
+from scipy.spatial import cKDTree
 
 if TYPE_CHECKING:
     import pyrealsense2 as rs
 
 
-# ── Constants ────────────────────────────────────────────────────────────────
+# ── Constants ─────────────────────────────────────────────────────────────────
 
 _VOFF  = np.int64(100_000)
 _VMASK = np.int64(0x3FFFF)
 
-_Z_REL_LO:   float = -1.4
-_Z_REL_HI:   float =  0.5
+# Camera-relative height band (Z in camera_link = up direction from IMU).
+# Height is measured relative to the camera, not world origin, so it is
+# unaffected by absolute position error in the translation estimate.
+_Z_REL_LO:    float = -1.4
+_Z_REL_HI:    float =  0.5
 _FLOOR_RAY_Z: float = -0.30
 
 # Optical frame (X=right, Y=down, Z=depth) → camera_link (X=fwd, Y=left, Z=up)
 _R_OPT_TO_LINK = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=np.float32)
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _pack(vkeys: np.ndarray) -> np.ndarray:
     v = (vkeys.astype(np.int64) + _VOFF) & _VMASK
     return (v[:, 0] << np.int64(36)) | (v[:, 1] << np.int64(18)) | v[:, 2]
-
-
-def _unpack(keys: np.ndarray) -> np.ndarray:
-    """int64 keys → (N, 3) int64 voxel indices."""
-    vx = ((keys >> np.int64(36)) & _VMASK) - _VOFF
-    vy = ((keys >> np.int64(18)) & _VMASK) - _VOFF
-    vz = (keys & _VMASK) - _VOFF
-    return np.column_stack([vx, vy, vz])
 
 
 def _height_color(z_rel: np.ndarray) -> np.ndarray:
@@ -99,17 +103,13 @@ class GradientStabilityFilter:
 @dataclass
 class DepthFramePacket:
     timestamp:  float
-    depth:      np.ndarray       # H×W float32, NaN=invalid
+    depth:      np.ndarray       # H×W float32, metres, NaN=invalid
     intrinsics: np.ndarray       # [fx, fy, cx, cy] float64
     width:      int
     height:     int
-    pose_R:     np.ndarray       # 3×3 float32 camera→world
-    pose_t:     np.ndarray       # (3,) float32 camera→world
+    pose_R:     np.ndarray       # 3×3 float32  camera_link → world
+    pose_t:     np.ndarray       # (3,) float32 camera world position
     colors_hw:  np.ndarray | None = field(default=None)  # H×W×3 uint8 RGB
-
-    @property
-    def valid_fraction(self) -> float:
-        return float(np.isfinite(self.depth).mean())
 
     @property
     def K(self) -> np.ndarray:
@@ -117,16 +117,166 @@ class DepthFramePacket:
         return np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float64)
 
 
+# ── IMU orientation — Madgwick AHRS ──────────────────────────────────────────
+
+class MadgwickFilter:
+    """Attitude estimation from gyroscope + accelerometer.
+
+    Fuses gyro integration (fast, drifts over minutes) with gravity direction
+    from accelerometer (stable, noisy during motion).  Outputs R: the rotation
+    from the sensor frame to world (Z-up).
+
+    beta: gradient-descent gain. 0.033 is a conservative default.
+    Increase toward 0.1 if orientation drifts during slow motion.
+    """
+
+    def __init__(self, beta: float = 0.033) -> None:
+        self._q    = np.array([1., 0., 0., 0.], dtype=np.float64)  # w x y z
+        self._beta = beta
+        self._t_prev: float | None = None
+
+    def update(self, gyro: np.ndarray, accel: np.ndarray, t: float) -> None:
+        """gyro: rad/s (x,y,z),  accel: m/s² (x,y,z),  t: monotonic seconds."""
+        if self._t_prev is None:
+            self._t_prev = t
+            return
+        dt = min(t - self._t_prev, 0.1)
+        self._t_prev = t
+        if dt <= 0:
+            return
+
+        q0, q1, q2, q3 = self._q
+        gx, gy, gz = gyro.astype(np.float64)
+
+        # Accelerometer correction (skip during near-freefall or strong vibration)
+        a_n = np.linalg.norm(accel)
+        if a_n > 0.5:
+            ax, ay, az = accel.astype(np.float64) / a_n
+            # Objective: align predicted gravity (R^T * [0,0,1]) with measured accel
+            f1 = 2*(q1*q3 - q0*q2) - ax
+            f2 = 2*(q0*q1 + q2*q3) - ay
+            f3 = 2*(0.5 - q1**2 - q2**2) - az
+            J  = np.array([
+                [-2*q2,  2*q3, -2*q0, 2*q1],
+                [ 2*q1,  2*q0,  2*q3, 2*q2],
+                [    0, -4*q1, -4*q2,    0],
+            ])
+            grad = J.T @ np.array([f1, f2, f3])
+            gn   = np.linalg.norm(grad)
+            if gn > 1e-9:
+                grad /= gn
+        else:
+            grad = np.zeros(4)
+
+        q_dot = 0.5 * np.array([
+            -q1*gx - q2*gy - q3*gz,
+             q0*gx + q2*gz - q3*gy,
+             q0*gy - q1*gz + q3*gx,
+             q0*gz + q1*gy - q2*gx,
+        ]) - self._beta * grad
+
+        self._q = self._q + q_dot * dt
+        self._q /= np.linalg.norm(self._q) + 1e-12
+
+    @property
+    def R(self) -> np.ndarray:
+        """Rotation: sensor_frame → world (Z-up)."""
+        q0, q1, q2, q3 = self._q
+        return np.array([
+            [1-2*(q2**2+q3**2), 2*(q1*q2-q0*q3),   2*(q1*q3+q0*q2)  ],
+            [2*(q1*q2+q0*q3),   1-2*(q1**2+q3**2), 2*(q2*q3-q0*q1)  ],
+            [2*(q1*q3-q0*q2),   2*(q2*q3+q0*q1),   1-2*(q1**2+q2**2)],
+        ], dtype=np.float32)
+
+
+# ── Translation odometry — rotation-decoupled ICP ────────────────────────────
+
+class PointCloudOdometry:
+    """Frame-to-frame translation via ICP with rotation already applied by IMU.
+
+    Each frame's camera_link points are first rotated to a gravity-aligned
+    frame using R from MadgwickFilter, then shifted by t to reach world frame.
+    ICP finds the shift by aligning current gravity-aligned pts to the previous
+    world-frame cloud.  Converges in 3–4 iterations since rotation is pre-applied.
+
+    Updated in the map thread (daemon) so it does not slow live-cloud rendering.
+    Live cloud uses t from the previous frame — one-frame lag, ~67 ms at 15 fps.
+    """
+
+    ITERS    = 4
+    MAX_DIST = 0.40    # m  — reject correspondences further than this
+    N_SRC    = 1_500   # subsample from current frame
+    N_DST    = 8_000   # subsample stored from previous world cloud
+    N_STORE  = 10_000  # how many pts to keep as "previous world cloud"
+
+    def __init__(self) -> None:
+        self._t          = np.zeros(3, dtype=np.float32)
+        self._lock       = threading.Lock()
+        self._prev_world: np.ndarray | None = None
+
+    @property
+    def t(self) -> np.ndarray:
+        with self._lock:
+            return self._t.copy()
+
+    def update(self, xyz_cam: np.ndarray, R: np.ndarray) -> np.ndarray:
+        """Estimate world-frame translation for the current frame.
+
+        xyz_cam: (N, 3) float32, camera_link-frame stable filtered points
+        R:       (3, 3) float32, orientation from MadgwickFilter
+        Returns: (3,) float32 world translation
+        """
+        # Rotate to gravity-aligned frame (no translation yet)
+        pts_ga = (xyz_cam @ R.T).astype(np.float32)
+
+        with self._lock:
+            t_est = self._t.copy()
+
+        if self._prev_world is None or len(pts_ga) < 50:
+            t_new = t_est
+        else:
+            n_src = min(self.N_SRC, len(pts_ga))
+            n_dst = min(self.N_DST, len(self._prev_world))
+            src   = pts_ga[np.random.choice(len(pts_ga), n_src, replace=False)]
+            dst   = self._prev_world[np.random.choice(len(self._prev_world), n_dst, replace=False)]
+            tree  = cKDTree(dst)
+
+            for _ in range(self.ITERS):
+                dists, idx = tree.query(src + t_est, k=1, workers=1)
+                mask = dists < self.MAX_DIST
+                if mask.sum() < 30:
+                    break
+                # Centroid shift of matched pairs = translation correction
+                delta = dst[idx[mask]].mean(axis=0) - (src[mask] + t_est).mean(axis=0)
+                t_est = (t_est + 0.7 * delta).astype(np.float32)  # damped update
+
+            t_new = t_est
+
+        # Store current world-frame pts as reference for next frame
+        n_st  = min(self.N_STORE, len(pts_ga))
+        idx_s = np.random.choice(len(pts_ga), n_st, replace=False)
+        self._prev_world = (pts_ga[idx_s] + t_new).astype(np.float32)
+
+        with self._lock:
+            self._t = t_new
+        return t_new
+
+
 # ── Backprojector ─────────────────────────────────────────────────────────────
 
 class DepthBackprojector:
-    """Pinhole backproject → rotate optical→camera_link → apply pose."""
+    """Pinhole backproject → camera_link frame → world frame.
+
+    Returns (xyz_world, xyz_cam, colors):
+      xyz_cam:   camera_link-frame pts — passed to map worker for ICP
+      xyz_world: world-frame pts — used for live-cloud display
+    """
 
     def project(
         self,
         pkt:    DepthFramePacket,
         stable: np.ndarray | None = None,
-    ) -> tuple[np.ndarray, np.ndarray | None]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
         valid = np.isfinite(pkt.depth) if stable is None else (np.isfinite(pkt.depth) & stable)
         d = pkt.depth
         H, W = d.shape
@@ -137,97 +287,76 @@ class DepthBackprojector:
         xyz_opt = np.column_stack([(uu[valid] - cx) * dd / fx,
                                    (vv[valid] - cy) * dd / fy,
                                    dd]).astype(np.float32)
-        xyz_cam   = xyz_opt @ _R_OPT_TO_LINK.T
-        xyz_world = (xyz_cam @ pkt.pose_R.T + pkt.pose_t).astype(np.float32)
+        xyz_cam   = xyz_opt @ _R_OPT_TO_LINK.T                           # optical → camera_link
+        xyz_world = (xyz_cam @ pkt.pose_R.T + pkt.pose_t).astype(np.float32)  # → world
         colors    = pkt.colors_hw[valid] if pkt.colors_hw is not None else None
-        return xyz_world, colors
+        return xyz_world, xyz_cam, colors
 
 
-# ── Probabilistic occupancy voxel map ────────────────────────────────────────
+# ── Voxel map (same as ZED — the one that works) ─────────────────────────────
 
-class OccupancyVoxelMap:
-    """Log-odds occupancy map updated by ray casting.
+class FastVoxelMap:
+    """Append-only world-frame point map backed entirely by numpy arrays."""
 
-    For each stable depth measurement:
-      - RAY_SAMPLES points sampled between camera and surface → free evidence
-      - Terminal voxel (the measurement itself) → occupied evidence
+    COMPACT_EVERY: int = 30
 
-    A voxel only appears in the output once accumulated occupied evidence
-    exceeds free evidence (log_odds > RENDER_THRESH). This creates natural
-    separation between free corridors and occupied surfaces.
-    """
+    def __init__(self, voxel_size: float = 0.05, capacity: int = 500_000) -> None:
+        self._v      = voxel_size
+        self._cap    = capacity
+        self._pts    = np.empty((capacity, 3), dtype=np.float32)
+        self._n      = 0
+        self._n_adds = 0
 
-    LOG_FREE      = -0.4    # per-sample decrement (free ray hit)
-    LOG_OCC       =  0.85   # per-measurement increment (occupied hit)
-    LOG_MIN       = -2.0    # clamp — prevents over-confidence in free
-    LOG_MAX       =  5.0    # clamp — prevents over-confidence in occupied
-    RENDER_THRESH =  0.5    # log-odds above this → render as occupied
-    RAY_SAMPLES   =  6      # free-space samples per ray (between cam and surface)
-
-    def __init__(self, voxel_size: float = 0.05) -> None:
-        self._v       = voxel_size
-        self._data:   dict[int, float] = {}
-        self._occupied: set[int]       = set()   # keys where log_odds > RENDER_THRESH
-
-    def update(self, xyz_world: np.ndarray, cam_pos: np.ndarray) -> None:
-        if len(xyz_world) == 0:
+    def add(self, xyz: np.ndarray) -> None:
+        if len(xyz) == 0:
             return
+        vk = np.floor(xyz / self._v).astype(np.int32)
+        _, first = np.unique(_pack(vk), return_index=True)
+        new_pts = xyz[first]
+        if self._n + len(new_pts) > self._cap:
+            self._compact()
+        if self._n + len(new_pts) > self._cap:
+            self._grow()
+        s = slice(self._n, self._n + len(new_pts))
+        self._pts[s] = new_pts
+        self._n += len(new_pts)
+        self._n_adds += 1
+        if self._n_adds % self.COMPACT_EVERY == 0:
+            self._compact()
 
-        # ── Free-space samples along each ray ─────────────────────────
-        # t in (0.05, 0.90): avoid the camera voxel and the surface voxel
-        t    = np.linspace(0.05, 0.90, self.RAY_SAMPLES, dtype=np.float32)
-        dirs = (xyz_world - cam_pos).astype(np.float32)            # (N, 3)
-        free_pts = cam_pos + dirs[:, None, :] * t[None, :, None]  # (N, K, 3)
-        free_pts = free_pts.reshape(-1, 3)
+    def _compact(self) -> None:
+        if self._n == 0:
+            return
+        vk = np.floor(self._pts[:self._n] / self._v).astype(np.int32)
+        _, idx = np.unique(_pack(vk), return_index=True)
+        n_u = len(idx)
+        self._pts[:n_u] = self._pts[:self._n][idx]
+        self._n = n_u
 
-        free_vk = np.floor(free_pts / self._v).astype(np.int32)
-        uf, fc  = np.unique(_pack(free_vk), return_counts=True)
+    def _grow(self) -> None:
+        cap2 = self._cap * 2
+        buf  = np.empty((cap2, 3), dtype=np.float32)
+        buf[:self._n] = self._pts[:self._n]
+        self._pts = buf
+        self._cap = cap2
 
-        # ── Occupied at the measurement ────────────────────────────────
-        occ_vk = np.floor(xyz_world / self._v).astype(np.int32)
-        uo, oc = np.unique(_pack(occ_vk), return_counts=True)
-
-        d   = self._data
-        occ = self._occupied
-
-        for k, c in zip(uf.tolist(), fc.tolist()):
-            old = d.get(k, 0.0)
-            new = max(self.LOG_MIN, old + c * self.LOG_FREE)
-            if old > self.RENDER_THRESH and new <= self.RENDER_THRESH:
-                occ.discard(k)
-            d[k] = new
-
-        for k, c in zip(uo.tolist(), oc.tolist()):
-            old = d.get(k, 0.0)
-            new = min(self.LOG_MAX, old + c * self.LOG_OCC)
-            if new > self.RENDER_THRESH and old <= self.RENDER_THRESH:
-                occ.add(k)
-            d[k] = new
-
-    def occupied_points(self) -> np.ndarray:
-        if not self._occupied:
-            return np.zeros((0, 3), dtype=np.float32)
-        keys   = np.array(list(self._occupied), dtype=np.int64)
-        voxels = _unpack(keys).astype(np.float32)
-        return (voxels + 0.5) * self._v   # voxel centre coordinates
+    def points(self) -> np.ndarray:
+        return self._pts[:self._n]
 
     @property
-    def n_occupied(self) -> int:
-        return len(self._occupied)
-
-    @property
-    def n_total(self) -> int:
-        return len(self._data)
+    def count(self) -> int:
+        return self._n
 
 
-# ── RealSense depth source ───────────────────────────────────────────────────
+# ── RealSense source with IMU ─────────────────────────────────────────────────
 
 class RealSenseDepthSource:
-    """pyrealsense2 → DepthFramePacket.
+    """D435i → DepthFramePacket with VIO pose from IMU + point-cloud odometry.
 
-    Depth is aligned to the color frame (same intrinsics, no pixel offset).
-    No VIO: pose is always identity. Map accumulates in the camera's
-    starting frame.
+    Enables accel + gyro streams alongside depth + color.  IMU extrinsics are
+    read from the SDK so MadgwickFilter operates in camera_link frame directly.
+    Translation comes from PointCloudOdometry (updated in the map thread,
+    one frame behind — see DepthStreamer._map_worker).
     """
 
     MIN_DEPTH: float = 0.3
@@ -240,8 +369,10 @@ class RealSenseDepthSource:
         self._height = height
 
         cfg = rs.config()
-        cfg.enable_stream(rs.stream.depth, width, height, rs.format.z16,  fps)
-        cfg.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
+        cfg.enable_stream(rs.stream.depth, width, height, rs.format.z16,           fps)
+        cfg.enable_stream(rs.stream.color, width, height, rs.format.bgr8,          fps)
+        cfg.enable_stream(rs.stream.accel, rs.format.motion_xyz32f, 250)
+        cfg.enable_stream(rs.stream.gyro,  rs.format.motion_xyz32f, 400)
 
         self._pipeline = rs.pipeline()
         profile        = self._pipeline.start(cfg)
@@ -251,6 +382,7 @@ class RealSenseDepthSource:
         )
         self._align = rs.align(rs.stream.color)
 
+        # Intrinsics: color stream (depth is aligned to it)
         intr = (profile.get_stream(rs.stream.color)
                        .as_video_stream_profile()
                        .get_intrinsics())
@@ -258,34 +390,63 @@ class RealSenseDepthSource:
             [intr.fx, intr.fy, intr.ppx, intr.ppy], dtype=np.float64
         )
 
-        self._pose_R = np.eye(3, dtype=np.float32)
-        self._pose_t = np.zeros(3, dtype=np.float32)
+        # IMU-to-camera_link rotation for frame alignment
+        # accel → depth-optical → camera_link
+        ext             = (profile.get_stream(rs.stream.accel)
+                                  .get_extrinsics_to(profile.get_stream(rs.stream.depth)))
+        R_imu_to_depth  = np.array(ext.rotation, dtype=np.float32).reshape(3, 3)
+        self._R_imu_to_link = _R_OPT_TO_LINK @ R_imu_to_depth   # IMU → camera_link
+
+        self._madgwick = MadgwickFilter(beta=0.033)
+        self.odom      = PointCloudOdometry()    # translation; updated by map worker
+        self._pose_locked = False
 
     @property
     def pose_locked(self) -> bool:
-        return True   # identity pose is always "locked"
+        return self._pose_locked
 
     def read(self, ts: float) -> DepthFramePacket:
         frames  = self._pipeline.wait_for_frames()
         aligned = self._align.process(frames)
 
-        depth_raw = np.asarray(
+        # ── IMU: update orientation ────────────────────────────────────
+        gyro_f  = frames.first_or_default(rs.stream.gyro)   # type: ignore[name-defined]
+        accel_f = frames.first_or_default(rs.stream.accel)  # type: ignore[name-defined]
+        if gyro_f and accel_f:
+            g = gyro_f.as_motion_frame().get_motion_data()
+            a = accel_f.as_motion_frame().get_motion_data()
+            gyro_imu  = np.array([g.x, g.y, g.z], dtype=np.float32)
+            accel_imu = np.array([a.x, a.y, a.z], dtype=np.float32)
+            # Rotate measurements to camera_link frame before filter
+            gyro_link  = self._R_imu_to_link @ gyro_imu
+            accel_link = self._R_imu_to_link @ accel_imu
+            self._madgwick.update(gyro_link, accel_link, ts)
+            if not self._pose_locked:
+                print("*** IMU locked ***")
+                self._pose_locked = True
+
+        R = self._madgwick.R.copy()
+        t = self.odom.t                     # translation from previous ICP update
+
+        # ── Depth ──────────────────────────────────────────────────────
+        depth = np.asarray(
             aligned.get_depth_frame().get_data(), dtype=np.float32
         ) * self._depth_scale
-        invalid = (depth_raw <= 0) | (depth_raw < self.MIN_DEPTH) | (depth_raw > self.MAX_DEPTH)
-        depth_raw[invalid] = np.nan
+        invalid = (depth <= 0) | (depth < self.MIN_DEPTH) | (depth > self.MAX_DEPTH)
+        depth[invalid] = np.nan
 
+        # ── Color ──────────────────────────────────────────────────────
         bgr       = np.asarray(aligned.get_color_frame().get_data(), dtype=np.uint8)
         colors_hw = bgr[:, :, ::-1].copy()
 
         return DepthFramePacket(
             timestamp  = ts,
-            depth      = depth_raw,
+            depth      = depth,
             intrinsics = self._intrinsics,
             width      = self._width,
             height     = self._height,
-            pose_R     = self._pose_R,
-            pose_t     = self._pose_t,
+            pose_R     = R,
+            pose_t     = t,
             colors_hw  = colors_hw,
         )
 
@@ -296,17 +457,16 @@ class RealSenseDepthSource:
 # ── Streamer ──────────────────────────────────────────────────────────────────
 
 class DepthStreamer:
-    """Two-layer pipeline.
+    """Two-layer pipeline — mirrors the ZED implementation that worked.
 
     Main thread  (fast): gradient filter → backproject → live Rerun cloud
-    Map thread (async):  height filter → isolation filter → OccupancyVoxelMap
-                         with ray casting → periodic Rerun map update
+    Map thread (async):  height/floor/isolation filter → ICP (updates translation)
+                         → xyz_world = xyz_cam @ R.T + t → FastVoxelMap → Rerun map
     """
 
-    MAX_CLOUD    = 50_000
-    MAX_MAP      = 200_000
-    MAP_EVERY    = 5    # frames between occupancy map updates
-    MAP_LOG_EVERY = 30  # frames between Rerun map renders
+    MAX_CLOUD  = 50_000
+    MAX_MAP    = 200_000
+    MAP_EVERY  = 5
 
     def __init__(
         self,
@@ -317,12 +477,11 @@ class DepthStreamer:
         self._src            = source
         self._bp             = backproj
         self._grad           = grad_filter or GradientStabilityFilter()
-        self._occ            = OccupancyVoxelMap(voxel_size=0.05)
-        self._occ_lock       = threading.Lock()
-        self._cam_z          = 0.0
-        self._pinhole_logged = False
+        self._vox            = FastVoxelMap(voxel_size=0.05)
+        self._vox_lock       = threading.Lock()
         self._last_n_valid   = 0
         self._last_n_stable  = 0
+        self._pinhole_logged = False
         self._map_queue: queue.Queue = queue.Queue(maxsize=16)
         self._map_thread = threading.Thread(target=self._map_worker, daemon=True)
         self._map_thread.start()
@@ -344,53 +503,60 @@ class DepthStreamer:
         self._last_n_valid  = int(np.isfinite(pkt.depth).sum())
         self._last_n_stable = int(stable_mask.sum())
 
-        xyz, colors = self._bp.project(pkt, stable_mask)
-        if len(xyz) == 0:
+        xyz_world, xyz_cam, colors = self._bp.project(pkt, stable_mask)
+        if len(xyz_world) == 0:
             return
 
-        self._cam_z = float(pkt.pose_t[2])
-        n   = min(len(xyz), self.MAX_CLOUD)
-        idx = np.random.choice(len(xyz), n, replace=False) if len(xyz) > n else np.arange(n)
+        # Live cloud — instant, no map ops
+        n   = min(len(xyz_world), self.MAX_CLOUD)
+        idx = np.random.choice(len(xyz_world), n, replace=False) if len(xyz_world) > n else np.arange(n)
+        cam_z = float(pkt.pose_t[2])
         cloud_colors = (colors[idx] if colors is not None
-                        else _height_color(xyz[idx, 2] - self._cam_z))
-        rr.log("world/cloud", rr.Points3D(positions=xyz[idx], colors=cloud_colors, radii=0.003))
+                        else _height_color(xyz_world[idx, 2] - cam_z))
+        rr.log("world/cloud", rr.Points3D(positions=xyz_world[idx], colors=cloud_colors, radii=0.003))
 
-        try:
-            self._map_queue.put_nowait((xyz, pkt.pose_t.copy(), self._cam_z, frame))
-        except queue.Full:
-            pass
+        # Hand xyz_cam + R to map worker for ICP + accumulation
+        if self._src.pose_locked:
+            try:
+                self._map_queue.put_nowait((xyz_cam, pkt.pose_R.copy(), frame))
+            except queue.Full:
+                pass
 
     def _map_worker(self) -> None:
         while True:
             item = self._map_queue.get()
             if item is None:
                 return
-            xyz_world, cam_pos, cam_z, frame = item
+            xyz_cam, R, frame = item
 
-            # Height band + floor-angle filter
-            h_rel    = xyz_world[:, 2] - cam_z
-            rays     = xyz_world - cam_pos
-            dist     = np.linalg.norm(rays, axis=1)
-            d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0)
+            # Height band + floor-angle filter — all in camera_link frame.
+            # Z in camera_link = up direction (from IMU), so h_rel = xyz_cam[:,2]
+            # is height relative to camera regardless of world translation.
+            h_rel    = xyz_cam[:, 2]
+            dist     = np.linalg.norm(xyz_cam, axis=1)
+            d_z_norm = np.where(dist > 0, xyz_cam[:, 2] / dist, 0.0)
             keep     = (
                 (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI)
                 & (d_z_norm > _FLOOR_RAY_Z)
             )
-            xyz_filt = _filter_isolated(xyz_world[keep])
+            xyz_filt = _filter_isolated(xyz_cam[keep])
             if len(xyz_filt) == 0:
                 continue
 
+            # ICP → updated translation; project filtered pts to world frame
+            t = self._src.odom.update(xyz_filt, R)
+            xyz_world = (xyz_filt @ R.T + t).astype(np.float32)
+
+            with self._vox_lock:
+                self._vox.add(xyz_world)
+
             if frame % self.MAP_EVERY == 0:
-                with self._occ_lock:
-                    self._occ.update(xyz_filt, cam_pos)
-
-            if frame % self.MAP_LOG_EVERY == 0:
                 rr.set_time("frame", sequence=frame)
-                self._log_map(cam_z)
+                self._log_map(cam_z=float(t[2]))
 
-    def _log_map(self, cam_z: float) -> None:
-        with self._occ_lock:
-            pts = self._occ.occupied_points()
+    def _log_map(self, cam_z: float = 0.0) -> None:
+        with self._vox_lock:
+            pts = self._vox.points().copy()
         if len(pts) == 0:
             return
         n   = min(len(pts), self.MAX_MAP)
@@ -402,15 +568,17 @@ class DepthStreamer:
         ))
 
     def log_stdout(self, pkt: DepthFramePacket, frame: int, fps: float) -> None:
-        with self._occ_lock:
-            n_occ   = self._occ.n_occupied
-            n_total = self._occ.n_total
+        with self._vox_lock:
+            n_map = self._vox.count
+        t = self._src.odom.t
         pct = 100 * self._last_n_stable / self._last_n_valid if self._last_n_valid > 0 else 0.0
+        vio = "LOCKED" if self._src.pose_locked else "init"
         print(
             f"frame={frame:5d}  "
             f"stable={self._last_n_stable:6d}/{self._last_n_valid:6d} ({pct:.0f}%)  "
-            f"occ={n_occ:6d}  free+occ={n_total:6d}  "
-            f"fps={fps:.1f}",
+            f"map={n_map:6d}  "
+            f"t=[{t[0]:+.2f},{t[1]:+.2f},{t[2]:+.2f}]  "
+            f"vio={vio}  fps={fps:.1f}",
             flush=True,
         )
 
@@ -432,6 +600,7 @@ def main() -> None:
 
     src = RealSenseDepthSource(width=848, height=480, fps=15)
     print("RealSense open — Ctrl-C to quit.")
+    print("Hold still for 2–3 seconds while IMU initialises orientation.")
 
     streamer = DepthStreamer(
         src,
