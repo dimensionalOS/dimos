@@ -6,7 +6,7 @@
 //   const { data } = useTopicLatest("/odom");   // data?: geometry_msgs.PoseStamped  (autocompletes "/odom")
 //
 // The map in dimos.topics.gen.ts is a small checked-in sample — after topics change, hand-edit it or
-// regenerate the type text via `generateTypes()` in packages/topics/scripts/genTypes.ts.
+// regenerate from a live gateway:  deno task gen-types --out app/src/dimos.topics.gen.ts
 import { createDimosHooks } from "@dimos/react";
 import type { DimosTopics } from "./dimos.topics.gen.ts";
 

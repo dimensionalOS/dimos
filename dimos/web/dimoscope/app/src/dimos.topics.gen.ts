@@ -1,6 +1,6 @@
 // Typed topic map — a representative sample (a typical Go2 topic set) checked in so the app + typed
-// hooks compile. Edit by hand as topics change, or regenerate the type text with `generateTypes()`
-// from packages/topics/scripts/genTypes.ts.
+// hooks compile. Edit by hand as topics change, or regenerate from a live gateway with:
+//   deno task gen-types --out app/src/dimos.topics.gen.ts
 
 import type { geometry_msgs, nav_msgs } from "@dimos/msgs";
 
