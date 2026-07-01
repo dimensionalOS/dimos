@@ -445,7 +445,7 @@ class RealSenseDepthSource:
                     print("*** IMU locked ***")
                     self._pose_locked = True
 
-        R = self._madgwick.R.copy()
+        R = self._madgwick.R.copy() if self._has_imu else np.eye(3, dtype=np.float32)
         t = self.odom.t                     # translation from previous ICP update
 
         # ── Depth ──────────────────────────────────────────────────────
