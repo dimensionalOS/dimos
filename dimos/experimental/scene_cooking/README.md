@@ -1,53 +1,52 @@
 # Scene Cooking
 
-Scene cooking turns an authored 3D environment into a DimOS scene package. A
-scene package is one environment with the representations downstream systems
-need: a manifest, frame/alignment metadata, viewer-specific browser assets,
-MuJoCo collision assets, browser raycast assets, and optional runtime entities.
+Scene cooking turns an authored 3D environment into a DimOS scene package.
 
-The point is to keep source assets, cooking policy, and runtime loading cleanly
-separated. A downloaded `.blend`, `.glb`, or `.usd` can contain rich visual
-geometry, repeated product meshes, floors, walls, fixtures, and future asset
-types like splats or articulated objects. The cook decides which representations
-to build from that source; runtime consumers then load the package instead of
-relearning the source file layout.
-
-The robot is not baked into a normal scene package. Runtime code loads the
-package and attaches the robot it wants to simulate.
+A scene package is one environment with the representations downstream systems
+need: a manifest, frame metadata, browser assets, MuJoCo collision assets,
+browser raycast assets, and optional runtime entities. The robot is not baked
+into the normal package. Runtime code loads the package and attaches the robot
+it wants to simulate.
 
 ```text
-source asset + cook sidecar + alignment -> scene package -> runtime attaches robot
+source asset + cook sidecar + alignment -> scene package -> runtime consumers
 ```
 
-## Inputs
+Use this README to cook and load a package. See
+[`ARCHITECTURE.md`](ARCHITECTURE.md) for how the pipeline is organized.
 
-The cooker needs:
+## Install
 
-```text
-source asset      .glb, .gltf, .blend, .usd, .obj, .ply, .stl, ...
-cook sidecar      <scene>.cook.json, optional but strongly recommended
-alignment         scale, rotation, translation, and up-axis
-output directory  data/scene_packages/<name>
-visual target     rerun, babylon, or generic
-```
-
-Install the Python dependencies with:
+Python dependencies:
 
 ```bash
 uv sync --extra scene
 ```
 
-External tools are installed separately:
+External tools:
 
 ```text
 blender   required for .blend files and entity visual extraction
 gltfpack  recommended for browser visual optimization
 ```
 
-## Inspect First
+## Inputs
 
-Do not write collision policy blind. Inspect the source in the same frame the
-cooker will use:
+```text
+source asset      .glb, .gltf, .blend, .usd, .obj, .ply, .stl, ...
+cook sidecar      <scene>.cook.json, optional but recommended
+alignment         scale, rotation, translation, and up-axis
+output directory  data/scene_packages/<name>
+visual target     rerun, babylon, or generic
+```
+
+The sidecar is where authored scene intent lives: collision choices, support
+surfaces, walls, fixtures, interactables, and repeated entity groups.
+
+## Inspect
+
+Inspect the source in the same frame the cooker will use before writing
+collision policy:
 
 ```bash
 python - <<'PY'
@@ -64,16 +63,11 @@ alignment = SceneMeshAlignment(scale=2.0, y_up=False)
 
 for prim in load_scene_prims(prepared.cook_path, alignment=alignment):
     name = prim.visual_node_name or prim.prim_path or prim.name
+    if "Floor" not in name and "Wall" not in name:
+        continue
     lo = np.min(prim.vertices, axis=0)
     hi = np.max(prim.vertices, axis=0)
-    extent = hi - lo
-    if "Floor" in name or "Wall" in name:
-        print(
-            name,
-            "min=", lo.round(4).tolist(),
-            "max=", hi.round(4).tolist(),
-            "extent=", extent.round(4).tolist(),
-        )
+    print(name, "min=", lo.round(4).tolist(), "max=", hi.round(4).tolist())
 PY
 ```
 
@@ -81,10 +75,7 @@ For `.blend` files, `prepare_scene_source()` runs Blender headlessly and exports
 the evaluated dependency graph to a cached GLB. Geometry Nodes and collection
 instances are realized before the normal cook starts.
 
-## Author Collision Policy
-
-The cook sidecar is where scene-specific physics intent lives. Use it for
-support surfaces, walls, fixtures, interactables, and repeated entity groups.
+## Author A Sidecar
 
 Example floor policy:
 
@@ -103,10 +94,10 @@ Example floor policy:
 }
 ```
 
-That means: match source prims named `Floor*`, cook them as boxes, make them at
-least 4 cm thick, and keep the authored top surface height unchanged. This is
-better than adding an infinite MuJoCo plane because it preserves multi-floor
-buildings, ramps, platforms, and holes in the environment.
+This matches source prims named `Floor*`, cooks them as boxes, makes them at
+least 4 cm thick, and keeps the authored top surface height unchanged. This is
+usually better than adding an infinite MuJoCo plane because it preserves
+multi-floor buildings, ramps, platforms, and holes.
 
 Static collision types:
 
@@ -117,28 +108,6 @@ auto | box | sphere | cylinder | capsule | plane | hull | mesh | decompose | ski
 Interactables and entity groups become runtime entities in `scene.meta.json`.
 Mesh entities are extracted once, decomposed once, and reused by instances when
 the sidecar gives a shared prototype key.
-
-## Choose A Browser Visual Target
-
-Browser-facing GLBs are backend-specific. Different viewers support different
-glTF extensions and texture encodings, so the cooker exposes explicit visual
-targets instead of hardcoding one heuristic.
-
-```text
-rerun    conservative GLB for Rerun; no mesh quantization, normalized textures
-babylon  web-oriented GLB for Babylon/PimSim; quantization and instancing allowed
-generic  conservative generic GLB without Rerun-specific cleanup
-```
-
-Cooked packages store these under named artifacts. Runtime consumers should ask
-for the asset they support:
-
-```python
-rerun_glb = package.browser_visual_path("rerun")
-babylon_glb = package.browser_visual_path("babylon")
-```
-
-If a target returns `None`, the package was not cooked for that viewer.
 
 ## Cook
 
@@ -155,7 +124,7 @@ python -m dimos.experimental.scene_cooking.cook \
   --rebake
 ```
 
-Cook a Babylon/PimSim visual instead:
+Cook for a different browser backend:
 
 ```bash
 python -m dimos.experimental.scene_cooking.cook \
@@ -166,38 +135,33 @@ python -m dimos.experimental.scene_cooking.cook \
   --rebake
 ```
 
-The target profile supplies defaults. Override only when needed:
+Visual targets are explicit because GLB support differs by viewer:
 
-```bash
-python -m dimos.experimental.scene_cooking.cook \
-  data/my_scene/source.glb \
-  --cook-spec data/my_scene/source.cook.json \
-  --output-dir data/scene_packages/my_scene \
-  --visual-target babylon \
-  --visual-texture-format webp \
-  --visual-max-texture-size 2048 \
-  --rebake
+```text
+rerun    conservative GLB for Rerun; no mesh quantization, normalized textures
+babylon  web-oriented GLB for Babylon/PimSim; quantization and instancing allowed
+generic  conservative generic GLB without Rerun-specific cleanup
 ```
 
 Native `gltfpack` is required for WebP/KTX2 texture compression. The Node/npx
 package can optimize geometry but does not support those texture modes.
 
-## Output Layout
+## Output
 
 ```text
 data/scene_packages/<name>/
 ├── scene.meta.json
 ├── browser/
-│   ├── visual.rerun.glb       backend-specific visual, if cooked
-│   ├── visual.babylon.glb     backend-specific visual, if cooked
-│   ├── collision.glb          simplified raycast/picking collision
-│   └── objects.json           per-prim object table for browser users
+│   ├── visual.rerun.glb
+│   ├── visual.babylon.glb
+│   ├── collision.glb
+│   └── objects.json
 ├── mujoco/<hash>/
-│   ├── wrapper.xml            scene-only MuJoCo XML
-│   ├── wrapper.mjb            optional scene-only MuJoCo binary
-│   └── *.obj                  static collision meshes
+│   ├── wrapper.xml
+│   ├── wrapper.mjb
+│   └── *.obj
 ├── mujoco/composed/
-│   └── <robot>_<spawn>.mjb    optional robot+scene binary
+│   └── <robot>_<spawn>.mjb
 └── entities/<id>/
     ├── visual.glb
     └── mujoco_collision/
@@ -207,33 +171,27 @@ data/scene_packages/<name>/
 cook statistics. Runtime code should read it through `load_scene_package()` or
 `resolve_scene_package()`.
 
-## MuJoCo Artifacts
+## Load
 
-The normal MuJoCo artifact is scene-only XML:
+Runtime consumers ask for the package representation they support:
 
-```text
-scene.meta.json -> wrapper.xml + entities -> runtime attaches robot MJCF -> MjModel
+```python
+from dimos.simulation.scene_assets.spec import load_scene_package
+from dimos.simulation.scenes.catalog import resolve_scene_package
+
+package = resolve_scene_package("office")
+# or: package = load_scene_package("data/scene_packages/dimos_office/scene.meta.json")
+
+rerun_glb = package.browser_visual_path("rerun")
+babylon_glb = package.browser_visual_path("babylon")
+mujoco_scene = package.mujoco_scene_path
+entities = package.entities
 ```
-
-This keeps the package robot-agnostic. It is the right path for office-scale
-scenes and for packages that should work with multiple robots.
-
-Huge scenes can additionally use composed `.mjb` files:
-
-```text
-wrapper.xml + robot MJCF + spawn/entity selection -> composed/<name>.mjb
-```
-
-A composed `.mjb` loads quickly, but it is specific to one robot, spawn pose,
-runtime entity set, and scene revision. Rebuild it when any of those change.
-
-## Load The Cooked Package
 
 Run the G1 GR00T WBC blueprint with a cooked package:
 
 ```bash
-python -m dimos.robot.cli.dimos \
-  --simulation mujoco \
+dimos --simulation mujoco \
   --scene office \
   --viewer rerun \
   --n-workers 12 \
@@ -257,24 +215,3 @@ docs/development/large_file_management.md
 
 Code and docs changes go through normal git. Data archives should be updated
 with `./bin/lfs_push` when the package is ready to ship.
-
-## Reference Files
-
-```text
-dimos/experimental/scene_cooking/cook.py              cook CLI
-dimos/experimental/scene_cooking/package_config.py    cook-time artifact policy
-dimos/experimental/scene_cooking/sidecar.py           cook sidecar schema
-dimos/experimental/scene_cooking/planning.py          sidecar to entity/collision plan
-dimos/experimental/scene_cooking/source_assets/normalize.py .blend normalization
-dimos/experimental/scene_cooking/source_assets/mesh.py source mesh loading
-dimos/experimental/scene_cooking/source_assets/inspect.py asset budget inspection
-dimos/experimental/scene_cooking/source_assets/glb.py GLB rewrite helpers
-dimos/experimental/scene_cooking/browser/visuals.py   browser visual cooking
-dimos/experimental/scene_cooking/browser/collision.py browser collision mesh
-dimos/experimental/scene_cooking/entities/visuals.py  entity visual extraction
-dimos/experimental/scene_cooking/entities/collision.py entity collision hulls
-dimos/experimental/scene_cooking/mujoco/collision_export.py MuJoCo XML bake
-dimos/experimental/scene_cooking/mujoco/collision_policy.py static collision policy
-dimos/simulation/scene_assets/spec.py              runtime package metadata contract
-dimos/simulation/scenes/catalog.py                   runtime name/path resolution
-```
