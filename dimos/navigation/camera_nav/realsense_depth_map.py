@@ -80,6 +80,36 @@ def _filter_isolated(xyz: np.ndarray, voxel: float = 0.05, min_pts: int = 2) -> 
     return xyz[cnt[inv] >= min_pts]
 
 
+def _nearest_per_ray(xyz: np.ndarray, cam_pos: np.ndarray, deg: float = 3.0) -> np.ndarray:
+    """Keep only the nearest point per ~3° angular bin.
+
+    Stereo cameras leak background depth for pixels near an obstacle edge —
+    the two cameras see slightly different scenes and the matcher interpolates.
+    These spurious behind-surface returns share the same ray direction as the
+    real surface but sit at greater depth. Sorting by depth and keeping the
+    nearest per bin discards them, leaving only actual obstacle surfaces.
+    """
+    if len(xyz) == 0:
+        return xyz
+    rays  = xyz - cam_pos
+    dists = np.linalg.norm(rays, axis=1)
+    ok    = dists > 0
+    if not ok.any():
+        return xyz[ok]
+
+    idx_ok = np.where(ok)[0]
+    dirs   = rays[ok] / dists[ok, None]
+
+    rad = np.radians(deg)
+    az  = np.floor(np.arctan2(dirs[:, 1], dirs[:, 0]) / rad).astype(np.int32)
+    el  = np.floor(np.arcsin(np.clip(dirs[:, 2], -1.0, 1.0)) / rad).astype(np.int32)
+    keys = az.astype(np.int64) * 100_000 + el.astype(np.int64)
+
+    order = np.argsort(dists[ok])
+    _, first = np.unique(keys[order], return_index=True)
+    return xyz[idx_ok[order[first]]]
+
+
 # ── Gradient stability filter ─────────────────────────────────────────────────
 
 @dataclass
@@ -536,18 +566,24 @@ class DepthStreamer:
                         else _height_color(xyz[idx, 2] - cam_z))
         rr.log("world/cloud", rr.Points3D(positions=xyz[idx], colors=cloud_colors, radii=0.003))
 
-        # Live cloud map: filter live cloud pts → accumulate → persistent world map.
+        # Live cloud map — mirrors ZED costmap pipeline exactly:
+        #   nearest-per-ray (drop behind-surface leakage)
+        #   → height + floor-ray filter
+        #   → isolation filter (removes stereo edge noise)
+        #   → FastVoxelMap accumulate
         cam_pos  = pkt.pose_t.copy()
-        h_rel    = xyz[:, 2] - cam_z
-        rays     = xyz - cam_pos
-        dist     = np.linalg.norm(rays, axis=1)
-        d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0)
-        keep     = (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI) & (d_z_norm > _FLOOR_RAY_Z)
-        xyz_map  = xyz[keep]
-        print(f"[dbg] frame={frame} xyz={len(xyz)} keep={len(xyz_map)} live_vox={self._live_vox.count}", flush=True)
-        if len(xyz_map) > 0:
-            self._live_vox.add(xyz_map)
-        self._log_live_map(cam_z, frame)
+        xyz_surf = _nearest_per_ray(xyz, cam_pos)
+        if len(xyz_surf) > 0:
+            h_rel    = xyz_surf[:, 2] - cam_z
+            rays     = xyz_surf - cam_pos
+            dist     = np.linalg.norm(rays, axis=1)
+            d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0)
+            keep     = (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI) & (d_z_norm > _FLOOR_RAY_Z)
+            xyz_map  = _filter_isolated(xyz_surf[keep])
+            if len(xyz_map) > 0:
+                self._live_vox.add(xyz_map)
+        if frame % self.MAP_EVERY == 0:
+            self._log_live_map(cam_z, frame)
 
         # Hand world-frame pts + pose to map worker (same payload shape as ZED)
         if self._src.pose_locked:
@@ -588,28 +624,27 @@ class DepthStreamer:
             self._src.odom.update(xyz_cam_filt, R)
 
     def _log_live_map(self, cam_z: float = 0.0, frame: int = 0) -> None:
-        """Log accumulated filtered world map — bright orange so it's unmistakable in Rerun."""
+        """Log accumulated obstacle-surface world map to Rerun."""
         pts = self._live_vox.points()
         if len(pts) == 0:
-            print(f"[dbg] _log_live_map called but live_vox is empty", flush=True)
             return
         n   = min(len(pts), self.MAX_MAP)
         idx = np.random.choice(len(pts), n, replace=False) if len(pts) > n else np.arange(n)
         sub = pts[idx].copy()
-        orange = np.full((len(sub), 3), [255, 140, 0], dtype=np.uint8)
         rr.log("world/live_cloud_map", rr.Points3D(
             positions=sub,
-            colors=orange,
-            radii=0.008,
+            colors=_height_color(sub[:, 2] - cam_z),
+            radii=0.006,
         ))
-        mn, mx = pts.min(axis=0), pts.max(axis=0)
-        print(
-            f"  [map→Rerun] {len(pts):6d} vox  "
-            f"x=[{mn[0]:+.1f},{mx[0]:+.1f}] "
-            f"y=[{mn[1]:+.1f},{mx[1]:+.1f}] "
-            f"z=[{mn[2]:+.1f},{mx[2]:+.1f}]",
-            flush=True,
-        )
+        if frame % 30 == 0:
+            mn, mx = pts.min(axis=0), pts.max(axis=0)
+            print(
+                f"  map={len(pts):6d} vox  "
+                f"x=[{mn[0]:+.1f},{mx[0]:+.1f}] "
+                f"y=[{mn[1]:+.1f},{mx[1]:+.1f}] "
+                f"z=[{mn[2]:+.1f},{mx[2]:+.1f}]",
+                flush=True,
+            )
 
     def _log_map(self, cam_z: float = 0.0) -> None:
         with self._vox_lock:
