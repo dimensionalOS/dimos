@@ -19,7 +19,8 @@ import rerun.blueprint as rrb
 from scipy.ndimage import sobel
 
 
-VOX_SIZE     = 0.020   # 2.0 cm final voxels
+VOX_SIZE     = 0.020   # 2.0 cm — per-frame filtering resolution
+_MAP_VOX    = 0.050   # 5.0 cm — world map voxels; coarser than per-frame to absorb VIO pose noise
 _Z_REL_HI   =  0.5    # camera-relative ceiling (0.5 m above camera)
 _FLOOR_Z    =  0.03   # absolute world-Z floor cutoff (3 cm above gravity-aligned floor)
 _GRAD_THRESH =  0.30  # Sobel gradient magnitude threshold — pixels above this are edge artifacts
@@ -53,7 +54,7 @@ class FastVoxelMap:
     no between-frame duplicates, no stacking.
     """
 
-    def __init__(self, voxel_size: float = VOX_SIZE) -> None:
+    def __init__(self, voxel_size: float = _MAP_VOX) -> None:
         self._v     = voxel_size
         self._cap   = 500_000
         self._pts   = np.empty((self._cap, 3), dtype=np.float32)
@@ -411,7 +412,7 @@ def main() -> None:
                 rr.log("world/map", rr.Points3D(
                     positions=pts,
                     colors=_height_color(pts[:, 2] - cam_z),
-                    radii=0.010,
+                    radii=0.025,
                 ))
 
             fps = frame / max(ts - t0, 1e-6)
