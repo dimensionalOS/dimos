@@ -23,7 +23,7 @@ VOX_SIZE     = 0.020   # 2.0 cm per-frame voxels (unchanged)
 _Z_REL_HI   =  0.5    # camera-relative ceiling (0.5 m above camera)
 _FLOOR_Z    =  0.03   # absolute world-Z floor cutoff (3 cm above gravity-aligned floor)
 _GRAD_THRESH =  0.30  # Sobel gradient magnitude threshold — pixels above this are edge artifacts
-_MIN_OBS    =  2      # observations in distinct frames before a cell is marked occupied
+_MIN_OBS    =  1      # min frame hits to mark a cell occupied (>1 adds latency without gain at 2cm)
 _MAP_EVERY  =  5      # log world/world_map every N frames
 
 # ── Voxel key packing ────────────────────────────────────────────────────────
@@ -429,11 +429,14 @@ def main() -> None:
                 vk       = np.floor(xyz_obs / VOX_SIZE).astype(np.int32)
                 _, first = np.unique(_pack(vk), return_index=True)
                 xyz_vox  = xyz_obs[first]
-                rr.log("world/map", rr.Points3D(
-                    positions=xyz_vox,
-                    colors=_height_color(xyz_vox[:, 2] - cam_z),
-                    radii=0.010,
-                ))
+                # Only log world/map once VIO is locked — before lock the points
+                # are in camera frame, causing a jarring jump at lock time.
+                if src.pose_locked:
+                    rr.log("world/map", rr.Points3D(
+                        positions=xyz_vox,
+                        colors=_height_color(xyz_vox[:, 2] - cam_z),
+                        radii=0.010,
+                    ))
 
             # ── Persistent world map ──────────────────────────────────────────
             # Feed world-frame voxels into the accumulator only once VIO has
