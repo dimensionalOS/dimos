@@ -191,10 +191,10 @@ export function renderGo2(c) {
                     </div>
                 </section>
 
-                <!-- E-STOP: fixed to viewport bottom-right so it's always
-                     one thumb away, even mid-scroll. Removed from aside flow
-                     via position:fixed; the aside no longer reserves space. -->
-                <section id="estop-dock" class="fixed right-4 bottom-4 z-50 w-64 bg-bg-950 border border-[#2a2a2a] rounded-xl p-4 shadow-2xl shrink-0">
+                <!-- E-STOP: sticks to bottom of the aside as it scrolls.
+                     Original horizontal shape (full column width) preserved;
+                     background content scrolls behind it. -->
+                <section id="estop-dock" class="sticky bottom-0 z-10 mt-auto bg-bg-950 border border-[#2a2a2a] rounded-xl p-4 shrink-0 shadow-lg">
                     <button id="estop" class="estop">■ EMERGENCY STOP</button>
                     <button id="rearm" class="hidden mt-2 w-full py-2 text-xs term-caps text-gray-300 border border-[#2a2a2a] rounded hover:border-dim-700">
                         re-arm →
