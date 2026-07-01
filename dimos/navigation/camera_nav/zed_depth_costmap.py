@@ -487,33 +487,33 @@ class DepthStreamer:
 
         rr.log("world/camera/depth", rr.DepthImage(pkt.depth, meter=1.0))
 
-        # Stage 1+2: hard filter + gradient stability
+        # Stage 1: all valid depth pixels → live cloud (always show something)
+        xyz_all, colors_all = self._bp.project(pkt, stable=None)
+        self._last_n_valid = len(xyz_all)
+
+        if len(xyz_all) > 0:
+            self._cam_z = float(pkt.pose_t[2])
+            n   = min(len(xyz_all), self.MAX_CLOUD)
+            idx = np.random.choice(len(xyz_all), n, replace=False) if len(xyz_all) > n else np.arange(n)
+            cloud_colors = colors_all[idx] if colors_all is not None else _height_color(xyz_all[idx, 2] - self._cam_z)
+            rr.log("world/cloud", rr.Points3D(
+                positions=xyz_all[idx],
+                colors=cloud_colors,
+                radii=0.003,
+            ))
+
+        # Stage 2: gradient filter — only for map quality (not live cloud)
         stable_mask = self._grad.compute(pkt.depth)
-        self._last_n_valid  = int(np.isfinite(pkt.depth).sum())
         self._last_n_stable = int(stable_mask.sum())
         rr.log("world/camera/stable", rr.Image(stable_mask.astype(np.uint8) * 255))
 
-        # Stage 3: backproject — SDK XYZ fast path, just VIO transform
-        xyz, colors = self._bp.project(pkt, stable_mask)
-        if len(xyz) == 0:
-            return
+        xyz_stable, _ = self._bp.project(pkt, stable_mask)
 
-        # Live cloud — instant, no dict work
-        self._cam_z = float(pkt.pose_t[2])
-        n   = min(len(xyz), self.MAX_CLOUD)
-        idx = np.random.choice(len(xyz), n, replace=False) if len(xyz) > n else np.arange(n)
-        cloud_colors = colors[idx] if colors is not None else _height_color(xyz[idx, 2] - self._cam_z)
-        rr.log("world/cloud", rr.Points3D(
-            positions=xyz[idx],
-            colors=cloud_colors,
-            radii=0.003,
-        ))
-
-        # Hand off to map thread — non-blocking; drop frame if worker is behind
-        if self._src.pose_locked:
+        # Hand off stable points to map thread — non-blocking; drop if worker is behind
+        if self._src.pose_locked and len(xyz_stable) > 0:
             try:
                 self._map_queue.put_nowait(
-                    (xyz, pkt.pose_t.copy(), self._cam_z, frame)
+                    (xyz_stable, pkt.pose_t.copy(), self._cam_z, frame)
                 )
             except queue.Full:
                 pass
