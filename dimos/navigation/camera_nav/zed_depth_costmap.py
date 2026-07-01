@@ -18,8 +18,9 @@ import rerun as rr
 import rerun.blueprint as rrb
 
 
-VOX_SIZE: float    = 0.025  # 2.5 cm voxels for the map
-FLOOR_Z:  float    = 0.10   # metres above world floor to start showing obstacles
+VOX_SIZE:   float = 0.025  # 2.5 cm voxels for the map
+FLOOR_Z:    float = 0.05   # world_Z below this is floor — kept low so chair legs survive
+CEILING_Z:  float = 2.20   # world_Z above this is noise / ceiling — discard
 
 # ── Voxel key packing ────────────────────────────────────────────────────────
 _VOFF  = np.int64(100_000)
@@ -292,25 +293,26 @@ def main() -> None:
             col_vis = colors[near] if colors is not None else _height_color(xyz_vis[:, 2] - cam_z)
             rr.log("world/cloud", rr.Points3D(positions=xyz_vis, colors=col_vis, radii=0.003))
 
-            # ── Voxel map: full cloud → floor strip → isolation filter → dedup ─
-            # No nearest-per-ray: that discards occluded parts of nearby objects.
-            # Real surfaces have ~100 px/voxel at HD720; stereo artifacts have 1.
-            xyz_obs = xyz[xyz[:, 2] > FLOOR_Z]
-            if len(xyz_obs) >= 2:
-                vk           = np.floor(xyz_obs / VOX_SIZE).astype(np.int32)
-                keys         = _pack(vk)
-                _, inv, cnt  = np.unique(keys, return_inverse=True, return_counts=True)
-                dense        = cnt[inv] >= 2          # keep voxels with 2+ hits
-                xyz_d        = xyz_obs[dense]
-                _, first     = np.unique(keys[dense], return_index=True)
-                xyz_vox      = xyz_d[first]
+            # ── Voxel map: nearest-per-ray → height band → voxelise ─────────
+            # nearest-per-ray at 0.5° keeps only the closest surface in each
+            # direction, which eliminates NEURAL fill and stereo artifacts that
+            # would otherwise appear as voxels between the camera and obstacles.
+            # FLOOR_Z/CEILING_Z strip the floor plane and high-altitude noise.
+            near_map  = _nearest_per_ray_idx(xyz, pkt.pose_t, deg=0.5)
+            xyz_near  = xyz[near_map]
+            in_band   = (xyz_near[:, 2] > FLOOR_Z) & (xyz_near[:, 2] < CEILING_Z)
+            xyz_obs   = xyz_near[in_band]
+            if len(xyz_obs):
+                vk       = np.floor(xyz_obs / VOX_SIZE).astype(np.int32)
+                _, first = np.unique(_pack(vk), return_index=True)
+                xyz_vox  = xyz_obs[first]
                 rr.log("world/map", rr.Points3D(
                     positions=xyz_vox,
                     colors=_height_color(xyz_vox[:, 2] - cam_z),
                     radii=0.012,
                 ))
 
-            n_vox = len(xyz_vox) if len(xyz_obs) >= 2 else 0
+            n_vox = len(xyz_vox) if len(xyz_obs) else 0
             fps   = frame / max(ts - t0, 1e-6)
             print(
                 f"frame={frame:5d}  cloud={len(xyz_vis):5d}  vox={n_vox:6d}"
