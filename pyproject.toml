@@ -29,7 +29,9 @@ include = ["dimos*"]
 exclude = [
     "dimos.web.websocket_vis.node_modules*",
     "dimos.web.command-center-extension*",
-    "dimos.web.dimos_interface*",
+    "dimos.web.dimos_interface.src*",
+    "dimos.web.dimos_interface.public*",
+    "dimos.web.dimos_interface.node_modules*",
 ]
 
 [tool.setuptools.package-data]
@@ -58,7 +60,12 @@ exclude = [
     "mapping/google_maps/fixtures/**",
     "web/command-center-extension/**",
     "web/websocket_vis/node_modules/**",
-    "web/dimos_interface/**",
+    "web/dimos_interface/index.html",
+    "web/dimos_interface/*.json",
+    "web/dimos_interface/*.js",
+    "web/dimos_interface/src/**",
+    "web/dimos_interface/public/**",
+    "web/dimos_interface/node_modules/**",
     "hardware/sensors/lidar/fastlio2/cpp/**",
 ]
 
@@ -123,7 +130,7 @@ dependencies = [
     "llvmlite>=0.42.0", # Required by numba 0.60+
     # TODO: rerun shouldn't be required but rn its in core (there is NO WAY to use dimos without rerun rn)
     # remove this once rerun is optional in core
-    "rerun-sdk==0.32.0a1",
+    "rerun-sdk==0.32.0",
     "dimos-viewer==0.32.0a1",
     "toolz>=1.1.0",
     "protobuf>=6.33.5,<7",
@@ -182,7 +189,7 @@ misc = [
 ]
 
 visualization = [
-    "rerun-sdk==0.32.0a1",
+    "rerun-sdk==0.32.0",
     "dimos-viewer==0.32.0a1",
     # Rerun URDF robot visualization. yourdfpy depends on trimesh[easy],
     # which pulls embreex; embreex has no Linux aarch64 wheel.
