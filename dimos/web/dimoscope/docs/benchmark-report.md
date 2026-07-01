@@ -71,60 +71,58 @@ cheap aiortc/aioquic CLI stand-ins actually predict the real browser stacks**.
 
 ---
 
-## ⚠ BLOCKER found while re-benchmarking: `serve.py` double-delivers (dual-bus tap)
+## Resolved: the earlier "double delivery" was a stray publisher, not a `serve.py` bug
 
-The re-benchmark immediately surfaced a real bug the green typecheck/unit-tests didn't catch.
+An earlier pass reported `serve.py` "double-delivering" (`4× Pose` at ~576 msg/s ≈1.45×, `loss%` 99.98
+on a clean LAN). That diagnosis was **wrong**. Root-caused and fixed:
 
-- **Symptom:** `4× PoseStamped @ 100 Hz` (expect ~400 msg/s) arrives at ~**576 msg/s (≈1.45×)**, and the
-  matrix `loss%` reads **99.98%** on a clean LAN — both signatures of duplicate/interleaved delivery.
-- **Root cause:** `serve.py` lifespan **unconditionally** runs `bus.start_zenoh()` **and**
-  `bus.start_lcm()` (`servers/bus.py` even notes *"if both buses carry the same topic you'd see it
-  twice — normally only one is active"*). On a macOS/zenoh-default host the LCM-published `/bench/*`
-  topics are **also echoed onto zenoh**, so the bus fans out each message ~twice. No dedup.
-- **Proof:** disabling the zenoh tap (`ZENOH_KEY="nomatch/**"`) drops `4× Pose` from **576 → 297 msg/s**
-  (single delivery). Repro: `PORT=8080 ZENOH_KEY="nomatch/**" python serve.py` + `DIMOS_TRANSPORT=lcm
-  bench_publisher.py` + `GATEWAY_URL=ws://localhost:8080/ws deno task bench`.
-- **Impact:** (1) a **latent product correctness bug** — a browser on a dual-bus deployment receives
-  **duplicate messages**; (2) it corrupts **every throughput/loss** number in every layer (CLI, browser,
-  VPS), so those can't be trusted until fixed. **Latency** (per-message publish→recv) is *not* affected.
-- **Fix options (owner: the consolidation/`serve.py` author):** dedup in `bus.py` by `(topic, seq)` over
-  a short window; **or** a `BUS_BACKENDS` env to tap only the active bus (default both is the trap);
-  **or** at minimum gate the zenoh tap behind a flag. Until then, the benches should launch `serve.py`
-  with `ZENOH_KEY` matching nothing when the load is single-bus.
+- **Actual cause:** a **stale `go2-bench` benchload process** (`dimos … run go2-bench --option
+  benchload.autostart=true`) had been running for ~15 h, flooding **zenoh** with the same `/bench/p0..p3`
+  topic *names* that the CLI's LCM `bench_publisher` uses. Two **independent** publishers on one topic
+  name (its seq counter had reached ~4.1 M) — `serve.py` faithfully delivered both. Not one message
+  duplicated; two different messages (proven by the payloads: LCM copy `frame_id="bench"`, zenoh copy
+  `frame_id="<seq>"`).
+- **`serve.py`'s dual-tap is correct as designed** — tapping LCM **and** zenoh so a blueprint can switch
+  transports with no restart. In normal use a topic is published on only one bus; nothing to reconcile.
+- **Proof:** after killing the stray process, a single publisher gives **`hz≈328`** (4× ~82 Hz, single
+  delivery) and **`loss%=0`** across every profile — see the clean tables below. No code change to
+  `serve.py`/`bus.py` was needed (a content-dedup was prototyped, then reverted — it wouldn't even apply
+  here, since the two copies are genuinely different messages).
+- **Prevention:** benches must run in isolation. Before a run, `ps aux | grep -E "go2-bench|bench_source|
+  bench_publisher"` and kill strays; never run two publishers on the same topic names at once.
 
-**Decision needed (you):** fix `serve.py` (dedup / backend-select) — then I re-run the full program and
-the throughput/loss tables become trustworthy. I did **not** patch `serve.py` autonomously (it's the
-centerpiece another agent owns + the fix is a design choice). Below: the metrics that *are* trustworthy.
+The throughput/loss numbers below are from clean, single-publisher runs (`2026-07-01`).
 
 ## Results
 
-> Filled in by the run. Each table notes its layer + date; raw data in `bench/RESULTS-*.md`.
-> **Throughput/loss are bug-affected (see BLOCKER above) — read latency + relative ordering only.**
+> Each table notes its layer + date; raw data in `bench/RESULTS-*.md`. All numbers below are from
+> **clean, single-publisher runs** — throughput and `loss%` are real.
 
-### A — CLI / headless (single host), clean (`ZENOH_KEY=nomatch` workaround → single delivery, loss%=0)
-_2026-07-01 · netsim TCP profiles · one-way latency (ms) · loss%=0 across all clean rows (the workaround
-neutralises the dup bug)._
+### A — CLI / headless (single host), clean single-publisher
+_2026-07-01 · netsim TCP profiles · one-way latency (ms) · `loss%=0` across every profile._
 
-**Light stream (4× PoseStamped @100Hz, ~24 kB/s) — `RESULTS-mechanisms.md`:**
+**Light stream (4× PoseStamped @100Hz, ~27 kB/s, ~328 msg/s single delivery) — `RESULTS-mechanisms.md`:**
 
 | profile | ws p50 / p95 | sse p50 / p95 | poll p50 / p95 |
 |---|--:|--:|--:|
-| lan | 0.45 / 0.92 | 0.52 / 0.95 | 1.17 / 1.9 |
-| 4g  | 83 / 116 | 81 / 113 | 112 / 166 |
-| 3g  | 276 / 385 | 287 / 401 | **448 / 874** |
-| lossy | 153 / 263 | 166 / 274 | 193 / 338 |
+| lan | 1.3 / 4.6 | 2.0 / 5.3 | 1.5 / 3.6 |
+| wifi | 15.3 / 23.6 | 15.2 / 22.8 | 23.8 / 36.3 |
+| 4g  | 84 / 114 | 83 / 116 | 111 / 162 |
+| 3g  | 285 / 386 | 320 / 430 | **592 / 911** |
+| lossy | 148 / 249 | 195 / 320 | 224 / 365 |
 → **ws ≈ sse < poll**; at light load all three are usable even on 3g, but **poll's per-cycle RTT
-roughly doubles latency** as the link degrades. (loss%=0 everywhere — clean.)
+roughly doubles latency** as the link degrades (3g p50 592 vs ws 285). `loss%=0` everywhere; throughput
+holds ~310–329 msg/s to 4g and eases to ~250–269 on 3g (bandwidth, not loss).
 
-**Heavy stream (dense ~17 MB/s) — `RESULTS-mechanisms-dense.md`:**
+**Heavy stream (dense ~17.9 MB/s) — `RESULTS-mechanisms-dense.md`:**
 
 | profile | ws | sse | poll |
 |---|--:|--:|--:|
-| lan | 17.3 Hz, p50 21 ms | 17.3 Hz, p50 **26** (max 71) | 17.3 Hz, p50 21 ms |
+| lan | 18.3 Hz, p50 22 ms | 18.3 Hz, p50 **26** | 18.7 Hz, p50 21 ms |
 | 4g · 3g | **0 (dead)** | **0 (dead)** | **0 (dead)** |
-→ **MB/s saturates cellular** — 17 MB/s is impossible on 4g(12Mbps)/3g(2Mbps): every TCP mechanism
-collapses to 0. On LAN, **SSE's base64 inflates latency** (p50 26 vs 21; max 71). Heavy streams need a
-fat pipe, compression/decimation, or the media plane — not a raw topic relay.
+→ **MB/s saturates cellular** — ~18 MB/s is impossible on 4g(12Mbps)/3g(2Mbps): every TCP mechanism
+collapses to 0. On LAN, **SSE's base64 inflates latency** (p50 26 vs 21–22). Heavy streams need a fat
+pipe, compression/decimation, or the media plane — not a raw topic relay.
 
 **WebTransport (QUIC datagrams) under REAL packet loss — `bench:loss` (netsim-udp drops real datagrams):**
 
@@ -149,9 +147,7 @@ arrays like lidar/pointcloud, ~negligible on small structured pose). Keep decode
 
 > **Gaps in this CLI run:** the **WebRTC-data e2e** and **WebTransport-e2e** *aiortc/aioquic probes*
 > hit connection errors (`webrtc_client_probe.py` / `webtransport_client_probe.py`) — environmental,
-> to retry; WebTransport itself is proven by the loss bench above. The dual-delivery bug means absolute
-> **throughput** is the publisher's real ~75%-of-nominal single rate; the *relative ordering + latency*
-> are what to read.
+> to retry; WebTransport itself is proven by the loss bench above.
 
 ### A — CLI / headless (single host) — `bench/RESULTS-*.md`
 _pending Stage 1._
@@ -172,10 +168,10 @@ as NaN rows, confirming this empirically when run):
 just won't offer it / it errors into a NaN row). WS/SSE/poll/WebRTC are universal.
 
 _Empirical browser *performance* numbers (real Chrome via the claude-in-chrome MCP, or Playwright
-cross-browser) are **pending** — and should be collected **after** the `serve.py` dup fix so browser
-throughput is trustworthy. Run: `deno task serve` (with `ZENOH_KEY=nomatch` until fixed) + a source +
-`netsim`, open `bench.html?gw=localhost:8099`, Run, export. The key cross-check is whether the CLI
-aiortc/aioquic stand-in latencies match the real-browser WebRTC/WebTransport latencies._
+cross-browser) are **pending**. Run: `deno task serve` + a single source + `netsim`, open
+`bench.html?gw=localhost:8099`, Run, export (first `ps aux | grep bench` and kill any stray publisher so
+one source hits the topic). The key cross-check is whether the CLI aiortc/aioquic stand-in latencies
+match the real-browser WebRTC/WebTransport latencies._
 
 ### Kernel `tc/netem` on the VPS — `bench/RESULTS-vps.md`
 _pending Stage 3._
@@ -210,14 +206,11 @@ GATEWAY_URL=ws://<vps>:8080/ws deno task bench    # see docs/real-wan.md
 ## Status & remaining work (handoff)
 
 **Done & committed:** `bench.tsx` fixed to the 5 mechanisms · this report (methodology + CLI-vs-browser
-can/can't + simulation hierarchy + cross-browser support matrix) · the **dual-delivery bug finding** ·
-the **clean CLI numbers** (light/heavy/WT-loss/QoS/decode) via the `ZENOH_KEY=nomatch` workaround.
+can/can't + simulation hierarchy + cross-browser support matrix) · root-caused the earlier "double
+delivery" to a **stray `go2-bench` publisher** (killed; `serve.py` is correct — no code change) · the
+**clean CLI numbers** (light/heavy/WT-loss/QoS/decode), single-publisher, `loss%=0`.
 
-**Blocked on your decision — fix `serve.py`'s dual-bus tap** (dedup, or a `BUS_BACKENDS`/single-tap env;
-see the BLOCKER section). Until then, absolute **throughput/loss** on any layer is bug-affected; latency
-+ relative ordering are valid. **Once fixed,** drop the workaround and the numbers become real everywhere.
-
-**Teed up (run after the fix — each is one command, infra exists):**
+**Teed up (each is one command, infra exists):**
 - **Browser perf** (real Chrome via claude-in-chrome MCP, or `npx playwright` cross-browser) →
   `RESULTS-browser.md` + the CLI-stand-in-vs-real-browser latency cross-check.
 - **VPS / kernel netem** — `docs/real-wan.md` runbook: `uv sync --extra web` + `serve.py` on the VPS,

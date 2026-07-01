@@ -11,7 +11,7 @@ SIM=replay deno task demo:qos      # a real DimOS sim robot (also: mujoco, dimsi
 
 ## The model: declaration → enforcement → transport
 
-QoS is two things people conflate. **Declaration** (a topic's `reliability`/`durability`/`priority`) is
+QoS is two things people conflate. **Declaration** (a topic's `reliability`/`priority`/`depth`) is
 cheap and does nothing on its own. **Enforcement** is the hard part: importance only matters at a
 **bottleneck**, where something must choose what to send and what to drop. For a browser, that bottleneck
 is the **gateway's per-client outbound loop** — where the robot's fast bus meets the slow browser link.
