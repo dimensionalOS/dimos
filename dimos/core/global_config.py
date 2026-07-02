@@ -71,6 +71,8 @@ class GlobalConfig(BaseSettings):
     mujoco_start_pos: str = "-1.0, 1.0"
     mujoco_steps_per_frame: int = 7
     mujoco_headless: bool = False
+    mujoco_video_fps: float = 20.0
+    mujoco_lidar_fps: float = 2.0
     scene_package: str | None = None
     robot_model: str | None = None
     robot_id: str | None = None

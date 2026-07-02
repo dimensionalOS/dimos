@@ -147,11 +147,18 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
 
         scene_option = mujoco.MjvOption()
 
+        # Shadows and reflections roughly triple a software-GL (llvmpipe) render;
+        # nobody grades the headless camera on lighting.
+        if config.mujoco_headless:
+            for r in (rgb_renderer, depth_renderer, depth_left_renderer, depth_right_renderer):
+                r.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
+                r.scene.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
+
         # Timing control
         last_video_time = 0.0
         last_lidar_time = 0.0
-        video_interval = 1.0 / VIDEO_FPS
-        lidar_interval = 1.0 / LIDAR_FPS
+        video_interval = 1.0 / (config.mujoco_video_fps or VIDEO_FPS)
+        lidar_interval = 1.0 / (config.mujoco_lidar_fps or LIDAR_FPS)
 
         m_viewer.cam.lookat = config.mujoco_camera_position_float[0:3]
         m_viewer.cam.distance = config.mujoco_camera_position_float[3]
