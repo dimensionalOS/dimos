@@ -193,33 +193,58 @@ browser reports.
 
 ### The profile matrix (2026-07-02 · 20 MB/s offered flood · clock-synced end-to-end latency)
 
+Two servers speak WebTransport. The in-process **aioquic** default needs no extra dependencies but its
+pure-Python packetization caps bulk at ~2.4 MB/s (p50 2.6 s for 1 MB frames on this path) — fine for
+pose-class telemetry. The native **WT-rs sidecar** (`gateway/wt-sidecar/` — Rust,
+[wtransport](https://github.com/BiagioFesta/wtransport)/quinn) owns ONLY the UDP `:8443` listener and
+speaks the identical wire protocol (rows self-identify as `wire: dimoscope/WT-rs`); the Python gateway
+keeps the bus tap, `SafetyEgress` and QoS config and feeds it over a unix socket (`gateway/pipe.py`,
+`WT_EXTERNAL=1`). Teleop/goal/rpc flow browser → sidecar → pipe → the same `SafetyEgress`; a dying
+session (or a dying sidecar) still zero-twists the robot.
+
+Both transports, measured back-to-back in one session:
+
 | net profile | transport | pose hz / loss% / p50 / p99 (ms) | dense (1 MB frames) |
 |---|---|---|---|
-| clean | WS | 113 / 0 / **16.6** / 22 | **19.5 MB/s** / 0% / p50 85 ms |
-| clean | WT | 110 / 0 / **17.4** / 31 | 2.4 MB/s / 0% / p50 2.6 s *(aioquic ceiling)* |
-| wifi-normal | WS | 104 / 0.24 / 57 / 110 | **244 kB/s** / p50 2.6 s *(the Mathis limit — TCP at 0.3% loss × 80 ms RTT, not the 1.25 MB/s pipe)* |
-| wifi-normal | WT | 111 / 0.22 / 40 / ~61 | 975 kB/s *(≈ the 10 mbit cap)* |
-| wifi-crowded | WT | 100 / 1.2 / 298 / 330 | 244 kB/s *(≈ the 2 mbit cap)* |
-| wifi-edge | WT | 81 / 0 / **842** / 862 | starved (0) |
-| **loss-5** | **WS** | 107 / 0.9 / 44.6 / **184** | **0** *(Mathis at 5% ≈ 65 kB/s < one frame)* |
-| **loss-5** | **WT** | 98 / **8.6** / 40.4 / **63** | 0 *(aioquic + loss)* |
+| clean | **WT-rs** | 97 / – / **18.0** / 46 | **19.1 MB/s** / 0% / **p50 37 ms** |
+| clean | WS | 92 / – / 19.7 / 56 | 17.4 MB/s / p50 92 ms |
+| wifi-normal | **WT-rs** | 109 / 2.3 / **45** / **61** | **975 kB/s** *(≈ the 10 mbit cap)* |
+| wifi-normal | WS | 108 / 2.9 / 53 / 119 | 195 kB/s *(Mathis)* |
+| wifi-crowded | **WT-rs** | 101 / 2.4 / 235 / 332 | 244 kB/s *(≈ the 2 mbit cap)* |
+| wifi-crowded | WS | 105 / 1.0 / 90 / 126 | 1 frame / 4 s — and **0 msgs of anything** once bulk shares the pipe |
+| **loss-5** | **WT-rs** | 106 / 4.9 / **41** / **54** | **9.3 MB/s** |
+| **loss-5** | WS | 112 / 0 / 53 / **141** | **0** *(Mathis at 5% < one frame)* |
+
+*(clean pose loss% omitted: a ~13% ingress-loss floor from the flood generator sits upstream of both
+transports — the WS control shows the identical floor.)*
 
 **What the matrix shows:**
-- **The HoL headline (loss-5):** WT datagrams keep the pose tail flat — **p99 63 ms vs TCP's 184 ms (~3×)** —
-  at the cost of **shedding 8.6%** of frames; TCP delivers ~everything but with retransmit-tail stalls.
-  Freshness vs completeness, quantified: put teleop/pose on datagrams, commands/bulk on reliable.
-- **TCP bulk dies by Mathis, not by the pipe.** At wifi-normal the cap is 1.25 MB/s but TCP's congestion
-  control under 0.3% random loss yields ~244 kB/s; at 5% loss it can't move a single 1 MB frame. Random loss
-  is poison for reliable bulk regardless of bandwidth.
-- **WT bulk is implementation-capped (~2.4 MB/s over WAN)** — pure-Python aioquic, even on the persistent
-  uni-stream path. Under shaped caps it tracks the cap exactly (975/244 kB/s). For >2 MB/s bulk over QUIC,
-  the relay needs a native QUIC stack.
-- **wifi-edge: latency is the failure mode, not loss** — pose still arrives (0% loss) but ~850 ms stale.
-  Conflation/rate-limits (§2) matter more than transport choice there.
+- **The HoL headline (loss-5):** QUIC keeps both lanes alive at 5% random loss — pose p99 **54 ms**
+  (datagrams, shedding 4.9%) and bulk **9.3 MB/s** (per-stream retransmission). TCP delivers every pose
+  frame but with a **141 ms** retransmit tail, and its bulk moves **zero** bytes. Freshness vs
+  completeness, quantified: teleop/pose on datagrams, commands/bulk on reliable streams.
+- **TCP bulk dies by Mathis, not by the pipe.** At wifi-normal the cap is 1.25 MB/s but TCP under 0.3%
+  random loss yields ~195 kB/s; at 5% loss it can't move a single 1 MB frame. Random loss is poison for
+  reliable bulk regardless of bandwidth. WT-rs tracks the shaped cap exactly (975 / 244 kB/s).
+- **Bulk is wire-limited on WT-rs** — 19.1 MB/s of the 20 MB/s offered flood on the clean path, frame
+  p50 37 ms, over the same single QUIC connection that carries pose at p50 18 ms.
+- **wifi-crowded is queue-dominated for every transport:** pose-in-isolation rides the shaped queue
+  (WT-rs p99 332 ms; TCP's in-order smoothing reads better at 126 ms) — but the moment bulk shares the
+  connection, WS delivers nothing at all while WT-rs still tracks the cap. At this tier the fix is §2's
+  rate-limits/conflation, not transport choice.
 - **UDP over raw IP remains finicky:** QUIC handshakes fail under loss (connect first, then apply);
-  WebRTC-data needs STUN/TURN; Auto correctly falls back to WS when WT can't establish (the wire tag in each
-  row shows which transport actually carried the run). Outage buttons (`UDP 3s/10s`, `all 10s`) exist for
+  WebRTC-data needs STUN/TURN; Auto falls back to WS when WT can't establish (the wire tag in each row
+  shows which transport carried the run). Outage buttons (`UDP 3s/10s`, `all 10s`) exist for
   fallback/reconnect timing — a follow-up sweep.
+
+**Recommendation: `Auto (WT→WS)` against the sidecar** (`deno task serve:wt-rs` + `deno task
+wt-sidecar`); aioquic remains the zero-dependency default (`WT_EXTERNAL` unset).
+
+Two design constraints behind those numbers (`wt-sidecar/src/main.rs`):
+- **Separate datagram and bulk drain tasks per session** — datagrams never `await` behind a
+  flow-control-stalled 1 MB bulk write, so pose stays fresh while bulk saturates a shaped link.
+- **BBR congestion control** — cubic builds a standing queue on a shaped link (bufferbloat) that delays
+  every datagram by the queue depth; BBR keeps inflight ≈ BDP.
 
 ### VPS — run the dog (Ubuntu; needs `uv`; `deno` only to build the app)
 
@@ -240,6 +265,14 @@ cd dimos/web/dimoscope
 uv run python -m gateway &                                       # :8080 (app + /ws /sse /poll /rtc /media /cert) · QUIC :8443
 DIMOS_TRANSPORT=zenoh DIMSIM_RENDER=cpu \
   uv run dimos --simulation dimsim run go2-load &                # the dog, headless CPU render
+```
+
+**Native WebTransport (the WT-rs numbers above):** build the sidecar once (`rustup` + `cargo build
+--release --manifest-path gateway/wt-sidecar/Cargo.toml`, ~2 min), then swap the two gateway panes for:
+
+```bash
+WT_EXTERNAL=1 uv run python -m gateway &                         # aioquic off; pipe plane on /tmp/dimoscope-wt.sock
+gateway/wt-sidecar/target/release/wt-sidecar &                   # owns UDP :8443; /cert serves its hash (503 until up)
 ```
 
 `DIMSIM_RENDER=cpu` forces software rendering on a headless box (default is `gpu`); dimsim always runs
@@ -279,6 +312,9 @@ from that network, and any browser drives it via `http://localhost:5173/?gw=<the
 |---|---|---|
 | `HOST` / `PORT` | `0.0.0.0` / `8080` | HTTP/WS bind — app + `/ws /sse /poll /rtc /media /cert /health /netem` |
 | `WT_PORT` | `8443` | WebTransport QUIC/UDP port |
+| `WT_EXTERNAL` | off | `1` → the Rust sidecar (`gateway/wt-sidecar`) owns `:WT_PORT`; gateway serves it via the pipe |
+| `WT_PIPE` | `/tmp/dimoscope-wt.sock` | gateway↔sidecar unix socket (gateway listens) |
+| `WT_CERT_HASH_FILE` | `/tmp/dimoscope-wt-cert.hash` | sidecar writes its cert SHA-256 here; `/cert` serves it |
 | `EGRESS_KBPS` | off | pace each client's egress so priority bites in the outbox, not the socket buffer |
 | `QOS_RULES` | `qos.rules.json` | topic-glob → lane override map (see `qos.rules.example.json`) |
 | `NETEM_CTL` | off | enable `/netem` (Linux + the `dimos-netem` sudo wrapper above) |
