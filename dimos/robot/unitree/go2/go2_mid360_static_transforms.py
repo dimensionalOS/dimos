@@ -17,11 +17,12 @@
 Published continuously onto tf while recording (see :class:`Go2Mid360StaticTf`) so the
 mount geometry lands in the recording's tf stream.
 
-The tree is rooted at ``mid360_link`` because Point-LIO runs with identity extrinsics:
-its odometry child frame IS the sensor frame, so odometry supplies the moving
-``odom -> mid360_link`` edge and the rest of the robot hangs off it:
+The tree is rooted at ``world``, with identity ``world -> map -> odom`` edges.
+Point-LIO runs with identity extrinsics: its odometry child frame IS the sensor
+frame, so odometry supplies the moving ``odom -> mid360_link`` edge and the rest
+of the robot hangs off it:
 
-    odom -> mid360_link -> base_link -> front_camera -> camera_optical
+    world -> map -> odom -> mid360_link -> base_link -> front_camera -> camera_optical
 
 Mount geometry (measured on the physical rig)
 ---------------------------------------------
@@ -75,7 +76,10 @@ def _mid360_to_base() -> tuple[tuple[float, float, float], tuple[float, float, f
 MID360_TO_BASE_XYZ, MID360_TO_BASE_RPY = _mid360_to_base()
 
 FRAMES: list[FrameSpec] = [
-    ("mid360_link", None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+    ("world", None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+    ("map", "world", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+    ("odom", "map", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+    # odom -> mid360_link is the moving edge, published by Point-LIO.
     ("base_link", "mid360_link", MID360_TO_BASE_XYZ, MID360_TO_BASE_RPY),
     ("front_camera", "base_link", BASE_TO_CAMERA_XYZ, (0.0, 0.0, 0.0)),
     ("camera_optical", "front_camera", (0.0, 0.0, 0.0), OPTICAL_RPY),
