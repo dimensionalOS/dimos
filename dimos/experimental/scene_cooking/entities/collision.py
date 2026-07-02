@@ -36,6 +36,7 @@ decomposition and no per-machine cache; the package is self-contained.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from dimos.experimental.scene_cooking.coacd_util import silence_coacd_logging
 from dimos.utils.logging_config import setup_logger
@@ -109,7 +110,7 @@ def cook_entity_collision_hulls(
     return out_paths
 
 
-def _run_coacd(mesh: object, mesh_path: Path) -> list[tuple[object, object]]:
+def _run_coacd(mesh: Any, mesh_path: Path) -> list[tuple[Any, Any]]:
     """CoACD parts for an open3d mesh; ``[]`` means fall back to one hull."""
     import coacd  # type: ignore[import-not-found, import-untyped]
     import numpy as np
@@ -118,8 +119,8 @@ def _run_coacd(mesh: object, mesh_path: Path) -> list[tuple[object, object]]:
 
     try:
         cm = coacd.Mesh(
-            np.asarray(mesh.vertices, dtype=np.float64),  # type: ignore[attr-defined]
-            np.asarray(mesh.triangles, dtype=np.int32),  # type: ignore[attr-defined]
+            np.asarray(mesh.vertices, dtype=np.float64),
+            np.asarray(mesh.triangles, dtype=np.int32),
         )
         parts = coacd.run_coacd(
             cm,
