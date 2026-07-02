@@ -673,7 +673,14 @@ class DepthStreamer:
         keys_vox = keys[first]
         self._last_n_vox = len(xyz_vox)
 
-        # Fuse into persistent map: only add voxels whose key hasn't been seen
+        # Per-frame voxel map — shows current view, updates every frame
+        rr.log("world/map", rr.Points3D(
+            positions=xyz_vox,
+            colors=_height_color(xyz_vox[:, 2] - cam_z),
+            radii=0.010,
+        ))
+
+        # Persistent global map — only append voxels not already in the map
         new_idx = [i for i, k in enumerate(keys_vox.tolist()) if int(k) not in self._acc_keys]
         if new_idx:
             new_pts = xyz_vox[new_idx]
@@ -683,7 +690,7 @@ class DepthStreamer:
         if len(self._acc_pts):
             n   = min(len(self._acc_pts), self.MAX_MAP)
             idx = np.random.choice(len(self._acc_pts), n, replace=False) if len(self._acc_pts) > n else np.arange(n)
-            rr.log("world/map", rr.Points3D(
+            rr.log("world/global_map", rr.Points3D(
                 positions=self._acc_pts[idx],
                 colors=_height_color(self._acc_pts[idx, 2] - cam_z),
                 radii=0.010,
@@ -788,6 +795,8 @@ def main() -> None:
                               contents=["world/raw_cloud", "world/camera/**"]),
             rrb.Spatial3DView(name="voxel map", origin="world",
                               contents=["world/map"]),
+            rrb.Spatial3DView(name="global map", origin="world",
+                              contents=["world/global_map"]),
         )
     ))
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
