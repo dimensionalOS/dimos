@@ -15,8 +15,14 @@ import { TeleopPad } from "./panels/TeleopPad";
 import { StatsBar } from "./panels/StatsBar";
 import { CommandsPanel } from "./panels/CommandsPanel";
 import { StreamsTab } from "./panels/streams/StreamsTab";
-import { BenchDrawer } from "./panels/BenchDrawer";
+import { BenchDrawer, hasBenchParams } from "./panels/BenchDrawer";
 import { useGateway } from "./gateway";
+import { getParam, setUrlParam } from "./urlState";
+
+// ?tab=worldview|topics picks the page; bench params imply the Topics tab (where the drawer lives).
+type Tab = "2d" | "streams";
+const TAB_IDS: Record<string, Tab> = { worldview: "2d", topics: "streams" };
+const initialTab = (): Tab => TAB_IDS[getParam("tab") ?? ""] ?? (hasBenchParams() ? "streams" : "2d");
 
 function Inspector({ topic }: { topic: string }) {
   const { data, meta } = useTopicLatest<any>(topic, { maxHz: 4 });
@@ -48,7 +54,11 @@ export function App() {
   const label = useDimosClient()?.gatewayLabel;
   const { servers, activeId, setActiveId } = useServers();
   const [selected, setSelected] = useState<string | null>(null);
-  const [tab, setTab] = useState<"2d" | "streams">("2d");
+  const [tab, setTabState] = useState<Tab>(initialTab);
+  const setTab = (t: Tab) => {
+    setTabState(t);
+    setUrlParam("tab", t === "2d" ? null : "topics"); // worldview is the default → keep the URL clean
+  };
   const [mediaMode, setMediaMode] = useState<MediaMode>("auto");
   const { gateway, setGateway } = useGateway();
   const [gwText, setGwText] = useState(gateway);

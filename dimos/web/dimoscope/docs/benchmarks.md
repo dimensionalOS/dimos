@@ -76,8 +76,9 @@ Takeaways:
 Re-run: pick a generator tier + the matching workload profile, **Run sweep**, **copy Markdown**.
 The config drives from the URL — `?gw=host:port` targets a remote gateway, `?transport=<id>` pins
 the transport, `?profiles=pose,dense,mixed` selects workloads, `?dur=ms` tunes the window,
-`?maxHz=n` caps client QoS, `?load=<tier>` preselects the generator tier — and each export embeds
-its `repro:` URL.
+`?maxHz=n` caps client QoS, `?load=<tier>` preselects the generator tier. Bench URLs land on the
+bench tab (`?tab=worldview|topics` picks the page explicitly), and each export embeds its `repro:`
+URL.
 
 ---
 

@@ -40,7 +40,9 @@ const mbps = (bytes: number, hz: number) => (bytes * hz) / 1e6;
 // The bench config drives from the URL: ?profiles=pose,dense,mixed · ?dur=ms · ?maxHz=n ·
 // ?load=<tier id> (preselects the tier — starting the flood stays the ▶ button). Knob changes are
 // reflected back (omitted at defaults), and the Markdown export embeds the full repro URL.
-const BENCH_PARAMS = ["profiles", "dur", "maxHz", "load"];
+export const BENCH_PARAMS = ["profiles", "dur", "maxHz", "load"];
+/** True when the URL carries any bench knob — the app then lands on the bench (Topics) tab. */
+export const hasBenchParams = () => BENCH_PARAMS.some((k) => getParam(k) !== null);
 const initProfiles = (): string[] => {
   const ids = new Set(STREAM_PROFILES.map((p) => p.id));
   const fromUrl = (getParam("profiles") ?? "").split(",").filter((id) => ids.has(id));
@@ -62,7 +64,7 @@ export function BenchDrawer() {
   const activeUrl = servers.find((s) => s.id === activeId)?.url;
   const activeLabel = servers.find((s) => s.id === activeId)?.label ?? "active";
 
-  const [open, setOpen] = useState(() => BENCH_PARAMS.some((k) => getParam(k) !== null));
+  const [open, setOpen] = useState(hasBenchParams);
 
   const hasRpc = commands.some((c) => c.target === "GO2Load");
   const [heavyKind, setHeavyKind] = useState<"image" | "cloud">("image");
