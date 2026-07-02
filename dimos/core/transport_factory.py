@@ -27,6 +27,12 @@ from dimos.core.transport import (
     pLCMTransport,
     pZenohTransport,
 )
+from dimos.protocol.pubsub.impl.zenohpubsub import (
+    QOS_LATEST_WINS,
+    QOS_NEVER_DROP,
+    Topic as ZenohTopic,
+    ZenohQoS,
+)
 from dimos.protocol.rpc.pubsubrpc import LCMRPC, ZenohRPC
 from dimos.protocol.tf.tf import LCMTF, ZenohTF
 
@@ -48,6 +54,23 @@ def transport_topic(name: str, g: GlobalConfig = global_config) -> str:
     return name if name.startswith("/") else "/" + name
 
 
+# High-rate sensor streams: drop stale frames under congestion, never stall the
+# publisher. Matched by message type since that is what makes them high-rate.
+_LATEST_WINS_TYPES = ("sensor_msgs.Image", "sensor_msgs.PointCloud2")
+# Agent/human conversation channels: low-rate, and a dropped message loses a
+# whole turn of conversation.
+_NEVER_DROP_CHANNELS = ("human_input", "agent", "agent_idle")
+
+
+def default_zenoh_qos(name: str, msg_type: type | None = None) -> ZenohQoS | None:
+    """Default publisher QoS for a logical channel; None = zenoh defaults."""
+    if getattr(msg_type, "msg_name", None) in _LATEST_WINS_TYPES:
+        return QOS_LATEST_WINS
+    if name.lstrip("/") in _NEVER_DROP_CHANNELS:
+        return QOS_NEVER_DROP
+    return None
+
+
 def make_transport(
     name: str, msg_type: type | None = None, *, g: GlobalConfig = global_config
 ) -> PubSubTransport[Any]:
@@ -56,20 +79,25 @@ def make_transport(
     A pickled (self-describing) transport is used when no `msg_type` is given or
     the type has no `lcm_encode`. Otherwise a typed transport is used.
 
-    The factory covers pub/sub backends only; per-backend channel tuning lives
-    in `GlobalConfig` overlay fields (`zenoh_qos` maps key-expr patterns to
-    Zenoh publisher QoS) rather than per-call-site parameters. A future
-    non-pubsub backend (e.g. TCP) would add its own overlay fields the same way.
+    A channel name alone doesn't fully define a topic: backends have per-topic
+    settings (Zenoh publisher QoS, for one) that live on their Topic objects.
+    The factory fills those with `default_zenoh_qos`; a channel that needs more
+    should pin an explicit transport built from a full Topic instead, e.g.
+    `ZenohTransport(ZenohTopic("bla", Image, qos=...))` in the blueprint's
+    transport map. LCM (UDP multicast) has no per-topic settings.
     """
 
     use_pickled = msg_type is None or getattr(msg_type, "lcm_encode", None) is None
     topic = transport_topic(name, g)
+    if g.transport == "zenoh":
+        ztopic = ZenohTopic(
+            topic, None if use_pickled else msg_type, qos=default_zenoh_qos(name, msg_type)
+        )
+        return pZenohTransport(ztopic) if use_pickled else ZenohTransport(ztopic)
     if use_pickled:
-        return pZenohTransport(topic) if g.transport == "zenoh" else pLCMTransport(topic)
+        return pLCMTransport(topic)
     assert msg_type is not None  # not use_pickled implies a typed msg_type
-    return (
-        ZenohTransport(topic, msg_type) if g.transport == "zenoh" else LCMTransport(topic, msg_type)
-    )
+    return LCMTransport(topic, msg_type)
 
 
 def _transport_arg_error(argv: list[str], message: str) -> NoReturn:

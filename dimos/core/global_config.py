@@ -21,7 +21,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from dimos.constants import DEFAULT_BUILD_NATIVE
 from dimos.models.vl.types import VlModelName
-from dimos.protocol.pubsub.impl.zenohqos import DEFAULT_ZENOH_QOS, ZenohQoS
 from dimos.visualization.rerun.constants import (
     RERUN_ENABLE_WEB,
     RERUN_OPEN_DEFAULT,
@@ -84,12 +83,6 @@ class GlobalConfig(BaseSettings):
     transport: TransportBackend = Field(
         default_factory=_default_transport,
         validation_alias=AliasChoices("DIMOS_TRANSPORT", "transport"),
-    )
-    # Per-key-expr Zenoh publisher QoS rules; first matching rule wins.
-    # Env override is JSON: DIMOS_ZENOH_QOS='[{"key":"dimos/foo","reliability":"best_effort"}]'
-    zenoh_qos: tuple[ZenohQoS, ...] = Field(
-        default=DEFAULT_ZENOH_QOS,
-        validation_alias=AliasChoices("DIMOS_ZENOH_QOS", "zenoh_qos"),
     )
     build_native: bool = DEFAULT_BUILD_NATIVE
     dtop: bool = False

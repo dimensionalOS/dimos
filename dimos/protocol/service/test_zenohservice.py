@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import pytest
 
-from dimos.protocol.pubsub.impl.zenohqos import ZenohQoS
 from dimos.protocol.service.zenohservice import ZenohConfig, ZenohService, ZenohSessionPool
 
 
@@ -32,12 +31,6 @@ def test_different_modes_produce_different_keys() -> None:
     peer = ZenohConfig(mode="peer")
     client = ZenohConfig(mode="client")
     assert peer.session_key != client.session_key
-
-
-def test_qos_does_not_change_session_key() -> None:
-    # Sessions are shared across QoS configs; QoS applies per publisher.
-    with_qos = ZenohConfig(qos=(ZenohQoS(key="dimos/x", congestion_control="block"),))
-    assert with_qos.session_key == ZenohConfig().session_key
 
 
 def test_start_creates_session(session_pool) -> None:

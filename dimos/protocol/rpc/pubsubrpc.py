@@ -30,7 +30,11 @@ from typing import (
 from dimos.constants import LCM_MAX_CHANNEL_NAME_LENGTH
 from dimos.protocol.pubsub.impl.lcmpubsub import PickleLCM, Topic
 from dimos.protocol.pubsub.impl.shmpubsub import PickleSharedMemory
-from dimos.protocol.pubsub.impl.zenohpubsub import PickleZenoh
+from dimos.protocol.pubsub.impl.zenohpubsub import (
+    QOS_NEVER_DROP,
+    PickleZenoh,
+    Topic as ZenohTopic,
+)
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.rpc.rpc_utils import deserialize_exception, serialize_exception
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, Args, RPCSpec
@@ -339,8 +343,9 @@ class ZenohRPC(PubSubRPCMixin[Topic, Any], PickleZenoh):
     def topicgen(self, name: str, req_or_res: bool) -> Topic:
         # Zenoh key expressions can't start with '/' and have no LCM-style
         # channel-name length cap, so namespace under 'dimos/' with no fallback.
+        # RPC requests/responses are one-shot: never drop them under congestion.
         suffix = "res" if req_or_res else "req"
-        return Topic(topic=f"dimos/rpc/{name}/{suffix}")
+        return ZenohTopic(topic=f"dimos/rpc/{name}/{suffix}", qos=QOS_NEVER_DROP)
 
 
 class ShmRPC(PubSubRPCMixin[str, Any], PickleSharedMemory):

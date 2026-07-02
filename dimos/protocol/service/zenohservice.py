@@ -20,7 +20,6 @@ from typing import Any
 
 import zenoh
 
-from dimos.protocol.pubsub.impl.zenohqos import ZenohQoS
 from dimos.protocol.service.spec import BaseConfig, Service
 from dimos.utils.logging_config import setup_logger
 
@@ -33,9 +32,6 @@ class ZenohConfig(BaseConfig):
     mode: str = "peer"
     connect: list[str] = []
     listen: list[str] = []
-    # Per-publisher QoS rules; None = follow global_config.zenoh_qos.
-    # Excluded from session_key: sessions are shared, QoS is per-publisher.
-    qos: tuple[ZenohQoS, ...] | None = None
 
     @property
     def session_key(self) -> str:

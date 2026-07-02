@@ -355,25 +355,24 @@ The Rerun bridge also follows the global transport. When `transport=zenoh`, the 
 
 #### Per-topic QoS
 
-Zenoh publisher QoS is set per key expression by `global_config.zenoh_qos`, an ordered rule table (first match wins, defined in [`zenohqos.py`](/dimos/protocol/pubsub/impl/zenohqos.py)). Defaults:
-
-* `dimos/rpc/**` and the agent channels (`dimos/human_input`, `dimos/agent`, `dimos/agent_idle`): reliable, block under congestion (never drop).
-* `Image`/`PointCloud2` streams (matched by the type suffix in the key): best-effort, drop under congestion.
-* Everything else: zenoh defaults (reliable, drop under congestion).
-
-Override via env (JSON) or blueprint; rules are full-replace, so prepend to keep the defaults:
-
-```bash skip
-DIMOS_ZENOH_QOS='[{"key": "dimos/foo", "reliability": "best_effort"}]'
-```
+Zenoh publisher QoS lives on the Zenoh `Topic` object (see [`zenohpubsub.py`](/dimos/protocol/pubsub/impl/zenohpubsub.py#L27)):
 
 ```python skip
-blueprint.global_config(
-    zenoh_qos=({"key": "dimos/foo/**", "congestion_control": "drop"}, *DEFAULT_ZENOH_QOS),
+from dimos.core.transport import ZenohTransport
+from dimos.protocol.pubsub.impl.zenohpubsub import Topic, ZenohQoS
+
+blueprint = blueprint.transports(
+    {("image", CameraModule): ZenohTransport(Topic("dimos/image", Image, qos=ZenohQoS(reliability="best_effort", congestion_control="drop")))}
 )
 ```
 
-QoS is resolved once per key when the publisher is first declared; rule changes don't affect already-declared publishers. LCM has no per-topic settings, so the rules only apply when `transport=zenoh`.
+When the factory builds transports from the global switch, it applies defaults (`default_zenoh_qos` in [`transport_factory.py`](/dimos/core/transport_factory.py#L65)):
+
+* RPC topics and the agent channels (`human_input`, `agent`, `agent_idle`): reliable, block under congestion (never drop).
+* `Image`/`PointCloud2` streams: best-effort, drop under congestion (latest wins).
+* Everything else: zenoh defaults (reliable, drop under congestion).
+
+The publisher for a key is declared with the first publish's QoS. LCM has no per-topic settings, so QoS only applies when `transport=zenoh`.
 
 ### Shared memory (IPC)
 

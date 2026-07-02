@@ -92,7 +92,7 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
     for field_name, field_info in fields.items():
         field_type = field_info.annotation
 
-        # Container generics (e.g. `tuple[ZenohQoS, ...]`) have no single-flag CLI
+        # Container generics (e.g. `tuple[...]` fields) have no single-flag CLI
         # representation; they're configured via env/JSON. Skip like arg_help does.
         if isinstance(field_type, types.GenericAlias):
             continue

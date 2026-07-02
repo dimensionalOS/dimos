@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import pickle
 import threading
 from types import SimpleNamespace
 from typing import cast
@@ -39,6 +40,11 @@ from dimos.core.transport import (
     pZenohTransport,
 )
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.protocol.pubsub.impl.zenohpubsub import (
+    QOS_LATEST_WINS,
+    QOS_NEVER_DROP,
+    Topic as ZenohTopic,
+)
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 
 
@@ -219,6 +225,21 @@ def test_stop_and_restart(session_pool) -> None:
     t.start()
     assert t._started
     t.stop()
+
+
+def test_zenoh_transport_pickle_preserves_topic_qos() -> None:
+    t = ZenohTransport(ZenohTopic("dimos/camera/color", Image, qos=QOS_LATEST_WINS))
+    t2 = pickle.loads(pickle.dumps(t))
+    assert type(t2) is ZenohTransport
+    assert t2.topic == t.topic  # topic, lcm_type and qos all round-trip
+
+
+def test_pzenoh_transport_pickle_preserves_topic_qos() -> None:
+    t = pZenohTransport(ZenohTopic("dimos/human_input", qos=QOS_NEVER_DROP))
+    t2 = pickle.loads(pickle.dumps(t))
+    assert type(t2) is pZenohTransport
+    assert t2.topic == "dimos/human_input"
+    assert t2._zenoh_topic == t._zenoh_topic
 
 
 def test_coerce_lcm_to_zenoh_typed(use_zenoh) -> None:

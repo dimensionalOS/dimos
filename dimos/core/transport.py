@@ -341,17 +341,24 @@ if DDS_AVAILABLE:
 
 
 class ZenohTransport(PubSubTransport[T]):
-    """Zenoh transport with LCM encoding for typed DimosMsg."""
+    """Zenoh transport with LCM encoding for typed DimosMsg.
+
+    Accepts either a plain topic string plus message type, or a full
+    `ZenohTopic` carrying per-topic settings: `ZenohTransport(ZenohTopic("bla",
+    Image, qos=...))`.
+    """
 
     _started: bool = False
 
-    def __init__(self, topic: str, type: type, **kwargs: Any) -> None:
-        super().__init__(LCMTopic(topic, type))
+    def __init__(self, topic: str | ZenohTopic, type: type | None = None, **kwargs: Any) -> None:
+        if isinstance(topic, str):
+            topic = ZenohTopic(topic, type)
+        super().__init__(topic)
         self.zenoh = Zenoh(**kwargs)
         self._start_lock = threading.RLock()
 
     def __reduce__(self) -> tuple[Any, ...]:
-        return (ZenohTransport, (self.topic.topic, self.topic.lcm_type))
+        return (ZenohTransport, (self.topic,))
 
     def start(self) -> None:
         with self._start_lock:
@@ -379,18 +386,22 @@ class ZenohTransport(PubSubTransport[T]):
 
 
 class pZenohTransport(PubSubTransport[T]):
-    """Zenoh transport with pickle encoding for arbitrary Python objects."""
+    """Zenoh transport with pickle encoding for arbitrary Python objects.
+
+    Accepts either a plain topic string or a full `ZenohTopic` carrying
+    per-topic settings (QoS). `self.topic` stays the plain string.
+    """
 
     _started: bool = False
 
-    def __init__(self, topic: str, **kwargs: Any) -> None:
-        super().__init__(topic)
+    def __init__(self, topic: str | ZenohTopic, **kwargs: Any) -> None:
+        self._zenoh_topic = ZenohTopic(topic) if isinstance(topic, str) else topic
+        super().__init__(self._zenoh_topic.pattern)
         self.zenoh = PickleZenoh(**kwargs)
-        self._zenoh_topic = ZenohTopic(topic)
         self._start_lock = threading.RLock()
 
     def __reduce__(self) -> tuple[Any, ...]:
-        return (pZenohTransport, (self.topic,))
+        return (pZenohTransport, (self._zenoh_topic,))
 
     def start(self) -> None:
         with self._start_lock:
