@@ -22,8 +22,11 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+import platform
 
-from dimos.memory.db_tf import DbTf
+import pytest
+
+from dimos.memory.db_tf_sql import DbTfSql
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -33,10 +36,14 @@ from dimos.msgs.nav_msgs.DeformationNode import DeformationNode, tf_id_for
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.tf import MultiTBuffer
 
+# sqlite-vec fails to load on Linux ARM (32-bit binary in the aarch64 wheel) and
+# on macOS in CI; SqliteStore loads it on init, so skip like memory2/conftest.py.
+_SKIP_SQLITE_VEC = platform.machine() == "aarch64" or platform.system() == "Darwin"
+pytestmark = pytest.mark.skipif(_SKIP_SQLITE_VEC, reason="sqlite-vec extension not loadable here")
+
 _T0 = 1000.0
 _DYN_RATE = 30.0
 _DURATION = 10.0
-_NO_PRUNE = 1.0e15
 
 
 def _yaw(theta: float) -> Quaternion:
@@ -66,7 +73,7 @@ def _append(store: SqliteStore, transform: Transform) -> None:
 
 
 def _ref(transforms: list[Transform]) -> MultiTBuffer:
-    buffer = MultiTBuffer(buffer_size=_NO_PRUNE)
+    buffer = MultiTBuffer(buffer_size=math.inf)
     buffer.receive_transform(*transforms)
     return buffer
 
@@ -123,7 +130,7 @@ def test_interpolates_and_matches_full_load(tmp_path: Path) -> None:
     transforms = _record_single_robot(tmp_path / "r.db", static_repeat=True)
     reference = _ref(transforms)
     store = SqliteStore(path=str(tmp_path / "r.db"), must_exist=True)
-    db = DbTf(store)
+    db = DbTfSql(store)
     compared = 0
     for k in range(25):
         q = _T0 + 0.013 + k * 0.317
@@ -142,7 +149,7 @@ def test_latched_static_resolves(tmp_path: Path) -> None:
     (no bracket, no tolerance) — the case a plain time-bracket would drop."""
     _record_single_robot(tmp_path / "r.db", static_repeat=False)
     store = SqliteStore(path=str(tmp_path / "r.db"), must_exist=True)
-    db = DbTf(store)
+    db = DbTfSql(store)
     assert db.get("world", "sensor", _T0 + 9.5, 0.5) is not None  # ~9.5s after statics
     store.stop()
 
@@ -185,7 +192,7 @@ def test_reparent_midrun_uses_graph_as_of_query_time(tmp_path: Path) -> None:
     store.stop()
 
     store = SqliteStore(path=str(path), must_exist=True)
-    db = DbTf(store)
+    db = DbTfSql(store)
 
     q1 = _T0 + 2.013
     want1 = _ref(
@@ -259,7 +266,7 @@ def test_loop_closure_deformation_corrects_matched_edge(tmp_path: Path) -> None:
     store.stop()
 
     store = SqliteStore(path=str(path), must_exist=True)
-    db = DbTf(store)
+    db = DbTfSql(store)
     got = db.get("map", "odom", _T0 + 0.3, 0.5)
     assert got is not None and abs(got.translation.x - 1.0) < 1e-6  # raw identity + delta
     base = db.get("odom", "base_link", _T0 + 0.3, 0.5)  # unmatched edge, unchanged
@@ -283,7 +290,7 @@ def test_loop_closure_deformation_blends_between_keyframes(tmp_path: Path) -> No
     store.stop()
 
     store = SqliteStore(path=str(path), must_exist=True)
-    db = DbTf(store)
+    db = DbTfSql(store)
     got = db.get("map", "odom", _T0 + 4.0, 0.5)  # midpoint of [t0, t0+8]
     assert got is not None and abs(got.translation.x - 1.0) < 1e-6
     store.stop()
@@ -319,7 +326,7 @@ def test_disjoint_multirobot_returns_none(tmp_path: Path) -> None:
     store.stop()
 
     store = SqliteStore(path=str(path), must_exist=True)
-    db = DbTf(store)
+    db = DbTfSql(store)
     q = _T0 + 0.3
     assert db.get("baseA", "worldA", q, 0.5) is not None  # same component
     assert db.get("baseB", "baseA", q, 0.5) is None  # different components

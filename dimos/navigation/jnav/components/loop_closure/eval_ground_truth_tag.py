@@ -51,16 +51,17 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from dimos.navigation.jnav.components.loop_closure.eval import (
-    odometry_pose7_lookup,
     run_module_graph,
+    tf_pose_samples,
 )
 from dimos.navigation.jnav.utils.module_loading import (
     filter_config_for_module,
     load_module_class,
 )
-from dimos.navigation.jnav.utils.recording_db import store
+from dimos.navigation.jnav.utils.recording_db import ODOM_MATCH_TOLERANCE_S, store
 from dimos.navigation.jnav.utils.trajectory_metrics import (
     drift_delta_lookup,
+    pose7_lookup,
     rigid_align_rmse,
 )
 
@@ -141,6 +142,8 @@ def tag_constellation(
     odom_stream: str,
     optical_in_base: list[float],
     ignore_tags: set[int],
+    world_frame: str = "world",
+    body_frame: str = "base_link",
 ) -> tuple[dict[int, np.ndarray], int]:
     """Run the PGO, then place each tag sighting in the world via the corrected
     trajectory + extrinsic, averaging per tag. Returns {marker_id: world centroid}
@@ -155,7 +158,10 @@ def tag_constellation(
         odom_stream=odom_stream,
         lockstep=True,
     )
-    raw_pose7_lookup = odometry_pose7_lookup(db_path, odom_stream)
+    raw_times, raw_poses7 = tf_pose_samples(
+        db_path, odom_stream, world_frame=world_frame, body_frame=body_frame
+    )
+    raw_pose7_lookup = pose7_lookup(raw_times, raw_poses7, ODOM_MATCH_TOLERANCE_S)
     delta_lookup = drift_delta_lookup(graph, raw_pose7_lookup)
     by_tag: dict[int, list[np.ndarray]] = defaultdict(list)
     for timestamp, marker_id, tag_pose7 in tag_in_camera_sightings(db_path):
