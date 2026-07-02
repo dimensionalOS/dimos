@@ -600,6 +600,7 @@ class DepthStreamer:
         self._last_n_vox     = 0
         self._pinhole_logged = False
         self._floor_calib = _FloorCalibrator()
+        self._global_vox  = FastVoxelMap(voxel_size=_VOX_SIZE)
         self._map_queue: queue.Queue = queue.Queue(maxsize=16)
         self._map_thread = threading.Thread(target=self._map_worker, daemon=True)
         self._map_thread.start()
@@ -644,17 +645,43 @@ class DepthStreamer:
                 radii=0.003,
             ))
 
-        # Floor calibration — runs in camera_link frame (Z always up, IMU-independent)
-        # so the height estimate is stable even before Madgwick fully converges.
-        xyz_cam = xyz @ pkt.pose_R   # world → camera_link (exact inverse since t=0)
+        # camera_link frame (Z always up) — used for floor calibration and ICP
+        xyz_cam = xyz @ pkt.pose_R
+
+        # Floor calibration (runs first 30+30 frames, then stays fixed)
         self._floor_calib.update(xyz_cam)
 
-        # Feed persistent map worker — accumulates floor-filtered world pts across
-        # all frames; worker also runs ICP to refine the translation estimate.
-        if not self._map_queue.full():
-            self._map_queue.put_nowait(
-                (xyz, pkt.pose_t.copy(), cam_z, pkt.pose_R.copy(), frame)
-            )
+        # Floor filter — same threshold as ZED's 3 cm above floor
+        if self._floor_calib.ready:
+            keep     = xyz_cam[:, 2] > (self._floor_calib.floor_z + 0.03)
+            xyz_kept = xyz[keep]
+        else:
+            xyz_kept = xyz
+
+        # Voxelize this frame and merge into the persistent global map
+        if len(xyz_kept):
+            vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
+            _, first = np.unique(_pack(vk), return_index=True)
+            xyz_vox  = xyz_kept[first]
+            self._last_n_vox = len(xyz_vox)
+            self._global_vox.add(xyz_vox)
+
+        # Log full accumulated map every frame
+        pts = self._global_vox.points()
+        if len(pts):
+            n   = min(len(pts), self.MAX_MAP)
+            idx = np.random.choice(len(pts), n, replace=False) if len(pts) > n else np.arange(n)
+            rr.log("world/map", rr.Points3D(
+                positions=pts[idx],
+                colors=_height_color(pts[idx, 2] - cam_z),
+                radii=0.010,
+            ))
+
+        # ICP: update translation so next frame's backprojection lands at the
+        # correct world position when the camera has physically moved
+        if len(xyz_kept) >= 50:
+            self._src.odom.update(xyz_cam[keep] if self._floor_calib.ready else xyz_cam,
+                                  pkt.pose_R)
 
     def _map_worker(self) -> None:
         while True:
