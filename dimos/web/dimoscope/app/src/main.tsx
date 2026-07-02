@@ -7,9 +7,10 @@ import { GatewayContext } from "./gateway";
 import "./styles.css";
 
 // Data plane, camera /media, and bench transports share one host:port; the gateway (host:port) is a
-// user-editable setting. WebTransport is the exception — QUIC can't share the HTTP port, so it uses WT_PORT=8443.
+// user-editable setting. WebTransport is the exception — QUIC can't share the HTTP port, so it uses
+// WT_PORT=8443; ?wt=<port> overrides it (deployments where only e.g. UDP 443 is reachable).
 const GW_PORT = 8080; // gateway HTTP/WS port (python -m gateway default)
-const WT_PORT = 8443; // gateway WebTransport/QUIC port
+const WT_PORT = Number(new URLSearchParams(location.search).get("wt") ?? 8443); // gateway WebTransport/QUIC port
 
 // Initial gateway: ?gw=host:port seeds it, else localStorage, else hostname:GW_PORT.
 function initialGateway(): string {
@@ -30,7 +31,7 @@ function buildServers(gateway: string): ServerOpt[] {
       id: "auto",
       label: "Auto (WT→WS)",
       connect: async () => {
-        const c = createDimosClient({ transport: (url) => createAutoTransport({ url }) });
+        const c = createDimosClient({ transport: (url) => createAutoTransport({ url, wtPort: WT_PORT }) });
         await c.connect(gateway);
         return c;
       },
