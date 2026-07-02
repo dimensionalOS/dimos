@@ -319,6 +319,7 @@ from that network, and any browser drives it via `http://localhost:5173/?gw=<the
 | `QOS_RULES` | `qos.rules.json` | topic-glob → lane override map (see `qos.rules.example.json`) |
 | `NETEM_CTL` | off | enable `/netem` (Linux + the `dimos-netem` sudo wrapper above) |
 | `ZENOH_KEY` | `**` | zenoh key-expr the bus tap subscribes |
+| `DIMOS_TRANSPORT` | platform default | the RPC bridge's backend — must match the blueprint's (topics tap both buses; teleop publishes to both; RPC is request/response and can't). `deno task serve` pins `zenoh`, same as every blueprint task |
 | `DIMOS_LCM_HOST` / `DIMOS_LCM_PORT` | `239.255.76.67` / `7667` | LCM multicast group the tap joins |
 | `STATIC_DIR` | `app/dist` | the built app served at `/` |
 

@@ -42,7 +42,7 @@
     "build": "cd app && deno run -A npm:vite build",
     "preview": "cd app && deno run -A npm:vite preview",
     "serve": "cargo build --release --manifest-path gateway/wt-sidecar/Cargo.toml && deno task serve:run",
-    "serve:run": "cargo run --release --manifest-path gateway/wt-sidecar/Cargo.toml & uv run python -m gateway",
+    "serve:run": "cargo run --release --manifest-path gateway/wt-sidecar/Cargo.toml & DIMOS_TRANSPORT=zenoh uv run python -m gateway",
     "wt-sidecar": "cargo run --release --manifest-path gateway/wt-sidecar/Cargo.toml",
     "netem:install": "sudo install -m755 gateway/scripts/dimos-netem /usr/local/bin/ && echo \"$USER ALL=(root) NOPASSWD: /usr/local/bin/dimos-netem\" | sudo tee /etc/sudoers.d/dimos-netem",
     "check": "deno check packages/web/src/**/*.ts packages/react/src/**/*.tsx && cd app && deno run -A npm:typescript/tsc --noEmit -p tsconfig.json",
