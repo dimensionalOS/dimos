@@ -306,17 +306,17 @@ if __name__ == "__main__":
 
 # Development
 
-## Develop on DimOS
-
 ```sh skip
 export GIT_LFS_SKIP_SMUDGE=1
 git clone https://github.com/dimensionalOS/dimos.git
 cd dimos
-
-# Run the default test suite (uv run syncs deps on demand; --all-groups
-# only needed for self-hosted tests / mypy — see docs/development/testing.md)
-uv run pytest --numprocesses=auto dimos
+uv sync --all-extras --no-extra dds
+source .venv/bin/activate
+pre-commit install
+pytest --numprocesses=auto dimos
 ```
+
+> **Full developer guide:** [docs/development/index.md](docs/development/index.md) — environment setup, linting, type checking, project structure, and more.
 
 
 ## Multi Language Support
