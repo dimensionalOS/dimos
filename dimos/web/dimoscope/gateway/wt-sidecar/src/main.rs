@@ -28,7 +28,7 @@ use wtransport::endpoint::IncomingSession;
 use wtransport::error::SendDatagramError;
 use wtransport::{Connection, Endpoint, ServerConfig};
 
-use session::{Hub, Session};
+use session::{now_ms, Hub, Session};
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
@@ -75,6 +75,17 @@ async fn main() -> Result<()> {
     let pipe_path = env_or("WT_PIPE", "/tmp/dimoscope-wt.sock");
     let hash_file = env_or("WT_CERT_HASH_FILE", "/tmp/dimoscope-wt-cert.hash");
     let egress_kbps: f64 = env_or("EGRESS_KBPS", "0").parse().unwrap_or(0.0);
+    // send_window bounds the connection's send buffer. quinn's ~10 MB default lets write_all accept
+    // frame after frame instantly, so a saturating bulk topic piles up in quinn's buffer *past* the
+    // outbox — measured 5+ s of stale backlog on a shaped link. Capping it to ~1.5 MB paces the
+    // drain to the link rate: write_all blocks, the backlog stays in the outbox where conflation
+    // keeps only the freshest frame. 1.5 MB > clean-WAN BDP (~0.6 MB at 20 MB/s × 30 ms) so clean
+    // throughput is unaffected.
+    let send_window: u64 = env_or("WT_SEND_WINDOW", "1500000").parse().unwrap_or(1_500_000);
+    // Datagram freshness: drop a pose frame older than this at drain time (post-stall staleness
+    // bound), and keep quinn's datagram send buffer small so newest-wins by drop-oldest.
+    let dgram_ttl_ms: f64 = env_or("WT_DGRAM_TTL_MS", "200").parse().unwrap_or(200.0);
+    let dgram_buf: usize = env_or("WT_DGRAM_BUF", "16384").parse().unwrap_or(16384);
     load_qos_rules(&env_or("QOS_RULES", "qos.rules.json"));
 
     // Cert FIRST: the gateway's /cert serves 503 until this file exists.
@@ -94,14 +105,16 @@ async fn main() -> Result<()> {
     tokio::spawn(rtc::run(hub.clone(), rtc_port, rtc_public_ip, offer_rx));
 
     // BBR keeps inflight ≈ BDP so a saturating bulk stream doesn't build a standing queue on a
-    // shaped link — cubic bufferbloats, delaying every datagram by the queue depth. The small
-    // datagram send buffer bounds staleness below the outbox for the same reason.
+    // shaped link — cubic bufferbloats, delaying every datagram by the queue depth. send_window
+    // caps the send buffer so bulk backlog stays in the outbox (conflated fresh); the small
+    // datagram send buffer bounds pose staleness the same way (drop-oldest = newest-wins).
     let mut transport = wtransport::config::QuicTransportConfig::default();
     transport
         .congestion_controller_factory(std::sync::Arc::new(
             wtransport::quinn::congestion::BbrConfig::default(),
         ))
-        .datagram_send_buffer_size(64 * 1024);
+        .send_window(send_window)
+        .datagram_send_buffer_size(dgram_buf);
 
     // with_bind_default binds [::] dual-stack — required on IPv6-first macOS, where a 0.0.0.0
     // bind leaves `localhost` (resolving to ::1 first) unreachable.
@@ -116,14 +129,19 @@ async fn main() -> Result<()> {
         let incoming = server.accept().await;
         let hub = hub.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_session(hub, incoming, egress_kbps).await {
+            if let Err(e) = handle_session(hub, incoming, egress_kbps, dgram_ttl_ms).await {
                 info!("session ended: {e:#}");
             }
         });
     }
 }
 
-async fn handle_session(hub: Arc<Hub>, incoming: IncomingSession, egress_kbps: f64) -> Result<()> {
+async fn handle_session(
+    hub: Arc<Hub>,
+    incoming: IncomingSession,
+    egress_kbps: f64,
+    dgram_ttl_ms: f64,
+) -> Result<()> {
     let request = incoming.await?;
     // Accept regardless of URL path — the wire protocol doesn't route on :path.
     let conn = Arc::new(request.accept().await?);
@@ -141,7 +159,12 @@ async fn handle_session(hub: Arc<Hub>, incoming: IncomingSession, egress_kbps: f
     // Two drain tasks so a flow-control-stalled bulk write can never head-of-line-block datagrams;
     // the fallback channel carries the rare datagram that stopped fitting the path MTU.
     let (fallback_tx, fallback_rx) = mpsc::unbounded_channel();
-    let dgrams = tokio::spawn(drain_datagrams(conn.clone(), sess.clone(), fallback_tx));
+    let dgrams = tokio::spawn(drain_datagrams(
+        conn.clone(),
+        sess.clone(),
+        fallback_tx,
+        dgram_ttl_ms,
+    ));
     let bulk = tokio::spawn(drain_bulk(
         conn.clone(),
         sess.clone(),
@@ -221,9 +244,17 @@ async fn drain_datagrams(
     conn: Arc<Connection>,
     sess: Arc<Session>,
     fallback: mpsc::UnboundedSender<Bytes>,
+    ttl_ms: f64,
 ) {
     loop {
         let frame = sess.dgram.get().await;
+        // frame = [f64be ingress-ms][LC02]; skip if it aged past the TTL waiting to drain.
+        if ttl_ms > 0.0 && frame.len() >= 8 {
+            let stamp = f64::from_be_bytes(frame[..8].try_into().expect("8 bytes"));
+            if now_ms() - stamp > ttl_ms {
+                continue;
+            }
+        }
         let max_dgram = conn.max_datagram_size().unwrap_or(0);
         if frame.len() <= max_dgram {
             match conn.send_datagram(&frame) {
