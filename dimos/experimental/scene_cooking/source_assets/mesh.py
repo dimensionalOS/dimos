@@ -43,6 +43,11 @@ from dimos.simulation.scene_assets.spec import SceneMeshAlignment
 
 _TRIMESH_DUPLICATE_SUFFIX_RE = re.compile(r"_[0-9a-f]{6}$", re.IGNORECASE)
 
+#: Height (metres) the downward probe ray in ``floor_z_under_origin`` starts
+#: from. Must clear any plausible scene ceiling; the hit depth is measured
+#: from this same height, so the two uses must stay equal.
+_FLOOR_PROBE_RAY_HEIGHT_M = 1000.0
+
 
 def _world_rotation(alignment: SceneMeshAlignment) -> np.ndarray:
     """Compose the y-up swap + ZYX Euler into one 3x3."""
@@ -357,12 +362,12 @@ def floor_z_under_origin(
     mesh = load_scene_mesh(scene_mesh_path, alignment=alignment)
     scene = make_raycasting_scene(mesh)
     rays = o3c.Tensor(
-        np.array([[0.0, 0.0, 1000.0, 0.0, 0.0, -1.0]], dtype=np.float32),
+        np.array([[0.0, 0.0, _FLOOR_PROBE_RAY_HEIGHT_M, 0.0, 0.0, -1.0]], dtype=np.float32),
         dtype=o3c.Dtype.Float32,
     )
     t_hit = float(scene.cast_rays(rays)["t_hit"].numpy()[0])
     if np.isfinite(t_hit):
-        return 1000.0 - t_hit
+        return _FLOOR_PROBE_RAY_HEIGHT_M - t_hit
     bbox = mesh.get_axis_aligned_bounding_box()
     return float(bbox.min_bound[2])
 
