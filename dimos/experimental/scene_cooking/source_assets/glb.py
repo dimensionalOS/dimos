@@ -32,9 +32,15 @@ GLB_HEADER_SIZE = 12
 GLB_CHUNK_HEADER_SIZE = 8
 GLB_JSON_CHUNK_TYPE = 0x4E4F534A
 GLB_BIN_CHUNK_TYPE = 0x004E4942
+GLB_ALIGNMENT = 4
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 STANDARD_TEXTURE_MIME_TYPES = {"image/png", "image/jpeg"}
 STANDARD_TEXTURE_MODES = {"RGB", "RGBA"}
+
+#: Byte offset of the IHDR chunk's bit-depth field: 8-byte PNG signature +
+#: 4-byte chunk length + 4-byte "IHDR" type + 4-byte width + 4-byte height.
+_PNG_IHDR_BIT_DEPTH_OFFSET = 24
+_PNG_STANDARD_BIT_DEPTH = 8
 
 
 def read_glb(path: Path) -> tuple[dict[str, Any], bytes]:
@@ -95,15 +101,15 @@ def write_glb(
         payload = buffer_view_replacements.get(index)
         if payload is None:
             payload = buffer_view_bytes(bin_chunk, view)
-        _pad_bytearray(new_bin, alignment=4, pad=0)
+        _pad_bytearray(new_bin, alignment=GLB_ALIGNMENT, pad=0)
         view["byteOffset"] = len(new_bin)
         view["byteLength"] = len(payload)
         new_bin.extend(payload)
-    _pad_bytearray(new_bin, alignment=4, pad=0)
+    _pad_bytearray(new_bin, alignment=GLB_ALIGNMENT, pad=0)
     buffers[0]["byteLength"] = len(new_bin)
 
     json_chunk = json.dumps(gltf, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    json_chunk = _padded_bytes(json_chunk, alignment=4, pad=b" ")
+    json_chunk = _padded_bytes(json_chunk, alignment=GLB_ALIGNMENT, pad=b" ")
     bin_bytes = bytes(new_bin)
     total_length = (
         GLB_HEADER_SIZE
@@ -239,9 +245,10 @@ def _is_standard_embedded_texture(
 
 
 def _is_high_bit_depth_png(texture_bytes: bytes) -> bool:
-    if not texture_bytes.startswith(PNG_SIGNATURE) or len(texture_bytes) < 25:
+    min_length = _PNG_IHDR_BIT_DEPTH_OFFSET + 1
+    if not texture_bytes.startswith(PNG_SIGNATURE) or len(texture_bytes) < min_length:
         return False
-    return texture_bytes[24] > 8
+    return texture_bytes[_PNG_IHDR_BIT_DEPTH_OFFSET] > _PNG_STANDARD_BIT_DEPTH
 
 
 def _pad_bytearray(data: bytearray, *, alignment: int, pad: int) -> None:
