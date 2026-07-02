@@ -111,10 +111,8 @@ def test_manipulator_keyboard_blueprint_uses_eef_twist_and_light_keyboard_kwargs
 ) -> None:
     keyboard_kwargs = _module_kwargs(blueprint, KeyboardTeleopModule)
     coordinator_tasks = _coordinator_tasks(blueprint)
+    eef_twist_tasks = [task for task in coordinator_tasks if task.type == "eef_twist"]
 
-    assert "model_path" not in keyboard_kwargs
-    assert "ee_joint_id" not in keyboard_kwargs
-    assert "joint_names" not in keyboard_kwargs
-    assert "home_joints" not in keyboard_kwargs
-    assert any(task.type == "eef_twist" for task in coordinator_tasks)
+    assert keyboard_kwargs == {}
+    assert [task.name for task in eef_twist_tasks] == [EEF_TWIST_TASK_NAME]
     assert all(task.type != "cartesian_ik" for task in coordinator_tasks)

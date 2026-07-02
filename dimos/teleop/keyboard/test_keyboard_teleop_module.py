@@ -15,21 +15,29 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import cast
 
-from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
-from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopConfig, KeyboardTeleopModule
+import dimos.teleop.keyboard.keyboard_teleop_module as keyboard_mod
+from dimos.teleop.keyboard.keyboard_teleop_module import (
+    ANGULAR_SPEED,
+    LINEAR_SPEED,
+    KeyboardTeleopConfig,
+    KeyboardTeleopModule,
+    _twist_from_keys,
+)
 
 
-def _keyboard_module_with_publish(publish) -> KeyboardTeleopModule:
-    return cast(
-        "KeyboardTeleopModule",
-        SimpleNamespace(
-            coordinator_ee_twist_command=cast("Out[TwistStamped]", SimpleNamespace(publish=publish))
-        ),
-    )
+class PressedKeys:
+    def __init__(self, *keys: int) -> None:
+        self._keys = set(keys)
+
+    def __getitem__(self, key: int) -> bool:
+        return key in self._keys
+
+
+def _keyboard_module_with_publish(publish):
+    return SimpleNamespace(coordinator_ee_twist_command=SimpleNamespace(publish=publish))
 
 
 def test_keyboard_config_has_no_joint_state_or_fk_dependencies() -> None:
@@ -73,3 +81,21 @@ def test_publish_twist_zero_stop_uses_task_frame_id(mocker) -> None:
     assert msg.frame_id == EEF_TWIST_TASK_NAME
     assert [msg.linear.x, msg.linear.y, msg.linear.z] == [0.0, 0.0, 0.0]
     assert [msg.angular.x, msg.angular.y, msg.angular.z] == [0.0, 0.0, 0.0]
+
+
+def test_twist_from_keys_maps_translation_keys_to_eef_linear_twist() -> None:
+    linear, angular = _twist_from_keys(
+        PressedKeys(keyboard_mod.pygame.K_w, keyboard_mod.pygame.K_d, keyboard_mod.pygame.K_q)
+    )
+
+    assert linear == (LINEAR_SPEED, -LINEAR_SPEED, LINEAR_SPEED)
+    assert angular == (0.0, 0.0, 0.0)
+
+
+def test_twist_from_keys_maps_rotation_keys_to_eef_angular_twist() -> None:
+    linear, angular = _twist_from_keys(
+        PressedKeys(keyboard_mod.pygame.K_r, keyboard_mod.pygame.K_g, keyboard_mod.pygame.K_y)
+    )
+
+    assert linear == (0.0, 0.0, 0.0)
+    assert angular == (ANGULAR_SPEED, -ANGULAR_SPEED, ANGULAR_SPEED)

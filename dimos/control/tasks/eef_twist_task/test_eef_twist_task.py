@@ -36,12 +36,14 @@ class FakePose:
 class FakeIK:
     def __init__(self) -> None:
         self.nq = 3
+        self.fk_calls: list[np.ndarray] = []
         self.solve_calls: list[FakePose] = []
         self.solution = np.array([0.01, 0.02, 0.03], dtype=np.float64)
         self.converged = True
         self.final_error = 0.0
 
     def forward_kinematics(self, q_current: np.ndarray) -> FakePose:
+        self.fk_calls.append(q_current.copy())
         return FakePose(q_current.copy(), np.eye(3, dtype=np.float64))
 
     def solve(self, pose: FakePose, q_current: np.ndarray) -> tuple[np.ndarray, bool, float]:
@@ -139,6 +141,26 @@ def test_non_finite_ik_solution_is_rejected(task: EEFTwistTask, fake_ik: FakeIK)
     output = task.compute(_state(1.01))
 
     assert output is None
+
+
+def test_non_finite_twist_is_rejected_without_activating_task(task: EEFTwistTask) -> None:
+    accepted = task.on_ee_twist_command(
+        TwistStamped(frame_id="eef", linear=[np.nan, 0.0, 0.0], angular=[0.0, 0.0, 0.0]),
+        t_now=1.0,
+    )
+
+    assert accepted is False
+    assert not task.is_active()
+
+
+def test_missing_joint_state_skips_fk_and_ik(task: EEFTwistTask, fake_ik: FakeIK) -> None:
+    assert task.on_ee_twist_command(_twist(), t_now=1.0)
+
+    output = task.compute(_state(1.01, positions=[0.0, 0.0]))
+
+    assert output is None
+    assert fake_ik.fk_calls == []
+    assert fake_ik.solve_calls == []
 
 
 def test_joint_delta_rejection_returns_none(task: EEFTwistTask, fake_ik: FakeIK) -> None:

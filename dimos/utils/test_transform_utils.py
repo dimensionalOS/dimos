@@ -65,7 +65,9 @@ class TestTwistToNumpy:
         result = transform_utils.twist_to_numpy(twist)
 
         assert result.dtype == np.float64
-        assert np.array_equal(result, np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]))
+        np.testing.assert_array_equal(
+            result, np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=np.float64)
+        )
 
     def test_twist_to_numpy_accepts_twist_stamped(self) -> None:
         twist = TwistStamped(frame_id="eef", linear=[-1.0, 0.0, 1.0], angular=[0.1, 0.2, 0.3])
@@ -73,7 +75,9 @@ class TestTwistToNumpy:
         result = transform_utils.twist_to_numpy(twist)
 
         assert result.dtype == np.float64
-        assert np.array_equal(result, np.array([-1.0, 0.0, 1.0, 0.1, 0.2, 0.3]))
+        np.testing.assert_array_equal(
+            result, np.array([-1.0, 0.0, 1.0, 0.1, 0.2, 0.3], dtype=np.float64)
+        )
 
 
 class TestPoseToMatrix:
