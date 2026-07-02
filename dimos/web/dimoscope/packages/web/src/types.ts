@@ -13,8 +13,6 @@ export interface MessageMeta {
   latencyMs?: number;
   /** Encoded payload size in bytes. */
   sizeBytes: number;
-  /** Cumulative messages coalesced/dropped for this topic by client rate-limit. */
-  dropped: number;
   /** Per-topic source sequence number, parsed from a numeric `frame_id` (or
    *  `header.seq`) when present — lets a consumer detect wire drops/gaps. The
    *  bench source stamps `frame_id = str(seq)`; normal named-frame topics
@@ -42,8 +40,6 @@ export interface TopicStats {
   hz: number;
   /** Bytes received in the last ~1s. */
   bytesPerSec: number;
-  /** Cumulative client-side coalesced messages. */
-  dropped: number;
   /** Most recent latency sample (ms), if a source stamp was available. */
   lastLatencyMs?: number;
   /** Total messages seen. */
@@ -58,22 +54,12 @@ export interface TopicInfo {
   type: string;
 }
 
-/**
- * Per-subscription Quality-of-Service, honored in two tiers:
- *  • client-side (transport-agnostic) — `maxHz` / `rateLimit` / `conflation` (see topic.ts).
- *  • gateway-scheduler — `priority` / `reliability` / `depth`, forwarded only by transports whose
- *    `caps.qos.transport` advertises them; `applyCaps` (qos.ts) strips them elsewhere.
- */
+/** Per-subscription Quality-of-Service — a request the server on the transport's path enforces;
+ *  the client's control is what it asks for. Sent verbatim in the subscribe op; servers ignore
+ *  fields they don't honor (`caps.qos` declares which). */
 export interface Qos {
-  /** Cap delivery to at most this many Hz (0/undefined = unlimited). */
+  /** Downsample to at most this many Hz at the gateway — bytes leave the wire (0/undefined = full rate). */
   maxHz?: number;
-  /** Where `maxHz` is enforced: "server" (default) downsamples on the wire; "client" drops locally
-   *  (bytes unchanged). Client-only transports (zenoh-ts/webrtc) are always "client". */
-  rateLimit?: "server" | "client";
-  /** Delivery discipline — a label over `maxHz`, not a buffer (delivery is synchronous, newest-wins):
-   *  "latest" (default) drops intermediates under a rate cap; "all" delivers every message (maxHz=0). */
-  conflation?: "latest" | "all";
-  // gateway-scheduler (honored where caps.qos.transport advertises them)
   /** Scheduler priority band — the gateway drains higher first and sheds lower first under
    *  contention (the per-client priority outbox in gateway/data.py). */
   priority?: "low" | "normal" | "high" | "critical";
@@ -84,15 +70,9 @@ export interface Qos {
   depth?: number;
 }
 
-/** Which QoS fields a transport actually honors (the rest are ignored / client-emulated). */
-export interface QosCaps {
-  /** Where a `maxHz` request takes effect: "server" downsamples on the wire,
-   *  "client" only throttles delivery locally. */
-  maxHz: "server" | "client";
-  /** Gateway-scheduler QoS fields this transport forwards + the server honors (the gateway-WS
-   *  adapter advertises ["priority","reliability","depth"]; client-only transports advertise none). */
-  transport?: ReadonlyArray<keyof Qos>;
-}
+/** A `Qos` field a server can honor — by design that's every `Qos` field ("maxHz" ⇒ downsampled
+ *  on the wire; the rest ⇒ gateway-scheduler inputs). */
+export type ServerQosField = keyof Qos;
 
 // Transport implementations live in ./transports/ (default gatewayWs), with experimental ones under
 // ./transports/experimental/. The client is transport-agnostic.
@@ -116,8 +96,9 @@ export interface TransportCaps {
   /** Does unsubscribe actually stop bytes flowing (vs client-side filtering)? */
   onDemand: boolean;
   discovery: "live" | "wildcard" | "passive";
-  /** Which QoS knobs this transport honors (undefined → client-side maxHz only). */
-  qos?: QosCaps;
+  /** `Qos` fields the server on this path honors (declarative — drives UI affordances).
+   *  undefined ⇒ no server on the path: qos is a no-op there. */
+  qos?: ReadonlyArray<ServerQosField>;
 }
 
 /** One clock-sync round-trip to the gateway. `offsetMs` estimates (gateway clock − client clock)

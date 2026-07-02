@@ -189,7 +189,7 @@ export function useTopicLatest<T = unknown>(
     setState({}); // clear stale data from the previous topic on switch
     if (!client || !topic) return;
     const t = client.topic(topic);
-    if (maxHz) t.setRateLimit(maxHz);
+    if (maxHz) t.setQos({ maxHz });
     const sub = t.subscribeLatest((m) => setState({ data: m.data as T, meta: m.meta }));
     return () => sub.unsubscribe();
   }, [client, topic, maxHz]);

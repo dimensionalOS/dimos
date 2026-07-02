@@ -32,7 +32,6 @@ function fakeClient() {
       type: "x",
       recvTs: 0,
       sizeBytes: 100,
-      dropped: 0,
       ...over,
     };
     (handlers.get(name) ?? []).forEach((h) => h({ data: {}, ts: meta.srcTs ?? meta.recvTs, meta }));
@@ -134,11 +133,10 @@ Deno.test("measureScenario: offsetMs corrects cross-machine end-to-end latency",
   assert.equal(r.latP50, 10); // floor(0.5*2)=1 → sorted[1]
 });
 
-Deno.test("measureScenario: client-rate-limited run reports NaN loss (gaps are intentional)", async () => {
+Deno.test("measureScenario: rate-limited run reports NaN loss (gaps are intentional)", async () => {
   const { client, deliver } = fakeClient();
   const p = measureScenario(client, { name: "t", topics: ["/a"] }, 20, true, {
     maxHz: 5,
-    rateLimit: "server",
   }, NO_PHASES);
   deliver("/a", { srcTs: 0, recvTs: 3, seq: 0 });
   deliver("/a", { srcTs: 0, recvTs: 3, seq: 4 }); // gap = downsampling, not loss
@@ -153,7 +151,6 @@ Deno.test("measureScenario: qos arg is optional-chained (fake topic without setQ
   // fakeClient.topic() returns an object WITHOUT setQos — passing qos must not throw.
   const p = measureScenario(client, { name: "t", topics: ["/a"] }, 20, true, {
     maxHz: 5,
-    rateLimit: "server",
   }, NO_PHASES);
   deliver("/a", { srcTs: 0, recvTs: 3, seq: 0 });
   const r = await p;

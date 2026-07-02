@@ -19,13 +19,13 @@ export type {
   Message,
   MessageMeta,
   Qos,
-  QosCaps,
+  ServerQosField,
   Subscription,
   TopicInfo,
   TopicStats,
 } from "./types.ts";
 // QoS lanes — ROS 2-grounded named profiles (sane defaults, configurable) + the scheduler priority map.
-export { applyCaps, defaultLane, LANES, PRIORITY_RANK, resolveQos } from "./qos.ts";
+export { defaultLane, GATEWAY_QOS, LANES, PRIORITY_RANK, resolveQos } from "./qos.ts";
 export type { Lane } from "./qos.ts";
 // Media plane — pluggable, negotiated video delivery.
 export { selectMediaChannel } from "./media.ts";

@@ -2,7 +2,7 @@
 // over WebSocket. Binary frames are raw LCM packets; JSON frames are control.
 // Runs unchanged in any JS runtime with a global WebSocket.
 import { frameToSample } from "./frame.ts";
-import { applyCaps, GATEWAY_QOS } from "../qos.ts";
+import { GATEWAY_QOS } from "../qos.ts";
 import type {
   ClockSample,
   CommandInfo,
@@ -243,14 +243,13 @@ export const createGatewayWsTransport = (deps: GatewayWsDeps): Transport => {
 
   // Re-sending subscribe with new qos updates the server's per-client override — how setQos propagates.
   function sendSub(topic: string, qos?: Qos) {
-    const q = qos ? applyCaps(qos, caps.qos) : undefined;
     send({
       op: "subscribe",
       topic,
-      maxHz: q?.maxHz,
-      priority: q?.priority,
-      reliability: q?.reliability,
-      depth: q?.depth,
+      maxHz: qos?.maxHz,
+      priority: qos?.priority,
+      reliability: qos?.reliability,
+      depth: qos?.depth,
     });
   }
   function subscribe(topic: string, qos?: Qos) {

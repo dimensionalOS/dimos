@@ -1,7 +1,6 @@
-// QoS lanes ~ ROS 2 named profiles. defaultLane auto-assigns by topic/type, resolveQos merges overrides,
-// applyCaps degrades to what a transport honors; the gateway enforces priority under load.
-import type { Qos } from "./types.ts";
-import type { QosCaps } from "./types.ts";
+// QoS lanes ~ ROS 2 named profiles. defaultLane auto-assigns by topic/type, resolveQos merges
+// overrides; the gateway enforces everything server-side.
+import type { Qos, ServerQosField } from "./types.ts";
 
 export type Lane = "command" | "sensor" | "default" | "bulk";
 
@@ -16,33 +15,13 @@ export const PRIORITY_RANK: Record<NonNullable<Qos["priority"]>, number> = {
 /** The four lanes ≈ ROS 2 profiles: command(Services) · sensor(SensorData) · default(Default) · bulk. */
 export const LANES: Record<Lane, Qos> = {
   // control: every message, in order, wins everything (gateway adds clamp + deadman on the WS path).
-  command: {
-    reliability: "reliable",
-    priority: "critical",
-    depth: 1,
-    conflation: "all",
-  },
+  command: { reliability: "reliable", priority: "critical", depth: 1 },
   // high-rate telemetry: latest-wins, droppable — pose/odom/imu/tf/joints (≈ ROS 2 SensorData).
-  sensor: {
-    reliability: "best-effort",
-    priority: "high",
-    depth: 5,
-    conflation: "latest",
-  },
+  sensor: { reliability: "best-effort", priority: "high", depth: 5 },
   // general reliable topics (≈ ROS 2 Default).
-  default: {
-    reliability: "reliable",
-    priority: "normal",
-    depth: 10,
-    conflation: "all",
-  },
+  default: { reliability: "reliable", priority: "normal", depth: 10 },
   // bulk: lidar/camera/pointcloud/maps — best-effort, lowest priority, yields first under load.
-  bulk: {
-    reliability: "best-effort",
-    priority: "low",
-    depth: 1,
-    conflation: "latest",
-  },
+  bulk: { reliability: "best-effort", priority: "low", depth: 1 },
 };
 
 // topic-name / message-type keyword → lane. Checked in priority order (command → bulk → sensor → default).
@@ -74,24 +53,10 @@ export function resolveQos(
   return { ...LANES[lane], ...fields };
 }
 
-// Always honored by the gateway (client rate-limit + the scheduler inputs), regardless of transport.
-const GATEWAY_FIELDS: (keyof Qos)[] = [
+/** Everything the dimos gateway honors — the `caps.qos` every gateway-backed transport advertises. */
+export const GATEWAY_QOS: ReadonlyArray<ServerQosField> = [
   "maxHz",
-  "rateLimit",
-  "conflation",
   "priority",
+  "reliability",
   "depth",
 ];
-
-/** Degrade a QoS to what a transport actually honors: keep the gateway-enforced fields, plus the
- *  gateway-scheduler fields the adapter advertises in `caps.transport`; drop the rest. Called by the
- *  gateway-WS adapter before each subscribe op (gatewayWs.ts) so a client-only transport doesn't send
- *  priority/reliability/depth the server-less path can't honor. */
-export function applyCaps(qos: Qos, caps: QosCaps): Qos {
-  const honored = new Set<keyof Qos>([...GATEWAY_FIELDS, ...(caps.transport ?? [])]);
-  const out: Qos = {};
-  for (const k of Object.keys(qos) as (keyof Qos)[]) {
-    if (honored.has(k)) (out as Record<string, unknown>)[k] = qos[k];
-  }
-  return out;
-}

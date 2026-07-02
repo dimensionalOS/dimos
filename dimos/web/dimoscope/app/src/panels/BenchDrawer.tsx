@@ -112,11 +112,11 @@ export function BenchDrawer() {
     }
   }
 
-  // Workload + sweep knobs. maxHz is the one client-side QoS applied to the sweep.
+  // Workload + sweep knobs. maxHz is the one QoS request applied to the sweep (gateway-enforced).
   const [picked, setPicked] = useState<string[]>(["pose"]);
   const [maxHz, setMaxHz] = useState(0);
   const [dur, setDur] = useState(4000);
-  const qos: Qos = { maxHz, rateLimit: "server", conflation: "latest" };
+  const qos: Qos = { maxHz };
   const qosLabel = `maxHz=${maxHz ? `${maxHz}Hz` : "∞"}`;
 
   const [running, setRunning] = useState(false);

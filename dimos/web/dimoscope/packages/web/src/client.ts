@@ -187,7 +187,6 @@ export const createDimosClient = <TMap = EmptyTopicMap, TCmds = EmptyModuleMap>(
       srcTs,
       latencyMs,
       sizeBytes: s.payload.length,
-      dropped: 0,
       seq: seqFrom(data),
     };
     latestData.set(s.topic, data);

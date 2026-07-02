@@ -17,8 +17,9 @@ export interface HttpPollDeps {
 }
 
 export const createHttpPollTransport = (deps: HttpPollDeps): Transport => {
-  // qos.maxHz "client": /poll filters by topic set only (no per-subscriber downsample) → client-side cap.
-  const caps: TransportCaps = { onDemand: true, discovery: "passive", qos: { maxHz: "client" } };
+  // No caps.qos: /poll filters by topic set only (no per-subscriber downsample). QoS is
+  // unsupported here — subscribes deliver at full wire rate.
+  const caps: TransportCaps = { onDemand: true, discovery: "passive" };
   const base = deps.url.replace(/\/$/, "").replace(/^ws/, "http");
   const maxBatch = deps.maxBatch ?? 512;
   let sampleCb: ((s: RawSample) => void) | undefined;

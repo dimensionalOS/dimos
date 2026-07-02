@@ -1,8 +1,7 @@
 // Unit tests for the QoS lanes — sane defaults (auto-assign) + configurable (override) + cap degradation.
 import assert from "node:assert/strict";
 
-import { applyCaps, defaultLane, LANES, PRIORITY_RANK, resolveQos } from "./qos.ts";
-import type { QosCaps } from "./types.ts";
+import { defaultLane, LANES, PRIORITY_RANK, resolveQos } from "./qos.ts";
 
 Deno.test("defaultLane: commands win", () => {
   assert.equal(defaultLane("/cmd_vel"), "command");
@@ -48,21 +47,4 @@ Deno.test("PRIORITY_RANK orders command > sensor > default > bulk", () => {
   assert.ok(rank("command") > rank("sensor"));
   assert.ok(rank("sensor") > rank("default"));
   assert.ok(rank("default") > rank("bulk"));
-});
-
-Deno.test("applyCaps: keeps gateway fields + advertised scheduler fields, drops the rest", () => {
-  const qos = resolveQos("/pose", "", { maxHz: 30 }); // sensor: priority high, reliability best-effort, depth 5
-  // a client-only transport (no server priority outbox): advertises no scheduler fields
-  const clientOnly: QosCaps = { maxHz: "client" };
-  const cq = applyCaps(qos, clientOnly);
-  assert.equal(cq.maxHz, 30); // gateway/client field kept
-  assert.equal(cq.priority, "high"); // priority is a GATEWAY_FIELD → always kept
-  assert.equal(cq.conflation, "latest");
-  assert.equal("reliability" in cq, false); // not advertised → dropped
-  // the gateway-WS transport advertises priority/reliability/depth
-  const ws: QosCaps = { maxHz: "server", transport: ["priority", "reliability", "depth"] };
-  const wq = applyCaps(qos, ws);
-  assert.equal(wq.reliability, "best-effort"); // now kept
-  assert.equal(wq.depth, 5);
-  assert.equal(wq.priority, "high"); // gateway field still kept
 });

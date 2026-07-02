@@ -17,9 +17,9 @@ export interface SseDeps {
 }
 
 export const createSseTransport = (deps: SseDeps): Transport => {
-  // qos.maxHz "client": /sse filters by topic set only (no per-subscriber downsample — that's on the
-  // WS control channel), so a rate cap is client-side.
-  const caps: TransportCaps = { onDemand: true, discovery: "passive", qos: { maxHz: "client" } };
+  // No caps.qos: /sse filters by topic set only (no per-subscriber downsample — that's on the
+  // WS control channel). QoS is unsupported here — subscribes deliver at full wire rate.
+  const caps: TransportCaps = { onDemand: true, discovery: "passive" };
   const base = deps.url.replace(/\/$/, "").replace(/^ws/, "http");
   let sampleCb: ((s: RawSample) => void) | undefined;
   let topicsCb: ((t: TopicInfo[]) => void) | undefined;

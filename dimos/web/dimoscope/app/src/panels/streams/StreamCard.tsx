@@ -8,8 +8,6 @@ import { Sparkline } from "../../widgets/Sparkline";
 // The QoS knobs the SDK's `Qos` exposes (packages/web/src/types.ts).
 const LANE_OPTS: (Lane | "")[] = ["", "command", "sensor", "default", "bulk"];
 const HZ_OPTS = [0, 5, 20, 60, 120];
-const RATELIMIT_OPTS = ["server", "client"] as const;
-const CONFLATION_OPTS = ["latest", "all"] as const;
 const RELIABILITY_OPTS = ["reliable", "best-effort"] as const;
 const DEPTH_OPTS = [1, 5, 10, 16];
 const PRIORITY_OPTS = ["low", "normal", "high", "critical"] as const;
@@ -63,8 +61,7 @@ export function StreamCard({ topic, type, onRemove }: {
   // Base lane preset + per-knob overrides (`over`) + an independent rate cap; eff=resolveQos merges LANES[lane] with overrides.
   const [laneOverride, setLaneOverride] = useState<Lane | "">("");
   const [maxHz, setMaxHz] = useState(0);
-  const [rateLimit, setRateLimit] = useState<NonNullable<Qos["rateLimit"]>>("server");
-  const [over, setOver] = useState<Partial<Pick<Qos, "conflation" | "reliability" | "depth" | "priority">>>({});
+  const [over, setOver] = useState<Partial<Pick<Qos, "reliability" | "depth" | "priority">>>({});
 
   const autoLane = defaultLane(topic, type);
   const activeLane = laneOverride || autoLane;
@@ -72,12 +69,11 @@ export function StreamCard({ topic, type, onRemove }: {
     lane: activeLane,
     ...over,
     ...(maxHz > 0 ? { maxHz } : {}),
-    rateLimit,
   });
 
-  // WS/WebTransport honor scheduler + server downsample; sse/poll/zenoh-ts advertise none → client-emulated.
-  const serverRate = caps?.qos?.maxHz === "server";
-  const schedHonored = (caps?.qos?.transport?.length ?? 0) > 0;
+  // WS/WebTransport honor server downsample + scheduler; sse/poll advertise none → qos is a no-op there.
+  const serverRate = caps?.qos?.includes("maxHz") ?? false;
+  const schedHonored = caps?.qos?.some((f) => f !== "maxHz") ?? false;
   const live = !!stats && stats.hz > 0;
 
   // Declare via resolveQos(lane+overrides)→setQos, re-applied on knob change; the shared Topic re-issues the wire subscribe.
@@ -87,9 +83,8 @@ export function StreamCard({ topic, type, onRemove }: {
       lane: activeLane,
       ...over,
       ...(maxHz > 0 ? { maxHz } : {}),
-      rateLimit,
     }));
-  }, [client, topic, type, activeLane, maxHz, rateLimit, over]);
+  }, [client, topic, type, activeLane, maxHz, over]);
 
   useEffect(() => {
     if (!stats) return;
@@ -105,8 +100,8 @@ export function StreamCard({ topic, type, onRemove }: {
     setOver((o) => ({ ...o, [k]: v }));
 
   const kb = stats ? stats.bytesPerSec / 1000 : 0;
-  const summary = `${eff.reliability}, ${eff.conflation}-wins, ${eff.priority} priority, keep-last ${eff.depth}` +
-    (maxHz > 0 ? `, ≤${maxHz} Hz (${rateLimit})` : "");
+  const summary = `${eff.reliability}, ${eff.priority} priority, keep-last ${eff.depth}` +
+    (maxHz > 0 ? `, ≤${maxHz} Hz` : "");
 
   return (
     <div className="panel stream-card">
@@ -139,9 +134,6 @@ export function StreamCard({ topic, type, onRemove }: {
           <b>{feed.lossPct != null ? feed.lossPct.toFixed(feed.lossPct >= 10 ? 0 : 1) : "–"}</b>
           <span>gap%</span>
         </div>
-        <div className="metric" title="messages the client-side rate-limit dropped locally (rateLimit=client)">
-          <b>{stats?.dropped ?? 0}</b><span>drop</span>
-        </div>
         <Sparkline data={hist} color="var(--signal)" width={96} height={24} />
       </div>
 
@@ -159,22 +151,18 @@ export function StreamCard({ topic, type, onRemove }: {
 
         <div className="qos-grp-lbl">rate — visible now</div>
         <div className="qos-row">
-          <span className="qos-lbl" title="cap delivery to N Hz (∞ = unlimited)">maxHz</span>
-          <Seg options={HZ_OPTS} value={maxHz} onChange={setMaxHz} render={(h) => (h === 0 ? "∞" : String(h))} />
-        </div>
-        <div className="qos-row">
-          <span className="qos-lbl" title="server = gateway downsamples (fewer bytes on the wire); client = keep bytes, drop locally">
-            limit
-          </span>
-          <Seg options={RATELIMIT_OPTS} value={rateLimit} onChange={(v) => setRateLimit(v)} disabled={!serverRate} />
-          {!serverRate && <span className="muted small qos-note">client-only transport</span>}
+          <span className="qos-lbl" title="ask the gateway to downsample to N Hz — bytes leave the wire (∞ = full rate)">maxHz</span>
+          <Seg
+            options={HZ_OPTS}
+            value={maxHz}
+            onChange={setMaxHz}
+            render={(h) => (h === 0 ? "∞" : String(h))}
+            disabled={!serverRate}
+          />
+          {!serverRate && <span className="muted small qos-note">no server on this path — qos is a no-op</span>}
         </div>
 
-        <div className="qos-grp-lbl">delivery{schedHonored ? "" : " — client-emulated on this transport"}</div>
-        <div className="qos-row">
-          <span className="qos-lbl" title="latest = drop stale under a cap; all = deliver every message">conflate</span>
-          <Seg options={CONFLATION_OPTS} value={eff.conflation} onChange={(v) => setKnob("conflation", v)} />
-        </div>
+        <div className="qos-grp-lbl">delivery{schedHonored ? "" : " — not honored on this transport"}</div>
         <div className="qos-row">
           <span className="qos-lbl" title="reliable = keep-last buffer; best-effort = conflate, shed first under load">reliab.</span>
           <Seg

@@ -4,7 +4,7 @@
 // stream). A bidirectional control stream
 // carries the full WS control protocol (subscribe/QoS + teleop/goal/rpc via the shared SafetyEgress),
 // so WT drives the robot alone. Cert: we fetch the server's self-signed SHA-256 for serverCertificateHashes.
-import { applyCaps } from "../qos.ts";
+import { GATEWAY_QOS } from "../qos.ts";
 import type {
   ClockSample,
   CommandInfo,
@@ -30,12 +30,11 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 export const createWebTransportTransport = (deps: WebTransportDeps): Transport => {
-  // maxHz "server" ⇒ gateway downsamples per subscriber+topic; priority/reliability/depth feed its
-  // per-client priority outbox (same fields the WS adapter declares).
+  // Same gateway as the WS adapter: server-side downsampling + per-client priority outbox.
   const caps: TransportCaps = {
     onDemand: true,
     discovery: "passive",
-    qos: { maxHz: "server", transport: ["priority", "reliability", "depth"] },
+    qos: GATEWAY_QOS,
   };
   const url = deps.url.replace(/^ws/, "https");
   const host = new URL(url).hostname;
@@ -128,14 +127,13 @@ export const createWebTransportTransport = (deps: WebTransportDeps): Transport =
   }
 
   function sendSub(topic: string, qos?: Qos) {
-    const q = qos ? applyCaps(qos, caps.qos!) : undefined;
     sendControl({
       op: "subscribe",
       topic,
-      maxHz: q?.maxHz,
-      priority: q?.priority,
-      reliability: q?.reliability,
-      depth: q?.depth,
+      maxHz: qos?.maxHz,
+      priority: qos?.priority,
+      reliability: qos?.reliability,
+      depth: qos?.depth,
     });
   }
 

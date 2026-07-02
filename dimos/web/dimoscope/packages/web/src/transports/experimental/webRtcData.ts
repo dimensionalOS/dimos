@@ -19,9 +19,9 @@ export interface WebRtcDataDeps {
 }
 
 export const createWebRtcDataTransport = (deps: WebRtcDataDeps): Transport => {
-  // qos.maxHz "client": DataChannel forwards all subscribed topics (no per-channel downsample) ⇒ rate
-  // cap client-side; ordered/maxRetransmits are set at channel creation, not per-subscription.
-  const caps: TransportCaps = { onDemand: false, discovery: "passive", qos: { maxHz: "client" } };
+  // No caps.qos: DataChannel forwards all subscribed topics (no per-channel downsample) — QoS is
+  // unsupported, full wire rate; ordered/maxRetransmits are set at channel creation, not per-subscription.
+  const caps: TransportCaps = { onDemand: false, discovery: "passive" };
   const sigUrl = deps.url.replace(/^http/, "ws");
   let sampleCb: ((s: RawSample) => void) | undefined;
   // passive discovery — stores but never pushes a topic list.
