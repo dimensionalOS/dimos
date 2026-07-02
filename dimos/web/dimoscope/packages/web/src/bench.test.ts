@@ -4,7 +4,13 @@
 // divisor is the actual elapsed wall clock, not the nominal window.
 import assert from "node:assert/strict";
 
-import { type BenchRow, measureScenario, onDemandSaving } from "./bench.ts";
+import {
+  type BenchRow,
+  formatMarkdown,
+  measureScenario,
+  onDemandSaving,
+  STREAM_PROFILES,
+} from "./bench.ts";
 import type { Message, MessageMeta } from "./types.ts";
 
 const NO_PHASES = { warmupMs: 0, graceMs: 0 };
@@ -157,10 +163,30 @@ Deno.test("measureScenario: qos arg is optional-chained (fake topic without setQ
   assert.equal(r.msgs, 1);
 });
 
-Deno.test("onDemandSaving: 1-of-4 vs all-4 kB/s", () => {
+Deno.test("onDemandSaving: on-demand vs all-lanes kB/s", () => {
   const rows = [
-    row({ scenario: "4x (throughput)", topics: 4, kbps: 40 }),
-    row({ scenario: "1x (on-demand)", topics: 1, kbps: 10 }),
+    row({ scenario: "all-lanes", topics: 4, kbps: 40 }),
+    row({ scenario: "on-demand", topics: 1, kbps: 10 }),
   ];
   assert.equal(onDemandSaving(rows), 75);
+});
+
+Deno.test("formatMarkdown: on-demand footer renders only when the pair ran", () => {
+  const pair = [
+    row({ scenario: "all-lanes", topics: 4, kbps: 40 }),
+    row({ scenario: "on-demand", topics: 1, kbps: 10 }),
+  ];
+  const md = formatMarkdown("ws", "ws://x", 1000, "2026-07-02", pair);
+  assert.ok(md.includes("75% reduction"), md);
+  assert.ok(md.includes("1 of 4 topics"), md);
+  const solo = formatMarkdown("ws", "ws://x", 1000, "2026-07-02", [
+    row({ scenario: "pose", topics: 3, kbps: 5 }),
+  ]);
+  assert.ok(!solo.includes("On-demand bandwidth"), solo);
+});
+
+Deno.test("STREAM_PROFILES carries the pair the footer matches on (all-lanes + on-demand)", () => {
+  const ids = STREAM_PROFILES.map((p) => p.id);
+  assert.ok(ids.includes("all-lanes"), "all-lanes profile missing");
+  assert.ok(ids.includes("on-demand"), "on-demand profile missing");
 });

@@ -29,6 +29,16 @@ export const STREAM_PROFILES: StreamProfile[] = [
     topics: ["/load/fast", "/load/mid", "/load/slow"],
     hint: "fast@100 + mid@20 + slow@2 Hz — small, high-rate lanes",
   },
+  {
+    id: "all-lanes",
+    topics: ["/load/fast", "/load/mid", "/load/slow", "/load/grid"],
+    hint: "fast@100 + mid@20 + slow@2 + grid@5 Hz — every small lane",
+  },
+  {
+    id: "on-demand",
+    topics: ["/load/fast"],
+    hint: "fast@100 only — run with all-lanes: the export prints the WS-hop cut",
+  },
   { id: "lidar", topics: ["/load/img"], hint: "img@10Hz × 200KB ≈ 2 MB/s" },
   { id: "camera", topics: ["/load/img"], hint: "img@20Hz × 550KB ≈ 11 MB/s" },
   { id: "dense", topics: ["/load/img"], hint: "img@20Hz × 1MB ≈ 20 MB/s" },
@@ -48,6 +58,12 @@ export const STREAM_PROFILES: StreamProfile[] = [
     hint: "fast@100 + mid@20 + slow@2 + grid@5 + img flood",
   },
 ];
+
+/** The measured on-demand pair: run both profiles in one sweep and formatMarkdown
+ *  prints the WS-hop saving (subscribe 1 lane vs all of them). Ids must match
+ *  STREAM_PROFILES — the sync is unit-tested. */
+const ON_DEMAND_PAIR = { all: "all-lanes", one: "on-demand" } as const;
+
 export interface BenchRow {
   scenario: string;
   topics: number;
@@ -115,8 +131,8 @@ export async function measureScenario(
   let phase: "warmup" | "measure" | "grace" = warmupMs > 0 ? "warmup" : "measure";
   const subs = scenario.topics.map((t) => {
     const topic = client.topic(t);
-    // Apply QoS before subscribing so the gateway downsample (rateLimit:"server") is requested
-    // on the first subscribe. Optional-chained so test fakes without setQos don't throw.
+    // Apply QoS before subscribing so the gateway downsample (maxHz) is requested on the
+    // first subscribe. Optional-chained so test fakes without setQos don't throw.
     if (qos) topic.setQos?.(qos);
     return topic.subscribe(({ meta: m }) => {
       if (phase === "warmup") return;
@@ -200,15 +216,15 @@ export async function measureScenario(
   };
 }
 
-/** On-demand WS-hop saving %: 1-of-4 kB/s vs all-4 kB/s, from the standard rows. */
+/** On-demand WS-hop saving %: the `on-demand` profile's kB/s vs `all-lanes`'s, from the rows. */
 export function onDemandSaving(rows: BenchRow[]): number {
-  const all4 = rows.find((r) => r.topics === 4);
-  const one = rows.find((r) => r.scenario.includes("on-demand"));
-  if (!all4 || !one || all4.kbps <= 0) return 0;
-  return Math.round((1 - one.kbps / all4.kbps) * 100);
+  const all = rows.find((r) => r.scenario === ON_DEMAND_PAIR.all);
+  const one = rows.find((r) => r.scenario === ON_DEMAND_PAIR.one);
+  if (!all || !one || all.kbps <= 0) return 0;
+  return Math.round((1 - one.kbps / all.kbps) * 100);
 }
 
-/** Render one transport's rows as a Markdown section (the format the CLI bench writes). */
+/** Render one transport's rows as a Markdown section (the in-app bench's copy-Markdown export). */
 export function formatMarkdown(
   label: string,
   url: string,
@@ -216,8 +232,8 @@ export function formatMarkdown(
   stamp: string,
   rows: BenchRow[],
 ): string {
-  const all4 = rows.find((r) => r.topics === 4);
-  const one = rows.find((r) => r.scenario.includes("on-demand"));
+  const all = rows.find((r) => r.scenario === ON_DEMAND_PAIR.all);
+  const one = rows.find((r) => r.scenario === ON_DEMAND_PAIR.one);
   const lines = [
     `# Transport benchmark — ${label}`,
     ``,
@@ -231,10 +247,10 @@ export function formatMarkdown(
     ),
     ``,
   ];
-  // Only meaningful when the sweep actually ran an on-demand pair (1-of-4 vs all-4).
-  if (one && all4) {
+  // Only meaningful when the sweep actually ran the on-demand pair (all-lanes + on-demand).
+  if (one && all) {
     lines.push(
-      `**On-demand bandwidth:** subscribing 1 of 4 topics delivered **${one.kbps} kB/s** vs **${all4.kbps} kB/s** for all 4 — a **${
+      `**On-demand bandwidth:** subscribing 1 of ${all.topics} topics delivered **${one.kbps} kB/s** vs **${all.kbps} kB/s** for all ${all.topics} — a **${
         onDemandSaving(rows)
       }% reduction** on the WS hop.`,
       ``,
