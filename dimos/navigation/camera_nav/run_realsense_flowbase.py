@@ -14,8 +14,12 @@ import threading
 
 
 def _start_robot(address: str | None) -> None:
+    import os
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.navigation.camera_nav.blueprint_flowbase import _make_flowbase_coordinator
+    # keyboard_teleop.py sets SDL_VIDEODRIVER=x11 at import time; that breaks macOS
+    # (SDL2 on macOS uses Cocoa/Metal, not X11). Remove it so SDL auto-detects.
+    os.environ.pop("SDL_VIDEODRIVER", None)
     try:
         ModuleCoordinator.build(_make_flowbase_coordinator(address=address)).loop()
     except Exception as e:
