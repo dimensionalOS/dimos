@@ -567,33 +567,29 @@ class DepthStreamer:
                         else _height_color(xyz[idx, 2] - cam_z))
         rr.log("world/cloud", rr.Points3D(positions=xyz[idx], colors=cloud_colors, radii=0.003))
 
-        # Live cloud map: depth cap → height/floor filter → isolation → accumulate.
-        # Depth camera already gives nearest surface per ray; gradient filter above
-        # already removes stereo edge artifacts. No angular ray-binning needed.
-        cam_pos  = pkt.pose_t.copy()
-        rays     = xyz - cam_pos
-        dist     = np.linalg.norm(rays, axis=1)
-        d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0)
-        h_rel    = xyz[:, 2] - cam_z
-        keep     = (
-            (dist <= _MAP_MAX_DEPTH) &
-            (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI) &
-            (d_z_norm > _FLOOR_RAY_Z)
-        )
-        xyz_map = _filter_isolated(xyz[keep])
-        if len(xyz_map) > 0:
-            self._live_vox.add(xyz_map)
-        if frame % self.MAP_EVERY == 0:
-            self._log_live_map(cam_z, frame)
-
-        # Hand world-frame pts + pose to map worker (same payload shape as ZED)
-        if self._src.pose_locked:
-            try:
-                self._map_queue.put_nowait(
-                    (xyz, pkt.pose_t.copy(), cam_z, pkt.pose_R.copy(), frame)
-                )
-            except queue.Full:
-                pass
+        # Map accumulation commented out — observing pure live cloud only
+        # cam_pos  = pkt.pose_t.copy()
+        # rays     = xyz - cam_pos
+        # dist     = np.linalg.norm(rays, axis=1)
+        # d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0)
+        # h_rel    = xyz[:, 2] - cam_z
+        # keep     = (
+        #     (dist <= _MAP_MAX_DEPTH) &
+        #     (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI) &
+        #     (d_z_norm > _FLOOR_RAY_Z)
+        # )
+        # xyz_map = _filter_isolated(xyz[keep])
+        # if len(xyz_map) > 0:
+        #     self._live_vox.add(xyz_map)
+        # if frame % self.MAP_EVERY == 0:
+        #     self._log_live_map(cam_z, frame)
+        # if self._src.pose_locked:
+        #     try:
+        #         self._map_queue.put_nowait(
+        #             (xyz, pkt.pose_t.copy(), cam_z, pkt.pose_R.copy(), frame)
+        #         )
+        #     except queue.Full:
+        #         pass
 
     def _map_worker(self) -> None:
         while True:
