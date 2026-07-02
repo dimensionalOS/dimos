@@ -391,7 +391,7 @@ class RealSenseDepthSource:
     one frame behind — see DepthStreamer._map_worker).
     """
 
-    MIN_DEPTH: float = 0.3
+    MIN_DEPTH: float = 0.1
     MAX_DEPTH: float = 8.0
 
     def __init__(self, width: int = 848, height: int = 480, fps: int = 15) -> None:
@@ -439,6 +439,11 @@ class RealSenseDepthSource:
         self._stream_gyro  = rs.stream.gyro
         self._stream_accel = rs.stream.accel
 
+        # SDK post-processing: smooth out IR-pattern artifacts on flat surfaces
+        # (walls appear hollow without this when using native depth alignment).
+        self._spatial_filter    = rs.spatial_filter()
+        self._hole_fill_filter  = rs.hole_filling_filter()
+
         if self._has_imu:
             # IMU-to-camera_link rotation: accel → depth-optical → camera_link
             ext            = (profile.get_stream(rs.stream.accel)
@@ -481,9 +486,12 @@ class RealSenseDepthSource:
         t = self.odom.t                     # translation from previous ICP update
 
         # ── Depth ──────────────────────────────────────────────────────
-        depth = np.asarray(
-            aligned.get_depth_frame().get_data(), dtype=np.float32
-        ) * self._depth_scale
+        # Spatial filter smooths IR-pattern noise on flat surfaces (walls);
+        # hole-filling fills remaining gaps before the gradient filter runs.
+        depth_frame = aligned.get_depth_frame()
+        depth_frame = self._spatial_filter.process(depth_frame)
+        depth_frame = self._hole_fill_filter.process(depth_frame)
+        depth = np.asarray(depth_frame.get_data(), dtype=np.float32) * self._depth_scale
         invalid = (depth <= 0) | (depth < self.MIN_DEPTH) | (depth > self.MAX_DEPTH)
         depth[invalid] = np.nan
 
