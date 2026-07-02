@@ -88,6 +88,43 @@ When `stop()` is called, the process receives SIGTERM. If it doesn't exit within
 | `log_format`       | `LogFormat`      | `TEXT`        | How to parse subprocess output (`TEXT` or `JSON`)           |
 | `cli_exclude`      | `frozenset[str]` | `frozenset()` | Config fields to skip when generating CLI args              |
 
+### Configuration source of truth
+
+Prefer DimOS module configuration over ad-hoc native-binary flags. Define operational settings as typed fields on the `NativeModuleConfig` subclass, then pass values through blueprint overrides, config files, environment-backed global config, or `dimos run -o ...`. This keeps configuration discoverable from Python, visible to `--help`, and reusable across local replay, simulation, and hardware blueprints.
+
+Use `extra_args` only for temporary migration or third-party flags that cannot yet be modeled as typed config. New DimOS-native wrappers should avoid documenting custom user-facing CLI flags on the C++ or Rust executable as the primary configuration interface.
+
+Recommended migration pattern:
+
+1. Add a typed field to the Python config class with the same meaning as the native flag.
+2. Update the native executable to read the generated `--field_name` argument.
+3. Keep the old native-only flag in `extra_args` only while downstream launch scripts are migrated.
+4. Mark the old native-only flag as deprecated in the executable help text and release notes.
+5. Remove the compatibility flag once blueprints and scripts use the typed config field.
+
+For example, prefer:
+
+```python skip
+class MyLidarConfig(NativeModuleConfig):
+    executable: str = "./build/my_lidar"
+    host_ip: str = "192.168.1.5"
+    frequency: float = 10.0
+```
+
+and launch it from Python with:
+
+```python skip
+MyLidar.blueprint(host_ip="192.168.1.10", frequency=20.0)
+```
+
+or from the CLI with a blueprint option:
+
+```sh skip
+dimos run my-lidar-blueprint -o mylidar.host_ip=192.168.1.10 -o mylidar.frequency=20
+```
+
+Avoid making users pass the same settings directly to the native executable, for example by documenting `extra_args=["--host-ip", "192.168.1.10"]` as the normal path. That bypasses DimOS config introspection and makes it harder to validate blueprint configuration before the subprocess starts.
+
 ### Auto CLI arg generation
 
 Any field you add to your config subclass automatically becomes a `--name value` CLI arg. Fields from `NativeModuleConfig` itself (like `executable`, `extra_args`, `cwd`) are **not** passed — they're for Python-side orchestration only.
