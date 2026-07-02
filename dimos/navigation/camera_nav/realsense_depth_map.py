@@ -581,14 +581,12 @@ class DepthStreamer:
             ))
 
         # Per-frame voxel map — mirrors ZED world/map pipeline exactly
-        cam_pos  = pkt.pose_t
-        h_rel    = xyz[:, 2] - cam_z
-        dist     = np.linalg.norm(xyz - cam_pos, axis=1)
+        h_rel   = xyz[:, 2] - cam_z
         # Dynamic floor removal: IMU aligns world Z with gravity, so the floor is
         # always the lowest-Z cluster. 2nd-percentile + 12 cm buffer removes it
         # without needing to know camera height.
-        floor_z  = float(np.percentile(xyz[:, 2], 2)) + 0.12
-        keep     = (xyz[:, 2] > floor_z) & (h_rel <= _Z_REL_HI) & (dist <= _MAP_MAX_DEPTH)
+        floor_z = float(np.percentile(xyz[:, 2], 2)) + 0.12
+        keep    = (xyz[:, 2] > floor_z) & (h_rel <= _Z_REL_HI)
         xyz_kept = xyz[keep]
         if len(xyz_kept):
             vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
