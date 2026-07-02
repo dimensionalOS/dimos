@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
+from numpy.typing import NDArray
 from scipy.spatial import ConvexHull, QhullError  # type: ignore[import-untyped]
 
 from dimos.experimental.scene_cooking.coacd_util import silence_coacd_logging
@@ -252,7 +253,7 @@ class CollisionSpec:
 # --------------------------------------------------------------------------- #
 
 
-def _matrix_to_quat_wxyz(R: np.ndarray) -> tuple[float, float, float, float]:
+def _matrix_to_quat_wxyz(R: NDArray[np.float64]) -> tuple[float, float, float, float]:
     """3x3 right-handed rotation → quaternion ``(w, x, y, z)``.
 
     Standard Shepperd's method; avoids the singularity at ``trace == -1``.
@@ -286,7 +287,7 @@ def _matrix_to_quat_wxyz(R: np.ndarray) -> tuple[float, float, float, float]:
     return (float(w), float(x), float(y), float(z))
 
 
-def _quat_z_to(axis: np.ndarray) -> tuple[float, float, float, float]:
+def _quat_z_to(axis: NDArray[np.float64]) -> tuple[float, float, float, float]:
     """Quaternion that rotates ``+Z`` onto ``axis`` (unit vector).
 
     Used for cylinder/capsule placement — MuJoCo's primitive long-axis
@@ -327,7 +328,7 @@ _SHEET_PRISM_MIN_FOOTPRINT_AREA_M2 = 2.0
 _SHEET_PRISM_MAX_TRIANGLES = 1024
 
 
-def _fit_aabb_box(vertices: np.ndarray) -> PrimitiveFit:
+def _fit_aabb_box(vertices: NDArray[np.float64]) -> PrimitiveFit:
     """Axis-aligned bounding box.  Identity quat."""
     mn, mx = vertices.min(0), vertices.max(0)
     half_ext = np.maximum((mx - mn) / 2.0, _MIN_SIZE_M)
@@ -341,7 +342,7 @@ def _fit_aabb_box(vertices: np.ndarray) -> PrimitiveFit:
     }
 
 
-def _fit_obb_box(vertices: np.ndarray) -> PrimitiveFit:
+def _fit_obb_box(vertices: NDArray[np.float64]) -> PrimitiveFit:
     """Oriented bounding box via PCA.  Tighter than AABB when the prim
     is rotated relative to world axes (most UE props are world-aligned,
     so OBB ≈ AABB, but rotated assets benefit)."""
@@ -366,7 +367,7 @@ def _fit_obb_box(vertices: np.ndarray) -> PrimitiveFit:
     }
 
 
-def _fit_sphere(vertices: np.ndarray) -> PrimitiveFit:
+def _fit_sphere(vertices: NDArray[np.float64]) -> PrimitiveFit:
     """Centroid + farthest-vertex.  Looser than Welzl/Ritter but fine for
     fill-ratio comparison."""
     centroid = vertices.mean(0)
@@ -380,7 +381,7 @@ def _fit_sphere(vertices: np.ndarray) -> PrimitiveFit:
     }
 
 
-def _fit_cylinder(vertices: np.ndarray) -> PrimitiveFit:
+def _fit_cylinder(vertices: NDArray[np.float64]) -> PrimitiveFit:
     """Cylinder along PCA principal axis."""
     centroid = vertices.mean(0)
     centered = vertices - centroid
@@ -403,7 +404,7 @@ def _fit_cylinder(vertices: np.ndarray) -> PrimitiveFit:
     }
 
 
-def _fit_capsule(vertices: np.ndarray) -> PrimitiveFit:
+def _fit_capsule(vertices: NDArray[np.float64]) -> PrimitiveFit:
     """Capsule along PCA principal axis.  MuJoCo capsule half-height is
     the *cylindrical* portion only; total length = 2*(half_h + r)."""
     cyl = _fit_cylinder(vertices)
@@ -419,7 +420,7 @@ def _fit_capsule(vertices: np.ndarray) -> PrimitiveFit:
     }
 
 
-def _hull_volume(vertices: np.ndarray) -> float | None:
+def _hull_volume(vertices: NDArray[np.float64]) -> float | None:
     """Convex-hull volume in m³, or ``None`` if qhull rejects the points."""
     try:
         return float(ConvexHull(vertices).volume)
@@ -427,7 +428,7 @@ def _hull_volume(vertices: np.ndarray) -> float | None:
         return None
 
 
-def _mesh_volume(vertices: np.ndarray, triangles: np.ndarray) -> float:
+def _mesh_volume(vertices: NDArray[np.float64], triangles: NDArray[np.int32]) -> float:
     """Signed mesh volume (Gauss / divergence theorem on triangle fans).
 
     Closed meshes return a positive number; for non-closed inputs the
@@ -439,7 +440,7 @@ def _mesh_volume(vertices: np.ndarray, triangles: np.ndarray) -> float:
 
 
 def _best_primitive_fit(
-    vertices: np.ndarray,
+    vertices: NDArray[np.float64],
     hull_vol: float,
     candidates: tuple[str, ...] = ("box", "cylinder", "sphere", "capsule"),
 ) -> PrimitiveFit | None:
@@ -472,11 +473,11 @@ def _best_primitive_fit(
 # --------------------------------------------------------------------------- #
 
 
-def _is_tiny(extent: np.ndarray, threshold_m: float) -> bool:
+def _is_tiny(extent: NDArray[np.float64], threshold_m: float) -> bool:
     return bool(extent.max() < threshold_m)
 
 
-def _is_slab(extent: np.ndarray, aspect_ratio: float) -> bool:
+def _is_slab(extent: NDArray[np.float64], aspect_ratio: float) -> bool:
     """Wall / floor / door / panel — one axis is much smaller than the
     other two (or one much larger than the other two — covers beams)."""
     sorted_ext = np.sort(extent)
@@ -486,8 +487,8 @@ def _is_slab(extent: np.ndarray, aspect_ratio: float) -> bool:
 
 
 def _sheet_footprint_stats(
-    vertices: np.ndarray,
-    triangles: np.ndarray,
+    vertices: NDArray[np.float64],
+    triangles: NDArray[np.int32],
     thin_axis: int,
 ) -> tuple[float, float] | None:
     """Return ``(projected_aabb_area, projected_triangle_fill)`` for a sheet."""
@@ -507,8 +508,8 @@ def _sheet_footprint_stats(
 
 
 def _is_boxlike_sheet(
-    vertices: np.ndarray,
-    triangles: np.ndarray,
+    vertices: NDArray[np.float64],
+    triangles: NDArray[np.int32],
     thin_axis: int,
 ) -> bool:
     """Whether a thin mesh roughly fills its projected bounding rectangle.
@@ -526,8 +527,8 @@ def _is_boxlike_sheet(
 
 
 def _should_emit_triangle_prisms(
-    vertices: np.ndarray,
-    triangles: np.ndarray,
+    vertices: NDArray[np.float64],
+    triangles: NDArray[np.int32],
     thin_axis: int,
 ) -> bool:
     """Use exact-ish triangle prisms only for large horizontal sheets.
@@ -547,12 +548,12 @@ def _should_emit_triangle_prisms(
 
 
 def _thin_sheet_hulls(
-    vertices: np.ndarray,
-    triangles: np.ndarray,
+    vertices: NDArray[np.float64],
+    triangles: NDArray[np.int32],
     thickness: float = _SHEET_PRISM_THICKNESS_M,
-) -> list[tuple[np.ndarray, np.ndarray]]:
+) -> list[tuple[NDArray[np.float32], NDArray[np.int32]]]:
     """Represent a thin non-rectangular sheet as convex triangle prisms."""
-    hulls: list[tuple[np.ndarray, np.ndarray]] = []
+    hulls: list[tuple[NDArray[np.float32], NDArray[np.int32]]] = []
     faces = np.asarray(
         [
             [0, 1, 2],
@@ -582,7 +583,7 @@ def _thin_sheet_hulls(
     return hulls
 
 
-def _is_flat_horizontal_box(extent: np.ndarray, thin_axis: int) -> bool:
+def _is_flat_horizontal_box(extent: NDArray[np.float64], thin_axis: int) -> bool:
     """Thin in world Z, broad in world X/Y, and flat enough to box safely.
 
     PCA boxes are unstable for nearly flat floors/ceilings: any small
@@ -619,7 +620,9 @@ class PrimDecision:
     primitive: PrimitiveFit | None = None
 
     #: For ``"hulls"``: list of ``(vertices, triangles)`` ready to write.
-    hulls: list[tuple[np.ndarray, np.ndarray]] = field(default_factory=list)
+    #: Vertex precision varies by source (CoACD/sheet-prisms emit float32,
+    #: single-hull pass-through keeps the input prim's float64).
+    hulls: list[tuple[NDArray[np.floating[Any]], NDArray[np.int32]]] = field(default_factory=list)
 
     #: For diagnostics: which rule fired.
     reason: str = ""
@@ -633,8 +636,8 @@ class PrimDecision:
 
 
 def decide_for_prim(
-    vertices: np.ndarray,
-    triangles: np.ndarray,
+    vertices: NDArray[np.float64],
+    triangles: NDArray[np.int32],
     prim_path: str,
     spec: CollisionSpec,
 ) -> PrimDecision:
@@ -787,7 +790,7 @@ def decide_for_prim(
 
 
 def _resolve_explicit_primitive(
-    vertices: np.ndarray,
+    vertices: NDArray[np.float64],
     kind: str,
     override: OverrideConfig,
 ) -> PrimitiveFit:
@@ -835,7 +838,7 @@ def _resolve_explicit_primitive(
 
 def _apply_box_min_thickness(
     fit: PrimitiveFit,
-    vertices: np.ndarray,
+    vertices: NDArray[np.float64],
     override: OverrideConfig,
 ) -> None:
     raw_min_thickness = override.get("min_thickness")
@@ -886,11 +889,11 @@ def _target_faces(override: OverrideConfig) -> int | None:
 
 
 def _coacd_decompose(
-    vertices: np.ndarray,
-    triangles: np.ndarray,
+    vertices: NDArray[np.float64],
+    triangles: NDArray[np.int32],
     threshold: float,
     max_hulls: int,
-) -> list[tuple[np.ndarray, np.ndarray]]:
+) -> list[tuple[NDArray[np.float32], NDArray[np.int32]]]:
     """Run CoACD on a single prim, return list of ``(verts, tris)`` hulls.
 
     CoACD is imported lazily — it ships its own C library and we don't
@@ -915,7 +918,7 @@ def _coacd_decompose(
         mcts_iterations=30,
         mcts_nodes=10,
     )
-    out: list[tuple[np.ndarray, np.ndarray]] = []
+    out: list[tuple[NDArray[np.float32], NDArray[np.int32]]] = []
     for v, t in parts:
         v = np.asarray(v, dtype=np.float32)
         t = np.asarray(t, dtype=np.int32)
