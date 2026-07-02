@@ -580,10 +580,14 @@ class DepthStreamer:
                 radii=0.003,
             ))
 
-        # Per-frame voxel map — mirrors ZED world/map pipeline exactly
-        h_rel  = xyz[:, 2] - cam_z
-        keep   = h_rel <= _Z_REL_HI
-        xyz_kept = xyz[keep]
+        # Per-frame voxel map — use raw (unfiltered) projection so the map covers
+        # the full depth FOV.  The gradient filter aggressively removes peripheral
+        # pixels, cutting effective width/height well below what the sensor sees.
+        # Voxelisation at 2 cm already suppresses most stereo edge noise.
+        xyz_map  = xyz_raw if len(xyz_raw) else xyz
+        h_rel    = xyz_map[:, 2] - cam_z
+        keep     = h_rel <= _Z_REL_HI
+        xyz_kept = xyz_map[keep]
         if len(xyz_kept):
             vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
             _, first = np.unique(_pack(vk), return_index=True)
