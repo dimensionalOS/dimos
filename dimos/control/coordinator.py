@@ -505,7 +505,7 @@ class ControlCoordinator(Module):
         with self._task_lock:
             task = self._tasks.get(task_name)
             if task is None:
-                logger.warning(f"EEF twist command for unknown task: {task_name}")
+                logger.warning("EEF twist command for unknown task", task_name=task_name)
                 return
             task.on_ee_twist_command(msg, t_now)
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from numpy.typing import NDArray
 import pytest
 
 from dimos.control.task import ControlMode, CoordinatorState, JointStateSnapshot
@@ -26,8 +27,8 @@ from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 
 @dataclass
 class FakePose:
-    translation: np.ndarray
-    rotation: np.ndarray
+    translation: NDArray[np.float64]
+    rotation: NDArray[np.float64]
 
     def copy(self) -> FakePose:
         return FakePose(self.translation.copy(), self.rotation.copy())
@@ -42,11 +43,13 @@ class FakeIK:
         self.converged = True
         self.final_error = 0.0
 
-    def forward_kinematics(self, q_current: np.ndarray) -> FakePose:
+    def forward_kinematics(self, q_current: NDArray[np.float64]) -> FakePose:
         self.fk_calls.append(q_current.copy())
         return FakePose(q_current.copy(), np.eye(3, dtype=np.float64))
 
-    def solve(self, pose: FakePose, q_current: np.ndarray) -> tuple[np.ndarray, bool, float]:
+    def solve(
+        self, pose: FakePose, q_current: NDArray[np.float64]
+    ) -> tuple[NDArray[np.float64], bool, float]:
         self.solve_calls.append(pose.copy())
         return self.solution.copy(), self.converged, self.final_error
 

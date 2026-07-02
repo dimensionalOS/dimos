@@ -16,9 +16,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 import threading
 import time
-from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -199,53 +200,59 @@ class TestConnectedHardware:
         mock_adapter.write_joint_positions.assert_called()
 
 
+@pytest.fixture
+def make_coordinator() -> Iterator[Callable[..., ControlCoordinator]]:
+    """Factory for real coordinators, all stopped on teardown."""
+    coordinators: list[ControlCoordinator] = []
+
+    def make(**kwargs: Any) -> ControlCoordinator:
+        coordinator = ControlCoordinator(publish_joint_state=False, **kwargs)
+        coordinators.append(coordinator)
+        return coordinator
+
+    try:
+        yield make
+    finally:
+        for coordinator in coordinators:
+            coordinator.stop()
+
+
 class TestControlCoordinatorLifecycle:
-    def test_on_ee_twist_command_routes_only_matching_frame_id(self):
-        coordinator = ControlCoordinator(publish_joint_state=False)
+    def test_on_ee_twist_command_routes_only_matching_frame_id(self, make_coordinator):
+        coordinator = make_coordinator()
         matching_task = MagicMock(spec=["on_ee_twist_command"])
         other_task = MagicMock(spec=["on_ee_twist_command"])
         coordinator._tasks = {"eef": matching_task, "other": other_task}
 
-        try:
-            coordinator._on_ee_twist_command(
-                TwistStamped(frame_id="eef", linear=[0.1, 0.0, 0.0], angular=[0.0, 0.0, 0.0])
+        coordinator._on_ee_twist_command(
+            TwistStamped(frame_id="eef", linear=[0.1, 0.0, 0.0], angular=[0.0, 0.0, 0.0])
+        )
+        coordinator._on_ee_twist_command(
+            TwistStamped(
+                frame_id="missing",
+                linear=[0.1, 0.0, 0.0],
+                angular=[0.0, 0.0, 0.0],
             )
-            coordinator._on_ee_twist_command(
-                TwistStamped(
-                    frame_id="missing",
-                    linear=[0.1, 0.0, 0.0],
-                    angular=[0.0, 0.0, 0.0],
-                )
-            )
-            coordinator._on_ee_twist_command(
-                TwistStamped(frame_id="", linear=[0.1, 0.0, 0.0], angular=[0.0, 0.0, 0.0])
-            )
-        finally:
-            coordinator.stop()
+        )
+        coordinator._on_ee_twist_command(
+            TwistStamped(frame_id="", linear=[0.1, 0.0, 0.0], angular=[0.0, 0.0, 0.0])
+        )
 
         matching_task.on_ee_twist_command.assert_called_once()
         other_task.on_ee_twist_command.assert_not_called()
 
-    def test_start_subscribes_ee_twist_only_for_eef_twist_tasks(self, mocker):
-        def make_coordinator(tasks):
-            coordinator = ControlCoordinator(publish_joint_state=False, tasks=tasks)
-            eef_twist_subscribe = mocker.Mock(return_value=mocker.Mock())
-            coordinator.coordinator_joint_state = SimpleNamespace(publish=mocker.Mock())
-            coordinator.coordinator_ee_twist_command = SimpleNamespace(
-                subscribe=eef_twist_subscribe
-            )
-            coordinator.joint_command = SimpleNamespace(subscribe=mocker.Mock())
-            coordinator.coordinator_cartesian_command = SimpleNamespace(subscribe=mocker.Mock())
-            coordinator.twist_command = SimpleNamespace(subscribe=mocker.Mock())
-            coordinator.teleop_buttons = SimpleNamespace(subscribe=mocker.Mock())
-            return coordinator, eef_twist_subscribe
-
+    def test_start_subscribes_ee_twist_only_for_eef_twist_tasks(self, make_coordinator, mocker):
         mocker.patch("dimos.core.module.Module.start")
         mocker.patch("dimos.control.coordinator.ControlCoordinator._setup_from_config")
-        tick_loop = mocker.patch("dimos.control.coordinator.TickLoop")
-        tick_loop.return_value.start.return_value = None
+        mocker.patch("dimos.control.coordinator.TickLoop")
 
-        eef_coordinator, eef_twist_subscribe = make_coordinator(
+        def start_coordinator(tasks):
+            coordinator = make_coordinator(tasks=tasks)
+            subscribe = mocker.patch.object(coordinator.coordinator_ee_twist_command, "subscribe")
+            coordinator.start()
+            return coordinator, subscribe
+
+        eef_coordinator, eef_twist_subscribe = start_coordinator(
             [
                 TaskConfig(
                     name="eef",
@@ -255,21 +262,15 @@ class TestControlCoordinatorLifecycle:
                 )
             ]
         )
-        non_eef_coordinator, non_eef_twist_subscribe = make_coordinator(
+        _, non_eef_twist_subscribe = start_coordinator(
             [TaskConfig(name="traj", type="trajectory", joint_names=["arm/joint1"])]
         )
-        try:
-            eef_coordinator.start()
-            non_eef_coordinator.start()
 
-            eef_twist_subscribe.assert_called_once_with(eef_coordinator._on_ee_twist_command)
-            non_eef_twist_subscribe.assert_not_called()
-        finally:
-            eef_coordinator.stop()
-            non_eef_coordinator.stop()
+        eef_twist_subscribe.assert_called_once_with(eef_coordinator._on_ee_twist_command)
+        non_eef_twist_subscribe.assert_not_called()
 
-    def test_stop_unsubscribes_ee_twist_subscription(self, mocker):
-        coordinator = ControlCoordinator(publish_joint_state=False)
+    def test_stop_unsubscribes_ee_twist_subscription(self, make_coordinator, mocker):
+        coordinator = make_coordinator()
         unsubscribe = mocker.Mock()
         coordinator._ee_twist_command_unsub = unsubscribe
 
@@ -278,8 +279,10 @@ class TestControlCoordinatorLifecycle:
         unsubscribe.assert_called_once_with()
         assert coordinator._ee_twist_command_unsub is None
 
-    def test_on_twist_command_still_routes_planar_twist_to_base_and_velocity_tasks(self, mocker):
-        coordinator = ControlCoordinator(publish_joint_state=False)
+    def test_on_twist_command_still_routes_planar_twist_to_base_and_velocity_tasks(
+        self, make_coordinator, mocker
+    ):
+        coordinator = make_coordinator()
         component = HardwareComponent(
             hardware_id="base",
             hardware_type=HardwareType.BASE,

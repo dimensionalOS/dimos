@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.typing import NDArray
-import pinocchio  # type: ignore[import-not-found]
+import pinocchio
 
 from dimos.control.task import (
     BaseControlTask,
@@ -52,9 +52,9 @@ class EEFTwistTaskConfig:
     joint_names: list[str]
     model_path: str | Path
     ee_joint_id: int
+    timeout: float
+    max_joint_delta_deg: float
     priority: int = 10
-    timeout: float = 0.3
-    max_joint_delta_deg: float = 15.0
 
 
 class EEFTwistTask(BaseControlTask):
@@ -93,7 +93,7 @@ class EEFTwistTask(BaseControlTask):
     def on_ee_twist_command(self, twist: TwistStamped, t_now: float) -> bool:
         values = twist_to_numpy(twist)
         if not np.all(np.isfinite(values)):
-            logger.warning(f"EEFTwistTask {self._name}: rejecting non-finite twist")
+            logger.warning("EEFTwistTask rejecting non-finite twist", task=self._name)
             return False
         with self._lock:
             if np.allclose(values, 0.0):
@@ -128,14 +128,18 @@ class EEFTwistTask(BaseControlTask):
             return None
         if not converged:
             logger.debug(
-                f"EEFTwistTask {self._name}: IK did not converge "
-                f"(error={final_error:.4f}), using partial solution"
+                "EEFTwistTask IK did not converge, using partial solution",
+                task=self._name,
+                error=final_error,
             )
         if not check_joint_delta(q_solution, q_current, self._config.max_joint_delta_deg):
             worst_idx, worst_deg = get_worst_joint_delta(q_solution, q_current)
             logger.warning(
-                f"EEFTwistTask {self._name}: rejecting joint {self._joint_names_list[worst_idx]} "
-                f"delta {worst_deg:.1f}° exceeds {self._config.max_joint_delta_deg}°"
+                "EEFTwistTask rejecting solution: joint delta exceeds limit",
+                task=self._name,
+                joint=self._joint_names_list[worst_idx],
+                delta_deg=worst_deg,
+                max_delta_deg=self._config.max_joint_delta_deg,
             )
             return None
 
@@ -147,7 +151,9 @@ class EEFTwistTask(BaseControlTask):
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         if joints & self._joint_names:
-            logger.warning(f"EEFTwistTask {self._name} preempted by {by_task} on joints {joints}")
+            logger.warning(
+                "EEFTwistTask preempted", task=self._name, by_task=by_task, joints=joints
+            )
 
     def _get_current_joints(self, state: CoordinatorState) -> NDArray[np.floating[Any]] | None:
         positions = []

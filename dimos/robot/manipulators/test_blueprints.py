@@ -42,16 +42,16 @@ from dimos.robot.manipulators.xarm.config import make_xarm7_model_config, make_x
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 
+def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
+    return next(atom.kwargs for atom in blueprint.blueprints if atom.module is module_type)
+
+
 def _manipulation_kwargs(blueprint: Blueprint) -> dict[str, Any]:
-    return next(atom.kwargs for atom in blueprint.blueprints if atom.module is ManipulationModule)
+    return _module_kwargs(blueprint, ManipulationModule)
 
 
 def _manipulation_config(blueprint: Blueprint) -> ManipulationModuleConfig:
     return ManipulationModuleConfig(**_manipulation_kwargs(blueprint))
-
-
-def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
-    return next(atom.kwargs for atom in blueprint.blueprints if atom.module is module_type)
 
 
 def _coordinator_tasks(blueprint: Blueprint) -> list[TaskConfig]:

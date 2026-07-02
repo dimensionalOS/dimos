@@ -27,17 +27,19 @@ Keyboard controls:
     ESC: Quit
 """
 
+from __future__ import annotations
+
 import os
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 try:
-    import pygame  # type: ignore[import-not-found]
-    from pygame.key import ScancodeWrapper  # type: ignore[attr-defined, import-not-found]
-except ImportError as exc:
-    raise ImportError(
-        "pygame is required for keyboard teleop. Install it with: pip install pygame"
-    ) from exc
+    import pygame
+except ImportError:
+    pygame = None  # type: ignore[assignment]
+
+if TYPE_CHECKING:
+    from pygame.key import ScancodeWrapper  # type: ignore[attr-defined]
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
@@ -82,6 +84,10 @@ class KeyboardTeleopModule(Module):
 
     @rpc
     def start(self) -> None:
+        if pygame is None:
+            raise ImportError(
+                "pygame is required for keyboard teleop. Install it with: pip install pygame"
+            )
         super().start()
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._pygame_loop, daemon=True)
@@ -159,20 +165,16 @@ class KeyboardTeleopModule(Module):
             pygame.display.flip()
             clock.tick(50)
 
-        self._publish_twist(task_name, zero=True)
+        self._publish_twist(task_name)
         pygame.quit()
 
     def _publish_twist(
         self,
         task_name: str,
         *,
-        linear: tuple[float, float, float] = (0.0, 0.0, 0.0),
-        angular: tuple[float, float, float] = (0.0, 0.0, 0.0),
-        zero: bool = False,
+        linear: TwistVector = (0.0, 0.0, 0.0),
+        angular: TwistVector = (0.0, 0.0, 0.0),
     ) -> None:
-        if zero:
-            linear = (0.0, 0.0, 0.0)
-            angular = (0.0, 0.0, 0.0)
         self.coordinator_ee_twist_command.publish(
             TwistStamped(frame_id=task_name, linear=list(linear), angular=list(angular))
         )

@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+from collections.abc import Iterator
+
+import pytest
 
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
@@ -35,17 +37,19 @@ class PressedKeys:
         return key in self._keys
 
 
-def _keyboard_module_with_publish(publish):
-    return SimpleNamespace(coordinator_ee_twist_command=SimpleNamespace(publish=publish))
+@pytest.fixture
+def module() -> Iterator[KeyboardTeleopModule]:
+    module = KeyboardTeleopModule()
+    try:
+        yield module
+    finally:
+        module.stop()
 
 
-def test_publish_twist_emits_routed_twist_stamped(mocker) -> None:
-    publish = mocker.Mock()
-    module = _keyboard_module_with_publish(publish)
+def test_publish_twist_emits_routed_twist_stamped(module: KeyboardTeleopModule, mocker) -> None:
+    publish = mocker.patch.object(module.coordinator_ee_twist_command, "publish")
 
-    KeyboardTeleopModule._publish_twist(
-        module, "custom_eef", linear=(0.1, 0.2, 0.3), angular=(0.4, 0.5, 0.6)
-    )
+    module._publish_twist("custom_eef", linear=(0.1, 0.2, 0.3), angular=(0.4, 0.5, 0.6))
 
     msg = publish.call_args.args[0]
     assert isinstance(msg, TwistStamped)
@@ -54,17 +58,10 @@ def test_publish_twist_emits_routed_twist_stamped(mocker) -> None:
     assert [msg.angular.x, msg.angular.y, msg.angular.z] == [0.4, 0.5, 0.6]
 
 
-def test_publish_twist_zero_stop_uses_task_frame_id(mocker) -> None:
-    publish = mocker.Mock()
-    module = _keyboard_module_with_publish(publish)
+def test_publish_twist_defaults_to_zero_twist(module: KeyboardTeleopModule, mocker) -> None:
+    publish = mocker.patch.object(module.coordinator_ee_twist_command, "publish")
 
-    KeyboardTeleopModule._publish_twist(
-        module,
-        EEF_TWIST_TASK_NAME,
-        linear=(1.0, 1.0, 1.0),
-        angular=(1.0, 1.0, 1.0),
-        zero=True,
-    )
+    module._publish_twist(EEF_TWIST_TASK_NAME)
 
     msg = publish.call_args.args[0]
     assert msg.frame_id == EEF_TWIST_TASK_NAME
