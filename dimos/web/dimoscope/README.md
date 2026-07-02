@@ -9,12 +9,12 @@ self-describing), so the service is a thin byte-relay and the same SDK works ove
 robot / sim ─► DimOS bus (LCM | Zenoh)
    │
    └─► the backend (`deno task serve`) — the Python gateway (http://0.0.0.0:8080) + the native Rust
-         WebTransport sidecar (UDP :8443, fed over a unix socket). The gateway taps BOTH
-         LCM + Zenoh → one normalized stream, fanned out over every transport:
+         sidecar (WebTransport UDP :8443 + WebRTC UDP :8444, fed over a unix socket). The gateway
+         taps BOTH LCM + Zenoh → one normalized stream, fanned out over every transport:
            GET /            the built web app  (the SDK consumer itself)
            WS  /ws          data plane: topics + teleop/goal/rpc  (the trust boundary)
            GET /sse · /poll Server-Sent Events · HTTP long-poll
-           WS  /rtc         WebRTC DataChannel          UDP :8443  WebTransport (QUIC, the sidecar)
+           WS  /rtc         WebRTC signaling (the sidecar owns the DataChannel sessions)
            WS  /media       camera: webrtc / webcodecs / jpeg
            GET /cert        the sidecar's self-signed cert hash
    ▼
@@ -107,7 +107,7 @@ only the wire differs:
 | **WebSocket**    | TCP               | `/ws`       | duplex, reliable; carries teleop/goal/rpc; the universal fallback for Auto                                   |
 | **SSE**          | TCP/HTTP          | `/sse`      | server→client only (binary→base64)                                                                           |
 | **HTTP poll**    | TCP/HTTP          | `/poll`     | universal req/resp baseline                                                                                  |
-| **WebRTC data**  | SCTP/DTLS/**UDP** | `/rtc`      | configurable unordered/unreliable → no TCP head-of-line blocking                                             |
+| **WebRTC data**  | SCTP/DTLS/**UDP** | `/rtc` + UDP `:8444` | served by the sidecar (all sessions mux on one UDP port); duplex — teleop/goal/rpc over the ctl channel; one shared SCTP cwnd → no lane isolation ([benchmarks §3](docs/benchmarks.md)) |
 | **WebTransport** | HTTP/3 **QUIC**   | UDP `:8443` | streams + datagrams, no HoL; also carries teleop/rpc; the Auto default; cert hash from `/cert` (Chrome/Edge); served by the native Rust sidecar (`gateway/wt-sidecar` — bulk numbers in [benchmarks §3](docs/benchmarks.md)) |
 
 ## Benchmark

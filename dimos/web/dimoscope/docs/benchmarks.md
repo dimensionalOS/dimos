@@ -229,9 +229,8 @@ small lanes alone; bulk = the steady-state flood; crowded rows use a 20 s window
   bulk sharing the connection WS collapses to 0.49 Hz / 99.5% loss while WT-rs keeps pose at 107 Hz /
   p99 249 ms beside cap-pinned bulk. One QUIC connection isolates its lanes; one TCP pipe doesn't.
   The fix at this tier is §2's rate-limits/conflation, not transport choice.
-- QUIC handshakes fail under loss (connect first, then apply); WebRTC-data needs STUN/TURN; Auto
-  falls back to WS when WT can't establish. The outage buttons (`UDP 3s/10s`, `all 10s`) cover
-  fallback/reconnect timing.
+- QUIC handshakes fail under loss (connect first, then apply); Auto falls back to WS when WT can't
+  establish. The outage buttons (`UDP 3s/10s`, `all 10s`) cover fallback/reconnect timing.
 
 Recommendation: `Auto (WT→WS)` — WT-rs where UDP works, WebSocket everywhere else.
 
@@ -241,10 +240,35 @@ Two design constraints behind those numbers (`wt-sidecar/src/main.rs`):
 - BBR congestion control: cubic builds a standing queue on a shaped link (bufferbloat) that delays
   every datagram by the queue depth; BBR keeps inflight ≈ BDP.
 
+### WebRTC DataChannels (2026-07-02 · same VPS link, same day)
+
+The rtc plane lives in the same sidecar (`wt-sidecar/src/rtc.rs`, webrtc-rs) behind the same
+outboxes/QoS: `ctl` reliable JSON (full control protocol incl. teleop/rpc), `pose`
+unordered+no-retransmit (the datagram analogue), `bulk` length-prefixed in ≤60 KB chunks — SCTP
+can't carry a 1 MB message. All sessions mux on UDP `:8444`; `/rtc` on the gateway is only an SDP
+relay. Rows self-identify `wire: dimoscope/rtc-rs`.
+
+| net | scenario | WT-rs | WS | WebRTC |
+|---|---|---|---|---|
+| clean | pose alone | 99 Hz | 107 Hz | 111 Hz |
+| clean | bulk (1 MB frames, ~19 MB/s offered) | 18.3 MB/s | 13.9 MB/s | **3.2 MB/s** · p50 336 ms |
+| wifi-crowded | pose alone | 109 Hz · p50 119 | 93 Hz · p50 127 | 96 Hz · p50 129 |
+| wifi-crowded | mixed — small lanes beside bulk | **90–107 Hz** | 0.65 Hz · 99% loss | **1.1 Hz · 98% loss** |
+
+- Small state is at parity on every profile — unordered/no-retransmit channels deliver real
+  datagram semantics (pose-alone p50 tracks the path rtt, which varied 28–42 ms between runs).
+- The coexistence row is the decider: one SCTP association has **one congestion window**, so a
+  saturating bulk channel starves the small channels — WS-class collapse, while QUIC schedules its
+  lanes independently. Protocol shape, not implementation.
+- The clean-path bulk gap is the userspace SCTP stack: 3.2 MB/s over a ~28 ms path (16.9 MB/s on
+  loopback, where cwnd doesn't bite) vs QUIC/BBR's 18.3.
+- Where WebRTC does win: browser↔browser (no server in the path) and media — the camera plane
+  (`/media`) already rides WebRTC video tracks with hardware codecs.
+
 ### VPS — run the dog (Ubuntu; needs `uv` + `rustup`; `deno` only to build the app)
 
-Firewall: TCP `8080`; UDP `:8443` (WebTransport) + the WebRTC ICE range.
-`sudo ufw allow 8080/tcp; sudo ufw allow 8443/udp; sudo ufw allow 32768:60999/udp`.
+Firewall: TCP `8080`; UDP `:8443` (WebTransport) + `:8444` (WebRTC — all sessions mux on one port).
+`sudo ufw allow 8080/tcp; sudo ufw allow 8443/udp; sudo ufw allow 8444/udp`.
 
 The simulated dog is heavier than `--extra web`: `go2-load` composes the smart `unitree_go2` (mapping +
 navigation + perception), and dimsim launches a headless-Chromium renderer (Deno + Playwright Chromium,
