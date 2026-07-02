@@ -32,10 +32,15 @@ RUN apt-get update && apt-get install -y \
     supervisor \
     iproute2 # for LCM networking system config \
     liblcm-dev \
-    libturbojpeg0-dev
+    libturbojpeg0-dev \
+    cyclonedds-dev  # For unitree-sdk2py
 
 # Fix distutils-installed packages that block pip upgrades
 RUN apt-get purge -y python3-blinker python3-sympy python3-oauthlib || true
+
+# Setup needed for Python's cyclonedds to work.
+RUN mkdir -p /opt/cyclonedds && ln -s /usr/include /opt/cyclonedds/include && ln -s /usr/lib/x86_64-linux-gnu /opt/cyclonedds/lib
+ENV CYCLONEDDS_HOME=/opt/cyclonedds
 
 # Install UV for fast Python package management
 ENV UV_SYSTEM_PYTHON=1

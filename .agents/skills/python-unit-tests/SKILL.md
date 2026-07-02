@@ -77,7 +77,7 @@ uv run pytest dimos/path/to/test_file.py -k test_name
 Explicit default marker filter:
 
 ```bash
-uv run pytest dimos/path/to/test_file.py -k test_name -m 'not (tool or self_hosted or mujoco or self_hosted_large)'
+uv run pytest dimos/path/to/test_file.py -k test_name -m 'not (self_hosted or mujoco or self_hosted_large)'
 ```
 
 Broader local check:

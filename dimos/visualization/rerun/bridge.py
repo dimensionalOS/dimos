@@ -134,6 +134,12 @@ def _hex_to_rgba(hex_color: str) -> int:
     return int(h[:8], 16)
 
 
+def _set_rerun_message_time(msg: Any) -> None:
+    ts = getattr(msg, "ts", None)
+    if isinstance(ts, (int, float)) and ts > 0:
+        rr.set_time("dimos_time", timestamp=float(ts))
+
+
 def _with_graph_tab(bp: Blueprint) -> Blueprint:
     """Add a Graph tab alongside the existing viewer layout without changing it."""
 
@@ -169,7 +175,7 @@ class Config(ModuleConfig):
     visual_override: dict[Glob | str, Callable[[Any], Archetype] | None] = field(
         default_factory=dict
     )
-    static: dict[str, Callable[[Any], Archetype]] = field(default_factory=dict)
+    static: dict[str, Callable[[Any], Any]] = field(default_factory=dict)
     max_hz: dict[str, float] = field(default_factory=dict)
 
     entity_prefix: str = "world"
@@ -288,6 +294,8 @@ class RerunBridgeModule(Module):
 
         if not rerun_data:
             return
+
+        _set_rerun_message_time(msg)
 
         # TFMessage for example returns list of (entity_path, archetype) tuples
         if is_rerun_multi(rerun_data):
@@ -433,10 +441,30 @@ class RerunBridgeModule(Module):
     def _log_static(self) -> None:
         for entity_path, factory in self.config.static.items():
             data = factory(rr)
+            if is_rerun_multi(data):
+                logger.info(
+                    "Rerun static entity",
+                    entity_path=entity_path,
+                    archetypes=[type(archetype).__name__ for _, archetype in data],
+                )
+                for path, archetype in data:
+                    rr.log(path, archetype, static=True)
+                continue
+
             if isinstance(data, list):
+                logger.info(
+                    "Rerun static entity",
+                    entity_path=entity_path,
+                    archetypes=[type(archetype).__name__ for archetype in data],
+                )
                 for archetype in data:
                     rr.log(entity_path, archetype, static=True)
             else:
+                logger.info(
+                    "Rerun static entity",
+                    entity_path=entity_path,
+                    archetypes=[type(data).__name__],
+                )
                 rr.log(entity_path, data, static=True)
 
     @rpc

@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
 from contextlib import suppress
 import hashlib
 import os
@@ -86,7 +85,6 @@ def _is_macos() -> bool:
 
 
 def pytest_configure(config):
-    config.addinivalue_line("markers", "tool: dev tooling")
     config.addinivalue_line(
         "markers",
         "self_hosted: tests that need the self-hosted runner (LFS, ROS, CUDA, etc.)",
@@ -154,13 +152,6 @@ def pytest_collection_modifyitems(config, items):
             for item in items:
                 if item.get_closest_marker(marker_name):
                     item.add_marker(skip)
-
-
-@pytest.fixture
-def event_loop():
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
 
 
 _session_threads = set()

@@ -13,16 +13,12 @@
 # limitations under the License.
 
 
-from typing import TYPE_CHECKING
-
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
 from dimos.agents.annotation import skill
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -34,12 +30,8 @@ from dimos.perception.detection.module2D import Detection2DModule
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
-from dimos.spec.perception import Camera, Pointcloud
 from dimos.types.timestamped import align_timestamped
 from dimos.utils.reactive import backpressure
-
-if TYPE_CHECKING:
-    from dimos.core.rpc_client import ModuleProxy
 
 
 class Detection3DModule(Detection2DModule):
@@ -194,30 +186,3 @@ class Detection3DModule(Detection2DModule):
         for index, detection in enumerate(detections[:3]):
             pointcloud_topic = getattr(self, "detected_pointcloud_" + str(index))
             pointcloud_topic.publish(detection.pointcloud)
-
-
-def deploy(  # type: ignore[no-untyped-def]
-    dimos: ModuleCoordinator,
-    lidar: Pointcloud,
-    camera: Camera,
-    prefix: str = "/detector3d",
-    **kwargs,
-) -> "ModuleProxy":
-    detector = dimos.deploy(Detection3DModule, camera_info=camera.hardware_camera_info, **kwargs)  # type: ignore[attr-defined]
-
-    detector.image.connect(camera.color_image)
-    detector.pointcloud.connect(lidar.pointcloud)
-
-    detector.detections.transport = LCMTransport(f"{prefix}/detections", Detection2DArray)
-
-    detector.detected_image_0.transport = LCMTransport(f"{prefix}/image/0", Image)
-    detector.detected_image_1.transport = LCMTransport(f"{prefix}/image/1", Image)
-    detector.detected_image_2.transport = LCMTransport(f"{prefix}/image/2", Image)
-
-    detector.detected_pointcloud_0.transport = LCMTransport(f"{prefix}/pointcloud/0", PointCloud2)
-    detector.detected_pointcloud_1.transport = LCMTransport(f"{prefix}/pointcloud/1", PointCloud2)
-    detector.detected_pointcloud_2.transport = LCMTransport(f"{prefix}/pointcloud/2", PointCloud2)
-
-    detector.start()
-
-    return detector

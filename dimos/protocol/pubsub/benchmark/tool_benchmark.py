@@ -77,7 +77,6 @@ def benchmark_results() -> Generator[BenchmarkResults, None, None]:
     results.print_loss_heatmap()
 
 
-@pytest.mark.tool
 @pytest.mark.parametrize(
     "msg_size", MSG_SIZES, ids=[human_bytes(s, concise=True, decimals=0) for s in MSG_SIZES]
 )

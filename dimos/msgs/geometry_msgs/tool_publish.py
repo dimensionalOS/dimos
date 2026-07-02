@@ -15,12 +15,10 @@
 import time
 
 import lcm
-import pytest
 
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
-@pytest.mark.tool
 def test_runpublish() -> None:
     for i in range(10):
         msg = Vector3(-5 + i, -5 + i, i)
@@ -30,7 +28,6 @@ def test_runpublish() -> None:
         print(f"Published: {msg}")
 
 
-@pytest.mark.tool
 def test_receive() -> None:
     lc = lcm.LCM()
 

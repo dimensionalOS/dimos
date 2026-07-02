@@ -67,7 +67,6 @@ def clip() -> CLIPModel:
 #
 
 
-@pytest.mark.tool
 class TestVisualizer:
     def test_db(self, store: SqliteStore) -> None:
         print("Available streams:", store.streams)

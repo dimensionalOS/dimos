@@ -17,10 +17,10 @@ from typing import Literal
 from pydantic import Field
 
 from dimos.skills.manipulation.abstract_manipulation_skill import AbstractManipulationSkill
-from dimos.types.manipulation import TranslationConstraint, Vector  # type: ignore[attr-defined]
+from dimos.types.manipulation import TranslationConstraint
+from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
 
-# Initialize logger
 logger = setup_logger()
 
 

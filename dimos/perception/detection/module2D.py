@@ -19,7 +19,6 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.subject import Subject
 
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -32,7 +31,6 @@ from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.perception.detection.type.detection2d.base import Filter2D
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.spec.perception import Camera
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.reactive import backpressure
 
@@ -148,24 +146,3 @@ class Detection2DModule(Module):
     @rpc
     def stop(self) -> None:
         return super().stop()
-
-
-def deploy(  # type: ignore[no-untyped-def]
-    dimos: ModuleCoordinator,
-    camera: Camera,
-    prefix: str = "/detector2d",
-    **kwargs,
-) -> Detection2DModule:
-    from dimos.core.transport import LCMTransport
-
-    detector = Detection2DModule(**kwargs)
-    detector.color_image.connect(camera.color_image)
-
-    detector.detections.transport = LCMTransport(f"{prefix}/detections", Detection2DArray)
-
-    detector.detected_image_0.transport = LCMTransport(f"{prefix}/image/0", Image)
-    detector.detected_image_1.transport = LCMTransport(f"{prefix}/image/1", Image)
-    detector.detected_image_2.transport = LCMTransport(f"{prefix}/image/2", Image)
-
-    detector.start()
-    return detector

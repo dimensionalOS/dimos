@@ -87,7 +87,6 @@ def lidar_replay() -> LegacyPickleStore[PointCloud2]:
     return LegacyPickleStore("go2_short/lidar")
 
 
-@pytest.mark.tool
 class TestImportReplay:
     """Import legacy pickle replay data into a memory2 SqliteStore.
 
@@ -161,7 +160,6 @@ class TestImportReplay:
         print(f"Imported {count} lidar frames (skipped {skipped} before {threshold:.2f})")
 
 
-@pytest.mark.tool
 class TestEmbed:
     def test_embed_and_save(self, session: SqliteStore, clip: CLIPModel) -> None:
         """Embed video frames at 1Hz and persist to an embedded stream."""
@@ -210,7 +208,6 @@ class TestEmbed:
         assert "lidar" in streams
 
 
-@pytest.mark.tool
 class TestE2EQuery:
     """Query operations against real robot replay data."""
 
@@ -322,7 +319,6 @@ class TestE2EQuery:
         assert overlap_start < overlap_end, "Video and lidar should overlap in time"
 
 
-@pytest.mark.tool
 class TestEmbedImages:
     """CLIP-embed imported video frames and search by text."""
 

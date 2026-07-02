@@ -34,7 +34,7 @@ class PathFollowerConfig(NativeModuleConfig):
     cwd: str | None = str(Path(__file__).resolve().parent)
     executable: str = "result/bin/path_follower"
     build_command: str | None = (
-        "nix build github:dimensionalOS/dimos-module-path-follower/v0.2.0 --no-write-lock-file"
+        "nix build github:dimensionalOS/dimos-module-path-follower/v0.2.1 --no-write-lock-file"
     )
 
     cli_name_override: dict[str, str] = {

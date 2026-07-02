@@ -303,6 +303,17 @@ class ControlTask(Protocol):
         """Handle velocity commands by joint name."""
         ...
 
+    def reset_runtime_state(self, reactivate: bool | None = None) -> bool:
+        """Clear transient state after a runtime discontinuity.
+
+        Called on simulation/runtime discontinuities such as a MuJoCo
+        respawn, where task histories and latched commands must be cleared
+        without tearing down the coordinator. ``reactivate`` optionally
+        re-engages a task that had stopped itself. Returns True if the task
+        had state to reset.
+        """
+        ...
+
 
 class BaseControlTask(ControlTask):
     """Base class with no-op defaults for optional listener methods.
@@ -324,5 +335,9 @@ class BaseControlTask(ControlTask):
         return False
 
     def set_velocities_by_name(self, velocities: dict[str, float], t_now: float) -> bool:
+        """No-op default."""
+        return False
+
+    def reset_runtime_state(self, reactivate: bool | None = None) -> bool:
         """No-op default."""
         return False

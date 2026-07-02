@@ -6,7 +6,7 @@ rm -f .coverage .coverage.*
 
 export _DIMOS_COV=1
 
-uv run coverage run -m pytest "$@" -m 'not tool'
+uv run coverage run -m pytest "$@" -m ''
 uv run coverage combine
 uv run coverage html
 uv run coverage report

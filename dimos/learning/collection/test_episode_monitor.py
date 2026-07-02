@@ -28,12 +28,12 @@ from collections.abc import Callable, Iterator
 import pytest
 import pytest_mock
 
-from dimos.core.module import LCMRPC
 from dimos.learning.collection.episode_monitor import (
     EpisodeMonitorModule,
     EpisodeStatus,
     KeyPress,
 )
+from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.teleop.quest.quest_types import BUTTON_ALIASES, Buttons
 
 

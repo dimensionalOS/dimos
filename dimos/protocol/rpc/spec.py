@@ -87,18 +87,14 @@ class RPCClient(Protocol):
         return result, unsub_fn
 
     async def call_async(self, name: str, arguments: Args) -> Any:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         future = loop.create_future()
 
         def receive_value(val) -> None:  # type: ignore[no-untyped-def]
-            try:
-                # Check if the value is an exception
-                if isinstance(val, BaseException):
-                    loop.call_soon_threadsafe(future.set_exception, val)
-                else:
-                    loop.call_soon_threadsafe(future.set_result, val)
-            except Exception as e:
-                loop.call_soon_threadsafe(future.set_exception, e)
+            if isinstance(val, BaseException):
+                loop.call_soon_threadsafe(future.set_exception, val)
+            else:
+                loop.call_soon_threadsafe(future.set_result, val)
 
         self.call(name, arguments, receive_value)
 
