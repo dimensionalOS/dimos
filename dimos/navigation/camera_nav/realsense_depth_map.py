@@ -391,7 +391,7 @@ class RealSenseDepthSource:
     one frame behind — see DepthStreamer._map_worker).
     """
 
-    MIN_DEPTH: float = 0.3
+    MIN_DEPTH: float = 0.15
     MAX_DEPTH: float = 8.0
 
     def __init__(self, width: int = 848, height: int = 480, fps: int = 15) -> None:
@@ -425,10 +425,10 @@ class RealSenseDepthSource:
         self._depth_scale = (
             profile.get_device().first_depth_sensor().get_depth_scale()
         )
-        self._align = rs.align(rs.stream.color)
+        self._align = rs.align(rs.stream.depth)
 
-        # Intrinsics: color stream (depth is aligned to it)
-        intr = (profile.get_stream(rs.stream.color)
+        # Intrinsics: depth stream (color is warped to it, preserving full depth FOV)
+        intr = (profile.get_stream(rs.stream.depth)
                        .as_video_stream_profile()
                        .get_intrinsics())
         self._intrinsics = np.array(
