@@ -94,8 +94,13 @@ fn primary_local_v4() -> Result<std::net::IpAddr> {
 }
 
 async fn build_api(port: u16, public_ip: Option<String>) -> Result<API> {
-    // One UDP socket for every session (ICE mux). Dual-stack [::] for IPv6-first hosts.
-    let socket = tokio::net::UdpSocket::bind(("::", port))
+    // One UDP socket for every session (ICE mux). v4-only ON PURPOSE: a dual-stack [::] bind
+    // reports v4 peers as ::ffff:a.b.c.d, and webrtc-ice fails to match that form against the
+    // browser's plain-v4 candidates ("discard success message … no such remote" — ICE never
+    // completes). WebRTC dials literal candidate IPs (never names), and we only advertise v4,
+    // so nothing is lost. (WebTransport keeps its dual-stack bind: browsers resolve localhost
+    // to ::1 first.)
+    let socket = tokio::net::UdpSocket::bind(("0.0.0.0", port))
         .await
         .with_context(|| format!("bind udp :{port}"))?;
     let mut se = SettingEngine::default();
