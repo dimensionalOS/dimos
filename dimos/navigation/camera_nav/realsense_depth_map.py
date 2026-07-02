@@ -425,10 +425,10 @@ class RealSenseDepthSource:
         self._depth_scale = (
             profile.get_device().first_depth_sensor().get_depth_scale()
         )
-        self._align = rs.align(rs.stream.color)
+        self._align = rs.align(rs.stream.depth)
 
-        # Intrinsics: color stream (depth is aligned to it)
-        intr = (profile.get_stream(rs.stream.color)
+        # Intrinsics: depth stream (color is warped to it, preserving full depth FOV)
+        intr = (profile.get_stream(rs.stream.depth)
                        .as_video_stream_profile()
                        .get_intrinsics())
         self._intrinsics = np.array(
