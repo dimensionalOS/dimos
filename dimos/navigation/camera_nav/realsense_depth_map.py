@@ -599,9 +599,8 @@ class DepthStreamer:
         self._last_n_stable  = 0
         self._last_n_vox     = 0
         self._pinhole_logged = False
-        self._floor_calib  = _FloorCalibrator()
+        self._floor_calib = _FloorCalibrator()
         self._acc_pts: np.ndarray = np.empty((0, 3), dtype=np.float32)
-        self._acc_keys: set       = set()   # voxel key → already in map (O(1) lookup)
         self._map_queue: queue.Queue = queue.Queue(maxsize=16)
         self._map_thread = threading.Thread(target=self._map_worker, daemon=True)
         self._map_thread.start()
@@ -673,28 +672,25 @@ class DepthStreamer:
         keys_vox = keys[first]
         self._last_n_vox = len(xyz_vox)
 
-        # Per-frame voxel map — shows current view, updates every frame
+        # Per-frame voxel map — current view, refreshes every frame
         rr.log("world/map", rr.Points3D(
             positions=xyz_vox,
             colors=_height_color(xyz_vox[:, 2] - cam_z),
             radii=0.010,
         ))
 
-        # Persistent global map — only append voxels not already in the map
-        new_idx = [i for i, k in enumerate(keys_vox.tolist()) if int(k) not in self._acc_keys]
-        if new_idx:
-            new_pts = xyz_vox[new_idx]
-            self._acc_pts = np.vstack([self._acc_pts, new_pts]) if len(self._acc_pts) else new_pts
-            self._acc_keys.update(int(keys_vox[i]) for i in new_idx)
+        # Global map — append this frame's voxels, compact every 30 frames
+        self._acc_pts = np.vstack([self._acc_pts, xyz_vox]) if len(self._acc_pts) else xyz_vox.copy()
+        if frame % 30 == 0:
+            vk_a = np.floor(self._acc_pts / _VOX_SIZE).astype(np.int32)
+            _, ui = np.unique(_pack(vk_a), return_index=True)
+            self._acc_pts = self._acc_pts[ui]
 
-        if len(self._acc_pts):
-            n   = min(len(self._acc_pts), self.MAX_MAP)
-            idx = np.random.choice(len(self._acc_pts), n, replace=False) if len(self._acc_pts) > n else np.arange(n)
-            rr.log("world/global_map", rr.Points3D(
-                positions=self._acc_pts[idx],
-                colors=_height_color(self._acc_pts[idx, 2] - cam_z),
-                radii=0.010,
-            ))
+        rr.log("world/global_map", rr.Points3D(
+            positions=self._acc_pts,
+            colors=_height_color(self._acc_pts[:, 2] - cam_z),
+            radii=0.010,
+        ))
 
         # ICP: update translation so next frame stitches when camera moves
         if len(xyz_cam_kept) >= 50:
