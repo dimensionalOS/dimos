@@ -23,6 +23,8 @@
     "build": "cd app && deno run -A npm:vite build",
     "preview": "cd app && deno run -A npm:vite preview",
     "serve": "uv run python -m gateway",
+    "serve:wt-rs": "WT_EXTERNAL=1 uv run python -m gateway",
+    "wt-sidecar": "cargo run --release --manifest-path gateway/wt-sidecar/Cargo.toml",
     "check": "deno check packages/web/src/**/*.ts packages/react/src/**/*.tsx && cd app && deno run -A npm:typescript/tsc --noEmit -p tsconfig.json",
     "scope:nav": "DIMOS_TRANSPORT=zenoh uv run python scenarios/nav.py",
     "scope:arm": "DIMOS_TRANSPORT=zenoh uv run python scenarios/arm.py",

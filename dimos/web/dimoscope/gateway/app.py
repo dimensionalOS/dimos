@@ -39,6 +39,11 @@ logger = setup_logger()
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", 8080))
 WT_PORT = int(os.environ.get("WT_PORT", 8443))  # WebTransport QUIC/UDP (separate listener)
+# WT_EXTERNAL=1 → the native Rust sidecar (gateway/wt-sidecar) owns UDP :WT_PORT; the gateway serves it
+# over a unix socket (gateway/pipe.py) instead of running the in-process aioquic server.
+WT_EXTERNAL = os.environ.get("WT_EXTERNAL", "") == "1"
+WT_PIPE = os.environ.get("WT_PIPE", "/tmp/dimoscope-wt.sock")
+WT_CERT_HASH_FILE = Path(os.environ.get("WT_CERT_HASH_FILE", "/tmp/dimoscope-wt-cert.hash"))
 ZENOH_KEY = os.environ.get("ZENOH_KEY", "**")
 LCM_HOST = os.environ.get("DIMOS_LCM_HOST", "239.255.76.67")
 LCM_PORT = int(os.environ.get("DIMOS_LCM_PORT", 7667))
@@ -58,7 +63,14 @@ def build_app() -> FastAPI:
     sse = SsePlane(bus)
     poll = PollPlane(bus)
     rtc = WebRtcDataPlane(bus)
-    wt = WebTransportServer(bus, egress)
+    if WT_EXTERNAL:
+        from .pipe import PipePlane
+
+        wt = None
+        pipe = PipePlane(bus, egress)
+    else:
+        wt = WebTransportServer(bus, egress)
+        pipe = None
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -68,7 +80,9 @@ def build_app() -> FastAPI:
         tasks = [
             asyncio.create_task(media.run_encoder()),
             asyncio.create_task(media.run_fanout()),
-            asyncio.create_task(wt.start(HOST, WT_PORT)),
+            asyncio.create_task(
+                pipe.start(WT_PIPE) if WT_EXTERNAL else wt.start(HOST, WT_PORT)
+            ),
         ]
         logger.info("dimoscope up", url=f"http://localhost:{PORT}", transports="all")
         try:
@@ -93,7 +107,18 @@ def build_app() -> FastAPI:
     app.add_api_websocket_route("/rtc", rtc.handle)
     app.add_api_route("/sse", sse.handle, methods=["GET"])
     app.add_api_route("/poll", poll.handle, methods=["GET"])
-    app.add_api_route("/cert", lambda: PlainTextResponse(wt.cert_hash), methods=["GET"])
+    def cert_hash() -> PlainTextResponse:
+        # WT_EXTERNAL: the sidecar writes its cert's SHA-256 hex to WT_CERT_HASH_FILE at startup;
+        # until then (or with no sidecar) serve 503 — an empty 200 would silently fail every WT client.
+        if WT_EXTERNAL:
+            try:
+                h = WT_CERT_HASH_FILE.read_text().strip()
+            except OSError:
+                h = ""
+            return PlainTextResponse(h if h else "sidecar not up", status_code=200 if h else 503)
+        return PlainTextResponse(wt.cert_hash)
+
+    app.add_api_route("/cert", cert_hash, methods=["GET"])
     app.add_api_route("/health", lambda: PlainTextResponse("ok"), methods=["GET"])
     # Browser-controlled network conditions (bench): OFF unless NETEM_CTL=1 (gateway/netem.py).
     app.add_api_route("/netem", netem.get_state, methods=["GET"])
