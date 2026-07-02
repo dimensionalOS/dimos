@@ -134,6 +134,7 @@ jobs:
           path: wheelhouse/*.whl
 
   publish-testpypi:
+    if: ${{ inputs.dry-run }}
     needs: [validate, build-sdist, build-wheels]
     runs-on: ubuntu-latest
     environment:
@@ -163,7 +164,7 @@ jobs:
 
   publish-pypi:
     if: ${{ ! inputs.dry-run }}
-    needs: [validate, publish-testpypi]
+    needs: [validate, build-sdist, build-wheels]
     runs-on: ubuntu-latest
     environment:
       name: pypi
