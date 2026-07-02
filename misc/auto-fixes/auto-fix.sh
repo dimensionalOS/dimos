@@ -212,16 +212,16 @@ if [[ "$n_commits" -eq 0 ]]; then
 fi
 log ">> fix agent made $n_commits commit(s)"
 
-# Safety net: Claude's includeCoAuthoredBy=false is the primary guard for Claude, but settings can be
-# ignored or future agents may add their own trailer, so mechanically strip attribution lines from the
-# new commits and verify nothing slipped through.
+# Safety net: --settings includeCoAuthoredBy=false is the primary guard, but --print silently ignores
+# an invalid settings string, so mechanically strip any attribution lines from the new commits and
+# verify nothing slipped through.
 log ">> stripping any agent attribution from commit messages"
 FILTER_BRANCH_SQUELCH_WARNING=1 git -C "$WORKTREE" filter-branch -f --msg-filter \
-  'grep -viE "^(Co-authored-by:|Generated with .*(Claude Code|OpenCode))|🤖"' \
+  'grep -viE "^(Co-authored-by:|Generated with \[Claude Code\])|🤖"' \
   -- "$BASE_SHA"..HEAD
 
 if git -C "$WORKTREE" log --format='%B' "$BASE_SHA"..HEAD \
-   | grep -qiE 'co-authored-by:|generated with .*(claude code|opencode)|🤖'; then
+   | grep -qiE 'co-authored-by:|generated with \[claude code\]|🤖'; then
   err "agent attribution survived strip; aborting."
   exit 1
 fi
