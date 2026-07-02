@@ -34,6 +34,8 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 class PointlioRecorderConfig(RecorderConfig):
     # Append into a populated db (keep other streams); replace only our own.
     on_existing: OnExisting = OnExisting.APPEND
+    # pcap_to_db has no tf source of its own — don't record (and thus don't touch) tf.
+    record_tf: bool = False
 
 
 class PointlioRecorder(Recorder):

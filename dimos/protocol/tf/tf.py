@@ -23,10 +23,12 @@ import time
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.nav_msgs.DeformationNode import DeformationNode
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service.spec import BaseConfig, Service
+from dimos.protocol.tf.deformation import DeformationBuffer
 from dimos.types.timestamped import to_human_readable
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.timeseries.inmemory import InMemoryStore
@@ -325,6 +327,10 @@ class MultiTBuffer:
 
 class PubSubTFConfig(TFConfig):
     topic: Topic | None = None  # Required field but needs default for dataclass inheritance
+    # Optional per-keyframe loop-closure deformation stream (e.g. gsc_pgo's
+    # tf_deformation_nodes). When wired, get()/lookup() return loop-closure-corrected
+    # transforms live, matching the recorded DbTfSql behaviour. Unset = raw tf only.
+    deformation_topic: Topic | None = None
     pubsub: type[PubSub] | PubSub | None = None  # type: ignore[type-arg]
     autostart: bool = True
 
@@ -335,6 +341,7 @@ class PubSubTF(MultiTBuffer, TFSpec):
     def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
         TFSpec.__init__(self, **kwargs)
         MultiTBuffer.__init__(self, self.config.buffer_size)
+        self._deformation = DeformationBuffer()
 
         pubsub_config = getattr(self.config, "pubsub", None)
         if pubsub_config is not None:
@@ -354,6 +361,44 @@ class PubSubTF(MultiTBuffer, TFSpec):
             topic = getattr(self.config, "topic", None)
             if topic:
                 self.pubsub.subscribe(topic, self.receive_msg)
+            deformation_topic = getattr(self.config, "deformation_topic", None)
+            if deformation_topic:
+                self.pubsub.subscribe(deformation_topic, self.receive_deformation)
+
+    def receive_deformation(self, msg: DeformationNode, topic: Topic) -> None:
+        self._deformation.receive(msg)
+
+    def get_transform(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: float | None = None,
+        time_tolerance: float | None = None,
+    ) -> Transform | None:
+        """Single-edge lookup, loop-closure-corrected. Correction is applied on the
+        edge's stored direction, so both direct lookups and BFS chain hops (forward or
+        reversed) resolve to the corrected transform. Falls back to the raw lookup when
+        no deformation nodes have arrived."""
+        if not self._deformation.has_corrections:
+            return super().get_transform(parent_frame, child_frame, time_point, time_tolerance)
+        with self._cv:
+            forward = (parent_frame, child_frame)
+            if forward in self.buffers:
+                raw = self.buffers[forward].get(time_point, time_tolerance)  # type: ignore[arg-type]
+                if raw is None:
+                    return None
+                ts = time_point if time_point is not None else raw.ts
+                return self._deformation.correct(parent_frame, child_frame, raw, ts)
+            reverse = (child_frame, parent_frame)
+            if reverse in self.buffers:
+                # child->parent (stored direction)
+                raw = self.buffers[reverse].get(time_point, time_tolerance)  # type: ignore[arg-type]
+                if raw is None:
+                    return None
+                ts = time_point if time_point is not None else raw.ts
+                corrected = self._deformation.correct(child_frame, parent_frame, raw, ts)
+                return corrected.inverse()
+            return None
 
     def stop(self) -> None:
         self.pubsub.stop()
@@ -427,6 +472,12 @@ class PubSubTF(MultiTBuffer, TFSpec):
 
 class LCMPubsubConfig(PubSubTFConfig):
     topic: Topic = field(default_factory=lambda: Topic("/tf", TFMessage))
+    # On by default: subscribe the loop-closure deformation stream so live tf.get is
+    # corrected whenever a PGO publishes it. Harmless when nothing does — the buffer
+    # stays empty and correct() is a zero-cost pass-through.
+    deformation_topic: Topic | None = field(
+        default_factory=lambda: Topic("/tf_deformation_nodes", DeformationNode)
+    )
     pubsub: type[PubSub] | PubSub | None = LCM  # type: ignore[type-arg]
     autostart: bool = True
 

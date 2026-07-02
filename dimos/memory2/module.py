@@ -199,6 +199,10 @@ class MemoryModule(Module):
 
 class SemanticSearchConfig(MemoryModuleConfig):
     embedding_model: type[EmbeddingModel] | None = None
+    # The pose of a match is resolved at QUERY time via store.tf (so it reflects loop
+    # closure), looking up root_frame <- the observation's frame_id at its timestamp.
+    root_frame: str = "world"
+    tf_tolerance: float = 0.5
 
 
 class SemanticSearch(MemoryModule):
@@ -249,8 +253,21 @@ class SemanticSearch(MemoryModule):
             return cast("EmbeddedObservation[Any]", obs).similarity or 0.0
 
         best = results.transform(peaks(key=_similarity, distance=1.0)).last()
+
+        # Resolve the match's world pose at QUERY time via tf, so it reflects any loop
+        # closure since the observation was recorded (the baked pose_stamped is stale).
+        frame_id = getattr(best.data, "frame_id", None) or self.config.root_frame
+        transform = self.store.tf.get(
+            self.config.root_frame, frame_id, best.ts, self.config.tf_tolerance
+        )
+        if transform is not None:
+            return transform.to_pose(ts=best.ts)
+        # No tf chain at that time — fall back to the pose baked at record time.
         if best.pose_stamped is None:
-            raise LookupError("No pose on best search result")
+            raise LookupError("No tf and no baked pose on best search result")
+        logger.warning(
+            "SemanticSearch: no tf for %s @ %s; using stale baked pose", frame_id, best.ts
+        )
         return best.pose_stamped
 
 
@@ -320,15 +337,7 @@ class Recorder(MemoryModule):
 
     config: RecorderConfig
 
-    # Optional static-tf input stream: a future system publishes latched mount/extrinsic
-    # transforms here; recorded into "tf" + flagged static in the graph. Unconnected =
-    # no-op (today nothing publishes it). Folded into tf, not recorded as its own stream.
     tf_static: In[TFMessage]
-
-    # Optional pose-graph deformation stream: a loop-closure backend (e.g. gsc_pgo)
-    # publishes one DeformationNode per keyframe on create and again whenever the
-    # optimizer moves it. Recorded into its own "tf_deformation_nodes" stream so a
-    # query can later correct tf for loop closure. Unconnected = no-op.
     tf_deformation_nodes: In[DeformationNode]
 
     _pose_setters: dict[str, Any] = {}
@@ -432,15 +441,27 @@ class Recorder(MemoryModule):
             )
 
     def _prepare_streams(self) -> None:
-        """On APPEND, drop the streams this recorder is about to (re)write — the
-        remapped In-port streams plus ``tf`` — so a re-run replaces them instead
-        of duplicating, while leaving any other streams in the db untouched."""
+        """On APPEND, clear only the streams this recorder will actually (re)write —
+        i.e. those with a connected source — so a re-run overwrites them cleanly.
+        Streams whose source is unconnected are left untouched: recording into an
+        existing db never drops data it won't repopulate (e.g. pcap_to_db, which has
+        no tf source, must not wipe an existing tf / tf_deformation_nodes)."""
         if self.config.on_existing is not OnExisting.APPEND:
             return
-        targets = {self.config.stream_remapping.get(name, name) for name in self.inputs}
+        targets: set[str] = set()
+        for name, port in self.inputs.items():
+            if name in ("tf_static", "tf_deformation_nodes"):
+                continue  # tf-family, handled below only when their source is connected
+            if port.transport is None:
+                continue  # unconnected -> nothing to write, leave any existing data
+            targets.add(self.config.stream_remapping.get(name, name))
         if self.config.record_tf:
-            targets.add("tf")
-            targets.add("tf_deformation_nodes")
+            topic = getattr(self.tf.config, "topic", None)
+            pubsub = getattr(self.tf, "pubsub", None)
+            if (topic and pubsub is not None) or self.tf_static.transport is not None:
+                targets.update(("tf", "tf_graph"))
+            if self.tf_deformation_nodes.transport is not None:
+                targets.add("tf_deformation_nodes")
         for stream in targets.intersection(self.store.list_streams()):
             self.store.delete_stream(stream)
 

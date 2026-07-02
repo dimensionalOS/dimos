@@ -121,9 +121,9 @@ class Store(Configurable, CompositeResource):
         (e.g. ``world -> ... -> mid360_link``) from the recorded transforms.
         """
         if self._tf is None:
-            from dimos.memory2.db_tf import DbTf
+            from dimos.memory2.db_tf_live import DbTfLive
 
-            self._tf = DbTf(self)
+            self._tf = DbTfLive(self)
         return self._tf
 
     def replay(
