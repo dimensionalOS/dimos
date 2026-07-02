@@ -500,8 +500,8 @@ def _best_primitive_fit(
                 continue
             f["fill_ratio"] = hull_vol / f["volume"]
             fits.append(f)
-        except Exception as e:
-            logger.debug(f"  primitive fit {kind} failed: {e}")
+        except (np.linalg.LinAlgError, ValueError, ZeroDivisionError) as e:
+            logger.warning(f"  primitive fit {kind} failed: {e}")
     if not fits:
         return None
     return max(fits, key=lambda f: f["fill_ratio"])
