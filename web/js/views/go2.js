@@ -328,7 +328,14 @@ function wireGo2() {
     state.onMap = onMap;
     state.onOdom = onOdom;
     document.getElementById('view-swap').addEventListener('click', () => setMainView());
-    document.getElementById('pip').addEventListener('click', () => setMainView());
+    // Click the floating PiP to swap too. Both media elements are always in the
+    // DOM; only the one with .is-pip is visually the PiP, so a click on either
+    // (guarded to the PiP one) flips the view.
+    for (const id of ['robot-cam', 'map-canvas']) {
+        document.getElementById(id).addEventListener('click', (e) => {
+            if (e.currentTarget.classList.contains('is-pip')) setMainView();
+        });
+    }
     setMainView('camera');  // default: camera main, map floating (per spec)
 
     selectSpeed(ui.speedMode, /*sendToRobot=*/ false);  // reflect default selection
