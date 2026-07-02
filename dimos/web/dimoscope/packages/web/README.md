@@ -4,9 +4,10 @@ DimOS robot topics in the browser — a transport-agnostic client for subscribin
 and calling `@rpc` commands over the internet.
 
 ```ts
-import { createDimosClient, ws } from "@dimos/web";
+import { createDimosClient } from "@dimos/web";
 
-const dimos = createDimosClient({ transport: ws() }); // or webtransport() — full-duplex QUIC, auto-falls back to WS
+const dimos = createDimosClient(); // default: the gateway WebSocket; QUIC with WS fallback:
+// createDimosClient({ transport: (url) => createAutoTransport({ url }) })
 await dimos.connect("ws://localhost:8080");
 dimos.subscribe("/nav/pose", (m) => use(m.data, m.ts)); // one { data, ts, meta } envelope everywhere
 ```

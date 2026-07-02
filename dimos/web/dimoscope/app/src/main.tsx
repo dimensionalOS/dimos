@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { DimosProvider, type ServerOpt } from "@dimos/react";
-import { createDimosClient, webtransport, ws } from "@dimos/web";
+import { createAutoTransport, createDimosClient, createGatewayWsTransport } from "@dimos/web";
 import { App } from "./App";
 import { GatewayContext } from "./gateway";
 import "./styles.css";
@@ -30,7 +30,7 @@ function buildServers(gateway: string): ServerOpt[] {
       id: "auto",
       label: "Auto (WT→WS)",
       connect: async () => {
-        const c = createDimosClient({ transport: webtransport() });
+        const c = createDimosClient({ transport: (url) => createAutoTransport({ url }) });
         await c.connect(gateway);
         return c;
       },
@@ -41,7 +41,7 @@ function buildServers(gateway: string): ServerOpt[] {
       label: "WebSocket",
       url: `${wsBase}/ws`,
       connect: async () => {
-        const c = createDimosClient({ transport: ws() });
+        const c = createDimosClient({ transport: (url) => createGatewayWsTransport({ url }) });
         await c.connect(`${wsBase}/ws`);
         return c;
       },

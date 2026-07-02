@@ -1,10 +1,10 @@
 /// <reference lib="dom" />
-// webtransport() — one WebTransport connection for data + control, with a transparent WebSocket
-// fallback when the browser lacks WT or UDP is blocked. WS always works; WT just adds no-HoL/lower jitter.
+// createAutoTransport() — one WebTransport connection for data + control, with a transparent
+// WebSocket fallback when the browser lacks WT or UDP is blocked. WS always works; WT just adds
+// no-HoL/lower jitter.
 import { createGatewayWsTransport } from "./gatewayWs.ts";
 import { createWebTransportTransport } from "./webTransport.ts";
 import { GATEWAY_QOS } from "../qos.ts";
-import type { TransportFactory } from "../client.ts";
 import type {
   CommandInfo,
   Qos,
@@ -15,15 +15,15 @@ import type {
   TransportCaps,
 } from "../types.ts";
 
-export interface WebtransportOpts {
-  /** WebSocket (control + fallback) port on the gateway host. Default 8080. */
+export interface AutoTransportDeps {
+  /** Gateway base URL or bare host — the WS/WT/cert endpoints are derived from its hostname. */
+  url: string;
+  /** Gateway HTTP/WS port — serves the WS fallback wire and the `/cert` hash fetch. Default 8080. */
   wsPort?: number;
   /** WebTransport (QUIC/UDP) port on the gateway host. Default 8443. */
   wtPort?: number;
   /** How long to wait for the WT connection before falling back to WS (ms). Default 4000. */
   timeoutMs?: number;
-  /** Test seam: build the wires (defaults to the real transports). */
-  _mkWires?: (url: string) => { wt?: Transport; mkWs: () => Transport };
 }
 
 // Derive the WT data URL, WS fallback URL, and cert-hash URL from a base URL or bare host.
@@ -48,7 +48,7 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
  *  fallback wire, so a WT drop degrades to WS instead of bricking the client. Callbacks
  *  registered before connect() are buffered and re-registered on whichever wire is live; the
  *  wrapper owns the connecting→open status so the WT→WS swap never surfaces a spurious "closed". */
-function createAutoFallback(
+export function createAutoFallback(
   primary: Transport,
   mkFallback: () => Transport,
   timeoutMs: number,
@@ -153,13 +153,9 @@ function createAutoFallback(
   };
 }
 
-export const webtransport = (opts?: WebtransportOpts): TransportFactory => (url) => {
-  const timeoutMs = opts?.timeoutMs ?? 4000;
-  if (opts?._mkWires) {
-    const { wt, mkWs } = opts._mkWires(url);
-    return wt ? createAutoFallback(wt, mkWs, timeoutMs) : mkWs();
-  }
-  const { wsUrl, wtUrl, certUrl } = derive(url, opts?.wsPort ?? 8080, opts?.wtPort ?? 8443);
+export const createAutoTransport = (deps: AutoTransportDeps): Transport => {
+  const timeoutMs = deps.timeoutMs ?? 4000;
+  const { wsUrl, wtUrl, certUrl } = derive(deps.url, deps.wsPort ?? 8080, deps.wtPort ?? 8443);
   const mkWs = () => createGatewayWsTransport({ url: wsUrl, reconnect: true });
   // No WebTransport in this browser → WS does everything (data + control).
   if (typeof (globalThis as { WebTransport?: unknown }).WebTransport === "undefined") return mkWs();

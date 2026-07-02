@@ -11,7 +11,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { createDimosClient, type DimosClient, selectMediaChannel, ws } from "@dimos/web";
+import { createDimosClient, type DimosClient, selectMediaChannel } from "@dimos/web";
 import type {
   CommandInfo,
   MediaChannel,
@@ -69,7 +69,7 @@ export function DimosProvider({
           id: url,
           label: url,
           connect: () => {
-            const c = createDimosClient({ transport: ws() });
+            const c = createDimosClient();
             return c.connect(url).then(() => c);
           },
         }]

@@ -1,6 +1,6 @@
 // Transport-agnostic browser API for DimOS topics. Transport is chosen at
-// createDimosClient({transport}) (default ws()) and wired at connect(url); pass the generated
-// <DimosTopics, DimosCommands> maps for typed topics + modules. Usage: see README.
+// createDimosClient({transport}) (default: the gateway WebSocket) and wired at connect(url); pass
+// the generated <DimosTopics, DimosCommands> maps for typed topics + modules. Usage: see README.
 import { createGatewayWsTransport } from "./transports/gatewayWs.ts";
 import { decode as msgsDecode } from "@dimos/msgs";
 import { createTopic, type Topic } from "./topic.ts";
@@ -54,12 +54,10 @@ export function seqFrom(data: unknown): number | undefined {
 /** A transport built lazily from the connect() URL. */
 export type TransportFactory = (url: string) => Transport;
 
-/** Default transport: one WebSocket for control + data (appends `/ws` if missing). */
-export const ws = (opts?: { reconnect?: boolean }): TransportFactory => (url) =>
-  createGatewayWsTransport({
-    url: /\/ws$/.test(url) ? url : url.replace(/\/+$/, "") + "/ws",
-    reconnect: opts?.reconnect,
-  });
+/** Default transport: the gateway WebSocket (appends `/ws` if missing; explicit transports get
+ *  the URL verbatim). */
+const defaultTransport: TransportFactory = (url) =>
+  createGatewayWsTransport({ url: /\/ws$/.test(url) ? url : url.replace(/\/+$/, "") + "/ws" });
 
 /** Untyped client topic map: no known keys, so the key-based overloads accept any string. */
 export type EmptyTopicMap = Record<never, never>;
@@ -77,8 +75,8 @@ type TypedModules<TCmds> = { [T in keyof TCmds]: { [M in keyof TCmds[T]]: RpcFn<
 
 export interface DimosClient<TMap = EmptyTopicMap, TCmds = EmptyModuleMap> {
   status: Status;
-  /** Connect (or reconnect) the transport. Pass the gateway URL (`ws://host:8080` for `ws()`; a bare
-   *  `host` for composite adapters that derive their own ports). */
+  /** Connect (or reconnect) the transport. Pass the gateway URL (`ws://host:8080` for the default
+   *  WebSocket; a bare `host` for createAutoTransport, which derives its own ports). */
   connect(url: string): Promise<void>;
   /** Rich per-topic handle (subscribe/getLatest/setQos/stats/pause). */
   topic<K extends (keyof TMap & string) | (string & Record<never, never>)>(
@@ -135,15 +133,16 @@ export interface DimosClient<TMap = EmptyTopicMap, TCmds = EmptyModuleMap> {
 }
 
 export interface DimosClientDeps {
-  /** The transport factory (`ws()` default, `webtransport()`, an experimental one, …), wired at
-   *  `connect(url)`. */
+  /** How `connect(url)` becomes a transport. Defaults to the gateway WebSocket; for anything else
+   *  pass a closure over a raw constructor, e.g. `(url) => createAutoTransport({ url })` or
+   *  `(url) => createSseTransport({ url })`. */
   transport?: TransportFactory;
 }
 
 export const createDimosClient = <TMap = EmptyTopicMap, TCmds = EmptyModuleMap>(
   deps: DimosClientDeps = {},
 ): DimosClient<TMap, TCmds> => {
-  const factory: TransportFactory = deps.transport ?? ws();
+  const factory: TransportFactory = deps.transport ?? defaultTransport;
   let transport: Transport | undefined;
   const topicsMap = new Map<string, string>();
   const topicObjs = new Map<string, Topic<any>>();

@@ -1,5 +1,6 @@
 // @dimos/web/experimental — non-production delivery mechanisms (benchmark / niche fallback), exposed as
-// raw `createXTransport(deps): Transport` factories. Production uses ws() or webtransport().
+// raw `createXTransport(deps): Transport` constructors like every transport. Production uses the
+// default gateway WebSocket or createAutoTransport.
 export { createSseTransport, type SseDeps } from "./sse.ts";
 export { createHttpPollTransport, type HttpPollDeps } from "./httpPoll.ts";
 export { createWebRtcDataTransport, type WebRtcDataDeps } from "./webRtcData.ts";

@@ -1,11 +1,12 @@
 // @dimos/web — DimOS topics in the browser. Entry: `createDimosClient({ transport? }).connect(url)`.
-// ws() = default (universal WS backbone + control plane); webtransport() = data+control over QUIC with a
-// transparent WS fallback. Research/bench transports (WebRTC-data, SSE, HTTP-poll, raw WebTransport) live
-// in "@dimos/web/experimental".
-export { createDimosClient, ws } from "./client.ts";
+// Default transport: the gateway WebSocket. Every transport is a raw `create*Transport(deps)`
+// constructor — pass one as `transport: (url) => create*Transport({ url, … })`; createAutoTransport =
+// data+control over QUIC with a transparent WS fallback. Research/bench transports (WebRTC-data,
+// SSE, HTTP-poll, raw WebTransport) live in "@dimos/web/experimental".
+export { createDimosClient } from "./client.ts";
 export type { DimosClient, DimosClientDeps, ModuleMap, TransportFactory } from "./client.ts";
-export { webtransport } from "./transports/composite.ts";
-export type { WebtransportOpts } from "./transports/composite.ts";
+export { createAutoTransport } from "./transports/composite.ts";
+export type { AutoTransportDeps } from "./transports/composite.ts";
 export { createTopic } from "./topic.ts";
 export type { Topic, TopicDeps, TopicWiring } from "./topic.ts";
 export { createGatewayWsTransport } from "./transports/gatewayWs.ts";

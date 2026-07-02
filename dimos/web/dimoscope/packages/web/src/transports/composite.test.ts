@@ -1,8 +1,8 @@
-// webtransport() Auto fallback: WT connect failure → WS, WT death mid-session → WS (with the
-// tracked subscriptions replayed either way), and the no-WebTransport → plain-WS path.
+// createAutoFallback(): WT connect failure → WS, WT death mid-session → WS (with the
+// tracked subscriptions replayed either way).
 import assert from "node:assert/strict";
 
-import { webtransport } from "./composite.ts";
+import { createAutoFallback } from "./composite.ts";
 import type { Qos, Status, Transport } from "../types.ts";
 
 function fakeWire(name: string, opts?: { failConnect?: boolean }) {
@@ -29,9 +29,7 @@ function fakeWire(name: string, opts?: { failConnect?: boolean }) {
 Deno.test("auto: WT connect failure → WS fallback, pre-connect subs replayed", async () => {
   const wt = fakeWire("WT", { failConnect: true });
   const ws = fakeWire("ws");
-  const t = webtransport({ _mkWires: () => ({ wt: wt.t, mkWs: () => ws.t }), timeoutMs: 50 })(
-    "host",
-  );
+  const t = createAutoFallback(wt.t, () => ws.t, 50);
   t.subscribe("/odom", { maxHz: 5 });
   await t.connect();
   assert.ok(ws.subs.has("/odom"));
@@ -42,7 +40,7 @@ Deno.test("auto: WT connect failure → WS fallback, pre-connect subs replayed",
 Deno.test("auto: WT death mid-session → WS takes over, subs replayed with QoS", async () => {
   const wt = fakeWire("WT");
   const ws = fakeWire("ws");
-  const t = webtransport({ _mkWires: () => ({ wt: wt.t, mkWs: () => ws.t }) })("host");
+  const t = createAutoFallback(wt.t, () => ws.t, 50);
   const statuses: Status[] = [];
   t.onStatus((s) => statuses.push(s));
   await t.connect();
@@ -56,11 +54,4 @@ Deno.test("auto: WT death mid-session → WS takes over, subs replayed with QoS"
   assert.ok(!ws.subs.has("/scan"));
   assert.equal(t.label, "ws");
   assert.ok(statuses.includes("closed")); // the drop is visible, then the fallback reopens
-});
-
-Deno.test("auto: no WebTransport wire → plain WS transport", async () => {
-  const ws = fakeWire("ws");
-  const t = webtransport({ _mkWires: () => ({ mkWs: () => ws.t }) })("host");
-  await t.connect();
-  assert.equal(t.label, "ws");
 });
