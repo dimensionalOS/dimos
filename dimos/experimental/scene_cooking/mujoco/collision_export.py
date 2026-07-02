@@ -461,8 +461,8 @@ def _process_one_prim(
             asset_lines.append(_ASSET_LINE.format(name=vis_name, file=vis_path.name))
             geom_lines.append(_VISUAL_GEOM_LINE.format(name=f"{vis_name}_geom", mesh=vis_name))
             counters["visuals"] = 1
-        except Exception:
-            pass
+        except (ValueError, RuntimeError, ZeroDivisionError, OSError) as exc:
+            logger.warning(f"visual OBJ write failed for {prim.name}: {exc}")
 
     friction_attr = ""
     if decision.friction is not None:
@@ -758,9 +758,9 @@ def _oriented_box(
     Falls back to AABB if trimesh's OBB fitter produces non-finite
     output or the prim has < 3 vertices.
     """
-    try:
-        import trimesh  # type: ignore[import-untyped]
+    import trimesh  # type: ignore[import-untyped]
 
+    try:
         tm = trimesh.Trimesh(vertices=vertices, faces=np.empty((0, 3), dtype=np.int32))
         obb = tm.bounding_box_oriented
         transform = np.asarray(obb.primitive.transform, dtype=np.float64)
@@ -771,8 +771,8 @@ def _oriented_box(
             rotation[:, 0] *= -1.0
         if np.isfinite(center).all() and np.isfinite(rotation).all() and np.isfinite(extent).all():
             return center, rotation, np.abs(extent)
-    except Exception:
-        pass
+    except (ValueError, RuntimeError, ZeroDivisionError) as exc:
+        logger.debug(f"oriented-box fit failed; falling back to AABB: {exc}")
 
     lo = vertices.min(axis=0)
     hi = vertices.max(axis=0)
@@ -863,8 +863,8 @@ def _simplify_mesh_geom(
         out_faces = np.asarray(simplified.triangles, dtype=np.int32)
         if len(out_vertices) >= 4 and 4 <= len(out_faces) <= target_faces:
             return out_vertices, out_faces
-    except Exception:
-        logger.debug("mesh simplification failed; falling back to convex hull", exc_info=True)
+    except RuntimeError:
+        logger.warning("mesh simplification failed; falling back to convex hull", exc_info=True)
 
     hull = _convex_hull_mesh(vertices)
     return hull if hull is not None else (vertices, faces)
@@ -914,8 +914,9 @@ def _write_visual_obj(obj_file: Path, vertices: np.ndarray, faces: np.ndarray) -
             if len(hull.vertices) >= 4 and len(hull.faces) >= 4:
                 vertices = np.asarray(hull.vertices, dtype=np.float64)
                 faces = np.asarray(hull.faces, dtype=np.int32)
-        except Exception:
-            pass  # fall back to original; visual may look hollow
+        except (ValueError, RuntimeError, ZeroDivisionError) as exc:
+            # Fall back to the original (possibly hollow-looking) mesh.
+            logger.warning(f"convex hull fallback failed for {obj_file.name}: {exc}")
     _write_mesh_obj(obj_file, vertices, faces)
 
 
