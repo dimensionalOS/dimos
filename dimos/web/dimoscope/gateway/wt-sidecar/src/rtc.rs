@@ -41,8 +41,13 @@ pub const CHUNK: usize = 60_000;
 /// Pose sends are dropped (not queued) beyond this buffered amount — freshness over completeness.
 const POSE_BUF_MAX: usize = 64_000;
 /// Bulk waits below this before each chunk, so the backlog accumulates in the outbox (where
-/// conflation keeps it fresh), not in the SCTP send buffer.
-const BULK_BUF_HIGH: usize = 512_000;
+/// conflation keeps it fresh), not in the SCTP send buffer. Kept small ON PURPOSE: pose shares
+/// the association and webrtc-rs has no cross-stream scheduler (RFC 8260), so every queued bulk
+/// byte transmits ahead of pose frames. At 512 KB this queue was ~500 ms of wire time on wifi
+/// rates — the pose channel's buffer never drained, its drop gate fired on nearly every frame
+/// (fast lane ×5.6 late, 2% delivered beside a 2 MB/s flood). ~1.5 chunks bounds the bulk that
+/// can sit ahead of pose; the buffered-amount-low refill keeps bulk itself saturated.
+const BULK_BUF_HIGH: usize = 96_000;
 
 /// `[u32be len][frame]` — the exact framing the browser's bulk reassembler parses.
 pub fn bulk_framed(frame: &Bytes) -> Bytes {
