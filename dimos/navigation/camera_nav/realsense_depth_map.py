@@ -425,10 +425,10 @@ class RealSenseDepthSource:
         self._depth_scale = (
             profile.get_device().first_depth_sensor().get_depth_scale()
         )
-        self._align = rs.align(rs.stream.color)
+        self._align = rs.align(rs.stream.depth)
 
-        # Intrinsics: color stream (depth is aligned to it)
-        intr = (profile.get_stream(rs.stream.color)
+        # Intrinsics: depth stream (color is warped to it, preserving full depth FOV)
+        intr = (profile.get_stream(rs.stream.depth)
                        .as_video_stream_profile()
                        .get_intrinsics())
         self._intrinsics = np.array(
@@ -580,10 +580,11 @@ class DepthStreamer:
                 radii=0.003,
             ))
 
-        # Per-frame voxel map — use full unfiltered projection (xyz_raw) so the
-        # map sees everything the sensor captures.  The gradient-filtered xyz is
-        # for the live cloud only; using it here cuts edges/bottom of frame.
-        xyz_kept = xyz_raw if len(xyz_raw) else xyz
+        # Per-frame voxel map — gradient-filtered xyz with full depth FOV.
+        # xyz_raw caused quality drop at edges (noisy stereo beyond color FOV).
+        # Gradient filter removes those unreliable pixels while depth alignment
+        # still gives wider coverage than color alignment.
+        xyz_kept = xyz
         if len(xyz_kept):
             vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
             _, first = np.unique(_pack(vk), return_index=True)
