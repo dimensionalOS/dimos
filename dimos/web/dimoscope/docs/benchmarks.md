@@ -183,7 +183,7 @@ stamped `net:<profile>`, so a table is self-describing across workload × transp
 
 Opt-in and scoped: the gateway needs `NETEM_CTL=1` + the root wrapper installed
 (`sudo install -m755 gateway/scripts/dimos-netem /usr/local/bin/ && echo '<user> ALL=(root) NOPASSWD:
-/usr/local/bin/dimos-netem' > /etc/sudoers.d/dimos-netem`). Shaping hits **only** the gateway's egress ports
+/usr/local/bin/dimos-netem' | sudo tee /etc/sudoers.d/dimos-netem`). Shaping hits **only** the gateway's egress ports
 (8080/8443 via a prio+u32 band), so SSH and the rest of the box are untouched, and every apply self-heals
 after 15 min. Apply loss **after** the transport is connected — QUIC handshakes fail under loss.
 
