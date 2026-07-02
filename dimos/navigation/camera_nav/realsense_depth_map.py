@@ -600,7 +600,7 @@ class DepthStreamer:
         self._last_n_vox     = 0
         self._pinhole_logged = False
         self._floor_calib = _FloorCalibrator()
-        self._global_map  = FastVoxelMap(voxel_size=_VOX_SIZE)
+        self._acc_pts: np.ndarray = np.empty((0, 3), dtype=np.float32)
         self._map_queue: queue.Queue = queue.Queue(maxsize=16)
         self._map_thread = threading.Thread(target=self._map_worker, daemon=True)
         self._map_thread.start()
@@ -651,30 +651,40 @@ class DepthStreamer:
         # Floor calibration (runs first 30+30 frames, then stays fixed)
         self._floor_calib.update(xyz_cam)
 
-        # Floor filter — same threshold as ZED's 3 cm above floor
+        # Floor filter
         if self._floor_calib.ready:
-            keep     = xyz_cam[:, 2] > (self._floor_calib.floor_z + 0.03)
-            xyz_kept = xyz[keep]
+            keep         = xyz_cam[:, 2] > (self._floor_calib.floor_z + 0.03)
+            xyz_kept     = xyz[keep]
+            xyz_cam_kept = xyz_cam[keep]
         else:
-            xyz_kept = xyz
+            xyz_kept     = xyz
+            xyz_cam_kept = xyz_cam
 
-        # Per-frame voxel map → add to persistent global map
-        if len(xyz_kept):
-            vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
-            _, first = np.unique(_pack(vk), return_index=True)
-            xyz_vox  = xyz_kept[first]
-            self._last_n_vox = len(xyz_vox)
-            self._global_map.add(xyz_vox)
-
-        pts = self._global_map.points()
-        if len(pts):
-            rr.log("world/map", rr.Points3D(
-                positions=pts,
-                colors=_height_color(pts[:, 2] - cam_z),
-                radii=0.010,
-            ))
-        else:
+        if len(xyz_kept) == 0:
             self._last_n_vox = 0
+            return
+
+        # Voxelize this frame (same as before)
+        vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
+        _, first = np.unique(_pack(vk), return_index=True)
+        xyz_vox  = xyz_kept[first]
+        self._last_n_vox = len(xyz_vox)
+
+        # Merge into accumulated map and deduplicate immediately
+        merged        = np.vstack([self._acc_pts, xyz_vox]) if len(self._acc_pts) else xyz_vox
+        vk_m          = np.floor(merged / _VOX_SIZE).astype(np.int32)
+        _, uniq       = np.unique(_pack(vk_m), return_index=True)
+        self._acc_pts = merged[uniq]
+
+        rr.log("world/map", rr.Points3D(
+            positions=self._acc_pts,
+            colors=_height_color(self._acc_pts[:, 2] - cam_z),
+            radii=0.010,
+        ))
+
+        # ICP: refine camera translation so next frame stitches correctly
+        if len(xyz_cam_kept) >= 50:
+            self._src.odom.update(xyz_cam_kept, pkt.pose_R)
 
     def _map_worker(self) -> None:
         while True:
