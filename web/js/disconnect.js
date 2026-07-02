@@ -50,6 +50,7 @@ export async function disconnect() {
     state.liveStats.soc = null;      // else next robot briefly shows this one's battery
     state.liveStats.iceType = null;  // ditto for the ICE path label
     state.speedScale = { lin: 0.5, ang: 0.5 };  // don't leak cockpit Rage scale into next session
+    state.videoStall = { stalled: false, blocked: false, armed: false };
     state.cmdSendCount = 0;
 
     const canvas = document.getElementById('canvas');

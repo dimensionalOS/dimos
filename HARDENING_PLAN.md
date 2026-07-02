@@ -27,7 +27,11 @@ video, in-flight sport actions, and truthful state after reconnect.
 
 Matches `dimos` roadmap Phases 2–3 (`myprojects/hosted/README.md`).
 
-### A1. Wire the video-freshness drive lockout — `[teleop]` `S`
+### A1. Wire the video-freshness drive lockout — `[teleop]` `S` — ✅ implemented
+(auto-resume + neutral gate; liveness = video.currentTime progression, 1s
+threshold; overlay + DRIVE pill + health=bad; one zero-twist on transition;
+unit-tested in web/js/tests/stall.test.mjs. VR pose streaming not gated —
+tracked separately.)
 - **Issue:** The cockpit's `#video-lost` "video stalled — drive disabled"
   overlay (`web/js/views/go2.js:109`) is dead markup — nothing toggles it, and
   `state.driveEnabled` gates only on posture/E-STOP (`go2.js:420`). An operator

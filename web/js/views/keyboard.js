@@ -3,6 +3,7 @@
 
 import { geometry_msgs, std_msgs } from 'https://esm.sh/jsr/@dimos/msgs@0.1.4';
 import { disconnect } from '../disconnect.js';
+import { createStallGate, videoMediaTime } from '../stall.js';
 import { escHtml, sendInterval, state } from '../state.js';
 
 export function renderKeyboard(c) {
@@ -136,6 +137,8 @@ function updateKeyVisuals() {
     }
 }
 
+const DRIVE_KEYS = ['w', 'a', 's', 'd', 'q', 'e'];
+
 export function startKeyboardLoop() {
     // Idempotent — callers re-render and would otherwise stack listeners.
     stopKeyboardLoop();
@@ -143,14 +146,11 @@ export function startKeyboardLoop() {
     window.addEventListener('keyup', onKeyUp);
     bindTouchKeys();  // on-screen keys → same kbKeys set (phone/mouse)
     let twistSeq = 0;
-    state.kbInterval = setInterval(() => {
-        // Always update key visuals; only send/readout when channel is up.
-        updateKeyVisuals();
-        if (!state.cmdChannel || state.cmdChannel.readyState !== 'open') return;
-        // Cockpit gates drive on posture: WASD moves only after Stand/Drive.
-        // Standalone keyboard view leaves driveEnabled=true, so unaffected.
-        if (!state.driveEnabled) return;
-        const t = buildTwist();
+    // Fresh gate per session — stall state must not leak across connects.
+    const stallGate = createStallGate();
+    state.videoStall = { stalled: false, blocked: false, armed: false };
+
+    const sendTwist = (t) => {
         // Stamp in the robot's clock frame (clockOffsetMs is 0 until the first
         // pong lands; falls back gracefully on old brokers).
         const nowMs = Date.now() + state.clockOffsetMs;
@@ -168,6 +168,34 @@ export function startKeyboardLoop() {
         });
         state.cmdChannel.send(twist.encode());
         state.cmdSendCount++;  // for cmdHz (operator send rate); sampled once/sec
+    };
+
+    state.kbInterval = setInterval(() => {
+        // Always update key visuals; only send/readout when channel is up.
+        updateKeyVisuals();
+        // Video-freshness gate: driving blind on a frozen frame is the failure
+        // mode. Auto-resumes when frames return, but only unblocks after all
+        // drive keys are released (neutral gate) so a held W can't lunge the
+        // robot the instant the picture unfreezes.
+        const keysHeld = DRIVE_KEYS.some((k) => state.kbKeys.has(k));
+        const wasBlocked = state.videoStall.blocked;
+        state.videoStall = stallGate.sample(
+            videoMediaTime(document.getElementById('robot-cam')),
+            performance.now(),
+            keysHeld,
+        );
+        if (!state.cmdChannel || state.cmdChannel.readyState !== 'open') return;
+        if (state.videoStall.blocked) {
+            // One explicit zero-twist on the transition; after that the robot's
+            // 200ms cmd_vel deadman keeps it stopped while we stay silent.
+            if (!wasBlocked) sendTwist({ linear_x: 0, linear_y: 0, linear_z: 0, angular_z: 0 });
+            return;
+        }
+        // Cockpit gates drive on posture: WASD moves only after Stand/Drive.
+        // Standalone keyboard view leaves driveEnabled=true, so unaffected.
+        if (!state.driveEnabled) return;
+        const t = buildTwist();
+        sendTwist(t);
         const out = document.getElementById('twist-readout');
         if (out) out.textContent =
             `linear.x  = ${t.linear_x.toFixed(2)}\n` +

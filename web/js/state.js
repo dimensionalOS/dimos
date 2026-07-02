@@ -59,6 +59,9 @@ export const state = {
     },
     onCmdAck: null,         // optional view hook: (msg) => void for {type:cmd_ack,nonce,ok}
     driveEnabled: true,     // gates WASD; go2 cockpit sets false until Stand/Drive
+    // Video-freshness drive gate (stall.js): stalled drives the overlay/HUD,
+    // blocked suppresses twist sends (stall OR post-stall neutral gate).
+    videoStall: { stalled: false, blocked: false, armed: false },
     cmdSendCount: 0,        // rolling counter; sampled into cmdHz once/sec
     hudTimer: null,
 

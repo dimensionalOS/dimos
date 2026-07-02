@@ -11,6 +11,8 @@ const HUD_GOOD = '#34d399', HUD_WARN = '#ffcc00', HUD_BAD = '#ff5252';
 // safety-relevant axis — a laggy command link is worse than a degraded picture.
 // Also the signal a future stale-video drive-lockout will reuse.
 export function statsHealth() {
+    // A stalled feed means driving blind — worst state regardless of numbers.
+    if (state.videoStall?.stalled) return 'bad';
     const v = state.liveStats.video;
     const c = state.liveStats.cmd;
     if (!v) return 'warn';

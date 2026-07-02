@@ -420,9 +420,11 @@ function refreshControls() {
     state.driveEnabled = ui.posture === 'StandReady' && !ui.estopped;
 
     const kb = document.getElementById('kb-live');
-    kb.className = 'pill ' + (state.driveEnabled ? 'pill-good' : 'pill-bad');
+    const stalled = state.videoStall.stalled;
+    kb.className = 'pill ' + (state.driveEnabled && !stalled ? 'pill-good' : 'pill-bad');
     kb.querySelector('.dot').nextSibling.textContent =
-        state.driveEnabled ? 'DRIVE LIVE' : 'DRIVE OFF — press Stand/Drive';
+        stalled ? 'DRIVE OFF — video stalled'
+        : state.driveEnabled ? 'DRIVE LIVE' : 'DRIVE OFF — press Stand/Drive';
 
     document.getElementById('posture-chip').textContent =
         ({ StandReady: 'STANDING', StandDown: 'SITTING', RecoveryStand: 'RECOVERY', Damp: 'STOPPED' }[ui.posture]) ||
@@ -484,6 +486,15 @@ function startTick() {
         // the interval can outlive the elements for a tick.
         const summary = document.getElementById('hud-summary');
         if (!summary) return;
+
+        // Video-freshness lockout (keyboard loop drives state.videoStall):
+        // stalled → overlay + drive pill off; the loop already blocks sends.
+        const lost = document.getElementById('video-lost');
+        const stalled = state.videoStall.stalled;
+        if (lost && lost.classList.contains('hidden') !== !stalled) {
+            lost.classList.toggle('hidden', !stalled);
+            refreshControls();  // re-render the DRIVE pill on stall transitions
+        }
 
         // Summary always; detail grid rendered (hidden until expanded).
         summary.textContent = hudSummaryLine();
