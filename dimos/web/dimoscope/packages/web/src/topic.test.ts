@@ -36,7 +36,7 @@ Deno.test("rate-limit: coalesces within the window, counts drops", () => {
   });
   let delivered = 0;
   t.subscribe(() => delivered++);
-  t.setRateLimit(10); // ≤ 1 per 100 ms
+  t.setQos({ maxHz: 10 }); // ≤ 1 per 100 ms
   t._deliver({}, meta(1000)); // first → delivered
   t._deliver({}, meta(1010)); // +10 ms → dropped
   t._deliver({}, meta(1050)); // +50 ms → dropped
@@ -86,6 +86,27 @@ Deno.test("qos: client-side rateLimit still drops in _deliver (bytes flow, deliv
   t._deliver({}, meta(1200)); // delivered
   assert.equal(delivered, 2);
   assert.equal(t.stats().dropped, 1);
+});
+
+Deno.test("a throwing subscriber doesn't break delivery to later subscribers", () => {
+  const t = createTopic({
+    name: "/t",
+    type: "x",
+    wiring: { subscribe: () => {}, unsubscribe: () => {} },
+  });
+  let delivered = 0;
+  t.subscribe(() => {
+    throw new Error("boom");
+  });
+  t.subscribe(() => delivered++);
+  const origError = console.error;
+  console.error = () => {}; // the isolation logs — keep test output clean
+  try {
+    t._deliver({}, meta(1000));
+  } finally {
+    console.error = origError;
+  }
+  assert.equal(delivered, 1);
 });
 
 Deno.test("qos: conflation 'all' forces unlimited delivery (overrides maxHz)", () => {

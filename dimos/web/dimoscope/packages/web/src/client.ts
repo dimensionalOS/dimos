@@ -194,7 +194,13 @@ export const createDimosClient = <TMap = EmptyTopicMap, TCmds = EmptyModuleMap>(
     t?._deliver(data, meta);
     if (firehose.size) {
       const m: Message = { data, ts: s.recvTs, meta };
-      firehose.forEach((f) => f(m));
+      firehose.forEach((f) => {
+        try {
+          f(m);
+        } catch (e) {
+          console.error("[@dimos/web] subscribeAll handler threw", e);
+        }
+      });
     }
   }
 

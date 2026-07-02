@@ -16,9 +16,6 @@ export interface Topic<T = unknown> {
   /** Same wire behavior — delivery is always newest-first (we never queue). */
   subscribeLatest(handler: Handler<T>): Subscription;
   getLatest(): T | undefined;
-  /** Cap delivery to `hz` (also asks the gateway to downsample → saves bandwidth).
-   *  Shorthand for `setQos({ maxHz: hz })` with the current rateLimit location. */
-  setRateLimit(hz: number): void;
   /** Set per-subscription QoS. Client-side fields (maxHz / rateLimit / conflation) take
    *  effect immediately; transport-level fields are honored only where caps.qos allows. */
   setQos(qos: Qos): void;
@@ -75,10 +72,6 @@ export const createTopic = <T = unknown>(deps: TopicDeps): Topic<T> => {
     if (handlers.size > 0) wiring.subscribe(name, effectiveQos()); // re-subscribe = propagate the new QoS
   }
 
-  function setRateLimit(hz: number) {
-    setQos({ ...qos, maxHz: hz });
-  }
-
   function stats(): TopicStats {
     const now = Date.now();
     let i = 0;
@@ -108,7 +101,13 @@ export const createTopic = <T = unknown>(deps: TopicDeps): Topic<T> => {
     lastDeliver = now;
     const m = { ...meta, dropped };
     const message: Message<T> = { data, ts: m.recvTs, meta: m };
-    handlers.forEach((h) => h(message));
+    handlers.forEach((h) => {
+      try {
+        h(message);
+      } catch (e) {
+        console.error(`[@dimos/web] subscriber for ${name} threw`, e);
+      }
+    });
   }
 
   return {
@@ -117,7 +116,6 @@ export const createTopic = <T = unknown>(deps: TopicDeps): Topic<T> => {
     subscribe,
     subscribeLatest: subscribe,
     getLatest: () => latest,
-    setRateLimit,
     setQos,
     pause: () => {
       paused = true;
