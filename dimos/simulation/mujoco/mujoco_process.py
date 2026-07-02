@@ -15,11 +15,13 @@
 # limitations under the License.
 
 import base64
+import contextlib
 import json
 import pickle
 import signal
 import sys
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import mujoco
@@ -45,6 +47,22 @@ from dimos.simulation.mujoco.shared_memory import ShmReader
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+
+class _HeadlessViewer:
+    """Stand-in for the passive viewer on displayless hosts (mujoco_headless).
+
+    The GUI would render into nothing, and on a software-GL box every sync()
+    costs more than the physics it paces — the loop paces itself instead.
+    """
+
+    cam = SimpleNamespace(lookat=None, distance=None, azimuth=None, elevation=None)
+
+    def is_running(self) -> bool:
+        return True
+
+    def sync(self) -> None:
+        return None
 
 
 class MockController:
@@ -108,7 +126,12 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
 
     shm.signal_ready()
 
-    with viewer.launch_passive(model, data, show_left_ui=False, show_right_ui=False) as m_viewer:
+    viewer_ctx = (
+        contextlib.nullcontext(_HeadlessViewer())
+        if config.mujoco_headless
+        else viewer.launch_passive(model, data, show_left_ui=False, show_right_ui=False)
+    )
+    with viewer_ctx as m_viewer:
         camera_size = (VIDEO_WIDTH, VIDEO_HEIGHT)
 
         # Create renderers
@@ -220,8 +243,13 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
 
                 last_lidar_time = current_time
 
-            # Control simulation speed
-            time_until_next_step = model.opt.timestep - (time.time() - step_start)
+            # Control simulation speed. With the viewer, sync() vsyncs the loop and this
+            # only backstops it; headless must pace itself to the sim time actually
+            # advanced (steps_per_frame steps) or the sim drifts off realtime.
+            iteration_budget = model.opt.timestep * (
+                config.mujoco_steps_per_frame if config.mujoco_headless else 1
+            )
+            time_until_next_step = iteration_budget - (time.time() - step_start)
             if time_until_next_step > 0:
                 time.sleep(time_until_next_step)
 

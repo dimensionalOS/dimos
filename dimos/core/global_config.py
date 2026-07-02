@@ -70,6 +70,7 @@ class GlobalConfig(BaseSettings):
     mujoco_global_map_from_pointcloud: str | None = None
     mujoco_start_pos: str = "-1.0, 1.0"
     mujoco_steps_per_frame: int = 7
+    mujoco_headless: bool = False
     scene_package: str | None = None
     robot_model: str | None = None
     robot_id: str | None = None

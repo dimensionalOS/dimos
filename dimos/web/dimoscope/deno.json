@@ -55,6 +55,7 @@
     "fmt": "deno fmt",
     "lint": "deno lint",
     "dog": "DIMOS_TRANSPORT=zenoh uv run dimos --simulation dimsim run go2-load",
+    "dog:vps": "MUJOCO_GL=egl DIMOS_TRANSPORT=zenoh uv run dimos --simulation mujoco --mujoco-headless run go2-load",
     "load": "DIMOS_TRANSPORT=zenoh uv run dimos run load",
     "load:flood": "DIMOS_TRANSPORT=zenoh uv run dimos run load -o go2load.heavy_hz=20 -o go2load.heavy_bytes=1000000",
     "sim": "DIMOS_TRANSPORT=zenoh uv run dimos --simulation mujoco run unitree-go2",
