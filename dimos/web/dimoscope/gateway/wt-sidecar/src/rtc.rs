@@ -86,6 +86,13 @@ pub async fn run(
     }
 }
 
+/// The IPv4 the default route uses (connect() picks the route; no packet is sent).
+fn primary_local_v4() -> Result<std::net::IpAddr> {
+    let s = std::net::UdpSocket::bind("0.0.0.0:0")?;
+    s.connect("8.8.8.8:80")?;
+    Ok(s.local_addr()?.ip())
+}
+
 async fn build_api(port: u16, public_ip: Option<String>) -> Result<API> {
     // One UDP socket for every session (ICE mux). Dual-stack [::] for IPv6-first hosts.
     let socket = tokio::net::UdpSocket::bind(("::", port))
@@ -97,6 +104,14 @@ async fn build_api(port: u16, public_ip: Option<String>) -> Result<API> {
     ))));
     if let Some(ip) = public_ip {
         se.set_nat_1to1_ips(vec![ip], RTCIceCandidateType::Host);
+        // The 1:1 mapper rewrites EVERY local IP to the public one, so a multi-NIC host (EC2 ENI +
+        // a VPN interface) yields identical candidates — and webrtc-ice closes the duplicate, which
+        // closes the SHARED mux conn and kills the session ("udp_mux: … buffer: closed"). Keep
+        // exactly one local IP; which one is irrelevant (the SDP carries the public IP and the mux
+        // socket listens on ::).
+        let primary = primary_local_v4().context("primary local v4 for RTC_PUBLIC_IP")?;
+        info!(%primary, "webrtc 1:1 NAT: mapping only the primary interface");
+        se.set_ip_filter(Box::new(move |a: std::net::IpAddr| a == primary));
     }
     let mut media = MediaEngine::default();
     media.register_default_codecs()?;
