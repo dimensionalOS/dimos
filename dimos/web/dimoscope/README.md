@@ -94,7 +94,6 @@ Typed topics + commands are generated from the blueprint: `deno task gen-types` 
 `createDimosClient<DimosTopics, DimosCommands>()` autocompletes topic names, message fields, and RPC
 signatures — see [`packages/web/README.md`](packages/web/README.md).
 
-
 ## Transports — pick a delivery mechanism from the topbar dropdown
 
 Same app, same `@dimos/web` SDK, five swappable delivery mechanisms — all on the one service,
@@ -141,7 +140,7 @@ Without deno — prod/VPS shape, exactly what `deno task serve` automates:
 
 ```bash
 cargo build --release --manifest-path gateway/wt-sidecar/Cargo.toml   # once (~2 min)
-uv run python -m gateway &                                            # :8080 — app + every TCP transport
+DIMOS_TRANSPORT=zenoh uv run python -m gateway &                      # :8080 — RPC backend must match the blueprints'
 gateway/wt-sidecar/target/release/wt-sidecar &                        # QUIC/UDP :8443 — WebTransport
 ```
 
