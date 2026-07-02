@@ -826,3 +826,66 @@ body {
   flex-direction: column;
   gap: 12px;
 }
+
+/* Bench results — Δ-vs-baseline suffixes, expandable lane/time-series sub-rows, run history. */
+.delta {
+  font-size: 10px;
+  margin-left: 3px;
+  color: var(--muted);
+}
+.delta-good {
+  color: var(--ok);
+}
+.delta-bad {
+  color: var(--err);
+}
+.stats tr.bench-sub td {
+  background: var(--bg);
+  padding: 8px 6px;
+}
+.bench-sparks {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.bench-spark-lbl {
+  font: 600 10px var(--mono);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: var(--track);
+}
+.bench-caret-btn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0 4px;
+  font: inherit;
+}
+.bench-history-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 12px var(--mono);
+  padding: 3px 0;
+}
+.bench-name-input {
+  background: var(--elev);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 2px 8px;
+  font: 500 12px var(--mono);
+  width: 160px;
+}
+.net-dot {
+  color: var(--ok);
+  margin-right: 4px;
+  font-size: 8px;
+}
+/* Topbar netem select while the path is shaped — the "why is everything slow" tell. */
+.server-select.net-warn {
+  color: var(--warn);
+  border-color: var(--warn);
+}

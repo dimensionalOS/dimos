@@ -17,10 +17,20 @@ deno task load                    # /load/* lanes + the crankable flood (`deno t
 ## 1. The benchmark — in the real browser, across transports
 
 The Topics tab → Benchmark drawer measures the live transport end-to-end (publish→browser,
-`recvTs − srcTs`) across workload profiles and exports the results as Markdown. Transports come from
-the topbar dropdown; the generator ladder runs `light 2 → camera 11 → dense 20 → depth-hd 50 →
-raw-1080p 180 → firehose 300` MB/s on `/load/img`. `pose` measures the always-on small lanes; running
-the `all-lanes` + `on-demand` pair in one sweep prints the on-demand bandwidth cut (~75% on the WS hop).
+`recvTs − srcTs`) as a **matrix sweep** — netem profiles × workloads × maxHz × repeats, one cell per
+condition, asserted server-side per group and restored after (also on Stop). Transports come from the
+topbar dropdown; the generator ladder runs `lidar 2 → camera 11 → dense 20 → depth-hd 50 →
+raw-1080p 180 → firehose 300` MB/s on `/load/img`, and with **auto-drive** on the sweep sets that
+publisher config itself per heavy profile (`start_bench`, manual state restored) — the profile name
+IS the offered load, and every row reports **offered kB/s / deliv%** derived from the per-topic seq
+span (works without the RPC too). `pose` measures the always-on small lanes; `mixed` is the
+beside-bulk coexistence case — expand any row (▸) for **per-lane stats** (pose fresh beside the img
+backlog is the fair-data-plane evidence) and **1 s sparklines** (ramp, outage recovery). The
+`all-lanes` + `on-demand` pair in one sweep prints the on-demand bandwidth cut (~75% on the WS hop).
+Results **append across sweeps and transport switches** (the cross-wire table builds live), persist
+to a run history (localStorage; time-series stripped on disk — the JSON export keeps it), and a
+pinned baseline adds Δ suffixes on p95 (relative %) and loss (percentage-point) for matching
+`scenario+netem+maxHz` cells.
 
 Methodology (`packages/web/src/bench.ts`): a warmup window is discarded (subscribe ramp-up, QoS
 negotiation), then `durMs` of measurement, then a grace window so a delayed frame counts as late, not
@@ -73,12 +83,15 @@ Takeaways:
 - Loopback has no loss, so TCP never stalls here. The no-HoL-under-loss case is §3 — or inject loss
   locally (Linux `tc qdisc add dev lo root netem loss 5%`; macOS `dnctl`/dummynet).
 
-Re-run: pick a generator tier + the matching workload profile, **Run sweep**, **copy Markdown**.
-The config drives from the URL — `?gw=host:port` targets a remote gateway, `?transport=<id>` pins
-the transport, `?profiles=pose,dense,mixed` selects workloads, `?dur=ms` tunes the window,
-`?maxHz=n` caps client QoS, `?load=<tier>` preselects the generator tier. Bench URLs land on the
-bench tab (`?tab=worldview|topics` picks the page explicitly), and each export embeds its `repro:`
-URL.
+Re-run: pick workloads (+ netem/maxHz axes), **Run sweep**, **copy Markdown** — or paste an
+export's `repro:` URL. The whole config drives from the URL: `?gw=host:port` targets a remote
+gateway, `?transport=<id>` pins the transport, `?profiles=pose,dense,mixed` selects workloads,
+`?dur=ms` tunes the window, `?maxHz=0,60` is the QoS axis (comma list; 0 = ∞),
+`?net=clean,loss-5` the netem axis, `?reps=N` repeats, `?load=<tier>` / `?loadHz=&loadBytes=` /
+`?loadKind=cloud` the generator config, `?drive=0` turns auto-drive off, and **`?run=1` executes on
+load** (3 s cancel chip — netem flips are gateway-wide). Bench URLs land on the bench tab
+(`?tab=worldview|topics` picks the page explicitly), and each export embeds its `repro:` URL, so
+every published table is one paste away from re-measurement.
 
 ---
 
@@ -149,10 +162,14 @@ sim, `deno task load:flood` is lighter.
 
 ### Network profiles — simulate deployment conditions from the browser
 
-The BenchDrawer's Network section flips server-side `tc netem` profiles on the gateway host —
+A `net:` select in the topbar flips server-side `tc netem` profiles on the gateway host —
 `clean · wifi-normal (10mbit/40ms/0.3%) · wifi-crowded (2mbit/100ms/1.5% bursty) · wifi-edge
-(700kbit/200ms/5% bursty) · disaster (200kbit/500ms/8%) · loss-3/loss-5 (loss, no bw cap)` — plus
-momentary UDP/all outage buttons. Every result row is stamped `net:<profile>`.
+(700kbit/200ms/5% bursty) · disaster (200kbit/500ms/8%) · loss-3/loss-5 (loss, no bw cap)` — amber
+while anything is shaped (the condition affects teleop/camera/WorldView, not just the bench). The
+BenchDrawer's Network section is the **sweep axis**: multi-select profiles and the matrix asserts
+each per group (settle, verified from the POST body, re-asserted against the self-heal on long
+matrices, pre-sweep profile restored after — also on Stop), plus momentary UDP/all outage buttons
+(legal mid-run: failover is data). Every result cell is stamped `net:<profile>`.
 
 Opt-in and scoped: install the root wrapper once with `deno task netem:install` (= `sudo install
 -m755 gateway/scripts/dimos-netem /usr/local/bin/` + a sudoers entry for `$USER` scoped to that one
@@ -162,8 +179,8 @@ would let WebRTC bypass the shaper). SSH stays untouched; box-level UDP (DNS, VP
 a profile is active, and every apply self-heals after 15 min. Apply loss **after** the transport is
 connected: QUIC handshakes fail under loss.
 
-The browser panel is one of three equivalent controls over the same wrapper (the panel shows whatever
-is active):
+The browser (topbar select + bench sweep axis) is one of three equivalent controls over the same
+wrapper — all views show whatever is actually active, from any of them:
 
 ```bash
 sudo dimos-netem wifi-crowded    # on the gateway box — apply · `clean` clears · `status` prints

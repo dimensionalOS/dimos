@@ -12,10 +12,38 @@ export type { Topic, TopicDeps, TopicWiring } from "./topic.ts";
 export { createGatewayWsTransport } from "./transports/gatewayWs.ts";
 export type { GatewayWsDeps } from "./transports/gatewayWs.ts";
 export { b64ToBytes, frameToSample } from "./transports/frame.ts";
-export { formatMarkdown, measureScenario, onDemandSaving, STREAM_PROFILES } from "./bench.ts";
-export type { BenchRow, BenchScenario, StreamProfile } from "./bench.ts";
+export {
+  defaultGrace,
+  defaultWarmup,
+  measureScenario,
+  ON_DEMAND_PAIR,
+  onDemandSaving,
+  STREAM_PROFILES,
+} from "./bench.ts";
+export type {
+  BenchBucket,
+  BenchOpts,
+  BenchRow,
+  BenchScenario,
+  BucketLane,
+  GenSpec,
+  LaneStats,
+  StreamProfile,
+} from "./bench.ts";
+export {
+  formatMarkdown,
+  parseRun,
+  reviveRun,
+  RUN_SCHEMA,
+  RUN_VERSION,
+  serializeRun,
+  stripBuckets,
+  trimRuns,
+} from "./benchRun.ts";
+export type { GeneratorConfig, RunCell, RunMeta, RunRecord } from "./benchRun.ts";
 export type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "./types.ts";
 export type {
+  ClockSample,
   Handler,
   Message,
   MessageMeta,

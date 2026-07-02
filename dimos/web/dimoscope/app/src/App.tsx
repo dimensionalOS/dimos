@@ -15,8 +15,10 @@ import { TeleopPad } from "./panels/TeleopPad";
 import { StatsBar } from "./panels/StatsBar";
 import { CommandsPanel } from "./panels/CommandsPanel";
 import { StreamsTab } from "./panels/streams/StreamsTab";
-import { BenchDrawer, hasBenchParams } from "./panels/BenchDrawer";
+import { BenchDrawer, hasBenchParams } from "./panels/bench/BenchDrawer";
+import { TopbarNetem } from "./panels/TopbarNetem";
 import { useGateway } from "./gateway";
+import { NetemProvider } from "./netem";
 import { getParam, setUrlParam } from "./urlState";
 
 // ?tab=worldview|topics picks the page; bench params imply the Topics tab (where the drawer lives).
@@ -64,6 +66,7 @@ export function App() {
   const [gwText, setGwText] = useState(gateway);
 
   return (
+    <NetemProvider>
     <div className="layout">
       <header className="topbar">
         <span
@@ -88,6 +91,7 @@ export function App() {
           </button>
         </div>
         <div className="topbar-right">
+          <TopbarNetem />
           {servers.length > 1 && (
             <select
               className="server-select"
@@ -175,5 +179,6 @@ export function App() {
         </div>
       )}
     </div>
+    </NetemProvider>
   );
 }

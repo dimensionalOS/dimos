@@ -113,7 +113,10 @@ only the wire differs:
 ## Benchmark
 
 The benchmark runs **in the real browser** across all 5 delivery mechanisms (WS · SSE · poll ·
-WebRTC-data · WebTransport), so WebRTC/WebTransport are measured on the actual browser stacks. See
+WebRTC-data · WebTransport), so WebRTC/WebTransport are measured on the actual browser stacks. One
+sweep is a matrix — netem profiles × workloads × maxHz × repeats — with per-cell condition stamps,
+per-lane breakdowns, 1 s time-series, offered-vs-delivered goodput, a localStorage run history with
+a pinned Δ baseline, and Markdown/JSON exports that embed a paste-to-reproduce URL (`?run=1`). See
 **[docs/benchmarks.md](docs/benchmarks.md)** for the methodology, QoS, real-WAN runbook, and full tables.
 
 ```bash
