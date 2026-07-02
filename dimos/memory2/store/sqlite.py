@@ -27,10 +27,14 @@ from dimos.memory2.codecs.base import codec_id
 from dimos.memory2.observationstore.sqlite import SqliteObservationStore
 from dimos.memory2.registry import RegistryStore, deserialize_component, qual
 from dimos.memory2.store.base import Store, StoreConfig
+from dimos.memory2.stream import Stream
 from dimos.memory2.utils.sqlite import open_disposable_sqlite_connection
 from dimos.memory2.utils.validation import validate_identifier
 from dimos.memory2.vectorstore.base import VectorStore
 from dimos.memory2.vectorstore.sqlite import SqliteVectorStore
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 class SqliteStoreConfig(StoreConfig):
@@ -209,6 +213,23 @@ class SqliteStore(Store):
     def list_streams(self) -> list[str]:
         db_names = set(self._registry.list_streams())
         return sorted(db_names | set(self._streams.keys()))
+
+    def summary(self) -> str:
+        """One line per stream, skipping any whose payload type can't be loaded.
+
+        Recordings may reference Python types not present in this checkout;
+        those streams are warned about and omitted rather than crashing the
+        whole summary. Requesting such a stream by name still raises.
+        """
+        lines: list[str] = []
+        for name in self.list_streams():
+            try:
+                stream: Stream[Any] = self.stream(name)
+            except (ImportError, AttributeError, ValueError) as error:
+                logger.warning(f"skipping stream {name!r}: unresolved payload type ({error})")
+                continue
+            lines.append(stream.summary())
+        return "\n".join(lines)
 
     def delete_stream(self, name: str) -> None:
         super().delete_stream(name)

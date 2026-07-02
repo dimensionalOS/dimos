@@ -29,16 +29,33 @@ import typer
 from dimos.memory2.codecs.base import _resolve_payload_type
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.utils.data import resolve_named_path
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 def _stream_payload_types(db_path: Path) -> dict[str, type]:
-    """Read each stream's registered payload type from the _streams table."""
+    """Read each stream's resolvable payload type from the _streams table.
+
+    Streams whose payload class can't be imported (recordings that reference
+    Python types not present in this checkout) are skipped with a warning
+    rather than crashing the whole command.
+    """
     conn = sqlite3.connect(str(db_path))
     try:
         rows = conn.execute("SELECT name, config FROM _streams").fetchall()
     finally:
         conn.close()
-    return {name: _resolve_payload_type(json.loads(cfg)["payload_module"]) for name, cfg in rows}
+    resolved: dict[str, type] = {}
+    for name, cfg in rows:
+        payload_module = json.loads(cfg)["payload_module"]
+        try:
+            resolved[name] = _resolve_payload_type(payload_module)
+        except (ImportError, AttributeError, ValueError) as error:
+            logger.warning(
+                f"skipping stream {name!r}: cannot load type {payload_module!r} ({error})"
+            )
+    return resolved
 
 
 def main(

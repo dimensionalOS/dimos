@@ -274,6 +274,38 @@ class TestBlobLoading:
             assert obs.data == "data1"
         bs.stop()
 
+    def test_sqlite_summary_skips_unresolvable_types(self, tmp_path) -> None:
+        """summary() skips streams whose payload class can't be imported.
+
+        Recordings may reference Python types not present in this checkout;
+        those must not crash a summary, but explicitly requesting one still errors.
+        """
+        import json
+        import sqlite3
+
+        from dimos.memory2.store.sqlite import SqliteStore
+        from dimos.msgs.std_msgs.Int32 import Int32
+
+        db = str(tmp_path / "unknown_type.db")
+        with SqliteStore(path=db) as store:
+            store.stream("good", Int32).append(Int32(data=1))
+            store.stream("ghost", Int32).append(Int32(data=2))
+
+        conn = sqlite3.connect(db)
+        row = conn.execute("SELECT config FROM _streams WHERE name='ghost'").fetchone()
+        cfg = json.loads(row[0])
+        cfg["payload_module"] = "dimos.msgs.does_not_exist.GhostType.GhostType"
+        conn.execute("UPDATE _streams SET config=? WHERE name='ghost'", (json.dumps(cfg),))
+        conn.commit()
+        conn.close()
+
+        with SqliteStore(path=db, must_exist=True) as store:
+            summary = store.summary()
+            assert "good" in summary
+            assert "ghost" not in summary
+            with pytest.raises((ImportError, AttributeError, ValueError)):
+                store.stream("ghost")
+
 
 class SpyBlobStore(BlobStore):
     """BlobStore that records all calls for verification."""
