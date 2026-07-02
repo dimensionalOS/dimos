@@ -277,6 +277,11 @@ relay. Rows self-identify `wire: dimoscope/rtc-rs`.
   loopback, where cwnd doesn't bite) vs QUIC/BBR's 18.3.
 - Where WebRTC does win: browser↔browser (no server in the path) and media — the camera plane
   (`/media`) already rides WebRTC video tracks with hardware codecs.
+- The ordering reproduces on a second, independently deployed host (an EC2 box also running the
+  sim): WT 18.9 MB/s clean / 10.6 at loss-5 with the fast lane at ~84 Hz beside it; WebRTC bulk
+  ~4 MB/s clean, near-zero under any shaping. Stability differs by host: in 30 s-per-cell runs the
+  SCTP association survived on the EC2 box (heavily degraded) but collapsed outright on three long
+  runs on a shared-vCPU VPS — the same sessions over QUIC and TCP ran without incident on both.
 
 ### VPS — run the dog (Ubuntu; needs `uv` + `rustup`; `deno` only to build the app)
 
