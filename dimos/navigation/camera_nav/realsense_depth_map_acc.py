@@ -1,14 +1,23 @@
 """RealSense accumulated global map.
 
-Per-frame voxel map + persistent global map in one loop.
-Run this instead of realsense_depth_map.py when you want global accumulation.
+Per-frame voxel map (world/map) + persistent global map (world/global_map).
 
+Key design decisions
+--------------------
+Per-frame map  uses xyz_world = xyz_cam @ R.T + t  (ICP translation included)
+               Refreshes every frame.  Moving objects update.  Never accumulates.
+
+Global map     uses xyz_ronly = xyz_world - t = xyz_cam @ R.T  (rotation ONLY)
+               ICP translation is deliberately excluded.  On the D435i there is
+               no wheel odometry or VIO, so t from centroid-ICP oscillates ±1-2 cm
+               even for a static camera.  At 2 cm voxel size that causes the same
+               physical surface to land on different keys every frame → map explodes.
+               Madgwick orientation (R) is reliable after convergence.  Using R only
+               gives a stable panoramic map: pan the camera left/right and each new
+               area of the scene lands at its correct world-frame position.
+
+Usage
     python -m dimos.navigation.camera_nav.realsense_depth_map_acc
-
-Rerun tabs:
-  world/map        — per-frame voxel grid (refreshes every frame, moving objects update)
-  world/global_map — persistent map that grows as camera explores new space
-  world/cloud      — live dense point cloud
 """
 from __future__ import annotations
 
@@ -48,18 +57,13 @@ def main() -> None:
     grad        = GradientStabilityFilter()
     floor_calib = _FloorCalibrator()
 
-    # Global map: plain float32 array, grows as camera explores new space.
-    # Only populated after floor_calib.ready so that Madgwick has converged
-    # and xyz_world positions are stable.  Pre-convergence geometry is thrown away.
-    acc_pts:           np.ndarray = np.empty((0, 3), dtype=np.float32)
-    map_ready:         bool       = False   # True once we've started accumulating
-
+    acc_pts:   np.ndarray = np.empty((0, 3), dtype=np.float32)
+    map_ready: bool       = False
     frame          = 0
     t0             = time.monotonic()
     pinhole_logged = False
 
-    print("RealSense open — Ctrl-C to quit.")
-    print("Hold still ~2 s for IMU to converge.")
+    print("RealSense open — hold still ~4 s for IMU + floor calibration, then explore freely.")
 
     try:
         while True:
@@ -76,9 +80,9 @@ def main() -> None:
 
             rr.log("world/camera/depth", rr.DepthImage(pkt.depth, meter=1.0))
 
-            # Gradient-stable world-frame points
-            stable_mask    = grad.compute(pkt.depth)
-            xyz, colors    = bp.project(pkt, stable_mask)
+            # Project depth → world frame (xyz = xyz_cam @ R.T + t_icp)
+            stable_mask = grad.compute(pkt.depth)
+            xyz, colors = bp.project(pkt, stable_mask)
             if not len(xyz):
                 frame += 1
                 continue
@@ -91,7 +95,7 @@ def main() -> None:
                 radii=0.003,
             ))
 
-            # Floor filter in camera_link frame (Z always up)
+            # Floor calibration uses camera_link frame (Z always up, independent of IMU)
             xyz_cam = xyz @ pkt.pose_R
             floor_calib.update(xyz_cam)
             if floor_calib.ready:
@@ -103,7 +107,7 @@ def main() -> None:
                 xyz_cam_icp = xyz_cam
 
             if len(xyz_kept):
-                # ── Per-frame voxel map ──────────────────────────────────────
+                # ── Per-frame voxel map (includes ICP translation) ───────────
                 vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
                 _, first = np.unique(_pack(vk), return_index=True)
                 xyz_vox  = xyz_kept[first]
@@ -114,18 +118,24 @@ def main() -> None:
                     radii=0.010,
                 ))
 
-                # ── Persistent global map ────────────────────────────────────
-                # Don't start until floor_calib is ready: that guarantees
-                # Madgwick has converged (~60 frames) so world-frame positions
-                # are stable.  Pre-convergence geometry would corrupt the map.
+                # ── Global map (rotation ONLY — no ICP translation) ──────────
+                # Wait for floor_calib.ready: guarantees ~60 frames of IMU data
+                # so Madgwick orientation has converged before we start stacking.
                 if floor_calib.ready:
                     if not map_ready:
-                        # First frame after convergence: start from clean slate
                         acc_pts   = np.empty((0, 3), dtype=np.float32)
                         map_ready = True
-                        print("*** global map started (IMU converged) ***", flush=True)
+                        print("*** global map started (IMU + floor converged) ***", flush=True)
 
-                    acc_pts = np.vstack([acc_pts, xyz_vox]) if len(acc_pts) else xyz_vox.copy()
+                    # Strip ICP translation: xyz_ronly = xyz_cam @ R.T (pure rotation)
+                    # floor_kept points in rotation-only world frame
+                    xyz_ronly_kept = xyz_kept - pkt.pose_t
+
+                    vk_r      = np.floor(xyz_ronly_kept / _VOX_SIZE).astype(np.int32)
+                    _, first_r = np.unique(_pack(vk_r), return_index=True)
+                    xyz_vox_r  = xyz_ronly_kept[first_r]
+
+                    acc_pts = np.vstack([acc_pts, xyz_vox_r]) if len(acc_pts) else xyz_vox_r.copy()
                     vk_a    = np.floor(acc_pts / _VOX_SIZE).astype(np.int32)
                     _, ui   = np.unique(_pack(vk_a), return_index=True)
                     acc_pts = acc_pts[ui]
@@ -136,7 +146,7 @@ def main() -> None:
                         radii=0.010,
                     ))
 
-            # ICP: refines camera translation so next frame lands at correct world pos
+            # ICP: still update for per-frame map (world/map uses it)
             if len(xyz_cam_icp) >= 50:
                 src.odom.update(xyz_cam_icp, pkt.pose_R)
 
@@ -144,7 +154,8 @@ def main() -> None:
             t_icp = src.odom.t
             print(
                 f"frame={frame:5d}  map={len(acc_pts):6d}vox  "
-                f"t=[{t_icp[0]:+.2f},{t_icp[1]:+.2f},{t_icp[2]:+.2f}]  fps={fps:.1f}",
+                f"t=[{t_icp[0]:+.3f},{t_icp[1]:+.3f},{t_icp[2]:+.3f}]  "
+                f"floor={'ready' if floor_calib.ready else 'calibrating'}  fps={fps:.1f}",
                 flush=True,
             )
             frame += 1
