@@ -17,7 +17,7 @@ from importlib import resources
 import sys
 from threading import Thread
 import time
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 
 from pydantic import Field
 from reactivex import empty
@@ -27,18 +27,11 @@ import rerun.blueprint as rrb
 
 from dimos.agents.annotation import skill
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
-from dimos.core.transport import LCMTransport, pSHMTransport
-from dimos.spec.perception import Camera, Pointcloud
-from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.core.rpc_client import ModuleProxy
 from dimos.memory2.replay import Replay, resolve_db_path
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -51,7 +44,9 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.type.lowstate import LowStateMsg
+from dimos.spec.perception import Camera, Pointcloud
 from dimos.utils.decorators.decorators import cached_property, simple_mcache
+from dimos.utils.logging_config import setup_logger
 
 if sys.version_info < (3, 13):
     from typing_extensions import TypeVar
@@ -403,23 +398,3 @@ class GO2Connection(Module, Camera, Pointcloud):
         Returns None if no frame has been captured yet.
         """
         return self._latest_video_frame
-
-
-def deploy(dimos: ModuleCoordinator, ip: str, prefix: str = "") -> "ModuleProxy":
-    from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
-
-    connection = dimos.deploy(GO2Connection, ip=ip)
-
-    connection.pointcloud.transport = pSHMTransport(
-        f"{prefix}/lidar", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-    )
-    connection.color_image.transport = pSHMTransport(
-        f"{prefix}/image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-    )
-
-    connection.cmd_vel.transport = LCMTransport(f"{prefix}/cmd_vel", Twist)
-
-    connection.camera_info.transport = LCMTransport(f"{prefix}/camera_info", CameraInfo)
-    connection.start()
-
-    return connection
