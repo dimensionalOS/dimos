@@ -506,10 +506,16 @@ class ManipulationModule(Module):
         seed: JointState,
         check_collision: bool,
     ) -> IKResult:
-        """Run the configured kinematics backend for a world-frame pose."""
+        """Run the configured kinematics backend for a world-frame pose.
+
+        The pose addresses the grasp center; it is converted to the
+        end-effector-link frame (via the robot's grasp_offset) before the
+        solve, mirroring the grasp-frame FK in WorldMonitor.get_ee_pose.
+        """
         assert self._world_monitor and self._kinematics
 
         # Convert Pose to PoseStamped for the IK solver
+        from dimos.manipulation.planning.utils.kinematics_utils import grasp_to_link_pose
         from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
         target_pose = PoseStamped(
@@ -517,6 +523,8 @@ class ManipulationModule(Module):
             position=pose.position,
             orientation=pose.orientation,
         )
+        grasp_offset = self._world_monitor.get_robot_config(robot_id).grasp_offset
+        target_pose = grasp_to_link_pose(target_pose, grasp_offset)
 
         return self._kinematics.solve(
             world=self._world_monitor.world,

@@ -194,6 +194,7 @@ def robot_model_config(key: str, params: MapParams | None = None) -> RobotModelC
         base_pose=map_params.base_link_pose,
         joint_names=list(arm.joint_names),
         end_effector_link=arm.ee_body,
+        grasp_offset=arm.grasp_offset,
         base_link=arm.base_link,
         package_paths={pkg: Path(str(root)) for pkg, root in arm.package_roots.items()},
         collision_exclusion_pairs=list(arm.collision_exclude),
