@@ -600,6 +600,7 @@ class DepthStreamer:
         self._last_n_vox     = 0
         self._pinhole_logged = False
         self._floor_calib = _FloorCalibrator()
+        self._global_vox  = FastVoxelMap(voxel_size=_VOX_SIZE)
         self._map_queue: queue.Queue = queue.Queue(maxsize=16)
         self._map_thread = threading.Thread(target=self._map_worker, daemon=True)
         self._map_thread.start()
@@ -657,19 +658,31 @@ class DepthStreamer:
         else:
             xyz_kept = xyz
 
-        # Per-frame voxel map
+        # Voxelize this frame and accumulate into persistent global map
         if len(xyz_kept):
-            vk      = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
+            vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
             _, first = np.unique(_pack(vk), return_index=True)
             xyz_vox  = xyz_kept[first]
             self._last_n_vox = len(xyz_vox)
+            self._global_vox.add(xyz_vox)
+
+        # Log the full accumulated map
+        pts = self._global_vox.points()
+        if len(pts):
+            n   = min(len(pts), self.MAX_MAP)
+            idx = np.random.choice(len(pts), n, replace=False) if len(pts) > n else np.arange(n)
             rr.log("world/map", rr.Points3D(
-                positions=xyz_vox,
-                colors=_height_color(xyz_vox[:, 2] - cam_z),
+                positions=pts[idx],
+                colors=_height_color(pts[idx, 2] - cam_z),
                 radii=0.010,
             ))
         else:
             self._last_n_vox = 0
+
+        # ICP — updates translation for the next frame so moving camera stitches correctly
+        xyz_cam_for_icp = xyz_cam[keep] if (self._floor_calib.ready and len(xyz_kept) >= 50) else xyz_cam
+        if len(xyz_cam_for_icp) >= 50:
+            self._src.odom.update(xyz_cam_for_icp, pkt.pose_R)
 
     def _map_worker(self) -> None:
         while True:
