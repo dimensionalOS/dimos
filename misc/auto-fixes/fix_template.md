@@ -1,5 +1,5 @@
 You are fixing the issues recorded in `issues.ignore.md` in this working tree. The branch under
-review is $$BRANCH$$; you are on a fresh branch `$$BRANCH$$-autofixes` whose tip matches that
+review is $$BRANCH$$; you are on a fresh branch `$$AUTOFIX_BRANCH$$` whose tip matches that
 branch. A pull request back into $$BRANCH$$ will be opened from your commits.
 
 Read `issues.ignore.md` and fix every issue it lists, following the repo's existing conventions.
