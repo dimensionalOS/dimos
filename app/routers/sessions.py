@@ -769,9 +769,23 @@ async def _bridge_datachannel_locked(
                 status_code=409,
                 detail="Operator CF session expired — rejoin",
             )
-        raise HTTPException(status_code=502, detail=f"CF session gone: {e.detail}")
+        # Session-gone that matches neither stored id (stale in-memory row or
+        # a CF body that didn't name the session). Still a re-provision case,
+        # not a broker fault — 409 so the client retries the join flow instead
+        # of treating it as a backend outage (was an opaque 502; DM-6).
+        log.warning(
+            "bridge: unmatched CF session gone (cf=%s) session=%s: %s",
+            e.session_id, session.id, e.detail[:200],
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="CF session expired — rejoin (robot may need to reconnect)",
+        )
     except CloudflareRealtimeError as e:
         await _rollback_pushes()
+        # Log server-side too — the detail otherwise only reaches the browser
+        # console, which made the 2026-07-01 bridge 502 hard to attribute.
+        log.warning("bridge: CF datachannel bridge failed session=%s: %s", session.id, e.detail[:200])
         raise HTTPException(
             status_code=502,
             detail=f"Cloudflare datachannel bridge failed: {e.detail}",
@@ -895,6 +909,13 @@ async def leave_session(
     user_id = user["sub"]
 
     if session.operator_id == user_id:
+        # Log the reason — it's the only way the journal can distinguish the
+        # disconnect button (user_initiated) from a page reload (pagehide),
+        # which is exactly what the 2026-07-01 demo churn hunt needed.
+        log.info(
+            "operator leave: session=%s operator=%s reason=%s",
+            session_id, user_id, body.reason,
+        )
         # Same rationale as delete_session: serialize with bridges.
         async with _session_lock(session_id):
             session.operator_id = None
