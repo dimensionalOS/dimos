@@ -32,6 +32,13 @@ exclude = [
     "dimos.web.dimos_interface.src*",
     "dimos.web.dimos_interface.public*",
     "dimos.web.dimos_interface.node_modules*",
+    # dimoscope's non-Python trees: the deno workspace + the Rust sidecar's cargo target dir.
+    # target/ is written DURING `deno task serve` — without this exclude a concurrent editable
+    # build scans transient compiler files and dies on "package directory ... does not exist".
+    "dimos.web.dimoscope.node_modules*",
+    "dimos.web.dimoscope.app*",
+    "dimos.web.dimoscope.packages*",
+    "dimos.web.dimoscope.gateway.wt-sidecar*",
 ]
 
 [tool.setuptools.package-data]
@@ -67,6 +74,8 @@ exclude = [
     "web/dimos_interface/public/**",
     "web/dimos_interface/node_modules/**",
     "hardware/sensors/lidar/fastlio2/cpp/**",
+    "web/dimoscope/node_modules/**",
+    "web/dimoscope/gateway/wt-sidecar/target/**",
 ]
 
 [project]

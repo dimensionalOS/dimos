@@ -34,3 +34,5 @@ prune .pytest_cache
 prune .ruff_cache
 prune .vscode
 prune dimos/web/command-center-extension
+prune dimos/web/dimoscope/node_modules
+prune dimos/web/dimoscope/gateway/wt-sidecar/target
