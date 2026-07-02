@@ -665,7 +665,7 @@ class DepthStreamer:
             self._last_n_vox = 0
             return
 
-        # Per-frame voxel map (unchanged — the clean view)
+        # Voxelize current frame
         vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
         keys     = _pack(vk)
         _, first = np.unique(keys, return_index=True)
@@ -673,23 +673,19 @@ class DepthStreamer:
         keys_vox = keys[first]
         self._last_n_vox = len(xyz_vox)
 
-        rr.log("world/map", rr.Points3D(
-            positions=xyz_vox,
-            colors=_height_color(xyz_vox[:, 2] - cam_z),
-            radii=0.010,
-        ))
-
-        # Persistent global map — only append voxels not already seen
-        new_mask = np.array([int(k) not in self._acc_keys for k in keys_vox.tolist()], dtype=bool)
-        if new_mask.any():
-            new_pts = xyz_vox[new_mask]
+        # Fuse into persistent map: only add voxels whose key hasn't been seen
+        new_idx = [i for i, k in enumerate(keys_vox.tolist()) if int(k) not in self._acc_keys]
+        if new_idx:
+            new_pts = xyz_vox[new_idx]
             self._acc_pts = np.vstack([self._acc_pts, new_pts]) if len(self._acc_pts) else new_pts
-            self._acc_keys.update(int(k) for k in keys_vox[new_mask].tolist())
+            self._acc_keys.update(int(keys_vox[i]) for i in new_idx)
 
         if len(self._acc_pts):
-            rr.log("world/global_map", rr.Points3D(
-                positions=self._acc_pts,
-                colors=_height_color(self._acc_pts[:, 2] - cam_z),
+            n   = min(len(self._acc_pts), self.MAX_MAP)
+            idx = np.random.choice(len(self._acc_pts), n, replace=False) if len(self._acc_pts) > n else np.arange(n)
+            rr.log("world/map", rr.Points3D(
+                positions=self._acc_pts[idx],
+                colors=_height_color(self._acc_pts[idx, 2] - cam_z),
                 radii=0.010,
             ))
 
@@ -792,8 +788,6 @@ def main() -> None:
                               contents=["world/raw_cloud", "world/camera/**"]),
             rrb.Spatial3DView(name="voxel map", origin="world",
                               contents=["world/map"]),
-            rrb.Spatial3DView(name="global map", origin="world",
-                              contents=["world/global_map"]),
         )
     ))
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
