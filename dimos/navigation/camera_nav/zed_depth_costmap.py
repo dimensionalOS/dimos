@@ -19,14 +19,11 @@ import rerun.blueprint as rrb
 from scipy.ndimage import sobel
 
 
-VOX_SIZE     = 0.020   # 2.0 cm per-frame voxels
-_FLOOR_Z    =  0.03   # world-Z floor cutoff when VIO locked (3 cm above floor plane)
-_CEIL_Z     =  2.20   # world-Z ceiling when VIO locked
+VOX_SIZE     = 0.020   # 2 cm voxel grid — shared by per-frame map and world map
+_FLOOR_Z    =  0.03   # world-Z floor cutoff when VIO locked (3 cm above gravity floor)
 _GRAD_THRESH =  0.30  # Sobel gradient magnitude threshold
-_MIN_OBS    =  1      # min observations to show a world-map cell
-_MAP_EVERY  =  10     # log world/world_map every N frames
+_MAP_EVERY  =  10     # log world/world_map every N frames (display rate, not update rate)
 _MAP_MAX_PTS = 80_000 # cap Rerun message size
-_MAP_VOX    =  0.030  # 3 cm dedup cells in WorldMap
 
 # ── Voxel key packing ────────────────────────────────────────────────────────
 _VOFF  = np.int64(100_000)
@@ -37,99 +34,137 @@ def _pack(vkeys: np.ndarray) -> np.ndarray:
     return (v[:, 0] << 36) | (v[:, 1] << 18) | v[:, 2]
 
 
-def _filter_isolated(xyz: np.ndarray, voxel: float = 0.05, min_pts: int = 2) -> np.ndarray:
-    if len(xyz) < min_pts:
-        return np.zeros((0, 3), dtype=np.float32)
-    vk = np.floor(xyz / voxel).astype(np.int32)
-    _, inv, cnt = np.unique(_pack(vk), return_inverse=True, return_counts=True)
-    return xyz[cnt[inv] >= min_pts]
-
-
 # ── Persistent world map ─────────────────────────────────────────────────────
 class WorldMap:
-    """Pose-aligned incremental voxel map.
+    """Visibility-based overwrite voxel map.
 
-    Each 5 cm cell stores:
-      xyz   — running-mean world position (converges to true surface on revisit)
-      count — number of distinct frames that observed this cell
-      last  — most recent frame index
+    Per frame (VIO locked):
+      1. Every stored cell whose centre falls inside the current camera frustum
+         is deleted — the camera can see that region, so stale geometry is wrong.
+      2. The current frame's 2 cm voxels are inserted in their place.
 
-    A cell is only considered occupied once count >= _MIN_OBS, which filters
-    single-frame NEURAL/stereo artifacts that survive the per-frame pipeline.
+    Cells outside the frustum are untouched.  Moving objects, rearranged
+    furniture, and map drift are all corrected automatically on revisit because
+    the visible region is always rewritten from the latest observation.
 
-    update() is fully vectorised except for the Python dict inserts on new cells,
-    which shrink toward zero as the scene is explored.
+    No raycasting: the frustum check is a single vectorised numpy pass,
+    O(M) in the total map size with very small constants (~2 ms for M=500 k).
     """
+
+    _MIN_D: float = 0.3
+    _MAX_D: float = 8.0
 
     def __init__(self) -> None:
         self._cap   = 200_000
         self._xyz   = np.empty((self._cap, 3), dtype=np.float32)
-        self._count = np.zeros(self._cap, dtype=np.int32)
-        self._last  = np.zeros(self._cap, dtype=np.int32)
-        self._n     = 0
-        self._idx: dict[int, int] = {}   # voxel_key → row
+        self._keys  = np.empty(self._cap,      dtype=np.int64)
+        self._alive = np.zeros(self._cap,      dtype=bool)
+        self._n     = 0          # high-watermark index
+        self._dead  = 0          # count of dead rows (drives compaction)
+        self._idx:  dict[int, int] = {}   # packed key → row
 
-    def update(self, xyz_world: np.ndarray, frame: int) -> None:
-        if len(xyz_world) == 0:
-            return
-        # 3 cm dedup: absorbs ZED stereo noise (~5 mm) and moderate VIO drift,
-        # while staying 6× denser than 5 cm — matches per-frame voxel quality.
-        vk   = np.floor(xyz_world / _MAP_VOX).astype(np.int32)
-        keys = _pack(vk)
-        _, first = np.unique(keys, return_index=True)
-        keys = keys[first]
-        xyz  = xyz_world[first]
+    # ── public ───────────────────────────────────────────────────────────────
 
-        # Bulk convert to Python ints once (C-level, ~3× faster than int(k) per-iter)
-        key_list = keys.tolist()
-        rows = np.array([self._idx.get(k, -1) for k in key_list], dtype=np.int32)
-        ex   = rows >= 0
-        nw   = ~ex
-
-        # Vectorised update for existing cells
-        if ex.any():
-            er  = rows[ex]
-            c   = self._count[er].astype(np.float32)
-            self._xyz[er]   = self._xyz[er] * (c / (c + 1))[:, None] + xyz[ex] / (c + 1)[:, None]
-            self._count[er] += 1
-            self._last[er]   = frame
-
-        # Batch insert new cells — dict.update(zip) is C-level, avoids Python loop
-        if nw.any():
-            new_xyz  = xyz[nw]
-            new_keys = keys[nw]
-            n_new    = len(new_keys)
-            if self._n + n_new > self._cap:
-                self._grow()
-            s = slice(self._n, self._n + n_new)
-            self._xyz[s]   = new_xyz
-            self._count[s] = 1
-            self._last[s]  = frame
-            self._idx.update(zip(new_keys.tolist(), range(self._n, self._n + n_new)))
-            self._n += n_new
+    def update(
+        self,
+        xyz_vox:  np.ndarray,   # (N, 3) current-frame voxel centres in world frame
+        keys_vox: np.ndarray,   # (N,)   their packed 2 cm keys
+        pose_R:   np.ndarray,   # 3×3  camera→world rotation (from VIO)
+        pose_t:   np.ndarray,   # (3,) camera→world translation
+        tan_h:    float,         # horizontal half-FOV tangent = cx / fx
+        tan_v:    float,         # vertical half-FOV tangent   = cy / fy
+    ) -> None:
+        self._clear_frustum(pose_R, pose_t, tan_h, tan_v)
+        self._insert(xyz_vox, keys_vox)
+        if self._dead > max(500, self._n // 2):
+            self._compact()
 
     def occupied(self) -> np.ndarray:
         if self._n == 0:
             return np.empty((0, 3), dtype=np.float32)
-        mask = self._count[:self._n] >= _MIN_OBS
-        return self._xyz[:self._n][mask]
-
-    def _grow(self) -> None:
-        cap2              = self._cap * 2
-        new_xyz           = np.empty((cap2, 3), dtype=np.float32)
-        new_count         = np.zeros(cap2,       dtype=np.int32)
-        new_last          = np.zeros(cap2,       dtype=np.int32)
-        new_xyz[:self._n]   = self._xyz[:self._n]
-        new_count[:self._n] = self._count[:self._n]
-        new_last[:self._n]  = self._last[:self._n]
-        self._xyz   = new_xyz
-        self._count = new_count
-        self._last  = new_last
-        self._cap   = cap2
+        return self._xyz[:self._n][self._alive[:self._n]]
 
     @property
     def size(self) -> int:
-        return self._n
+        return int(self._alive[:self._n].sum())
+
+    # ── private ───────────────────────────────────────────────────────────────
+
+    def _clear_frustum(
+        self,
+        R:     np.ndarray,
+        t:     np.ndarray,
+        tan_h: float,
+        tan_v: float,
+    ) -> None:
+        """Delete all stored cells inside the current camera frustum."""
+        if self._n == 0:
+            return
+        live = np.where(self._alive[:self._n])[0]
+        if not len(live):
+            return
+        # Inverse of xyz_world = xyz_cam @ R.T + t  →  xyz_cam = (xyz_world - t) @ R
+        xyz_cam = (self._xyz[live] - t) @ R
+        d = xyz_cam[:, 0]               # X = forward in RIGHT_HANDED_Z_UP_X_FWD
+        in_frustum = (
+            (d > self._MIN_D) & (d < self._MAX_D)
+            & (np.abs(xyz_cam[:, 1]) < tan_h * d)   # horizontal
+            & (np.abs(xyz_cam[:, 2]) < tan_v * d)   # vertical
+        )
+        kill = live[in_frustum]
+        if not len(kill):
+            return
+        self._alive[kill] = False
+        self._dead += len(kill)
+        for k in self._keys[kill].tolist():
+            del self._idx[k]
+
+    def _insert(self, xyz_vox: np.ndarray, keys_vox: np.ndarray) -> None:
+        """Append current-frame voxels; skip any key already in the map."""
+        if not len(xyz_vox):
+            return
+        key_list = keys_vox.tolist()
+        new_mask = np.array([k not in self._idx for k in key_list], dtype=bool)
+        xyz_new  = xyz_vox[new_mask]
+        keys_new = keys_vox[new_mask]
+        n_new    = len(xyz_new)
+        if not n_new:
+            return
+        if self._n + n_new > self._cap:
+            self._grow()
+        s = slice(self._n, self._n + n_new)
+        self._xyz[s]   = xyz_new
+        self._keys[s]  = keys_new
+        self._alive[s] = True
+        self._idx.update(zip(keys_new.tolist(), range(self._n, self._n + n_new)))
+        self._n += n_new
+
+    def _compact(self) -> None:
+        """Reclaim dead rows; rebuild the key→row dict."""
+        live     = self._alive[:self._n]
+        xyz_live = self._xyz[:self._n][live].copy()
+        key_live = self._keys[:self._n][live].copy()
+        n        = len(xyz_live)
+        self._xyz[:n]     = xyz_live
+        self._keys[:n]    = key_live
+        self._alive[:n]   = True
+        self._alive[n:self._n] = False
+        self._n   = n
+        self._dead = 0
+        self._idx  = {int(k): i for i, k in enumerate(key_live.tolist())}
+
+    def _grow(self) -> None:
+        cap2      = self._cap * 2
+        new_xyz   = np.empty((cap2, 3), dtype=np.float32)
+        new_keys  = np.empty(cap2,      dtype=np.int64)
+        new_alive = np.zeros(cap2,      dtype=bool)
+        new_xyz[:self._n]   = self._xyz[:self._n]
+        new_keys[:self._n]  = self._keys[:self._n]
+        new_alive[:self._n] = self._alive[:self._n]
+        self._xyz   = new_xyz
+        self._keys  = new_keys
+        self._alive = new_alive
+        self._cap   = cap2
 
 
 # ── Nearest-per-ray filter (live cloud denoising only) ───────────────────────
@@ -419,25 +454,34 @@ def main() -> None:
                 # Pre-VIO: camera-relative band (avoids deep floor and high ceiling).
                 keep = (h_rel >= -1.4) & (h_rel <= 1.5)
 
-            xyz_vox = np.empty((0, 3), dtype=np.float32)
+            xyz_vox  = np.empty((0, 3), dtype=np.float32)
+            keys_vox = np.empty(0,      dtype=np.int64)
             xyz_kept = xyz[keep]
             if len(xyz_kept):
-                vk       = np.floor(xyz_kept / VOX_SIZE).astype(np.int32)
-                _, first = np.unique(_pack(vk), return_index=True)
-                xyz_vox  = xyz_kept[first]
+                vk        = np.floor(xyz_kept / VOX_SIZE).astype(np.int32)
+                all_keys  = _pack(vk)
+                _, first  = np.unique(all_keys, return_index=True)
+                xyz_vox   = xyz_kept[first]
+                keys_vox  = all_keys[first]
                 rr.log("world/map", rr.Points3D(
                     positions=xyz_vox,
                     colors=_height_color(xyz_vox[:, 2] - cam_z),
                     radii=0.010,
                 ))
 
-            # ── Persistent world map ──────────────────────────────────────────
-            # Accumulate every frame so the running-mean positions converge quickly
-            # to the true surface. Log to Rerun every _MAP_EVERY frames only —
-            # the display doesn't need 15 fps updates and the TCP serialisation
-            # cost of large point clouds is the bottleneck, not the dict update.
+            # ── World map: frustum-clear then fill ────────────────────────────
+            # Every frame with VIO locked: erase all stored cells visible to the
+            # camera (frustum test), then write the current observations.  Areas
+            # behind the camera are untouched.  On revisit the old geometry is
+            # automatically replaced by the new truth.
             if src.pose_locked and len(xyz_vox):
-                world_map.update(xyz_vox, frame)
+                fx, fy, cx, cy = pkt.intrinsics
+                world_map.update(
+                    xyz_vox, keys_vox,
+                    pkt.pose_R, pkt.pose_t,
+                    tan_h=float(cx / fx),
+                    tan_v=float(cy / fy),
+                )
 
             n_occ = 0
             if frame % _MAP_EVERY == 0:
