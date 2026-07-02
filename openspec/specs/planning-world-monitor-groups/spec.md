@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Specify world and monitor support for planning-group queries.
+
+## Requirements
 
 ### Requirement: World backends must answer group pose queries
 World backends MUST provide end-effector pose queries for pose-targetable planning groups using the group's configured target frame.
