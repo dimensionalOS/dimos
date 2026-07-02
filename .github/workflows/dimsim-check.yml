@@ -25,7 +25,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          lfs: true
+          # Don't do a full-repo LFS fetch: it would pull main's large
+          # data/.lfs/* objects (several GB, some missing on the LFS server → 404)
+          # which this job doesn't need. `npm run build` + `deno check` don't read
+          # glb contents, so pointer stubs for misc/DimSim assets are fine here.
+          lfs: false
 
       - uses: actions/setup-node@v4
         with:
