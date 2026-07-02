@@ -1,0 +1,45 @@
+name: dimsim-check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'misc/DimSim/**'
+      - '.github/workflows/dimsim-check.yml'
+  pull_request:
+    paths:
+      - 'misc/DimSim/**'
+      - '.github/workflows/dimsim-check.yml'
+
+permissions: {}
+
+jobs:
+  check:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: misc/DimSim
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          lfs: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Type-check CLI
+        run: cd cli && deno check cli.ts

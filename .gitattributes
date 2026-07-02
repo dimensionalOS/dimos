@@ -19,3 +19,7 @@
 docs/capabilities/memory/assets/** filter=lfs diff=lfs merge=lfs -text
 docs/capabilities/memory/assets/.gitattributes -filter -diff -merge text
 docs/capabilities/mapping/assets/** filter=lfs diff=lfs merge=lfs -text
+# DimSim scene assets and embodiment models
+misc/DimSim/public/embodiment/*.glb filter=lfs diff=lfs merge=lfs -text
+misc/DimSim/scenes/**/*.glb filter=lfs diff=lfs merge=lfs -text
+misc/DimSim/scenes/**/*.gltf filter=lfs diff=lfs merge=lfs -text

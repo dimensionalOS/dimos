@@ -617,7 +617,12 @@ ignore = [
     "dimos/dashboard/dimos.rbl",
     "dimos/web/dimos_interface/themes.json",
     "dimos/manipulation/manipulation_module.py",
-    "dimos/manipulation/visualization/viser/test_viser_visualization.py",
+    "dimos/navigation/nav_stack/modules/*/main.cpp",
+    "dimos/navigation/nav_stack/common/*.hpp",
     "dimos/navigation/cmu_nav/modules/*/main.cpp",
     "dimos/navigation/cmu_nav/common/*.hpp",
+    "dimos/manipulation/visualization/viser/test_viser_visualization.py",
+    "misc/DimSim/src/AiAvatar.js",
+    "misc/DimSim/src/style.css",
+    "misc/DimSim/src/engine.js",
 ]
