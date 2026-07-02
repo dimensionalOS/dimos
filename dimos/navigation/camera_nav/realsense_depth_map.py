@@ -599,8 +599,9 @@ class DepthStreamer:
         self._last_n_stable  = 0
         self._last_n_vox     = 0
         self._pinhole_logged = False
-        self._floor_calib = _FloorCalibrator()
+        self._floor_calib  = _FloorCalibrator()
         self._acc_pts: np.ndarray = np.empty((0, 3), dtype=np.float32)
+        self._acc_keys: set       = set()   # voxel key → already in map (O(1) lookup)
         self._map_queue: queue.Queue = queue.Queue(maxsize=16)
         self._map_thread = threading.Thread(target=self._map_worker, daemon=True)
         self._map_thread.start()
@@ -664,25 +665,35 @@ class DepthStreamer:
             self._last_n_vox = 0
             return
 
-        # Voxelize this frame (same as before)
+        # Per-frame voxel map (unchanged — the clean view)
         vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
-        _, first = np.unique(_pack(vk), return_index=True)
+        keys     = _pack(vk)
+        _, first = np.unique(keys, return_index=True)
         xyz_vox  = xyz_kept[first]
+        keys_vox = keys[first]
         self._last_n_vox = len(xyz_vox)
 
-        # Merge into accumulated map and deduplicate immediately
-        merged        = np.vstack([self._acc_pts, xyz_vox]) if len(self._acc_pts) else xyz_vox
-        vk_m          = np.floor(merged / _VOX_SIZE).astype(np.int32)
-        _, uniq       = np.unique(_pack(vk_m), return_index=True)
-        self._acc_pts = merged[uniq]
-
         rr.log("world/map", rr.Points3D(
-            positions=self._acc_pts,
-            colors=_height_color(self._acc_pts[:, 2] - cam_z),
+            positions=xyz_vox,
+            colors=_height_color(xyz_vox[:, 2] - cam_z),
             radii=0.010,
         ))
 
-        # ICP: refine camera translation so next frame stitches correctly
+        # Persistent global map — only append voxels not already seen
+        new_mask = np.array([int(k) not in self._acc_keys for k in keys_vox.tolist()], dtype=bool)
+        if new_mask.any():
+            new_pts = xyz_vox[new_mask]
+            self._acc_pts = np.vstack([self._acc_pts, new_pts]) if len(self._acc_pts) else new_pts
+            self._acc_keys.update(int(k) for k in keys_vox[new_mask].tolist())
+
+        if len(self._acc_pts):
+            rr.log("world/global_map", rr.Points3D(
+                positions=self._acc_pts,
+                colors=_height_color(self._acc_pts[:, 2] - cam_z),
+                radii=0.010,
+            ))
+
+        # ICP: update translation so next frame stitches when camera moves
         if len(xyz_cam_kept) >= 50:
             self._src.odom.update(xyz_cam_kept, pkt.pose_R)
 
