@@ -10,7 +10,7 @@
 # Profile names are HARDCODED here — the gateway endpoint (gateway/netem.py) passes a name, never tc
 # arguments, so there is no injection surface. Install (one-time, as root):
 #   install -m755 gateway/scripts/dimos-netem /usr/local/bin/dimos-netem
-#   echo 'kristjan ALL=(root) NOPASSWD: /usr/local/bin/dimos-netem' > /etc/sudoers.d/dimos-netem
+#   echo '<user> ALL=(root) NOPASSWD: /usr/local/bin/dimos-netem' > /etc/sudoers.d/dimos-netem
 #
 # Usage: dimos-netem <profile>|clear|status
 set -u

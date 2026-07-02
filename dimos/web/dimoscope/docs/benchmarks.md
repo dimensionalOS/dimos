@@ -213,36 +213,40 @@ and QoS config and feeds it over a unix socket (`gateway/pipe.py`). Teleop/goal/
 sidecar → pipe → the same `SafetyEgress`; a dying session (or a dying sidecar) still zero-twists the
 robot.
 
-Both transports, measured back-to-back in one session:
+Both transports, measured back-to-back in one session on a clean-install deployment (fresh clone →
+`uv sync --extra web` → `deno install && deno task build` → `deno task serve` + `deno task load`).
+pose = the small lanes alone; bulk = the steady-state flood scenario; the crowded rows use a 20 s
+window (a 1 MB frame needs ~4.1 s of wire time at 2 mbit — a 4 s window can't contain one):
 
-| net profile | transport | pose hz / loss% / p50 / p99 (ms) | dense (1 MB frames) |
+| net profile | transport | pose hz / loss% / p50 / p99 (ms) | bulk (1 MB frames) |
 |---|---|---|---|
-| clean | **WT-rs** | 97 / – / **18.0** / 46 | **19.1 MB/s** / 0% / **p50 37 ms** |
-| clean | WS | 92 / – / 19.7 / 56 | 17.4 MB/s / p50 92 ms |
-| wifi-normal | **WT-rs** | 109 / 2.3 / **45** / **61** | **975 kB/s** *(≈ the 10 mbit cap)* |
-| wifi-normal | WS | 108 / 2.9 / 53 / 119 | 195 kB/s *(Mathis)* |
-| wifi-crowded | **WT-rs** | 101 / 2.4 / 235 / 332 | 244 kB/s *(≈ the 2 mbit cap)* |
-| wifi-crowded | WS | 105 / 1.0 / 90 / 126 | 1 frame / 4 s — and **0 msgs of anything** once bulk shares the pipe |
-| **loss-5** | **WT-rs** | 106 / 4.9 / **41** / **54** | **9.3 MB/s** |
-| **loss-5** | WS | 112 / 0 / 53 / **141** | **0** *(Mathis at 5% < one frame)* |
-
-*(clean pose loss% omitted: a ~13% ingress-loss floor from the flood generator sits upstream of both
-transports — the WS control shows the identical floor.)*
+| clean | **WT-rs** | 111 / 0.2 / **22** / **34** | **19.0 MB/s** / 0% / **p50 56 ms** |
+| clean | WS | 101 / 0.7 / 25 / 79 | 11.5 MB/s / 40% shed / p50 230 ms |
+| wifi-normal | **WT-rs** | 106 / 0 / **56** / **78** | **1.22 MB/s** *(≈ the 10 mbit cap)* |
+| wifi-normal | WS | 85 / 2.9 / 57 / **347** | 0 frames *(Mathis)* |
+| wifi-crowded | **WT-rs** | 106 / 0.7 / 129 / 463 | 195 kB/s *(= the 2 mbit cap)* / p50 7.3 s per frame; mixed: pose keeps **107 Hz / p99 249** beside it |
+| wifi-crowded | WS | 111 / 0 / 120 / 153 | 1 frame / 20 s; mixed: **0.49 Hz total / 99.5% loss** — bulk owns the TCP pipe |
+| **loss-5** | **WT-rs** | 106 / 4.9 / **51** / **65** | **10.7 MB/s** / 49% shed |
+| **loss-5** | WS | 113 / 0 / 60 / **163** | **0** *(Mathis at 5% < one frame)* |
 
 Reading the matrix:
-- loss-5 is the HoL case: QUIC keeps both lanes alive at 5% random loss — pose p99 54 ms (datagrams,
-  shedding 4.9%) and bulk 9.3 MB/s (per-stream retransmission). TCP delivers every pose frame but with a
-  141 ms retransmit tail, and its bulk moves zero bytes. Freshness vs completeness: teleop/pose on
+- loss-5 is the HoL case: QUIC keeps both lanes alive at 5% random loss — pose p99 65 ms (datagrams,
+  shedding 4.9%) and bulk 10.7 MB/s (per-stream retransmission). TCP delivers every pose frame but with
+  a 163 ms retransmit tail, and its bulk moves zero bytes. Freshness vs completeness: teleop/pose on
   datagrams, commands/bulk on reliable streams.
 - TCP bulk dies by Mathis, not by the pipe. At wifi-normal the cap is 1.25 MB/s but TCP under 0.3%
-  random loss yields ~195 kB/s; at 5% loss it can't move a single 1 MB frame. Random loss is poison for
-  reliable bulk regardless of bandwidth. WT-rs tracks the shaped cap exactly (975 / 244 kB/s).
-- Bulk is wire-limited on WT-rs: 19.1 MB/s of the 20 MB/s offered flood on the clean path, frame
-  p50 37 ms, over the same single QUIC connection that carries pose at p50 18 ms.
-- wifi-crowded is queue-dominated for every transport: pose-in-isolation rides the shaped queue
-  (WT-rs p99 332 ms; TCP's in-order smoothing reads better at 126 ms) — but the moment bulk shares the
-  connection, WS delivers nothing at all while WT-rs still tracks the cap. At this tier the fix is §2's
-  rate-limits/conflation, not transport choice.
+  random loss can't complete a single 1 MB frame in the window; at 5% loss it moves zero bytes. Random
+  loss is poison for reliable bulk regardless of bandwidth. WT-rs tracks the shaped caps exactly
+  (1.22 MB/s / 195 kB/s).
+- Bulk is wire-limited on WT-rs: 19.0 of the 20 MB/s offered flood on the clean path at p50 56 ms, over
+  the same single QUIC connection that carries pose at p50 22 ms. WebSocket on the same path manages
+  11.5 MB/s with 40% shed at p50 230 ms — TCP congestion control plus permessage-deflate CPU on
+  incompressible payloads.
+- wifi-crowded is the coexistence case: pose-in-isolation is queue-dominated on both transports
+  (p99 463 vs 153 over 20 s — TCP's in-order smoothing reads better) — but the moment bulk shares the
+  connection, WS collapses to 0.49 Hz of everything at 99.5% loss while WT-rs keeps pose at 107 Hz /
+  p99 249 ms beside cap-pinned bulk. One QUIC connection isolates its lanes; one TCP pipe doesn't.
+  At this tier the real fix is §2's rate-limits/conflation, not transport choice.
 - UDP over raw IP remains finicky: QUIC handshakes fail under loss (connect first, then apply);
   WebRTC-data needs STUN/TURN; Auto falls back to WS when WT can't establish (the wire tag in each row
   shows which transport carried the run). Outage buttons (`UDP 3s/10s`, `all 10s`) exist for
@@ -266,22 +270,24 @@ navigation + perception), and dimsim launches a headless-Chromium renderer (Deno
 auto-cloned `paul-nechifor/DimSim`). Install the sim stack, not just the web extra:
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh                 # uv
-git clone <your-dimos-remote> && cd dimos                        # or cd your checkout; use the branch under test
+curl -LsSf https://astral.sh/uv/install.sh | sh                  # uv
+GIT_LFS_SKIP_SMUDGE=1 git clone <your-dimos-remote> && cd dimos  # skip LFS blobs: ~176 MB instead of ~13 GB
 uv sync --extra unitree --extra sim --extra mapping             # the dog stack (pin exact extras to your box;
                                                                 # `--extra all` is the sledgehammer fallback)
 
 cd dimos/web/dimoscope
 cargo build --release --manifest-path gateway/wt-sidecar/Cargo.toml   # the WT sidecar, once (~2 min)
 
-uv run python -m gateway &                                       # :8080 (app + /ws /sse /poll /rtc /media /cert)
+DIMOS_TRANSPORT=zenoh uv run python -m gateway &                 # :8080 — RPC backend must match the blueprints'
 gateway/wt-sidecar/target/release/wt-sidecar &                   # owns QUIC/UDP :8443; /cert serves its hash (503 until up)
 DIMOS_TRANSPORT=zenoh DIMSIM_RENDER=cpu \
   uv run dimos --simulation dimsim run go2-load &                # the dog, headless CPU render
 ```
 
 `DIMSIM_RENDER=cpu` forces software rendering on a headless box (default is `gpu`); dimsim always runs
-`--headless` and needs `git` + outbound internet on first run (repo + Chromium download).
+`--headless` and needs `git` + outbound internet on first run (repo + Chromium download). The first RPC
+after a gateway start (e.g. the drawer's `Start load`) can take ~10 s while zenoh establishes the
+`/rpc/*` routes — later calls are instant.
 
 Light fallback if the full sim is too heavy on the box: `uv sync --extra web`, then either
 `uv run dimos run load` (the standalone `/load/*` source, coordinator-wired, keeps the interactive
