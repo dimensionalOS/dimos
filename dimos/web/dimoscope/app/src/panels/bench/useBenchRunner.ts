@@ -128,16 +128,20 @@ export function useBenchRunner(history: BenchHistory) {
     let curNet: string | null = null;
     let lastAssert = 0;
     let touchedNetem = false;
-    // Best knowledge of what's flowing — seeded from the manual flood state.
+    // Best knowledge of what's flowing — a GUESS, seeded from this browser's manual state.
+    // Another client may be flooding, and a timed-out start_bench may have applied server-side
+    // anyway; at the trust boundaries (first off, restore) we send regardless — it's idempotent.
     let genCur: GeneratorConfig | "off" = ctx.manualGen ?? "off";
+    let offConfirmed = false;
 
     const ensureGen = async (want: GenWant): Promise<GeneratorConfig | null> => {
       if (want.kind === "keep") return genCur === "off" ? null : genCur;
       try {
         if (want.kind === "off") {
-          if (genCur !== "off") {
+          if (!offConfirmed) {
             await call("GO2Load", "stop_bench");
             genCur = "off";
+            offConfirmed = true;
             await sleep(GEN_SETTLE_MS);
           }
           return null;
@@ -150,6 +154,7 @@ export function useBenchRunner(history: BenchHistory) {
         const same = genCur !== "off" && genCur.hz === spec.hz && genCur.bytes === spec.bytes &&
           genCur.kind === spec.kind;
         if (!same) {
+          offConfirmed = false; // even a throwing start may have applied server-side
           await call("GO2Load", "start_bench", spec.hz, spec.bytes, spec.kind);
           genCur = spec;
           await sleep(GEN_SETTLE_MS);
@@ -181,7 +186,8 @@ export function useBenchRunner(history: BenchHistory) {
         let cellNet = baseNet;
         if (pc.netem !== null) {
           // Assert on group change; re-assert on long matrices before the profile self-heals.
-          const stale = Date.now() - lastAssert > Math.min(healS / 2, 300) * 1000;
+          // Floor healS: a misconfigured HEAL_S=0 must not force a re-assert on every cell.
+          const stale = Date.now() - lastAssert > Math.min(Math.max(healS, 60) / 2, 300) * 1000;
           cellNet = pc.netem !== curNet || stale ? await assertNetem(pc.netem) : pc.netem;
         }
         if (abortedRef.current) break;
@@ -243,6 +249,7 @@ export function useBenchRunner(history: BenchHistory) {
       // Generator first — cut the flood so the netem-restore POST isn't competing with it.
       if (plan.driveGen) {
         try {
+          offConfirmed = false; // restore must not trust the guess — send regardless
           await ensureGen(
             ctx.manualGen
               ? {

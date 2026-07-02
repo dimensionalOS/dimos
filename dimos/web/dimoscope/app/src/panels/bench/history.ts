@@ -35,8 +35,10 @@ function persist(records: RunRecord[], baselineId: string | null): boolean {
     return true;
   } catch {
     try {
-      // QuotaExceededError — evict one more, retry once.
-      write(disk.slice(0, Math.max(1, disk.length - 1)));
+      // QuotaExceededError — evict one more (the oldest NON-baseline; never the pin), retry once.
+      let cut = disk.length - 1;
+      while (cut > 0 && disk[cut].id === baselineId) cut--;
+      write(disk.filter((_, i) => i !== cut || disk.length === 1));
       return true;
     } catch {
       return false;

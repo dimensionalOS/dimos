@@ -47,8 +47,10 @@ export const BENCH_KEYS = [
   "loadKind",
 ] as const;
 
-/** True when the URL carries any bench knob — the app then lands on the Topics tab. */
-export const hasBenchParams = () => BENCH_KEYS.some((k) => getParam(k) !== null);
+/** True when the URL carries any bench knob OR the run flag — the app then lands on the
+ *  Topics tab and the drawer opens. `run` stays out of BENCH_KEYS (never reflected), but a
+ *  default-config repro link is exactly `?gw=…&transport=…&run=1` and must still land here. */
+export const hasBenchParams = () => BENCH_KEYS.some((k) => getParam(k) !== null) || getParam("run") !== null;
 
 /** One-shot auto-run flag (?run=1) — cleared after firing/cancel so reloads don't re-run. */
 export const readRunFlag = () => getParam("run") === "1";

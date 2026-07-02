@@ -6,6 +6,14 @@ import { Sparkline } from "../../widgets/Sparkline";
 
 const f = (n: number) => (Number.isFinite(n) ? String(n) : "–");
 
+// Empty buckets have no latency sample (NaN). Rendering them as 0 would read as "0 ms p95"
+// during total silence — the opposite of the truth — so the p95 series carries the last
+// finite value forward instead. hz/kB·s keep honest zeros (nothing arrived).
+const carryForward = (xs: number[]): number[] => {
+  let last = xs.find(Number.isFinite) ?? 0;
+  return xs.map((v) => (Number.isFinite(v) ? (last = v) : last));
+};
+
 function Spark({ label, unit, data, color }: {
   label: string;
   unit: string;
@@ -73,7 +81,12 @@ export function LaneDetail({ row }: { row: BenchRow }) {
           <div className="bench-sparks">
             <Spark label="hz" unit="hz" data={row.buckets.map((b) => b.hz)} color="var(--signal)" />
             <Spark label="kB/s" unit="kB/s" data={row.buckets.map((b) => b.kbps)} color="#9fb4d8" />
-            <Spark label="p95" unit="ms" data={row.buckets.map((b) => b.latP95)} color="var(--accent)" />
+            <Spark
+              label="p95"
+              unit="ms"
+              data={carryForward(row.buckets.map((b) => b.latP95))}
+              color="var(--accent)"
+            />
           </div>
         )
         : (

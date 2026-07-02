@@ -172,12 +172,13 @@ export function App() {
         </main>
       )}
 
-      {tab === "streams" && (
-        <div className="streams-full">
-          <StreamsTab />
-          <BenchDrawer />
-        </div>
-      )}
+      {/* The drawer stays mounted across tabs (hidden via CSS) so a running matrix sweep
+          survives a glance at WorldView; StreamsTab stays conditional so its live
+          subscriptions still stop when the tab is left. */}
+      <div className="streams-full" style={tab === "streams" ? undefined : { display: "none" }}>
+        {tab === "streams" && <StreamsTab />}
+        <BenchDrawer />
+      </div>
     </div>
     </NetemProvider>
   );

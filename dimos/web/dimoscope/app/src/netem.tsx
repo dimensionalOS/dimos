@@ -7,6 +7,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from "react";
 import { useGateway } from "./gateway";
@@ -72,10 +73,14 @@ export function NetemProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string>();
+  // Bumped by every successful POST — a slow GET that started before it must not
+  // overwrite the fresher state (the matrix runner flips profiles while ticks/focus refresh).
+  const epoch = useRef(0);
 
   const refresh = useCallback(async () => {
+    const started = epoch.current;
     const st = await getNetem(httpBase);
-    setNetem(st);
+    if (epoch.current === started) setNetem(st);
     setReady(true);
     return st;
   }, [httpBase]);
@@ -85,6 +90,7 @@ export function NetemProvider({ children }: { children: ReactNode }) {
     setMsg(undefined);
     try {
       const st = await postNetem(httpBase, id);
+      epoch.current++;
       setNetem(st);
       return st;
     } catch (e) {
