@@ -57,7 +57,7 @@ import numpy as np
 from dimos.experimental.scene_cooking.source_assets.normalize import prepare_scene_source
 from dimos.experimental.scene_cooking.source_assets.mesh import SceneMeshAlignment, load_scene_prims
 
-source = Path("data/dimos_office_mesh/dimos_office_mesh.glb")
+source = Path("data/office_scene_cooking_example/dimos_office_mesh.glb")
 prepared = prepare_scene_source(source)
 alignment = SceneMeshAlignment(scale=2.0, y_up=False)
 
@@ -114,9 +114,9 @@ the sidecar gives a shared prototype key.
 Cook the office package for Rerun:
 
 ```bash
-python -m dimos.experimental.scene_cooking.cook \
-  data/dimos_office_mesh/dimos_office_mesh.glb \
-  --cook-spec data/dimos_office_mesh/dimos_office_mesh.cook.json \
+uv run --extra scene python -m dimos.experimental.scene_cooking.cook \
+  data/office_scene_cooking_example/dimos_office_mesh.glb \
+  --cook-spec data/office_scene_cooking_example/dimos_office_mesh.cook.json \
   --output-dir data/scene_packages/dimos_office \
   --scale 2.0 \
   --no-y-up \
@@ -127,7 +127,7 @@ python -m dimos.experimental.scene_cooking.cook \
 Cook for a different browser backend:
 
 ```bash
-python -m dimos.experimental.scene_cooking.cook \
+uv run --extra scene python -m dimos.experimental.scene_cooking.cook \
   data/my_scene/source.blend \
   --cook-spec data/my_scene/source.cook.json \
   --output-dir data/scene_packages/my_scene \
@@ -192,7 +192,7 @@ Run the G1 GR00T WBC blueprint with a cooked package:
 
 ```bash
 dimos --simulation mujoco \
-  --scene office \
+  --scene-package office \
   --viewer rerun \
   --n-workers 12 \
   run unitree-g1-groot-wbc \
