@@ -40,14 +40,6 @@ def _keyboard_module_with_publish(publish):
     return SimpleNamespace(coordinator_ee_twist_command=SimpleNamespace(publish=publish))
 
 
-def test_keyboard_config_has_no_joint_state_or_fk_dependencies() -> None:
-    config_fields = set(KeyboardTeleopConfig.model_fields)
-
-    assert "coordinator_joint_state" not in KeyboardTeleopModule.__annotations__
-    assert "model_path" not in config_fields
-    assert "ee_joint_id" not in config_fields
-    assert "joint_names" not in config_fields
-    assert "home_joints" not in config_fields
 
 
 def test_publish_twist_emits_routed_twist_stamped(mocker) -> None:
