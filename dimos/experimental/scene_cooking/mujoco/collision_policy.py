@@ -33,10 +33,10 @@ from the *emission* (the OBJ/MJCF writing).  Three layers cooperate:
    future UE-side extractor, an LLM…) doesn't matter to the bake — the
    sidecar is the contract.
 
-The dispatcher ``emit_for_prim()`` walks: sidecar override → generic
-heuristics → primitive auto-fit → CoACD fallback, and returns a list
-of ``GeomEmission`` describing every ``<geom>`` the wrapper should
-include for the prim.
+The dispatcher ``decide_for_prim()`` walks: sidecar override → generic
+heuristics → primitive auto-fit → CoACD fallback, and returns a
+``PrimDecision`` describing the ``<geom>``(s) the wrapper should emit
+for the prim.
 """
 
 from __future__ import annotations
@@ -245,47 +245,6 @@ class CollisionSpec:
                     return {**override, "type": self.default}
                 return override
         return {"type": self.default}
-
-
-# --------------------------------------------------------------------------- #
-# Emission record                                                             #
-# --------------------------------------------------------------------------- #
-
-
-@dataclass
-class GeomEmission:
-    """One MuJoCo ``<geom>`` to emit, in dimos world frame.
-
-    Either ``mesh_path`` is set (mesh-type geom — also emits a
-    ``<mesh>`` asset) or the primitive parameters (``size``, ``pos``,
-    ``quat``) are set.
-    """
-
-    name: str
-    purpose: Literal["collision", "visual"]
-    kind: Literal["mesh", "box", "sphere", "cylinder", "capsule", "plane"]
-
-    #: For ``kind="mesh"``: absolute path to the OBJ.
-    mesh_path: Path | None = None
-
-    #: Primitive size (semantics depend on ``kind``):
-    #:   * box     → (hx, hy, hz)  (half-extents)
-    #:   * sphere  → (r,)
-    #:   * cylinder→ (r, half_height)
-    #:   * capsule → (r, half_height)        (caps extend beyond half_height)
-    #:   * plane   → (hx, hy, _grid_spacing)  — last is cosmetic only
-    size: tuple[float, ...] | None = None
-
-    #: World-frame position of the primitive centre.  ``None`` for meshes
-    #: (their geometry is already in world frame).
-    pos: tuple[float, float, float] | None = None
-
-    #: World-frame orientation (wxyz, MuJoCo convention).  ``None`` →
-    #: identity.  Not used for meshes.
-    quat: tuple[float, float, float, float] | None = None
-
-    #: Optional friction override (slide, spin, roll).
-    friction: tuple[float, float, float] | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -648,7 +607,7 @@ def _is_flat_horizontal_box(extent: np.ndarray, thin_axis: int) -> bool:
 @dataclass
 class PrimDecision:
     """What the dispatcher decided for one prim.  Consumed by the bake
-    which materialises ``GeomEmission`` records and writes OBJs."""
+    which materialises MJCF ``<geom>`` lines and writes OBJs."""
 
     #: ``"skip"`` (no collision), ``"primitive"`` (one ``<geom>`` with
     #: kind ∈ {box, sphere, cylinder, capsule, plane}), or ``"hulls"``
