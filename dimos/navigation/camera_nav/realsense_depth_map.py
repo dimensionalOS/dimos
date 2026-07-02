@@ -581,12 +581,22 @@ class DepthStreamer:
             ))
 
         # Per-frame voxel map — mirrors ZED world/map pipeline exactly
-        h_rel   = xyz[:, 2] - cam_z
-        # Dynamic floor removal: IMU aligns world Z with gravity, so the floor is
-        # always the lowest-Z cluster. 2nd-percentile + 12 cm buffer removes it
-        # without needing to know camera height.
-        floor_z = float(np.percentile(xyz[:, 2], 2)) + 0.12
-        keep    = (xyz[:, 2] > floor_z) & (h_rel <= _Z_REL_HI)
+        h_rel    = xyz[:, 2] - cam_z
+        # Histogram-based floor plane detection.
+        # Percentile is unreliable when few floor pixels are visible (angled camera,
+        # etc.) — the histogram finds the *densest* Z cluster in the lower half of
+        # the scene, which is always the floor regardless of what fraction of the
+        # frame it occupies.  This is 1D RANSAC with a known normal (IMU gives us
+        # world Z = up, so the floor plane normal is always [0,0,1]).
+        z        = xyz[:, 2]
+        z_lo     = float(z.min())
+        z_search = float(np.percentile(z, 40))
+        if z_search - z_lo > 0.05:
+            hist, edges = np.histogram(z[(z >= z_lo) & (z <= z_search)], bins=30)
+            floor_z = float(edges[np.argmax(hist) + 1]) + 0.15
+        else:
+            floor_z = z_lo + 0.15
+        keep     = (xyz[:, 2] > floor_z) & (h_rel <= _Z_REL_HI)
         xyz_kept = xyz[keep]
         if len(xyz_kept):
             vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
