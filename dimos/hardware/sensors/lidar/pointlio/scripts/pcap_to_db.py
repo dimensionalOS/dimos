@@ -335,6 +335,7 @@ def _build_blueprint(
     from dimos.core.coordination.blueprints import autoconnect
     from dimos.hardware.sensors.lidar.pointlio.module import PointLio
     from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
+    from dimos.hardware.sensors.lidar.pointlio.replay_static_tf import Go2Mid360ReplayStaticTf
     from dimos.hardware.sensors.lidar.virtual_mid360.module import VirtualMid360
 
     pointlio_kwargs: dict[str, Any] = dict(
@@ -356,15 +357,18 @@ def _build_blueprint(
                 setup_network=not args.no_network_setup,
             ),
             PointLio.blueprint(**pointlio_kwargs),
+            # Supplies the fixed tf edges PointLio's odom->body rebroadcast omits, so
+            # the recorded tree is map->odom->body(=base_link)->front_camera->{...}.
+            Go2Mid360ReplayStaticTf.blueprint(),
             PointlioRecorder.blueprint(
                 db_path=str(db_path),
                 stream_remapping={
                     _ODOM_STREAM: args.odom_stream,
                     _LIDAR_STREAM: args.lidar_stream,
                 },
-                # No tf publisher in this replay, so the tf stream would be empty —
-                # and recording it would drop any existing tf in the target db.
-                record_tf=False,
+                # PointLio rebroadcasts odometry as tf and Go2Mid360ReplayStaticTf
+                # supplies the static edges, so record the full tf tree.
+                record_tf=True,
                 skip_ports=frozenset({_LIDAR_STREAM}) if args.no_lidar else frozenset(),
             ),
         )
