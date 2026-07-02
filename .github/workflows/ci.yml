@@ -57,6 +57,32 @@ jobs:
       - name: Run pre-commit
         uses: pre-commit/action@v3.0.1
 
+  web:
+    # The dimoscope browser SDK + app (dimos/web/dimoscope): typecheck, unit tests,
+    # and the production bundle the gateway serves at /.
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+    defaults:
+      run:
+        working-directory: dimos/web/dimoscope
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Install workspace deps
+        run: deno install
+      - name: Typecheck
+        run: deno task check
+      - name: Tests
+        run: deno task test
+      - name: Build the app
+        run: deno task build
+
   rust:
     timeout-minutes: 20
     runs-on: ubuntu-latest
@@ -687,6 +713,7 @@ jobs:
 
     needs:
     - lint
+    - web
     - rust
     - md-babel
     - docs-validate
