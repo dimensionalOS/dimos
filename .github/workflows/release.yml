@@ -178,6 +178,12 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+      - name: Install twine
+        run: uv tool install twine
+      - name: Validate distributions
+        run: twine check dist/*
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
