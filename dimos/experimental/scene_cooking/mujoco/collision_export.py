@@ -171,6 +171,23 @@ _CACHE_KEY_LEN = 12
 # contract and old cache directories can safely stay on disk.
 _CACHE_SCHEMA_VERSION = "scene-only-v11"
 
+# Cap on worker processes when the parent has multiple native threads
+# (see ``_native_thread_count``) -- ``forkserver``/``spawn`` startup gets
+# expensive past this many workers.
+_MAX_THREADED_WORKERS = 8
+# Log progress roughly this many times across a bake, regardless of scene size.
+_PROGRESS_LOG_EVERY_SMALL_SCENE = 25
+_PROGRESS_LOG_EVERY_LARGE_SCENE = 250
+_PROGRESS_LOG_LARGE_SCENE_THRESHOLD = 500
+# Pad the viewer-framing extent beyond the tight scene bounding sphere so
+# geometry right at the edge isn't clipped by the camera's far plane.
+_SCENE_EXTENT_PADDING = 1.1
+# MuJoCo visual zfar: scale with scene extent, with a floor high enough for
+# small scenes to still render distant geometry (e.g. a skybox) without
+# clipping.
+_VISUAL_ZFAR_EXTENT_MULTIPLIER = 20.0
+_MIN_VISUAL_ZFAR_M = 10000.0
+
 
 @dataclass
 class _BakeArtifacts:
@@ -567,7 +584,7 @@ def _bake_prims(
 
     n_workers = max(1, (os.cpu_count() or 4) - 1)
     if _native_thread_count() > 1:
-        n_workers = min(n_workers, 8)
+        n_workers = min(n_workers, _MAX_THREADED_WORKERS)
         start_method = (
             "forkserver" if "forkserver" in multiprocessing.get_all_start_methods() else "spawn"
         )
@@ -585,7 +602,11 @@ def _bake_prims(
     n_skipped += n_pre_skipped
     reasons.update(pre_skip_reasons)
     total_work = len(work_items)
-    progress_every = 25 if total_work <= 500 else 250
+    progress_every = (
+        _PROGRESS_LOG_EVERY_SMALL_SCENE
+        if total_work <= _PROGRESS_LOG_LARGE_SCENE_THRESHOLD
+        else _PROGRESS_LOG_EVERY_LARGE_SCENE
+    )
     with executor as ex:
         futures = [ex.submit(_process_one_prim, item) for item in work_items]
         done = 0
@@ -818,7 +839,7 @@ def _scene_bounds(prims: list[ScenePrimMesh]) -> tuple[np.ndarray, float]:
     scene_max = np.max(np.vstack(maxs), axis=0)
     center = (scene_min + scene_max) * 0.5
     diagonal = scene_max - scene_min
-    extent = max(float(np.linalg.norm(diagonal) * 0.5 * 1.1), 1.0)
+    extent = max(float(np.linalg.norm(diagonal) * 0.5 * _SCENE_EXTENT_PADDING), 1.0)
     return center, extent
 
 
@@ -952,7 +973,7 @@ def _write_wrapper(
     ``MjSpec``; the wrapper directory holds only this file plus the
     cooked scene OBJs that it references with relative paths.
     """
-    visual_zfar = max(float(statistic_extent) * 20.0, 10000.0)
+    visual_zfar = max(float(statistic_extent) * _VISUAL_ZFAR_EXTENT_MULTIPLIER, _MIN_VISUAL_ZFAR_M)
     wrapper_xml = _WRAPPER_TEMPLATE.format(
         model_name=f"scene_{cache_key}",
         statistic_center=_fmt_vec(statistic_center),
