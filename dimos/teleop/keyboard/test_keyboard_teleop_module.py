@@ -22,7 +22,6 @@ import dimos.teleop.keyboard.keyboard_teleop_module as keyboard_mod
 from dimos.teleop.keyboard.keyboard_teleop_module import (
     ANGULAR_SPEED,
     LINEAR_SPEED,
-    KeyboardTeleopConfig,
     KeyboardTeleopModule,
     _twist_from_keys,
 )
@@ -38,8 +37,6 @@ class PressedKeys:
 
 def _keyboard_module_with_publish(publish):
     return SimpleNamespace(coordinator_ee_twist_command=SimpleNamespace(publish=publish))
-
-
 
 
 def test_publish_twist_emits_routed_twist_stamped(mocker) -> None:
