@@ -8,7 +8,7 @@ follows whatever is publishing (run one, stop, run another).
 | scenario | namespace | topics (type · rate · size) | data-path axis | primary viewer |
 |---|---|---|---|---|
 | **scope-nav** — mobile navigation | `/nav/*` | `pose` PoseStamped·100 Hz·tiny · `path` Path·5 Hz · `cloud` PointCloud2·10 Hz·~200 KB · `map` OccupancyGrid·1 Hz·~40 KB | **size-mix** (the QoS-priority story) | WorldView 2D (arrow+trail, path, points, grid) |
-| **scope-arm** — manipulation | `/arm/*` | `joint_states` JointState·250 Hz · `ee_pose` PoseStamped·100 Hz · `imu` Imu·500 Hz·tiny · `trajectory` JointTrajectory·2 Hz | **message-rate ceiling** (~850 msg/s) | Bench monitor (hz/latency) + ee_pose arrow |
+| **scope-arm** — manipulation | `/arm/*` | `joint_states` JointState·250 Hz · `ee_pose` PoseStamped·100 Hz · `imu` Imu·500 Hz·tiny · `trajectory` JointTrajectory·2 Hz | **message-rate ceiling** (~850 msg/s) | Topics-tab stream cards (hz/latency) + ee_pose arrow |
 | **scope-cam** — perception | `/cam/*` | `rgb` Image·30 Hz·~550 KB · `depth` Image·15 Hz · `points` PointCloud2·10 Hz·~1 MB · `detections` Detection2DArray·30 Hz | **bandwidth / bufferbloat** (the WebTransport story) | CameraView (rgb) + WorldView points |
 
 Each reuses standard `dimos.msgs` types, so the app auto-renders them by type (no app code per scenario)
@@ -33,14 +33,14 @@ Then run **one** scenario (a third terminal); Ctrl-C to stop, then run another:
 
 Open `http://localhost:5173`. The sidebar discovers the live topics; **WorldView** (2D) draws the spatial
 ones, **CameraView** shows `/cam/rgb`, and clicking any topic shows it as JSON in the **Inspector**. The
-**Bench** tab plots per-topic hz/latency for anything (best for the high-rate `/arm/*` streams).
+**Topics** tab's stream cards plot per-topic hz/latency for anything (best for the high-rate `/arm/*` streams).
 
 Transport is `DIMOS_TRANSPORT=zenoh` by default (matches `deno task serve`/`sim`); `DIMOS_TRANSPORT=lcm`
 also works — the gateway taps both.
 
 ### Switching scenarios
 
-Stop a scenario and start another and the data switches live (Bench monitor, Inspector and CameraView
+Stop a scenario and start another and the data switches live (stream cards, Inspector and CameraView
 follow immediately). The gateway's discovery registry (`gateway/bus.py` `Bus.topics`) never evicts, so
 topic names accumulate for the life of the process and WorldView's "first topic of a type" pick can
 latch onto a stale name — restart `deno task serve` for a pristine topic list. The data switch needs no restart.
@@ -51,7 +51,7 @@ Each scenario's typed maps are generated **directly from its Python source** —
 module-level `PORTS` list, RPC commands from its `@rpc` method signatures — with nothing running:
 
 ```bash
-deno task gen-types scenarios/nav.py --out app/src/dimos.topics.gen.ts
+deno task gen-types    # regenerates app/src/dimos.topics.gen.ts from all sources (nav/arm/cam/bench + go2_load)
 ```
 
 → a `DimosTopics` map (0 untyped) + a strongly-typed `DimosCommands`:
@@ -66,10 +66,10 @@ Consume via `createDimosClient<DimosTopics, DimosCommands>()`. Details + the ful
 
 ## Benchmark them
 
-Run a scenario, then open the app's **Bench** tab (or `/bench.html`) to measure its live topics across
+Run a scenario, then open the app's **Topics tab → Benchmark drawer** to measure its live topics across
 transports — the three profiles are clearly distinct: `nav` = size-mix (~1.9 MB/s), `arm` = message-rate
-ceiling (~566 msg/s, tiny bytes), `cam` = bandwidth (~26 MB/s), each stressing a different axis of the
-data path. For the standard `/bench/*` synthetic load, use `deno task scope:bench` (see `bench.py`).
+ceiling (~850 msg/s, tiny bytes), `cam` = bandwidth (~26 MB/s), each stressing a different axis of the
+data path. For the standard `/load/*` synthetic load, use `deno task scope:bench` (see `bench.py`).
 
 ## Remote / VPS
 
@@ -85,16 +85,22 @@ additionally needs the QUIC port (`WT_PORT`, default 8443) reachable + the `/cer
 
 ## Recommended QoS lanes
 
-Suggested `qos.rules.json` entries for the scenario topics:
+Suggested `qos.rules.json` entries for the scenario topics — an **array** of `{topic, lane}` rules
+(first match wins; globs + `#type` matching supported; see `qos.rules.example.json`). The command lane
+is for teleop/cmd_vel; the default lane catches the rest (e.g. `/nav/path`, detections):
 
-```jsonc
-{
-  "/nav/pose": "sensor",   "/arm/ee_pose": "sensor",   "/arm/imu": "sensor",
-  "/arm/joint_states": "sensor",
-  "/nav/map": "bulk",  "/nav/cloud": "bulk",  "/cam/rgb": "bulk",
-  "/cam/depth": "bulk", "/cam/points": "bulk"
-  // (command lane is for teleop/cmd_vel; default lane catches the rest, e.g. /nav/path, detections)
-}
+```json
+[
+  { "topic": "/nav/pose", "lane": "sensor" },
+  { "topic": "/arm/ee_pose", "lane": "sensor" },
+  { "topic": "/arm/imu", "lane": "sensor" },
+  { "topic": "/arm/joint_states", "lane": "sensor" },
+  { "topic": "/nav/map", "lane": "bulk" },
+  { "topic": "/nav/cloud", "lane": "bulk" },
+  { "topic": "/cam/rgb", "lane": "bulk" },
+  { "topic": "/cam/depth", "lane": "bulk" },
+  { "topic": "/cam/points", "lane": "bulk" }
+]
 ```
 
 ## Files
@@ -103,7 +109,7 @@ Suggested `qos.rules.json` entries for the scenario topics:
 scenarios/common.py       shared scaffolding (transport helpers, seq/ts stamping, make_image, runner)
 scenarios/nav.py|arm.py|cam.py   the 3 blueprints (Module + Out[T] streams + __main__ launcher)
 scenarios/run.sh          launch one:  ./scenarios/run.sh <nav|arm|cam>
-scenarios/bench.py        the /bench/* synthetic load source for the in-browser bench (deno task scope:bench)
+scenarios/bench.py        the standalone /load/* synthetic source for the in-browser bench (deno task scope:bench)
 ```
 
 ## Notes on message choices

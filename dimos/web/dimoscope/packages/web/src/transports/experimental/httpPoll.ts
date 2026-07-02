@@ -12,7 +12,7 @@ import type {
 import { frameToSample } from "../frame.ts";
 
 export interface HttpPollDeps {
-  url: string; // gateway base, e.g. http://localhost:8090
+  url: string; // gateway base, e.g. http://localhost:8080
   maxBatch?: number;
 }
 

@@ -39,7 +39,7 @@ PORTS = [("pose", "/nav/pose", PoseStamped), ("cloud", "/nav/cloud", PointCloud2
 ```
 
 ```bash
-deno task gen-types scenarios/nav.py --out app/src/dimos.topics.gen.ts
+deno task gen-types    # regenerates app/src/dimos.topics.gen.ts from all sources (nav/arm/cam/bench + go2_load)
 ```
 
 emits `dimos.topics.gen.ts`:
@@ -106,11 +106,12 @@ never instantiated). It's the only way to type RPC args/returns — the wire onl
 `{target, method}`, never signatures.
 
 ```bash
-deno task gen-types scenarios/nav.py                                     # print to stdout
-deno task gen-types scenarios/nav.py --out app/src/dimos.topics.gen.ts   # write the app's map
+deno task gen-types                                                # the app's map, all baked-in sources
+uv run python packages/web/scripts/gen_types.py scenarios/nav.py   # one blueprint → stdout (--out to write)
 ```
 
-`deno task gen-types` = `uv run python packages/web/scripts/gen_types.py`.
+The task bakes in the app's source list (`scenarios/*` + `go2_load.py`); call the script directly for
+custom inputs.
 
 **What it reads:**
 

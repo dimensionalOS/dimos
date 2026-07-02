@@ -8,9 +8,10 @@ multi-rate `/load/{fast,mid,slow,grid,cloud}` lanes (auto-run) **plus** a cranka
 `start_bench`/`stop_bench` `@rpc`. The standalone `load` blueprint is the same module without the sim.
 
 ```bash
-deno task serve   # the gateway → http://localhost:8080 (+ WT QUIC :8443)
-deno task dog     # go2-load: the /load/* lanes + the crankable flood
-deno task app     # then open http://localhost:8080/ → Topics tab → Benchmark drawer
+deno install && deno task build   # once — the app bundle the gateway serves at /
+deno task serve                   # the gateway → http://localhost:8080 (+ WT QUIC :8443)
+deno task load                    # /load/* lanes + the crankable flood (no sim; `deno task dog` = the full dimsim dog)
+# open http://localhost:8080/ → Topics tab → Benchmark drawer
 ```
 
 ---
@@ -184,12 +185,11 @@ Opt-in and scoped: the gateway needs `NETEM_CTL=1` + the root wrapper installed
 (8080/8443 via a prio+u32 band), so SSH and the rest of the box are untouched, and every apply self-heals
 after 15 min. Apply loss **after** the transport is connected — QUIC handshakes fail under loss.
 
-**⚠ The compression trap (why the first numbers were wrong).** The load generators originally published
-all-zeros images; WebSocket **permessage-deflate** compresses those ~1000:1, so a "20 MB/s" WS flood was
-~20 kB/s on the wire and sailed through every rate cap — caught because the netem band counters didn't move
-while the browser reported 19 MB/s. QUIC/WT has no compression, so its numbers were real all along. The
-generators now publish **random (incompressible) payloads** ≈ real sensor entropy; all numbers below are
-post-fix. (Any bench payload that isn't incompressible is measuring the compressor, not the transport.)
+**Payloads are incompressible by design.** The load generators publish random bytes (≈ real camera/
+lidar entropy). WebSocket negotiates **permessage-deflate**, which squeezes regular payloads ~1000:1 —
+a compressible bench payload measures the compressor, not the transport (and asymmetrically: QUIC/WT
+has no equivalent). Sanity check on any run: the netem band byte counters must move ≈ the bytes the
+browser reports.
 
 ### The profile matrix (2026-07-02 · 20 MB/s offered flood · clock-synced end-to-end latency)
 
@@ -263,7 +263,7 @@ deno task app     # Vite on :5173, served from your Mac
 ```
 
 Keep the client page on `http://localhost` (so it may reach `ws://`/`http://` on the VPS IP without a
-mixed-content block). WebTransport's self-signed cert is ECDSA ≤14 days — the service regenerates it and the
+mixed-content block). WebTransport's self-signed cert is ECDSA ≤10 days — the service regenerates it and the
 client always fetches the current hash from `/cert`.
 
 ### Later — a physical Go2 over the internet (coworker's path)
@@ -272,6 +272,20 @@ No code change: run the gateway on a machine *next to the real dog* (`uv sync --
 per-device AES-128 key), point `go2-load` / `unitree_go2` at the hardware, forward `8080/tcp` + `8443/udp`
 from that network, and any browser drives it via `http://localhost:5173/?gw=<their-ip>:8080`. Same app, same
 `SafetyEgress` (velocity clamp + TTL deadman + stop-on-disconnect).
+
+### Gateway environment reference
+
+| env | default | what |
+|---|---|---|
+| `HOST` / `PORT` | `0.0.0.0` / `8080` | HTTP/WS bind — app + `/ws /sse /poll /rtc /media /cert /health /netem` |
+| `WT_PORT` | `8443` | WebTransport QUIC/UDP port |
+| `EGRESS_KBPS` | off | pace each client's egress so priority bites in the outbox, not the socket buffer |
+| `QOS_RULES` | `qos.rules.json` | topic-glob → lane override map (see `qos.rules.example.json`) |
+| `DIMOS_GATEWAY_RPC` | built-ins | the complete `@rpc` whitelist, `"Target/method,…"` (replaces the defaults) |
+| `NETEM_CTL` | off | enable `/netem` (Linux + the `dimos-netem` sudo wrapper above) |
+| `ZENOH_KEY` | `**` | zenoh key-expr the bus tap subscribes |
+| `DIMOS_LCM_HOST` / `DIMOS_LCM_PORT` | `239.255.76.67` / `7667` | LCM multicast group the tap joins |
+| `STATIC_DIR` | `app/dist` | the built app served at `/` |
 
 ---
 

@@ -12,7 +12,7 @@ import type {
 import { b64ToBytes, frameToSample } from "../frame.ts";
 
 export interface SseDeps {
-  url: string; // gateway base, e.g. http://localhost:8090
+  url: string; // gateway base, e.g. http://localhost:8080
   reconnect?: boolean;
 }
 
