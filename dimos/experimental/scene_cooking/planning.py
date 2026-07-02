@@ -44,6 +44,17 @@ from dimos.simulation.scene_assets.spec import SceneMeshAlignment
 
 _HASH_SUFFIX_RE = re.compile(r"_[0-9a-fA-F]{6,}$")
 
+#: Floor for a prim/entity's AABB extent (metres). Keeps zero-thickness
+#: sheets (a floor tile authored with no depth) from producing a zero-size
+#: physics extent.
+_MIN_EXTENT_M = 1e-4
+
+
+def _safe_extents(aabb_min: np.ndarray, aabb_max: np.ndarray) -> np.ndarray:
+    """AABB extents clamped to ``_MIN_EXTENT_M`` so no axis is zero-size."""
+    extents: np.ndarray = np.maximum(aabb_max - aabb_min, _MIN_EXTENT_M).astype(float)
+    return extents
+
 
 @dataclass(frozen=True)
 class EntityCookPlan:
@@ -243,7 +254,7 @@ def _build_matched_entity_plan(
     aabb_min_np = vertices.min(axis=0).astype(float)
     aabb_max_np = vertices.max(axis=0).astype(float)
     center_np = ((aabb_min_np + aabb_max_np) * 0.5).astype(float)
-    extents = np.maximum(aabb_max_np - aabb_min_np, 1e-4).astype(float)
+    extents = _safe_extents(aabb_min_np, aabb_max_np)
     safe_id = _safe_entity_id(spec.id)
     visual_path = entities_dir / safe_id / "visual.glb"
 
@@ -375,7 +386,7 @@ def _build_group_entity_plan(
     vertices = np.asarray(prim.vertices, dtype=np.float64)
     aabb_min_np = vertices.min(axis=0).astype(float)
     aabb_max_np = vertices.max(axis=0).astype(float)
-    extents = np.maximum(aabb_max_np - aabb_min_np, 1e-4).astype(float)
+    extents = _safe_extents(aabb_min_np, aabb_max_np)
     local_vertices, center_np, quat = _localize_prim_mesh(vertices)
     shape_hint, shape_extents = _resolve_shape(spec, extents)
     descriptor = _make_descriptor(spec, shape_hint, shape_extents, visual_path=None)
