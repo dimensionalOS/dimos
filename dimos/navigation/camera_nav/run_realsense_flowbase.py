@@ -15,11 +15,16 @@ import threading
 
 def _start_robot(address: str | None) -> None:
     import os
+    import sys
+    # Clear before import so pygame doesn't cache x11 at C-extension load time.
+    os.environ.pop("SDL_VIDEODRIVER", None)
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.navigation.camera_nav.blueprint_flowbase import _make_flowbase_coordinator
-    # keyboard_teleop.py sets SDL_VIDEODRIVER=x11 at import time; that breaks macOS
-    # (SDL2 on macOS uses Cocoa/Metal, not X11). Remove it so SDL auto-detects.
+    # keyboard_teleop.py re-sets SDL_VIDEODRIVER=x11 at module level; clear again.
+    # On macOS SDL2 auto-selects Cocoa when the var is absent.
     os.environ.pop("SDL_VIDEODRIVER", None)
+    if sys.platform == "darwin":
+        os.environ["SDL_VIDEODRIVER"] = "cocoa"
     try:
         ModuleCoordinator.build(_make_flowbase_coordinator(address=address)).loop()
     except Exception as e:
