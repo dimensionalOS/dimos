@@ -37,6 +37,7 @@ import re
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 import open3d as o3d  # type: ignore[import-untyped]
 
 from dimos.simulation.scene_assets.spec import SceneMeshAlignment
@@ -49,7 +50,9 @@ _TRIMESH_DUPLICATE_SUFFIX_RE = re.compile(r"_[0-9a-f]{6}$", re.IGNORECASE)
 _FLOOR_PROBE_RAY_HEIGHT_M = 1000.0
 
 
-def _fan_triangulate(face_counts: np.ndarray, face_verts: np.ndarray) -> np.ndarray:
+def _fan_triangulate(
+    face_counts: NDArray[np.int32], face_verts: NDArray[np.int32]
+) -> NDArray[np.int32]:
     """Vectorized fan triangulation of USD polygonal faces.
 
     For a face with local vertex indices ``v0..v_{n-1}`` (``n =
@@ -79,7 +82,7 @@ def _fan_triangulate(face_counts: np.ndarray, face_verts: np.ndarray) -> np.ndar
     return np.stack([v0, v1, v2], axis=1).astype(np.int32)
 
 
-def _world_rotation(alignment: SceneMeshAlignment) -> np.ndarray:
+def _world_rotation(alignment: SceneMeshAlignment) -> NDArray[np.float64]:
     """Compose the y-up swap + ZYX Euler into one 3x3."""
     rad = np.radians(alignment.rotation_zyx_deg)
     cz, sz = np.cos(rad[0]), np.sin(rad[0])
@@ -99,8 +102,8 @@ def _world_rotation(alignment: SceneMeshAlignment) -> np.ndarray:
 
 
 def _average_per_face_vertex(
-    per_fv: np.ndarray, face_verts: np.ndarray, n_verts: int
-) -> np.ndarray:
+    per_fv: NDArray[np.floating[Any]], face_verts: NDArray[np.int32], n_verts: int
+) -> NDArray[np.float64]:
     """Scatter-average ``(n_face_verts, 3)`` values onto ``(n_verts, 3)`` indices."""
     out = np.zeros((n_verts, 3), dtype=np.float32)
     counts = np.zeros(n_verts, dtype=np.int32)
@@ -113,9 +116,9 @@ def _average_per_face_vertex(
 def _color_from_displaycolor(
     mesh: Any,
     n_verts: int,
-    face_counts: np.ndarray,
-    face_verts: np.ndarray,
-) -> np.ndarray | None:
+    face_counts: NDArray[np.int32],
+    face_verts: NDArray[np.int32],
+) -> NDArray[np.floating[Any]] | None:
     """Per-vertex RGB from ``primvars:displayColor`` if present and valued.
 
     Handles the four standard interpolations: ``constant`` / ``vertex`` /
@@ -153,8 +156,8 @@ def _color_from_displaycolor(
 
 
 def _color_from_material(
-    prim: Any, material_color_cache: dict[str, np.ndarray | None]
-) -> np.ndarray | None:
+    prim: Any, material_color_cache: dict[str, NDArray[np.float32] | None]
+) -> NDArray[np.float32] | None:
     """Per-prim RGB from the bound material's ``inputs:diffuseColor``.
 
     Walks ``UsdShadeMaterialBindingAPI`` → surface shader → ``inputs:diffuseColor``,
@@ -181,7 +184,7 @@ def _color_from_material(
     return color
 
 
-def _resolve_diffuse_color(material: Any) -> np.ndarray | None:
+def _resolve_diffuse_color(material: Any) -> NDArray[np.float32] | None:
     """Pull a literal ``diffuseColor`` out of a UsdShade material's surface shader."""
     from pxr import UsdShade  # type: ignore[import-not-found, import-untyped]
 
@@ -223,12 +226,12 @@ def _load_usd_mesh(path: Path) -> o3d.geometry.TriangleMesh:
     if stage is None:
         raise RuntimeError(f"could not open USD stage: {path}")
 
-    all_pts: list[np.ndarray] = []
-    all_tris: list[np.ndarray] = []
-    all_colors: list[np.ndarray] = []
+    all_pts: list[NDArray[np.float32]] = []
+    all_tris: list[NDArray[np.int32]] = []
+    all_colors: list[NDArray[np.floating[Any]]] = []
     any_color = False
     vtx_offset = 0
-    material_color_cache: dict[str, np.ndarray | None] = {}
+    material_color_cache: dict[str, NDArray[np.float32] | None] = {}
 
     for prim in stage.Traverse():
         if not prim.IsA(UsdGeom.Mesh):
@@ -325,8 +328,8 @@ def load_scene_mesh(
             faces_world = np.asarray(scene_or_mesh.faces, dtype=np.int64)
         else:
             scene = scene_or_mesh
-            verts_chunks: list[np.ndarray] = []
-            faces_chunks: list[np.ndarray] = []
+            verts_chunks: list[NDArray[np.float64]] = []
+            faces_chunks: list[NDArray[np.int64]] = []
             v_off = 0
             for node_name in scene.graph.nodes_geometry:
                 xform, geom_name = scene.graph[node_name]
@@ -413,10 +416,10 @@ class ScenePrimMesh:
     """Sanitized identifier (safe for MJCF asset names) — typically the
     USD prim path with non-alphanumerics replaced."""
 
-    vertices: np.ndarray
+    vertices: NDArray[np.float32]
     """``(N, 3)`` float32, in world frame after alignment."""
 
-    triangles: np.ndarray
+    triangles: NDArray[np.int32]
     """``(M, 3)`` int32 vertex indices."""
 
     prim_path: str | None = None
