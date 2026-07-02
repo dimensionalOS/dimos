@@ -49,6 +49,7 @@ _BLENDER_INPUT_SUFFIXES = {
     ".ply",
 }
 _GLTFPACK_INPUT_SUFFIXES = {".gltf", ".glb", ".obj"}
+_GLTFPACK_WARNING_TAIL_LINES = 30
 
 _BLENDER_SCRIPT = r"""
 import pathlib
@@ -340,7 +341,7 @@ def _export_with_gltfpack(
                 ) from exc
             raise
         if output and "Warning:" in output:
-            logger.warning("gltfpack output:\n%s", _tail(output, 30))
+            logger.warning("gltfpack output:\n%s", _tail(output, _GLTFPACK_WARNING_TAIL_LINES))
         report = _read_json(report_path)
     return ("gltfpack", report)
 

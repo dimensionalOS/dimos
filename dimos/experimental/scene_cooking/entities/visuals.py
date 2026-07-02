@@ -20,6 +20,7 @@ import json
 from pathlib import Path
 import shutil
 import tempfile
+from typing import Any
 
 from dimos.experimental.scene_cooking.command import (
     blender_output_line_is_interesting,
@@ -280,7 +281,7 @@ def cook_plan_visual_assets(
     return static_visual_source
 
 
-def _blender_plan_json(plan: SceneCookPlan, static_visual_source: Path) -> dict[str, object]:
+def _blender_plan_json(plan: SceneCookPlan, static_visual_source: Path) -> dict[str, Any]:
     return {
         "visual_plan_version": _VISUAL_PLAN_VERSION,
         "alignment": {
@@ -307,7 +308,7 @@ def _blender_plan_json(plan: SceneCookPlan, static_visual_source: Path) -> dict[
     }
 
 
-def _manifest_matches(path: Path, expected: dict[str, object]) -> bool:
+def _manifest_matches(path: Path, expected: dict[str, Any]) -> bool:
     if not path.exists():
         return False
     try:

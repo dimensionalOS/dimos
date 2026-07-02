@@ -28,6 +28,7 @@ import re
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation as R
 
 from dimos.experimental.scene_cooking.mujoco.collision_policy import CollisionSpec
@@ -43,6 +44,19 @@ from dimos.experimental.scene_cooking.source_assets.mesh import (
 from dimos.simulation.scene_assets.spec import SceneMeshAlignment
 
 _HASH_SUFFIX_RE = re.compile(r"_[0-9a-fA-F]{6,}$")
+
+#: Floor for a prim/entity's AABB extent (metres). Keeps zero-thickness
+#: sheets (a floor tile authored with no depth) from producing a zero-size
+#: physics extent.
+_MIN_EXTENT_M = 1e-4
+
+
+def _safe_extents(
+    aabb_min: NDArray[np.float64], aabb_max: NDArray[np.float64]
+) -> NDArray[np.float64]:
+    """AABB extents clamped to ``_MIN_EXTENT_M`` so no axis is zero-size."""
+    extents: NDArray[np.float64] = np.maximum(aabb_max - aabb_min, _MIN_EXTENT_M).astype(float)
+    return extents
 
 
 @dataclass(frozen=True)
@@ -118,8 +132,8 @@ class EntityPrototypePlan:
     id: str
     safe_id: str
     source_prim_path: str
-    vertices: np.ndarray
-    triangles: np.ndarray
+    vertices: NDArray[np.float32]
+    triangles: NDArray[np.int32]
     collision_dir: Path
 
     def to_json_dict(self) -> dict[str, Any]:
@@ -243,7 +257,7 @@ def _build_matched_entity_plan(
     aabb_min_np = vertices.min(axis=0).astype(float)
     aabb_max_np = vertices.max(axis=0).astype(float)
     center_np = ((aabb_min_np + aabb_max_np) * 0.5).astype(float)
-    extents = np.maximum(aabb_max_np - aabb_min_np, 1e-4).astype(float)
+    extents = _safe_extents(aabb_min_np, aabb_max_np)
     safe_id = _safe_entity_id(spec.id)
     visual_path = entities_dir / safe_id / "visual.glb"
 
@@ -375,7 +389,7 @@ def _build_group_entity_plan(
     vertices = np.asarray(prim.vertices, dtype=np.float64)
     aabb_min_np = vertices.min(axis=0).astype(float)
     aabb_max_np = vertices.max(axis=0).astype(float)
-    extents = np.maximum(aabb_max_np - aabb_min_np, 1e-4).astype(float)
+    extents = _safe_extents(aabb_min_np, aabb_max_np)
     local_vertices, center_np, quat = _localize_prim_mesh(vertices)
     shape_hint, shape_extents = _resolve_shape(spec, extents)
     descriptor = _make_descriptor(spec, shape_hint, shape_extents, visual_path=None)
@@ -407,7 +421,7 @@ def _build_group_entity_plan(
 
 def _resolve_shape(
     spec: InteractableSpec,
-    extents_np: np.ndarray,
+    extents_np: NDArray[np.float64],
 ) -> tuple[str, list[float]]:
     shape_hint = str(spec.physics.get("shape", "box"))
     shape_extents = spec.physics.get("extents")
@@ -469,8 +483,8 @@ def _entity_group_prototype_key(group: EntityGroupSpec, prim: ScenePrimMesh) -> 
 
 
 def _localize_prim_mesh(
-    vertices: np.ndarray,
-) -> tuple[np.ndarray, tuple[float, float, float], tuple[float, float, float, float]]:
+    vertices: NDArray[np.float64],
+) -> tuple[NDArray[np.float64], tuple[float, float, float], tuple[float, float, float, float]]:
     aabb_min = vertices.min(axis=0)
     aabb_max = vertices.max(axis=0)
     center = (aabb_min + aabb_max) * 0.5

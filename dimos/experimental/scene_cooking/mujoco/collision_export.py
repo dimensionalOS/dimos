@@ -59,6 +59,7 @@ import argparse
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, replace
 import hashlib
+import json
 import multiprocessing
 import os
 from pathlib import Path
@@ -66,8 +67,12 @@ import time
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 import open3d as o3d  # type: ignore[import-untyped]
+from scipy.spatial import ConvexHull, QhullError  # type: ignore[import-untyped]
+from scipy.spatial.transform import Rotation  # type: ignore[import-untyped]
 
+from dimos.constants import CACHE_DIR as _DIMOS_CACHE_DIR
 from dimos.experimental.scene_cooking.mujoco.collision_policy import (
     CollisionSpec,
     decide_for_prim,
@@ -83,7 +88,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-CACHE_DIR = Path.home() / ".cache" / "dimos" / "scene_meshes"
+CACHE_DIR = _DIMOS_CACHE_DIR / "scene_meshes"
 
 
 # Scene-only wrapper -- no robot include. Robots are attached at runtime
@@ -171,6 +176,23 @@ _CACHE_KEY_LEN = 12
 # contract and old cache directories can safely stay on disk.
 _CACHE_SCHEMA_VERSION = "scene-only-v11"
 
+# Cap on worker processes when the parent has multiple native threads
+# (see ``_native_thread_count``) -- ``forkserver``/``spawn`` startup gets
+# expensive past this many workers.
+_MAX_THREADED_WORKERS = 8
+# Log progress roughly this many times across a bake, regardless of scene size.
+_PROGRESS_LOG_EVERY_SMALL_SCENE = 25
+_PROGRESS_LOG_EVERY_LARGE_SCENE = 250
+_PROGRESS_LOG_LARGE_SCENE_THRESHOLD = 500
+# Pad the viewer-framing extent beyond the tight scene bounding sphere so
+# geometry right at the edge isn't clipped by the camera's far plane.
+_SCENE_EXTENT_PADDING = 1.1
+# MuJoCo visual zfar: scale with scene extent, with a floor high enough for
+# small scenes to still render distant geometry (e.g. a skybox) without
+# clipping.
+_VISUAL_ZFAR_EXTENT_MULTIPLIER = 20.0
+_MIN_VISUAL_ZFAR_M = 10000.0
+
 
 @dataclass
 class _BakeArtifacts:
@@ -215,8 +237,8 @@ def bake_scene_mjcf(
             etc. Anything ``source_assets.mesh.load_scene_prims`` accepts.
         alignment: scale / translation / rotation / y-up swap to bake
             into world frame before any geom is emitted.
-        cache_root: override the cache root (defaults to
-            ``~/.cache/dimos/scene_meshes``).
+        cache_root: override the cache root (defaults to the XDG cache dir
+            under ``dimos/scene_meshes``).
         collision_spec: per-prim policy.  ``None`` auto-discovers a
             sidecar ``<scene>.collision.json`` next to the source, or
             falls back to ``CollisionSpec()`` defaults (auto-fit
@@ -381,7 +403,6 @@ def _cache_key(
     Robot-agnostic: the cooked scene wrapper is the same regardless of
     which robot will eventually be attached at runtime via ``MjSpec``.
     """
-    import json
 
     def _file_signature(path: Path) -> str:
         st = path.stat()
@@ -461,8 +482,8 @@ def _process_one_prim(
             asset_lines.append(_ASSET_LINE.format(name=vis_name, file=vis_path.name))
             geom_lines.append(_VISUAL_GEOM_LINE.format(name=f"{vis_name}_geom", mesh=vis_name))
             counters["visuals"] = 1
-        except Exception:
-            pass
+        except (ValueError, RuntimeError, ZeroDivisionError, OSError) as exc:
+            logger.warning(f"visual OBJ write failed for {prim.name}: {exc}")
 
     friction_attr = ""
     if decision.friction is not None:
@@ -567,7 +588,7 @@ def _bake_prims(
 
     n_workers = max(1, (os.cpu_count() or 4) - 1)
     if _native_thread_count() > 1:
-        n_workers = min(n_workers, 8)
+        n_workers = min(n_workers, _MAX_THREADED_WORKERS)
         start_method = (
             "forkserver" if "forkserver" in multiprocessing.get_all_start_methods() else "spawn"
         )
@@ -585,7 +606,11 @@ def _bake_prims(
     n_skipped += n_pre_skipped
     reasons.update(pre_skip_reasons)
     total_work = len(work_items)
-    progress_every = 25 if total_work <= 500 else 250
+    progress_every = (
+        _PROGRESS_LOG_EVERY_SMALL_SCENE
+        if total_work <= _PROGRESS_LOG_LARGE_SCENE_THRESHOLD
+        else _PROGRESS_LOG_EVERY_LARGE_SCENE
+    )
     with executor as ex:
         futures = [ex.submit(_process_one_prim, item) for item in work_items]
         done = 0
@@ -686,7 +711,7 @@ def _emit_primitive_geom(
 # --------------------------------------------------------------------------- #
 
 
-def _valid_hull(v: np.ndarray, f: np.ndarray) -> bool:
+def _valid_hull(v: NDArray[np.float32], f: NDArray[np.int32]) -> bool:
     """Reject hulls that MuJoCo's qhull would choke on at compile time.
 
     Four layers:
@@ -710,15 +735,15 @@ def _valid_hull(v: np.ndarray, f: np.ndarray) -> bool:
     if np.linalg.matrix_rank(centered, tol=_DEGENERATE_EPS) < 3:
         return False
     try:
-        from scipy.spatial import ConvexHull, QhullError  # type: ignore[import-untyped]
-
         ConvexHull(v, qhull_options="Qt")
     except (QhullError, ValueError):
         return False
     return True
 
 
-def _fallback_box_geom(name: str, vertices: np.ndarray, friction_attr: str = "") -> str | None:
+def _fallback_box_geom(
+    name: str, vertices: NDArray[np.float32], friction_attr: str = ""
+) -> str | None:
     """Emit a thin OBB box geom for vertices that can't form a valid hull.
 
     The thickness floor (``_FALLBACK_BOX_THICKNESS_M = 3 cm``) keeps the
@@ -751,16 +776,16 @@ def _fallback_box_geom(name: str, vertices: np.ndarray, friction_attr: str = "")
 
 
 def _oriented_box(
-    vertices: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    vertices: NDArray[np.float64],
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """OBB via trimesh's ``bounding_box_oriented``.
 
     Falls back to AABB if trimesh's OBB fitter produces non-finite
     output or the prim has < 3 vertices.
     """
-    try:
-        import trimesh  # type: ignore[import-untyped]
+    import trimesh  # type: ignore[import-untyped]
 
+    try:
         tm = trimesh.Trimesh(vertices=vertices, faces=np.empty((0, 3), dtype=np.int32))
         obb = tm.bounding_box_oriented
         transform = np.asarray(obb.primitive.transform, dtype=np.float64)
@@ -771,27 +796,25 @@ def _oriented_box(
             rotation[:, 0] *= -1.0
         if np.isfinite(center).all() and np.isfinite(rotation).all() and np.isfinite(extent).all():
             return center, rotation, np.abs(extent)
-    except Exception:
-        pass
+    except (ValueError, RuntimeError, ZeroDivisionError) as exc:
+        logger.debug(f"oriented-box fit failed; falling back to AABB: {exc}")
 
     lo = vertices.min(axis=0)
     hi = vertices.max(axis=0)
     return (lo + hi) * 0.5, np.eye(3), hi - lo
 
 
-def _rotation_matrix_to_wxyz(rotation: np.ndarray) -> np.ndarray:
+def _rotation_matrix_to_wxyz(rotation: NDArray[np.float64]) -> NDArray[np.float64]:
     """3x3 rotation -> ``(w, x, y, z)`` quaternion."""
-    from scipy.spatial.transform import Rotation  # type: ignore[import-untyped]
-
     xyzw = Rotation.from_matrix(rotation).as_quat()
     return np.array([xyzw[3], xyzw[0], xyzw[1], xyzw[2]], dtype=np.float64)
 
 
-def _fmt_vec(values: np.ndarray) -> str:
+def _fmt_vec(values: NDArray[np.float64]) -> str:
     return " ".join(f"{float(v):.9g}" for v in values)
 
 
-def _scene_bounds(prims: list[ScenePrimMesh]) -> tuple[np.ndarray, float]:
+def _scene_bounds(prims: list[ScenePrimMesh]) -> tuple[NDArray[np.float64], float]:
     """Return a viewer-friendly center and extent for the aligned scene.
 
     MuJoCo's viewer uses ``statistic.center`` / ``statistic.extent`` for
@@ -799,8 +822,8 @@ def _scene_bounds(prims: list[ScenePrimMesh]) -> tuple[np.ndarray, float]:
     much too small for baked building-scale scenes, so wrappers need to
     advertise the scene bounds explicitly.
     """
-    mins: list[np.ndarray] = []
-    maxs: list[np.ndarray] = []
+    mins: list[NDArray[np.float64]] = []
+    maxs: list[NDArray[np.float64]] = []
     for prim in prims:
         vertices = np.asarray(prim.vertices, dtype=np.float64)
         if vertices.ndim != 2 or vertices.shape[1] != 3 or len(vertices) == 0:
@@ -818,7 +841,7 @@ def _scene_bounds(prims: list[ScenePrimMesh]) -> tuple[np.ndarray, float]:
     scene_max = np.max(np.vstack(maxs), axis=0)
     center = (scene_min + scene_max) * 0.5
     diagonal = scene_max - scene_min
-    extent = max(float(np.linalg.norm(diagonal) * 0.5 * 1.1), 1.0)
+    extent = max(float(np.linalg.norm(diagonal) * 0.5 * _SCENE_EXTENT_PADDING), 1.0)
     return center, extent
 
 
@@ -827,17 +850,19 @@ def _scene_bounds(prims: list[ScenePrimMesh]) -> tuple[np.ndarray, float]:
 # --------------------------------------------------------------------------- #
 
 
-def _write_hull_obj(obj_file: Path, vertices: np.ndarray, faces: np.ndarray) -> None:
+def _write_hull_obj(
+    obj_file: Path, vertices: NDArray[np.float32], faces: NDArray[np.int32]
+) -> None:
     """Write a CoACD/single-hull mesh.  No watertight check -- hulls are
     closed by construction."""
     _write_mesh_obj(obj_file, vertices, faces)
 
 
 def _simplify_mesh_geom(
-    vertices: np.ndarray,
-    faces: np.ndarray,
+    vertices: NDArray[np.float32],
+    faces: NDArray[np.int32],
     target_faces: int,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[NDArray[np.float32], NDArray[np.int32]]:
     if target_faces <= 0 or len(faces) <= target_faces:
         return vertices, faces
 
@@ -863,17 +888,17 @@ def _simplify_mesh_geom(
         out_faces = np.asarray(simplified.triangles, dtype=np.int32)
         if len(out_vertices) >= 4 and 4 <= len(out_faces) <= target_faces:
             return out_vertices, out_faces
-    except Exception:
-        logger.debug("mesh simplification failed; falling back to convex hull", exc_info=True)
+    except RuntimeError:
+        logger.warning("mesh simplification failed; falling back to convex hull", exc_info=True)
 
     hull = _convex_hull_mesh(vertices)
     return hull if hull is not None else (vertices, faces)
 
 
-def _convex_hull_mesh(vertices: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
+def _convex_hull_mesh(
+    vertices: NDArray[np.float32],
+) -> tuple[NDArray[np.float32], NDArray[np.int32]] | None:
     try:
-        from scipy.spatial import ConvexHull, QhullError  # type: ignore[import-untyped]
-
         hull = ConvexHull(vertices.astype(np.float64))
     except (QhullError, ValueError):
         return None
@@ -885,7 +910,9 @@ def _convex_hull_mesh(vertices: np.ndarray) -> tuple[np.ndarray, np.ndarray] | N
     return vertices[used].astype(np.float32), remapped_faces.astype(np.int32)
 
 
-def _write_visual_obj(obj_file: Path, vertices: np.ndarray, faces: np.ndarray) -> None:
+def _write_visual_obj(
+    obj_file: Path, vertices: NDArray[np.float64], faces: NDArray[np.int32]
+) -> None:
     """Write a *renderable* OBJ -- closed under all viewing angles.
 
     UE's static-mesh exporter culls hidden faces (a floor slab ships
@@ -914,12 +941,15 @@ def _write_visual_obj(obj_file: Path, vertices: np.ndarray, faces: np.ndarray) -
             if len(hull.vertices) >= 4 and len(hull.faces) >= 4:
                 vertices = np.asarray(hull.vertices, dtype=np.float64)
                 faces = np.asarray(hull.faces, dtype=np.int32)
-        except Exception:
-            pass  # fall back to original; visual may look hollow
+        except (ValueError, RuntimeError, ZeroDivisionError) as exc:
+            # Fall back to the original (possibly hollow-looking) mesh.
+            logger.warning(f"convex hull fallback failed for {obj_file.name}: {exc}")
     _write_mesh_obj(obj_file, vertices, faces)
 
 
-def _write_mesh_obj(obj_file: Path, vertices: np.ndarray, faces: np.ndarray) -> None:
+def _write_mesh_obj(
+    obj_file: Path, vertices: NDArray[np.floating[Any]], faces: NDArray[np.int32]
+) -> None:
     o3d_mesh = o3d.geometry.TriangleMesh()
     o3d_mesh.vertices = o3d.utility.Vector3dVector(vertices.astype(np.float64))
     o3d_mesh.triangles = o3d.utility.Vector3iVector(faces)
@@ -944,14 +974,14 @@ def _write_wrapper(
     cache_key: str,
     asset_lines: list[str],
     geom_lines: list[str],
-    statistic_center: np.ndarray,
+    statistic_center: NDArray[np.float64],
     statistic_extent: float,
 ) -> None:
     """Emit the scene-only wrapper.xml. Robots attach at runtime via
     ``MjSpec``; the wrapper directory holds only this file plus the
     cooked scene OBJs that it references with relative paths.
     """
-    visual_zfar = max(float(statistic_extent) * 20.0, 10000.0)
+    visual_zfar = max(float(statistic_extent) * _VISUAL_ZFAR_EXTENT_MULTIPLIER, _MIN_VISUAL_ZFAR_M)
     wrapper_xml = _WRAPPER_TEMPLATE.format(
         model_name=f"scene_{cache_key}",
         statistic_center=_fmt_vec(statistic_center),

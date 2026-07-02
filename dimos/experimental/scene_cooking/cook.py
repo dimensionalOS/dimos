@@ -61,6 +61,9 @@ logger = setup_logger()
 SCENE_PACKAGE_DIR = get_data_dir("scene_packages")
 _PACKAGE_KEY_LEN = 12
 _COOK_VERSION = 4
+#: Cap on entity id samples recorded in cook stats -- diagnostics only, not
+#: the full entity list (that lives in ``scene.meta.json``).
+_ENTITY_ID_SAMPLE_CAP = 100
 
 
 def cook_scene_package(
@@ -140,7 +143,7 @@ def cook_scene_package(
     if entities:
         stats["interactables"] = {
             "count": len(entities),
-            "id_samples": [entity["id"] for entity in entities[:100]],
+            "id_samples": [entity["id"] for entity in entities[:_ENTITY_ID_SAMPLE_CAP]],
             "static_visual_filter": "plan/blender",
         }
 
@@ -237,7 +240,7 @@ def cook_scene_package(
         stats=stats,
     )
     package.write_metadata()
-    logger.info("scene package cooked: %s", package.metadata_path)
+    logger.info("scene package cooked", metadata_path=package.metadata_path)
     return package
 
 
@@ -262,9 +265,9 @@ def _cook_entity_collision(
         visual_path = entity.get("visual_path")
         if not visual_path or not Path(visual_path).exists():
             logger.warning(
-                "entity %s: mesh entity has no cooked visual GLB; "
+                "mesh entity has no cooked visual GLB; "
                 "no collision hulls (runtime falls back to AABB box)",
-                entity.get("id"),
+                entity_id=entity.get("id"),
             )
             continue
         hull_paths = cook_entity_collision_hulls(
@@ -330,6 +333,8 @@ def _compile_mujoco_binary(scene_xml_path: Path, *, rebake: bool) -> tuple[Path,
     requires the XML wrapper unless a robot-specific composed binary is
     produced separately.
     """
+    # Lazy: mujoco is a `sim` extra, not a `scene` one -- browser/rerun-only
+    # cooks (mujoco.compile_binary=False) shouldn't require it installed.
     import mujoco
 
     binary_path = scene_xml_path.with_suffix(".mjb")

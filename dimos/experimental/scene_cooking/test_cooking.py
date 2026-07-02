@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -31,7 +32,7 @@ from dimos.simulation.scene_assets.spec import (
 )
 
 
-def _metadata(tmp_path: Path) -> dict[str, object]:
+def _metadata(tmp_path: Path) -> dict[str, Any]:
     return {
         "source_path": str(tmp_path / "source.glb"),
         "package_dir": str(tmp_path),
@@ -176,7 +177,7 @@ def test_scene_package_metadata_uses_package_relative_paths(tmp_path: Path) -> N
 def test_load_scene_package_tolerates_missing_objects_sidecar(tmp_path: Path) -> None:
     raw = _metadata(tmp_path)
     # Older cooked packages without the semantic sidecar should still load.
-    raw["artifacts"].pop("objects")  # type: ignore[union-attr]
+    raw["artifacts"].pop("objects")
     metadata_path = tmp_path / "scene.meta.json"
     metadata_path.write_text(json.dumps(raw))
 
@@ -201,6 +202,8 @@ def test_browser_visual_profiles_are_backend_specific() -> None:
 
 
 def test_extract_scene_objects_emits_per_prim_aabb() -> None:
+    # Inlined so importing this test module doesn't pull heavy open3d/trimesh
+    # for the many tests here that don't need browser.collision.
     from dimos.experimental.scene_cooking.browser.collision import extract_scene_objects
 
     triangles = np.array([[0, 1, 2]], dtype=np.int32)
