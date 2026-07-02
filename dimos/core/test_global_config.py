@@ -12,16 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for GlobalConfig security defaults."""
+from dimos.core.global_config import GlobalConfig
+from dimos.protocol.pubsub.impl.zenohqos import DEFAULT_ZENOH_QOS, ZenohQoS
 
 
 class TestGlobalConfigSecurityDefaults:
     """Network services must bind to localhost by default (not 0.0.0.0)."""
 
     def test_listen_host_defaults_to_localhost(self) -> None:
-        from dimos.core.global_config import GlobalConfig
-
         config = GlobalConfig()
         assert config.listen_host == "127.0.0.1", (
             f"listen_host must default to 127.0.0.1, got {config.listen_host}"
         )
+
+
+class TestZenohQoSField:
+    def test_default_is_rule_table(self) -> None:
+        assert GlobalConfig().zenoh_qos == DEFAULT_ZENOH_QOS
+
+    def test_env_json_override(self, monkeypatch) -> None:
+        monkeypatch.setenv("DIMOS_ZENOH_QOS", '[{"key": "dimos/x", "reliability": "best_effort"}]')
+        config = GlobalConfig()
+        assert config.zenoh_qos == (ZenohQoS(key="dimos/x", reliability="best_effort"),)
+
+    def test_update_coerces_dicts(self) -> None:
+        # Blueprint overrides arrive as plain dicts via global_config.update().
+        config = GlobalConfig()
+        config.update(zenoh_qos=({"key": "dimos/x", "congestion_control": "block"},))
+        assert config.zenoh_qos == (ZenohQoS(key="dimos/x", congestion_control="block"),)
