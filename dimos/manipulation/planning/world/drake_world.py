@@ -25,11 +25,18 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from dimos.manipulation.planning.groups.identifiers import (
+    is_global_joint_name,
+    make_global_joint_names,
+    make_planning_group_id,
+)
+from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import (
     JointPath,
     Obstacle,
+    PlanningGroupID,
     PlanningSceneInfo,
     WorldRobotID,
 )
@@ -207,6 +214,10 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             raise RuntimeError("Cannot add robot after world is finalized")
 
         with self._lock:
+            if any(data.config.name == config.name for data in self._robots.values()):
+                raise ValueError(f"Robot name '{config.name}' is already registered")
+            self._validate_planning_group_config(config)
+
             self._robot_counter += 1
             robot_id = f"robot_{self._robot_counter}"
 
@@ -215,9 +226,16 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
             self._validate_joints(config, model_instance)
 
-            ee_frame = self._plant.GetBodyByName(
-                config.end_effector_link, model_instance
-            ).body_frame()
+            ee_link = config.base_link
+            try:
+                primary_group_id = self._primary_pose_group_id_for_config(config)
+            except ValueError:
+                primary_group_id = None
+            if primary_group_id is not None:
+                primary_group = self._planning_group_from_config(config, primary_group_id)
+                if primary_group.tip_link is not None:
+                    ee_link = primary_group.tip_link
+            ee_frame = self._plant.GetBodyByName(ee_link, model_instance).body_frame()
             base_frame = self._plant.GetBodyByName(config.base_link, model_instance).body_frame()
 
             # Preview (yellow ghost) — always a separate instance per robot
@@ -235,7 +253,6 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                 base_frame=base_frame,
                 preview_model_instance=preview_model_instance,
             )
-
             logger.info(f"Added robot '{robot_id}' ({config.name})")
             return robot_id
 
@@ -316,6 +333,49 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         if robot_id not in self._robots:
             raise KeyError(f"Robot '{robot_id}' not found")
         return self._robots[robot_id].config
+
+    def _validate_planning_group_config(self, config: RobotModelConfig) -> None:
+        seen_group_names: set[str] = set()
+        for definition in config.planning_groups:
+            make_planning_group_id(config.name, definition.name)
+            if definition.name in seen_group_names:
+                raise ValueError(f"Planning group '{definition.name}' is already registered")
+            make_global_joint_names(config.name, definition.joint_names)
+            seen_group_names.add(definition.name)
+
+    def _planning_group_from_config(
+        self, config: RobotModelConfig, group_id: PlanningGroupID
+    ) -> PlanningGroup:
+        for definition in config.planning_groups:
+            if make_planning_group_id(config.name, definition.name) == group_id:
+                joint_names = tuple(make_global_joint_names(config.name, definition.joint_names))
+                return PlanningGroup(
+                    group_id,
+                    config.name,
+                    definition.name,
+                    joint_names,
+                    definition.joint_names,
+                    definition.base_link,
+                    definition.tip_link,
+                    definition.source,
+                )
+        raise KeyError(f"Unknown planning group ID: {group_id}")
+
+    def _planning_group_from_id(self, group_id: PlanningGroupID) -> PlanningGroup:
+        for robot_data in self._robots.values():
+            try:
+                return self._planning_group_from_config(robot_data.config, group_id)
+            except KeyError:
+                continue
+        raise KeyError(f"Unknown planning group ID: {group_id}")
+
+    def _primary_pose_group_id_for_config(self, config: RobotModelConfig) -> PlanningGroupID | None:
+        pose_groups = [group for group in config.planning_groups if group.has_pose_target]
+        if not pose_groups:
+            return None
+        if len(pose_groups) > 1:
+            raise ValueError(f"Robot '{config.name}' has multiple pose groups")
+        return make_planning_group_id(config.name, pose_groups[0].name)
 
     def get_joint_limits(
         self, robot_id: WorldRobotID
@@ -768,8 +828,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         if not self._finalized or self._plant_context is None:
             return  # Silently ignore before finalization
 
-        # Extract positions as numpy array for internal use
-        positions = np.array(joint_state.position, dtype=np.float64)
+        positions = self._joint_state_to_q(robot_id, joint_state)
 
         with self._lock:
             self._set_positions_internal(self._plant_context, robot_id, positions)
@@ -787,8 +846,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         if not self._finalized:
             raise RuntimeError("World must be finalized first")
 
-        # Extract positions as numpy array for internal use
-        positions = np.array(joint_state.position, dtype=np.float64)
+        positions = self._joint_state_to_q(robot_id, joint_state)
 
         # Get plant context from diagram context
         plant_ctx = self._diagram.GetMutableSubsystemContext(self._plant, ctx)
@@ -808,6 +866,51 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             full_positions[joint_idx] = positions[i]
 
         self._plant.SetPositions(plant_ctx, full_positions)
+
+    def _joint_state_to_q(
+        self, robot_id: WorldRobotID, joint_state: JointState
+    ) -> NDArray[np.float64]:
+        """Normalize unnamed, robot-local, mapped, or global JointState to robot joint order."""
+        if robot_id not in self._robots:
+            raise KeyError(f"Robot '{robot_id}' not found")
+        robot_data = self._robots[robot_id]
+        if not joint_state.name:
+            if len(joint_state.position) != len(robot_data.config.joint_names):
+                raise ValueError("JointState position length must match configured joint count")
+            return np.asarray(joint_state.position, dtype=np.float64)
+        if len(joint_state.name) != len(joint_state.position):
+            raise ValueError("JointState name and position lengths must match")
+        name_to_pos: dict[str, float] = {}
+        for name, position in zip(joint_state.name, joint_state.position, strict=True):
+            if name in robot_data.config.joint_names:
+                resolved_name = name
+            elif name in robot_data.config.joint_name_mapping:
+                resolved_name = robot_data.config.joint_name_mapping[name]
+            elif is_global_joint_name(name):
+                prefix = f"{robot_data.config.name}/"
+                if not name.startswith(prefix):
+                    continue
+                resolved_name = name[len(prefix) :]
+                if resolved_name not in robot_data.config.joint_names:
+                    raise ValueError(f"Unknown global joint name for DrakeWorld: {name}")
+            else:
+                resolved_name = robot_data.config.get_urdf_joint_name(name)
+            if resolved_name in name_to_pos:
+                raise ValueError(f"JointState resolves duplicate joint '{resolved_name}'")
+            name_to_pos[resolved_name] = float(position)
+        missing = [name for name in robot_data.config.joint_names if name not in name_to_pos]
+        if missing:
+            raise ValueError(f"JointState missing joints for DrakeWorld: {missing}")
+        return np.asarray([name_to_pos[name] for name in robot_data.config.joint_names])
+
+    def _robot_id_for_group(self, group_id: PlanningGroupID) -> WorldRobotID:
+        group = self._planning_group_from_id(group_id)
+        matches = [
+            rid for rid, data in self._robots.items() if data.config.name == group.robot_name
+        ]
+        if not matches:
+            raise KeyError(f"No robot registered for planning group '{group_id}'")
+        return matches[0]
 
     def get_joint_state(self, ctx: Context, robot_id: WorldRobotID) -> JointState:
         """Get robot joint state from given context."""
@@ -905,16 +1008,28 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
     def get_ee_pose(self, ctx: Context, robot_id: WorldRobotID) -> PoseStamped:
         """Get end-effector pose."""
+        if robot_id not in self._robots:
+            raise KeyError(f"Robot '{robot_id}' not found")
+        robot_data = self._robots[robot_id]
+        group_id = self._primary_pose_group_id_for_config(robot_data.config)
+        if group_id is None:
+            raise ValueError(
+                f"Robot '{robot_data.config.name}' has no pose-targetable planning group"
+            )
+        return self.get_group_ee_pose(ctx, group_id)
+
+    def get_group_ee_pose(self, ctx: Context, group_id: PlanningGroupID) -> PoseStamped:
+        """Get planning-group tip pose."""
         if not self._finalized:
             raise RuntimeError("World must be finalized first")
 
-        if robot_id not in self._robots:
-            raise KeyError(f"Robot '{robot_id}' not found")
-
-        robot_data = self._robots[robot_id]
+        group = self._planning_group_from_id(group_id)
+        if group.tip_link is None:
+            raise ValueError(f"Planning group '{group_id}' has no tip link")
+        robot_data = self._robots[self._robot_id_for_group(group_id)]
         plant_ctx = self._diagram.GetSubsystemContext(self._plant, ctx)
 
-        ee_body = robot_data.ee_frame.body()
+        ee_body = self._plant.GetBodyByName(group.tip_link, robot_data.model_instance)
         X_WE = self._plant.EvalBodyPoseInWorld(plant_ctx, ee_body)
 
         # Extract position and quaternion from Drake transform
@@ -955,30 +1070,58 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
         Rows: [vx, vy, vz, wx, wy, wz] (linear, then angular)
         """
+        if robot_id not in self._robots:
+            raise KeyError(f"Robot '{robot_id}' not found")
+        robot_data = self._robots[robot_id]
+        group_id = self._primary_pose_group_id_for_config(robot_data.config)
+        if group_id is None:
+            raise ValueError(
+                f"Robot '{robot_data.config.name}' has no pose-targetable planning group"
+            )
+        return self.get_group_jacobian(ctx, group_id)
+
+    def get_group_jacobian(self, ctx: Context, group_id: PlanningGroupID) -> NDArray[np.float64]:
+        """Get geometric Jacobian (6 x group joints) in group-local order."""
         if not self._finalized:
             raise RuntimeError("World must be finalized first")
 
-        if robot_id not in self._robots:
-            raise KeyError(f"Robot '{robot_id}' not found")
-
-        robot_data = self._robots[robot_id]
+        group = self._planning_group_from_id(group_id)
+        if group.tip_link is None:
+            raise ValueError(f"Planning group '{group_id}' has no tip link")
+        robot_data = self._robots[self._robot_id_for_group(group_id)]
         plant_ctx = self._diagram.GetSubsystemContext(self._plant, ctx)
+        tip_frame = self._plant.GetBodyByName(
+            group.tip_link, robot_data.model_instance
+        ).body_frame()
 
         # Compute full Jacobian
         J_full = self._plant.CalcJacobianSpatialVelocity(
             plant_ctx,
             JacobianWrtVariable.kQDot,
-            robot_data.ee_frame,
+            tip_frame,
             np.array([0.0, 0.0, 0.0]),  # type: ignore[arg-type]  # Point on end-effector
             self._plant.world_frame(),
             self._plant.world_frame(),
         )
 
-        # Extract columns for this robot's joints
-        n_joints = len(robot_data.joint_indices)
+        # Extract columns for configured controllable joints only.
+        joint_indices_by_name = dict(
+            zip(robot_data.config.joint_names, robot_data.joint_indices, strict=True)
+        )
+        missing = [
+            joint_name
+            for joint_name in group.local_joint_names
+            if joint_name not in joint_indices_by_name
+        ]
+        if missing:
+            raise ValueError(
+                f"Planning group '{group_id}' references non-controllable joints: {missing}"
+            )
+        group_joint_indices = [joint_indices_by_name[name] for name in group.local_joint_names]
+        n_joints = len(group_joint_indices)
         J_robot = np.zeros((6, n_joints))
 
-        for i, joint_idx in enumerate(robot_data.joint_indices):
+        for i, joint_idx in enumerate(group_joint_indices):
             J_robot[:, i] = J_full[:, joint_idx]
 
         # Reorder rows: Drake uses [angular, linear], we want [linear, angular]

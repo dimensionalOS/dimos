@@ -20,7 +20,6 @@ from pathlib import Path
 
 import pytest
 
-from dimos.manipulation.planning.groups import utils as planning_group_utils
 from dimos.manipulation.planning.groups.discovery import (
     FALLBACK_PLANNING_GROUP_NAME,
     PlanningGroupDiscoveryError,
@@ -472,23 +471,6 @@ def test_matching_global_joint_name_requires_unique_suffix_match() -> None:
     assert matching_global_joint_name({"left/j1": 1.0, "right/j2": 2.0}, "j1") == "left/j1"
     assert matching_global_joint_name({"left/j1": 1.0, "right/j1": 2.0}, "j1") is None
     assert matching_global_joint_name({"left/j1": 1.0}, "j2") is None
-
-
-def test_matching_global_joint_name_warns_when_suffix_match_is_not_unique(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    messages: list[str] = []
-
-    def capture_warning(message: str) -> None:
-        messages.append(message)
-
-    monkeypatch.setattr(planning_group_utils.logger, "warning", capture_warning)
-
-    assert matching_global_joint_name({"left/j1": 1.0, "right/j1": 2.0}, "j1") is None
-    assert messages == [
-        "Expected exactly one global joint ending with local joint name 'j1', "
-        "found 2 matches: ['left/j1', 'right/j1']"
-    ]
 
 
 def test_planning_group_id_from_selector_accepts_id_or_group() -> None:

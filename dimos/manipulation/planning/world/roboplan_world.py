@@ -41,9 +41,20 @@ except ImportError as exc:
         "Install the manipulation extra before selecting the roboplan backend."
     ) from exc
 
+from dimos.manipulation.planning.groups.identifiers import (
+    is_global_joint_name,
+    make_global_joint_names,
+    make_planning_group_id,
+)
+from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
-from dimos.manipulation.planning.spec.models import Obstacle, PlanningResult, WorldRobotID
+from dimos.manipulation.planning.spec.models import (
+    Obstacle,
+    PlanningGroupID,
+    PlanningResult,
+    WorldRobotID,
+)
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.manipulation.planning.utils.path_utils import compute_path_length
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -104,6 +115,9 @@ class RoboPlanWorld:
             raise ValueError("RoboPlanWorld currently supports one robot per Scene")
         if not Path(config.model_path).exists():
             raise FileNotFoundError(f"Robot model not found: {Path(config.model_path).resolve()}")
+        if any(data.config.name == config.name for data in self._robots.values()):
+            raise ValueError(f"Robot name '{config.name}' is already registered")
+        self._validate_planning_group_config(config)
 
         self._validate_robot_config(config)
         self._robot_counter += 1
@@ -272,7 +286,17 @@ class RoboPlanWorld:
     def get_ee_pose(self, ctx: RoboPlanContext, robot_id: WorldRobotID) -> PoseStamped:
         """Get end-effector pose if RoboPlan exposes FK."""
         robot = self._get_robot(robot_id)
-        mat = self.get_link_pose(ctx, robot_id, robot.config.end_effector_link)
+        group_id = self._primary_pose_group_id_for_config(robot.config)
+        if group_id is None:
+            raise ValueError(f"Robot '{robot.config.name}' has no pose-targetable planning group")
+        return self.get_group_ee_pose(ctx, group_id)
+
+    def get_group_ee_pose(self, ctx: RoboPlanContext, group_id: PlanningGroupID) -> PoseStamped:
+        """Get planning-group tip pose if RoboPlan exposes FK."""
+        group = self._planning_group_from_id(group_id)
+        if group.tip_link is None:
+            raise ValueError(f"Planning group '{group_id}' has no tip link")
+        mat = self.get_link_pose(ctx, self._robot_id_for_group(group_id), group.tip_link)
         pose = matrix_to_pose(mat)
         return PoseStamped(
             frame_id="world",
@@ -299,17 +323,46 @@ class RoboPlanWorld:
     def get_jacobian(self, ctx: RoboPlanContext, robot_id: WorldRobotID) -> NDArray[np.float64]:
         """Get end-effector Jacobian if RoboPlan exposes a compatible API."""
         robot = self._get_robot(robot_id)
+        group_id = self._primary_pose_group_id_for_config(robot.config)
+        if group_id is None:
+            raise ValueError(f"Robot '{robot.config.name}' has no pose-targetable planning group")
+        return self.get_group_jacobian(ctx, group_id)
+
+    def get_group_jacobian(
+        self, ctx: RoboPlanContext, group_id: PlanningGroupID
+    ) -> NDArray[np.float64]:
+        """Get planning-group Jacobian projected to group-local joint order."""
+        group = self._planning_group_from_id(group_id)
+        if group.tip_link is None:
+            raise ValueError(f"Planning group '{group_id}' has no tip link")
+        robot_id = self._robot_id_for_group(group_id)
+        robot = self._get_robot(robot_id)
         q = ctx.q_by_robot.get(robot_id)
         if q is None:
             raise KeyError(f"Robot '{robot_id}' not found in context")
         scene = self._require_scene()
-        result = scene.computeFrameJacobian(
-            self._to_scene_q(robot_id, q), robot.config.end_effector_link, True
-        )
+        result = scene.computeFrameJacobian(self._to_scene_q(robot_id, q), group.tip_link, True)
         arr = np.asarray(result, dtype=np.float64)
         if arr.shape[0] != 6:
             raise ValueError(f"Unexpected RoboPlan Jacobian shape: {arr.shape}; expected 6 x n")
-        return arr
+        scene_joint_order = self._query_scene_joint_order(scene, robot.config)
+        if scene_joint_order is not None and arr.shape[1] == len(scene_joint_order):
+            missing = [name for name in group.local_joint_names if name not in scene_joint_order]
+            if missing:
+                raise ValueError(f"Unknown joints for planning group '{group_id}': {missing}")
+            indices = [scene_joint_order.index(name) for name in group.local_joint_names]
+            return arr[:, indices]
+        if arr.shape[1] == len(robot.config.joint_names):
+            missing = [
+                name for name in group.local_joint_names if name not in robot.config.joint_names
+            ]
+            if missing:
+                raise ValueError(f"Unknown joints for planning group '{group_id}': {missing}")
+            indices = [robot.config.joint_names.index(name) for name in group.local_joint_names]
+            return arr[:, indices]
+        raise ValueError(
+            f"Unexpected RoboPlan Jacobian shape: {arr.shape}; cannot project group '{group_id}'"
+        )
 
     # PlannerSpec for native RoboPlan planning
 
@@ -502,10 +555,69 @@ class RoboPlanWorld:
             return None
         return list(group_info.joint_names)
 
+    def _validate_planning_group_config(self, config: RobotModelConfig) -> None:
+        """Validate planning groups before mutating backend state."""
+        seen_group_names: set[str] = set()
+        for definition in config.planning_groups:
+            group_id = make_planning_group_id(config.name, definition.name)
+            if definition.name in seen_group_names:
+                raise ValueError(f"Planning group '{group_id}' is already registered")
+            make_global_joint_names(config.name, definition.joint_names)
+            seen_group_names.add(definition.name)
+
+    def _planning_group_from_config(
+        self, config: RobotModelConfig, group_id: PlanningGroupID
+    ) -> PlanningGroup:
+        for definition in config.planning_groups:
+            if make_planning_group_id(config.name, definition.name) == group_id:
+                return PlanningGroup(
+                    id=group_id,
+                    robot_name=config.name,
+                    group_name=definition.name,
+                    joint_names=tuple(make_global_joint_names(config.name, definition.joint_names)),
+                    local_joint_names=definition.joint_names,
+                    base_link=definition.base_link,
+                    tip_link=definition.tip_link,
+                    source=definition.source,
+                )
+        raise KeyError(f"Unknown planning group ID: {group_id}")
+
+    def _planning_group_from_id(self, group_id: PlanningGroupID) -> PlanningGroup:
+        for robot in self._robots.values():
+            try:
+                return self._planning_group_from_config(robot.config, group_id)
+            except KeyError:
+                continue
+        raise KeyError(f"Unknown planning group ID: {group_id}")
+
+    def _primary_pose_group_id_for_config(self, config: RobotModelConfig) -> PlanningGroupID | None:
+        pose_group_ids = [
+            make_planning_group_id(config.name, group.name)
+            for group in config.planning_groups
+            if group.has_pose_target
+        ]
+        if not pose_group_ids:
+            return None
+        if len(pose_group_ids) > 1:
+            raise ValueError(
+                f"Robot '{config.name}' has {len(pose_group_ids)} pose-targetable "
+                "planning groups; use an explicit planning group ID"
+            )
+        return pose_group_ids[0]
+
     def _get_robot(self, robot_id: WorldRobotID) -> _RoboPlanRobotData:
         if robot_id not in self._robots:
             raise KeyError(f"Robot '{robot_id}' not found")
         return self._robots[robot_id]
+
+    def _robot_id_for_group(self, group_id: PlanningGroupID) -> WorldRobotID:
+        group = self._planning_group_from_id(group_id)
+        matches = [
+            rid for rid, data in self._robots.items() if data.config.name == group.robot_name
+        ]
+        if not matches:
+            raise KeyError(f"No robot registered for planning group '{group_id}'")
+        return matches[0]
 
     def _joint_state_to_q(
         self, robot_id: WorldRobotID, joint_state: JointState
@@ -515,10 +627,24 @@ class RoboPlanWorld:
             raise ValueError("JointState position length must match configured joint count")
         if not joint_state.name:
             return np.asarray(joint_state.position, dtype=np.float64)
-        name_to_pos = {
-            robot.config.get_urdf_joint_name(name): position
-            for name, position in zip(joint_state.name, joint_state.position, strict=True)
-        }
+        name_to_pos: dict[str, float] = {}
+        for name, position in zip(joint_state.name, joint_state.position, strict=True):
+            if name in robot.config.joint_names:
+                resolved_name = name
+            elif name in robot.config.joint_name_mapping:
+                resolved_name = robot.config.joint_name_mapping[name]
+            elif is_global_joint_name(name):
+                prefix = f"{robot.config.name}/"
+                if not name.startswith(prefix):
+                    continue
+                resolved_name = name[len(prefix) :]
+                if resolved_name not in robot.config.joint_names:
+                    raise ValueError(f"Unknown global joint name for RoboPlanWorld: {name}")
+            else:
+                resolved_name = robot.config.get_urdf_joint_name(name)
+            if resolved_name in name_to_pos:
+                raise ValueError(f"JointState resolves duplicate joint '{resolved_name}'")
+            name_to_pos[resolved_name] = float(position)
         missing = [name for name in robot.config.joint_names if name not in name_to_pos]
         if missing:
             raise ValueError(f"JointState missing joints for RoboPlanWorld: {missing}")

@@ -21,6 +21,12 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.manipulation.planning.groups.identifiers import (
+    make_global_joint_names,
+    make_planning_group_id,
+)
+from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
+from dimos.manipulation.planning.groups.utils import filter_joint_state_to_selected_joints
 from dimos.manipulation.planning.monitor.robot_state_monitor import RobotStateMonitor
 from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
 from dimos.manipulation.planning.spec.models import PlanningSceneInfo
@@ -40,6 +46,8 @@ if TYPE_CHECKING:
         CollisionObjectMessage,
         JointPath,
         Obstacle,
+        PlanningGroupID,
+        RobotName,
         WorldRobotID,
     )
     from dimos.msgs.vision_msgs.Detection3D import Detection3D
@@ -61,6 +69,8 @@ class WorldMonitor:
         self._lock = threading.RLock()
         self._robot_joints: dict[WorldRobotID, list[str]] = {}
         self._robot_configs: dict[WorldRobotID, RobotModelConfig] = {}
+        self._robot_ids_by_name: dict[RobotName, WorldRobotID] = {}
+        self._planning_groups = PlanningGroupRegistry()
         self._state_monitors: dict[WorldRobotID, RobotStateMonitor] = {}
         self._obstacle_monitor: WorldObstacleMonitor | None = None
         self._viz_thread: threading.Thread | None = None
@@ -72,11 +82,21 @@ class WorldMonitor:
     def add_robot(self, config: RobotModelConfig) -> WorldRobotID:
         """Add a robot. Returns robot_id."""
         with self._lock:
+            if config.name in self._robot_ids_by_name:
+                raise ValueError(f"Robot name '{config.name}' is already registered")
+            self._validate_planning_group_config(config)
             robot_id = self._world.add_robot(config)
             self._robot_joints[robot_id] = config.joint_names
             self._robot_configs[robot_id] = config
+            self._robot_ids_by_name[config.name] = robot_id
+            self._planning_groups.add_robot(config)
             logger.info(f"Added robot '{config.name}' as '{robot_id}'")
         return robot_id
+
+    @property
+    def planning_groups(self) -> PlanningGroupRegistry:
+        """Registered public planning groups."""
+        return self._planning_groups
 
     def planning_scene_info(self) -> PlanningSceneInfo:
         """Return a stable metadata snapshot of the initialized planning scene."""
@@ -284,9 +304,11 @@ class WorldMonitor:
             if positions is not None:
                 joint_names = self._robot_joints.get(robot_id, [])
                 return JointState(
-                    name=joint_names,
-                    position=positions.tolist(),
-                    velocity=velocities.tolist() if velocities is not None else [],
+                    {
+                        "name": joint_names,
+                        "position": positions.tolist(),
+                        "velocity": velocities.tolist() if velocities is not None else [],
+                    }
                 )
 
         # Fall back to world's live context
@@ -294,13 +316,129 @@ class WorldMonitor:
             ctx = self._world.get_live_context()
             return self._world.get_joint_state(ctx, robot_id)
 
+    def current_global_joint_state(self, max_age: float = 1.0) -> JointState:
+        """Return current state for all fresh robots with public global joint names."""
+        names: list[str] = []
+        positions: list[float] = []
+        for robot_name, robot_id in self._robot_ids_by_name.items():
+            if robot_id in self._state_monitors and self.is_state_stale(robot_id, max_age):
+                continue
+            state = self.get_current_joint_state(robot_id)
+            if state is None:
+                continue
+            pos_by_name = dict(zip(state.name, state.position, strict=True))
+            for local_name in self._robot_joints.get(robot_id, []):
+                if local_name in pos_by_name:
+                    names.append(f"{robot_name}/{local_name}")
+                    positions.append(float(pos_by_name[local_name]))
+        return JointState({"name": names, "position": positions})
+
+    def current_group_joint_state(
+        self, group_id: PlanningGroupID, max_age: float = 1.0
+    ) -> JointState:
+        """Return current joint state scoped and ordered for one planning group."""
+        group = self._planning_groups.get(group_id)
+        state = self._current_robot_joint_state_for_group(group_id, max_age)
+        return filter_joint_state_to_selected_joints(
+            state, group.joint_names, group.local_joint_names
+        )
+
+    def _current_robot_joint_state_for_group(
+        self, group_id: PlanningGroupID, max_age: float = 1.0
+    ) -> JointState:
+        """Return current full robot state for a planning group."""
+        group = self._planning_groups.get(group_id)
+        robot_id = self._robot_ids_by_name[group.robot_name]
+        if robot_id in self._state_monitors and self.is_state_stale(robot_id, max_age):
+            raise ValueError(f"Current state for robot '{group.robot_name}' is stale")
+        state = self.get_current_joint_state(robot_id)
+        if state is None:
+            raise ValueError(f"Current state for robot '{group.robot_name}' is unavailable")
+        return state
+
+    def _joint_state_for_group_query(
+        self, group_id: PlanningGroupID, joint_state: JointState | None
+    ) -> JointState:
+        """Normalize full-robot or group-scoped input to full robot-local state."""
+        group = self._planning_groups.get(group_id)
+        robot_id = self._robot_ids_by_name[group.robot_name]
+        if joint_state is not None:
+            full_state = self._full_robot_joint_state_from_input(robot_id, joint_state)
+            if full_state is not None:
+                return full_state
+        current_state = self._current_robot_joint_state_for_group(group_id)
+        if joint_state is None:
+            return current_state
+        group_state = filter_joint_state_to_selected_joints(
+            joint_state, group.joint_names, group.local_joint_names
+        )
+        positions_by_name = dict(zip(current_state.name, current_state.position, strict=True))
+        for local_name, position in zip(group.local_joint_names, group_state.position, strict=True):
+            if local_name not in positions_by_name:
+                raise ValueError(f"Current state is missing group joint '{local_name}'")
+            positions_by_name[local_name] = float(position)
+        return JointState(
+            {
+                "name": list(current_state.name),
+                "position": [positions_by_name[name] for name in current_state.name],
+            }
+        )
+
+    def _full_robot_joint_state_from_input(
+        self, robot_id: WorldRobotID, joint_state: JointState
+    ) -> JointState | None:
+        """Return a full robot-local state if input contains all robot joints."""
+        config = self._robot_configs[robot_id]
+        if not joint_state.name:
+            if len(joint_state.position) != len(config.joint_names):
+                return None
+            return JointState(
+                {"name": list(config.joint_names), "position": list(joint_state.position)}
+            )
+        if len(joint_state.name) != len(joint_state.position):
+            raise ValueError("JointState name and position lengths must match")
+        resolved_positions: dict[str, float] = {}
+        global_prefix = f"{config.name}/"
+        for name, position in zip(joint_state.name, joint_state.position, strict=True):
+            if name in config.joint_names:
+                resolved_name = name
+            elif name in config.joint_name_mapping:
+                resolved_name = config.joint_name_mapping[name]
+            elif name.startswith(global_prefix):
+                resolved_name = name[len(global_prefix) :]
+            else:
+                resolved_name = config.get_urdf_joint_name(name)
+            if resolved_name not in config.joint_names:
+                return None
+            if resolved_name in resolved_positions:
+                raise ValueError(f"JointState resolves duplicate joint '{resolved_name}'")
+            resolved_positions[resolved_name] = float(position)
+        if set(resolved_positions) != set(config.joint_names):
+            return None
+        return JointState(
+            {
+                "name": list(config.joint_names),
+                "position": [resolved_positions[name] for name in config.joint_names],
+            }
+        )
+
+    def _validate_planning_group_config(self, config: RobotModelConfig) -> None:
+        """Validate planning groups before mutating world/backend state."""
+        seen_group_names: set[str] = set()
+        for definition in config.planning_groups:
+            group_id = make_planning_group_id(config.name, definition.name)
+            if definition.name in seen_group_names:
+                raise ValueError(f"Planning group '{group_id}' is already registered")
+            make_global_joint_names(config.name, definition.joint_names)
+            seen_group_names.add(definition.name)
+
     def get_current_velocities(self, robot_id: WorldRobotID) -> JointState | None:
         """Get current joint velocities as JointState. Returns None if not available."""
         if robot_id in self._state_monitors:
             velocities = self._state_monitors[robot_id].get_current_velocities()
             if velocities is not None:
                 joint_names = self._robot_joints.get(robot_id, [])
-                return JointState(name=joint_names, velocity=velocities.tolist())
+                return JointState({"name": joint_names, "velocity": velocities.tolist()})
         return None
 
     def wait_for_state(self, robot_id: WorldRobotID, timeout: float = 1.0) -> bool:
@@ -367,15 +505,23 @@ class WorldMonitor:
         self, robot_id: WorldRobotID, joint_state: JointState | None = None
     ) -> PoseStamped:
         """Get end-effector pose. Uses current state if joint_state is None."""
+        robot_name = self._robot_configs[robot_id].name
+        group_id = self._planning_groups.primary_pose_group_id_for_robot(robot_name)
+        if group_id is None:
+            raise ValueError(f"Robot '{robot_name}' has no pose-targetable planning group")
+        return self.get_group_ee_pose(group_id, joint_state)
+
+    def get_group_ee_pose(
+        self, group_id: PlanningGroupID, joint_state: JointState | None = None
+    ) -> PoseStamped:
+        """Get planning-group tip pose. Uses current group state if joint_state is None."""
+        group = self._planning_groups.get(group_id)
+        robot_id = self._robot_ids_by_name[group.robot_name]
         with self._world.scratch_context() as ctx:
-            # If no state provided, fetch current from state monitor
-            if joint_state is None:
-                joint_state = self.get_current_joint_state(robot_id)
+            normalized_state = self._joint_state_for_group_query(group_id, joint_state)
+            self._world.set_joint_state(ctx, robot_id, normalized_state)
 
-            if joint_state is not None:
-                self._world.set_joint_state(ctx, robot_id, joint_state)
-
-            return self._world.get_ee_pose(ctx, robot_id)
+            return self._world.get_group_ee_pose(ctx, group_id)
 
     def get_link_pose(
         self, robot_id: WorldRobotID, link_name: str, joint_state: JointState | None = None
@@ -411,9 +557,22 @@ class WorldMonitor:
 
     def get_jacobian(self, robot_id: WorldRobotID, joint_state: JointState) -> NDArray[np.float64]:
         """Get 6xN Jacobian matrix."""
+        robot_name = self._robot_configs[robot_id].name
+        group_id = self._planning_groups.primary_pose_group_id_for_robot(robot_name)
+        if group_id is None:
+            raise ValueError(f"Robot '{robot_name}' has no pose-targetable planning group")
+        return self.get_group_jacobian(group_id, joint_state)
+
+    def get_group_jacobian(
+        self, group_id: PlanningGroupID, joint_state: JointState
+    ) -> NDArray[np.float64]:
+        """Get 6xN planning-group Jacobian matrix."""
+        group = self._planning_groups.get(group_id)
+        robot_id = self._robot_ids_by_name[group.robot_name]
         with self._world.scratch_context() as ctx:
-            self._world.set_joint_state(ctx, robot_id, joint_state)
-            return self._world.get_jacobian(ctx, robot_id)
+            normalized_state = self._joint_state_for_group_query(group_id, joint_state)
+            self._world.set_joint_state(ctx, robot_id, normalized_state)
+            return self._world.get_group_jacobian(ctx, group_id)
 
     # Lifecycle
 

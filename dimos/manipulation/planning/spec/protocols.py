@@ -33,6 +33,7 @@ if TYPE_CHECKING:
         IKResult,
         JointPath,
         Obstacle,
+        PlanningGroupID,
         PlanningResult,
         PlanningSceneInfo,
         WorldRobotID,
@@ -168,6 +169,14 @@ class WorldSpec(Protocol):
 
     def get_jacobian(self, ctx: Any, robot_id: WorldRobotID) -> NDArray[np.float64]:
         """Get end-effector Jacobian (6 x n_joints)."""
+        ...
+
+    def get_group_ee_pose(self, ctx: Any, group_id: PlanningGroupID) -> PoseStamped:
+        """Get planning-group tip pose."""
+        ...
+
+    def get_group_jacobian(self, ctx: Any, group_id: PlanningGroupID) -> NDArray[np.float64]:
+        """Get planning-group Jacobian (6 x n_group_joints)."""
         ...
 
 

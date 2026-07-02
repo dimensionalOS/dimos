@@ -1,4 +1,6 @@
-## ADDED Requirements
+# planning-group-foundation Specification
+
+## Requirements
 
 ### Requirement: Planning group definitions must identify kinematic chains
 The planning configuration MUST represent kinematic chain metadata with planning-group definitions containing group-local joint names, a chain base link, and an optional pose-target tip link.

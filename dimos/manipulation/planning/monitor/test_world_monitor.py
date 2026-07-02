@@ -17,6 +17,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+import pytest
+
 from dimos.manipulation.planning import factory as planning_factory
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.monitor import world_monitor as world_monitor_module
@@ -25,15 +28,48 @@ from dimos.manipulation.planning.spec.models import PlanningSceneInfo
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointState import JointState
+
+
+class _VectorLike(list[float]):
+    def tolist(self) -> list[float]:
+        return list(self)
+
+
+class _FakeStateMonitor:
+    def __init__(self, positions: list[float], stale: bool = False) -> None:
+        self._positions = _VectorLike(positions)
+        self._stale = stale
+
+    def get_current_positions(self) -> _VectorLike:
+        return self._positions
+
+    def get_current_velocities(self) -> None:
+        return None
+
+    def is_state_stale(self, max_age: float) -> bool:
+        _ = max_age
+        return self._stale
+
+
+class _ScratchContext:
+    def __enter__(self) -> str:
+        return "scratch"
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+        return False
 
 
 class FakeWorld:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, Any]] = []
+        self.calls: list[tuple[Any, ...]] = []
+        self.configs: dict[str, RobotModelConfig] = {}
 
     def add_robot(self, config):
         self.calls.append(("add_robot", config))
-        return "robot-1"
+        robot_id = f"robot-{len(self.configs) + 1}"
+        self.configs[robot_id] = config
+        return robot_id
 
     def get_robot_ids(self):
         return []
@@ -70,12 +106,14 @@ class FakeWorld:
         return None
 
     def scratch_context(self):
-        return self
+        self.calls.append(("scratch_context", None))
+        return _ScratchContext()
 
     def sync_from_joint_state(self, robot_id, joint_state) -> None:
         return None
 
     def set_joint_state(self, ctx, robot_id, joint_state) -> None:
+        self.calls.append(("set_joint_state", ctx, robot_id, joint_state))
         return None
 
     def get_joint_state(self, ctx, robot_id):
@@ -96,11 +134,19 @@ class FakeWorld:
     def get_ee_pose(self, ctx, robot_id):
         return None
 
+    def get_group_ee_pose(self, ctx, group_id):
+        self.calls.append(("get_group_ee_pose", ctx, group_id))
+        return PoseStamped(position=Vector3(1, 2, 3), orientation=Quaternion([0, 0, 0, 1]))
+
     def get_link_pose(self, ctx, robot_id, link_name):
         return []
 
     def get_jacobian(self, ctx, robot_id):
         return []
+
+    def get_group_jacobian(self, ctx, group_id):
+        self.calls.append(("get_group_jacobian", ctx, group_id))
+        return np.ones((6, 2))
 
     def get_visualization_url(self):
         return None
@@ -165,6 +211,26 @@ def _robot_config() -> RobotModelConfig:
     )
 
 
+def _robot_config_with_groups(groups: list[PlanningGroupDefinition]) -> RobotModelConfig:
+    return _robot_config().model_copy(update={"planning_groups": groups})
+
+
+def _three_joint_reordered_group_config() -> RobotModelConfig:
+    return _robot_config().model_copy(
+        update={
+            "joint_names": ["j1", "j2", "j3"],
+            "planning_groups": [
+                PlanningGroupDefinition(
+                    name="manipulator",
+                    joint_names=("j2", "j1"),
+                    base_link="base",
+                    tip_link="ee",
+                )
+            ],
+        }
+    )
+
+
 def test_world_monitor_add_robot_records_scene_without_visualization_probe() -> None:
     fake_world = FakeWorld()
     fake_viz = FakeViz()
@@ -209,3 +275,137 @@ def test_create_planning_specs_wraps_existing_world(monkeypatch) -> None:
     assert planning_specs.world_monitor.visualization is None
     assert planning_specs.kinematics is fake_kinematics
     assert planning_specs.planner is fake_planner
+
+
+def test_world_monitor_exposes_planning_groups_and_duplicate_names_do_not_mutate() -> None:
+    fake_world = FakeWorld()
+    monitor = world_monitor_module.WorldMonitor(world=fake_world)  # type: ignore[arg-type]
+    monitor.add_robot(_robot_config())
+
+    assert [group.id for group in monitor.planning_groups.list()] == ["arm/manipulator"]
+    with pytest.raises(ValueError, match="already registered"):
+        monitor.add_robot(_robot_config())
+    assert [call[0] for call in fake_world.calls].count("add_robot") == 1
+
+
+def test_world_monitor_invalid_duplicate_group_config_does_not_mutate_backend() -> None:
+    fake_world = FakeWorld()
+    monitor = world_monitor_module.WorldMonitor(world=fake_world)  # type: ignore[arg-type]
+    invalid_config = _robot_config_with_groups(
+        [
+            PlanningGroupDefinition(
+                name="manipulator", joint_names=("j1",), base_link="base", tip_link="ee"
+            ),
+            PlanningGroupDefinition(
+                name="manipulator", joint_names=("j2",), base_link="base", tip_link="ee"
+            ),
+        ]
+    )
+
+    with pytest.raises(ValueError, match="already registered"):
+        monitor.add_robot(invalid_config)
+
+    assert [call[0] for call in fake_world.calls].count("add_robot") == 0
+
+
+def test_world_monitor_invalid_group_joint_name_does_not_mutate_backend() -> None:
+    fake_world = FakeWorld()
+    monitor = world_monitor_module.WorldMonitor(world=fake_world)  # type: ignore[arg-type]
+    invalid_config = _robot_config_with_groups(
+        [
+            PlanningGroupDefinition(
+                name="manipulator",
+                joint_names=("j1", "bad/joint"),
+                base_link="base",
+                tip_link="ee",
+            )
+        ]
+    )
+
+    with pytest.raises(ValueError, match="Invalid local joint name"):
+        monitor.add_robot(invalid_config)
+
+    assert [call[0] for call in fake_world.calls].count("add_robot") == 0
+
+
+def test_current_group_joint_state_uses_public_names_in_group_order() -> None:
+    fake_world = FakeWorld()
+    monitor = world_monitor_module.WorldMonitor(world=fake_world)  # type: ignore[arg-type]
+    robot_id = monitor.add_robot(_three_joint_reordered_group_config())
+    monitor._state_monitors[robot_id] = _FakeStateMonitor([0.1, 0.2, 0.3])  # type: ignore[attr-defined]
+
+    state = monitor.current_group_joint_state("arm/manipulator")
+
+    assert state.name == ["arm/j2", "arm/j1"]
+    assert state.position == [0.2, 0.1]
+
+
+def test_group_kinematics_with_full_state_does_not_require_current_state() -> None:
+    fake_world = FakeWorld()
+    monitor = world_monitor_module.WorldMonitor(world=fake_world)  # type: ignore[arg-type]
+    monitor.add_robot(_three_joint_reordered_group_config())
+
+    pose = monitor.get_group_ee_pose(
+        "arm/manipulator",
+        JointState({"name": ["j1", "j2", "j3"], "position": [0.1, 0.2, 0.3]}),
+    )
+
+    set_calls = [call for call in fake_world.calls if call[0] == "set_joint_state"]
+    assert set_calls[0][3].name == ["j1", "j2", "j3"]
+    assert set_calls[0][3].position == [0.1, 0.2, 0.3]
+    assert pose.position.x == 1
+
+
+def test_group_kinematics_route_to_backend_and_merge_group_state() -> None:
+    fake_world = FakeWorld()
+    monitor = world_monitor_module.WorldMonitor(world=fake_world)  # type: ignore[arg-type]
+    robot_id = monitor.add_robot(_three_joint_reordered_group_config())
+    monitor._state_monitors[robot_id] = _FakeStateMonitor([0.1, 0.2, 0.3])  # type: ignore[attr-defined]
+
+    pose = monitor.get_group_ee_pose(
+        "arm/manipulator", JointState({"name": ["arm/j2", "arm/j1"], "position": [0.8, 0.9]})
+    )
+    jacobian = monitor.get_group_jacobian(
+        "arm/manipulator", JointState({"name": ["arm/j2", "arm/j1"], "position": [0.3, 0.4]})
+    )
+
+    set_calls = [call for call in fake_world.calls if call[0] == "set_joint_state"]
+    assert set_calls[0][3].name == ["j1", "j2", "j3"]
+    assert set_calls[0][3].position == [0.9, 0.8, 0.3]
+    assert set_calls[1][3].name == ["j1", "j2", "j3"]
+    assert set_calls[1][3].position == [0.4, 0.3, 0.3]
+    assert pose.position.x == 1
+    assert jacobian.shape == (6, 2)
+    assert ("get_group_ee_pose", "scratch", "arm/manipulator") in fake_world.calls
+    assert ("get_group_jacobian", "scratch", "arm/manipulator") in fake_world.calls
+
+
+def test_legacy_wrappers_fail_for_no_pose_and_ambiguous_pose_groups() -> None:
+    fake_world = FakeWorld()
+    monitor = world_monitor_module.WorldMonitor(world=fake_world)  # type: ignore[arg-type]
+    no_pose_id = monitor.add_robot(
+        _robot_config_with_groups(
+            [PlanningGroupDefinition(name="base", joint_names=("j1",), base_link="base")]
+        )
+    )
+    with pytest.raises(ValueError, match="no pose-targetable"):
+        monitor.get_ee_pose(no_pose_id, JointState({"name": ["j1", "j2"], "position": [0.0, 0.0]}))
+
+    fake_world2 = FakeWorld()
+    monitor2 = world_monitor_module.WorldMonitor(world=fake_world2)  # type: ignore[arg-type]
+    ambiguous_id = monitor2.add_robot(
+        _robot_config_with_groups(
+            [
+                PlanningGroupDefinition(
+                    name="a", joint_names=("j1",), base_link="base", tip_link="ee1"
+                ),
+                PlanningGroupDefinition(
+                    name="b", joint_names=("j2",), base_link="base", tip_link="ee2"
+                ),
+            ]
+        )
+    )
+    with pytest.raises(ValueError, match="pose-targetable planning groups"):
+        monitor2.get_jacobian(
+            ambiguous_id, JointState({"name": ["j1", "j2"], "position": [0.0, 0.0]})
+        )

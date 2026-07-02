@@ -387,6 +387,37 @@ def test_joint_name_mapping_is_applied_to_input_states(
     assert live_round_trip.position == [0.2, 0.3]
 
 
+def test_global_joint_names_are_mapped_without_regressing_coordinator_names(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    robot_config.joint_name_mapping = {"arm/j1": "joint1", "arm/j2": "joint2"}
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    world.finalize()
+
+    world.sync_from_joint_state(
+        robot_id, JointState(name=["arm/j1", "arm/j2"], position=[0.4, 0.5])
+    )
+    assert world.get_joint_state(world.get_live_context(), robot_id).position == [0.4, 0.5]
+
+    world.sync_from_joint_state(
+        robot_id, JointState(name=["arm/joint1", "arm/joint2"], position=[0.2, 0.3])
+    )
+    assert world.get_joint_state(world.get_live_context(), robot_id).position == [0.2, 0.3]
+
+
+def test_duplicate_resolved_joint_names_fail_clearly(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    robot_config.joint_name_mapping = {"alias": "joint1"}
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    world.finalize()
+
+    with pytest.raises(ValueError, match="duplicate joint 'joint1'"):
+        world.sync_from_joint_state(
+            robot_id, JointState(name=["joint1", "alias"], position=[0.1, 0.2])
+        )
+
+
 def test_obstacle_mutation_updates_scene_and_stored_pose(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
@@ -471,6 +502,65 @@ def test_fk_jacobian_and_explicit_min_distance_unsupported(
     assert world.get_jacobian(ctx, robot_id).shape == (6, 2)
     with pytest.raises(NotImplementedError, match="get_min_distance"):
         world.get_min_distance(ctx, robot_id)
+
+
+def test_group_fk_and_jacobian_use_group_tip_and_local_joint_order(
+    fake_roboplan: None, robot_config: RobotModelConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = robot_config.model_copy(
+        update={
+            "joint_names": ["joint1", "joint2", "joint3"],
+            "planning_groups": [
+                PlanningGroupDefinition(
+                    name="wrist",
+                    joint_names=("joint3", "joint1"),
+                    base_link="base",
+                    tip_link="wrist_tip",
+                )
+            ],
+            "joint_limits_lower": [-1.0, -2.0, -3.0],
+            "joint_limits_upper": [1.0, 2.0, 3.0],
+        }
+    )
+    monkeypatch.setattr(FakeScene, "joint_group_joint_names", ["joint2", "joint1", "joint3"])
+    monkeypatch.setattr(FakeScene, "position_limits_lower", [-2.0, -1.0, -3.0])
+    monkeypatch.setattr(FakeScene, "position_limits_upper", [2.0, 1.0, 3.0])
+    fk_frames: list[str] = []
+
+    def fake_fk(
+        self: FakeScene, q: np.ndarray, frame_name: str, base_frame: str = ""
+    ) -> np.ndarray:
+        _ = (self, base_frame)
+        fk_frames.append(frame_name)
+        mat = np.eye(4)
+        mat[0, 3] = float(np.sum(q))
+        return mat
+
+    def fake_jacobian(
+        self: FakeScene, q: np.ndarray, frame_name: str, local: bool = True
+    ) -> np.ndarray:
+        _ = (self, q)
+        assert frame_name == "wrist_tip"
+        assert local is True
+        return np.arange(18, dtype=np.float64).reshape(6, 3)
+
+    monkeypatch.setattr(FakeScene, "forwardKinematics", fake_fk)
+    monkeypatch.setattr(FakeScene, "computeFrameJacobian", fake_jacobian)
+    world, robot_id = _make_world(fake_roboplan, config)
+    world.finalize()
+    ctx = world.get_live_context()
+    world.set_joint_state(
+        ctx,
+        robot_id,
+        JointState({"name": ["joint1", "joint2", "joint3"], "position": [1.0, 2.0, 3.0]}),
+    )
+
+    pose = world.get_group_ee_pose(ctx, "arm/wrist")
+    jacobian = world.get_group_jacobian(ctx, "arm/wrist")
+
+    assert fk_frames == ["wrist_tip"]
+    assert pose.position.x == pytest.approx(6.0)
+    np.testing.assert_allclose(jacobian, np.arange(18, dtype=np.float64).reshape(6, 3)[:, [2, 1]])
 
 
 def test_native_planner_converts_path(fake_roboplan: None, robot_config: RobotModelConfig) -> None:

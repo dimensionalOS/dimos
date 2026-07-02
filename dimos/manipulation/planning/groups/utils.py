@@ -28,9 +28,6 @@ from dimos.manipulation.planning.spec.models import (
     PlanningGroupID,
 )
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger()
 
 
 def planning_group_id_from_selector(selector: PlanningGroupID | PlanningGroup) -> PlanningGroupID:
@@ -48,10 +45,6 @@ def matching_global_joint_name(
     matches = [name for name in positions_by_name if name.endswith(suffix)]
     if len(matches) == 1:
         return matches[0]
-    logger.warning(
-        f"Expected exactly one global joint ending with local joint name "
-        f"'{local_joint_name}', found {len(matches)} matches: {matches}"
-    )
     return None
 
 
@@ -83,7 +76,7 @@ def filter_joint_state_to_selected_joints(
         missing.append(global_name)
 
     if missing:
-        raise ValueError(f"Joint state is missing selected joints: {missing}")
+        raise ValueError(f"IK result is missing selected joints: {missing}")
 
     return JointState({"name": list(global_joint_names), "position": selected_positions})
 
