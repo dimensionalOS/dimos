@@ -584,8 +584,11 @@ class DepthStreamer:
         cam_pos  = pkt.pose_t
         h_rel    = xyz[:, 2] - cam_z
         dist     = np.linalg.norm(xyz - cam_pos, axis=1)
-        d_z_norm = np.where(dist > 0, (xyz[:, 2] - cam_z) / dist, 0.0)
-        keep     = (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI) & (dist <= _MAP_MAX_DEPTH) & (d_z_norm > _FLOOR_RAY_Z)
+        # Dynamic floor removal: IMU aligns world Z with gravity, so the floor is
+        # always the lowest-Z cluster. 2nd-percentile + 12 cm buffer removes it
+        # without needing to know camera height.
+        floor_z  = float(np.percentile(xyz[:, 2], 2)) + 0.12
+        keep     = (xyz[:, 2] > floor_z) & (h_rel <= _Z_REL_HI) & (dist <= _MAP_MAX_DEPTH)
         xyz_kept = xyz[keep]
         if len(xyz_kept):
             vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
