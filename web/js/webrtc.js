@@ -10,6 +10,7 @@ import {
     VIDEO_STATS_INTERVAL_MS,
     state,
 } from './state.js';
+import { computeVideoStats, findVideoInbound, selectedIceType } from './statscore.js';
 
 const STUN_ONLY = [{ urls: 'stun:stun.cloudflare.com:3478' }];
 
@@ -285,24 +286,8 @@ export function stopClockSync() {
 }
 
 // ─── Video stats ─────────────────────────────────────────────────────────
-// Resolve the in-use ICE path from a getStats() report: find the active
-// candidate-pair, look up its local candidate, map candidateType → label.
-//   host/srflx (prflx) → direct over STUN-discovered address
-//   relay              → going through a TURN relay
-function selectedIceType(report) {
-    let pair = null;
-    report.forEach((r) => {
-        if (r.type !== 'candidate-pair') return;
-        // `selected` (Chrome) or nominated+succeeded (spec) marks the active pair.
-        if (r.selected || (r.nominated && r.state === 'succeeded')) pair = r;
-    });
-    if (!pair) return null;
-    const local = report.get(pair.localCandidateId);
-    if (!local) return null;
-    return local.candidateType === 'relay' ? 'turn'
-        : local.candidateType === 'srflx' || local.candidateType === 'prflx' ? 'stun'
-        : 'direct';  // host
-}
+// Delta math + ICE-path resolution live in statscore.js (shared with the
+// LiveKit path, unit-tested under web/js/tests/).
 
 // Glass-to-glass latency: read the robot's capture stamp from a strip APPENDED
 // below the video (robot draws it as extra rows, not over content). Constants
@@ -356,65 +341,39 @@ function readLatencyStamp() {
 // getStats() lives only in the browser, so the operator samples the inbound
 // track and reports health to the robot (rate/bitrate/loss = deltas between
 // consecutive 1s samples). Robot folds it into report.json.
-export function startVideoStats(channel) {
+//
+// getReport supplies the RTCStatsReport: defaults to the Cloudflare path's
+// state.pc.getStats(); the LiveKit path passes its track receiver's getStats.
+export function startVideoStats(channel, getReport = null) {
     state.videoStatsPrev = null;
     // Skip overlapping ticks — if getStats() blocks >1s, two concurrent
     // bodies race on videoStatsPrev and emit nonsense deltas.
     let inFlight = false;
     state.videoStatsTimer = setInterval(async () => {
         if (inFlight) return;
-        if (!channel || channel.readyState !== 'open' || !state.pc) return;
+        if (!channel || channel.readyState !== 'open') return;
+        if (!getReport && !state.pc) return;  // CF path needs the PC
         inFlight = true;
-        let inbound = null;
         let report = null;
         try {
-            report = await state.pc.getStats();
-            report.forEach((r) => {
-                if (r.type === 'inbound-rtp' && r.kind === 'video') inbound = r;
-            });
-            state.liveStats.iceType = selectedIceType(report);  // direct/stun/turn
+            report = await (getReport ? getReport() : state.pc.getStats());
         } catch (_) {
             inFlight = false;
             return;
         }
+        state.liveStats.iceType = selectedIceType(report);  // direct/stun/turn
+        const inbound = findVideoInbound(report);
         if (!inbound) { inFlight = false; return; }
 
-        const now = inbound.timestamp;  // ms, getStats clock
         const prev = state.videoStatsPrev;
         state.videoStatsPrev = inbound;
-        if (!prev) { inFlight = false; return; }  // need two samples for deltas
-
-        const dt = (now - prev.timestamp) / 1000;
-        if (dt <= 0) { inFlight = false; return; }  // must clear inFlight or stats wedge forever
-        const dFrames = (inbound.framesDecoded ?? 0) - (prev.framesDecoded ?? 0);
-        const dBytes = (inbound.bytesReceived ?? 0) - (prev.bytesReceived ?? 0);
-        const dLost = (inbound.packetsLost ?? 0) - (prev.packetsLost ?? 0);
-        const dRecv = (inbound.packetsReceived ?? 0) - (prev.packetsReceived ?? 0);
-        const lossDen = dLost + dRecv;
-        // Avg decode time per frame over the window — latency component.
-        const dDecode = (inbound.totalDecodeTime ?? 0) - (prev.totalDecodeTime ?? 0);
-        const decodeMs = dFrames > 0 ? +((dDecode / dFrames) * 1000).toFixed(1) : 0;
-
-        const payload = {
-            type: 'video_stats',
-            fps: +(dFrames / dt).toFixed(1),
-            kbps: +((dBytes * 8) / dt / 1000).toFixed(1),
-            width: inbound.frameWidth ?? 0,
-            height: inbound.frameHeight ?? 0,
-            loss_pct: lossDen > 0 ? +((dLost / lossDen) * 100).toFixed(2) : 0,
-            jitter_ms: +((inbound.jitter ?? 0) * 1000).toFixed(1),
-            frames_dropped: inbound.framesDropped ?? 0,
-            freezes: inbound.freezeCount ?? 0,
-            // Receive-side latency (network RTT lives in clock-sync, not here).
-            jitter_buffer_ms:
-                inbound.jitterBufferEmittedCount
-                    ? +((inbound.jitterBufferDelay / inbound.jitterBufferEmittedCount) * 1000).toFixed(1)
-                    : 0,
-            decode_ms: decodeMs,
-            e2e_latency_ms: readLatencyStamp(),  // glass-to-glass, 0 if not stamping
-        };
-        try { channel.send(JSON.stringify(payload)); } catch (_) {}
-        state.liveStats.video = payload;  // latest sample for the HUD/VR quad
+        // Stamp decode draws the video to a canvas — skip it on ticks that
+        // can't produce a payload anyway (first sample).
+        const payload = prev ? computeVideoStats(prev, inbound, readLatencyStamp()) : null;
+        if (payload) {
+            try { channel.send(JSON.stringify(payload)); } catch (_) {}
+            state.liveStats.video = payload;  // latest sample for the HUD/VR quad
+        }
         inFlight = false;
     }, VIDEO_STATS_INTERVAL_MS);
 }

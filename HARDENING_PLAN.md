@@ -217,7 +217,10 @@ tracked separately.)
   loop — operator's `video_stats` (loss/freezes, already delivered to the
   robot) nudges the encoder bitrate up/down.
 
-### E2. LiveKit HUD stats parity — `S/M` `[teleop]`
+### E2. LiveKit HUD stats parity — `S/M` `[teleop]` — ✅ implemented
+(stats sampler now takes a pluggable report source; LiveKit feeds the
+subscribed track's RTCRtpReceiver.getStats(); shared delta math extracted to
+statscore.js with node tests.)
 - **Issue:** `startVideoStats` is skipped on LiveKit (`livekit.js:106`) — HUD
   video panel is blank, health classifier runs degraded.
 - **Plan:** Sample the subscribed track's `RTCStatsReport` via the LiveKit SDK

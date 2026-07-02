@@ -7,7 +7,10 @@
 import { api } from './api.js';
 import { ensureRobotCam, setStatus } from './dom.js';
 import { state } from './state.js';
-import { startClockSync, handleStateMessage, startOpHeartbeat, timeout } from './webrtc.js';
+import {
+    handleStateMessage, startClockSync, startOpHeartbeat,
+    startVideoStats, stopVideoStats, timeout,
+} from './webrtc.js';
 
 const CMD_TOPIC = 'cmd_unreliable';
 const STATE_TOPIC = 'state_reliable';
@@ -56,6 +59,15 @@ async function _setupLiveKitInner(sessionId) {
 
     // Robot camera track → the shared <video> element (same one the WebRTC path
     // feeds via pc.ontrack), so keyboard view + VR GL texture pick it up as-is.
+    // The track's RTCRtpReceiver also feeds the video-stats sampler — the SDK
+    // owns the PeerConnection, so state.pc.getStats() doesn't exist here.
+    let videoTrack = null;
+    const maybeStartStats = () => {
+        const receiver = videoTrack?.receiver;
+        if (!receiver || !state.stateChannel) return;
+        stopVideoStats();
+        startVideoStats(state.stateChannel, () => receiver.getStats());
+    };
     room.on(LK.RoomEvent.TrackSubscribed, (track) => {
         if (track.kind !== 'video') return;
         const existed = !!document.getElementById('robot-cam');
@@ -63,6 +75,8 @@ async function _setupLiveKitInner(sessionId) {
         track.attach(v);
         if (existed) v.style.display = 'block';
         v.play?.().catch(() => {});
+        videoTrack = track;
+        maybeStartStats();  // no-op until the state-channel shim exists below
     });
 
     // Robot replies on the back channel by protocol; LiveKit never echoes our
@@ -78,6 +92,7 @@ async function _setupLiveKitInner(sessionId) {
     room.on(LK.RoomEvent.Disconnected, () => {
         console.info('[livekit] room disconnected');
         if (state.room === room) {
+            stopVideoStats();  // sampler holds this room's track receiver
             state.room = null;
             state.cmdChannel = null;
             state.stateChannel = null;
@@ -117,6 +132,8 @@ async function _setupLiveKitInner(sessionId) {
 
     startClockSync(state.stateChannel);
     startOpHeartbeat(sessionId);
-    // Video-stats reporter is skipped on LiveKit: it samples state.pc.getStats(),
-    // which the SDK owns internally. (HUD video health is a follow-up.)
+    // Video stats: sampled off the subscribed track's RTCRtpReceiver (the SDK
+    // owns the PC). TrackSubscribed may fire before or after this point —
+    // whichever side runs second actually starts the sampler.
+    maybeStartStats();
 }
