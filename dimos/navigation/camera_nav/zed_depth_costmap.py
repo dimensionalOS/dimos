@@ -34,65 +34,6 @@ def _pack(vkeys: np.ndarray) -> np.ndarray:
     return (v[:, 0] << 36) | (v[:, 1] << 18) | v[:, 2]
 
 
-# ── Persistent world map ─────────────────────────────────────────────────────
-class WorldMap:
-    """Depth-evidence overwrite voxel map.
-
-    Per frame (VIO locked):
-      - Voxels the current frame DIRECTLY observed → overwrite world-map position.
-      - Voxels not in the current frame → untouched.
-
-    This is a pure upsert: O(N) in the current frame's voxel count, no frustum
-    geometry, no deletions, no compaction.  Revisited areas are corrected because
-    the same 2 cm key overwrites the stored position with the latest observation.
-    New areas are added as new keys.  The map only grows when genuinely new
-    voxels are seen.
-    """
-
-    def __init__(self) -> None:
-        self._cap = 200_000
-        self._xyz = np.empty((self._cap, 3), dtype=np.float32)
-        self._n   = 0
-        self._idx: dict[int, int] = {}   # packed key → row
-
-    def update(self, xyz_vox: np.ndarray, keys_vox: np.ndarray) -> None:
-        """Upsert current-frame voxels into the world map."""
-        if not len(xyz_vox):
-            return
-        key_list  = keys_vox.tolist()
-        rows      = np.array([self._idx.get(k, -1) for k in key_list], dtype=np.int32)
-        ex        = rows >= 0
-        nw        = ~ex
-
-        # Overwrite existing cells with the latest observed position.
-        if ex.any():
-            self._xyz[rows[ex]] = xyz_vox[ex]
-
-        # Insert new cells.
-        if nw.any():
-            xyz_new  = xyz_vox[nw]
-            keys_new = keys_vox[nw]
-            n_new    = len(xyz_new)
-            if self._n + n_new > self._cap:
-                self._grow()
-            s = slice(self._n, self._n + n_new)
-            self._xyz[s] = xyz_new
-            self._idx.update(zip(keys_new.tolist(), range(self._n, self._n + n_new)))
-            self._n += n_new
-
-    def occupied(self) -> np.ndarray:
-        return self._xyz[:self._n]
-
-    @property
-    def size(self) -> int:
-        return self._n
-
-    def _grow(self) -> None:
-        cap2     = self._cap * 2
-        new_xyz  = np.empty((cap2, 3), dtype=np.float32)
-        new_xyz[:self._n] = self._xyz[:self._n]
-        self._xyz = new_xyz
-        self._cap = cap2
 
 
 # ── Nearest-per-ray filter (live cloud denoising only) ───────────────────────
@@ -330,9 +271,10 @@ def main() -> None:
     zed.set_camera_settings(sl.VIDEO_SETTINGS.EXPOSURE, 50)
     print("camera open — Ctrl-C to quit.")
 
-    src       = ZEDDepthSource(zed)
+    src = ZEDDepthSource(zed)
     src.enable_tracking()
-    world_map = WorldMap()
+    _wm_chunks: list[np.ndarray] = []                        # per-frame voxels since last dedup
+    _wm_base:   np.ndarray = np.empty((0, 3), dtype=np.float32)  # deduplicated world map
 
     rt = sl.RuntimeParameters()
     rt.remove_saturated_areas = True
@@ -375,40 +317,41 @@ def main() -> None:
 
             # ── Voxel map: floor removal → voxelise ──────────────────────────
             h_rel = xyz[:, 2] - cam_z
-            if src.pose_locked:
-                # VIO gravity-aligned: floor at world_Z≈0. Remove it; keep everything above.
+            if src.pose_locked and cam_z > 0.15:
+                # Floor established: use absolute world-Z cutoff (floor is at ~0).
                 keep = xyz[:, 2] > _FLOOR_Z
             else:
-                # Pre-VIO: camera-relative band (avoids deep floor and high ceiling).
+                # Pre-VIO or VIO just locked before floor calibrated: camera-relative band.
                 keep = (h_rel >= -1.4) & (h_rel <= 1.5)
 
             xyz_vox  = np.empty((0, 3), dtype=np.float32)
-            keys_vox = np.empty(0,      dtype=np.int64)
             xyz_kept = xyz[keep]
             if len(xyz_kept):
-                vk        = np.floor(xyz_kept / VOX_SIZE).astype(np.int32)
-                all_keys  = _pack(vk)
-                _, first  = np.unique(all_keys, return_index=True)
-                xyz_vox   = xyz_kept[first]
-                keys_vox  = all_keys[first]
+                vk       = np.floor(xyz_kept / VOX_SIZE).astype(np.int32)
+                _, first = np.unique(_pack(vk), return_index=True)
+                xyz_vox  = xyz_kept[first]
                 rr.log("world/map", rr.Points3D(
                     positions=xyz_vox,
                     colors=_height_color(xyz_vox[:, 2] - cam_z),
                     radii=0.010,
                 ))
 
-            # ── World map: depth-evidence upsert ─────────────────────────────
-            # Only cells the current frame directly observed are updated.
-            # Cells outside the current frame's observations are untouched.
+            # ── World map: chunk accumulation, dedup every _MAP_EVERY frames ──
+            # Newest observations win: when the same voxel key appears in
+            # both fresh chunks and _wm_base, the chunk (recent) takes priority.
             if src.pose_locked and len(xyz_vox):
-                world_map.update(xyz_vox, keys_vox)
+                _wm_chunks.append(xyz_vox)
 
-            n_occ = 0
             if frame % _MAP_EVERY == 0:
-                occ = world_map.occupied()
-                n_occ = len(occ)
-                if n_occ:
-                    pts = occ
+                if _wm_chunks:
+                    fresh    = np.concatenate(_wm_chunks[::-1])  # newest chunk rows first
+                    combined = np.concatenate([fresh, _wm_base]) if len(_wm_base) else fresh
+                    vk       = np.floor(combined / VOX_SIZE).astype(np.int32)
+                    _, first = np.unique(_pack(vk), return_index=True)
+                    _wm_base = combined[first]
+                    _wm_chunks = []
+                if len(_wm_base):
+                    pts = _wm_base
                     if len(pts) > _MAP_MAX_PTS:
                         pts = pts[np.random.choice(len(pts), _MAP_MAX_PTS, replace=False)]
                     rr.log("world/world_map", rr.Points3D(
@@ -421,7 +364,7 @@ def main() -> None:
             print(
                 f"frame={frame:5d}  raw={len(xyz):6d}  keep={keep.sum():6d}"
                 f"  vox={len(xyz_vox):5d}  cloud={len(xyz_vis):5d}"
-                f"  world={world_map.size:6d}  cam_z={cam_z:.2f}"
+                f"  world={len(_wm_base):6d}  cam_z={cam_z:.2f}"
                 f"  vio={'LOCKED' if src.pose_locked else 'search'}  fps={fps:.1f}",
                 flush=True,
             )
