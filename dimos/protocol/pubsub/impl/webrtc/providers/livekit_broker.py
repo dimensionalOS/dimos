@@ -287,16 +287,35 @@ class LiveKitBrokerProvider(AsyncProviderBase):
 
     async def _heartbeat_loop(self) -> None:
         interval = 1.0 / max(self._config.heartbeat_hz, 0.1)
+        # Terminal condition mirrors BrokerProvider: 5 consecutive 401/404
+        # means the key was revoked or the session force-deleted — retrying
+        # forever just log-floods at heartbeat_hz.
+        terminal_streak = 0
         while True:
+            status: int | None = None
             try:
                 if self._http is not None and self.session_id is not None:
-                    await self._http.post(
+                    r = await self._http.post(
                         f"{self._broker_url}/api/v1/sessions/{self.session_id}/heartbeat",
                         headers=self._headers,
                         json={},
                     )
+                    status = r.status_code
+                    if status != 200:
+                        logger.warning("LiveKit heartbeat failed: %d %s", status, r.text[:200])
             except Exception:
                 logger.warning("LiveKit heartbeat failed", exc_info=True)
+            if status in (401, 404):
+                terminal_streak += 1
+                if terminal_streak >= 5:
+                    logger.error(
+                        "LiveKit heartbeat terminal: %d consecutive %d responses — stopping loop",
+                        terminal_streak,
+                        status,
+                    )
+                    return
+            else:
+                terminal_streak = 0
             await asyncio.sleep(interval)
 
     # ─── Dispatch (loop thread) ──────────────────────────────────────
