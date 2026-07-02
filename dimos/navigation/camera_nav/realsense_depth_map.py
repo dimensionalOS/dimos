@@ -74,6 +74,61 @@ def _height_color(z_rel: np.ndarray) -> np.ndarray:
     return (np.column_stack([r, g, b]) * 255).astype(np.uint8)
 
 
+class _FloorCalibrator:
+    """One-shot floor height estimator using camera_link frame (Z always up).
+
+    Works independently of Madgwick convergence because camera_link Z is defined
+    by the fixed optical→link rotation, not by IMU attitude.  Skips the first
+    SKIP frames so the IMU settles, then histograms the depth of floor-candidate
+    points over CALIB frames and takes the mode — more robust than a percentile
+    because sub-floor stereo noise has fewer hits than the real floor plane.
+
+    After calibration, `floor_z` is the camera_link Z of the floor (negative,
+    since floor is below the camera), and `cam_height` is the positive distance.
+    """
+
+    SKIP_FRAMES  = 30
+    CALIB_FRAMES = 30
+    BIN_M        = 0.02   # 2 cm histogram bins
+
+    def __init__(self) -> None:
+        self._frame   = 0
+        self._samples: list[float] = []
+        self.floor_z:   float | None = None  # camera_link Z of floor (negative)
+        self.cam_height: float | None = None  # positive metres above floor
+
+    @property
+    def ready(self) -> bool:
+        return self.floor_z is not None
+
+    def update(self, xyz_cam: np.ndarray) -> None:
+        self._frame += 1
+        if self.ready or self._frame <= self.SKIP_FRAMES:
+            return
+
+        # Candidate floor points: at least 30 cm below camera, close enough
+        # to have reliable stereo (within 4 m lateral distance)
+        z    = xyz_cam[:, 2]
+        dist = np.linalg.norm(xyz_cam[:, :2], axis=1)
+        mask = (z < -0.30) & (dist < 4.0)
+        if mask.sum() < 200:
+            return
+
+        z_floor = z[mask]
+        lo, hi  = z_floor.min(), z_floor.max()
+        if hi - lo < self.BIN_M:
+            return
+        bins          = np.arange(lo, hi + self.BIN_M, self.BIN_M)
+        counts, edges = np.histogram(z_floor, bins=bins)
+        mode_z        = float(edges[int(np.argmax(counts))] + self.BIN_M / 2)
+        self._samples.append(mode_z)
+
+        if len(self._samples) >= self.CALIB_FRAMES:
+            self.floor_z    = float(np.median(self._samples))
+            self.cam_height = -self.floor_z
+            print(f"*** floor calibrated: camera {self.cam_height:.3f} m above floor ***")
+
+
 def _filter_isolated(xyz: np.ndarray, voxel: float = 0.05, min_pts: int = 2) -> np.ndarray:
     if len(xyz) < min_pts:
         return np.zeros((0, 3), dtype=np.float32)
@@ -544,6 +599,7 @@ class DepthStreamer:
         self._last_n_stable  = 0
         self._last_n_vox     = 0
         self._pinhole_logged = False
+        self._floor_calib = _FloorCalibrator()
         self._map_queue: queue.Queue = queue.Queue(maxsize=16)
         self._map_thread = threading.Thread(target=self._map_worker, daemon=True)
         self._map_thread.start()
@@ -588,11 +644,20 @@ class DepthStreamer:
                 radii=0.003,
             ))
 
+        # Floor calibration — runs in camera_link frame (Z always up, IMU-independent)
+        # so the height estimate is stable even before Madgwick fully converges.
+        xyz_cam = xyz @ pkt.pose_R   # world → camera_link (exact inverse since t=0)
+        self._floor_calib.update(xyz_cam)
+
         # Per-frame voxel map — gradient-filtered xyz with full depth FOV.
-        # xyz_raw caused quality drop at edges (noisy stereo beyond color FOV).
-        # Gradient filter removes those unreliable pixels while depth alignment
-        # still gives wider coverage than color alignment.
-        xyz_kept = xyz
+        # If floor is calibrated, strip the floor plane (same 3 cm threshold as ZED).
+        # Until then show everything so the map is visible from frame 1.
+        if self._floor_calib.ready:
+            floor_z    = self._floor_calib.floor_z        # camera_link Z of floor
+            keep_floor = xyz_cam[:, 2] > (floor_z + 0.03)
+            xyz_kept   = xyz[keep_floor]
+        else:
+            xyz_kept = xyz
         if len(xyz_kept):
             vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
             _, first = np.unique(_pack(vk), return_index=True)
