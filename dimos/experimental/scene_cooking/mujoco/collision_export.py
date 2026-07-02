@@ -67,6 +67,7 @@ import time
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 import open3d as o3d  # type: ignore[import-untyped]
 from scipy.spatial import ConvexHull, QhullError  # type: ignore[import-untyped]
 from scipy.spatial.transform import Rotation  # type: ignore[import-untyped]
@@ -710,7 +711,7 @@ def _emit_primitive_geom(
 # --------------------------------------------------------------------------- #
 
 
-def _valid_hull(v: np.ndarray, f: np.ndarray) -> bool:
+def _valid_hull(v: NDArray[np.float32], f: NDArray[np.int32]) -> bool:
     """Reject hulls that MuJoCo's qhull would choke on at compile time.
 
     Four layers:
@@ -740,7 +741,9 @@ def _valid_hull(v: np.ndarray, f: np.ndarray) -> bool:
     return True
 
 
-def _fallback_box_geom(name: str, vertices: np.ndarray, friction_attr: str = "") -> str | None:
+def _fallback_box_geom(
+    name: str, vertices: NDArray[np.float32], friction_attr: str = ""
+) -> str | None:
     """Emit a thin OBB box geom for vertices that can't form a valid hull.
 
     The thickness floor (``_FALLBACK_BOX_THICKNESS_M = 3 cm``) keeps the
@@ -773,8 +776,8 @@ def _fallback_box_geom(name: str, vertices: np.ndarray, friction_attr: str = "")
 
 
 def _oriented_box(
-    vertices: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    vertices: NDArray[np.float64],
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """OBB via trimesh's ``bounding_box_oriented``.
 
     Falls back to AABB if trimesh's OBB fitter produces non-finite
@@ -801,17 +804,17 @@ def _oriented_box(
     return (lo + hi) * 0.5, np.eye(3), hi - lo
 
 
-def _rotation_matrix_to_wxyz(rotation: np.ndarray) -> np.ndarray:
+def _rotation_matrix_to_wxyz(rotation: NDArray[np.float64]) -> NDArray[np.float64]:
     """3x3 rotation -> ``(w, x, y, z)`` quaternion."""
     xyzw = Rotation.from_matrix(rotation).as_quat()
     return np.array([xyzw[3], xyzw[0], xyzw[1], xyzw[2]], dtype=np.float64)
 
 
-def _fmt_vec(values: np.ndarray) -> str:
+def _fmt_vec(values: NDArray[np.float64]) -> str:
     return " ".join(f"{float(v):.9g}" for v in values)
 
 
-def _scene_bounds(prims: list[ScenePrimMesh]) -> tuple[np.ndarray, float]:
+def _scene_bounds(prims: list[ScenePrimMesh]) -> tuple[NDArray[np.float64], float]:
     """Return a viewer-friendly center and extent for the aligned scene.
 
     MuJoCo's viewer uses ``statistic.center`` / ``statistic.extent`` for
@@ -819,8 +822,8 @@ def _scene_bounds(prims: list[ScenePrimMesh]) -> tuple[np.ndarray, float]:
     much too small for baked building-scale scenes, so wrappers need to
     advertise the scene bounds explicitly.
     """
-    mins: list[np.ndarray] = []
-    maxs: list[np.ndarray] = []
+    mins: list[NDArray[np.float64]] = []
+    maxs: list[NDArray[np.float64]] = []
     for prim in prims:
         vertices = np.asarray(prim.vertices, dtype=np.float64)
         if vertices.ndim != 2 or vertices.shape[1] != 3 or len(vertices) == 0:
@@ -847,17 +850,19 @@ def _scene_bounds(prims: list[ScenePrimMesh]) -> tuple[np.ndarray, float]:
 # --------------------------------------------------------------------------- #
 
 
-def _write_hull_obj(obj_file: Path, vertices: np.ndarray, faces: np.ndarray) -> None:
+def _write_hull_obj(
+    obj_file: Path, vertices: NDArray[np.float32], faces: NDArray[np.int32]
+) -> None:
     """Write a CoACD/single-hull mesh.  No watertight check -- hulls are
     closed by construction."""
     _write_mesh_obj(obj_file, vertices, faces)
 
 
 def _simplify_mesh_geom(
-    vertices: np.ndarray,
-    faces: np.ndarray,
+    vertices: NDArray[np.float32],
+    faces: NDArray[np.int32],
     target_faces: int,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[NDArray[np.float32], NDArray[np.int32]]:
     if target_faces <= 0 or len(faces) <= target_faces:
         return vertices, faces
 
@@ -890,7 +895,9 @@ def _simplify_mesh_geom(
     return hull if hull is not None else (vertices, faces)
 
 
-def _convex_hull_mesh(vertices: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
+def _convex_hull_mesh(
+    vertices: NDArray[np.float32],
+) -> tuple[NDArray[np.float32], NDArray[np.int32]] | None:
     try:
         hull = ConvexHull(vertices.astype(np.float64))
     except (QhullError, ValueError):
@@ -903,7 +910,9 @@ def _convex_hull_mesh(vertices: np.ndarray) -> tuple[np.ndarray, np.ndarray] | N
     return vertices[used].astype(np.float32), remapped_faces.astype(np.int32)
 
 
-def _write_visual_obj(obj_file: Path, vertices: np.ndarray, faces: np.ndarray) -> None:
+def _write_visual_obj(
+    obj_file: Path, vertices: NDArray[np.float64], faces: NDArray[np.int32]
+) -> None:
     """Write a *renderable* OBJ -- closed under all viewing angles.
 
     UE's static-mesh exporter culls hidden faces (a floor slab ships
@@ -938,7 +947,9 @@ def _write_visual_obj(obj_file: Path, vertices: np.ndarray, faces: np.ndarray) -
     _write_mesh_obj(obj_file, vertices, faces)
 
 
-def _write_mesh_obj(obj_file: Path, vertices: np.ndarray, faces: np.ndarray) -> None:
+def _write_mesh_obj(
+    obj_file: Path, vertices: NDArray[np.floating[Any]], faces: NDArray[np.int32]
+) -> None:
     o3d_mesh = o3d.geometry.TriangleMesh()
     o3d_mesh.vertices = o3d.utility.Vector3dVector(vertices.astype(np.float64))
     o3d_mesh.triangles = o3d.utility.Vector3iVector(faces)
@@ -963,7 +974,7 @@ def _write_wrapper(
     cache_key: str,
     asset_lines: list[str],
     geom_lines: list[str],
-    statistic_center: np.ndarray,
+    statistic_center: NDArray[np.float64],
     statistic_extent: float,
 ) -> None:
     """Emit the scene-only wrapper.xml. Robots attach at runtime via
