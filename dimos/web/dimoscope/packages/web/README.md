@@ -101,7 +101,7 @@ arg/return the mapper can't type stays `unknown`; regenerate when the blueprint'
 
 ## Typed codegen reference — `scripts/gen_types.py`
 
-Generates the `DimosTopics` + `DimosCommands` TypeScript **statically** from a blueprint — no gateway, no
+Generates the `DimosTopics` + `DimosCommands` TypeScript statically from a blueprint — no gateway, no
 robot, no running bus. The import is side-effect-free (class-definition reflection only; the blueprint is
 never instantiated). It's the only way to type RPC args/returns — the wire only advertises
 `{target, method}`, never signatures.

@@ -3,8 +3,8 @@
 //! kind 1 = DATA (raw LC02 packet — topic/type live inside the channel), kind 2 = JSON.
 //!
 //! DATA frames are stamped [f64be now-ms] ONCE at this ingress point and the framed Bytes shared
-//! across all sessions — the same place webtransport.py stamps (bus ingress), so latency numbers
-//! include outbox queue time on both servers.
+//! across all sessions — the same place the WS data plane stamps (gateway ingress, _common.frame),
+//! so latency numbers include outbox queue time and are comparable across transports.
 
 use std::time::Duration;
 

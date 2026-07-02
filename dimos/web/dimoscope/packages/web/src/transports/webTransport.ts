@@ -1,7 +1,7 @@
 /// <reference lib="dom" />
-// Delivery over WebTransport (HTTP/3 / QUIC; browser-only). Talks to gateway/transports/webtransport.py,
-// which size-routes frames (small → datagrams, large → length-prefixed messages on one persistent uni
-// stream). A bidirectional control stream
+// Delivery over WebTransport (HTTP/3 / QUIC; browser-only). Talks to the native sidecar
+// (gateway/wt-sidecar), which size-routes frames (small → datagrams, large → length-prefixed messages
+// on one persistent uni stream). A bidirectional control stream
 // carries the full WS control protocol (subscribe/QoS + teleop/goal/rpc via the shared SafetyEgress),
 // so WT drives the robot alone. Cert: we fetch the server's self-signed SHA-256 for serverCertificateHashes.
 import { GATEWAY_QOS } from "../qos.ts";
@@ -18,8 +18,8 @@ import type {
 import { frameToSample } from "./frame.ts";
 
 export interface WebTransportDeps {
-  url: string; // e.g. https://localhost:8093
-  certHashUrl?: string; // where to GET the cert sha256 hex (default: http://<host>:8094/cert-hash)
+  url: string; // e.g. https://localhost:8443
+  certHashUrl?: string; // where to GET the cert sha256 hex (default: the gateway's http://<host>:8080/cert)
 }
 
 function hexToBytes(hex: string): Uint8Array {
@@ -38,7 +38,7 @@ export const createWebTransportTransport = (deps: WebTransportDeps): Transport =
   };
   const url = deps.url.replace(/^ws/, "https");
   const host = new URL(url).hostname;
-  const certHashUrl = deps.certHashUrl ?? `http://${host}:8094/cert-hash`;
+  const certHashUrl = deps.certHashUrl ?? `http://${host}:8080/cert`;
   let sampleCb: ((s: RawSample) => void) | undefined;
   let topicsCb: ((t: TopicInfo[]) => void) | undefined;
   let statusCb: ((s: Status) => void) | undefined;

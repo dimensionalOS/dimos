@@ -1,6 +1,20 @@
 #!/usr/bin/env python3
-# Pipe plane: feeds the native WebTransport sidecar (gateway/wt-sidecar) over a local unix socket when
-# WT_EXTERNAL=1. The gateway keeps the single bus tap, SafetyEgress and QoS config; the sidecar owns the
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Pipe plane: feeds the native WebTransport sidecar (gateway/wt-sidecar) over a local unix socket.
+# The gateway keeps the single bus tap, SafetyEgress and QoS config; the sidecar owns the
 # QUIC sessions and per-session scheduling. The gateway LISTENS; the sidecar connects (and reconnects).
 #
 # Framing: [u32be len][u8 kind][payload]
@@ -43,6 +57,12 @@ class PipePlane:
         self._conn: _Conn | None = None
         bus.subscribe(self._on_sample)
         bus.on_new_topic(self._on_new_topic)
+
+    @property
+    def connected(self) -> bool:
+        """A live sidecar is on the pipe — gates /cert so a stale hash file can't 200 while
+        nothing is listening on :WT_PORT."""
+        return self._conn is not None
 
     async def start(self, path: str) -> None:
         import contextlib
@@ -90,11 +110,14 @@ class PipePlane:
 
 
 class _Conn:
-    def __init__(self, plane: PipePlane, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    def __init__(
+        self, plane: PipePlane, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         self.plane = plane
         self.reader = reader
         self.writer = writer
-        self.subs: set[str] = set()  # announced sub-union; on-demand — nothing flows until announced
+        # announced sub-union; on-demand — nothing flows until announced
+        self.subs: set[str] = set()
         self.sids: set[str] = set()  # sessions that touched the write path (teleop/stop/rpc)
         self._q: asyncio.Queue[bytes] = asyncio.Queue(maxsize=QUEUE_MAX)
         self._dropped = 0

@@ -1,7 +1,22 @@
 #!/usr/bin/env python3
-# dimoscope gateway: the whole backend in one process. Serves the built frontend + every transport on one
-# HTTP port (+ one UDP port for WebTransport/QUIC); ingest taps both LCM and Zenoh (gateway/bus.py).
-# Run: python -m gateway
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# dimoscope gateway: the Python brain of the backend. Serves the built frontend + every TCP transport on
+# one HTTP port; ingest taps both LCM and Zenoh (gateway/bus.py). WebTransport (QUIC/UDP) is the native
+# sidecar (gateway/wt-sidecar), fed over a unix socket (gateway/pipe.py).
+# Run: deno task serve   (this gateway + the sidecar)
 #
 #   GET  /                 the built web app (app/dist)
 #   WS   /ws               data plane (topics + teleop/goal/rpc)   ← @dimos/web default
@@ -9,8 +24,8 @@
 #   WS   /rtc              WebRTC DataChannel (bench)
 #   GET  /sse              Server-Sent Events (bench)
 #   GET  /poll             HTTP long-poll (bench)
-#   GET  /cert             WebTransport cert SHA-256 (browser needs it before connecting)
-#   QUIC :WT_PORT/UDP      WebTransport (bench)
+#   GET  /cert             WebTransport cert SHA-256 (the sidecar's; browser needs it before connecting)
+#   UDS  WT_PIPE           feed to the WebTransport sidecar, which owns QUIC/UDP :WT_PORT
 from __future__ import annotations
 
 import asyncio
@@ -30,7 +45,8 @@ from .bus import Bus
 from .data import DataPlane
 from .egress import SafetyEgress
 from .media import MediaPlane
-from .transports import PollPlane, SsePlane, WebRtcDataPlane, WebTransportServer
+from .pipe import PipePlane
+from .transports import PollPlane, SsePlane, WebRtcDataPlane
 
 logger = setup_logger()
 
@@ -38,10 +54,8 @@ logger = setup_logger()
 # LAN (the data plane clamps velocity + runs a deadman). Set HOST=127.0.0.1 for loopback-only.
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", 8080))
-WT_PORT = int(os.environ.get("WT_PORT", 8443))  # WebTransport QUIC/UDP (separate listener)
-# WT_EXTERNAL=1 → the native Rust sidecar (gateway/wt-sidecar) owns UDP :WT_PORT; the gateway serves it
-# over a unix socket (gateway/pipe.py) instead of running the in-process aioquic server.
-WT_EXTERNAL = os.environ.get("WT_EXTERNAL", "") == "1"
+# The native Rust sidecar (gateway/wt-sidecar) owns the WebTransport QUIC/UDP listener (:WT_PORT is its
+# env); the gateway feeds it over this unix socket (gateway/pipe.py) and serves its cert hash at /cert.
 WT_PIPE = os.environ.get("WT_PIPE", "/tmp/dimoscope-wt.sock")
 WT_CERT_HASH_FILE = Path(os.environ.get("WT_CERT_HASH_FILE", "/tmp/dimoscope-wt-cert.hash"))
 ZENOH_KEY = os.environ.get("ZENOH_KEY", "**")
@@ -63,14 +77,7 @@ def build_app() -> FastAPI:
     sse = SsePlane(bus)
     poll = PollPlane(bus)
     rtc = WebRtcDataPlane(bus)
-    if WT_EXTERNAL:
-        from .pipe import PipePlane
-
-        wt = None
-        pipe = PipePlane(bus, egress)
-    else:
-        wt = WebTransportServer(bus, egress)
-        pipe = None
+    pipe = PipePlane(bus, egress)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -80,9 +87,7 @@ def build_app() -> FastAPI:
         tasks = [
             asyncio.create_task(media.run_encoder()),
             asyncio.create_task(media.run_fanout()),
-            asyncio.create_task(
-                pipe.start(WT_PIPE) if WT_EXTERNAL else wt.start(HOST, WT_PORT)
-            ),
+            asyncio.create_task(pipe.start(WT_PIPE)),
         ]
         logger.info("dimoscope up", url=f"http://localhost:{PORT}", transports="all")
         try:
@@ -107,16 +112,18 @@ def build_app() -> FastAPI:
     app.add_api_websocket_route("/rtc", rtc.handle)
     app.add_api_route("/sse", sse.handle, methods=["GET"])
     app.add_api_route("/poll", poll.handle, methods=["GET"])
+
     def cert_hash() -> PlainTextResponse:
-        # WT_EXTERNAL: the sidecar writes its cert's SHA-256 hex to WT_CERT_HASH_FILE at startup;
-        # until then (or with no sidecar) serve 503 — an empty 200 would silently fail every WT client.
-        if WT_EXTERNAL:
-            try:
-                h = WT_CERT_HASH_FILE.read_text().strip()
-            except OSError:
-                h = ""
-            return PlainTextResponse(h if h else "sidecar not up", status_code=200 if h else 503)
-        return PlainTextResponse(wt.cert_hash)
+        # The sidecar writes its cert's SHA-256 hex to WT_CERT_HASH_FILE at startup, but the file
+        # outlives the process — gate on a live pipe connection so a dead sidecar's stale hash can't
+        # 200 (the client would burn a doomed connect). 503 = not up yet / not connected.
+        if not pipe.connected:
+            return PlainTextResponse("sidecar not connected", status_code=503)
+        try:
+            h = WT_CERT_HASH_FILE.read_text().strip()
+        except OSError:
+            h = ""
+        return PlainTextResponse(h if h else "sidecar not up", status_code=200 if h else 503)
 
     app.add_api_route("/cert", cert_hash, methods=["GET"])
     app.add_api_route("/health", lambda: PlainTextResponse("ok"), methods=["GET"])

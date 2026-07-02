@@ -225,10 +225,9 @@ web = [
     "jinja2>=3.1.6",
     "ffmpeg-python",
     "soundfile",
-    # dimoscope gateway: the zenoh bus tap + the WebTransport (HTTP/3/QUIC) plane
-    # (dimos/web/dimoscope/gateway/transports/webtransport.py — datagrams + streams, no TCP head-of-line).
+    # dimoscope gateway bus tap (dimos/web/dimoscope/gateway); WebTransport is served by its native
+    # Rust sidecar (gateway/wt-sidecar) — no Python QUIC dependency.
     "eclipse-zenoh>=1.0.0,<2.0",
-    "aioquic>=1.3.0",
 ]
 
 perception = [

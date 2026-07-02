@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # Integration tests for the pipe plane in pipe.py (the unix-socket feed for the Rust WT sidecar):
 # hello-meta on connect, sub-union DATA filtering, new-topic push, teleop → SafetyEgress with a
-# per-sid deadman, pipe-drop → all-stop, and the rpc round-trip. A fake sidecar talks over a real
-# UDS; no dimos transports (fake publishers injected, as in test_egress.py). The /cert 503-until-
-# hash-file behavior lives in app.py's route closure and is exercised in the end-to-end bench run.
+# per-sid deadman, pipe-drop → all-stop, the rpc round-trip, and the `connected` liveness that gates
+# /cert. A fake sidecar talks over a real UDS; no dimos transports (fake publishers injected, as in
+# test_egress.py).
 #
 # Run: uv run pytest dimos/web/dimoscope/gateway/tests/test_pipe.py -q
 import asyncio
@@ -199,5 +199,17 @@ def test_disconnect_op_stops_one_sid():
             await h.settle()
             assert h.pub.published[-1].linear.x == 0.0  # zero twist for the departing sid
             assert not h.egress._deadman
+
+    asyncio.run(run())
+
+
+def test_connected_tracks_the_live_sidecar():
+    async def run():
+        async with Harness() as h:
+            await h.read_json()  # hello — the fake sidecar is on the pipe
+            assert h.plane.connected  # /cert may serve the hash
+            h.writer.close()  # sidecar dies
+            await h.settle()
+            assert not h.plane.connected  # /cert must 503 — the hash file is stale now
 
     asyncio.run(run())

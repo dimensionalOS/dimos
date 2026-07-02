@@ -1,7 +1,15 @@
 {
-  "workspace": ["./app", "./packages/web", "./packages/react"],
+  "workspace": [
+    "./app",
+    "./packages/web",
+    "./packages/react"
+  ],
   "nodeModulesDir": "auto",
-  "exclude": ["app", "node_modules", "dist"],
+  "exclude": [
+    "app",
+    "node_modules",
+    "dist"
+  ],
   "imports": {
     "@dimos/msgs": "npm:@jsr/dimos__msgs@0.1.4",
     "react": "npm:react@^18.3.1",
@@ -10,20 +18,31 @@
   },
   "fmt": {
     "lineWidth": 100,
-    "exclude": ["node_modules", "dist", "app/dist", "**/*.md"]
+    "exclude": [
+      "node_modules",
+      "dist",
+      "app/dist",
+      "**/*.md"
+    ]
   },
   "lint": {
     "rules": {
-      "exclude": ["no-explicit-any"]
+      "exclude": [
+        "no-explicit-any"
+      ]
     },
-    "exclude": ["node_modules", "dist", "app"]
+    "exclude": [
+      "node_modules",
+      "dist",
+      "app"
+    ]
   },
   "tasks": {
     "app": "cd app && deno run -A npm:vite",
     "build": "cd app && deno run -A npm:vite build",
     "preview": "cd app && deno run -A npm:vite preview",
-    "serve": "uv run python -m gateway",
-    "serve:wt-rs": "WT_EXTERNAL=1 uv run python -m gateway",
+    "serve": "cargo build --release --manifest-path gateway/wt-sidecar/Cargo.toml && deno task serve:run",
+    "serve:run": "cargo run --release --manifest-path gateway/wt-sidecar/Cargo.toml & uv run python -m gateway",
     "wt-sidecar": "cargo run --release --manifest-path gateway/wt-sidecar/Cargo.toml",
     "check": "deno check packages/web/src/**/*.ts packages/react/src/**/*.tsx && cd app && deno run -A npm:typescript/tsc --noEmit -p tsconfig.json",
     "scope:nav": "DIMOS_TRANSPORT=zenoh uv run python scenarios/nav.py",

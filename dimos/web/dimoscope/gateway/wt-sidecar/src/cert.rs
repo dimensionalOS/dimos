@@ -1,7 +1,6 @@
-//! Self-signed identity matching the aioquic server's cert semantics
-//! (gateway/transports/webtransport.py `_make_cert`): ECDSA P-256, 10-day
-//! validity, SHA-256-of-DER published as lowercase hex for the browser's
-//! `serverCertificateHashes`. The gateway serves the hash via /cert.
+//! Self-signed identity in the shape Chrome's `serverCertificateHashes`
+//! accepts: ECDSA P-256, 10-day validity, SHA-256-of-DER published as
+//! lowercase hex. The gateway serves the hash via /cert.
 
 use anyhow::{Context, Result};
 use wtransport::tls::Identity;

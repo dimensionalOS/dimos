@@ -1,9 +1,9 @@
 //! wt-sidecar — native QUIC/WebTransport egress for the dimoscope gateway.
 //!
-//! QUIC muscle, Python brain: this process owns ONLY the UDP :8443 WebTransport listener (replacing
-//! the pure-Python aioquic server, which caps bulk at ~2.4 MB/s). The Python gateway keeps the bus
-//! tap, SafetyEgress and RPC whitelist, and feeds us over a unix socket (gateway/pipe.py, enabled
-//! with WT_EXTERNAL=1). We speak the existing WT wire protocol — zero browser-client changes.
+//! QUIC muscle, Python brain: this process owns ONLY the UDP :8443 WebTransport listener. The Python
+//! gateway keeps the bus tap, SafetyEgress and RPC whitelist, and feeds us over a unix socket
+//! (gateway/pipe.py). The wire protocol is pinned by the browser client
+//! (packages/web/src/transports/webTransport.ts).
 //!
 //! Env: WT_PORT (8443) · WT_PIPE (/tmp/dimoscope-wt.sock) · WT_CERT_HASH_FILE
 //! (/tmp/dimoscope-wt-cert.hash, served by the gateway /cert) · EGRESS_KBPS (optional per-session
@@ -63,8 +63,8 @@ async fn main() -> Result<()> {
         ))
         .datagram_send_buffer_size(64 * 1024);
 
-    // with_bind_default binds [::] dual-stack — required on IPv6-first macOS
-    // (same lesson as the aioquic server's `::` bind).
+    // with_bind_default binds [::] dual-stack — required on IPv6-first macOS, where a 0.0.0.0
+    // bind leaves `localhost` (resolving to ::1 first) unreachable.
     let config = ServerConfig::builder()
         .with_bind_default(port)
         .with_custom_transport(bundle.identity, transport)
@@ -85,7 +85,7 @@ async fn main() -> Result<()> {
 
 async fn handle_session(hub: Arc<Hub>, incoming: IncomingSession, egress_kbps: f64) -> Result<()> {
     let request = incoming.await?;
-    // Accept regardless of URL path (mirror aioquic, which ignores :path).
+    // Accept regardless of URL path — the wire protocol doesn't route on :path.
     let conn = Arc::new(request.accept().await?);
     let (ctl_tx, ctl_rx) = mpsc::unbounded_channel();
     let sess = hub.add_session(ctl_tx);
@@ -161,7 +161,7 @@ async fn control_stream(
                     if line.iter().all(u8::is_ascii_whitespace) {
                         continue;
                     }
-                    // mirror aioquic: bad JSON lines are dropped
+                    // bad JSON lines are dropped, never fatal to the session
                     if let Ok(m) = serde_json::from_slice::<Value>(line) {
                         sess.on_control(&hub, &m);
                     }
@@ -200,7 +200,7 @@ async fn drain_datagrams(
 
 /// Big frames, length-prefixed on ONE persistent low-priority uni stream. Writes are awaited on
 /// purpose: QUIC flow control pushes backpressure into the bulk outbox, where WRR + conflation keep
-/// the backlog fresh. EGRESS_KBPS>0 adds the aioquic-style explicit pacer on top.
+/// the backlog fresh. EGRESS_KBPS>0 adds an explicit pacer on top (mirrors gateway/data.py).
 async fn drain_bulk(
     conn: Arc<Connection>,
     sess: Arc<Session>,

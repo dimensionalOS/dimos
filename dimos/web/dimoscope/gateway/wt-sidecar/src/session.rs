@@ -1,6 +1,5 @@
-//! Per-browser-session state + the shared Hub. The wire protocol is pinned by the existing clients
-//! (packages/web/src/transports/webTransport.ts) and the aioquic reference server
-//! (gateway/transports/webtransport.py) — this must stay drop-in compatible with both.
+//! Per-browser-session state + the shared Hub. The wire protocol is pinned by the browser client
+//! (packages/web/src/transports/webTransport.ts) — this must stay drop-in compatible with it.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -94,7 +93,7 @@ impl Hub {
     }
 
     /// Fan a bus frame out to every interested session. `framed` = [f64be ingress-ms][LC02], stamped
-    /// once by the pipe reader and shared (mirrors webtransport.py stamping once per sample).
+    /// once by the pipe reader and shared (mirrors the WS data plane's once-per-sample stamp).
     pub fn route(&self, topic: &str, typ: &str, framed: &Bytes) {
         let sessions = self.sessions.lock().expect("hub lock");
         if sessions.is_empty() {
@@ -145,7 +144,7 @@ struct SessState {
 }
 
 /// QUIC datagrams are path-MTU-capped; frames over this ride the persistent bulk stream.
-/// Mirrors gateway/transports/webtransport.py DATAGRAM_MAX (threshold on the full [f64][LC02] frame).
+/// The threshold applies to the full [f64][LC02] frame.
 pub const DATAGRAM_MAX: usize = 1100;
 
 pub struct Session {
@@ -183,7 +182,7 @@ impl Session {
         outbox.put_data(topic, lane, framed.clone());
     }
 
-    /// Handle one control-stream op from the browser. Mirrors webtransport.py `_on_control`.
+    /// Handle one control-stream op from the browser — the same control protocol as the data WS.
     pub fn on_control(&self, hub: &Hub, m: &Value) {
         let op = m.get("op").and_then(Value::as_str).unwrap_or("");
         match op {
