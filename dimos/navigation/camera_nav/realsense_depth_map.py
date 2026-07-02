@@ -54,8 +54,6 @@ _Z_REL_HI:    float =  1.5
 _VOX_SIZE:    float =  0.020
 _FLOOR_RAY_Z: float = -0.15   # tighter than ZED default: rejects rays >~9° below horizontal
 _MAP_MAX_DEPTH: float = 4.5   # D435i stereo accuracy degrades beyond ~5 m — cap map pts here
-_FLOOR_CALIB_FRAMES: int   = 30    # frames to accumulate before locking camera height
-_FLOOR_ABOVE:        float = 0.05  # keep points > floor_z + 5 cm (mirrors ZED _FLOOR_Z)
 
 # Optical frame (X=right, Y=down, Z=depth) → camera_link (X=fwd, Y=left, Z=up)
 _R_OPT_TO_LINK = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=np.float32)
@@ -538,8 +536,6 @@ class DepthStreamer:
         self._last_n_stable  = 0
         self._last_n_vox     = 0
         self._pinhole_logged = False
-        self._camera_height: float | None = None  # locked after startup calibration
-        self._calib_buf:     list[float]  = []    # floor Z samples during calibration
         self._map_queue: queue.Queue = queue.Queue(maxsize=16)
         self._map_thread = threading.Thread(target=self._map_worker, daemon=True)
         self._map_thread.start()
@@ -584,26 +580,14 @@ class DepthStreamer:
                 radii=0.003,
             ))
 
-        # Per-frame voxel map — full FOV, startup floor calibration mirrors ZED.
-        # Filter and calibrate in camera_link frame (Z=up by construction via
-        # _R_OPT_TO_LINK), not world frame.  World frame Z depends on Madgwick
-        # converging — camera_link Z is always correct.
-        # Since pose_t=[0,0,0]: xyz_cam = xyz_world @ pose_R  (exact inverse).
-        xyz_map = xyz_raw if len(xyz_raw) else xyz
-        z_cam   = (xyz_map @ pkt.pose_R)[:, 2]   # camera_link Z = vertical, always
-
-        if self._camera_height is None:
-            if self._src.pose_locked:
-                self._calib_buf.append(float(np.percentile(z_cam, 5)))
-                if len(self._calib_buf) >= _FLOOR_CALIB_FRAMES:
-                    self._camera_height = abs(float(np.median(self._calib_buf)))
-                    print(f"*** floor calibrated — camera_height={self._camera_height:.3f} m ***",
-                          flush=True)
-            keep = z_cam <= _Z_REL_HI
-        else:
-            keep = (z_cam > -self._camera_height + _FLOOR_ABOVE) & (z_cam <= _Z_REL_HI)
-
-        xyz_kept = xyz_map[keep]
+        # Per-frame voxel map — mirrors ZED world/map pipeline exactly
+        h_rel   = xyz[:, 2] - cam_z
+        # Dynamic floor removal: IMU aligns world Z with gravity, so the floor is
+        # always the lowest-Z cluster. 2nd-percentile + 12 cm buffer removes it
+        # without needing to know camera height.
+        floor_z = float(np.percentile(xyz[:, 2], 2)) + 0.12
+        keep    = (xyz[:, 2] > floor_z) & (h_rel <= _Z_REL_HI)
+        xyz_kept = xyz[keep]
         if len(xyz_kept):
             vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
             _, first = np.unique(_pack(vk), return_index=True)
@@ -688,13 +672,11 @@ class DepthStreamer:
             n_map = self._vox.count
         t = self._src.odom.t
         pct = 100 * self._last_n_stable / self._last_n_valid if self._last_n_valid > 0 else 0.0
-        vio   = "LOCKED" if self._src.pose_locked else "init"
-        floor = (f"h={self._camera_height:.2f}m" if self._camera_height is not None
-                 else f"calib({len(self._calib_buf)}/{_FLOOR_CALIB_FRAMES})")
+        vio = "LOCKED" if self._src.pose_locked else "init"
         print(
             f"frame={frame:5d}  "
             f"stable={self._last_n_stable:6d}/{self._last_n_valid:6d} ({pct:.0f}%)  "
-            f"vox={self._last_n_vox:5d}  floor={floor}  "
+            f"vox={self._last_n_vox:5d}  "
             f"t=[{t[0]:+.2f},{t[1]:+.2f},{t[2]:+.2f}]  "
             f"vio={vio}  fps={fps:.1f}",
             flush=True,
