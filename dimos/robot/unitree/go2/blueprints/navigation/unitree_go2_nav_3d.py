@@ -85,7 +85,9 @@ _nav_rerun_config = {
 unitree_go2_nav_3d = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=_nav_rerun_config),
     # "mcf" for stair traversal
-    GO2Connection.blueprint(lidar=False, camera=False, motion_mode="mcf").remappings(
+    GO2Connection.blueprint(
+        lidar=False, camera=False, motion_mode="mcf", odom_frame_id="go2_odom"
+    ).remappings(
         [
             (GO2Connection, "lidar", "lidar_l1"),
             (GO2Connection, "odom", "odom_go2"),
