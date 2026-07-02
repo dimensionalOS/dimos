@@ -140,9 +140,6 @@ dependencies = [
     "lz4>=4.4.5",
     "bleak>=3.0.2",
     "cryptography>=46.0.5",
-    # aioquic: HTTP/3/QUIC server for the WebTransport data-path benchmark
-    # (dimos/web/dimoscope/servers/webtransport.py — datagrams + streams, no TCP head-of-line).
-    "aioquic>=1.3.0",
     # DimSim scene client (dimos/simulation/dimsim/scene_client.py) imports `websocket`
     # at module load; DimSim is a non-extra-gated robot connection backend.
     "websocket-client>=1.8",
@@ -228,6 +225,10 @@ web = [
     "jinja2>=3.1.6",
     "ffmpeg-python",
     "soundfile",
+    # dimoscope gateway: the zenoh bus tap + the WebTransport (HTTP/3/QUIC) plane
+    # (dimos/web/dimoscope/gateway/transports/webtransport.py — datagrams + streams, no TCP head-of-line).
+    "eclipse-zenoh>=1.0.0,<2.0",
+    "aioquic>=1.3.0",
 ]
 
 perception = [

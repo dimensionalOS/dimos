@@ -1534,7 +1534,6 @@ name = "dimos"
 version = "0.0.13.post1"
 source = { editable = "." }
 dependencies = [
-    { name = "aioquic" },
     { name = "bleak" },
     { name = "cryptography" },
     { name = "dimos-lcm" },
@@ -1587,11 +1586,13 @@ agents = [
 ]
 all = [
     { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "aioquic" },
     { name = "chromadb" },
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64'" },
     { name = "dimos-viewer" },
     { name = "drake", version = "1.45.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform == 'darwin'" },
     { name = "drake", version = "1.49.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform != 'darwin'" },
+    { name = "eclipse-zenoh" },
     { name = "edgetam-dimos" },
     { name = "einops" },
     { name = "fastapi" },
@@ -1655,8 +1656,10 @@ apriltag = [
     { name = "reportlab" },
 ]
 base = [
+    { name = "aioquic" },
     { name = "chromadb" },
     { name = "dimos-viewer" },
+    { name = "eclipse-zenoh" },
     { name = "einops" },
     { name = "fastapi" },
     { name = "faster-whisper" },
@@ -1752,8 +1755,10 @@ sim = [
     { name = "pygame" },
 ]
 unitree = [
+    { name = "aioquic" },
     { name = "chromadb" },
     { name = "dimos-viewer" },
+    { name = "eclipse-zenoh" },
     { name = "einops" },
     { name = "fastapi" },
     { name = "faster-whisper" },
@@ -1783,9 +1788,11 @@ unitree = [
     { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
 unitree-dds = [
+    { name = "aioquic" },
     { name = "chromadb" },
     { name = "cyclonedds" },
     { name = "dimos-viewer" },
+    { name = "eclipse-zenoh" },
     { name = "einops" },
     { name = "fastapi" },
     { name = "faster-whisper" },
@@ -1822,6 +1829,8 @@ visualization = [
     { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
 web = [
+    { name = "aioquic" },
+    { name = "eclipse-zenoh" },
     { name = "fastapi" },
     { name = "ffmpeg-python" },
     { name = "jinja2" },
@@ -1989,7 +1998,7 @@ tests-self-hosted = [
 [package.metadata]
 requires-dist = [
     { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'manipulation'" },
-    { name = "aioquic", specifier = ">=1.3.0" },
+    { name = "aioquic", marker = "extra == 'web'", specifier = ">=1.3.0" },
     { name = "bleak", specifier = ">=3.0.2" },
     { name = "chromadb", marker = "extra == 'perception'", specifier = ">=1.0.0" },
     { name = "cryptography", specifier = ">=46.0.5" },
@@ -2006,6 +2015,7 @@ requires-dist = [
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform == 'darwin' and extra == 'manipulation'", specifier = "==1.45.0" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform != 'darwin' and extra == 'manipulation'", specifier = ">=1.40.0" },
     { name = "eclipse-zenoh", specifier = ">=1.0.0,<2.0" },
+    { name = "eclipse-zenoh", marker = "extra == 'web'", specifier = ">=1.0.0,<2.0" },
     { name = "edgetam-dimos", marker = "extra == 'misc'" },
     { name = "einops", marker = "extra == 'perception'", specifier = ">=0.8.1" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.115.6" },

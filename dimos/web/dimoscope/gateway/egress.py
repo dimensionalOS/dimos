@@ -76,8 +76,12 @@ class SafetyEgress:
 
     # setup: publishers to both backends + the rpc bridge
     def start(self) -> None:
+        try:
+            from dimos.core.transport_factory import make_transport, rpc_backend
+        except ImportError:  # dimos build without the transport factory → read-only gateway
+            logger.warning("transport_factory unavailable — teleop/goal/rpc egress disabled")
+            return
         from dimos.core.global_config import global_config
-        from dimos.core.transport_factory import make_transport, rpc_backend
         from dimos.msgs.geometry_msgs.PointStamped import PointStamped
         from dimos.msgs.geometry_msgs.Twist import Twist
         from dimos.msgs.geometry_msgs.Vector3 import Vector3

@@ -300,7 +300,7 @@ class GO2Load(Module):
 # (NO dimos/ namespace — pinning the matching-backend transport keeps the coordinator's
 # _coerce_transport_to_backend from re-adding the dimos/ prefix), LCM channel "/load/x".
 def _load_transport(topic: str, typ: type) -> object:
-    if global_config.transport == "zenoh":
+    if getattr(global_config, "transport", "lcm") == "zenoh":
         return ZenohTransport(topic.lstrip("/"), typ)  # key: load/x
     return LCMTransport(topic, typ)  # channel: /load/x
 

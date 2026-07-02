@@ -79,7 +79,11 @@ class Bus:
 
     def start_zenoh(self, key: str = "**") -> None:
         self._loop = asyncio.get_running_loop()
-        import zenoh
+        try:
+            import zenoh
+        except ImportError:
+            logger.warning("zenoh not installed — LCM tap only (uv sync --extra web)")
+            return
 
         def on_sample(sample) -> None:  # runs on a Zenoh thread
             k = str(sample.key_expr)
