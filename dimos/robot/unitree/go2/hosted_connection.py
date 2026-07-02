@@ -26,7 +26,8 @@ from __future__ import annotations
 import json
 import threading
 import time
-from typing import Any
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable
 
 import numpy as np
 from reactivex.disposable import Disposable
@@ -85,6 +86,10 @@ class Go2HostedConnection(GO2Connection):
     mux_image: Out[Image]
     cmd_vel_stamped: Out[TwistStamped]
 
+    # Queued (non-urgent) commands beyond this are busy-rejected — bounds the
+    # backlog a spamming/laggy operator can build behind a slow command.
+    _MAX_PENDING_CMDS = 4
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._cmd_stats = LiveStreamStats()
@@ -95,11 +100,18 @@ class Go2HostedConnection(GO2Connection):
         self._cam_lock = threading.Lock()
         self._cam_frames: dict[str, Image] = {}
         self._cam_selected = ["cam1"]
+        # Single worker (repo pattern, cf. utils/threadpool + drake_world):
+        # commands execute strictly in order, so state like _rage_active can't
+        # race between overlapping runners. Bounded by _MAX_PENDING_CMDS.
+        self._cmd_executor: ThreadPoolExecutor | None = None
+        self._cmd_pending = 0
+        self._cmd_lock = threading.Lock()
 
     @rpc
     def start(self) -> None:
         super().start()
         self._stop_event.clear()
+        self._cmd_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="Go2Cmd")
         # Force firmware out of Rage so _rage_active=False matches reality —
         # a prior session may have left it on, and the set_mode short-circuit
         # then locks the user in Rage.
@@ -194,6 +206,9 @@ class Go2HostedConnection(GO2Connection):
     @rpc
     def stop(self) -> None:
         self._stop_event.set()
+        if self._cmd_executor is not None:
+            self._cmd_executor.shutdown(wait=False, cancel_futures=True)
+            self._cmd_executor = None
         if self._telemetry_thread is not None:
             self._telemetry_thread.join(timeout=2.0)
             self._telemetry_thread = None
@@ -231,6 +246,49 @@ class Go2HostedConnection(GO2Connection):
             )
         # ping answered by BrokerProvider; unknown types ignored.
 
+    def _submit_cmd(self, label: str, nonce: Any, task: Callable[[], bool], *, urgent: bool = False) -> None:
+        """Run a blocking command off the WebRTC/video loop and ack the result.
+
+        Non-urgent commands go through a single worker — strict ordering, so
+        stateful toggles (rage) can't interleave — with a bounded backlog:
+        past _MAX_PENDING_CMDS they're busy-rejected (ack ok=False) instead of
+        piling up threads. urgent=True (Damp / E-STOP) bypasses the queue on a
+        dedicated thread: a stop must never wait behind a 3s StandReady.
+        """
+
+        def runner() -> None:
+            ok = False
+            try:
+                ok = bool(task())
+            except Exception:
+                logger.exception("%s failed", label)
+            finally:
+                if not urgent:
+                    with self._cmd_lock:
+                        self._cmd_pending -= 1
+            self._send_ack(nonce, ok)
+
+        if urgent:
+            threading.Thread(target=runner, daemon=True, name=f"Go2Cmd-{label}").start()
+            return
+
+        executor = self._cmd_executor
+        if executor is None:  # not started / already stopped
+            self._send_ack(nonce, False)
+            return
+        with self._cmd_lock:
+            if self._cmd_pending >= self._MAX_PENDING_CMDS:
+                logger.warning("%s rejected: %d commands already pending", label, self._cmd_pending)
+                self._send_ack(nonce, False)
+                return
+            self._cmd_pending += 1
+        try:
+            executor.submit(runner)
+        except RuntimeError:  # shutdown raced us
+            with self._cmd_lock:
+                self._cmd_pending -= 1
+            self._send_ack(nonce, False)
+
     def _handle_sport_cmd(self, msg: dict[str, Any]) -> None:
         """Operator button → allow-listed SPORT_MOD request, ack on cmd_ack."""
         name = msg.get("name")
@@ -238,7 +296,7 @@ class Go2HostedConnection(GO2Connection):
 
         # StandReady is the standup+balance combo, never the two separately.
         if name == "StandReady":
-            self._stand_ready(nonce)
+            self._submit_cmd("StandReady", nonce, self._stand_ready_task)
             return
 
         api_id = ALLOWED_SPORT_CMDS.get(name) if isinstance(name, str) else None
@@ -247,39 +305,27 @@ class Go2HostedConnection(GO2Connection):
             self._send_ack(nonce, False)
             return
 
-        # sport_command blocks the WebRTC loop (= the video loop) — run off the
-        # callback so a gesture like Hello doesn't stall video.
-        def runner() -> None:
-            ok = False
-            try:
-                ok = bool(self.connection.sport_command(api_id))
-            except Exception:
-                logger.exception("sport_cmd %s failed", name)
-            self._send_ack(nonce, ok)
+        # Damp is the E-STOP: it must jump the queue, not wait behind slower
+        # queued commands (StandReady holds the worker for ~3.3s).
+        self._submit_cmd(
+            f"sport_cmd {name}",
+            nonce,
+            lambda: bool(self.connection.sport_command(api_id)),
+            urgent=(name == "Damp"),
+        )
 
-        threading.Thread(target=runner, daemon=True, name=f"Go2SportCmd-{name}").start()
-
-    def _stand_ready(self, nonce: Any) -> None:
+    def _stand_ready_task(self) -> bool:
         """Standup → settle → BalanceStand → RecoveryStand (drive-ready).
 
         BalanceStand alone doesn't always leave the FSM accepting velocity
         after transitions from Sit / Rage / StandDown; RecoveryStand does.
         """
-
-        def runner() -> None:
-            ok = False
-            try:
-                self.connection.standup()
-                time.sleep(3.0)  # standup must finish before balance_stand
-                self.connection.balance_stand()
-                time.sleep(0.3)
-                self.connection.sport_command(ALLOWED_SPORT_CMDS["RecoveryStand"])
-                ok = True
-            except Exception:
-                logger.exception("StandReady failed")
-            self._send_ack(nonce, ok)
-
-        threading.Thread(target=runner, daemon=True, name="Go2StandReady").start()
+        self.connection.standup()
+        time.sleep(3.0)  # standup must finish before balance_stand
+        self.connection.balance_stand()
+        time.sleep(0.3)
+        self.connection.sport_command(ALLOWED_SPORT_CMDS["RecoveryStand"])
+        return True
 
     def _handle_set_mode(self, msg: dict[str, Any]) -> None:
         """Speed-mode select. normal/high differ only by browser-side scale;
@@ -291,39 +337,31 @@ class Go2HostedConnection(GO2Connection):
             self._send_ack(nonce, False)
             return
         want_rage = mode == "rage"
-        if want_rage == self._rage_active:
-            self._send_ack(nonce, True)  # already in the right FSM
-            return
 
-        def runner() -> None:
-            ok = False
-            try:
-                ok = bool(self.connection.set_rage_mode(want_rage))
-                if ok:
-                    self._rage_active = want_rage
-                logger.info("set_mode: rage=%s ok=%s", want_rage, ok)
-            except Exception:
-                logger.exception("set_mode rage=%s failed", want_rage)
-            self._send_ack(nonce, ok)
+        # The rage check runs INSIDE the serialized task: checking on the
+        # callback thread raced the previous toggle's write of _rage_active.
+        def task() -> bool:
+            if want_rage == self._rage_active:
+                return True  # already in the right FSM
+            ok = bool(self.connection.set_rage_mode(want_rage))
+            if ok:
+                self._rage_active = want_rage
+            logger.info("set_mode: rage=%s ok=%s", want_rage, ok)
+            return ok
 
-        threading.Thread(target=runner, daemon=True, name="Go2SetMode").start()
+        self._submit_cmd(f"set_mode {mode}", nonce, task)
 
     def _handle_obstacle_avoidance(self, msg: dict[str, Any]) -> None:
         """Toggle the Go2's onboard obstacle avoidance on/off."""
         enabled = bool(msg.get("enabled"))
         nonce = msg.get("nonce")
 
-        def runner() -> None:
-            ok = False
-            try:
-                self.connection.set_obstacle_avoidance(enabled)
-                ok = True
-                logger.info("obstacle_avoidance: enabled=%s", enabled)
-            except Exception:
-                logger.exception("obstacle_avoidance enabled=%s failed", enabled)
-            self._send_ack(nonce, ok)
+        def task() -> bool:
+            self.connection.set_obstacle_avoidance(enabled)
+            logger.info("obstacle_avoidance: enabled=%s", enabled)
+            return True
 
-        threading.Thread(target=runner, daemon=True, name="Go2ObstacleAvoid").start()
+        self._submit_cmd(f"obstacle_avoidance {enabled}", nonce, task)
 
     def _send_ack(self, nonce: Any, ok: bool) -> None:
         # Best-effort: the ack rides state_reliable_back, which doesn't exist

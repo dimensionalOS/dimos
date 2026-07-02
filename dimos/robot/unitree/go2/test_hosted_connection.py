@@ -23,7 +23,9 @@ stale / out-of-order cmd_vel drop on the unreliable wire.
 
 from __future__ import annotations
 
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -36,12 +38,36 @@ from dimos.robot.unitree.go2.hosted_connection import (
 )
 
 
+# Executors created by _bare_connection, reaped after each test so the
+# repo-wide non-closed-thread check stays green.
+_live_executors: list[ThreadPoolExecutor] = []
+
+
+@pytest.fixture(autouse=True)
+def _reap_cmd_executors():
+    yield
+    while _live_executors:
+        _live_executors.pop().shutdown(wait=True)
+    # Urgent (Damp/E-STOP) runners are plain threads — give them a beat to die.
+    deadline = time.time() + 2.0
+    while time.time() < deadline and any(
+        t.name.startswith("Go2Cmd-") for t in threading.enumerate()
+    ):
+        time.sleep(0.005)
+
+
 def _bare_connection() -> Go2HostedConnection:
     """A Go2HostedConnection with only the fields the command paths need."""
     conn = object.__new__(Go2HostedConnection)
     conn.connection = MagicMock()
     conn._last_cmd_ts = 0.0
     conn.config = SimpleNamespace(cmd_stale_after_sec=0.5)
+    # Command execution plane (normally built in start()).
+    conn._cmd_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="Go2CmdTest")
+    conn._cmd_pending = 0
+    conn._cmd_lock = threading.Lock()
+    conn._rage_active = False
+    _live_executors.append(conn._cmd_executor)
     return conn
 
 
@@ -87,14 +113,18 @@ def test_disallowed_sport_cmd_rejected(name: Any, monkeypatch: pytest.MonkeyPatc
 
 
 def test_standready_is_not_a_raw_sport_command(monkeypatch: pytest.MonkeyPatch) -> None:
-    """StandReady routes to the combo, never a single sport_command call."""
+    """StandReady routes to the combo task, never a single sport_command call."""
     conn = _bare_connection()
-    called: list[Any] = []
-    monkeypatch.setattr(conn, "_stand_ready", lambda nonce: called.append(nonce))
+    called: list[bool] = []
+    monkeypatch.setattr(conn, "_stand_ready_task", lambda: called.append(True) or True)
+    acks: list[tuple[Any, bool]] = []
+    monkeypatch.setattr(conn, "_send_ack", lambda nonce, ok: acks.append((nonce, ok)))
 
     conn._handle_sport_cmd({"name": "StandReady", "nonce": 3})
+    _wait_ack(acks)
 
-    assert called == [3]
+    assert called == [True]
+    assert acks == [(3, True)]
     conn.connection.sport_command.assert_not_called()
 
 
@@ -161,6 +191,7 @@ def test_set_mode_non_rage_does_not_touch_firmware(
     monkeypatch.setattr(conn, "_send_ack", lambda nonce, ok: acks.append((nonce, ok)))
 
     conn._handle_set_mode({"mode": mode, "nonce": 2})
+    _wait_ack(acks)
 
     assert acks == [(2, True)]
     conn.connection.set_rage_mode.assert_not_called()
@@ -190,6 +221,82 @@ def test_set_mode_already_in_rage_short_circuits(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(conn, "_send_ack", lambda nonce, ok: acks.append((nonce, ok)))
 
     conn._handle_set_mode({"mode": "rage", "nonce": 5})
+    _wait_ack(acks)
 
     assert acks == [(5, True)]
     conn.connection.set_rage_mode.assert_not_called()
+
+
+# ─── command execution plane: ordering, backlog bound, urgent bypass ─
+
+
+def _wait_for(cond, timeout: float = 2.0) -> None:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if cond():
+            return
+        time.sleep(0.005)
+
+
+def test_rapid_rage_toggles_execute_in_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Serialized worker: rage on→off lands in order, no interleaved race."""
+    conn = _bare_connection()
+    calls: list[bool] = []
+    conn.connection.set_rage_mode.side_effect = lambda v: calls.append(v) or True
+    acks: list[tuple[Any, bool]] = []
+    monkeypatch.setattr(conn, "_send_ack", lambda nonce, ok: acks.append((nonce, ok)))
+
+    conn._handle_set_mode({"mode": "rage", "nonce": 1})
+    conn._handle_set_mode({"mode": "normal", "nonce": 2})
+    _wait_for(lambda: len(acks) == 2)
+
+    assert calls == [True, False]  # both toggles fired, in submit order
+    assert conn._rage_active is False
+    assert sorted(acks) == [(1, True), (2, True)]
+
+
+def test_backlog_past_max_pending_is_busy_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Queued commands beyond _MAX_PENDING_CMDS ack ok=False immediately."""
+    conn = _bare_connection()
+    release = threading.Event()
+    conn.connection.sport_command.side_effect = lambda _id: release.wait(2.0) or True
+    acks: list[tuple[Any, bool]] = []
+    monkeypatch.setattr(conn, "_send_ack", lambda nonce, ok: acks.append((nonce, ok)))
+
+    total = conn._MAX_PENDING_CMDS + 3
+    for i in range(total):
+        conn._handle_sport_cmd({"name": "Hello", "nonce": i})
+
+    # Overflow rejections ack synchronously while the first command blocks.
+    rejected = [a for a in acks if a[1] is False]
+    assert len(rejected) == total - conn._MAX_PENDING_CMDS
+
+    release.set()
+    _wait_for(lambda: len(acks) == total)
+    accepted = [a for a in acks if a[1] is True]
+    assert len(accepted) == conn._MAX_PENDING_CMDS
+
+
+def test_damp_bypasses_busy_queue(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Damp (E-STOP) runs urgently even while the worker is wedged."""
+    conn = _bare_connection()
+    wedge = threading.Event()
+    damped = threading.Event()
+
+    def fake_sport(api_id: int) -> bool:
+        if api_id == ALLOWED_SPORT_CMDS["Damp"]:
+            damped.set()
+            return True
+        wedge.wait(5.0)  # Hello holds the single worker
+        return True
+
+    conn.connection.sport_command.side_effect = fake_sport
+    acks: list[tuple[Any, bool]] = []
+    monkeypatch.setattr(conn, "_send_ack", lambda nonce, ok: acks.append((nonce, ok)))
+
+    conn._handle_sport_cmd({"name": "Hello", "nonce": 1})  # occupies the worker
+    conn._handle_sport_cmd({"name": "Damp", "nonce": 2})
+
+    assert damped.wait(1.0), "Damp must not queue behind a blocking command"
+    wedge.set()
+    _wait_for(lambda: len(acks) == 2)
