@@ -297,6 +297,48 @@ relay. Rows self-identify `wire: dimoscope/rtc-rs`.
   SCTP association survived on the EC2 box (heavily degraded) but collapsed outright on three long
   runs on a shared-vCPU VPS — the same sessions over QUIC and TCP ran without incident on both.
 
+### Tuning knobs — measured before/after (2026-07-03 · same VPS, headless Chrome, 30 s/cell)
+
+Three levers, each with the delivered effect measured on the exact cells they target (headless
+Chrome with `--disable-background-timer-throttling` so the numbers aren't background-throttled):
+
+**WebSocket + BBR** (`sysctl net.ipv4.tcp_congestion_control=bbr`; the box ships BBRv1 on mainline
+6.8, so no v2/v3 loss-threshold). Under 5% random loss, cubic collapses by Mathis; BBRv1 ignores
+random loss:
+
+| WS · loss-5 | cubic (before) | bbr (after) |
+|---|---|---|
+| bulk (1 MB frames) | **0** (dead) | **1.2 MB/s** · p50 833 ms |
+| mixed (small lanes + bulk) | 0.43 Hz · 33 kB/s | **8.6 Hz · 1.9 MB/s** |
+
+The trade: BBR is less aggressive than cubic on a clean fat pipe, so clean WS bulk eases ~12.4 →
+10.3 MB/s — worth it for a robot link where loss resilience beats peak clean throughput. `notsent_lowat`
+was tried and reverted: 16 KB is too shallow for a 20 MB/s flood on one pipe (the socket backs up
+and the pose lane sheds). permessage-deflate is off by default (`WS_DEFLATE=1` restores) — pure CPU
+on incompressible sensor frames.
+
+**WebTransport `WT_SEND_WINDOW` (1.5 MB, was quinn's ~10 MB default).** The default lets `write_all`
+accept frame after frame into quinn's buffer, so a saturating bulk topic piles up *past* the outbox
+where conflation can't help. Capping it paces the drain to the link rate; backlog stays in the
+outbox as the freshest single frame:
+
+| WT · wifi-normal (10 mbit) | before | after |
+|---|---|---|
+| dense (1 MB frames) p50 | 4694 ms | **2159 ms** (−54%) |
+| mixed p50 · fast-lane interference | 1923 ms · ×23 | **1270 ms · ×15** |
+| clean dense throughput · p95 | 17.7 MB/s · 231 ms | 18.4 MB/s · **99 ms** |
+
+Clean throughput is preserved (1.5 MB > clean-WAN BDP), and the clean-path tail actually tightens.
+
+**WebTransport datagram TTL (`WT_DGRAM_TTL_MS`=200 + `WT_DGRAM_BUF`=16 KB).** Drop a pose datagram
+already older than the TTL at drain time, and keep quinn's datagram send buffer small so a stall
+drops-oldest instead of flushing a stale burst:
+
+| WT · wifi-crowded | pose p95 | pose p99 |
+|---|---|---|
+| before | 8789 ms | 9783 ms |
+| after | **2112 ms** (−76%) | 3166 ms |
+
 ### VPS — run the dog (Ubuntu; needs `uv` + `rustup`; `deno` only to build the app)
 
 Firewall: TCP `8080`; UDP `:8443` (WebTransport) + `:8444` (WebRTC — all sessions mux on one port).
@@ -358,7 +400,11 @@ IP + per-device AES-128 key), point `go2-load` / `unitree_go2` at the hardware, 
 | `WT_PIPE` | `/tmp/dimoscope-wt.sock` | gateway↔sidecar unix socket (gateway listens, sidecar reconnects) |
 | `WT_CERT_HASH_FILE` | `/tmp/dimoscope-wt-cert.hash` | sidecar writes its cert SHA-256 here; `/cert` serves it |
 | `EGRESS_KBPS` | off | explicit hard cap: pace each client's egress to a known link budget |
+| `WT_SEND_WINDOW` | `1500000` | cap quinn's connection send buffer so bulk backlog stays in the outbox (conflated fresh), not quinn's ~10 MB default. > clean-WAN BDP, so clean throughput is intact |
+| `WT_DGRAM_TTL_MS` | `200` | drop a pose datagram older than this at drain time (post-stall staleness bound; 0 = off) |
+| `WT_DGRAM_BUF` | `16384` | quinn datagram send-buffer bytes — small = drop-oldest → newest pose wins under a stall |
 | `WS_SNDBUF` | `262144` | bound the /ws kernel send buffer so WAN backlog stays in the priority outbox (0 = OS autotuning) |
+| `WS_DEFLATE` | off | `1` re-enables /ws permessage-deflate (off by default — pure CPU on incompressible sensor frames) |
 | `QOS_RULES` | `qos.rules.json` | topic-glob → lane override map (see `qos.rules.example.json`) — read by the gateway **and** the sidecar |
 | `NETEM_CTL` | off | enable `/netem` (Linux + the `dimos-netem` sudo wrapper above) |
 | `ZENOH_KEY` | `**` | zenoh key-expr the bus tap subscribes |
