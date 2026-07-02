@@ -165,20 +165,16 @@ class KeyboardTeleopModule(Module):
             pygame.display.flip()
             clock.tick(50)
 
-        self._publish_twist(task_name, zero=True)
+        self._publish_twist(task_name)
         pygame.quit()
 
     def _publish_twist(
         self,
         task_name: str,
         *,
-        linear: tuple[float, float, float] = (0.0, 0.0, 0.0),
-        angular: tuple[float, float, float] = (0.0, 0.0, 0.0),
-        zero: bool = False,
+        linear: TwistVector = (0.0, 0.0, 0.0),
+        angular: TwistVector = (0.0, 0.0, 0.0),
     ) -> None:
-        if zero:
-            linear = (0.0, 0.0, 0.0)
-            angular = (0.0, 0.0, 0.0)
         self.coordinator_ee_twist_command.publish(
             TwistStamped(frame_id=task_name, linear=list(linear), angular=list(angular))
         )

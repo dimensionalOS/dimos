@@ -57,17 +57,11 @@ def test_publish_twist_emits_routed_twist_stamped(mocker) -> None:
     assert [msg.angular.x, msg.angular.y, msg.angular.z] == [0.4, 0.5, 0.6]
 
 
-def test_publish_twist_zero_stop_uses_task_frame_id(mocker) -> None:
+def test_publish_twist_defaults_to_zero_twist(mocker) -> None:
     publish = mocker.Mock()
     module = _keyboard_module_with_publish(publish)
 
-    KeyboardTeleopModule._publish_twist(
-        module,
-        EEF_TWIST_TASK_NAME,
-        linear=(1.0, 1.0, 1.0),
-        angular=(1.0, 1.0, 1.0),
-        zero=True,
-    )
+    KeyboardTeleopModule._publish_twist(module, EEF_TWIST_TASK_NAME)
 
     msg = publish.call_args.args[0]
     assert msg.frame_id == EEF_TWIST_TASK_NAME
