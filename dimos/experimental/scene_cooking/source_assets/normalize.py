@@ -24,6 +24,7 @@ import shutil
 import tempfile
 from typing import Any
 
+from dimos.constants import CACHE_DIR
 from dimos.experimental.scene_cooking.command import (
     blender_output_line_is_interesting,
     run_logged_command,
@@ -44,7 +45,7 @@ DIRECT_SCENE_SUFFIXES = {
     ".usdz",
 }
 
-SOURCE_CACHE_DIR = Path.home() / ".cache" / "dimos" / "scene_sources"
+SOURCE_CACHE_DIR = CACHE_DIR / "scene_sources"
 _BLENDER_NORMALIZER_VERSION = "blend-evaluated-depsgraph-v1"
 
 

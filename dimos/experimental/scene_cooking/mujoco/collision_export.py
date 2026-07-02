@@ -68,6 +68,7 @@ from typing import Any
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 
+from dimos.constants import CACHE_DIR as _DIMOS_CACHE_DIR
 from dimos.experimental.scene_cooking.mujoco.collision_policy import (
     CollisionSpec,
     decide_for_prim,
@@ -83,7 +84,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-CACHE_DIR = Path.home() / ".cache" / "dimos" / "scene_meshes"
+CACHE_DIR = _DIMOS_CACHE_DIR / "scene_meshes"
 
 
 # Scene-only wrapper -- no robot include. Robots are attached at runtime
@@ -232,8 +233,8 @@ def bake_scene_mjcf(
             etc. Anything ``source_assets.mesh.load_scene_prims`` accepts.
         alignment: scale / translation / rotation / y-up swap to bake
             into world frame before any geom is emitted.
-        cache_root: override the cache root (defaults to
-            ``~/.cache/dimos/scene_meshes``).
+        cache_root: override the cache root (defaults to the XDG cache dir
+            under ``dimos/scene_meshes``).
         collision_spec: per-prim policy.  ``None`` auto-discovers a
             sidecar ``<scene>.collision.json`` next to the source, or
             falls back to ``CollisionSpec()`` defaults (auto-fit
