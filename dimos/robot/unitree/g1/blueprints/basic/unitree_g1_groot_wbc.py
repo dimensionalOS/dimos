@@ -462,7 +462,10 @@ def _g1_real_odometry_root(odom: Any) -> Any:
     from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 
     t_world_mid360 = np.eye(4)
-    t_world_mid360[:3, :3] = odom.orientation.to_rotation_matrix()
+    # The MID-360 is physically mounted upside down on the G1 head (the
+    # URDF's mid360_joint doesn't carry the flip), so un-roll the sensor
+    # body by pi about x before composing: Rx(pi) == diag(1, -1, -1).
+    t_world_mid360[:3, :3] = odom.orientation.to_rotation_matrix() @ np.diag([1.0, -1.0, -1.0])
     t_world_mid360[:3, 3] = (odom.x, odom.y, odom.z)
     t_world_pelvis = t_world_mid360 @ np.linalg.inv(_g1_pelvis_to_mid360())
     q = Quaternion.from_rotation_matrix(t_world_pelvis[:3, :3])
