@@ -585,26 +585,23 @@ class DepthStreamer:
             ))
 
         # Per-frame voxel map — full FOV, startup floor calibration mirrors ZED.
-        # On first _FLOOR_CALIB_FRAMES frames (once IMU locked) we measure the
-        # floor Z from the lowest 5th-percentile of the world cloud and derive
-        # camera_height = |floor_z|.  After that the filter is identical to ZED:
-        #   keep = xyz[:,2] > floor_z + _FLOOR_ABOVE
-        # where floor_z = -camera_height (camera is at world origin, floor below).
+        # Filter and calibrate in camera_link frame (Z=up by construction via
+        # _R_OPT_TO_LINK), not world frame.  World frame Z depends on Madgwick
+        # converging — camera_link Z is always correct.
+        # Since pose_t=[0,0,0]: xyz_cam = xyz_world @ pose_R  (exact inverse).
         xyz_map = xyz_raw if len(xyz_raw) else xyz
-        h_rel   = xyz_map[:, 2] - cam_z
+        z_cam   = (xyz_map @ pkt.pose_R)[:, 2]   # camera_link Z = vertical, always
 
         if self._camera_height is None:
             if self._src.pose_locked:
-                self._calib_buf.append(float(np.percentile(xyz_map[:, 2], 5)))
+                self._calib_buf.append(float(np.percentile(z_cam, 5)))
                 if len(self._calib_buf) >= _FLOOR_CALIB_FRAMES:
-                    floor_z             = float(np.median(self._calib_buf))
-                    self._camera_height = abs(floor_z)
+                    self._camera_height = abs(float(np.median(self._calib_buf)))
                     print(f"*** floor calibrated — camera_height={self._camera_height:.3f} m ***",
                           flush=True)
-            keep = h_rel <= _Z_REL_HI          # no floor filter while calibrating
+            keep = z_cam <= _Z_REL_HI
         else:
-            floor_z = -self._camera_height      # floor is below world origin
-            keep    = (xyz_map[:, 2] > floor_z + _FLOOR_ABOVE) & (h_rel <= _Z_REL_HI)
+            keep = (z_cam > -self._camera_height + _FLOOR_ABOVE) & (z_cam <= _Z_REL_HI)
 
         xyz_kept = xyz_map[keep]
         if len(xyz_kept):
