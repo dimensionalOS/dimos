@@ -151,7 +151,7 @@ body {
 
 /* gateway address input — set the server (host:port) at runtime; reconnects on change */
 .gw-input {
-  width: 140px;
+  width: 170px; /* a full ip:port in 12px mono without truncation */
   background-color: var(--elev);
   color: var(--text);
   border: 1px solid var(--line);

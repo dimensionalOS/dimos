@@ -1,5 +1,5 @@
 // dimoscope — the example app for @dimos/web + @dimos/react.
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { type MediaMode, SubscribeBar } from "@dimos/react";
 import {
   useDimosClient,
@@ -17,7 +17,7 @@ import { CommandsPanel } from "./panels/CommandsPanel";
 import { StreamsTab } from "./panels/streams/StreamsTab";
 import { BenchDrawer, hasBenchParams } from "./panels/bench/BenchDrawer";
 import { TopbarNetem } from "./panels/TopbarNetem";
-import { useGateway } from "./gateway";
+import { normalizeGateway, recentGateways, useGateway } from "./gateway";
 import { NetemProvider } from "./netem";
 import { getParam, setUrlParam } from "./urlState";
 
@@ -64,6 +64,18 @@ export function App() {
   const [mediaMode, setMediaMode] = useState<MediaMode>("auto");
   const { gateway, setGateway } = useGateway();
   const [gwText, setGwText] = useState(gateway);
+  const [gwRecent, setGwRecent] = useState(recentGateways);
+  // Snap the field to the committed (normalized) value — a pasted http://… must not linger raw.
+  useEffect(() => setGwText(gateway), [gateway]);
+  const commitGw = (raw: string) => {
+    setGateway(raw);
+    // When raw normalizes to the CURRENT gateway, context state doesn't change and the
+    // effect above won't fire — snap the visible text ourselves.
+    setGwText(normalizeGateway(raw) || gateway);
+  };
+  // Escape blurs, and the blur handler would commit the text Escape meant to discard —
+  // state updates land after the synchronous blur, so a ref carries the intent.
+  const gwCancel = useRef(false);
 
   return (
     <NetemProvider>
@@ -120,18 +132,37 @@ export function App() {
           <input
             className="gw-input"
             value={gwText}
+            list="gw-recent"
             onChange={(e) => setGwText(e.target.value)}
+            onFocus={(e) => {
+              e.currentTarget.select(); // address-bar ergonomics: focus = replace
+              setGwRecent(recentGateways());
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
-                setGateway(gwText);
+                commitGw(gwText);
+                (e.target as HTMLInputElement).blur();
+              }
+              if (e.key === "Escape") {
+                gwCancel.current = true;
                 (e.target as HTMLInputElement).blur();
               }
             }}
-            onBlur={() => setGateway(gwText)}
-            placeholder="host:port"
-            title="gateway server (host:port) — reconnects on change; saved to this browser"
+            onBlur={() => {
+              if (gwCancel.current) {
+                gwCancel.current = false;
+                setGwText(gateway);
+                return;
+              }
+              commitGw(gwText);
+            }}
+            placeholder="localhost:8080"
+            title="gateway server (host:port; pasted URLs are normalized) — reconnects on change; recent gateways remembered"
             spellCheck={false}
           />
+          <datalist id="gw-recent">
+            {gwRecent.map((g) => <option key={g} value={g} />)}
+          </datalist>
           <span className="badge">gateway · {label ?? "connecting…"}</span>
         </div>
       </header>

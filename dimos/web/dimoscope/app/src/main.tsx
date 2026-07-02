@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { DimosProvider, type ServerOpt } from "@dimos/react";
 import { createAutoTransport, createDimosClient, createGatewayWsTransport } from "@dimos/web";
 import { App } from "./App";
-import { GatewayContext } from "./gateway";
+import { GatewayContext, normalizeGateway, pushRecentGateway } from "./gateway";
 import { setUrlParam } from "./urlState";
 import "./styles.css";
 
@@ -14,9 +14,10 @@ const GW_PORT = 8080; // gateway HTTP/WS port (python -m gateway default)
 const WT_PORT = Number(new URLSearchParams(location.search).get("wt") ?? 8443); // gateway WebTransport/QUIC port
 
 // Initial gateway: ?gw=host:port seeds it, else localStorage, else hostname:GW_PORT.
+// Normalized at every entry: pasted full URLs (?gw=http://host:8080/) become host:port.
 function initialGateway(): string {
-  return new URLSearchParams(location.search).get("gw") ??
-    localStorage.getItem("dimos.gw") ??
+  return normalizeGateway(new URLSearchParams(location.search).get("gw") ?? "") ||
+    normalizeGateway(localStorage.getItem("dimos.gw") ?? "") ||
     `${location.hostname}:${GW_PORT}`;
 }
 
@@ -111,8 +112,9 @@ function Root() {
   const [gateway, setGatewayState] = useState(initialGateway);
   const servers = useMemo(() => buildServers(gateway), [gateway]);
   const setGateway = (g: string) => {
-    const v = g.trim();
+    const v = normalizeGateway(g);
     if (!v || v === gateway) return;
+    pushRecentGateway(v);
     localStorage.setItem("dimos.gw", v);
     setUrlParam("gw", v);
     setGatewayState(v); // → servers rebuild → DimosProvider closes the old client + reconnects to `v`

@@ -13,7 +13,15 @@ export function TeleopPad() {
   const [active, setActive] = useState(false);
 
   useEffect(() => {
+    // Never steal keys from a text field: "localhost" contains a+s, and arrows must move the
+    // cursor, not the robot. keyup stays unguarded so a key held before focusing still releases.
+    const editing = (e: KeyboardEvent) =>
+      e.target instanceof HTMLInputElement ||
+      e.target instanceof HTMLTextAreaElement ||
+      e.target instanceof HTMLSelectElement ||
+      (e.target instanceof HTMLElement && e.target.isContentEditable);
     const down = (e: KeyboardEvent) => {
+      if (editing(e)) return;
       if (KEYS.includes(e.key)) {
         held.current.add(e.key);
         e.preventDefault();
