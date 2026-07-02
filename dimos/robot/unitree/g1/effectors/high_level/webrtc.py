@@ -24,7 +24,6 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.g1.effectors.high_level.commands import (
     ARM_API_ID,
     ARM_COMMANDS,
@@ -37,6 +36,7 @@ from dimos.robot.unitree.g1.effectors.high_level.commands import (
     execute_g1_command,
 )
 from dimos.robot.unitree.g1.effectors.high_level.high_level_spec import HighLevelG1Spec
+from dimos.robot.unitree.g1.g1_webrtc import G1WebRTCConnection
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -55,7 +55,7 @@ class G1HighLevelWebRtc(Module, HighLevelG1Spec):
     cmd_vel: In[Twist]
     config: G1HighLevelWebRtcConfig
 
-    connection: UnitreeWebRTCConnection | None
+    connection: G1WebRTCConnection | None
 
     def __init__(self, *args: Any, g: GlobalConfig = global_config, **kwargs: Any) -> None:
         super().__init__(*args, g=g, **kwargs)
@@ -65,7 +65,7 @@ class G1HighLevelWebRtc(Module, HighLevelG1Spec):
     def start(self) -> None:
         super().start()
         assert self.config.ip is not None, "ip must be set in G1HighLevelWebRtcConfig"
-        self.connection = UnitreeWebRTCConnection(
+        self.connection = G1WebRTCConnection(
             self.config.ip,
             self.config.connection_mode,
             aes_128_key=self.config.aes_128_key,
