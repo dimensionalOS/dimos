@@ -436,6 +436,10 @@ export function handleStateMessage(data) {
         // Battery SOC rides robot_telemetry (state_reliable_back). null until
         // the robot's first lowstate; views read state.liveStats.soc.
         if (msg.soc != null) state.liveStats.soc = msg.soc;
+        // Robot-authoritative UI state (posture/rage/OA/cams/estop) — the
+        // active view registers state.onRobotState to reconcile its controls.
+        // Absent on older robots; the hook is a no-op then.
+        if (msg.state) state.onRobotState?.(msg.state);
     }
     // Command ack for a nonce'd command (body_height, sport_cmd, ...). The
     // active view registers state.onCmdAck to resolve its pending button/slider.

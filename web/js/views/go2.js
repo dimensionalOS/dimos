@@ -289,6 +289,8 @@ function wireGo2() {
 
     // Resolve command acks coming back on state_reliable_back (via webrtc.js).
     state.onCmdAck = onCmdAck;
+    // Reconcile controls from robot-authoritative telemetry state (3Hz).
+    state.onRobotState = onRobotState;
 
     selectSpeed(ui.speedMode, /*sendToRobot=*/ false);  // reflect default selection
 }
@@ -361,6 +363,42 @@ function renderObstacleToggle() {
 // ── command ack (state_reliable_back) — shared by all nonce'd commands ──
 function onCmdAck(msg) {
     resolveAck(msg.nonce, !!msg.ok);
+}
+
+// ── robot-state reconcile (robot_telemetry.state, 3Hz) ──────────────
+// The robot is authoritative: on (re)connect the cockpit's optimistic
+// defaults (StandReady, OA on, cams [cam1], no rage) get corrected to
+// reality. Skipped while a command is pending — the robot still reports
+// the old state until the ack lands, and flip-flopping the UI mid-click
+// reads as a glitch.
+function onRobotState(s) {
+    if (ui.pending.size > 0) return;
+    let dirty = false;
+    if (typeof s.posture === 'string' && s.posture !== ui.posture) {
+        ui.posture = s.posture;
+        dirty = true;
+    }
+    if (typeof s.estopped === 'boolean' && s.estopped !== ui.estopped) {
+        ui.estopped = s.estopped;
+        dirty = true;
+    }
+    if (typeof s.obstacle_avoidance === 'boolean' && s.obstacle_avoidance !== ui.obstacleAvoid) {
+        ui.obstacleAvoid = s.obstacle_avoidance;
+        renderObstacleToggle();
+    }
+    if (Array.isArray(s.cams) && s.cams.join() !== ui.selectedCams.join()) {
+        ui.selectedCams = s.cams.filter((c) => CAMS.some((k) => k.id === c));
+        if (!ui.selectedCams.length) ui.selectedCams = ['cam1'];
+        renderCamTabs();
+    }
+    // Rage is firmware truth; normal-vs-high is browser-only, so only the
+    // rage boundary is reconcilable. Don't send set_mode back — this IS the
+    // robot's state.
+    if (typeof s.rage === 'boolean') {
+        const uiRage = ui.speedMode === 'rage';
+        if (s.rage !== uiRage) selectSpeed(s.rage ? 'rage' : 'normal', /*sendToRobot=*/ false);
+    }
+    if (dirty) refreshControls();
 }
 
 function resolveAck(nonce, ok) {
@@ -531,8 +569,9 @@ export function stopTick() {
         clearInterval(tickTimer);
         tickTimer = null;
     }
-    // Drop the ack hook + pending watchdogs so they don't leak to the next view.
+    // Drop the ack/state hooks + pending watchdogs so they don't leak to the next view.
     if (state.onCmdAck === onCmdAck) state.onCmdAck = null;
+    if (state.onRobotState === onRobotState) state.onRobotState = null;
     ui.pending.forEach((p) => clearTimeout(p.timer));
     ui.pending.clear();
 }

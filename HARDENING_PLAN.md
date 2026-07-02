@@ -73,7 +73,10 @@ Browser E-STOP sends estop + legacy Damp; re-arm sends estop_clear.)
   E-STOP pressed with healthy link → ack ≤300 ms and subsequent WASD/actions
   refused until re-arm.
 
-### A3. State snapshot on operator join + richer telemetry — `[dimos]` + `[teleop]` `M`
+### A3. State snapshot on operator join + richer telemetry — `[dimos]` + `[teleop]` `M` — ✅ implemented
+(robot_telemetry.state = {posture, rage, obstacle_avoidance, cams, estopped},
+always published at 3Hz; cockpit reconciles via state.onRobotState, skipping
+ticks with pending commands. Backward-compatible both directions.)
 - **Issue:** `robot_telemetry` carries only `{cmd stats, soc, robot_ts}`
   (`hosted_connection.py:361`). Reconnecting operators get an optimistic UI:
   posture defaults to `StandReady`, obstacle-avoidance assumed ON, rage/cams

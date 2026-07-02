@@ -58,6 +58,7 @@ export const state = {
         iceType: null,      // selected ICE path: 'direct' | 'stun' | 'turn' | null
     },
     onCmdAck: null,         // optional view hook: (msg) => void for {type:cmd_ack,nonce,ok}
+    onRobotState: null,     // optional view hook: (state) => void for robot_telemetry.state
     driveEnabled: true,     // gates WASD; go2 cockpit sets false until Stand/Drive
     // Video-freshness drive gate (stall.js): stalled drives the overlay/HUD,
     // blocked suppresses twist sends (stall OR post-stall neutral gate).
