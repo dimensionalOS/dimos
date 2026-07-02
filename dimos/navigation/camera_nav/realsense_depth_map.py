@@ -600,7 +600,7 @@ class DepthStreamer:
         self._last_n_vox     = 0
         self._pinhole_logged = False
         self._floor_calib = _FloorCalibrator()
-        self._map_pts: np.ndarray = np.empty((0, 3), dtype=np.float32)
+        self._global_map  = FastVoxelMap(voxel_size=_VOX_SIZE)
         self._map_queue: queue.Queue = queue.Queue(maxsize=16)
         self._map_thread = threading.Thread(target=self._map_worker, daemon=True)
         self._map_thread.start()
@@ -658,24 +658,19 @@ class DepthStreamer:
         else:
             xyz_kept = xyz
 
-        # Per-frame voxel map
+        # Per-frame voxel map → add to persistent global map
         if len(xyz_kept):
             vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
             _, first = np.unique(_pack(vk), return_index=True)
             xyz_vox  = xyz_kept[first]
             self._last_n_vox = len(xyz_vox)
+            self._global_map.add(xyz_vox)
 
-            # Merge into accumulated map: stack + deduplicate at same voxel resolution
-            combined       = np.vstack([self._map_pts, xyz_vox]) if len(self._map_pts) else xyz_vox
-            vk_all         = np.floor(combined / _VOX_SIZE).astype(np.int32)
-            _, uniq        = np.unique(_pack(vk_all), return_index=True)
-            self._map_pts  = combined[uniq]
-
-            n   = min(len(self._map_pts), self.MAX_MAP)
-            idx = np.random.choice(len(self._map_pts), n, replace=False) if len(self._map_pts) > n else np.arange(n)
+        pts = self._global_map.points()
+        if len(pts):
             rr.log("world/map", rr.Points3D(
-                positions=self._map_pts[idx],
-                colors=_height_color(self._map_pts[idx, 2] - cam_z),
+                positions=pts,
+                colors=_height_color(pts[:, 2] - cam_z),
                 radii=0.010,
             ))
         else:
