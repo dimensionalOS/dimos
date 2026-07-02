@@ -649,27 +649,12 @@ class DepthStreamer:
         xyz_cam = xyz @ pkt.pose_R   # world → camera_link (exact inverse since t=0)
         self._floor_calib.update(xyz_cam)
 
-        # Per-frame voxel map — gradient-filtered xyz with full depth FOV.
-        # If floor is calibrated, strip the floor plane (same 3 cm threshold as ZED).
-        # Until then show everything so the map is visible from frame 1.
-        if self._floor_calib.ready:
-            floor_z    = self._floor_calib.floor_z        # camera_link Z of floor
-            keep_floor = xyz_cam[:, 2] > (floor_z + 0.03)
-            xyz_kept   = xyz[keep_floor]
-        else:
-            xyz_kept = xyz
-        if len(xyz_kept):
-            vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
-            _, first = np.unique(_pack(vk), return_index=True)
-            xyz_vox  = xyz_kept[first]
-            self._last_n_vox = len(xyz_vox)
-            rr.log("world/map", rr.Points3D(
-                positions=xyz_vox,
-                colors=_height_color(xyz_vox[:, 2] - cam_z),
-                radii=0.010,
-            ))
-        else:
-            self._last_n_vox = 0
+        # Feed persistent map worker — accumulates floor-filtered world pts across
+        # all frames; worker also runs ICP to refine the translation estimate.
+        if not self._map_queue.full():
+            self._map_queue.put_nowait(
+                (xyz, pkt.pose_t.copy(), cam_z, pkt.pose_R.copy(), frame)
+            )
 
     def _map_worker(self) -> None:
         while True:
@@ -678,12 +663,16 @@ class DepthStreamer:
                 return
             xyz_world, cam_pos, cam_z, R, frame = item
 
-            # ── Identical to ZED map worker ───────────────────────────
-            h_rel    = xyz_world[:, 2] - cam_z
-            rays     = xyz_world - cam_pos
-            dist     = np.linalg.norm(rays, axis=1)
-            d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0)
-            keep     = (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI) & (d_z_norm > _FLOOR_RAY_Z)
+            # Floor filter in camera_link frame (calibrated) or fallback ray-angle
+            xyz_cam_all = (xyz_world - cam_pos) @ R
+            if self._floor_calib.ready:
+                keep = xyz_cam_all[:, 2] > (self._floor_calib.floor_z + 0.03)
+            else:
+                h_rel    = xyz_world[:, 2] - cam_z
+                rays     = xyz_world - cam_pos
+                dist     = np.linalg.norm(rays, axis=1)
+                d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0)
+                keep     = (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI) & (d_z_norm > _FLOOR_RAY_Z)
             xyz_map  = _filter_isolated(xyz_world[keep])
             if len(xyz_map) == 0:
                 continue
@@ -695,10 +684,8 @@ class DepthStreamer:
                 rr.set_time("frame", sequence=frame)
                 self._log_map(cam_z)
 
-            # ── ICP: update translation estimate for next frame ───────
-            # Recover camera-link pts from world-frame: xyz_cam = (xyz_world - t) @ R
-            xyz_cam_filt = (xyz_map - cam_pos) @ R
-            self._src.odom.update(xyz_cam_filt, R)
+            # ICP: update translation estimate for next frame
+            self._src.odom.update(xyz_cam_all[keep], R)
 
     def _log_live_map(self, cam_z: float = 0.0, frame: int = 0) -> None:
         """Log accumulated obstacle-surface world map to Rerun."""
@@ -730,12 +717,11 @@ class DepthStreamer:
             return
         n   = min(len(pts), self.MAX_MAP)
         idx = np.random.choice(len(pts), n, replace=False) if len(pts) > n else np.arange(n)
-        # world/map disabled — replaced by world/live_cloud_map above
-        # rr.log("world/map", rr.Points3D(
-        #     positions=pts[idx],
-        #     colors=_height_color(pts[idx, 2] - cam_z),
-        #     radii=0.005,
-        # ))
+        rr.log("world/map", rr.Points3D(
+            positions=pts[idx],
+            colors=_height_color(pts[idx, 2] - cam_z),
+            radii=0.005,
+        ))
 
     def log_stdout(self, pkt: DepthFramePacket, frame: int, fps: float) -> None:
         with self._vox_lock:
