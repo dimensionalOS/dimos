@@ -12,8 +12,8 @@
 #                             the WT bulk stream (SCTP maxMessageSize is far below a 1 MB frame)
 #
 # Two outboxes + two drain tasks per client: a bulk send waiting on bufferedAmount must never block
-# pose (the WT sidecar's split-drain lesson). Signaling stays a WS at /rtc; ICE uses a public STUN
-# server on both sides — no TURN, a relay would benchmark the relay.
+# pose (the WT sidecar's split-drain lesson). Signaling stays a WS at /rtc; ICE uses STUN on the
+# browser side only (the NATed end) — no TURN, a relay would benchmark the relay.
 from __future__ import annotations
 
 import asyncio
@@ -28,7 +28,7 @@ from ..qos import PriorityOutbox, declared_to_class, default_priority
 from ._common import frame, wants
 
 try:
-    from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCSessionDescription
+    from aiortc import RTCConfiguration, RTCPeerConnection, RTCSessionDescription
 
     HAS_WEBRTC_DATA = True
 except Exception:  # pragma: no cover
@@ -38,7 +38,6 @@ DATAGRAM_MAX = 1100  # same size split as the WT sidecar: ≤ → pose channel, 
 CHUNK = 60_000  # bulk chunk size; safely under the 64 KB SCTP message-size interop floor
 POSE_BUF_MAX = 64_000  # pose sends are dropped (not queued) beyond this — datagram semantics
 BULK_BUF_HIGH = 512_000  # bulk drain waits below this; backlog then accumulates in the outbox
-STUN = "stun:stun.l.google.com:19302"
 
 
 class RtcSession:
@@ -161,7 +160,11 @@ class WebRtcDataPlane:
         if not HAS_WEBRTC_DATA:
             await ws.close()
             return
-        pc = RTCPeerConnection(RTCConfiguration(iceServers=[RTCIceServer(urls=STUN)]))
+        # No STUN server-side: the gateway host's own IP is already a host candidate (a server needs
+        # a reachable address to serve at all), and STUN binding timeouts across extra interfaces
+        # (VPNs, container bridges, v6) delay the non-trickle answer by many seconds — measured 6.4 s
+        # on a stock VPS. The browser side keeps STUN; it is the NATed end.
+        pc = RTCPeerConnection(RTCConfiguration(iceServers=[]))
         sess = RtcSession()
         self.sessions[ws] = sess
         drains: list[asyncio.Task] = []
