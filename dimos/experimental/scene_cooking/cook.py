@@ -333,6 +333,8 @@ def _compile_mujoco_binary(scene_xml_path: Path, *, rebake: bool) -> tuple[Path,
     requires the XML wrapper unless a robot-specific composed binary is
     produced separately.
     """
+    # Lazy: mujoco is a `sim` extra, not a `scene` one -- browser/rerun-only
+    # cooks (mujoco.compile_binary=False) shouldn't require it installed.
     import mujoco
 
     binary_path = scene_xml_path.with_suffix(".mjb")
