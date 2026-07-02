@@ -31,12 +31,24 @@ from dimos.mapping.ray_tracing.transformer import RayTraceMap
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.memory2.transform import FnTransformer
 from dimos.memory2.type.observation import Observation
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.nav_3d.mls_planner.mls_planner import MLSPlanner
+from dimos.protocol.tf.tf import MultiTBuffer
 from dimos.utils.data import resolve_named_path
 
 TIMELINE = "ts"
+
+# Body-frame axis-triad length for the odometry transform (m).
+ODOM_AXIS_LEN = 0.5
+
+# Mount frames as recorded on the tf stream.
+BASE_FRAME = "base_link"
+SENSOR_FRAME = "mid360_link"
 
 # Distinct path colors for overlaid configurations, config 0 first.
 PATH_PALETTE = [
@@ -105,6 +117,63 @@ def _log_path_wp(waypoints: NDArray[np.float32] | None, entity: str, color: list
         return
     points = [(float(p[0]), float(p[1]), float(p[2])) for p in waypoints]
     rr.log(entity, rr.LineStrips3D([points], colors=[color], radii=0.05))
+
+
+def _base_from_body(store: SqliteStore) -> Transform | None:
+    """The body -> base_link transform from the recording's static mount frames.
+
+    Treats the LIO body frame as the sensor frame. The few-cm IMU-to-lidar
+    extrinsic is invisible at triad scale.
+    """
+    buffer = MultiTBuffer()
+    try:
+        for i, obs in enumerate(store.stream("tf", TFMessage).order_by("ts")):
+            buffer.receive_transform(*obs.data.transforms)
+            if i >= 20:
+                break
+    except Exception as e:
+        print(f"no usable tf stream in the recording ({e}); skipping the base_link triad")
+        return None
+    return buffer.get(SENSOR_FRAME, BASE_FRAME)
+
+
+def _log_odometry(
+    pose: tuple[float, ...],
+    ts: float,
+    trail: list[tuple[float, float, float]],
+    base_from_body: Transform | None,
+) -> None:
+    """Log the odometry pose as a moving body-frame transform with an XYZ axis
+    triad, plus the trajectory trail growing over time. The triad is a static
+    child of world/odom, so it inherits this transform and sweeps along the path."""
+    px, py, pz, qx, qy, qz, qw = pose
+    rr.set_time(TIMELINE, timestamp=ts)
+    rr.log(
+        "world/odom",
+        rr.Transform3D(translation=[px, py, pz], quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw])),
+    )
+    trail.append((px, py, pz))
+    if len(trail) > 1:
+        rr.log("world/odom_path", rr.LineStrips3D([trail], colors=[[255, 255, 255]], radii=0.015))
+    if base_from_body is None:
+        return
+    body = Transform(
+        translation=Vector3(px, py, pz),
+        rotation=Quaternion(qx, qy, qz, qw),
+        frame_id="world",
+        child_frame_id=base_from_body.frame_id,
+        ts=ts,
+    )
+    base = body + base_from_body
+    rr.log(
+        "world/base_link",
+        rr.Transform3D(
+            translation=[base.translation.x, base.translation.y, base.translation.z],
+            quaternion=rr.Quaternion(
+                xyzw=[base.rotation.x, base.rotation.y, base.rotation.z, base.rotation.w]
+            ),
+        ),
+    )
 
 
 def _clearance_colors(clearance: NDArray[np.float32], clamp_m: float) -> NDArray[np.uint8]:
@@ -346,6 +415,27 @@ def main(
 
         rr.log("world/goal", rr.Points3D([goal], colors=[[255, 0, 0]], radii=0.1), static=True)
 
+        # Static XYZ axis triads in the odometry body frame and the derived
+        # robot base frame.
+        base_from_body = _base_from_body(store)
+        entities = ["world/odom/axes"] + (["world/base_link/axes"] if base_from_body else [])
+        for entity in entities:
+            rr.log(
+                entity,
+                rr.Arrows3D(
+                    origins=[[0.0, 0.0, 0.0]] * 3,
+                    vectors=[
+                        [ODOM_AXIS_LEN, 0.0, 0.0],
+                        [0.0, ODOM_AXIS_LEN, 0.0],
+                        [0.0, 0.0, ODOM_AXIS_LEN],
+                    ],
+                    colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]],
+                    radii=ODOM_AXIS_LEN / 25,
+                ),
+                static=True,
+            )
+        odom_trail: list[tuple[float, float, float]] = []
+
         try:
             frame = 0
             for ray_obs in ray_pipeline:
@@ -354,6 +444,7 @@ def main(
                 ref_timing = _process_frame(
                     ray_obs, planners, goal, robot_height, render_voxel, clearance_clamp
                 )
+                _log_odometry(ray_obs.pose_tuple, ray_obs.ts, odom_trail, base_from_body)
                 frame += 1
                 print(
                     f"frame={frame} configs={len(planners)} "
