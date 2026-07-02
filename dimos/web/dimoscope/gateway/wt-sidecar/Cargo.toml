@@ -2,10 +2,11 @@
 name = "wt-sidecar"
 version = "0.1.0"
 edition = "2021"
-description = "Native QUIC/WebTransport egress for the dimoscope gateway — speaks the existing WT wire protocol, fed by gateway/pipe.py over a unix socket"
+description = "Native egress sidecar for the dimoscope gateway — WebTransport (QUIC :8443) + WebRTC DataChannels (UDP :8444, muxed), fed by gateway/pipe.py over a unix socket"
 
 [dependencies]
 wtransport = { version = "0.7", features = ["self-signed", "quinn"] }
+webrtc = "0.17"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -1,17 +1,19 @@
-//! wt-sidecar — native QUIC/WebTransport egress for the dimoscope gateway.
+//! wt-sidecar — native UDP egress for the dimoscope gateway: WebTransport (QUIC :WT_PORT) and
+//! WebRTC DataChannels (muxed UDP :RTC_PORT).
 //!
-//! QUIC muscle, Python brain: this process owns ONLY the UDP :8443 WebTransport listener. The Python
-//! gateway keeps the bus tap, SafetyEgress and RPC whitelist, and feeds us over a unix socket
-//! (gateway/pipe.py). The wire protocol is pinned by the browser client
-//! (packages/web/src/transports/webTransport.ts).
+//! Native muscle, Python brain: the Python gateway keeps the bus tap, SafetyEgress and RPC
+//! whitelist, and feeds us over a unix socket (gateway/pipe.py). The wire protocols are pinned by
+//! the browser clients (packages/web/src/transports/webTransport.ts + experimental/webRtcData.ts).
 //!
-//! Env: WT_PORT (8443) · WT_PIPE (/tmp/dimoscope-wt.sock) · WT_CERT_HASH_FILE
-//! (/tmp/dimoscope-wt-cert.hash, served by the gateway /cert) · EGRESS_KBPS (optional per-session
-//! drain pacer, mirrors gateway/data.py; 0/unset = rely on QUIC flow-control backpressure).
+//! Env: WT_PORT (8443) · RTC_PORT (8444) · RTC_PUBLIC_IP (host NATed → 1:1 candidate) · WT_PIPE
+//! (/tmp/dimoscope-wt.sock) · WT_CERT_HASH_FILE (/tmp/dimoscope-wt-cert.hash, served by the gateway
+//! /cert) · EGRESS_KBPS (optional per-session drain pacer, mirrors gateway/data.py; 0/unset = rely
+//! on QUIC flow-control backpressure).
 
 mod cert;
 mod outbox;
 mod pipe;
+mod rtc;
 mod session;
 
 use std::sync::Arc;
@@ -53,6 +55,13 @@ async fn main() -> Result<()> {
     let hub = Arc::new(Hub::new(upstream_tx));
     tokio::spawn(pipe::run(hub.clone(), pipe_path, upstream_rx));
 
+    // WebRTC plane: one muxed UDP socket, offers relayed by the gateway over the pipe.
+    let rtc_port: u16 = env_or("RTC_PORT", "8444").parse().context("RTC_PORT")?;
+    let rtc_public_ip = std::env::var("RTC_PUBLIC_IP").ok();
+    let (offer_tx, offer_rx) = mpsc::unbounded_channel();
+    *hub.rtc_offers.lock().expect("hub lock") = Some(offer_tx);
+    tokio::spawn(rtc::run(hub.clone(), rtc_port, rtc_public_ip, offer_rx));
+
     // BBR keeps inflight ≈ BDP so a saturating bulk stream doesn't build a standing queue on a
     // shaped link — cubic bufferbloats, delaying every datagram by the queue depth. The small
     // datagram send buffer bounds staleness below the outbox for the same reason.
@@ -88,7 +97,7 @@ async fn handle_session(hub: Arc<Hub>, incoming: IncomingSession, egress_kbps: f
     // Accept regardless of URL path — the wire protocol doesn't route on :path.
     let conn = Arc::new(request.accept().await?);
     let (ctl_tx, ctl_rx) = mpsc::unbounded_channel();
-    let sess = hub.add_session(ctl_tx);
+    let sess = hub.add_session(ctl_tx, "WT-rs");
     let sid = sess.sid;
     info!(sid, max_datagram = ?conn.max_datagram_size(), "session established");
 

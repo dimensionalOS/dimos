@@ -185,6 +185,19 @@ fn on_json(hub: &Hub, body: &[u8]) {
                 hub.deliver_rpc_res(sid, m);
             }
         }
+        // SDP offer relayed from the gateway's /rtc websocket → the WebRTC plane (rtc.rs), which
+        // answers upstream with rtc-answer{rsid, sdp|error}.
+        Some("rtc-offer") => {
+            let (rsid, sdp) = (
+                m.get("rsid").and_then(Value::as_u64),
+                m.get("sdp").and_then(Value::as_str),
+            );
+            if let (Some(rsid), Some(sdp)) = (rsid, sdp) {
+                if let Some(tx) = hub.rtc_offers.lock().expect("hub lock").as_ref() {
+                    let _ = tx.send((rsid, sdp.to_string()));
+                }
+            }
+        }
         other => warn!("unknown pipe op {other:?}"),
     }
 }

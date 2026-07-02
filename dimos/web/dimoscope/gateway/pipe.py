@@ -13,17 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Pipe plane: feeds the native WebTransport sidecar (gateway/wt-sidecar) over a local unix socket.
-# The gateway keeps the single bus tap, SafetyEgress and QoS config; the sidecar owns the
-# QUIC sessions and per-session scheduling. The gateway LISTENS; the sidecar connects (and reconnects).
+# Pipe plane: feeds the native sidecar (gateway/wt-sidecar — WebTransport :8443 + WebRTC :8444)
+# over a local unix socket. The gateway keeps the single bus tap, SafetyEgress and QoS config; the
+# sidecar owns the wire sessions and per-session scheduling. The gateway LISTENS; the sidecar
+# connects (and reconnects).
 #
 # Framing: [u32be len][u8 kind][payload]
 #   kind 1 = DATA (gateway→sidecar): raw Sample.lc02 — topic/type live inside the LC02 channel; the
 #            sidecar stamps the [f64be send-ms] prefix at its ingress (mirror of _common.frame timing).
 #   kind 2 = JSON (both directions):
-#     downstream  hello{topics,label,rpc} · topic{topic,type} · rpc-res{sid,id,res|error}
+#     downstream  hello{topics,label,rpc} · topic{topic,type} · rpc-res{sid,id,res|error} ·
+#                 rtc-offer{rsid,sdp}   (SDP relayed from the /rtc websocket)
 #     upstream    subs{topics[]} · teleop{sid,linearX,angularZ,ttlMs} · stop{sid} · goal{x,y,z} ·
-#                 rpc{sid,id,target,method,args} · disconnect{sid}
+#                 rpc{sid,id,target,method,args} · disconnect{sid} · rtc-answer{rsid,sdp|error}
 #
 # Safety invariants: disconnect{sid} → deadman-cancel + zero twist for that session (egress key
 # (self, sid)); the pipe connection dropping → egress.disconnect for ALL its sids (the robot never keeps
@@ -44,7 +46,7 @@ logger = setup_logger()
 
 KIND_DATA = 1
 KIND_JSON = 2
-LABEL = "dimoscope/WT-rs"
+LABEL = "dimoscope"  # base label; the sidecar appends the wire tag (WT-rs / rtc-rs) per session
 QUEUE_MAX = 4096  # frames buffered toward the sidecar; localhost UDS — should never fill
 
 
@@ -55,6 +57,8 @@ class PipePlane:
         self.bus = bus
         self.egress = egress
         self._conn: _Conn | None = None
+        # rtc-answer{rsid,sdp|error} handler, installed by the /rtc signaling relay.
+        self.on_rtc_answer: callable | None = None
         bus.subscribe(self._on_sample)
         bus.on_new_topic(self._on_new_topic)
 
@@ -63,6 +67,14 @@ class PipePlane:
         """A live sidecar is on the pipe — gates /cert so a stale hash file can't 200 while
         nothing is listening on :WT_PORT."""
         return self._conn is not None
+
+    def rtc_offer(self, rsid: int, sdp: str) -> bool:
+        """Relay a browser SDP offer to the sidecar's WebRTC plane. False = no sidecar on the pipe."""
+        conn = self._conn
+        if conn is None:
+            return False
+        conn.send_json({"op": "rtc-offer", "rsid": rsid, "sdp": sdp})
+        return True
 
     async def start(self, path: str) -> None:
         import contextlib
@@ -197,6 +209,10 @@ class _Conn:
             sid = m.get("sid")
             self.sids.discard(sid)
             egress.disconnect((self, sid))
+        elif op == "rtc-answer":
+            cb = self.plane.on_rtc_answer
+            if cb is not None:
+                cb(m)
 
     async def _do_rpc(self, m: dict) -> None:
         res = await self.plane.egress.rpc(

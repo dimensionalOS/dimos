@@ -1,11 +1,12 @@
 /// <reference lib="dom" />
-// WebRTC DataChannel (browser-only), via gateway/transports/webrtc.py. Three channels over one SCTP
-// association mirror what WebTransport gets from QUIC, so the transports compare fairly:
-//   ctl   ordered+reliable   subscribe/unsubscribe/list/ping · hello/topic/topics/pong (one JSON/msg)
+// WebRTC DataChannel (browser-only), served by the native sidecar (gateway/wt-sidecar/src/rtc.rs);
+// the gateway's /rtc websocket only relays SDP. Three channels over one SCTP association mirror
+// what WebTransport gets from QUIC, so the transports compare fairly:
+//   ctl   ordered+reliable   the full control protocol — subscribe/QoS/list/ping AND teleop/goal/
+//                            rpc (the sidecar forwards the write path to the gateway SafetyEgress)
 //   pose  unordered+lossy    [f64 send-ms][LC02] frames ≤1100 B, one per message (datagram analogue)
 //   bulk  ordered+reliable   [u32be len][frame] chunked server-side; reassembled here exactly like
 //                            the WT bulk stream (concatenate messages, length-prefix parse)
-// Read-only: teleop/goal/rpc stay on the duplex transports (/ws, WebTransport).
 import type {
   ClockSample,
   CommandInfo,
@@ -39,6 +40,10 @@ export const createWebRtcDataTransport = (deps: WebRtcDataDeps): Transport => {
   let sig: WebSocket | undefined;
   let pingId = 0;
   const pendingPings = new Map<number, (serverTs: number) => void>();
+  let rpcId = 1;
+  const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  let commands: CommandInfo[] = []; // @rpc commands the gateway advertises (from hello.rpc)
+  let commandsCb: ((c: CommandInfo[]) => void) | undefined;
 
   function sendControl(obj: Record<string, unknown>) {
     if (ctl?.readyState === "open") ctl.send(JSON.stringify(obj));
@@ -51,7 +56,10 @@ export const createWebRtcDataTransport = (deps: WebRtcDataDeps): Transport => {
       topic?: string;
       type?: string;
       label?: string;
+      rpc?: CommandInfo[];
       id?: number;
+      res?: unknown;
+      error?: string;
       serverTs?: number;
     },
   ) {
@@ -59,10 +67,21 @@ export const createWebRtcDataTransport = (deps: WebRtcDataDeps): Transport => {
       if (m.label) transport.label = m.label;
       topics = m.topics ?? [];
       topicsCb?.(topics);
+      if (Array.isArray(m.rpc)) {
+        commands = m.rpc;
+        commandsCb?.(commands);
+      }
     } else if (m.op === "topic" && m.topic) {
       if (!topics.find((t) => t.topic === m.topic)) {
         topics.push({ topic: m.topic, type: m.type ?? "?" });
         topicsCb?.(topics);
+      }
+    } else if (m.op === "rpc-res" && m.id != null) {
+      const p = pending.get(m.id);
+      if (p) {
+        pending.delete(m.id);
+        if (m.error) p.reject(new Error(m.error));
+        else p.resolve(m.res);
       }
     } else if (m.op === "pong" && m.id != null) {
       const f = pendingPings.get(m.id);
@@ -163,6 +182,13 @@ export const createWebRtcDataTransport = (deps: WebRtcDataDeps): Transport => {
       ws.onmessage = async (e: MessageEvent) => {
         const m = JSON.parse(e.data as string);
         if (m.op === "answer") await pc!.setRemoteDescription({ type: "answer", sdp: m.sdp });
+        else if (m.op === "error") {
+          // relay-level failure (sidecar down / answer timeout) — fail fast, don't wait 15 s
+          finish(() => {
+            clearTimeout(timer);
+            reject(new Error(`webrtc signaling: ${m.error}`));
+          });
+        }
       };
       ws.onerror = () =>
         finish(() => {
@@ -176,7 +202,7 @@ export const createWebRtcDataTransport = (deps: WebRtcDataDeps): Transport => {
     caps,
     label: "WebRTC-data",
     get commands(): CommandInfo[] {
-      return []; // read-only plane
+      return commands;
     },
     connect,
     subscribe(topic: string, qos?: Qos) {
@@ -192,10 +218,24 @@ export const createWebRtcDataTransport = (deps: WebRtcDataDeps): Transport => {
     unsubscribe(topic: string) {
       sendControl({ op: "unsubscribe", topic });
     },
-    publishTeleop() {}, // read-only channel — teleop stays on /ws or WebTransport
-    publishGoal() {},
-    rpc() {
-      return Promise.reject(new Error("WebRTC-data transport is read-only"));
+    // Write path over ctl → the sidecar forwards to the gateway's shared SafetyEgress (clamp+deadman).
+    publishTeleop(linearX: number, angularZ: number, ttlMs?: number) {
+      sendControl({ op: "teleop", linearX, angularZ, ttlMs });
+    },
+    publishGoal(x: number, y: number, z = 0) {
+      sendControl({ op: "goal", x, y, z });
+    },
+    rpc(target: string, method: string, args: unknown[] = []): Promise<unknown> {
+      const id = rpcId++;
+      return new Promise((resolve, reject) => {
+        pending.set(id, { resolve, reject });
+        sendControl({ op: "rpc", id, target, method, args });
+        // 20 s: the gateway's first RPC to a module waits for zenoh route establishment (>8 s on a
+        // WAN box; instant once warm). Keep in sync with gatewayWs.ts / webTransport.ts.
+        setTimeout(() => {
+          if (pending.delete(id)) reject(new Error(`rpc ${target}/${method} timed out`));
+        }, 20000);
+      });
     },
     // NTP-style clock probe: offset = serverTs − (tSend + rtt/2), assuming a symmetric path.
     ping(): Promise<ClockSample> {
@@ -223,6 +263,9 @@ export const createWebRtcDataTransport = (deps: WebRtcDataDeps): Transport => {
     },
     onStatus(cb: (s: Status) => void) {
       statusCb = cb;
+    },
+    onCommands(cb: (c: CommandInfo[]) => void) {
+      commandsCb = cb;
     },
     close() {
       try {

@@ -106,7 +106,7 @@ def test_hello_meta_on_connect():
         async with Harness() as h:
             hello = await h.read_json()
             assert hello["op"] == "hello"
-            assert hello["label"] == "dimoscope/WT-rs"
+            assert hello["label"] == "dimoscope"  # base label; the sidecar appends the wire tag
             assert hello["topics"] == []
             assert isinstance(hello["rpc"], list) and hello["rpc"]  # egress whitelist forwarded
 

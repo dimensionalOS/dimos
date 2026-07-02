@@ -19,16 +19,20 @@ pub fn now_ms() -> f64 {
         * 1000.0
 }
 
-/// Shared state between the pipe client (gateway side) and the QUIC sessions (browser side).
+/// Shared state between the pipe client (gateway side) and the wire sessions (browser side —
+/// WebTransport and WebRTC alike).
 pub struct Hub {
     pub sessions: Mutex<HashMap<u64, Arc<Session>>>,
     /// topic -> type registry, fed by the gateway's hello/topic JSON.
     pub topics: Mutex<HashMap<String, String>>,
     /// rpc manifest from the gateway hello (egress whitelist), forwarded verbatim in our hello.
     pub rpc: Mutex<Value>,
+    /// Base label from the gateway hello; sessions append their wire tag (WT-rs / rtc-rs).
     pub label: Mutex<String>,
     /// JSON ops to the gateway (subs/teleop/stop/goal/rpc/disconnect). Unbounded: control-rate only.
     pub upstream: mpsc::UnboundedSender<Value>,
+    /// SDP offers relayed from the gateway (rtc-offer over the pipe) → the WebRTC plane.
+    pub rtc_offers: Mutex<Option<mpsc::UnboundedSender<(u64, String)>>>,
     next_sid: AtomicU64,
 }
 
@@ -38,16 +42,22 @@ impl Hub {
             sessions: Mutex::new(HashMap::new()),
             topics: Mutex::new(HashMap::new()),
             rpc: Mutex::new(json!([])),
-            label: Mutex::new("dimoscope/WT-rs".to_string()),
+            label: Mutex::new("dimoscope".to_string()),
             upstream,
+            rtc_offers: Mutex::new(None),
             next_sid: AtomicU64::new(1),
         }
     }
 
-    pub fn add_session(self: &Arc<Self>, ctl: mpsc::UnboundedSender<Value>) -> Arc<Session> {
+    pub fn add_session(
+        self: &Arc<Self>,
+        ctl: mpsc::UnboundedSender<Value>,
+        tag: &'static str,
+    ) -> Arc<Session> {
         let sid = self.next_sid.fetch_add(1, Ordering::Relaxed);
         let sess = Arc::new(Session {
             sid,
+            tag,
             state: Mutex::new(SessState::default()),
             dgram: PriorityOutbox::new(),
             bulk: PriorityOutbox::new(),
@@ -149,6 +159,8 @@ pub const DATAGRAM_MAX: usize = 1100;
 
 pub struct Session {
     pub sid: u64,
+    /// Wire tag appended to the hello label ("WT-rs" / "rtc-rs") — bench rows self-identify.
+    pub tag: &'static str,
     state: Mutex<SessState>,
     /// Datagram-size frames — drained by a task that never blocks on flow control, so a stalled
     /// 1 MB bulk write can't head-of-line-block pose.
@@ -161,6 +173,17 @@ pub struct Session {
 }
 
 impl Session {
+    /// The hello the browser bootstraps on: topics + wire label + the gateway's rpc whitelist.
+    /// WT clients pull it with a "list" op; the WebRTC plane pushes it when the ctl channel opens.
+    pub fn hello(&self, hub: &Hub) -> Value {
+        json!({
+            "op": "hello",
+            "topics": hub.topic_list(),
+            "label": format!("{}/{}", hub.label.lock().expect("hub lock"), self.tag),
+            "rpc": hub.rpc.lock().expect("hub lock").clone(),
+        })
+    }
+
     fn offer(&self, topic: &str, default: Lane, framed: &Bytes, now: f64) {
         let mut st = self.state.lock().expect("session lock");
         if !(st.subs.contains("*") || st.subs.contains(topic)) {
@@ -226,12 +249,7 @@ impl Session {
                 }
             }
             "list" => {
-                let _ = self.ctl.send(json!({
-                    "op": "hello",
-                    "topics": hub.topic_list(),
-                    "label": hub.label.lock().expect("hub lock").clone(),
-                    "rpc": hub.rpc.lock().expect("hub lock").clone(),
-                }));
+                let _ = self.ctl.send(self.hello(hub));
             }
             "ping" => {
                 // clock-sync probe: echo our clock (same host as the gateway → semantics hold)
@@ -301,7 +319,7 @@ mod tests {
     fn subscribe_routes_and_unsubscribed_never_transit() {
         let (hub, _rx) = hub();
         let (ctl, _ctl_rx) = mpsc::unbounded_channel();
-        let sess = hub.add_session(ctl);
+        let sess = hub.add_session(ctl, "WT-rs");
         let frame = Bytes::from_static(b"payload");
         hub.route("/pose", "geometry_msgs.Pose", &frame);
         sess.on_control(&hub, &json!({"op": "subscribe", "topic": "/pose"}));
@@ -329,7 +347,7 @@ mod tests {
     fn maxhz_downsamples() {
         let (hub, _rx) = hub();
         let (ctl, _ctl_rx) = mpsc::unbounded_channel();
-        let sess = hub.add_session(ctl);
+        let sess = hub.add_session(ctl, "WT-rs");
         // "/foo" → LANE_DEFAULT (no conflation) so each delivered frame stays queued
         sess.on_control(
             &hub,
@@ -350,7 +368,7 @@ mod tests {
     fn disconnect_announces_and_sends_disconnect_op() {
         let (hub, mut rx) = hub();
         let (ctl, _ctl_rx) = mpsc::unbounded_channel();
-        let sess = hub.add_session(ctl);
+        let sess = hub.add_session(ctl, "WT-rs");
         sess.on_control(&hub, &json!({"op": "subscribe", "topic": "/pose"}));
         let subs = rx.try_recv().unwrap();
         assert_eq!(subs["op"], "subs");

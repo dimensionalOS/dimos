@@ -14,18 +14,18 @@
 # limitations under the License.
 
 # dimoscope gateway: the Python brain of the backend. Serves the built frontend + every TCP transport on
-# one HTTP port; ingest taps both LCM and Zenoh (gateway/bus.py). WebTransport (QUIC/UDP) is the native
-# sidecar (gateway/wt-sidecar), fed over a unix socket (gateway/pipe.py).
+# one HTTP port; ingest taps both LCM and Zenoh (gateway/bus.py). WebTransport and WebRTC (UDP) live in
+# the native sidecar (gateway/wt-sidecar), fed over a unix socket (gateway/pipe.py).
 # Run: deno task serve   (this gateway + the sidecar)
 #
 #   GET  /                 the built web app (app/dist)
 #   WS   /ws               data plane (topics + teleop/goal/rpc)   ← @dimos/web default
 #   WS   /media            camera: webrtc / webcodecs / jpeg
-#   WS   /rtc              WebRTC DataChannel (bench)
+#   WS   /rtc              WebRTC signaling (SDP relay; the sidecar owns the DataChannel sessions)
 #   GET  /sse              Server-Sent Events (bench)
 #   GET  /poll             HTTP long-poll (bench)
 #   GET  /cert             WebTransport cert SHA-256 (the sidecar's; browser needs it before connecting)
-#   UDS  WT_PIPE           feed to the WebTransport sidecar, which owns QUIC/UDP :WT_PORT
+#   UDS  WT_PIPE           feed to the sidecar, which owns WebTransport :WT_PORT + WebRTC :RTC_PORT
 from __future__ import annotations
 
 import asyncio
@@ -46,7 +46,7 @@ from .data import DataPlane
 from .egress import SafetyEgress
 from .media import MediaPlane
 from .pipe import PipePlane
-from .transports import PollPlane, SsePlane, WebRtcDataPlane
+from .transports import PollPlane, RtcSignalRelay, SsePlane
 
 logger = setup_logger()
 
@@ -76,8 +76,8 @@ def build_app() -> FastAPI:
     media = MediaPlane(bus)
     sse = SsePlane(bus)
     poll = PollPlane(bus)
-    rtc = WebRtcDataPlane(bus)
     pipe = PipePlane(bus, egress)
+    rtc = RtcSignalRelay(pipe)  # /rtc = SDP relay; the sidecar owns the WebRTC sessions
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
