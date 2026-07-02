@@ -48,8 +48,11 @@ def main() -> None:
     grad        = GradientStabilityFilter()
     floor_calib = _FloorCalibrator()
 
-    # Global map: plain float32 array, grows as camera explores new space
-    acc_pts: np.ndarray = np.empty((0, 3), dtype=np.float32)
+    # Global map: plain float32 array, grows as camera explores new space.
+    # Only populated after floor_calib.ready so that Madgwick has converged
+    # and xyz_world positions are stable.  Pre-convergence geometry is thrown away.
+    acc_pts:           np.ndarray = np.empty((0, 3), dtype=np.float32)
+    map_ready:         bool       = False   # True once we've started accumulating
 
     frame          = 0
     t0             = time.monotonic()
@@ -112,18 +115,26 @@ def main() -> None:
                 ))
 
                 # ── Persistent global map ────────────────────────────────────
-                # Append this frame's voxels then deduplicate: same physical
-                # geometry (same world-frame voxel key) is merged in-place.
-                acc_pts = np.vstack([acc_pts, xyz_vox]) if len(acc_pts) else xyz_vox.copy()
-                vk_a    = np.floor(acc_pts / _VOX_SIZE).astype(np.int32)
-                _, ui   = np.unique(_pack(vk_a), return_index=True)
-                acc_pts = acc_pts[ui]
+                # Don't start until floor_calib is ready: that guarantees
+                # Madgwick has converged (~60 frames) so world-frame positions
+                # are stable.  Pre-convergence geometry would corrupt the map.
+                if floor_calib.ready:
+                    if not map_ready:
+                        # First frame after convergence: start from clean slate
+                        acc_pts   = np.empty((0, 3), dtype=np.float32)
+                        map_ready = True
+                        print("*** global map started (IMU converged) ***", flush=True)
 
-                rr.log("world/global_map", rr.Points3D(
-                    positions=acc_pts,
-                    colors=_height_color(acc_pts[:, 2] - cam_z),
-                    radii=0.010,
-                ))
+                    acc_pts = np.vstack([acc_pts, xyz_vox]) if len(acc_pts) else xyz_vox.copy()
+                    vk_a    = np.floor(acc_pts / _VOX_SIZE).astype(np.int32)
+                    _, ui   = np.unique(_pack(vk_a), return_index=True)
+                    acc_pts = acc_pts[ui]
+
+                    rr.log("world/global_map", rr.Points3D(
+                        positions=acc_pts,
+                        colors=_height_color(acc_pts[:, 2] - cam_z),
+                        radii=0.010,
+                    ))
 
             # ICP: refines camera translation so next frame lands at correct world pos
             if len(xyz_cam_icp) >= 50:
