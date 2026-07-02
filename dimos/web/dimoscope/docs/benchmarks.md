@@ -131,14 +131,27 @@ scheduler OFF (FIFO) vs ON:
 | **OFF** (FIFO) | 55 | **1294 ms** | 2419 ms | 120 |
 | **ON** (priority outbox) | 99.5 | **4 ms** | 9 ms | 116 |
 
-Priority only bites if the backlog sits in the outbox, so the gateway paces each client's writer to
-its link budget (`EGRESS_KBPS`, applied to the `/ws` writer and the WT drain); without pacing,
-kernel/proxy socket buffers absorb the backlog downstream and FIFO it.
+Priority only bites if the backlog sits in the outbox. On `/ws` the gateway bounds the kernel send
+buffer for exactly this (`WS_SNDBUF`, default 256 KB — set on the listen socket, inherited by every
+connection): OS autotuning otherwise grows it to megabytes on WAN and drains the priority outbox
+into a FIFO. 256 KB caps nothing at loopback RTTs (~20 Gb/s window) but surfaces WAN backlog in the
+outbox within ~256 KB in-flight (~40 Mb/s at 50 ms RTT — ample for robot links); `WS_SNDBUF=0`
+restores autotuning. QUIC gets the same effect natively from stream flow control. `EGRESS_KBPS`
+remains the explicit hard cap (both the `/ws` writer and the WT drain) when you want to pace to a
+known link budget.
 
 Lanes are defaults. The `subscribe` op carries per-topic `priority`/`reliability`/`depth`
 (`topic.setQos(...)` client-side) and the subscriber's declaration wins; operator config
 (`qos.rules.json`, see `qos.rules.example.json`) classifies custom topics by name/type glob in
-between. Under a fat link both scheduler modes measure identical — priority only matters at saturation.
+between — loaded by the gateway **and** the WT/RTC sidecar (same file), so a topic classifies
+identically on every wire. Under a fat link both scheduler modes measure identical — priority only
+matters at saturation.
+
+Durability: every topic keeps a last-value cache (one frame, ≤16 MB) on both planes, replayed on
+subscribe through the normal lane/outbox path — a late-joining browser sees `/map`-grade slow
+topics immediately (≈ DDS TRANSIENT_LOCAL, Foxglove-style). Replays are freshly send-stamped but
+keep the original `srcTs`/seq, so stale data reads stale; the bench's warmup window discards them
+(keep `warmupMs > 0` when measuring against a live gateway).
 
 ---
 
@@ -325,8 +338,9 @@ IP + per-device AES-128 key), point `go2-load` / `unitree_go2` at the hardware, 
 | `RTC_PUBLIC_IP` | off | 1:1-NAT hosts (EC2 & co.): the NIC carries a private address, so ICE would advertise unreachable candidates — set the public IP to advertise instead |
 | `WT_PIPE` | `/tmp/dimoscope-wt.sock` | gateway↔sidecar unix socket (gateway listens, sidecar reconnects) |
 | `WT_CERT_HASH_FILE` | `/tmp/dimoscope-wt-cert.hash` | sidecar writes its cert SHA-256 here; `/cert` serves it |
-| `EGRESS_KBPS` | off | pace each client's egress so priority bites in the outbox, not the socket buffer |
-| `QOS_RULES` | `qos.rules.json` | topic-glob → lane override map (see `qos.rules.example.json`) |
+| `EGRESS_KBPS` | off | explicit hard cap: pace each client's egress to a known link budget |
+| `WS_SNDBUF` | `262144` | bound the /ws kernel send buffer so WAN backlog stays in the priority outbox (0 = OS autotuning) |
+| `QOS_RULES` | `qos.rules.json` | topic-glob → lane override map (see `qos.rules.example.json`) — read by the gateway **and** the sidecar |
 | `NETEM_CTL` | off | enable `/netem` (Linux + the `dimos-netem` sudo wrapper above) |
 | `ZENOH_KEY` | `**` | zenoh key-expr the bus tap subscribes |
 | `DIMOS_TRANSPORT` | platform default | the RPC bridge's backend — must match the blueprint's (topics tap both buses; teleop publishes to both; RPC is request/response and can't). `deno task serve` pins `zenoh`, same as every blueprint task |

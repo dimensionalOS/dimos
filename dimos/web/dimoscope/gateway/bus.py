@@ -32,6 +32,11 @@ class Sample:
 
 Consumer = Callable[[Sample], None]
 
+# Last-value cache: one frame per topic, so a late-joining client is handed the most recent
+# sample on subscribe (Foxglove-style durability ≈ DDS TRANSIENT_LOCAL, without publisher
+# declarations). Frames above this cap are not cached — a firehose topic must not pin tens of MB.
+LVC_MAX_BYTES = 16_000_000
+
 
 def _canonical(topic: str) -> str:
     """Drop the Zenoh `dimos` namespace so the browser sees the same names LCM uses ("/lidar")."""
@@ -44,6 +49,8 @@ class Bus:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._seq = 0
         self.topics: dict[str, str] = {}  # topic -> type (discovery registry)
+        self.last: dict[str, Sample] = {}  # topic -> most recent sample (last-value cache)
+        self._lvc_skipped: set[str] = set()  # oversize topics already warned about
         self._consumers: list[Consumer] = []
         self._on_topic: list[Callable[[str, str], None]] = []
         self._zenoh_session = None
@@ -74,6 +81,11 @@ class Bus:
             for cb in self._on_topic:
                 cb(topic, typ)
         s = Sample(topic, typ, lc02, payload)
+        if len(lc02) <= LVC_MAX_BYTES:
+            self.last[topic] = s
+        elif topic not in self._lvc_skipped:
+            self._lvc_skipped.add(topic)
+            logger.warning("lvc: frame too large to cache", topic=topic, bytes=len(lc02))
         for cb in self._consumers:
             cb(s)  # cheap + sync (enqueue); never await here
 

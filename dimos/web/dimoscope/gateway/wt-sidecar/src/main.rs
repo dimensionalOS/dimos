@@ -8,7 +8,8 @@
 //! Env: WT_PORT (8443) · RTC_PORT (8444) · RTC_PUBLIC_IP (host NATed → 1:1 candidate) · WT_PIPE
 //! (/tmp/dimoscope-wt.sock) · WT_CERT_HASH_FILE (/tmp/dimoscope-wt-cert.hash, served by the gateway
 //! /cert) · EGRESS_KBPS (optional per-session drain pacer, mirrors gateway/data.py; 0/unset = rely
-//! on QUIC flow-control backpressure).
+//! on QUIC flow-control backpressure) · QOS_RULES (operator lane rules, default ./qos.rules.json —
+//! the same file the gateway loads, so both planes classify identically).
 
 mod cert;
 mod outbox;
@@ -33,6 +34,35 @@ fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
+/// Operator lane rules (qos.rules.json) — same file, same precedence as the gateway (qos.py), so a
+/// topic classifies identically on every wire. Absent file = pure heuristic (the common case).
+/// The serve tasks run from the dimoscope root, where the default relative path matches the
+/// gateway's `<dimoscope>/qos.rules.json`; QOS_RULES overrides for other layouts.
+fn load_qos_rules(path: &str) {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        info!(path, "no qos rules (heuristic lanes only)");
+        return;
+    };
+    let entries: Vec<Value> = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            warn!(path, %e, "qos rules unreadable — heuristic lanes only");
+            return;
+        }
+    };
+    let pairs: Vec<(String, String)> = entries
+        .iter()
+        .filter_map(|r| {
+            Some((
+                r.get("topic")?.as_str()?.to_string(),
+                r.get("lane")?.as_str()?.to_string(),
+            ))
+        })
+        .collect();
+    let n = outbox::set_qos_rules(&pairs);
+    info!(path, count = n, "loaded qos rules");
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -45,6 +75,7 @@ async fn main() -> Result<()> {
     let pipe_path = env_or("WT_PIPE", "/tmp/dimoscope-wt.sock");
     let hash_file = env_or("WT_CERT_HASH_FILE", "/tmp/dimoscope-wt-cert.hash");
     let egress_kbps: f64 = env_or("EGRESS_KBPS", "0").parse().unwrap_or(0.0);
+    load_qos_rules(&env_or("QOS_RULES", "qos.rules.json"));
 
     // Cert FIRST: the gateway's /cert serves 503 until this file exists.
     let bundle = cert::make_identity()?;

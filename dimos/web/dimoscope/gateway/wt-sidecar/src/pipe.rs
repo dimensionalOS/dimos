@@ -128,6 +128,13 @@ fn on_data(hub: &Hub, lc02: Bytes) {
         return;
     };
     let (topic, typ) = (topic.to_string(), typ.to_string());
+    // Last-value cache (raw, pre-stamp — replays get a fresh send-ms). Mirrors bus.py.
+    if lc02.len() <= crate::session::LVC_MAX_BYTES {
+        hub.last_frames
+            .lock()
+            .expect("hub lock")
+            .insert(topic.clone(), (typ.clone(), lc02.clone()));
+    }
     // [f64be ingress-ms][LC02] — the exact frame the browser's frameToSample decodes.
     let mut framed = BytesMut::with_capacity(8 + lc02.len());
     framed.put_f64(now_ms());

@@ -1,7 +1,8 @@
-//! Port of gateway/qos.py — PriorityOutbox (priority + conflation + weighted round-robin) and the
-//! topic/type → lane heuristic. KEEP IN SYNC with qos.py (regex table, lane tuples, WRR weights);
-//! qos.py is the source of truth. The operator glob-rule layer (QOS_RULES) is deliberately NOT ported —
-//! it's off by default and stays a Python-side feature (see the crate README).
+//! Port of gateway/qos.py — PriorityOutbox (priority + conflation + weighted round-robin), the
+//! topic/type → lane heuristic, and the operator glob-rule layer (QOS_RULES / qos.rules.json —
+//! loaded at startup by main.rs, same file the gateway reads, so both planes classify identically).
+//! KEEP IN SYNC with qos.py (regex table, lane tuples, WRR weights, rule precedence); qos.py is the
+//! source of truth.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{LazyLock, Mutex};
@@ -42,8 +43,85 @@ static BULK_T: LazyLock<Regex> =
 static SENSOR_T: LazyLock<Regex> =
     re!(r"(?i)(Pose|Odometry|Imu|Transform|JointState|Quaternion|Vector3)");
 
-/// qos.py default_priority (minus the QOS_RULES layer — not ported).
+// Operator rules (qos.rules.json): (pattern-has-#, compiled glob, lane), first match wins —
+// checked before the heuristic, mirroring qos.py _rule_lane. Set once at startup.
+static RULES: LazyLock<Mutex<Vec<(bool, Regex, Lane)>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+
+fn lane_by_name(name: &str) -> Option<Lane> {
+    match name {
+        "command" => Some(LANE_COMMAND),
+        "sensor" => Some(LANE_SENSOR),
+        "default" => Some(LANE_DEFAULT),
+        "bulk" => Some(LANE_BULK),
+        _ => None,
+    }
+}
+
+/// fnmatch → anchored regex: `*` → `.*`, `?` → `.`, `[seq]`/`[!seq]` classes pass through
+/// (`!` → `^`), everything else escaped. Covers the fnmatch subset qos.py accepts.
+fn fnmatch_to_regex(pat: &str) -> Option<Regex> {
+    let mut out = String::from("(?s)^");
+    let mut chars = pat.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '*' => out.push_str(".*"),
+            '?' => out.push('.'),
+            '[' => {
+                out.push('[');
+                if chars.peek() == Some(&'!') {
+                    chars.next();
+                    out.push('^');
+                }
+                for c2 in chars.by_ref() {
+                    out.push(c2);
+                    if c2 == ']' {
+                        break;
+                    }
+                }
+            }
+            c => out.push_str(&regex::escape(&c.to_string())),
+        }
+    }
+    out.push('$');
+    Regex::new(&out).ok()
+}
+
+/// Install the operator rules: (fnmatch pattern, lane name) pairs, order = precedence.
+/// Unknown lanes / uncompilable patterns are skipped. Returns how many rules took effect.
+pub fn set_qos_rules(pairs: &[(String, String)]) -> usize {
+    let compiled: Vec<(bool, Regex, Lane)> = pairs
+        .iter()
+        .filter_map(|(pat, lane)| {
+            Some((pat.contains('#'), fnmatch_to_regex(pat)?, lane_by_name(lane)?))
+        })
+        .collect();
+    let n = compiled.len();
+    *RULES.lock().expect("rules lock") = compiled;
+    n
+}
+
+/// First matching operator rule → its lane, else None. A '#' in the pattern matches
+/// "<topic>#<type>" (classify by message type) — same convention as qos.py.
+fn rule_lane(topic: &str, typ: &str) -> Option<Lane> {
+    let rules = RULES.lock().expect("rules lock");
+    for (with_type, re, lane) in rules.iter() {
+        let matched = if *with_type {
+            re.is_match(&format!("{topic}#{typ}"))
+        } else {
+            re.is_match(topic)
+        };
+        if matched {
+            return Some(*lane);
+        }
+    }
+    None
+}
+
+/// qos.py default_priority: operator rules first, then the name/type heuristic.
 pub fn default_priority(topic: &str, typ: &str) -> Lane {
+    if let Some(lane) = rule_lane(topic, typ) {
+        return lane;
+    }
     if CMD.is_match(topic) || CMD_T.is_match(typ) {
         LANE_COMMAND
     } else if BULK.is_match(topic) || BULK_T.is_match(typ) {
@@ -225,6 +303,43 @@ mod tests {
             }
         }
         out
+    }
+
+    // One serial test for the whole rules layer: set_qos_rules REPLACES the global table, so
+    // separate #[test]s would race under cargo's parallel threads. Patterns are namespaced
+    // (/rulez-…) so the concurrently-running heuristic tests can never collide with them.
+    #[test]
+    fn operator_rules_layer() {
+        // rule beats heuristic; empty table restores it
+        assert_eq!(set_qos_rules(&[("/rulez-debug/*".to_string(), "bulk".to_string())]), 1);
+        assert_eq!(default_priority("/rulez-debug/anything", ""), LANE_BULK);
+        set_qos_rules(&[]);
+        assert_eq!(default_priority("/rulez-debug/anything", ""), LANE_DEFAULT);
+
+        // '#' pattern classifies by "<topic>#<type>"
+        set_qos_rules(&[("*#rulez_msgs.DriveCmd".to_string(), "command".to_string())]);
+        assert_eq!(default_priority("/whatever-rulez", "rulez_msgs.DriveCmd"), LANE_COMMAND);
+        assert_eq!(default_priority("/whatever-rulez", "rulez_msgs.Other"), LANE_DEFAULT);
+
+        // first match wins; unknown lane names are skipped
+        let n = set_qos_rules(&[
+            ("/rulez-x/*".to_string(), "sensor".to_string()),
+            ("/rulez-x/*".to_string(), "bulk".to_string()),
+            ("/rulez-y".to_string(), "no-such-lane".to_string()),
+        ]);
+        assert_eq!(n, 2);
+        assert_eq!(default_priority("/rulez-x/a", ""), LANE_SENSOR);
+
+        // fnmatch translation: ? = exactly one char, [ab] classes pass through
+        set_qos_rules(&[
+            ("/rulez-q?".to_string(), "bulk".to_string()),
+            ("/rulez-[ab]".to_string(), "sensor".to_string()),
+        ]);
+        assert_eq!(default_priority("/rulez-q1", ""), LANE_BULK);
+        assert_eq!(default_priority("/rulez-q12", ""), LANE_DEFAULT);
+        assert_eq!(default_priority("/rulez-a", ""), LANE_SENSOR);
+        assert_eq!(default_priority("/rulez-c", ""), LANE_DEFAULT);
+        set_qos_rules(&[]);
     }
 
     #[test]

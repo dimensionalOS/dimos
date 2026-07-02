@@ -5,11 +5,14 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
 use crate::outbox::{declared_to_class, default_priority, Lane, PriorityOutbox};
+
+/// Last-value-cache frame cap — a firehose topic must not pin tens of MB. Mirrors bus.py.
+pub const LVC_MAX_BYTES: usize = 16_000_000;
 
 pub fn now_ms() -> f64 {
     std::time::SystemTime::now()
@@ -33,6 +36,9 @@ pub struct Hub {
     pub upstream: mpsc::UnboundedSender<Value>,
     /// SDP offers relayed from the gateway (rtc-offer over the pipe) → the WebRTC plane.
     pub rtc_offers: Mutex<Option<mpsc::UnboundedSender<(u64, String)>>>,
+    /// Last-value cache: topic → (type, raw LC02 — pre-stamp, so a replay gets a fresh send-ms).
+    /// Fed by the pipe reader (every bus frame passes it); replayed on subscribe. Mirrors bus.py.
+    pub last_frames: Mutex<HashMap<String, (String, Bytes)>>,
     next_sid: AtomicU64,
 }
 
@@ -45,6 +51,7 @@ impl Hub {
             label: Mutex::new("dimoscope".to_string()),
             upstream,
             rtc_offers: Mutex::new(None),
+            last_frames: Mutex::new(HashMap::new()),
             next_sid: AtomicU64::new(1),
         }
     }
@@ -222,6 +229,7 @@ impl Session {
                 }
                 Self::apply_qos(&mut st, hub, t, m);
                 drop(st);
+                self.replay_last(hub, t); // last-value cache → late joiners see slow topics now
                 hub.announce_subs();
             }
             "unsubscribe" => {
@@ -280,6 +288,33 @@ impl Session {
                 "args": m.get("args").cloned().unwrap_or(json!([])),
             })),
             _ => {}
+        }
+    }
+
+    /// Replay a topic's cached frame(s) to this session — freshly stamped, routed through the
+    /// normal offer() path so lane class + maxHz apply exactly like a live frame. srcTs/seq stay
+    /// old inside the LC02: stale data honestly reads stale. Mirrors data.py `_replay_last`.
+    fn replay_last(&self, hub: &Hub, topic: &str) {
+        let cached: Vec<(String, String, Bytes)> = {
+            let cache = hub.last_frames.lock().expect("hub lock");
+            if topic == "*" {
+                cache
+                    .iter()
+                    .map(|(t, (ty, b))| (t.clone(), ty.clone(), b.clone()))
+                    .collect()
+            } else {
+                cache
+                    .get(topic)
+                    .map(|(ty, b)| vec![(topic.to_string(), ty.clone(), b.clone())])
+                    .unwrap_or_default()
+            }
+        };
+        let now = now_ms();
+        for (t, ty, lc02) in cached {
+            let mut framed = BytesMut::with_capacity(8 + lc02.len());
+            framed.put_f64(now);
+            framed.put_slice(&lc02);
+            self.offer(&t, default_priority(&t, &ty), &framed.freeze(), now);
         }
     }
 
@@ -362,6 +397,56 @@ mod tests {
         assert!(futures_ready(&sess.dgram));
         assert!(futures_ready(&sess.dgram));
         assert!(!futures_ready(&sess.dgram));
+    }
+
+    #[test]
+    fn subscribe_replays_last_value_with_fresh_stamp() {
+        let (hub, _rx) = hub();
+        let (ctl, _ctl_rx) = mpsc::unbounded_channel();
+        let sess = hub.add_session(ctl, "WT-rs");
+        hub.last_frames.lock().unwrap().insert(
+            "/pose".to_string(),
+            ("geometry_msgs.Pose".to_string(), Bytes::from_static(b"LC02cached")),
+        );
+        let before = now_ms();
+        sess.on_control(&hub, &json!({"op": "subscribe", "topic": "/pose"}));
+        let frame = block_get(&sess.dgram).expect("subscribe must replay the cached frame");
+        let stamp = f64::from_be_bytes(frame[0..8].try_into().unwrap());
+        assert_eq!(&frame[8..], b"LC02cached");
+        assert!(stamp >= before - 1.0, "replay must be freshly stamped");
+        assert!(!futures_ready(&sess.dgram)); // exactly one replay
+    }
+
+    #[test]
+    fn wildcard_subscribe_replays_all_cached_topics() {
+        let (hub, _rx) = hub();
+        let (ctl, _ctl_rx) = mpsc::unbounded_channel();
+        let sess = hub.add_session(ctl, "WT-rs");
+        {
+            let mut cache = hub.last_frames.lock().unwrap();
+            cache.insert("/a".to_string(), ("T".to_string(), Bytes::from_static(b"a")));
+            cache.insert("/b".to_string(), ("T".to_string(), Bytes::from_static(b"b")));
+        }
+        sess.on_control(&hub, &json!({"op": "subscribe", "topic": "*"}));
+        let mut got = vec![
+            block_get(&sess.dgram).unwrap()[8..].to_vec(),
+            block_get(&sess.dgram).unwrap()[8..].to_vec(),
+        ];
+        got.sort();
+        assert_eq!(got, vec![b"a".to_vec(), b"b".to_vec()]);
+        assert!(!futures_ready(&sess.dgram));
+    }
+
+    fn block_get(ob: &PriorityOutbox) -> Option<Bytes> {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap()
+            .block_on(async {
+                tokio::time::timeout(std::time::Duration::from_millis(5), ob.get())
+                    .await
+                    .ok()
+            })
     }
 
     #[test]

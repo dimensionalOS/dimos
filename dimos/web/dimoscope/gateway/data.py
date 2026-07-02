@@ -82,6 +82,24 @@ class DataPlane:
                 s.topic, prio, conflate, depth, frame
             )  # priority outbox; never blocks/raises
 
+    def _replay_last(self, st: _Client, topic: str) -> None:
+        """Hand a fresh subscriber each topic's most recent frame from the bus's last-value cache —
+        a late joiner sees `/map`-style slow/latched topics immediately instead of waiting for the
+        next republish. Freshly stamped (the gateway→browser hop reads true); srcTs/seq stay old,
+        so stale data honestly reads stale. Rides the normal outbox: lane class + maxHz apply."""
+        samples = (
+            list(self.bus.last.values()) if topic == "*" else
+            ([self.bus.last[topic]] if topic in self.bus.last else [])
+        )
+        if not samples:
+            return
+        now = time.time() * 1000.0
+        for s in samples:
+            prio, conflate, depth = st.qos.get(s.topic, default_priority(s.topic, s.type))
+            st.q.put_data(s.topic, prio, conflate, depth, struct.pack(">d", now) + s.lc02)
+            if st.rate.get(s.topic, 0) > 0:
+                st.last[s.topic] = now  # the replay counts against the maxHz window
+
     def _on_new_topic(self, topic: str, typ: str) -> None:
         msg = json.dumps({"op": "topic", "topic": topic, "type": typ})
         for st in self.clients.values():
@@ -138,6 +156,7 @@ class DataPlane:
             self._apply_qos(
                 st, m["topic"], m
             )  # client-declared priority/reliability/depth (overrides default)
+            self._replay_last(st, m["topic"])  # last-value cache → late joiners see slow topics now
         elif op == "unsubscribe":
             st.subs.discard(m["topic"])
             st.rate.pop(m["topic"], None)
