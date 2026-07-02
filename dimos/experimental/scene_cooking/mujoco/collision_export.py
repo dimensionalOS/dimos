@@ -59,6 +59,7 @@ import argparse
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, replace
 import hashlib
+import json
 import multiprocessing
 import os
 from pathlib import Path
@@ -67,6 +68,8 @@ from typing import Any
 
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
+from scipy.spatial import ConvexHull, QhullError  # type: ignore[import-untyped]
+from scipy.spatial.transform import Rotation  # type: ignore[import-untyped]
 
 from dimos.constants import CACHE_DIR as _DIMOS_CACHE_DIR
 from dimos.experimental.scene_cooking.mujoco.collision_policy import (
@@ -399,7 +402,6 @@ def _cache_key(
     Robot-agnostic: the cooked scene wrapper is the same regardless of
     which robot will eventually be attached at runtime via ``MjSpec``.
     """
-    import json
 
     def _file_signature(path: Path) -> str:
         st = path.stat()
@@ -732,8 +734,6 @@ def _valid_hull(v: np.ndarray, f: np.ndarray) -> bool:
     if np.linalg.matrix_rank(centered, tol=_DEGENERATE_EPS) < 3:
         return False
     try:
-        from scipy.spatial import ConvexHull, QhullError  # type: ignore[import-untyped]
-
         ConvexHull(v, qhull_options="Qt")
     except (QhullError, ValueError):
         return False
@@ -803,8 +803,6 @@ def _oriented_box(
 
 def _rotation_matrix_to_wxyz(rotation: np.ndarray) -> np.ndarray:
     """3x3 rotation -> ``(w, x, y, z)`` quaternion."""
-    from scipy.spatial.transform import Rotation  # type: ignore[import-untyped]
-
     xyzw = Rotation.from_matrix(rotation).as_quat()
     return np.array([xyzw[3], xyzw[0], xyzw[1], xyzw[2]], dtype=np.float64)
 
@@ -894,8 +892,6 @@ def _simplify_mesh_geom(
 
 def _convex_hull_mesh(vertices: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
     try:
-        from scipy.spatial import ConvexHull, QhullError  # type: ignore[import-untyped]
-
         hull = ConvexHull(vertices.astype(np.float64))
     except (QhullError, ValueError):
         return None
