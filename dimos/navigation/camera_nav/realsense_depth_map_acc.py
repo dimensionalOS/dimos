@@ -38,6 +38,47 @@ from dimos.navigation.camera_nav.realsense_depth_map import (
 )
 
 
+def _raycast_free_keys(
+    surface_pts: np.ndarray,
+    vox_size: float,
+    n_rays: int = 400,
+) -> np.ndarray:
+    """Return int64 voxel keys that are free space between camera and surface.
+
+    Camera is always at [0,0,0] in the rotation-only world frame.
+    Fully vectorised: builds all ray-step grids at once, no Python loop.
+    Stops one voxel short of each surface point so the surface itself is
+    never cleared.
+    """
+    n = min(len(surface_pts), n_rays)
+    if n == 0:
+        return np.empty(0, dtype=np.int64)
+
+    idx   = (np.random.choice(len(surface_pts), n, replace=False)
+             if len(surface_pts) > n else np.arange(n))
+    pts   = surface_pts[idx]                   # (n, 3)
+    dists = np.linalg.norm(pts, axis=1)        # camera at [0,0,0]
+    ok    = dists > vox_size * 2               # skip points too close to origin
+    pts, dists = pts[ok], dists[ok]
+    if not len(pts):
+        return np.empty(0, dtype=np.int64)
+
+    dirs      = pts / dists[:, None]           # (n, 3) unit vectors
+    max_steps = int(np.ceil(dists.max() / vox_size))
+
+    # t-values for every step; stop 1.5 voxels short to avoid clipping surface
+    t_vals  = np.arange(max_steps, dtype=np.float32) * vox_size   # (max_steps,)
+    t_end   = (dists - vox_size * 1.5)[:, None]                   # (n, 1)
+    valid_m = (t_vals[None, :] >= 0) & (t_vals[None, :] < t_end)  # (n, max_steps)
+
+    # Positions along all rays: (n, max_steps, 3)
+    ray_pts = dirs[:, None, :] * t_vals[None, :, None]
+
+    vk_flat  = np.floor(ray_pts.reshape(-1, 3) / vox_size).astype(np.int32)
+    keys_all = _pack(vk_flat)                  # (n * max_steps,)
+    return np.unique(keys_all[valid_m.ravel()])
+
+
 def main() -> None:
     rr.init("realsense_acc", spawn=True)
     rr.send_blueprint(rrb.Blueprint(
@@ -128,13 +169,23 @@ def main() -> None:
                         print("*** global map started (IMU + floor converged) ***", flush=True)
 
                     # Strip ICP translation: xyz_ronly = xyz_cam @ R.T (pure rotation)
-                    # floor_kept points in rotation-only world frame
                     xyz_ronly_kept = xyz_kept - pkt.pose_t
 
-                    vk_r      = np.floor(xyz_ronly_kept / _VOX_SIZE).astype(np.int32)
-                    _, first_r = np.unique(_pack(vk_r), return_index=True)
-                    xyz_vox_r  = xyz_ronly_kept[first_r]
+                    vk_r       = np.floor(xyz_ronly_kept / _VOX_SIZE).astype(np.int32)
+                    _, first_r  = np.unique(_pack(vk_r), return_index=True)
+                    xyz_vox_r   = xyz_ronly_kept[first_r]
 
+                    # Ray-cast: clear map voxels the current rays pass through.
+                    # Do this BEFORE adding new observations so a moved object's
+                    # old ghost gets erased and the new position is then inserted.
+                    if len(acc_pts):
+                        free_keys = _raycast_free_keys(xyz_vox_r, _VOX_SIZE, n_rays=400)
+                        if len(free_keys):
+                            vk_acc   = np.floor(acc_pts / _VOX_SIZE).astype(np.int32)
+                            keys_acc = _pack(vk_acc)
+                            acc_pts  = acc_pts[~np.isin(keys_acc, free_keys)]
+
+                    # Insert current frame's surface observations then dedup
                     acc_pts = np.vstack([acc_pts, xyz_vox_r]) if len(acc_pts) else xyz_vox_r.copy()
                     vk_a    = np.floor(acc_pts / _VOX_SIZE).astype(np.int32)
                     _, ui   = np.unique(_pack(vk_a), return_index=True)
