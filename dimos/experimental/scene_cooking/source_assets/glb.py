@@ -218,18 +218,22 @@ def normalized_texture_bytes(
 ) -> bytes | None:
     """Return an 8-bit PNG replacement, or None when the texture is standard."""
     try:
-        with Image.open(BytesIO(texture_bytes)) as image:
-            image.load()
-            if _is_standard_embedded_texture(image, texture_bytes, mime_type):
-                return None
-            has_alpha = image.mode in {"RGBA", "LA"} or "transparency" in image.info
-            mode = "RGBA" if has_alpha else "RGB"
-            converted = image.convert(mode)
-            out = BytesIO()
-            converted.save(out, format="PNG", compress_level=1)
-            return out.getvalue()
-    except Exception as exc:
+        image = Image.open(BytesIO(texture_bytes))
+        image.load()
+    except OSError as exc:
+        # OSError covers PIL.UnidentifiedImageError (a subclass) along with
+        # truncated/corrupt image payloads.
         raise RuntimeError("failed to normalize embedded GLB texture to 8-bit PNG") from exc
+
+    with image:
+        if _is_standard_embedded_texture(image, texture_bytes, mime_type):
+            return None
+        has_alpha = image.mode in {"RGBA", "LA"} or "transparency" in image.info
+        mode = "RGBA" if has_alpha else "RGB"
+        converted = image.convert(mode)
+        out = BytesIO()
+        converted.save(out, format="PNG", compress_level=1)
+        return out.getvalue()
 
 
 def _is_standard_embedded_texture(
