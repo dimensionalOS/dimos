@@ -295,10 +295,17 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     @rpc
     def stop(self) -> None:
-        self.liedown()
+        # Best-effort steps: teardown must always reach the WebRTC disconnect.
+        try:
+            self.liedown()
+        except Exception:
+            logger.warning("liedown on stop failed (link already down?) — continuing teardown")
 
         if self.connection:
-            self.connection.stop()
+            try:
+                self.connection.stop()
+            except Exception:
+                logger.warning("connection stop failed", exc_info=True)
 
         if self._camera_info_thread and self._camera_info_thread.is_alive():
             self._camera_info_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
