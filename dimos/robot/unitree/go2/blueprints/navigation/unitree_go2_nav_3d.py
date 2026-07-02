@@ -15,12 +15,16 @@
 
 """3d navigation on Go2 with ray tracing and MLS planning"""
 
+from datetime import datetime
 import math
+import os
+from pathlib import Path
 from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.basic_path_follower.module import BasicPathFollower
 from dimos.navigation.movement_manager.movement_manager import MovementManager
@@ -41,6 +45,19 @@ _sensor_mount_rotation = list(base_link_from_mid360().rotation.to_tuple())
 
 # Body-frame axis-triad length (m).
 _axis_len = 0.5
+
+
+# Opt-in recording: set DIMOS_NAV_RECORD=1 to capture pointlio_lidar +
+# pointlio_odometry into a timestamped db that plan_rrd replays from.
+_RECORD = os.getenv("DIMOS_NAV_RECORD", "").lower() in ("1", "true", "yes", "on")
+
+
+def _recording_db_path() -> str:
+    now = datetime.now().astimezone()
+    stamp = (
+        now.strftime("%Y-%m-%d") + "_" + now.strftime("%I-%M%p").lower() + "-" + now.strftime("%Z")
+    )
+    return str(Path("recordings") / stamp / "mem2.db")
 
 
 def _render_global_map(msg: Any) -> Any:
@@ -66,8 +83,8 @@ def _static_robot_body(rr: Any) -> list[Any]:
     ]
 
 
-def _static_body_axes(rr: Any) -> Any:
-    """XYZ axis triad riding the robot body."""
+def _axis_triad(rr: Any) -> Any:
+    """XYZ axis triad, red/green/blue for x/y/z."""
     return rr.Arrows3D(
         origins=[[0.0, 0.0, 0.0]] * 3,
         vectors=[
@@ -78,6 +95,17 @@ def _static_body_axes(rr: Any) -> Any:
         colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]],
         radii=_axis_len / 25,
     )
+
+
+def _static_body_axes(rr: Any) -> Any:
+    """XYZ triad on the leveled robot body (child of the counter-rotated box)."""
+    return _axis_triad(rr)
+
+
+def _static_sensor_axes(rr: Any) -> list[Any]:
+    """XYZ triad on pointlio's raw sensor frame, tilted by the lidar pitch. This
+    is the frame the ray tracer registers clouds in, versus the leveled body."""
+    return [_axis_triad(rr), rr.Transform3D(parent_frame="tf#/body")]
 
 
 _nav_rerun_config = {
@@ -97,6 +125,7 @@ _nav_rerun_config = {
     "static": {
         "world/robot_body": _static_robot_body,
         "world/robot_body/axes": _static_body_axes,
+        "world/sensor_axes": _static_sensor_axes,
     },
     "visual_override": {
         **rerun_config["visual_override"],
@@ -152,3 +181,17 @@ unitree_go2_nav_3d = autoconnect(
     ),
     MovementManager.blueprint(),
 ).global_config(n_workers=10, robot_model="unitree_go2", obstacle_avoidance=False)
+
+# The nav blueprint leaves PointLio on its default lidar / odometry topics, so
+# remap the recorder's ports onto them. Streams are recorded under the port
+# names pointlio_lidar / pointlio_odometry regardless of the topic.
+if _RECORD:
+    unitree_go2_nav_3d = autoconnect(
+        unitree_go2_nav_3d,
+        PointlioRecorder.blueprint(db_path=_recording_db_path()).remappings(
+            [
+                (PointlioRecorder, "pointlio_lidar", "lidar"),
+                (PointlioRecorder, "pointlio_odometry", "odometry"),
+            ]
+        ),
+    )
