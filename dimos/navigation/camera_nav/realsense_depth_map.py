@@ -580,8 +580,10 @@ class DepthStreamer:
                 radii=0.003,
             ))
 
-        # Per-frame voxel map — no floor filter, show everything captured
-        xyz_kept = xyz
+        # Per-frame voxel map — use full unfiltered projection (xyz_raw) so the
+        # map sees everything the sensor captures.  The gradient-filtered xyz is
+        # for the live cloud only; using it here cuts edges/bottom of frame.
+        xyz_kept = xyz_raw if len(xyz_raw) else xyz
         if len(xyz_kept):
             vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
             _, first = np.unique(_pack(vk), return_index=True)
