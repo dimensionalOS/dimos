@@ -465,10 +465,19 @@ class RealSenseDepthSource:
         cfg.enable_stream(rs.stream.accel, rs.format.motion_xyz32f)   # let SDK pick fps
         cfg.enable_stream(rs.stream.gyro,  rs.format.motion_xyz32f)
 
+        # IMU state — written by callback thread, read by main thread
+        self._imu_lock   = threading.Lock()
+        self._last_accel = np.array([0.0, 0.0, -9.81], dtype=np.float32)  # gravity prior
+        self._depth_queue: queue.Queue = queue.Queue(maxsize=2)
+
         try:
-            profile       = self._pipeline.start(cfg)
+            # Start with callback so gyro/accel arrive at their native 200 Hz / 63 Hz.
+            # wait_for_frames() only delivers ONE motion sample per video frame (15 Hz),
+            # which is too slow for Madgwick to track yaw → R stays near identity → all
+            # frames pile up in camera space.
+            profile       = self._pipeline.start(cfg, self._on_frame)
             self._has_imu = True
-            print("IMU streams enabled (D435i) — orientation tracking active")
+            print("IMU streams enabled (D435i) — gyro callback at 200 Hz")
         except RuntimeError:
             cfg2 = rs.config()
             cfg2.enable_stream(rs.stream.depth, width, height, rs.format.z16,  fps)
@@ -511,33 +520,61 @@ class RealSenseDepthSource:
             self._madgwick      = None
 
         self.odom         = PointCloudOdometry()
-        self._pose_locked = not self._has_imu   # no IMU → identity pose is always "locked"
+        self._pose_locked = not self._has_imu
+
+    def _on_frame(self, frame: object) -> None:
+        """Pipeline callback — called by SDK thread for every incoming frame.
+
+        Motion frames arrive at their native rate (gyro ~200 Hz, accel ~63 Hz).
+        Video framesets (depth+color synced) arrive at the depth FPS (15 Hz).
+        """
+        import pyrealsense2 as rs
+        if frame.is_frameset():
+            # Video frame: enqueue for read(); drop oldest if full
+            fs = frame.as_frameset()
+            if self._depth_queue.full():
+                try:
+                    self._depth_queue.get_nowait()
+                except queue.Empty:
+                    pass
+            try:
+                self._depth_queue.put_nowait(fs)
+            except queue.Full:
+                pass
+        else:
+            st = frame.get_profile().stream_type()
+            if st == rs.stream.gyro:
+                g = frame.as_motion_frame().get_motion_data()
+                gyro_imu = np.array([g.x, g.y, g.z], dtype=np.float32)
+                gyro_link = self._R_imu_to_link @ gyro_imu
+                ts_hw = frame.get_timestamp() / 1000.0   # ms → s
+                with self._imu_lock:
+                    self._madgwick.update(gyro_link, self._last_accel, ts_hw)
+                    if not self._pose_locked:
+                        self._pose_locked = True
+                        print("*** IMU gyro callback active — orientation tracking at 200 Hz ***",
+                              flush=True)
+            elif st == rs.stream.accel:
+                a = frame.as_motion_frame().get_motion_data()
+                accel_imu = np.array([a.x, a.y, a.z], dtype=np.float32)
+                with self._imu_lock:
+                    self._last_accel = self._R_imu_to_link @ accel_imu
 
     @property
     def pose_locked(self) -> bool:
         return self._pose_locked
 
     def read(self, ts: float) -> DepthFramePacket:
-        frames  = self._pipeline.wait_for_frames()
+        # Get next depth+color frameset.  With the callback pipeline, motion frames
+        # are handled in _on_frame() at native rate; we only block here for video.
+        if self._has_imu:
+            frames = self._depth_queue.get(timeout=5.0)
+        else:
+            frames = self._pipeline.wait_for_frames()
         aligned = self._align.process(frames)
 
-        # ── IMU: update orientation ────────────────────────────────────
-        if self._has_imu:
-            gyro_f  = frames.first_or_default(self._stream_gyro)
-            accel_f = frames.first_or_default(self._stream_accel)
-            if gyro_f and accel_f:
-                g = gyro_f.as_motion_frame().get_motion_data()
-                a = accel_f.as_motion_frame().get_motion_data()
-                gyro_imu  = np.array([g.x, g.y, g.z], dtype=np.float32)
-                accel_imu = np.array([a.x, a.y, a.z], dtype=np.float32)
-                gyro_link  = self._R_imu_to_link @ gyro_imu
-                accel_link = self._R_imu_to_link @ accel_imu
-                self._madgwick.update(gyro_link, accel_link, ts)
-                if not self._pose_locked:
-                    print("*** IMU locked ***")
-                    self._pose_locked = True
-
-        R = self._madgwick.R.copy() if self._has_imu else np.eye(3, dtype=np.float32)
+        with self._imu_lock:
+            R = self._madgwick.R.copy() if self._has_imu else np.eye(3, dtype=np.float32)
         t = self.odom.t                     # translation from previous ICP update
 
         # ── Depth ──────────────────────────────────────────────────────
