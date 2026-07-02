@@ -49,6 +49,36 @@ _TRIMESH_DUPLICATE_SUFFIX_RE = re.compile(r"_[0-9a-f]{6}$", re.IGNORECASE)
 _FLOOR_PROBE_RAY_HEIGHT_M = 1000.0
 
 
+def _fan_triangulate(face_counts: np.ndarray, face_verts: np.ndarray) -> np.ndarray:
+    """Vectorized fan triangulation of USD polygonal faces.
+
+    For a face with local vertex indices ``v0..v_{n-1}`` (``n =
+    face_counts[i]``), emits ``(v0, vk, vk+1)`` for ``k = 1..n-2`` -- the
+    same result as nested Python loops over faces and ``k``, without the
+    per-triangle Python overhead. Returns ``(T, 3)`` int32 indices into
+    ``face_verts``' referent (empty when every face is a degenerate
+    <3-gon).
+    """
+    counts = np.asarray(face_counts, dtype=np.int64)
+    if len(counts) == 0:
+        return np.empty((0, 3), dtype=np.int32)
+    face_starts = np.concatenate(([0], np.cumsum(counts)[:-1]))
+    tri_counts = np.maximum(counts - 2, 0)
+    total_tris = int(tri_counts.sum())
+    if total_tris == 0:
+        return np.empty((0, 3), dtype=np.int32)
+
+    face_id = np.repeat(np.arange(len(counts)), tri_counts)
+    tri_start_in_face = np.repeat(np.cumsum(tri_counts) - tri_counts, tri_counts)
+    k = np.arange(total_tris) - tri_start_in_face + 1  # 1-based fan index
+
+    base = face_starts[face_id]
+    v0 = face_verts[base]
+    v1 = face_verts[base + k]
+    v2 = face_verts[base + k + 1]
+    return np.stack([v0, v1, v2], axis=1).astype(np.int32)
+
+
 def _world_rotation(alignment: SceneMeshAlignment) -> np.ndarray:
     """Compose the y-up swap + ZYX Euler into one 3x3."""
     rad = np.radians(alignment.rotation_zyx_deg)
@@ -234,23 +264,11 @@ def _load_usd_mesh(path: Path) -> o3d.geometry.TriangleMesh:
             prim_colors = np.full((len(pts), 3), 0.7, dtype=np.float32)
 
         # USD allows quads / n-gons; fan-triangulate so o3d gets pure tris.
-        tris: list[tuple[int, int, int]] = []
-        cursor = 0
-        for n in face_counts:
-            for k in range(1, n - 1):
-                tris.append(
-                    (
-                        int(face_verts[cursor]) + vtx_offset,
-                        int(face_verts[cursor + k]) + vtx_offset,
-                        int(face_verts[cursor + k + 1]) + vtx_offset,
-                    )
-                )
-            cursor += n
-
-        if not tris:
+        tris = _fan_triangulate(face_counts, face_verts)
+        if len(tris) == 0:
             continue
         all_pts.append(pts_world)
-        all_tris.append(np.asarray(tris, dtype=np.int32))
+        all_tris.append((tris + vtx_offset).astype(np.int32))
         all_colors.append(prim_colors)
         vtx_offset += len(pts_world)
 
@@ -675,19 +693,8 @@ def load_scene_prims(
         pts_world = (R @ (s * pts_stage).T).T + T
 
         # Triangulate any quads / n-gons (vertex indices are local to this prim now).
-        tris: list[tuple[int, int, int]] = []
-        cursor = 0
-        for n in face_counts:
-            for k in range(1, n - 1):
-                tris.append(
-                    (
-                        int(face_verts[cursor]),
-                        int(face_verts[cursor + k]),
-                        int(face_verts[cursor + k + 1]),
-                    )
-                )
-            cursor += n
-        if not tris:
+        tris = _fan_triangulate(face_counts, face_verts)
+        if len(tris) == 0:
             continue
 
         # MJCF asset names: strip the leading slash, swap remaining
