@@ -19,15 +19,14 @@ import rerun.blueprint as rrb
 from scipy.ndimage import sobel
 
 
-VOX_SIZE     = 0.020   # 2.0 cm per-frame voxels (unchanged)
-_Z_REL_HI   =  0.5    # camera-relative ceiling used pre-VIO (0.5 m above camera)
-_FLOOR_Z    =  0.03   # absolute world-Z floor cutoff (3 cm above gravity-aligned floor)
-_CEIL_Z     =  2.00   # absolute world-Z ceiling when VIO locked — no cam_z dependence
-_GRAD_THRESH =  0.30  # Sobel gradient magnitude threshold — pixels above this are edge artifacts
-_MIN_OBS    =  1      # min frame hits to mark a cell occupied (>1 adds latency without gain at 2cm)
-_MAP_EVERY  =  10     # log world/world_map every N frames (~0.67 s at 15 fps)
-_MAP_MAX_PTS = 80_000 # Rerun point cap — keeps TCP message size bounded
-_MAP_VOX    =  0.030  # 3 cm dedup cells in WorldMap — tighter than 5 cm, still absorbs VIO noise
+VOX_SIZE     = 0.020   # 2.0 cm per-frame voxels
+_FLOOR_Z    =  0.03   # world-Z floor cutoff when VIO locked (3 cm above floor plane)
+_CEIL_Z     =  2.20   # world-Z ceiling when VIO locked
+_GRAD_THRESH =  0.30  # Sobel gradient magnitude threshold
+_MIN_OBS    =  1      # min observations to show a world-map cell
+_MAP_EVERY  =  10     # log world/world_map every N frames
+_MAP_MAX_PTS = 80_000 # cap Rerun message size
+_MAP_VOX    =  0.030  # 3 cm dedup cells in WorldMap
 
 # ── Voxel key packing ────────────────────────────────────────────────────────
 _VOFF  = np.int64(100_000)
@@ -411,33 +410,21 @@ def main() -> None:
             col_vis = colors[near] if colors is not None else _height_color(xyz_vis[:, 2] - cam_z)
             rr.log("world/cloud", rr.Points3D(positions=xyz_vis, colors=col_vis, radii=0.003))
 
-            # ── Voxel map: height filter → isolation → voxelise ─────────────
-            # Floor removal strategy:
-            #   VIO locked   → world Z is gravity-aligned (set_floor_as_origin puts floor
-            #                  at 0). Absolute threshold world_Z > _FLOOR_Z keeps anything
-            #                  3 cm above the floor — including chair legs and low boxes —
-            #                  while removing the floor plane itself.
-            #   VIO unlocked → world = camera-link frame, not gravity-aligned; fall back
-            #                  to camera-relative band.
-            # Ray-angle (d_z_norm) filter is intentionally absent: at 0.9 m camera height
-            # it cuts everything below ~0.65 m at typical ranges, destroying low obstacles.
-            # Gradient filter + isolation filter handle ghost pixels instead.
-            h_rel = xyz[:, 2] - cam_z   # camera-relative height (used for colormap)
-            if src.pose_locked and cam_z > 0.3:
-                keep = (xyz[:, 2] > _FLOOR_Z) & (xyz[:, 2] < _CEIL_Z)
+            # ── Voxel map: floor removal → voxelise ──────────────────────────
+            h_rel = xyz[:, 2] - cam_z
+            if src.pose_locked:
+                # VIO gravity-aligned: floor at world_Z≈0. Remove it; keep everything above.
+                keep = xyz[:, 2] > _FLOOR_Z
             else:
-                keep = (h_rel >= -1.4) & (h_rel <= _Z_REL_HI)
+                # Pre-VIO: camera-relative band (avoids deep floor and high ceiling).
+                keep = (h_rel >= -1.4) & (h_rel <= 1.5)
+
+            xyz_vox = np.empty((0, 3), dtype=np.float32)
             xyz_kept = xyz[keep]
-            # _filter_isolated needs ≥2 pts per 5 cm cell to keep anything.
-            # When VIO is tracking, ZED depth output gets sparser (compute competition)
-            # and most cells end up with 1 point → everything is filtered → vox=0.
-            # The gradient filter already removes edge artifacts; isolation is redundant.
-            xyz_obs = xyz_kept if len(xyz_kept) < 4000 else _filter_isolated(xyz_kept)
-            xyz_vox  = np.empty((0, 3), dtype=np.float32)
-            if len(xyz_obs):
-                vk       = np.floor(xyz_obs / VOX_SIZE).astype(np.int32)
+            if len(xyz_kept):
+                vk       = np.floor(xyz_kept / VOX_SIZE).astype(np.int32)
                 _, first = np.unique(_pack(vk), return_index=True)
-                xyz_vox  = xyz_obs[first]
+                xyz_vox  = xyz_kept[first]
                 rr.log("world/map", rr.Points3D(
                     positions=xyz_vox,
                     colors=_height_color(xyz_vox[:, 2] - cam_z),
@@ -469,9 +456,9 @@ def main() -> None:
             fps = frame / max(ts - t0, 1e-6)
             print(
                 f"frame={frame:5d}  raw={len(xyz):6d}  keep={keep.sum():6d}"
-                f"  iso={len(xyz_obs):6d}  vox={len(xyz_vox):5d}"
-                f"  cloud={len(xyz_vis):5d}  world={world_map.size:6d}"
-                f"  cam_z={cam_z:.2f}  vio={'LOCKED' if src.pose_locked else 'search'}  fps={fps:.1f}",
+                f"  vox={len(xyz_vox):5d}  cloud={len(xyz_vis):5d}"
+                f"  world={world_map.size:6d}  cam_z={cam_z:.2f}"
+                f"  vio={'LOCKED' if src.pose_locked else 'search'}  fps={fps:.1f}",
                 flush=True,
             )
             frame += 1
