@@ -45,7 +45,6 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.go2.go2_webrtc import Go2WebRTCConnection, TwistMode
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.spec.perception import Camera, Pointcloud
-from dimos.robot.unitree.unitree_webrtc import UnitreeWebRTCConnection
 from dimos.utils.decorators.decorators import cached_property, simple_mcache
 from dimos.utils.logging_config import setup_logger
 

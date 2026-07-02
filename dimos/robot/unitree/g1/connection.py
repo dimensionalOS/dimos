@@ -23,7 +23,6 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.robot.unitree.g1.g1_webrtc import G1WebRTCConnection
-from dimos.spec.control import LocalPlanner
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
