@@ -321,6 +321,8 @@ IP + per-device AES-128 key), point `go2-load` / `unitree_go2` at the hardware, 
 |---|---|---|
 | `HOST` / `PORT` | `0.0.0.0` / `8080` | HTTP/WS bind — app + `/ws /sse /poll /rtc /media /cert /health /netem` |
 | `WT_PORT` | `8443` | WebTransport QUIC/UDP port (read by the sidecar; the app assumes 8443) |
+| `RTC_PORT` | `8444` | WebRTC muxed UDP port — every session shares it (one firewall rule) |
+| `RTC_PUBLIC_IP` | off | 1:1-NAT hosts (EC2 & co.): the NIC carries a private address, so ICE would advertise unreachable candidates — set the public IP to advertise instead |
 | `WT_PIPE` | `/tmp/dimoscope-wt.sock` | gateway↔sidecar unix socket (gateway listens, sidecar reconnects) |
 | `WT_CERT_HASH_FILE` | `/tmp/dimoscope-wt-cert.hash` | sidecar writes its cert SHA-256 here; `/cert` serves it |
 | `EGRESS_KBPS` | off | pace each client's egress so priority bites in the outbox, not the socket buffer |
