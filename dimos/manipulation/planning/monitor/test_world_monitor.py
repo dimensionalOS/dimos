@@ -288,16 +288,72 @@ def test_world_monitor_exposes_planning_groups_and_duplicate_names_do_not_mutate
     assert [call[0] for call in fake_world.calls].count("add_robot") == 1
 
 
+def test_world_monitor_invalid_duplicate_group_config_does_not_mutate_backend() -> None:
+    fake_world = FakeWorld()
+    monitor = world_monitor_module.WorldMonitor(world=fake_world)  # type: ignore[arg-type]
+    invalid_config = _robot_config_with_groups(
+        [
+            PlanningGroupDefinition(
+                name="manipulator", joint_names=("j1",), base_link="base", tip_link="ee"
+            ),
+            PlanningGroupDefinition(
+                name="manipulator", joint_names=("j2",), base_link="base", tip_link="ee"
+            ),
+        ]
+    )
+
+    with pytest.raises(ValueError, match="already registered"):
+        monitor.add_robot(invalid_config)
+
+    assert [call[0] for call in fake_world.calls].count("add_robot") == 0
+
+
+def test_world_monitor_invalid_group_joint_name_does_not_mutate_backend() -> None:
+    fake_world = FakeWorld()
+    monitor = world_monitor_module.WorldMonitor(world=fake_world)  # type: ignore[arg-type]
+    invalid_config = _robot_config_with_groups(
+        [
+            PlanningGroupDefinition(
+                name="manipulator",
+                joint_names=("j1", "bad/joint"),
+                base_link="base",
+                tip_link="ee",
+            )
+        ]
+    )
+
+    with pytest.raises(ValueError, match="Invalid local joint name"):
+        monitor.add_robot(invalid_config)
+
+    assert [call[0] for call in fake_world.calls].count("add_robot") == 0
+
+
 def test_current_group_joint_state_uses_public_names_in_group_order() -> None:
     fake_world = FakeWorld()
     monitor = world_monitor_module.WorldMonitor(world=fake_world)  # type: ignore[arg-type]
     robot_id = monitor.add_robot(_three_joint_reordered_group_config())
     monitor._state_monitors[robot_id] = _FakeStateMonitor([0.1, 0.2, 0.3])  # type: ignore[attr-defined]
 
-    state = monitor.get_current_group_joint_state("arm/manipulator")
+    state = monitor.current_group_joint_state("arm/manipulator")
 
     assert state.name == ["arm/j2", "arm/j1"]
     assert state.position == [0.2, 0.1]
+
+
+def test_group_kinematics_with_full_state_does_not_require_current_state() -> None:
+    fake_world = FakeWorld()
+    monitor = world_monitor_module.WorldMonitor(world=fake_world)  # type: ignore[arg-type]
+    monitor.add_robot(_three_joint_reordered_group_config())
+
+    pose = monitor.get_group_ee_pose(
+        "arm/manipulator",
+        JointState({"name": ["j1", "j2", "j3"], "position": [0.1, 0.2, 0.3]}),
+    )
+
+    set_calls = [call for call in fake_world.calls if call[0] == "set_joint_state"]
+    assert set_calls[0][3].name == ["j1", "j2", "j3"]
+    assert set_calls[0][3].position == [0.1, 0.2, 0.3]
+    assert pose.position.x == 1
 
 
 def test_group_kinematics_route_to_backend_and_merge_group_state() -> None:

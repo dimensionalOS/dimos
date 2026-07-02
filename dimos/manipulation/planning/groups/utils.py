@@ -20,12 +20,17 @@ from dimos.manipulation.planning.groups.identifiers import (
     assert_global_joint_names,
     assert_local_joint_names,
     is_global_joint_name,
+    make_global_joint_names,
+    make_planning_group_id,
+    parse_planning_group_id,
 )
-from dimos.manipulation.planning.groups.models import PlanningGroup
+from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupDefinition
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import (
     GlobalJointName,
     LocalModelJointName,
     PlanningGroupID,
+    RobotName,
 )
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
@@ -53,6 +58,144 @@ def matching_global_joint_name(
         f"'{local_joint_name}', found {len(matches)} matches: {matches}"
     )
     return None
+
+
+def planning_group_from_configs(
+    group_id: PlanningGroupID, configs: Sequence[RobotModelConfig]
+) -> PlanningGroup:
+    """Resolve a public planning-group ID from stored robot configs."""
+    robot_name, group_name = parse_planning_group_id(group_id)
+    config = _config_for_robot_name(robot_name, configs)
+    definition = _definition_for_group_name(group_name, config.planning_groups, group_id)
+    return planning_group_from_definition(config, definition)
+
+
+def planning_group_from_definition(
+    config: RobotModelConfig, definition: PlanningGroupDefinition
+) -> PlanningGroup:
+    """Build the public planning-group model for one config definition."""
+    return PlanningGroup(
+        id=make_planning_group_id(config.name, definition.name),
+        robot_name=config.name,
+        group_name=definition.name,
+        joint_names=tuple(make_global_joint_names(config.name, definition.joint_names)),
+        local_joint_names=definition.joint_names,
+        base_link=definition.base_link,
+        tip_link=definition.tip_link,
+        source=definition.source,
+    )
+
+
+def validate_planning_group_config(config: RobotModelConfig) -> None:
+    """Validate config-derived planning groups without constructing a registry."""
+    seen_group_ids: set[PlanningGroupID] = set()
+    seen_group_names: set[str] = set()
+    for definition in config.planning_groups:
+        group_id = make_planning_group_id(config.name, definition.name)
+        if definition.name in seen_group_names or group_id in seen_group_ids:
+            raise ValueError(f"Planning group '{group_id}' is already registered")
+        planning_group_from_definition(config, definition)
+        seen_group_names.add(definition.name)
+        seen_group_ids.add(group_id)
+
+
+def primary_pose_group_id_for_config(config: RobotModelConfig) -> PlanningGroupID | None:
+    """Return the unique pose-targetable group ID for robot-scoped wrappers."""
+    pose_groups = [group for group in config.planning_groups if group.has_pose_target]
+    if not pose_groups:
+        return None
+    if len(pose_groups) > 1:
+        raise ValueError(
+            f"Robot '{config.name}' has {len(pose_groups)} pose-targetable planning groups; "
+            "use an explicit planning group ID"
+        )
+    return make_planning_group_id(config.name, pose_groups[0].name)
+
+
+def full_robot_joint_state_from_input(
+    config: RobotModelConfig, joint_state: JointState
+) -> JointState | None:
+    """Return a full robot-local state if input contains all robot joints."""
+    if not joint_state.name:
+        if len(joint_state.position) != len(config.joint_names):
+            return None
+        return JointState(
+            {"name": list(config.joint_names), "position": list(joint_state.position)}
+        )
+    if len(joint_state.name) != len(joint_state.position):
+        raise ValueError("JointState name and position lengths must match")
+    resolved_positions: dict[str, float] = {}
+    global_prefix = f"{config.name}/"
+    for name, position in zip(joint_state.name, joint_state.position, strict=True):
+        if name in config.joint_names:
+            resolved_name = name
+        elif name in config.joint_name_mapping:
+            resolved_name = config.joint_name_mapping[name]
+        elif name.startswith(global_prefix):
+            resolved_name = name[len(global_prefix) :]
+        else:
+            resolved_name = config.get_urdf_joint_name(name)
+        if resolved_name not in config.joint_names:
+            return None
+        if resolved_name in resolved_positions:
+            raise ValueError(f"JointState resolves duplicate joint '{resolved_name}'")
+        resolved_positions[resolved_name] = float(position)
+    if set(resolved_positions) != set(config.joint_names):
+        return None
+    return JointState(
+        {
+            "name": list(config.joint_names),
+            "position": [resolved_positions[name] for name in config.joint_names],
+        }
+    )
+
+
+def joint_state_for_group_query(
+    config: RobotModelConfig,
+    group: PlanningGroup,
+    current_state: JointState,
+    joint_state: JointState | None,
+) -> JointState:
+    """Normalize full-robot or group-scoped input to full robot-local state."""
+    if joint_state is None:
+        return current_state
+    full_state = full_robot_joint_state_from_input(config, joint_state)
+    if full_state is not None:
+        return full_state
+    group_state = filter_joint_state_to_selected_joints(
+        joint_state, group.joint_names, group.local_joint_names
+    )
+    positions_by_name = dict(zip(current_state.name, current_state.position, strict=True))
+    for local_name, position in zip(group.local_joint_names, group_state.position, strict=True):
+        if local_name not in positions_by_name:
+            raise ValueError(f"Current state is missing group joint '{local_name}'")
+        positions_by_name[local_name] = float(position)
+    return JointState(
+        {
+            "name": list(current_state.name),
+            "position": [positions_by_name[name] for name in current_state.name],
+        }
+    )
+
+
+def _config_for_robot_name(
+    robot_name: RobotName, configs: Sequence[RobotModelConfig]
+) -> RobotModelConfig:
+    for config in configs:
+        if config.name == robot_name:
+            return config
+    raise KeyError(f"No robot registered for planning group robot '{robot_name}'")
+
+
+def _definition_for_group_name(
+    group_name: str,
+    definitions: Sequence[PlanningGroupDefinition],
+    group_id: PlanningGroupID,
+) -> PlanningGroupDefinition:
+    for definition in definitions:
+        if definition.name == group_name:
+            return definition
+    raise KeyError(f"Unknown planning group ID: {group_id}")
 
 
 def filter_joint_state_to_selected_joints(
@@ -104,7 +247,7 @@ def joint_target_to_global_names(
                 f"Target for '{group.id}' has {len(target.position)} positions, "
                 f"expected {len(group.joint_names)}"
             )
-        return JointState(name=list(group.joint_names), position=list(target.position))
+        return JointState({"name": list(group.joint_names), "position": list(target.position)})
 
     if len(target.name) != len(target.position):
         raise ValueError(
@@ -140,4 +283,4 @@ def joint_target_to_global_names(
     extra = set(target_names) - set(expected_names)
     if extra:
         raise ValueError(f"Target for '{group.id}' has extra joints: {sorted(extra)}")
-    return JointState(name=list(group.joint_names), position=global_positions)
+    return JointState({"name": list(group.joint_names), "position": global_positions})

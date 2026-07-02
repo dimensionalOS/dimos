@@ -42,7 +42,11 @@ except ImportError as exc:
     ) from exc
 
 from dimos.manipulation.planning.groups.identifiers import is_global_joint_name
-from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
+from dimos.manipulation.planning.groups.utils import (
+    planning_group_from_configs,
+    primary_pose_group_id_for_config,
+    validate_planning_group_config,
+)
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
 from dimos.manipulation.planning.spec.models import (
@@ -95,7 +99,6 @@ class RoboPlanWorld:
             logger.warning("RoboPlanWorld does not currently provide manipulation visualization")
 
         self._robots: dict[WorldRobotID, _RoboPlanRobotData] = {}
-        self._planning_groups = PlanningGroupRegistry()
         self._obstacles: dict[str, Obstacle] = {}
         self._robot_counter = 0
         self._finalized = False
@@ -112,8 +115,9 @@ class RoboPlanWorld:
             raise ValueError("RoboPlanWorld currently supports one robot per Scene")
         if not Path(config.model_path).exists():
             raise FileNotFoundError(f"Robot model not found: {Path(config.model_path).resolve()}")
-        if self._planning_groups.groups_for_robot(config.name):
+        if any(data.config.name == config.name for data in self._robots.values()):
             raise ValueError(f"Robot name '{config.name}' is already registered")
+        validate_planning_group_config(config)
 
         self._validate_robot_config(config)
         self._robot_counter += 1
@@ -129,7 +133,6 @@ class RoboPlanWorld:
         self._live_context.q_by_robot[robot_id] = np.zeros(
             len(config.joint_names), dtype=np.float64
         )
-        self._planning_groups.add_robot(config)
         logger.info(f"Added RoboPlan robot '{robot_id}' ({config.name})")
         return robot_id
 
@@ -140,11 +143,6 @@ class RoboPlanWorld:
     def get_robot_config(self, robot_id: WorldRobotID) -> RobotModelConfig:
         """Get robot configuration by ID."""
         return self._get_robot(robot_id).config
-
-    @property
-    def planning_groups(self) -> PlanningGroupRegistry:
-        """Registered planning groups for this world."""
-        return self._planning_groups
 
     def get_joint_limits(
         self, robot_id: WorldRobotID
@@ -288,14 +286,16 @@ class RoboPlanWorld:
     def get_ee_pose(self, ctx: RoboPlanContext, robot_id: WorldRobotID) -> PoseStamped:
         """Get end-effector pose if RoboPlan exposes FK."""
         robot = self._get_robot(robot_id)
-        group_id = self._planning_groups.primary_pose_group_id_for_robot(robot.config.name)
+        group_id = primary_pose_group_id_for_config(robot.config)
         if group_id is None:
             raise ValueError(f"Robot '{robot.config.name}' has no pose-targetable planning group")
         return self.get_group_ee_pose(ctx, group_id)
 
     def get_group_ee_pose(self, ctx: RoboPlanContext, group_id: PlanningGroupID) -> PoseStamped:
         """Get planning-group tip pose if RoboPlan exposes FK."""
-        group = self._planning_groups.get(group_id)
+        group = planning_group_from_configs(
+            group_id, [data.config for data in self._robots.values()]
+        )
         if group.tip_link is None:
             raise ValueError(f"Planning group '{group_id}' has no tip link")
         mat = self.get_link_pose(ctx, self._robot_id_for_group(group_id), group.tip_link)
@@ -325,7 +325,7 @@ class RoboPlanWorld:
     def get_jacobian(self, ctx: RoboPlanContext, robot_id: WorldRobotID) -> NDArray[np.float64]:
         """Get end-effector Jacobian if RoboPlan exposes a compatible API."""
         robot = self._get_robot(robot_id)
-        group_id = self._planning_groups.primary_pose_group_id_for_robot(robot.config.name)
+        group_id = primary_pose_group_id_for_config(robot.config)
         if group_id is None:
             raise ValueError(f"Robot '{robot.config.name}' has no pose-targetable planning group")
         return self.get_group_jacobian(ctx, group_id)
@@ -334,7 +334,9 @@ class RoboPlanWorld:
         self, ctx: RoboPlanContext, group_id: PlanningGroupID
     ) -> NDArray[np.float64]:
         """Get planning-group Jacobian projected to group-local joint order."""
-        group = self._planning_groups.get(group_id)
+        group = planning_group_from_configs(
+            group_id, [data.config for data in self._robots.values()]
+        )
         if group.tip_link is None:
             raise ValueError(f"Planning group '{group_id}' has no tip link")
         robot_id = self._robot_id_for_group(group_id)
@@ -563,7 +565,9 @@ class RoboPlanWorld:
         return self._robots[robot_id]
 
     def _robot_id_for_group(self, group_id: PlanningGroupID) -> WorldRobotID:
-        group = self._planning_groups.get(group_id)
+        group = planning_group_from_configs(
+            group_id, [data.config for data in self._robots.values()]
+        )
         matches = [
             rid for rid, data in self._robots.items() if data.config.name == group.robot_name
         ]

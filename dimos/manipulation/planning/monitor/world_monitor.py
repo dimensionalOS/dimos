@@ -22,7 +22,12 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
-from dimos.manipulation.planning.groups.utils import filter_joint_state_to_selected_joints
+from dimos.manipulation.planning.groups.utils import (
+    filter_joint_state_to_selected_joints,
+    full_robot_joint_state_from_input,
+    joint_state_for_group_query,
+    validate_planning_group_config,
+)
 from dimos.manipulation.planning.monitor.robot_state_monitor import RobotStateMonitor
 from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
 from dimos.manipulation.planning.spec.models import PlanningSceneInfo
@@ -80,8 +85,7 @@ class WorldMonitor:
         with self._lock:
             if config.name in self._robot_ids_by_name:
                 raise ValueError(f"Robot name '{config.name}' is already registered")
-            new_groups = PlanningGroupRegistry()
-            new_groups.add_robot(config)
+            validate_planning_group_config(config)
             robot_id = self._world.add_robot(config)
             self._robot_joints[robot_id] = config.joint_names
             self._robot_configs[robot_id] = config
@@ -301,9 +305,11 @@ class WorldMonitor:
             if positions is not None:
                 joint_names = self._robot_joints.get(robot_id, [])
                 return JointState(
-                    name=joint_names,
-                    position=positions.tolist(),
-                    velocity=velocities.tolist() if velocities is not None else [],
+                    {
+                        "name": joint_names,
+                        "position": positions.tolist(),
+                        "velocity": velocities.tolist() if velocities is not None else [],
+                    }
                 )
 
         # Fall back to world's live context
@@ -328,17 +334,12 @@ class WorldMonitor:
                     positions.append(float(pos_by_name[local_name]))
         return JointState({"name": names, "position": positions})
 
-    def get_current_group_joint_state(
+    def current_group_joint_state(
         self, group_id: PlanningGroupID, max_age: float = 1.0
     ) -> JointState:
         """Return current joint state scoped and ordered for one planning group."""
         group = self._planning_groups.get(group_id)
-        robot_id = self._robot_ids_by_name[group.robot_name]
-        if robot_id in self._state_monitors and self.is_state_stale(robot_id, max_age):
-            raise ValueError(f"Current state for robot '{group.robot_name}' is stale")
-        state = self.get_current_joint_state(robot_id)
-        if state is None:
-            raise ValueError(f"Current state for robot '{group.robot_name}' is unavailable")
+        state = self._current_robot_joint_state_for_group(group_id, max_age)
         return filter_joint_state_to_selected_joints(
             state, group.joint_names, group.local_joint_names
         )
@@ -356,69 +357,21 @@ class WorldMonitor:
             raise ValueError(f"Current state for robot '{group.robot_name}' is unavailable")
         return state
 
-    def _full_robot_joint_state_from_input(
-        self, robot_id: WorldRobotID, joint_state: JointState
-    ) -> JointState | None:
-        """Return a full robot-local state if input contains all robot joints."""
-        config = self._robot_configs[robot_id]
-        if not joint_state.name:
-            if len(joint_state.position) != len(config.joint_names):
-                return None
-            return JointState(
-                {"name": list(config.joint_names), "position": list(joint_state.position)}
-            )
-        if len(joint_state.name) != len(joint_state.position):
-            raise ValueError("JointState name and position lengths must match")
-        resolved_positions: dict[str, float] = {}
-        global_prefix = f"{config.name}/"
-        for name, position in zip(joint_state.name, joint_state.position, strict=True):
-            if name in config.joint_names:
-                resolved_name = name
-            elif name in config.joint_name_mapping:
-                resolved_name = config.joint_name_mapping[name]
-            elif name.startswith(global_prefix):
-                resolved_name = name[len(global_prefix) :]
-            else:
-                resolved_name = config.get_urdf_joint_name(name)
-            if resolved_name not in config.joint_names:
-                return None
-            if resolved_name in resolved_positions:
-                raise ValueError(f"JointState resolves duplicate joint '{resolved_name}'")
-            resolved_positions[resolved_name] = float(position)
-        if set(resolved_positions) != set(config.joint_names):
-            return None
-        return JointState(
-            {
-                "name": list(config.joint_names),
-                "position": [resolved_positions[name] for name in config.joint_names],
-            }
-        )
-
     def _joint_state_for_group_query(
         self, group_id: PlanningGroupID, joint_state: JointState | None
     ) -> JointState:
         """Normalize full-robot or group-scoped input to full robot-local state."""
         group = self._planning_groups.get(group_id)
         robot_id = self._robot_ids_by_name[group.robot_name]
-        if joint_state is None:
-            return self._current_robot_joint_state_for_group(group_id)
-        full_state = self._full_robot_joint_state_from_input(robot_id, joint_state)
-        if full_state is not None:
-            return full_state
+        if joint_state is not None:
+            full_state = full_robot_joint_state_from_input(
+                self._robot_configs[robot_id], joint_state
+            )
+            if full_state is not None:
+                return full_state
         current_state = self._current_robot_joint_state_for_group(group_id)
-        group_state = filter_joint_state_to_selected_joints(
-            joint_state, group.joint_names, group.local_joint_names
-        )
-        positions_by_name = dict(zip(current_state.name, current_state.position, strict=True))
-        for local_name, position in zip(group.local_joint_names, group_state.position, strict=True):
-            if local_name not in positions_by_name:
-                raise ValueError(f"Current state is missing group joint '{local_name}'")
-            positions_by_name[local_name] = float(position)
-        return JointState(
-            {
-                "name": list(current_state.name),
-                "position": [positions_by_name[name] for name in current_state.name],
-            }
+        return joint_state_for_group_query(
+            self._robot_configs[robot_id], group, current_state, joint_state
         )
 
     def get_current_velocities(self, robot_id: WorldRobotID) -> JointState | None:
@@ -427,7 +380,7 @@ class WorldMonitor:
             velocities = self._state_monitors[robot_id].get_current_velocities()
             if velocities is not None:
                 joint_names = self._robot_joints.get(robot_id, [])
-                return JointState(name=joint_names, velocity=velocities.tolist())
+                return JointState({"name": joint_names, "velocity": velocities.tolist()})
         return None
 
     def wait_for_state(self, robot_id: WorldRobotID, timeout: float = 1.0) -> bool:
