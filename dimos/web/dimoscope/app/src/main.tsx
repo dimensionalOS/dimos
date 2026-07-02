@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { DimosProvider, type ServerOpt } from "@dimos/react";
-import { createDimosClient, hybrid, webtransport, ws } from "@dimos/web";
+import { createDimosClient, webtransport, ws } from "@dimos/web";
 import { App } from "./App";
 import { GatewayContext } from "./gateway";
 import "./styles.css";
@@ -31,18 +31,6 @@ function buildServers(gateway: string): ServerOpt[] {
       label: "Auto (WT→WS)",
       connect: async () => {
         const c = createDimosClient({ transport: webtransport() });
-        await c.connect(gateway);
-        return c;
-      },
-      media: { ...media },
-    },
-    // Hybrid: BOTH wires open — sensor lanes ride WT datagrams (flat tail under loss), control/bulk
-    // ride WS (reliable, real throughput). Degrades to WS-only if WT can't connect / dies.
-    {
-      id: "hybrid",
-      label: "Hybrid (WS+WT)",
-      connect: async () => {
-        const c = createDimosClient({ transport: hybrid() });
         await c.connect(gateway);
         return c;
       },
