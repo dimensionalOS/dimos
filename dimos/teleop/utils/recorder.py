@@ -56,7 +56,7 @@ class TeleopRecorder(Recorder):
     (``cmd_vel_stamped``), and hosted-teleop video stats. Unconnected ports stay
     empty in the DB. Each run lands in its own ``<stem>_<YYYYmmdd_HHMMSS>.db``
     so runs don't clobber. On stop, if ``generate_report=True``, also writes
-    ``report.md`` next to the .db.
+    ``report.json`` next to the .db.
     """
 
     left_controller_output: In[PoseStamped]

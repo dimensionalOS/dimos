@@ -14,26 +14,30 @@
 
 """Hosted teleop blueprints (WebRTC transport)."""
 
-from pathlib import Path
-
-from dimos.constants import STATE_DIR
 from dimos.control.blueprints.teleop import coordinator_teleop_xarm7
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.transport import CloudflareTransport, CloudflareVideoTransport, LCMTransport
+from dimos.core.transport import (
+    CloudflareTransport,
+    CloudflareVideoTransport,
+    LCMTransport,
+    LiveKitTransport,
+    LiveKitVideoTransport,
+)
+from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
+from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.hosted_connection import Go2HostedConnection
 from dimos.teleop.quest.quest_types import Buttons
 from dimos.teleop.quest_hosted.hosted_extensions import (
     HostedArmTeleopModule,
     HostedTwistTeleopModule,
 )
-from dimos.teleop.utils.recorder import TeleopRecorder, TeleopRecorderConfig
 
-# Single XArm7 teleop via the hosted (WebRTC) client. Pass `--simulation` to
-# run the coordinator inside MuJoCo, omit it for real hardware.
+# Single XArm7 hosted teleop. Pass `--simulation` to run in MuJoCo.
 teleop_hosted_xarm7 = (
     autoconnect(
         HostedArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
@@ -51,59 +55,87 @@ teleop_hosted_xarm7 = (
 )
 
 
-# viewer="none" drops the rerun window (operator gets video over WebRTC, so the
-# robot-side rerun view is unwanted here).
+# Hosted teleop via the legacy module wrapper (the transport swap is preferred).
 teleop_hosted_go2 = autoconnect(
     HostedTwistTeleopModule.blueprint(),
     unitree_go2_basic,
 ).global_config(n_workers=8, viewer="none")
 
-
-# Hosted teleop as a pure transport swap — no teleop module wrapper. The
-# browser's keyboard/VR view sends LCM TwistStamped on cmd_unreliable; the
-# transport decodes it straight onto the go2 cmd_vel stream (commands arrive
-# as sent: normalized [-1, 1], no speed rescaling). The camera stream feeds
-# the session's WebRTC video track via CloudflareVideoTransport (same
-# provider/PeerConnection), and robot → operator telemetry can ride
-# CloudflareTransport.spec("state_reliable_back", ...) the same way.
-#
-# Run:  dimos run teleop-hosted-go2-transport -o transports.broker.api_key=dtk_live_...
-#       (or TRANSPORTS__BROKER__API_KEY=dtk_live_... in env; robot identity is
-#       derived from the key, override with transports.broker.robot_id if needed)
-# then connect from https://teleop.dimensionalos.com (keyboard view).
-teleop_hosted_go2_transport = unitree_go2_basic.transports(
-    {
-        ("cmd_vel", Twist): CloudflareTransport.spec("cmd_unreliable", TwistStamped),
-        ("color_image", Image): CloudflareVideoTransport.spec(),
-    }
-).global_config(viewer="none")
-
-
-HOSTED_RECORDINGS_DIR = STATE_DIR / "hosted_teleop" / "recordings"
+# Hosted teleop over CF Realtime. Run with -o transports.broker.api_key=dtk_live_...
+teleop_hosted_go2_transport = (
+    autoconnect(
+        unitree_go2_basic.disabled_modules(GO2Connection),
+        Go2HostedConnection.blueprint(),
+    )
+    .transports(
+        {
+            ("cmd_vel", Twist): CloudflareTransport.spec("cmd_unreliable", TwistStamped),
+            # mux_image (not color_image): the muxed out-frame carries the
+            # latency stamp and works for 1 cam (mux returns cam1 alone) or more.
+            ("mux_image", Image): CloudflareVideoTransport.spec(),
+            ("state_json", bytes): CloudflareTransport.spec("state_reliable"),
+            ("telemetry_out", bytes): CloudflareTransport.spec("state_reliable_back"),
+            ("cmd_raw", bytes): CloudflareTransport.spec("cmd_unreliable"),  # stats tap
+            ("cmd_vel_stamped", TwistStamped): LCMTransport.spec("cmd_vel_stamped", TwistStamped),
+        }
+    )
+    .global_config(viewer="none")
+)
 
 
-class HostedTeleopRecorderConfig(TeleopRecorderConfig):
-    # Same generic recorder, just defaulting recordings into the hosted dir.
-    db_path: str | Path = HOSTED_RECORDINGS_DIR / "recording_hosted.db"
+# LiveKit twin of teleop_hosted_go2_transport — same channels, LiveKit SFU.
+# Run with -o transports.broker.api_key=dtk_live_...
+teleop_hosted_go2_livekit = (
+    autoconnect(
+        unitree_go2_basic.disabled_modules(GO2Connection),
+        Go2HostedConnection.blueprint(),
+    )
+    .transports(
+        {
+            ("cmd_vel", Twist): LiveKitTransport.spec("cmd_unreliable", TwistStamped),
+            ("color_image", Image): LiveKitVideoTransport.spec(),
+            ("state_json", bytes): LiveKitTransport.spec("state_reliable"),
+            ("telemetry_out", bytes): LiveKitTransport.spec("state_reliable_back"),
+            ("cmd_raw", bytes): LiveKitTransport.spec("cmd_unreliable"),  # stats tap
+            ("cmd_vel_stamped", TwistStamped): LiveKitTransport.spec(
+                "cmd_unreliable", TwistStamped
+            ),
+        }
+    )
+    .global_config(viewer="none")
+)
 
 
-class HostedTeleopRecorder(TeleopRecorder):
-    """Generic ``TeleopRecorder`` defaulting to the hosted recordings dir.
-
-    Ports + per-run timestamping are inherited; this only changes the default
-    output path. Compose at the CLI::
-
-        dimos run teleop-hosted-xarm7 hosted-teleop-recorder
-        dimos run teleop-hosted-go2   hosted-teleop-recorder
-    """
-
-    config: HostedTeleopRecorderConfig
+# Adds a RealSense as cam2 (mux'd into the video track by Go2HostedConnection).
+# Needs the RealSense wired in; use teleop-hosted-go2-transport otherwise.
+teleop_hosted_go2_multicam = (
+    autoconnect(
+        unitree_go2_basic.disabled_modules(GO2Connection),
+        Go2HostedConnection.blueprint(),
+        RealSenseCamera.blueprint(enable_depth=False, enable_pointcloud=False),
+    )
+    .remappings([(RealSenseCamera, "color_image", "cam2_in")])
+    .transports(
+        {
+            ("cmd_vel", Twist): CloudflareTransport.spec("cmd_unreliable", TwistStamped),
+            ("mux_image", Image): CloudflareVideoTransport.spec(),
+            ("cam2_in", Image): LCMTransport.spec("cam2_in", Image),
+            ("state_json", bytes): CloudflareTransport.spec("state_reliable"),
+            ("telemetry_out", bytes): CloudflareTransport.spec("state_reliable_back"),
+            ("cmd_raw", bytes): CloudflareTransport.spec("cmd_unreliable"),
+            ("cmd_vel_stamped", TwistStamped): CloudflareTransport.spec(
+                "cmd_unreliable", TwistStamped
+            ),
+        }
+    )
+    .global_config(viewer="none")
+)
 
 
 __all__ = [
-    "HostedTeleopRecorder",
-    "HostedTeleopRecorderConfig",
     "teleop_hosted_go2",
+    "teleop_hosted_go2_livekit",
+    "teleop_hosted_go2_multicam",
     "teleop_hosted_go2_transport",
     "teleop_hosted_xarm7",
 ]

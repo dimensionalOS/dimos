@@ -28,7 +28,6 @@ from __future__ import annotations
 import asyncio
 from enum import IntEnum
 import json
-import os
 import threading
 import time
 from typing import Any
@@ -75,7 +74,7 @@ class HostedTeleopConfig(ModuleConfig):
     control_loop_hz: float = 50.0
 
     broker_url: str = "https://teleop.dimensionalos.com"
-    # Empty defaults; resolved from TELEOP_* env vars at start() if unset.
+    # Set via the module-config flow (-o hosted-teleop.broker_api_key=... or env).
     broker_api_key: str = ""
     robot_id: str = ""
     robot_name: str = ""
@@ -219,9 +218,13 @@ class HostedTeleopModule(Module):
         async def _on_state() -> None:
             if self._pc is None:
                 return
-            logger.info(f"PC state: {self._pc.connectionState}")
-            if self._pc.connectionState == "connected":
+            cs = self._pc.connectionState
+            logger.info(f"PC state: {cs}")
+            if cs == "connected":
                 self._video_track.arm()
+            elif cs in ("failed", "closed"):
+                # Terminal — orchestrator decides whether to reconnect.
+                logger.error("PC entered terminal state %s — connection lost", cs)
 
         offer = await self._pc.createOffer()
         await self._pc.setLocalDescription(offer)
@@ -241,8 +244,8 @@ class HostedTeleopModule(Module):
 
         url = f"{self.config.broker_url.rstrip('/')}/api/v1/sessions"
         body = {
-            "robot_id": self.config.robot_id or os.getenv("TELEOP_ROBOT_ID", ""),
-            "robot_name": self.config.robot_name or os.getenv("TELEOP_ROBOT_NAME", ""),
+            "robot_id": self.config.robot_id,
+            "robot_name": self.config.robot_name,
             "sdp_offer": self._pc.localDescription.sdp,
         }
         resp = await self._http.post(url, json=body, headers=self._auth_headers())
@@ -287,9 +290,8 @@ class HostedTeleopModule(Module):
         self._session_id = None
 
     def _auth_headers(self) -> dict[str, str]:
-        api_key = self.config.broker_api_key or os.getenv("TELEOP_API_KEY")
-        if api_key:
-            return {"X-Robot-API-Key": api_key}
+        if self.config.broker_api_key:
+            return {"X-Robot-API-Key": self.config.broker_api_key}
         return {}
 
     def _start_heartbeat(self) -> None:

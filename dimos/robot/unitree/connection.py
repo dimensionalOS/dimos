@@ -49,7 +49,10 @@ from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.types.timestamped import Timestamped
 from dimos.utils.decorators.decorators import simple_mcache
+from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure, callback_to_observable
+
+logger = setup_logger()
 
 VideoMessage: TypeAlias = NDArray[np.uint8]  # Shape: (height, width, 3)
 
@@ -93,19 +96,19 @@ class SerializableVideoFrame:
 class UnitreeWebRTCConnection(Resource):
     _SPORT_API_ID_RAGEMODE: int = 2059
 
-    def __init__(self, ip: str, mode: str = "ai") -> None:
+    def __init__(self, ip: str, mode: str = "ai", aes_128_key: str | None = None) -> None:
         self.ip = ip
         self.mode = mode
         self.stop_timer: threading.Timer | None = None
         self.cmd_vel_timeout = 0.2
-        self.conn = LegionConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
+        # Per-device AES-128 key for new Unitree firmware (data2=3 handshake); omitted when unset.
+        self.conn = LegionConnection(
+            WebRTCConnectionMethod.LocalSTA, ip=self.ip, aes_128_key=aes_128_key
+        )
         self.connect()
 
     def connect(self) -> None:
         self.loop = asyncio.new_event_loop()
-        self.task = None
-        self.connected_event = asyncio.Event()
-        self.connection_ready = threading.Event()
 
         async def async_connect() -> None:
             await self.conn.connect()
@@ -117,21 +120,20 @@ class UnitreeWebRTCConnection(Resource):
                 RTC_TOPIC["MOTION_SWITCHER"], {"api_id": 1002, "parameter": {"name": self.mode}}
             )
 
-            self.connected_event.set()
-            self.connection_ready.set()
-
-            while True:
-                await asyncio.sleep(1)
-
         def start_background_loop() -> None:
             asyncio.set_event_loop(self.loop)
-            self.task = self.loop.create_task(async_connect())
             self.loop.run_forever()
 
-        self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(target=start_background_loop, daemon=True)
         self.thread.start()
-        self.connection_ready.wait()
+
+        # Blocks until connected; re-raises connect failures (e.g. missing AES key).
+        try:
+            asyncio.run_coroutine_threadsafe(async_connect(), self.loop).result()
+        except Exception:
+            self.loop.call_soon_threadsafe(self.loop.stop)
+            self.thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            raise
 
     def start(self) -> None:
         pass
@@ -141,9 +143,6 @@ class UnitreeWebRTCConnection(Resource):
         if self.stop_timer:
             self.stop_timer.cancel()
             self.stop_timer = None
-
-        if self.task:
-            self.task.cancel()
 
         async def async_disconnect() -> None:
             try:
@@ -199,7 +198,9 @@ class UnitreeWebRTCConnection(Resource):
         if self.stop_timer:
             self.stop_timer.cancel()
 
-        # Auto-stop after 0.5 seconds if no new commands
+        # Deadman: auto-stop after cmd_vel_timeout (0.2s) with no new command —
+        # the safety backstop that halts the base if the operator link drops
+        # mid-drive. Keep this in sync with cmd_vel_timeout in __init__.
         self.stop_timer = threading.Timer(self.cmd_vel_timeout, self.stop_movement)
         self.stop_timer.daemon = True
         self.stop_timer.start()
@@ -314,6 +315,10 @@ class UnitreeWebRTCConnection(Resource):
             self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["BalanceStand"]})
         )
 
+    def sport_command(self, api_id: int) -> bool:
+        """Send a parameterless SPORT_MOD command by api_id (Hello, Stretch, ...)."""
+        return bool(self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": api_id}))
+
     def set_obstacle_avoidance(self, enabled: bool = True) -> None:
         self.publish_request(
             RTC_TOPIC["OBSTACLES_AVOID"],
@@ -324,28 +329,44 @@ class UnitreeWebRTCConnection(Resource):
         """Activate FreeWalk locomotion mode — enables walking and velocity commands."""
         return bool(self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["FreeWalk"]}))
 
-    def enable_rage_mode(self) -> bool:
-        """Enable Rage Mode on the Go2 via WebRTC.
-        Assumes the robot is already in BalanceStand.
+    def switch_joystick(self, enable: bool = True) -> bool:
+        """Firmware joystick listening on/off. move()'s WIRELESS_CONTROLLER
+        stick emulation is silently ignored while this is off."""
+        return bool(
+            self.publish_request(
+                RTC_TOPIC["SPORT_MOD"],
+                {"api_id": SPORT_CMD["SwitchJoystick"], "parameter": {"data": enable}},
+            )
+        )
+
+    def set_rage_mode(self, enable: bool) -> bool:
+        """Toggle Rage Mode (api 2059) over WebRTC, both directions.
+
+        BalanceStand → 2059 {data:enable} → SwitchJoystick(True). When on,
+        normal move() twists drive at the ~2.5 m/s rage envelope.
         """
+        # Re-establish BalanceStand before toggling (notes: always BalanceStand
+        # before flipping Rage).
+        if not self.balance_stand():
+            logger.warning("balance_stand() failed before rage toggle — proceeding")
+        time.sleep(0.3)
+
         rage_ok = bool(
             self.publish_request(
                 RTC_TOPIC["SPORT_MOD"],
-                {"api_id": self._SPORT_API_ID_RAGEMODE, "parameter": {"data": True}},
+                {"api_id": self._SPORT_API_ID_RAGEMODE, "parameter": {"data": enable}},
             )
         )
-        time.sleep(2.0)
+        if not rage_ok:
+            return False
 
-        joystick_ok = bool(
-            self.publish_request(
-                RTC_TOPIC["SPORT_MOD"],
-                {
-                    "api_id": SPORT_CMD["SwitchJoystick"],
-                    "parameter": {"data": True},
-                },
-            )
-        )
-        return rage_ok and joystick_ok
+        # Settle both directions — FSM transition needs time before SwitchJoystick.
+        time.sleep(2.0)
+        # Joystick stays ON in both directions — rage only changes the speed
+        # envelope. Passing `enable` here disabled joystick listening whenever
+        # rage was turned OFF (including the hosted boot force-reset), which
+        # silently killed WASD drive until something re-enabled it.
+        return self.switch_joystick(True)
 
     def liedown(self) -> bool:
         return bool(
@@ -368,6 +389,16 @@ class UnitreeWebRTCConnection(Resource):
                     "time": colortime,
                 },
             },
+        )
+
+    def set_light(self, level: int) -> bool:
+        """Head LED brightness via the VUI api (1005): levels 0-10, 0 = off."""
+        level = max(0, min(10, int(level)))
+        return bool(
+            self.publish_request(
+                RTC_TOPIC["VUI"],
+                {"api_id": 1005, "parameter": {"brightness": level}},
+            )
         )
 
     @simple_mcache
@@ -432,8 +463,6 @@ class UnitreeWebRTCConnection(Resource):
             self.stop_timer.cancel()
             self.stop_timer = None
 
-        if hasattr(self, "task") and self.task:
-            self.task.cancel()
         if hasattr(self, "conn"):
 
             async def async_disconnect() -> None:

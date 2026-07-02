@@ -79,6 +79,10 @@ class DimSimConnection:
     def video_stream(self) -> Observable[Image]:
         return Subject()
 
+    @functools.cache
+    def lowstate_stream(self) -> Observable[Any]:
+        return Subject()
+
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
         return True
 
@@ -91,10 +95,19 @@ class DimSimConnection:
     def balance_stand(self) -> bool:
         return True
 
+    def sport_command(self, api_id: int) -> bool:
+        return True
+
     def set_obstacle_avoidance(self, enabled: bool = True) -> None:
         pass
 
-    def enable_rage_mode(self) -> bool:
+    def set_rage_mode(self, enable: bool) -> bool:
+        return True
+
+    def set_light(self, level: int) -> bool:
+        return True
+
+    def switch_joystick(self, enable: bool = True) -> bool:
         return True
 
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
