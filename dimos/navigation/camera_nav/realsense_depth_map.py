@@ -582,20 +582,23 @@ class DepthStreamer:
 
         # Per-frame voxel map — mirrors ZED world/map pipeline exactly
         h_rel    = xyz[:, 2] - cam_z
-        # Histogram-based floor plane detection.
-        # Percentile is unreliable when few floor pixels are visible (angled camera,
-        # etc.) — the histogram finds the *densest* Z cluster in the lower half of
-        # the scene, which is always the floor regardless of what fraction of the
-        # frame it occupies.  This is 1D RANSAC with a known normal (IMU gives us
-        # world Z = up, so the floor plane normal is always [0,0,1]).
+        # RANSAC ground-plane detection (known normal = world Z from IMU).
+        # Since the floor normal is gravity-aligned, the only unknown is the
+        # floor's Z value.  Sample candidates from the bottom 25% of points
+        # (floor is always the lowest surface) and find the Z with the most
+        # inliers in a 3 cm slab.  Robust to any camera height or tilt angle.
         z        = xyz[:, 2]
-        z_lo     = float(z.min())
-        z_search = float(np.percentile(z, 40))
-        if z_search - z_lo > 0.05:
-            hist, edges = np.histogram(z[(z >= z_lo) & (z <= z_search)], bins=30)
-            floor_z = float(edges[np.argmax(hist) + 1]) + 0.15
-        else:
-            floor_z = z_lo + 0.15
+        z_sorted = np.sort(z)
+        lo_n     = max(1, len(z_sorted) // 4)
+        n_iter   = min(50, lo_n)
+        step     = max(1, lo_n // n_iter)
+        _SLAB    = 0.03                       # 3 cm inlier slab
+        best_z, best_n = float(z_sorted[0]), 0
+        for cz in z_sorted[:lo_n:step]:
+            n_in = int(np.sum(np.abs(z - cz) < _SLAB))
+            if n_in > best_n:
+                best_n, best_z = n_in, float(cz)
+        floor_z  = best_z + _SLAB + 0.12     # top of inlier slab + 12 cm buffer
         keep     = (xyz[:, 2] > floor_z) & (h_rel <= _Z_REL_HI)
         xyz_kept = xyz[keep]
         if len(xyz_kept):
