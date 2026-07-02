@@ -44,11 +44,31 @@ const heavy = (id: string, hz: number, bytes: number, note?: string): StreamProf
   return { id, topics: ["/load/img"], hint: genHint(gen), gen };
 };
 
+/** The small-lane trio the coex variants ride beside a flood — the `pose` profile's topics. */
+export const POSE_LANES = ["/load/fast", "/load/mid", "/load/slow"] as const;
+/** The interference signal lane: 100 Hz, tiny — the first casualty of a congested wire. */
+export const FAST_LANE = "/load/fast";
+/** Flood-carrying topics — a row with one of these beside FAST_LANE is a coexistence cell. */
+export const BULK_LANES = ["/load/img", "/load/cloud"] as const;
+
+/**
+ * Coexistence variant of a flood profile: the pose lanes measured BESIDE its flood, so the
+ * per-lane split answers "does the bulk stream delay /load/fast?". Identity for profiles
+ * that already carry the fast lane (pose/all-lanes/on-demand/mixed) — and thus idempotent.
+ */
+export const coexProfile = (p: StreamProfile): StreamProfile =>
+  p.topics.includes(FAST_LANE) ? p : {
+    ...p,
+    id: `${p.id}+pose`,
+    topics: [...POSE_LANES, ...p.topics],
+    hint: `pose lanes beside ${p.hint}`,
+  };
+
 /** Canonical workload classes — keep `id` + `topics` in sync with the GO2Load `/load/*` ports. */
 export const STREAM_PROFILES: StreamProfile[] = [
   {
     id: "pose",
-    topics: ["/load/fast", "/load/mid", "/load/slow"],
+    topics: [...POSE_LANES],
     hint: "fast@100 + mid@20 + slow@2 Hz — small, high-rate lanes",
   },
   {

@@ -8,9 +8,12 @@ import assert from "node:assert/strict";
 import {
   type BenchBucket,
   type BenchRow,
+  coexProfile,
+  FAST_LANE,
   measureScenario,
   ON_DEMAND_PAIR,
   onDemandSaving,
+  POSE_LANES,
   STREAM_PROFILES,
 } from "./bench.ts";
 import type { Message, MessageMeta } from "./types.ts";
@@ -393,4 +396,22 @@ Deno.test("STREAM_PROFILES: on-demand pair present; heavy profiles carry their g
   const dense = STREAM_PROFILES.find((p) => p.id === "dense")!;
   assert.deepEqual({ hz: dense.gen!.hz, bytes: dense.gen!.bytes }, { hz: 20, bytes: 1_000_000 });
   assert.ok(dense.hint.includes("20 MB/s")); // hint derives from gen
+});
+
+Deno.test("coexProfile: derives <tier>+pose beside the flood; identity for pose-bearing", () => {
+  const dense = STREAM_PROFILES.find((p) => p.id === "dense")!;
+  const dp = coexProfile(dense);
+  assert.equal(dp.id, "dense+pose");
+  assert.deepEqual(dp.topics, [...POSE_LANES, "/load/img"]);
+  assert.deepEqual(dp.gen, dense.gen); // the flood config rides along untouched
+  assert.ok(dp.hint.startsWith("pose lanes beside "));
+  assert.equal(coexProfile(dp), dp); // idempotent
+  for (const id of ["pose", "all-lanes", "on-demand", "mixed"]) {
+    const p = STREAM_PROFILES.find((x) => x.id === id)!;
+    assert.equal(coexProfile(p), p, `${id} should be identity`);
+  }
+  // The constants the interference machinery keys on can't drift from the pose profile.
+  const pose = STREAM_PROFILES.find((p) => p.id === "pose")!;
+  assert.deepEqual(pose.topics, [...POSE_LANES]);
+  assert.equal(POSE_LANES[0], FAST_LANE);
 });

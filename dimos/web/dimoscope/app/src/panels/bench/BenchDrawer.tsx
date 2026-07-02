@@ -7,7 +7,13 @@
 // omitted; ?run=1 auto-runs behind a 3 s cancel chip. Execution lives in useBenchRunner,
 // persistence in history.ts — this file owns config state and composition only.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { defaultGrace, defaultWarmup, type GeneratorConfig, STREAM_PROFILES } from "@dimos/web";
+import {
+  coexProfile,
+  defaultGrace,
+  defaultWarmup,
+  type GeneratorConfig,
+  STREAM_PROFILES,
+} from "@dimos/web";
 import { useCommands, useDimosClient, useServers, useTopics } from "../../dimos";
 import { useGateway } from "../../gateway";
 import { useNetem } from "../../netem";
@@ -92,6 +98,9 @@ export function BenchDrawer() {
   };
 
   const picked = STREAM_PROFILES.filter((p) => cfg.profiles.includes(p.id));
+  // What the plan will actually run — coex derives `<tier>+pose`, so the hint stays truthful.
+  const shown = cfg.coex ? picked.map(coexProfile) : picked;
+  const coexNoRef = cfg.coex && !cfg.profiles.includes("pose") && picked.some((p) => p.gen);
   const benchFlowing = discovered.some((t) => t.topic.startsWith("/load/"));
   const baseline = useMemo(() => {
     const rec = history.baselineId ? history.get(history.baselineId) : undefined;
@@ -154,9 +163,25 @@ export function BenchDrawer() {
                 </button>
               ))}
             </div>
-            <div className="muted small" style={{ marginTop: 4 }}>
-              {picked.map((p) => `${p.id}: ${p.hint}`).join("  ·  ") || "pick ≥1 workload"}
+            <div className="bench-chips" style={{ marginTop: 4 }}>
+              <button
+                className={`tab ${cfg.coex ? "tab-active" : ""}`}
+                title="each selected flood tier also subscribes the pose lanes (scenario <tier>+pose) — measures whether the bulk stream delays /load/fast; zero extra cells; use ≥10 s windows on shaped nets"
+                disabled={runner.running}
+                onClick={() => patch({ coex: !cfg.coex })}
+              >
+                +pose beside floods
+              </button>
             </div>
+            <div className="muted small" style={{ marginTop: 4 }}>
+              {shown.map((p) => `${p.id}: ${p.hint}`).join("  ·  ") || "pick ≥1 workload"}
+            </div>
+            {coexNoRef && (
+              <div className="muted small">
+                add <span className="mono">pose</span>{" "}
+                for the in-run interference Δ (the flood-off reference)
+              </div>
+            )}
           </div>
 
           <GeneratorSection
@@ -202,7 +227,7 @@ export function BenchDrawer() {
             onClear={runner.clear}
           />
 
-          <HistoryPanel history={history} onLoad={runner.append} />
+          <HistoryPanel history={history} onLoad={runner.toggleLoad} loadedIds={runner.loadedIds} />
         </div>
       )}
     </div>

@@ -1,12 +1,13 @@
 // Past runs — load back into the table (side-by-side with fresh cells), pin one as the Δ
 // baseline, rename inline, export full-fidelity JSON (in-memory copies keep buckets), delete.
 import { useState } from "react";
-import { type RunCell, serializeRun } from "@dimos/web";
+import { type RunRecord, serializeRun } from "@dimos/web";
 import type { BenchHistory } from "./history";
 
-export function HistoryPanel({ history, onLoad }: {
+export function HistoryPanel({ history, onLoad, loadedIds }: {
   history: BenchHistory;
-  onLoad: (cells: RunCell[]) => void;
+  onLoad: (rec: RunRecord) => void;
+  loadedIds: Set<string>;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
   const { records, baselineId, persistOk, remove, rename, pin, get } = history;
@@ -62,11 +63,16 @@ export function HistoryPanel({ history, onLoad }: {
             )}
           <span className="muted small">
             {r.stamp} · {r.cells.length} cell{r.cells.length === 1 ? "" : "s"}
+            {r.meta.gatewayUrl ? ` · ${r.meta.gatewayUrl}` : ""}
             {r.aborted ? " · aborted" : ""}
           </span>
           {r.id === baselineId && <span className="badge">baseline</span>}
-          <button className="tab" onClick={() => onLoad(r.cells)} title="append this run's cells to the table">
-            load
+          <button
+            className={`tab ${loadedIds.has(r.id) ? "tab-active" : ""}`}
+            onClick={() => onLoad(r)}
+            title="load this run's cells into the table (click again to remove)"
+          >
+            {loadedIds.has(r.id) ? "loaded" : "load"}
           </button>
           <button
             className={`tab ${r.id === baselineId ? "tab-active" : ""}`}

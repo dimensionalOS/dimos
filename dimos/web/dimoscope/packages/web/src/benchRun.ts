@@ -2,7 +2,14 @@
 // condition stamps (netem × maxHz × workload × rep), JSON serialization (NaN ⇄ null), the
 // persistence trim policy, and the Markdown export. Measurement itself lives in bench.ts.
 import type { ClockSample } from "./types.ts";
-import { type BenchRow, ON_DEMAND_PAIR, onDemandSaving } from "./bench.ts";
+import {
+  type BenchRow,
+  BULK_LANES,
+  FAST_LANE,
+  type LaneStats,
+  ON_DEMAND_PAIR,
+  onDemandSaving,
+} from "./bench.ts";
 
 export const RUN_SCHEMA = "dimoscope.bench.run" as const;
 export const RUN_VERSION = 1;
@@ -179,6 +186,83 @@ export function trimRuns(
 const cell = (n: number) => (Number.isFinite(n) ? String(n) : "–");
 const hzLabel = (maxHz: number) => (maxHz ? `${maxHz}Hz` : "∞");
 
+/** The `/load/fast` slice of a row — the interference signal lane. */
+export const fastLane = (row: BenchRow): LaneStats | undefined =>
+  row.lanes.find((l) => l.topic === FAST_LANE);
+
+/** A coexistence row measures the fast lane BESIDE a flood lane. Lane presence, not profile
+ *  id — so `mixed`, `<tier>+pose`, manual-flood cells, and old saved runs all qualify. */
+export const isCoexRow = (row: BenchRow): boolean =>
+  !!fastLane(row) &&
+  row.lanes.some((l) => (BULK_LANES as readonly string[]).includes(l.topic));
+
+/** Interference match key — transport IS in the key (opposite of the baseline `cellKey`):
+ *  the comparison is flood-on vs flood-off on ONE wire, not across wires. */
+export const floodOffKey = (c: Pick<RunCell, "transport" | "netem" | "maxHz">): string =>
+  [c.transport, c.netem, c.maxHz].join("\u0000");
+
+/** The fast lane's flood-off reference under one condition. */
+export interface FloodOffStat {
+  p95: number;
+  deliveryPct: number;
+}
+
+const median = (ns: number[]): number => {
+  const f = ns.filter(Number.isFinite).sort((a, b) => a - b);
+  return f.length ? f[Math.floor((f.length - 1) / 2)] : NaN;
+};
+
+/** key → the fast lane's median p95/deliv% over the flood-OFF cells (fast lane present, no
+ *  bulk lane, no error) — the "alone" side `interferenceDelta` compares against. */
+export function buildFloodOffIndex(cells: RunCell[]): Map<string, FloodOffStat> {
+  const byKey = new Map<string, { p95: number[]; deliv: number[] }>();
+  for (const c of cells) {
+    if (c.error || isCoexRow(c.row)) continue;
+    const fl = fastLane(c.row);
+    if (!fl) continue;
+    const k = floodOffKey(c);
+    const e = byKey.get(k) ?? byKey.set(k, { p95: [], deliv: [] }).get(k)!;
+    e.p95.push(fl.latP95);
+    e.deliv.push(fl.deliveryPct);
+  }
+  const out = new Map<string, FloodOffStat>();
+  for (const [k, v] of byKey) out.set(k, { p95: median(v.p95), deliveryPct: median(v.deliv) });
+  return out;
+}
+
+/** How much the flood hurts the fast lane in this cell vs its flood-off reference. On /ws
+ *  this is inter-stream HOL blocking; on WT/WebRTC (independent lanes) what remains is
+ *  congestion-control coupling + drop policy — same number, different mechanism. */
+export interface InterferenceDelta {
+  /** underP95 / baseP95 — ×1 = the flood didn't touch the fast lane. */
+  ratio: number;
+  baseP95: number;
+  underP95: number;
+  baseDeliv: number;
+  underDeliv: number;
+  /** deliv% drop in percentage points (NaN when either side is NaN). */
+  delivDropPp: number;
+}
+
+export function interferenceDelta(
+  c: RunCell,
+  index: Map<string, FloodOffStat>,
+): InterferenceDelta | undefined {
+  if (c.error || !isCoexRow(c.row)) return undefined;
+  const fl = fastLane(c.row);
+  const base = index.get(floodOffKey(c));
+  if (!fl || !base) return undefined;
+  if (!Number.isFinite(base.p95) || base.p95 <= 0 || !Number.isFinite(fl.latP95)) return undefined;
+  return {
+    ratio: fl.latP95 / base.p95,
+    baseP95: base.p95,
+    underP95: fl.latP95,
+    baseDeliv: base.deliveryPct,
+    underDeliv: fl.deliveryPct,
+    delivDropPp: base.deliveryPct - fl.deliveryPct,
+  };
+}
+
 /** Render a whole run as Markdown: header + context, one table per condition group
  *  (transport·wire·netem·maxHz), per-lane sub-rows, offered/deliv% columns, the on-demand
  *  footer per group, and the repro URL. */
@@ -207,6 +291,7 @@ export function formatMarkdown(run: RunRecord): string {
     (groups.get(k) ?? groups.set(k, []).get(k)!).push(c);
   }
   let anyReset = false;
+  const ifIndex = buildFloodOffIndex(run.cells);
   for (const cells of groups.values()) {
     const first = cells[0];
     const wireTag = first.wire && first.wire !== first.transport ? ` (wire: ${first.wire})` : "";
@@ -227,6 +312,7 @@ export function formatMarkdown(run: RunRecord): string {
       "p50",
       "p95",
       "p99",
+      "fast p95",
       "max",
       "std",
       "loss%",
@@ -253,6 +339,7 @@ export function formatMarkdown(run: RunRecord): string {
         cell(r.latP50),
         cell(r.latP95),
         cell(r.latP99),
+        cell(fastLane(r)?.latP95 ?? NaN),
         cell(r.latMax),
         cell(r.latStd),
         cell(r.lossPct),
@@ -273,6 +360,7 @@ export function formatMarkdown(run: RunRecord): string {
             cell(l.latP50),
             cell(l.latP95),
             cell(l.latP99),
+            "",
             cell(l.latMax),
             cell(l.latStd),
             cell(l.lossPct),
@@ -297,6 +385,33 @@ export function formatMarkdown(run: RunRecord): string {
         }% reduction** on the WS hop.`,
         ``,
       );
+    }
+    // Interference footer — each coex scenario's fast lane vs its flood-off twin (one line
+    // per scenario, first rep; per-rep values are in the rows above).
+    const coexSeen = new Set<string>();
+    let coexNoRef = false;
+    for (const c of ok) {
+      if (!isCoexRow(c.row) || coexSeen.has(c.scenario)) continue;
+      coexSeen.add(c.scenario);
+      const d = interferenceDelta(c, ifIndex);
+      if (!d) {
+        coexNoRef = true;
+        continue;
+      }
+      const dlv = Number.isFinite(d.delivDropPp)
+        ? `, deliv ${cell(d.baseDeliv)} → ${cell(d.underDeliv)}%`
+        : "";
+      lines.push(
+        `**Interference (${c.scenario}):** \`/load/fast\` p95 ${cell(d.baseP95)} → ${
+          cell(d.underP95)
+        } ms (**×${
+          d.ratio.toFixed(1)
+        }**)${dlv} beside the flood — vs the flood-off cell at the same net·maxHz.`,
+        ``,
+      );
+    }
+    if (coexNoRef) {
+      lines.push(`- interference Δ unavailable — add the \`pose\` profile to the sweep`, ``);
     }
   }
   if (anyReset) {

@@ -25,7 +25,19 @@ publisher config itself per heavy profile (`start_bench`, manual state restored)
 IS the offered load, and every row reports **offered kB/s / deliv%** derived from the per-topic seq
 span (works without the RPC too). `pose` measures the always-on small lanes; `mixed` is the
 beside-bulk coexistence case — expand any row (▸) for **per-lane stats** (pose fresh beside the img
-backlog is the fair-data-plane evidence) and **1 s sparklines** (ramp, outage recovery). The
+backlog is the fair-data-plane evidence) and **1 s sparklines** (ramp, outage recovery).
+**+pose beside floods** (`?coex=1`) generalizes `mixed` to every flood tier: each selected heavy
+profile derives a `<tier>+pose` scenario (pose lanes subscribed beside its flood, same gen, zero
+extra cells), so the sweep shows at what offered bulk load each transport starts hurting the fast
+lane. Multi-lane rows surface `/load/fast`'s p95 as the **fast p95** column (the pooled p95 is
+sample-count weighted and hides it), and when the same table holds a flood-off small-lane cell at
+the same transport·net·maxHz, the coex row gets a **×N interference chip** (fast-lane p95 under
+flood ÷ alone; the Markdown export prints the matching **Interference** footer). Read the ratio per
+wire: on `/ws` it is inter-stream head-of-line blocking on the single TCP pipe; on WT/WebRTC the
+lanes are independent, so what remains is congestion-control coupling + drop policy — one
+connection, one congestion controller. (Terminology per Marx et al. 2020's HOL-blocked-bytes
+studies; RFC 8260 stream schedulers, WebTransport `sendOrder`, and MoQ `DELIVERY_TIMEOUT` are the
+standards analogues of the lane scheduler, priorities, and conflation here.) The
 `all-lanes` + `on-demand` pair in one sweep prints the on-demand bandwidth cut (~75% on the WS hop).
 Results **append across sweeps and transport switches** (the cross-wire table builds live), persist
 to a run history (localStorage; time-series stripped on disk — the JSON export keeps it), and a
@@ -87,7 +99,9 @@ Re-run: pick workloads (+ netem/maxHz axes), **Run sweep**, **copy Markdown** �
 export's `repro:` URL. The whole config drives from the URL: `?gw=host:port` targets a remote
 gateway, `?transport=<id>` pins the transport, `?profiles=pose,dense,mixed` selects workloads,
 `?dur=ms` tunes the window, `?maxHz=0,60` is the QoS axis (comma list; 0 = ∞),
-`?net=clean,loss-5` the netem axis, `?reps=N` repeats, `?load=<tier>` / `?loadHz=&loadBytes=` /
+`?net=clean,loss-5` the netem axis, `?reps=N` repeats, `?coex=1` pairs the pose lanes with every
+selected flood (use ≥10 s windows on shaped nets — a 1 MB frame needs seconds of wire time at
+wifi-crowded rates), `?load=<tier>` / `?loadHz=&loadBytes=` /
 `?loadKind=cloud` the generator config, `?drive=0` turns auto-drive off, and **`?run=1` executes on
 load** (3 s cancel chip — netem flips are gateway-wide). Bench URLs land on the bench tab
 (`?tab=worldview|topics` picks the page explicitly), and each export embeds its `repro:` URL, so

@@ -62,6 +62,10 @@ export function useBenchRunner(history: BenchHistory) {
   const netem = useNetem();
 
   const [cells, setCells] = useState<RunCell[]>([]);
+  const [loadedIds, setLoadedIds] = useState<Set<string>>(new Set());
+  // id → the exact cell array appended; past history records are immutable, so cell object
+  // identity is stable and lets us remove exactly that run's cells on toggle-off.
+  const loadedCells = useRef<Map<string, RunCell[]>>(new Map());
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState("idle");
   const [note, setNote] = useState<string>();
@@ -89,8 +93,28 @@ export function useBenchRunner(history: BenchHistory) {
     setProgress("stopping after this cell…");
   }, []);
 
-  const clear = useCallback(() => setCells([]), []);
-  const append = useCallback((cs: RunCell[]) => setCells((prev) => [...prev, ...cs]), []);
+  const clear = useCallback(() => {
+    loadedCells.current.clear();
+    setLoadedIds(new Set());
+    setCells([]);
+  }, []);
+  // Toggle a past run's cells into/out of the table (reversible; other loaded runs untouched).
+  const toggleLoad = useCallback((rec: { id: string; cells: RunCell[] }) => {
+    setLoadedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(rec.id)) {
+        const set = new Set(loadedCells.current.get(rec.id));
+        loadedCells.current.delete(rec.id);
+        setCells((cs) => cs.filter((c) => !set.has(c)));
+        next.delete(rec.id);
+      } else {
+        loadedCells.current.set(rec.id, rec.cells);
+        setCells((cs) => [...cs, ...rec.cells]);
+        next.add(rec.id);
+      }
+      return next;
+    });
+  }, []);
 
   const start = useCallback(async (plan: SweepPlan, ctx: SweepCtx) => {
     if (!client || runningRef.current || plan.cells.length === 0) return;
@@ -281,7 +305,7 @@ export function useBenchRunner(history: BenchHistory) {
     }
   }, [client, call, netem, history]);
 
-  return { cells, clear, append, running, progress, note, live, clock, start, stop };
+  return { cells, clear, toggleLoad, loadedIds, running, progress, note, live, clock, start, stop };
 }
 
 export type BenchRunner = ReturnType<typeof useBenchRunner>;

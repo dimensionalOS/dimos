@@ -13,11 +13,15 @@ export { createGatewayWsTransport } from "./transports/gatewayWs.ts";
 export type { GatewayWsDeps } from "./transports/gatewayWs.ts";
 export { b64ToBytes, frameToSample } from "./transports/frame.ts";
 export {
+  BULK_LANES,
+  coexProfile,
   defaultGrace,
   defaultWarmup,
+  FAST_LANE,
   measureScenario,
   ON_DEMAND_PAIR,
   onDemandSaving,
+  POSE_LANES,
   STREAM_PROFILES,
 } from "./bench.ts";
 export type {
@@ -31,7 +35,12 @@ export type {
   StreamProfile,
 } from "./bench.ts";
 export {
+  buildFloodOffIndex,
+  fastLane,
+  floodOffKey,
   formatMarkdown,
+  interferenceDelta,
+  isCoexRow,
   parseRun,
   reviveRun,
   RUN_SCHEMA,
@@ -40,7 +49,14 @@ export {
   stripBuckets,
   trimRuns,
 } from "./benchRun.ts";
-export type { GeneratorConfig, RunCell, RunMeta, RunRecord } from "./benchRun.ts";
+export type {
+  FloodOffStat,
+  GeneratorConfig,
+  InterferenceDelta,
+  RunCell,
+  RunMeta,
+  RunRecord,
+} from "./benchRun.ts";
 export type { CommandInfo, RawSample, Status, Transport, TransportCaps } from "./types.ts";
 export type {
   ClockSample,

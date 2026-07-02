@@ -15,6 +15,9 @@ export interface BenchUrlConfig {
   reps: number;
   /** Sweep drives the GO2Load generator per heavy profile (default on when the RPC exists). */
   autoDrive: boolean;
+  /** Selected flood profiles also subscribe the pose lanes (scenario `<tier>+pose`) —
+   *  measures whether the bulk stream delays /load/fast. Zero extra cells. */
+  coex: boolean;
   genKind: "image" | "cloud";
   genHz: number;
   genBytes: number;
@@ -27,6 +30,7 @@ export const BENCH_DEFAULTS: BenchUrlConfig = {
   net: [],
   reps: 1,
   autoDrive: true,
+  coex: false,
   genKind: "image",
   genHz: 20,
   genBytes: 1_000_000,
@@ -41,6 +45,7 @@ export const BENCH_KEYS = [
   "net",
   "reps",
   "drive",
+  "coex",
   "load",
   "loadHz",
   "loadBytes",
@@ -86,6 +91,7 @@ export function readBenchConfig(): BenchUrlConfig {
     net: (getParam("net") ?? "").split(",").filter(Boolean),
     reps: int(getParam("reps"), d.reps, 1),
     autoDrive: getParam("drive") !== "0",
+    coex: getParam("coex") === "1",
     genKind: kindRaw === "cloud" ? "cloud" : tier?.gen?.kind ?? d.genKind,
     genHz: int(getParam("loadHz"), tier?.gen?.hz ?? d.genHz, 1),
     genBytes: int(getParam("loadBytes"), tier?.gen?.bytes ?? d.genBytes, 1),
@@ -105,6 +111,7 @@ function serializeAll(cfg: BenchUrlConfig): Record<(typeof BENCH_KEYS)[number], 
     net: cfg.net.length ? cfg.net.join(",") : null,
     reps: cfg.reps === d.reps ? null : String(cfg.reps),
     drive: cfg.autoDrive ? null : "0",
+    coex: cfg.coex ? "1" : null,
     load: genDefault || !tier ? null : tier.id,
     loadHz: genDefault || tier ? null : String(cfg.genHz),
     loadBytes: genDefault || tier ? null : String(cfg.genBytes),

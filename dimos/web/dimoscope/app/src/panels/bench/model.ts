@@ -1,9 +1,12 @@
 // Pure sweep-domain logic — plan building (cell order), time estimates, baseline matching,
 // Δ rendering rules. No React, no IO; the runner and table consume this.
 import {
+  coexProfile,
   defaultGrace,
   defaultWarmup,
+  type FloodOffStat,
   type GenSpec,
+  interferenceDelta,
   type RunCell,
   type RunMeta,
   type RunRecord,
@@ -53,6 +56,7 @@ export function buildPlan(
     net: string[];
     reps: number;
     autoDrive: boolean;
+    coex: boolean;
   },
   netem: NetemState | null,
   hasRpc: boolean,
@@ -61,7 +65,10 @@ export function buildPlan(
   const nets = serverIds.filter((id) => cfg.net.includes(id));
   const netIgnored = cfg.net.filter((id) => !serverIds.includes(id));
   const netAxis: (string | null)[] = nets.length ? nets : [null];
-  const profiles = STREAM_PROFILES.filter((p) => cfg.profiles.includes(p.id));
+  // coex derives `<tier>+pose` scenarios (pose lanes beside each flood) — cell count, gen
+  // handling, and the scenario-keyed machinery downstream all inherit the derived profile.
+  const profiles = STREAM_PROFILES.filter((p) => cfg.profiles.includes(p.id))
+    .map((p) => (cfg.coex ? coexProfile(p) : p));
   const hzs = [...cfg.maxHz].sort((a, b) => a - b);
   const reps = Math.max(1, cfg.reps);
   const driveGen = cfg.autoDrive && hasRpc;
@@ -202,6 +209,26 @@ export function deltas(c: RunCell, index: Map<string, BaselineStat>): CellDeltas
     }
   }
   return out.p95 || out.loss ? out : undefined;
+}
+
+/** ×N chip for the fast-p95 column: this coex cell's `/load/fast` p95 vs its flood-off twin
+ *  (same transport·net·maxHz, from `buildFloodOffIndex`). Noise floor mirrors `deltas`:
+ *  under ×1.2 renders faint. On /ws the ratio is inter-stream HOL blocking; on WT/WebRTC
+ *  (independent lanes) it measures congestion-control coupling + drop policy instead. */
+export function interferenceChip(
+  c: RunCell,
+  index: Map<string, FloodOffStat>,
+): { chip: DeltaChip; title: string } | undefined {
+  const d = interferenceDelta(c, index);
+  if (!d) return undefined;
+  const dlv = Number.isFinite(d.delivDropPp)
+    ? ` · deliv ${d.baseDeliv} → ${d.underDeliv}%`
+    : "";
+  return {
+    chip: { text: `×${d.ratio.toFixed(1)}`, bad: d.ratio > 1, faint: d.ratio < 1.2 },
+    title:
+      `/load/fast p95 ${d.baseP95}ms alone → ${d.underP95}ms beside the flood${dlv} — HOL on a single TCP pipe; CC coupling + drop policy on WT/RTC`,
+  };
 }
 
 export const newRunId = () => crypto.randomUUID().slice(0, 8);

@@ -1,22 +1,30 @@
 // The results table — cells append across sweeps and transport switches (side-by-side wires),
 // Δ suffixes against the pinned baseline, expandable per-lane/time-series detail, and the
 // exports (Markdown, JSON) built from the same RunRecord the history persists.
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
+  buildFloodOffIndex,
   type ClockSample,
+  fastLane,
   formatMarkdown,
   type RunCell,
   type RunRecord,
   serializeRun,
 } from "@dimos/web";
-import { type BaselineStat, deltas } from "./model";
+import { type BaselineStat, deltas, interferenceChip } from "./model";
 import { LaneDetail } from "./LaneDetail";
 
 const f = (n: number) => (Number.isFinite(n) ? String(n) : "–");
 
-function DeltaCell({ v, chip }: { v: number; chip?: { text: string; bad: boolean; faint: boolean } }) {
+function DeltaCell(
+  { v, chip, title }: {
+    v: number;
+    chip?: { text: string; bad: boolean; faint: boolean };
+    title?: string;
+  },
+) {
   return (
-    <td>
+    <td title={title}>
       {f(v)}
       {chip && (
         <span className={`delta ${chip.faint ? "" : chip.bad ? "delta-bad" : "delta-good"}`}>
@@ -38,6 +46,8 @@ export function ResultsTable(
 ) {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [detail, setDetail] = useState(false);
+  // Flood-off references over the displayed cells — "this table" IS the comparison set.
+  const ifIndex = useMemo(() => buildFloodOffIndex(cells), [cells]);
   if (cells.length === 0) return null;
   const toggle = (i: number) =>
     setExpanded((s) => {
@@ -55,7 +65,7 @@ export function ResultsTable(
     a.click();
     URL.revokeObjectURL(a.href);
   };
-  const cols = 13 + (detail ? 2 : 0);
+  const cols = 14 + (detail ? 3 : 0);
   return (
     <div className="bench-section">
       <div className="bench-row">
@@ -107,8 +117,12 @@ export function ResultsTable(
             <th>kB/s</th>
             <th>deliv%</th>
             <th>p50</th>
-            <th>p95</th>
+            <th title="pooled across lanes (sample-count weighted) — see fast p95 for the small-lane story">
+              p95
+            </th>
             <th>p99</th>
+            <th title="/load/fast lane only — the interference signal beside a flood">fast p95</th>
+            {detail && <th title="/load/fast lane deliv%">fast dlv%</th>}
             {detail && <th>max</th>}
             {detail && <th>σ</th>}
             <th>loss%</th>
@@ -118,6 +132,8 @@ export function ResultsTable(
         <tbody>
           {cells.map((c, i) => {
             const d = baseline ? deltas(c, baseline) : undefined;
+            const ifd = interferenceChip(c, ifIndex);
+            const fl = fastLane(c.row);
             const wireTag = c.wire && c.wire !== c.transport ? ` (${c.wire})` : "";
             const r = c.row;
             return [
@@ -151,6 +167,8 @@ export function ResultsTable(
                       <td>{f(r.latP50)}</td>
                       <DeltaCell v={r.latP95} chip={d?.p95} />
                       <td>{f(r.latP99)}</td>
+                      <DeltaCell v={fl?.latP95 ?? NaN} chip={ifd?.chip} title={ifd?.title} />
+                      {detail && <td>{f(fl?.deliveryPct ?? NaN)}</td>}
                       {detail && <td>{f(r.latMax)}</td>}
                       {detail && <td>{f(r.latStd)}</td>}
                       <DeltaCell v={r.lossPct} chip={d?.loss} />
@@ -171,6 +189,11 @@ export function ResultsTable(
       </table>
       {cells.some((c) => c.row.seqResets > 0) && (
         <div className="muted small">† source restarted mid-run (seq reset) — treat loss/offered with care</div>
+      )}
+      {cells.some((c) => interferenceChip(c, ifIndex)) && (
+        <div className="muted small">
+          × = /load/fast p95 vs this table's flood-off cell at the same transport·net·maxHz
+        </div>
       )}
     </div>
   );

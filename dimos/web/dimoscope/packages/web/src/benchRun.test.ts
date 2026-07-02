@@ -2,9 +2,14 @@
 // the persistence trim policy, and the Markdown export shape.
 import assert from "node:assert/strict";
 
-import type { BenchRow } from "./bench.ts";
+import type { BenchRow, LaneStats } from "./bench.ts";
 import {
+  buildFloodOffIndex,
+  fastLane,
+  floodOffKey,
   formatMarkdown,
+  interferenceDelta,
+  isCoexRow,
   parseRun,
   reviveRun,
   RUN_SCHEMA,
@@ -287,4 +292,97 @@ Deno.test("formatMarkdown: seq-reset rows get the † footnote", () => {
   const md = formatMarkdown(run([cell({ row: row({ scenario: "pose", seqResets: 1 }) })]));
   assert.ok(md.includes("pose†"));
   assert.ok(md.includes("† source restarted"));
+});
+
+const lane = (topic: string, over?: Partial<LaneStats>): LaneStats => ({
+  topic,
+  msgs: 0,
+  hz: 0,
+  kbps: 0,
+  latP50: 0,
+  latP95: 0,
+  latP99: 0,
+  latMax: 0,
+  latStd: 0,
+  lossPct: 0,
+  latePct: 0,
+  offeredHz: NaN,
+  offeredKbps: NaN,
+  deliveryPct: NaN,
+  seqResets: 0,
+  ...over,
+});
+
+/** A flood-off small-lane cell (pose-shaped) and a coex cell (fast beside img). */
+const poseCell = (p95: number, over?: Partial<RunCell>): RunCell =>
+  cell({
+    scenario: "pose",
+    row: row({
+      scenario: "pose",
+      lanes: [lane("/load/fast", { latP95: p95, deliveryPct: 100 }), lane("/load/mid")],
+    }),
+    ...over,
+  });
+const coexCell = (p95: number, deliveryPct: number, over?: Partial<RunCell>): RunCell =>
+  cell({
+    scenario: "dense+pose",
+    row: row({
+      scenario: "dense+pose",
+      lanes: [lane("/load/fast", { latP95: p95, deliveryPct }), lane("/load/img")],
+    }),
+    ...over,
+  });
+
+Deno.test("fastLane/isCoexRow: lane presence, not scenario id", () => {
+  const coex = coexCell(64, 40);
+  assert.equal(fastLane(coex.row)?.latP95, 64);
+  assert.ok(isCoexRow(coex.row));
+  assert.ok(!isCoexRow(poseCell(20).row)); // no bulk lane
+  assert.ok(!isCoexRow(row({ lanes: [lane("/load/img")] }))); // no fast lane
+  // /load/cloud counts as bulk too (manual cloud floods).
+  assert.ok(isCoexRow(row({ lanes: [lane("/load/fast"), lane("/load/cloud")] })));
+});
+
+Deno.test("buildFloodOffIndex: medians across reps; excludes errors, coex rows; keys by transport", () => {
+  const idx = buildFloodOffIndex([
+    poseCell(10, { rep: 1 }),
+    poseCell(20, { rep: 2 }),
+    poseCell(30, { rep: 3 }),
+    poseCell(999, { error: "died" }), // excluded
+    coexCell(500, 10), // bulk-bearing — never a reference
+    poseCell(7, { transport: "WT-rs" }), // separate wire, separate key
+  ]);
+  const ws = idx.get(floodOffKey({ transport: "WebSocket", netem: "live", maxHz: 0 }))!;
+  assert.equal(ws.p95, 20); // median of 10/20/30
+  assert.equal(ws.deliveryPct, 100);
+  assert.equal(idx.get(floodOffKey({ transport: "WT-rs", netem: "live", maxHz: 0 }))!.p95, 7);
+});
+
+Deno.test("interferenceDelta: ratio + deliv drop vs the flood-off twin; undefined without one", () => {
+  const idx = buildFloodOffIndex([poseCell(20)]);
+  const d = interferenceDelta(coexCell(64, 40), idx)!;
+  assert.equal(d.ratio, 3.2);
+  assert.deepEqual({ base: d.baseP95, under: d.underP95 }, { base: 20, under: 64 });
+  assert.equal(d.delivDropPp, 60);
+  // No reference at this condition → undefined.
+  assert.equal(interferenceDelta(coexCell(64, 40, { netem: "loss-5" }), idx), undefined);
+  // Non-coex cells and zero/NaN baselines never produce a delta.
+  assert.equal(interferenceDelta(poseCell(20), idx), undefined);
+  const zeroIdx = buildFloodOffIndex([poseCell(0)]);
+  assert.equal(interferenceDelta(coexCell(64, 40), zeroIdx), undefined);
+});
+
+Deno.test("formatMarkdown: fast p95 column + interference footer; hint when no reference", () => {
+  const md = formatMarkdown(run([poseCell(20), coexCell(64, 40)]));
+  assert.ok(md.includes("fast p95"), md);
+  assert.ok(md.includes("**Interference (dense+pose):**"), md);
+  assert.ok(md.includes("×3.2"), md);
+  assert.ok(md.includes("deliv 100 → 40%"), md);
+  // Coex row with no flood-off twin → the "add pose" hint instead.
+  const noRef = formatMarkdown(run([coexCell(64, 40)]));
+  assert.ok(!noRef.includes("**Interference"), noRef);
+  assert.ok(noRef.includes("add the `pose` profile"), noRef);
+  // No coex rows → neither footer nor hint.
+  const plain = formatMarkdown(run([poseCell(20)]));
+  assert.ok(!plain.includes("Interference") && !plain.includes("add the `pose`"), plain);
 });
