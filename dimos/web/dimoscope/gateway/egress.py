@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 
 from dimos.utils.logging_config import setup_logger
@@ -21,7 +22,7 @@ MAX_ANG = 1.5  # rad/s clamp
 DEFAULT_TTL = 400.0  # deadman timeout (ms)
 
 # RPC bridge: which dimos @rpc commands the browser may invoke (server-side authoritative whitelist).
-RPC_COMMANDS = [
+_DEFAULT_RPC_COMMANDS = [
     {"target": "GO2Connection", "method": "standup", "label": "Stand up"},
     {"target": "GO2Connection", "method": "liedown", "label": "Lie down"},
     {"target": "GO2Load", "method": "start_all", "label": "Start streams"},
@@ -29,6 +30,25 @@ RPC_COMMANDS = [
     {"target": "GO2Load", "method": "start_bench", "label": "Start bench"},
     {"target": "GO2Load", "method": "stop_bench", "label": "Stop bench"},
 ]
+
+
+def _rpc_commands_from_env() -> list[dict[str, str]]:
+    """DIMOS_GATEWAY_RPC="Target/method,Target2/m2" — the operator's complete whitelist,
+    replacing the defaults (so a deployment can also lock the list down). Empty/unset → defaults."""
+    out: list[dict[str, str]] = []
+    for spec in os.environ.get("DIMOS_GATEWAY_RPC", "").split(","):
+        spec = spec.strip()
+        if not spec:
+            continue
+        target, sep, method = spec.partition("/")
+        if not sep or not target or not method:
+            logger.warning("DIMOS_GATEWAY_RPC entry ignored (want Target/method)", entry=spec)
+            continue
+        out.append({"target": target, "method": method, "label": f"{target}/{method}"})
+    return out
+
+
+RPC_COMMANDS = _rpc_commands_from_env() or _DEFAULT_RPC_COMMANDS
 RPC_WHITELIST = {(c["target"], c["method"]) for c in RPC_COMMANDS}
 
 
