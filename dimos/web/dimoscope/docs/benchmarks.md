@@ -23,7 +23,9 @@ The **Topics tab → Benchmark** drawer measures the *live* transport end-to-end
 transport from the topbar dropdown (WebSocket · SSE · HTTP poll · WebRTC data · WebTransport, or Auto),
 crank the **load generator** up the ladder (`light 2 → camera 11 → dense 20 → depth-hd 50 → raw-1080p 180
 → firehose 300` MB/s on `/load/img`), and sweep. The `pose` profile measures the small `/load/{fast,mid,slow}`
-lanes (always live); the heavy profiles measure `/load/img` at whatever the generator is emitting.
+lanes (always live); the heavy profiles measure `/load/img` at whatever the generator is emitting. Running
+the `all-lanes` + `on-demand` pair in one sweep makes the Markdown export print the on-demand saving — the
+WS-hop bandwidth cut of subscribing 1 lane vs all of them (the README's ~75% headline).
 
 **Methodology** (`packages/web/src/bench.ts`): each scenario discards a **warmup** window (subscribe
 ramp-up and QoS negotiation never pollute the stats), measures for `durMs`, then drains a **grace**
@@ -76,7 +78,7 @@ and the *small-vs-bulk isolation*, not WAN behavior (for that see §3).
   TCP path is C-optimized. A non-Python QUIC relay closes that gap.
 - **The ceilings differ: WS relays ~255 MB/s, WT bulk ~20 MB/s on this box.** Offered 180–300 MB/s, the WS
   path keeps shipping (154 → 255 MB/s delivered; sustained saturation eventually costs 12.5% loss and
-  100–230 ms tails — the "big data stresses the browser" tier, recorded rather than hidden). The WT bulk
+  100–230 ms tails — the "big data stresses the browser" tier). The WT bulk
   lane saturates at its aioquic CPU ceiling and backlogs (reliable = delayed, not dropped: loss stays 0) —
   past ~20 MB/s of bulk, pick WS or put the bulk topic on a `bulk` QoS lane so it conflates to the freshest
   frame instead of queueing.
@@ -160,15 +162,15 @@ requires a **secure context** — `localhost` qualifies, a bare public-IP HTTP o
 
 ### WAN results (2026-07-01, measured — Mac ⇄ VPS `37.60.232.68`)
 
-Deploy: `go2-load` runs on the Linux VPS (the forkserver worker pool that fails on macOS works on Linux);
+Deploy: `go2-load` runs on the Linux VPS;
 `/load/*` streams over the real internet, **and the full dog renders headless** — dimsim launches Chromium
 (`DIMSIM_RENDER=cpu`, SwiftShader software WebGL), publishes `/color_image` + `/camera_info`, and the
-rendered scene shows in the browser over WAN. *(Gotcha: this box's **IPv6 route to the playwright CDN is
-broken**, so `playwright install chromium` — which dimsim runs on first launch — hangs on the IPv6 download.
-Fix: fetch the browser + headless-shell over **IPv4** (`wget -4 …chrome-linux64.zip` /
-`…chrome-headless-shell-linux64.zip`) into `~/.cache/ms-playwright/chromium{,_headless_shell}-<build>/` with
-empty `INSTALLATION_COMPLETE`+`DEPENDENCIES_VALIDATED` markers, or set the system to prefer IPv4. Then dimsim
-renders. Use **cam: jpeg** over WAN — the webrtc cam mode needs ICE, which doesn't establish over a raw IP.)*
+rendered scene shows in the browser over WAN. *(If `playwright install chromium` — which dimsim runs on
+first launch — hangs, the usual cause is a broken IPv6 route to the CDN: fetch the browser + headless-shell
+over **IPv4** (`wget -4 …chrome-linux64.zip` / `…chrome-headless-shell-linux64.zip`) into
+`~/.cache/ms-playwright/chromium{,_headless_shell}-<build>/` with empty
+`INSTALLATION_COMPLETE`+`DEPENDENCIES_VALIDATED` markers, or prefer IPv4 system-wide. Use **cam: jpeg**
+over WAN — the webrtc cam mode needs ICE, which doesn't establish over a raw IP.)*
 For a headless benchmark **without** the sim, the standalone `deno task load:flood` source is lighter.
 
 ### Network profiles — simulate deployment conditions from the browser
@@ -235,7 +237,7 @@ transports — the WS control shows the identical floor.)*
 - **UDP over raw IP remains finicky:** QUIC handshakes fail under loss (connect first, then apply);
   WebRTC-data needs STUN/TURN; Auto falls back to WS when WT can't establish (the wire tag in each row
   shows which transport carried the run). Outage buttons (`UDP 3s/10s`, `all 10s`) exist for
-  fallback/reconnect timing — a follow-up sweep.
+  fallback/reconnect timing.
 
 **Recommendation: `Auto (WT→WS)` against the sidecar** (`deno task serve:wt-rs` + `deno task
 wt-sidecar`); aioquic remains the zero-dependency default (`WT_EXTERNAL` unset).
@@ -248,7 +250,7 @@ Two design constraints behind those numbers (`wt-sidecar/src/main.rs`):
 
 ### VPS — run the dog (Ubuntu; needs `uv`; `deno` only to build the app)
 
-**Firewall — open the ports** (already done on this box): TCP `8080`; UDP `:8443` (WebTransport) + the WebRTC
+**Firewall — open the ports**: TCP `8080`; UDP `:8443` (WebTransport) + the WebRTC
 ICE range. `sudo ufw allow 8080/tcp; sudo ufw allow 8443/udp; sudo ufw allow 32768:60999/udp`.
 
 The simulated dog is **heavier than `--extra web`**: `go2-load` composes the *smart* `unitree_go2` (mapping +
@@ -299,7 +301,7 @@ Keep the client page on `http://localhost` (so it may reach `ws://`/`http://` on
 mixed-content block). WebTransport's self-signed cert is ECDSA ≤10 days — the service regenerates it and the
 client always fetches the current hash from `/cert`.
 
-### Later — a physical Go2 over the internet (coworker's path)
+### A physical Go2 over the internet
 
 No code change: run the gateway on a machine *next to the real dog* (`uv sync --extra unitree`, robot IP +
 per-device AES-128 key), point `go2-load` / `unitree_go2` at the hardware, forward `8080/tcp` + `8443/udp`

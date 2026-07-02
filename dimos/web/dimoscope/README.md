@@ -24,6 +24,9 @@ robot / sim ─► DimOS bus (LCM | Zenoh)
 
 ## Quickstart
 
+Prereqs: [uv](https://docs.astral.sh/uv/) + [Deno](https://deno.com/) 2.x (no Node — Deno runs Vite);
+Chrome/Edge for WebTransport (everything else falls back to WebSocket).
+
 From the **repo root**, with only the `web` extra — every line is copy-paste:
 
 ```bash
@@ -143,7 +146,7 @@ only the wire differs:
 | **SSE**          | TCP/HTTP          | `/sse`      | server→client only (binary→base64)                                                                           |
 | **HTTP poll**    | TCP/HTTP          | `/poll`     | universal req/resp baseline                                                                                  |
 | **WebRTC data**  | SCTP/DTLS/**UDP** | `/rtc`      | configurable unordered/unreliable → no TCP head-of-line blocking                                             |
-| **WebTransport** | HTTP/3 **QUIC**   | UDP `:8443` | streams + datagrams, no HoL; also carries teleop/rpc; the Auto default; cert hash from `/cert` (Chrome/Edge) |
+| **WebTransport** | HTTP/3 **QUIC**   | UDP `:8443` | streams + datagrams, no HoL; also carries teleop/rpc; the Auto default; cert hash from `/cert` (Chrome/Edge); served by aioquic in-process, or the native Rust sidecar with `WT_EXTERNAL=1` (bulk numbers in [benchmarks §3](docs/benchmarks.md)) |
 
 **Default = Auto (WT→WS).** The app's default transport prefers **one WebTransport connection**
 carrying *both* data (QUIC datagrams/streams, no HoL) *and* control (subscribe/QoS + teleop/goal/rpc
@@ -192,6 +195,12 @@ copy the results as Markdown. The top tiers can stress or crash the tab — that
 measured, so sweep light→heavy. Route through a remote VPS with `?gw=host:port` for real-WAN numbers;
 tune duration with `?dur=ms`.
 
+On a **Linux** gateway, `NETEM_CTL=1` (+ the `dimos-netem` sudo wrapper) adds a **Network** section to
+the drawer: server-side `tc netem` profiles (`clean → wifi-normal → wifi-crowded → wifi-edge →
+disaster → loss-3/5%`) plus momentary outage buttons, shaping only the gateway's egress ports and
+self-healing after 15 min. Every result row is stamped `net:<profile>`; setup + the measured profile
+matrix are in [benchmarks §3](docs/benchmarks.md).
+
 Headlines: the service is a byte-relay, so **language isn't the bottleneck** (one Python process relays
 ~255 MB/s over WS; ~1 ms p50 on loopback); at robot-realistic bulk (≤20 MB/s) **WebTransport and
 WebSocket deliver identical throughput at 0% loss**, and WT's datagram lanes stay at 1 ms even when its
@@ -212,8 +221,23 @@ server-JSON decode costs **2.64× the bytes** of the binary relay; **~75% on-dem
 | `gateway/{data,media}.py`                             | `/ws` data plane (topics + teleop/goal/rpc) · `/media` camera plane                                                                                                                                                            |
 | `gateway/{qos,egress}.py`                             | per-client priority outbox (the QoS enforcement point) · `SafetyEgress` (clamp + deadman + rpc whitelist)                                                                                                                      |
 | `gateway/transports/`                                 | the `/sse` `/poll` `/rtc` + WebTransport planes                                                                                                                                                                                |
+| `gateway/pipe.py` · `gateway/wt-sidecar/`             | unix-socket feed + the native Rust WebTransport server — owns UDP `:8443` when `WT_EXTERNAL=1` (see its [README](gateway/wt-sidecar/README.md))                                                                                |
 | `scenarios/`                                          | dimos publisher blueprints — live data sources (`nav`/`arm`/`cam`) + `bench.py` (standalone `/load/*` source)                                                                                                                  |
 | `packages/web/src/bench.ts` · `app/…/BenchDrawer.tsx` | the in-browser benchmark core (`STREAM_PROFILES`, `measureScenario`) + the Topics-tab Benchmark drawer UI                                                                                                                      |
+
+## Development
+
+```bash
+deno task check                                     # typecheck: SDK + react + app
+deno task test                                      # SDK unit tests
+uv run pytest dimos/web/dimoscope/gateway/tests -q  # gateway unit tests — run from the REPO ROOT
+deno task fmt && deno task lint
+```
+
+The optional **native WT sidecar** (Rust) replaces aioquic's QUIC plane: build once with
+`cargo build --release --manifest-path gateway/wt-sidecar/Cargo.toml`, then run
+`deno task serve:wt-rs` + `deno task wt-sidecar` (aioquic stays the zero-dependency default; measured
+in [benchmarks §3](docs/benchmarks.md)).
 
 ## Status / next
 
@@ -230,3 +254,10 @@ Done:
   crankable flood + Topics-tab chips).
 - No head-of-line blocking under loss: WebRTC-data / WebTransport (UDP) stay smooth where WS (TCP)
   stalls; plus on-demand subscribe + server-enforced QoS (maxHz downsample / priority / reliability / depth).
+
+Next / open:
+
+- Converge the public API toward [#2502](https://github.com/dimensionalOS/dimos/issues/2502)
+  (`Dimos.connect(...)` / `app.modules.X.y()`) — `client.modules.*` already matches the RPC half.
+- Multi-robot: topics share one global namespace today; per-robot namespacing is the open design
+  question (demo multi-robot via distinct topic prefixes until then).
