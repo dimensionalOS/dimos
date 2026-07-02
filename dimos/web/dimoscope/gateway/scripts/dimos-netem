@@ -17,7 +17,10 @@
 # Usage: dimos-netem <profile>|clear|status
 set -u
 
-IFACE="${DIMOS_NETEM_IFACE:-eth0}"
+# Egress NIC: env override (manual CLI use only — the gateway calls this via `sudo -n`,
+# which strips env), else the default-route interface, else eth0.
+IFACE="${DIMOS_NETEM_IFACE:-$(ip -o route show default 2>/dev/null | awk '{print $5; exit}')}"
+IFACE="${IFACE:-eth0}"
 HEAL_S="${DIMOS_NETEM_HEAL_S:-900}"
 STATE_DIR=/run/dimos-netem
 PROFILE_F="$STATE_DIR/profile"
