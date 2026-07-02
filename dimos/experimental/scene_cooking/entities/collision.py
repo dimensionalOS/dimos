@@ -38,6 +38,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from dimos.experimental.scene_cooking.coacd_util import silence_coacd_logging
 from dimos.utils.logging_config import setup_logger
 
@@ -90,8 +92,6 @@ def cook_entity_collision_hulls(
     for stale in out_dir.glob("hull_*.obj"):
         stale.unlink()
 
-    import numpy as np
-
     out_paths: list[Path] = []
     if parts:
         for i, (vertices, triangles) in enumerate(parts):
@@ -113,7 +113,6 @@ def cook_entity_collision_hulls(
 def _run_coacd(mesh: Any, mesh_path: Path) -> list[tuple[Any, Any]]:
     """CoACD parts for an open3d mesh; ``[]`` means fall back to one hull."""
     import coacd  # type: ignore[import-not-found, import-untyped]
-    import numpy as np
 
     silence_coacd_logging()
 
