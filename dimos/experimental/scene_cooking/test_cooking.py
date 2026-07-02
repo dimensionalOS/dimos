@@ -202,6 +202,8 @@ def test_browser_visual_profiles_are_backend_specific() -> None:
 
 
 def test_extract_scene_objects_emits_per_prim_aabb() -> None:
+    # Inlined so importing this test module doesn't pull heavy open3d/trimesh
+    # for the many tests here that don't need browser.collision.
     from dimos.experimental.scene_cooking.browser.collision import extract_scene_objects
 
     triangles = np.array([[0, 1, 2]], dtype=np.int32)
