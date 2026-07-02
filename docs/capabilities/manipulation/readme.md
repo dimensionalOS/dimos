@@ -30,12 +30,11 @@ Keyboard controls:
 | Key | Action |
 |-----|--------|
 | W/S | +X/-X (forward/back) |
-| A/D | -Y/+Y (left/right) |
+| A/D | +Y/-Y (left/right) |
 | Q/E | +Z/-Z (up/down) |
 | R/F | +Roll/-Roll |
 | T/G | +Pitch/-Pitch |
 | Y/H | +Yaw/-Yaw |
-| SPACE | Reset to home pose |
 | ESC | Quit |
 
 ### Motion Planning (two terminals)
@@ -212,13 +211,13 @@ XARM7_IP=<ip> dimos run coordinator-xarm7 xarm-perception-agent
 KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
   (pygame UI)              (100Hz tick loop)      (WorldSpec backend)
        │                        │                       │
-  PoseStamped            CartesianIK task         RRT planner
-  commands               (Pinocchio IK)           JacobianIK
-                              │                   DrakeWorld
-                         JointState ────────────→ (visualization)
+  TwistStamped           EEFTwistTask             RRT planner
+  spatial EEF twist      (Pinocchio FK/IK)        JacobianIK
+                               │                   DrakeWorld
+                          JointState ────────────→ (visualization)
 ```
 
-- **KeyboardTeleopModule** — Pygame UI publishing cartesian pose commands
+- **KeyboardTeleopModule** — Pygame UI publishing routed spatial EEF twist intent
 - **ControlCoordinator** — 100Hz control loop with mock or real hardware adapters
 - **ManipulationModule** — world backend, optional visualization, RRT motion planning, obstacle management
 
