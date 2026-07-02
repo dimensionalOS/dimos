@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 import open3d as o3d  # type: ignore[import-untyped]
 import trimesh  # type: ignore[import-untyped]
 
@@ -183,8 +184,8 @@ def _build_fused_collision_mesh(
     prims: list[ScenePrimMesh],
     spec: CollisionSpec,
 ) -> o3d.geometry.TriangleMesh:
-    vertices: list[np.ndarray] = []
-    faces: list[np.ndarray] = []
+    vertices: list[NDArray[np.float64]] = []
+    faces: list[NDArray[np.int64]] = []
     vertex_offset = 0
     for prim in prims:
         mesh = _mesh_for_prim(prim, spec)
@@ -256,7 +257,9 @@ def _mesh_for_prim(
     return mesh
 
 
-def _mesh_from_arrays(vertices: np.ndarray, faces: np.ndarray) -> o3d.geometry.TriangleMesh:
+def _mesh_from_arrays(
+    vertices: NDArray[np.float64], faces: NDArray[np.int64]
+) -> o3d.geometry.TriangleMesh:
     mesh = o3d.geometry.TriangleMesh()
     mesh.vertices = o3d.utility.Vector3dVector(vertices)
     mesh.triangles = o3d.utility.Vector3iVector(faces.astype(np.int32))
