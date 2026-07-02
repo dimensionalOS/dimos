@@ -24,11 +24,22 @@ import threading
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
+from dimos.core.coordination.worker_launcher import CommandWorkerLauncher, VenvWorkerLauncher
 from dimos.core.coordination.worker_manager import WorkerManager
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.resource import Resource
+from dimos.core.runtime_environment import (
+    PythonProjectRuntimeEnvironment,
+    RuntimeEnvironment,
+    RuntimeEnvironmentRegistry,
+    RuntimePlacement,
+)
+from dimos.core.runtime_reconciliation import (
+    active_runtime_placements,
+    reconcile_blueprint_runtimes,
+)
 from dimos.core.transport import LCMTransport, PubSubTransport, pLCMTransport
 from dimos.spec.utils import is_spec, spec_annotation_compliance, spec_structural_compliance
 from dimos.utils.generic import short_id
@@ -68,6 +79,9 @@ class ModuleCoordinator(Resource):
         self._transport_registry: dict[tuple[str, type], PubSubTransport[Any]] = {}
         self._class_aliases: dict[type[ModuleBase], type[ModuleBase]] = {}
         self._module_transports: dict[type[ModuleBase], dict[str, PubSubTransport[Any]]] = {}
+        self._runtime_environment_registry = RuntimeEnvironmentRegistry.with_current_process()
+        self._runtime_placement_map: dict[type[ModuleBase], RuntimePlacement] = {}
+        self._module_manager_keys: dict[type[ModuleBase], str] = {}
         self._started = False
         self._modules_lock = threading.RLock()
         self._coordinator_rpc: CoordinatorRPC | None = None
@@ -166,39 +180,102 @@ class ModuleCoordinator(Resource):
         if not self._managers:
             raise ValueError("Trying to dimos.deploy before the client has started")
 
-        deployed_module = self._managers[module_class.deployment].deploy(
-            module_class, global_config, kwargs
+        manager_key = self._manager_key_for_module(module_class)
+        if manager_key not in self._managers:
+            self._ensure_runtime_manager(module_class)
+        deployed_module = self._managers[manager_key].deploy(
+            module_class,
+            global_config,
+            kwargs,
+            runtime_placement=self._runtime_placement_map.get(module_class),
         )
         with self._modules_lock:
             self._deployed_modules[module_class] = deployed_module
+            self._module_manager_keys[module_class] = manager_key
         return deployed_module  # type: ignore[return-value]
 
     def deploy_parallel(
-        self, module_specs: list[ModuleSpec], blueprint_args: Mapping[str, Mapping[str, Any]]
+        self,
+        module_specs: list[ModuleSpec],
+        blueprint_args: Mapping[str, Mapping[str, Any]],
+        *,
+        runtime_environment_registry: RuntimeEnvironmentRegistry | None = None,
+        runtime_placement_map: Mapping[type[ModuleBase], RuntimePlacement] | None = None,
     ) -> list[ModuleProxy]:
         if not self._managers:
             raise ValueError("Not started")
 
-        # Group specs by deployment type, tracking original indices for reassembly
+        results: list[Any] = [None] * len(module_specs)
+        previous_registry = self._runtime_environment_registry
+        previous_placements = dict(self._runtime_placement_map)
+        created_manager_keys: set[str] = set()
         indices_by_deployment: dict[str, list[int]] = {}
         specs_by_deployment: dict[str, list[ModuleSpec]] = {}
-        for index, spec in enumerate(module_specs):
-            # spec = (module_class, global_config, kwargs)
-            dep = spec[0].deployment
-            indices_by_deployment.setdefault(dep, []).append(index)
-            specs_by_deployment.setdefault(dep, []).append(spec)
-
-        results: list[Any] = [None] * len(module_specs)
+        placements_by_deployment: dict[str, dict[type[ModuleBase], RuntimePlacement]] = {}
 
         def _deploy_group(dep: str) -> None:
-            deployed = self._managers[dep].deploy_parallel(specs_by_deployment[dep], blueprint_args)
+            deployed = self._managers[dep].deploy_parallel(
+                specs_by_deployment[dep],
+                blueprint_args,
+                runtime_placements=placements_by_deployment.get(dep, {}),
+            )
             for index, module in zip(indices_by_deployment[dep], deployed, strict=True):
                 results[index] = module
 
+        def _rollback_successful_deployments() -> list[Exception]:
+            cleanup_errors: list[Exception] = []
+            for index, module in enumerate(results):
+                if module is None:
+                    continue
+                module_class = module_specs[index][0]
+                manager_key = self._manager_key_for_module(module_class)
+                manager = self._managers.get(manager_key)
+                undeploy = getattr(manager, "undeploy", None)
+                if callable(undeploy):
+                    try:
+                        undeploy(module)
+                    except Exception as e:
+                        cleanup_errors.append(e)
+            return cleanup_errors
+
         try:
+            if runtime_environment_registry is not None:
+                self._runtime_environment_registry = self._runtime_environment_registry.merge(
+                    runtime_environment_registry
+                )
+            if runtime_placement_map is not None:
+                self._runtime_placement_map.update(runtime_placement_map)
+
+            # Group specs by deployment type, tracking original indices for reassembly
+            for index, spec in enumerate(module_specs):
+                # spec = (module_class, global_config, kwargs)
+                dep = self._manager_key_for_module(spec[0])
+                if dep not in self._managers:
+                    self._ensure_runtime_manager(spec[0])
+                    created_manager_keys.add(dep)
+                indices_by_deployment.setdefault(dep, []).append(index)
+                specs_by_deployment.setdefault(dep, []).append(spec)
+                placement = self._runtime_placement_map.get(spec[0])
+                if placement is not None:
+                    placements_by_deployment.setdefault(dep, {})[spec[0]] = placement
+
             safe_thread_map(list(specs_by_deployment.keys()), _deploy_group)
-        except:
-            self.stop()
+        except Exception as error:
+            cleanup_errors = _rollback_successful_deployments()
+            for key in created_manager_keys:
+                manager = self._managers.pop(key, None)
+                if manager is not None:
+                    try:
+                        manager.stop()
+                    except Exception as e:
+                        cleanup_errors.append(e)
+            self._runtime_environment_registry = previous_registry
+            self._runtime_placement_map = previous_placements
+            if cleanup_errors:
+                raise ExceptionGroup(
+                    "Python runtime deployment failed and rollback cleanup also failed",
+                    [error, *cleanup_errors],
+                ) from error
             raise
 
         with self._modules_lock:
@@ -209,7 +286,50 @@ class ModuleCoordinator(Resource):
                     if mod is not None
                 }
             )
+            self._module_manager_keys.update(
+                {
+                    cls: self._manager_key_for_module(cls)
+                    for (cls, _, _), mod in zip(module_specs, results, strict=True)
+                    if mod is not None
+                }
+            )
         return results
+
+    def _manager_key_for_module(self, module_class: type[ModuleBase]) -> str:
+        placement = self._runtime_placement_map.get(module_class)
+        if placement is None:
+            return module_class.deployment
+        if module_class.deployment != "python":
+            raise ValueError(
+                f"Runtime placement for {module_class.__name__} requires python deployment, "
+                f"got {module_class.deployment!r}"
+            )
+        return f"python:{placement.runtime}"
+
+    def _ensure_runtime_manager(self, module_class: type[ModuleBase]) -> None:
+        placement = self._runtime_placement_map.get(module_class)
+        if placement is None:
+            return
+        manager_key = self._manager_key_for_module(module_class)
+        if manager_key in self._managers:
+            return
+        runtime = self._runtime_environment_registry.resolve(placement.runtime)
+        self._managers[manager_key] = self._create_runtime_manager(runtime)
+
+    def _create_runtime_manager(self, runtime: RuntimeEnvironment) -> WorkerManagerPython:
+        if isinstance(runtime, PythonProjectRuntimeEnvironment):
+            launcher = CommandWorkerLauncher(runtime.resolve_python_project())
+        else:
+            material = runtime.resolve_python()
+            launcher = VenvWorkerLauncher(
+                material.python_executable,
+                dict(material.env),
+                runtime_name=runtime.name,
+            )
+        manager = WorkerManagerPython(g=self._global_config, worker_launcher=launcher)
+        if self._started:
+            manager.start()
+        return manager
 
     def build_all_modules(self) -> None:
         """Call build() on all deployed modules in parallel.
@@ -294,6 +414,7 @@ class ModuleCoordinator(Resource):
         _run_configurators(blueprint)
         _check_requirements(blueprint)
         _verify_no_name_conflicts(blueprint)
+        reconcile_blueprint_runtimes(blueprint)
 
         logger.info("Starting the modules")
         coordinator = cls(g=global_config)
@@ -338,18 +459,20 @@ class ModuleCoordinator(Resource):
         if "g" in blueprint_args:
             self._global_config.update(**blueprint_args.pop("g"))
 
-        # Scale worker pool.
+        _run_configurators(blueprint)
+        _check_requirements(blueprint)
+        _verify_no_name_conflicts(blueprint)
+        _verify_no_conflicts_with_existing(blueprint, self._transport_registry)
+        reconcile_blueprint_runtimes(blueprint)
+
+        # Scale worker pool only after runtime reconciliation succeeds, so this
+        # deployment slice does not launch any new workers before the barrier.
         n_extra = int(blueprint.global_config_overrides.get("n_workers", 0))
         python_wm = cast("WorkerManagerPython", self._managers["python"])
         if n_extra:
             python_wm.add_workers(n_extra)
         if not python_wm.workers and blueprint.active_blueprints:
             python_wm.add_workers(1)
-
-        _run_configurators(blueprint)
-        _check_requirements(blueprint)
-        _verify_no_name_conflicts(blueprint)
-        _verify_no_conflicts_with_existing(blueprint, self._transport_registry)
 
         # Reject duplicate modules.
         for bp in blueprint.active_blueprints:
@@ -411,9 +534,10 @@ class ModuleCoordinator(Resource):
                 exc_info=True,
             )
 
-        python_wm = cast("WorkerManagerPython", self._managers["python"])
+        manager_key = self._module_manager_keys.get(module_class, module_class.deployment)
+        manager = cast("WorkerManagerPython", self._managers[manager_key])
         try:
-            python_wm.undeploy(proxy)
+            manager.undeploy(proxy)
         except Exception:
             logger.error(
                 "Error undeploying module from worker",
@@ -423,6 +547,7 @@ class ModuleCoordinator(Resource):
 
         del self._deployed_modules[module_class]
         self._deployed_atoms.pop(module_class, None)
+        self._module_manager_keys.pop(module_class, None)
         self._module_transports.pop(module_class, None)
         self._class_aliases = {
             k: v for k, v in self._class_aliases.items() if v is not module_class
@@ -490,6 +615,8 @@ class ModuleCoordinator(Resource):
             for (consumer, ref_name), target in self._resolved_module_refs.items()
             if consumer is module_class
         ]
+        old_manager_key = self._module_manager_keys.get(module_class, module_class.deployment)
+        placement = self._runtime_placement_map.get(module_class)
 
         self.unload_module(module_class)
 
@@ -508,9 +635,12 @@ class ModuleCoordinator(Resource):
                     self._class_aliases[old_cls] = new_class
             self._class_aliases[module_class] = new_class
 
-        python_wm = cast("WorkerManagerPython", self._managers["python"])
-        new_proxy = python_wm.deploy_fresh(new_class, self._global_config, kwargs)
+        python_wm = cast("WorkerManagerPython", self._managers[old_manager_key])
+        new_proxy = python_wm.deploy_fresh(
+            new_class, self._global_config, kwargs, runtime_placement=placement
+        )
         self._deployed_modules[new_class] = new_proxy
+        self._module_manager_keys[new_class] = old_manager_key
 
         new_bp = new_class.blueprint(**kwargs)
         new_atom = new_bp.active_blueprints[0]
@@ -687,7 +817,12 @@ def _deploy_all_modules(
     for bp in blueprint.active_blueprints:
         module_specs.append((bp.module, gc, bp.kwargs.copy()))
 
-    module_coordinator.deploy_parallel(module_specs, blueprint_args)
+    module_coordinator.deploy_parallel(
+        module_specs,
+        blueprint_args,
+        runtime_environment_registry=blueprint.runtime_environment_registry,
+        runtime_placement_map=active_runtime_placements(blueprint),
+    )
 
     for bp in blueprint.active_blueprints:
         module_coordinator._deployed_atoms[bp.module] = bp

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import importlib
 import logging
 import multiprocessing
 from multiprocessing.connection import Connection
@@ -24,6 +25,7 @@ import threading
 import traceback
 from typing import TYPE_CHECKING, Any
 
+from dimos.core.coordination.worker_launcher import ForkserverWorkerLauncher, WorkerLauncher
 from dimos.core.coordination.worker_messages import (
     CallMethodRequest,
     DeployModuleRequest,
@@ -161,13 +163,14 @@ _module_ids = SequentialIds()
 
 
 class PythonWorker:
-    def __init__(self) -> None:
+    def __init__(self, launcher: WorkerLauncher | None = None) -> None:
         self._lock = threading.Lock()
         self._modules: dict[int, Actor] = {}
         self._reserved: int = 0
         self._process: Any = None
         self._conn: Connection | None = None
         self._worker_id: int = _worker_ids.next()
+        self._launcher = launcher or ForkserverWorkerLauncher()
         self.dedicated: bool = False
 
     @property
@@ -202,22 +205,16 @@ class PythonWorker:
         self._reserved += 1
 
     def start_process(self) -> None:
-        ctx = get_forkserver_context()
-        parent_conn, child_conn = ctx.Pipe()
-        self._conn = parent_conn
-
-        self._process = ctx.Process(
-            target=_worker_entrypoint,
-            args=(child_conn, self._worker_id),
-            daemon=True,
-        )
-        self._process.start()
+        self._process = self._launcher.launch(self._worker_id)
+        self._conn = self._process.connection
 
     def deploy_module(
         self,
         module_class: type[ModuleBase],
         global_config: GlobalConfig = global_config,
         kwargs: dict[str, Any] | None = None,
+        implementation_path: str | None = None,
+        runtime_name: str | None = None,
     ) -> Actor:
         if self._conn is None:
             raise RuntimeError("Worker process not started")
@@ -226,17 +223,29 @@ class PythonWorker:
         kwargs["g"] = global_config
         module_id = _module_ids.next()
 
-        request = DeployModuleRequest(module_id=module_id, module_class=module_class, kwargs=kwargs)
+        request = DeployModuleRequest(
+            module_id=module_id,
+            module_class=module_class,
+            kwargs=kwargs,
+            implementation_path=implementation_path,
+            runtime_name=runtime_name,
+        )
         try:
             with self._lock:
                 self._conn.send(request)
                 response: WorkerResponse = self._conn.recv()
 
             if response.error:
-                raise RuntimeError(f"Failed to deploy module: {response.error}")
+                context = (
+                    f" in runtime {runtime_name!r} using implementation {implementation_path!r}"
+                    if runtime_name or implementation_path
+                    else ""
+                )
+                raise RuntimeError(f"Failed to deploy module{context}: {response.error}")
 
             actor = Actor(self._conn, module_class, self._worker_id, module_id, self._lock)
-            actor.set_ref(actor).result()
+            if self._process is None or self._process.supports_parent_actor_ref:
+                actor.set_ref(actor).result()
 
             self._modules[module_id] = actor
             logger.info(
@@ -370,8 +379,23 @@ def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
 
 def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
     match request:
-        case DeployModuleRequest(module_id=module_id, module_class=module_class, kwargs=kwargs):
-            state.instances[module_id] = module_class(**kwargs)
+        case DeployModuleRequest(
+            module_id=module_id,
+            module_class=module_class,
+            kwargs=kwargs,
+            implementation_path=implementation_path,
+            runtime_name=runtime_name,
+        ):
+            deployment_class = _resolve_deployment_class(
+                module_class,
+                implementation_path=implementation_path,
+                runtime_name=runtime_name,
+            )
+            instance = deployment_class(**kwargs)
+            rpc = getattr(instance, "rpc", None)
+            if deployment_class is not module_class and rpc is not None:
+                rpc.serve_module_rpc(instance, name=module_class.__name__)
+            state.instances[module_id] = instance
             return WorkerResponse(result=module_id)
 
         case SetRefRequest(module_id=module_id, ref=ref):
@@ -401,6 +425,30 @@ def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
 
         case _:
             return WorkerResponse(error=f"Unknown request type: {type(request)}")
+
+
+def _resolve_deployment_class(
+    module_class: type[ModuleBase],
+    *,
+    implementation_path: str | None,
+    runtime_name: str | None,
+) -> type[ModuleBase]:
+    if implementation_path is None:
+        return module_class
+    module_name, _, class_name = implementation_path.rpartition(".")
+    if not module_name or not class_name:
+        raise ValueError(
+            f"Invalid Runtime Implementation path {implementation_path!r} for "
+            f"{module_class.__module__}.{module_class.__name__} in runtime {runtime_name!r}"
+        )
+    module = importlib.import_module(module_name)
+    implementation = getattr(module, class_name)
+    if not isinstance(implementation, type) or not issubclass(implementation, module_class):
+        raise TypeError(
+            f"Runtime Implementation {implementation_path!r} in runtime {runtime_name!r} "
+            f"must subclass Module Contract {module_class.__module__}.{module_class.__name__}"
+        )
+    return implementation
 
 
 def _worker_loop(conn: Connection, state: _WorkerState) -> None:

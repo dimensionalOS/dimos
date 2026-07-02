@@ -35,6 +35,7 @@ from dimos.core.coordination.blueprints import (
 )
 from dimos.core.core import rpc
 from dimos.core.module import Module
+from dimos.core.runtime_environment import PythonVenvRuntimeEnvironment, RuntimePlacement
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.spec.utils import Spec
@@ -251,3 +252,68 @@ def test_active_blueprints_filters_disabled() -> None:
     active_modules = {bp.module for bp in blueprint.active_blueprints}
     assert ModuleA not in active_modules
     assert ModuleB in active_modules
+
+
+def test_runtime_environment_and_placement_api_composes_with_autoconnect() -> None:
+    runtime = PythonVenvRuntimeEnvironment(name="runtime-a", python_executable="/usr/bin/python3")
+    placement = RuntimePlacement(
+        runtime="runtime-a",
+        implementation="example_runtime_impl.ModuleAImpl",
+    )
+
+    bp_a = ModuleA.blueprint().runtime_placements({ModuleA: placement})
+    bp_b = ModuleB.blueprint().runtime_environments(runtime)
+    merged = autoconnect(bp_a, bp_b)
+
+    assert merged.runtime_environment_registry.resolve("runtime-a") is runtime
+    assert merged.runtime_placement_map[ModuleA] == placement
+    assert ModuleB not in merged.runtime_placement_map
+
+
+def test_runtime_placement_rejects_unknown_or_non_member_module() -> None:
+    runtime = PythonVenvRuntimeEnvironment(name="runtime-a", python_executable="/usr/bin/python3")
+    blueprint = ModuleA.blueprint().runtime_environments(runtime)
+
+    with pytest.raises(ValueError, match="does not match a blueprint module"):
+        blueprint.runtime_placements(
+            {ModuleB: RuntimePlacement(runtime="runtime-a", implementation="impl.ModuleB")}
+        )
+
+    unresolved = ModuleA.blueprint().runtime_placements(
+        {ModuleA: RuntimePlacement(runtime="missing", implementation="impl.ModuleA")}
+    )
+    with pytest.raises(Exception, match="Unknown runtime environment"):
+        autoconnect(unresolved)
+
+
+def test_autoconnect_allows_disabled_placement_with_unknown_runtime() -> None:
+    blueprint = ModuleA.blueprint().runtime_placements(
+        {ModuleA: RuntimePlacement(runtime="missing", implementation="impl.ModuleA")}
+    )
+
+    merged = autoconnect(blueprint.disabled_modules(ModuleA))
+
+    assert merged.runtime_placement_map[ModuleA] == RuntimePlacement(
+        runtime="missing",
+        implementation="impl.ModuleA",
+    )
+    assert ModuleA not in {bp.module for bp in merged.active_blueprints}
+
+
+def test_autoconnect_filters_placements_for_replaced_duplicate_modules() -> None:
+    old_runtime = PythonVenvRuntimeEnvironment(
+        name="old-runtime", python_executable="/usr/bin/python3"
+    )
+    old = (
+        ModuleA.blueprint(key1="old")
+        .runtime_environments(old_runtime)
+        .runtime_placements(
+            {ModuleA: RuntimePlacement(runtime="old-runtime", implementation="impl.Old")}
+        )
+    )
+    new = ModuleA.blueprint(key1="new")
+
+    merged = autoconnect(old, new)
+
+    assert merged.blueprints[0].kwargs == {"key1": "new"}
+    assert ModuleA not in merged.runtime_placement_map

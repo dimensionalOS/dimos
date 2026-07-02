@@ -18,9 +18,11 @@ from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from dimos.core.coordination.python_worker import PythonWorker
+from dimos.core.coordination.worker_launcher import WorkerLauncher
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.rpc_client import ModuleProxyProtocol, RPCClient
+from dimos.core.runtime_environment import RuntimePlacement
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.safe_thread_map import safe_thread_map
 
@@ -33,9 +35,10 @@ logger = setup_logger()
 class WorkerManagerPython:
     deployment_identifier: str = "python"
 
-    def __init__(self, g: GlobalConfig) -> None:
+    def __init__(self, g: GlobalConfig, worker_launcher: WorkerLauncher | None = None) -> None:
         self._cfg = g
         self._n_workers = g.n_workers
+        self._worker_launcher = worker_launcher
         self._workers: list[PythonWorker] = []
         self._closed = False
         self._started = False
@@ -46,7 +49,7 @@ class WorkerManagerPython:
             return
         self._started = True
         for _ in range(self._n_workers):
-            worker = PythonWorker()
+            worker = PythonWorker(self._worker_launcher)
             worker.start_process()
             self._workers.append(worker)
         logger.info("Worker pool started.", n_workers=self._n_workers)
@@ -64,7 +67,7 @@ class WorkerManagerPython:
         if not self._started:
             raise RuntimeError("WorkerManager not started; call start() first")
         for _ in range(n):
-            worker = PythonWorker()
+            worker = PythonWorker(self._worker_launcher)
             worker.start_process()
             self._workers.append(worker)
         self._n_workers += n
@@ -75,6 +78,7 @@ class WorkerManagerPython:
         module_class: type[ModuleBase],
         global_config: GlobalConfig,
         kwargs: dict[str, Any],
+        runtime_placement: RuntimePlacement | None = None,
     ) -> ModuleProxyProtocol:
         if self._closed:
             raise RuntimeError("WorkerManager is closed")
@@ -84,7 +88,13 @@ class WorkerManagerPython:
 
         self._ensure_capacity_for_dedicated([(module_class, global_config, kwargs)])
         worker = self._select_worker(dedicated=module_class.dedicated_worker)
-        actor = worker.deploy_module(module_class, global_config, kwargs=kwargs)
+        actor = worker.deploy_module(
+            module_class,
+            global_config,
+            kwargs=kwargs,
+            implementation_path=(runtime_placement.implementation if runtime_placement else None),
+            runtime_name=(runtime_placement.runtime if runtime_placement else None),
+        )
         return RPCClient(actor, module_class)
 
     def deploy_fresh(
@@ -92,6 +102,7 @@ class WorkerManagerPython:
         module_class: type[ModuleBase],
         global_config: GlobalConfig,
         kwargs: dict[str, Any],
+        runtime_placement: RuntimePlacement | None = None,
     ) -> ModuleProxyProtocol:
         """Spawn a brand-new worker process and deploy *module_class* on it.
 
@@ -104,13 +115,19 @@ class WorkerManagerPython:
         if not self._started:
             self.start()
 
-        worker = PythonWorker()
+        worker = PythonWorker(self._worker_launcher)
         worker.start_process()
         self._workers.append(worker)
         self._n_workers += 1
         if module_class.dedicated_worker:
             worker.dedicated = True
-        actor = worker.deploy_module(module_class, global_config, kwargs=kwargs)
+        actor = worker.deploy_module(
+            module_class,
+            global_config,
+            kwargs=kwargs,
+            implementation_path=(runtime_placement.implementation if runtime_placement else None),
+            runtime_name=(runtime_placement.runtime if runtime_placement else None),
+        )
         return RPCClient(actor, module_class)
 
     def undeploy(self, proxy: ModuleProxyProtocol) -> None:
@@ -136,12 +153,16 @@ class WorkerManagerPython:
             self._n_workers = max(0, self._n_workers - 1)
 
     def deploy_parallel(
-        self, specs: Iterable[ModuleSpec], blueprint_args: Mapping[str, Mapping[str, Any]]
+        self,
+        specs: Iterable[ModuleSpec],
+        blueprint_args: Mapping[str, Mapping[str, Any]],
+        runtime_placements: Mapping[type[ModuleBase], RuntimePlacement] | None = None,
     ) -> list[ModuleProxyProtocol]:
         if self._closed:
             raise RuntimeError("WorkerManager is closed")
 
         specs = list(specs)
+        runtime_placements = runtime_placements or {}
         if len(specs) == 0:
             return []
 
@@ -168,15 +189,33 @@ class WorkerManagerPython:
 
         def _deploy(item: tuple[PythonWorker, ModuleSpec]) -> ModuleProxyProtocol:
             worker, (module_class, global_config, kwargs) = item
+            placement = runtime_placements.get(module_class)
             return RPCClient(
-                worker.deploy_module(module_class, global_config, kwargs), module_class
+                worker.deploy_module(
+                    module_class,
+                    global_config,
+                    kwargs,
+                    implementation_path=(placement.implementation if placement else None),
+                    runtime_name=(placement.runtime if placement else None),
+                ),
+                module_class,
             )
 
-        try:
-            return safe_thread_map(assignments, _deploy)
-        except:
-            self.stop()
-            raise
+        def _rollback(
+            _outcomes: list[
+                tuple[tuple[PythonWorker, ModuleSpec], ModuleProxyProtocol | Exception]
+            ],
+            successes: list[ModuleProxyProtocol],
+            errors: list[Exception],
+        ) -> list[ModuleProxyProtocol]:
+            for proxy in successes:
+                try:
+                    self.undeploy(proxy)
+                except Exception:
+                    logger.error("Error rolling back deployed module", exc_info=True)
+            raise ExceptionGroup("Python worker deployment failed", errors)
+
+        return safe_thread_map(assignments, _deploy, on_errors=_rollback)
 
     def health_check(self) -> bool:
         if len(self._workers) == 0:

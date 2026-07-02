@@ -25,6 +25,8 @@ class DeployModuleRequest:
     module_id: int
     module_class: type[ModuleBase]
     kwargs: dict[str, Any]
+    implementation_path: str | None = None
+    runtime_name: str | None = None
 
 
 @dataclass(frozen=True)

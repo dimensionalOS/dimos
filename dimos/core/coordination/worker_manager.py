@@ -22,6 +22,7 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.core.rpc_client import ModuleProxyProtocol
+    from dimos.core.runtime_environment import RuntimePlacement
 
 logger = setup_logger()
 
@@ -38,13 +39,17 @@ class WorkerManager(Protocol):
         module_class: type[ModuleBase],
         global_config: GlobalConfig,
         kwargs: dict[str, Any],
+        runtime_placement: RuntimePlacement | None = None,
     ) -> ModuleProxyProtocol: ...
 
     def deploy_parallel(
         self,
         specs: Sequence[ModuleSpec],
         blueprint_args: Mapping[str, Mapping[str, Any]],
+        runtime_placements: Mapping[type[ModuleBase], RuntimePlacement] | None = None,
     ) -> list[ModuleProxyProtocol]: ...
+
+    def undeploy(self, proxy: ModuleProxyProtocol) -> None: ...
 
     def stop(self) -> None: ...
 

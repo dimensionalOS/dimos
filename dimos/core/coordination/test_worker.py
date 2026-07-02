@@ -16,7 +16,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from dimos.core.coordination.python_worker import _handle_request, _WorkerState
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
+from dimos.core.coordination.worker_messages import DeployModuleRequest
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
@@ -62,6 +64,16 @@ class AnotherModule(Module):
     @rpc
     def get_value(self) -> int:
         return self.value
+
+
+class RuntimeSimpleModule(SimpleModule):
+    @rpc
+    def increment(self) -> int:
+        return super().increment() + 1000
+
+
+class NotASimpleModule(Module):
+    pass
 
 
 class ThirdModule(Module):
@@ -130,6 +142,64 @@ def test_worker_manager_basic(create_worker_manager):
     assert result == 2
 
     module.stop()
+
+
+def test_worker_deploy_request_imports_runtime_implementation_and_validates_subclass():
+    state = _WorkerState(instances={}, worker_id=1)
+    response = _handle_request(
+        DeployModuleRequest(
+            module_id=10,
+            module_class=SimpleModule,
+            kwargs={"g": global_config},
+            runtime_name="test-runtime",
+            implementation_path="dimos.core.coordination.test_worker.RuntimeSimpleModule",
+        ),
+        state,
+    )
+
+    assert response.error is None
+    assert isinstance(state.instances[10], RuntimeSimpleModule)
+    assert state.instances[10].increment() == 1001
+    state.instances[10].stop()
+
+
+def test_worker_deploy_request_runtime_implementation_error_context():
+    with pytest.raises(TypeError) as exc_info:
+        _handle_request(
+            DeployModuleRequest(
+                module_id=10,
+                module_class=SimpleModule,
+                kwargs={"g": global_config},
+                runtime_name="bad-runtime",
+                implementation_path="dimos.core.coordination.test_worker.NotASimpleModule",
+            ),
+            _WorkerState(instances={}, worker_id=1),
+        )
+
+    message = str(exc_info.value)
+    assert "bad-runtime" in message
+    assert "Runtime Implementation" in message
+    assert "Module Contract" in message
+    assert "NotASimpleModule" in message
+
+
+def test_worker_deploy_request_invalid_runtime_implementation_path_context():
+    with pytest.raises(ValueError) as exc_info:
+        _handle_request(
+            DeployModuleRequest(
+                module_id=10,
+                module_class=SimpleModule,
+                kwargs={"g": global_config},
+                runtime_name="bad-runtime",
+                implementation_path="NotAQualifiedPath",
+            ),
+            _WorkerState(instances={}, worker_id=1),
+        )
+
+    message = str(exc_info.value)
+    assert "bad-runtime" in message
+    assert "Invalid Runtime Implementation path" in message
+    assert "SimpleModule" in message
 
 
 @pytest.mark.skipif_macos_bug

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
 from types import MappingProxyType
 from typing import Protocol
 
@@ -37,6 +38,7 @@ from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
+from dimos.core.runtime_environment import PythonVenvRuntimeEnvironment, RuntimePlacement
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.spec.utils import Spec
@@ -84,6 +86,82 @@ class ModuleB(Module):
 
 class ModuleC(Module):
     data3: In[Data3]
+
+
+class RuntimeModuleA(Module):
+    @rpc
+    def stop(self) -> None: ...
+
+
+class RuntimeModuleB(Module):
+    @rpc
+    def stop(self) -> None: ...
+
+
+class _FakeProxy:
+    @rpc
+    def build(self) -> None: ...
+
+    @rpc
+    def start(self) -> None: ...
+
+    @rpc
+    def stop(self) -> None: ...
+
+
+class _FakeManager:
+    deployment_identifier = "python"
+
+    def __init__(
+        self,
+        key: str,
+        calls: list[str],
+        fail: bool = False,
+        fail_delay: float = 0.0,
+        fail_undeploy: bool = False,
+        fail_stop: bool = False,
+    ) -> None:
+        self.key = key
+        self.calls = calls
+        self.fail = fail
+        self.fail_delay = fail_delay
+        self.fail_undeploy = fail_undeploy
+        self.fail_stop = fail_stop
+        self.workers = [object()]
+        self.deployments: list[tuple[list[type[Module]], dict[type[Module], RuntimePlacement]]] = []
+
+    def start(self) -> None:
+        self.calls.append(f"start:{self.key}")
+
+    def stop(self) -> None:
+        self.calls.append(f"stop:{self.key}")
+        if self.fail_stop:
+            raise RuntimeError(f"stop-boom:{self.key}")
+
+    def deploy(self, module_class, global_config, kwargs, runtime_placement=None):
+        self.calls.append(f"deploy-one:{self.key}:{module_class.__name__}")
+        return _FakeProxy()
+
+    def deploy_parallel(self, specs, blueprint_args, runtime_placements=None):
+        if self.fail:
+            if self.fail_delay:
+                time.sleep(self.fail_delay)
+            raise RuntimeError(f"boom:{self.key}")
+        placements = dict(runtime_placements or {})
+        modules = [spec[0] for spec in specs]
+        self.deployments.append((modules, placements))
+        self.calls.append(f"deploy:{self.key}:{','.join(module.__name__ for module in modules)}")
+        return [_FakeProxy() for _ in modules]
+
+    def undeploy(self, module: _FakeProxy) -> None:
+        self.calls.append(f"undeploy:{self.key}")
+        if self.fail_undeploy:
+            raise RuntimeError(f"undeploy-boom:{self.key}")
+
+    def health_check(self) -> bool:
+        return True
+
+    def suppress_console(self) -> None: ...
 
 
 class SourceModule(Module):
@@ -192,6 +270,180 @@ def test_build_happy_path() -> None:
 
     finally:
         coordinator.stop()
+
+
+def test_deploy_parallel_routes_runtime_and_default_managers() -> None:
+    calls: list[str] = []
+    coordinator = ModuleCoordinator(g=GlobalConfig(n_workers=1, viewer="none"))
+    default_manager = _FakeManager("python", calls)
+    runtime_manager = _FakeManager("python:runtime-a", calls)
+    coordinator._managers = {"python": default_manager}
+    coordinator._started = True
+    runtime = PythonVenvRuntimeEnvironment(name="runtime-a", python_executable="/usr/bin/python3")
+    placement = RuntimePlacement(
+        runtime="runtime-a",
+        implementation="dimos.core.coordination.test_module_coordinator.RuntimeModuleA",
+    )
+    coordinator._runtime_environment_registry = coordinator._runtime_environment_registry.register(
+        runtime
+    )
+    coordinator._create_runtime_manager = lambda _runtime: runtime_manager  # type: ignore[method-assign]
+
+    results = coordinator.deploy_parallel(
+        [
+            (RuntimeModuleA, coordinator._global_config, {}),
+            (RuntimeModuleB, coordinator._global_config, {}),
+        ],
+        {},
+        runtime_placement_map={RuntimeModuleA: placement},
+    )
+
+    assert len(results) == 2
+    assert set(calls) == {
+        "deploy:python:RuntimeModuleB",
+        "deploy:python:runtime-a:RuntimeModuleA",
+    }
+    assert default_manager.deployments[0][0] == [RuntimeModuleB]
+    assert runtime_manager.deployments[0] == ([RuntimeModuleA], {RuntimeModuleA: placement})
+    assert coordinator._module_manager_keys[RuntimeModuleA] == "python:runtime-a"
+    assert coordinator._module_manager_keys[RuntimeModuleB] == "python"
+
+
+def test_failed_runtime_deployment_cleans_up_manager_and_placement_state() -> None:
+    calls: list[str] = []
+    coordinator = ModuleCoordinator(g=GlobalConfig(n_workers=1, viewer="none"))
+    coordinator._managers = {"python": _FakeManager("python", calls)}
+    coordinator._started = True
+    runtime = PythonVenvRuntimeEnvironment(name="runtime-a", python_executable="/usr/bin/python3")
+    placement = RuntimePlacement(runtime="runtime-a", implementation="impl.RuntimeModuleA")
+    failing_manager = _FakeManager("python:runtime-a", calls, fail=True)
+    previous_registry = coordinator._runtime_environment_registry
+    previous_placements = dict(coordinator._runtime_placement_map)
+    coordinator._create_runtime_manager = lambda _runtime: failing_manager  # type: ignore[method-assign]
+
+    with pytest.raises(ExceptionGroup):
+        coordinator.deploy_parallel(
+            [(RuntimeModuleA, coordinator._global_config, {})],
+            {},
+            runtime_environment_registry=previous_registry.register(runtime),
+            runtime_placement_map={RuntimeModuleA: placement},
+        )
+
+    assert "python:runtime-a" not in coordinator._managers
+    assert coordinator._runtime_environment_registry == previous_registry
+    assert coordinator._runtime_placement_map == previous_placements
+    assert calls == ["stop:python:runtime-a"]
+
+
+def test_failed_runtime_deployment_rolls_back_existing_manager_successes() -> None:
+    calls: list[str] = []
+    coordinator = ModuleCoordinator(g=GlobalConfig(n_workers=1, viewer="none"))
+    default_manager = _FakeManager("python", calls)
+    failing_runtime_manager = _FakeManager("python:runtime-a", calls, fail=True, fail_delay=0.05)
+    coordinator._managers = {"python": default_manager, "python:runtime-a": failing_runtime_manager}
+    coordinator._started = True
+    runtime = PythonVenvRuntimeEnvironment(name="runtime-a", python_executable="/usr/bin/python3")
+    placement = RuntimePlacement(runtime="runtime-a", implementation="impl.RuntimeModuleA")
+    previous_registry = coordinator._runtime_environment_registry
+
+    with pytest.raises(ExceptionGroup):
+        coordinator.deploy_parallel(
+            [
+                (RuntimeModuleB, coordinator._global_config, {}),
+                (RuntimeModuleA, coordinator._global_config, {}),
+            ],
+            {},
+            runtime_environment_registry=previous_registry.register(runtime),
+            runtime_placement_map={RuntimeModuleA: placement},
+        )
+
+    assert "undeploy:python" in calls
+    assert RuntimeModuleB not in coordinator._deployed_modules
+    assert RuntimeModuleA not in coordinator._deployed_modules
+    assert coordinator._runtime_environment_registry == previous_registry
+
+
+def test_runtime_deployment_restores_state_when_rollback_cleanup_fails() -> None:
+    calls: list[str] = []
+    coordinator = ModuleCoordinator(g=GlobalConfig(n_workers=1, viewer="none"))
+    default_manager = _FakeManager("python", calls, fail_undeploy=True)
+    failing_runtime_manager = _FakeManager("python:runtime-a", calls, fail=True, fail_delay=0.05)
+    coordinator._managers = {"python": default_manager, "python:runtime-a": failing_runtime_manager}
+    coordinator._started = True
+    runtime = PythonVenvRuntimeEnvironment(name="runtime-a", python_executable="/usr/bin/python3")
+    placement = RuntimePlacement(runtime="runtime-a", implementation="impl.RuntimeModuleA")
+    previous_registry = coordinator._runtime_environment_registry
+    previous_placements = dict(coordinator._runtime_placement_map)
+
+    with pytest.raises(ExceptionGroup, match="rollback cleanup also failed"):
+        coordinator.deploy_parallel(
+            [
+                (RuntimeModuleB, coordinator._global_config, {}),
+                (RuntimeModuleA, coordinator._global_config, {}),
+            ],
+            {},
+            runtime_environment_registry=previous_registry.register(runtime),
+            runtime_placement_map={RuntimeModuleA: placement},
+        )
+
+    assert "undeploy:python" in calls
+    assert coordinator._runtime_environment_registry == previous_registry
+    assert coordinator._runtime_placement_map == previous_placements
+
+
+def test_runtime_deployment_restores_state_when_new_manager_stop_fails() -> None:
+    calls: list[str] = []
+    coordinator = ModuleCoordinator(g=GlobalConfig(n_workers=1, viewer="none"))
+    coordinator._managers = {"python": _FakeManager("python", calls)}
+    coordinator._started = True
+    runtime = PythonVenvRuntimeEnvironment(name="runtime-a", python_executable="/usr/bin/python3")
+    placement = RuntimePlacement(runtime="runtime-a", implementation="impl.RuntimeModuleA")
+    failing_manager = _FakeManager("python:runtime-a", calls, fail=True, fail_stop=True)
+    previous_registry = coordinator._runtime_environment_registry
+    previous_placements = dict(coordinator._runtime_placement_map)
+    coordinator._create_runtime_manager = lambda _runtime: failing_manager  # type: ignore[method-assign]
+
+    with pytest.raises(ExceptionGroup, match="rollback cleanup also failed"):
+        coordinator.deploy_parallel(
+            [(RuntimeModuleA, coordinator._global_config, {})],
+            {},
+            runtime_environment_registry=previous_registry.register(runtime),
+            runtime_placement_map={RuntimeModuleA: placement},
+        )
+
+    assert "python:runtime-a" not in coordinator._managers
+    assert coordinator._runtime_environment_registry == previous_registry
+    assert coordinator._runtime_placement_map == previous_placements
+
+
+def test_load_blueprint_reconciles_before_runtime_manager_launch(monkeypatch) -> None:
+    calls: list[str] = []
+    coordinator = ModuleCoordinator(g=GlobalConfig(n_workers=1, viewer="none"))
+    coordinator._managers = {"python": _FakeManager("python", calls)}
+    coordinator._started = True
+
+    def fake_reconcile(_blueprint) -> None:
+        calls.append("reconcile")
+
+    monkeypatch.setattr(
+        "dimos.core.coordination.module_coordinator.reconcile_blueprint_runtimes",
+        fake_reconcile,
+    )
+    coordinator._create_runtime_manager = (  # type: ignore[method-assign]
+        lambda _runtime: _FakeManager("python:runtime-a", calls)
+    )
+
+    runtime = PythonVenvRuntimeEnvironment(name="runtime-a", python_executable="/usr/bin/python3")
+    placement = RuntimePlacement(runtime="runtime-a", implementation="impl.RuntimeModuleA")
+    blueprint = (
+        RuntimeModuleA.blueprint()
+        .runtime_environments(runtime)
+        .runtime_placements({RuntimeModuleA: placement})
+    )
+
+    coordinator.load_blueprint(blueprint)
+
+    assert calls.index("reconcile") < calls.index("deploy:python:runtime-a:RuntimeModuleA")
 
 
 def test_name_conflicts_are_reported() -> None:

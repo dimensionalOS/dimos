@@ -28,6 +28,11 @@ if TYPE_CHECKING:
 
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase, is_module_type
+from dimos.core.runtime_environment import (
+    RuntimeEnvironment,
+    RuntimeEnvironmentRegistry,
+    RuntimePlacement,
+)
 from dimos.core.stream import In, Out
 from dimos.core.transport import PubSubTransport
 from dimos.spec.utils import Spec, is_spec
@@ -142,7 +147,12 @@ class BlueprintAtom:
 
 
 # These fields cannot be pickled.
-_PROXY_FIELDS = ("transport_map", "global_config_overrides", "remapping_map")
+_PROXY_FIELDS = (
+    "transport_map",
+    "global_config_overrides",
+    "remapping_map",
+    "runtime_placement_map",
+)
 
 
 @dataclass(frozen=True)
@@ -155,6 +165,12 @@ class Blueprint:
     global_config_overrides: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     remapping_map: Mapping[tuple[type[ModuleBase], str], str | type[ModuleBase] | type[Spec]] = (
         field(default_factory=lambda: MappingProxyType({}))
+    )
+    runtime_environment_registry: RuntimeEnvironmentRegistry = field(
+        default_factory=RuntimeEnvironmentRegistry.with_current_process
+    )
+    runtime_placement_map: Mapping[type[ModuleBase], RuntimePlacement] = field(
+        default_factory=lambda: MappingProxyType({})
     )
     requirement_checks: tuple[Callable[[], str | None], ...] = field(default_factory=tuple)
     configurator_checks: "tuple[SystemConfigurator, ...]" = field(default_factory=tuple)
@@ -205,6 +221,25 @@ class Blueprint:
             remappings_dict[(module, old)] = new
         return replace(self, remapping_map=MappingProxyType(remappings_dict))
 
+    def runtime_environments(self, *environments: RuntimeEnvironment) -> "Blueprint":
+        return replace(
+            self,
+            runtime_environment_registry=self.runtime_environment_registry.register(*environments),
+        )
+
+    def runtime_placements(
+        self,
+        placements: Mapping[type[ModuleBase], RuntimePlacement],
+    ) -> "Blueprint":
+        placement_dict = dict(self.runtime_placement_map)
+        for module, placement in placements.items():
+            if module not in {bp.module for bp in self.blueprints}:
+                raise ValueError(
+                    f"Runtime placement for {module.__name__} does not match a blueprint module"
+                )
+            placement_dict[module] = placement
+        return replace(self, runtime_placement_map=MappingProxyType(placement_dict))
+
     def requirements(self, *checks: Callable[[], str | None]) -> "Blueprint":
         return replace(self, requirement_checks=self.requirement_checks + tuple(checks))
 
@@ -230,17 +265,40 @@ def autoconnect(*blueprints: Blueprint) -> Blueprint:
     all_remappings = dict(  # type: ignore[var-annotated]
         reduce(operator.iadd, [list(x.remapping_map.items()) for x in blueprints], [])
     )
+    runtime_environment_registry = RuntimeEnvironmentRegistry.with_current_process()
+    for blueprint in blueprints:
+        runtime_environment_registry = runtime_environment_registry.merge(
+            blueprint.runtime_environment_registry
+        )
+    placement_owner_by_module: dict[type[ModuleBase], int] = {}
+    for blueprint_index, blueprint in enumerate(blueprints):
+        for atom in blueprint.blueprints:
+            placement_owner_by_module[atom.module] = blueprint_index
+    all_disabled_modules = tuple(
+        module for bp in blueprints for module in bp.disabled_modules_tuple
+    )
+    disabled_modules = set(all_disabled_modules)
+    all_runtime_placements: dict[type[ModuleBase], RuntimePlacement] = {}
+    for blueprint_index, blueprint in enumerate(blueprints):
+        for module, placement in blueprint.runtime_placement_map.items():
+            if placement_owner_by_module.get(module) != blueprint_index:
+                continue
+            if module not in disabled_modules:
+                runtime_environment_registry.resolve(placement.runtime)
+            if module in all_runtime_placements and all_runtime_placements[module] != placement:
+                raise ValueError(f"Conflicting runtime placements for {module.__name__}")
+            all_runtime_placements[module] = placement
     all_requirement_checks = tuple(check for bs in blueprints for check in bs.requirement_checks)
     all_configurator_checks = tuple(check for bs in blueprints for check in bs.configurator_checks)
 
     return Blueprint(
         blueprints=all_blueprints,
-        disabled_modules_tuple=tuple(
-            module for bp in blueprints for module in bp.disabled_modules_tuple
-        ),
+        disabled_modules_tuple=all_disabled_modules,
         transport_map=MappingProxyType(all_transports),
         global_config_overrides=MappingProxyType(all_config_overrides),
         remapping_map=MappingProxyType(all_remappings),
+        runtime_environment_registry=runtime_environment_registry,
+        runtime_placement_map=MappingProxyType(all_runtime_placements),
         requirement_checks=all_requirement_checks,
         configurator_checks=all_configurator_checks,
     )

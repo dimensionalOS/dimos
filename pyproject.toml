@@ -603,6 +603,7 @@ exclude_also = [
 max_size_kb = 50
 ignore = [
     "uv.lock",
+    "examples/dimos-demo-worker-module/uv.lock",
     "*/package-lock.json",
     "dimos/dashboard/dimos.rbl",
     "dimos/web/dimos_interface/themes.json",
