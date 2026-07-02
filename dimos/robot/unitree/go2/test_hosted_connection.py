@@ -61,7 +61,8 @@ def _bare_connection() -> Go2HostedConnection:
     conn = object.__new__(Go2HostedConnection)
     conn.connection = MagicMock()
     conn._last_cmd_ts = 0.0
-    conn.config = SimpleNamespace(cmd_stale_after_sec=0.5)
+    conn._estopped = False
+    conn.config = SimpleNamespace(cmd_stale_after_sec=0.5, damp_on_operator_lost=False)
     # Command execution plane (normally built in start()).
     conn._cmd_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="Go2CmdTest")
     conn._cmd_pending = 0
@@ -337,6 +338,84 @@ def test_busy_rejection_does_not_poison_nonce(monkeypatch: pytest.MonkeyPatch) -
     conn._handle_sport_cmd({"name": "Hello", "nonce": 99})
     _wait_for(lambda: (99, True) in acks)
     assert conn.connection.sport_command.call_count == conn._MAX_PENDING_CMDS + 1
+
+
+# ─── E-STOP latch + operator-loss safety ─────────────────────────────
+
+
+def test_estop_latches_and_damps(monkeypatch: pytest.MonkeyPatch) -> None:
+    """estop → immediate latch (move refused) + urgent Damp + ack."""
+    conn = _bare_connection()
+    conn.connection.sport_command.return_value = True
+    acks: list[tuple[Any, bool]] = []
+    monkeypatch.setattr(conn, "_send_ack", lambda nonce, ok: acks.append((nonce, ok)))
+
+    conn._on_state_json(b'{"type": "estop", "nonce": 1}')
+    assert conn._estopped is True
+    assert conn.move(_twist(time.time())) is False  # latched before RPC even lands
+    _wait_ack(acks)
+    conn.connection.sport_command.assert_called_with(ALLOWED_SPORT_CMDS["Damp"])
+    assert (1, True) in acks
+
+
+def test_estop_rejects_commands_until_cleared(monkeypatch: pytest.MonkeyPatch) -> None:
+    """While latched: sport_cmd rejected; after estop_clear it executes."""
+    conn = _bare_connection()
+    conn._estopped = True
+    conn.connection.sport_command.return_value = True
+    acks: list[tuple[Any, bool]] = []
+    monkeypatch.setattr(conn, "_send_ack", lambda nonce, ok: acks.append((nonce, ok)))
+
+    conn._handle_sport_cmd({"name": "Hello", "nonce": 2})
+    assert acks == [(2, False)]
+    conn.connection.sport_command.assert_not_called()
+
+    conn._on_state_json(b'{"type": "estop_clear", "nonce": 3}')
+    assert conn._estopped is False
+    assert (3, True) in acks
+
+    conn._handle_sport_cmd({"name": "Hello", "nonce": 4})
+    _wait_for(lambda: (4, True) in acks)
+    conn.connection.sport_command.assert_called_once_with(ALLOWED_SPORT_CMDS["Hello"])
+
+
+def test_estop_clear_does_not_move_the_robot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Re-arm must not trigger motion — operator must Stand/Drive explicitly."""
+    conn = _bare_connection()
+    conn._estopped = True
+    monkeypatch.setattr(conn, "_send_ack", lambda nonce, ok: None)
+
+    conn._on_state_json(b'{"type": "estop_clear"}')
+
+    conn.connection.sport_command.assert_not_called()
+    conn.connection.standup.assert_not_called()
+    conn.connection.move.assert_not_called()
+
+
+def test_operator_lost_stops_motion_and_clears_nonces(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Provider-injected operator_lost → stop_movement + nonce cache reset."""
+    conn = _bare_connection()
+    conn._nonce_results = {7: (True, time.monotonic())}
+
+    conn._on_state_json(b'{"type": "operator_lost"}')
+
+    conn.connection.stop_movement.assert_called_once()
+    assert conn._nonce_results == {}
+    conn.connection.sport_command.assert_not_called()  # damp off by default
+    assert conn._estopped is False  # a link blip must not require re-arm
+
+
+def test_operator_lost_damps_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    conn = _bare_connection()
+    conn.config = SimpleNamespace(cmd_stale_after_sec=0.5, damp_on_operator_lost=True)
+    conn.connection.sport_command.return_value = True
+    monkeypatch.setattr(conn, "_send_ack", lambda nonce, ok: None)
+
+    conn._on_state_json(b'{"type": "operator_lost"}')
+
+    conn.connection.stop_movement.assert_called_once()
+    _wait_for(lambda: conn.connection.sport_command.call_count == 1)
+    conn.connection.sport_command.assert_called_with(ALLOWED_SPORT_CMDS["Damp"])
 
 
 def test_damp_bypasses_busy_queue(monkeypatch: pytest.MonkeyPatch) -> None:

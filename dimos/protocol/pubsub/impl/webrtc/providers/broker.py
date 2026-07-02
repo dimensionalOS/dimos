@@ -313,11 +313,31 @@ class BrokerProvider(AsyncProviderBase):
         for name, raw_id in ids.items():
             sctp_id = int(raw_id) if raw_id is not None else None
             if sctp_id != self._dc_ids.get(name):
+                # Operator left (or was reaped): the command plane is gone.
+                # Tell subscribers so the robot can stop motion / reset state.
+                if name == "state_reliable" and self._dc_ids.get(name) is not None and sctp_id is None:
+                    self._notify_operator_lost()
                 self._close_channel(name)
                 self._dc_ids[name] = sctp_id
                 if sctp_id is not None:
                     self._open_channel(name, sctp_id)
         return 200
+
+    def _notify_operator_lost(self) -> None:
+        """Synthetic {"type":"operator_lost"} to state_reliable subscribers.
+
+        Rides the normal inbound plumbing (same thread, same callback shape as
+        a real operator message) so modules get one uniform signal on both
+        transports without new provider API.
+        """
+        payload = b'{"type": "operator_lost"}'
+        with self._lock:
+            callbacks = list(self._callbacks.get("state_reliable", ()))
+        for cb in callbacks:
+            try:
+                cb(payload, "state_reliable")
+            except Exception:
+                logger.exception("operator_lost subscriber callback error")
 
     def _channel_options(self, name: str) -> dict[str, Any]:
         if name == "cmd_unreliable":

@@ -251,6 +251,13 @@ class LiveKitBrokerProvider(AsyncProviderBase):
         def _on_data(packet: Any) -> None:
             self._dispatch(packet)
 
+        # Operator leaving the room = command plane gone. Same synthetic
+        # signal shape as BrokerProvider._notify_operator_lost so modules
+        # handle one message on both transports.
+        @self._room.on("participant_disconnected")  # type: ignore[untyped-decorator]
+        def _on_participant_gone(_participant: Any) -> None:
+            self._notify_operator_lost()
+
         await self._room.connect(url, token)
         self._video.bind(self._room, asyncio.get_running_loop())
         logger.info(
@@ -319,6 +326,18 @@ class LiveKitBrokerProvider(AsyncProviderBase):
             await asyncio.sleep(interval)
 
     # ─── Dispatch (loop thread) ──────────────────────────────────────
+
+    def _notify_operator_lost(self) -> None:
+        """Synthetic {"type":"operator_lost"} to state_reliable subscribers
+        (mirrors BrokerProvider — one uniform signal on both transports)."""
+        payload = b'{"type": "operator_lost"}'
+        with self._lock:
+            callbacks = list(self._callbacks.get("state_reliable", ()))
+        for cb in callbacks:
+            try:
+                cb(payload, "state_reliable")
+            except Exception:
+                logger.exception("operator_lost subscriber callback error")
 
     def _dispatch(self, packet: Any) -> None:
         topic = getattr(packet, "topic", "") or ""

@@ -60,6 +60,10 @@ class Go2HostedConnectionConfig(ConnectionConfig):
     telemetry_hz: float = 3.0  # robot → operator HUD telemetry push rate
     cmd_stale_after_sec: float = 0.5  # cmd_vel twists older than this are dropped
     latency_stamp: bool = False  # benchmark: paint capture-time into frame corner
+    # Also Damp (go limp) when the operator link drops, on top of the always-on
+    # zero-velocity stop. Off by default: a WiFi blip shouldn't drop the robot
+    # mid-patrol; the 0.2s cmd_vel deadman + stop_movement cover the base.
+    damp_on_operator_lost: bool = False
 
 
 # Frame-embedded capture time for glass-to-glass latency, read back by the
@@ -115,6 +119,9 @@ class Go2HostedConnection(GO2Connection):
         self._cmd_lock = threading.Lock()
         # nonce → (result | None while in flight, monotonic stamp)
         self._nonce_results: dict[Any, tuple[bool | None, float]] = {}
+        # E-STOP latch: set by {"type":"estop"}; while latched, move() refuses
+        # twists and non-urgent commands are rejected until {"type":"estop_clear"}.
+        self._estopped = False
 
     @rpc
     def start(self) -> None:
@@ -237,7 +244,13 @@ class Go2HostedConnection(GO2Connection):
             return
 
         kind = msg.get("type")
-        if kind == "sport_cmd":
+        if kind == "estop":
+            self._handle_estop(msg.get("nonce"))
+        elif kind == "estop_clear":
+            self._handle_estop_clear(msg.get("nonce"))
+        elif kind == "operator_lost":  # synthetic, injected by the provider
+            self._on_operator_lost()
+        elif kind == "sport_cmd":
             self._handle_sport_cmd(msg)
         elif kind == "set_mode":
             self._handle_set_mode(msg)
@@ -255,6 +268,49 @@ class Go2HostedConnection(GO2Connection):
             )
         # ping answered by BrokerProvider; unknown types ignored.
 
+    # ─── E-STOP latch + operator-loss safety ─────────────────────────
+
+    def _handle_estop(self, nonce: Any) -> None:
+        """Latch FIRST (gates move() immediately, before the RPC lands), then
+        Damp urgently — never queued behind slower commands."""
+        self._estopped = True
+        logger.warning("E-STOP latched by operator")
+        self._submit_cmd(
+            "estop",
+            nonce,
+            lambda: bool(self.connection.sport_command(ALLOWED_SPORT_CMDS["Damp"])),
+            urgent=True,
+        )
+
+    def _handle_estop_clear(self, nonce: Any) -> None:
+        """Re-arm. Deliberately does NOT move the robot — the operator must
+        explicitly Stand/Drive afterwards."""
+        self._estopped = False
+        logger.warning("E-STOP cleared by operator")
+        self._send_ack(nonce, True)
+
+    def _on_operator_lost(self) -> None:
+        """Provider-injected when the operator's command plane goes away.
+
+        Always zero the base (belt to the 0.2s cmd_vel deadman's braces — an
+        in-flight duration move keeps publishing without it) and drop the
+        nonce cache: browser nonces restart at 1 on the next session, so a
+        stale entry would re-ack instead of executing. Damp only if configured."""
+        logger.warning("operator link lost — stopping motion")
+        with self._cmd_lock:
+            self._nonce_results.clear()
+        try:
+            self.connection.stop_movement()
+        except Exception:
+            logger.exception("stop_movement on operator loss failed")
+        if self.config.damp_on_operator_lost:
+            self._submit_cmd(
+                "damp_on_operator_lost",
+                None,
+                lambda: bool(self.connection.sport_command(ALLOWED_SPORT_CMDS["Damp"])),
+                urgent=True,
+            )
+
     def _submit_cmd(self, label: str, nonce: Any, task: Callable[[], bool], *, urgent: bool = False) -> None:
         """Run a blocking command off the WebRTC/video loop and ack the result.
 
@@ -264,6 +320,13 @@ class Go2HostedConnection(GO2Connection):
         piling up threads. urgent=True (Damp / E-STOP) bypasses the queue on a
         dedicated thread: a stop must never wait behind a 3s StandReady.
         """
+
+        # E-STOP latch: only urgent work (Damp itself) may run while latched;
+        # estop_clear is handled upstream and never reaches here.
+        if self._estopped and not urgent:
+            logger.warning("%s rejected: E-STOP latched", label)
+            self._send_ack(nonce, False)
+            return
 
         # Nonce dedup (B2): a duplicate of a finished command re-acks its
         # result; a duplicate of an in-flight command is dropped (the original
@@ -424,6 +487,8 @@ class Go2HostedConnection(GO2Connection):
 
     def move(self, twist: Any, duration: float = 0.0) -> bool:
         """Drop stale + out-of-order cmd_vel from the unreliable wire."""
+        if self._estopped:
+            return False  # latched: no motion until estop_clear
         ts = float(twist.ts)
         age = time.time() - ts
         if age > self.config.cmd_stale_after_sec:
