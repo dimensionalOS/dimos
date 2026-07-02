@@ -55,6 +55,11 @@ _VOX_SIZE:    float =  0.020
 _FLOOR_RAY_Z: float = -0.15   # tighter than ZED default: rejects rays >~9° below horizontal
 _MAP_MAX_DEPTH: float = 4.5   # D435i stereo accuracy degrades beyond ~5 m — cap map pts here
 
+# Tracked floor plane (gravity-aligned, so floor normal is always world Z).
+# EMA tracks the floor Z value across frames; band removes only a thin slab around it.
+_FLOOR_EMA_ALPHA: float = 0.05   # slow update — stable across ~20 frames
+_FLOOR_BAND:      float = 0.03   # ±3 cm removal band around the tracked floor Z
+
 # Optical frame (X=right, Y=down, Z=depth) → camera_link (X=fwd, Y=left, Z=up)
 _R_OPT_TO_LINK = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=np.float32)
 
@@ -536,6 +541,7 @@ class DepthStreamer:
         self._last_n_stable  = 0
         self._last_n_vox     = 0
         self._pinhole_logged = False
+        self._floor_z:  float | None = None   # EMA-tracked floor plane Z in world frame
         self._map_queue: queue.Queue = queue.Queue(maxsize=16)
         self._map_thread = threading.Thread(target=self._map_worker, daemon=True)
         self._map_thread.start()
@@ -580,13 +586,20 @@ class DepthStreamer:
                 radii=0.003,
             ))
 
-        # Per-frame voxel map — use raw (unfiltered) projection so the map covers
-        # the full depth FOV.  The gradient filter aggressively removes peripheral
-        # pixels, cutting effective width/height well below what the sensor sees.
-        # Voxelisation at 2 cm already suppresses most stereo edge noise.
-        xyz_map  = xyz_raw if len(xyz_raw) else xyz
-        h_rel    = xyz_map[:, 2] - cam_z
-        keep     = h_rel <= _Z_REL_HI
+        # Per-frame voxel map — full FOV (unfiltered), gravity-aligned floor removal.
+        # IMU keeps world Z = up, so the floor is always a horizontal plane at some
+        # fixed Z value.  Track that Z with an EMA (stable across ~20 frames) and
+        # remove only a ±3 cm band around it.  Obstacles above the floor — even
+        # ones touching it — are preserved because their points lie outside the band.
+        xyz_map = xyz_raw if len(xyz_raw) else xyz
+        z_vals  = xyz_map[:, 2]
+        z_est   = float(np.percentile(z_vals, 3))   # fast per-frame floor estimate
+        if self._floor_z is None:
+            self._floor_z = z_est
+        elif abs(z_est - self._floor_z) < 0.50:     # ignore implausible jumps (>50 cm)
+            self._floor_z = (1 - _FLOOR_EMA_ALPHA) * self._floor_z + _FLOOR_EMA_ALPHA * z_est
+        h_rel    = z_vals - cam_z
+        keep     = (np.abs(z_vals - self._floor_z) > _FLOOR_BAND) & (h_rel <= _Z_REL_HI)
         xyz_kept = xyz_map[keep]
         if len(xyz_kept):
             vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
