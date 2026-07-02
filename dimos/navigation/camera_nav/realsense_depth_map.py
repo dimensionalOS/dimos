@@ -581,20 +581,19 @@ class DepthStreamer:
             ))
 
         # Per-frame voxel map — mirrors ZED world/map pipeline exactly
-        h_rel    = xyz[:, 2] - cam_z
-        # Floor detection: scan upward from z.min() in 2 cm slabs.
-        # The floor is ALWAYS the lowest significant surface — so the first slab
-        # (from the bottom) with ≥ 0.3 % of total points is the floor plane.
-        # Previous approaches (percentile, histogram peak, RANSAC densest cluster)
-        # all failed because they found the densest cluster, not the lowest one.
-        z        = xyz[:, 2]
-        _STEP    = 0.02
-        _MIN_PTS = max(20, int(len(z) * 0.003))
-        bins     = np.arange(float(z.min()), float(np.percentile(z, 30)) + _STEP, _STEP)
-        counts, _ = np.histogram(z, bins=bins)
-        hit       = np.where(counts >= _MIN_PTS)[0]
-        floor_z   = (float(bins[hit[0] + 1]) + 0.05) if len(hit) else (float(z.min()) + 0.07)
-        keep      = (xyz[:, 2] > floor_z) & (h_rel <= _Z_REL_HI)
+        h_rel  = xyz[:, 2] - cam_z
+        # Floor detection: grab the lowest Z cluster (within 5 cm of z.min()),
+        # then check if it's flat (std < 3 cm) and large enough to be a real
+        # surface.  If yes → floor, remove it + 8 cm buffer.
+        # If not flat or too sparse → no confident floor, keep everything.
+        z      = xyz[:, 2]
+        z_lo   = float(z.min())
+        cand   = z[(z - z_lo) < 0.05]
+        if len(cand) > 50 and float(cand.std()) < 0.03:
+            floor_z = float(cand.mean()) + 0.08
+            keep = (xyz[:, 2] > floor_z) & (h_rel <= _Z_REL_HI)
+        else:
+            keep = h_rel <= _Z_REL_HI
         xyz_kept = xyz[keep]
         if len(xyz_kept):
             vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
