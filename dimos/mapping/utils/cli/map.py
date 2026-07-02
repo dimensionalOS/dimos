@@ -395,7 +395,7 @@ def main(
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.perception.fiducial.marker_transformer import DetectMarkers
-    from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL, _camera_info_static
+    from dimos.robot.unitree.go2.config import Go2Config, camera_info_static
     from dimos.utils.data import resolve_named_path
     from dimos.visualization.rerun.init import rerun_init
 
@@ -502,11 +502,8 @@ def main(
 
     marker_dets: list[Observation[Any]] = []
     if markers:
-        # Image observations in dimos recordings are stamped with
-        # frame_id="camera_optical", so obs.pose is already optical-in-world
-        # (verified: matches lidar_base_pose + BASE_TO_OPTICAL to ~1mm). With
-        # --image-pose, swap that stored pose for a different source (e.g.
-        # fastlio_odometry), composing the base→optical mount onto it first.
+        # obs.pose is already optical-in-world (stamped frame_id="camera_optical").
+        # --image-pose swaps it for another source, composing base→optical onto it first.
         color_image = store.stream("color_image", Image).from_time(seek or None).to_time(duration)
         n_images = color_image.count()
         if image_pose is not None:
@@ -516,8 +513,12 @@ def main(
                 store.stream(image_pose).from_time(seek or None).to_time(duration)
             )
             print(f"re-posing color_image from {image_pose!r} + camera optical mount")
-            color_image = pose_fill(color_image, src_pose, tolerance=0.1, mount=BASE_TO_OPTICAL)
-        cam_info = CameraInfo.from_yaml(str(camera_info)) if camera_info else _camera_info_static()
+            base_to_optical = (
+                Go2Config.static_transforms["camera_link"]
+                + Go2Config.static_transforms["camera_optical"]
+            )
+            color_image = pose_fill(color_image, src_pose, tolerance=0.1, mount=base_to_optical)
+        cam_info = CameraInfo.from_yaml(str(camera_info)) if camera_info else camera_info_static()
         xf = DetectMarkers(
             camera_info=cam_info,
             marker_length_m=marker_size,

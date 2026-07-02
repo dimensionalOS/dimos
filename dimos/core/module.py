@@ -109,6 +109,8 @@ class ModuleConfig(BaseConfig):
     tf_transport: type[TFSpec] = LCMTF  # type: ignore[type-arg]
     frame_id_prefix: str | None = None
     frame_id: str | None = None
+    # how others remap frame names; TODO: also expose this at the blueprint level
+    frame_mapping: dict[str, str] = Field(default_factory=dict)
     g: GlobalConfig = global_config
 
 
@@ -149,6 +151,7 @@ class ModuleBase(Configurable, CompositeResource):
         self._tools = {}
         self._tools_lock = threading.Lock()
         self._loop, self._loop_thread = get_loop()
+        self.frame_mapping = self._setup_frame_mapping()
         try:
             self.rpc = self.config.rpc_transport(  # type: ignore[call-arg]
                 rpc_timeouts=self.config.rpc_timeouts,
@@ -190,6 +193,25 @@ class ModuleBase(Configurable, CompositeResource):
         self._stop_main()
         super().stop()
         self._close_module()
+
+    def _setup_frame_mapping(self) -> dict[str, str]:
+        frame_mapping_field = type(self.config).model_fields["frame_mapping"]
+        if not hasattr(frame_mapping_field, "default_factory") or not callable(
+            frame_mapping_field.default_factory
+        ):
+            raise ValueError(
+                f"""In the {self.name!r} module config definition, the frame_mapping needs to be a pydantic field, not a dict"""
+            )
+        # frame_mapping maps a "common_name" (e.g. "body") to the REAL frame id
+        # (e.g. "base_link") that other modules query
+        existing_frames: dict[str, str] = frame_mapping_field.default_factory()  # type: ignore[call-arg]
+        final_frame_mapping = {**existing_frames, **self.config.frame_mapping}
+        for existing_frame, remapped_frame in final_frame_mapping.items():
+            if existing_frame not in existing_frames:
+                raise ValueError(
+                    f"""On module {self.name}, tried to map {existing_frame!r} to {remapped_frame!r} but that first frame doesn't exist. The existing ones are: {list(existing_frames.keys())!r} """
+                )
+        return final_frame_mapping
 
     def _close_module(self) -> None:
         with self._module_closed_lock:
