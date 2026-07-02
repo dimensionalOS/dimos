@@ -32,7 +32,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dimos.robot.unitree.go2.hosted_connection import (
+from dimos.teleop.quest_hosted.go2_hosted_connection import (
     ALLOWED_SPORT_CMDS,
     Go2HostedConnection,
 )
@@ -59,15 +59,11 @@ def _bare_connection() -> Go2HostedConnection:
     """A Go2HostedConnection with only the fields the command paths need."""
     conn = object.__new__(Go2HostedConnection)
     conn.connection = MagicMock()
+    conn._hosted_init(["cam1", "cam2"])  # mux + cmd stats + E-STOP latch
     conn._last_cmd_ts = 0.0
-    conn._estopped = False
     conn._posture = "StandReady"
     conn._obstacle_avoidance = True
     conn._light = 0.0
-    conn._cam_selected = ["cam1"]
-    conn._cam_frames = {}
-    conn._cam_lock = threading.Lock()
-    conn._last_mux_pub = 0.0
     conn.mux_image = MagicMock()
     conn._cmd_stats = SimpleNamespace(snapshot=lambda: None)
     conn.config = SimpleNamespace(

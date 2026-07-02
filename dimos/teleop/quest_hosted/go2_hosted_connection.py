@@ -25,12 +25,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-import json
 import threading
 import time
 from typing import Any
 
-import numpy as np
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
@@ -38,7 +36,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
-from dimos.teleop.utils.stream_stats import LiveStreamStats
+from dimos.teleop.quest_hosted.hosted_base import HostedConnectionMixin
 from dimos.teleop.utils.video_stats import VideoStats
 from dimos.utils.logging_config import setup_logger
 
@@ -76,19 +74,14 @@ class Go2HostedConnectionConfig(ConnectionConfig):
     video_max_fps: float = 0.0
 
 
-# Frame-embedded capture time for glass-to-glass latency, read back by the
-# operator (webrtc.js readLatencyStamp). Encoded as B/W cells in a strip
-# APPENDED below the frame (video content untouched; operator reads then crops).
-# MSB-first: SYNC then time. Constants MUST match webrtc.js readLatencyStamp.
-_STAMP_CELL_PX = 16  # cell width — big enough to survive H.264 compression
-_STAMP_STRIP_PX = 16  # height of the appended timestamp band, in rows
-_STAMP_SYNC = (1, 0, 1, 0)  # both sides must agree
-_STAMP_TIME_BITS = 44  # ms since epoch (~41 bits) + headroom
-_STAMP_CELLS = len(_STAMP_SYNC) + _STAMP_TIME_BITS
+class Go2HostedConnection(GO2Connection, HostedConnectionMixin):
+    """GO2Connection + the hosted-teleop state plane, colocated (one session).
 
-
-class Go2HostedConnection(GO2Connection):
-    """GO2Connection + the hosted-teleop state plane, colocated (one session)."""
+    The shared control plane (state_json dispatch, camera mux + latency
+    stamp, cmd_ack, telemetry loop) lives in ``HostedConnectionMixin``; this
+    class adds the Go2 parts: sport commands, rage mode, obstacle avoidance,
+    the head LED, and the serialized command executor they run on.
+    """
 
     config: Go2HostedConnectionConfig
 
@@ -113,14 +106,12 @@ class Go2HostedConnection(GO2Connection):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._cmd_stats = LiveStreamStats()
-        self._telemetry_thread: threading.Thread | None = None
+        # E-STOP latch from _hosted_init: while set, move() refuses twists and
+        # non-urgent commands are rejected until estop_clear.
+        self._hosted_init(["cam1", "cam2"])
         self._stop_event = threading.Event()
         self._rage_active = False
         self._last_cmd_ts = 0.0
-        self._cam_lock = threading.Lock()
-        self._cam_frames: dict[str, Image] = {}
-        self._cam_selected = ["cam1"]
         # Single worker (repo pattern, cf. utils/threadpool + drake_world):
         # commands execute strictly in order, so state like _rage_active can't
         # race between overlapping runners. Bounded by _MAX_PENDING_CMDS.
@@ -129,16 +120,12 @@ class Go2HostedConnection(GO2Connection):
         self._cmd_lock = threading.Lock()
         # nonce → (result | None while in flight, monotonic stamp)
         self._nonce_results: dict[Any, tuple[bool | None, float]] = {}
-        # E-STOP latch: set by {"type":"estop"}; while latched, move() refuses
-        # twists and non-urgent commands are rejected until {"type":"estop_clear"}.
-        self._estopped = False
         # Robot-authoritative UI state, pushed in telemetry so a reconnecting
         # operator's cockpit reflects reality instead of optimistic defaults.
         # GO2Connection.start() stands the robot up, hence the initial posture.
         self._posture = "StandReady"
         self._obstacle_avoidance = True  # corrected from config.g in start()
         self._light = 0.0  # head-LED brightness 0..1, assumed off until set
-        self._last_mux_pub = 0.0  # monotonic stamp for the video_max_fps cap
 
     @rpc
     def start(self) -> None:
@@ -172,149 +159,26 @@ class Go2HostedConnection(GO2Connection):
         )
         self._start_telemetry()
 
-    # ─── Camera mux ──────────────────────────────────────────────────
-    def _on_cam(self, cam: str, img: Image) -> None:
-        with self._cam_lock:
-            self._cam_frames[cam] = img
-            shown = cam in self._cam_selected
-        if not shown:
-            return
-        # FPS cap before any mux/encode work — skipping here is nearly free.
-        max_fps = self.config.video_max_fps
-        if max_fps > 0:
-            now = time.monotonic()
-            if now - self._last_mux_pub < 1.0 / max_fps:
-                return
-            self._last_mux_pub = now
-        out = self._composite()
-        if out is not None:
-            self.mux_image.publish(out)
-
-    def _composite(self) -> Image | None:
-        with self._cam_lock:
-            order = [c for c in ("cam1", "cam2") if c in self._cam_selected]
-            imgs = [self._cam_frames[c] for c in order if c in self._cam_frames]
-        if not imgs:
-            return None
-        if len(imgs) == 1:
-            return self._stamp(self._downscale(imgs[0]))
-        import cv2
-
-        target_h = min(im.data.shape[0] for im in imgs)
-        tiles = []
-        for im in imgs:
-            h, w = im.data.shape[:2]
-            tiles.append(
-                cv2.resize(im.data, (int(w * target_h / h), target_h)) if h != target_h else im.data
-            )
-        return self._stamp(
-            self._downscale(
-                Image(data=np.hstack(tiles), format=imgs[0].format, frame_id="camera_mux")
-            )
-        )
-
-    def _downscale(self, img: Image) -> Image:
-        """Cap publish width at config.video_max_width (0 = off). Runs before
-        _stamp so the strip's 16px cells stay decodable at the sent size."""
-        max_w = self.config.video_max_width
-        if max_w <= 0 or img.data.ndim < 2:
-            return img
-        h, w = img.data.shape[:2]
-        if w <= max_w:
-            return img
-        import cv2
-
-        out = cv2.resize(img.data, (max_w, max(1, int(h * max_w / w))))
-        return Image(data=out, format=img.format, frame_id=img.frame_id)
-
-    def _stamp(self, img: Image) -> Image:
-        """Append a bottom strip encoding capture time as B/W cells (benchmark).
-
-        Rows are ADDED below the frame (height grows by ``_STAMP_STRIP_PX``), so
-        the video content is never overwritten — the operator reads the strip,
-        then crops it on display. No-op unless ``config.latency_stamp``.
-        """
-        if not self.config.latency_stamp:
-            return img
-
-        ms = int(time.time() * 1000)
-        bits = list(_STAMP_SYNC) + [
-            (ms >> (_STAMP_TIME_BITS - 1 - i)) & 1 for i in range(_STAMP_TIME_BITS)
-        ]
-
-        s = _STAMP_CELL_PX
-        data = img.data
-        if data.ndim < 2 or data.shape[1] < _STAMP_CELLS * s:
-            return img
-
-        # Build the strip (black), paint cells across it, then stack below.
-        strip_shape = (_STAMP_STRIP_PX, data.shape[1], *data.shape[2:])
-        strip = np.zeros(strip_shape, dtype=data.dtype)
-        for i, bit in enumerate(bits):
-            if bit:
-                strip[:, i * s : (i + 1) * s] = 255
-        out = np.vstack([data, strip])
-        return Image(data=out, format=img.format, frame_id=img.frame_id)
-
-    def _set_cam_selection(self, cams: list[str]) -> None:
-        sel = [c for c in cams if c in ("cam1", "cam2")] or ["cam1"]
-        with self._cam_lock:
-            self._cam_selected = sel
-        logger.info("camera selection → %s", sel)
-        out = self._composite()
-        if out is not None:
-            self.mux_image.publish(out)
-
     @rpc
     def stop(self) -> None:
         self._stop_event.set()
         if self._cmd_executor is not None:
             self._cmd_executor.shutdown(wait=False, cancel_futures=True)
             self._cmd_executor = None
-        if self._telemetry_thread is not None:
-            self._telemetry_thread.join(timeout=2.0)
-            self._telemetry_thread = None
+        self._stop_telemetry()
         super().stop()
 
-    # ─── Inbound state plane (operator → robot) ──────────────────────
+    # ─── Go2-specific state-plane types (rest handled by the mixin) ──
 
-    def _on_state_json(self, data: Any) -> None:
-        if isinstance(data, str):
-            data = data.encode()
-        if not data.startswith(b"{"):
-            return  # not JSON
-        try:
-            msg = json.loads(data)
-        except ValueError:
-            logger.warning("state_reliable: malformed JSON: %r", data[:80])
-            return
-
-        kind = msg.get("type")
-        if kind == "estop":
-            self._handle_estop(msg.get("nonce"))
-        elif kind == "estop_clear":
-            self._handle_estop_clear(msg.get("nonce"))
-        elif kind == "operator_lost":  # synthetic, injected by the provider
-            self._on_operator_lost()
-        elif kind == "sport_cmd":
+    def _handle_robot_msg(self, kind: Any, msg: dict[str, Any]) -> None:
+        if kind == "sport_cmd":
             self._handle_sport_cmd(msg)
         elif kind == "set_mode":
             self._handle_set_mode(msg)
-        elif kind == "camera_select":
-            self._set_cam_selection(msg.get("cams", []))
         elif kind == "obstacle_avoidance":
             self._handle_obstacle_avoidance(msg)
         elif kind == "light":
             self._handle_light(msg)
-        elif kind == "video_stats":
-            self.video_stats.publish(VideoStats.from_dict(msg))
-        elif kind == "clock_report":
-            logger.info(
-                "clock-sync: operator rtt=%s offset=%s",
-                msg.get("rtt_ms"),
-                msg.get("offset_ms"),
-            )
-        # ping answered by BrokerProvider; unknown types ignored.
 
     # ─── E-STOP latch + operator-loss safety ─────────────────────────
 
@@ -566,17 +430,6 @@ class Go2HostedConnection(GO2Connection):
 
         self._submit_cmd(f"light {brightness:.1f}", nonce, task)
 
-    def _send_ack(self, nonce: Any, ok: bool) -> None:
-        # Best-effort: the ack rides state_reliable_back, which doesn't exist
-        # while no operator is connected — a dropped ack there is expected, but
-        # a failure once connected means the operator's button spins, so warn.
-        try:
-            self.telemetry_out.publish(
-                json.dumps({"type": "cmd_ack", "nonce": nonce, "ok": ok}).encode()
-            )
-        except Exception:
-            logger.warning("cmd_ack publish failed", exc_info=True)
-
     # ─── Command-plane health (robot → operator) ─────────────────────
 
     def move(self, twist: Any, duration: float = 0.0) -> bool:
@@ -615,43 +468,18 @@ class Go2HostedConnection(GO2Connection):
         except (KeyError, TypeError, ValueError):
             return None
 
-    def _telemetry_payload(self) -> dict[str, Any]:
-        """One telemetry frame. `state` is robot-authoritative UI state so a
-        (re)connecting operator seeds its cockpit from reality — posture, rage,
-        obstacle avoidance, camera selection, E-STOP latch."""
+    def _telemetry_extra(self) -> dict[str, Any]:
+        return {"soc": self._battery_soc()}
+
+    def _telemetry_state(self) -> dict[str, Any]:
+        """Robot-authoritative UI state — posture, rage, obstacle avoidance,
+        head LED (cams + estopped are merged in by the mixin)."""
         return {
-            "type": "robot_telemetry",
-            "cmd": self._cmd_stats.snapshot(),
-            "soc": self._battery_soc(),
-            "state": {
-                "posture": self._posture,
-                "rage": self._rage_active,
-                "obstacle_avoidance": self._obstacle_avoidance,
-                "light": self._light,  # brightness 0..1
-                "cams": list(self._cam_selected),
-                "estopped": self._estopped,
-            },
-            "robot_ts": time.time(),
+            "posture": self._posture,
+            "rage": self._rage_active,
+            "obstacle_avoidance": self._obstacle_avoidance,
+            "light": self._light,  # brightness 0..1
         }
-
-    def _start_telemetry(self) -> None:
-        def runner() -> None:
-            interval = 1.0 / max(self.config.telemetry_hz, 0.1)
-            while not self._stop_event.is_set():
-                payload = json.dumps(self._telemetry_payload())
-                # debug (not warning): this fires at telemetry_hz with no
-                # operator connected, so a failed publish here is the norm
-                # and would flood the log at a higher level.
-                try:
-                    self.telemetry_out.publish(payload.encode())
-                except Exception:
-                    logger.debug("telemetry publish failed", exc_info=True)
-                self._stop_event.wait(interval)
-
-        self._telemetry_thread = threading.Thread(
-            target=runner, daemon=True, name="Go2HostedTelemetry"
-        )
-        self._telemetry_thread.start()
 
 
 __all__ = ["Go2HostedConnection", "Go2HostedConnectionConfig"]
