@@ -23,6 +23,7 @@ from typing import Any
 
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
+import trimesh  # type: ignore[import-untyped]
 
 from dimos.experimental.scene_cooking.mujoco.collision_policy import CollisionSpec
 from dimos.experimental.scene_cooking.package_config import BrowserCollisionSpec
@@ -115,8 +116,6 @@ def cook_browser_collision(
 
 
 def _write_glb(mesh: o3d.geometry.TriangleMesh, path: Path) -> None:
-    import trimesh
-
     # Quadric decimation collapses triangles but leaves the original input
     # vertices in the buffer (referenced by nothing). Drop them before export,
     # else the GLB carries millions of orphan vertices (~25x larger on a 100k
