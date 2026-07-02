@@ -323,12 +323,11 @@ apriltag = [
     "reportlab>=4.5.0",
 ]
 
-# Offline scene-package cooking + loading: mesh/USD import (open3d, usd-core),
-# convex decomposition for collision (coacd), and mesh ops (trimesh). The
-# Blender visual bake is an optional external `blender` binary, not a wheel.
+# Offline scene-package cooking + loading: USD import (usd-core), convex
+# decomposition for collision (coacd), and mesh ops (trimesh). open3d is
+# already a core dependency. The Blender visual bake is an optional external
+# `blender` binary, not a wheel.
 scene = [
-    "open3d-unofficial-arm>=0.19.0.post9; platform_system == 'Linux' and platform_machine == 'aarch64'",
-    "open3d>=0.18.0; platform_system != 'Linux' or platform_machine != 'aarch64'",
     "trimesh>=4.0.0",
     "coacd>=1.0.0",
     "usd-core>=23.11",
