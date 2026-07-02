@@ -61,6 +61,9 @@ logger = setup_logger()
 SCENE_PACKAGE_DIR = get_data_dir("scene_packages")
 _PACKAGE_KEY_LEN = 12
 _COOK_VERSION = 4
+#: Cap on entity id samples recorded in cook stats -- diagnostics only, not
+#: the full entity list (that lives in ``scene.meta.json``).
+_ENTITY_ID_SAMPLE_CAP = 100
 
 
 def cook_scene_package(
@@ -140,7 +143,7 @@ def cook_scene_package(
     if entities:
         stats["interactables"] = {
             "count": len(entities),
-            "id_samples": [entity["id"] for entity in entities[:100]],
+            "id_samples": [entity["id"] for entity in entities[:_ENTITY_ID_SAMPLE_CAP]],
             "static_visual_filter": "plan/blender",
         }
 
