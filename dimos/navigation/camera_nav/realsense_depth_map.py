@@ -58,7 +58,7 @@ _MAP_MAX_DEPTH: float = 4.5   # D435i stereo accuracy degrades beyond ~5 m — c
 # Tracked floor plane (gravity-aligned, so floor normal is always world Z).
 # EMA tracks the floor Z value across frames; band removes only a thin slab around it.
 _FLOOR_EMA_ALPHA: float = 0.05   # slow update — stable across ~20 frames
-_FLOOR_BAND:      float = 0.03   # ±3 cm removal band around the tracked floor Z
+_FLOOR_BAND:      float = 0.10   # one-sided: keep only points > floor_z + 10 cm
 
 # Optical frame (X=right, Y=down, Z=depth) → camera_link (X=fwd, Y=left, Z=up)
 _R_OPT_TO_LINK = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=np.float32)
@@ -593,13 +593,20 @@ class DepthStreamer:
         # ones touching it — are preserved because their points lie outside the band.
         xyz_map = xyz_raw if len(xyz_raw) else xyz
         z_vals  = xyz_map[:, 2]
-        z_est   = float(np.percentile(z_vals, 3))   # fast per-frame floor estimate
+        # 5th-percentile EMA: lands inside the floor cluster, not below it.
+        # Sub-floor stereo artifacts (~2-3% of points) drag the 3rd percentile
+        # below the real floor so the ±band filter misses it.  5th percentile
+        # stays within the floor pixels and the EMA keeps it stable across frames.
+        z_est = float(np.percentile(z_vals, 5))
         if self._floor_z is None:
             self._floor_z = z_est
         elif abs(z_est - self._floor_z) < 0.50:     # ignore implausible jumps (>50 cm)
             self._floor_z = (1 - _FLOOR_EMA_ALPHA) * self._floor_z + _FLOOR_EMA_ALPHA * z_est
+        # One-sided cutoff: remove everything below floor_z + buffer.
+        # Symmetric band fails when floor_z is biased even a few cm — the real
+        # floor falls outside the band.  One-sided is robust to that bias.
         h_rel    = z_vals - cam_z
-        keep     = (np.abs(z_vals - self._floor_z) > _FLOOR_BAND) & (h_rel <= _Z_REL_HI)
+        keep     = (z_vals > self._floor_z + _FLOOR_BAND) & (h_rel <= _Z_REL_HI)
         xyz_kept = xyz_map[keep]
         if len(xyz_kept):
             vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
