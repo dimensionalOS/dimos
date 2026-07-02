@@ -329,10 +329,20 @@ class UnitreeWebRTCConnection(Resource):
         """Activate FreeWalk locomotion mode — enables walking and velocity commands."""
         return bool(self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["FreeWalk"]}))
 
+    def switch_joystick(self, enable: bool = True) -> bool:
+        """Firmware joystick listening on/off. move()'s WIRELESS_CONTROLLER
+        stick emulation is silently ignored while this is off."""
+        return bool(
+            self.publish_request(
+                RTC_TOPIC["SPORT_MOD"],
+                {"api_id": SPORT_CMD["SwitchJoystick"], "parameter": {"data": enable}},
+            )
+        )
+
     def set_rage_mode(self, enable: bool) -> bool:
         """Toggle Rage Mode (api 2059) over WebRTC, both directions.
 
-        BalanceStand → 2059 {data:enable} → SwitchJoystick(enable). When on,
+        BalanceStand → 2059 {data:enable} → SwitchJoystick(True). When on,
         normal move() twists drive at the ~2.5 m/s rage envelope.
         """
         # Re-establish BalanceStand before toggling (notes: always BalanceStand
@@ -352,12 +362,11 @@ class UnitreeWebRTCConnection(Resource):
 
         # Settle both directions — FSM transition needs time before SwitchJoystick.
         time.sleep(2.0)
-        return bool(
-            self.publish_request(
-                RTC_TOPIC["SPORT_MOD"],
-                {"api_id": SPORT_CMD["SwitchJoystick"], "parameter": {"data": enable}},
-            )
-        )
+        # Joystick stays ON in both directions — rage only changes the speed
+        # envelope. Passing `enable` here disabled joystick listening whenever
+        # rage was turned OFF (including the hosted boot force-reset), which
+        # silently killed WASD drive until something re-enabled it.
+        return self.switch_joystick(True)
 
     def liedown(self) -> bool:
         return bool(

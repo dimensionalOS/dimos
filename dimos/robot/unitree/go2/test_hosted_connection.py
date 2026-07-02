@@ -355,6 +355,26 @@ def test_busy_rejection_does_not_poison_nonce(monkeypatch: pytest.MonkeyPatch) -
     assert conn.connection.sport_command.call_count == conn._MAX_PENDING_CMDS + 1
 
 
+# ─── Stand/Drive combo leaves the robot drive-ready ──────────────────
+
+
+def test_stand_ready_ends_drive_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The combo must end in BalanceStand + joystick listening ON — WASD is
+    wireless-controller stick emulation, dead without either. Ending in
+    RecoveryStand (the old order) or leaving SwitchJoystick off (rage-off
+    side effect) both silently killed drive."""
+    conn = _bare_connection()
+    monkeypatch.setattr(time, "sleep", lambda _s: None)
+
+    assert conn._stand_ready_task() is True
+
+    names = [c[0] for c in conn.connection.method_calls]
+    assert names == ["standup", "sport_command", "balance_stand", "switch_joystick"]
+    conn.connection.sport_command.assert_called_once_with(ALLOWED_SPORT_CMDS["RecoveryStand"])
+    conn.connection.switch_joystick.assert_called_once_with(True)
+    assert conn._posture == "StandReady"
+
+
 # ─── telemetry state snapshot (operator UI seeding) ──────────────────
 
 

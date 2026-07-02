@@ -246,6 +246,9 @@ class MujocoConnection:
     def set_light(self, level: int) -> bool:
         return True
 
+    def switch_joystick(self, enable: bool = True) -> bool:
+        return True
+
     def get_video_frame(self) -> NDArray[Any] | None:
         if self.shm_data is None:
             return None

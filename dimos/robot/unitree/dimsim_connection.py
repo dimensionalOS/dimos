@@ -107,6 +107,9 @@ class DimSimConnection:
     def set_light(self, level: int) -> bool:
         return True
 
+    def switch_joystick(self, enable: bool = True) -> bool:
+        return True
+
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
         return {}
 

@@ -474,16 +474,21 @@ class Go2HostedConnection(GO2Connection):
         self._submit_cmd(f"sport_cmd {name}", nonce, task, urgent=(name == "Damp"))
 
     def _stand_ready_task(self) -> bool:
-        """Standup → settle → BalanceStand → RecoveryStand (drive-ready).
+        """Standup → RecoveryStand → BalanceStand → joystick ON (drive-ready).
 
-        BalanceStand alone doesn't always leave the FSM accepting velocity
-        after transitions from Sit / Rage / StandDown; RecoveryStand does.
+        WASD drives via wireless-controller stick emulation, which needs BOTH
+        the BalanceStand FSM (so ending in RecoveryStand left drive dead) and
+        firmware joystick listening enabled — SwitchJoystick(False) is left
+        behind by rage-off transitions on older set_rage_mode. RecoveryStand
+        runs mid-sequence to recover from Sit / Damp / Rage weirdness.
         """
         self.connection.standup()
-        time.sleep(3.0)  # standup must finish before balance_stand
+        time.sleep(3.0)  # standup must finish before the FSM transitions
+        self.connection.sport_command(ALLOWED_SPORT_CMDS["RecoveryStand"])
+        time.sleep(0.3)
         self.connection.balance_stand()
         time.sleep(0.3)
-        self.connection.sport_command(ALLOWED_SPORT_CMDS["RecoveryStand"])
+        self.connection.switch_joystick(True)
         self._posture = "StandReady"
         return True
 
