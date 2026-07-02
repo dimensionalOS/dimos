@@ -23,6 +23,7 @@ pytest.importorskip("viser", reason="Viser optional dependency is not installed"
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import PlanningSceneInfo
+from dimos.manipulation.reachability.capability_map import CapabilityMap, MapParams
 from dimos.manipulation.visualization.viser import (
     runtime as runtime_module,
     visualizer as visualizer_module,
@@ -124,6 +125,7 @@ def test_visualizer_initializes_all_scene_robots_from_planning_scene(
             adapter: InProcessViserAdapter,
             config: ViserVisualizationConfig,
             scene: FakeScene,
+            **_kwargs: object,
         ) -> None:
             calls.append(("create", "gui"))
 
@@ -165,6 +167,90 @@ def test_visualizer_initializes_all_scene_robots_from_planning_scene(
     ]
 
 
+def test_visualizer_loads_configured_reachability_maps(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    map_path = tmp_path / "arm-capability.npz"
+    CapabilityMap(
+        MapParams(r_xy=0.2, z_min=0.0, z_max=0.2, cell=0.1, n_theta=4, n_inplane=2),
+        robot="arm",
+    ).save(map_path)
+    calls = []
+
+    class FakeRuntime:
+        url = "http://localhost:8095"
+
+        def __init__(self, config: ViserVisualizationConfig) -> None:
+            self.config = config
+
+        def start(self) -> FakeServer:
+            return FakeServer()
+
+        def close(self) -> None:
+            calls.append(("close", "runtime"))
+
+    class FakeLayer:
+        def close(self) -> None:
+            calls.append(("close", "reachability"))
+
+    class FakeScene:
+        def __init__(
+            self,
+            server: FakeServer,
+            viser_urdf: type[FakeViserUrdf],
+            *,
+            preview_fps: float,
+        ) -> None:
+            pass
+
+        def create_reachability_layer(self) -> FakeLayer:
+            calls.append(("create", "reachability"))
+            return FakeLayer()
+
+        def close(self) -> None:
+            calls.append(("close", "scene"))
+
+    class FakeGui:
+        def __init__(
+            self,
+            server: FakeServer,
+            adapter: InProcessViserAdapter,
+            config: ViserVisualizationConfig,
+            scene: FakeScene,
+            *,
+            reachability_maps: dict[str, CapabilityMap],
+            reachability_layer: FakeLayer,
+        ) -> None:
+            calls.append(
+                ("maps", tuple(reachability_maps), isinstance(reachability_layer, FakeLayer))
+            )
+
+        def start(self) -> None:
+            calls.append(("start", "gui"))
+
+        def refresh(self) -> None:
+            pass
+
+        def close(self) -> None:
+            calls.append(("close", "gui"))
+
+    monkeypatch.setattr(visualizer_module, "ViserRuntime", FakeRuntime)
+    monkeypatch.setattr(visualizer_module, "ViserUrdf", FakeViserUrdf)
+    monkeypatch.setattr(visualizer_module, "ViserManipulationScene", FakeScene)
+    monkeypatch.setattr(visualizer_module, "ViserPanelGui", FakeGui)
+    visualizer = ViserManipulationVisualizer(
+        world_monitor=FakeDependency(),
+        manipulation_module=FakeDependency(),
+        config=ViserVisualizationConfig(panel_enabled=True, reachability_maps={"arm": map_path}),
+    )
+
+    visualizer.initialize_scene(PlanningSceneInfo(robots={}))
+    visualizer.close()
+
+    assert ("create", "reachability") in calls
+    assert ("maps", ("arm",), True) in calls
+
+
 def test_visualizer_closes_partial_startup_when_gui_start_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -202,6 +288,7 @@ def test_visualizer_closes_partial_startup_when_gui_start_fails(
             adapter: InProcessViserAdapter,
             config: ViserVisualizationConfig,
             scene: FakeScene,
+            **_kwargs: object,
         ) -> None:
             pass
 
@@ -308,6 +395,7 @@ def test_visualizer_close_is_best_effort_when_gui_raises(
             adapter: InProcessViserAdapter,
             config: ViserVisualizationConfig,
             scene: FakeScene,
+            **_kwargs: object,
         ) -> None:
             pass
 

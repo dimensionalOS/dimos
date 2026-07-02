@@ -14,11 +14,25 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from math import radians
 from typing import TypeAlias
 
+import numpy as np
+
+from dimos.manipulation.reachability.capability_map import CapabilityMap
 from dimos.manipulation.visualization.types import RobotInfo, TargetEvaluation
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
+from dimos.manipulation.visualization.viser.reachability import (
+    ReachabilityMapLayer,
+    body_point_cloud,
+    body_voxel_mesh,
+    score_colors,
+    slice_image_height,
+    slice_image_yaw,
+    vertical_slice_wxyz,
+)
 from dimos.manipulation.visualization.viser.runtime import VISER_INSTALL_HINT
 from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
 from dimos.manipulation.visualization.viser.state import (
@@ -63,6 +77,7 @@ PanelHandle: TypeAlias = (
     | GuiDropdownHandle[str]
     | GuiButtonHandle
     | GuiCheckboxHandle
+    | GuiSliderHandle[float]
     | TransformControlsHandle
 )
 
@@ -79,11 +94,16 @@ class ViserPanelGui:
         adapter: InProcessViserAdapter,
         config: ViserVisualizationConfig,
         scene: ViserManipulationScene | None = None,
+        *,
+        reachability_maps: Mapping[str, CapabilityMap] | None = None,
+        reachability_layer: ReachabilityMapLayer | None = None,
     ) -> None:
         self.server = server
         self.adapter = adapter
         self.config = config
         self.scene = scene
+        self.reachability_maps = dict(reachability_maps or {})
+        self.reachability_layer = reachability_layer
         self.state = PanelState(runtime=PanelRuntime.STARTING)
         self._closed = False
         self._operation_sequence_id = 0
@@ -153,6 +173,7 @@ class ViserPanelGui:
         self._handles["status"] = gui.add_markdown("Starting manipulation panel...")
         robots = self.adapter.list_robots()
         self._build_scene_controls(gui)
+        self._build_reachability_controls(gui)
         robot_dropdown = gui.add_dropdown(
             "Robot",
             options=robots or [""],
@@ -199,6 +220,152 @@ class ViserPanelGui:
         if self.scene is None:
             return
         self.scene.set_reference_grid_visible(bool(visible))
+
+    def _build_reachability_controls(self, gui: GuiApi) -> None:
+        if self.reachability_layer is None or not self.reachability_maps:
+            return
+        first_map = next(iter(self.reachability_maps.values()))
+        z_mid = (first_map.params.z_min + first_map.params.z_max) / 2.0
+        folder = gui.add_folder("Reachability", expand_by_default=False)
+        self._handles["reachability_folder"] = folder
+        with folder:
+            visible = gui.add_checkbox("Show reachability", initial_value=False)
+            self._handles["reachability_visible"] = visible
+            style = gui.add_dropdown(
+                "Style",
+                options=["points", "voxels"],
+                initial_value="points",
+            )
+            self._handles["reachability_style"] = style
+            dexterity = gui.add_slider(
+                "Min dexterity [%]",
+                min=0,
+                max=60,
+                step=1,
+                initial_value=0,
+            )
+            self._handles["reachability_dexterity"] = dexterity
+            point_size = gui.add_slider(
+                "Point size [mm]",
+                min=0,
+                max=60,
+                step=1,
+                initial_value=5,
+            )
+            self._handles["reachability_point_size"] = point_size
+            vertical_slice = gui.add_checkbox("Vertical slice", initial_value=False)
+            self._handles["reachability_vertical_slice"] = vertical_slice
+            yaw = gui.add_slider(
+                "Slice yaw [deg]",
+                min=-180,
+                max=180,
+                step=5,
+                initial_value=0,
+            )
+            self._handles["reachability_slice_yaw"] = yaw
+            horizontal_slice = gui.add_checkbox("Horizontal slice", initial_value=False)
+            self._handles["reachability_horizontal_slice"] = horizontal_slice
+            z = gui.add_slider(
+                "Slice height [m]",
+                min=first_map.params.z_min,
+                max=first_map.params.z_max,
+                step=first_map.params.cell,
+                initial_value=z_mid,
+            )
+            self._handles["reachability_slice_z"] = z
+        for handle in (
+            visible,
+            style,
+            dexterity,
+            point_size,
+            vertical_slice,
+            yaw,
+            horizontal_slice,
+            z,
+        ):
+            handle.on_update(lambda _event: self._refresh_reachability())
+        self._sync_reachability_z_slider(first_map)
+
+    def _refresh_reachability(self) -> None:
+        if self._closed or self.reachability_layer is None:
+            return
+        cap = self._selected_reachability_map()
+        if cap is None or not self._handle_bool("reachability_visible", False):
+            self.reachability_layer.close()
+            return
+
+        self._sync_reachability_z_slider(cap)
+        dexterity = self._handle_float("reachability_dexterity", 0.0) / 100.0
+        if self._handle_str("reachability_style", "points") == "voxels":
+            mesh, _n_voxels = body_voxel_mesh(cap, dexterity)
+            self.reachability_layer.show_voxel_mesh(mesh)
+        else:
+            points, scores = body_point_cloud(cap, dexterity)
+            colors = score_colors(scores, vmax=max(float(scores.max(initial=0.0)), 1e-9))
+            point_size = self._handle_float("reachability_point_size", 5.0) / 1000.0
+            self.reachability_layer.show_points(points, colors, point_size=point_size)
+
+        if self._handle_bool("reachability_vertical_slice", False):
+            yaw = self._handle_float("reachability_slice_yaw", 0.0)
+            image, width, height = slice_image_yaw(cap, yaw)
+            self.reachability_layer.show_vertical_slice(
+                image,
+                width=width,
+                height=height,
+                center_z=(cap.params.z_min + cap.params.z_max) / 2.0,
+                wxyz=vertical_slice_wxyz(radians(yaw)),
+            )
+        else:
+            self.reachability_layer.clear_vertical_slice()
+
+        if self._handle_bool("reachability_horizontal_slice", False):
+            z = self._handle_float(
+                "reachability_slice_z",
+                (cap.params.z_min + cap.params.z_max) / 2.0,
+            )
+            image, width, height = slice_image_height(cap, z)
+            self.reachability_layer.show_horizontal_slice(
+                image,
+                width=width,
+                height=height,
+                z=z,
+            )
+        else:
+            self.reachability_layer.clear_horizontal_slice()
+
+    def _sync_reachability_z_slider(self, cap: CapabilityMap) -> None:
+        handle = self._handles.get("reachability_slice_z")
+        if handle is None:
+            return
+        params = cap.params
+        self._set_optional_handle_attr(handle, "min", params.z_min)
+        self._set_optional_handle_attr(handle, "max", params.z_max)
+        self._set_optional_handle_attr(handle, "step", params.cell)
+        current = self._handle_float(
+            "reachability_slice_z",
+            (params.z_min + params.z_max) / 2.0,
+        )
+        self._set_optional_handle_attr(
+            handle, "value", float(np.clip(current, params.z_min, params.z_max))
+        )
+
+    def _selected_reachability_map(self) -> CapabilityMap | None:
+        if self.state.selected_robot is None:
+            return None
+        return self.reachability_maps.get(self.state.selected_robot)
+
+    def _handle_bool(self, key: str, default: bool) -> bool:
+        return bool(getattr(self._handles.get(key), "value", default))
+
+    def _handle_float(self, key: str, default: float) -> float:
+        try:
+            return float(getattr(self._handles.get(key), "value", default))
+        except (TypeError, ValueError):
+            return default
+
+    def _handle_str(self, key: str, default: str) -> str:
+        value = getattr(self._handles.get(key), "value", default)
+        return value if isinstance(value, str) else default
 
     def _refresh_selected_robot_state(self) -> None:
         robot_name = self.state.selected_robot
@@ -297,6 +464,7 @@ class ViserPanelGui:
         self._build_joint_sliders()
         self._sync_preset_dropdown()
         self.refresh()
+        self._refresh_reachability()
 
     def _sync_robot_dropdown(self, robots: list[str]) -> None:
         handle = self._handles.get("robot")

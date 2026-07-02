@@ -374,6 +374,72 @@ class TestPlanningInitialization:
         assert kwargs["seed"] is explicit_seed
         module._world_monitor.get_current_joint_state.assert_not_called()
 
+    def test_evaluate_pose_target_returns_ik_candidate_for_visual_preview(self, robot_config):
+        """Cartesian target evaluation keeps preview joints even when IK is not feasible."""
+        module = _make_module()
+        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
+        module._world_monitor = MagicMock()
+        module._world_monitor.world = MagicMock()
+        current = JointState(name=robot_config.joint_names, position=[0.0, 0.0, 0.0])
+        candidate = JointState(name=robot_config.joint_names, position=[0.1, 0.2, 0.3])
+        achieved_pose = PoseStamped(position=Vector3(x=0.4, y=0.1, z=0.2))
+        module._world_monitor.get_current_joint_state.return_value = current
+        module._world_monitor.is_state_valid.return_value = True
+        module._world_monitor.get_ee_pose.return_value = achieved_pose
+        module._kinematics = MagicMock()
+        module._kinematics.solve.return_value = IKResult(
+            status=IKStatus.NO_SOLUTION,
+            joint_state=candidate,
+            position_error=0.025,
+            orientation_error=0.2,
+            iterations=300,
+            message="Mink IK did not converge within the iteration budget",
+        )
+
+        pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
+        result = module.evaluate_pose_target(pose, "test_arm")
+
+        assert result["success"] is False
+        assert result["status"] == "NO_SOLUTION"
+        assert result["collision_free"] is True
+        assert result["joint_state"] is not None
+        assert result["joint_state"].position == [0.1, 0.2, 0.3]
+        assert result["ee_pose"] is achieved_pose
+        _, kwargs = module._kinematics.solve.call_args
+        assert kwargs["check_collision"] is False
+        module._world_monitor.is_state_valid.assert_called_once_with("robot_id", candidate)
+
+    def test_evaluate_pose_target_reports_collision_without_dropping_candidate(self, robot_config):
+        """A colliding Cartesian IK result can still pose the red preview ghost."""
+        module = _make_module()
+        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
+        module._world_monitor = MagicMock()
+        module._world_monitor.world = MagicMock()
+        current = JointState(name=robot_config.joint_names, position=[0.0, 0.0, 0.0])
+        candidate = JointState(name=robot_config.joint_names, position=[0.4, 0.5, 0.6])
+        module._world_monitor.get_current_joint_state.return_value = current
+        module._world_monitor.is_state_valid.return_value = False
+        module._world_monitor.get_ee_pose.return_value = None
+        module._kinematics = MagicMock()
+        module._kinematics.solve.return_value = IKResult(
+            status=IKStatus.SUCCESS,
+            joint_state=candidate,
+            position_error=0.0001,
+            orientation_error=0.0002,
+            iterations=20,
+            message="Mink IK solution found",
+        )
+
+        pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
+        result = module.evaluate_pose_target(pose, "test_arm")
+
+        assert result["success"] is False
+        assert result["status"] == "COLLISION"
+        assert result["message"] == "IK solution is in collision"
+        assert result["collision_free"] is False
+        assert result["joint_state"] is not None
+        assert result["joint_state"].position == [0.4, 0.5, 0.6]
+
 
 class TestJointNameTranslation:
     """Test trajectory joint name translation for coordinator."""

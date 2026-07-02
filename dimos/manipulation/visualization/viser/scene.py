@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Protocol, TypeAlias, cast
+from typing import TYPE_CHECKING, Protocol, TypeAlias, cast
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
@@ -53,6 +53,9 @@ except ImportError as e:
         raise
     raise ModuleNotFoundError(VISER_URDF_INSTALL_HINT) from e
 
+if TYPE_CHECKING:
+    from dimos.manipulation.visualization.viser.reachability import ReachabilityMapLayer
+
 logger = setup_logger()
 
 GOAL_ROBOT_FEASIBLE_COLOR = (255, 122, 0)
@@ -88,6 +91,7 @@ class ViserManipulationScene:
         self._configs_by_id: dict[str, RobotModelConfig] = {}
         self._urdfs: dict[str, ViserUrdf] = {}
         self._handles: dict[str, TransformControlsHandle] = {}
+        self._root_frames: dict[str, object] = {}
         self._grid_handle: GridHandle | None = None
         self._grid_visible = True
         self._preview_visible: dict[str, bool] = {}
@@ -108,6 +112,26 @@ class ViserManipulationScene:
         self._preview_visible.setdefault(robot_id, False)
         self._target_tracks_current.setdefault(robot_id, True)
         self._ensure_robot_urdfs(robot_id, config)
+
+    def unregister_robot(self, robot_id: str) -> None:
+        """Remove robot visuals and target controls for one robot ID."""
+        self._remove_handle(f"{robot_id}:ee_control")
+        for kind in ("current", "target", "preview"):
+            urdf = self._urdfs.pop(f"{robot_id}:{kind}", None)
+            if urdf is not None:
+                self._remove_scene_handle(urdf)
+            root = self._root_frames.pop(f"{robot_id}:{kind}", None)
+            if root is not None:
+                self._remove_scene_handle(root)
+        self._configs_by_id.pop(robot_id, None)
+        self._preview_visible.pop(robot_id, None)
+        self._target_tracks_current.pop(robot_id, None)
+
+    def create_reachability_layer(self, root: str = "/reachability") -> ReachabilityMapLayer:
+        """Create a reachability-map layer attached to this scene."""
+        from dimos.manipulation.visualization.viser.reachability import ReachabilityMapLayer
+
+        return ReachabilityMapLayer(self, root=root)
 
     def _ensure_reference_grid(self) -> None:
         try:
@@ -252,7 +276,10 @@ class ViserManipulationScene:
             self._grid_handle = None
         for urdf in self._urdfs.values():
             self._remove_scene_handle(urdf)
+        for root in self._root_frames.values():
+            self._remove_scene_handle(root)
         self._urdfs.clear()
+        self._root_frames.clear()
         self._configs_by_id.clear()
         self._preview_visible.clear()
         self._target_tracks_current.clear()
@@ -262,13 +289,11 @@ class ViserManipulationScene:
             return
         for kind in ("current", "target", "preview"):
             key = f"{robot_id}:{kind}"
+            root_node_name = self._root_node_name(robot_id, kind)
             if key in self._urdfs:
+                self._ensure_root_frame(key, root_node_name, config)
                 continue
-            root_node_name = {
-                "current": f"/robots/{robot_id}/current",
-                "target": f"/targets/{robot_id}/target",
-                "preview": f"/previews/{robot_id}/ghost",
-            }[kind]
+            self._ensure_root_frame(key, root_node_name, config)
             mesh_color_override = {
                 "current": None,
                 "target": GOAL_ROBOT_MESH_COLOR,
@@ -292,6 +317,55 @@ class ViserManipulationScene:
                 self._set_handle_visibility(
                     self._urdfs[key], self._preview_visible.get(robot_id, False)
                 )
+
+    @staticmethod
+    def _root_node_name(robot_id: str, kind: str) -> str:
+        return {
+            "current": f"/robots/{robot_id}/current",
+            "target": f"/targets/{robot_id}/target",
+            "preview": f"/previews/{robot_id}/ghost",
+        }[kind]
+
+    def _ensure_root_frame(self, key: str, root_node_name: str, config: RobotModelConfig) -> None:
+        if key in self._root_frames:
+            self._set_root_frame_pose(self._root_frames[key], config)
+            return
+        add_frame = getattr(self.server.scene, "add_frame", None)
+        if not callable(add_frame):
+            return
+        pose = config.base_pose
+        self._root_frames[key] = add_frame(
+            root_node_name,
+            show_axes=False,
+            position=(
+                float(pose.position.x),
+                float(pose.position.y),
+                float(pose.position.z),
+            ),
+            wxyz=(
+                float(pose.orientation.w),
+                float(pose.orientation.x),
+                float(pose.orientation.y),
+                float(pose.orientation.z),
+            ),
+        )
+
+    @staticmethod
+    def _set_root_frame_pose(frame: object, config: RobotModelConfig) -> None:
+        pose = config.base_pose
+        if hasattr(frame, "position"):
+            frame.position = (
+                float(pose.position.x),
+                float(pose.position.y),
+                float(pose.position.z),
+            )
+        if hasattr(frame, "wxyz"):
+            frame.wxyz = (
+                float(pose.orientation.w),
+                float(pose.orientation.x),
+                float(pose.orientation.y),
+                float(pose.orientation.z),
+            )
 
     def prepared_urdf_path(self, config: RobotModelConfig) -> Path:
         package_paths = {package: Path(path) for package, path in config.package_paths.items()}

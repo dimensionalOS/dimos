@@ -176,6 +176,7 @@ def test_config_validates_viser_visualization() -> None:
             "visualization_host": "0.0.0.0",
             "visualization_port": "8096",
             "viser_panel_enabled": "false",
+            "viser_reachability_maps": {"arm": "/tmp/g1-left-capability.npz"},
         },
     )
 
@@ -183,6 +184,7 @@ def test_config_validates_viser_visualization() -> None:
     assert config.visualization.host == "0.0.0.0"
     assert config.visualization.port == 8096
     assert config.visualization.panel_enabled is False
+    assert config.visualization.reachability_maps == {"arm": Path("/tmp/g1-left-capability.npz")}
 
 
 def test_config_meshcat_requires_world_visualization() -> None:

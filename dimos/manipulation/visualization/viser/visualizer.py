@@ -17,9 +17,11 @@ from __future__ import annotations
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
+from dimos.manipulation.reachability.capability_map import CapabilityMap
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
+from dimos.manipulation.visualization.viser.reachability import ReachabilityMapLayer
 from dimos.manipulation.visualization.viser.runtime import (
     VISER_URDF_INSTALL_HINT,
     ViserRuntime,
@@ -70,6 +72,7 @@ class ViserManipulationVisualizer:
         self._adapter: InProcessViserAdapter | None = None
         self._scene: ViserManipulationScene | None = None
         self._gui: ViserPanelGui | None = None
+        self._reachability_layer: ReachabilityMapLayer | None = None
         self._closed = False
 
     def _ensure_started(self) -> None:
@@ -78,6 +81,7 @@ class ViserManipulationVisualizer:
         runtime = ViserRuntime(self.config)
         scene: ViserManipulationScene | None = None
         gui: ViserPanelGui | None = None
+        reachability_layer: ReachabilityMapLayer | None = None
         try:
             server = runtime.start()
             apply_dimos_theme(server)
@@ -90,8 +94,18 @@ class ViserManipulationVisualizer:
                 ViserUrdf,
                 preview_fps=self.config.preview_fps,
             )
+            reachability_maps = self._load_reachability_maps() if self.config.panel_enabled else {}
+            if self.config.panel_enabled and reachability_maps:
+                reachability_layer = scene.create_reachability_layer()
             gui = (
-                ViserPanelGui(server, adapter, self.config, scene)
+                ViserPanelGui(
+                    server,
+                    adapter,
+                    self.config,
+                    scene,
+                    reachability_maps=reachability_maps,
+                    reachability_layer=reachability_layer,
+                )
                 if self.config.panel_enabled
                 else None
             )
@@ -101,6 +115,9 @@ class ViserManipulationVisualizer:
             if gui is not None:
                 with suppress(Exception):
                     gui.close()
+            if reachability_layer is not None:
+                with suppress(Exception):
+                    reachability_layer.close()
             if scene is not None:
                 with suppress(Exception):
                     scene.close()
@@ -111,6 +128,7 @@ class ViserManipulationVisualizer:
             self._adapter = None
             self._scene = None
             self._gui = None
+            self._reachability_layer = None
             self._closed = True
             raise
         self._runtime = runtime
@@ -118,8 +136,23 @@ class ViserManipulationVisualizer:
         self._adapter = adapter
         self._scene = scene
         self._gui = gui
+        self._reachability_layer = reachability_layer
         self._closed = False
         logger.info(f"Viser manipulation visualization: {self.get_visualization_url()}")
+
+    def _load_reachability_maps(self) -> dict[str, CapabilityMap]:
+        maps: dict[str, CapabilityMap] = {}
+        for robot_name, path in self.config.reachability_maps.items():
+            try:
+                cap = CapabilityMap.load(path)
+            except Exception:
+                logger.warning(
+                    f"Could not load reachability map for robot {robot_name!r}: {path}",
+                    exc_info=True,
+                )
+                continue
+            maps[robot_name] = cap
+        return maps
 
     def initialize_scene(self, scene: PlanningSceneInfo) -> None:
         """Initialize Viser robot visuals from planning-scene metadata."""
@@ -191,6 +224,11 @@ class ViserManipulationVisualizer:
                     self._gui.close()
                 except Exception as e:
                     errors.append(e)
+            if self._reachability_layer is not None:
+                try:
+                    self._reachability_layer.close()
+                except Exception as e:
+                    errors.append(e)
             if self._scene is not None:
                 try:
                     self._scene.close()
@@ -207,5 +245,6 @@ class ViserManipulationVisualizer:
             self._adapter = None
             self._scene = None
             self._gui = None
+            self._reachability_layer = None
         if errors:
             raise errors[0]

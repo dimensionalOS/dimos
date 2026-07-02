@@ -893,19 +893,28 @@ class ManipulationModule(Module):
                 "message": "Planning is not initialized or current state is unavailable",
                 "collision_free": False,
             }
-        ik = self._solve_ik_for_pose(robot_id, pose, current, check_collision=True)
-        joint_state = JointState(ik.joint_state) if ik.is_success() and ik.joint_state else None
+        # Visualization needs the best kinematic candidate even when it is not
+        # plan-valid yet, so solve IK first and report collision separately.
+        ik = self._solve_ik_for_pose(robot_id, pose, current, check_collision=False)
+        joint_state = JointState(ik.joint_state) if ik.joint_state else None
         collision_free = bool(
             joint_state is not None and self._world_monitor.is_state_valid(robot_id, joint_state)
         )
+        success = ik.is_success() and collision_free
+        ee_pose = self._world_monitor.get_ee_pose(robot_id, joint_state) if joint_state else None
+        status = "COLLISION" if ik.is_success() and not collision_free else ik.status.name
+        message = (
+            "IK solution is in collision" if ik.is_success() and not collision_free else ik.message
+        )
         return {
-            "success": joint_state is not None and collision_free,
+            "success": success,
             "joint_state": joint_state,
-            "status": ik.status.name,
-            "message": ik.message,
+            "status": status,
+            "message": message,
             "position_error": ik.position_error,
             "orientation_error": ik.orientation_error,
             "collision_free": collision_free,
+            "ee_pose": ee_pose,
         }
 
     def get_planned_path(self, robot_name: RobotName) -> JointPath | None:
