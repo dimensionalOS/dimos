@@ -1,16 +1,14 @@
 # dimoscope — Benchmark, QoS & Real-WAN
 
-The quantitative side of dimoscope: the in-browser transport benchmark, the QoS priority story, and the
-runbook for driving the dog over the real internet from a VPS.
-
-The load source for all of it is the `go2-load` dog (`dimos/robot/benchmark/go2_load.py`): fixed
-multi-rate `/load/{fast,mid,slow,grid,cloud}` lanes plus a crankable `/load/img` flood via
+Benchmarks, the QoS model, and the runbook for driving a robot over the real internet. The load
+source throughout is `go2-load` (`dimos/robot/benchmark/go2_load.py`): multi-rate
+`/load/{fast,mid,slow,grid,cloud}` lanes plus a `/load/img` flood cranked via
 `start_bench`/`stop_bench` `@rpc`. The standalone `load` blueprint is the same module without the sim.
 
 ```bash
 deno install && deno task build   # once — the app bundle the gateway serves at /
 deno task serve                   # gateway + WT sidecar → http://localhost:8080 (+ QUIC :8443)
-deno task load                    # /load/* lanes + the crankable flood (no sim; `deno task dog` = the full dimsim dog)
+deno task load                    # /load/* lanes + the crankable flood (`deno task dog` = the full dimsim dog)
 # open http://localhost:8080/ → Topics tab → Benchmark drawer
 ```
 
@@ -18,31 +16,25 @@ deno task load                    # /load/* lanes + the crankable flood (no sim;
 
 ## 1. The benchmark — in the real browser, across transports
 
-The Topics tab → Benchmark drawer measures the live transport end-to-end (publish→browser latency,
-`recvTs − srcTs`) across the workload profiles, then lets you copy the results as Markdown. Pick a
-transport from the topbar dropdown (WebSocket · SSE · HTTP poll · WebRTC data · WebTransport, or Auto),
-crank the load generator up the ladder (`light 2 → camera 11 → dense 20 → depth-hd 50 → raw-1080p 180
-→ firehose 300` MB/s on `/load/img`), and sweep. The `pose` profile measures the small `/load/{fast,mid,slow}`
-lanes, which are always live; the heavy profiles measure `/load/img` at whatever the generator emits.
-Running the `all-lanes` + `on-demand` pair in one sweep makes the Markdown export print the on-demand
-saving: the WS-hop bandwidth cut of subscribing 1 lane vs all of them (the README's ~75%).
+The Topics tab → Benchmark drawer measures the live transport end-to-end (publish→browser,
+`recvTs − srcTs`) across workload profiles and exports the results as Markdown. Transports come from
+the topbar dropdown; the generator ladder runs `light 2 → camera 11 → dense 20 → depth-hd 50 →
+raw-1080p 180 → firehose 300` MB/s on `/load/img`. `pose` measures the always-on small lanes; running
+the `all-lanes` + `on-demand` pair in one sweep prints the on-demand bandwidth cut (~75% on the WS hop).
 
-**Methodology** (`packages/web/src/bench.ts`): each scenario discards a warmup window (subscribe ramp-up
-and QoS negotiation never pollute the stats), measures for `durMs`, then drains a grace window so a frame
-that was merely delayed past the window counts as late, not lost. loss% is only what never arrived, and is
-NaN on rate-limited runs where gaps are intentional. Rates divide by the wall clock actually elapsed, not
-the nominal window. Before each sweep the client runs an NTP-style `{op:"ping"}` clock probe
-(`client.estimateClockOffset()`, lowest-RTT of 5) and corrects `recvTs − srcTs` by the offset, so
-end-to-end latency stays meaningful when the gateway is on another machine. Each result row is stamped
-with the wire that actually carried it (Auto → `(wire: …)`, otherwise the WT→WS fallback is silent), and
-the Markdown export carries the offered load, page origin, and UA.
+Methodology (`packages/web/src/bench.ts`): a warmup window is discarded (subscribe ramp-up, QoS
+negotiation), then `durMs` of measurement, then a grace window so a delayed frame counts as late, not
+lost — loss% is only what never arrived (NaN under client rate limits, where gaps are intentional).
+Rates divide by elapsed wall clock. An NTP-style `{op:"ping"}` probe (lowest-RTT of 5) corrects clock
+offset before each sweep, so end-to-end latency holds across machines. Every row is stamped with the
+wire that actually carried it (`wire: …` — the Auto WT→WS fallback is silent otherwise), the offered
+load, page origin, and UA.
 
 ### Results (localhost loopback · end-to-end · maxHz=∞ · 2026-07-02 · `31a1f92b7`)
 
-Loopback numbers, no network loss. They show the relay/browser ceiling and whether bulk drags down the
-small lanes — not WAN behavior (see §3). loss% marked `*` is a source-side seq floor (2–12%, varies per
-run, identical on TCP where wire loss is impossible) — not transport loss. Unmarked bulk loss% is the
-outbox conflating what the wire can't carry.
+Loopback: no network loss, so these show the relay/browser ceiling and lane isolation, not WAN
+behavior (§3). loss% marked `*` is a source-side seq floor (2–12%, varies per run, identical on TCP
+where wire loss is impossible); unmarked bulk loss% is the outbox conflating what the wire can't carry.
 
 **Small lanes + a 20 MB/s bulk stream — WebTransport (WT-rs) vs WebSocket:**
 
@@ -67,51 +59,38 @@ outbox conflating what the wire can't carry.
 | 300 MB/s | WebSocket | firehose (img) | 3.75 | 36.6 | 289 | 359 | 412 | 85 | 0 |
 | 300 MB/s | WebSocket | firehose, sustained 20 s | 3.85 | 37.6 | 282 | 328 | 412 | 85.4 | 0 |
 
-### Takeaways
+Takeaways:
 
-- The small high-rate lanes stay crisp beside any flood: `pose` holds ~95–100 Hz at ~1 ms p50 on both
-  transports with 20–180 MB/s of bulk running (3.4 ms at 300 MB/s offered). On WebTransport that's
-  structural — pose rides QUIC datagrams, isolated from the bulk stream inside one connection.
-- At robot-realistic bulk (≤20 MB/s) both transports carry the full dense flood at ~18 MB/s with 0%
-  loss; WT-rs does it at p50 9.6 ms vs WS 21 ms. WT's bulk rides one persistent reliable uni-stream
-  (big frames length-prefixed; small ≤1100 B frames go as datagrams — `gateway/wt-sidecar`).
-- Past that the roles are clear: WT-rs moves 155 of 180 MB/s offered (p99 232 ms); WS tops out at
-  ~40–45 MB/s of incompressible bulk and the outbox conflates the rest to the freshest frame (the
-  loss% column — shedding by design, the tab stays interactive). WebTransport is the bulk workhorse;
-  WebSocket is the universal control/fallback wire.
-- History note: this table's previous revision said "WS relays ~255 MB/s". That was measured before
-  `032a9f4cb` — the generators published all-zeros frames and WS permessage-deflate shrank them
-  ~1000:1, so the wire carried kilobytes while the browser reported hundreds of MB/s. These are the
-  first honest loopback WS numbers. Deflate still burns CPU on the now-random payloads; disabling it
-  on `/ws` is an open follow-up that should raise the WS ceiling.
-- WebTransport's other advantage — no HoL blocking under packet loss — doesn't show on loopback: with
-  zero loss, TCP never stalls. Measure it on a real WAN (§3), or inject loss locally (Linux `tc qdisc
-  add dev lo root netem loss 5%`; macOS `dnctl`/dummynet via `pfctl`).
-- The Python relay comfortably carries robot-realistic bulk on either wire; past ~45 MB/s the Rust
-  sidecar is the path. The tab survives the 300 MB/s firehose either way (conflation + backpressure —
-  no hard crash).
+- pose holds ~95–100 Hz at ~1 ms p50 beside 20–180 MB/s of bulk on both transports (3.4 ms at
+  300 MB/s offered). On WebTransport the isolation is structural: pose rides datagrams, bulk rides one
+  reliable length-prefixed uni-stream, inside one connection.
+- At robot-realistic bulk (≤20 MB/s) the transports tie on throughput (~18 MB/s, 0% loss); WT-rs
+  delivers it at p50 9.6 ms vs WS 21 ms.
+- Past that they diverge: WT-rs moves 155 of 180 MB/s offered; WS tops out around 40–45 MB/s of
+  incompressible bulk and the outbox conflates the rest to the freshest frame (shedding by design —
+  the tab stays interactive through the 300 MB/s firehose). permessage-deflate burns CPU on the random
+  payloads; disabling it on `/ws` is an open follow-up.
+- Loopback has no loss, so TCP never stalls here. The no-HoL-under-loss case is §3 — or inject loss
+  locally (Linux `tc qdisc add dev lo root netem loss 5%`; macOS `dnctl`/dummynet).
 
-Re-run any of this yourself: `deno task dog`, open the Benchmark drawer, set the generator tier, pick the
-matching workload profile, **Run sweep**, **copy Markdown**. `?gw=host:port` points it at a remote VPS;
-`?dur=ms` tunes the window.
+Re-run: pick a generator tier + the matching workload profile, **Run sweep**, **copy Markdown**.
+`?gw=host:port` targets a remote gateway; `?dur=ms` tunes the window.
 
 ---
 
 ## 2. QoS — declare importance, enforce it at the bottleneck
 
-On a constrained browser link, declaring some topics more important and enforcing it at the gateway
-keeps pose/teleop crisp while bulk (lidar/camera) degrades gracefully, instead of everything getting
-equally janky.
+On a constrained browser link, declaring some topics more important keeps pose/teleop fresh while
+bulk degrades gracefully, instead of everything getting equally stale.
 
 Declaration → enforcement → transport:
-1. Client declares a lane per topic (sane defaults, configurable) — `packages/web/src/qos.ts`.
-2. Gateway enforces at the per-client egress — `gateway/qos.py`'s priority outbox, wired into
-   `gateway/data.py`: under backpressure it drains high-priority topics first and conflates/drops the
-   lowest-priority `best_effort` topics first, never the high-priority ones.
-3. Transport reinforces (optional): put high-priority small topics on a no-HoL primitive (WebTransport
-   datagrams) so they can't queue behind bulk within one connection.
+1. Client declares a lane per topic (defaults by name/type, overridable) — `packages/web/src/qos.ts`.
+2. Gateway enforces at the per-client egress — `gateway/qos.py`'s priority outbox: under backpressure
+   it drains high-priority topics first and sheds the lowest-priority best-effort topics first.
+3. Transport reinforces (optional): high-priority small topics on a no-HoL primitive (WT datagrams)
+   can't queue behind bulk within one connection.
 
-The four lanes (auto-assigned by name/type via `defaultLane`, overridable per-topic; grounded in DDS / ROS 2):
+The four lanes (auto-assigned via `defaultLane`, grounded in DDS / ROS 2):
 
 | lane | reliability | priority | under load | typical topics |
 |---|---|---|---|---|
@@ -120,89 +99,76 @@ The four lanes (auto-assigned by name/type via `defaultLane`, overridable per-to
 | **default** | reliable | normal | bounded queue | general |
 | **bulk** | best-effort | low | conflates / sheds first | lidar, camera, pointcloud, maps |
 
-`gateway/qos.py` replaces the single FIFO with `{priority-class → {topic → slot}}`: `best_effort` topics
-get a latest-only slot (a backed-up lidar overwrites itself, never grows a queue); `reliable` topics get a
-bounded deque (DDS `keep_last`). The writer drains by weighted round-robin — high classes get most of the
-budget, low classes keep a non-starving floor. Nothing novel here: Foxglove's ws-bridge keeps a bounded
-per-client queue, Reactive Streams calls the conflation `onBackpressureLatest`, DDS/Zenoh have the
-reliability + priority bands. The same patterns, applied at the browser link — the one boundary bus QoS
-can't reach.
+`gateway/qos.py` replaces the single FIFO with `{priority class → {topic → slot}}`: best-effort
+topics keep a latest-only slot (a backed-up lidar overwrites itself, never grows a queue), reliable
+topics a bounded deque (DDS `keep_last`), drained by weighted round-robin with a non-starving floor
+for the lowest class. Prior art: Foxglove's bounded per-client queue, Reactive Streams'
+`onBackpressureLatest`, DDS/Zenoh reliability + priority bands — applied at the browser link, the one
+boundary bus QoS can't reach.
 
-The A/B (pose @100 Hz light+high-priority · a heavy low-priority stream · link paced to ~4 Mbps via
-`EGRESS_KBPS`), scheduler OFF (FIFO) vs ON (priority outbox):
+The A/B (pose @100 Hz high-priority · a heavy low-priority stream · link paced to ~4 Mbps),
+scheduler OFF (FIFO) vs ON:
 
 | mode | pose hz | **pose p50** | pose p95 | heavy hz |
 |---|--:|--:|--:|--:|
 | **OFF** (FIFO) | 55 | **1294 ms** | 2419 ms | 120 |
 | **ON** (priority outbox) | 99.5 | **4 ms** | 9 ms | 116 |
 
-Pose latency collapses 1294 ms → 4 ms (~300×) and rate is restored (55 → 99.5 Hz) while the heavy stream
-keeps flowing, conflated to its freshest frame. The catch: priority only bites if the backlog sits in the
-gateway outbox. That's why the gateway paces each client's writer to its link budget (`EGRESS_KBPS`,
-applied to both the `/ws` writer and the WebTransport drain). Without pacing, kernel and proxy socket
-buffers absorb the backlog downstream and FIFO it — bufferbloat defeats any gateway QoS. Same discipline
-as WebRTC's `bufferedAmount` watermark.
+Priority only bites if the backlog sits in the outbox, so the gateway paces each client's writer to
+its link budget (`EGRESS_KBPS`, applied to the `/ws` writer and the WT drain); without pacing,
+kernel/proxy socket buffers absorb the backlog downstream and FIFO it.
 
-Lanes are defaults. A subscriber overrides any topic's QoS and it flows over the wire (the `subscribe` op
-carries `priority`/`reliability`/`depth`, resolved client-side from `topic.setQos({lane})`); declaring
-`pose=bulk` + `lidar=command` from the client flips which stream survives the saturated link. Operator
-config (`qos.rules.json`, copy `qos.rules.example.json`) classifies custom per-blueprint topics by
-name/type glob; the subscriber always wins over it.
-
-Priority only matters under saturation — on a fat link both modes look identical, correctly.
+Lanes are defaults. The `subscribe` op carries per-topic `priority`/`reliability`/`depth`
+(`topic.setQos(...)` client-side) and the subscriber's declaration wins; operator config
+(`qos.rules.json`, see `qos.rules.example.json`) classifies custom topics by name/type glob in
+between. Under a fat link both scheduler modes measure identical — priority only matters at saturation.
 
 ---
 
 ## 3. Real-WAN — the dog over the internet from a VPS
 
-Run the gateway + `go2-load` on a VPS with a public IP and drive it from your browser over the real path
-(RTT, reorder, drop). The JS SDK doesn't change: the app + Benchmark drawer read `?gw=host:port`.
+Run the gateway + `go2-load` on a VPS with a public IP; the app + Benchmark drawer read
+`?gw=host:port`. Serve the page from `http://localhost` (Mac Vite), not from the public IP:
+WebTransport needs a secure context — on a bare-IP HTTP origin the API is `undefined` and the app
+silently uses WebSocket.
 
-Serve the app from `http://localhost` (Mac Vite + `?gw=VPS`), not from `http://<public-IP>`: WebTransport
-needs a secure context, and `localhost` qualifies where a bare public-IP HTTP origin doesn't (the
-`WebTransport` API is simply `undefined` there, so the app silently uses WebSocket). Keeping the page on
-`localhost` also lets `ws://`/`http://` reach the VPS IP without a mixed-content block.
+### WAN deploy notes (2026-07-01, Mac ⇄ a public-IP VPS)
 
-### WAN results (2026-07-01, measured — Mac ⇄ a small public-IP VPS over the real internet)
-
-Deploy: `go2-load` runs on the Linux VPS; `/load/*` streams over the real internet, and the full dog
-renders headless — dimsim launches Chromium (`DIMSIM_RENDER=cpu`, SwiftShader software WebGL), publishes
-`/color_image` + `/camera_info`, and the rendered scene shows in the browser over WAN. *(If `playwright install chromium` — which dimsim runs on
-first launch — hangs, the usual cause is a broken IPv6 route to the CDN: fetch the browser + headless-shell
-over **IPv4** (`wget -4 …chrome-linux64.zip` / `…chrome-headless-shell-linux64.zip`) into
-`~/.cache/ms-playwright/chromium{,_headless_shell}-<build>/` with empty
-`INSTALLATION_COMPLETE`+`DEPENDENCIES_VALIDATED` markers, or prefer IPv4 system-wide. Use **cam: jpeg**
-over WAN — the webrtc cam mode needs ICE, which doesn't establish over a raw IP.)*
-For a headless benchmark **without** the sim, the standalone `deno task load:flood` source is lighter.
+`go2-load` runs on the Linux VPS; `/load/*` streams over the real internet and the dog renders
+headless — dimsim launches Chromium (`DIMSIM_RENDER=cpu`, SwiftShader), publishes `/color_image` +
+`/camera_info`. If `playwright install chromium` hangs on first launch, the usual cause is a broken
+IPv6 route to the CDN: fetch the browser + headless-shell over IPv4 (`wget -4 …chrome-linux64.zip` /
+`…chrome-headless-shell-linux64.zip`) into `~/.cache/ms-playwright/chromium{,_headless_shell}-<build>/`
+with empty `INSTALLATION_COMPLETE`+`DEPENDENCIES_VALIDATED` markers. Use **cam: jpeg** over WAN — the
+webrtc cam mode needs ICE, which doesn't establish over a raw IP. For a headless benchmark without the
+sim, `deno task load:flood` is lighter.
 
 ### Network profiles — simulate deployment conditions from the browser
 
 The BenchDrawer's Network section flips server-side `tc netem` profiles on the gateway host —
 `clean · wifi-normal (10mbit/40ms/0.3%) · wifi-crowded (2mbit/100ms/1.5% bursty) · wifi-edge
-(700kbit/200ms/5% bursty) · disaster (200kbit/500ms/8%) · loss-3/loss-5 (loss with no bw cap, the HoL
-isolation tiers)` — plus momentary UDP/all **outage** buttons. Every result row and the copied Markdown are
-stamped `net:<profile>`, so a table is self-describing across workload × transport × network condition.
+(700kbit/200ms/5% bursty) · disaster (200kbit/500ms/8%) · loss-3/loss-5 (loss, no bw cap)` — plus
+momentary UDP/all outage buttons. Every result row is stamped `net:<profile>`.
 
-Opt-in and scoped: install the root wrapper once with `deno task netem:install` (= `sudo install -m755
-gateway/scripts/dimos-netem /usr/local/bin/` + a sudoers entry for `$USER` scoped to that one script),
-then run the gateway with `NETEM_CTL=1`. Shaping hits **only** the gateway's egress ports
-(8080/8443 via a prio+u32 band), so SSH and the rest of the box are untouched, and every apply self-heals
-after 15 min. Apply loss **after** the transport is connected — QUIC handshakes fail under loss.
+Opt-in and scoped: install the root wrapper once with `deno task netem:install` (= `sudo install
+-m755 gateway/scripts/dimos-netem /usr/local/bin/` + a sudoers entry for `$USER` scoped to that one
+script), then run the gateway with `NETEM_CTL=1`. Shaping hits only the gateway's egress ports
+(8080/8443 via a prio+u32 band) — SSH stays untouched — and every apply self-heals after 15 min.
+Apply loss **after** the transport is connected: QUIC handshakes fail under loss.
 
-The browser panel is one of three equivalent controls — all drive the same wrapper and stay in sync
-(the panel shows whatever is currently active):
+The browser panel is one of three equivalent controls over the same wrapper (the panel shows whatever
+is active):
 
 ```bash
 sudo dimos-netem wifi-crowded    # on the gateway box — apply · `clean` clears · `status` prints
 curl -X POST http://<gw>:8080/netem -H 'content-type: application/json' -d '{"profile":"loss-5"}'
-curl http://<gw>:8080/netem      # from anywhere — the same endpoint the browser panel uses
+curl http://<gw>:8080/netem      # from anywhere — the endpoint the browser panel uses
 ```
 
-Payloads are incompressible by design: the load generators publish random bytes, about the entropy of
-real camera/lidar data. WebSocket negotiates permessage-deflate, which squeezes regular payloads ~1000:1,
-so a compressible bench payload measures the compressor, not the transport — and asymmetrically, since
-QUIC/WT has no equivalent. Sanity check on any run: the netem band byte counters must move ≈ the bytes
-the browser reports.
+Payloads are incompressible by design: the generators publish random bytes, about the entropy of real
+camera/lidar data. WebSocket negotiates permessage-deflate, which squeezes regular payloads ~1000:1 —
+a compressible bench payload measures the compressor, not the transport (and asymmetrically: QUIC/WT
+has no equivalent). Sanity check: the netem band byte counters must move ≈ the bytes the browser reports.
 
 ### The profile matrix (2026-07-02 · 20 MB/s offered flood · clock-synced end-to-end latency)
 
@@ -213,10 +179,10 @@ and QoS config and feeds it over a unix socket (`gateway/pipe.py`). Teleop/goal/
 sidecar → pipe → the same `SafetyEgress`; a dying session (or a dying sidecar) still zero-twists the
 robot.
 
-Both transports, measured back-to-back in one session on a clean-install deployment (fresh clone →
-`uv sync --extra web` → `deno install && deno task build` → `deno task serve` + `deno task load`).
-pose = the small lanes alone; bulk = the steady-state flood scenario; the crowded rows use a 20 s
-window (a 1 MB frame needs ~4.1 s of wire time at 2 mbit — a 4 s window can't contain one):
+Both transports, back-to-back in one session on a clean-install deployment (fresh clone → `uv sync
+--extra web` → `deno install && deno task build` → `deno task serve` + `deno task load`). pose = the
+small lanes alone; bulk = the steady-state flood; crowded rows use a 20 s window (a 1 MB frame needs
+~4.1 s of wire time at 2 mbit):
 
 | net profile | transport | pose hz / loss% / p50 / p99 (ms) | bulk (1 MB frames) |
 |---|---|---|---|
@@ -229,27 +195,19 @@ window (a 1 MB frame needs ~4.1 s of wire time at 2 mbit — a 4 s window can't 
 | **loss-5** | **WT-rs** | 106 / 4.9 / **51** / **65** | **10.7 MB/s** / 49% shed |
 | **loss-5** | WS | 113 / 0 / 60 / **163** | **0** *(Mathis at 5% < one frame)* |
 
-Reading the matrix:
-- loss-5 is the HoL case: QUIC keeps both lanes alive at 5% random loss — pose p99 65 ms (datagrams,
-  shedding 4.9%) and bulk 10.7 MB/s (per-stream retransmission). TCP delivers every pose frame but with
-  a 163 ms retransmit tail, and its bulk moves zero bytes. Freshness vs completeness: teleop/pose on
-  datagrams, commands/bulk on reliable streams.
-- TCP bulk dies by Mathis, not by the pipe. At wifi-normal the cap is 1.25 MB/s but TCP under 0.3%
-  random loss can't complete a single 1 MB frame in the window; at 5% loss it moves zero bytes. Random
-  loss is poison for reliable bulk regardless of bandwidth. WT-rs tracks the shaped caps exactly
-  (1.22 MB/s / 195 kB/s).
-- Bulk is wire-limited on WT-rs: 19.0 of the 20 MB/s offered flood on the clean path at p50 56 ms, over
-  the same single QUIC connection that carries pose at p50 22 ms. WebSocket on the same path manages
-  11.5 MB/s with 40% shed at p50 230 ms — TCP congestion control plus permessage-deflate CPU on
-  incompressible payloads.
-- wifi-crowded is the coexistence case: pose-in-isolation is queue-dominated on both transports
-  (p99 463 vs 153 over 20 s — TCP's in-order smoothing reads better) — but the moment bulk shares the
-  connection, WS collapses to 0.49 Hz of everything at 99.5% loss while WT-rs keeps pose at 107 Hz /
+- loss-5: QUIC keeps both lanes alive — pose p99 65 ms shedding 4.9%, bulk 10.7 MB/s via per-stream
+  retransmission. TCP delivers every pose frame at a 163 ms retransmit tail and moves zero bulk.
+  Freshness vs completeness: pose/teleop on datagrams, commands/bulk on reliable streams.
+- TCP bulk dies by Mathis, not bandwidth: 0.3% random loss already stops 1 MB frames at wifi-normal.
+  WT-rs tracks the shaped caps exactly (1.22 MB/s, 195 kB/s).
+- Clean-path bulk is wire-limited on WT-rs — 19.0 of 20 MB/s at p50 56 ms, pose at p50 22 ms on the
+  same connection. WS manages 11.5 MB/s at p50 230 ms (congestion control + deflate CPU).
+- wifi-crowded is the coexistence case: pose alone is queue-dominated on both transports, but with
+  bulk sharing the connection WS collapses to 0.49 Hz / 99.5% loss while WT-rs keeps pose at 107 Hz /
   p99 249 ms beside cap-pinned bulk. One QUIC connection isolates its lanes; one TCP pipe doesn't.
-  At this tier the real fix is §2's rate-limits/conflation, not transport choice.
-- UDP over raw IP remains finicky: QUIC handshakes fail under loss (connect first, then apply);
-  WebRTC-data needs STUN/TURN; Auto falls back to WS when WT can't establish (the wire tag in each row
-  shows which transport carried the run). Outage buttons (`UDP 3s/10s`, `all 10s`) exist for
+  The fix at this tier is §2's rate-limits/conflation, not transport choice.
+- QUIC handshakes fail under loss (connect first, then apply); WebRTC-data needs STUN/TURN; Auto
+  falls back to WS when WT can't establish. The outage buttons (`UDP 3s/10s`, `all 10s`) cover
   fallback/reconnect timing.
 
 Recommendation: `Auto (WT→WS)` — WT-rs where UDP works, WebSocket everywhere else.
@@ -262,7 +220,7 @@ Two design constraints behind those numbers (`wt-sidecar/src/main.rs`):
 
 ### VPS — run the dog (Ubuntu; needs `uv` + `rustup`; `deno` only to build the app)
 
-Firewall — open the ports: TCP `8080`; UDP `:8443` (WebTransport) + the WebRTC ICE range.
+Firewall: TCP `8080`; UDP `:8443` (WebTransport) + the WebRTC ICE range.
 `sudo ufw allow 8080/tcp; sudo ufw allow 8443/udp; sudo ufw allow 32768:60999/udp`.
 
 The simulated dog is heavier than `--extra web`: `go2-load` composes the smart `unitree_go2` (mapping +
@@ -284,17 +242,15 @@ DIMOS_TRANSPORT=zenoh DIMSIM_RENDER=cpu \
   uv run dimos --simulation dimsim run go2-load &                # the dog, headless CPU render
 ```
 
-`DIMSIM_RENDER=cpu` forces software rendering on a headless box (default is `gpu`); dimsim always runs
-`--headless` and needs `git` + outbound internet on first run (repo + Chromium download). The first RPC
-after a gateway start (e.g. the drawer's `Start load`) can take ~10 s while zenoh establishes the
-`/rpc/*` routes — later calls are instant.
+`DIMSIM_RENDER=cpu` forces software rendering on a headless box (default `gpu`); dimsim needs `git` +
+outbound internet on first run. The first RPC after a gateway start (e.g. the drawer's `Start load`)
+can take ~10 s while zenoh establishes the `/rpc/*` routes — later calls are instant.
 
-Light fallback if the full sim is too heavy on the box: `uv sync --extra web`, then either
-`uv run dimos run load` (the standalone `/load/*` source, coordinator-wired, keeps the interactive
-`start_bench` crank) or `DIMOS_TRANSPORT=lcm uv run python scenarios/bench.py` (ultra-light, env-tuned).
-Both give a WAN benchmark with no dog viz.
+Light fallback if the sim is too heavy: `uv sync --extra web`, then `uv run dimos run load` (the
+standalone `/load/*` source, keeps the `start_bench` crank) or `DIMOS_TRANSPORT=lcm uv run python
+scenarios/bench.py` (ultra-light, env-tuned).
 
-### Mac — point the browser at the VPS (zero new code)
+### Mac — point the browser at the VPS
 
 ```bash
 deno task app     # Vite on :5173, served from your Mac
@@ -302,16 +258,15 @@ deno task app     # Vite on :5173, served from your Mac
 # Topics tab → Benchmark → sweep each transport for real-path hz/latency/loss
 ```
 
-Keep the client page on `http://localhost` (so it may reach `ws://`/`http://` on the VPS IP without a
-mixed-content block). WebTransport's self-signed cert is ECDSA ≤10 days — the service regenerates it and the
-client always fetches the current hash from `/cert`.
+WebTransport's self-signed cert is ECDSA ≤10 days; the service regenerates it and the client always
+fetches the current hash from `/cert`.
 
 ### A physical Go2 over the internet
 
-No code change: run the gateway on a machine *next to the real dog* (`uv sync --extra unitree`, robot IP +
-per-device AES-128 key), point `go2-load` / `unitree_go2` at the hardware, forward `8080/tcp` + `8443/udp`
-from that network, and any browser drives it via `http://localhost:5173/?gw=<their-ip>:8080`. Same app, same
-`SafetyEgress` (velocity clamp + TTL deadman + stop-on-disconnect).
+No code change: run the gateway on a machine next to the real dog (`uv sync --extra unitree`, robot
+IP + per-device AES-128 key), point `go2-load` / `unitree_go2` at the hardware, forward `8080/tcp` +
+`8443/udp`, and any browser drives it via `http://localhost:5173/?gw=<their-ip>:8080`. Same app, same
+`SafetyEgress`.
 
 ### Environment reference (gateway + sidecar)
 
