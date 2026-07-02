@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useCommands, useDimosClient, useRpc, useServers, useTopics } from "../dimos";
 import { useGateway } from "../gateway";
+import { getParam, setUrlParam } from "../urlState";
 import { type BenchRow, formatMarkdown, measureScenario, type Qos, STREAM_PROFILES } from "@dimos/web";
 
 const HZ_PRESETS = [0, 5, 20, 60, 120];
@@ -36,6 +37,22 @@ const STREAM_TIERS = [
 ];
 const mbps = (bytes: number, hz: number) => (bytes * hz) / 1e6;
 
+// The bench config drives from the URL: ?profiles=pose,dense,mixed · ?dur=ms · ?maxHz=n ·
+// ?load=<tier id> (preselects the tier — starting the flood stays the ▶ button). Knob changes are
+// reflected back (omitted at defaults), and the Markdown export embeds the full repro URL.
+const BENCH_PARAMS = ["profiles", "dur", "maxHz", "load"];
+const initProfiles = (): string[] => {
+  const ids = new Set(STREAM_PROFILES.map((p) => p.id));
+  const fromUrl = (getParam("profiles") ?? "").split(",").filter((id) => ids.has(id));
+  return fromUrl.length ? fromUrl : ["pose"];
+};
+const initInt = (name: string, fallback: number): number => {
+  const raw = getParam(name);
+  const n = raw === null ? NaN : Number(raw);
+  return Number.isInteger(n) && n >= 0 ? n : fallback;
+};
+const initTier = () => STREAM_TIERS.find((t) => t.id === getParam("load"));
+
 export function BenchDrawer() {
   const client = useDimosClient();
   const commands = useCommands();
@@ -45,12 +62,12 @@ export function BenchDrawer() {
   const activeUrl = servers.find((s) => s.id === activeId)?.url;
   const activeLabel = servers.find((s) => s.id === activeId)?.label ?? "active";
 
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(() => BENCH_PARAMS.some((k) => getParam(k) !== null));
 
   const hasRpc = commands.some((c) => c.target === "GO2Load");
   const [heavyKind, setHeavyKind] = useState<"image" | "cloud">("image");
-  const [heavyHz, setHeavyHz] = useState(20);
-  const [heavyBytes, setHeavyBytes] = useState(1_000_000);
+  const [heavyHz, setHeavyHz] = useState(() => initTier()?.hz ?? 20);
+  const [heavyBytes, setHeavyBytes] = useState(() => initTier()?.bytes ?? 1_000_000);
   const [heavyOn, setHeavyOn] = useState(false);
   const [genMsg, setGenMsg] = useState<string>();
   const [genBusy, setGenBusy] = useState(false);
@@ -113,11 +130,18 @@ export function BenchDrawer() {
   }
 
   // Workload + sweep knobs. maxHz is the one QoS request applied to the sweep (gateway-enforced).
-  const [picked, setPicked] = useState<string[]>(["pose"]);
-  const [maxHz, setMaxHz] = useState(0);
-  const [dur, setDur] = useState(4000);
+  const [picked, setPicked] = useState<string[]>(initProfiles);
+  const [maxHz, setMaxHz] = useState(() => initInt("maxHz", 0));
+  const [dur, setDur] = useState(() => initInt("dur", 4000));
   const qos: Qos = { maxHz };
   const qosLabel = `maxHz=${maxHz ? `${maxHz}Hz` : "∞"}`;
+
+  // Reflect the knobs back into the URL (default values are omitted to keep it clean).
+  useEffect(() => {
+    setUrlParam("profiles", picked.length === 1 && picked[0] === "pose" ? null : picked.join(","));
+    setUrlParam("dur", dur === 4000 ? null : String(dur));
+    setUrlParam("maxHz", maxHz === 0 ? null : String(maxHz));
+  }, [picked, dur, maxHz]);
 
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState("idle");
@@ -181,9 +205,18 @@ export function BenchDrawer() {
   const clockLabel = clock
     ? `clock offset ${clock.offsetMs.toFixed(1)}ms (rtt ${clock.rttMs.toFixed(1)}ms) corrected`
     : "no clock sync (latency raw)";
+  // Full repro URL from the live state (not location.href — the load tier isn't URL-tracked live).
+  const reproQ = new URLSearchParams({ gw: gateway, transport: activeId ?? "auto" });
+  if (!(picked.length === 1 && picked[0] === "pose")) reproQ.set("profiles", picked.join(","));
+  if (dur !== 4000) reproQ.set("dur", String(dur));
+  if (maxHz) reproQ.set("maxHz", String(maxHz));
+  const runTier = STREAM_TIERS.find((t) => t.bytes === heavyBytes && t.hz === heavyHz);
+  if (heavyOn && runTier) reproQ.set("load", runTier.id);
+  const repro = `${location.origin}${location.pathname}?${reproQ}`;
   const md = `# dimoscope in-app bench — ${activeLabel}\n\n` +
     `_${stamp} · ${dur}ms/scenario · end-to-end latency · ${clockLabel} · QoS: ${qosLabel} · ${offeredLabel}_\n` +
-    `_${globalThis.location?.origin ?? "?"} · ${globalThis.navigator?.userAgent ?? "?"}_\n\n` +
+    `_repro: ${repro}_\n` +
+    `_${globalThis.navigator?.userAgent ?? "?"}_\n\n` +
     [...byLabel].map(([label, rs]) => formatMarkdown(label, activeUrl ?? activeLabel, dur, stamp, rs)).join("\n---\n\n");
 
   return (

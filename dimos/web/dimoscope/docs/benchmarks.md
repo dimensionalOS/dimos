@@ -74,7 +74,10 @@ Takeaways:
   locally (Linux `tc qdisc add dev lo root netem loss 5%`; macOS `dnctl`/dummynet).
 
 Re-run: pick a generator tier + the matching workload profile, **Run sweep**, **copy Markdown**.
-`?gw=host:port` targets a remote gateway; `?dur=ms` tunes the window.
+The config drives from the URL — `?gw=host:port` targets a remote gateway, `?transport=<id>` pins
+the transport, `?profiles=pose,dense,mixed` selects workloads, `?dur=ms` tunes the window,
+`?maxHz=n` caps client QoS, `?load=<tier>` preselects the generator tier — and each export embeds
+its `repro:` URL.
 
 ---
 
