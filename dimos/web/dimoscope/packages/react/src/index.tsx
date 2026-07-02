@@ -52,14 +52,20 @@ const Ctx = createContext<DimosCtx>({
 });
 
 /** Provides a DimosClient to the tree. Pass `servers` to expose a switcher (the client is rebuilt on
- *  change); a bare `url` is a one-server shorthand. */
+ *  change); a bare `url` is a one-server shorthand. Persistence policy stays with the app:
+ *  `initialServerId` seeds the switcher (unknown id → first entry) and `onActiveChange` fires on
+ *  every user switch (write it to a URL param / localStorage there). */
 export function DimosProvider({
   servers,
   url,
+  initialServerId,
+  onActiveChange,
   children,
 }: {
   servers?: ServerOpt[];
   url?: string;
+  initialServerId?: string;
+  onActiveChange?: (id: string) => void;
   children: ReactNode;
 }) {
   const list = useMemo<ServerOpt[]>(
@@ -76,9 +82,17 @@ export function DimosProvider({
         : []),
     [servers, url],
   );
-  const [activeId, setActiveId] = useState<string | null>(list[0]?.id ?? null);
+  const [activeId, setActiveIdState] = useState<string | null>(
+    initialServerId && list.some((s) => s.id === initialServerId)
+      ? initialServerId
+      : list[0]?.id ?? null,
+  );
   const [client, setClient] = useState<DimosClient | null>(null);
   const [status, setStatus] = useState<Status>("connecting");
+  const setActiveId = (id: string) => {
+    setActiveIdState(id);
+    onActiveChange?.(id);
+  };
 
   useEffect(() => {
     const opt = list.find((s) => s.id === activeId);

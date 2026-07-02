@@ -4,6 +4,7 @@ import { DimosProvider, type ServerOpt } from "@dimos/react";
 import { createAutoTransport, createDimosClient, createGatewayWsTransport } from "@dimos/web";
 import { App } from "./App";
 import { GatewayContext } from "./gateway";
+import { setUrlParam } from "./urlState";
 import "./styles.css";
 
 // Data plane, camera /media, and bench transports share one host:port; the gateway (host:port) is a
@@ -17,6 +18,14 @@ function initialGateway(): string {
   return new URLSearchParams(location.search).get("gw") ??
     localStorage.getItem("dimos.gw") ??
     `${location.hostname}:${GW_PORT}`;
+}
+
+// Initial transport: ?transport=<id> seeds the dropdown, else localStorage, else auto. Unknown ids
+// fall back to the first server entry inside DimosProvider.
+function initialTransport(): string {
+  return new URLSearchParams(location.search).get("transport") ??
+    localStorage.getItem("dimos.transport") ??
+    "auto";
 }
 
 // Rebuilt whenever the gateway changes; DimosProvider reconnects on list-identity change.
@@ -105,11 +114,20 @@ function Root() {
     const v = g.trim();
     if (!v || v === gateway) return;
     localStorage.setItem("dimos.gw", v);
+    setUrlParam("gw", v);
     setGatewayState(v); // → servers rebuild → DimosProvider closes the old client + reconnects to `v`
+  };
+  const onTransportChange = (id: string) => {
+    localStorage.setItem("dimos.transport", id);
+    setUrlParam("transport", id);
   };
   return (
     <GatewayContext.Provider value={{ gateway, setGateway }}>
-      <DimosProvider servers={servers}>
+      <DimosProvider
+        servers={servers}
+        initialServerId={initialTransport()}
+        onActiveChange={onTransportChange}
+      >
         <App />
       </DimosProvider>
     </GatewayContext.Provider>

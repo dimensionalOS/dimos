@@ -97,9 +97,10 @@ signatures — see [`packages/web/README.md`](packages/web/README.md).
 ## Transports — pick a delivery mechanism from the topbar dropdown
 
 Same app, same `@dimos/web` SDK, five swappable delivery mechanisms — all on the one service,
-same-origin. The dropdown rebuilds the client; `?gw=host:port` overrides the origin, e.g. a remote VPS
-for real-WAN testing. They carry identical self-describing frames, so the codec is unchanged; only the
-wire differs:
+same-origin. The dropdown rebuilds the client; `?gw=host:port` overrides the origin (e.g. a remote VPS
+for real-WAN testing) and `?transport=<id>` persists the dropdown across reloads (`auto | ws | sse |
+poll | webrtc | webtransport`). They carry identical self-describing frames, so the codec is unchanged;
+only the wire differs:
 
 | Mechanism        | Wire              | Path        | Notes                                                                                                        |
 | ---------------- | ----------------- | ----------- | ------------------------------------------------------------------------------------------------------------ |
