@@ -13,7 +13,8 @@
       flake = false;
     };
     fast-lio = {
-      url = "github:dimensionalOS/dimos-module-fastlio2/v0.3.0-quiet-logs";
+      # v0.3.0-quiet-logs + get_body_cloud() (sensor-frame cloud).
+      url = "github:dimensionalOS/dimos-module-fastlio2?ref=jeff/feat/fastlio-body-cloud";
       flake = false;
     };
     lcm-extended = {
@@ -79,7 +80,6 @@
             pkgs.glib
             pkgs.eigen
             pkgs.pcl
-            pkgs.yaml-cpp
             pkgs.boost
             pkgs.llvmPackages.openmp
           ];

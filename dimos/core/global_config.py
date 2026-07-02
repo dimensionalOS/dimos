@@ -33,6 +33,9 @@ def _get_all_numbers(s: str) -> list[float]:
 class GlobalConfig(BaseSettings):
     robot_ip: str | None = None
     robot_ips: str | None = None
+    # Per-device AES-128 key for new Unitree firmware (G1 >=1.5.1, Go2 >=1.1.15, data2=3
+    # handshake). Fetch: unitree-fetch-aes-key --email YOU --sn <serial>
+    unitree_aes_128_key: str | None = None
     xarm7_ip: str | None = None
     xarm6_ip: str | None = None
     can_port: str | None = None
@@ -55,7 +58,9 @@ class GlobalConfig(BaseSettings):
     mujoco_global_map_from_pointcloud: str | None = None
     mujoco_start_pos: str = "-1.0, 1.0"
     mujoco_steps_per_frame: int = 7
+    scene_package: str | None = None
     robot_model: str | None = None
+    robot_id: str | None = None
     robot_width: float = 0.3
     robot_rotation_diameter: float = 0.6
     nerf_speed: float = 1.0

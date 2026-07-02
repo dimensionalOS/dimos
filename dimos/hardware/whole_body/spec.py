@@ -85,14 +85,3 @@ class WholeBodyAdapter(Protocol):
     def read_imu(self) -> IMUState: ...
 
     def write_motor_commands(self, commands: list[MotorCommand]) -> bool: ...
-
-
-__all__ = [
-    "POS_STOP",
-    "VEL_STOP",
-    "IMUState",
-    "MotorCommand",
-    "MotorState",
-    "WholeBodyAdapter",
-    "WholeBodyConfig",
-]

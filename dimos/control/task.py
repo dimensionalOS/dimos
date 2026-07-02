@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from dimos.control.components import JointName
-from dimos.hardware.manipulators.spec import ControlMode
+from dimos.hardware.manipulators.spec import ControlMode as ControlMode
 from dimos.hardware.whole_body.spec import IMUState
 
 if TYPE_CHECKING:
@@ -303,6 +303,17 @@ class ControlTask(Protocol):
         """Handle velocity commands by joint name."""
         ...
 
+    def reset_runtime_state(self, reactivate: bool | None = None) -> bool:
+        """Clear transient state after a runtime discontinuity.
+
+        Called on simulation/runtime discontinuities such as a MuJoCo
+        respawn, where task histories and latched commands must be cleared
+        without tearing down the coordinator. ``reactivate`` optionally
+        re-engages a task that had stopped itself. Returns True if the task
+        had state to reset.
+        """
+        ...
+
 
 class BaseControlTask(ControlTask):
     """Base class with no-op defaults for optional listener methods.
@@ -327,16 +338,6 @@ class BaseControlTask(ControlTask):
         """No-op default."""
         return False
 
-
-__all__ = [
-    # Protocol + Base
-    "BaseControlTask",
-    # Types
-    "ControlMode",
-    "ControlTask",
-    "CoordinatorState",
-    "JointCommandOutput",
-    "JointName",
-    "JointStateSnapshot",
-    "ResourceClaim",
-]
+    def reset_runtime_state(self, reactivate: bool | None = None) -> bool:
+        """No-op default."""
+        return False

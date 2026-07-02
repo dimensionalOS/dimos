@@ -47,7 +47,7 @@ This is the same as:
 pytest --numprocesses=auto dimos
 ```
 
-The default `addopts` in `pyproject.toml` includes a `-m` filter that excludes `self_hosted`/`mujoco`/`tool`, so plain `pytest dimos` runs only the default suite; `--numprocesses=auto` parallelizes across cores via pytest-xdist.
+The default `addopts` in `pyproject.toml` includes a `-m` filter that excludes `self_hosted`/`mujoco`, so plain `pytest dimos` runs only the default suite; `--numprocesses=auto` parallelizes across cores via pytest-xdist.
 
 ### Self-hosted tests
 
@@ -55,7 +55,7 @@ The default `addopts` in `pyproject.toml` includes a `-m` filter that excludes `
 ./bin/pytest-slow
 ```
 
-(Shortcut for `pytest -m 'not (tool or mujoco)' dimos` — runs the default suite *and* self-hosted tests, but not `tool` or `mujoco`.)
+(Shortcut for `pytest -m 'not mujoco' dimos` — runs the default suite *and* self-hosted tests, but not `mujoco`.)
 
 When writing or debugging a specific self-hosted test, override `-m` yourself to run it:
 
@@ -165,12 +165,21 @@ There are other useful things in `mocker`, like `mocker.MagicMock()` for creatin
 | `--tb=short` | Shorter tracebacks |
 | `--durations=0` | Measure the speed of each test |
 
+## Tool files
+
+Dev-only pseudo-tests -- the kind that need human interaction or make no assertions -- live in `tool_*.py` files (e.g. `dimos/protocol/pubsub/benchmark/tool_benchmark.py`). pytest never collects them, because the filename doesn't match the `test_*.py` pattern, so a normal `pytest` run stays clean. Run one on demand by naming it directly:
+
+```bash
+pytest -s dimos/path/to/tool_file.py
+```
+
+(`-s` keeps stdout/stdin open for prints and interactive input; add `--timeout=0` for long-running or interactive ones.)
+
 ## Markers
 
 We have a few markers in use now.
 
 * `self_hosted`: used to mark tests that need the self-hosted runner (LFS, ROS, CUDA, heavy deps).
-* `tool`: tests which require human interaction. I don't like this. Please don't use them.
 * `mujoco`: tests which use `MuJoCo`. These are very slow and don't work in CI currently.
 
 If a test needs to be skipped for some reason, please use on of these markers, or add another one.

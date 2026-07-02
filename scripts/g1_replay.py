@@ -113,13 +113,13 @@ def main() -> None:
                 current_q[n] = q
         state_event.set()
 
-    state_sub: LCMTransport[JointState] = LCMTransport("/coordinator/joint_state", JointState)
+    state_sub: LCMTransport[JointState] = LCMTransport("/coordinator_joint_state", JointState)
     # subscribe() returns an unsub callable; signature claims None (see transport.py).
     state_unsub = state_sub.subscribe(on_state)  # type: ignore[func-returns-value]
     cmd_pub: LCMTransport[JointState] = LCMTransport("/g1/joint_command", JointState)
 
     try:
-        logger.info("waiting up to 10s for /coordinator/joint_state ...")
+        logger.info("waiting up to 10s for /coordinator_joint_state ...")
         if not state_event.wait(timeout=10.0):
             logger.error("no joint_state received — is `dimos run unitree-g1-coordinator` running?")
             return

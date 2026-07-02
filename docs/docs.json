@@ -80,6 +80,7 @@
         "pages": [
           "agents/index",
           "agents/style",
+          "agents/code-quality-rules",
           "agents/testing",
           {
             "group": "Authoring agent docs",
@@ -112,13 +113,15 @@
           {
             "group": "Navigation",
             "pages": [
-              "capabilities/navigation/nav_stack",
-              {
-                "group": "Native",
-                "pages": [
-                  "capabilities/navigation/native/index"
-                ]
-              }
+              "capabilities/navigation/index",
+              "capabilities/navigation/deep_dive",
+              "capabilities/navigation/relocalization"
+            ]
+          },
+          {
+            "group": "Teleoperation",
+            "pages": [
+              "capabilities/teleoperation/hosted"
             ]
           }
         ]
@@ -129,7 +132,14 @@
           {
             "group": "Quadruped",
             "pages": [
-              "platforms/quadruped/go2/index"
+              {
+                "group": "Unitree Go2",
+                "pages": [
+                  "platforms/quadruped/go2/index",
+                  "platforms/quadruped/go2/setup",
+                  "platforms/quadruped/go2/simulation"
+                ]
+              }
             ]
           },
           {

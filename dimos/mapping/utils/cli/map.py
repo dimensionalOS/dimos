@@ -24,7 +24,7 @@ import rerun as rr
 import rerun.blueprint as rrb
 import typer
 
-# Heavy dimos imports (mapping/memory2 → torch, transformers, open3d, sklearn) are
+# Heavy dimos imports (mapping/memory2 → torch, transformers, open3d) are
 # deferred into the function bodies below so that `dimos --help` — which imports this
 # module just to register the `map` subcommand — stays fast. See test_cli_startup.py.
 if TYPE_CHECKING:
@@ -97,14 +97,34 @@ def _accumulate(
     block_count: int,
     device: str,
     graph: PoseGraph | None = None,
+    world_frame: bool = True,
+    carve_columns: bool = False,
     progress_cb: Callable[[Observation[Any]], None] | None = None,
 ) -> PointCloud2 | None:
     """Accumulate a voxel map from `obs_iter`, optionally PGO-correcting each frame.
+
+    By default the clouds are assumed already world-registered (the go2/fastlio
+    path) — only the PGO correction is applied, if any. Set ``world_frame=False``
+    (the ``--use-tf`` path) when each frame's cloud is in the sensor/body frame
+    and must be registered into the world via its per-frame pose.
 
     Returns the final ``PointCloud2`` (or ``None`` if the input was empty).
     Disposal of the underlying ``VoxelGrid`` is handled by ``VoxelMapTransformer``.
     """
     from dimos.mapping.voxels import VoxelMapTransformer
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+
+    def _pose_tf(obs: Observation[Any]) -> Transform:
+        pose = obs.pose
+        assert pose is not None
+        return Transform(
+            translation=Vector3(pose.position.x, pose.position.y, pose.position.z),
+            rotation=Quaternion(
+                pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w
+            ),
+        )
 
     def prepared() -> Iterable[Observation[PointCloud2]]:
         for obs in obs_iter:
@@ -112,18 +132,27 @@ def _accumulate(
                 progress_cb(obs)
             if len(obs.data) == 0:
                 continue
+            # body->world via the per-frame pose, unless the clouds are already
+            # world-registered (go2 default). graph adds the PGO correction on top
+            # (correction ∘ pose), applied after the pose.
+            tf: Transform | None = None
+            if not world_frame:
+                if obs.pose is None:
+                    continue
+                tf = _pose_tf(obs)
             if graph is not None:
                 if obs.pose_tuple is None:
                     continue
-                yield obs.derive(data=obs.data.transform(graph.correction_at(obs.ts)))
-            else:
-                yield obs
+                correction = graph.correction_at(obs.ts)
+                tf = correction if tf is None else correction + tf
+            yield obs if tf is None else obs.derive(data=obs.data.transform(tf))
 
     vmt = VoxelMapTransformer(
         emit_every=0,  # batch mode: emit once on exhaustion
         voxel_size=voxel,
         block_count=block_count,
         device=device,
+        carve_columns=carve_columns,
     )
     result = next(iter(vmt(iter(prepared()))), None)
     return result.data if result is not None else None
@@ -299,6 +328,19 @@ def main(
         None, "--out", help="Output .rrd path (default: ./<dataset>.rrd)"
     ),
     no_gui: bool = typer.Option(False, "--no-gui", help="Write the .rrd but don't launch rerun"),
+    use_tf: bool = typer.Option(
+        False,
+        "--use-tf",
+        help="Clouds are in the sensor/body frame; register each by its per-frame pose. "
+        "By default clouds are assumed already world-registered (e.g. go2/fastlio).",
+    ),
+    carve: bool = typer.Option(
+        False,
+        "--carve/--no-carve",
+        help="Column carving: keep only the latest frame's points per (X,Y) column. "
+        "Off by default (full 3D accumulation); on collapses vertical structure "
+        "(stairs, revisited columns) to the most recent observation.",
+    ),
     markers: bool = typer.Option(
         False,
         "--markers",
@@ -428,6 +470,8 @@ def main(
             block_count=block_count,
             device=device,
             graph=graph,
+            world_frame=not use_tf,
+            carve_columns=carve,
             progress_cb=progress(n_kept, "pgo pass 2 (rebuilding)"),
         )
 
@@ -440,6 +484,8 @@ def main(
             block_count=block_count,
             device=device,
             graph=graph,
+            world_frame=not use_tf,
+            carve_columns=carve,
             progress_cb=progress(total, "full pgo (rebuilding)"),
         )
 
@@ -449,6 +495,8 @@ def main(
         voxel=voxel,
         block_count=block_count,
         device=device,
+        world_frame=not use_tf,
+        carve_columns=carve,
         progress_cb=progress(n_kept, "reconstructing global map"),
     )
 

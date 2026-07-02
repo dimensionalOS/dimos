@@ -391,6 +391,3 @@ def to_detection3d_array(objects: list[Object]) -> Detection3DArray:
         array.detections.append(obj.to_detection3d_msg())
 
     return array
-
-
-__all__ = ["Object", "aggregate_pointclouds", "to_detection3d_array"]

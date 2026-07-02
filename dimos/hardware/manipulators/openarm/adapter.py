@@ -203,6 +203,14 @@ class OpenArmAdapter:
     def is_connected(self) -> bool:
         return self._bus is not None
 
+    def activate(self) -> bool:
+        return self.write_enable(True)
+
+    def deactivate(self) -> bool:
+        stopped = self.write_stop()
+        disabled = self.write_enable(False)
+        return stopped and disabled
+
     def get_info(self) -> ManipulatorInfo:
         return ManipulatorInfo(
             vendor="Enactic",
@@ -428,6 +436,3 @@ class OpenArmAdapter:
 # ── Registry hook (required for auto-discovery) ───────────────────
 def register(registry: AdapterRegistry) -> None:
     registry.register("openarm", OpenArmAdapter)
-
-
-__all__ = ["OpenArmAdapter", "register"]

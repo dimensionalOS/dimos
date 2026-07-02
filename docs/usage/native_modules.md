@@ -116,11 +116,11 @@ class MyConfig(NativeModuleConfig):
 If a config field shouldn't be a CLI arg, add it to `cli_exclude`:
 
 ```python skip
-class FastLio2Config(NativeModuleConfig):
-    executable: str = "./build/fastlio2"
-    config: str = "mid360.yaml"                          # human-friendly name
-    config_path: str = Field(default_factory=lambda m: str(Path(m["config"]).resolve()))
-    cli_exclude: frozenset[str] = frozenset({"config"})  # only config_path is passed
+class MyNativeConfig(NativeModuleConfig):
+    executable: str = "./build/my_native"
+    acc_cov: float = 1.0                                  # rendered into a config file, not a CLI arg
+    config_path: str | None = None                        # set at start() to the generated file
+    cli_exclude: frozenset[str] = frozenset({"acc_cov"})  # only config_path is passed
 ```
 
 ## Using with blueprints
@@ -268,3 +268,13 @@ class MyLidarConfig(NativeModuleConfig):
 `cwd` is used for both the build command and the runtime subprocess. Relative paths are resolved against the directory of the Python file that defines the module
 
 If the executable already exists, the build step is skipped entirely.
+
+### Faster builds via the Cachix substituter
+
+CI pre-builds the `cmu_nav` native modules and pushes the Nix store paths to the `dimensionalos` Cachix cache. Opt in locally to skip cold compiles when the cache has them:
+
+```
+# ~/.config/nix/nix.conf  (single-user)  or  /etc/nix/nix.conf  (multi-user)
+extra-substituters = https://dimensionalos.cachix.org
+extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
+```
