@@ -37,8 +37,8 @@ const ACTIONS = [
 // cam1 = Go2, cam2 = RealSense. Toggle on/off; both = side-by-side. (B-ready:
 // the same {camera_select, cams:[...]} protocol works for per-camera tracks.)
 const CAMS = [
-    { id: 'cam1', label: 'Cam 1 · Go2' },
-    { id: 'cam2', label: 'Cam 2 · RealSense' },
+    { id: 'cam1', label: 'Cam 1' },
+    { id: 'cam2', label: 'Cam 2' },
 ];
 
 const SPEEDS = [
@@ -100,16 +100,17 @@ export function renderGo2(c) {
                  shows in the floating PiP (bottom-right). state.mainView toggles.
                  SKELETON: markup + swap wired; map draw + PiP layout TBD. -->
             <section class="bg-bg-950 border border-[#2a2a2a] rounded-xl overflow-hidden flex flex-col min-h-0">
-                <div class="flex items-center gap-2 p-2 border-b border-[#2a2a2a] shrink-0">
+                <!-- Slim control strip: swap + camera tabs. Kept compact (px-2
+                     py-1, text-[11px]) so it's a thin bar, not a tall column. -->
+                <div class="flex items-center gap-1.5 px-2 py-1 border-b border-[#2a2a2a] shrink-0">
                     <!-- Swap button — LEFT of the camera tabs (per spec). Flips
                          which of {camera, map} is the main stage vs the PiP. -->
-                    <button id="view-swap" class="cmd-btn term-caps text-xs px-2 py-1" title="Swap camera / map">
+                    <button id="view-swap" class="cmd-btn term-caps text-[11px] leading-none px-2 py-0.5" title="Swap camera / map">
                         ⇄ <span id="view-swap-label">MAP</span>
                     </button>
                     <!-- Camera tabs: toggle which cameras the robot composites into
-                         the single video. cam1 (Go2) default; cam2 (RealSense)
-                         optional; both → side-by-side. At least one stays selected. -->
-                    <div class="flex items-center gap-2" id="cam-tabs"></div>
+                         the single video. At least one stays selected. -->
+                    <div class="flex items-center gap-1.5" id="cam-tabs"></div>
                 </div>
                 <div class="relative flex-1 bg-black flex items-center justify-center min-h-0" id="stage">
                     <!-- Camera + map are BOTH always in the DOM; setMainView()
@@ -259,7 +260,7 @@ function wireGo2() {
     // Camera tabs: render toggles, wire selection.
     const tabs = document.getElementById('cam-tabs');
     tabs.innerHTML = CAMS.map((c) =>
-        `<button data-cam="${c.id}" class="px-3 py-1 rounded text-xs border border-[#2a2a2a] text-gray-400">${c.label}</button>`
+        `<button data-cam="${c.id}" class="px-2 py-0.5 rounded text-[11px] leading-none border border-[#2a2a2a] text-gray-400">${c.label}</button>`
     ).join('');
     tabs.querySelectorAll('[data-cam]').forEach((b) =>
         b.addEventListener('click', () => toggleCam(b.dataset.cam)));
@@ -426,7 +427,10 @@ function drawMap() {
     ctx.scale(1, -1);                 // y-up within [0..dh] → world-north = top
     ctx.drawImage(m.img, 0, 0, dw, dh);
 
-    // Robot marker, in the same flipped frame.
+    // Robot footprint, in the same flipped frame. Drawn as a to-scale box:
+    // the Go2 body is 0.70 m long (+x / heading) × 0.31 m wide (+y). Convert
+    // metres → cells → px via the map scale; a min-size floor keeps it visible
+    // on wide/zoomed-out maps where true scale would be a few px.
     const o = ui.lastOdom;
     if (o && m.res > 0) {
         const col = (o.x - m.origin[0]) / m.res;   // cells east of origin
@@ -434,26 +438,41 @@ function drawMap() {
         const px = col * scale;
         const py = row * scale;                     // y-up here (frame flipped)
         if (px >= 0 && px <= dw && py >= 0 && py <= dh) {
+            const pxPerM = scale / m.res;           // map px per world metre
+            const MIN_LEN_PX = 14;                  // visibility floor (long side)
+            let lenPx = GO2_LEN_M * pxPerM;         // along heading (+x)
+            let widPx = GO2_WID_M * pxPerM;         // across (+y)
+            if (lenPx < MIN_LEN_PX) {               // scale up together, keep ratio
+                widPx *= MIN_LEN_PX / lenPx;
+                lenPx = MIN_LEN_PX;
+            }
             ctx.save();
             ctx.translate(px, py);
-            // In this y-up frame a CCW world yaw is a CCW canvas rotation, so no
-            // sign flip. The glyph's nose points +x (world east) at yaw 0.
+            // y-up frame: CCW world yaw = CCW canvas rotation (no sign flip).
+            // Box local x = heading, local y = left. Center it on the robot.
             ctx.rotate(o.yaw || 0);
-            ctx.beginPath();                        // triangle, nose = +x
-            ctx.moveTo(9, 0);
-            ctx.lineTo(-6, 5);
-            ctx.lineTo(-6, -5);
-            ctx.closePath();
-            ctx.fillStyle = '#b0e1f0';
+            ctx.fillStyle = 'rgba(176,225,240,0.35)';
+            ctx.strokeStyle = '#b0e1f0';
+            ctx.lineWidth = 1.5;
+            ctx.fillRect(-lenPx / 2, -widPx / 2, lenPx, widPx);
+            ctx.strokeRect(-lenPx / 2, -widPx / 2, lenPx, widPx);
+            // Heading tick: short line from centre to the front (+x) edge so the
+            // facing direction is unambiguous on the rectangle.
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(lenPx / 2, 0);
             ctx.strokeStyle = '#0d0e0e';
-            ctx.lineWidth = 1;
-            ctx.fill();
+            ctx.lineWidth = 2;
             ctx.stroke();
             ctx.restore();
         }
     }
     ctx.restore();
 }
+
+// Go2 body footprint (URDF base_link box): 0.70 m long × 0.31 m wide.
+const GO2_LEN_M = 0.70;
+const GO2_WID_M = 0.31;
 
 // ── camera tabs ──────────────────────────────────────────────────────
 function toggleCam(id) {
@@ -473,7 +492,7 @@ function toggleCam(id) {
 function renderCamTabs() {
     document.querySelectorAll('#cam-tabs [data-cam]').forEach((b) => {
         const on = ui.selectedCams.includes(b.dataset.cam);
-        b.className = 'px-3 py-1 rounded text-xs border ' +
+        b.className = 'px-2 py-0.5 rounded text-[11px] leading-none border ' +
             (on ? 'bg-dim-500 text-bg-950 border-dim-500' : 'border-[#2a2a2a] text-gray-400');
     });
 }
