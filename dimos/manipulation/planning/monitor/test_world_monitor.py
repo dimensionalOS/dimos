@@ -347,7 +347,7 @@ def test_group_kinematics_with_full_state_does_not_require_current_state() -> No
 
     pose = monitor.get_group_ee_pose(
         "arm/manipulator",
-        JointState({"name": ["j1", "j2", "j3"], "position": [0.1, 0.2, 0.3]}),
+        JointState(name=["j1", "j2", "j3"], position=[0.1, 0.2, 0.3]),
     )
 
     set_calls = [call for call in fake_world.calls if call[0] == "set_joint_state"]
@@ -356,17 +356,18 @@ def test_group_kinematics_with_full_state_does_not_require_current_state() -> No
     assert pose.position.x == 1
 
 
-def test_group_kinematics_route_to_backend_and_merge_group_state() -> None:
+def test_group_kinematics_route_full_state_to_backend() -> None:
     fake_world = FakeWorld()
     monitor = world_monitor_module.WorldMonitor(world=fake_world)  # type: ignore[arg-type]
-    robot_id = monitor.add_robot(_three_joint_reordered_group_config())
-    monitor._state_monitors[robot_id] = _FakeStateMonitor([0.1, 0.2, 0.3])  # type: ignore[attr-defined]
+    monitor.add_robot(_three_joint_reordered_group_config())
 
     pose = monitor.get_group_ee_pose(
-        "arm/manipulator", JointState({"name": ["arm/j2", "arm/j1"], "position": [0.8, 0.9]})
+        "arm/manipulator",
+        JointState(name=["j1", "j2", "j3"], position=[0.9, 0.8, 0.3]),
     )
     jacobian = monitor.get_group_jacobian(
-        "arm/manipulator", JointState({"name": ["arm/j2", "arm/j1"], "position": [0.3, 0.4]})
+        "arm/manipulator",
+        JointState(name=["j1", "j2", "j3"], position=[0.4, 0.3, 0.3]),
     )
 
     set_calls = [call for call in fake_world.calls if call[0] == "set_joint_state"]
@@ -389,7 +390,7 @@ def test_legacy_wrappers_fail_for_no_pose_and_ambiguous_pose_groups() -> None:
         )
     )
     with pytest.raises(ValueError, match="no pose-targetable"):
-        monitor.get_ee_pose(no_pose_id, JointState({"name": ["j1", "j2"], "position": [0.0, 0.0]}))
+        monitor.get_ee_pose(no_pose_id, JointState(name=["j1", "j2"], position=[0.0, 0.0]))
 
     fake_world2 = FakeWorld()
     monitor2 = world_monitor_module.WorldMonitor(world=fake_world2)  # type: ignore[arg-type]
@@ -406,6 +407,4 @@ def test_legacy_wrappers_fail_for_no_pose_and_ambiguous_pose_groups() -> None:
         )
     )
     with pytest.raises(ValueError, match="pose-targetable planning groups"):
-        monitor2.get_jacobian(
-            ambiguous_id, JointState({"name": ["j1", "j2"], "position": [0.0, 0.0]})
-        )
+        monitor2.get_jacobian(ambiguous_id, JointState(name=["j1", "j2"], position=[0.0, 0.0]))
