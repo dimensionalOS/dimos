@@ -14,11 +14,12 @@ import { startKeyboardLoop, stopKeyboardLoop } from './keyboard.js';
 
 // Command catalog — labels only; SPORT_CMD ids live robot-side.
 // StandReady = standup + balance_stand (drive-ready); they always go together,
-// so there's no separate Stand Up / Balance.
+// so there's no separate Stand Up / Balance. No Recovery button either:
+// Stand/Drive already ends in RecoveryStand robot-side, so it doubles as the
+// recovery action — one less thing on the panel.
 const POSTURE = [
     { name: 'StandReady', label: 'Stand / Drive' },
     { name: 'StandDown', label: 'Sit' },
-    { name: 'RecoveryStand', label: 'Recovery' },
 ];
 // Robot actions. Hello/Stretch verified working; Pounce/Jump are acrobatic and
 // UNVERIFIED on this firmware (may no-op) — and the robot leaps, so clear space.
