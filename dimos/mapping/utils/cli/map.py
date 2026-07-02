@@ -30,6 +30,7 @@ import typer
 if TYPE_CHECKING:
     from dimos.mapping.loop_closure.pgo import PoseGraph
     from dimos.mapping.utils.cli.world_registration import WorldRegistrar
+    from dimos.memory2.store.base import Store
     from dimos.memory2.stream import Stream
     from dimos.memory2.type.observation import Observation
     from dimos.msgs.sensor_msgs.Image import Image
@@ -40,6 +41,8 @@ PATH_THICKNESS = 0.01
 # from each marker with the label floating at the top so multi-marker
 # labels never overlap the boxes.
 MARKER_STEM = 1.0
+# Tags are dense along the trajectory, so a tall pin just adds clutter.
+APRIL_TAG_STEM = 0.3
 
 
 def _log_markers(
@@ -51,11 +54,12 @@ def _log_markers(
     outline_half: list[tuple[float, float, float]],
     colors: list[tuple[int, int, int]],
     labels: list[str],
+    stem: float = MARKER_STEM,
 ) -> None:
     """Render per-marker fill + outline + pin-stem + label as four static entities."""
     n = len(centers)
-    pin_strips = [[(cx, cy, cz), (cx, cy, cz + MARKER_STEM)] for (cx, cy, cz) in centers]
-    label_positions = [(cx, cy, cz + MARKER_STEM + 0.01) for (cx, cy, cz) in centers]
+    pin_strips = [[(cx, cy, cz), (cx, cy, cz + stem)] for (cx, cy, cz) in centers]
+    label_positions = [(cx, cy, cz + stem + 0.01) for (cx, cy, cz) in centers]
     rr.log(
         f"{prefix}/fill",
         rr.Boxes3D(
@@ -86,7 +90,13 @@ def _log_markers(
     )
     rr.log(
         f"{prefix}/label",
-        rr.Points3D(positions=label_positions, labels=labels, colors=colors, radii=[0.001] * n),
+        rr.Points3D(
+            positions=label_positions,
+            labels=labels,
+            show_labels=True,
+            colors=colors,
+            radii=[0.001] * n,
+        ),
         static=True,
     )
 
@@ -268,6 +278,67 @@ def _log_reconstruction(
                 colors=colors,
                 labels=labels,
             )
+
+
+def _log_april_tags(
+    store: Store,
+    registrar: WorldRegistrar,
+    *,
+    marker_size: float,
+    seek: float,
+    duration: float | None,
+) -> None:
+    """Render the ``april_tags`` stream (if any) as static world markers.
+
+    Each tag pose is placed into ``world`` via the registrar: world/empty
+    frame_ids pass through, others are looked up in the recording's tf tree,
+    and poses whose frame can't be resolved are skipped with a warning.
+    """
+    from dimos.memory2.vis.color import Color
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.msgs.geometry_msgs.Transform import Transform
+
+    if "april_tags" not in store.list_streams():
+        return
+    tag_stream = store.stream("april_tags", PoseStamped).from_time(seek or None).to_time(duration)
+
+    centers: list[tuple[float, float, float]] = []
+    quats: list[tuple[float, float, float, float]] = []
+    colors: list[tuple[int, int, int]] = []
+    labels: list[str] = []
+    for obs in tag_stream:
+        keep, world_transform = registrar.world_transform(obs.data.frame_id, obs.ts)
+        if not keep:
+            continue
+        pose = Transform.from_pose(obs.data.frame_id, obs.data)
+        if world_transform is not None:
+            pose = world_transform + pose
+        marker_id = (obs.tags or {}).get("marker_id")
+        centers.append((pose.translation.x, pose.translation.y, pose.translation.z))
+        quats.append((pose.rotation.x, pose.rotation.y, pose.rotation.z, pose.rotation.w))
+        colors.append(
+            Color.from_cmap("tab10", (int(marker_id) % 10) / 10.0).rgb_u8()
+            if marker_id is not None
+            else (255, 255, 255)
+        )
+        labels.append(f"tag={marker_id}")
+    if not centers:
+        return
+
+    n = len(centers)
+    half = marker_size / 2.0
+    outline_bump = marker_size * 0.05
+    _log_markers(
+        "world/april_tags",
+        centers,
+        quats,
+        fill_half=[(half, half, 0.005)] * n,
+        outline_half=[(half + outline_bump, half + outline_bump, 0.006)] * n,
+        colors=colors,
+        labels=labels,
+        stem=APRIL_TAG_STEM,
+    )
+    print(f"april_tags: rendered {n} tag poses")
 
 
 def main(
@@ -544,6 +615,7 @@ def main(
         marker_size=marker_size,
         bottom_cutoff=bottom_cutoff,
     )
+    _log_april_tags(store, registrar, marker_size=marker_size, seek=seek, duration=duration)
     print(f"wrote {out}")
     if no_gui:
         print(f"open with: rerun {out}")
