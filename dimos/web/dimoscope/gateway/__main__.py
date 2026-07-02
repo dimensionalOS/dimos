@@ -21,6 +21,11 @@ from .app import HOST, PORT, build_app
 logger = setup_logger()
 
 WS_SNDBUF = int(os.environ.get("WS_SNDBUF", "262144"))
+# permessage-deflate is OFF by default: the sensor frames are incompressible (random-entropy by
+# design, matching real camera/lidar), so deflate spends CPU on both ends for ~0 size reduction and
+# serializes every message through one zlib stream (a latency tax). It also costs ~50 KB of zlib
+# state per connection. WS_DEFLATE=1 restores it for text/JSON-heavy deployments where it pays.
+WS_DEFLATE = os.environ.get("WS_DEFLATE", "0") == "1"
 
 
 def main() -> None:
@@ -32,7 +37,11 @@ def main() -> None:
     sock.bind((HOST, PORT))
     effective = sock.getsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF)
     logger.info("egress send buffer", ws_sndbuf=WS_SNDBUF or "os-autotuned", effective=effective)
-    config = uvicorn.Config(build_app(), log_level="info")
+    config = uvicorn.Config(
+        build_app(),
+        log_level="info",
+        ws_per_message_deflate=WS_DEFLATE,
+    )
     uvicorn.Server(config).run(sockets=[sock])
 
 
