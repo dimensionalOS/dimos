@@ -37,57 +37,59 @@ end-to-end latency stays meaningful when the gateway is on another machine. Each
 with the wire that actually carried it (Auto → `(wire: …)`, otherwise the WT→WS fallback is silent), and
 the Markdown export carries the offered load, page origin, and UA.
 
-### Results (localhost loopback · end-to-end · maxHz=∞ · 2026-07-01)
+### Results (localhost loopback · end-to-end · maxHz=∞ · 2026-07-02 · `31a1f92b7`)
 
 Loopback numbers, no network loss. They show the relay/browser ceiling and whether bulk drags down the
-small lanes — not WAN behavior (see §3).
+small lanes — not WAN behavior (see §3). loss% marked `*` is a source-side seq floor (2–12%, varies per
+run, identical on TCP where wire loss is impossible) — not transport loss. Unmarked bulk loss% is the
+outbox conflating what the wire can't carry.
 
-**Small lanes + a 20 MB/s bulk stream — WebTransport vs WebSocket:**
+**Small lanes + a 20 MB/s bulk stream — WebTransport (WT-rs) vs WebSocket:**
 
 | transport | scenario | hz | MB/s | p50 ms | p95 ms | p99 ms | loss% | late% |
 |---|---|--:|--:|--:|--:|--:|--:|--:|
-| **WebTransport** | pose (fast+mid+slow) | 103 | 0.008 | **1.32** | 3.56 | 5.4 | 0 | 0 |
-| WebTransport | dense (img @20 MB/s) | 18.8 | **17.9** | 53.7 | 62.4 | 72.3 | **0** | 0 |
-| WebTransport | mixed | 132 | 18.1 | 1.27 | 79.2 | 89.2 | 0 | 0 |
-| **WebSocket** | pose (fast+mid+slow) | 101 | 0.008 | **1.45** | 4.73 | 9.9 | 0 | 0 |
-| WebSocket | dense (img @20 MB/s) | 18.4 | **17.5** | 6.45 | 14.1 | 39.3 | **0** | 0 |
-| WebSocket | mixed | 127 | 17.6 | 0.93 | 6.6 | 9.6 | 0 | 0 |
+| **WebTransport** | pose (fast+mid+slow) | 94.7 | 0.008 | **1.02** | 11.4 | 18.0 | 7.8* | 0 |
+| WebTransport | dense (img @20 MB/s) | 18.8 | **18.3** | **9.6** | 26.9 | 30.1 | **0** | 0 |
+| WebTransport | mixed | 123.7 | 18.3 | 1.08 | 12.8 | 22.8 | 3.5* | 0 |
+| **WebSocket** | pose (fast+mid+slow) | 98.2 | 0.008 | **0.88** | 11.4 | 20.3 | 5.3* | 0 |
+| WebSocket | dense (img @20 MB/s) | 18.5 | **18.0** | 21.2 | 33.1 | 35.2 | **0** | 0 |
+| WebSocket | mixed | 115.2 | 18.1 | 2.94 | 26.8 | 33.6 | 8.9* | 0 |
 
 **Up the overload ladder (the small lanes ride alongside the bulk flood):**
 
 | offered | transport | scenario | hz | MB/s delivered | p50 ms | p95 ms | p99 ms | loss% | late% |
 |---|---|---|--:|--:|--:|--:|--:|--:|--:|
-| 180 MB/s | WebSocket | pose | 103 | 0.008 | **1.08** | 4.7 | 6.5 | 0 | 0 |
-| 180 MB/s | WebSocket | raw-1080p (img) | 27 | **154** | 25.5 | 30.7 | 33 | 0 | 0 |
-| 180 MB/s | WebTransport | pose | 103 | 0.008 | **1.01** | 3.8 | 6.7 | 0 | 0 |
-| 180 MB/s | WebTransport | raw-1080p (img) | 2 | 11.4 | 2535 | 3770 | 3770 | 0 | 0 |
-| 300 MB/s | WebSocket | pose | 102 | 0.008 | **1.23** | 6.1 | 8.3 | 0 | 0 |
-| 300 MB/s | WebSocket | firehose (img) | 26.8 | **255** | 42.6 | 49.3 | 51.4 | 0 | 0 |
-| 300 MB/s | WebSocket | firehose, sustained | 22.8 | 217 | 61 | 112 | 230 | **12.5** | 0 |
+| 180 MB/s | WebSocket | pose | 100.7 | 0.008 | 1.39 | 11.6 | 15.2 | 2.4* | 0 |
+| 180 MB/s | WebSocket | raw-1080p (img) | 7.75 | 45.4 | 146 | 165 | 175 | 71 | 0 |
+| 180 MB/s | WebTransport | pose | 94.5 | 0.008 | **0.97** | 11.0 | 19.0 | 4.1* | 0 |
+| 180 MB/s | WebTransport | raw-1080p (img) | 26.5 | **155** | 159 | 225 | 232 | 5.4 | 0 |
+| 300 MB/s | WebSocket | pose | 92.7 | 0.008 | 3.35 | 17.8 | 26.4 | 2.9* | 0 |
+| 300 MB/s | WebSocket | firehose (img) | 3.75 | 36.6 | 289 | 359 | 412 | 85 | 0 |
+| 300 MB/s | WebSocket | firehose, sustained 20 s | 3.85 | 37.6 | 282 | 328 | 412 | 85.4 | 0 |
 
 ### Takeaways
 
-- The small high-rate lanes stay crisp under any bulk load: `pose` holds ~100 Hz at 1–1.5 ms p50 and
-  0% loss on both transports, even with a 20–300 MB/s stream beside it. On WebTransport that's
-  structural — pose rides QUIC datagrams, so a bulk stream backlogged by seconds (the 180 MB/s WT row)
-  still leaves the pose lane at 1 ms. No head-of-line blocking between the lanes of one connection.
-- At robot-realistic bulk (≤20 MB/s) the transports deliver identical throughput: both carry the full
-  dense flood at ~18 MB/s with 0% loss. WT's bulk rides one persistent reliable uni-stream (big frames
-  length-prefixed; small ≤1100 B frames go as datagrams — `gateway/transports/webtransport.py`). Its
-  higher bulk p50 (54 vs 6.5 ms) is aioquic's pure-Python per-byte CPU cost; the browser + uvicorn TCP
-  path is C-optimized. A non-Python QUIC relay closes that gap (§3).
-- The ceilings differ: WS relays ~255 MB/s, WT bulk ~20 MB/s on this box. Offered 180–300 MB/s, the WS
-  path keeps shipping (154 → 255 MB/s delivered; sustained saturation eventually costs 12.5% loss and
-  100–230 ms tails — the "big data stresses the browser" tier). The WT bulk
-  lane saturates at its aioquic CPU ceiling and backlogs (reliable = delayed, not dropped: loss stays 0).
-  Past ~20 MB/s of bulk, pick WS or put the bulk topic on a `bulk` QoS lane so it conflates to the
-  freshest frame instead of queueing.
-- WebTransport's advantage — no HoL blocking under packet loss — doesn't show on loopback: with zero
-  loss, TCP never stalls and WS looks perfect. Measure it on a real WAN (§3), or inject loss locally
-  (Linux `tc qdisc add dev lo root netem loss 5%`; macOS `dnctl`/dummynet via `pfctl`). Loss, not a fat
-  clean link, is where UDP/no-HoL pulls ahead of TCP.
-- The Python byte-relay is not the bottleneck for robot workloads. One gateway process sustains
-  hundreds of MB/s over WS, and the tab survives the firehose (WS backpressure — no hard crash).
+- The small high-rate lanes stay crisp beside any flood: `pose` holds ~95–100 Hz at ~1 ms p50 on both
+  transports with 20–180 MB/s of bulk running (3.4 ms at 300 MB/s offered). On WebTransport that's
+  structural — pose rides QUIC datagrams, isolated from the bulk stream inside one connection.
+- At robot-realistic bulk (≤20 MB/s) both transports carry the full dense flood at ~18 MB/s with 0%
+  loss; WT-rs does it at p50 9.6 ms vs WS 21 ms. WT's bulk rides one persistent reliable uni-stream
+  (big frames length-prefixed; small ≤1100 B frames go as datagrams — `gateway/wt-sidecar`).
+- Past that the roles are clear: WT-rs moves 155 of 180 MB/s offered (p99 232 ms); WS tops out at
+  ~40–45 MB/s of incompressible bulk and the outbox conflates the rest to the freshest frame (the
+  loss% column — shedding by design, the tab stays interactive). WebTransport is the bulk workhorse;
+  WebSocket is the universal control/fallback wire.
+- History note: this table's previous revision said "WS relays ~255 MB/s". That was measured before
+  `032a9f4cb` — the generators published all-zeros frames and WS permessage-deflate shrank them
+  ~1000:1, so the wire carried kilobytes while the browser reported hundreds of MB/s. These are the
+  first honest loopback WS numbers. Deflate still burns CPU on the now-random payloads; disabling it
+  on `/ws` is an open follow-up that should raise the WS ceiling.
+- WebTransport's other advantage — no HoL blocking under packet loss — doesn't show on loopback: with
+  zero loss, TCP never stalls. Measure it on a real WAN (§3), or inject loss locally (Linux `tc qdisc
+  add dev lo root netem loss 5%`; macOS `dnctl`/dummynet via `pfctl`).
+- The Python relay comfortably carries robot-realistic bulk on either wire; past ~45 MB/s the Rust
+  sidecar is the path. The tab survives the 300 MB/s firehose either way (conflation + backpressure —
+  no hard crash).
 
 Re-run any of this yourself: `deno task dog`, open the Benchmark drawer, set the generator tier, pick the
 matching workload profile, **Run sweep**, **copy Markdown**. `?gw=host:port` points it at a remote VPS;
@@ -161,7 +163,7 @@ needs a secure context, and `localhost` qualifies where a bare public-IP HTTP or
 `WebTransport` API is simply `undefined` there, so the app silently uses WebSocket). Keeping the page on
 `localhost` also lets `ws://`/`http://` reach the VPS IP without a mixed-content block.
 
-### WAN results (2026-07-01, measured — Mac ⇄ VPS `37.60.232.68`)
+### WAN results (2026-07-01, measured — Mac ⇄ a small public-IP VPS over the real internet)
 
 Deploy: `go2-load` runs on the Linux VPS; `/load/*` streams over the real internet, and the full dog
 renders headless — dimsim launches Chromium (`DIMSIM_RENDER=cpu`, SwiftShader software WebGL), publishes
@@ -181,11 +183,20 @@ The BenchDrawer's Network section flips server-side `tc netem` profiles on the g
 isolation tiers)` — plus momentary UDP/all **outage** buttons. Every result row and the copied Markdown are
 stamped `net:<profile>`, so a table is self-describing across workload × transport × network condition.
 
-Opt-in and scoped: the gateway needs `NETEM_CTL=1` + the root wrapper installed
-(`sudo install -m755 gateway/scripts/dimos-netem /usr/local/bin/ && echo '<user> ALL=(root) NOPASSWD:
-/usr/local/bin/dimos-netem' | sudo tee /etc/sudoers.d/dimos-netem`). Shaping hits **only** the gateway's egress ports
+Opt-in and scoped: install the root wrapper once with `deno task netem:install` (= `sudo install -m755
+gateway/scripts/dimos-netem /usr/local/bin/` + a sudoers entry for `$USER` scoped to that one script),
+then run the gateway with `NETEM_CTL=1`. Shaping hits **only** the gateway's egress ports
 (8080/8443 via a prio+u32 band), so SSH and the rest of the box are untouched, and every apply self-heals
 after 15 min. Apply loss **after** the transport is connected — QUIC handshakes fail under loss.
+
+The browser panel is one of three equivalent controls — all drive the same wrapper and stay in sync
+(the panel shows whatever is currently active):
+
+```bash
+sudo dimos-netem wifi-crowded    # on the gateway box — apply · `clean` clears · `status` prints
+curl -X POST http://<gw>:8080/netem -H 'content-type: application/json' -d '{"profile":"loss-5"}'
+curl http://<gw>:8080/netem      # from anywhere — the same endpoint the browser panel uses
+```
 
 Payloads are incompressible by design: the load generators publish random bytes, about the entropy of
 real camera/lidar data. WebSocket negotiates permessage-deflate, which squeezes regular payloads ~1000:1,
@@ -256,7 +267,7 @@ auto-cloned `paul-nechifor/DimSim`). Install the sim stack, not just the web ext
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh                 # uv
-cd ~/code/dimos && git fetch && git checkout kris/research-29-06-2026 && git pull
+git clone <your-dimos-remote> && cd dimos                        # or cd your checkout; use the branch under test
 uv sync --extra unitree --extra sim --extra mapping             # the dog stack (pin exact extras to your box;
                                                                 # `--extra all` is the sledgehammer fallback)
 

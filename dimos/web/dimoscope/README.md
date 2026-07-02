@@ -201,11 +201,12 @@ copy the results as Markdown. The top tiers can stress or crash the tab — that
 measured, so sweep light→heavy. Route through a remote VPS with `?gw=host:port` for real-WAN numbers;
 tune duration with `?dur=ms`.
 
-On a **Linux** gateway, `NETEM_CTL=1` (+ the `dimos-netem` sudo wrapper) adds a **Network** section to
-the drawer: server-side `tc netem` profiles (`clean → wifi-normal → wifi-crowded → wifi-edge →
-disaster → loss-3/5%`) plus momentary outage buttons, shaping only the gateway's egress ports and
-self-healing after 15 min. Every result row is stamped `net:<profile>`; setup + the measured profile
-matrix are in [benchmarks §3](docs/benchmarks.md).
+On a **Linux** gateway, install the netem wrapper once (`deno task netem:install`) and run the gateway
+with `NETEM_CTL=1`: the drawer gains a **Network** section with server-side `tc netem` profiles
+(`clean → wifi-normal → wifi-crowded → wifi-edge → disaster → loss-3/5%`) plus momentary outage
+buttons, shaping only the gateway's egress ports and self-healing after 15 min. The same profiles are
+drivable from a shell (`sudo dimos-netem <profile>` on the box, or `POST /netem` from anywhere); every
+result row is stamped `net:<profile>`. Setup + the measured profile matrix: [benchmarks §3](docs/benchmarks.md).
 
 Headlines. The service is a byte-relay, so language isn't the bottleneck: one Python process relays
 ~255 MB/s over WS at ~1 ms p50 on loopback. At robot-realistic bulk (≤20 MB/s) WebTransport and
