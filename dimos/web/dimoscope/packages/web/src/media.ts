@@ -8,8 +8,8 @@ import { createWebCodecsMedia } from "./media/webCodecsMedia.ts";
 
 export interface MediaDeps {
   client: DimosClient; // for the jpeg-topic floor (subscribes via client.topic)
-  gatewayUrl?: string; // media node WS (WebRTC signaling / WebCodecs chunks, e.g. ws://host:8092)
-  serverMedia?: readonly MediaKind[]; // what the media node serves; floor = ["jpeg"]
+  gatewayUrl?: string; // the gateway /media WS (WebRTC signaling / WebCodecs chunks, e.g. ws://host:8080/media)
+  serverMedia?: readonly MediaKind[]; // what the gateway's media plane serves; floor = ["jpeg"]
   prefer?: MediaKind[]; // preference order; default ["webrtc","jpeg"]
 }
 
@@ -24,7 +24,7 @@ export function selectMediaChannel(d: MediaDeps): MediaChannel {
     webrtc: "RTCPeerConnection" in globalThis,
     jpeg: true,
   };
-  // webcodecs/webrtc need the media node URL, else they skip.
+  // webcodecs/webrtc need the /media URL, else they skip.
   const build: Record<MediaKind, () => MediaChannel | undefined> = {
     webcodecs: () => d.gatewayUrl ? createWebCodecsMedia({ gatewayUrl: d.gatewayUrl }) : undefined,
     webrtc: () => d.gatewayUrl ? createWebRtcMedia({ gatewayUrl: d.gatewayUrl }) : undefined,

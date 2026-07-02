@@ -8,7 +8,7 @@ import "./styles.css";
 
 // Data plane, camera /media, and bench transports share one host:port; the gateway (host:port) is a
 // user-editable setting. WebTransport is the exception — QUIC can't share the HTTP port, so it uses WT_PORT=8443.
-const GW_PORT = 8080; // gateway HTTP/WS port (serve.py default)
+const GW_PORT = 8080; // gateway HTTP/WS port (python -m gateway default)
 const WT_PORT = 8443; // gateway WebTransport/QUIC port
 
 // Initial gateway: ?gw=host:port seeds it, else localStorage, else hostname:GW_PORT.

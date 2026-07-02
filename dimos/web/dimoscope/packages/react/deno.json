@@ -1,4 +1,9 @@
 {
+  "name": "@dimos/react",
+  "version": "0.1.0",
+  "exports": {
+    ".": "./src/index.tsx"
+  },
   "compilerOptions": {
     "lib": ["deno.ns", "dom", "dom.iterable", "dom.asynciterable"],
     "jsx": "react-jsx",

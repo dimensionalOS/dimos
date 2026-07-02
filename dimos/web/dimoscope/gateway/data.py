@@ -143,8 +143,6 @@ class DataPlane:
             st.rate.pop(m["topic"], None)
             st.last.pop(m["topic"], None)
             st.qos.pop(m["topic"], None)
-        elif op == "rate":
-            st.rate[m["topic"]] = float(m.get("maxHz") or 0)
         elif op == "list":
             st.q.put_control(json.dumps({"op": "topics", "topics": self.bus.topic_list()}))
         elif op == "ping":  # clock-sync probe: echo our clock so the client can estimate skew
@@ -159,8 +157,6 @@ class DataPlane:
                 float(m.get("ttlMs", DEFAULT_TTL)),
                 loop,
             )
-        elif op == "stop":
-            self.egress.stop(ws)
         elif op == "goal":
             self.egress.goal(m.get("x", 0), m.get("y", 0), m.get("z", 0))
         elif op == "rpc":

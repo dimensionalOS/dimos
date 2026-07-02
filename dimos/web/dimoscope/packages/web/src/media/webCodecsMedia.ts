@@ -13,7 +13,7 @@ interface Decoding {
 }
 
 export interface WebCodecsMediaDeps {
-  gatewayUrl: string; // media node WS that streams H.264 chunks (e.g. ws://host:8092)
+  gatewayUrl: string; // the gateway /media WS that streams H.264 chunks (e.g. ws://host:8080/media)
 }
 
 /** Close a decoder, swallowing the throw if it's already closed. */

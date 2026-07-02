@@ -29,7 +29,7 @@ export function frameToSample(frame: Uint8Array, recvTs: number): RawSample | un
   return { topic, type, payload, recvTs, gatewaySendMs };
 }
 
-/** Portable base64 → bytes (SSE data lines). Works in the browser, Deno and Bun. */
+/** Portable base64 → bytes (SSE data lines). Works in any JS runtime with `atob`. */
 export function b64ToBytes(s: string): Uint8Array {
   const bin = atob(s);
   const u8 = new Uint8Array(bin.length);

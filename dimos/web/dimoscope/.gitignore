@@ -5,8 +5,5 @@ app/dist/
 .vite/
 **/.vite/
 *.log
-bench/results.json
-bench/results_*.json
-bench/last_run.md
 qos.rules.json
 .DS_Store

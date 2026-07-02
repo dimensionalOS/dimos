@@ -2,7 +2,7 @@
 # dimoscope bus: the single in-process tap every transport reads from. Ingests both backends at once
 # (Zenoh declare_subscriber("**"); LCM UDP-multicast with LC03→LC02 reassembly) and normalises each sample
 # to Sample(topic, type, lc02, payload). lc02 is the self-describing "LC02"<seq><channel>\0<payload> packet
-# the browser decodes; payload is the bare lcm_encode bytes (fed to Image.lcm_decode by the media node).
+# the browser decodes; payload is the bare lcm_encode bytes (fed to Image.lcm_decode by the media plane).
 # Consumer callbacks run on the loop and must be cheap (enqueue, don't await); Zenoh delivers on its own
 # thread → call_soon_threadsafe, the LCM tap already runs on the loop.
 from __future__ import annotations

@@ -5,7 +5,7 @@
 import type { MediaCaps, MediaChannel, Status } from "../types.ts";
 
 export interface WebRtcMediaDeps {
-  gatewayUrl: string; // media node WS for WebRTC signaling (e.g. ws://host:8092)
+  gatewayUrl: string; // the gateway /media WS for WebRTC signaling (e.g. ws://host:8080/media)
 }
 
 export const createWebRtcMedia = (deps: WebRtcMediaDeps): MediaChannel => {

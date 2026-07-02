@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 # Benchmark load generator for the in-browser bench: a configurable dimos Module emitting timestamped,
 # seq-tagged streams so the browser can measure latency/throughput/jitter/loss across transports.
-# Tuned by env (BENCH_HZ, BENCH_IMG_HZ, BENCH_IMG_BYTES, BENCH_POSE_TOPICS, ...); also a blueprint.
-# Ultra-light (no coordinator) twin of the `load`/`go2-load` blueprint (dimos/robot/benchmark/go2_load.py):
-# same /load/* wire, env-tuned. For interactive start_bench control use `dimos run load` / `deno task dog`.
+# Tuned by env (BENCH_HZ, BENCH_MID_HZ, BENCH_SLOW_HZ, BENCH_GRID_HZ, BENCH_IMG_HZ, BENCH_IMG_BYTES);
+# also a blueprint. Ultra-light (no coordinator) twin of the `load`/`go2-load` blueprint
+# (dimos/robot/benchmark/go2_load.py): same /load/* wire, env-tuned. For interactive start_bench
+# control use `dimos run load` / `deno task dog`.
 #
-# Topics (names match @dimos/web/bench; leading "/" stripped on zenoh). Each stamps `ts` (publish
-# wall-clock, seconds) → one-way latency, and `frame_id=str(seq)` (per-topic counter) → drop/gap detection:
-#   /load/p0../pN  PoseStamped   @ rate_hz   small, high-rate
-#   /load/grid     OccupancyGrid @ grid_hz   medium (~3.7 KB)
-#   /load/img      Image         @ img_hz    large (~img_bytes)
+# Topics (names match the STREAM_PROFILES in packages/web/src/bench.ts and go2_load's lanes; leading
+# "/" stripped on zenoh). Each stamps `ts` (publish wall-clock, seconds) → one-way latency, and
+# `frame_id=str(seq)` (per-topic counter) → drop/gap detection:
+#   /load/fast|mid|slow  PoseStamped   @ fast/mid/slow_hz  small lanes at distinct rates
+#   /load/grid           OccupancyGrid @ grid_hz           medium (~3.7 KB)
+#   /load/img            Image         @ img_hz            large (~img_bytes)
 import os
 import time
 
@@ -39,11 +41,13 @@ def _env_i(key: str, default: int) -> int:
 
 class BenchSourceConfig(ModuleConfig):
     # Defaults read from env so the standalone harness and `dimos run --option` agree
-    # (an explicit --option still overrides; the env value is only the default).
-    rate_hz: float = _env_f("BENCH_HZ", 100)  # each PoseStamped topic
-    n_pose_topics: int = _env_i("BENCH_POSE_TOPICS", 4)  # 1..4
-    grid_hz: float = _env_f("BENCH_GRID_HZ", 20)  # OccupancyGrid (0 = off)
-    img_hz: float = _env_f("BENCH_IMG_HZ", 0)  # large Image (0 = off)
+    # (an explicit --option still overrides; the env value is only the default). Lane rates
+    # default to the go2_load spread the STREAM_PROFILES hints describe (0 = lane off).
+    fast_hz: float = _env_f("BENCH_HZ", 100)  # /load/fast PoseStamped
+    mid_hz: float = _env_f("BENCH_MID_HZ", 20)  # /load/mid PoseStamped
+    slow_hz: float = _env_f("BENCH_SLOW_HZ", 2)  # /load/slow PoseStamped
+    grid_hz: float = _env_f("BENCH_GRID_HZ", 5)  # OccupancyGrid
+    img_hz: float = _env_f("BENCH_IMG_HZ", 0)  # large Image
     img_bytes: int = _env_i("BENCH_IMG_BYTES", 1_000_000)  # ~payload size when img_hz > 0
 
 
@@ -66,10 +70,9 @@ class BenchSource(Module):
     """Configurable high-rate load generator for transport/mechanism benchmarking."""
 
     config: BenchSourceConfig
-    p0: Out[PoseStamped]
-    p1: Out[PoseStamped]
-    p2: Out[PoseStamped]
-    p3: Out[PoseStamped]
+    fast: Out[PoseStamped]
+    mid: Out[PoseStamped]
+    slow: Out[PoseStamped]
     grid: Out[OccupancyGrid]
     img: Out[Image]
 
@@ -83,23 +86,25 @@ class BenchSource(Module):
             self._seq[topic] = n + 1
             return str(n)
 
-        n_pose = max(1, min(4, c.n_pose_topics))
-        pose_ports = [self.p0, self.p1, self.p2, self.p3][:n_pose]
+        def pose_lane(port: Out[PoseStamped], topic: str, hz: float, y: float) -> None:
+            if hz <= 0:
+                return
 
-        def tick_pose(_: int) -> None:
-            now = time.time()
-            for i, port in enumerate(pose_ports):
+            def tick(_: int) -> None:
                 port.publish(
                     PoseStamped(
-                        ts=now,
-                        frame_id=seq(f"/load/p{i}"),
-                        position=(0.0, float(i), 0.0),
+                        ts=time.time(),
+                        frame_id=seq(topic),
+                        position=(0.0, y, 0.0),
                         orientation=IDENT,
                     )
                 )
 
-        if c.rate_hz > 0:  # rate_hz=0 → pose off (heavy-stream-only profiles)
-            self.register_disposable(rx.interval(1.0 / c.rate_hz).subscribe(tick_pose))
+            self.register_disposable(rx.interval(1.0 / hz).subscribe(tick))
+
+        pose_lane(self.fast, "/load/fast", c.fast_hz, 0.0)
+        pose_lane(self.mid, "/load/mid", c.mid_hz, 1.0)
+        pose_lane(self.slow, "/load/slow", c.slow_hz, 2.0)
 
         if c.grid_hz > 0:
             self.register_disposable(
@@ -150,16 +155,15 @@ def _mk(topic: str, typ: type):  # type: ignore[no-untyped-def]
 if __name__ == "__main__":
     mod = BenchSource()
     c = mod.config
-    mod.p0.transport = _mk(_tn("/load/p0"), PoseStamped)
-    mod.p1.transport = _mk(_tn("/load/p1"), PoseStamped)
-    mod.p2.transport = _mk(_tn("/load/p2"), PoseStamped)
-    mod.p3.transport = _mk(_tn("/load/p3"), PoseStamped)
+    mod.fast.transport = _mk(_tn("/load/fast"), PoseStamped)
+    mod.mid.transport = _mk(_tn("/load/mid"), PoseStamped)
+    mod.slow.transport = _mk(_tn("/load/slow"), PoseStamped)
     mod.grid.transport = _mk(_tn("/load/grid"), OccupancyGrid)
     mod.img.transport = _mk(_tn("/load/img"), Image)
     mod.start()
     print(
-        f"bench_source: {max(1, min(4, c.n_pose_topics))}×PoseStamped @ {c.rate_hz}Hz "
-        f"+ grid @ {c.grid_hz}Hz + img({c.img_bytes}B) @ {c.img_hz}Hz over {TRANSPORT}",
+        f"bench_source: /load/fast@{c.fast_hz} mid@{c.mid_hz} slow@{c.slow_hz} "
+        f"+ grid@{c.grid_hz}Hz + img({c.img_bytes}B)@{c.img_hz}Hz over {TRANSPORT}",
         flush=True,
     )
     try:

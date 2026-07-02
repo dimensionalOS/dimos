@@ -1,4 +1,10 @@
 {
+  "name": "@dimos/web",
+  "version": "0.1.0",
+  "exports": {
+    ".": "./src/index.ts",
+    "./experimental": "./src/transports/experimental/index.ts"
+  },
   "compilerOptions": {
     "lib": ["deno.ns", "dom", "dom.iterable", "dom.asynciterable"]
   }
