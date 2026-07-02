@@ -582,21 +582,7 @@ class DepthStreamer:
 
         # Per-frame voxel map — mirrors ZED world/map pipeline exactly
         h_rel  = xyz[:, 2] - cam_z
-        # Floor detection: grab the lowest Z cluster (within 5 cm of z.min()),
-        # then check if it's flat (std < 3 cm) and large enough to be a real
-        # surface.  If yes → floor, remove it + 8 cm buffer.
-        # If not flat or too sparse → no confident floor, keep everything.
-        z      = xyz[:, 2]
-        z_lo   = float(z.min())
-        cand   = z[(z - z_lo) < 0.05]
-        c_std  = float(cand.std()) if len(cand) > 0 else 999.0
-        if len(cand) > 50 and c_std < 0.03:
-            floor_z = float(cand.mean()) + 0.08
-            self._dbg_floor = f"det@{floor_z:.2f}(n={len(cand)},std={c_std:.3f})"
-            keep = (xyz[:, 2] > floor_z) & (h_rel <= _Z_REL_HI)
-        else:
-            self._dbg_floor = f"NONE(n={len(cand)},std={c_std:.3f},zlo={z_lo:.2f})"
-            keep = h_rel <= _Z_REL_HI
+        keep   = h_rel <= _Z_REL_HI
         xyz_kept = xyz[keep]
         if len(xyz_kept):
             vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
@@ -687,7 +673,6 @@ class DepthStreamer:
             f"frame={frame:5d}  "
             f"stable={self._last_n_stable:6d}/{self._last_n_valid:6d} ({pct:.0f}%)  "
             f"vox={self._last_n_vox:5d}  "
-            f"floor={getattr(self, '_dbg_floor', '?')}  "
             f"t=[{t[0]:+.2f},{t[1]:+.2f},{t[2]:+.2f}]  "
             f"vio={vio}  fps={fps:.1f}",
             flush=True,
