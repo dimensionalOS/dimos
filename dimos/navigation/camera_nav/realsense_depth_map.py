@@ -569,6 +569,17 @@ class DepthStreamer:
                         else _height_color(xyz[idx, 2] - cam_z))
         rr.log("world/cloud", rr.Points3D(positions=xyz[idx], colors=cloud_colors, radii=0.003))
 
+        # Raw cloud (no gradient filter) — for comparison
+        xyz_raw, colors_raw = self._bp.project(pkt, stable=None)
+        if len(xyz_raw):
+            n_r   = min(len(xyz_raw), self.MAX_CLOUD)
+            idx_r = np.random.choice(len(xyz_raw), n_r, replace=False) if len(xyz_raw) > n_r else np.arange(len(xyz_raw))
+            rr.log("world/raw_cloud", rr.Points3D(
+                positions=xyz_raw[idx_r],
+                colors=colors_raw[idx_r] if colors_raw is not None else _height_color(xyz_raw[idx_r, 2] - cam_z),
+                radii=0.003,
+            ))
+
         # Per-frame voxel map — mirrors ZED world/map pipeline exactly
         cam_pos  = pkt.pose_t
         h_rel    = xyz[:, 2] - cam_z
@@ -678,6 +689,8 @@ def main() -> None:
         rrb.Tabs(
             rrb.Spatial3DView(name="live cloud", origin="world",
                               contents=["world/cloud", "world/camera/**"]),
+            rrb.Spatial3DView(name="raw cloud", origin="world",
+                              contents=["world/raw_cloud", "world/camera/**"]),
             rrb.Spatial3DView(name="voxel map", origin="world",
                               contents=["world/map"]),
         )
