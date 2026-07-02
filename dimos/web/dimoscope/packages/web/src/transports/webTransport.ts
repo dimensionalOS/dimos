@@ -252,9 +252,11 @@ export const createWebTransportTransport = (deps: WebTransportDeps): Transport =
       return new Promise((resolve, reject) => {
         pending.set(id, { resolve, reject });
         sendControl({ op: "rpc", id, target, method, args });
+        // 20 s: the gateway's first RPC to a module waits for zenoh route establishment (>8 s on a
+        // WAN box; instant once warm). Keep in sync with gatewayWs.ts.
         setTimeout(() => {
           if (pending.delete(id)) reject(new Error(`rpc ${target}/${method} timed out`));
-        }, 8000);
+        }, 20000);
       });
     },
     // NTP-style clock probe: offset = serverTs − (tSend + rtt/2), assuming a symmetric path.
