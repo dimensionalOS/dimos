@@ -792,6 +792,8 @@ def main() -> None:
                               contents=["world/raw_cloud", "world/camera/**"]),
             rrb.Spatial3DView(name="voxel map", origin="world",
                               contents=["world/map"]),
+            rrb.Spatial3DView(name="global map", origin="world",
+                              contents=["world/global_map"]),
         )
     ))
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
