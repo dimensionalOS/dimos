@@ -1,8 +1,10 @@
 #!/bin/bash
 # dimos-netem — scoped network-condition profiles for the dimoscope benchmark (Linux, root).
 #
-# Applies tc netem ONLY to the gateway's egress flows (sport 8080/tcp + 8443/udp via a prio qdisc +
-# u32 filters), so SSH and everything else on the box stay untouched even at the harshest profile.
+# Applies tc netem to the gateway's egress flows — TCP sport 8080 plus ALL egress UDP (WebTransport's
+# :8443 and WebRTC's ICE-negotiated ports, v4+v6) via a prio qdisc + u32 filters. SSH (TCP) stays
+# untouched even at the harshest profile; box-level UDP (DNS, VPNs) is shaped while a profile is
+# active and self-heals with it.
 # Every apply arms a self-heal timer that clears the shaping after $HEAL_S, so a crashed caller can
 # never leave the box degraded. Outage profiles drop the gateway ports via iptables for a few seconds
 # and always auto-restore.
@@ -46,9 +48,12 @@ apply() {
   # shellcheck disable=SC2086 — corr is an optional extra token for netem loss correlation
   tc qdisc add dev "$IFACE" parent 1:4 handle 40: netem \
     rate "$rate" delay "$delay" "$jitter" loss "$loss" $corr || { clear_all; exit 1; }
-  # Steer only the gateway's egress into the shaped band (server→browser data direction).
+  # Steer the gateway's egress into the shaped band (server→browser data direction):
+  # TCP 8080 (HTTP/WS) + ALL egress UDP — WebTransport's :8443 and WebRTC's ICE-negotiated
+  # ephemeral ports (v4+v6). A port-scoped UDP match would let WebRTC bypass the shaper.
   tc filter add dev "$IFACE" parent 1: protocol ip u32 match ip sport 8080 0xffff flowid 1:4
-  tc filter add dev "$IFACE" parent 1: protocol ip u32 match ip sport 8443 0xffff flowid 1:4
+  tc filter add dev "$IFACE" parent 1: protocol ip u32 match ip protocol 17 0xff flowid 1:4
+  tc filter add dev "$IFACE" parent 1: protocol ipv6 u32 match ip6 protocol 17 0xff flowid 1:4
   echo "$name" > "$PROFILE_F"
   ( sleep "$HEAL_S"; "$0" clear ) >/dev/null 2>&1 &
   echo $! > "$TIMER_F"

@@ -156,9 +156,11 @@ momentary UDP/all outage buttons. Every result row is stamped `net:<profile>`.
 
 Opt-in and scoped: install the root wrapper once with `deno task netem:install` (= `sudo install
 -m755 gateway/scripts/dimos-netem /usr/local/bin/` + a sudoers entry for `$USER` scoped to that one
-script), then run the gateway with `NETEM_CTL=1`. Shaping hits only the gateway's egress ports
-(8080/8443 via a prio+u32 band) — SSH stays untouched — and every apply self-heals after 15 min.
-Apply loss **after** the transport is connected: QUIC handshakes fail under loss.
+script), then run the gateway with `NETEM_CTL=1`. Shaping hits the gateway's egress — TCP 8080 plus
+**all egress UDP** (WebTransport's :8443 and WebRTC's ICE-negotiated ports; a port-scoped UDP match
+would let WebRTC bypass the shaper). SSH stays untouched; box-level UDP (DNS, VPNs) is shaped while
+a profile is active, and every apply self-heals after 15 min. Apply loss **after** the transport is
+connected: QUIC handshakes fail under loss.
 
 The browser panel is one of three equivalent controls over the same wrapper (the panel shows whatever
 is active):
