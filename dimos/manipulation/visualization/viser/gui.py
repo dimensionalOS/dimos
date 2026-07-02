@@ -853,13 +853,14 @@ class ViserPanelGui:
     def _submit_clear(self) -> None:
         if self._closed:
             return
+        robot_name = self.state.selected_robot
         operation_id = self._next_operation_id()
 
         def operation() -> None:
             if not self._operation_is_current(operation_id):
                 return
             self.state.action_status = ActionStatus.CLEARING_PLAN
-            ok = self.adapter.clear_planned_path()
+            ok = self.adapter.clear_planned_path(robot_name)
             if not self._operation_is_current(operation_id):
                 return
             self.state.plan_state = PanelPlanState()

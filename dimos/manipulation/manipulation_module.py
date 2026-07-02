@@ -721,13 +721,16 @@ class ManipulationModule(Module):
         return True
 
     @rpc
-    def has_planned_path(self) -> bool:
+    def has_planned_path(self, robot_name: RobotName | None = None) -> bool:
         """Check if there's a planned path ready.
+
+        Args:
+            robot_name: Robot to check (required if multiple robots configured)
 
         Returns:
             True if a path is planned and ready
         """
-        robot = self._get_robot()
+        robot = self._get_robot(robot_name)
         if robot is None:
             return False
         robot_name, _, _, _ = robot
@@ -747,15 +750,18 @@ class ManipulationModule(Module):
         return self._world_monitor.get_visualization_url()
 
     @rpc
-    def clear_planned_path(self) -> bool:
+    def clear_planned_path(self, robot_name: RobotName | None = None) -> bool:
         """Clear the stored planned path.
+
+        Args:
+            robot_name: Robot to clear (required if multiple robots configured)
 
         Returns:
             True if cleared
         """
         if self._world_monitor is None:
             return False
-        robot = self._get_robot()
+        robot = self._get_robot(robot_name)
         if robot is None:
             return False
         robot_name, _, _, _ = robot

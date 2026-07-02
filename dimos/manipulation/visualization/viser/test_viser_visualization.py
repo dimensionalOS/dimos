@@ -1057,7 +1057,7 @@ def test_adapter_copies_joint_state_and_delegates_to_module() -> None:
         preview_path=lambda robot_name=None: robot_name,
         execute=lambda robot_name=None: robot_name,
         cancel=lambda: True,
-        clear_planned_path=lambda: True,
+        clear_planned_path=lambda robot_name=None: True,
     )
     world_monitor = SimpleNamespace(
         get_current_joint_state=lambda robot_id: copied,
@@ -1597,7 +1597,7 @@ def test_gui_safe_execute_requires_fresh_matching_plan_and_clear_resets_path(
         _planned_trajectories={},
         _state=NamedState(name="IDLE"),
         execute=lambda robot_name=None: executed.append(robot_name) or True,
-        clear_planned_path=lambda: cleared.append(True) or True,
+        clear_planned_path=lambda robot_name=None: cleared.append(True) or True,
     )
     world_monitor = SimpleNamespace(
         get_current_joint_state=lambda robot_id: current,

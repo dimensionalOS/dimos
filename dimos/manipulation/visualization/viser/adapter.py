@@ -161,8 +161,8 @@ class InProcessViserAdapter:
     def cancel(self) -> bool:
         return self._module.cancel()
 
-    def clear_planned_path(self) -> bool:
-        return self._module.clear_planned_path()
+    def clear_planned_path(self, robot_name: RobotName | None = None) -> bool:
+        return self._module.clear_planned_path(robot_name)
 
     @staticmethod
     def joints_from_values(joint_names: Sequence[str], values: Sequence[float]) -> JointState:
