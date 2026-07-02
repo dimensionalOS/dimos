@@ -455,43 +455,23 @@ class RealSenseDepthSource:
         self._width  = width
         self._height = height
 
+        # ── Video pipeline: depth + colour only (NO IMU in this pipeline) ─────
+        # When IMU streams are mixed into the same pipeline, the SDK synchroniser
+        # bundles them into composite framesets delivered at the VIDEO rate (15 Hz).
+        # At 15 Hz Madgwick barely integrates yaw — a fast pan can be missed
+        # entirely if the syncer drops a motion frame.  The fix: start IMU via the
+        # sensor API independently so gyro arrives at its native ~200 Hz.
         self._pipeline = rs.pipeline()
-
-        # Try to start with IMU streams (D435i).  Falls back to depth+colour only
-        # if the device has no IMU (D435) or the firmware rejects the request.
         cfg = rs.config()
         cfg.enable_stream(rs.stream.depth, width, height, rs.format.z16,  fps)
         cfg.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
-        cfg.enable_stream(rs.stream.accel, rs.format.motion_xyz32f)   # let SDK pick fps
-        cfg.enable_stream(rs.stream.gyro,  rs.format.motion_xyz32f)
-
-        # IMU state — written by callback thread, read by main thread
-        self._imu_lock   = threading.Lock()
-        self._last_accel = np.array([0.0, 0.0, -9.81], dtype=np.float32)  # gravity prior
-        self._depth_queue: queue.Queue = queue.Queue(maxsize=2)
-
-        try:
-            # Start with callback so gyro/accel arrive at their native 200 Hz / 63 Hz.
-            # wait_for_frames() only delivers ONE motion sample per video frame (15 Hz),
-            # which is too slow for Madgwick to track yaw → R stays near identity → all
-            # frames pile up in camera space.
-            profile       = self._pipeline.start(cfg, self._on_frame)
-            self._has_imu = True
-            print("IMU streams enabled (D435i) — gyro callback at 200 Hz")
-        except RuntimeError:
-            cfg2 = rs.config()
-            cfg2.enable_stream(rs.stream.depth, width, height, rs.format.z16,  fps)
-            cfg2.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
-            profile       = self._pipeline.start(cfg2)
-            self._has_imu = False
-            print("IMU not available (D435?) — world-frame tracking disabled, using identity pose")
+        profile = self._pipeline.start(cfg)
 
         self._depth_scale = (
             profile.get_device().first_depth_sensor().get_depth_scale()
         )
         self._align = rs.align(rs.stream.depth)
 
-        # Intrinsics: depth stream (color is warped to it, preserving full depth FOV)
         intr = (profile.get_stream(rs.stream.depth)
                        .as_video_stream_profile()
                        .get_intrinsics())
@@ -499,83 +479,79 @@ class RealSenseDepthSource:
             [intr.fx, intr.fy, intr.ppx, intr.ppy], dtype=np.float64
         )
 
-        # Store stream enum refs so read() can use them without re-importing
-        self._stream_gyro  = rs.stream.gyro
-        self._stream_accel = rs.stream.accel
+        self._spatial_filter   = rs.spatial_filter()
+        self._hole_fill_filter = rs.hole_filling_filter()
 
-        # SDK post-processing: smooth out IR-pattern artifacts on flat surfaces
-        # (walls appear hollow without this when using native depth alignment).
-        self._spatial_filter    = rs.spatial_filter()
-        self._hole_fill_filter  = rs.hole_filling_filter()
+        # ── IMU sensor: started separately so it runs at native rate ──────────
+        self._imu_lock      = threading.Lock()
+        self._last_accel    = np.array([0.0, 0.0, -9.81], dtype=np.float32)
+        self._motion_sensor = None
+        self._has_imu       = False
+        self._madgwick      = None
+        self._R_imu_to_link = None
 
-        if self._has_imu:
-            # IMU-to-camera_link rotation: accel → depth-optical → camera_link
-            ext            = (profile.get_stream(rs.stream.accel)
-                                     .get_extrinsics_to(profile.get_stream(rs.stream.depth)))
+        device = profile.get_device()
+        for sensor in device.query_sensors():
+            if not sensor.is_motion_sensor():
+                continue
+            all_profiles = sensor.get_stream_profiles()
+            gyro_profiles  = [p for p in all_profiles if p.stream_type() == rs.stream.gyro]
+            accel_profiles = [p for p in all_profiles if p.stream_type() == rs.stream.accel]
+            if not gyro_profiles or not accel_profiles:
+                break
+            # Pick highest available rate for each
+            gyro_p  = max(gyro_profiles,  key=lambda p: p.fps())
+            accel_p = max(accel_profiles, key=lambda p: p.fps())
+            # Extrinsics: accel frame → depth optical frame → camera_link
+            depth_stream   = profile.get_stream(rs.stream.depth)
+            ext            = accel_p.get_extrinsics_to(depth_stream)
             R_imu_to_depth = np.array(ext.rotation, dtype=np.float32).reshape(3, 3)
             self._R_imu_to_link = _R_OPT_TO_LINK @ R_imu_to_depth
             self._madgwick      = MadgwickFilter(beta=0.033)
-        else:
-            self._R_imu_to_link = None
-            self._madgwick      = None
+            sensor.open([gyro_p, accel_p])
+            sensor.start(self._on_motion)
+            self._motion_sensor = sensor
+            self._has_imu       = True
+            print(f"IMU sensor API: gyro@{gyro_p.fps()}Hz  accel@{accel_p.fps()}Hz  "
+                  f"(independent of video pipeline)")
+            break
+
+        if not self._has_imu:
+            print("IMU not available — world-frame tracking disabled, using identity pose")
 
         self.odom         = PointCloudOdometry()
         self._pose_locked = not self._has_imu
 
-    def _on_frame(self, frame: object) -> None:
-        """Pipeline callback — called by SDK thread for every incoming frame.
-
-        Motion frames arrive at their native rate (gyro ~200 Hz, accel ~63 Hz).
-        Video framesets (depth+color synced) arrive at the depth FPS (15 Hz).
-        """
+    def _on_motion(self, frame: object) -> None:
+        """Sensor callback — gyro at ~200 Hz, accel at ~63 Hz, independent of video."""
         import pyrealsense2 as rs
-        if frame.is_frameset():
-            # Video frame: enqueue for read(); drop oldest if full
-            fs = frame.as_frameset()
-            if self._depth_queue.full():
-                try:
-                    self._depth_queue.get_nowait()
-                except queue.Empty:
-                    pass
-            try:
-                self._depth_queue.put_nowait(fs)
-            except queue.Full:
-                pass
-        else:
-            st = frame.get_profile().stream_type()
-            if st == rs.stream.gyro:
-                g = frame.as_motion_frame().get_motion_data()
-                gyro_imu = np.array([g.x, g.y, g.z], dtype=np.float32)
-                gyro_link = self._R_imu_to_link @ gyro_imu
-                ts_hw = frame.get_timestamp() / 1000.0   # ms → s
-                with self._imu_lock:
-                    self._madgwick.update(gyro_link, self._last_accel, ts_hw)
-                    if not self._pose_locked:
-                        self._pose_locked = True
-                        print("*** IMU gyro callback active — orientation tracking at 200 Hz ***",
-                              flush=True)
-            elif st == rs.stream.accel:
-                a = frame.as_motion_frame().get_motion_data()
-                accel_imu = np.array([a.x, a.y, a.z], dtype=np.float32)
-                with self._imu_lock:
-                    self._last_accel = self._R_imu_to_link @ accel_imu
+        st = frame.get_profile().stream_type()
+        if st == rs.stream.gyro:
+            g         = frame.as_motion_frame().get_motion_data()
+            gyro_link = self._R_imu_to_link @ np.array([g.x, g.y, g.z], dtype=np.float32)
+            ts_hw     = frame.get_timestamp() / 1000.0   # SDK gives ms → convert to s
+            with self._imu_lock:
+                self._madgwick.update(gyro_link, self._last_accel, ts_hw)
+                if not self._pose_locked:
+                    self._pose_locked = True
+                    print("*** IMU active — gyro integrating at native rate ***", flush=True)
+        elif st == rs.stream.accel:
+            a = frame.as_motion_frame().get_motion_data()
+            with self._imu_lock:
+                self._last_accel = self._R_imu_to_link @ np.array([a.x, a.y, a.z],
+                                                                    dtype=np.float32)
 
     @property
     def pose_locked(self) -> bool:
         return self._pose_locked
 
     def read(self, ts: float) -> DepthFramePacket:
-        # Get next depth+color frameset.  With the callback pipeline, motion frames
-        # are handled in _on_frame() at native rate; we only block here for video.
-        if self._has_imu:
-            frames = self._depth_queue.get(timeout=5.0)
-        else:
-            frames = self._pipeline.wait_for_frames()
+        frames  = self._pipeline.wait_for_frames()
         aligned = self._align.process(frames)
 
         with self._imu_lock:
             R = self._madgwick.R.copy() if self._has_imu else np.eye(3, dtype=np.float32)
-        t = self.odom.t                     # translation from previous ICP update
+        t = self.odom.t
 
         # ── Depth ──────────────────────────────────────────────────────
         # Spatial filter smooths IR-pattern noise on flat surfaces (walls);
@@ -603,6 +579,12 @@ class RealSenseDepthSource:
         )
 
     def stop(self) -> None:
+        if self._motion_sensor is not None:
+            try:
+                self._motion_sensor.stop()
+                self._motion_sensor.close()
+            except Exception:
+                pass
         self._pipeline.stop()
 
 

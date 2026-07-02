@@ -152,8 +152,10 @@ def main() -> None:
 
             fps   = frame / max(time.monotonic() - t0, 1e-6)
             t_icp = src.odom.t
+            # rotation angle from identity — stays 0 if IMU not tracking
+            theta = np.degrees(np.arccos(np.clip((np.trace(pkt.pose_R) - 1.0) / 2.0, -1.0, 1.0)))
             print(
-                f"frame={frame:5d}  map={len(acc_pts):6d}vox  "
+                f"frame={frame:5d}  rot={theta:.1f}deg  map={len(acc_pts):6d}vox  "
                 f"t=[{t_icp[0]:+.3f},{t_icp[1]:+.3f},{t_icp[2]:+.3f}]  "
                 f"floor={'ready' if floor_calib.ready else 'calibrating'}  fps={fps:.1f}",
                 flush=True,
