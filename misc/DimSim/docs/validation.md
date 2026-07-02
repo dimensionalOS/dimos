@@ -31,17 +31,23 @@ lighting, `enableShadows()` for shadows. See [scenes.md](./scenes.md).
 Drop `map.glb` in the scene folder:
 
 ```js
-export default async function build({ scene, physics, loadGLTF, setSky, placeOnGround }) {
+export default async function build({ scene, physics, loadGLTF, setSky, findOpenSpawn }) {
   setSky({ topColor: "#1a6be0", horizonColor: "#c8ddf5" });
   const map = (await loadGLTF("./map.glb")).scene;
   scene.add(map);
-  physics.staticCollider(map, "trimesh");       // so the robot can't fall through
-  return { spawnPoint: placeOnGround(0, 0) };    // resolve floor height at (0, 0)
+  physics.staticCollider(map, "trimesh");   // so the robot can't fall through
+  return { spawnPoint: findOpenSpawn() };   // auto-pick a clear spot (after colliders exist)
 }
 ```
 
-Observe: the robot spawns on the map and collides with walls/floor. If it floats,
-`placeOnGround` warns. Pick an `x, z` over the floor.
+Observe: the robot spawns on the map and collides with walls/floor.
+
+`findOpenSpawn()` is the safe default for a third-party map: you don't know where the
+walls are, and it searches outward from the origin for a collision-free spot instead of
+guessing coords. If you *do* know a good clear spot, `placeOnGround(x, z)` (or
+`placeInAir(x, z, altitude)` for drones) resolves the floor height at that `x, z` — but a
+guessed origin can land inside geometry, and `placeOnGround` only *warns* if it floats.
+`findOpenSpawn` must run after the colliders exist, so call it in the `return`.
 
 ---
 
@@ -83,12 +89,12 @@ executes (`cmd_vel → /odom`):
 // drone — set embodimentType too so the browser visual matches the flight physics
 setEmbodiment({ motionModel: "flight", embodimentType: "drone",
   radius: 0.3, halfHeight: 0.1, gravity: 0, maxSpeed: 3, maxAltitude: 20 });
-return { spawnPoint: placeInAir(0, 0, 5) };
+return { spawnPoint: findOpenSpawn({ altitude: 5 }) };   // clear column, hover 5 m up
 
 // car
 setEmbodiment({ motionModel: "ackermann",
   radius: 0.4, halfHeight: 0.3, maxSpeed: 4, wheelBase: 1.2, maxSteerAngle: 0.6 });
-return { spawnPoint: placeOnGround(0, 0) };
+return { spawnPoint: findOpenSpawn() };
 ```
 
 To add a new model (legged, tank, boat), add one function to `MOTION_MODELS` in
