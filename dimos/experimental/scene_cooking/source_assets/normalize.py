@@ -146,7 +146,7 @@ def _normalize_blend_source(
 
     if not target.exists():
         raise RuntimeError(f"Blender source normalization did not write {target}")
-    logger.info("normalized Blender scene source: %s -> %s", source, target)
+    logger.info("normalized Blender scene source", source=source, target=target)
     return PreparedSceneSource(
         original_path=source,
         cook_path=target,

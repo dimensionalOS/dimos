@@ -240,7 +240,7 @@ def cook_scene_package(
         stats=stats,
     )
     package.write_metadata()
-    logger.info("scene package cooked: %s", package.metadata_path)
+    logger.info("scene package cooked", metadata_path=package.metadata_path)
     return package
 
 
@@ -265,9 +265,9 @@ def _cook_entity_collision(
         visual_path = entity.get("visual_path")
         if not visual_path or not Path(visual_path).exists():
             logger.warning(
-                "entity %s: mesh entity has no cooked visual GLB; "
+                "mesh entity has no cooked visual GLB; "
                 "no collision hulls (runtime falls back to AABB box)",
-                entity.get("id"),
+                entity_id=entity.get("id"),
             )
             continue
         hull_paths = cook_entity_collision_hulls(
