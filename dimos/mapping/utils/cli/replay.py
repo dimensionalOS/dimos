@@ -44,8 +44,11 @@ import typer
 # main() so that `dimos map --help` stays fast. See test_cli_startup.py and the
 # same pattern in dimos/mapping/utils/cli/map.py.
 if TYPE_CHECKING:
+    from dimos.mapping.utils.cli.world_registration import WorldRegistrar
     from dimos.memory2.stream import Stream
     from dimos.memory2.type.observation import Observation
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.nav_msgs.Odometry import Odometry
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 TIMELINE = "ts"
@@ -89,6 +92,7 @@ def _log_clouds(
     voxel: float,
     point_mode: str,
     *,
+    registrar: WorldRegistrar | None = None,
     total: int | None = None,
     bottom_cutoff: float | None = None,
 ) -> None:
@@ -96,16 +100,20 @@ def _log_clouds(
 
     ``total`` overrides the progress denominator — useful for transform
     pipelines where calling :py:meth:`Stream.count` would materialize the
-    whole pipeline.
+    whole pipeline. With ``registrar``, non-world clouds are registered into
+    world via the recording's tf tree (and dropped if that lookup fails).
     """
     n = total if total is not None else stream.count()
     cb = _progress(n, label)
     for obs in stream:
         cb(obs)
+        cloud = obs.data if registrar is None else registrar.register_cloud(obs.data, obs.ts)
+        if cloud is None:
+            continue
         rr.set_time(TIMELINE, timestamp=obs.ts)
         rr.log(
             entity,
-            obs.data.to_rerun(voxel_size=voxel, mode=point_mode, bottom_cutoff=bottom_cutoff),
+            cloud.to_rerun(voxel_size=voxel, mode=point_mode, bottom_cutoff=bottom_cutoff),
         )
 
 
@@ -145,6 +153,29 @@ def _log_path(
     ):
         rr.set_time(TIMELINE, timestamp=last_ts)
         rr.log(entity, rr.LineStrips3D([points], colors=[color]))
+
+
+def _odom_world_pose(registrar: WorldRegistrar, obs: Observation[Odometry]) -> Transform | None:
+    """World pose of an odometry observation, or ``None`` if it can't be placed.
+
+    A world-frame (or frame-less) odometry pose is returned as-is; otherwise the
+    ``world <- frame_id`` transform from the recording's tf tree is composed onto
+    the payload pose. Returns ``None`` when the tf lookup fails.
+    """
+    from dimos.msgs.geometry_msgs.Transform import Transform
+
+    odom = obs.data
+    keep, world_from_frame = registrar.world_transform(getattr(odom, "frame_id", "") or "", obs.ts)
+    if not keep:
+        return None
+    pose = Transform(
+        translation=odom.position,
+        rotation=odom.orientation,
+        frame_id=odom.frame_id,
+        child_frame_id=odom.child_frame_id,
+        ts=obs.ts,
+    )
+    return pose if world_from_frame is None else world_from_frame + pose
 
 
 def main(
@@ -207,6 +238,7 @@ def main(
 ) -> None:
     """Dump a recording to .rrd (lidar clouds + camera frames) and open it in rerun."""
     from dimos.mapping.utils.cli.summary import _stream_payload_types
+    from dimos.mapping.utils.cli.world_registration import WorldRegistrar
     from dimos.mapping.voxels import VoxelMapTransformer
     from dimos.memory2.store.sqlite import SqliteStore
     from dimos.memory2.transform import throttle
@@ -252,6 +284,11 @@ def main(
     with store:
         print(store.summary())
 
+        # world-frame clouds/odometry render directly; anything in another frame is
+        # registered into world via the recording's tf stream (missing lookups warn
+        # and skip). See WorldRegistrar / DbTf.
+        registrar = WorldRegistrar(store)
+
         def clipped(name: str, ptype: type[Any]) -> Stream[Any]:
             return store.stream(name, ptype).from_time(seek or None).to_time(duration)
 
@@ -261,9 +298,16 @@ def main(
         livox = clipped("fastlio_lidar", PointCloud2) if has_livox else None
 
         # Per-frame raw clouds.
-        _log_clouds("       lidar", lidar, "world/lidar", voxel, point_mode)
+        _log_clouds("       lidar", lidar, "world/lidar", voxel, point_mode, registrar=registrar)
         if livox is not None:
-            _log_clouds("fastlio_lidar", livox, "world/fastlio_lidar", voxel, point_mode)
+            _log_clouds(
+                "fastlio_lidar",
+                livox,
+                "world/fastlio_lidar",
+                voxel,
+                point_mode,
+                registrar=registrar,
+            )
 
         # Accumulated voxel maps over the selected PointCloud2 streams.
         # --map logs a growing map per stream; --map-final logs one static map
@@ -275,10 +319,13 @@ def main(
                 src = clipped(name, PointCloud2)
                 if not src.exists():
                     continue
+                # Register into world before voxelizing so the accumulated grid is
+                # built in world frame regardless of the source cloud's frame_id.
+                registered = registrar.register_clouds(src)
                 if map:
                     _log_clouds(
                         f"{name}_voxels",
-                        src.transform(
+                        registered.transform(
                             VoxelMapTransformer(
                                 emit_every=map_emit_every,
                                 carve_columns=map_carve_columns,
@@ -293,7 +340,7 @@ def main(
                     )
                 if map_final:
                     # emit_every=0 → one accumulated obs at exhaustion
-                    final = src.transform(
+                    final = registered.transform(
                         VoxelMapTransformer(
                             emit_every=0, carve_columns=map_carve_columns, **grid_kwargs
                         )
@@ -306,29 +353,38 @@ def main(
                         static=True,
                     )
 
-        # fastlio pose axis + path from fastlio_odometry stream.
+        # fastlio pose axis + path from fastlio_odometry stream. World-frame odometry
+        # renders directly; other frames are composed through the tf tree and frames
+        # with no tf chain are skipped (see WorldRegistrar).
         if "fastlio_odometry" in store.streams:
             odometry = clipped("fastlio_odometry", Odometry)
             cb = _progress(odometry.count(), "fastlio_odometry")
+            fastlio_path: list[tuple[float, float, float]] = []
+            last_ts: float | None = None
             for obs in odometry:
                 cb(obs)
-                if obs.pose_tuple is None:
+                world_pose = _odom_world_pose(registrar, obs)
+                if world_pose is None:
                     continue
+                translation, rotation = world_pose.translation, world_pose.rotation
                 rr.set_time(TIMELINE, timestamp=obs.ts)
-                x, y, z, qx, qy, qz, qw = obs.pose_tuple
                 rr.log(
                     "world/fastlio",
                     rr.Transform3D(
-                        translation=[x, y, z],
-                        quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw]),
+                        translation=[translation.x, translation.y, translation.z],
+                        quaternion=rr.Quaternion(
+                            xyzw=[rotation.x, rotation.y, rotation.z, rotation.w]
+                        ),
                     ),
                 )
-            _log_path(
-                "  fastlio_path",
-                clipped("fastlio_odometry", Odometry),
-                "world/fastlio_path",
-                color=(255, 165, 0),  # orange
-            )
+                fastlio_path.append((translation.x, translation.y, translation.z))
+                last_ts = obs.ts
+            if last_ts is not None and len(fastlio_path) >= 2:
+                rr.set_time(TIMELINE, timestamp=last_ts)
+                rr.log(
+                    "world/fastlio_path",
+                    rr.LineStrips3D([fastlio_path], colors=[(255, 165, 0)]),  # orange
+                )
 
         # Go2 native odom pose axis + path.
         if "odom" in store.streams:

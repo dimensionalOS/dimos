@@ -29,6 +29,7 @@ import typer
 # module just to register the `map` subcommand — stays fast. See test_cli_startup.py.
 if TYPE_CHECKING:
     from dimos.mapping.loop_closure.pgo import PoseGraph
+    from dimos.mapping.utils.cli.world_registration import WorldRegistrar
     from dimos.memory2.stream import Stream
     from dimos.memory2.type.observation import Observation
     from dimos.msgs.sensor_msgs.Image import Image
@@ -97,34 +98,21 @@ def _accumulate(
     block_count: int,
     device: str,
     graph: PoseGraph | None = None,
-    world_frame: bool = True,
+    registrar: WorldRegistrar | None = None,
     carve_columns: bool = False,
     progress_cb: Callable[[Observation[Any]], None] | None = None,
 ) -> PointCloud2 | None:
     """Accumulate a voxel map from `obs_iter`, optionally PGO-correcting each frame.
 
-    By default the clouds are assumed already world-registered (the go2/fastlio
-    path) — only the PGO correction is applied, if any. Set ``world_frame=False``
-    (the ``--use-tf`` path) when each frame's cloud is in the sensor/body frame
-    and must be registered into the world via its per-frame pose.
+    Each cloud is world-registered from its ``frame_id`` via ``registrar``:
+    clouds already in ``world`` pass through untouched, others are looked up in
+    the recording's ``tf`` stream, and frames with no resolvable transform are
+    dropped. The PGO correction, if any, is applied on top of the world cloud.
 
     Returns the final ``PointCloud2`` (or ``None`` if the input was empty).
     Disposal of the underlying ``VoxelGrid`` is handled by ``VoxelMapTransformer``.
     """
     from dimos.mapping.voxels import VoxelMapTransformer
-    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-    from dimos.msgs.geometry_msgs.Transform import Transform
-    from dimos.msgs.geometry_msgs.Vector3 import Vector3
-
-    def _pose_tf(obs: Observation[Any]) -> Transform:
-        pose = obs.pose
-        assert pose is not None
-        return Transform(
-            translation=Vector3(pose.position.x, pose.position.y, pose.position.z),
-            rotation=Quaternion(
-                pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w
-            ),
-        )
 
     def prepared() -> Iterable[Observation[PointCloud2]]:
         for obs in obs_iter:
@@ -132,20 +120,14 @@ def _accumulate(
                 progress_cb(obs)
             if len(obs.data) == 0:
                 continue
-            # body->world via the per-frame pose, unless the clouds are already
-            # world-registered (go2 default). graph adds the PGO correction on top
-            # (correction ∘ pose), applied after the pose.
-            tf: Transform | None = None
-            if not world_frame:
-                if obs.pose is None:
-                    continue
-                tf = _pose_tf(obs)
+            cloud = obs.data if registrar is None else registrar.register_cloud(obs.data, obs.ts)
+            if cloud is None:
+                continue
             if graph is not None:
                 if obs.pose_tuple is None:
                     continue
-                correction = graph.correction_at(obs.ts)
-                tf = correction if tf is None else correction + tf
-            yield obs if tf is None else obs.derive(data=obs.data.transform(tf))
+                cloud = cloud.transform(graph.correction_at(obs.ts))
+            yield obs if cloud is obs.data else obs.derive(data=cloud)
 
     vmt = VoxelMapTransformer(
         emit_every=0,  # batch mode: emit once on exhaustion
@@ -328,12 +310,6 @@ def main(
         None, "--out", help="Output .rrd path (default: ./<dataset>.rrd)"
     ),
     no_gui: bool = typer.Option(False, "--no-gui", help="Write the .rrd but don't launch rerun"),
-    use_tf: bool = typer.Option(
-        False,
-        "--use-tf",
-        help="Clouds are in the sensor/body frame; register each by its per-frame pose. "
-        "By default clouds are assumed already world-registered (e.g. go2/fastlio).",
-    ),
     carve: bool = typer.Option(
         False,
         "--carve/--no-carve",
@@ -388,6 +364,7 @@ def main(
 ) -> None:
     """Rebuild a voxel map from a recorded SQLite dataset, write a .rrd, and open it in rerun."""
     from dimos.mapping.loop_closure.pgo import PGO
+    from dimos.mapping.utils.cli.world_registration import WorldRegistrar
     from dimos.memory2.store.sqlite import SqliteStore
     from dimos.memory2.transform import QualityWindow, SpeedLimit
     from dimos.memory2.utils.progress import progress
@@ -406,6 +383,7 @@ def main(
         pgo = True
 
     store = SqliteStore(path=db_path)
+    registrar = WorldRegistrar(store)
     lidar = store.stream(lidar_stream, PointCloud2).from_time(seek or None).to_time(duration)
 
     print(lidar.summary())
@@ -415,17 +393,17 @@ def main(
     # Spatial dedup: bucket frames by 3D cell using the raw pose, keep the
     # latest per cell. Shared by raw and PGO rebuilds. Doesn't touch obs.data
     # so it stays cheap (no pointcloud loading). With pgo_tol<=0 the bucketing
-    # is disabled and every posed frame is kept (keyed by index).
+    # is disabled and every posed frame is kept (keyed by index). Frames with no
+    # baked pose (e.g. world-frame clouds that carry no per-frame pose) can't be
+    # spatially bucketed, so they're all kept by index and placed by the registrar.
     seen: dict[Any, Observation[Any]] = {}
     for i, obs in enumerate(lidar):
         pose = obs.pose
-        if pose is None:
-            continue
         # Reject placeholder poses: zero translation OR uninitialized rotation.
         # Same condition as pgo_keyframes so dedup and PGO see the same frames.
-        if pose.position.is_zero() or pose.orientation.is_zero():
+        if pose is not None and (pose.position.is_zero() or pose.orientation.is_zero()):
             continue
-        if pgo_tol > 0:
+        if pose is not None and pgo_tol > 0:
             t = pose.position
             # math.floor so negative coords bucket consistently; int() truncates
             # toward zero and silently folds -0.5 and 0.5 into the same cell.
@@ -445,8 +423,8 @@ def main(
     else:
         print(f"dedup: disabled, kept all [{n_kept}/{total}] posed frames")
 
-    # Dict insertion order = lidar iteration order = chronological.
-    # `seen` only contains entries with non-None poses (filtered above).
+    # Dict insertion order = lidar iteration order = chronological. Frames
+    # without a baked pose contribute no path point.
     path: list[tuple[float, float, float]] = [
         (p[0], p[1], p[2]) for obs in seen.values() if (p := obs.pose_tuple) is not None
     ]
@@ -470,7 +448,7 @@ def main(
             block_count=block_count,
             device=device,
             graph=graph,
-            world_frame=not use_tf,
+            registrar=registrar,
             carve_columns=carve,
             progress_cb=progress(n_kept, "pgo pass 2 (rebuilding)"),
         )
@@ -484,7 +462,7 @@ def main(
             block_count=block_count,
             device=device,
             graph=graph,
-            world_frame=not use_tf,
+            registrar=registrar,
             carve_columns=carve,
             progress_cb=progress(total, "full pgo (rebuilding)"),
         )
@@ -495,7 +473,7 @@ def main(
         voxel=voxel,
         block_count=block_count,
         device=device,
-        world_frame=not use_tf,
+        registrar=registrar,
         carve_columns=carve,
         progress_cb=progress(n_kept, "reconstructing global map"),
     )
