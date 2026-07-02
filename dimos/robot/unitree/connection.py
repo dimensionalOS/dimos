@@ -198,7 +198,9 @@ class UnitreeWebRTCConnection(Resource):
         if self.stop_timer:
             self.stop_timer.cancel()
 
-        # Auto-stop after 0.5 seconds if no new commands
+        # Deadman: auto-stop after cmd_vel_timeout (0.2s) with no new command —
+        # the safety backstop that halts the base if the operator link drops
+        # mid-drive. Keep this in sync with cmd_vel_timeout in __init__.
         self.stop_timer = threading.Timer(self.cmd_vel_timeout, self.stop_movement)
         self.stop_timer.daemon = True
         self.stop_timer.start()
