@@ -50,7 +50,8 @@ _VMASK = np.int64(0x3FFFF)
 # Height is measured relative to the camera, not world origin, so it is
 # unaffected by absolute position error in the translation estimate.
 _Z_REL_LO:    float = -1.4
-_Z_REL_HI:    float =  0.5
+_Z_REL_HI:    float =  1.5
+_VOX_SIZE:    float =  0.020
 _FLOOR_RAY_Z: float = -0.15   # tighter than ZED default: rejects rays >~9° below horizontal
 _MAP_MAX_DEPTH: float = 4.5   # D435i stereo accuracy degrades beyond ~5 m — cap map pts here
 
@@ -533,6 +534,7 @@ class DepthStreamer:
         self._live_vox       = FastVoxelMap(voxel_size=0.05)   # live_cloud_map accumulator
         self._last_n_valid   = 0
         self._last_n_stable  = 0
+        self._last_n_vox     = 0
         self._pinhole_logged = False
         self._map_queue: queue.Queue = queue.Queue(maxsize=16)
         self._map_thread = threading.Thread(target=self._map_worker, daemon=True)
@@ -567,29 +569,24 @@ class DepthStreamer:
                         else _height_color(xyz[idx, 2] - cam_z))
         rr.log("world/cloud", rr.Points3D(positions=xyz[idx], colors=cloud_colors, radii=0.003))
 
-        # Map accumulation commented out — observing pure live cloud only
-        # cam_pos  = pkt.pose_t.copy()
-        # rays     = xyz - cam_pos
-        # dist     = np.linalg.norm(rays, axis=1)
-        # d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0)
-        # h_rel    = xyz[:, 2] - cam_z
-        # keep     = (
-        #     (dist <= _MAP_MAX_DEPTH) &
-        #     (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI) &
-        #     (d_z_norm > _FLOOR_RAY_Z)
-        # )
-        # xyz_map = _filter_isolated(xyz[keep])
-        # if len(xyz_map) > 0:
-        #     self._live_vox.add(xyz_map)
-        # if frame % self.MAP_EVERY == 0:
-        #     self._log_live_map(cam_z, frame)
-        # if self._src.pose_locked:
-        #     try:
-        #         self._map_queue.put_nowait(
-        #             (xyz, pkt.pose_t.copy(), cam_z, pkt.pose_R.copy(), frame)
-        #         )
-        #     except queue.Full:
-        #         pass
+        # Per-frame voxel map — mirrors ZED world/map pipeline exactly
+        cam_pos  = pkt.pose_t
+        h_rel    = xyz[:, 2] - cam_z
+        dist     = np.linalg.norm(xyz - cam_pos, axis=1)
+        keep     = (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI) & (dist <= _MAP_MAX_DEPTH)
+        xyz_kept = xyz[keep]
+        if len(xyz_kept):
+            vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
+            _, first = np.unique(_pack(vk), return_index=True)
+            xyz_vox  = xyz_kept[first]
+            self._last_n_vox = len(xyz_vox)
+            rr.log("world/map", rr.Points3D(
+                positions=xyz_vox,
+                colors=_height_color(xyz_vox[:, 2] - cam_z),
+                radii=0.010,
+            ))
+        else:
+            self._last_n_vox = 0
 
     def _map_worker(self) -> None:
         while True:
@@ -666,7 +663,7 @@ class DepthStreamer:
         print(
             f"frame={frame:5d}  "
             f"stable={self._last_n_stable:6d}/{self._last_n_valid:6d} ({pct:.0f}%)  "
-            f"live_map={self._live_vox.count:6d}  "
+            f"vox={self._last_n_vox:5d}  "
             f"t=[{t[0]:+.2f},{t[1]:+.2f},{t[2]:+.2f}]  "
             f"vio={vio}  fps={fps:.1f}",
             flush=True,
@@ -679,10 +676,10 @@ def main() -> None:
     rr.init("realsense_depth_map", spawn=True)
     rr.send_blueprint(rrb.Blueprint(
         rrb.Tabs(
-            rrb.Spatial3DView(name="live cloud + map", origin="world",
-                              contents=["world/cloud", "world/live_cloud_map", "world/camera/**"]),
-            rrb.Spatial3DView(name="map only", origin="world",
-                              contents=["world/live_cloud_map"]),
+            rrb.Spatial3DView(name="live cloud", origin="world",
+                              contents=["world/cloud", "world/camera/**"]),
+            rrb.Spatial3DView(name="voxel map", origin="world",
+                              contents=["world/map"]),
         )
     ))
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
