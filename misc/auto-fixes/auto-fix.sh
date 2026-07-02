@@ -152,7 +152,7 @@ log ">> installing dependencies"
 
 log ">> running scan agent ($AGENT)"
 # In the detached worktree the bare local <branch> ref may not exist, so the template's
-# `git diff main...$$BRANCH$$` is pointed at origin/<branch>.
+# `git diff origin/main...$$BRANCH$$` is pointed at origin/<branch>.
 scan_prompt="$(cat "$SCAN_TEMPLATE")"
 scan_prompt="${scan_prompt//"$RULES_PLACEHOLDER"/$(cat "$RULES_FILE")}"
 scan_prompt="${scan_prompt//"$PLACEHOLDER"/origin/$BRANCH}"
