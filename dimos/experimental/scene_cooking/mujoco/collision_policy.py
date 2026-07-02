@@ -50,6 +50,7 @@ from typing import Any, Literal
 import numpy as np
 from scipy.spatial import ConvexHull, QhullError  # type: ignore[import-untyped]
 
+from dimos.experimental.scene_cooking.coacd_util import silence_coacd_logging
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -938,10 +939,7 @@ def _coacd_decompose(
     """
     import coacd  # type: ignore[import-not-found, import-untyped]
 
-    # CoACD's C lib prints a lot per invocation; quiet it once per process.
-    if not getattr(_coacd_decompose, "_silenced", False):
-        coacd.set_log_level("error")
-        _coacd_decompose._silenced = True  # type: ignore[attr-defined]
+    silence_coacd_logging()
 
     mesh = coacd.Mesh(vertices.astype(np.float64), triangles.astype(np.int32))
     # CoACD's MCTS defaults (mcts_iterations=150, resolution=2000) are tuned

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dimos.experimental.scene_cooking.coacd_util import silence_coacd_logging
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -113,9 +114,7 @@ def _run_coacd(mesh: object, mesh_path: Path) -> list[tuple[object, object]]:
     import coacd  # type: ignore[import-not-found, import-untyped]
     import numpy as np
 
-    if not getattr(_run_coacd, "_coacd_silenced", False):
-        coacd.set_log_level("error")
-        _run_coacd._coacd_silenced = True  # type: ignore[attr-defined]
+    silence_coacd_logging()
 
     try:
         cm = coacd.Mesh(
