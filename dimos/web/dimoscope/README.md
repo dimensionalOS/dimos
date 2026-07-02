@@ -68,9 +68,9 @@ Also on the client: `client.teleop(lin, ang)` (the service clamps velocity + run
 
 **Server-side you write nothing.** The gateway self-discovers topics from both LCM and Zenoh, assigns
 QoS lanes by a type/name heuristic (override per deployment via `qos.rules.json` — see
-`qos.rules.example.json`), and runs a per-client priority outbox. To expose your own `@rpc` commands,
-set `DIMOS_GATEWAY_RPC="MyModule/my_method,…"` — the complete whitelist, replacing the built-ins
-(GO2Connection `standup`/`liedown` + GO2Load `start_all`/`stop_all`/`start_bench`/`stop_bench`).
+`qos.rules.example.json`), and runs a per-client priority outbox. RPC is a server-side whitelist —
+the `RPC_COMMANDS` list in `gateway/egress.py` (GO2Connection `standup`/`liedown` + GO2Load
+`start_all`/`stop_all`/`start_bench`/`stop_bench`); edit it to expose your own `@rpc`.
 
 Typed topics + commands are generated from the blueprint: `deno task gen-types` writes
 `app/src/dimos.topics.gen.ts` (scenarios + `go2_load.py`), and
@@ -223,8 +223,7 @@ Done:
 - Single-service gateway: one Python process taps LCM + Zenoh and serves the app + all five delivery
   mechanisms (WS · SSE · poll · WebRTC-data · WebTransport) + the camera.
 - Media plane: camera over WebRTC / WebCodecs / JPEG, capability-negotiated (`useVideo` + cam toggle).
-- RPC bridge: `client.call("GO2Connection","standup")` → whitelisted dimos `@rpc` (Commands panel);
-  operator whitelist via `DIMOS_GATEWAY_RPC`.
+- RPC bridge: `client.call("GO2Connection","standup")` → whitelisted dimos `@rpc` (Commands panel).
 - WebTransport teleop + Auto (WT→WS) default: one QUIC connection carries data and control through the
   shared `SafetyEgress` (clamp + deadman + stop-on-disconnect), with a WebSocket fallback at connect
   and mid-session. Plus the `go2-load` demo blueprint (teleop go2 dimsim + multi-rate `/load/*` lanes +

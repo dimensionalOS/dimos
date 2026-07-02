@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
-from egress import MAX_ANG, MAX_LIN, SafetyEgress, _rpc_commands_from_env
+from egress import MAX_ANG, MAX_LIN, SafetyEgress
 
 
 class FakeVec:
@@ -105,22 +105,6 @@ def test_disconnect_stops_robot():
         assert len(pub.published) == n
 
     asyncio.run(run())
-
-
-def test_rpc_env_whitelist_parses_and_skips_malformed(monkeypatch):
-    monkeypatch.setenv("DIMOS_GATEWAY_RPC", "MyArm/grip, bad-entry ,Nav/go_home,/nope,Trailing/")
-    cmds = _rpc_commands_from_env()
-    assert cmds == [
-        {"target": "MyArm", "method": "grip", "label": "MyArm/grip"},
-        {"target": "Nav", "method": "go_home", "label": "Nav/go_home"},
-    ]
-
-
-def test_rpc_env_unset_or_empty_keeps_defaults(monkeypatch):
-    monkeypatch.delenv("DIMOS_GATEWAY_RPC", raising=False)
-    assert _rpc_commands_from_env() == []  # falsy → module falls back to _DEFAULT_RPC_COMMANDS
-    monkeypatch.setenv("DIMOS_GATEWAY_RPC", " , ")
-    assert _rpc_commands_from_env() == []
 
 
 def test_rpc_whitelist_rejects_and_no_bridge_reports_unavailable():

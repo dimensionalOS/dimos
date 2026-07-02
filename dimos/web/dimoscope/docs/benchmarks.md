@@ -281,7 +281,6 @@ from that network, and any browser drives it via `http://localhost:5173/?gw=<the
 | `WT_PORT` | `8443` | WebTransport QUIC/UDP port |
 | `EGRESS_KBPS` | off | pace each client's egress so priority bites in the outbox, not the socket buffer |
 | `QOS_RULES` | `qos.rules.json` | topic-glob → lane override map (see `qos.rules.example.json`) |
-| `DIMOS_GATEWAY_RPC` | built-ins | the complete `@rpc` whitelist, `"Target/method,…"` (replaces the defaults) |
 | `NETEM_CTL` | off | enable `/netem` (Linux + the `dimos-netem` sudo wrapper above) |
 | `ZENOH_KEY` | `**` | zenoh key-expr the bus tap subscribes |
 | `DIMOS_LCM_HOST` / `DIMOS_LCM_PORT` | `239.255.76.67` / `7667` | LCM multicast group the tap joins |
