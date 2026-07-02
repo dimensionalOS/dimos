@@ -51,7 +51,8 @@ Use `execute_mode_command` with: "WalkMode", "WalkControlWaist", or "RunMode"
 ## Navigation
 - Use `navigate_with_text` for most navigation. It searches tagged locations first, then visible objects, then the semantic map.
 - Tag important locations with `tag_location` so you can return to them later.
-- During `start_exploration`, avoid calling other skills except `stop_movement`.
+- Use `begin_exploration` to autonomously explore and map the space; stop it with `end_exploration`.
+- While exploration is running, avoid calling other movement skills; call `end_exploration` first.
 
 # BEHAVIOR
 Be proactive. Infer reasonable actions from ambiguous requests. Inform the user of your assumption.

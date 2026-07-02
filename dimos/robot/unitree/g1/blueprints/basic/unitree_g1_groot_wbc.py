@@ -46,6 +46,7 @@ Overrides (replace the old env-var dance):
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, cast
 
@@ -70,6 +71,9 @@ from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
+    WavefrontFrontierExplorer,
+)
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.g1.config import G1
@@ -288,11 +292,76 @@ if global_config.simulation == "mujoco":
             robot_rotation_diameter=_G1_NAV_ROTATION_DIAMETER,
         ),
         MovementManager.blueprint(),
+        # Frontier exploration rides the same costmap/planner chain the
+        # clicked-goal path uses; `begin_exploration` is its agent skill.
+        # goal_timeout is tuned for humanoid walking speed (~0.5 m/s toward
+        # ~5 m frontiers) vs the go2-trot default of 15 s.
+        WavefrontFrontierExplorer.blueprint(
+            goal_timeout=float(os.environ.get("DIMOS_EXPLORE_GOAL_TIMEOUT", "45.0")),
+        ),
     )
     _remappings = [
         (VoxelGridMapper, "lidar", "pointcloud"),
         (ControlCoordinator, "twist_command", "cmd_vel"),
     ]
+
+    def _mesh_camera() -> Any | None:
+        """Textured raycast RGB-D camera from the scene package's visual GLB.
+
+        The sim's default camera whenever a resolvable scene package ships a
+        visual mesh (opt out with ``DIMOS_ENABLE_MESH_CAMERA=0``). Publishes
+        aligned color+depth+camera_info — the perception RGBD contract — plus
+        a ``world -> camera_optical`` TF each frame. FK runs off
+        ``coordinator_joint_state`` + ``odom`` in a local robot copy, so the
+        camera never touches the live engine (backend-agnostic by design).
+        """
+        if os.environ.get("DIMOS_ENABLE_MESH_CAMERA", "1").lower() in ("0", "false", "no"):
+            return None
+        if global_config.scene_package is None:
+            return None
+        from dimos.simulation.scene.catalog import resolve_scene_package
+
+        try:
+            package = resolve_scene_package(global_config.scene_package)
+        except (FileNotFoundError, ValueError):
+            return None
+        if package is None or package.visual_path is None:
+            return None
+
+        from dimos.core.transport import JpegLcmTransport
+        from dimos.msgs.sensor_msgs.Image import Image
+        from dimos.simulation.sensors.mesh_camera import MeshCameraModule
+        from dimos.simulation.sensors.rig import g1_d435_default, g1_d435_forward
+
+        forward = os.environ.get("DIMOS_MESH_CAMERA_FORWARD", "1").lower() not in (
+            "0",
+            "false",
+            "no",
+        )
+        alignment = package.alignment
+        return MeshCameraModule.blueprint(
+            camera_spec=g1_d435_forward() if forward else g1_d435_default(),
+            scene_path=str(package.visual_path),
+            mjcf_path=str(_MJCF_PATH),
+            scene_scale=alignment.scale,
+            scene_translation=tuple(alignment.translation),
+            scene_rotation_zyx_deg=tuple(alignment.rotation_zyx_deg),
+            scene_y_up=alignment.y_up,
+            render_hz=float(os.environ.get("DIMOS_MESH_CAMERA_HZ", "10.0")),
+        ).transports(
+            {
+                # JPEG on the wire; plain-LCM subscribers auto-detect the
+                # encoding on decode.
+                ("color_image", Image): JpegLcmTransport("/camera_image", Image),
+            }
+        )
+
+    _mesh_camera_bp = _mesh_camera()
+    if _mesh_camera_bp is not None:
+        from dimos.simulation.sensors.mesh_camera import MeshCameraModule as _MeshCam
+
+        _nav_stack = autoconnect(_nav_stack, _mesh_camera_bp)
+        _remappings.append((_MeshCam, "joint_state", "coordinator_joint_state"))
 else:
     from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
