@@ -42,8 +42,9 @@ class LocalModuleSource(ModuleSource):
         return self._coordinator.list_module_names()
 
     def get_module(self, name: str) -> Any:
-        for cls, proxy in self._coordinator._deployed_modules.items():
-            if cls.__name__ == name:
+        for key, proxy in self._coordinator._deployed_modules.items():
+            expected_name = f"{key.namespace}/{key.module.__name__}" if key.namespace else key.module.__name__
+            if expected_name == name:
                 return proxy
         raise KeyError(name)
 

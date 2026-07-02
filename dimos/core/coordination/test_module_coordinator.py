@@ -502,7 +502,7 @@ def test_load_blueprint_conflict_with_existing() -> None:
     """Loading a blueprint whose stream name clashes (different type) raises ValueError."""
     from dimos.core.transport import pLCMTransport
 
-    registry: dict[tuple[str, type], object] = {("data1", Data1): pLCMTransport("/data1")}
+    registry: dict[tuple[str | None, str, type], object] = {(None, "data1", Data1): pLCMTransport("/data1")}
 
     class ConflictModule(Module):
         data1: In[Data2]  # same name, different type
@@ -613,12 +613,12 @@ def test_restart_module_preserves_stream_wiring(dynamic_coordinator) -> None:
     c = dynamic_coordinator.get_instance(ModuleC)
     assert c is not None
     topic_before = c.data3.transport.topic
-    registry_before = dynamic_coordinator._transport_registry[("data3", Data3)]
+    registry_before = dynamic_coordinator._transport_registry[(None, "data3", Data3)]
 
     dynamic_coordinator.restart_module(ModuleC, reload_source=False)
 
     # Transport in the registry is the same parent-side object.
-    assert dynamic_coordinator._transport_registry[("data3", Data3)] is registry_before
+    assert dynamic_coordinator._transport_registry[(None, "data3", Data3)] is registry_before
 
     c_after = dynamic_coordinator.get_instance(ModuleC)
     assert c_after is not None
@@ -765,12 +765,12 @@ def test_restart_preserves_remapped_streams(dynamic_coordinator) -> None:
     dynamic_coordinator.load_blueprint(bp)
 
     target = dynamic_coordinator.get_instance(TargetModule)
-    registry_before = dynamic_coordinator._transport_registry[("remapped_data", Data1)]
+    registry_before = dynamic_coordinator._transport_registry[(None, "remapped_data", Data1)]
 
     dynamic_coordinator.restart_module(SourceModule, reload_source=False)
 
     # The coordinator-side transport object in the registry is unchanged.
-    assert dynamic_coordinator._transport_registry[("remapped_data", Data1)] is registry_before
+    assert dynamic_coordinator._transport_registry[(None, "remapped_data", Data1)] is registry_before
     # The restarted proxy sees the same topic as the target.
     source_after = dynamic_coordinator.get_instance(SourceModule)
     assert source_after.color_image.transport.topic == target.remapped_data.transport.topic

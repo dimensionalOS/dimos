@@ -144,6 +144,10 @@ class ModuleBase(Configurable, CompositeResource):
     _tools_lock: threading.Lock
 
     def __init__(self, config_args: dict[str, Any]) -> None:
+        # new
+        self._dimos_rpc_name = config_args.pop("__dimos_rpc_name__", None)
+        self._dimos_namespace = config_args.pop("__dimos_namespace__", None)
+        # end
         super().__init__(**config_args)
         self._module_closed_lock = threading.Lock()
         self._tools = {}
@@ -154,7 +158,9 @@ class ModuleBase(Configurable, CompositeResource):
                 rpc_timeouts=self.config.rpc_timeouts,
                 default_rpc_timeout=self.config.default_rpc_timeout,
             )
-            self.rpc.serve_module_rpc(self)
+            # new
+            self.rpc.serve_module_rpc(self, name=self._dimos_rpc_name or self.name)
+            # end
             self.rpc.start()  # type: ignore[attr-defined]
         except ValueError:
             ...
