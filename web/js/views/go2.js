@@ -366,7 +366,9 @@ function setMainView(view) {
 }
 
 // Occupancy grid (~2Hz). Decode the PNG once here (off the fast odom path),
-// cache it, then redraw. png_b64 bands: 0=occupied, 127=unknown, 255=free.
+// cache it, then redraw. The robot bakes the rerun palette into the PNG
+// (violet-blue free / orange occupied / red lethal / transparent unknown), so
+// there's no colormap here — drawMap just blits the image.
 function onMap(msg) {
     if (!msg || !msg.png_b64) return;
     const img = new Image();
