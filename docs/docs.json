@@ -35,7 +35,7 @@
       {
         "group": "Usage",
         "pages": [
-          "usage/readme",
+          "usage/index",
           "usage/modules",
           "usage/blueprints",
           "usage/configuration",
@@ -50,7 +50,7 @@
           {
             "group": "Data streams",
             "pages": [
-              "usage/data_streams/readme",
+              "usage/data_streams/index",
               "usage/data_streams/advanced_streams",
               "usage/data_streams/quality_filter",
               "usage/data_streams/reactivex",
@@ -61,7 +61,7 @@
           {
             "group": "Sensor streams",
             "pages": [
-              "usage/sensor_streams/readme",
+              "usage/sensor_streams/index",
               "usage/sensor_streams/advanced_streams",
               "usage/sensor_streams/quality_filter",
               "usage/sensor_streams/reactivex",
@@ -102,13 +102,13 @@
           {
             "group": "Agents",
             "pages": [
-              "capabilities/agents/readme"
+              "capabilities/agents/index"
             ]
           },
           {
             "group": "Manipulation",
             "pages": [
-              "capabilities/manipulation/readme",
+              "capabilities/manipulation/index",
               "capabilities/manipulation/adding_a_custom_arm",
               "capabilities/manipulation/openarm_integration",
               "capabilities/manipulation/a750"
@@ -128,6 +128,12 @@
               "capabilities/navigation/index",
               "capabilities/navigation/deep_dive",
               "capabilities/navigation/relocalization"
+            ]
+          },
+          {
+            "group": "Perception",
+            "pages": [
+              "capabilities/perception/index"
             ]
           },
           {

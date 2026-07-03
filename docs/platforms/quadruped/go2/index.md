@@ -1,4 +1,6 @@
-# Unitree Go2 Quick Start
+---
+title: "Unitree Go2"
+---
 
 - [Setup your Dog](/docs/platforms/quadruped/go2/setup.md) — requirements, install, connecting to your Go2, and agentic control
 - [Simulation](/docs/platforms/quadruped/go2/simulation.md) — try it with no hardware via replay or MuJoCo

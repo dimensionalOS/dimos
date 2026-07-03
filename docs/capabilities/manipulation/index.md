@@ -1,4 +1,6 @@
-# Manipulation
+---
+title: "Manipulation"
+---
 
 Motion planning and teleoperation for robotic manipulators. Drake remains the default
 world backend, RoboPlan is available as an optional planning backend, and
