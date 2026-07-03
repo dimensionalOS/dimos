@@ -27,6 +27,10 @@ import numpy as np
 import rerun as rr
 import rerun.blueprint as rrb
 
+# ±1 voxel shift in packed-key space for each axis.
+# Used in the fat-voxel clearing step to absorb ±2 cm ICP-t drift.
+_SHIFTS = np.array([0, 1<<36, -(1<<36), 1<<18, -(1<<18), 1, -1], dtype=np.int64)
+
 from dimos.navigation.camera_nav.realsense_depth_map import (
     DepthBackprojector,
     GradientStabilityFilter,
@@ -47,8 +51,13 @@ def _raycast_free_keys(
 
     Camera is always at [0,0,0] in the rotation-only world frame.
     Fully vectorised: builds all ray-step grids at once, no Python loop.
-    Stops one voxel short of each surface point so the surface itself is
+    Stops 1.5 voxels short of each surface point so the surface itself is
     never cleared.
+
+    Ghost clearing requirement: the camera must look toward the old object
+    position and observe a surface BEHIND it (floor, wall, new object).
+    If the old position is outside the current FOV, no rays reach it and
+    the ghost persists until the camera sweeps back over that area.
     """
     n = min(len(surface_pts), n_rays)
     if n == 0:
@@ -178,12 +187,21 @@ def main() -> None:
                     # Ray-cast: clear map voxels the current rays pass through.
                     # Do this BEFORE adding new observations so a moved object's
                     # old ghost gets erased and the new position is then inserted.
+                    #
+                    # Fat-voxel check: for each stored voxel we test it AND its
+                    # 6 face-adjacent neighbours against the free-key set via
+                    # searchsorted (free_keys is sorted by np.unique).  This
+                    # absorbs the ±2 cm ICP-t oscillation that shifts a ghost's
+                    # stored voxel key by exactly 1 step relative to the ray.
                     if len(acc_pts):
                         free_keys = _raycast_free_keys(xyz_vox_r, _VOX_SIZE, n_rays=400)
                         if len(free_keys):
-                            vk_acc   = np.floor(acc_pts / _VOX_SIZE).astype(np.int32)
-                            keys_acc = _pack(vk_acc)
-                            acc_pts  = acc_pts[~np.isin(keys_acc, free_keys)]
+                            keys_acc = _pack(np.floor(acc_pts / _VOX_SIZE).astype(np.int32))
+                            shifted  = (keys_acc[:, None] + _SHIFTS[None, :]).ravel()
+                            idx      = np.searchsorted(free_keys, shifted)
+                            idx      = np.clip(idx, 0, len(free_keys) - 1)
+                            in_free  = (free_keys[idx] == shifted).reshape(len(acc_pts), 7).any(axis=1)
+                            acc_pts  = acc_pts[~in_free]
 
                     # Insert current frame's surface observations then dedup
                     acc_pts = np.vstack([acc_pts, xyz_vox_r]) if len(acc_pts) else xyz_vox_r.copy()
