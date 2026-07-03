@@ -109,12 +109,12 @@ export function renderGo2(c) {
                 <div class="flex items-center gap-1.5 px-2 py-1 border-b border-[#2a2a2a] shrink-0">
                     <!-- Swap button — LEFT of the camera tabs (per spec). Flips
                          which of {camera, map} is the main stage vs the PiP. -->
-                    <button id="view-swap" class="cmd-btn term-caps text-[10px] leading-none px-1.5 py-0.5" title="Swap camera / map">
+                    <button id="view-swap" class="cmd-btn term-caps text-[10px] leading-none px-1 py-0.5 tracking-normal" title="Swap camera / map">
                         <span id="view-swap-label">MAP VIEW</span>
                     </button>
                     <!-- Operator mic → robot. Track is captured muted at connect;
                          this flips track.enabled. Greyed when no mic was granted. -->
-                    <button id="mic-toggle" class="cmd-btn term-caps text-[10px] leading-none px-1.5 py-0.5" title="Operator mic → robot">
+                    <button id="mic-toggle" class="cmd-btn term-caps text-[10px] leading-none px-1 py-0.5 tracking-normal" title="Operator mic → robot">
                         <span id="mic-toggle-label">AUDIO OFF</span>
                     </button>
                     <!-- Camera tabs: toggle which cameras the robot composites into
