@@ -101,6 +101,7 @@ classifiers = [
 dependencies = [
     # Transport Protocols
     "dimos-lcm>=0.1.3",
+    "eclipse-zenoh>=1.0.0,<2.0",
     "PyTurboJPEG==1.8.2",
     # Core
     "numpy>=1.26.4",
@@ -517,6 +518,7 @@ python_version = "3.12"
 incremental = true
 strict = true
 warn_unused_ignores = false
+untyped_calls_exclude = ["zenoh"]
 explicit_package_bases = true
 exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/tool_.|.*/conftest.py*"
 

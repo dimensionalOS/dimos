@@ -26,6 +26,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
+from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service.spec import BaseConfig, Service
 from dimos.types.timestamped import to_human_readable
@@ -443,6 +444,17 @@ class LCMPubsubConfig(PubSubTFConfig):
 
 class LCMTF(PubSubTF):
     config: LCMPubsubConfig
+
+
+class ZenohPubsubConfig(PubSubTFConfig):
+    # Zenoh key expressions can't start with '/'; namespace under 'dimos'.
+    topic: Topic = field(default_factory=lambda: Topic("dimos/tf", TFMessage))
+    pubsub: type[PubSub] | PubSub | None = Zenoh  # type: ignore[type-arg]
+    autostart: bool = True
+
+
+class ZenohTF(PubSubTF):
+    config: ZenohPubsubConfig
 
 
 TF = LCMTF
