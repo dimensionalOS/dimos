@@ -7,7 +7,7 @@
     "light": "#1682a3",
     "dark": "#1682a3"
   },
-  "favicon": "/assets/favicon.png",
+  "favicon": "assets/favicon.png",
   "seo": {
     "metatags": {
       "og:site_name": "Dimensional",
