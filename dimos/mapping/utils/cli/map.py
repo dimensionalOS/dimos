@@ -18,7 +18,7 @@ from collections.abc import Callable, Iterable
 import math
 from pathlib import Path
 import subprocess
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import rerun as rr
 import rerun.blueprint as rrb
@@ -40,10 +40,6 @@ PATH_THICKNESS = 0.01
 # from each marker with the label floating at the top so multi-marker
 # labels never overlap the boxes.
 MARKER_STEM = 1.0
-
-# Sentinel a register resolver returns when a frame has no usable registration
-# source and must be dropped (None means "already in the world frame").
-_DROP_FRAME = cast("Transform", object())
 
 # Conventional world frames tried in order when --frame isn't given.
 _WORLD_FRAMES = ("world", "map", "odom")
@@ -123,9 +119,8 @@ def _accumulate(
     """Accumulate a voxel map from `obs_iter`, optionally PGO-correcting each frame.
 
     ``register`` maps each observation to the transform lifting its cloud into
-    the world frame: ``None`` when the cloud is already world-registered, or
-    ``_DROP_FRAME`` when it has no registration source (the frame is skipped).
-    With ``register=None`` all clouds are assumed world-registered.
+    the world frame; ``None`` means no transform is available and the frame is
+    skipped. With ``register=None`` all clouds are assumed world-registered.
 
     Returns the final ``PointCloud2`` (or ``None`` if the input was empty).
     Disposal of the underlying ``VoxelGrid`` is handled by ``VoxelMapTransformer``.
@@ -144,7 +139,7 @@ def _accumulate(
             tf: Transform | None = None
             if register is not None:
                 tf = register(obs)
-                if tf is _DROP_FRAME:
+                if tf is None:
                     continue
             if graph is not None:
                 if obs.pose_tuple is None:
@@ -452,13 +447,17 @@ def main(
     if world is None:
         world = "world"  # empty lidar stream; the frame is moot
 
+    # Registration: sensor-frame clouds get a per-frame tf lookup lifting them
+    # into the world frame (frames with no tf answer are dropped); clouds
+    # already stamped with the world frame accumulate verbatim (register=None).
+    register: Callable[[Observation[Any]], Transform | None] | None = None
     if first_obs is not None and cloud_frame is not None and cloud_frame != world:
         # Fail fast when registration is impossible: probe the first cloud's
         # timestamp (unbounded tolerance — "possible at all", not "in range").
         probe = (
             tf_buf.get(world, cloud_frame, time_point=first_obs.ts) if tf_buf is not None else None
         )
-        if probe is None:
+        if tf_buf is None or probe is None:
             frames = tf_buf.get_frames() if tf_buf is not None else set()
             known = ", ".join(sorted(frames)) or "dataset has no tf stream"
             raise typer.BadParameter(
@@ -466,17 +465,14 @@ def main(
                 param_hint="--frame",
             )
         print(f"registering clouds {world!r} ← {cloud_frame!r} via tf")
+        buf = tf_buf
+
+        def _register(obs: Observation[Any]) -> Transform | None:
+            return buf.get(world, obs.data.frame_id, time_point=obs.ts, time_tolerance=tf_tolerance)
+
+        register = _register
     elif cloud_frame is not None:
         print(f"clouds already in world frame {world!r}; accumulating verbatim")
-
-    def _register(obs: Observation[Any]) -> Transform | None:
-        cf = obs.data.frame_id
-        if cf == world:
-            return None
-        if tf_buf is None:
-            return _DROP_FRAME
-        tf = tf_buf.get(world, cf, time_point=obs.ts, time_tolerance=tf_tolerance)
-        return tf if tf is not None else _DROP_FRAME
 
     def _position(obs: Observation[Any]) -> tuple[float, float, float] | None:
         """Trajectory position for dedup/path: tf lookup, else the stored pose."""
@@ -542,7 +538,7 @@ def main(
             block_count=block_count,
             device=device,
             graph=graph,
-            register=_register,
+            register=register,
             carve_columns=carve,
             progress_cb=progress(n_kept, "pgo pass 2 (rebuilding)"),
         )
@@ -556,7 +552,7 @@ def main(
             block_count=block_count,
             device=device,
             graph=graph,
-            register=_register,
+            register=register,
             carve_columns=carve,
             progress_cb=progress(total, "full pgo (rebuilding)"),
         )
@@ -567,7 +563,7 @@ def main(
         voxel=voxel,
         block_count=block_count,
         device=device,
-        register=_register,
+        register=register,
         carve_columns=carve,
         progress_cb=progress(n_kept, "reconstructing global map"),
     )
