@@ -115,7 +115,10 @@ dependencies = [
     # Logging
     "structlog>=25.5.0,<26",
     # Core Msgs
-    "opencv-python",
+    # Contrib variant (superset of opencv-python) because cv2.legacy CSRT
+    # trackers (perception/drone) are contrib-only. <5 defers the OpenCV 5
+    # major bump. See also the opencv-python entry in override-dependencies.
+    "opencv-contrib-python>=4.8,<5",
     "open3d-unofficial-arm>=0.19.0.post9; platform_system == 'Linux' and platform_machine == 'aarch64'",
     "open3d>=0.18.0; platform_system != 'Linux' or platform_machine != 'aarch64'",
     # CLI
@@ -326,7 +329,6 @@ base = [
 
 # All extras except dds and unitree-dds (which require special system setup).
 apriltag = [
-    "opencv-contrib-python==4.10.0.84",
     "reportlab>=4.5.0",
 ]
 
@@ -444,6 +446,10 @@ default-groups = ["tests"]
 exclude-newer = "7 days"
 exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false }
 override-dependencies = [
+    # ultralytics, unitree-sdk2py-dimos and unitree-webrtc-connect depend on
+    # opencv-python, which ships the same cv2/ tree as our opencv-contrib-python
+    # core dep and clobbers it. Contrib is a superset, so never install plain.
+    "opencv-python; sys_platform == 'never'",
     # moondream pins pillow<11 but we need >=12.2.0 for security fixes
     # (CVE-2026-25990, CVE-2026-40192, CVE-2026-42311).
     "pillow>=12.2.0",
