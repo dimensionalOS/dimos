@@ -200,7 +200,7 @@ Every module has access to `self.tf`, a transform service that:
 - **Looks up** transforms between any two frames
 - **Buffers** historical transforms for temporal queries
 
-The TF service is implemented in [`tf.py`](/dimos/protocol/tf/tf.py) and is lazily initialized on first access.
+The TF service is implemented in [`protocol/tf/tf.py`](/dimos/protocol/tf/tf.py) and is lazily initialized on first access.
 
 ### Multi-Module Transform Example
 
