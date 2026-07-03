@@ -244,7 +244,7 @@ class GO2Connection(TfModule, Camera, Pointcloud):
             self._latest_video_frame = image
 
         if self.config.lidar:
-            self.register_disposable(self.connection.lidar_stream().subscribe(self.lidar.publish))
+            self.register_disposable(self.connection.lidar_stream().subscribe(self._publish_lidar))
         self.register_disposable(self.connection.odom_stream().subscribe(self._publish_tf))
         self.register_disposable(self.connection.lowstate_stream().subscribe(self._on_lowstate))
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
@@ -276,6 +276,9 @@ class GO2Connection(TfModule, Camera, Pointcloud):
     def _on_static_publish(self) -> None:
         self._camera_info_static.frame_id = self.frame_mapping["camera_optical"]
         self.camera_info.publish(self._camera_info_static)
+
+    def _publish_lidar(self, cloud: PointCloud2) -> None:
+        self.lidar.publish(cloud)
 
     def _publish_tf(self, msg: PoseStamped) -> None:
         self.tf.publish(

@@ -52,7 +52,7 @@ def _transform_to_matrix(transform: Transform) -> np.ndarray:
     return matrix
 
 
-def _base_to_frame_matrix(loader: UrdfLoader, leaf_frame: str) -> np.ndarray:
+def base_to_frame_matrix(loader: UrdfLoader, leaf_frame: str) -> np.ndarray:
     """Compose the fixed-joint chain from the model root down to ``leaf_frame``."""
     static_transforms = loader.static_transforms
     chain: list[Transform] = []
@@ -73,9 +73,9 @@ def mount_correction_matrix(
     sensor_frame: str = "mid360_link",
 ) -> list[float]:
     """Row-major 4x4 (16 floats) mapping the ``original`` mount to the ``new`` one."""
-    original = _base_to_frame_matrix(
+    original = base_to_frame_matrix(
         UrdfLoader(name="original", model_path=original_static_tf), sensor_frame
     )
-    new = _base_to_frame_matrix(UrdfLoader(name="new", model_path=new_static_tf), sensor_frame)
+    new = base_to_frame_matrix(UrdfLoader(name="new", model_path=new_static_tf), sensor_frame)
     correction = np.linalg.inv(new) @ original
     return [float(value) for value in correction.flatten()]
