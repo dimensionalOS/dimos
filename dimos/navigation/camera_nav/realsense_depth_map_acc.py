@@ -176,20 +176,29 @@ def main() -> None:
                         map_ready = True
                         print("*** global map started (IMU + floor converged) ***", flush=True)
 
+                    # World-frame floor filter: more robust than camera-frame filter
+                    # when camera tilts slightly on uneven terrain.  In world frame
+                    # the floor sits at a near-constant Z = cam_z + floor_calib.floor_z
+                    # regardless of camera tilt, so this catches floor points that
+                    # slip through the camera-frame filter.
+                    floor_world = cam_z + floor_calib.floor_z
+                    xyz_for_map = xyz_vox[xyz_vox[:, 2] > floor_world + 0.04]
+
                     # Ray-cast BEFORE inserting so moved-object ghosts are erased first.
                     # Camera origin in world frame = pkt.pose_t.
-                    if len(acc_pts):
+                    if len(acc_pts) and len(xyz_for_map):
                         free_keys = _raycast_free_keys(
-                            xyz_vox, _VOX_SIZE, n_rays=400, cam_origin=pkt.pose_t,
+                            xyz_for_map, _VOX_SIZE, n_rays=400, cam_origin=pkt.pose_t,
                         )
                         if len(free_keys):
                             keys_acc = _pack(np.floor(acc_pts / _VOX_SIZE).astype(np.int32))
                             acc_pts  = acc_pts[~np.isin(keys_acc, free_keys)]
 
-                    acc_pts = np.vstack([acc_pts, xyz_vox]) if len(acc_pts) else xyz_vox.copy()
-                    _, ui   = np.unique(_pack(np.floor(acc_pts / _VOX_SIZE).astype(np.int32)),
-                                        return_index=True)
-                    acc_pts = acc_pts[ui]
+                    if len(xyz_for_map):
+                        acc_pts = np.vstack([acc_pts, xyz_for_map]) if len(acc_pts) else xyz_for_map.copy()
+                        _, ui   = np.unique(_pack(np.floor(acc_pts / _VOX_SIZE).astype(np.int32)),
+                                            return_index=True)
+                        acc_pts = acc_pts[ui]
 
                     rr.log("world/global_map", rr.Points3D(
                         positions=acc_pts,
