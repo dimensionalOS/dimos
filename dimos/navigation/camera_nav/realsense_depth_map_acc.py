@@ -166,34 +166,32 @@ def main() -> None:
                     radii=0.010,
                 ))
 
-                # ── Global map (world frame — same coordinate as per-frame map) ──
-                # xyz_vox is already floor-filtered, gradient-stable, and voxelised.
-                # Using world frame (not rotation-only) ensures the same physical
-                # surface always maps to the same voxel key regardless of robot
-                # position — required for correct accumulation on a moving robot.
+                # ── Global map (rotation-only frame: xyz_cam @ R.T, strips ICP t) ─
+                # ICP t oscillates ±2 cm → same surface lands on different world-frame
+                # voxel keys each frame → infinite accumulation.  Stripping t gives a
+                # stable panoramic key: same orientation = same key, always.
                 if floor_calib.ready:
                     if not map_ready:
                         acc_pts       = np.empty((0, 3), dtype=np.float32)
                         map_ready     = True
-                        # Lock floor threshold once in world frame.  cam_z ≈ 0 here
-                        # (robot stationary during calibration) so ICP Z drift can't
-                        # corrupt the threshold later.  floor_calib.floor_z is negative
-                        # (floor below camera); world_floor_z ≈ world Z of the floor.
+                        # Lock floor Z once (cam_z ≈ 0, ICP hasn't drifted yet).
                         world_floor_z = cam_z + floor_calib.floor_z
-                        print(f"*** global map started — floor at world Z ≈ {world_floor_z:.3f} m ***",
+                        print(f"*** global map started — floor at Z ≈ {world_floor_z:.3f} m ***",
                               flush=True)
 
-                    # World-frame floor filter: more robust than camera-frame filter
-                    # when camera tilts on uneven terrain.  Fixed threshold doesn't
-                    # drift with ICP Z noise.
-                    xyz_for_map = xyz_vox[xyz_vox[:, 2] > world_floor_z + 0.04]
+                    # Rotation-only positions: translate per-frame voxels, re-dedup in
+                    # ronly frame so the grid is aligned for stable accumulation keys.
+                    xyz_ronly  = xyz_vox - pkt.pose_t
+                    vk_r       = np.floor(xyz_ronly / _VOX_SIZE).astype(np.int32)
+                    _, first_r = np.unique(_pack(vk_r), return_index=True)
+                    xyz_vox_r  = xyz_ronly[first_r]
 
-                    # Ray-cast BEFORE inserting so moved-object ghosts are erased first.
-                    # Camera origin in world frame = pkt.pose_t.
+                    # Floor filter in rotation-only frame (Z ≈ world Z since t_z ≈ 0).
+                    xyz_for_map = xyz_vox_r[xyz_vox_r[:, 2] > world_floor_z + 0.04]
+
+                    # Ray-cast BEFORE inserting; camera at origin in rotation-only frame.
                     if len(acc_pts) and len(xyz_for_map):
-                        free_keys = _raycast_free_keys(
-                            xyz_for_map, _VOX_SIZE, n_rays=400, cam_origin=pkt.pose_t,
-                        )
+                        free_keys = _raycast_free_keys(xyz_for_map, _VOX_SIZE, n_rays=400)
                         if len(free_keys):
                             keys_acc = _pack(np.floor(acc_pts / _VOX_SIZE).astype(np.int32))
                             acc_pts  = acc_pts[~np.isin(keys_acc, free_keys)]
