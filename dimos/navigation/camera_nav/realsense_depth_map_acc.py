@@ -160,35 +160,27 @@ def main() -> None:
                 ))
 
                 # ── Global map (rotation ONLY — no ICP translation) ──────────
-                # Wait for floor_calib.ready: guarantees ~60 frames of IMU data
-                # so Madgwick orientation has converged before we start stacking.
+                # Reuse xyz_vox (already floor-filtered, voxelised, deduped by
+                # the per-frame map above) and strip ICP translation so the same
+                # physical surface always lands on the same voxel key across frames.
                 if floor_calib.ready:
                     if not map_ready:
                         acc_pts   = np.empty((0, 3), dtype=np.float32)
                         map_ready = True
                         print("*** global map started (IMU + floor converged) ***", flush=True)
 
-                    # Strip ICP translation: xyz_ronly = xyz_cam @ R.T (pure rotation)
-                    xyz_ronly_kept = xyz_kept - pkt.pose_t
+                    xyz_vox_r = xyz_vox - pkt.pose_t
 
-                    vk_r       = np.floor(xyz_ronly_kept / _VOX_SIZE).astype(np.int32)
-                    _, first_r  = np.unique(_pack(vk_r), return_index=True)
-                    xyz_vox_r   = xyz_ronly_kept[first_r]
-
-                    # Ray-cast: clear map voxels the current rays pass through.
-                    # Do this BEFORE adding new observations so a moved object's
-                    # old ghost gets erased and the new position is then inserted.
+                    # Ray-cast BEFORE inserting so moved-object ghosts are erased first.
                     if len(acc_pts):
                         free_keys = _raycast_free_keys(xyz_vox_r, _VOX_SIZE, n_rays=400)
                         if len(free_keys):
-                            vk_acc   = np.floor(acc_pts / _VOX_SIZE).astype(np.int32)
-                            keys_acc = _pack(vk_acc)
+                            keys_acc = _pack(np.floor(acc_pts / _VOX_SIZE).astype(np.int32))
                             acc_pts  = acc_pts[~np.isin(keys_acc, free_keys)]
 
-                    # Insert current frame's surface observations then dedup
                     acc_pts = np.vstack([acc_pts, xyz_vox_r]) if len(acc_pts) else xyz_vox_r.copy()
-                    vk_a    = np.floor(acc_pts / _VOX_SIZE).astype(np.int32)
-                    _, ui   = np.unique(_pack(vk_a), return_index=True)
+                    _, ui   = np.unique(_pack(np.floor(acc_pts / _VOX_SIZE).astype(np.int32)),
+                                        return_index=True)
                     acc_pts = acc_pts[ui]
 
                     rr.log("world/global_map", rr.Points3D(
