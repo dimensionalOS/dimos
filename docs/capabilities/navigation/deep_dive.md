@@ -1,5 +1,6 @@
 ---
-title: "Go2 Non-ROS Navigation"
+title: "Go2 non-ROS navigation deep dive"
+description: "Deep dive into the Go2 non-ROS navigation stack: column-carving voxel mapping, LiDAR frame updates, and the full data flow pipeline."
 ---
 ![output](assets/noros_nav.gif)
 

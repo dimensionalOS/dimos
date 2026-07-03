@@ -1,5 +1,6 @@
 ---
-title: "Profiling dimos"
+title: "Profiling DimOS blueprints with py-spy"
+description: "Profile a DimOS blueprint with py-spy and speedscope, capture a flamegraph across subprocesses, and visualize hotspots on speedscope.app."
 ---
 
 You can use py-spy to profile a particular blueprint:

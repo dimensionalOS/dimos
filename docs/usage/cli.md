@@ -1,5 +1,6 @@
 ---
-title: "CLI Reference"
+title: "dimos CLI reference: commands and global options"
+description: "Reference for the dimos CLI: manage the DimOS robot stack lifecycle, use global config flags, and inspect or interact with running blueprints."
 ---
 
 The `dimos` CLI manages the full lifecycle of a DimOS robot stack — start, stop, inspect, and interact.

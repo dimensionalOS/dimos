@@ -1,5 +1,6 @@
 ---
-title: "Transforms"
+title: "Coordinate frame transforms for robot sensors and arms"
+description: "How DimOS uses coordinate frame transforms to convert camera pixels, depth, and sensor readings into arm and world coordinates for manipulation."
 ---
 
 ## The Problem: Everything Measures from Its Own Perspective

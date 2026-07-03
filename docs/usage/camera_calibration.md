@@ -1,5 +1,6 @@
 ---
-title: "Camera calibration"
+title: "Camera calibration with dimos cameracalibrate"
+description: "Calibrate cameras in DimOS using chessboard targets and the dimos cameracalibrate CLI, producing ROS-style CameraInfo YAML for reuse."
 ---
 
 Operator workflow for chessboard targets and `dimos cameracalibrate` (ROS-style CameraInfo YAML). The square size you pass to the CLI must match the board you actually print and measure.

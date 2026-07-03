@@ -1,5 +1,6 @@
 ---
-title: "ReactiveX (RxPY) Quick Reference"
+title: "ReactiveX RxPY quick reference for data streams"
+description: "Practical RxPY quick reference for composing asynchronous data streams in DimOS, with common Observable, subscription, and operator patterns."
 ---
 
 RxPY provides composable asynchronous data streams. This is a practical guide focused on common patterns in this codebase.

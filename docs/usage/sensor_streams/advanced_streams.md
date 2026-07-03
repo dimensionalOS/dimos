@@ -1,5 +1,6 @@
 ---
-title: "Advanced Stream Handling"
+title: "Advanced sensor stream handling in DimOS"
+description: "Manage backpressure and parallel subscribers on hardware sensor streams in DimOS, and pull latest frames with synchronous getters for slow consumers."
 ---
 
 > **Prerequisite:** Read [ReactiveX Fundamentals](/docs/usage/sensor_streams/reactivex.md) first for Observable basics.

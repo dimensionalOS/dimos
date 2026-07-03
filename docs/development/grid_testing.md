@@ -1,5 +1,6 @@
 ---
-title: "Grid Testing Strategy"
+title: "Grid testing across implementations with pytest"
+description: "Grid testing pattern in DimOS: run the same test logic across multiple implementations or configurations using pytest parametrize and Case dataclasses."
 ---
 
 Grid tests run the same test logic across multiple implementations or configurations using pytest's parametrize feature.

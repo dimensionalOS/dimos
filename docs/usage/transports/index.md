@@ -1,5 +1,6 @@
 ---
-title: "Transports"
+title: "Transports: connecting DimOS module streams across processes"
+description: "How DimOS transports connect module streams across process boundaries and networks, with modules, topics, messages, and per-edge protocol choice."
 ---
 
 Transports connect **module streams** across **process boundaries** and/or **networks**.

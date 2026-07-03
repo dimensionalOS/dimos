@@ -1,5 +1,6 @@
 ---
-title: "Configuration"
+title: "Configuring DimOS modules with Configurable and Pydantic"
+description: "Configure DimOS modules with the Configurable base class and Pydantic models, defining default values and validating structure per module."
 ---
 
 Dimos provides a `Configurable` base class. See [`service/spec.py`](/dimos/protocol/service/spec.py#L22).

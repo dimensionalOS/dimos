@@ -1,5 +1,6 @@
 ---
-title: "Testing"
+title: "Running the DimOS test suite with uv and pytest"
+description: "Run the DimOS test suite with uv and pytest, sync optional groups for self-hosted tests, and parallelize tests across cores with xdist."
 ---
 
 `uv run` syncs the project deps + `tests` group on demand, so the default test suite needs no upfront install — just `uv run pytest --numprocesses=auto dimos` (xdist parallelizes across cores).

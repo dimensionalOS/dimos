@@ -1,5 +1,6 @@
 ---
-title: "Code Blocks"
+title: "Writing docs: code blocks and doc links"
+description: "How to write DimOS documentation with executable code blocks and correct doc and code links so examples run and references stay valid."
 ---
 
 **All code blocks must be executable.**

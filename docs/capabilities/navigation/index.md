@@ -1,5 +1,6 @@
 ---
-title: "Navigation"
+title: "Go2 navigation, mapping, and relocalization"
+description: "Overview of the Go2 navigation stack with column-carving voxel mapping and relocalization on previously stored and reconstructed maps."
 ---
 
 ![output](assets/noros_nav.gif)

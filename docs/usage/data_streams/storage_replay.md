@@ -1,5 +1,6 @@
 ---
-title: "Sensor Storage and Replay"
+title: "Data stream storage and replay with TimedSensorStorage"
+description: "Record DimOS data streams to disk and replay them with original timing using TimedSensorStorage for testing, debugging, and reproducible datasets."
 ---
 
 Record sensor streams to disk and replay them with original timing. Useful for testing, debugging, and creating reproducible datasets.

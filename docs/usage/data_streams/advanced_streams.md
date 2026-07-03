@@ -1,5 +1,6 @@
 ---
-title: "Advanced Stream Handling"
+title: "Advanced data stream handling in DimOS"
+description: "Handle backpressure, parallel subscribers to hardware, and synchronous getters when working with reactive data streams in DimOS pipelines."
 ---
 
 > **Prerequisite:** Read [ReactiveX Fundamentals](/docs/usage/data_streams/reactivex.md) first for Observable basics.

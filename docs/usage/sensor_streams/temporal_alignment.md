@@ -1,5 +1,6 @@
 ---
-title: "Temporal Message Alignment"
+title: "Temporal message alignment across sensor streams"
+description: "Match messages from multiple DimOS sensor streams by timestamp using align_timestamped, e.g. fusing 30fps camera frames with 10Hz lidar scans."
 ---
 
 Robots have multiple sensors emitting data at different rates and latencies. A camera might run at 30fps, while lidar scans at 10Hz, and each has different processing delays. For perception tasks like projecting 2D detections into 3D pointclouds, we need to match data from these streams by timestamp.

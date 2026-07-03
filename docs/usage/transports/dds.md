@@ -1,5 +1,6 @@
 ---
-title: "Installing DDS Transport Libs on Ubuntu"
+title: "Install DDS transport libs on Ubuntu with CycloneDDS"
+description: "Install the CycloneDDS C library and the DimOS dds extra on Ubuntu, either via Nix or from source, so Python builds link against the right runtime."
 ---
 
 The `dds` extra provides DDS (Data Distribution Service) transport support via [Eclipse Cyclone DDS](https://cyclonedds.io/docs/cyclonedds-python/latest/). The Python package builds C extensions against the CycloneDDS C library, so the C library must be installed before the Python package.

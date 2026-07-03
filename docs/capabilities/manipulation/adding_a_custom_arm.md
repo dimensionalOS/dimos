@@ -1,5 +1,6 @@
 ---
-title: "How to Integrate a New Manipulator Arm"
+title: "Integrate a new manipulator arm with DimOS"
+description: "Walk through integrating a new robot arm with DimOS: write the hardware adapter, wrap the vendor SDK, and create blueprints for planning and control."
 ---
 This guide walks through integrating a new robot arm with DimOS, from writing the hardware adapter to creating blueprints for planning and control.
 

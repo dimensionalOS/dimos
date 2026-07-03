@@ -1,5 +1,6 @@
 ---
-title: "Unitree G1"
+title: "Unitree G1 humanoid setup and SSH access"
+description: "Set up the Unitree G1 EDU humanoid with DimOS: hardware requirements, Ethernet configuration, SSH access, and preparing your development laptop."
 ---
 
 ## Requirements

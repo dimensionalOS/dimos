@@ -1,5 +1,6 @@
 ---
-title: "Code Style Guidelines"
+title: "Code style guidelines for DimOS"
+description: "Style rules for writing Python code in DimOS, addressing recurring code-review issues like comment banners, imports, and formatting conventions."
 ---
 
 Rules for writing code in dimos. These address recurring issues found in code review.

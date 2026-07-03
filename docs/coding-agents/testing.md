@@ -1,5 +1,6 @@
 ---
-title: "Testing Guidelines"
+title: "Testing guidelines for DimOS contributors"
+description: "Guidelines for writing tests in DimOS: import placement, structure, and common review issues, with pointers to grid testing across backends."
 ---
 
 Rules for writing tests in dimos. These address recurring issues found in code review.

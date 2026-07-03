@@ -1,5 +1,6 @@
 ---
-title: "Writing Docs"
+title: "Writing DimOS docs, diagrams, and examples"
+description: "Where to place DimOS docs, how to generate mermaid and pikchr diagrams with bin/gen-diagrams, and how to keep code examples runnable via md-babel-py."
 ---
 
 1. Where to put your docs:

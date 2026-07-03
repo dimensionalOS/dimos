@@ -1,5 +1,6 @@
 ---
-title: "Docker Images"
+title: "DimOS Docker images for ROS and non-ROS builds"
+description: "How DimOS uses parallel Docker image hierarchies for ROS and non-ROS builds so you can pick the container that fits your development environment."
 ---
 
 Dimos uses parallel Docker image hierarchies for ROS and non-ROS builds, allowing you to choose the environment that fits your use case.

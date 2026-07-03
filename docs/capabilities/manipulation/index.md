@@ -1,5 +1,6 @@
 ---
-title: "Manipulation"
+title: "Manipulation: planning, teleop, and visualization"
+description: "Motion planning and teleoperation for robotic manipulators in DimOS with Drake or RoboPlan planning backends and Meshcat or Viser visualization."
 ---
 
 Motion planning and teleoperation for robotic manipulators. Drake remains the default

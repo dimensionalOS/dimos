@@ -1,5 +1,6 @@
 ---
-title: "Quality-Based Stream Filtering"
+title: "Quality-based sensor stream filtering with quality_barrier"
+description: "Reduce sensor stream frequency in DimOS while keeping the sharpest frames by using quality_barrier to pick the best item within each time window."
 ---
 
 When processing sensor streams, you often want to reduce frequency while keeping the best quality data. For discrete data like images that can't be averaged or merged, instead of blindly dropping frames, `quality_barrier` selects the highest quality item within each time window.

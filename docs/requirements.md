@@ -1,5 +1,6 @@
 ---
-title: "System Requirements"
+title: "DimOS system requirements: GPU, CPU, and OS"
+description: "Minimum and recommended DimOS hardware and OS requirements, including NVIDIA GPU, CPU, RAM, disk, and Ubuntu or macOS support for perception and VLMs."
 ---
 
 ## Hardware

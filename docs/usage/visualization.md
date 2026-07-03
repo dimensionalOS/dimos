@@ -1,5 +1,6 @@
 ---
-title: "Viewer Backends"
+title: "Viewer backends: Rerun visualization for DimOS blueprints"
+description: "Configure DimOS visualization with Rerun as the default viewer, disable it via the CLI, and render typed robot streams from blueprints with vis_module."
 ---
 
 Dimos uses Rerun for visualizations. It can be disabled by using

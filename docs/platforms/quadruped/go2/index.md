@@ -1,5 +1,6 @@
 ---
-title: "Unitree Go2"
+title: "Unitree Go2 quadruped setup and blueprints"
+description: "Set up the Unitree Go2 quadruped with DimOS, run navigation and agentic blueprints, and try simulation without hardware using replay or MuJoCo."
 ---
 
 - [Setup your Dog](/docs/platforms/quadruped/go2/setup.md) — requirements, install, connecting to your Go2, and agentic control

@@ -1,5 +1,6 @@
 ---
-title: "Data Streams"
+title: "Data streams with RxPY reactive pipelines"
+description: "How DimOS uses RxPY reactive streams to handle asynchronous data from multiple sources at different rates, with links to advanced stream guides."
 ---
 
 Dimos uses reactive streams (RxPY) to handle sensor data. This approach naturally fits robotics where multiple sensors emit data asynchronously at different rates, and downstream processors may be slower than the data sources.

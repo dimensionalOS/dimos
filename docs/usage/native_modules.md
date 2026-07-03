@@ -1,5 +1,6 @@
 ---
-title: "Native Modules"
+title: "Native modules: wrap any executable as a DimOS module"
+description: "Wrap any native executable as a first-class DimOS module by speaking LCM, letting Python handle blueprint wiring, lifecycle, and logging."
 ---
 
 Prerequisite for this is to understand dimos [Modules](/docs/usage/modules.md) and [Blueprints](/docs/usage/blueprints.md).

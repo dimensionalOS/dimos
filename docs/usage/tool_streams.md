@@ -1,5 +1,6 @@
 ---
-title: "Tool Streams"
+title: "Tool streams for background MCP tool updates"
+description: "Route background progress updates from long-running DimOS tools to the calling MCP client using tool streams and MCP notifications/progress frames."
 ---
 
 Some tools return quickly but keep doing work in the background. For example,

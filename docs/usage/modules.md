@@ -1,5 +1,6 @@
 ---
-title: "DimOS Modules"
+title: "DimOS modules: autonomous robot subsystems"
+description: "How DimOS modules work as autonomous robot subsystems that communicate through standardized messages, with examples for cameras, navigation, and detection."
 ---
 
 Modules are subsystems on a robot that operate autonomously and communicate with other subsystems using standardized messages.

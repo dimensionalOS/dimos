@@ -1,5 +1,6 @@
 ---
-title: "Concepts"
+title: "DimOS concepts: modules, streams, blueprints, and skills"
+description: "Overview of DimOS core concepts: modules as deployment units, streams for pub/sub, blueprints for wiring modules, and RPC skills used by agents."
 ---
 
 This page explains general concepts.

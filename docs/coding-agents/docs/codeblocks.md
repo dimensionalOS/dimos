@@ -1,5 +1,6 @@
 ---
-title: "Executable Code Blocks"
+title: "Executable code blocks with md-babel-py"
+description: "Write executable Markdown code blocks in DimOS docs using md-babel-py to run examples in-place and keep documentation correct as code evolves."
 ---
 
 We use [md-babel-py](https://github.com/leshy/md-babel-py/) to execute code blocks in markdown and insert results.

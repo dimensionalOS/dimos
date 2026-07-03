@@ -1,5 +1,6 @@
 ---
-title: "OpenArm Integration"
+title: "OpenArm bimanual 7-DOF arm integration"
+description: "Run the OpenArm open-source bimanual 7-DOF research arm built from Damiao DM-J quasi-direct-drive motors under the DimOS manipulation stack."
 ---
 Guide for running the **OpenArm** — an open-source bimanual 7-DOF research arm built from Damiao DM-J quasi-direct-drive motors — under the dimos manipulation + control stack.
 

@@ -1,5 +1,6 @@
 ---
-title: "Python API"
+title: "DimOS Python API: local and remote usage"
+description: "Use the DimOS Python API in local mode to create and run modules in-process, or in remote mode to connect to an already-running DimOS instance."
 ---
 
 The `Dimos` class is the main entry point for using DimOS from Python. There are two modes:

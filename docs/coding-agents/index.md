@@ -1,5 +1,6 @@
 ---
-title: "For Agents"
+title: "Guide for coding agents working on DimOS"
+description: "Index of guides for coding agents contributing to DimOS: worktrees, code style, code-quality rules, testing, and documentation authoring."
 ---
 
 ├── worktrees.md (creating provisioned worktrees with `bin/worktree`)

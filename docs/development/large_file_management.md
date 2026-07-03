@@ -1,5 +1,6 @@
 ---
-title: "Data Loading"
+title: "Data loading and Git LFS with get_data"
+description: "Use the get_data helper in DimOS to access test data and model files from Python, with automatic Git LFS downloads for large binary assets."
 ---
 
 The [`get_data`](/dimos/utils/data.py) function provides access to test data and model files, handling Git LFS downloads automatically.

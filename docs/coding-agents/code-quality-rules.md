@@ -1,5 +1,6 @@
 ---
-title: "Code Quality Rules"
+title: "Code quality rules for DimOS contributors"
+description: "Code-quality rules for DimOS covering architecture, separation of concerns, ownership of lifecycle, and patterns to avoid in code review."
 ---
 
 Rules dimos code is expected to follow. They address recurring issues found in code review. The automated scan/fix prompts in `misc/auto-fixes/` are built from this file, but it's meant to be reused by any prompt that needs the project's code-quality criteria.
