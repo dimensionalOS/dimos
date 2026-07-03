@@ -3,6 +3,7 @@
 // the generated <DimosTopics, DimosCommands> maps for typed topics + modules. Usage: see README.
 import { createGatewayWsTransport } from "./transports/gatewayWs.ts";
 import { decode as msgsDecode } from "@dimos/msgs";
+import { decodeDracoEnvelope, DRACO_TYPE } from "./draco.ts";
 import { createTopic, type Topic } from "./topic.ts";
 import type {
   ClockSample,
@@ -170,6 +171,14 @@ export const createDimosClient = <TMap = EmptyTopicMap, TCmds = EmptyModuleMap>(
     let data: unknown;
     if (s.decoded !== undefined) {
       data = s.decoded; // pre-decoded injection (unit tests); no transport sets this
+    } else if (s.type === DRACO_TYPE) {
+      // Draco cloud (gateway/cloud.py): cheap envelope parse keeps it measurable (seq/size) without
+      // the wasm decoder; the renderer decodes the carried blob lazily. @dimos/msgs can't type it.
+      try {
+        data = decodeDracoEnvelope(s.payload);
+      } catch {
+        return;
+      }
     } else {
       try {
         data = msgsDecode(s.payload);

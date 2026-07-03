@@ -59,4 +59,20 @@ under loss/contention. The MoQ paper below reaches the same conclusion from the 
   **downsample/voxelize/splat at the gateway** (LEAN-3D style, viz-only), with G-PCC/Draco as the
   structured-lossless upgrade path.
 
+## Measured in dimoscope (2026-07-03)
+
+Built the option-1+2 path end-to-end — a server-side **cloud plane** (`gateway/cloud.py`) that
+republishes, for every source `PointCloud2`, a stride-**downsampled** standard-`PointCloud2` variant
+and a **Draco**-quantized variant, both flowing over the existing WS/WT/WebRTC transports. Measured
+end-to-end (localhost, WS + WT, live 10 Hz cloud):
+
+- raw 320 KB/frame (≈3.2 MB/s) → **downsample 10×** (drops 90% of points) → **Draco 6.1×** (all points,
+  ~cm precision), 100% delivery on both transports; the existing `WorldView` renders the result.
+- Draco ratio is structure-dependent: random 6.1× / smooth-surface 7.8× / real sparse lidar more.
+- Tradeoff: downsample is cheap but lossy-by-decimation; Draco keeps all points but adds ~8 ms
+  software-encode latency. Both take the cloud from "won't fit a cellular uplink" to ~0.3–0.5 MB/s.
+
+Full numbers, method, and gaps (WebRTC-local ICE, netem-loss matrix pending a Linux VPS):
+`../bench-results-cloud-2026-07-03.md`.
+
 Related repo docs: `docs/benchmarks.md`, `bench-results-2026-07-03.md`.

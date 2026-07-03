@@ -1563,6 +1563,7 @@ all = [
     { name = "chromadb" },
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64'" },
     { name = "dimos-viewer" },
+    { name = "dracopy" },
     { name = "drake", version = "1.45.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform == 'darwin'" },
     { name = "drake", version = "1.49.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform != 'darwin'" },
     { name = "eclipse-zenoh" },
@@ -1631,6 +1632,7 @@ apriltag = [
 base = [
     { name = "chromadb" },
     { name = "dimos-viewer" },
+    { name = "dracopy" },
     { name = "eclipse-zenoh" },
     { name = "einops" },
     { name = "fastapi" },
@@ -1729,6 +1731,7 @@ sim = [
 unitree = [
     { name = "chromadb" },
     { name = "dimos-viewer" },
+    { name = "dracopy" },
     { name = "eclipse-zenoh" },
     { name = "einops" },
     { name = "fastapi" },
@@ -1762,6 +1765,7 @@ unitree-dds = [
     { name = "chromadb" },
     { name = "cyclonedds" },
     { name = "dimos-viewer" },
+    { name = "dracopy" },
     { name = "eclipse-zenoh" },
     { name = "einops" },
     { name = "fastapi" },
@@ -1799,6 +1803,7 @@ visualization = [
     { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
 web = [
+    { name = "dracopy" },
     { name = "eclipse-zenoh" },
     { name = "fastapi" },
     { name = "ffmpeg-python" },
@@ -1980,6 +1985,7 @@ requires-dist = [
     { name = "dimos-lcm", specifier = ">=0.1.3" },
     { name = "dimos-viewer", specifier = "==0.32.0a1" },
     { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = "==0.32.0a1" },
+    { name = "dracopy", marker = "extra == 'web'", specifier = ">=1.4.0" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform == 'darwin' and extra == 'manipulation'", specifier = "==1.45.0" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform != 'darwin' and extra == 'manipulation'", specifier = ">=1.40.0" },
     { name = "eclipse-zenoh", specifier = ">=1.0.0,<2.0" },
@@ -2304,6 +2310,31 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/52/d8/8abe80d62c5dce1075578031bcfde07e735bcf0afe2886dd48b470162ab4/docstring_to_markdown-0.17.tar.gz", hash = "sha256:df72a112294c7492487c9da2451cae0faeee06e86008245c188c5761c9590ca3", size = 32260, upload-time = "2025-05-02T15:09:07.932Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/56/7b/af3d0da15bed3a8665419bb3a630585756920f4ad67abfdfef26240ebcc0/docstring_to_markdown-0.17-py3-none-any.whl", hash = "sha256:fd7d5094aa83943bf5f9e1a13701866b7c452eac19765380dead666e36d3711c", size = 23479, upload-time = "2025-05-02T15:09:06.676Z" },
+]
+
+[[package]]
+name = "dracopy"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/18/1c/5cb492dfa367ba85ac124e7f5d3e685ce32e4ff6d1358cf3266b46fd26b3/dracopy-2.0.0-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:e3704682b9f013b820d598b451a1b5917bc09f4fb439597f351ef9576a595148", size = 2753432, upload-time = "2025-11-11T16:10:16.464Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/3a/812cee5204bee8b9a8063de0c5ddc0cb86d17dede230cdfb2ac59551631b/dracopy-2.0.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:c171d213f8c810747e4be1b191f537fb2319dadaf1c1874feee29b185274a6c2", size = 2583081, upload-time = "2025-11-11T16:47:18.159Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/d0/62d18a620691a274018bf1ca23e4f887bccac34c315934a6b0fe8b1eea66/dracopy-2.0.0-cp310-cp310-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:50816fe2c5bb253584a4f1556ccd6cfb9885db30a6bdbfed2e09f22dcaf5a28b", size = 4922707, upload-time = "2026-02-23T23:04:56.503Z" },
+    { url = "https://files.pythonhosted.org/packages/73/fd/26c6a1ecf4e0fcc7b30e0f1ba183151cfbf1bbf643beed18a3e738ddf393/dracopy-2.0.0-cp310-cp310-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:cf63039f1abb5bc1e4d1b380985b277994b0e00afe9169276ebce7b4802c7456", size = 5074752, upload-time = "2025-11-11T16:13:06.155Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/c9/85aa8e3b302b6c4c88cece4a75e002a4e5a99211bb3a9999797bd928074f/dracopy-2.0.0-cp310-cp310-win32.whl", hash = "sha256:9fb438db1ea9f4ce1af19c4a8643b3f7c43b12498ed7929ed41b6aba308ae1ec", size = 4282964, upload-time = "2025-11-11T16:13:08.946Z" },
+    { url = "https://files.pythonhosted.org/packages/2f/f5/b28ff30aff5dabba9cfa489db83cf45451d3736ad26ada26fc726f0fb59a/dracopy-2.0.0-cp310-cp310-win_amd64.whl", hash = "sha256:4a0136a40e3fc3a0ca3cdc25b5f6277f9536b4f4bb10cd45aaa0baa4baae655a", size = 5059040, upload-time = "2025-11-11T16:13:07.538Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/98/79ab63a4e4b4114e7dde47e52c12718952c0d5e06c6e2e63020902378f95/dracopy-2.0.0-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:c41311512caee19e6c4ea1eded3895cfa557984a878aa3e4a96b8cf44e769325", size = 2752855, upload-time = "2025-11-11T16:13:10.436Z" },
+    { url = "https://files.pythonhosted.org/packages/8e/29/cf35fcc673f8fd2cb094cf8f1368894818eaa80ead18b9fc1e526c8bee43/dracopy-2.0.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:e16575abfe1ba2d21c55641b425e6238ee87637256fe573021b4ba8fa450028f", size = 2582155, upload-time = "2025-11-11T16:47:20.261Z" },
+    { url = "https://files.pythonhosted.org/packages/46/8a/d24295229fd2ba12d3b08cc332d175d929fedca625a517a4f6e598429705/dracopy-2.0.0-cp311-cp311-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:418964da7c21f6c3583a3c3113da8afe25efeb77dd80de441ab4efe4f7960d62", size = 4962806, upload-time = "2026-02-23T23:04:58.839Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/b7/e67c59d8a2e4f9362c5c07353818c85125821c0f32ab97f2536a7a1f5e98/dracopy-2.0.0-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:fa9a32159669f4291c5e37775b26beb36fac2164afce64d883d6a8f96a32e88e", size = 5116896, upload-time = "2025-11-11T16:14:17.424Z" },
+    { url = "https://files.pythonhosted.org/packages/af/f7/d9c60758b80e31614b162f65b3968001fa953b252af33ba2a3d8c79cb09a/dracopy-2.0.0-cp311-cp311-win32.whl", hash = "sha256:33ddaf26e26485aa0f951df3283d8a4dd94e5c9dc5da727c5db4a44f596b9a38", size = 4282085, upload-time = "2025-11-11T16:14:21.057Z" },
+    { url = "https://files.pythonhosted.org/packages/9d/3f/baac5aa88aab4117f9f74b892366bb336c9d682588cda11e71b7abc0a930/dracopy-2.0.0-cp311-cp311-win_amd64.whl", hash = "sha256:106c968fd20fd0d46eab5d3c624db55f5b1dade504c9ae31879459e350d7cf44", size = 5059285, upload-time = "2025-11-11T16:14:19.316Z" },
+    { url = "https://files.pythonhosted.org/packages/2b/be/7fccb6eadf9a18118fc125929b078e083e35e97aa3c10b8df677c5d93862/dracopy-2.0.0-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:00ed24e138bcfbf2605d495c3a4e6c17b71cbd0b63b78e945d9d3c89d4fb9d69", size = 2749370, upload-time = "2025-11-11T16:14:24.499Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/59/6c2c83cb8a0f56f61ca297241abb51f4157a0eebebfc24f213e707996857/dracopy-2.0.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:218626fc0ec0326ca65dbc47035926a15175d9044d71bcde475e25433eea0056", size = 2579812, upload-time = "2025-11-11T16:47:22.093Z" },
+    { url = "https://files.pythonhosted.org/packages/b1/f9/f8d0e9283e17854e2e265a5249b2cc1ba16d89547dd5414f08ae8ecf0ccd/dracopy-2.0.0-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:e7787814cf6e7a70814c78228a84f22accbfc5662053260a5756d7eabb87ad23", size = 4938162, upload-time = "2026-02-23T23:05:00.702Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/b7/28dff0bc2f992df437aaeeaeffba8f2f1ec031f054cedfc0390ea4300370/dracopy-2.0.0-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:4d6ea2821545b5fa1cfb1ca2911ea6425a2606932cf4fac2f9b1f2d4ccb6e52d", size = 5096811, upload-time = "2025-11-11T16:14:26.18Z" },
+    { url = "https://files.pythonhosted.org/packages/7b/2b/69af07d283aa3a7d3bbbf4236631742fdbb0a647f605f477161e4203e11c/dracopy-2.0.0-cp312-cp312-win32.whl", hash = "sha256:956c3077342d3b62d28cec10a85e4fa1836caf4641a219f4a536205f8f6e9ad1", size = 4280701, upload-time = "2025-11-11T16:14:29.676Z" },
+    { url = "https://files.pythonhosted.org/packages/35/16/3c9cf0ef315de04ff2a8754685c14e58c04394077d10cf3f3a01ff9afe9e/dracopy-2.0.0-cp312-cp312-win_amd64.whl", hash = "sha256:7f1991d0f0575d5096847ef2320d76b2c4a2cf1f88c741cb35dea75d3d682ff4", size = 5058707, upload-time = "2025-11-11T16:14:28.062Z" },
 ]
 
 [[package]]

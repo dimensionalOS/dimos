@@ -44,6 +44,26 @@ const heavy = (id: string, hz: number, bytes: number, note?: string): StreamProf
   return { id, topics: ["/load/img"], hint: genHint(gen), gen };
 };
 
+/**
+ * Point-cloud workload. The source flood is GO2Load `start_bench(hz, bytes, "cloud")` on
+ * `/load/cloud` (bytes/12 ≈ point count; each point is 16 B on the wire). `topic` selects which
+ * variant the bench subscribes to — the raw cloud, or a gateway-derived downsampled/Draco variant
+ * (`gateway/cloud.py`) — so raw vs ds vs draco A/B/C in one sweep against the same offered load.
+ */
+const heavyCloud = (id: string, topic: string, note: string): StreamProfile => {
+  const gen: GenSpec = { hz: 10, bytes: 240_000, kind: "cloud", note };
+  const pts = Math.round(gen.bytes / 12);
+  const wireMbps = (pts * 16 * gen.hz) / 1e6;
+  return {
+    id,
+    topics: [topic],
+    hint: `cloud@${gen.hz}Hz × ~${Math.round(pts / 1000)}k pts ≈ ${
+      wireMbps.toFixed(1)
+    } MB/s src (${note})`,
+    gen,
+  };
+};
+
 /** The small-lane trio the coex variants ride beside a flood — the `pose` profile's topics. */
 export const POSE_LANES = ["/load/fast", "/load/mid", "/load/slow"] as const;
 /** The interference signal lane: 100 Hz, tiny — the first casualty of a congested wire. */
@@ -95,6 +115,12 @@ export const STREAM_PROFILES: StreamProfile[] = [
     hint: "fast@100 + mid@20 + slow@2 + grid@5 + img flood",
     gen: { hz: 20, bytes: 1_000_000, kind: "image", note: "the beside-bulk coexistence case" },
   },
+  // Point-cloud variants — same source flood on /load/cloud, three subscribe targets. `cloud` is
+  // the raw PointCloud2; `cloud-ds`/`cloud-draco` are gateway-derived (gateway/cloud.py) and read
+  // empty until that transcoder runs. The A/B/C shows the bandwidth win of thinning/coding geometry.
+  heavyCloud("cloud", "/load/cloud", "raw 20k-pt PointCloud2"),
+  heavyCloud("cloud-ds", "/load/cloud_ds", "gateway voxel-downsampled"),
+  heavyCloud("cloud-draco", "/load/cloud_draco", "Draco-encoded"),
 ];
 
 /** The measured on-demand pair: run both profiles in one sweep and the export prints the

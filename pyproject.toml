@@ -237,6 +237,9 @@ web = [
     # dimoscope gateway bus tap (dimos/web/dimoscope/gateway); WebTransport is served by its native
     # Rust sidecar (gateway/wt-sidecar) — no Python QUIC dependency.
     "eclipse-zenoh>=1.0.0,<2.0",
+    # dimoscope cloud plane (gateway/cloud.py): server-side Draco point-cloud coding. Optional —
+    # the plane degrades to downsample-only if absent.
+    "DracoPy>=1.4.0",
 ]
 
 perception = [

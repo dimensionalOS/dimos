@@ -42,6 +42,7 @@ from dimos.utils.logging_config import setup_logger
 
 from . import netem, qos
 from .bus import Bus
+from .cloud import CloudPlane
 from .data import DataPlane
 from .egress import SafetyEgress
 from .media import MediaPlane
@@ -74,6 +75,7 @@ def build_app() -> FastAPI:
     egress = SafetyEgress()  # one teleop/goal/rpc trust boundary, shared by /ws + WebTransport
     data = DataPlane(bus, egress)
     media = MediaPlane(bus)
+    cloud = CloudPlane(bus)  # PointCloud2 → downsampled/Draco variants republished on the bus
     sse = SsePlane(bus)
     poll = PollPlane(bus)
     pipe = PipePlane(bus, egress)
@@ -89,6 +91,8 @@ def build_app() -> FastAPI:
             asyncio.create_task(media.run_fanout()),
             asyncio.create_task(pipe.start(WT_PIPE)),
         ]
+        if cloud.enabled:
+            tasks.append(asyncio.create_task(cloud.run()))
         logger.info("dimoscope up", url=f"http://localhost:{PORT}", transports="all")
         try:
             yield
