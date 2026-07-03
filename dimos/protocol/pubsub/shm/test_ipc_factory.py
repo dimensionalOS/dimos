@@ -112,7 +112,12 @@ def test_reader_outpaced_drops_oldest() -> None:
 
 
 def test_concurrent_publishers_no_loss() -> None:
-    """`slots` threads each publishing once fill the ring with no loss or dupes."""
+    """Threads sharing ONE instance publish concurrently with no loss or dupes.
+
+    This exercises the per-instance ``_pub_lock`` (single-writer-instance thread
+    safety). It does not cover multiple writer *instances* over one segment, which
+    are not cross-process serialised -- see the ``CpuShmQueue`` class docstring.
+    """
     slots = 32
     ch = CpuShmQueue((CAP,), np.uint8, slots=slots)
     try:

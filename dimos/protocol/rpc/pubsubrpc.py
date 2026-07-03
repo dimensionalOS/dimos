@@ -322,8 +322,17 @@ class LCMRPC(PubSubRPCMixin[Topic, Any], PickleLCM):
         return Topic(topic=topic)
 
 
+# RPC messages are small control-plane payloads (pickled dicts), so the ring uses
+# a modest per-slot capacity and a deep slot count to absorb concurrent bursts.
+# Segment bytes = slots * (capacity + 20) ~= 16 MiB here; inheriting the 3.6 MB
+# streaming frame would make each segment ~900 MiB.
+_SHM_RPC_CAPACITY = 64 * 1024
+_SHM_RPC_SLOTS = 256
+
+
 class ShmRPC(PubSubRPCMixin[str, Any], PickleSharedMemory):
     _channel_class = CpuShmQueue
+    _channel_kwargs = {"slots": _SHM_RPC_SLOTS}
 
     def __init__(
         self,
@@ -334,7 +343,12 @@ class ShmRPC(PubSubRPCMixin[str, Any], PickleSharedMemory):
     ) -> None:
         if rpc_timeouts is None:
             rpc_timeouts = dict(DEFAULT_RPC_TIMEOUTS)
-        PickleSharedMemory.__init__(self, prefer=prefer, **kwargs)
+        # Only the pubsub base consumes default_capacity; pop it so it doesn't
+        # also flow into PubSubRPCMixin.__init__ via **kwargs.
+        default_capacity = kwargs.pop("default_capacity", _SHM_RPC_CAPACITY)
+        PickleSharedMemory.__init__(
+            self, prefer=prefer, default_capacity=default_capacity, **kwargs
+        )
         PubSubRPCMixin.__init__(
             self, rpc_timeouts=rpc_timeouts, default_rpc_timeout=default_rpc_timeout, **kwargs
         )

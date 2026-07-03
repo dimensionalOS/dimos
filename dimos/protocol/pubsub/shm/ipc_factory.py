@@ -315,7 +315,19 @@ class CpuShmChannel(FrameChannel):
 
 
 class CpuShmQueue(FrameChannel):
-    """Multi-slot ring-buffer SHM channel for reliable delivery under load."""
+    """Multi-slot ring-buffer SHM channel for reliable delivery under load.
+
+    Delivery is reliable for a single writer *instance* (publishes are serialised
+    by ``_pub_lock``) feeding readers that keep up: every message lands in its own
+    slot with a monotonic seq. Two limits remain by design:
+
+    - ``_pub_lock`` is per-instance, so multiple writer instances/processes on the
+      *same* named segment are not mutually excluded and can race the seq counter.
+      The pubsub uses one writer instance per topic.
+    - A reader outpaced by more than ``slots`` messages loses the oldest (logged).
+      Size ``slots`` for the expected burst; a multi-reader ring cannot apply
+      backpressure.
+    """
 
     _HEADER_FIELDS = 3  # (seq, ts, length) per slot, all int64
     _CTRL_SLOTS = 2  # (producer_seq, last_ts)
@@ -344,26 +356,28 @@ class CpuShmQueue(FrameChannel):
         if data_name is None or ctrl_name is None:
             self._shm_data = SharedMemory(create=True, size=data_size)
             self._shm_ctrl = SharedMemory(create=True, size=ctrl_size)
-            self._is_owner = True
+            self._own_data = self._own_ctrl = True
         else:
-            self._shm_data, own_d = _create_or_open(data_name, data_size)
-            self._shm_ctrl, own_c = _create_or_open(ctrl_name, ctrl_size)
-            self._is_owner = own_d and own_c
+            # Track ownership per segment: under a first-attach race two processes
+            # can split ownership (one creates data, the other ctrl), and each must
+            # unlink the segment it created or it leaks.
+            self._shm_data, self._own_data = _create_or_open(data_name, data_size)
+            self._shm_ctrl, self._own_ctrl = _create_or_open(ctrl_name, ctrl_size)
 
         self._ctrl: NDArray[np.int64] = np.ndarray(
             (self._CTRL_SLOTS,), dtype=np.int64, buffer=self._shm_ctrl.buf
         )
-        if self._is_owner:
+        if self._own_ctrl:
             self._ctrl[:] = 0
 
         self._finalizer_data = (
             weakref.finalize(self, _safe_unlink, self._shm_data.name)
-            if (_UNLINK_ON_GC and self._is_owner)
+            if (_UNLINK_ON_GC and self._own_data)
             else None
         )
         self._finalizer_ctrl = (
             weakref.finalize(self, _safe_unlink, self._shm_ctrl.name)
-            if (_UNLINK_ON_GC and self._is_owner)
+            if (_UNLINK_ON_GC and self._own_ctrl)
             else None
         )
 
@@ -411,8 +425,12 @@ class CpuShmQueue(FrameChannel):
             seq = int(self._ctrl[0]) + 1
             ts = int(time.time_ns())
             slot = seq % self._slots
-            # Payload first, metadata next, seq last: a reader that observes the
-            # new seq is then guaranteed to see a fully-written slot.
+            # Invalidate the slot before overwriting it: a reader still holding
+            # the previous occupant's seq sees 0 on its post-copy re-check and
+            # discards the torn payload instead of returning a mix of two
+            # messages. Then payload, metadata, and the new seq last, so a reader
+            # that observes the seq is guaranteed a fully-written slot.
+            headers[slot, 0] = 0
             payloads[slot, :n] = src[:n]
             headers[slot, 1] = ts
             headers[slot, 2] = n
@@ -447,7 +465,10 @@ class CpuShmQueue(FrameChannel):
         if require_new:
             if current <= last_seq:
                 return last_seq, int(self._ctrl[1]), None
-            want = last_seq + 1
+            # Clamp to the first real seq: seqs start at 1, so the ABC's default
+            # last_seq=-1 must not make want=0 (a phantom seq that inflates the
+            # outpaced-drop count and matches the zero-initialised slot 0).
+            want = max(1, last_seq + 1)
             oldest = max(1, current - self._slots + 1)
             if want < oldest:
                 logger.warning(
@@ -498,16 +519,18 @@ class CpuShmQueue(FrameChannel):
                 f"Ensure the writer is running on the same host and the channel is alive."
             ) from e
         obj._ctrl = np.ndarray((cls._CTRL_SLOTS,), dtype=np.int64, buffer=obj._shm_ctrl.buf)
-        obj._is_owner = False
+        obj._own_data = obj._own_ctrl = False
         obj._finalizer_data = obj._finalizer_ctrl = None
         return obj
 
     def close(self) -> None:
         self._shm_ctrl.close()
         self._shm_data.close()
-        if self._is_owner:
-            # Owner unlinks the segments; readers just drop their handle.
+        # Unlink each segment we created; a reader that created neither just drops
+        # its handles.
+        if self._own_ctrl:
             _safe_unlink(self._shm_ctrl.name)
+        if self._own_data:
             _safe_unlink(self._shm_data.name)
 
 

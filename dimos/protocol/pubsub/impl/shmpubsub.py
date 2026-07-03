@@ -66,6 +66,11 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
     # every message delivered (e.g. ShmRPC) override this with CpuShmQueue.
     _channel_class: type[FrameChannel] = CpuShmChannel
 
+    # Extra keyword args passed to _channel_class(...) at construction (empty for
+    # the streaming channel; ShmRPC sets e.g. {"slots": N}). Folded into the
+    # segment name so distinct layouts never mmap over one another.
+    _channel_kwargs: dict[str, Any] = {}
+
     # Per-topic state
     # TODO: implement "is_cuda" below capacity, above cp
     class _TopicState:
@@ -242,19 +247,25 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
 
             def _names_for_topic(topic: str, capacity: int) -> tuple[str, str]:
                 # Python's SharedMemory requires names without a leading '/'.
-                # Fold the channel class name into the hash so two pubsubs using
-                # different layouts (streaming CpuShmChannel vs RPC CpuShmQueue)
-                # on the same topic get distinct segments rather than mmapping
-                # incompatible layouts over each other.
+                # Fold the channel class name AND its layout kwargs (e.g. slots)
+                # into the hash so two pubsubs using different layouts (streaming
+                # CpuShmChannel vs RPC CpuShmQueue, or two ring sizes) on the same
+                # topic get distinct segments rather than mmapping incompatible
+                # layouts over each other.
                 # Use a short digest to avoid macOS shared memory name length limits.
+                layout = f"{self._channel_class.__name__}:{sorted(self._channel_kwargs.items())}"
                 h = hashlib.blake2b(
-                    f"{topic}:{capacity}:{self._channel_class.__name__}".encode(), digest_size=8
+                    f"{topic}:{capacity}:{layout}".encode(), digest_size=8
                 ).hexdigest()
                 return f"psm_{h}_data", f"psm_{h}_ctrl"
 
             data_name, ctrl_name = _names_for_topic(topic, cap)
             ch = self._channel_class(
-                (cap + 20,), np.uint8, data_name=data_name, ctrl_name=ctrl_name
+                (cap + 20,),
+                np.uint8,
+                data_name=data_name,
+                ctrl_name=ctrl_name,
+                **self._channel_kwargs,
             )
             st = SharedMemoryPubSubBase._TopicState(ch, cap, None)
             self._topics[topic] = st
