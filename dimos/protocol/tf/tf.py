@@ -20,6 +20,7 @@ from dataclasses import field
 from functools import reduce
 import threading
 import time
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -32,6 +33,24 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.timeseries.inmemory import InMemoryStore
 
 logger = setup_logger()
+
+
+@runtime_checkable
+class TFLookup(Protocol):
+    """Read side of a tf service: resolve ``parent ← child`` at a time point.
+
+    Satisfied by the live services (:class:`MultiTBuffer`, :class:`PubSubTF`)
+    and by replay backends like ``dimos.memory2.tf.StreamTF``. Code that only
+    queries transforms should accept this instead of a concrete service.
+    """
+
+    def get(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: float | None = None,
+        time_tolerance: float | None = None,
+    ) -> Transform | None: ...
 
 
 # generic configuration for transform service
@@ -63,6 +82,26 @@ class TFSpec(Service):
         *,
         forward_tolerance: float = 0.0,
     ) -> Transform | None: ...
+
+    def get_pose(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: float | None = None,
+        time_tolerance: float | None = None,
+        *,
+        forward_tolerance: float = 0.0,
+    ) -> PoseStamped | None:
+        tf = self.get(
+            parent_frame,
+            child_frame,
+            time_point,
+            time_tolerance,
+            forward_tolerance=forward_tolerance,
+        )
+        if not tf:
+            return None
+        return tf.to_pose()
 
     def receive_transform(self, *args: Transform) -> None: ...
 
@@ -159,16 +198,20 @@ class MultiTBuffer:
                 ts=time_point if time_point is not None else time.time(),
             )
 
+        # No explicit tolerance means "anything still buffered" — the buffer
+        # holds at most buffer_size seconds, so that is the effective reach.
+        tolerance = time_tolerance if time_tolerance is not None else self.buffer_size
+
         with self._cv:
             # Check forward direction
             key = (parent_frame, child_frame)
             if key in self.buffers:
-                return self.buffers[key].get(time_point, time_tolerance)  # type: ignore[arg-type]
+                return self.buffers[key].get(time_point, tolerance)
 
             # Check reverse direction and return inverse
             reverse_key = (child_frame, parent_frame)
             if reverse_key in self.buffers:
-                transform = self.buffers[reverse_key].get(time_point, time_tolerance)  # type: ignore[arg-type]
+                transform = self.buffers[reverse_key].get(time_point, tolerance)
                 return transform.inverse() if transform else None
 
             return None
@@ -388,26 +431,6 @@ class PubSubTF(MultiTBuffer, TFSpec):
             forward_tolerance=forward_tolerance,
         )
 
-    def get_pose(
-        self,
-        parent_frame: str,
-        child_frame: str,
-        time_point: float | None = None,
-        time_tolerance: float | None = None,
-        *,
-        forward_tolerance: float = 0.0,
-    ) -> PoseStamped | None:
-        tf = self.get(
-            parent_frame,
-            child_frame,
-            time_point,
-            time_tolerance,
-            forward_tolerance=forward_tolerance,
-        )
-        if not tf:
-            return None
-        return tf.to_pose()
-
     def receive_msg(self, msg: TFMessage, topic: Topic) -> None:
         self.receive_tfmessage(msg)
 
@@ -423,3 +446,7 @@ class LCMTF(PubSubTF):
 
 
 TF = LCMTF
+
+if TYPE_CHECKING:
+    # mypy conformance checks: the live services satisfy the read-side protocol.
+    _lookup_impls: tuple[type[TFLookup], ...] = (MultiTBuffer, PubSubTF)
