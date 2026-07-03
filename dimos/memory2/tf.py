@@ -91,9 +91,10 @@ class StreamTF(MultiTBuffer, TFSpec):
             last = next(iter(self.stream.order_by("ts", desc=True).limit(1)), None)
             tp = last.ts if last is not None else None
 
-        back = time_tolerance if time_tolerance is not None else self.config.buffer_size
-        fwd = time_tolerance if time_tolerance is not None else forward_tolerance
-        self._ensure(tp - back, tp + fwd)
+        if tp is not None:
+            back = time_tolerance if time_tolerance is not None else self.config.buffer_size
+            fwd = time_tolerance if time_tolerance is not None else forward_tolerance
+            self._ensure(tp - back, tp + fwd)
 
         return super().get(
             parent_frame,
