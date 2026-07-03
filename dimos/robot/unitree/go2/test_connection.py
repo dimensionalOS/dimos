@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Test that go2.connection.make_connection forwards aes_128_key.
+"""Tests for go2.connection: make_connection routing and TF frame naming.
 
 The leaf (UnitreeWebRTCConnection.__init__) is covered in
 dimos/robot/unitree/test_connection.py; this pins the go2-local routing.
@@ -24,8 +24,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from dimos.core.global_config import GlobalConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.unitree.go2 import connection as go2_conn
-from dimos.robot.unitree.go2.connection import ConnectionConfig
+from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
 
 
 @pytest.fixture
@@ -52,3 +53,30 @@ def test_connection_config_aes_key_defaults_from_global_config() -> None:
     """ConnectionConfig.aes_128_key defaults from GlobalConfig.unitree_aes_128_key."""
     g = GlobalConfig(robot_ip="127.0.0.1", unitree_aes_128_key="dd" * 16)
     assert ConnectionConfig(g=g).aes_128_key == "dd" * 16
+
+
+def test_odom_to_tf_unprefixed_by_default() -> None:
+    odom = PoseStamped(ts=1.0, frame_id="world")
+    base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom)
+    assert (base.frame_id, base.child_frame_id) == ("world", "base_link")
+    assert (camera_link.frame_id, camera_link.child_frame_id) == ("base_link", "camera_link")
+    assert (camera_optical.frame_id, camera_optical.child_frame_id) == (
+        "camera_link",
+        "camera_optical",
+    )
+
+
+def test_odom_to_tf_prefixed() -> None:
+    """namespace() sets frame_id_prefix: robot-local frames get prefixed, the
+    odom parent frame stays global so all robots hang off one tree root."""
+    odom = PoseStamped(ts=1.0, frame_id="world")
+    base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom, prefix="robot0")
+    assert (base.frame_id, base.child_frame_id) == ("world", "robot0/base_link")
+    assert (camera_link.frame_id, camera_link.child_frame_id) == (
+        "robot0/base_link",
+        "robot0/camera_link",
+    )
+    assert (camera_optical.frame_id, camera_optical.child_frame_id) == (
+        "robot0/camera_link",
+        "robot0/camera_optical",
+    )

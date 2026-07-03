@@ -163,9 +163,12 @@ def arg_help(
     _atom: BlueprintAtom | None = None,
     _defaults: BaseModel | dict[str, Any] | None = None,
 ) -> str:
+    # Imported here for performance reasons.
+    from dimos.core.coordination.blueprints import config_key
+
     output = ""
     for k, info in config.model_fields.items():
-        if k == "g":
+        if k in ("g", "instance_name"):
             continue
         t: object = info.annotation
         if isinstance(t, types.GenericAlias):
@@ -181,7 +184,9 @@ def arg_help(
             if _atom is None:
                 # Root BlueprintConfig fields are blueprint atoms, except schema
                 # branches such as transports.* that have no backing atom.
-                bp = next((bp for bp in blueprint.blueprints if bp.module.name == k), None)
+                bp = next(
+                    (bp for bp in blueprint.blueprints if config_key(bp.name) == k), None
+                )
                 defaults = bp.kwargs if bp is not None else field_defaults
             else:
                 # Nested BaseModel fields belong to the current atom and must not
@@ -282,7 +287,9 @@ def load_config_args(config: type[BaseModel], args: Iterable[str], path: Path) -
 
     for arg in args:
         k, _, v = arg.partition("=")
-        parts = k.split(".")
+        # Accept namespaced instance names in both forms: robot0/sensor.ip
+        # and robot0_sensor.ip (config keys escape "/" to "_").
+        parts = [p.replace("/", "_") for p in k.split(".")]
         d = kwargs
         for p in parts[:-1]:
             d = d.setdefault(p, {})
