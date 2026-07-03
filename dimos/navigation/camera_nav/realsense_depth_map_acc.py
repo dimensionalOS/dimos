@@ -1,21 +1,21 @@
 """RealSense accumulated global map.
 
-Per-frame voxel map (world/map) + persistent global map (world/global_map).
+Two Rerun channels
+  world/map        per-frame voxel grid — refreshes every frame, never accumulates
+  world/global_map persistent panoramic map — grows as the camera explores
 
-Key design decisions
---------------------
-Both maps use the same coordinate system:
-  xyz_world = xyz_cam @ R.T + t   (ICP translation included)
+Coordinate frames
+  Per-frame map    world frame: xyz_world = xyz_cam @ R.T + t
+                   R from Madgwick IMU, t from ICP.  Refreshed each frame so
+                   ICP noise has no cumulative effect.
 
-The per-frame map refreshes every frame — current view only.
-The global map accumulates across frames so the same physical surface always
-lands on the same world-frame voxel key regardless of robot position.
-
-Using xyz_world (not rotation-only) is essential on a moving robot: in the
-rotation-only frame, xyz_ronly = xyz_world - t shifts with t, so revisiting
-a surface from a new robot position creates a duplicate voxel.  In world
-frame, ICP t correctly places each observed surface at its stable world-space
-address regardless of where the robot was when it observed it.
+  Global map       rotation-only frame: xyz_ronly = xyz_world - t = xyz_cam @ R.T
+                   ICP t oscillates ±2 cm even for a static camera (centroid
+                   sub-sampling noise).  At 2 cm voxels that maps the same surface
+                   to different keys every frame → unbounded accumulation.  Stripping
+                   t gives a stable key: same camera orientation = same voxel, always.
+                   The floor threshold is locked once at map-start so ICP Z drift
+                   cannot corrupt it later.
 
 Usage
     python -m dimos.navigation.camera_nav.realsense_depth_map_acc
