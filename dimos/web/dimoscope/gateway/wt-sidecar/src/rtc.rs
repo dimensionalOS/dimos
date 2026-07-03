@@ -34,12 +34,18 @@ use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
-use crate::session::{Hub, Session};
+use crate::session::{now_ms, Hub, Session};
 
 /// Bulk chunk size — safely under the 64 KB SCTP message-size interop floor.
 pub const CHUNK: usize = 60_000;
 /// Pose sends are dropped (not queued) beyond this buffered amount — freshness over completeness.
 const POSE_BUF_MAX: usize = 64_000;
+/// Default pose-age TTL (ms): drop a pose frame already older than this at drain time, so a cleared
+/// stall delivers newest-wins instead of a stale burst — the WT datagram drain's WT_DGRAM_TTL_MS,
+/// mirrored here (the pose channel gates only on buffer *size*, POSE_BUF_MAX, without it). Pose
+/// frames are the same [f64be ingress-ms][LC02] the pipe stamps, so the age check is identical.
+/// RTC_POSE_TTL_MS overrides; 0 = off.
+const POSE_TTL_MS_DEFAULT: f64 = 200.0;
 /// Bulk waits below this before each chunk, so the backlog accumulates in the outbox (where
 /// conflation keeps it fresh), not in the SCTP send buffer. Kept small ON PURPOSE: pose shares
 /// the association and webrtc-rs has no cross-stream scheduler (RFC 8260), so every queued bulk
@@ -71,12 +77,18 @@ pub async fn run(
             return;
         }
     };
-    info!(port, "WebRTC listening (udp, muxed)");
+    // Read once at plane start (env, not const, so it's tunable without touching main.rs). f64 is
+    // Copy, so every session gets it for free through answer → drain_pose.
+    let pose_ttl_ms: f64 = std::env::var("RTC_POSE_TTL_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(POSE_TTL_MS_DEFAULT);
+    info!(port, pose_ttl_ms, "WebRTC listening (udp, muxed)");
     while let Some((rsid, sdp)) = offers.recv().await {
         let hub = hub.clone();
         let api = api.clone();
         tokio::spawn(async move {
-            match answer(&hub, &api, sdp).await {
+            match answer(&hub, &api, sdp, pose_ttl_ms).await {
                 Ok(answer_sdp) => {
                     hub.send_upstream(json!({"op": "rtc-answer", "rsid": rsid, "sdp": answer_sdp}))
                 }
@@ -134,7 +146,7 @@ async fn build_api(port: u16, public_ip: Option<String>) -> Result<API> {
 }
 
 /// One browser session: peer connection + Hub session + the three channels' tasks.
-async fn answer(hub: &Arc<Hub>, api: &API, offer_sdp: String) -> Result<String> {
+async fn answer(hub: &Arc<Hub>, api: &API, offer_sdp: String, pose_ttl_ms: f64) -> Result<String> {
     let pc = Arc::new(api.new_peer_connection(RTCConfiguration::default()).await?);
 
     let (ctl_tx, ctl_rx) = mpsc::unbounded_channel();
@@ -161,7 +173,7 @@ async fn answer(hub: &Arc<Hub>, api: &API, offer_sdp: String) -> Result<String> 
                 match dc.label() {
                     "ctl" => wire_ctl(hub, sess, dc, ctl_rx, tasks).await,
                     "pose" => {
-                        let t = tokio::spawn(drain_pose(dc, sess));
+                        let t = tokio::spawn(drain_pose(dc, sess, pose_ttl_ms));
                         tasks.lock().expect("tasks lock").push(t);
                     }
                     "bulk" => {
@@ -255,11 +267,27 @@ async fn wire_ctl(
     }));
 }
 
+/// True if a pose frame ([f64be ingress-ms] prefix) has aged past `ttl_ms` by `now` (both ms, same
+/// wall clock as `now_ms`). `ttl_ms <= 0` disables the gate; a frame too short to carry a stamp is
+/// never expired (fail-open — better to send an unstamped frame than drop it).
+fn pose_expired(frame: &[u8], ttl_ms: f64, now: f64) -> bool {
+    if ttl_ms <= 0.0 || frame.len() < 8 {
+        return false;
+    }
+    let stamp = f64::from_be_bytes(frame[..8].try_into().expect("8 bytes"));
+    now - stamp > ttl_ms
+}
+
 /// Datagram semantics: never wait on the SCTP buffer — a full buffer drops the frame, so a stalled
-/// association can't turn pose into a queue of stale samples.
-async fn drain_pose(dc: Arc<RTCDataChannel>, sess: Arc<Session>) {
+/// association can't turn pose into a queue of stale samples. The age gate (mirroring the WT
+/// datagram drain) drops a frame that aged past the TTL while queued, so a cleared stall delivers
+/// the newest pose instead of a stale burst the buffer-size gate alone would let through.
+async fn drain_pose(dc: Arc<RTCDataChannel>, sess: Arc<Session>, ttl_ms: f64) {
     loop {
         let frame = sess.dgram.get().await;
+        if pose_expired(&frame, ttl_ms, now_ms()) {
+            continue; // drop: aged past the TTL waiting to drain
+        }
         if dc.buffered_amount().await > POSE_BUF_MAX {
             continue; // drop: freshness over completeness
         }
@@ -321,5 +349,16 @@ mod tests {
         assert_eq!(len, frame.len());
         assert_eq!(&stream[4..4 + len], &frame[..]);
         assert_eq!(stream.len(), 4 + len); // no trailing bytes
+    }
+
+    #[test]
+    fn pose_expired_gates_on_age() {
+        // frame = [f64be ingress-ms=1000][payload]
+        let mut f = 1000.0f64.to_be_bytes().to_vec();
+        f.extend_from_slice(b"LC02payload");
+        assert!(!pose_expired(&f, 200.0, 1150.0)); // age 150 ≤ 200 → fresh
+        assert!(pose_expired(&f, 200.0, 1300.0)); // age 300 > 200 → expired
+        assert!(!pose_expired(&f, 0.0, 9999.0)); // ttl 0 disables the gate
+        assert!(!pose_expired(&[1, 2, 3], 200.0, 9999.0)); // too short to stamp → never expired
     }
 }
