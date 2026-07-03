@@ -363,7 +363,7 @@ Transform tree:
 ```
 
 
-You can view these transforms in 3D using the Rerun viewer (see [Visualization](/docs/usage/visualization.md)).
+You can view these transforms in 3D using the Rerun viewer (see [Visualization](/usage/visualization)).
 
 ![transforms](assets/transforms.png)
 
@@ -464,5 +464,5 @@ For the mathematical foundations, the ROS documentation provides detailed backgr
 - [ROS REP 105 - Coordinate Frames for Mobile Platforms](https://www.ros.org/reps/rep-0105.html)
 
 See also:
-- [Modules](/docs/usage/modules.md) for understanding the module system
-- [Configuration](/docs/usage/configuration.md) for module configuration patterns
+- [Modules](/usage/modules) for understanding the module system
+- [Configuration](/usage/configuration) for module configuration patterns
