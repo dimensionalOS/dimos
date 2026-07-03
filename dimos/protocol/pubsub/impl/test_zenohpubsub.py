@@ -196,11 +196,12 @@ class TestZenohPubSubBase:
 
         def callback(msg: bytes, t: Topic) -> None:
             received.append(msg)
-            event.set()
+            if msg == b"wildcard":
+                event.set()
 
         pubsub.subscribe_all(callback)
         retry_until(event, lambda: pubsub.publish(topic, b"wildcard"))
-        assert received[-1] == b"wildcard"
+        assert b"wildcard" in received
 
     def test_subscribe_after_stop_does_not_track(self, pubsub) -> None:
         # Models the declare/stop race: once stopped, a newly declared subscriber
