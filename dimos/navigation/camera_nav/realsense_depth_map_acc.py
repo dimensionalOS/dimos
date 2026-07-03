@@ -43,17 +43,15 @@ def _raycast_free_keys(
     surface_pts: np.ndarray,
     vox_size: float,
     n_rays: int = 400,
-    cam_origin: np.ndarray | None = None,
 ) -> np.ndarray:
     """Return int64 voxel keys that are free space between camera and surface.
 
-    surface_pts: (N, 3) surface points in the same frame as acc_pts.
-    cam_origin:  (3,) camera position in that same frame. Defaults to [0,0,0].
+    Operates in the rotation-only frame where the camera is always at [0,0,0].
     Fully vectorised: builds all ray-step grids at once, no Python loop.
     Stops one voxel short of each surface point so the surface itself is
     never cleared.
     """
-    origin = np.zeros(3, dtype=np.float32) if cam_origin is None else np.asarray(cam_origin, dtype=np.float32)
+    origin = np.zeros(3, dtype=np.float32)
 
     n = min(len(surface_pts), n_rays)
     if n == 0:

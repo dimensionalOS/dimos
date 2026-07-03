@@ -25,7 +25,6 @@ Usage:
 
 from __future__ import annotations
 
-import queue
 import threading
 import time
 from dataclasses import dataclass, field
@@ -127,44 +126,6 @@ class _FloorCalibrator:
             self.floor_z    = float(np.median(self._samples))
             self.cam_height = -self.floor_z
             print(f"*** floor calibrated: camera {self.cam_height:.3f} m above floor ***")
-
-
-def _filter_isolated(xyz: np.ndarray, voxel: float = 0.05, min_pts: int = 2) -> np.ndarray:
-    if len(xyz) < min_pts:
-        return np.zeros((0, 3), dtype=np.float32)
-    vk = np.floor(xyz / voxel).astype(np.int32)
-    _, inv, cnt = np.unique(_pack(vk), return_inverse=True, return_counts=True)
-    return xyz[cnt[inv] >= min_pts]
-
-
-def _nearest_per_ray(xyz: np.ndarray, cam_pos: np.ndarray, deg: float = 3.0) -> np.ndarray:
-    """Keep only the nearest point per ~3° angular bin.
-
-    Stereo cameras leak background depth for pixels near an obstacle edge —
-    the two cameras see slightly different scenes and the matcher interpolates.
-    These spurious behind-surface returns share the same ray direction as the
-    real surface but sit at greater depth. Sorting by depth and keeping the
-    nearest per bin discards them, leaving only actual obstacle surfaces.
-    """
-    if len(xyz) == 0:
-        return xyz
-    rays  = xyz - cam_pos
-    dists = np.linalg.norm(rays, axis=1)
-    ok    = dists > 0
-    if not ok.any():
-        return xyz[ok]
-
-    idx_ok = np.where(ok)[0]
-    dirs   = rays[ok] / dists[ok, None]
-
-    rad = np.radians(deg)
-    az  = np.floor(np.arctan2(dirs[:, 1], dirs[:, 0]) / rad).astype(np.int32)
-    el  = np.floor(np.arcsin(np.clip(dirs[:, 2], -1.0, 1.0)) / rad).astype(np.int32)
-    keys = az.astype(np.int64) * 100_000 + el.astype(np.int64)
-
-    order = np.argsort(dists[ok])
-    _, first = np.unique(keys[order], return_index=True)
-    return xyz[idx_ok[order[first]]]
 
 
 # ── Gradient stability filter ─────────────────────────────────────────────────
@@ -354,9 +315,8 @@ class PointCloudOdometry:
 class DepthBackprojector:
     """Pinhole backproject → camera_link frame → world frame.
 
-    Returns (xyz_world, xyz_cam, colors):
-      xyz_cam:   camera_link-frame pts — passed to map worker for ICP
-      xyz_world: world-frame pts — used for live-cloud display
+    Returns (xyz_world, colors):
+      xyz_world: world-frame pts — used for live-cloud display and mapping
     """
 
     def project(
@@ -380,7 +340,7 @@ class DepthBackprojector:
         return xyz_world, colors
 
 
-# ── Voxel map (same as ZED — the one that works) ─────────────────────────────
+# ── Voxel map ─────────────────────────────────────────────────────────────────
 
 class FastVoxelMap:
     """Append-only world-frame point map backed entirely by numpy arrays."""
@@ -442,8 +402,8 @@ class RealSenseDepthSource:
 
     Enables accel + gyro streams alongside depth + color.  IMU extrinsics are
     read from the SDK so MadgwickFilter operates in camera_link frame directly.
-    Translation comes from PointCloudOdometry (updated in the map thread,
-    one frame behind — see DepthStreamer._map_worker).
+    Translation comes from PointCloudOdometry (updated each frame after process,
+    one frame behind — negligible at 15 fps).
     """
 
     MIN_DEPTH: float = 0.1
@@ -553,7 +513,6 @@ class RealSenseDepthSource:
             R = self._madgwick.R.copy() if self._has_imu else np.eye(3, dtype=np.float32)
         t = self.odom.t
 
-        # ── Depth ──────────────────────────────────────────────────────
         # Spatial filter smooths IR-pattern noise on flat surfaces (walls);
         # hole-filling fills remaining gaps before the gradient filter runs.
         depth_frame = aligned.get_depth_frame()
@@ -563,7 +522,6 @@ class RealSenseDepthSource:
         invalid = (depth <= 0) | (depth < self.MIN_DEPTH) | (depth > self.MAX_DEPTH)
         depth[invalid] = np.nan
 
-        # ── Color ──────────────────────────────────────────────────────
         bgr       = np.asarray(aligned.get_color_frame().get_data(), dtype=np.uint8)
         colors_hw = bgr[:, :, ::-1].copy()
 
@@ -591,16 +549,13 @@ class RealSenseDepthSource:
 # ── Streamer ──────────────────────────────────────────────────────────────────
 
 class DepthStreamer:
-    """Two-layer pipeline — mirrors the ZED implementation that worked.
+    """Single-thread pipeline: gradient filter → backproject → voxel map → Rerun.
 
-    Main thread  (fast): gradient filter → backproject → live Rerun cloud
-    Map thread (async):  height/floor/isolation filter → ICP (updates translation)
-                         → xyz_world = xyz_cam @ R.T + t → FastVoxelMap → Rerun map
+    For the persistent global map with ray-cast ghost clearing, use
+    realsense_depth_map_acc.py which imports the components above.
     """
 
-    MAX_CLOUD  = 50_000
-    MAX_MAP    = 200_000
-    MAP_EVERY  = 5
+    MAX_CLOUD = 50_000
 
     def __init__(
         self,
@@ -611,18 +566,11 @@ class DepthStreamer:
         self._src            = source
         self._bp             = backproj
         self._grad           = grad_filter or GradientStabilityFilter()
-        self._vox            = FastVoxelMap(voxel_size=0.05)
-        self._vox_lock       = threading.Lock()
-        self._live_vox       = FastVoxelMap(voxel_size=0.05)   # live_cloud_map accumulator
+        self._floor_calib    = _FloorCalibrator()
         self._last_n_valid   = 0
         self._last_n_stable  = 0
         self._last_n_vox     = 0
         self._pinhole_logged = False
-        self._floor_calib = _FloorCalibrator()
-        self._acc_pts: np.ndarray = np.empty((0, 3), dtype=np.float32)
-        self._map_queue: queue.Queue = queue.Queue(maxsize=16)
-        self._map_thread = threading.Thread(target=self._map_worker, daemon=True)
-        self._map_thread.start()
 
     def assemble(self, ts: float) -> DepthFramePacket:
         return self._src.read(ts)
@@ -645,147 +593,47 @@ class DepthStreamer:
         if len(xyz) == 0:
             return
 
-        # Live cloud — instant, no map ops
         cam_z = float(pkt.pose_t[2])
         n     = min(len(xyz), self.MAX_CLOUD)
         idx   = np.random.choice(len(xyz), n, replace=False) if len(xyz) > n else np.arange(n)
-        cloud_colors = (colors[idx] if colors is not None
-                        else _height_color(xyz[idx, 2] - cam_z))
-        rr.log("world/cloud", rr.Points3D(positions=xyz[idx], colors=cloud_colors, radii=0.003))
+        rr.log("world/cloud", rr.Points3D(
+            positions=xyz[idx],
+            colors=colors[idx] if colors is not None else _height_color(xyz[idx, 2] - cam_z),
+            radii=0.003,
+        ))
 
-        # Raw cloud (no gradient filter) — for comparison
-        xyz_raw, colors_raw = self._bp.project(pkt, stable=None)
-        if len(xyz_raw):
-            n_r   = min(len(xyz_raw), self.MAX_CLOUD)
-            idx_r = np.random.choice(len(xyz_raw), n_r, replace=False) if len(xyz_raw) > n_r else np.arange(len(xyz_raw))
-            rr.log("world/raw_cloud", rr.Points3D(
-                positions=xyz_raw[idx_r],
-                colors=colors_raw[idx_r] if colors_raw is not None else _height_color(xyz_raw[idx_r, 2] - cam_z),
-                radii=0.003,
-            ))
-
-        # camera_link frame (Z always up) — used for floor calibration and ICP
+        # Floor calibration in camera_link frame (Z always up)
         xyz_cam = xyz @ pkt.pose_R
-
-        # Floor calibration (runs first 30+30 frames, then stays fixed)
         self._floor_calib.update(xyz_cam)
-
-        # Floor filter
         if self._floor_calib.ready:
-            keep         = xyz_cam[:, 2] > (self._floor_calib.floor_z + 0.03)
-            xyz_kept     = xyz[keep]
-            xyz_cam_kept = xyz_cam[keep]
+            keep        = xyz_cam[:, 2] > (self._floor_calib.floor_z + 0.03)
+            xyz_kept    = xyz[keep]
+            xyz_cam_icp = xyz_cam[keep]
         else:
-            xyz_kept     = xyz
-            xyz_cam_kept = xyz_cam
+            xyz_kept    = xyz
+            xyz_cam_icp = xyz_cam
 
         if len(xyz_kept) == 0:
             self._last_n_vox = 0
             return
 
-        # Voxelize current frame
+        # Per-frame voxel map — current view, refreshes every frame
         vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
-        keys     = _pack(vk)
-        _, first = np.unique(keys, return_index=True)
+        _, first = np.unique(_pack(vk), return_index=True)
         xyz_vox  = xyz_kept[first]
-        keys_vox = keys[first]
         self._last_n_vox = len(xyz_vox)
 
-        # Per-frame voxel map — current view, refreshes every frame
         rr.log("world/map", rr.Points3D(
             positions=xyz_vox,
             colors=_height_color(xyz_vox[:, 2] - cam_z),
             radii=0.010,
         ))
 
-        # Global map — append this frame's voxels, compact every 30 frames
-        self._acc_pts = np.vstack([self._acc_pts, xyz_vox]) if len(self._acc_pts) else xyz_vox.copy()
-        if frame % 30 == 0:
-            vk_a = np.floor(self._acc_pts / _VOX_SIZE).astype(np.int32)
-            _, ui = np.unique(_pack(vk_a), return_index=True)
-            self._acc_pts = self._acc_pts[ui]
-
-        rr.log("world/global_map", rr.Points3D(
-            positions=self._acc_pts,
-            colors=_height_color(self._acc_pts[:, 2] - cam_z),
-            radii=0.010,
-        ))
-
-        # ICP: update translation so next frame stitches when camera moves
-        if len(xyz_cam_kept) >= 50:
-            self._src.odom.update(xyz_cam_kept, pkt.pose_R)
-
-    def _map_worker(self) -> None:
-        while True:
-            item = self._map_queue.get()
-            if item is None:
-                return
-            xyz_world, cam_pos, cam_z, R, frame = item
-
-            # Floor filter in camera_link frame (calibrated) or fallback ray-angle
-            xyz_cam_all = (xyz_world - cam_pos) @ R
-            if self._floor_calib.ready:
-                keep = xyz_cam_all[:, 2] > (self._floor_calib.floor_z + 0.03)
-            else:
-                h_rel    = xyz_world[:, 2] - cam_z
-                rays     = xyz_world - cam_pos
-                dist     = np.linalg.norm(rays, axis=1)
-                d_z_norm = np.where(dist > 0, rays[:, 2] / dist, 0.0)
-                keep     = (h_rel >= _Z_REL_LO) & (h_rel <= _Z_REL_HI) & (d_z_norm > _FLOOR_RAY_Z)
-            xyz_map  = _filter_isolated(xyz_world[keep])
-            if len(xyz_map) == 0:
-                continue
-
-            with self._vox_lock:
-                self._vox.add(xyz_map)
-
-            if frame % self.MAP_EVERY == 0:
-                rr.set_time("frame", sequence=frame)
-                self._log_map(cam_z)
-
-            # ICP: update translation estimate for next frame
-            self._src.odom.update(xyz_cam_all[keep], R)
-
-    def _log_live_map(self, cam_z: float = 0.0, frame: int = 0) -> None:
-        """Log accumulated obstacle-surface world map to Rerun."""
-        pts = self._live_vox.points()
-        if len(pts) == 0:
-            return
-        n   = min(len(pts), self.MAX_MAP)
-        idx = np.random.choice(len(pts), n, replace=False) if len(pts) > n else np.arange(n)
-        sub = pts[idx].copy()
-        rr.log("world/live_cloud_map", rr.Points3D(
-            positions=sub,
-            colors=_height_color(sub[:, 2] - cam_z),
-            radii=0.006,
-        ))
-        if frame % 30 == 0:
-            mn, mx = pts.min(axis=0), pts.max(axis=0)
-            print(
-                f"  map={len(pts):6d} vox  "
-                f"x=[{mn[0]:+.1f},{mx[0]:+.1f}] "
-                f"y=[{mn[1]:+.1f},{mx[1]:+.1f}] "
-                f"z=[{mn[2]:+.1f},{mx[2]:+.1f}]",
-                flush=True,
-            )
-
-    def _log_map(self, cam_z: float = 0.0) -> None:
-        with self._vox_lock:
-            pts = self._vox.points().copy()
-        if len(pts) == 0:
-            return
-        n   = min(len(pts), self.MAX_MAP)
-        idx = np.random.choice(len(pts), n, replace=False) if len(pts) > n else np.arange(n)
-        rr.log("world/map", rr.Points3D(
-            positions=pts[idx],
-            colors=_height_color(pts[idx, 2] - cam_z),
-            radii=0.005,
-        ))
+        if len(xyz_cam_icp) >= 50:
+            self._src.odom.update(xyz_cam_icp, pkt.pose_R)
 
     def log_stdout(self, pkt: DepthFramePacket, frame: int, fps: float) -> None:
-        with self._vox_lock:
-            n_map = self._vox.count
-        t = self._src.odom.t
+        t   = self._src.odom.t
         pct = 100 * self._last_n_stable / self._last_n_valid if self._last_n_valid > 0 else 0.0
         vio = "LOCKED" if self._src.pose_locked else "init"
         print(
@@ -806,17 +654,11 @@ def main() -> None:
         rrb.Tabs(
             rrb.Spatial3DView(name="live cloud", origin="world",
                               contents=["world/cloud", "world/camera/**"]),
-            rrb.Spatial3DView(name="raw cloud", origin="world",
-                              contents=["world/raw_cloud", "world/camera/**"]),
-            rrb.Spatial3DView(name="voxel map", origin="world",
+            rrb.Spatial3DView(name="voxel map",  origin="world",
                               contents=["world/map"]),
-            rrb.Spatial3DView(name="global map", origin="world",
-                              contents=["world/global_map"]),
         )
     ))
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
-    rr.log("world/cloud", rr.Points3D([[0, 0, 0]]), static=True)
-    # live_cloud_map is logged temporally every frame — no static seed needed
 
     src = RealSenseDepthSource(width=848, height=480, fps=15)
     print("RealSense open — Ctrl-C to quit.")
