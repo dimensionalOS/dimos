@@ -205,7 +205,7 @@ def main() -> None:
                     rr.log("world/global_map", rr.Points3D(
                         positions=acc_pts,
                         colors=_height_color(acc_pts[:, 2] - cam_z),
-                        radii=0.010,
+                        radii=0.006,
                     ))
 
             # ICP: update odometry for next frame's t
