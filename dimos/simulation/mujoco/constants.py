@@ -12,11 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from pathlib import Path
 
-# Video/Camera constants
-VIDEO_WIDTH = 640
-VIDEO_HEIGHT = 360
+# Video/Camera constants. Width/height are env-overridable so a headless/software-GL host can
+# render the camera at a lower resolution to cut llvmpipe render time (render cost scales with
+# pixels) and camera bandwidth. Read here as the single source so the renderer, the shared-memory
+# buffer sizing, and the reader all agree — e.g. MUJOCO_VIDEO_WIDTH=320 MUJOCO_VIDEO_HEIGHT=180.
+VIDEO_WIDTH = int(os.environ.get("MUJOCO_VIDEO_WIDTH", "640"))
+VIDEO_HEIGHT = int(os.environ.get("MUJOCO_VIDEO_HEIGHT", "360"))
 VIDEO_CAMERA_FOV = 45  # MuJoCo default FOV for head_camera (degrees)
 DEPTH_CAMERA_FOV = 160
 
