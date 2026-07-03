@@ -25,6 +25,9 @@ _GRAD_THRESH =  0.50  # Sobel gradient magnitude threshold — 0.30 was too tigh
 _MAP_EVERY  =  10     # log world/world_map every N frames (display rate, not update rate)
 _MAP_MAX_PTS = 80_000 # cap Rerun message size
 
+# ±1 voxel shift in packed-key space for each axis — used in fat-voxel ghost clearing.
+_SHIFTS = np.array([0, 1<<36, -(1<<36), 1<<18, -(1<<18), 1, -1], dtype=np.int64)
+
 # ── Voxel key packing ────────────────────────────────────────────────────────
 _VOFF  = np.int64(100_000)
 _VMASK = np.int64(0x3FFFF)
@@ -34,6 +37,34 @@ def _pack(vkeys: np.ndarray) -> np.ndarray:
     return (v[:, 0] << 36) | (v[:, 1] << 18) | v[:, 2]
 
 
+
+
+# ── Ray-cast ghost clearing ───────────────────────────────────────────────────
+def _raycast_free_keys(surface_pts: np.ndarray, vox_size: float, n_rays: int = 400) -> np.ndarray:
+    """Return voxel keys that are free space between camera (origin) and surface.
+
+    surface_pts must be in camera-relative frame (camera at [0,0,0]).
+    """
+    n = min(len(surface_pts), n_rays)
+    if n == 0:
+        return np.empty(0, dtype=np.int64)
+    idx   = (np.random.choice(len(surface_pts), n, replace=False)
+             if len(surface_pts) > n else np.arange(n))
+    pts   = surface_pts[idx]
+    dists = np.linalg.norm(pts, axis=1)
+    ok    = dists > vox_size * 2
+    pts, dists = pts[ok], dists[ok]
+    if not len(pts):
+        return np.empty(0, dtype=np.int64)
+    dirs      = pts / dists[:, None]
+    max_steps = int(np.ceil(dists.max() / vox_size))
+    t_vals  = np.arange(max_steps, dtype=np.float32) * vox_size
+    t_end   = (dists - vox_size * 1.5)[:, None]
+    valid_m = (t_vals[None, :] >= 0) & (t_vals[None, :] < t_end)
+    ray_pts = dirs[:, None, :] * t_vals[None, :, None]
+    vk_flat  = np.floor(ray_pts.reshape(-1, 3) / vox_size).astype(np.int32)
+    keys_all = _pack(vk_flat)
+    return np.unique(keys_all[valid_m.ravel()])
 
 
 # ── Nearest-per-ray filter (live cloud denoising only) ───────────────────────
@@ -251,6 +282,8 @@ def main() -> None:
                               contents=["world/map"]),
             rrb.Spatial3DView(name="world map", origin="world",
                               contents=["world/world_map"]),
+            rrb.Spatial3DView(name="global map", origin="world",
+                              contents=["world/global_map"]),
         )
     ))
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
@@ -275,6 +308,7 @@ def main() -> None:
     src.enable_tracking()
     _wm_chunks: list[np.ndarray] = []                        # per-frame voxels since last dedup
     _wm_base:   np.ndarray = np.empty((0, 3), dtype=np.float32)  # deduplicated world map
+    acc_pts:    np.ndarray = np.empty((0, 3), dtype=np.float32)  # global map with ghost clearing
 
     rt = sl.RuntimeParameters()
     rt.remove_saturated_areas = True
@@ -360,11 +394,41 @@ def main() -> None:
                         radii=0.012,
                     ))
 
+            # ── Global map: ray-cast ghost clearing + full VIO world coords ────
+            # ZED VIO translation is reliable so we keep full world coordinates
+            # (unlike RealSense which strips translation to avoid ICP drift).
+            # Ghost clearing is done in camera-relative space then applied to
+            # world-frame acc_pts.
+            if src.pose_locked and len(xyz_vox):
+                xyz_vox_rel = xyz_vox - pkt.pose_t   # camera-relative for ray cast
+
+                if len(acc_pts):
+                    free_keys = _raycast_free_keys(xyz_vox_rel, VOX_SIZE, n_rays=400)
+                    if len(free_keys):
+                        acc_pts_rel = acc_pts - pkt.pose_t
+                        keys_acc = _pack(np.floor(acc_pts_rel / VOX_SIZE).astype(np.int32))
+                        shifted  = (keys_acc[:, None] + _SHIFTS[None, :]).ravel()
+                        idx      = np.searchsorted(free_keys, shifted)
+                        idx      = np.clip(idx, 0, len(free_keys) - 1)
+                        in_free  = (free_keys[idx] == shifted).reshape(len(acc_pts), 7).any(axis=1)
+                        acc_pts  = acc_pts[~in_free]
+
+                acc_pts = np.vstack([acc_pts, xyz_vox]) if len(acc_pts) else xyz_vox.copy()
+                vk_a    = np.floor(acc_pts / VOX_SIZE).astype(np.int32)
+                _, ui   = np.unique(_pack(vk_a), return_index=True)
+                acc_pts = acc_pts[ui]
+
+                rr.log("world/global_map", rr.Points3D(
+                    positions=acc_pts,
+                    colors=_height_color(acc_pts[:, 2] - cam_z),
+                    radii=0.010,
+                ))
+
             fps = frame / max(ts - t0, 1e-6)
             print(
                 f"frame={frame:5d}  raw={len(xyz):6d}  keep={keep.sum():6d}"
                 f"  vox={len(xyz_vox):5d}  cloud={len(xyz_vis):5d}"
-                f"  world={len(_wm_base):6d}  cam_z={cam_z:.2f}"
+                f"  world={len(_wm_base):6d}  global={len(acc_pts):6d}  cam_z={cam_z:.2f}"
                 f"  vio={'LOCKED' if src.pose_locked else 'search'}  fps={fps:.1f}",
                 flush=True,
             )
