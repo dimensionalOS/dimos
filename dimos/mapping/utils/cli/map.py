@@ -473,13 +473,15 @@ def main(
         register = _register
     elif cloud_frame is not None:
         print(f"clouds already in world frame {world!r}; accumulating verbatim")
+        print("warning: trajectory positions come from stored obs.pose (old dataset)")
 
     def _position(obs: Observation[Any]) -> tuple[float, float, float] | None:
-        """Trajectory position for dedup/path: tf lookup, else the stored pose."""
-        if tf_buf is not None and cloud_frame is not None and cloud_frame != world:
-            tf = tf_buf.get(world, cloud_frame, time_point=obs.ts, time_tolerance=tf_tolerance)
-            if tf is not None:
-                return (tf.translation.x, tf.translation.y, tf.translation.z)
+        """Trajectory position for dedup/path: registration tf, else the stored pose."""
+        if register is not None:
+            tf = register(obs)
+            if tf is None:
+                return None
+            return (tf.translation.x, tf.translation.y, tf.translation.z)
         pose = obs.pose
         # Reject placeholder poses: zero translation OR uninitialized rotation.
         # Same condition as pgo_keyframes so dedup and PGO see the same frames.
