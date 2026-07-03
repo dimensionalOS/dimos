@@ -5,6 +5,7 @@
     "npm:@types/react-dom@^18.3.1": "18.3.7_@types+react@18.3.31",
     "npm:@types/react@^18.3.12": "18.3.31",
     "npm:@vitejs/plugin-react@^4.3.4": "4.7.0_vite@5.4.21",
+    "npm:playwright-core@1.49.1": "1.49.1",
     "npm:playwright@1.58.2": "1.58.2",
     "npm:react-dom@^18.3.1": "18.3.1_react@18.3.1",
     "npm:react@^18.3.1": "18.3.1",
@@ -601,6 +602,10 @@
     "picocolors@1.1.1": {
       "integrity": "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA=="
     },
+    "playwright-core@1.49.1": {
+      "integrity": "sha512-BzmpVcs4kE2CH15rWfzpjzVGhWERJfmnXmniSyKeRZUs9Ws65m+RGIi7mjJK/euCegfn3i7jvqWeWyHe9y3Vgg==",
+      "bin": true
+    },
     "playwright-core@1.58.2": {
       "integrity": "sha512-yZkEtftgwS8CsfYo7nm0KE8jsvm6i/PTgVtB8DL726wNf6H2IMsDuxCpJj59KDaxCtSnrWan2AeDqM7JBaultg==",
       "bin": true
@@ -608,7 +613,7 @@
     "playwright@1.58.2": {
       "integrity": "sha512-vA30H8Nvkq/cPBnNw4Q8TWz1EJyqgpuinBcHET0YVJVFldr8JDNiU9LaWAE1KqSkRYazuaBhTpB5ZzShOezQ6A==",
       "dependencies": [
-        "playwright-core"
+        "playwright-core@1.58.2"
       ],
       "optionalDependencies": [
         "fsevents@2.3.2"
