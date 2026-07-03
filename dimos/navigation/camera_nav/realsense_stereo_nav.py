@@ -31,7 +31,7 @@ Notes:
   - Accel + gyro require D435i firmware >= 5.12.
 
 Usage:
-    python -m dimos.navigation.camera_nav.realsense_depth_map
+    python -m dimos.navigation.camera_nav.realsense_stereo_nav
 """
 
 from __future__ import annotations
@@ -56,9 +56,6 @@ if TYPE_CHECKING:
 _VOFF  = np.int64(100_000)
 _VMASK = np.int64(0x3FFFF)
 
-# Camera-relative height band (Z in camera_link = up direction from IMU).
-# Height is measured relative to the camera, not world origin, so it is
-# unaffected by absolute position error in the translation estimate.
 _Z_REL_LO:    float = -1.4
 _Z_REL_HI:    float =  1.5
 _VOX_SIZE:    float =  0.020
@@ -285,7 +282,6 @@ class PointCloudOdometry:
         R:       (3, 3) float32, orientation from MadgwickFilter
         Returns: (3,) float32 world translation
         """
-        # Rotate to gravity-aligned frame (no translation yet)
         pts_ga = (xyz_cam @ R.T).astype(np.float32)
 
         with self._lock:
@@ -311,7 +307,6 @@ class PointCloudOdometry:
 
             t_new = t_est
 
-        # Store current world-frame pts as reference for next frame
         n_st  = min(self.N_STORE, len(pts_ga))
         idx_s = np.random.choice(len(pts_ga), n_st, replace=False)
         self._prev_world = (pts_ga[idx_s] + t_new).astype(np.float32)
@@ -426,12 +421,6 @@ class RealSenseDepthSource:
         self._width  = width
         self._height = height
 
-        # ── Video pipeline: depth + colour only (NO IMU in this pipeline) ─────
-        # When IMU streams are mixed into the same pipeline, the SDK synchroniser
-        # bundles them into composite framesets delivered at the VIDEO rate (15 Hz).
-        # At 15 Hz Madgwick barely integrates yaw — a fast pan can be missed
-        # entirely if the syncer drops a motion frame.  The fix: start IMU via the
-        # sensor API independently so gyro arrives at its native ~200 Hz.
         self._pipeline = rs.pipeline()
         cfg = rs.config()
         cfg.enable_stream(rs.stream.depth, width, height, rs.format.z16,  fps)
@@ -453,7 +442,6 @@ class RealSenseDepthSource:
         self._spatial_filter   = rs.spatial_filter()
         self._hole_fill_filter = rs.hole_filling_filter()
 
-        # ── IMU sensor: started separately so it runs at native rate ──────────
         self._imu_lock      = threading.Lock()
         self._last_accel    = np.array([0.0, 0.0, -9.81], dtype=np.float32)
         self._motion_sensor = None
@@ -470,7 +458,6 @@ class RealSenseDepthSource:
             accel_profiles = [p for p in all_profiles if p.stream_type() == rs.stream.accel]
             if not gyro_profiles or not accel_profiles:
                 break
-            # Pick highest available rate for each
             gyro_p  = max(gyro_profiles,  key=lambda p: p.fps())
             accel_p = max(accel_profiles, key=lambda p: p.fps())
             # Extrinsics: accel frame → depth optical frame → camera_link
@@ -524,8 +511,6 @@ class RealSenseDepthSource:
             R = self._madgwick.R.copy() if self._has_imu else np.eye(3, dtype=np.float32)
         t = self.odom.t
 
-        # Spatial filter smooths IR-pattern noise on flat surfaces (walls);
-        # hole-filling fills remaining gaps before the gradient filter runs.
         depth_frame = aligned.get_depth_frame()
         depth_frame = self._spatial_filter.process(depth_frame)
         depth_frame = self._hole_fill_filter.process(depth_frame)
@@ -603,7 +588,7 @@ def _raycast_free_keys(
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
-    rr.init("realsense_depth_map", spawn=True)
+    rr.init("realsense_stereo_nav", spawn=True)
     rr.send_blueprint(rrb.Blueprint(
         rrb.Tabs(
             rrb.Spatial3DView(name="live cloud",  origin="world",
@@ -658,7 +643,6 @@ def main() -> None:
                 radii=0.003,
             ))
 
-            # Floor calibration uses camera_link frame (Z always up, independent of IMU)
             xyz_cam = xyz @ pkt.pose_R
             floor_calib.update(xyz_cam)
             if floor_calib.ready:
@@ -681,10 +665,7 @@ def main() -> None:
                     radii=0.010,
                 ))
 
-                # ── Global map (rotation-only frame: xyz_cam @ R.T, strips ICP t) ─
-                # ICP t oscillates ±2 cm → same surface lands on different world-frame
-                # voxel keys each frame → infinite accumulation.  Stripping t gives a
-                # stable panoramic key: same orientation = same key, always.
+                # ── Global map (rotation-only frame, strips ICP t oscillation) ─────
                 if floor_calib.ready:
                     if not map_ready:
                         acc_pts       = np.empty((0, 3), dtype=np.float32)
@@ -694,8 +675,6 @@ def main() -> None:
                         print(f"*** global map started — floor at Z ≈ {world_floor_z:.3f} m ***",
                               flush=True)
 
-                    # Rotation-only positions: translate per-frame voxels, re-dedup in
-                    # ronly frame so the grid is aligned for stable accumulation keys.
                     xyz_ronly  = xyz_vox - pkt.pose_t
                     vk_r       = np.floor(xyz_ronly / _VOX_SIZE).astype(np.int32)
                     _, first_r = np.unique(_pack(vk_r), return_index=True)

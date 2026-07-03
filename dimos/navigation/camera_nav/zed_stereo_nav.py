@@ -299,8 +299,6 @@ def main() -> None:
             rr.log("world/camera/depth", rr.DepthImage(pkt.depth, meter=1.0))
 
             # ── Gradient stability filter ─────────────────────────────────────
-            # Pixels where depth changes abruptly are stereo edge artifacts.
-            # Remove them before backprojection so they never enter the map.
             depth_f  = np.where(np.isfinite(pkt.depth), pkt.depth, 0.0).astype(np.float64)
             grad_mag = np.hypot(sobel(depth_f, axis=1), sobel(depth_f, axis=0))
             stable   = np.isfinite(pkt.depth) & (grad_mag < _GRAD_THRESH)
@@ -341,9 +339,6 @@ def main() -> None:
                 ))
 
             # ── World map: chunk accumulation, dedup every _MAP_EVERY frames ──
-            # Newest observations win: when the same voxel key appears in
-            # both fresh chunks and _wm_base, the chunk (recent) takes priority.
-            # Accumulates immediately — does not wait for VIO lock.
             if len(xyz_vox):
                 _wm_chunks.append(xyz_vox)
 
@@ -366,10 +361,6 @@ def main() -> None:
                     ))
 
             # ── Global map: ray-cast ghost clearing + full VIO world coords ────
-            # ZED VIO translation is reliable so we keep full world coordinates
-            # (unlike RealSense which strips translation to avoid ICP drift).
-            # Ghost clearing is done in camera-relative space then applied to
-            # world-frame acc_pts. Runs every 3 frames to keep CPU load low.
             if src.pose_locked and len(xyz_vox):
                 xyz_vox_rel = xyz_vox - pkt.pose_t   # camera-relative for ray cast
 

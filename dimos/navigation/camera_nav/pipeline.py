@@ -9,7 +9,7 @@ Classes:
   DepthStreamer            main thread (live cloud) + async map thread
 
 To support a new camera, implement DepthSource and write a thin entry-point
-module (see zed_stereo_nav.py and realsense_depth_map.py for examples).
+module (see zed_stereo_nav.py and realsense_stereo_nav.py for examples).
 
 Shared exports used by camera-specific pipelines:
   _pack, _height_color, _R_OPT_TO_LINK  — helper functions and constants

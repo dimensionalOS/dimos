@@ -50,5 +50,5 @@ if __name__ == "__main__":
         t = threading.Thread(target=_start_robot, args=(args.address,), daemon=True)
         t.start()
 
-        from dimos.navigation.camera_nav.realsense_depth_map import main
+        from dimos.navigation.camera_nav.realsense_stereo_nav import main
         main()
