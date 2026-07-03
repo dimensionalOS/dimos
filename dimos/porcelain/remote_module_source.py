@@ -75,7 +75,8 @@ class RemoteModuleSource(ModuleSource):
 
     def _refresh_descriptors(self) -> dict[str, ModuleDescriptor]:
         descriptors = self._coord.call("list_modules")
-        self._descriptors = {d.class_name: d for d in descriptors}
+        # rpc_name is empty when talking to an older daemon.
+        self._descriptors = {(d.rpc_name or d.class_name): d for d in descriptors}
         return self._descriptors
 
     def _get_descriptor(self, name: str) -> ModuleDescriptor:
@@ -103,7 +104,7 @@ class RemoteModuleSource(ModuleSource):
             try:
                 module_path, class_name = descriptor.qualified_path.rsplit(".", 1)
                 cls = getattr(importlib.import_module(module_path), class_name)
-                proxy = RPCClient(None, cls, rpc=self._coord.rpc)
+                proxy = RPCClient(None, cls, descriptor.rpc_name or None, rpc=self._coord.rpc)
             except (ImportError, AttributeError):
                 proxy = _RemoteProxy(self._coord.rpc, name, set(descriptor.rpc_names))
             self._cache[name] = proxy

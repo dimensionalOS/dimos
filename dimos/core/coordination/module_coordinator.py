@@ -49,6 +49,10 @@ class ModuleDescriptor(NamedTuple):
     class_name: str
     qualified_path: str
     rpc_names: list[str]
+    # RPC topic prefix: the class name, or the instance name for modules
+    # deployed under a non-default name. Defaulted so the tuple stays
+    # wire-compatible with older daemons.
+    rpc_name: str = ""
 
 
 class ModuleCoordinator(Resource):
@@ -137,13 +141,14 @@ class ModuleCoordinator(Resource):
     def list_modules(self) -> list[ModuleDescriptor]:
         with self._modules_lock:
             descriptors: list[ModuleDescriptor] = []
-            for cls in self._instance_classes.values():
+            for name, cls in self._instance_classes.items():
                 qualified = f"{cls.__module__}.{cls.__name__}"
                 descriptors.append(
                     ModuleDescriptor(
                         class_name=cls.__name__,
                         qualified_path=qualified,
                         rpc_names=list(cls.rpcs.keys()),
+                        rpc_name=_rpc_name(name, cls),
                     )
                 )
             return descriptors
@@ -156,7 +161,7 @@ class ModuleCoordinator(Resource):
 
     def list_module_names(self) -> list[str]:
         with self._modules_lock:
-            return [cls.__name__ for cls in self._instance_classes.values()]
+            return [_rpc_name(name, cls) for name, cls in self._instance_classes.items()]
 
     def health_check(self) -> bool:
         return all(m.health_check() for m in self._managers.values())
@@ -618,6 +623,11 @@ class ModuleCoordinator(Resource):
             return
         finally:
             self.stop()
+
+
+def _rpc_name(instance_key: str, cls: type[ModuleBase]) -> str:
+    """The module's RPC topic prefix: class name unless an instance name is set."""
+    return cls.__name__ if instance_key == cls.name else instance_key
 
 
 def _all_name_types(blueprint: Blueprint) -> set[tuple[str, type]]:

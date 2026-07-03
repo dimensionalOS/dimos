@@ -43,7 +43,8 @@ class LocalModuleSource(ModuleSource):
 
     def get_module(self, name: str) -> Any:
         for instance_key, proxy in self._coordinator._deployed_modules.items():
-            if self._coordinator._instance_classes[instance_key].__name__ == name:
+            cls = self._coordinator._instance_classes[instance_key]
+            if name in (instance_key, cls.__name__):
                 return proxy
         raise KeyError(name)
 

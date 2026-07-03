@@ -790,3 +790,45 @@ def test_list_module_names(dynamic_coordinator) -> None:
     dynamic_coordinator.load_module(ModuleA)
     dynamic_coordinator.load_module(ModuleC)
     assert set(dynamic_coordinator.list_module_names()) == {"ModuleA", "ModuleC"}
+
+
+class NamedModule(Module):
+    @rpc
+    def whoami(self) -> str:
+        return self.config.instance_name or "default"
+
+
+def test_deploy_two_instances_of_same_class(dynamic_coordinator) -> None:
+    """Two instances of one class get separate RPC topics and coordinator entries."""
+    p0 = dynamic_coordinator.deploy(NamedModule, instance_name="robot0/namedmodule")
+    p1 = dynamic_coordinator.deploy(NamedModule, instance_name="robot1/namedmodule")
+
+    assert dynamic_coordinator.get_instance("robot0/namedmodule") is p0
+    assert dynamic_coordinator.get_instance("robot1/namedmodule") is p1
+    with pytest.raises(ValueError, match="Multiple instances"):
+        dynamic_coordinator.get_instance(NamedModule)
+
+    # Each proxy reaches its own instance over the instance-name RPC topic.
+    assert p0.remote_name == "robot0/namedmodule"
+    assert p0.whoami() == "robot0/namedmodule"
+    assert p1.whoami() == "robot1/namedmodule"
+
+    assert set(dynamic_coordinator.list_module_names()) == {
+        "robot0/namedmodule",
+        "robot1/namedmodule",
+    }
+    descriptors = {d.rpc_name: d for d in dynamic_coordinator.list_modules()}
+    assert descriptors["robot0/namedmodule"].class_name == "NamedModule"
+
+
+def test_rpc_client_pickle_preserves_remote_name(dynamic_coordinator) -> None:
+    """Proxies pickled into workers (set_module_ref) must keep the instance RPC name."""
+    import pickle
+
+    proxy = dynamic_coordinator.deploy(NamedModule, instance_name="robot0/namedmodule")
+    restored = pickle.loads(pickle.dumps(proxy))
+    try:
+        assert restored.remote_name == "robot0/namedmodule"
+        assert restored.whoami() == "robot0/namedmodule"
+    finally:
+        restored.stop_rpc_client()

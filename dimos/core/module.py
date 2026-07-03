@@ -109,6 +109,10 @@ class ModuleConfig(BaseConfig):
     tf_transport: type[TFSpec] = LCMTF  # type: ignore[type-arg]
     frame_id_prefix: str | None = None
     frame_id: str | None = None
+    # Set by the coordinator when the same module class is deployed more than
+    # once (see BlueprintAtom.instance_name). Changes the RPC topic prefix
+    # from the class name to this name.
+    instance_name: str | None = None
     g: GlobalConfig = global_config
 
 
@@ -154,7 +158,7 @@ class ModuleBase(Configurable, CompositeResource):
                 rpc_timeouts=self.config.rpc_timeouts,
                 default_rpc_timeout=self.config.default_rpc_timeout,
             )
-            self.rpc.serve_module_rpc(self)
+            self.rpc.serve_module_rpc(self, name=self.config.instance_name)
             self.rpc.start()  # type: ignore[attr-defined]
         except ValueError:
             ...

@@ -160,7 +160,8 @@ def arg_help(
 
     output = ""
     for k, info in config.model_fields.items():
-        if k == "g":
+        # instance_name is assigned by the blueprint, not user config.
+        if k in ("g", "instance_name"):
             continue
         t = info.annotation
         if isinstance(t, types.GenericAlias):
