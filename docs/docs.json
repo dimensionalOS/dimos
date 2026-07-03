@@ -79,7 +79,7 @@
         ]
       },
       {
-        "group": "Agents",
+        "group": "Coding agents",
         "pages": [
           "coding-agents/index",
           "coding-agents/style",
