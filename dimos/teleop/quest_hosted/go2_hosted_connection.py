@@ -27,6 +27,7 @@ import base64
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 import json
+import struct
 import threading
 import time
 from typing import Any
@@ -39,7 +40,10 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.protocol.pubsub.impl.webrtc.providers.spec import shutdown_all_providers
+from dimos.protocol.pubsub.impl.webrtc.providers.spec import (
+    set_audio_sink,
+    shutdown_all_providers,
+)
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
 from dimos.teleop.quest_hosted.hosted_base import HostedConnectionMixin
 from dimos.teleop.utils.video_stats import VideoStats
@@ -107,6 +111,10 @@ class Go2HostedConnection(GO2Connection, HostedConnectionMixin):
     # connection.odom_stream() in start() (the source the base uses for TF).
     global_costmap: In[OccupancyGrid]
     map_out: Out[bytes]
+    # Operator mic audio, re-published for local consumers (Go2 has no speaker
+    # yet). 8-byte header (sample_rate u32, channels u16, 0=s16 u16) + PCM.
+    # Frames only flow when the provider runs with transports.broker.audio_in=true.
+    audio_out: Out[bytes]
 
     # Queued (non-urgent) commands beyond this are busy-rejected — bounds the
     # backlog a spamming/laggy operator can build behind a slow command.
@@ -185,6 +193,11 @@ class Go2HostedConnection(GO2Connection, HostedConnectionMixin):
             self.register_disposable(
                 self.connection.odom_stream().subscribe(self._on_odom)
             )
+        # Operator mic → audio_out. The subscribes above already forced the
+        # broker provider into existence, so the registry sweep finds it; frames
+        # only arrive when it runs with audio_in=true.
+        if set_audio_sink(self._on_audio_frame):
+            logger.info("operator audio sink wired")
         self._start_telemetry()
 
     @rpc
@@ -573,6 +586,16 @@ class Go2HostedConnection(GO2Connection, HostedConnectionMixin):
             logger.debug("odom publish failed", exc_info=True)
             return
         self._last_odom_pub = now
+
+    def _on_audio_frame(self, pcm: bytes, sample_rate: int, channels: int) -> None:
+        """Operator mic frame (from the broker provider's audio track) →
+        audio_out. Self-describing: 8-byte header (sample_rate u32, channels
+        u16, format u16 = 0 for s16 interleaved) then the raw PCM."""
+        try:
+            self.audio_out.publish(struct.pack("<IHH", sample_rate, channels, 0) + pcm)
+        except Exception:
+            # No consumer/transport bound is the norm until something subscribes.
+            logger.debug("audio publish failed", exc_info=True)
 
     @staticmethod
     def _block_max(cells: Any, factor: int) -> Any:

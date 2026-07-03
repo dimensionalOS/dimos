@@ -25,6 +25,11 @@ Channel plan (topic == DataChannel name):
     state_reliable_back robot → operator   telemetry (reliable) — publishable
     map_unreliable      robot → operator   map (unordered, lossy) — publishable
 
+Audio (opt-in, ``audio_in=True``): the offer also carries a recvonly audio
+transceiver; the broker pulls the operator's mic track onto this session and
+hands the CF renegotiation offer back via the heartbeat ack, which we answer.
+Received PCM frames fan out through ``set_audio_frame_callback``.
+
 Video: the robot's session offer always carries one sendonly video track
 (the broker stores its mid/track and the operator pulls it on join). Feed
 frames with ``set_video_frame()`` — typically via ``CloudflareVideoTransport``
@@ -78,6 +83,9 @@ class BrokerConfig(ProviderConfig):
     # Preferred video codec ("h264" / "vp8"; "" = aiortc default order).
     # Opt-in: falls back to defaults if the codec isn't in local capabilities.
     video_codec: str = ""
+    # Operator → robot audio: add a recvonly audio transceiver so the operator's
+    # mic can be bridged in. Off by default — ships dark until Go2 has audio-out.
+    audio_in: bool = False
 
     def _create(self) -> BrokerProvider:
         return BrokerProvider(self)
@@ -131,6 +139,10 @@ class BrokerProvider(AsyncProviderBase):
         from dimos.protocol.pubsub.impl.webrtc.providers.video_track import CameraVideoTrack
 
         self._video_track = CameraVideoTrack()
+        # Operator → robot audio: sink for received PCM frames + the reader task.
+        # set_audio_frame_callback() wires the transport; None = drop frames.
+        self._audio_frame_cb: Callable[[bytes, int, int], None] | None = None
+        self._audio_task: asyncio.Task[None] | None = None
 
         # Guarded by self._lock (from the base).
         self._callbacks: dict[str, list[Callable[[bytes, str], None]]] = defaultdict(list)
@@ -199,6 +211,12 @@ class BrokerProvider(AsyncProviderBase):
             self._pc.addTrack(self._video_track)
             if self._config.video_codec:
                 self._prefer_video_codec(self._config.video_codec)
+            # Operator → robot audio: recvonly m=audio in the offer so CF can
+            # bridge the operator's mic track into this session. The frames are
+            # read off the track in the on("track") handler below. Opt-in.
+            if self._config.audio_in:
+                self._pc.addTransceiver("audio", direction="recvonly")
+                self._attach_audio_receiver()
             self._pc.createDataChannel("_sctp_init", negotiated=True, id=0)
 
             offer = await self._pc.createOffer()
@@ -266,12 +284,61 @@ class BrokerProvider(AsyncProviderBase):
                 t.setCodecPreferences(preferred + rest)
                 logger.info("video codec preference: %s first", want)
 
+    # ─── Operator → robot audio ──────────────────────────────────────
+
+    def set_audio_frame_callback(
+        self, cb: Callable[[bytes, int, int], None] | None
+    ) -> None:
+        """Register a sink for received operator audio: cb(pcm_bytes, sample_rate,
+        channels). Thread-safe to set; frames are dropped until it's wired."""
+        self._audio_frame_cb = cb
+
+    def _attach_audio_receiver(self) -> None:
+        """Read frames off the operator's inbound audio track and fan them to the
+        sink callback. Runs on the loop thread; one reader task per track."""
+        assert self._pc is not None
+
+        @self._pc.on("track")
+        def _on_track(track: Any) -> None:
+            if track.kind != "audio":
+                return
+            logger.info("Operator audio track received")
+            self._audio_task = asyncio.get_event_loop().create_task(
+                self._read_audio_track(track)
+            )
+
+    async def _read_audio_track(self, track: Any) -> None:
+        """Pull av.AudioFrames off the track → PCM bytes → sink callback.
+
+        Best-effort: any decode error ends the loop (the track is gone); the
+        callback failing must not kill it. Frames drop when no sink is set."""
+        import av  # noqa: F401  (aiortc dep; AudioFrame comes off the track)
+
+        try:
+            while True:
+                frame = await track.recv()  # av.AudioFrame
+                cb = self._audio_frame_cb
+                if cb is None:
+                    continue
+                try:
+                    pcm = frame.to_ndarray()  # shape (channels, samples), int16
+                    cb(pcm.tobytes(), int(frame.sample_rate), pcm.shape[0])
+                except Exception:
+                    logger.debug("audio sink callback error", exc_info=True)
+        except Exception:
+            logger.info("Operator audio track ended")
+
     async def _disconnect(self) -> None:
         if self._hb_task is not None:
             self._hb_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._hb_task
             self._hb_task = None
+        if self._audio_task is not None:
+            self._audio_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._audio_task
+            self._audio_task = None
         if self._http and self.session_id:
             with contextlib.suppress(Exception):  # best-effort deregistration
                 await self._http.delete(
@@ -352,7 +419,44 @@ class BrokerProvider(AsyncProviderBase):
                 self._dc_ids[name] = sctp_id
                 if sctp_id is not None:
                     self._open_channel(name, sctp_id)
+
+        # CF renegotiation offer (operator audio pulled onto our session): answer
+        # it. The broker hands each offer exactly once — a failed answer is
+        # retried only when the broker re-offers on a later ack.
+        offer_sdp = ack.get("renegotiate_offer")
+        if offer_sdp:
+            await self._answer_renegotiation(offer_sdp)
         return 200
+
+    async def _answer_renegotiation(self, offer_sdp: str) -> None:
+        """setRemoteDescription(CF offer) → answer → POST back to the broker.
+
+        This is the robot's first-ever renegotiation path — the initial connect
+        is offer→answer with us as the offerer; a track pull inverts the roles.
+        Best-effort: a failure degrades to no-audio, never drops the session."""
+        from aiortc import RTCSessionDescription
+
+        if self._pc is None or self._http is None or self.session_id is None:
+            return
+        try:
+            await self._pc.setRemoteDescription(
+                RTCSessionDescription(sdp=offer_sdp, type="offer")
+            )
+            answer = await self._pc.createAnswer()
+            await self._pc.setLocalDescription(answer)
+            r = await self._http.post(
+                f"{self._broker_url}/api/v1/sessions/{self.session_id}/renegotiate-robot",
+                headers=self._headers,
+                json={"sdp_answer": self._pc.localDescription.sdp},
+            )
+            if r.status_code not in (200, 201):
+                logger.warning(
+                    "renegotiate-robot failed: %d %s", r.status_code, r.text[:200]
+                )
+            else:
+                logger.info("Robot renegotiation complete (operator audio bridged)")
+        except Exception:
+            logger.exception("Robot renegotiation failed — continuing without audio")
 
     def _notify_operator_lost(self) -> None:
         """Synthetic {"type":"operator_lost"} to state_reliable subscribers.

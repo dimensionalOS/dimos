@@ -80,6 +80,7 @@ def _bare_connection() -> Go2HostedConnection:
     conn._last_odom_pub = 0.0
     conn.telemetry_out = MagicMock()
     conn.map_out = MagicMock()
+    conn.audio_out = MagicMock()
     # Command execution plane (normally built in start()).
     conn._cmd_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="Go2CmdTest")
     conn._cmd_pending = 0
@@ -770,3 +771,15 @@ def test_empty_costmap_publishes_nothing() -> None:
     conn = _bare_connection()
     conn._on_costmap(OccupancyGrid())  # no-arg = empty 1D grid; must be skipped
     assert _published_json(conn.map_out, "map") is None
+
+
+def test_audio_frame_published_with_header() -> None:
+    import struct
+
+    conn = _bare_connection()
+    conn._on_audio_frame(b"\x01\x02\x03\x04", 48000, 2)
+
+    (data,) = conn.audio_out.publish.call_args.args
+    sr, ch, fmt = struct.unpack("<IHH", data[:8])
+    assert (sr, ch, fmt) == (48000, 2, 0)
+    assert data[8:] == b"\x01\x02\x03\x04"

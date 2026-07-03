@@ -70,6 +70,25 @@ _providers: dict[ProviderConfig, Provider] = {}
 _providers_lock = threading.Lock()
 
 
+def set_audio_sink(cb: Callable[[bytes, int, int], None] | None) -> bool:
+    """Wire an audio-frame sink ``cb(pcm_bytes, sample_rate, channels)`` onto
+    every live provider that supports one; returns True if any took it.
+
+    Modules have no direct provider handle (singletons live in this registry),
+    so this is the same access pattern as ``shutdown_all_providers``. No-op on
+    providers without audio support.
+    """
+    with _providers_lock:
+        providers = list(_providers.values())
+    wired = False
+    for provider in providers:
+        setter = getattr(provider, "set_audio_frame_callback", None)
+        if setter is not None:
+            setter(cb)
+            wired = True
+    return wired
+
+
 def shutdown_all_providers() -> None:
     """Stop every live provider in this process and clear the registry.
 
@@ -231,6 +250,7 @@ __all__ = [
     "AsyncProviderBase",
     "Provider",
     "ProviderConfig",
+    "set_audio_sink",
     "shutdown_all_providers",
     "wait_connected",
     "wait_open",
