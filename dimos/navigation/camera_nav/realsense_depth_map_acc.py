@@ -104,8 +104,9 @@ def main() -> None:
     grad        = GradientStabilityFilter()
     floor_calib = _FloorCalibrator()
 
-    acc_pts:   np.ndarray = np.empty((0, 3), dtype=np.float32)
-    map_ready: bool       = False
+    acc_pts:      np.ndarray = np.empty((0, 3), dtype=np.float32)
+    map_ready:    bool       = False
+    world_floor_z: float     = 0.0   # set once at map start; never updated
     frame          = 0
     t0             = time.monotonic()
     pinhole_logged = False
@@ -172,17 +173,20 @@ def main() -> None:
                 # position — required for correct accumulation on a moving robot.
                 if floor_calib.ready:
                     if not map_ready:
-                        acc_pts   = np.empty((0, 3), dtype=np.float32)
-                        map_ready = True
-                        print("*** global map started (IMU + floor converged) ***", flush=True)
+                        acc_pts       = np.empty((0, 3), dtype=np.float32)
+                        map_ready     = True
+                        # Lock floor threshold once in world frame.  cam_z ≈ 0 here
+                        # (robot stationary during calibration) so ICP Z drift can't
+                        # corrupt the threshold later.  floor_calib.floor_z is negative
+                        # (floor below camera); world_floor_z ≈ world Z of the floor.
+                        world_floor_z = cam_z + floor_calib.floor_z
+                        print(f"*** global map started — floor at world Z ≈ {world_floor_z:.3f} m ***",
+                              flush=True)
 
                     # World-frame floor filter: more robust than camera-frame filter
-                    # when camera tilts slightly on uneven terrain.  In world frame
-                    # the floor sits at a near-constant Z = cam_z + floor_calib.floor_z
-                    # regardless of camera tilt, so this catches floor points that
-                    # slip through the camera-frame filter.
-                    floor_world = cam_z + floor_calib.floor_z
-                    xyz_for_map = xyz_vox[xyz_vox[:, 2] > floor_world + 0.04]
+                    # when camera tilts on uneven terrain.  Fixed threshold doesn't
+                    # drift with ICP Z noise.
+                    xyz_for_map = xyz_vox[xyz_vox[:, 2] > world_floor_z + 0.04]
 
                     # Ray-cast BEFORE inserting so moved-object ghosts are erased first.
                     # Camera origin in world frame = pkt.pose_t.
