@@ -10,6 +10,10 @@ Classes:
 
 To support a new camera, implement DepthSource and write a thin entry-point
 module (see zed_depth_map.py and realsense_depth_map.py for examples).
+
+Shared exports used by camera-specific pipelines:
+  _pack, _height_color, _R_OPT_TO_LINK  — helper functions and constants
+  DepthFramePacket, DepthBackprojector   — camera-agnostic packet and backprojector
 """
 
 from __future__ import annotations

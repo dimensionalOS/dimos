@@ -4,8 +4,8 @@ Usage:
   python -m dimos.navigation.camera_nav.zed_depth_map
 
 Camera-specific parts (ZED SDK, VIO tracking, native XYZ retrieval) are here.
-The pipeline (gradient filter → backproject → voxel map → Rerun) lives in
-depth_map.py and is camera-agnostic.
+The shared pipeline (gradient filter → backproject → voxel map → Rerun) lives in
+pipeline.py and is camera-agnostic.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import time
 import numpy as np
 import pyzed.sl as sl
 
-from dimos.navigation.camera_nav.depth_map import (
+from dimos.navigation.camera_nav.pipeline import (
     DepthBackprojector,
     DepthFramePacket,
     DepthStreamer,

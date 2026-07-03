@@ -34,26 +34,7 @@ import numpy as np
 import pyzed.sl as sl
 import rerun as rr
 
-
-# ── Optical-frame → camera_link rotation (constant, from ZEDCamera TF) ────────
-#
-# ZED get_position() returns pose of camera_link in world frame.
-# camera_link:   X = forward (depth axis), Y = left, Z = up
-# camera_optical: X = right in image, Y = down in image, Z = depth
-#
-# Mapping: x_link = z_opt,  y_link = -x_opt,  z_link = -y_opt
-# Matches OPTICAL_ROTATION = Quaternion(-0.5, 0.5, -0.5, 0.5) used in ZEDCamera.
-# Without this rotation, Z in the output = depth (not height), and the CostMapper
-# height-cost algorithm computes gradients of scene-distance instead of terrain.
-_R_OPT_TO_LINK = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=np.float32)
-
-# ── Voxel key packing ──────────────────────────────────────────────────────────
-_OFF  = np.int64(100_000)
-_MASK = np.int64(0x3FFFF)
-
-def _pack(vkeys: np.ndarray) -> np.ndarray:
-    v = (vkeys.astype(np.int64) + _OFF) & _MASK
-    return (v[:, 0] << 36) | (v[:, 1] << 18) | v[:, 2]
+from dimos.navigation.camera_nav.pipeline import _pack, _R_OPT_TO_LINK
 
 
 # ── Ray casting ────────────────────────────────────────────────────────────────

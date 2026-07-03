@@ -19,22 +19,14 @@ Usage
 """
 
 from __future__ import annotations
+
 import time
+
 import numpy as np
 import pyzed.sl as sl
 import rerun as rr
 
-
-# ── Shared helpers ────────────────────────────────────────────────────────────
-
-_OFF  = np.int64(100_000)
-_MASK = np.int64(0x3FFFF)   # 18 bits → handles ±100 000 voxels per axis (±2 km at 2 cm)
-
-
-def _pack(vkeys: np.ndarray) -> np.ndarray:
-    """(N, 3) int32 voxel indices → unique int64 keys."""
-    v = (vkeys.astype(np.int64) + _OFF) & _MASK
-    return (v[:, 0] << 36) | (v[:, 1] << 18) | v[:, 2]
+from dimos.navigation.camera_nav.pipeline import _pack
 
 
 def _jet(t: np.ndarray) -> np.ndarray:
