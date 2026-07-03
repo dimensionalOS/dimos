@@ -59,7 +59,7 @@ Zenoh ships with DimOS by default (`eclipse-zenoh` is a base dependency), so the
 
 **Two ways to override for one run or for your shell:**
 
-1. **CLI:** `dimos --transport=zenoh ...` or `dimos --transport=lcm ...` (see [CLI](/docs/usage/cli.md) for precedence with `.env` and blueprints).
+1. **CLI:** `dimos --transport=zenoh ...` or `dimos --transport=lcm ...` (see [CLI](/usage/cli) for precedence with `.env` and blueprints).
 2. **Environment:** `DIMOS_TRANSPORT=zenoh` or `DIMOS_TRANSPORT=lcm`.
 
 Typical **replay on macOS** (default is already Zenoh, so no transport flag is required):

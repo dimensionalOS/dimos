@@ -46,7 +46,7 @@ uv run pytest --numprocesses=auto dimos
 
 LCM over UDP can be unreliable on macOS for large or high-rate replay workloads. DimOS defaults the global stream transport to **Zenoh** on macOS, so you usually do not need `--transport=zenoh`. Use `--transport=lcm` if you need to force the legacy multicast path.
 
-See the [Zenoh quickstart](/docs/usage/transports/index.md#zenoh-quickstart) for install, Linux versus macOS defaults, and `DIMOS_TRANSPORT`.
+See the [Zenoh quickstart](/usage/transports/index#zenoh-quickstart) for install, Linux versus macOS defaults, and `DIMOS_TRANSPORT`.
 
 ```sh skip
 dimos --dtop --replay --replay-db=go2_bigoffice run unitree-go2
