@@ -179,15 +179,7 @@ def main() -> None:
                         print("*** global map started (IMU + floor converged) ***", flush=True)
 
                     # Strip ICP translation: xyz_ronly = xyz_cam @ R.T (pure rotation)
-                    # Use a stricter floor clearance for the global map (8 cm vs 3 cm
-                    # for the per-frame map) — accumulated maps collect marginal floor
-                    # points across many frames even if each individual frame barely shows them.
-                    gmap_keep      = xyz_cam_icp[:, 2] > (floor_calib.floor_z + 0.08)
-                    xyz_ronly_kept = (xyz_kept - pkt.pose_t)[gmap_keep]
-
-                    if not len(xyz_ronly_kept):
-                        frame += 1
-                        continue
+                    xyz_ronly_kept = xyz_kept - pkt.pose_t
 
                     vk_r       = np.floor(xyz_ronly_kept / _VOX_SIZE).astype(np.int32)
                     _, first_r  = np.unique(_pack(vk_r), return_index=True)
