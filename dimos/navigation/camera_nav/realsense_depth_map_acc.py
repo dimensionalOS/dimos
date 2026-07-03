@@ -31,8 +31,6 @@ import rerun.blueprint as rrb
 # Used in the fat-voxel clearing step to absorb ±2 cm ICP-t drift.
 _SHIFTS = np.array([0, 1<<36, -(1<<36), 1<<18, -(1<<18), 1, -1], dtype=np.int64)
 
-# Global map uses coarser voxels than the per-frame map for a cleaner result.
-_GMAP_VOX = 0.04   # 4 cm — 8× fewer voxels than the 2 cm per-frame grid
 
 from dimos.navigation.camera_nav.realsense_depth_map import (
     DepthBackprojector,
@@ -181,9 +179,17 @@ def main() -> None:
                         print("*** global map started (IMU + floor converged) ***", flush=True)
 
                     # Strip ICP translation: xyz_ronly = xyz_cam @ R.T (pure rotation)
-                    xyz_ronly_kept = xyz_kept - pkt.pose_t
+                    # Use a stricter floor clearance for the global map (8 cm vs 3 cm
+                    # for the per-frame map) — accumulated maps collect marginal floor
+                    # points across many frames even if each individual frame barely shows them.
+                    gmap_keep      = xyz_cam_icp[:, 2] > (floor_calib.floor_z + 0.08)
+                    xyz_ronly_kept = (xyz_kept - pkt.pose_t)[gmap_keep]
 
-                    vk_r       = np.floor(xyz_ronly_kept / _GMAP_VOX).astype(np.int32)
+                    if not len(xyz_ronly_kept):
+                        frame += 1
+                        continue
+
+                    vk_r       = np.floor(xyz_ronly_kept / _VOX_SIZE).astype(np.int32)
                     _, first_r  = np.unique(_pack(vk_r), return_index=True)
                     xyz_vox_r   = xyz_ronly_kept[first_r]
 
@@ -197,9 +203,9 @@ def main() -> None:
                     # absorbs the ±2 cm ICP-t oscillation that shifts a ghost's
                     # stored voxel key by exactly 1 step relative to the ray.
                     if len(acc_pts):
-                        free_keys = _raycast_free_keys(xyz_vox_r, _GMAP_VOX, n_rays=400)
+                        free_keys = _raycast_free_keys(xyz_vox_r, _VOX_SIZE, n_rays=400)
                         if len(free_keys):
-                            keys_acc = _pack(np.floor(acc_pts / _GMAP_VOX).astype(np.int32))
+                            keys_acc = _pack(np.floor(acc_pts / _VOX_SIZE).astype(np.int32))
                             shifted  = (keys_acc[:, None] + _SHIFTS[None, :]).ravel()
                             idx      = np.searchsorted(free_keys, shifted)
                             idx      = np.clip(idx, 0, len(free_keys) - 1)
@@ -208,14 +214,14 @@ def main() -> None:
 
                     # Insert current frame's surface observations then dedup
                     acc_pts = np.vstack([acc_pts, xyz_vox_r]) if len(acc_pts) else xyz_vox_r.copy()
-                    vk_a    = np.floor(acc_pts / _GMAP_VOX).astype(np.int32)
+                    vk_a    = np.floor(acc_pts / _VOX_SIZE).astype(np.int32)
                     _, ui   = np.unique(_pack(vk_a), return_index=True)
                     acc_pts = acc_pts[ui]
 
                     rr.log("world/global_map", rr.Points3D(
                         positions=acc_pts,
                         colors=_height_color(acc_pts[:, 2] - cam_z),
-                        radii=0.020,
+                        radii=0.010,
                     ))
 
             # ICP: still update for per-frame map (world/map uses it)
