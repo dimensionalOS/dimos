@@ -37,15 +37,27 @@
         .key-reveal { word-break: break-all; }
         #canvas { display: none; position: absolute; inset: 0; width: 100%; height: 100%; }
         /* Camera/map swap: the .is-main element fills the stage; .is-pip floats
-           in the top-right corner. Applied by go2.js setMainView(). */
-        #stage .is-main { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; }
+           in the top-right corner. Applied by go2.js setMainView().
+           object-contain on BOTH so a wide dual-cam frame is never cropped —
+           it letterboxes instead. */
+        #stage .is-main { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; object-fit: contain; }
         #stage .is-pip {
             position: absolute; top: 12px; right: 12px; z-index: 3;
-            width: 12rem; aspect-ratio: 16 / 9; height: auto;
+            width: 12rem; height: 7.5rem;   /* resizable — see the drag handle */
             background: #000; border: 1px solid #2a2a2a; border-radius: 0.5rem;
             overflow: hidden; box-shadow: 0 4px 14px rgba(0,0,0,.5);
-            cursor: pointer; object-fit: cover;
+            cursor: pointer; object-fit: contain;
         }
+        /* PiP resize handle (bottom-left, since PiP sits top-right). */
+        #pip-resize {
+            position: absolute; z-index: 4; width: 16px; height: 16px;
+            cursor: nesw-resize; display: none;
+            background:
+              linear-gradient(45deg, transparent 6px, #b0e1f0 6px, #b0e1f0 8px, transparent 8px,
+                              transparent 10px, #b0e1f0 10px, #b0e1f0 12px, transparent 12px);
+            opacity: .55;
+        }
+        #pip-resize:hover { opacity: 1; }
         /* CRT glow for the wordmark */
         .crt-glow { filter: drop-shadow(0 0 6px rgba(176, 225, 240, 0.45)) drop-shadow(0 0 22px rgba(176, 225, 240, 0.18)); }
         .term-caps { text-transform: uppercase; letter-spacing: 0.12em; }

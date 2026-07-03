@@ -70,6 +70,7 @@ const ui = {
     lastOdom: null,           // latest {x,y,yaw,ts} for the robot marker
     mapZoom: 1,               // pan/zoom view transform on the minimap
     mapPanX: 0, mapPanY: 0,   // canvas-px pan offset (applied before letterbox/flip)
+    pipW: 192, pipH: 120,     // floating PiP size in px (user-resizable, free ratio)
 };
 
 let tickTimer = null;
@@ -123,6 +124,8 @@ export function renderGo2(c) {
                         class="object-contain is-main" style="display:none;"></video>
                     <!-- Map canvas — occupancy grid + robot marker drawn on top. -->
                     <canvas id="map-canvas" class="is-pip"></canvas>
+                    <!-- PiP resize handle (shown only over the floating window). -->
+                    <div id="pip-resize" title="Drag to resize"></div>
                     <!-- Centered status (Negotiating WebRTC…) + placeholder, both
                          hidden once the video track is actually playing. -->
                     <div id="video-placeholder" class="absolute inset-0 flex flex-col items-center justify-center text-center text-gray-500">
@@ -340,9 +343,52 @@ function wireGo2() {
         });
     }
     bindMapPanZoom();
+    bindPipResize();
     setMainView('camera');  // default: camera main, map floating (per spec)
+    window.addEventListener('resize', positionPipHandle);
 
     selectSpeed(ui.speedMode, /*sendToRobot=*/ false);  // reflect default selection
+}
+
+// Drag the bottom-left handle to resize the floating PiP. Free ratio (width and
+// height independent). Size lives in ui.pipW/pipH and is applied by setMainView.
+function bindPipResize() {
+    const handle = document.getElementById('pip-resize');
+    const stage = document.getElementById('stage');
+    if (!handle || !stage) return;
+    const MIN = 96, MAX_W = 640, MAX_H = 480;
+    let resizing = false, startX = 0, startY = 0, startW = 0, startH = 0;
+
+    handle.addEventListener('pointerdown', (e) => {
+        const pip = pipEl();
+        if (!pip) return;
+        e.preventDefault(); e.stopPropagation();
+        resizing = true;
+        startX = e.clientX; startY = e.clientY;
+        startW = pip.getBoundingClientRect().width;
+        startH = pip.getBoundingClientRect().height;
+        handle.setPointerCapture(e.pointerId);
+    });
+    handle.addEventListener('pointermove', (e) => {
+        if (!resizing) return;
+        const pip = pipEl();
+        if (!pip) return;
+        // PiP is anchored top-right; the handle is bottom-left, so dragging left
+        // grows width and dragging down grows height.
+        ui.pipW = Math.max(MIN, Math.min(MAX_W, startW + (startX - e.clientX)));
+        ui.pipH = Math.max(MIN, Math.min(MAX_H, startH + (e.clientY - startY)));
+        pip.style.width = ui.pipW + 'px';
+        pip.style.height = ui.pipH + 'px';
+        positionPipHandle();
+        if (pip.id === 'map-canvas') drawMap();  // canvas backing store follows size
+    });
+    const end = (e) => {
+        if (!resizing) return;
+        resizing = false;
+        try { handle.releasePointerCapture(e.pointerId); } catch (_) {}
+    };
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
 }
 
 // Scroll-to-zoom (about the cursor) + drag-to-pan on the minimap, active only
@@ -420,20 +466,47 @@ function setMainView(view) {
     cam.classList.toggle('is-pip', !camMain);
     map.classList.toggle('is-main', !camMain);
     map.classList.toggle('is-pip', camMain);
+    // Apply the user-resized PiP size to whichever element is now the PiP;
+    // clear it from the one that's now main (so it fills the stage).
+    for (const el of [cam, map]) {
+        if (el.classList.contains('is-pip')) {
+            el.style.width = ui.pipW + 'px';
+            el.style.height = ui.pipH + 'px';
+        } else {
+            el.style.width = ''; el.style.height = '';
+        }
+    }
     // Button/label name what a click switches TO (the other view).
     const label = document.getElementById('view-swap-label');
     if (label) label.textContent = camMain ? 'MAP' : 'CAM';
     // Reset pan/zoom whenever the map isn't the main view — a zoomed PiP is
     // never what you want, and it starts fresh next time it's promoted.
     if (camMain) { ui.mapZoom = 1; ui.mapPanX = 0; ui.mapPanY = 0; }
+    // Re-crop the benchmark strip NOW, not on the next 1Hz tick — the video's
+    // box just changed size, and a stale clip-path would flash the strip.
+    applyStampCrop();
+    positionPipHandle();
     // Canvas backing-store size changed (stage <-> PiP) → redraw at new size.
     drawMap();
 }
 
+// The resize handle sits at the PiP's bottom-left corner (PiP is top-right).
+// Only shown while a PiP exists; hidden isn't meaningful when nothing floats.
+function pipEl() { return document.querySelector('#stage .is-pip'); }
+function positionPipHandle() {
+    const handle = document.getElementById('pip-resize');
+    const pip = pipEl();
+    const stage = document.getElementById('stage');
+    if (!handle || !pip || !stage) return;
+    const pr = pip.getBoundingClientRect(), sr = stage.getBoundingClientRect();
+    handle.style.display = 'block';
+    handle.style.left = (pr.left - sr.left - 2) + 'px';
+    handle.style.top = (pr.bottom - sr.top - 14) + 'px';
+}
+
 // Occupancy grid (~2Hz). Decode the PNG once here (off the fast odom path),
-// cache it, then redraw. The robot bakes the rerun palette into the PNG
-// (violet-blue free / orange occupied / red lethal / transparent unknown), so
-// there's no colormap here — drawMap just blits the image.
+// cache it, then redraw. The robot bakes the color palette into the PNG
+// (transparent unknown), so there's no colormap here — drawMap just blits it.
 function onMap(msg) {
     if (!msg || !msg.png_b64) return;
     const img = new Image();
