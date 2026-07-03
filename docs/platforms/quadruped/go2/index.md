@@ -2,9 +2,9 @@
 title: "Unitree Go2"
 ---
 
-- [Setup your Dog](/docs/platforms/quadruped/go2/setup.md) — requirements, install, connecting to your Go2, and agentic control
-- [Simulation](/docs/platforms/quadruped/go2/simulation.md) — try it with no hardware via replay or MuJoCo
-- [Mapping & Navigation](/docs/capabilities/navigation/index.md) — map, premap, relocalize on replay or a live Go2
+- [Setup your Dog](/platforms/quadruped/go2/setup) — requirements, install, connecting to your Go2, and agentic control
+- [Simulation](/platforms/quadruped/go2/simulation) — try it with no hardware via replay or MuJoCo
+- [Mapping & Navigation](/capabilities/navigation/index) — map, premap, relocalize on replay or a live Go2
 
 ## Available Blueprints
 
@@ -19,8 +19,8 @@ title: "Unitree Go2"
 
 ## Deep Dive
 
-- [Navigation Stack](/docs/capabilities/navigation/deep_dive.md) — column-carving voxel mapping, costmap generation, A* planning
-- [Visualization](/docs/usage/visualization.md) — Rerun, performance tuning
-- [Data Streams](/docs/usage/data_streams) — RxPY streams, backpressure, quality filtering
-- [Transports](/docs/usage/transports/index.md) — LCM, SHM, DDS
-- [Blueprints](/docs/usage/blueprints.md) — composing modules
+- [Navigation Stack](/capabilities/navigation/deep_dive) — column-carving voxel mapping, costmap generation, A* planning
+- [Visualization](/usage/visualization) — Rerun, performance tuning
+- [Data Streams](/usage/data_streams) — RxPY streams, backpressure, quality filtering
+- [Transports](/usage/transports/index) — LCM, SHM, DDS
+- [Blueprints](/usage/blueprints) — composing modules

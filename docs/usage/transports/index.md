@@ -91,7 +91,7 @@ We’ll go through these layers top-down.
 
 ## Using transports with blueprints
 
-See [Blueprints](/docs/usage/blueprints.md) for the blueprint API.
+See [Blueprints](/usage/blueprints) for the blueprint API.
 
 From [`unitree/go2/blueprints/smart/unitree_go2.py`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py).
 
@@ -207,7 +207,7 @@ Received: (480, 640, 3)
 13:11:42.920 [inf][ation/worker_manager_python.py] All workers shut down
 ```
 
-See [Modules](/docs/usage/modules.md) for more on module architecture.
+See [Modules](/usage/modules) for more on module architecture.
 
 ---
 
@@ -244,7 +244,7 @@ Encoding is an implementation detail, but we encourage using LCM-compatible mess
 
 ### Encoding helpers
 
-Many of our message types provide `lcm_encode` / `lcm_decode` for compact, language-agnostic binary encoding (often faster than pickle). For details, see [LCM](/docs/usage/lcm.md).
+Many of our message types provide `lcm_encode` / `lcm_decode` for compact, language-agnostic binary encoding (often faster than pickle). For details, see [LCM](/usage/lcm).
 
 ---
 
@@ -277,7 +277,7 @@ print(inspect.getsource(PubSub.subscribe))
         ...
 ```
 
-Topic/message types are flexible: bytes, JSON, or our ROS-compatible [LCM](/docs/usage/lcm.md) types. We also have pickle-based transports for arbitrary Python objects.
+Topic/message types are flexible: bytes, JSON, or our ROS-compatible [LCM](/usage/lcm) types. We also have pickle-based transports for arbitrary Python objects.
 
 ### LCM (UDP multicast)
 
@@ -414,7 +414,7 @@ Transports often need to serialize messages before sending and deserialize after
 | `LCMEncoderMixin`    | LCM binary      | Cross-language (C/C++/Python/Go/…) |
 | `JpegEncoderMixin`   | JPEG compressed | Image data, reduces bandwidth      |
 
-`LCMEncoderMixin` is especially useful: you can use LCM message definitions with *any* transport (not just UDP multicast). See [LCM](/docs/usage/lcm.md) for details.
+`LCMEncoderMixin` is especially useful: you can use LCM message definitions with *any* transport (not just UDP multicast). See [LCM](/usage/lcm) for details.
 
 ### Creating a custom mixin
 

@@ -247,14 +247,14 @@ visualization backend.
 
 | Robot | DOF | Teleop | Planning | Perception |
 |-------|-----|--------|----------|------------|
-| [A-750](/docs/capabilities/manipulation/a750.md) | 6 | Y | Y | — |
+| [A-750](/capabilities/manipulation/a750) | 6 | Y | Y | — |
 | Piper | 6 | Y | Y | — |
 | XArm6 | 6 | Y | Y | — |
 | XArm7 | 7 | Y | Y | Y |
 
 ## Adding a Custom Arm
 
-[guide is here](/docs/capabilities/manipulation/adding_a_custom_arm.md)
+[guide is here](/capabilities/manipulation/adding_a_custom_arm)
 
 ## Key Files
 

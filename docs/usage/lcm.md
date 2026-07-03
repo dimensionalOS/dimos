@@ -9,7 +9,7 @@ The LCM project provides pubsub clients and code generators for many languages. 
 Our messages are ported from ROS (they are structurally compatible in order to facilitate easy communication to ROS if needed)
 Repo that hosts our message definitions and autogenerators is at [dimos-lcm](https://github.com/dimensionalOS/dimos-lcm/)
 
-our LCM implementation significantly [outperforms ROS for local communication](/docs/usage/transports/index.md#benchmarks)
+our LCM implementation significantly [outperforms ROS for local communication](/usage/transports/index#benchmarks)
 
 ## Supported languages
 
@@ -25,7 +25,7 @@ Types generated (but no examples yet) for:
 
 ### Native Modules
 
-Given LCM is so portable, we can easily run dimos [Modules](/docs/usage/modules.md) written in [third party languages](/docs/usage/native_modules.md)
+Given LCM is so portable, we can easily run dimos [Modules](/usage/modules) written in [third party languages](/usage/native_modules)
 
 ## dimos-lcm Package
 

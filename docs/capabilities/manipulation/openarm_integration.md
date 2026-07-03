@@ -7,7 +7,7 @@ Guide for running the **OpenArm** — an open-source bimanual 7-DOF research arm
 
 Related:
 - Upstream hardware + C++ reference: [enactic/openarm_can](https://github.com/enactic/openarm_can)
-- How to integrate any new arm: [adding_a_custom_arm.md](/docs/capabilities/manipulation/adding_a_custom_arm.md)
+- How to integrate any new arm: [adding_a_custom_arm.md](/capabilities/manipulation/adding_a_custom_arm)
 
 ---
 

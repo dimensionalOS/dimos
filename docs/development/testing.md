@@ -68,7 +68,7 @@ pytest -m self_hosted dimos/path/to/test_something.py
 ## Testing on a fresh Ubuntu install
 
 CI tests dimos with pre-built images and cached deps, so it can't catch gaps
-between what [`installation/ubuntu.md`](/docs/installation/ubuntu.md) tells a new user to
+between what [`installation/ubuntu.md`](/installation/ubuntu) tells a new user to
 do and what a clean machine actually needs (e.g. a system package we require but
 forgot to document).
 

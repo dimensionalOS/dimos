@@ -2,7 +2,7 @@
 title: "Native Modules"
 ---
 
-Prerequisite for this is to understand dimos [Modules](/docs/usage/modules.md) and [Blueprints](/docs/usage/blueprints.md).
+Prerequisite for this is to understand dimos [Modules](/usage/modules) and [Blueprints](/usage/blueprints).
 
 Native modules let you wrap **any executable** as a first-class DimOS module, given it speaks LCM.
 
@@ -10,7 +10,7 @@ Python will handle blueprint wiring, lifecycle, and logging. Native binary handl
 
 Python module **never touches the pubsub data**. It just passes configuration and LCM topic to use via CLI args to your executable.
 
-On how to speak LCM with the rest of dimos, you can read our [LCM intro](/docs/usage/lcm.md)
+On how to speak LCM with the rest of dimos, you can read our [LCM intro](/usage/lcm)
 
 ## Defining a native module
 

@@ -67,7 +67,7 @@ We can see that the camera module outputs two streams:
 
 It offers two RPC calls: `start()` and `stop()` (lifecycle methods).
 
-It also exposes an agentic [skill](/docs/usage/blueprints.md#defining-skills) called `take_a_picture` (more on skills in the Blueprints guide).
+It also exposes an agentic [skill](/usage/blueprints#defining-skills) called `take_a_picture` (more on skills in the Blueprints guide).
 
 We can start this module and explore the output of its streams in real time (this will use your webcam).
 
@@ -471,4 +471,4 @@ to_svg(agentic, "assets/go2_agentic.svg")
 
 ![output](assets/go2_agentic.svg)
 
-To see more information on how to use Blueprints, see [Blueprints](/docs/usage/blueprints.md).
+To see more information on how to use Blueprints, see [Blueprints](/usage/blueprints).

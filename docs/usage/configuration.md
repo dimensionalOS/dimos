@@ -46,7 +46,7 @@ https://errors.pydantic.dev/2.12/v/extra_forbidden
 
 # Configurable Modules
 
-[Modules](/docs/usage/modules.md) inherit from `Configurable`, so all of the above applies. Module configs should inherit from `ModuleConfig` ([`core/module.py`](/dimos/core/module.py#L40)), which includes shared configuration for all modules like transport protocols, frame IDs, etc.
+[Modules](/usage/modules) inherit from `Configurable`, so all of the above applies. Module configs should inherit from `ModuleConfig` ([`core/module.py`](/dimos/core/module.py#L40)), which includes shared configuration for all modules like transport protocols, frame IDs, etc.
 
 ```python
 from dimos.core.core import rpc

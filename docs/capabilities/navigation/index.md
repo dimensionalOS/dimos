@@ -6,8 +6,8 @@ title: "Navigation"
 
 The Go2 navigation stack uses simple **column-carving voxel map** strategy: each new LiDAR frame replaces the corresponding region of the global map entirely, ensuring the map always reflects the latest observations.
 
-[Navigation Deep Dive](/docs/capabilities/navigation/deep_dive.md)
+[Navigation Deep Dive](/capabilities/navigation/deep_dive)
 
 We also have a simple relocalization system on previously stored and reconstructed maps.
 
-[Relocalization](/docs/capabilities/navigation/relocalization.md)
+[Relocalization](/capabilities/navigation/relocalization)

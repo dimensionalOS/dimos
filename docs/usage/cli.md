@@ -109,7 +109,7 @@ Define a module-level `Blueprint` variable and register it in `all_blueprints.py
 pytest dimos/robot/test_all_blueprints_generation.py
 ```
 
-This auto-generates the registry. See [blueprints](/docs/usage/blueprints.md) for composition details.
+This auto-generates the registry. See [blueprints](/usage/blueprints) for composition details.
 
 ### `dimos status`
 
