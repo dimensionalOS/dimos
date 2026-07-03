@@ -413,7 +413,7 @@ text "CameraModule" italic at ((CL.x + CO.x)/2, CL.s.y - 0.25in)
 
 ## Transform Buffer
 
-`self.tf` on module is a transform buffer. This is a standalone class that maintains a temporal buffer of transforms (default 10 seconds) allowing queries at past timestamps, you can use it directly:
+`self.tf` on a module is a transform buffer. This is a standalone class that maintains a temporal buffer of transforms (default 10 seconds) allowing queries at past timestamps, you can use it directly:
 
 ```python
 import time
