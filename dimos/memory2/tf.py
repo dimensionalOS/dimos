@@ -69,13 +69,14 @@ class StreamTF(MultiTBuffer, TFSpec):
 
     def _ensure(self, lo: float, hi: float) -> None:
         """Serve ``[lo, hi]`` from the cache, else re-cache ``[lo, hi + cache_span]``."""
-        if self._covered is not None:
-            clo, chi = self._covered
-            if clo <= lo and hi <= chi:
-                return
-            with self._cv:
+        with self._cv:
+            if self._covered is not None:
+                clo, chi = self._covered
+                if clo <= lo and hi <= chi:
+                    return
                 self.buffers.clear()
-        self._load(lo, hi + self.config.cache_span)
+                self._covered = None
+            self._load(lo, hi + self.config.cache_span)
 
     def get(
         self,
