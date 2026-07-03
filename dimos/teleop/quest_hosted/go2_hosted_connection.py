@@ -599,17 +599,17 @@ class Go2HostedConnection(GO2Connection, HostedConnectionMixin):
     def _occupancy_to_bgra(cells: Any) -> Any:
         """Colorize occupancy int8 {-1,0,1..100} → BGRA for a color PNG.
 
-        Cool cyan family matching the cockpit accent: deep cyan-slate free,
-        bright cyan obstacles, rose lethal. Unknown is transparent so the map
-        floats over the canvas. BGRA because cv2.imencode uses OpenCV order.
+        Single cyan hue matching the cockpit accent: dark cyan free, bright cyan
+        obstacles, white-hot lethal. Unknown is transparent so the map floats
+        over the canvas. BGRA because cv2.imencode uses OpenCV order.
         """
         import numpy as np
 
         # (B, G, R, A) — RGB reversed for OpenCV.
         c_unknown = (0, 0, 0, 0)  # transparent
-        c_free = (77, 64, 36, 255)  # #24404d deep cyan-slate
-        c_occupied = (212, 184, 95, 255)  # #5fb8d4 bright cyan
-        c_lethal = (180, 160, 224, 255)  # #e0a0b4 rose
+        c_free = (68, 58, 30, 255)  # #1e3a44 dark cyan
+        c_occupied = (239, 220, 143, 255)  # #8fdcef bright cyan
+        c_lethal = (255, 255, 255, 255)  # #ffffff white-hot
 
         out = np.empty((*cells.shape, 4), dtype=np.uint8)
         out[...] = c_unknown  # default; -1 stays transparent

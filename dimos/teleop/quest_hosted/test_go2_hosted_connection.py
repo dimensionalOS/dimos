@@ -695,10 +695,10 @@ def test_costmap_png_round_trips_palette() -> None:
     img = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_UNCHANGED)
     assert img.shape[2] == 4  # has alpha
     row = [tuple(int(v) for v in px) for px in img[0]]
-    # unknown → transparent; free → cyan-slate; occupied(100) → rose lethal.
+    # unknown → transparent; free → dark cyan; occupied(100) → white-hot lethal.
     assert row[0] == (0, 0, 0, 0)  # unknown transparent
-    assert row[1] == (77, 64, 36, 255)  # free #24404d in BGRA
-    assert row[2] == (180, 160, 224, 255)  # 100 = lethal #e0a0b4 in BGRA
+    assert row[1] == (68, 58, 30, 255)  # free #1e3a44 in BGRA
+    assert row[2] == (255, 255, 255, 255)  # 100 = lethal #ffffff
 
 
 def test_costmap_rate_gated() -> None:
@@ -727,8 +727,8 @@ def test_block_max_preserves_obstacle_when_coarsening() -> None:
     assert msg["res"] == pytest.approx(0.1)  # coarsened 5×
     raw = base64.b64decode(msg["png_b64"])
     img = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_UNCHANGED)
-    # Lethal (100) survives as an opaque rose pixel (BGRA #e0a0b4).
-    lethal = np.all(img == (180, 160, 224, 255), axis=-1)
+    # Lethal (100) survives as an opaque white pixel (BGRA #ffffff).
+    lethal = np.all(img == (255, 255, 255, 255), axis=-1)
     assert lethal.any(), "obstacle erased by coarsening"
 
 
