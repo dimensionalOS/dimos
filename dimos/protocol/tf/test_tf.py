@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import math
-import platform
 import threading
 import time
 
@@ -631,15 +630,17 @@ def _t(parent: str, child: str, x: float, ts: float) -> Transform:
     )
 
 
-@pytest.fixture(params=["live", "stream_memory", "stream_sqlite"])
+@pytest.fixture(
+    params=[
+        "live",
+        "stream_memory",
+        # sqlite-vec ships a 32-bit binary in the aarch64 wheel and fails to
+        # load on macOS CI (same guard as memory2/conftest.py).
+        pytest.param("stream_sqlite", marks=[pytest.mark.skipif_aarch64, pytest.mark.skipif_macos]),
+    ]
+)
 def make_tf(request, tmp_path):  # type: ignore[no-untyped-def]
     """Builder fixture: feed it transforms, get back a TFLookup over them."""
-    if request.param == "stream_sqlite" and (
-        platform.machine() == "aarch64" or platform.system() == "Darwin"
-    ):
-        # Same guard as memory2/conftest.py: sqlite-vec ships a 32-bit binary
-        # in the aarch64 wheel and fails to load on macOS CI.
-        pytest.skip("sqlite-vec extension not loadable here")
     stores = []
 
     def build(*transforms: Transform) -> TFLookup:
