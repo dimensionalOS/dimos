@@ -293,7 +293,7 @@ def main() -> None:
     ip  = sl.InitParameters()
     ip.camera_resolution      = sl.RESOLUTION.HD720
     ip.camera_fps             = 15
-    ip.depth_mode             = sl.DEPTH_MODE.NEURAL
+    ip.depth_mode             = sl.DEPTH_MODE.ULTRA
     ip.coordinate_system      = sl.COORDINATE_SYSTEM.RIGHT_HANDED_Z_UP_X_FWD
     ip.coordinate_units       = sl.UNIT.METER
     ip.depth_maximum_distance = 8.0
@@ -373,7 +373,8 @@ def main() -> None:
             # ── World map: chunk accumulation, dedup every _MAP_EVERY frames ──
             # Newest observations win: when the same voxel key appears in
             # both fresh chunks and _wm_base, the chunk (recent) takes priority.
-            if src.pose_locked and len(xyz_vox):
+            # Accumulates immediately — does not wait for VIO lock.
+            if len(xyz_vox):
                 _wm_chunks.append(xyz_vox)
 
             if frame % _MAP_EVERY == 0:
@@ -398,12 +399,12 @@ def main() -> None:
             # ZED VIO translation is reliable so we keep full world coordinates
             # (unlike RealSense which strips translation to avoid ICP drift).
             # Ghost clearing is done in camera-relative space then applied to
-            # world-frame acc_pts.
+            # world-frame acc_pts. Runs every 3 frames to keep CPU load low.
             if src.pose_locked and len(xyz_vox):
                 xyz_vox_rel = xyz_vox - pkt.pose_t   # camera-relative for ray cast
 
-                if len(acc_pts):
-                    free_keys = _raycast_free_keys(xyz_vox_rel, VOX_SIZE, n_rays=400)
+                if len(acc_pts) and frame % 3 == 0:
+                    free_keys = _raycast_free_keys(xyz_vox_rel, VOX_SIZE, n_rays=200)
                     if len(free_keys):
                         acc_pts_rel = acc_pts - pkt.pose_t
                         keys_acc = _pack(np.floor(acc_pts_rel / VOX_SIZE).astype(np.int32))
@@ -418,10 +419,13 @@ def main() -> None:
                 _, ui   = np.unique(_pack(vk_a), return_index=True)
                 acc_pts = acc_pts[ui]
 
+                if len(acc_pts) > _MAP_MAX_PTS:
+                    acc_pts = acc_pts[np.random.choice(len(acc_pts), _MAP_MAX_PTS, replace=False)]
+
                 rr.log("world/global_map", rr.Points3D(
                     positions=acc_pts,
                     colors=_height_color(acc_pts[:, 2] - cam_z),
-                    radii=0.010,
+                    radii=0.012,
                 ))
 
             fps = frame / max(ts - t0, 1e-6)
