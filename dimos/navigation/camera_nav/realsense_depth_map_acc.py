@@ -4,17 +4,18 @@ Per-frame voxel map (world/map) + persistent global map (world/global_map).
 
 Key design decisions
 --------------------
-Per-frame map  uses xyz_world = xyz_cam @ R.T + t  (ICP translation included)
-               Refreshes every frame.  Moving objects update.  Never accumulates.
+Both maps use the same coordinate system:
+  xyz_world = xyz_cam @ R.T + t   (ICP translation included)
 
-Global map     uses xyz_ronly = xyz_world - t = xyz_cam @ R.T  (rotation ONLY)
-               ICP translation is deliberately excluded.  On the D435i there is
-               no wheel odometry or VIO, so t from centroid-ICP oscillates ±1-2 cm
-               even for a static camera.  At 2 cm voxel size that causes the same
-               physical surface to land on different keys every frame → map explodes.
-               Madgwick orientation (R) is reliable after convergence.  Using R only
-               gives a stable panoramic map: pan the camera left/right and each new
-               area of the scene lands at its correct world-frame position.
+The per-frame map refreshes every frame — current view only.
+The global map accumulates across frames so the same physical surface always
+lands on the same world-frame voxel key regardless of robot position.
+
+Using xyz_world (not rotation-only) is essential on a moving robot: in the
+rotation-only frame, xyz_ronly = xyz_world - t shifts with t, so revisiting
+a surface from a new robot position creates a duplicate voxel.  In world
+frame, ICP t correctly places each observed surface at its stable world-space
+address regardless of where the robot was when it observed it.
 
 Usage
     python -m dimos.navigation.camera_nav.realsense_depth_map_acc
@@ -42,28 +43,33 @@ def _raycast_free_keys(
     surface_pts: np.ndarray,
     vox_size: float,
     n_rays: int = 400,
+    cam_origin: np.ndarray | None = None,
 ) -> np.ndarray:
     """Return int64 voxel keys that are free space between camera and surface.
 
-    Camera is always at [0,0,0] in the rotation-only world frame.
+    surface_pts: (N, 3) surface points in the same frame as acc_pts.
+    cam_origin:  (3,) camera position in that same frame. Defaults to [0,0,0].
     Fully vectorised: builds all ray-step grids at once, no Python loop.
     Stops one voxel short of each surface point so the surface itself is
     never cleared.
     """
+    origin = np.zeros(3, dtype=np.float32) if cam_origin is None else np.asarray(cam_origin, dtype=np.float32)
+
     n = min(len(surface_pts), n_rays)
     if n == 0:
         return np.empty(0, dtype=np.int64)
 
-    idx   = (np.random.choice(len(surface_pts), n, replace=False)
-             if len(surface_pts) > n else np.arange(n))
-    pts   = surface_pts[idx]                   # (n, 3)
-    dists = np.linalg.norm(pts, axis=1)        # camera at [0,0,0]
-    ok    = dists > vox_size * 2               # skip points too close to origin
-    pts, dists = pts[ok], dists[ok]
-    if not len(pts):
+    idx  = (np.random.choice(len(surface_pts), n, replace=False)
+            if len(surface_pts) > n else np.arange(n))
+    pts  = surface_pts[idx]                        # (n, 3)
+    vecs = pts - origin                            # (n, 3) from camera to surface
+    dists = np.linalg.norm(vecs, axis=1)           # (n,)
+    ok    = dists > vox_size * 2                   # skip points too close to origin
+    vecs, dists = vecs[ok], dists[ok]
+    if not len(vecs):
         return np.empty(0, dtype=np.int64)
 
-    dirs      = pts / dists[:, None]           # (n, 3) unit vectors
+    dirs      = vecs / dists[:, None]              # (n, 3) unit vectors
     max_steps = int(np.ceil(dists.max() / vox_size))
 
     # t-values for every step; stop 1.5 voxels short to avoid clipping surface
@@ -72,10 +78,10 @@ def _raycast_free_keys(
     valid_m = (t_vals[None, :] >= 0) & (t_vals[None, :] < t_end)  # (n, max_steps)
 
     # Positions along all rays: (n, max_steps, 3)
-    ray_pts = dirs[:, None, :] * t_vals[None, :, None]
+    ray_pts = origin + dirs[:, None, :] * t_vals[None, :, None]
 
     vk_flat  = np.floor(ray_pts.reshape(-1, 3) / vox_size).astype(np.int32)
-    keys_all = _pack(vk_flat)                  # (n * max_steps,)
+    keys_all = _pack(vk_flat)                      # (n * max_steps,)
     return np.unique(keys_all[valid_m.ravel()])
 
 
@@ -148,7 +154,7 @@ def main() -> None:
                 xyz_cam_icp = xyz_cam
 
             if len(xyz_kept):
-                # ── Per-frame voxel map (includes ICP translation) ───────────
+                # ── Per-frame voxel map ───────────────────────────────────────
                 vk       = np.floor(xyz_kept / _VOX_SIZE).astype(np.int32)
                 _, first = np.unique(_pack(vk), return_index=True)
                 xyz_vox  = xyz_kept[first]
@@ -159,26 +165,28 @@ def main() -> None:
                     radii=0.010,
                 ))
 
-                # ── Global map (rotation ONLY — no ICP translation) ──────────
-                # Reuse xyz_vox (already floor-filtered, voxelised, deduped by
-                # the per-frame map above) and strip ICP translation so the same
-                # physical surface always lands on the same voxel key across frames.
+                # ── Global map (world frame — same coordinate as per-frame map) ──
+                # xyz_vox is already floor-filtered, gradient-stable, and voxelised.
+                # Using world frame (not rotation-only) ensures the same physical
+                # surface always maps to the same voxel key regardless of robot
+                # position — required for correct accumulation on a moving robot.
                 if floor_calib.ready:
                     if not map_ready:
                         acc_pts   = np.empty((0, 3), dtype=np.float32)
                         map_ready = True
                         print("*** global map started (IMU + floor converged) ***", flush=True)
 
-                    xyz_vox_r = xyz_vox - pkt.pose_t
-
                     # Ray-cast BEFORE inserting so moved-object ghosts are erased first.
+                    # Camera origin in world frame = pkt.pose_t.
                     if len(acc_pts):
-                        free_keys = _raycast_free_keys(xyz_vox_r, _VOX_SIZE, n_rays=400)
+                        free_keys = _raycast_free_keys(
+                            xyz_vox, _VOX_SIZE, n_rays=400, cam_origin=pkt.pose_t,
+                        )
                         if len(free_keys):
                             keys_acc = _pack(np.floor(acc_pts / _VOX_SIZE).astype(np.int32))
                             acc_pts  = acc_pts[~np.isin(keys_acc, free_keys)]
 
-                    acc_pts = np.vstack([acc_pts, xyz_vox_r]) if len(acc_pts) else xyz_vox_r.copy()
+                    acc_pts = np.vstack([acc_pts, xyz_vox]) if len(acc_pts) else xyz_vox.copy()
                     _, ui   = np.unique(_pack(np.floor(acc_pts / _VOX_SIZE).astype(np.int32)),
                                         return_index=True)
                     acc_pts = acc_pts[ui]
@@ -189,13 +197,12 @@ def main() -> None:
                         radii=0.010,
                     ))
 
-            # ICP: still update for per-frame map (world/map uses it)
+            # ICP: update odometry for next frame's t
             if len(xyz_cam_icp) >= 50:
                 src.odom.update(xyz_cam_icp, pkt.pose_R)
 
             fps   = frame / max(time.monotonic() - t0, 1e-6)
             t_icp = src.odom.t
-            # rotation angle from identity — stays 0 if IMU not tracking
             theta = np.degrees(np.arccos(np.clip((np.trace(pkt.pose_R) - 1.0) / 2.0, -1.0, 1.0)))
             print(
                 f"frame={frame:5d}  rot={theta:.1f}deg  map={len(acc_pts):6d}vox  "
