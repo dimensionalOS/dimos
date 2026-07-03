@@ -69,6 +69,7 @@ def m20_rerun_blueprint() -> Any:
 rerun = autoconnect(
     RerunBridgeModule.blueprint(
         blueprint=m20_rerun_blueprint,
+        memory_limit="4GB",
         max_hz={
             "world/color_image": 0,
             "world/color_image_rear": 0,
@@ -98,8 +99,8 @@ ray_tracer = RayTracingVoxelMap.blueprint(
     registered_clouds=True,
 ).remappings(
     [
-        (RayTracingVoxelMap, "lidar", "slam_aligned_points"),
-        (RayTracingVoxelMap, "odometry", "slam_odom"),
+        (RayTracingVoxelMap, "lidar", "dimos/slam_aligned_points"),
+        (RayTracingVoxelMap, "odometry", "dimos/slam_odom"),
     ]
 )
 
@@ -108,6 +109,7 @@ m20 = autoconnect(
     rerun,
     # M20TF turns the SLAM odometry into the map->base_link TF. The bridge
     # publishes it on ``slam_odom`` (not the default ``odometry``), so remap.
+    M20Connection.blueprint(),
     M20TF.blueprint().remappings([(M20TF, "odometry", "slam_odom")]),
 ).global_config(n_workers=3)
 
@@ -126,7 +128,7 @@ m20_nav = autoconnect(
 # global_map is remapped off. world_frame="map" matches the M20 SLAM frame.
 m20_nav_3d = autoconnect(
     m20_nav,
-    GoalRelay.blueprint().remappings([(GoalRelay, "odometry", "slam_odom")]),
+    GoalRelay.blueprint().remappings([(GoalRelay, "odometry", "dimos/slam_odom")]),
     MLSPlannerNative.blueprint(
         world_frame="map",
         voxel_size=voxel_size,
@@ -139,13 +141,13 @@ m20_nav_3d = autoconnect(
         viz_publish_hz=1.0,
     ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
     BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6).remappings(
-        [(BasicPathFollower, "odometry", "slam_odom")]
+        [(BasicPathFollower, "odometry", "dimos/slam_odom")]
     ),
     MovementManager.blueprint(),
 ).global_config(n_workers=10)
 
 m20_api = autoconnect(
     m20_nav,
-    M20Connection.blueprint(ip="m20"),
+    M20Connection.blueprint(),
     MovementManager.blueprint(),
 ).global_config(n_workers=3)

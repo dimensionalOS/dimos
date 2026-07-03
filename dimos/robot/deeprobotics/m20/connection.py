@@ -37,6 +37,7 @@ import time
 from typing import TYPE_CHECKING
 
 import cv2
+from pydantic import Field
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
@@ -273,7 +274,7 @@ class PatrolLink:
 
 
 class M20Config(ModuleConfig):
-    ip: str = "10.21.31.103"
+    ip: str = Field(default_factory=lambda m: m["g"].robot_ip or "10.21.31.103")
     # Wide-angle cameras. Default to the control-channel host (front = video1,
     # rear = video2); override only to point at a different stream.
     rtsp_url: str | None = None

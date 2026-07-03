@@ -47,7 +47,7 @@ package-lock.json
 # Ignore build artifacts
 dist/
 build/
-
+data/
 # Rust build artifacts
 **/target/
 **/*.rs.bk
@@ -105,3 +105,14 @@ recording*.db
 
 # Deepwork local progress state
 .slim/deepwork/
+data/*
+data/.lfs/gradient_simple.png.tar.gz
+data/.lfs/inflation_simple.png.tar.gz
+data/.lfs/raw_odometry_rotate_walk.tar.gz
+data/.lfs/three_paths.npy.tar.gz
+data/.lfs/visualize_occupancy_rainbow.png.tar.gz
+data/.lfs/gradient_simple.png.tar.gz
+data/.lfs/inflation_simple.png.tar.gz
+data/.lfs/raw_odometry_rotate_walk.tar.gz
+data/.lfs/three_paths.npy.tar.gz
+data/.lfs/visualize_occupancy_rainbow.png.tar.gz

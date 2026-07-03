@@ -3,11 +3,10 @@
     "dimos-repo": {
       "flake": false,
       "locked": {
-        "lastModified": 1782035438,
-        "narHash": "sha256-cLfoz3EA+AWzeEgzeWWA5iKCaNLwJB6qvesexSXWFqY=",
-        "ref": "refs/heads/feat/ivan/m20",
-        "rev": "aab8855a820568ee76bcedae11829e36dd74b9e2",
-        "revCount": 905,
+        "dirtyRev": "c49481b440ccc9b7f1bab7c4b4e69a7592c58263-dirty",
+        "dirtyShortRev": "c49481b-dirty",
+        "lastModified": 1782810076,
+        "narHash": "sha256-9ocRTqrxpGzEEszBIY3B+EJhTPfsrIU2/WFcsqAK9n0=",
         "type": "git",
         "url": "file:../../../.."
       },
