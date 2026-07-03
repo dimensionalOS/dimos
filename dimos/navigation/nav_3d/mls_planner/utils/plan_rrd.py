@@ -289,6 +289,12 @@ def main(
     voxel_size: float = typer.Option(0.08, "--voxel-size", help="Voxel edge length (m)"),
     max_range: float = typer.Option(30.0, "--max-range", help="Max ray cast distance (m)"),
     ray_subsample: int = typer.Option(1, "--ray-subsample", help="Keep every Nth ray"),
+    shadow_depth: float = typer.Option(
+        0.2, "--shadow-depth", help="Extend rays past the endpoint to clear shadows (m)"
+    ),
+    grace_depth: float = typer.Option(
+        0.2, "--grace-depth", help="Skip clearing for voxels within this range of a point (m)"
+    ),
     emit_every: int = typer.Option(1, "--emit-every", help="Replan every N lidar frames"),
     min_health: int = typer.Option(
         -1,
@@ -374,6 +380,8 @@ def main(
                 voxel_size=voxel_size,
                 max_range=max_range,
                 ray_subsample=ray_subsample,
+                shadow_depth=shadow_depth,
+                grace_depth=grace_depth,
                 emit_every=emit_every,
                 min_health=min_health,
                 max_health=max_health,
