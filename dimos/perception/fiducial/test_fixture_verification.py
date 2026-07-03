@@ -38,8 +38,6 @@ from dimos.perception.fiducial.fixture_verification import (
 from dimos.perception.fiducial.marker_detect import detect_markers_in_image
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 
-pytest.importorskip("cv2.aruco")
-
 
 @pytest.fixture(scope="module")
 def layout() -> BoardLayout:

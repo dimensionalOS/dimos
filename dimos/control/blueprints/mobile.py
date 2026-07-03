@@ -140,6 +140,8 @@ coordinator_flowbase_nav = (
                 "publish_free_paths": False,
             },
             simple_planner={
+                # FastLio2 publishes odom -> mid360_link (no separate body frame).
+                "body_frame": "mid360_link",
                 "cell_size": 0.2,
                 "obstacle_height_threshold": 0.15,
                 "inflation_radius": 0.3,  # FlowBase footprint smaller than G1's 0.5

@@ -29,6 +29,7 @@ from dimos.robot.manipulators.common.topics import (
     CARTESIAN_IK_TASK_NAME,
     COORDINATOR_FRAME_ID,
     DEFAULT_TRAJECTORY_TASK_NAME,
+    EEF_TWIST_TASK_NAME,
     trajectory_task_name,
 )
 
@@ -58,6 +59,23 @@ def cartesian_ik_task(
     return TaskConfig(
         name=name,
         type="cartesian_ik",
+        joint_names=hardware.joints,
+        priority=priority,
+        params={"model_path": model_path, "ee_joint_id": ee_joint_id},
+    )
+
+
+def eef_twist_task(
+    hardware: HardwareComponent,
+    *,
+    model_path: Path,
+    ee_joint_id: int,
+    name: str = EEF_TWIST_TASK_NAME,
+    priority: int = 10,
+) -> TaskConfig:
+    return TaskConfig(
+        name=name,
+        type="eef_twist",
         joint_names=hardware.joints,
         priority=priority,
         params={"model_path": model_path, "ee_joint_id": ee_joint_id},
@@ -114,12 +132,14 @@ def planner(
     visualization: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> Blueprint:
-    return ManipulationModule.blueprint(
-        robots=list(robots),
-        planning_timeout=planning_timeout,
-        visualization=visualization or {"backend": "meshcat"},
+    module_kwargs: dict[str, Any] = {
+        "robots": list(robots),
+        "planning_timeout": planning_timeout,
         **kwargs,
-    )
+    }
+    if visualization is not None:
+        module_kwargs["visualization"] = visualization
+    return ManipulationModule.blueprint(**module_kwargs)
 
 
 def default_trajectory_task_name(hardware_id: str) -> str:
