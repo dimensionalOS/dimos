@@ -30,6 +30,7 @@ from typing import (
 from dimos.constants import LCM_MAX_CHANNEL_NAME_LENGTH
 from dimos.protocol.pubsub.impl.lcmpubsub import PickleLCM, Topic
 from dimos.protocol.pubsub.impl.shmpubsub import PickleSharedMemory
+from dimos.protocol.pubsub.shm.ipc_factory import CpuShmQueue
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.rpc.rpc_utils import deserialize_exception, serialize_exception
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, Args, RPCSpec
@@ -322,6 +323,8 @@ class LCMRPC(PubSubRPCMixin[Topic, Any], PickleLCM):
 
 
 class ShmRPC(PubSubRPCMixin[str, Any], PickleSharedMemory):
+    _channel_class = CpuShmQueue
+
     def __init__(
         self,
         rpc_timeouts: dict[str, float] | None = None,
