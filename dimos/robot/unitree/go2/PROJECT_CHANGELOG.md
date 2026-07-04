@@ -9,6 +9,32 @@ Entries are listed in reverse chronological order.
 ## 2026-07-05
 
 - Branch: `refactor/go2-architecture-layers`
+- Summary: Reworked the Go2 self-evolution architecture diagram as a
+  deterministic editable SVG with a PNG render to eliminate generated-image
+  text/arrow errors. Added a separate DimOS repo-wide project architecture
+  diagram covering entry points, blueprints, configuration, core runtime,
+  communication transports, functional module families, robot/simulation
+  targets, and data/model/observability assets.
+- Files/modules:
+  - `docs/reviews/2026-07-05-go2-agent-architecture.svg`
+  - `docs/reviews/2026-07-05-go2-agent-architecture.png`
+  - `docs/reviews/2026-07-05-dimos-project-architecture.svg`
+  - `docs/reviews/2026-07-05-dimos-project-architecture.png`
+  - `docs/reviews/2026-07-05-go2-agent-architecture-review.md`
+  - `docs/reviews/2026-07-05-go2-agent-architecture-review.zh.md`
+  - `dimos/robot/unitree/go2/PROJECT_CHANGELOG.md`
+- Validation:
+  - Parsed both SVG files as XML.
+  - Rendered both SVG files to PNG with `sips`.
+  - Visually inspected both PNG renders for label and arrow issues.
+  - Ran `git diff --check` on the changed markdown/changelog/SVG files.
+- Open items:
+  - Keep the project-wide diagram updated when major package boundaries or
+    blueprint runtime responsibilities change.
+
+## 2026-07-05
+
+- Branch: `refactor/go2-architecture-layers`
 - Summary: Clarified the architecture diagram and review docs so the
   Rerun/WebsocketVis world-model panel is represented as optional observability,
   not a required dependency of `unitree_go2_agentic`. Updated the diagram label

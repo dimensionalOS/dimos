@@ -79,12 +79,27 @@ things:
 
 ## Architecture Diagram
 
-![DimOS Go2 agent self-evolution architecture](2026-07-05-go2-agent-architecture.png)
+![DimOS Go2 agent self-evolution architecture](2026-07-05-go2-agent-architecture.svg)
 
 The purple right-side column is optional observability/storage. The current
 `unitree_go2_agentic` blueprint does not wire `WebsocketVisModule`; the Rerun /
 WebsocketVis panel only receives world-model state if a separate visualization
 blueprint wires `WebsocketVisSpec`.
+
+Editable source: `2026-07-05-go2-agent-architecture.svg`
+PNG render: `2026-07-05-go2-agent-architecture.png`
+
+## Project Architecture Diagram
+
+![DimOS project architecture](2026-07-05-dimos-project-architecture.svg)
+
+This diagram is repo-wide, not Go2-specific. It shows the main DimOS flow:
+entry points, blueprint/configuration, core runtime, communication transports,
+functional module families, robots/simulation/hardware, and data/model/
+observability assets.
+
+Editable source: `2026-07-05-dimos-project-architecture.svg`
+PNG render: `2026-07-05-dimos-project-architecture.png`
 
 ## Interface Input/Output Quick Reference
 
