@@ -33,6 +33,26 @@
 - 当前机器已经有一个 live `dimos` 进程监听 MCP 端口 `9990`。跑 MCP 测试时要换端口，例如 `MCP_PORT=9991`，否则测试客户端会连到 live 服务。
 - `git diff --cached --check -- ':(exclude)*.patch'` 已通过。完整 `git diff --check` 会报上游 `.patch` 文件内的 trailing whitespace，这些是 patch 文件的 context 行，应单独处理，不能随意改动以免破坏补丁语义。
 
+## Review 粒度标准
+
+review 每个本地功能时，建议都按下面这些问题看，而不是只看文件名是否合理:
+
+- 入口: 第一个对外入口是 blueprint、module、MCP skill、RPC method，还是 helper 函数？
+- 输入: 它读取哪些 JSON 字符串、Spec provider、memory provider 或 runtime state？
+- 判断主体: 判断是确定性代码做的，LLM 做的，小型在线统计模型做的，还是人类 reviewer 做的？
+- 状态: 它是无状态、只在内存、写 JSON、写 Git，还是写已有 RAG/vector database？
+- 写边界: 哪个方法会写入？哪些方法是纯 read-only？
+- 失败形态: 缺数据时返回 `unavailable`、`uncertain`、clarifying question、failed `SkillResult`，还是 proposal artifact？
+- 安全边界: 它能执行机器人运动，还是只给上层建议？
+- Review artifact: 哪个 schema 是未来工具要依赖的稳定接口？
+- 测试: 哪个测试证明主数据流？哪个测试证明失败路径？
+
+这个分支最重要的区分是三件事:
+
+- Context selection: LLM 看到上下文前，由确定性代码做过滤和摘要。
+- Agent judgment: LLM 读取已选上下文和工具后决定下一步。
+- Self-evolution artifact: 产出可 review 的 JSON event/proposal，不自动改代码。
+
 ## 需要 Review 的上游更新
 
 这些不是本地自进化功能，但会影响本分支。
@@ -289,6 +309,20 @@ Review 重点:
 - 这还不是基于 replay metric 学出来的策略。
 - LLM 会消费这些上下文，并且仍可以判断上下文不足。
 
+调用路径和归属:
+
+1. 调用方带着 task/runtime metadata 调用 `get_context()`。
+2. ContextProvider 向已接线 provider 请求 world state、memory summary、skill contract、outcome summary、causal-world-model state、context feedback。provider 没接线时，应贡献明确的 unavailable 状态，而不是静默丢掉该 source。
+3. metadata 被传给 `build_context_evidence()`。这个 helper 是纯函数: 给定 metadata 和 `ContextEvidencePolicy`，返回被选 evidence，不发 RPC、不写 memory、不调用 LLM。
+4. ContextProvider 格式化 compact context，并附加 `context_evidence.v1`，让 reviewer 能看到为什么选了这些 evidence。
+5. LLM 仍然是最终消费上下文、做用户可见推理和工具选择的主体。ContextProvider 本身不决定执行 skill。
+
+没有实现的边界:
+
+- 还没有用 replay log 训练 learned ranker。
+- ContextProvider 不写 RAG/vector database。
+- context feedback 只是一个摘要信号，不会单独覆盖 provider data。
+
 Review 重点:
 
 - relevance/confidence 默认阈值是否过松。
@@ -343,6 +377,20 @@ Git 内容会提交到哪里:
 - 不会自动 push 到 GitHub。
 - 只有人类后续运行 `git push` 或开 PR，GitHub 才会收到这些记录。
 
+写入路径:
+
+1. 调用方调用 ledger-facing MCP skill，例如 `record_evolution_event()` 或 `record_skill_proposal()`。
+2. 模块验证 schema，并规范化 payload。
+3. 模块选择存储 root。默认是 repo-local `.dimos/evolution`，`DIMOS_EVOLUTION_LEDGER_DIR` 可以覆盖。
+4. 写入 JSON 文件，作为可 review artifact。
+5. 如果 `commit=False`，除了工作区文件外不碰 Git。
+6. 如果 `commit=True`，只 stage 并提交该 event/proposal 文件到本地 Git，不 push。
+
+隐私和 review 边界:
+
+- 这些文件可能包含 task text、outcome message、context summary、proposal rationale。真实机器人运行前，要先决定 `.dimos/evolution` 是否应该进入正常 Git 历史。
+- ledger 是控制面审计轨迹，不替代 SpatialMemory、TemporalMemory、SkillOutcomeStore 或 causal model state。
+
 Review 重点:
 
 - event/proposal 字段是否可能造成路径穿越。
@@ -367,6 +415,22 @@ Review 重点:
 
 - 这不是模型自训练。
 - 它是 agent self-assessment: 在行动前，agent 可以调用确定性 evaluator 判断任务是否具备上下文和能力支持。
+
+决策树:
+
+1. 解析 task 和可选 `context_json`。
+2. 把 task 匹配到已知 skill contract 和 expert domain。
+3. 根据 Layer 5 contract 检查 required args 和 context requirements。
+4. 对 motion-sensitive 或高风险 skill 检查 robot/world-state 是否可用。
+5. 输出三类粗粒度结果之一: `feasible`、`uncertain`、not feasible。
+6. 如果缺数据，推荐澄清问题或 context-gathering action。
+7. 如果缺能力，报告 missing capability evidence。这个 evidence 后续可以成为 skill-interface proposal 的依据。
+
+边界:
+
+- 它不会调用目标 skill。
+- 它不会创建新 skill。
+- 它不会让 LLM 判断 feasibility。
 
 Review 重点:
 
@@ -437,11 +501,58 @@ Review 重点:
   `dimos.world_model_dashboard.v1`。
 - 支持 save/load model state。
 
+它是不是训练了模型:
+
+- 严格说: 有一个非常小的在线模型，但没有离线训练流程，也没有神经网络世界模型。
+- `OnlineTransitionOutcomeModel` 是 lightweight logistic-style linear model。它把 feature weight 存在 dict 里，每次 `record_causal_transition()` 收到一次已观测 success/failure outcome 时增量更新。
+- 如果还没有记录 transition，它的 `sample_count` 是 0，此时预测只能视为低置信先验行为，不是已学习的机器人知识。
+- symbolic SCM 是手写的，不是从数据学出来的。
+- causal effect estimator 是观测统计估计，只比较 feature active/inactive 的平滑成功率差异，不控制 hidden confounders。
+
+组成部分:
+
+- `OnlineTransitionOutcomeModel`: 在线 success-probability scorer。feature 包括 bias、skill name、domain、是否有 odom、navigation state、spatial memory 是否可用、spatial match count、temporal 是否可用、action argument 是否存在和部分 argument value。更新方式是一阶 gradient adjustment，带 L2 shrinkage。
+- `CausalEffectEstimator`: bounded observation store，对 symbolic feature 做 treated/control success-rate difference。它能给出 risk factor、supporting factor 和 intervention suggestion，但输出里明确声明 unobserved confounders are not controlled。
+- `StructuralCausalModel`: 手写因果图，变量包括 `spatial_has_matches`、`target_resolvability`、`odom_ready`、`motion_safety`、`navigation_success`。它还会生成 counterfactual suggestion，例如语义导航前先 tag 或 perceive target。
+- `InterventionLog`: 记录显式 intervention，并让 prediction 能引用历史 intervention evidence。
+- `_WorldTransition`: compact event record，把 task、skill、before/after state、predicted risk、outcome、inferred cause、recovery suggestion 绑定起来。
+
+记录数据流:
+
+1. `record_causal_transition()` 接收 task、skill name、可选 args、before/after Layer 4 snapshot、prediction metadata、outcome metadata。
+2. 输入会按 JSON object 解析和验证。缺少 outcome 时，如果 SkillOutcomeStore 已接线，可以回退到同 skill 的最新 outcome。
+3. 模块根据 context、prediction reasons、outcome success、error code、message 推断粗粒度 cause 和 recovery suggestion。
+4. 模块计算 before/after snapshot 的 symbolic state delta。
+5. 调用 `_outcome_model.update(...)` 和 `_causal_estimator.update(...)`。
+6. 把 transition append 到内存 deque，最多保留 200 条。
+7. 只有设置了 `DIMOS_GO2_WORLD_MODEL_STATE` 时才 autosave。
+8. 如果 WebsocketVis 已接线，会 publish dashboard state。
+
+预测数据流:
+
+1. `predict_next_state()` 解析 snapshot 和 candidate action。
+2. 读取同 skill 的 recent transitions，提取 repeated failure modes。
+3. 根据当前 snapshot 和 action 计算 rule-based risk reasons。
+4. 调用在线模型得到 success probability、score、risk、confidence、top weighted feature contribution。
+5. 调用 causal estimator 得到 observational risk/support factors。
+6. 调用手写 SCM 得到 variables、edges、counterfactuals。
+7. 调用 intervention log 查找匹配的 intervention evidence。
+8. 合并 rule risk 和 model risk，得到最终 risk 和 score。
+9. 返回 `dimos.world_model_prediction.v1`，并可选 publish dashboard contract。
+
+可信边界:
+
+- 输出只是 advisory evidence，用来帮助 LLM 选择 preflight、perception、clarification 或更安全的 skill path。
+- 它不能直接命令机器人运动。
+- 当前 high confidence 需要同 skill 足够样本；否则应当视为低置信启发式。
+
 Review 重点:
 
 - 当前 causal estimate 只能作为 advisory evidence。
 - prediction schema 要对 dashboard 和 LLM prompt consumer 保持稳定。
 - persistence 不应意外混合不同 run 的数据。
+- UI/prompt 文案不能暗示这是完整训练好的 physical world model。
+- 在依赖它做自主 action selection 前，应补 replay 或 simulation evaluation。
 
 ### 13. Skill Interface Proposal Generator
 
@@ -458,6 +569,19 @@ Review 重点:
 - 如果现有 contract 已覆盖能力，则抑制重复 proposal。
 - 如果 ledger 已接线，通过 evolution ledger 写入 proposal 文件。
 - 不修改 Python 代码、不新增 `@skill`、不改 blueprint wiring。
+
+决策树:
+
+1. 解析 `failure_context_json`。
+2. 查找明确 missing capability evidence，而不是只看执行失败。
+3. 查询现有 Layer 5 contracts，避免 proposal 重复。
+4. 如果只是缺 argument、缺 context、provider 暂时 unavailable，则拒绝生成 proposal。
+5. 构造 proposal artifact，包含 task、evidence、suggested interface shape、expected inputs、expected output、review rationale。
+6. 如果 ledger 已接线，通过 evolution ledger 写入 proposal。
+
+人工边界:
+
+- 这个工具故意只做 proposal。开发者仍然需要写代码、选择 container、加 `@skill`、更新 contract/prompt，并测试行为。
 
 Review 重点:
 

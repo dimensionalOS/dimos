@@ -46,6 +46,35 @@ Important environment note:
   those are patch context lines and should be handled separately if we want a
   repository-wide whitespace cleanup.
 
+## Review Granularity
+
+Use this structure when reviewing each local feature. The goal is to avoid
+approving a feature just because the file names sound plausible.
+
+- Entry point: Which blueprint, module, MCP skill, RPC method, or helper is the
+  first public surface?
+- Inputs: Which JSON strings, spec providers, memory providers, or runtime
+  states feed it?
+- Decision owner: Is the decision made by deterministic code, the LLM reading
+  context, a small online statistical model, or a human reviewer?
+- State: Is the feature stateless, in-memory only, persisted to JSON, persisted
+  to Git, or stored in an existing RAG/vector database?
+- Write boundary: Which exact method writes, and which methods are read-only?
+- Failure mode: Does missing data produce `unavailable`, `uncertain`, a
+  clarifying question, a failed `SkillResult`, or a proposal artifact?
+- Safety boundary: Can it execute robot motion, or only advise another layer?
+- Review artifact: Which schema should be stable enough for future tooling?
+- Tests: Which test proves the data path, and which test proves the failure path?
+
+The most important distinction in this branch is between three very different
+things:
+
+- Context selection: deterministic filtering and summarization before the LLM
+  sees context.
+- Agent judgment: the LLM deciding what to do with selected context and tools.
+- Self-evolution artifact: reviewable JSON events/proposals, not automatic code
+  mutation.
+
 ## Upstream Changes To Review
 
 These are not local self-evolution features, but they can affect this branch.
@@ -345,6 +374,29 @@ What "effective" means today:
 - It is not yet learned from replay metrics.
 - The LLM consumes the selected context and may still judge it insufficient.
 
+Call path and ownership:
+
+1. The caller invokes `get_context()` with task/runtime metadata.
+2. ContextProvider asks wired providers for world state, memory summaries,
+   skill contracts, outcome summaries, causal-world-model state, and context
+   feedback. If a provider is not wired, the provider contributes an explicit
+   unavailable status rather than throwing away the source silently.
+3. Metadata is passed to `build_context_evidence()`. That helper is pure:
+   given metadata and a `ContextEvidencePolicy`, it returns selected evidence
+   without calling RPC, writing memory, or consulting an LLM.
+4. ContextProvider formats the compact context and attaches
+   `context_evidence.v1` so reviewers can see why the context contained those
+   entries.
+5. The LLM is still the consumer and final user-facing reasoning actor. The
+   provider does not decide to execute a skill.
+
+What is not implemented:
+
+- No learned ranker is trained from replay logs yet.
+- No RAG/vector database entries are written by ContextProvider.
+- Context feedback is summarized as a signal, but it does not override provider
+  data by itself.
+
 Review focus:
 
 - Check whether relevance/confidence defaults are too permissive.
@@ -400,6 +452,26 @@ Where does Git data go:
 - It does not push to GitHub.
 - GitHub only receives it if a human later runs `git push` or opens a PR.
 
+Write path:
+
+1. A caller invokes a ledger-facing MCP skill such as
+   `record_evolution_event()` or `record_skill_proposal()`.
+2. The module validates the schema and normalizes the payload.
+3. The module chooses the storage root. The default is the repo-local
+   `.dimos/evolution` tree; `DIMOS_EVOLUTION_LEDGER_DIR` overrides it.
+4. The JSON file is written as the review artifact.
+5. If `commit=False`, Git is not touched beyond the working tree file.
+6. If `commit=True`, only that new event/proposal file is staged and committed
+   locally. There is no push.
+
+Privacy and review boundary:
+
+- These files can contain task text, outcome messages, context summaries, and
+  proposal rationale. Decide whether `.dimos/evolution` belongs in normal Git
+  history before enabling commit mode on real robot runs.
+- The ledger is a control-plane audit trail. It is not a replacement for
+  SpatialMemory, TemporalMemory, SkillOutcomeStore, or the causal model state.
+
 Review focus:
 
 - Confirm no path traversal is possible through event/proposal fields.
@@ -428,6 +500,25 @@ Self-evolution meaning:
 - This is not model self-training.
 - It is agent self-assessment: before acting, the agent can ask a deterministic
   evaluator whether the task has enough context and capability support.
+
+Decision tree:
+
+1. Parse the task and optional `context_json`.
+2. Match the task against known skill contracts and expert domains.
+3. Check required arguments and context requirements from Layer 5 contracts.
+4. Check robot/world-state availability for motion-sensitive or risky skills.
+5. Produce one of three broad outcomes:
+   `feasible`, `uncertain`, or not feasible.
+6. If data is missing, recommend a clarifying question or context-gathering
+   action.
+7. If capability is missing, report it as missing capability evidence. That is
+   the input that can later justify a skill-interface proposal.
+
+Boundary:
+
+- It does not call the target skill.
+- It does not create a new skill.
+- It does not ask the LLM to classify feasibility.
 
 Review focus:
 
@@ -499,12 +590,87 @@ Implementation logic:
   `dimos.world_model_dashboard.v1`.
 - Supports save/load of model state.
 
+Is it a trained model?
+
+- Strict answer: there is a very small online model, but there is no offline
+  training pipeline and no neural world model.
+- `OnlineTransitionOutcomeModel` is a lightweight logistic-style linear model.
+  It stores feature weights in a dictionary and updates them incrementally when
+  `record_causal_transition()` receives an observed success/failure outcome.
+- If no transitions have been recorded, its `sample_count` is zero and its
+  prediction should be treated as low-confidence prior behavior, not learned
+  robot knowledge.
+- The symbolic SCM is hand-authored. It is not learned from data.
+- The causal effect estimator is observational statistics. It compares smoothed
+  success rates for active features and does not control hidden confounders.
+
+Components:
+
+- `OnlineTransitionOutcomeModel`: online success-probability scorer. Features
+  include bias, skill name, domain, odometry presence, navigation state, spatial
+  memory availability, spatial match count, temporal availability, and selected
+  action argument presence/value. The update is one-step gradient adjustment
+  with L2 shrinkage.
+- `CausalEffectEstimator`: bounded observation store with treated/control
+  success-rate differences for symbolic features. It can produce risk factors,
+  supporting factors, and intervention suggestions, but its own output declares
+  the assumption that unobserved confounders are not controlled.
+- `StructuralCausalModel`: hand-authored causal graph for variables such as
+  `spatial_has_matches`, `target_resolvability`, `odom_ready`,
+  `motion_safety`, and `navigation_success`. It also emits counterfactual
+  suggestions such as "tag or perceive target before semantic navigation".
+- `InterventionLog`: records explicit interventions and lets prediction surface
+  prior intervention evidence.
+- `_WorldTransition`: the compact event record tying task, skill, before/after
+  state, predicted risk, outcome, inferred cause, and recovery suggestion
+  together.
+
+Data flow for recording:
+
+1. `record_causal_transition()` receives task, skill name, optional args,
+   before/after Layer 4 snapshots, prediction metadata, and outcome metadata.
+2. Inputs are parsed as JSON objects and validated. Missing outcome can fall
+   back to the latest same-skill outcome if SkillOutcomeStore is wired.
+3. The module infers a coarse cause and recovery suggestion from context,
+   prediction reasons, outcome success, error code, and message.
+4. It computes a symbolic state delta from before/after snapshots.
+5. It calls `_outcome_model.update(...)` and `_causal_estimator.update(...)`.
+6. It appends the transition to an in-memory deque capped at 200 transitions.
+7. It autosaves to `DIMOS_GO2_WORLD_MODEL_STATE` only if that env path is set.
+8. It publishes dashboard state if WebsocketVis is wired.
+
+Data flow for prediction:
+
+1. `predict_next_state()` parses a snapshot and candidate action.
+2. It gets recent same-skill transitions and derives repeated failure modes.
+3. It computes rule-based risk reasons from the current snapshot and action.
+4. It asks the online model for success probability, score, risk, confidence,
+   and top weighted feature contributions.
+5. It asks the causal estimator for observational risk/support factors.
+6. It asks the hand-authored SCM for variables, edges, and counterfactuals.
+7. It asks the intervention log for matching intervention evidence.
+8. It combines rule risk and model risk into a final risk and score.
+9. It returns `dimos.world_model_prediction.v1` and optionally publishes the
+   dashboard contract.
+
+Trust boundary:
+
+- The output is advisory. It should help the LLM choose preflight, perception,
+  clarification, or a safer skill path.
+- It should not directly command robot motion.
+- High confidence currently requires enough recent samples for the same skill;
+  otherwise the model should be treated as a low-confidence heuristic.
+
 Review focus:
 
 - Treat current causal estimates as advisory evidence.
 - Validate that prediction schemas remain stable for dashboard and LLM prompt
   consumers.
 - Check that persistence does not mix data across runs unexpectedly.
+- Check that the UI/prompt labels do not imply a fully trained physical world
+  model.
+- Check that replay or simulation evaluation is added before relying on this
+  for autonomous action selection.
 
 ### 13. Skill Interface Proposal Generator
 
@@ -523,6 +689,23 @@ Implementation logic:
   capability.
 - Writes proposal files through the evolution ledger when wired.
 - Does not modify Python code, skill decorators, or blueprint wiring.
+
+Decision tree:
+
+1. Parse `failure_context_json`.
+2. Look for explicit missing capability evidence, not just failed execution.
+3. Check existing Layer 5 contracts to avoid proposing a duplicate interface.
+4. Reject cases that are only missing arguments, missing context, or temporary
+   provider unavailability.
+5. Build a proposal artifact with task, evidence, suggested interface shape,
+   expected inputs, expected output, and review rationale.
+6. Write it through the evolution ledger if a ledger is wired.
+
+Human boundary:
+
+- This tool is intentionally proposal-only. A developer still writes code,
+  chooses the container, adds `@skill`, updates contracts/prompts, and tests the
+  behavior.
 
 Review focus:
 

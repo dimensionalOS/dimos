@@ -9,6 +9,25 @@ Entries are listed in reverse chronological order.
 ## 2026-07-05
 
 - Branch: `refactor/go2-architecture-layers`
+- Summary: Expanded the English and Chinese Go2 architecture review guides with
+  finer implementation granularity, including entry points, inputs, decision
+  ownership, state/write boundaries, failure modes, and a detailed explanation
+  of the causal world model's online linear model, hand-authored SCM, and
+  observational estimator.
+- Files/modules:
+  - `docs/reviews/2026-07-05-go2-agent-architecture-review.md`
+  - `docs/reviews/2026-07-05-go2-agent-architecture-review.zh.md`
+  - `dimos/robot/unitree/go2/PROJECT_CHANGELOG.md`
+- Validation:
+  - Documentation-only change.
+  - Ran `git diff --check` on the changed review/changelog files.
+- Open items:
+  - Keep these review guides in sync if the implementation changes after code
+    review.
+
+## 2026-07-05
+
+- Branch: `refactor/go2-architecture-layers`
 - Summary: Synchronized the branch with upstream `main` at `6e813a72`, resolved
   conflicts against the Go2 layered architecture, and added a detailed review
   guide in English and Chinese for the full Go2 agent architecture/self-evolution
