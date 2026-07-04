@@ -55,6 +55,8 @@ approving a feature just because the file names sound plausible.
   first public surface?
 - Inputs: Which JSON strings, spec providers, memory providers, or runtime
   states feed it?
+- Outputs: Which `SkillResult`, dict schema, Spec return value, file artifact,
+  or dashboard payload does the interface return?
 - Decision owner: Is the decision made by deterministic code, the LLM reading
   context, a small online statistical model, or a human reviewer?
 - State: Is the feature stateless, in-memory only, persisted to JSON, persisted
@@ -74,6 +76,59 @@ things:
 - Agent judgment: the LLM deciding what to do with selected context and tools.
 - Self-evolution artifact: reviewable JSON events/proposals, not automatic code
   mutation.
+
+## Interface Input/Output Quick Reference
+
+Use this section when reviewing API boundaries. It lists the stable public
+surfaces added or changed by the local Go2 architecture work; helper functions
+that are not consumed across module boundaries are intentionally omitted.
+
+| Surface | Inputs | Outputs |
+| --- | --- | --- |
+| Go2 blueprint factories (`unitree_go2_agentic`, `unitree_go2_spatial`, `unitree_go2_temporal_memory`) | CLI blueprint name plus `GlobalConfig` values already resolved by DimOS. Lazy layer imports have no runtime arguments. | DimOS `Blueprint` objects composed with `autoconnect()`. They output module wiring, streams, and Spec injection paths, not user-facing JSON. |
+| `RobotBodyStateSpec.get_robot_body_snapshot()` | No arguments; reads recent odom/image/lidar observations and connection/local-policy summaries from Layer 6. | `dict` with connection state, sensor state, local policy state, safety state, and freshness/availability markers. |
+| `RobotBodyStateSpec.get_connection_state()` | No arguments. | `dict` describing connection availability/config-derived mode. |
+| `RobotBodyStateSpec.get_sensor_state()` | No arguments. | `dict` with observed sensor counters/freshness such as image, lidar, and odom availability. |
+| `RobotBodyStateSpec.get_local_policy_state()` | No arguments. | `dict` describing local policy/readiness state used as evidence by upper layers. |
+| `WorldStateSpec.get_world_snapshot(task, spatial_limit)` | `task: str`, `spatial_limit: int`; reads Layer 6 body state plus spatial/temporal memory providers when wired. | `dict` world snapshot with `robot_state`, `runtime`, `memory_state`, `semantic_temporal_map`, `sources`, and snapshot-storage metadata. |
+| `WorldStateSpec.get_robot_state()` | No arguments. | `dict` robot/body state view for upper-layer preflight. |
+| `WorldStateSpec.get_runtime_state()` | No arguments. | `dict` runtime mode/config summary such as replay/simulation/hardware and MCP/viewer settings. |
+| `WorldStateSpec.get_memory_state(task, spatial_limit)` | `task: str`, `spatial_limit: int`. | `dict` memory section with spatial and temporal availability, matches/summaries, and errors when a provider probe fails. |
+| `WorldStateSpec.get_snapshot_storage_policy()` | No arguments. | `dict` explaining whether snapshots are transient, written to memory, or persisted elsewhere. |
+| `SemanticTemporalMapSpec.query_semantic_temporal_map(query, spatial_limit)` | `query: str`, `spatial_limit: int`; reads spatial and temporal memory providers. | `dict` with spatial section, temporal section, fused evidence entries, confidence/location/time summaries, and source errors. |
+| `SkillInterfaceSpec.get_skill_interface_snapshot(domain)` | Optional `domain: str` filter. | `dict` with `available`, `version`, `source`, `domain_filter`, `domains`, `skill_count`, and a `skills` list of static contracts. |
+| `SkillInterfaceSpec.get_skill_contract(skill_name)` | `skill_name: str`. | Matching skill-contract `dict`, or `None` when no contract exists. |
+| `SkillInterfaceSpec.validate_skill_request(skill_name, args_json)` | `skill_name: str`, `args_json: str` JSON object. | `dict` with `valid`, `errors`, `warnings`, and the matched `contract`; unknown skills return `valid=False`. |
+| `SkillInterfaceSpec.compare_mcp_tools(tools_json)` | `tools_json: str` containing an MCP `tools/list` style payload or list. | `dict` with `valid`, parser errors, contract/MCP counts, missing contracts, unregistered MCP tools, and known internal tools. |
+| `route_task(task, context)` MCP skill | `task: str`, optional `context: str`. | `SkillResult` metadata: `domain`, `confidence`, `matched_keywords`, `recommended_tools`, `needs_context`, `reason`, and `context_used`. |
+| `get_context(task, focus, spatial_limit)` MCP skill | `task: str`, optional `focus: str`, `spatial_limit: int`; reads Layer 4, memory, skill, feedback, outcome, and world-model providers when wired. | `SkillResult` message plus metadata containing `sources`, `runtime`, `robot_state`, `world_state`, `skill_state`, `context_feedback`, `causal_state`, `world_model_state`, `context_evidence`, and provider `errors`. |
+| `build_context_evidence(metadata, policy)` helper | Metadata dict from ContextProvider and `ContextEvidencePolicy` thresholds. | `context_evidence.v1` dict describing selected evidence, dropped/low-confidence evidence, selected sources, and policy effects. |
+| `memory_backend_status()` MCP skill | No arguments; read probes optional providers. | `SkillResult` metadata with schema `go2_memory_backend_status.v1`, per-provider wired/available/probe fields, and warnings. |
+| `record_evolution_event(event_type, task, payload_json, commit)` MCP skill | `event_type: str`, optional `task: str`, `payload_json: str` JSON object, `commit: bool`. | `SkillResult` metadata with `schema`, `event_type`, `task`, `ledger_dir`, `event_path`, `commit_requested`, optional `commit_sha`, `warnings`, and full `event`. |
+| `record_skill_proposal(proposal_json, commit)` MCP skill / ledger RPC | `proposal_json: str` using `dimos.skill_proposal.v1`, `commit: bool`. | `SkillResult` metadata with `schema`, `proposal_id`, `ledger_dir`, `proposal_path`, `commit_requested`, optional `commit_sha`, `warnings`, and validated `proposal`. |
+| `EvolutionLedgerSpec.write_evolution_event(event_type, task, payload, commit)` | Structured payload `dict` from another Layer 3 module. | Same ledger event record dict as `record_evolution_event`, without MCP JSON parsing. |
+| `EvolutionLedgerSpec.write_skill_proposal(proposal, commit)` | Validated proposal `dict`. | Same proposal record dict as `record_skill_proposal`, without MCP JSON parsing. |
+| `evaluate_task_feasibility(task, context_json)` MCP skill | `task: str`, `context_json: str` JSON object, usually from `get_context` metadata. Reads Layer 5 contracts when wired. | `SkillResult` metadata: `feasible` (`yes`, `no`, `uncertain`), `missing_context`, `required_skills`, `available_skills`, `missing_skills`, `safety_risks`, `recommended_next_action`, `clarifying_question`, `evidence_sources`, and warnings. |
+| `record_context_feedback(task, context_evidence_json, selected_skill, outcome_json, helpful_sources_json, ignored_risks_json)` MCP skill | Task text, `context_evidence.v1` JSON, optional selected skill, outcome JSON object, helpful-source JSON list, ignored-risk JSON list. | `SkillResult` metadata with one `go2_context_feedback.v1` feedback record, `total_feedback`, and optional ledger warnings. |
+| `ContextFeedbackSpec.get_recent_context_feedback(limit, source)` | `limit: int`, optional source filter. | Newest-first list of `go2_context_feedback.v1` feedback dicts. |
+| `ContextFeedbackSpec.get_context_feedback_summary(limit)` | `limit: int`. | Aggregate `dict` with counts for success/failure/unknown outcomes plus helpful/harmful source counters. |
+| `record_skill_outcome(skill_name, success, domain, error_code, message, risk, recovery)` MCP skill | Skill name, success boolean, optional domain/error/message/risk/recovery strings. | `SkillResult` metadata with recorded outcome dict and `total_outcomes`. |
+| `summarize_skill_outcomes(limit, skill_name, domain)` MCP skill | Limit plus optional skill/domain filters. | `SkillResult` metadata with filtered newest-first `outcomes` list. |
+| `SkillOutcomeStoreSpec.get_recent_outcomes(limit, skill_name, domain)` | Limit plus optional exact skill/domain filters. | Newest-first list of outcome dicts: timestamp, skill name, success, domain, error code, message, risk, recovery. |
+| `predict_skill_outcome(skill_name, args_json, context)` MCP skill | Skill name, planned args JSON object, optional context text. Reads SkillOutcomeStore and CausalWorldModel when wired. | `SkillResult` metadata with `risk`, `predicted_success`, `failure_reasons`, `recovery_suggestions`, recent outcomes/transitions, optional world-model prediction, and provider availability flags. |
+| `record_causal_transition(...)` MCP skill | Task, skill name, args JSON, before/after context text, prediction JSON, outcome JSON, domain, before/after state JSON. | `SkillResult` metadata with transition dict, `total_transitions`, `autosave_error`, and `dashboard_error`. |
+| `predict_world_transition(snapshot_json, action_json, goal, horizon)` MCP skill / `predict_next_state(...)` RPC | Layer 4 snapshot JSON, action JSON with `skill_name` and `args`, optional goal, bounded horizon. | `dimos.world_model_prediction.v1` dict with action, snapshot summary, risk, predicted success, score, confidence, predicted symbolic delta, failure modes, reasons, model output, causal attribution, SCM explanation, and intervention evidence. |
+| `score_action(snapshot_json, action_json, goal)` RPC | Same snapshot/action/goal inputs as prediction. | Compact dict with score, risk, confidence, predicted success, failure modes, reasons, model/causal/SCM/intervention evidence. |
+| `summarize_causal_patterns(skill_name, domain, limit)` MCP skill | Optional skill/domain filters and limit. | `SkillResult` metadata with repeated causal `patterns` and filtered `transitions`. |
+| `record_intervention(...)` MCP skill | Task, intervention name, target variable, before/after value JSON, action JSON, before/after snapshot JSON, outcome JSON, causal hypothesis. | `SkillResult` metadata with intervention record, `total_interventions`, `autosave_error`, and `dashboard_error`. |
+| `save_world_model_state(path)` / `load_world_model_state(path)` MCP skills | Optional path; required unless `DIMOS_GO2_WORLD_MODEL_STATE` is set. | `SkillResult` summary with saved/loaded model-state counts plus optional dashboard error. |
+| `CausalWorldModelSpec.get_recent_transitions(limit, skill_name, domain, cause)` | Limit plus optional exact filters. | Newest-first list of transition dicts. |
+| `CausalWorldModelSpec.get_intervention_log(limit, target_variable, intervention_name)` | Limit plus optional exact filters. | Newest-first list of intervention dicts. |
+| `CausalWorldModelSpec.get_model_state()` | No arguments. | Dict with online model sample/weights summary, provider contract, causal estimator snapshot, intervention log snapshot, SCM snapshot, and persistence config. |
+| `CausalWorldModelSpec.get_provider_contract()` | No arguments. | `dimos.world_model_provider.v1` dict naming provider, model type, capabilities, and output schemas. |
+| `propose_skill_interface(task, failure_context_json)` MCP skill | Task text and failure-context JSON object with missing-capability evidence. Reads Layer 5 contracts/outcomes when wired. | `SkillResult` metadata: `proposal_created`, `proposal` using `dimos.skill_proposal.v1` when created, `existing_skill_matches`, `recommended_next_action`, optional `proposal_path` or warnings. |
+| MCP `tools/list` / `tools/call` runtime surface | JSON-RPC requests; `tools/call` also carries MCP arguments and optional `_mcp_context` progress/capability token. | Tool schemas with capability metadata; tool-call text/content results; SSE progress frames for background tools; capability release on instant return or stopped frame. |
+| `WebsocketVisSpec.set_world_model_state(state)` | `state: dict` expected to use `dimos.world_model_dashboard_state.v1`. | `dict` acknowledgement/current display state for dashboard clients. |
 
 ## Upstream Changes To Review
 
