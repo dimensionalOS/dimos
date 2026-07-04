@@ -9,6 +9,32 @@ Entries are listed in reverse chronological order.
 ## 2026-07-05
 
 - Branch: `refactor/go2-architecture-layers`
+- Summary: Added a single research-style composite architecture figure that
+  places the Go2 agentic self-evolution architecture inside the repo-wide DimOS
+  project architecture. The new figure makes the agent brain the emphasized
+  subsystem while preserving surrounding execution context: CLI/MCP entry
+  points, blueprint/configuration, core runtime, transports, module families,
+  robot/simulation targets, memory/assets, local review artifacts, and optional
+  observability.
+- Files/modules:
+  - `docs/reviews/2026-07-05-dimos-agentic-architecture.svg`
+  - `docs/reviews/2026-07-05-dimos-agentic-architecture.png`
+  - `docs/reviews/2026-07-05-go2-agent-architecture-review.md`
+  - `docs/reviews/2026-07-05-go2-agent-architecture-review.zh.md`
+  - `dimos/robot/unitree/go2/PROJECT_CHANGELOG.md`
+- Validation:
+  - Parsed the combined SVG as XML.
+  - Rendered the combined SVG to PNG with `sips`.
+  - Visually inspected the PNG render for label, arrow, and optional-path
+    ambiguity issues.
+  - Ran `git diff --check` on the changed markdown/changelog/SVG files.
+- Open items:
+  - Keep the combined figure as the canonical review diagram when future
+    agent, memory, skill, or blueprint boundaries change.
+
+## 2026-07-05
+
+- Branch: `refactor/go2-architecture-layers`
 - Summary: Reworked the Go2 self-evolution architecture diagram as a
   deterministic editable SVG with a PNG render to eliminate generated-image
   text/arrow errors. Added a separate DimOS repo-wide project architecture

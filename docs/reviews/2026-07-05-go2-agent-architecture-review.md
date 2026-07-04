@@ -77,29 +77,40 @@ things:
 - Self-evolution artifact: reviewable JSON events/proposals, not automatic code
   mutation.
 
-## Architecture Diagram
+## Combined Project and Agent Architecture Diagram
 
-![DimOS Go2 agent self-evolution architecture](2026-07-05-go2-agent-architecture.svg)
+![DimOS project architecture with Go2 agentic self-evolution extension](2026-07-05-dimos-agentic-architecture.svg)
 
-The purple right-side column is optional observability/storage. The current
-`unitree_go2_agentic` blueprint does not wire `WebsocketVisModule`; the Rerun /
-WebsocketVis panel only receives world-model state if a separate visualization
-blueprint wires `WebsocketVisSpec`.
+This is the canonical review figure for this branch. Panel A shows the
+repo-wide DimOS execution architecture: entry points, blueprint/configuration,
+core runtime, transports, module families, robot/simulation targets, and data
+assets. Panel B expands the Go2 agentic self-evolution extension inside that
+project architecture, with the agent brain deliberately emphasized because it
+owns task evaluation, context use, skill validation, feasibility judgment, and
+proposal/artifact emission.
 
-Editable source: `2026-07-05-go2-agent-architecture.svg`
-PNG render: `2026-07-05-go2-agent-architecture.png`
+The purple right-side column remains optional observability/storage. The
+current `unitree_go2_agentic` blueprint does not wire `WebsocketVisModule`; the
+Rerun / WebsocketVis panel only receives world-model state if a separate
+visualization blueprint wires `WebsocketVisSpec`.
 
-## Project Architecture Diagram
+Line semantics are part of the figure contract:
 
-![DimOS project architecture](2026-07-05-dimos-project-architecture.svg)
+- Solid black arrows: control flow, blueprint composition, tool calls, or robot
+  commands.
+- Dashed blue arrows: context/evidence reads used by the agent.
+- Dotted purple arrows: local review artifacts written to files/Git.
+- Dash-dot purple arrows: optional observability paths.
 
-This diagram is repo-wide, not Go2-specific. It shows the main DimOS flow:
-entry points, blueprint/configuration, core runtime, communication transports,
-functional module families, robots/simulation/hardware, and data/model/
-observability assets.
+Editable source: `2026-07-05-dimos-agentic-architecture.svg`
+PNG render: `2026-07-05-dimos-agentic-architecture.png`
 
-Editable source: `2026-07-05-dimos-project-architecture.svg`
-PNG render: `2026-07-05-dimos-project-architecture.png`
+Supporting detail figures retained for narrower inspection:
+
+- Agent-only detail: `2026-07-05-go2-agent-architecture.svg` /
+  `2026-07-05-go2-agent-architecture.png`
+- Project-only detail: `2026-07-05-dimos-project-architecture.svg` /
+  `2026-07-05-dimos-project-architecture.png`
 
 ## Interface Input/Output Quick Reference
 
