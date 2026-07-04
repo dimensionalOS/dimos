@@ -6,6 +6,52 @@ work so future contributors can understand why the fork differs from upstream.
 
 Entries are listed in reverse chronological order.
 
+## 2026-07-05
+
+- Branch: `refactor/go2-architecture-layers`
+- Summary: Synchronized the branch with upstream `main` at `6e813a72`, resolved
+  conflicts against the Go2 layered architecture, and added a detailed review
+  guide for the full Go2 agent architecture/self-evolution feature set.
+- Files/modules:
+  - `docs/reviews/2026-07-05-go2-agent-architecture-review.md`
+  - `dimos/agents/mcp/mcp_server.py`
+  - `dimos/agents/mcp/test_mcp_server.py`
+  - `dimos/perception/spatial_perception.py`
+  - `dimos/robot/unitree/go2/blueprints/agentic/unitree_go2_agentic.py`
+  - `dimos/robot/unitree/go2/blueprints/agentic/unitree_go2_temporal_memory.py`
+  - `dimos/robot/unitree/go2/blueprints/smart/unitree_go2_spatial.py`
+  - `dimos/robot/unitree/go2/test_connection.py`
+  - `dimos/robot/unitree/go2/PROJECT_CHANGELOG.md`
+- Validation:
+  - Installed missing upstream dependency `eclipse-zenoh==1.9.0` into the local
+    `.venv`.
+  - Ran focused MCP server tests:
+    `10 passed, 1 warning`.
+  - Ran focused Go2 connection tests:
+    `5 passed`.
+  - Ran full focused Go2 Layer 3 agent-brain suite:
+    `62 passed`.
+  - Ran focused Go2 Layer 4 world-state suite:
+    `3 passed, 1 warning`.
+  - Ran focused spatial-memory config tests:
+    `2 passed`.
+  - Ran ModuleCoordinator suite under LCM:
+    `35 passed`.
+  - Ran MCP client/tool-stream suite under LCM on port 9991:
+    `44 passed, 1 warning`.
+  - Ran blueprint registry generation check:
+    `1 passed`.
+  - Ran `git diff --cached --check -- ':(exclude)*.patch'`.
+- Open items:
+  - Upstream now defaults macOS transport to Zenoh; some tests expose native
+    pyo3 thread lifetime issues under that backend. The same suites pass with
+    `DIMOS_TRANSPORT=lcm`.
+  - MCP tests must avoid port `9990` on this machine while a live `dimos`
+    process is running there.
+  - Upstream `.patch` files contain whitespace that trips full
+    `git diff --check`; excluded patch files during validation to avoid
+    altering patch semantics.
+
 ## 2026-07-04
 
 - Branch: `refactor/go2-architecture-layers`

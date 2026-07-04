@@ -1,4 +1,6 @@
-# Transforms
+---
+title: "Transforms"
+---
 
 ## The Problem: Everything Measures from Its Own Perspective
 
@@ -43,7 +45,6 @@ text "target here" small italic at (GR.s.x, GR.s.y - 0.25in)
 </details>
 
 ![output](assets/transforms_tree.svg)
-
 
 Each arrow in this tree is a transform. To get the mug's position in gripper coordinates, you chain transforms through their common parent: camera → robot_base → arm → gripper.
 
@@ -97,7 +98,6 @@ base_link -> camera_link
   Rotation: Quaternion(0.000000, 0.000000, 0.000000, 1.000000)
 ```
 
-
 ### Transform Operations
 
 Transforms can be composed and inverted:
@@ -137,7 +137,6 @@ Translation: (1.0, 0.5, 0.0)
 Inverse: camera_link -> base_link
 ```
 
-
 ### Converting to Matrix Form
 
 For integration with libraries like NumPy or OpenCV:
@@ -163,8 +162,6 @@ print(matrix)
  [0. 0. 1. 3.]
  [0. 0. 0. 1.]]
 ```
-
-
 
 ## Frame IDs in Modules
 
@@ -197,7 +194,6 @@ Default frame_id: sensor_link
 With prefix: robot1/sensor_link
 ```
 
-
 ## The TF Service
 
 Every module has access to `self.tf`, a transform service that:
@@ -206,7 +202,7 @@ Every module has access to `self.tf`, a transform service that:
 - **Looks up** transforms between any two frames
 - **Buffers** historical transforms for temporal queries
 
-The TF service is implemented in [`tf.py`](/dimos/protocol/tf/tf.py) and is lazily initialized on first access.
+The TF service is implemented in [`protocol/tf/tf.py`](/dimos/protocol/tf/tf.py) and is lazily initialized on first access.
 
 ### Multi-Module Transform Example
 
@@ -275,7 +271,6 @@ class CameraModule(Module):
             rx.interval(0.1).subscribe(publish_transforms)
         )
 
-
 class PerceptionModule(Module):
     """Receives transforms and performs lookups."""
 
@@ -307,7 +302,6 @@ class PerceptionModule(Module):
         print("Transform tree:")
         print(self.tf.graph())
 
-
 if __name__ == "__main__":
     dimos = ModuleCoordinator()
     dimos.start()
@@ -327,8 +321,7 @@ if __name__ == "__main__":
 
 ```
 
-<!--Result:-->
-```
+```results
 16:21:45.203 [inf][ation/worker_manager_python.py] Worker pool started. n_workers=2
 16:21:45.445 [inf][/coordination/python_worker.py] Deployed module. module=RobotBaseModule module_id=0 worker_id=0
 16:21:45.451 [inf][/coordination/python_worker.py] Deployed module. module=CameraModule module_id=1 worker_id=1
@@ -414,17 +407,15 @@ box width (CO.e.x - BL.e.x + 0.1in) height 0.7in \
 text "CameraModule" italic at ((CL.x + CO.x)/2, CL.s.y - 0.25in)
 ```
 
-
 </details>
 
 ![output](assets/transforms_modules.svg)
-
 
 # Internals
 
 ## Transform Buffer
 
-`self.tf` on module is a transform buffer. This is a standalone class that maintains a temporal buffer of transforms (default 10 seconds) allowing queries at past timestamps, you can use it directly:
+`self.tf` on a module is a transform buffer. This is a standalone class that maintains a temporal buffer of transforms (default 10 seconds) allowing queries at past timestamps, you can use it directly:
 
 ```python
 import time
@@ -461,9 +452,7 @@ MultiTBuffer(1 buffers):
   TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2026-05-15 21:11:37 - 2026-05-15 21:11:37])
 ```
 
-
 This is essential for sensor fusion where you need to know where the camera was when an image was captured, not where it is now.
-
 
 ## Further Reading
 

@@ -40,10 +40,10 @@ from dimos.core.introspection.module.render import render_module_io
 from dimos.core.resource import CompositeResource
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteOut, Transport
-from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.core.transport_factory import rpc_backend, tf_backend
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
 from dimos.protocol.service.spec import BaseConfig, Configurable
-from dimos.protocol.tf.tf import LCMTF, TFSpec
+from dimos.protocol.tf.tf import TFSpec
 from dimos.utils import colors
 from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
@@ -69,6 +69,20 @@ class SkillInfo:
     class_name: str
     func_name: str
     args_schema: str
+    uses: tuple[str, ...] = ()
+    lifecycle: str = "instant"
+
+
+class PeekNotFound:
+    """Sentinel returned by `Module.peek_stream` when the named stream is
+    not present on a module. A class instance survives pickle round-trips so
+    `Dimos.peek_stream` can `isinstance(result, PeekNotFound)`-test the reply.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<PeekNotFound>"
 
 
 def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
@@ -89,10 +103,10 @@ Deployment = Literal["python", "docker"]
 
 
 class ModuleConfig(BaseConfig):
-    rpc_transport: type[RPCSpec] = LCMRPC
+    rpc_transport: type[RPCSpec] = Field(default_factory=rpc_backend)
     default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT
     rpc_timeouts: dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_RPC_TIMEOUTS))
-    tf_transport: type[TFSpec] = LCMTF  # type: ignore[type-arg]
+    tf_transport: type[TFSpec] = Field(default_factory=tf_backend)  # type: ignore[type-arg]
     frame_id_prefix: str | None = None
     frame_id: str | None = None
     g: GlobalConfig = global_config
@@ -140,8 +154,10 @@ class ModuleBase(Configurable, CompositeResource):
                 rpc_timeouts=self.config.rpc_timeouts,
                 default_rpc_timeout=self.config.default_rpc_timeout,
             )
-            self.rpc.serve_module_rpc(self)
+            # start() before serve_module_rpc(): Zenoh's subscribe needs an open
+            # session (acquired in start()), whereas LCM tolerates either order.
             self.rpc.start()  # type: ignore[attr-defined]
+            self.rpc.serve_module_rpc(self)
         except ValueError:
             ...
 
@@ -255,8 +271,7 @@ class ModuleBase(Configurable, CompositeResource):
     @property
     def tf(self):  # type: ignore[no-untyped-def]
         if self._tf is None:
-            # self._tf = self.config.tf_transport()
-            self._tf = LCMTF()
+            self._tf = self.config.tf_transport()
         return self._tf
 
     @tf.setter
@@ -426,9 +441,15 @@ class ModuleBase(Configurable, CompositeResource):
             attr = getattr(self, name)
             if callable(attr) and hasattr(attr, "__skill__"):
                 schema = json.dumps(tool(attr).args_schema.model_json_schema())
+                uses = tuple(getattr(attr, "__skill_uses__", ()) or ())
+                lifecycle = getattr(attr, "__skill_lifecycle__", "instant")
                 skills.append(
                     SkillInfo(
-                        class_name=self.__class__.__name__, func_name=name, args_schema=schema
+                        class_name=self.__class__.__name__,
+                        func_name=name,
+                        args_schema=schema,
+                        uses=uses,
+                        lifecycle=lifecycle,
                     )
                 )
         return skills
@@ -476,28 +497,21 @@ class ModuleBase(Configurable, CompositeResource):
         routed as `notifications/progress` frames bound to the originating
         `tools/call`.
 
-        Raises `RuntimeError` if a tool with the same name is already active on
-        this module (two concurrent streams for the same logical tool is almost
-        always a programmer error; `stop_tool` the previous one first).
+        If a stream named `name` is already active, this is a same-tool re-invoke
+        (a capability takeover): the live stream is re-stamped with this
+        invocation's acquire token -- so its eventual stop frame releases *this*
+        hold -- and no second stream is opened. Background skills can therefore
+        call `start_tool` unconditionally before any "already running" return.
         """
         # Lazy import
         from dimos.agents.mcp.tool_stream import ToolStream
 
-        stream = ToolStream(name)
         with self._tools_lock:
-            # Defensive check to prevent duplicate tools with the same name.
-            if name in self._tools:
-                # Unwind the already-constructed stream before raising so the
-                # LCM transport doesn't leak.
-                try:
-                    stream.stop()
-                except Exception:
-                    logger.exception("failed to unwind duplicate ToolStream")
-                raise RuntimeError(
-                    f"Tool {name!r} is already active on {type(self).__name__}. "
-                    f"Call stop_tool({name!r}) first."
-                )
-            self._tools[name] = stream
+            existing = self._tools.get(name)
+            if existing is not None:
+                existing.rebind_acquire_token()
+                return
+            self._tools[name] = ToolStream(name)
 
     def tool_update(self, name: str, message: str) -> None:
         """Publish `message` on the tool-stream channel named `name`.
@@ -771,6 +785,21 @@ class Module(ModuleBase):
 
         stream._transport = transport
         return True
+
+    @rpc
+    def peek_stream(self, stream_name: str, timeout: float) -> Any:
+        """Return the next emission on a named stream, a `PeekNotFound`
+        sentinel if no such stream exists, or `None` on timeout/error.
+
+        Used by `Dimos.peek_stream` to scan running modules.
+        """
+        stream = self.outputs.get(stream_name) or self.inputs.get(stream_name)
+        if stream is None:
+            return PeekNotFound()
+        try:
+            return stream.get_next(timeout)
+        except Exception:
+            return None
 
     # called from remote
     def connect_stream(self, input_name: str, remote_stream: RemoteOut[T]):  # type: ignore[no-untyped-def]

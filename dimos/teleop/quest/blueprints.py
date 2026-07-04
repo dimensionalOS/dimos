@@ -19,17 +19,24 @@ Single sim/real blueprints — pass `--simulation` to run inside MuJoCo, omit fo
 hardware. The underlying coordinator blueprints branch on `global_config.simulation`.
 """
 
-from dimos.control.blueprints.teleop import (
-    coordinator_teleop_dual,
-    coordinator_teleop_piper,
+from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.transport import LCMTransport, pSHMTransport
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.robot.manipulators.common.mixed import coordinator_teleop_dual
+from dimos.robot.manipulators.piper.blueprints.teleop import coordinator_teleop_piper
+from dimos.robot.manipulators.xarm.blueprints.teleop import (
     coordinator_teleop_xarm6,
     coordinator_teleop_xarm7,
 )
-from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.teleop.quest.quest_extensions import ArmTeleopModule
-from dimos.teleop.quest.quest_types import Buttons
+from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.teleop.quest.quest_extensions import (
+    ArmTeleopModule,
+    Go2TeleopModule,
+    VideoArmTeleopModule,
+)
 from dimos.visualization.vis_module import vis_module
 
 # Arm teleop with press-and-hold engage (has rerun viz)
@@ -40,7 +47,6 @@ teleop_quest_rerun = autoconnect(
     {
         ("left_controller_output", PoseStamped): LCMTransport("/teleop/left_delta", PoseStamped),
         ("right_controller_output", PoseStamped): LCMTransport("/teleop/right_delta", PoseStamped),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
     }
 )
 
@@ -49,13 +55,23 @@ teleop_quest_rerun = autoconnect(
 teleop_quest_xarm7 = autoconnect(
     ArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
     coordinator_teleop_xarm7,
-).transports(
-    {
-        ("right_controller_output", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
-    }
+).remappings([(ArmTeleopModule, "right_controller_output", "coordinator_cartesian_command")])
+
+
+# XArm7 teleop + camera streaming into the Quest scene as a panel.
+teleop_quest_xarm7_video = (
+    autoconnect(
+        VideoArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
+        coordinator_teleop_xarm7,
+    )
+    .remappings(
+        [(VideoArmTeleopModule, "right_controller_output", "coordinator_cartesian_command")]
+    )
+    .transports(
+        {
+            ("color_image", Image): LCMTransport("/teleop/color_image", Image),
+        }
+    )
 )
 
 
@@ -63,51 +79,41 @@ teleop_quest_xarm7 = autoconnect(
 teleop_quest_piper = autoconnect(
     ArmTeleopModule.blueprint(task_names={"left": "teleop_piper"}),
     coordinator_teleop_piper,
-).transports(
-    {
-        ("left_controller_output", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
-    }
-)
+).remappings([(ArmTeleopModule, "left_controller_output", "coordinator_cartesian_command")])
 
 
 # XArm6 teleop (sim with --simulation, real otherwise): right controller -> xarm6
 teleop_quest_xarm6 = autoconnect(
     ArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
     coordinator_teleop_xarm6,
-).transports(
-    {
-        ("right_controller_output", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
-    }
-)
+).remappings([(ArmTeleopModule, "right_controller_output", "coordinator_cartesian_command")])
 
 
 # Dual arm teleop: right -> piper, left -> xarm6 (TeleopIK, real-only)
 teleop_quest_dual = autoconnect(
     ArmTeleopModule.blueprint(task_names={"right": "teleop_piper", "left": "teleop_xarm"}),
     coordinator_teleop_dual,
-).transports(
-    {
-        ("right_controller_output", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("left_controller_output", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
-    }
+).remappings(
+    [
+        (ArmTeleopModule, "right_controller_output", "coordinator_cartesian_command"),
+        (ArmTeleopModule, "left_controller_output", "coordinator_cartesian_command"),
+    ]
 )
 
 
-__all__ = [
-    "teleop_quest_dual",
-    "teleop_quest_piper",
-    "teleop_quest_rerun",
-    "teleop_quest_xarm6",
-    "teleop_quest_xarm7",
-]
+# Go2 quadruped: thumbstick velocity teleop + camera streamed to the headset.
+teleop_quest_go2 = (
+    autoconnect(
+        Go2TeleopModule.blueprint(),
+        GO2Connection.blueprint(),
+    )
+    .transports(
+        {
+            ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
+            ("color_image", Image): pSHMTransport(
+                "color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+            ),
+        }
+    )
+    .global_config(robot_model="unitree_go2")
+)

@@ -16,5 +16,3 @@
 from dimos.robot.unitree.go2.blueprints.layers.layer_5_skill_interface import (
     _go2_agentic_skill_interface as _common_agentic,
 )
-
-__all__ = ["_common_agentic"]

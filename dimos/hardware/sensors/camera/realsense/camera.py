@@ -30,7 +30,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.core.transport import LCMTransport
+from dimos.core.transport_factory import make_transport
 from dimos.hardware.sensors.camera.spec import (
     OPTICAL_ROTATION,
     DepthCameraConfig,
@@ -358,17 +358,29 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         )
         transforms.append(depth_to_depth_optical)
 
-        color_tf = self._extrinsics_to_transform(
-            self._color_to_depth_extrinsics,
-            self._camera_link,
-            self._color_frame,
-            ts,
-        )
-        # Invert the transform since extrinsics are color->depth
-        color_tf = color_tf.inverse()
-        color_tf.frame_id = self._camera_link
-        color_tf.child_frame_id = self._color_frame
-        color_tf.ts = ts
+        # camera_link -> camera_color_frame. With depth disabled there are no
+        # color->depth extrinsics, so fall back to identity (color at the
+        # camera_link origin) instead of dereferencing None.
+        if self._color_to_depth_extrinsics is not None:
+            color_tf = self._extrinsics_to_transform(
+                self._color_to_depth_extrinsics,
+                self._camera_link,
+                self._color_frame,
+                ts,
+            )
+            # Invert the transform since extrinsics are color->depth
+            color_tf = color_tf.inverse()
+            color_tf.frame_id = self._camera_link
+            color_tf.child_frame_id = self._color_frame
+            color_tf.ts = ts
+        else:
+            color_tf = Transform(
+                translation=Vector3(0.0, 0.0, 0.0),
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                frame_id=self._camera_link,
+                child_frame_id=self._color_frame,
+                ts=ts,
+            )
         transforms.append(color_tf)
 
         # camera_color_frame -> camera_color_optical_frame
@@ -448,11 +460,11 @@ def main() -> None:
     dimos.start()
 
     camera = dimos.deploy(RealSenseCamera, enable_pointcloud=True, pointcloud_fps=5.0)
-    camera.color_image.transport = LCMTransport("/camera/color", Image)
-    camera.depth_image.transport = LCMTransport("/camera/depth", Image)
-    camera.pointcloud.transport = LCMTransport("/camera/pointcloud", PointCloud2)
-    camera.camera_info.transport = LCMTransport("/camera/color_info", CameraInfo)
-    camera.depth_camera_info.transport = LCMTransport("/camera/depth_info", CameraInfo)
+    camera.color_image.transport = make_transport("/camera/color", Image)
+    camera.depth_image.transport = make_transport("/camera/depth", Image)
+    camera.pointcloud.transport = make_transport("/camera/pointcloud", PointCloud2)
+    camera.camera_info.transport = make_transport("/camera/color_info", CameraInfo)
+    camera.depth_camera_info.transport = make_transport("/camera/depth_info", CameraInfo)
 
     def cleanup() -> None:
         try:

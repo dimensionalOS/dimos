@@ -135,6 +135,14 @@ class PiperAdapter(ManipulatorAdapter):
         except Exception:
             return False
 
+    def activate(self) -> bool:
+        return self.write_enable(True)
+
+    def deactivate(self) -> bool:
+        stopped = self.write_stop()
+        disabled = self.write_enable(False)
+        return stopped and disabled
+
     def get_info(self) -> ManipulatorInfo:
         """Get Piper information."""
         firmware_version = None
@@ -487,6 +495,3 @@ class PiperAdapter(ManipulatorAdapter):
 def register(registry: AdapterRegistry) -> None:
     """Register this adapter with the registry."""
     registry.register("piper", PiperAdapter)
-
-
-__all__ = ["PiperAdapter"]

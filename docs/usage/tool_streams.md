@@ -1,4 +1,6 @@
-# Tool Streams
+---
+title: "Tool Streams"
+---
 
 Some tools return quickly but keep doing work in the background. For example,
 `look_out_for` starts a perception loop and waits minutes for a match;
@@ -28,7 +30,6 @@ import time
 
 from dimos.agents.annotation import skill
 from dimos.core.module import Module
-
 
 class Counter(Module):
     @skill
@@ -60,7 +61,6 @@ from threading import Thread
 
 from dimos.agents.annotation import skill
 from dimos.core.module import Module
-
 
 class Streamer(Module):
     @skill

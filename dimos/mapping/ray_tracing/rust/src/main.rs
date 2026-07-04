@@ -1,35 +1,20 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use ahash::{AHashMap, AHashSet};
-use dimos_module::{run, Input, LcmTransport, Module, Output};
+use std::time::Duration;
+
+use ahash::AHashSet;
+use dimos_module::{error_throttled, run, warn_throttled, Input, LcmTransport, Module, Output};
+use dimos_voxel_ray_tracing::voxel_ray_tracer::{
+    batch_local_bounds, iter_global_points, update_map, Config, LocalBounds, VoxelKey, VoxelMap,
+};
+use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
-use serde::Deserialize;
-
-type VoxelKey = (i32, i32, i32);
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Config {
-    voxel_size: f32,
-    max_range: f32,
-    ray_subsample: u32,
-    shadow_depth: f32,
-    grace_depth: f32,
-    min_health: i32,
-    max_health: i32,
-}
-
-#[derive(Default)]
-struct VoxelMap {
-    // Save health of each voxel
-    voxels: AHashMap<VoxelKey, i32>,
-}
+use nalgebra::{UnitQuaternion, Vector3};
 
 #[derive(Module)]
-#[module(setup = validate_config)]
 struct RayTracingVoxelMap {
     #[input(decode = PointCloud2::decode, handler = on_lidar)]
     lidar: Input<PointCloud2>,
@@ -40,78 +25,53 @@ struct RayTracingVoxelMap {
     #[output(encode = PointCloud2::encode)]
     global_map: Output<PointCloud2>,
 
+    #[output(encode = PointCloud2::encode)]
+    local_map: Output<PointCloud2>,
+
+    // Cylinder bounds of the local map. Position is the center, orientation holds
+    // radius, z_min, z_max. Stamped like local_map so consumers pair them.
+    #[output(encode = PoseStamped::encode)]
+    region_bounds: Output<PoseStamped>,
+
     #[config]
     config: Config,
 
     map: VoxelMap,
-    last_origin: Option<(f32, f32, f32)>,
+    last_pose: Option<(Vector3<f32>, UnitQuaternion<f32>)>,
+    frame_count: u32,
+    batch_points: Vec<(f32, f32, f32)>,
+    batch_origins: Vec<(f32, f32, f32)>,
 }
 
 impl RayTracingVoxelMap {
-    /// Make sure all the configs are valid on setup
-    async fn validate_config(&self) {
-        let cfg = &self.config;
-        if !cfg.voxel_size.is_finite() || cfg.voxel_size <= 0.0 {
-            panic!(
-                "voxel_ray_tracing: voxel_size must be > 0, got {}",
-                cfg.voxel_size
-            );
-        }
-        if !cfg.max_range.is_finite() || cfg.max_range < 0.0 {
-            panic!(
-                "voxel_ray_tracing: max_range must be >= 0, got {}",
-                cfg.max_range
-            );
-        }
-        if !cfg.shadow_depth.is_finite() || cfg.shadow_depth < 0.0 {
-            panic!(
-                "voxel_ray_tracing: shadow_depth must be >= 0, got {}",
-                cfg.shadow_depth
-            );
-        }
-        if !cfg.grace_depth.is_finite() || cfg.grace_depth < 0.0 {
-            panic!(
-                "voxel_ray_tracing: grace_depth must be >= 0, got {}",
-                cfg.grace_depth
-            );
-        }
-        if cfg.ray_subsample == 0 {
-            panic!("voxel_ray_tracing: ray_subsample must be >= 1, got 0");
-        }
-        if cfg.max_health <= 0 {
-            panic!(
-                "voxel_ray_tracing: max_health must be > 0 or voxels can never become visible, got {}",
-                cfg.max_health
-            );
-        }
-        if cfg.min_health >= cfg.max_health {
-            panic!(
-                "voxel_ray_tracing: min_health ({}) must be < max_health ({})",
-                cfg.min_health, cfg.max_health
-            );
-        }
-    }
-
     async fn on_odometry(&mut self, msg: Odometry) {
-        self.last_origin = Some((
-            msg.pose.pose.position.x as f32,
-            msg.pose.pose.position.y as f32,
-            msg.pose.pose.position.z as f32,
+        let p = &msg.pose.pose.position;
+        let q = &msg.pose.pose.orientation;
+        self.last_pose = Some((
+            Vector3::new(p.x as f32, p.y as f32, p.z as f32),
+            UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(
+                q.w as f32, q.x as f32, q.y as f32, q.z as f32,
+            )),
         ));
     }
 
     async fn on_lidar(&mut self, msg: PointCloud2) {
-        let Some(origin) = self.last_origin else {
-            // Need at least one odometry sample before we can raycast.
+        let Some((translation, rotation)) = self.last_pose else {
+            // Need an odometry sample before we can raycast.
             return;
         };
+        let origin = (translation.x, translation.y, translation.z);
 
         let voxel_size = self.config.voxel_size;
 
         let points = match extract_xyz(&msg) {
             Ok(p) => p,
             Err(e) => {
-                eprintln!("voxel_ray_tracing: bad cloud, dropped: {e}");
+                warn_throttled!(
+                    Duration::from_secs(1),
+                    error = %e,
+                    "Failed to get lidar points, dropped a cloud.",
+                );
                 return;
             }
         };
@@ -119,215 +79,103 @@ impl RayTracingVoxelMap {
             return;
         }
 
-        let inv = 1.0_f32 / voxel_size;
-        let mut live: AHashSet<VoxelKey> = AHashSet::with_capacity(points.len());
-        for &(x, y, z) in &points {
-            live.insert(world_to_voxel(x, y, z, inv));
+        // Transform sensor-frame points into the world by the odom pose.
+        let rot = rotation.to_rotation_matrix();
+        let points: Vec<(f32, f32, f32)> = points
+            .iter()
+            .map(|&(x, y, z)| {
+                let p = rot * Vector3::new(x, y, z) + translation;
+                (p.x, p.y, p.z)
+            })
+            .collect();
+
+        let out_frame_id = "world";
+
+        let live = update_map(&mut self.map, origin, &points, &self.config);
+
+        // The batch only feeds the local region bounds, so skip it when the local
+        // map is disabled.
+        if self.config.emit_every > 0 {
+            self.batch_points.extend_from_slice(&points);
+            self.batch_origins.push(origin);
         }
 
-        update_map(&mut self.map, origin, &points, &self.config);
+        self.frame_count += 1;
+        let local_due = emit_due(self.frame_count, self.config.emit_every);
 
-        // Echo the input cloud's frame; the global map lives in the same
-        // world frame as the upstream lidar/odometry.
-        let cloud = build_pointcloud(
-            &self.map,
-            &live,
-            voxel_size,
-            &msg.header.frame_id,
-            msg.header.stamp,
-        );
-        if let Err(e) = self.global_map.publish(&cloud).await {
-            eprintln!("voxel_ray_tracing: publish failed: {e}");
-        }
-    }
-}
+        let cylinder = if local_due {
+            let margin = self.config.shadow_depth + voxel_size;
+            let (cx, cy, radius, z_min, z_max) = batch_local_bounds(
+                &self.batch_points,
+                &self.batch_origins,
+                self.config.region_percentile,
+                margin,
+            );
+            self.batch_points.clear();
+            self.batch_origins.clear();
 
-fn update_map(
-    map: &mut VoxelMap,
-    origin: (f32, f32, f32),
-    points: &[(f32, f32, f32)],
-    cfg: &Config,
-) {
-    let inv = 1.0_f32 / cfg.voxel_size;
-    let max_range_sq = if cfg.max_range > 0.0 {
-        cfg.max_range * cfg.max_range
-    } else {
-        f32::INFINITY
-    };
-
-    let mut hits: AHashSet<VoxelKey> = AHashSet::with_capacity(points.len());
-    for &(x, y, z) in points {
-        hits.insert(world_to_voxel(x, y, z, inv));
-    }
-
-    let mut misses: AHashSet<VoxelKey> = AHashSet::new();
-    let origin_voxel = world_to_voxel(origin.0, origin.1, origin.2, inv);
-    let step = cfg.ray_subsample as usize;
-    for (i, &p) in points.iter().enumerate() {
-        if i % step != 0 {
-            continue;
-        }
-        let dx = p.0 - origin.0;
-        let dy = p.1 - origin.1;
-        let dz = p.2 - origin.2;
-        if dx * dx + dy * dy + dz * dz > max_range_sq {
-            continue;
-        }
-        let endpoint = world_to_voxel(p.0, p.1, p.2, inv);
-        find_misses_along_ray(
-            &mut misses,
-            &map.voxels,
-            origin,
-            p,
-            cfg.voxel_size,
-            cfg.shadow_depth,
-            cfg.grace_depth,
-            origin_voxel,
-            endpoint,
-        );
-    }
-
-    // add new hits
-    for v in &hits {
-        let h = map.voxels.entry(*v).or_insert(cfg.min_health);
-        *h = (*h + 1).min(cfg.max_health);
-    }
-
-    // each miss is only checked once
-    for v in misses.difference(&hits) {
-        if let Some(h) = map.voxels.get_mut(v) {
-            *h -= 1;
-            if *h <= cfg.min_health {
-                map.voxels.remove(v);
+            let bounds_msg = PoseStamped {
+                header: Header {
+                    seq: 0,
+                    stamp: msg.header.stamp.clone(),
+                    frame_id: out_frame_id.to_string(),
+                },
+                pose: Pose {
+                    position: Point {
+                        x: cx as f64,
+                        y: cy as f64,
+                        z: 0.0,
+                    },
+                    orientation: Quaternion {
+                        x: radius as f64,
+                        y: z_min as f64,
+                        z: z_max as f64,
+                        w: 0.0,
+                    },
+                },
+            };
+            if let Err(e) = self.region_bounds.publish(&bounds_msg).await {
+                error_throttled!(
+                    Duration::from_secs(1),
+                    error = %e,
+                    "Region bounds failed to publish",
+                );
             }
-        }
-    }
-}
-
-#[inline]
-fn world_to_voxel(x: f32, y: f32, z: f32, inv: f32) -> VoxelKey {
-    (
-        (x * inv).floor() as i32,
-        (y * inv).floor() as i32,
-        (z * inv).floor() as i32,
-    )
-}
-
-/// Amanatides & Woo 3-D DDA. Records voxels on ray in between the end of the shadow region
-/// and origin if it is in the map. Voxels within grace region of the endpoint are spared from being marked as misses.
-#[allow(clippy::too_many_arguments)]
-fn find_misses_along_ray(
-    misses: &mut AHashSet<VoxelKey>,
-    map_voxels: &AHashMap<VoxelKey, i32>,
-    origin: (f32, f32, f32),
-    end: (f32, f32, f32),
-    voxel_size: f32,
-    shadow_depth: f32,
-    grace_depth: f32,
-    origin_voxel: VoxelKey,
-    endpoint: VoxelKey,
-) {
-    if origin_voxel == endpoint {
-        return;
-    }
-
-    let (ox, oy, oz) = origin;
-    let dx = end.0 - ox;
-    let dy = end.1 - oy;
-    let dz = end.2 - oz;
-
-    let (mut x, mut y, mut z) = origin_voxel;
-
-    let step_x = dx.signum() as i32;
-    let step_y = dy.signum() as i32;
-    let step_z = dz.signum() as i32;
-
-    let t_max_init = |p: f32, d: f32, vox: i32, step: i32| -> f32 {
-        if step == 0 {
-            return f32::INFINITY;
-        }
-        let next_boundary = if step > 0 {
-            (vox + 1) as f32 * voxel_size
+            Some(LocalBounds {
+                origin_x: cx,
+                origin_y: cy,
+                r_xy_max_sq: radius * radius,
+                z_min,
+                z_max,
+            })
         } else {
-            vox as f32 * voxel_size
+            None
         };
-        (next_boundary - p) / d
-    };
 
-    let mut tx = t_max_init(ox, dx, x, step_x);
-    let mut ty = t_max_init(oy, dy, y, step_y);
-    let mut tz = t_max_init(oz, dz, z, step_z);
+        let global_due = emit_due(self.frame_count, self.config.global_emit_every);
 
-    let dt_x = if step_x == 0 {
-        f32::INFINITY
-    } else {
-        voxel_size / dx.abs()
-    };
-    let dt_y = if step_y == 0 {
-        f32::INFINITY
-    } else {
-        voxel_size / dy.abs()
-    };
-    let dt_z = if step_z == 0 {
-        f32::INFINITY
-    } else {
-        voxel_size / dz.abs()
-    };
-
-    let half = voxel_size * 0.5;
-    let endpoint_center = (
-        endpoint.0 as f32 * voxel_size + half,
-        endpoint.1 as f32 * voxel_size + half,
-        endpoint.2 as f32 * voxel_size + half,
-    );
-    let shadow_sq = shadow_depth.powi(2);
-    let grace_sq = grace_depth.powi(2);
-
-    let mut past_endpoint = false;
-    loop {
-        if tx < ty {
-            if tx < tz {
-                x += step_x;
-                tx += dt_x;
+        let stamp = msg.header.stamp;
+        if let Some(cyl) = &cylinder {
+            if global_due {
+                let (global, local) =
+                    build_global_and_local(&self.map, &live, voxel_size, cyl, out_frame_id, stamp);
+                publish_cloud(&self.global_map, &global).await;
+                publish_cloud(&self.local_map, &local).await;
             } else {
-                z += step_z;
-                tz += dt_z;
+                let local =
+                    build_local_cloud(&self.map, &live, voxel_size, cyl, out_frame_id, stamp);
+                publish_cloud(&self.local_map, &local).await;
             }
-        } else if ty < tz {
-            y += step_y;
-            ty += dt_y;
-        } else {
-            z += step_z;
-            tz += dt_z;
-        }
-
-        if (x, y, z) == endpoint {
-            past_endpoint = true;
-            continue;
-        }
-
-        let cx = x as f32 * voxel_size + half;
-        let cy = y as f32 * voxel_size + half;
-        let cz = z as f32 * voxel_size + half;
-        let ddx = cx - endpoint_center.0;
-        let ddy = cy - endpoint_center.1;
-        let ddz = cz - endpoint_center.2;
-        let dist_sq = ddx * ddx + ddy * ddy + ddz * ddz;
-
-        if past_endpoint {
-            // continue past the endpoint and in to the shadow realm
-            if dist_sq > shadow_sq {
-                return;
-            }
-        } else if dist_sq < grace_sq {
-            // too close to the endpoint to safely mark as miss because we might be clipping other voxel's rays
-            continue;
-        }
-
-        if map_voxels.contains_key(&(x, y, z)) {
-            misses.insert((x, y, z));
+        } else if global_due {
+            let global = build_global_cloud(&self.map, &live, voxel_size, out_frame_id, stamp);
+            publish_cloud(&self.global_map, &global).await;
         }
     }
+}
+
+/// Whether the Nth-frame output fires this frame. Zero disables it.
+fn emit_due(frame_count: u32, every: u32) -> bool {
+    every != 0 && frame_count.is_multiple_of(every)
 }
 
 struct ExtractError(&'static str);
@@ -396,51 +244,40 @@ fn read_f32_le(buf: &[u8], off: usize) -> f32 {
     f32::from_le_bytes(bytes)
 }
 
-fn build_pointcloud(
-    map: &VoxelMap,
-    live: &AHashSet<VoxelKey>,
+fn write_point(data: &mut Vec<u8>, n: &mut i32, x: f32, y: f32, z: f32) {
+    data.extend_from_slice(&x.to_le_bytes());
+    data.extend_from_slice(&y.to_le_bytes());
+    data.extend_from_slice(&z.to_le_bytes());
+    data.extend_from_slice(&0.0_f32.to_le_bytes());
+    *n += 1;
+}
+
+/// Centers of live voxels not yet healthy enough to appear in the map.
+fn unhealthy_live_centers<'a>(
+    map: &'a VoxelMap,
+    live: &'a AHashSet<VoxelKey>,
     voxel_size: f32,
-    frame_id: &str,
-    stamp: Time,
-) -> PointCloud2 {
+) -> impl Iterator<Item = (f32, f32, f32)> + 'a {
     let half = voxel_size * 0.5;
-    let mut data = Vec::with_capacity((map.voxels.len() + live.len()) * 16);
-    let mut n: i32 = 0;
-
-    // helper just to inline the data handling, makes it a little faster
-    let mut add_to_cloud = |kx: i32, ky: i32, kz: i32| {
-        let x = kx as f32 * voxel_size + half;
-        let y = ky as f32 * voxel_size + half;
-        let z = kz as f32 * voxel_size + half;
-        data.extend_from_slice(&x.to_le_bytes());
-        data.extend_from_slice(&y.to_le_bytes());
-        data.extend_from_slice(&z.to_le_bytes());
-        data.extend_from_slice(&0.0_f32.to_le_bytes());
-        n += 1;
-    };
-
-    // add the healthy voxels
-    for (&(kx, ky, kz), &health) in &map.voxels {
-        if health > 0 {
-            add_to_cloud(kx, ky, kz);
+    live.iter().filter_map(move |&(kx, ky, kz)| {
+        if matches!(map.voxels.get(&(kx, ky, kz)), Some(c) if c.health > 0) {
+            return None;
         }
-    }
+        Some((
+            kx as f32 * voxel_size + half,
+            ky as f32 * voxel_size + half,
+            kz as f32 * voxel_size + half,
+        ))
+    })
+}
 
-    // add in the live voxels if they aren't already there
-    for &(kx, ky, kz) in live {
-        if !matches!(map.voxels.get(&(kx, ky, kz)), Some(h) if *h > 0) {
-            add_to_cloud(kx, ky, kz);
-        }
-    }
-
+fn make_cloud(data: Vec<u8>, n: i32, frame_id: &str, stamp: Time) -> PointCloud2 {
     let make_field = |name: &str, off: i32| PointField {
         name: name.into(),
         offset: off,
         datatype: PointField::FLOAT32 as u8,
         count: 1,
     };
-
-    // assemble the final cloud
     PointCloud2 {
         header: Header {
             seq: 0,
@@ -463,228 +300,212 @@ fn build_pointcloud(
     }
 }
 
+/// All healthy voxels plus this frame's live voxels.
+fn build_global_cloud(
+    map: &VoxelMap,
+    live: &AHashSet<VoxelKey>,
+    voxel_size: f32,
+    frame_id: &str,
+    stamp: Time,
+) -> PointCloud2 {
+    let mut data = Vec::with_capacity((map.voxels.len() + live.len()) * 16);
+    let mut n: i32 = 0;
+    for (x, y, z) in iter_global_points(map, voxel_size) {
+        write_point(&mut data, &mut n, x, y, z);
+    }
+    for (x, y, z) in unhealthy_live_centers(map, live, voxel_size) {
+        write_point(&mut data, &mut n, x, y, z);
+    }
+    make_cloud(data, n, frame_id, stamp)
+}
+
+/// Healthy voxels and this frame's live voxels, all inside the cylinder.
+fn build_local_cloud(
+    map: &VoxelMap,
+    live: &AHashSet<VoxelKey>,
+    voxel_size: f32,
+    cylinder: &LocalBounds,
+    frame_id: &str,
+    stamp: Time,
+) -> PointCloud2 {
+    let mut data = Vec::with_capacity(live.len() * 2 * 16);
+    let mut n: i32 = 0;
+    for (x, y, z) in iter_global_points(map, voxel_size) {
+        if cylinder.contains(x, y, z) {
+            write_point(&mut data, &mut n, x, y, z);
+        }
+    }
+    for (x, y, z) in unhealthy_live_centers(map, live, voxel_size) {
+        if cylinder.contains(x, y, z) {
+            write_point(&mut data, &mut n, x, y, z);
+        }
+    }
+    make_cloud(data, n, frame_id, stamp)
+}
+
+/// Build the global and local clouds in one pass over the map.
+fn build_global_and_local(
+    map: &VoxelMap,
+    live: &AHashSet<VoxelKey>,
+    voxel_size: f32,
+    cylinder: &LocalBounds,
+    frame_id: &str,
+    stamp: Time,
+) -> (PointCloud2, PointCloud2) {
+    let mut g_data = Vec::with_capacity((map.voxels.len() + live.len()) * 16);
+    let mut g_n: i32 = 0;
+    let mut l_data = Vec::with_capacity(live.len() * 2 * 16);
+    let mut l_n: i32 = 0;
+    let mut push = |x: f32, y: f32, z: f32| {
+        write_point(&mut g_data, &mut g_n, x, y, z);
+        if cylinder.contains(x, y, z) {
+            write_point(&mut l_data, &mut l_n, x, y, z);
+        }
+    };
+    for (x, y, z) in iter_global_points(map, voxel_size) {
+        push(x, y, z);
+    }
+    for (x, y, z) in unhealthy_live_centers(map, live, voxel_size) {
+        push(x, y, z);
+    }
+    (
+        make_cloud(g_data, g_n, frame_id, stamp.clone()),
+        make_cloud(l_data, l_n, frame_id, stamp),
+    )
+}
+
+async fn publish_cloud(out: &Output<PointCloud2>, cloud: &PointCloud2) {
+    if let Err(e) = out.publish(cloud).await {
+        error_throttled!(
+            Duration::from_secs(1),
+            error = %e,
+            topic = %out.topic,
+            "Voxel map failed to publish",
+        );
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let transport = LcmTransport::new()
         .await
         .expect("failed to create LCM transport");
-    run::<RayTracingVoxelMap, _>(transport)
-        .await
-        .expect("voxel_ray_tracing run failed");
+    run::<RayTracingVoxelMap, _>(transport).await;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dimos_voxel_ray_tracing::voxel_ray_tracer::Voxel;
 
-    fn basic_config() -> Config {
-        Config {
-            voxel_size: 1.0,
-            max_range: 100.0,
-            ray_subsample: 1,
-            shadow_depth: 2.0,
-            grace_depth: 0.0,
-            min_health: 0,
-            max_health: 1,
+    fn cloud_points(c: &PointCloud2) -> AHashSet<(u32, u32, u32)> {
+        let mut out = AHashSet::new();
+        let step = c.point_step as usize;
+        for i in 0..c.width as usize {
+            let base = i * step;
+            let x = f32::from_le_bytes(c.data[base..base + 4].try_into().unwrap());
+            let y = f32::from_le_bytes(c.data[base + 4..base + 8].try_into().unwrap());
+            let z = f32::from_le_bytes(c.data[base + 8..base + 12].try_into().unwrap());
+            out.insert((x.to_bits(), y.to_bits(), z.to_bits()));
+        }
+        out
+    }
+
+    fn voxel_center(kx: i32, ky: i32, kz: i32) -> (u32, u32, u32) {
+        (
+            (kx as f32 + 0.5).to_bits(),
+            (ky as f32 + 0.5).to_bits(),
+            (kz as f32 + 0.5).to_bits(),
+        )
+    }
+
+    #[test]
+    fn emit_due_fires_every_nth_frame_and_zero_disables() {
+        assert!(emit_due(1, 1));
+        assert!(emit_due(2, 1));
+        assert!(!emit_due(1, 2));
+        assert!(emit_due(2, 2));
+        assert!(!emit_due(5, 3));
+        assert!(emit_due(6, 3));
+        for n in 1..10 {
+            assert!(!emit_due(n, 0));
         }
     }
 
     #[test]
-    fn find_misses_along_ray_hits_correct_voxels_1() {
-        let voxel_size = 1.0;
-        let shadow_depth = 2.0;
-        let origin = (0.5, 0.5, 0.5);
-        let end = (5.5, 0.5, 0.5);
-        let inv = 1.0 / voxel_size;
-        let origin_voxel = world_to_voxel(origin.0, origin.1, origin.2, inv);
-        let endpoint = world_to_voxel(end.0, end.1, end.2, inv);
-
-        let expected: AHashSet<VoxelKey> = [
-            (1, 0, 0),
-            (2, 0, 0),
-            (3, 0, 0),
-            (4, 0, 0),
-            (6, 0, 0),
-            (7, 0, 0),
-        ]
-        .into_iter()
-        .collect();
-        let mut map_voxels: AHashMap<VoxelKey, i32> = AHashMap::new();
-        for v in &expected {
-            map_voxels.insert(*v, 1);
-        }
-
-        let mut misses: AHashSet<VoxelKey> = AHashSet::new();
-        find_misses_along_ray(
-            &mut misses,
-            &map_voxels,
-            origin,
-            end,
-            voxel_size,
-            shadow_depth,
-            0.0,
-            origin_voxel,
-            endpoint,
-        );
-
-        assert_eq!(misses, expected);
-    }
-
-    #[test]
-    fn find_misses_along_ray_hits_correct_voxels_2() {
-        let voxel_size = 1.0;
-        let shadow_depth = 2.0;
-        let origin = (0.5, 0.5, 0.5);
-        let end = (3.5, 2.5, 1.5);
-        let inv = 1.0 / voxel_size;
-        let origin_voxel = world_to_voxel(origin.0, origin.1, origin.2, inv);
-        let endpoint = world_to_voxel(end.0, end.1, end.2, inv);
-
-        let expected: AHashSet<VoxelKey> = [
-            (1, 0, 0),
-            (1, 1, 0),
-            (1, 1, 1),
-            (2, 1, 1),
-            (2, 2, 1),
-            (4, 2, 1),
-            (4, 3, 1),
-            (4, 3, 2),
-        ]
-        .into_iter()
-        .collect();
-        let mut map_voxels: AHashMap<VoxelKey, i32> = AHashMap::new();
-        for v in &expected {
-            map_voxels.insert(*v, 1);
-        }
-
-        let mut misses: AHashSet<VoxelKey> = AHashSet::new();
-        find_misses_along_ray(
-            &mut misses,
-            &map_voxels,
-            origin,
-            end,
-            voxel_size,
-            shadow_depth,
-            0.0,
-            origin_voxel,
-            endpoint,
-        );
-
-        assert_eq!(misses, expected);
-    }
-
-    #[test]
-    fn hits_insert_voxels() {
-        let cfg = basic_config();
+    fn local_map_includes_voxel_inside_cylinder() {
         let mut map = VoxelMap::default();
-        update_map(
-            &mut map,
-            (0.0, 0.0, 0.0),
-            &[(5.5, 0.5, 0.5), (0.5, 5.5, 0.5)],
-            &cfg,
-        );
-        assert_eq!(map.voxels.get(&(5, 0, 0)), Some(&1));
-        assert_eq!(map.voxels.get(&(0, 5, 0)), Some(&1));
-        assert_eq!(map.voxels.len(), 2);
-    }
-
-    #[test]
-    fn voxels_on_ray_are_removed() {
-        let cfg = basic_config();
-        let mut map = VoxelMap::default();
-        map.voxels.insert((3, 0, 0), 1);
-        update_map(&mut map, (0.0, 0.0, 0.0), &[(5.5, 0.5, 0.5)], &cfg);
-        // make sure the initial point got cleared by the new update
-        assert!(!map.voxels.contains_key(&(3, 0, 0)));
-        assert_eq!(map.voxels.get(&(5, 0, 0)), Some(&1));
-    }
-
-    #[test]
-    fn voxels_not_on_ray_survive() {
-        let cfg = basic_config();
-        let mut map = VoxelMap::default();
-        map.voxels.insert((3, 5, 0), 1);
-        update_map(&mut map, (0.0, 0.0, 0.0), &[(5.5, 0.5, 0.5)], &cfg);
-        assert_eq!(map.voxels.get(&(3, 5, 0)), Some(&1));
-        assert_eq!(map.voxels.get(&(5, 0, 0)), Some(&1));
-    }
-
-    #[test]
-    fn voxels_within_shadow_region_are_removed() {
-        let cfg = basic_config();
-        let mut map = VoxelMap::default();
-        map.voxels.insert((6, 0, 0), 1);
-        update_map(&mut map, (0.0, 0.0, 0.0), &[(5.5, 0.5, 0.5)], &cfg);
-        // point within the shadow is no longer included, new point is included
-        assert!(!map.voxels.contains_key(&(6, 0, 0)));
-        assert_eq!(map.voxels.get(&(5, 0, 0)), Some(&1));
-    }
-
-    #[test]
-    fn voxels_beyond_shadow_region_survive() {
-        let cfg = basic_config();
-        let mut map = VoxelMap::default();
-        map.voxels.insert((8, 0, 0), 1);
-        update_map(&mut map, (0.0, 0.0, 0.0), &[(5.5, 0.5, 0.5)], &cfg);
-        assert_eq!(map.voxels.get(&(8, 0, 0)), Some(&1));
-        assert_eq!(map.voxels.get(&(5, 0, 0)), Some(&1));
-    }
-
-    #[test]
-    fn hit_caught_by_other_ray_is_not_removed() {
-        let cfg = basic_config();
-        let mut map = VoxelMap::default();
-        update_map(
-            &mut map,
-            (0.0, 0.0, 0.0),
-            &[(3.5, 0.5, 0.5), (5.5, 0.5, 0.5)],
-            &cfg,
-        );
-        assert_eq!(map.voxels.get(&(3, 0, 0)), Some(&1));
-        assert_eq!(map.voxels.get(&(5, 0, 0)), Some(&1));
-    }
-
-    #[test]
-    fn point_beyond_max_range_does_not_clear() {
-        let cfg = Config {
-            max_range: 3.0,
-            ..basic_config()
+        map.voxels.insert((0, 0, 0), Voxel::with_health(1));
+        let live: AHashSet<VoxelKey> = AHashSet::new();
+        let cylinder = LocalBounds {
+            origin_x: 0.0,
+            origin_y: 0.0,
+            r_xy_max_sq: 4.0,
+            z_min: 0.0,
+            z_max: 1.0,
         };
-        let mut map = VoxelMap::default();
-        map.voxels.insert((3, 0, 0), 1);
-        update_map(&mut map, (0.0, 0.0, 0.0), &[(5.5, 0.5, 0.5)], &cfg);
-        assert_eq!(map.voxels.get(&(3, 0, 0)), Some(&1));
+        let global = build_global_cloud(&map, &live, 1.0, "world", Time::default());
+        let local = build_local_cloud(&map, &live, 1.0, &cylinder, "world", Time::default());
+        assert!(cloud_points(&global).contains(&voxel_center(0, 0, 0)));
+        assert!(cloud_points(&local).contains(&voxel_center(0, 0, 0)));
     }
 
     #[test]
-    fn two_hits_needed_when_min_health_is_negative() {
-        let cfg = Config {
-            min_health: -1,
-            ..basic_config()
-        };
+    fn local_map_excludes_voxel_outside_radius() {
         let mut map = VoxelMap::default();
-        update_map(&mut map, (0.0, 0.0, 0.0), &[(5.5, 0.5, 0.5)], &cfg);
-        assert_eq!(map.voxels.get(&(5, 0, 0)), Some(&0));
-
-        update_map(&mut map, (0.0, 0.0, 0.0), &[(5.5, 0.5, 0.5)], &cfg);
-        assert_eq!(map.voxels.get(&(5, 0, 0)), Some(&1));
+        map.voxels.insert((5, 0, 0), Voxel::with_health(1));
+        let live: AHashSet<VoxelKey> = AHashSet::new();
+        let cylinder = LocalBounds {
+            origin_x: 0.0,
+            origin_y: 0.0,
+            r_xy_max_sq: 4.0,
+            z_min: -10.0,
+            z_max: 10.0,
+        };
+        let global = build_global_cloud(&map, &live, 1.0, "world", Time::default());
+        let local = build_local_cloud(&map, &live, 1.0, &cylinder, "world", Time::default());
+        assert!(cloud_points(&global).contains(&voxel_center(5, 0, 0)));
+        assert!(!cloud_points(&local).contains(&voxel_center(5, 0, 0)));
+        assert_eq!(local.width, 0);
     }
 
     #[test]
-    fn two_misses_needed_when_max_health_is_two() {
-        let cfg = Config {
-            max_health: 2,
-            ..basic_config()
-        };
+    fn local_map_excludes_voxel_outside_z_range() {
         let mut map = VoxelMap::default();
-        update_map(&mut map, (0.0, 0.0, 0.0), &[(3.5, 0.5, 0.5)], &cfg);
-        update_map(&mut map, (0.0, 0.0, 0.0), &[(3.5, 0.5, 0.5)], &cfg);
-        assert_eq!(map.voxels.get(&(3, 0, 0)), Some(&2));
+        map.voxels.insert((0, 0, 5), Voxel::with_health(1));
+        let live: AHashSet<VoxelKey> = AHashSet::new();
+        let cylinder = LocalBounds {
+            origin_x: 0.0,
+            origin_y: 0.0,
+            r_xy_max_sq: 100.0,
+            z_min: 0.0,
+            z_max: 1.0,
+        };
+        let global = build_global_cloud(&map, &live, 1.0, "world", Time::default());
+        let local = build_local_cloud(&map, &live, 1.0, &cylinder, "world", Time::default());
+        assert!(cloud_points(&global).contains(&voxel_center(0, 0, 5)));
+        assert!(!cloud_points(&local).contains(&voxel_center(0, 0, 5)));
+        assert_eq!(local.width, 0);
+    }
 
-        update_map(&mut map, (0.0, 0.0, 0.0), &[(5.5, 0.5, 0.5)], &cfg);
-        assert_eq!(map.voxels.get(&(3, 0, 0)), Some(&1));
-
-        update_map(&mut map, (0.0, 0.0, 0.0), &[(5.5, 0.5, 0.5)], &cfg);
-        assert!(!map.voxels.contains_key(&(3, 0, 0)));
+    #[test]
+    fn live_voxels_follow_the_cylinder_in_local_map() {
+        let map = VoxelMap::default();
+        let mut live: AHashSet<VoxelKey> = AHashSet::new();
+        live.insert((1, 0, 0));
+        live.insert((10, 10, 10));
+        let cylinder = LocalBounds {
+            origin_x: 0.0,
+            origin_y: 0.0,
+            r_xy_max_sq: 4.0,
+            z_min: 0.0,
+            z_max: 1.0,
+        };
+        let global = build_global_cloud(&map, &live, 1.0, "world", Time::default());
+        let local = build_local_cloud(&map, &live, 1.0, &cylinder, "world", Time::default());
+        assert!(cloud_points(&global).contains(&voxel_center(1, 0, 0)));
+        assert!(cloud_points(&global).contains(&voxel_center(10, 10, 10)));
+        assert!(cloud_points(&local).contains(&voxel_center(1, 0, 0)));
+        assert!(!cloud_points(&local).contains(&voxel_center(10, 10, 10)));
     }
 }

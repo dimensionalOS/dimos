@@ -13,17 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import random
 import sys
 import threading
 import time
 
 from terminaltexteffects import Color  # type: ignore[attr-defined]
+from terminaltexteffects.effects.effect_expand import Expand
 
 from dimos.utils.cli import theme
 
-# Global to store the imported main function
 _humancli_main = None
 _import_complete = threading.Event()
 
@@ -43,112 +41,17 @@ def import_cli_in_background() -> None:
         _import_complete.set()
 
 
-def get_effect_config(effect_name: str):  # type: ignore[no-untyped-def]
-    """Get hardcoded configuration for a specific effect"""
-    # Hardcoded configs for each effect
-    global_config = {
-        "final_gradient_stops": [Color(theme.ACCENT)],
-    }
-
-    configs = {
-        "randomsequence": {
-            "speed": 0.075,
-        },
-        "slide": {"direction": "left", "movement_speed": 1.5},
-        "sweep": {"direction": "left"},
-        "print": {
-            "print_speed": 10,
-            "print_head_return_speed": 10,
-            "final_gradient_stops": [Color(theme.ACCENT)],
-        },
-        "pour": {"pour_speed": 9},
-        "matrix": {"rain_symbols": "01", "rain_fall_speed_range": (4, 7)},
-        "decrypt": {"typing_speed": 5, "decryption_speed": 3},
-        "burn": {"fire_chars": "█", "flame_color": "ffffff"},
-        "expand": {"expand_direction": "center"},
-        "scattered": {"movement_speed": 0.5},
-        "beams": {"movement_speed": 0.5, "beam_delay": 0},
-        "middleout": {"center_movement_speed": 3, "full_movement_speed": 0.5},
-        "rain": {
-            "rain_symbols": "░▒▓█",
-            "rain_fall_speed_range": (5, 10),
-        },
-        "highlight": {"highlight_brightness": 3},
-    }
-
-    return {**configs.get(effect_name, {}), **global_config}  # type: ignore[dict-item]
-
-
 def run_banner_animation() -> None:
-    """Run the ASCII banner animation before launching Textual"""
-
-    # Check if we should animate
-    random_anim = ["scattered", "print", "expand", "slide", "rain"]
-    animation_style = os.environ.get("DIMOS_BANNER_ANIMATION", random.choice(random_anim)).lower()
-
-    if animation_style == "none":
-        return  # Skip animation
-    from terminaltexteffects.effects.effect_beams import Beams
-    from terminaltexteffects.effects.effect_burn import Burn
-    from terminaltexteffects.effects.effect_decrypt import Decrypt
-    from terminaltexteffects.effects.effect_expand import Expand
-    from terminaltexteffects.effects.effect_highlight import (
-        Highlight,
-    )
-    from terminaltexteffects.effects.effect_matrix import Matrix
-    from terminaltexteffects.effects.effect_middleout import (
-        MiddleOut,
-    )
-    from terminaltexteffects.effects.effect_overflow import (
-        Overflow,
-    )
-    from terminaltexteffects.effects.effect_pour import Pour
-    from terminaltexteffects.effects.effect_print import Print
-    from terminaltexteffects.effects.effect_rain import Rain
-    from terminaltexteffects.effects.effect_random_sequence import (
-        RandomSequence,
-    )
-    from terminaltexteffects.effects.effect_scattered import (
-        Scattered,
-    )
-    from terminaltexteffects.effects.effect_slide import Slide
-    from terminaltexteffects.effects.effect_sweep import Sweep
-
-    # The DIMENSIONAL ASCII art
     ascii_art = "\n" + theme.ascii_logo.replace("\n", "\n ")
-    # Choose effect based on style
-    effect_map = {
-        "slide": Slide,
-        "sweep": Sweep,
-        "print": Print,
-        "pour": Pour,
-        "burn": Burn,
-        "matrix": Matrix,
-        "rain": Rain,
-        "scattered": Scattered,
-        "expand": Expand,
-        "decrypt": Decrypt,
-        "overflow": Overflow,
-        "randomsequence": RandomSequence,
-        "beams": Beams,
-        "middleout": MiddleOut,
-        "highlight": Highlight,
-    }
-
-    EffectClass = effect_map.get(animation_style, Slide)
 
     # Clear screen before starting animation
     print("\033[2J\033[H", end="", flush=True)
 
-    # Get effect configuration
-    effect_config = get_effect_config(animation_style)
+    effect = Expand(ascii_art)
+    effect.effect_config.expand_direction = "center"  # type: ignore[attr-defined]
+    effect.effect_config.final_gradient_stops = (Color(theme.ACCENT),)  # type: ignore[attr-defined]
 
-    # Create and run the effect with config
-    effect = EffectClass(ascii_art)
-    for key, value in effect_config.items():
-        setattr(effect.effect_config, key, value)  # type: ignore[attr-defined]
-
-    # Run the animation - terminal.print() handles all screen management
+    # Run the animation
     with effect.terminal_output() as terminal:  # type: ignore[attr-defined]
         for frame in effect:  # type: ignore[attr-defined]
             terminal.print(frame)
@@ -161,8 +64,6 @@ def run_banner_animation() -> None:
 
 
 def main() -> None:
-    """Main entry point - run animation then launch the real CLI"""
-
     # Start importing CLI in background (this is slow)
     import_thread = threading.Thread(target=import_cli_in_background, daemon=True)
     import_thread.start()
@@ -171,10 +72,8 @@ def main() -> None:
     if not (len(sys.argv) > 1 and sys.argv[1] == "web"):
         run_banner_animation()
 
-    # Wait for import to complete
-    _import_complete.wait(timeout=10)  # Max 10 seconds wait
+    _import_complete.wait(timeout=10)
 
-    # Launch the real CLI
     if _humancli_main:
         _humancli_main()
     else:

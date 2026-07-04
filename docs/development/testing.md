@@ -1,4 +1,6 @@
-# Testing
+---
+title: "Testing"
+---
 
 `uv run` syncs the project deps + `tests` group on demand, so the default test suite needs no upfront install — just `uv run pytest --numprocesses=auto dimos` (xdist parallelizes across cores).
 
@@ -47,7 +49,7 @@ This is the same as:
 pytest --numprocesses=auto dimos
 ```
 
-The default `addopts` in `pyproject.toml` includes a `-m` filter that excludes `self_hosted`/`mujoco`/`tool`, so plain `pytest dimos` runs only the default suite; `--numprocesses=auto` parallelizes across cores via pytest-xdist.
+The default `addopts` in `pyproject.toml` includes a `-m` filter that excludes `self_hosted`/`mujoco`, so plain `pytest dimos` runs only the default suite; `--numprocesses=auto` parallelizes across cores via pytest-xdist.
 
 ### Self-hosted tests
 
@@ -55,12 +57,35 @@ The default `addopts` in `pyproject.toml` includes a `-m` filter that excludes `
 ./bin/pytest-slow
 ```
 
-(Shortcut for `pytest -m 'not (tool or mujoco)' dimos` — runs the default suite *and* self-hosted tests, but not `tool` or `mujoco`.)
+(Shortcut for `pytest -m 'not mujoco' dimos` — runs the default suite *and* self-hosted tests, but not `mujoco`.)
+
+This includes slow agent and MCP-style integration tests in addition to slower transport and module tests. If one of those paths is broken, a failure can take close to a minute to surface because the harness waits for the agent flow to finish before timing out.
 
 When writing or debugging a specific self-hosted test, override `-m` yourself to run it:
 
 ```bash
 pytest -m self_hosted dimos/path/to/test_something.py
+```
+
+## Testing on a fresh Ubuntu install
+
+CI tests dimos with pre-built images and cached deps, so it can't catch gaps
+between what [`installation/ubuntu.md`](/docs/installation/ubuntu.md) tells a new user to
+do and what a clean machine actually needs (e.g. a system package we require but
+forgot to document).
+
+The [misc/fresh-ubuntu-tests/](/misc/fresh-ubuntu-tests/) harness closes that
+gap. It replays the documented install + test flow inside a fresh, official,
+**unmodified** Ubuntu Desktop 24.04 VM (VirtualBox).
+
+It's intended to be executed locally.
+
+```sh skip
+cd misc/fresh-ubuntu-tests
+
+./vmtest.sh build   # download + verify the official ISO, install, snapshot "golden" (once, ~15-30 min)
+./vmtest.sh run     # clone golden, run the doc flow, report PASS/FAIL
+./vmtest.sh clean   # delete leftover run clones and logs (keeps the ISO + golden VM)
 ```
 
 ## Writing tests
@@ -84,7 +109,6 @@ Simple example code:
 ```python
 import pytest
 
-
 class RobotArm:
     def __init__(self, device: str) -> None:
         self.device = device
@@ -102,7 +126,6 @@ class RobotArm:
     @property
     def position(self) -> tuple[float, float, float]:
         return self._position
-
 
 @pytest.fixture
 def arm():
@@ -146,12 +169,21 @@ There are other useful things in `mocker`, like `mocker.MagicMock()` for creatin
 | `--tb=short` | Shorter tracebacks |
 | `--durations=0` | Measure the speed of each test |
 
+## Tool files
+
+Dev-only pseudo-tests -- the kind that need human interaction or make no assertions -- live in `tool_*.py` files (e.g. `dimos/protocol/pubsub/benchmark/tool_benchmark.py`). pytest never collects them, because the filename doesn't match the `test_*.py` pattern, so a normal `pytest` run stays clean. Run one on demand by naming it directly:
+
+```bash
+pytest -s dimos/path/to/tool_file.py
+```
+
+(`-s` keeps stdout/stdin open for prints and interactive input; add `--timeout=0` for long-running or interactive ones.)
+
 ## Markers
 
 We have a few markers in use now.
 
 * `self_hosted`: used to mark tests that need the self-hosted runner (LFS, ROS, CUDA, heavy deps).
-* `tool`: tests which require human interaction. I don't like this. Please don't use them.
 * `mujoco`: tests which use `MuJoCo`. These are very slow and don't work in CI currently.
 
 If a test needs to be skipped for some reason, please use on of these markers, or add another one.

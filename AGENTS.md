@@ -141,6 +141,12 @@ docs/
 
 ---
 
+## For Coding Agents
+
+If you are a coding agent working on this dimos codebase, our coding agent focused docs are at `docs/coding-agents/index.md`
+
+---
+
 ## Architecture
 
 ### Modules
@@ -339,7 +345,7 @@ uv run pytest dimos/core/test_blueprints.py -v
 uv run mypy dimos/
 ```
 
-`uv run pytest` excludes `self_hosted`, `tool`, and `mujoco` markers. CI runs `self_hosted`-marked tests on the self-hosted runner only. See `docs/development/testing.md`.
+`uv run pytest` excludes `self_hosted` and `mujoco` markers, and never collects `tool_*.py` files. CI runs `self_hosted`-marked tests on the self-hosted runner only. See `docs/development/testing.md`.
 
 ---
 
@@ -404,4 +410,4 @@ CI asserts the file is current — if it's stale, CI fails.
 - Testing: `docs/development/testing.md`
 - CLI / dimos run: `docs/development/dimos_run.md`
 - LFS data: `docs/development/large_file_management.md`
-- Agent system: `docs/agents/`
+- Agent system: `docs/coding-agents/`

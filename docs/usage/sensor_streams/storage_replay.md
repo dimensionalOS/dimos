@@ -1,4 +1,6 @@
-# Sensor Storage and Replay
+---
+title: "Sensor Storage and Replay"
+---
 
 Record sensor streams to disk and replay them with original timing. Useful for testing, debugging, and creating reproducible datasets.
 
@@ -162,7 +164,6 @@ replay.stream(
 A common pattern is creating replay-based connection stubs for testing without hardware. From [`robot/unitree/go2/connection.py`](/dimos/robot/unitree/go2/connection.py#L83):
 
 This is a bit primitive. We'd like to write a higher-order API for recording full module I/O for any module, but this is a work in progress at the moment.
-
 
 ```python skip
 class ReplayConnection(UnitreeWebRTCConnection):

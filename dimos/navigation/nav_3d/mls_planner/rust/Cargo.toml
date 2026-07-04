@@ -1,0 +1,34 @@
+[package]
+name = "dimos-mls-planner"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust multi-level surface path planner for dimos"
+license = "Apache-2.0"
+
+[lib]
+# Must match the #[pymodule] fn name in python.rs.
+name = "dimos_mls_planner"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "mls_planner"
+path = "src/main.rs"
+
+[dependencies]
+dimos-module = { path = "../../../../../native/rust/dimos-module" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+serde = { version = "1", features = ["derive"] }
+ahash = "0.8"
+tracing = "0.1"
+validator = { version = "0.20", features = ["derive"] }
+image = { version = "0.25", default-features = false }
+imageproc = { version = "0.25", default-features = false }
+rayon = "1"
+pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"] }
+numpy = "0.25"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

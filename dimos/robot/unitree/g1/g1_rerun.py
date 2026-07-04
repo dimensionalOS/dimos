@@ -18,6 +18,42 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
+
+from dimos.visualization.rerun.urdf_robot import (
+    UrdfRobotJointStateRerunFactory,
+    UrdfRobotStaticRerunFactory,
+)
+
+G1_RERUN_ROOT = "world/odom/g1"
+G1_RERUN_URDF = "g1_urdf/g1.fixed.urdf"
+
+# Classic costmap palette, indexed by grid value + 1:
+# transparent unknown, blue free, orange occupied, red lethal.
+_COSTMAP_LOOKUP_TABLE = np.zeros((102, 4), dtype=np.uint8)
+_COSTMAP_LOOKUP_TABLE[0] = (0, 0, 0, 0)
+_COSTMAP_LOOKUP_TABLE[1] = (72, 73, 129, 255)
+_COSTMAP_LOOKUP_TABLE[2:101] = (255, 140, 0, 255)
+_COSTMAP_LOOKUP_TABLE[101] = (220, 30, 30, 255)
+
+
+def g1_costmap(grid: Any) -> Any:
+    """Render an OccupancyGrid with the classic costmap palette.
+
+    Lifts the mesh 2cm off the floor plane to avoid z-fighting with the ground.
+    """
+    return grid.to_rerun(color_lookup_table=_COSTMAP_LOOKUP_TABLE, z_offset=0.02)
+
+
+def g1_urdf_static_robot(root_path: str = G1_RERUN_ROOT) -> UrdfRobotStaticRerunFactory:
+    """Create a static Rerun logger for the G1 URDF visual meshes."""
+    return UrdfRobotStaticRerunFactory(urdf_path=G1_RERUN_URDF, root_path=root_path)
+
+
+def g1_urdf_joint_state(root_path: str = G1_RERUN_ROOT) -> UrdfRobotJointStateRerunFactory:
+    """Create a Rerun JointState converter for the G1 URDF."""
+    return UrdfRobotJointStateRerunFactory(urdf_path=G1_RERUN_URDF, root_path=root_path)
+
 
 def g1_static_robot(rr: Any) -> list[Any]:
     """Static G1 humanoid wireframe box attached to the sensor TF frame.

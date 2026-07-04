@@ -81,6 +81,15 @@ class MockAdapter:
         """Check mock connection status."""
         return self._connected
 
+    def activate(self) -> bool:
+        """Simulate activation (enable servos)."""
+        return self.write_enable(True)
+
+    def deactivate(self) -> bool:
+        """Simulate deactivation (stop motion, disable servos)."""
+        self.write_stop()
+        return self.write_enable(False)
+
     def get_info(self) -> ManipulatorInfo:
         """Return mock info."""
         return ManipulatorInfo(
@@ -218,6 +227,3 @@ class MockAdapter:
 def register(registry: AdapterRegistry) -> None:
     """Register this adapter with the registry."""
     registry.register("mock", MockAdapter)
-
-
-__all__ = ["MockAdapter"]

@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
 from contextlib import suppress
 import hashlib
 import os
 import platform
 import tempfile
 import threading
+import time
+import uuid
 
 # With pytest-xdist, pick a per-worker bucket and pin env vars *before*
 # any dimos module is imported, so parallel workers don't share LCM bus,
@@ -42,6 +43,11 @@ if _worker:
     os.environ["MCP_PORT"] = str(20000 + _BUCKET)
     os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix=f"dimos-test-state-{_worker}-")
 
+# Tag every pytest descendant so a sidecar watchdog can sweep strays (dimsim, rerun, etc).
+DIMOS_PYTEST_RUN_ID_ENV = "DIMOS_PYTEST_RUN_ID"
+if not _worker:
+    os.environ[DIMOS_PYTEST_RUN_ID_ENV] = f"pytest-{uuid.uuid4().hex[:16]}"
+
 # Raise the open-file limit. Each LCM transport opens at least one
 # multicast socket; with pytest-xdist workers running many in parallel,
 # the macOS default soft cap (~256) gets exhausted and tests fail with
@@ -61,6 +67,8 @@ from dotenv import load_dotenv
 import pytest
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.coordination.process_lifecycle import spawn_watchdog
+from dimos.utils.testing.waiting import retry_until as _retry_until, wait_until as _wait_until
 
 load_dotenv()
 
@@ -79,22 +87,33 @@ def _is_macos() -> bool:
 
 
 def pytest_configure(config):
-    config.addinivalue_line("markers", "tool: dev tooling")
     config.addinivalue_line(
         "markers",
         "self_hosted: tests that need the self-hosted runner (LFS, ROS, CUDA, etc.)",
     )
     config.addinivalue_line("markers", "mujoco: tests which open mujoco")
-    config.addinivalue_line("markers", "dimsim: tests which require dimsim")
+    config.addinivalue_line(
+        "markers", "self_hosted_large: tests that need a high-memory self-hosted runner"
+    )
     config.addinivalue_line("markers", "skipif_in_ci: skip when CI env var is set")
     config.addinivalue_line("markers", "skipif_no_openai: skip when OPENAI_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_alibaba: skip when ALIBABA_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_ros: skip when ROS dependencies are not present")
     config.addinivalue_line("markers", "skipif_macos_bug: skip known-buggy tests on macOS")
     config.addinivalue_line("markers", "skipif_macos: skip tests not intended to run on macOS")
+    config.addinivalue_line(
+        "markers", "skipif_aarch64: skip tests not intended to run on aarch64 (Linux ARM)"
+    )
 
     if config.pluginmanager.hasplugin("_cov"):
         os.environ["COVERAGE_PROCESS_START"] = str(config.rootpath / "pyproject.toml")
+
+    # Only spawn on the controller, without doing it on xdist workers.
+    if not hasattr(config, "workerinput"):
+        spawn_watchdog(
+            os.environ[DIMOS_PYTEST_RUN_ID_ENV],
+            env_var=DIMOS_PYTEST_RUN_ID_ENV,
+        )
 
 
 @pytest.fixture(scope="session")
@@ -115,6 +134,18 @@ def lcm_url() -> str:
     return os.environ.get("LCM_DEFAULT_URL", "udpm://239.255.76.67:7667?ttl=0")
 
 
+@pytest.fixture
+def wait_until():
+    """Poll a predicate until it's true or a timeout elapses. See dimos.utils.testing.waiting."""
+    return _wait_until
+
+
+@pytest.fixture
+def retry_until():
+    """Retry an action until a threading.Event fires. See dimos.utils.testing.waiting."""
+    return _retry_until
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items):
     _skipif_markers = {
@@ -124,6 +155,10 @@ def pytest_collection_modifyitems(config, items):
         "skipif_no_ros": (not _has_ros(), "ROS dependencies are not present"),
         "skipif_macos_bug": (_is_macos(), "Some tests are buggy on Mac OS"),
         "skipif_macos": (_is_macos(), "Not intended to run on macOS"),
+        "skipif_aarch64": (
+            platform.machine() == "aarch64",
+            "Not intended to run on aarch64 (Linux ARM)",
+        ),
     }
     for marker_name, (condition, reason) in _skipif_markers.items():
         if condition:
@@ -131,13 +166,6 @@ def pytest_collection_modifyitems(config, items):
             for item in items:
                 if item.get_closest_marker(marker_name):
                     item.add_marker(skip)
-
-
-@pytest.fixture
-def event_loop():
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
 
 
 _session_threads = set()
@@ -162,11 +190,13 @@ def pytest_sessionfinish(session):
 
     yield
 
-    # Check for session-level thread leaks at teardown
+    # Check for session-level thread leaks at teardown. A stopped thread that
+    # lingers in the registry (e.g. a zenoh pyo3-closure thread awaiting reaping)
+    # is not a leak, so only count threads that are still running.
     final_threads = [
         t
         for t in threading.enumerate()
-        if t.name != "MainThread" and t.ident not in _session_threads
+        if t.name != "MainThread" and t.ident not in _session_threads and t.is_alive()
     ]
 
     if final_threads:
@@ -190,51 +220,57 @@ def monitor_threads(request):
 
     with _seen_threads_lock:
         before = _before_test_threads.get(test_name, set())
-        current = {t.ident for t in threading.enumerate() if t.ident is not None}
 
-        # New threads are ones that exist now but didn't exist before this test
-        new_thread_ids = current - before
+    # Threads intentionally left running for the whole process and cleaned up on
+    # exit, so they don't count as per-test leaks.
+    expected_persistent_thread_prefixes = [
+        "Dask-Offload",
+        # HuggingFace safetensors conversion thread - no user cleanup API
+        # https://github.com/huggingface/transformers/issues/29513
+        "Thread-auto_conversion",
+    ]
 
-        if not new_thread_ids:
-            return
+    def live_new_threads():
+        # Threads created during this test that are still running. A thread that
+        # has already stopped is not a leak -- it's done, just not yet reaped
+        # from threading's registry -- so we key on is_alive(), not presence.
+        result = []
+        for t in threading.enumerate():
+            if t.ident is None or t.ident in before or t.name == "MainThread":
+                continue
+            if any(t.name.startswith(prefix) for prefix in expected_persistent_thread_prefixes):
+                continue
+            if t.is_alive():
+                result.append(t)
+        return result
 
-        # Get the actual thread objects for new threads
-        new_threads = [
-            t for t in threading.enumerate() if t.ident in new_thread_ids and t.name != "MainThread"
-        ]
+    # Some C extensions tear their callback threads down asynchronously, so a
+    # thread can stay alive briefly after the test cleaned up its owner (notably
+    # zenoh's pyo3-closure threads, freed shortly after the session is closed).
+    # A single snapshot races that teardown and flags a thread that is about to
+    # exit. Give new threads a grace period to drain; only ones that stay alive
+    # are real leaks (a genuinely leaked thread never exits).
+    deadline = time.monotonic() + 5.0
+    leaked = live_new_threads()
+    while leaked and time.monotonic() < deadline:
+        time.sleep(0.02)
+        leaked = live_new_threads()
 
-        # Filter out expected persistent threads that are shared globally
-        # These threads are intentionally left running and cleaned up on process exit
-        expected_persistent_thread_prefixes = [
-            "Dask-Offload",
-            # HuggingFace safetensors conversion thread - no user cleanup API
-            # https://github.com/huggingface/transformers/issues/29513
-            "Thread-auto_conversion",
-            # rpyc spawns per-call response threads inside the connection's
-            # SpawnThread protocol. They get cleaned up when the connection
-            # is closed (in the rpyc client's teardown), not per-test.
-            "RpycSpawnThread-",
-        ]
-        new_threads = [
-            t
-            for t in new_threads
-            if not any(t.name.startswith(prefix) for prefix in expected_persistent_thread_prefixes)
-        ]
+    if not leaked:
+        return
 
-        # Filter out threads we've already seen (from previous tests)
-        truly_new = [t for t in new_threads if t.ident not in _seen_threads]
+    with _seen_threads_lock:
+        # Report each leaked thread only once across the session.
+        truly_new = [t for t in leaked if t.ident not in _seen_threads]
+        for t in leaked:
+            _seen_threads.add(t.ident)
 
-        # Mark all new threads as seen
-        for t in new_threads:
-            if t.ident is not None:
-                _seen_threads.add(t.ident)
+    if not truly_new:
+        return
 
-        if not truly_new:
-            return
+    thread_names = [t.name for t in truly_new]
 
-        thread_names = [t.name for t in truly_new]
-
-        pytest.fail(
-            f"Non-closed threads created during this test. Thread names: {thread_names}. "
-            "Please look at the first test that fails and fix that."
-        )
+    pytest.fail(
+        f"Non-closed threads created during this test. Thread names: {thread_names}. "
+        "Please look at the first test that fails and fix that."
+    )

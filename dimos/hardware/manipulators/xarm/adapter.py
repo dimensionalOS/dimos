@@ -39,6 +39,11 @@ from dimos.hardware.manipulators.spec import (
 MM_TO_M = 0.001
 M_TO_MM = 1000.0
 MAX_CARTESIAN_SPEED_MM = 500.0  # Max cartesian speed in mm/s
+_XARM_LIFECYCLE_SPEED_DEG = 20.0
+_XARM_LIFECYCLE_ACCEL_DEG = 500.0
+_XARM6_INITIAL_JOINTS_DEG = [0.0, -40.0, -50.0, 0.0, 90.0, 0.0]
+# TODO (CC): change this once we have 7dof arm setup
+_XARM7_INITIAL_JOINTS_DEG = [0.0, 0.0, 0.0, 0.0, 0.0, math.degrees(-0.7), 0.0]
 
 # XArm mode codes
 _XARM_MODE_POSITION = 0
@@ -223,6 +228,64 @@ class XArmAdapter(ManipulatorAdapter):
         code: int = self._arm.set_servo_angle_j(angles, speed=100, mvacc=500)
         return code == 0
 
+    def activate(self) -> bool:
+        """Enable motion and move the arm to its initial joint pose."""
+        if not self._arm:
+            return False
+
+        self._prepare_for_position_motion()
+        if not self._move_to_initial_pose():
+            return False
+        return self.set_control_mode(ControlMode.SERVO_POSITION)
+
+    def deactivate(self) -> bool:
+        """Move the arm to its initial joint pose and enter stopped state."""
+        if not self._arm:
+            return False
+
+        self._prepare_for_position_motion()
+        if not self._move_to_initial_pose():
+            return False
+        self._arm.motion_enable(enable=False)
+        code: int = self._arm.set_state(4)
+        return code == 0
+
+    def _move_to_initial_pose(self) -> bool:
+        if not self._arm:
+            return False
+
+        joints = self._initial_joints_degrees()
+        if joints is None:
+            return True
+
+        code: int = self._arm.set_servo_angle(
+            angle=joints,
+            speed=_XARM_LIFECYCLE_SPEED_DEG,
+            mvacc=_XARM_LIFECYCLE_ACCEL_DEG,
+            wait=True,
+        )
+        return code == 0
+
+    def _initial_joints_degrees(self) -> list[float] | None:
+        if self._dof == 6:
+            return _XARM6_INITIAL_JOINTS_DEG
+        if self._dof == 7:
+            return _XARM7_INITIAL_JOINTS_DEG
+        return None
+
+    def _prepare_for_position_motion(self) -> None:
+        if not self._arm:
+            return
+
+        if self._arm.warn_code != 0:
+            self._arm.clean_warn()
+        if self._arm.error_code != 0:
+            self._arm.clean_error()
+        self._arm.motion_enable(enable=True)
+        self._arm.set_mode(_XARM_MODE_POSITION)
+        self._arm.set_state(0)
+        self._control_mode = ControlMode.POSITION
+
     def write_joint_velocities(self, velocities: list[float]) -> bool:
         """Write joint velocities (rad/s -> deg/s).
 
@@ -341,6 +404,3 @@ class XArmAdapter(ManipulatorAdapter):
 def register(registry: AdapterRegistry) -> None:
     """Register this adapter with the registry."""
     registry.register("xarm", XArmAdapter)
-
-
-__all__ = ["XArmAdapter"]

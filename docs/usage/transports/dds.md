@@ -1,4 +1,6 @@
-# Installing DDS Transport Libs on Ubuntu
+---
+title: "Installing DDS Transport Libs on Ubuntu"
+---
 
 The `dds` extra provides DDS (Data Distribution Service) transport support via [Eclipse Cyclone DDS](https://cyclonedds.io/docs/cyclonedds-python/latest/). The Python package builds C extensions against the CycloneDDS C library, so the C library must be installed before the Python package.
 
@@ -45,13 +47,10 @@ sudo ln -sf /usr/lib/x86_64-linux-gnu/libcycloneddsidl.so* /opt/cyclonedds/lib/
 sudo ln -sf /usr/bin/idlc /opt/cyclonedds/bin/
 sudo ln -sf /usr/bin/ddsperf /opt/cyclonedds/bin/
 sudo ln -sf /usr/include/dds /opt/cyclonedds/include/
-
-# Install with the dds extra
-CYCLONEDDS_HOME=/opt/cyclonedds uv pip install -e '.[dds]'
 ```
 
 To install all extras including DDS:
 
 ```bash
-CYCLONEDDS_HOME=/opt/cyclonedds uv sync --extra dds
+CYCLONEDDS_HOME=/opt/cyclonedds uv sync --all-extras --all-groups
 ```

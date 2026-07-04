@@ -25,5 +25,3 @@ unitree_go2_temporal_memory = autoconnect(
     unitree_go2_agentic,
     _go2_temporal_memory_world_state(),
 )
-
-__all__ = ["unitree_go2_temporal_memory"]

@@ -179,16 +179,65 @@ def speed() -> FnIterTransformer[Any, float]:
     def _speed(upstream: Iterator[Observation[Any]]) -> Iterator[Observation[float]]:
         prev: Observation[Any] | None = None
         for obs in upstream:
-            if prev is not None and obs.pose is not None and prev.pose is not None:
-                dx = obs.pose[0] - prev.pose[0]
-                dy = obs.pose[1] - prev.pose[1]
-                dz = obs.pose[2] - prev.pose[2]
+            p = obs.pose
+            pp = prev.pose if prev is not None else None
+            if prev is not None and p is not None and pp is not None:
                 dt = obs.ts - prev.ts
-                v = math.sqrt(dx * dx + dy * dy + dz * dz) / dt if dt > 0 else 0.0
+                v = (p.position - pp.position).length() / dt if dt > 0 else 0.0
                 yield obs.derive(data=v)
             prev = obs
 
     return FnIterTransformer(_speed)
+
+
+class SpeedLimit(Transformer[T, T]):
+    """Pass through observations whose linear (and optionally angular) speed is low.
+
+    Linear: ``||Δtranslation|| / Δt`` in m/s, must be ≤ ``max_mps``.
+    Angular: rotation-angle-between-quaternions / Δt in deg/s, must be
+    ≤ ``max_dps`` when set.
+
+    Both metrics are computed between consecutive observations in stream
+    order. Use to drop motion-blurry frames from fiducial / OCR /
+    SLAM-frontend pipelines.
+
+    First observation is dropped (no reference). Observations with no
+    ``.pose`` are skipped. ``Δt ≤ 0`` (duplicate / non-monotonic
+    timestamps) is treated as unknown and dropped.
+
+    Note: the effective sampling interval is whatever upstream provides.
+    Chain after ``QualityWindow(window=Δt)`` to measure motion over a
+    fixed time window instead of per-frame.
+    """
+
+    def __init__(self, max_mps: float, max_dps: float | None = None) -> None:
+        if max_mps <= 0:
+            raise ValueError(f"max_mps must be > 0, got {max_mps}")
+        if max_dps is not None and max_dps <= 0:
+            raise ValueError(f"max_dps must be > 0 when set, got {max_dps}")
+        self.max_mps = max_mps
+        self.max_dps = max_dps
+
+    def __call__(self, upstream: Iterator[Observation[T]]) -> Iterator[Observation[T]]:
+        prev: Observation[T] | None = None
+        max_mps = self.max_mps
+        max_dps = self.max_dps
+        max_rps = math.radians(max_dps) if max_dps is not None else None
+        for obs in upstream:
+            p = obs.pose
+            if p is None:
+                continue
+            pp = prev.pose if prev is not None else None
+            if prev is not None and pp is not None:
+                dt = obs.ts - prev.ts
+                if dt > 0:
+                    v = (p.position - pp.position).length() / dt
+                    ok = v <= max_mps
+                    if ok and max_rps is not None:
+                        ok = (p.orientation.angle_to(pp.orientation) / dt) <= max_rps
+                    if ok:
+                        yield obs
+            prev = obs
 
 
 def smooth(window: int) -> FnIterTransformer[float, float]:

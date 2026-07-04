@@ -24,9 +24,8 @@ from pathlib import Path
 import sys
 import time
 import types
-from typing import TYPE_CHECKING, Any, Union, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Literal, Union, cast, get_args, get_origin
 
-import click
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
@@ -38,6 +37,12 @@ from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
+from dimos.mapping.utils.cli.map import main as _map_main
+from dimos.mapping.utils.cli.pose_fill import main as _map_pose_fill_main
+from dimos.mapping.utils.cli.rename import main as _map_rename_main
+from dimos.mapping.utils.cli.replay import main as _map_replay_main
+from dimos.mapping.utils.cli.replay_marker import main as _map_replay_marker_main
+from dimos.mapping.utils.cli.summary import main as _map_summary_main
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import RerunOpenOption
@@ -87,6 +92,11 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
     for field_name, field_info in fields.items():
         field_type = field_info.annotation
 
+        # Container generics (e.g. `tuple[...]` fields) have no single-flag CLI
+        # representation; they're configured via env/JSON. Skip like arg_help does.
+        if isinstance(field_type, types.GenericAlias):
+            continue
+
         # Handle Optional types
         # Check for Optional/Union with None
         if get_origin(field_type) is type(str | None):
@@ -131,7 +141,11 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 
     def callback(**kwargs) -> None:  # type: ignore[no-untyped-def]
         ctx = kwargs.pop("ctx")
-        ctx.obj = {k: v for k, v in kwargs.items() if v is not None}
+        overrides = {k: v for k, v in kwargs.items() if v is not None}
+        ctx.obj = overrides
+        # Apply overrides (e.g. --transport, --viewer) to the process-global config
+        # up front so every subcommand honors flags given before the subcommand name.
+        global_config.update(**overrides)
 
     callback.__signature__ = inspect.Signature(params)  # type: ignore[attr-defined]
 
@@ -234,7 +248,6 @@ def run(
     )
     from dimos.core.run_registry import (
         RunEntry,
-        check_port_conflicts,
         cleanup_stale,
         generate_run_id,
     )
@@ -245,24 +258,10 @@ def run(
 
     cli_config_overrides: dict[str, Any] = ctx.obj
 
-    # this is a workaround until we have a proper way to have delayed-module-choice in blueprints
-    # ex: vis_module(viewer=global_config.viewer) is wrong (viewer will always be default value) without this patch
-    global_config.update(**cli_config_overrides)
-
     # Clean stale registry entries
     stale = cleanup_stale()
     if stale:
         logger.info(f"Cleaned {stale} stale run entries")
-
-    # Port conflict check
-    conflict = check_port_conflicts()
-    if conflict:
-        typer.echo(
-            f"Error: Ports in use by {conflict.run_id} (PID {conflict.pid}). "
-            f"Run 'dimos stop' first.",
-            err=True,
-        )
-        raise typer.Exit(1)
 
     blueprint_name = "-".join(robot_types)
     run_id = generate_run_id(blueprint_name)
@@ -316,7 +315,7 @@ def run(
 
         daemonize(log_dir)
 
-        rpyc_port = coordinator.start_rpyc_service()  # After daemonize().
+        coordinator.start_rpc_service()  # After daemonize().
         entry = RunEntry(
             run_id=run_id,
             pid=os.getpid(),
@@ -325,7 +324,6 @@ def run(
             log_dir=str(log_dir),
             cli_args=list(robot_types),
             config_overrides=cli_config_overrides,
-            rpyc_port=rpyc_port,
             original_argv=sys.argv,
         )
         entry.save()
@@ -333,7 +331,7 @@ def run(
         install_signal_handlers(entry, coordinator)
         coordinator.loop()
     else:
-        rpyc_port = coordinator.start_rpyc_service()
+        coordinator.start_rpc_service()
         entry = RunEntry(
             run_id=run_id,
             pid=os.getpid(),
@@ -342,7 +340,6 @@ def run(
             log_dir=str(log_dir),
             cli_args=list(robot_types),
             config_overrides=cli_config_overrides,
-            rpyc_port=rpyc_port,
             original_argv=sys.argv,
         )
         entry.save()
@@ -460,28 +457,30 @@ def mcp_list_tools() -> None:
     typer.echo(json.dumps(tools, indent=2))
 
 
-class _KeyValueType(click.ParamType):
-    """Parse KEY=VALUE arguments, auto-converting JSON values."""
+def _parse_key_value_arg(value: str) -> tuple[str, Any]:
+    """Parse a KEY=VALUE argument, auto-converting JSON values."""
+    if "=" not in value:
+        raise ValueError(f"expected KEY=VALUE, got: {value}")
+    key, val = value.split("=", 1)
+    try:
+        return (key, json.loads(val))
+    except (json.JSONDecodeError, ValueError):
+        return (key, val)
 
-    name = "KEY=VALUE"
 
-    def convert(
-        self, value: str, param: click.Parameter | None, ctx: click.Context | None
-    ) -> tuple[str, Any]:
+def _validate_key_value_args(values: list[str]) -> list[str]:
+    """Validate KEY=VALUE arguments during CLI parsing."""
+    for value in values:
         if "=" not in value:
-            self.fail(f"expected KEY=VALUE, got: {value}", param, ctx)
-        key, val = value.split("=", 1)
-        try:
-            return (key, json.loads(val))
-        except (json.JSONDecodeError, ValueError):
-            return (key, val)
+            raise typer.BadParameter(f"expected KEY=VALUE, got: {value}")
+    return values
 
 
 @mcp_app.command("call")
 def mcp_call_tool(
     tool_name: str = typer.Argument(..., help="Tool name to call"),
     args: list[str] = typer.Option(
-        [], "--arg", "-a", click_type=_KeyValueType(), help="Arguments as key=value"
+        [], "--arg", "-a", callback=_validate_key_value_args, help="Arguments as key=value"
     ),
     json_args: str = typer.Option("", "--json-args", "-j", help="Arguments as JSON string"),
 ) -> None:
@@ -494,8 +493,11 @@ def mcp_call_tool(
             typer.echo(f"Error: invalid JSON in --json-args: {e}", err=True)
             raise typer.Exit(1)
     else:
-        # _KeyValueType.convert() returns (key, val) tuples at runtime
-        arguments = dict(args)  # type: ignore[arg-type]
+        try:
+            arguments = dict(_parse_key_value_arg(arg) for arg in args)
+        except ValueError as e:
+            typer.echo(f"Error: invalid --arg: {e}", err=True)
+            raise typer.Exit(1)
 
     try:
         result = _get_adapter().call_tool(tool_name, arguments)
@@ -602,12 +604,8 @@ def restart(
 
 
 @main.command()
-def show_config(ctx: typer.Context) -> None:
+def show_config() -> None:
     """Show current config settings and their values."""
-
-    cli_config_overrides: dict[str, Any] = ctx.obj
-    global_config.update(**cli_config_overrides)
-
     for field_name, value in global_config.model_dump().items():
         typer.echo(f"{field_name}: {value}")
 
@@ -683,6 +681,56 @@ def send(
     from dimos.robot.cli.topic import topic_send
 
     topic_send(topic, message_expr)
+
+
+map_app = typer.Typer(help="Voxel-map tools over recorded sqlite datasets")
+main.add_typer(map_app, name="map")
+map_app.command("global")(_map_main)
+
+
+dataprep_app = typer.Typer(help="Build and inspect learning datasets from recordings")
+main.add_typer(dataprep_app, name="dataprep")
+
+
+@dataprep_app.command("build")
+def dataprep_build(
+    source: Path | None = typer.Option(None, "--source", "-s", help="Recording .db to read"),
+    output: Path | None = typer.Option(None, "--output", help="Dataset output directory"),
+    output_format: str = typer.Option(None, "--format", "-f", help="Output format: lerobot | hdf5"),
+    config_path: Path | None = typer.Option(
+        None, "--config", "-c", help="JSON DataPrepConfig (needed for obs/action stream maps)"
+    ),
+) -> None:
+    """Build a dataset from a recording (lerobot/hdf5 + dimos_meta.json)."""
+    from dimos.learning.dataprep.cli import build
+
+    build(config_path, source, output, cast("Literal['lerobot', 'hdf5'] | None", output_format))
+
+
+@dataprep_app.command("inspect")
+def dataprep_inspect(
+    dataset: Path | None = typer.Argument(
+        None, help="Built dataset: a .hdf5 file or a lerobot directory"
+    ),
+    output_format: str = typer.Option(
+        None, "--format", "-f", help="lerobot | hdf5 (auto-detected from the path if omitted)"
+    ),
+) -> None:
+    """Summarize a built dataset: features, shapes, episode/frame counts, uniformity."""
+    from dimos.learning.dataprep.cli import inspect
+
+    inspect(dataset, cast("Literal['lerobot', 'hdf5'] | None", output_format))
+
+
+map_app.command("summary")(_map_summary_main)
+map_app.command("rename")(_map_rename_main)
+map_app.command("pose-fill")(_map_pose_fill_main)
+map_app.command("replay")(_map_replay_main)
+map_app.command("replay-marker")(_map_replay_marker_main)
+
+from dimos.memory2.cli.app import mem_app
+
+main.add_typer(mem_app, name="mem")
 
 
 @main.command()

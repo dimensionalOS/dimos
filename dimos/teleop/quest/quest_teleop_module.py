@@ -21,6 +21,7 @@ FastAPI WebSocket server.  Transforms from WebXR to robot frame, computes
 deltas, and publishes PoseStamped commands.
 """
 
+import asyncio
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
@@ -88,7 +89,7 @@ class QuestTeleopModule(Module):
     Outputs:
         - left_controller_output: PoseStamped (output pose for left hand)
         - right_controller_output: PoseStamped (output pose for right hand)
-        - buttons: Buttons (button states for both controllers)
+        - teleop_buttons: Buttons (button states for both controllers)
     """
 
     config: QuestTeleopConfig
@@ -96,7 +97,7 @@ class QuestTeleopModule(Module):
     # Outputs: delta poses for each controller
     left_controller_output: Out[PoseStamped]
     right_controller_output: Out[PoseStamped]
-    buttons: Out[Buttons]
+    teleop_buttons: Out[Buttons]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -125,6 +126,13 @@ class QuestTeleopModule(Module):
             LCMJoy._get_packed_fingerprint(): self._on_joy_bytes,
         }
 
+        # Tracked here so subclasses can push from non-asyncio threads.
+        # _clients_lock guards add/discard/snapshot of the set across the
+        # uvicorn thread and the RX subscriber thread.
+        self._connected_clients: set[WebSocket] = set()
+        self._clients_lock = threading.Lock()
+        self._ws_loop: asyncio.AbstractEventLoop | None = None
+
         self._setup_routes()
 
     def _setup_routes(self) -> None:
@@ -143,6 +151,9 @@ class QuestTeleopModule(Module):
         @self._web_server.app.websocket("/ws")
         async def websocket_endpoint(ws: WebSocket) -> None:
             await ws.accept()
+            self._ws_loop = asyncio.get_running_loop()
+            with self._clients_lock:
+                self._connected_clients.add(ws)
             logger.info("Quest client connected")
             try:
                 while True:
@@ -157,6 +168,9 @@ class QuestTeleopModule(Module):
                 logger.info("Quest client disconnected")
             except Exception:
                 logger.exception("WebSocket error")
+            finally:
+                with self._clients_lock:
+                    self._connected_clients.discard(ws)
 
     @rpc
     def start(self) -> None:
@@ -378,4 +392,4 @@ class QuestTeleopModule(Module):
         keep analog values, add extra streams).
         """
         buttons = Buttons.from_controllers(left, right)
-        self.buttons.publish(buttons)
+        self.teleop_buttons.publish(buttons)

@@ -27,8 +27,13 @@ import numpy as np
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
-from dimos.manipulation.planning.spec.models import JointPath, Obstacle, WorldRobotID
-from dimos.manipulation.planning.spec.protocols import WorldSpec
+from dimos.manipulation.planning.spec.models import (
+    JointPath,
+    Obstacle,
+    PlanningSceneInfo,
+    WorldRobotID,
+)
+from dimos.manipulation.planning.spec.protocols import VisualizationSpec, WorldSpec
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.utils.logging_config import setup_logger
 
@@ -145,8 +150,8 @@ class _ThreadSafeMeshcat:
         self._executor.shutdown(wait=False)
 
 
-class DrakeWorld(WorldSpec):
-    """Drake implementation of WorldSpec with MultibodyPlant, SceneGraph, optional Meshcat."""
+class DrakeWorld(WorldSpec, VisualizationSpec):
+    """Drake implementation of WorldSpec and VisualizationSpec."""
 
     def __init__(self, time_step: float = 0.0, enable_viz: bool = False) -> None:
         if not DRAKE_AVAILABLE:
@@ -982,6 +987,10 @@ class DrakeWorld(WorldSpec):
         return J_reordered
 
     # Visualization
+
+    def initialize_scene(self, scene: PlanningSceneInfo) -> None:
+        """Embedded Meshcat observes the Drake world directly; no extra sync needed."""
+        return None
 
     def get_visualization_url(self) -> str | None:
         """Get visualization URL if enabled."""

@@ -15,22 +15,28 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Mapping, MutableMapping
+from collections.abc import Callable, Mapping, MutableMapping
 import importlib
 import inspect
 import shutil
 import sys
 import threading
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
-from dimos.core.coordination.rpyc_server import RpycServer
+from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.worker_manager import WorkerManager
-from dimos.core.coordination.worker_manager_docker import WorkerManagerDocker
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.resource import Resource
-from dimos.core.transport import LCMTransport, PubSubTransport, pLCMTransport
+from dimos.core.transport import (
+    LCMTransport,
+    PubSubTransport,
+    ZenohTransport,
+    pLCMTransport,
+    pZenohTransport,
+)
+from dimos.core.transport_factory import make_transport
 from dimos.spec.utils import is_spec, spec_annotation_compliance, spec_structural_compliance
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
@@ -45,6 +51,14 @@ logger = setup_logger()
 _SYSTEM_MODULES_NOWAIT_REMOTE_NAMES = frozenset({"McpClient"})
 
 
+class ModuleDescriptor(NamedTuple):
+    """Returned by `Coordinator/list_modules` so a remote client can build a proxy."""
+
+    class_name: str
+    qualified_path: str
+    rpc_names: list[str]
+
+
 class ModuleCoordinator(Resource):
     _managers: dict[str, WorkerManager]
     _global_config: GlobalConfig
@@ -55,7 +69,7 @@ class ModuleCoordinator(Resource):
         g: GlobalConfig = global_config,
     ) -> None:
         self._global_config = g
-        manager_types: list[type[WorkerManager]] = [WorkerManagerDocker, WorkerManagerPython]
+        manager_types: list[type[WorkerManager]] = [WorkerManagerPython]
         self._managers = {cls.deployment_identifier: cls(g=g) for cls in manager_types}
         self._deployed_modules = {}
         self._deployed_atoms: dict[type[ModuleBase], BlueprintAtom] = {}
@@ -65,7 +79,7 @@ class ModuleCoordinator(Resource):
         self._module_transports: dict[type[ModuleBase], dict[str, PubSubTransport[Any]]] = {}
         self._started = False
         self._modules_lock = threading.RLock()
-        self._rpyc = RpycServer(self)
+        self._coordinator_rpc: CoordinatorRPC | None = None
 
     def start(self) -> None:
         from dimos.core.o3dpickle import register_picklers
@@ -76,7 +90,9 @@ class ModuleCoordinator(Resource):
         self._started = True
 
     def stop(self) -> None:
-        self._rpyc.stop()
+        if self._coordinator_rpc is not None:
+            self._coordinator_rpc.stop()
+            self._coordinator_rpc = None
 
         for module_class, module in reversed(self._deployed_modules.items()):
             logger.info("Stopping module...", module=module_class.__name__)
@@ -94,25 +110,50 @@ class ModuleCoordinator(Resource):
 
         safe_thread_map(tuple(self._managers.values()), _stop_manager)
 
-    def start_rpyc_service(self) -> int:
-        return self._rpyc.start()
+    def start_rpc_service(self) -> None:
+        """Expose the coordinator's API as @rpc methods over LCM."""
+        if self._coordinator_rpc is not None:
+            return
+        self._coordinator_rpc = CoordinatorRPC.serve(self)
+
+    @property
+    def rpcs(self) -> dict[str, Callable[..., Any]]:
+        """Methods exposed via the Coordinator @rpc service."""
+        return {
+            "ping": self.ping,
+            "list_modules": self.list_modules,
+            "load_blueprint_by_name": self.load_blueprint_by_name,
+            "load_blueprint": self.load_blueprint,
+            "restart_module_by_class_name": self.restart_module_by_class_name,
+        }
+
+    def ping(self) -> str:
+        """Used by clients to check if the coordinator is alive and responsive."""
+        return "pong"
+
+    def list_modules(self) -> list[ModuleDescriptor]:
+        with self._modules_lock:
+            descriptors: list[ModuleDescriptor] = []
+            for cls in self._deployed_modules:
+                qualified = f"{cls.__module__}.{cls.__name__}"
+                descriptors.append(
+                    ModuleDescriptor(
+                        class_name=cls.__name__,
+                        qualified_path=qualified,
+                        rpc_names=list(cls.rpcs.keys()),
+                    )
+                )
+            return descriptors
+
+    def load_blueprint_by_name(self, name: str) -> None:
+        # Avoid circular import.
+        from dimos.robot.get_all_blueprints import get_by_name
+
+        self.load_blueprint(get_by_name(name))
 
     def list_module_names(self) -> list[str]:
         with self._modules_lock:
             return [cls.__name__ for cls in self._deployed_modules]
-
-    def get_module_endpoint(self, class_name: str) -> tuple[str, int, int]:
-        """Return (host, worker_rpyc_port, module_id) for the given class name.
-
-        Lazily starts the worker-side RPyC server on first use.
-        """
-        with self._modules_lock:
-            for cls, proxy in self._deployed_modules.items():
-                if cls.__name__ == class_name:
-                    actor = cast("ModuleProxy", proxy).actor_instance
-                    port = actor.start_rpyc()
-                    return ("localhost", int(port), int(actor._module_id))
-        raise KeyError(class_name)
 
     def health_check(self) -> bool:
         return all(m.health_check() for m in self._managers.values())
@@ -408,11 +449,12 @@ class ModuleCoordinator(Resource):
         class_name: str,
         *,
         reload_source: bool = True,
-    ) -> ModuleProxyProtocol:
+    ) -> None:
         with self._modules_lock:
             for cls in self._deployed_modules:
                 if cls.__name__ == class_name:
-                    return self._restart_module(cls, reload_source=reload_source)
+                    self._restart_module(cls, reload_source=reload_source)
+                    return
         raise ValueError(f"No deployed module with class name {class_name!r}")
 
     def restart_module(
@@ -541,15 +583,37 @@ def _is_name_unique(blueprint: Blueprint, name: str) -> bool:
 
 
 def _get_transport_for(blueprint: Blueprint, name: str, stream_type: type) -> PubSubTransport[Any]:
-    transport = blueprint.transport_map.get((name, stream_type), None)
-    if transport:
+    mapped = blueprint.transport_map.get((name, stream_type), None)
+    if mapped is not None:
+        return _coerce_transport_to_backend(mapped)
+
+    topic = f"/{name}" if _is_name_unique(blueprint, name) else f"/{short_id()}"
+    return make_transport(topic, stream_type)
+
+
+def _coerce_transport_to_backend(transport: PubSubTransport[Any]) -> PubSubTransport[Any]:
+    """Rebuild an explicitly-mapped LCM/Zenoh transport for the active backend.
+
+    Blueprints pin specific channels in their `transport_map` with e.g. `LCMTransport("/cmd_vel",
+    Twist)`. So the global transport switch reaches those too, rebuild the plain LCM<->Zenoh pair
+    via the factory when it doesn't match `global_config.transport`. Deliberate non-default choices
+    (`JpegLcmTransport`, SHM, ROS, DDS, ...) are exact-type-checked out and left untouched.
+    """
+    want = global_config.transport
+    is_pickled = type(transport) in (pLCMTransport, pZenohTransport)
+    is_lcm = type(transport) in (LCMTransport, pLCMTransport)
+    is_zenoh = type(transport) in (ZenohTransport, pZenohTransport)
+    if not ((want == "zenoh" and is_lcm) or (want == "lcm" and is_zenoh)):
         return transport
 
-    use_pickled = getattr(stream_type, "lcm_encode", None) is None
-    topic = f"/{name}" if _is_name_unique(blueprint, name) else f"/{short_id()}"
-    transport = pLCMTransport(topic) if use_pickled else LCMTransport(topic, stream_type)
-
-    return transport
+    if is_pickled:
+        raw, msg_type = transport.topic, None
+    else:
+        raw, msg_type = transport.topic.topic, transport.topic.lcm_type
+    # Strip the Zenoh 'dimos/' namespace (if present) back to the logical name.
+    # The factory re-applies the right prefix for the target backend.
+    logical = raw[len("dimos/") :] if raw.startswith("dimos/") else raw
+    return make_transport(logical, msg_type)
 
 
 def _verify_no_name_conflicts(blueprint: Blueprint) -> None:
@@ -617,7 +681,8 @@ def _run_configurators(blueprint: Blueprint) -> None:
     from dimos.protocol.service.system_configurator.base import configure_system
     from dimos.protocol.service.system_configurator.lcm_config import lcm_configurators
 
-    configurators = [*lcm_configurators(), *blueprint.configurator_checks]
+    lcm_checks = lcm_configurators() if global_config.transport == "lcm" else []
+    configurators = [*lcm_checks, *blueprint.configurator_checks]
 
     try:
         configure_system(configurators)

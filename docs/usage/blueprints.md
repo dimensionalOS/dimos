@@ -1,4 +1,4 @@
-# Blueprints
+## Blueprints
 
 Blueprints (`BlueprintAtom`) are instructions for how to initialize a `Module`.
 
@@ -269,7 +269,6 @@ print(arg_help(base_blueprint.config(), base_blueprint))
 Another function is `dimos.robot.cli.dimos.load_config_args()` which can create the
 argument dict for users from a config file, environment variables and CLI arguments:
 
-
 ```python session=blueprint-ex1
 from pathlib import Path
 
@@ -385,8 +384,7 @@ module_coordinator = ModuleCoordinator.build(SomeSkill.blueprint())
 module_coordinator.stop()
 ```
 
-<!--Result:-->
-```
+```results
 16:30:00.119 [inf][dination/module_coordinator.py] Building the blueprint
 16:30:00.133 [inf][dination/module_coordinator.py] Starting the modules
 16:30:01.320 [inf][ation/worker_manager_python.py] Worker pool started. n_workers=2

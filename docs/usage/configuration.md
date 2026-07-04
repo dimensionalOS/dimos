@@ -1,4 +1,6 @@
-# Configuration
+---
+title: "Configuration"
+---
 
 Dimos provides a `Configurable` base class. See [`service/spec.py`](/dimos/protocol/service/spec.py#L22).
 
@@ -29,7 +31,6 @@ try:
     myclass3 = MyClass(something="else")
 except (TypeError, ValidationError) as e:
     print(f"Error: {e}")
-
 
 ```
 
@@ -66,12 +67,10 @@ class MyModule(Module):
         super().__init__(**kwargs)
         print(self.config)
 
-
 myModule = MyModule(frame_id="frame_id_override", device="CPU")
 
 # In production, use dimos.deploy() instead:
 # myModule = dimos.deploy(MyModule, frame_id="frame_id_override")
-
 
 ```
 
@@ -107,6 +106,7 @@ Config(
         mujoco_global_map_from_pointcloud=None,
         mujoco_start_pos='-1.0, 1.0',
         mujoco_steps_per_frame=7,
+        scene_package=None,
         robot_model=None,
         robot_width=0.3,
         robot_rotation_diameter=0.6,
