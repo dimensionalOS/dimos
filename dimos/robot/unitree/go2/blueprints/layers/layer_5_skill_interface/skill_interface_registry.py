@@ -15,8 +15,8 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
+import json
 from typing import Any, Literal
 
 from dimos.core.core import rpc
@@ -68,12 +68,22 @@ _LIGHT_PREFLIGHT = ("route_task",)
 _KNOWN_NON_LAYER5_MCP_TOOLS = frozenset(
     {
         "agent_send",
+        "evaluate_task_feasibility",
         "get_context",
+        "load_world_model_state",
         "list_modules",
+        "memory_backend_status",
         "predict_skill_outcome",
+        "predict_world_transition",
+        "propose_skill_interface",
         "record_causal_transition",
+        "record_context_feedback",
+        "record_evolution_event",
+        "record_intervention",
+        "record_skill_proposal",
         "record_skill_outcome",
         "route_task",
+        "save_world_model_state",
         "server_status",
         "summarize_causal_patterns",
         "summarize_skill_outcomes",
@@ -366,7 +376,9 @@ class _Go2SkillInterfaceRegistry(Module):
         if contract.requires_context:
             warnings.append("call get_context before this skill when task context is non-trivial")
         if contract.motion_sensitive:
-            warnings.append("call predict_skill_outcome before executing this motion-sensitive skill")
+            warnings.append(
+                "call predict_skill_outcome before executing this motion-sensitive skill"
+            )
 
         return {
             "valid": not errors,
@@ -388,9 +400,7 @@ class _Go2SkillInterfaceRegistry(Module):
         mcp_names = set(tool_names)
         known_internal = sorted(mcp_names & _KNOWN_NON_LAYER5_MCP_TOOLS)
         missing_contracts = sorted(contract_names - mcp_names) if tool_names else []
-        unregistered_mcp_tools = sorted(
-            mcp_names - contract_names - _KNOWN_NON_LAYER5_MCP_TOOLS
-        )
+        unregistered_mcp_tools = sorted(mcp_names - contract_names - _KNOWN_NON_LAYER5_MCP_TOOLS)
 
         return {
             "valid": not errors and not missing_contracts and not unregistered_mcp_tools,

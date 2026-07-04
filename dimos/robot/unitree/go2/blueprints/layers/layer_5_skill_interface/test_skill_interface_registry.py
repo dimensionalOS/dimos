@@ -56,7 +56,15 @@ def test_compare_mcp_tools_accepts_matching_mcp_tool_payload() -> None:
         payload = {
             "result": {
                 "tools": [{"name": name, "inputSchema": {"type": "object"}} for name in tool_names]
-                + [{"name": "get_context"}, {"name": "route_task"}, {"name": "server_status"}]
+                + [
+                    {"name": "get_context"},
+                    {"name": "route_task"},
+                    {"name": "server_status"},
+                    {"name": "predict_world_transition"},
+                    {"name": "record_intervention"},
+                    {"name": "save_world_model_state"},
+                    {"name": "load_world_model_state"},
+                ]
             }
         }
 
@@ -66,6 +74,7 @@ def test_compare_mcp_tools_accepts_matching_mcp_tool_payload() -> None:
         assert result["missing_contracts"] == []
         assert result["unregistered_mcp_tools"] == []
         assert "get_context" in result["known_non_layer5_mcp_tools"]
+        assert "record_intervention" in result["known_non_layer5_mcp_tools"]
     finally:
         _stop_modules(registry)
 
@@ -106,6 +115,22 @@ def test_go2_agentic_mcp_tools_match_layer5_contracts() -> None:
         assert "server_status" in result["known_non_layer5_mcp_tools"]
     finally:
         _stop_modules(registry)
+
+
+def test_go2_agentic_blueprint_import_does_not_require_agent_runtime() -> None:
+    from dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic import (
+        unitree_go2_agentic,
+    )
+
+    assert unitree_go2_agentic.active_blueprints
+
+
+def test_go2_agentic_blueprint_config_resolves_runtime_type_hints() -> None:
+    from dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic import (
+        unitree_go2_agentic,
+    )
+
+    assert unitree_go2_agentic.config()
 
 
 def _static_mcp_tool_names(blueprint: Blueprint) -> set[str]:
@@ -171,9 +196,7 @@ def test_validate_skill_request_checks_required_arguments() -> None:
 def test_validate_skill_request_accepts_safe_speech_call() -> None:
     registry = _Go2SkillInterfaceRegistry()
     try:
-        result = registry.validate_skill_request(
-            "speak", '{"text": "hello", "blocking": false}'
-        )
+        result = registry.validate_skill_request("speak", '{"text": "hello", "blocking": false}')
 
         assert result["valid"] is True
         assert result["errors"] == []

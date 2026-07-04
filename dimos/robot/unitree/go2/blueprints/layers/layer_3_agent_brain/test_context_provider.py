@@ -122,6 +122,43 @@ class StubCausalWorldModel:
             }
         ][:limit]
 
+    def score_action(
+        self,
+        snapshot_json: str = "",
+        action_json: str = "",
+        goal: str = "",
+    ) -> dict[str, Any]:
+        return {
+            "score": 0.25,
+            "risk": "high",
+            "confidence": "medium",
+            "predicted_success": False,
+            "failure_modes": [{"cause": "semantic_map_missing_target", "count": 1}],
+        }
+
+    def get_model_state(self) -> dict[str, Any]:
+        return {
+            "type": "online_transition_outcome",
+            "sample_count": 3,
+            "positive_count": 1,
+            "negative_count": 2,
+            "intervention_log": {"record_count": 1},
+        }
+
+    def get_intervention_log(
+        self,
+        limit: int = 10,
+        target_variable: str = "",
+        intervention_name: str = "",
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "intervention_name": "look_out_for_then_tag_target",
+                "target_variable": "spatial_has_matches",
+                "outcome_success": True,
+            }
+        ][:limit]
+
 
 class StubWorldState:
     def get_world_snapshot(self, task: str = "", spatial_limit: int = 3) -> dict[str, Any]:
@@ -158,9 +195,7 @@ class StubWorldState:
                     "rolling_summary": "The hallway was recently observed.",
                 },
             },
-            "semantic_temporal_map": {
-                "fused": {"available": True, "spatial_match_count": 1}
-            },
+            "semantic_temporal_map": {"fused": {"available": True, "spatial_match_count": 1}},
         }
 
     def get_robot_state(self) -> dict[str, Any]:
@@ -197,10 +232,43 @@ def test_get_context_aggregates_available_sources() -> None:
         assert result.metadata["skill_state"]["interface"]["skill_count"] == 1
         assert "Skill interface: 1 contract(s)" in result.message
         assert result.metadata["causal_state"]["recent_transitions"][0]["outcome_success"] is False
+        assert result.metadata["world_model_state"]["available"] is True
+        assert result.metadata["world_model_state"]["transition_count"] == 1
+        assert result.metadata["world_model_state"]["intervention_count"] == 1
+        assert result.metadata["world_model_state"]["model"]["sample_count"] == 3
+        assert (
+            result.metadata["world_model_state"]["recent_interventions"][0]["intervention_name"]
+            == "look_out_for_then_tag_target"
+        )
+        evidence = result.metadata["context_evidence"]
+        assert evidence["version"] == "context_evidence.v1"
+        assert evidence["selection_policy"] == "deterministic_source_coverage_v1"
+        assert evidence["query"] == "find the person"
+        assert evidence["focus"] == "navigation"
+        assert evidence["entry_count"] >= 6
+        assert "spatial_memory" in evidence["selected_sources"]
+        assert "skill_outcome_store" in evidence["selected_sources"]
+        assert "causal_world_model" in evidence["selected_sources"]
+        spatial_evidence = next(
+            item for item in evidence["entries"] if item["source"] == "spatial_memory"
+        )
+        assert spatial_evidence["query"] == "find the person"
+        assert 0.0 <= spatial_evidence["relevance_score"] <= 1.0
+        assert spatial_evidence["confidence"] in {"low", "medium", "high"}
+        assert spatial_evidence["cost"] == "rag_query"
+        assert spatial_evidence["selected_reason"]
+        skill_evidence = next(
+            item for item in evidence["entries"] if item["source"] == "skill_outcome_store"
+        )
+        assert skill_evidence["risk_impact"] == "high"
+        assert "World model: available" in result.message
+        assert "interventions=1" in result.message
+        assert "Context evidence:" in result.message
 
         encoded = json.loads(result.agent_encode()[0]["text"])
         assert encoded["success"] is True
         assert encoded["metadata"]["task"] == "find the person"
+        assert encoded["metadata"]["context_evidence"]["entry_count"] == evidence["entry_count"]
     finally:
         _stop_modules(provider)
 
@@ -214,6 +282,11 @@ def test_get_context_handles_missing_optional_sources() -> None:
         assert result.metadata["sources"]["spatial_memory"] is False
         assert result.metadata["sources"]["temporal_memory"] is False
         assert result.metadata["robot_state"]["odom"] is None
+        evidence = result.metadata["context_evidence"]
+        assert evidence["entry_count"] >= 2
+        assert evidence["selected_sources"] == ["runtime_config", "task"]
+        assert evidence["entries"][0]["source"] == "task"
+        assert evidence["entries"][0]["selected_reason"] == "Current user goal anchors retrieval."
         assert "Spatial memory: unavailable" in result.message
     finally:
         _stop_modules(provider)

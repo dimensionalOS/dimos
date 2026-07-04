@@ -25,24 +25,32 @@ _GO2_LAYER_3_DECISION_POLICY = f"""
 Use the Layer 3 tools as the decision scaffold before calling physical Go2
 skills.
 
-1. For any non-trivial user goal, call `route_task(task)` first.
-2. If the route says context is needed, or if the task may involve movement,
+1. For any non-trivial user goal, call `evaluate_task_feasibility(task)` first.
+   If feasibility returns `no`, refuse or stop as directed. If it returns
+   `uncertain`, gather the requested context or ask the clarifying question.
+2. Call `route_task(task)` before choosing candidate tools.
+3. If the route says context is needed, or if the task may involve movement,
    perception, memory, safety, or recovery, call `get_context(task, focus)`.
-3. Before calling movement-sensitive or recovery-sensitive tools such as
+4. Re-run `evaluate_task_feasibility(task, context_json)` when new context
+   materially changes whether the task is safe or possible.
+5. Before calling movement-sensitive or recovery-sensitive tools such as
    `navigate_with_text`, `relative_move`, `follow_person`, `look_out_for`, or
    security patrol tools, call `predict_skill_outcome(skill_name, args_json,
    context)`.
-4. If prediction returns high risk, gather more context, ask the user for
+6. If prediction returns high risk, gather more context, ask the user for
    clarification, or choose a safer recovery tool instead of blindly retrying.
-5. Skill outcomes are recorded automatically when the outcome store is present.
+7. Skill outcomes are recorded automatically when the outcome store is present.
    Only call `record_skill_outcome(...)` manually for external events or
    important results that were not produced by an MCP tool call.
-6. After important physical or recovery-sensitive tool calls, call
+8. After important physical or recovery-sensitive tool calls, call
    `get_context(task, focus)` again for after-context, then call
    `record_causal_transition(...)` with the before-context, prediction, tool
    result, and after-context.
-7. Before retrying a failed skill, call `summarize_causal_patterns(...)` to
+9. Before retrying a failed skill, call `summarize_causal_patterns(...)` to
    check whether the same failure cause is repeating.
+10. Only after repeated evidence shows a missing capability, call
+   `propose_skill_interface(...)`. Treat it as a human-review proposal only; it
+   must not be used as executable robot code.
 
 Do not use Layer 3 tools as a substitute for physical safety checks. Stop or
 cancel active motion immediately when the user asks for it or when the task is

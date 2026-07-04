@@ -33,6 +33,13 @@ from dimos.perception.temporal_memory_spec import TemporalMemorySpec
 from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain.causal_world_model import (
     CausalWorldModelSpec,
 )
+from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain.context_evidence import (
+    ContextEvidencePolicy,
+    build_context_evidence,
+)
+from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain.context_feedback import (
+    ContextFeedbackSpec,
+)
 from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain.skill_outcome_store import (
     SkillOutcomeStoreSpec,
 )
@@ -57,6 +64,7 @@ class _Go2ContextProvider(Module):
     _skill_outcomes: SkillOutcomeStoreSpec | None = None
     _causal_world_model: CausalWorldModelSpec | None = None
     _skill_interface: SkillInterfaceSpec | None = None
+    _context_feedback: ContextFeedbackSpec | None = None
     _latest_odom: PoseStamped | None = None
 
     odom: In[PoseStamped]
@@ -99,7 +107,9 @@ class _Go2ContextProvider(Module):
             "robot_state": self._robot_context(errors, world_snapshot),
             "world_state": self._world_context(task, spatial_limit, errors, world_snapshot),
             "skill_state": self._skill_context(errors),
+            "context_feedback": self._context_feedback_context(errors),
             "causal_state": self._causal_context(errors),
+            "world_model_state": self._world_model_context(world_snapshot, errors),
             "external_context": {
                 "available": False,
                 "reason": "External context sources are not wired into ContextProvider yet.",
@@ -108,6 +118,7 @@ class _Go2ContextProvider(Module):
         if errors:
             metadata["errors"] = errors
 
+        metadata["context_evidence"] = self._context_evidence(metadata)
         message = self._format_message(metadata)
         return SkillResult(success=True, message=message, metadata=_to_jsonable(metadata))
 
@@ -124,7 +135,9 @@ class _Go2ContextProvider(Module):
             "navigation": self._navigation is not None or bool(layer4_sources.get("navigation")),
             "skill_outcomes": self._skill_outcomes is not None,
             "causal_world_model": self._causal_world_model is not None,
+            "predictive_world_model": self._causal_world_model is not None,
             "skill_interface": self._skill_interface is not None,
+            "context_feedback": self._context_feedback is not None,
             "runtime": True,
         }
 
@@ -239,6 +252,18 @@ class _Go2ContextProvider(Module):
             errors.append(f"skill_interface: {exc}")
             return {"available": True, "skills": []}
 
+    def _context_feedback_context(self, errors: list[str]) -> dict[str, Any]:
+        if self._context_feedback is None:
+            return {"available": False, "recent_feedback": [], "summary": {}}
+        try:
+            recent = self._context_feedback.get_recent_context_feedback(limit=5)
+            summary = self._context_feedback.get_context_feedback_summary(limit=20)
+        except Exception as exc:
+            logger.warning("Failed to read context-feedback context", exc_info=True)
+            errors.append(f"context_feedback: {exc}")
+            return {"available": True, "recent_feedback": [], "summary": {}}
+        return {"available": True, "recent_feedback": recent, "summary": summary}
+
     def _causal_context(self, errors: list[str]) -> dict[str, Any]:
         if self._causal_world_model is None:
             return {"available": False, "recent_transitions": []}
@@ -250,9 +275,69 @@ class _Go2ContextProvider(Module):
             return {"available": True, "recent_transitions": []}
         return {"available": True, "recent_transitions": recent}
 
-    def _spatial_context(
-        self, task: str, spatial_limit: int, errors: list[str]
+    def _world_model_context(
+        self, world_snapshot: dict[str, Any] | None, errors: list[str]
     ) -> dict[str, Any]:
+        if self._causal_world_model is None:
+            return {"available": False, "transition_count": 0}
+
+        try:
+            recent = self._causal_world_model.get_recent_transitions(limit=5)
+        except Exception as exc:
+            logger.warning("Failed to read world-model transition context", exc_info=True)
+            errors.append(f"world_model.transitions: {exc}")
+            recent = []
+
+        context: dict[str, Any] = {
+            "available": True,
+            "transition_count": len(recent),
+            "recent_transitions": recent,
+            "snapshot_available": world_snapshot is not None,
+            "prediction_available": hasattr(self._causal_world_model, "score_action"),
+        }
+        get_model_state = getattr(self._causal_world_model, "get_model_state", None)
+        if get_model_state is not None:
+            try:
+                context["model"] = get_model_state()
+            except Exception as exc:
+                logger.warning("Failed to read world-model state", exc_info=True)
+                errors.append(f"world_model.state: {exc}")
+
+        get_intervention_log = getattr(self._causal_world_model, "get_intervention_log", None)
+        if get_intervention_log is not None:
+            try:
+                recent_interventions = get_intervention_log(limit=5)
+                context["recent_interventions"] = recent_interventions
+                context["intervention_count"] = _intervention_count(
+                    context.get("model"),
+                    recent_interventions,
+                )
+            except Exception as exc:
+                logger.warning("Failed to read world-model interventions", exc_info=True)
+                errors.append(f"world_model.interventions: {exc}")
+        else:
+            context["recent_interventions"] = []
+            context["intervention_count"] = 0
+
+        if recent:
+            failures = [
+                transition for transition in recent if transition.get("outcome_success") is False
+            ]
+            context["recent_failure_count"] = len(failures)
+            context["top_failure_mode"] = failures[0].get("inferred_cause") if failures else ""
+
+        return context
+
+    def _context_evidence(self, metadata: dict[str, Any]) -> dict[str, Any]:
+        """Return the explicit evidence selected for this context response.
+
+        This is intentionally deterministic in V1. It does not replace RAG,
+        temporal memory, or the world model; it records which retrieved facts
+        were admitted into the compact context and why.
+        """
+        return build_context_evidence(metadata, ContextEvidencePolicy())
+
+    def _spatial_context(self, task: str, spatial_limit: int, errors: list[str]) -> dict[str, Any]:
         if self._spatial_memory is None:
             return {"available": False, "matches": []}
         if spatial_limit == 0:
@@ -384,11 +469,21 @@ class _Go2ContextProvider(Module):
 
         skill_interface = skill_state.get("interface") or {}
         if skill_interface.get("available"):
-            lines.append(
-                f"Skill interface: {skill_interface.get('skill_count', 0)} contract(s)"
-            )
+            lines.append(f"Skill interface: {skill_interface.get('skill_count', 0)} contract(s)")
         else:
             lines.append("Skill interface: unavailable")
+
+        context_feedback = metadata.get("context_feedback", {})
+        if context_feedback.get("available"):
+            summary = context_feedback.get("summary") or {}
+            lines.append(
+                "Context feedback: "
+                f"{summary.get('total_feedback', 0)} recent, "
+                f"helpful={summary.get('helpful_source_counts', {})}, "
+                f"harmful={summary.get('harmful_source_counts', {})}"
+            )
+        else:
+            lines.append("Context feedback: unavailable")
 
         causal_state = metadata.get("causal_state", {})
         recent_transitions = causal_state.get("recent_transitions") or []
@@ -407,7 +502,41 @@ class _Go2ContextProvider(Module):
         else:
             lines.append("Causal memory: unavailable")
 
+        world_model_state = metadata.get("world_model_state", {})
+        if world_model_state.get("available"):
+            lines.append(
+                "World model: available, "
+                f"prediction={world_model_state.get('prediction_available')}, "
+                f"transitions={world_model_state.get('transition_count', 0)}, "
+                f"interventions={world_model_state.get('intervention_count', 0)}, "
+                f"recent_failures={world_model_state.get('recent_failure_count', 0)}, "
+                f"model_samples={(world_model_state.get('model') or {}).get('sample_count', 0)}"
+            )
+        else:
+            lines.append("World model: unavailable")
+
+        context_evidence = metadata.get("context_evidence", {})
+        if isinstance(context_evidence, dict):
+            lines.append(
+                "Context evidence: "
+                f"{context_evidence.get('entry_count', 0)} item(s), "
+                f"sources={context_evidence.get('selected_sources', [])}"
+            )
+
         return "\n".join(lines)
+
+
+def _intervention_count(
+    model_state: Any,
+    recent_interventions: list[dict[str, Any]],
+) -> int:
+    if isinstance(model_state, dict):
+        intervention_log = model_state.get("intervention_log")
+        if isinstance(intervention_log, dict):
+            count = intervention_log.get("record_count")
+            if isinstance(count, int):
+                return count
+    return len(recent_interventions)
 
 
 def _summarize_spatial_match(match: dict[str, Any]) -> dict[str, Any]:
@@ -420,6 +549,277 @@ def _summarize_spatial_match(match: dict[str, Any]) -> dict[str, Any]:
     if not summary:
         summary["keys"] = sorted(match.keys())
     return _to_jsonable(summary)
+
+
+def _evidence_entry(
+    *,
+    source: str,
+    query: str,
+    relevance_score: float,
+    recency: str,
+    confidence: str,
+    risk_impact: str,
+    cost: str,
+    selected_reason: str,
+    summary: str,
+) -> dict[str, Any]:
+    return {
+        "source": source,
+        "query": query,
+        "relevance_score": round(max(0.0, min(1.0, relevance_score)), 3),
+        "recency": recency,
+        "confidence": _normalize_label(confidence, {"low", "medium", "high"}, "medium"),
+        "risk_impact": _normalize_label(
+            risk_impact,
+            {"low", "medium", "high", "unknown"},
+            "unknown",
+        ),
+        "cost": cost,
+        "selected_reason": selected_reason,
+        "summary": summary[:300],
+    }
+
+
+def _world_evidence_entries(task: str, world_state: dict[str, Any]) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    spatial = world_state.get("spatial") if isinstance(world_state.get("spatial"), dict) else {}
+    matches = spatial.get("matches") if isinstance(spatial.get("matches"), list) else []
+    if matches:
+        first_match = matches[0] if isinstance(matches[0], dict) else {}
+        entries.append(
+            _evidence_entry(
+                source="spatial_memory",
+                query=task,
+                relevance_score=_spatial_relevance(first_match),
+                recency=_match_recency(first_match),
+                confidence=_spatial_confidence(first_match),
+                risk_impact="medium",
+                cost="rag_query",
+                selected_reason="Top spatial/semantic RAG match for the current task.",
+                summary=_spatial_summary(first_match),
+            )
+        )
+
+    temporal = world_state.get("temporal") if isinstance(world_state.get("temporal"), dict) else {}
+    temporal_summary = str(temporal.get("rolling_summary") or "")
+    if temporal_summary or temporal.get("state") or temporal.get("answer"):
+        entries.append(
+            _evidence_entry(
+                source="temporal_memory",
+                query=task,
+                relevance_score=0.75 if temporal_summary else 0.65,
+                recency="recent_summary" if temporal_summary else "current_state",
+                confidence="medium",
+                risk_impact="medium",
+                cost="vlm_graph_query" if temporal.get("answer") else "state_read",
+                selected_reason="Temporal memory contributes recent entities, events, or rolling summary.",
+                summary=temporal_summary or "temporal state available",
+            )
+        )
+
+    semantic_temporal = world_state.get("semantic_temporal")
+    if not isinstance(semantic_temporal, dict):
+        semantic_temporal = world_state.get("semantic_temporal_map")
+    if isinstance(semantic_temporal, dict):
+        fused = semantic_temporal.get("fused")
+        if isinstance(fused, dict) and fused.get("available"):
+            entries.append(
+                _evidence_entry(
+                    source="semantic_temporal_map",
+                    query=task,
+                    relevance_score=0.7,
+                    recency="current_fusion",
+                    confidence="medium",
+                    risk_impact="medium",
+                    cost="rpc_read",
+                    selected_reason="Layer 4 fused spatial and temporal evidence into normalized entries.",
+                    summary=f"fused_entries={fused.get('entry_count', 0)}",
+                )
+            )
+    return entries
+
+
+def _skill_evidence_entries(task: str, skill_state: dict[str, Any]) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    recent_outcomes = (
+        skill_state.get("recent_outcomes")
+        if isinstance(skill_state.get("recent_outcomes"), list)
+        else []
+    )
+    if recent_outcomes:
+        failures = [outcome for outcome in recent_outcomes if not outcome.get("success")]
+        entries.append(
+            _evidence_entry(
+                source="skill_outcome_store",
+                query=task,
+                relevance_score=0.9 if failures else 0.65,
+                recency="recent_history",
+                confidence="high",
+                risk_impact="high" if failures else "low",
+                cost="memory_read",
+                selected_reason="Recent skill outcomes reveal repeated failures or successful recovery paths.",
+                summary=f"{len(recent_outcomes)} outcome(s), {len(failures)} failure(s)",
+            )
+        )
+
+    interface = (
+        skill_state.get("interface") if isinstance(skill_state.get("interface"), dict) else {}
+    )
+    if interface.get("available"):
+        entries.append(
+            _evidence_entry(
+                source="skill_interface_registry",
+                query=task,
+                relevance_score=0.8,
+                recency="static_contract",
+                confidence="high",
+                risk_impact="medium",
+                cost="rpc_read",
+                selected_reason="Skill contracts constrain tool choice, required arguments, and preflight checks.",
+                summary=f"{interface.get('skill_count', 0)} skill contract(s)",
+            )
+        )
+    return entries
+
+
+def _causal_evidence_entries(task: str, causal_state: dict[str, Any]) -> list[dict[str, Any]]:
+    transitions = (
+        causal_state.get("recent_transitions")
+        if isinstance(causal_state.get("recent_transitions"), list)
+        else []
+    )
+    if not transitions:
+        return []
+    failures = [
+        transition for transition in transitions if transition.get("outcome_success") is False
+    ]
+    return [
+        _evidence_entry(
+            source="causal_world_model",
+            query=task,
+            relevance_score=0.88 if failures else 0.7,
+            recency="recent_transition",
+            confidence="medium",
+            risk_impact="high" if failures else "low",
+            cost="memory_read",
+            selected_reason="Causal transitions explain whether prior actions changed state as expected.",
+            summary=f"{len(transitions)} transition(s), {len(failures)} failure(s)",
+        )
+    ]
+
+
+def _world_model_evidence_entries(
+    task: str, world_model_state: dict[str, Any]
+) -> list[dict[str, Any]]:
+    if not world_model_state.get("available"):
+        return []
+    model = (
+        world_model_state.get("model") if isinstance(world_model_state.get("model"), dict) else {}
+    )
+    failures = int(world_model_state.get("recent_failure_count") or 0)
+    return [
+        _evidence_entry(
+            source="predictive_world_model",
+            query=task,
+            relevance_score=0.82 if model.get("sample_count") else 0.6,
+            recency="online_model",
+            confidence="medium" if model.get("sample_count") else "low",
+            risk_impact="high" if failures else "medium",
+            cost="model_state_read",
+            selected_reason="Predictive world-model state exposes learned samples and recent failure modes.",
+            summary=(
+                f"samples={model.get('sample_count', 0)}, "
+                f"recent_failures={failures}, "
+                f"top_failure={world_model_state.get('top_failure_mode', '')}"
+            ),
+        )
+    ]
+
+
+def _robot_risk_impact(robot_state: dict[str, Any]) -> str:
+    safety = robot_state.get("safety") if isinstance(robot_state.get("safety"), dict) else {}
+    navigation = (
+        robot_state.get("navigation") if isinstance(robot_state.get("navigation"), dict) else {}
+    )
+    if safety and not safety.get("body_pose_available", True):
+        return "high"
+    if navigation and navigation.get("goal_reached") is False:
+        return "medium"
+    return "low"
+
+
+def _robot_state_summary(robot_state: dict[str, Any]) -> str:
+    parts: list[str] = []
+    odom = robot_state.get("odom")
+    if isinstance(odom, dict):
+        position = odom.get("position") if isinstance(odom.get("position"), dict) else {}
+        parts.append(f"pose=({position.get('x')}, {position.get('y')})")
+    navigation = robot_state.get("navigation")
+    if isinstance(navigation, dict):
+        parts.append(f"navigation={navigation.get('state')}")
+    connection = robot_state.get("connection")
+    if isinstance(connection, dict):
+        parts.append(f"connection={connection.get('mode')}")
+    return ", ".join(parts) or "robot state available"
+
+
+def _spatial_relevance(match: dict[str, Any]) -> float:
+    score = match.get("score")
+    if isinstance(score, int | float) and not isinstance(score, bool):
+        return float(score)
+    distance = match.get("distance")
+    if isinstance(distance, int | float) and not isinstance(distance, bool):
+        return 1.0 - min(max(float(distance), 0.0), 1.0)
+    return 0.6
+
+
+def _spatial_confidence(match: dict[str, Any]) -> str:
+    relevance = _spatial_relevance(match)
+    if relevance >= 0.75:
+        return "high"
+    if relevance >= 0.45:
+        return "medium"
+    return "low"
+
+
+def _spatial_summary(match: dict[str, Any]) -> str:
+    metadata = match.get("metadata")
+    if isinstance(metadata, list) and metadata and isinstance(metadata[0], dict):
+        metadata = metadata[0]
+    if isinstance(metadata, dict):
+        label = metadata.get("label") or metadata.get("description") or metadata.get("frame_id")
+        if label:
+            return str(label)
+        if "pos_x" in metadata and "pos_y" in metadata:
+            return f"spatial match at x={metadata.get('pos_x')}, y={metadata.get('pos_y')}"
+    if match.get("id"):
+        return str(match["id"])
+    return "spatial match"
+
+
+def _match_recency(match: dict[str, Any]) -> str:
+    metadata = match.get("metadata")
+    if isinstance(metadata, list) and metadata and isinstance(metadata[0], dict):
+        metadata = metadata[0]
+    if isinstance(metadata, dict) and metadata.get("timestamp") is not None:
+        return "timestamped_observation"
+    return "stored_observation"
+
+
+def _ordered_sources(entries: list[dict[str, Any]]) -> list[str]:
+    sources: set[str] = set()
+    for entry in entries:
+        source = str(entry.get("source") or "")
+        if source:
+            sources.add(source)
+    return sorted(sources)
+
+
+def _normalize_label(value: str, allowed: set[str], fallback: str) -> str:
+    normalized = value.strip().casefold()
+    if normalized in allowed:
+        return normalized
+    return fallback
 
 
 def _to_jsonable(value: Any, max_string_length: int = 500) -> Any:
