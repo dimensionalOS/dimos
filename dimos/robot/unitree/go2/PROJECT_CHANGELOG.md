@@ -11,9 +11,11 @@ Entries are listed in reverse chronological order.
 - Branch: `refactor/go2-architecture-layers`
 - Summary: Synchronized the branch with upstream `main` at `6e813a72`, resolved
   conflicts against the Go2 layered architecture, and added a detailed review
-  guide for the full Go2 agent architecture/self-evolution feature set.
+  guide in English and Chinese for the full Go2 agent architecture/self-evolution
+  feature set.
 - Files/modules:
   - `docs/reviews/2026-07-05-go2-agent-architecture-review.md`
+  - `docs/reviews/2026-07-05-go2-agent-architecture-review.zh.md`
   - `dimos/agents/mcp/mcp_server.py`
   - `dimos/agents/mcp/test_mcp_server.py`
   - `dimos/perception/spatial_perception.py`
