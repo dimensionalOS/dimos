@@ -98,6 +98,9 @@ recording*.db
 # Rerun recordings
 *.rrd
 
+# MuJoCo runtime log written to the current working directory
+MUJOCO_LOG.TXT
+
 /misc/fresh-ubuntu-tests/cache
 
 # openspec
