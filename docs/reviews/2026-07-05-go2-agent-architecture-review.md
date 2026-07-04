@@ -81,6 +81,11 @@ things:
 
 ![DimOS Go2 agent self-evolution architecture](2026-07-05-go2-agent-architecture.png)
 
+The purple right-side column is optional observability/storage. The current
+`unitree_go2_agentic` blueprint does not wire `WebsocketVisModule`; the Rerun /
+WebsocketVis panel only receives world-model state if a separate visualization
+blueprint wires `WebsocketVisSpec`.
+
 ## Interface Input/Output Quick Reference
 
 Use this section when reviewing API boundaries. It lists the stable public
@@ -132,7 +137,7 @@ that are not consumed across module boundaries are intentionally omitted.
 | `CausalWorldModelSpec.get_provider_contract()` | No arguments. | `dimos.world_model_provider.v1` dict naming provider, model type, capabilities, and output schemas. |
 | `propose_skill_interface(task, failure_context_json)` MCP skill | Task text and failure-context JSON object with missing-capability evidence. Reads Layer 5 contracts/outcomes when wired. | `SkillResult` metadata: `proposal_created`, `proposal` using `dimos.skill_proposal.v1` when created, `existing_skill_matches`, `recommended_next_action`, optional `proposal_path` or warnings. |
 | MCP `tools/list` / `tools/call` runtime surface | JSON-RPC requests; `tools/call` also carries MCP arguments and optional `_mcp_context` progress/capability token. | Tool schemas with capability metadata; tool-call text/content results; SSE progress frames for background tools; capability release on instant return or stopped frame. |
-| `WebsocketVisSpec.set_world_model_state(state)` | `state: dict` expected to use `dimos.world_model_dashboard_state.v1`. | `dict` acknowledgement/current display state for dashboard clients. |
+| Optional `WebsocketVisSpec.set_world_model_state(state)` | `state: dict` expected to use `dimos.world_model_dashboard_state.v1`. This is only active when a blueprint wires `WebsocketVisModule`; current `unitree_go2_agentic` does not. | `dict` acknowledgement/current display state for optional Rerun/WebsocketVis clients. |
 
 ## Upstream Changes To Review
 
@@ -1355,7 +1360,7 @@ Failure mode:
   proxies.
 - ReplayConnection stop should be a no-op, not an exception.
 
-### 16. Rerun/Websocket Dashboard World-Model State
+### 16. Optional Rerun/WebsocketVis World-Model Panel
 
 Files:
 
@@ -1369,12 +1374,16 @@ Implementation logic:
 - Websocket visualization can carry world-model/dashboard state in addition to
   existing visualization payloads.
 - Dashboard payload shape is aligned with `world_model_contract.py`.
+- This is optional observability. The current `unitree_go2_agentic` blueprint
+  does not include `WebsocketVisModule`, so this path is inactive unless a
+  visualization blueprint wires `WebsocketVisSpec`.
 
 Review focus:
 
 - Dashboard state should remain display-only.
 - Avoid making dashboard consumers depend on unversioned internal Python
   objects.
+- Do not treat this as a required dependency of the Go2 self-evolution runtime.
 
 Components:
 
@@ -1402,6 +1411,8 @@ Safety boundary:
 
 - Dashboard updates must not trigger robot actions.
 - UI should not present advisory predictions as guaranteed outcomes.
+- If `WebsocketVisModule` is not wired, CausalWorldModel still works; the
+  dashboard publication path is skipped.
 
 ## Review Order I Recommend
 

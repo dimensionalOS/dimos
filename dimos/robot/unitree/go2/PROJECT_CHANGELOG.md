@@ -9,6 +9,27 @@ Entries are listed in reverse chronological order.
 ## 2026-07-05
 
 - Branch: `refactor/go2-architecture-layers`
+- Summary: Clarified the architecture diagram and review docs so the
+  Rerun/WebsocketVis world-model panel is represented as optional observability,
+  not a required dependency of `unitree_go2_agentic`. Updated the diagram label
+  from Web Dashboard to optional Rerun/WebsocketVis and added text noting that
+  the current Go2 agentic blueprint does not wire `WebsocketVisModule`.
+- Files/modules:
+  - `docs/reviews/2026-07-05-go2-agent-architecture.png`
+  - `docs/reviews/2026-07-05-go2-agent-architecture-review.md`
+  - `docs/reviews/2026-07-05-go2-agent-architecture-review.zh.md`
+  - `dimos/robot/unitree/go2/PROJECT_CHANGELOG.md`
+- Validation:
+  - Documentation/image-only change.
+  - Visually inspected the updated PNG.
+  - Ran `git diff --check` on the changed markdown/changelog files.
+- Open items:
+  - Consider adding a deterministic SVG/Mermaid version if exact editable
+    diagram text is needed in future reviews.
+
+## 2026-07-05
+
+- Branch: `refactor/go2-architecture-layers`
 - Summary: Generated and added a review-oriented Go2 agent architecture diagram
   showing Layer 3 agent brain, Layer 4 world state, Layer 5 skill interface,
   Layer 6 robot body, local Git ledger artifacts, and dashboard observability.
