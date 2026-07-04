@@ -38,9 +38,22 @@ class SpeakSkill(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self._tts_node = OpenAITTSNode(speed=1.2, voice=Voice.ONYX)
-        self._audio_output = SounddeviceAudioOutput(sample_rate=24000)
-        self._audio_output.consume_audio(self._tts_node.emit_audio())
+        try:
+            self._tts_node = OpenAITTSNode(speed=1.2, voice=Voice.ONYX)
+            self._audio_output = SounddeviceAudioOutput(sample_rate=24000)
+            self._audio_output.consume_audio(self._tts_node.emit_audio())
+        except Exception as exc:
+            logger.warning(
+                "SpeakSkill audio unavailable; speech is disabled.",
+                error=str(exc),
+                exc_info=True,
+            )
+            if self._audio_output:
+                self._audio_output.stop()
+            if self._tts_node:
+                self._tts_node.dispose()
+            self._audio_output = None
+            self._tts_node = None
 
     @rpc
     def stop(self) -> None:

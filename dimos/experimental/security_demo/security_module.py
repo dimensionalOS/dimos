@@ -149,6 +149,8 @@ class SecurityModule(Module):
 
     _planner_spec: ReplanningAStarPlannerSpec
     _speak_skill: SpeakSkillSpec
+    _detector: YoloPersonDetector | None
+    _depth_estimator: DepthEstimator | None
     _tracker: EdgeTAMProcessor | None
 
     def __init__(self, **kwargs: Any) -> None:
@@ -156,10 +158,9 @@ class SecurityModule(Module):
 
         self._router: PatrolRouter = _create_router(self.config.g)
         self._visual_servo = _create_visual_servo(self.config, self.config.g)
-        self._detector = YoloPersonDetector()
+        self._detector = None
         self._tracker = None
-
-        self._depth_estimator = DepthEstimator(self.depth_image.publish)
+        self._depth_estimator = None
 
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
@@ -184,10 +185,16 @@ class SecurityModule(Module):
     @rpc
     def stop(self) -> None:
         self._stop_security_patrol_internal()
-        self._depth_estimator.stop()
-        self._detector.stop()
+        if self._depth_estimator is not None:
+            self._depth_estimator.stop()
+            self._depth_estimator = None
+            self._depth_started = False
+        if self._detector is not None:
+            self._detector.stop()
+            self._detector = None
         if self._tracker is not None:
             self._tracker.stop()
+            self._tracker = None
         super().stop()
 
     @skill
@@ -200,12 +207,19 @@ class SecurityModule(Module):
             if self._main_thread is not None and self._main_thread.is_alive():
                 return "Security patrol is already running. Use `stop_security_patrol` to stop."
 
+        try:
+            self._ensure_detector_available()
+            depth_estimator = self._ensure_depth_estimator_available()
+        except Exception as exc:
+            logger.warning("Security patrol unavailable", error=str(exc), exc_info=True)
+            return f"Security patrol unavailable: {exc}"
+
         tracker_error = self._ensure_tracker_available()
         if tracker_error is not None:
             return tracker_error
 
         if not self._depth_started:
-            self._depth_estimator.start()
+            depth_estimator.start()
             self._depth_started = True
 
         self._router.reset()
@@ -227,6 +241,16 @@ class SecurityModule(Module):
             "Security patrol started. The robot will patrol, detect, and follow "
             "persons automatically. Use `stop_security_patrol` to stop."
         )
+
+    def _ensure_detector_available(self) -> YoloPersonDetector:
+        if self._detector is None:
+            self._detector = YoloPersonDetector()
+        return self._detector
+
+    def _ensure_depth_estimator_available(self) -> DepthEstimator:
+        if self._depth_estimator is None:
+            self._depth_estimator = DepthEstimator(self.depth_image.publish)
+        return self._depth_estimator
 
     def _ensure_tracker_available(self) -> str | None:
         if self._tracker is not None:
@@ -255,7 +279,8 @@ class SecurityModule(Module):
     def _on_color_image(self, image: Image) -> None:
         with self._lock:
             self._latest_image = image
-        self._depth_estimator.submit(image)
+        if self._depth_started and self._depth_estimator is not None:
+            self._depth_estimator.submit(image)
 
     def _main_loop(self) -> None:
         self._transition_to("PATROLLING")
@@ -375,7 +400,8 @@ class SecurityModule(Module):
             overlay[mask_bool] = cv2.addWeighted(overlay[mask_bool], 0.6, green[mask_bool], 0.4, 0)
 
         # Run pose estimation on the tracked frame and draw skeleton
-        pose_detections = self._detector.process_image(latest_image)
+        detector = self._ensure_detector_available()
+        pose_detections = detector.process_image(latest_image)
         persons = [
             d
             for d in pose_detections.detections
@@ -392,7 +418,7 @@ class SecurityModule(Module):
 
     def _find_best_person(self, image: Image) -> Detection2DBBox | None:
         """Run YOLO and return the largest person detection, or None."""
-        all_detections = self._detector.process_image(image)
+        all_detections = self._ensure_detector_available().process_image(image)
         persons = [d for d in all_detections.detections if d.name == "person"]
         if not persons:
             return None
