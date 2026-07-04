@@ -21,10 +21,10 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.manipulation.planning.factory import create_world
 from dimos.manipulation.planning.monitor.robot_state_monitor import RobotStateMonitor
 from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
-from dimos.manipulation.planning.spec.protocols import VisualizationSpec
+from dimos.manipulation.planning.spec.models import PlanningSceneInfo
+from dimos.manipulation.planning.spec.protocols import VisualizationSpec, WorldSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
@@ -42,7 +42,6 @@ if TYPE_CHECKING:
         Obstacle,
         WorldRobotID,
     )
-    from dimos.manipulation.planning.spec.protocols import WorldSpec
     from dimos.msgs.vision_msgs.Detection3D import Detection3D
     from dimos.perception.detection.type.detection3d.object import Object
 
@@ -54,17 +53,14 @@ class WorldMonitor:
 
     def __init__(
         self,
-        backend: str = "drake",
-        enable_viz: bool = False,
-        **kwargs: Any,
+        world: WorldSpec,
+        visualization: VisualizationSpec | None = None,
     ) -> None:
-        self._backend = backend
-        self._world: WorldSpec = create_world(backend=backend, enable_viz=enable_viz, **kwargs)
-        self._visualization: VisualizationSpec | None = (
-            self._world if isinstance(self._world, VisualizationSpec) else None
-        )
+        self._world = world
+        self._visualization = visualization
         self._lock = threading.RLock()
         self._robot_joints: dict[WorldRobotID, list[str]] = {}
+        self._robot_configs: dict[WorldRobotID, RobotModelConfig] = {}
         self._state_monitors: dict[WorldRobotID, RobotStateMonitor] = {}
         self._obstacle_monitor: WorldObstacleMonitor | None = None
         self._viz_thread: threading.Thread | None = None
@@ -78,8 +74,21 @@ class WorldMonitor:
         with self._lock:
             robot_id = self._world.add_robot(config)
             self._robot_joints[robot_id] = config.joint_names
+            self._robot_configs[robot_id] = config
             logger.info(f"Added robot '{config.name}' as '{robot_id}'")
-            return robot_id
+        return robot_id
+
+    def planning_scene_info(self) -> PlanningSceneInfo:
+        """Return a stable metadata snapshot of the initialized planning scene."""
+        with self._lock:
+            return PlanningSceneInfo(robots=dict(self._robot_configs))
+
+    def sync_visualization_scene(self) -> None:
+        """Synchronize startup scene metadata to the attached visualization."""
+        visualization = self._visualization
+        if visualization is None:
+            return
+        visualization.initialize_scene(self.planning_scene_info())
 
     def get_robot_ids(self) -> list[WorldRobotID]:
         """Get all robot IDs."""
@@ -467,7 +476,7 @@ class WorldMonitor:
         self._viz_stop_event.clear()
         self._viz_thread = threading.Thread(
             target=self._visualization_loop,
-            name="MeshcatVizThread",
+            name="ManipulationVizThread",
             daemon=True,
         )
         self._viz_thread.start()
@@ -508,6 +517,10 @@ class WorldMonitor:
     def visualization(self) -> VisualizationSpec | None:
         """Get optional visualization backend."""
         return self._visualization
+
+    def set_visualization(self, visualization: VisualizationSpec | None) -> None:
+        """Set optional visualization backend after monitor construction."""
+        self._visualization = visualization
 
     def get_state_monitor(self, robot_id: str) -> RobotStateMonitor | None:
         """Get state monitor for a robot (may be None)."""

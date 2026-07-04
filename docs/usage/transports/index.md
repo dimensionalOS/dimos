@@ -1,4 +1,6 @@
-# Transports
+---
+title: "Transports"
+---
 
 Transports connect **module streams** across **process boundaries** and/or **networks**.
 
@@ -27,19 +29,62 @@ A transport is responsible for the mechanics of delivery (IPC, sockets, Redis, R
 
 So: treat the API as uniform, but pick a backend whose semantics match the task.
 
----
+## Choosing a backend
+
+For most users, the important choice is between `lcm`, `zenoh`, and shared memory overrides:
+
+* `lcm`: current legacy default on most platforms. Fast and simple, but UDP multicast is best-effort.
+* `zenoh`: network transport with reliable delivery semantics and the same typed message model through `LCMEncoderMixin`.
+* shared memory (`pSHMTransport`, etc.): best for large local streams on a single machine.
+
+At the CLI level, you can select the stream transport globally with:
+
+```bash
+dimos --transport=lcm run unitree-go2
+dimos --transport=zenoh run unitree-go2
+```
+
+On macOS, large replay workloads can be unreliable over LCM UDP, so DimOS defaults the global stream transport to `zenoh` there. Other platforms default to `lcm`.
+
+## Zenoh quickstart
+
+Zenoh ships with DimOS by default (`eclipse-zenoh` is a base dependency), so there is nothing extra to install.
+
+**Default global stream transport** (only applies when you do not pass `--transport` or set `DIMOS_TRANSPORT`):
+
+| Situation | Default |
+|-----------|---------|
+| macOS | `zenoh` |
+| Any other platform | `lcm` |
+
+**Two ways to override for one run or for your shell:**
+
+1. **CLI:** `dimos --transport=zenoh ...` or `dimos --transport=lcm ...` (see [CLI](/docs/usage/cli.md) for precedence with `.env` and blueprints).
+2. **Environment:** `DIMOS_TRANSPORT=zenoh` or `DIMOS_TRANSPORT=lcm`.
+
+Typical **replay on macOS** (default is already Zenoh, so no transport flag is required):
+
+```bash
+dimos --dtop --replay --replay-db=go2_bigoffice run unitree-go2
+```
+
+The same workload on **Linux** (default remains `lcm` until you opt in):
+
+```bash
+dimos --transport=zenoh --dtop --replay --replay-db=go2_bigoffice run unitree-go2
+```
+
+Architecture notes (Rerun bridge, TF still on LCM) live under [Zenoh](#zenoh) in PubSub transports below.
 
 ## Benchmarks
 
 Quick view on performance of our pubsub backends:
 
 ```sh skip
-python -m pytest -svm tool -k "not bytes" dimos/protocol/pubsub/benchmark/test_benchmark.py
+python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchmark.py
 ```
 
 ![Benchmark results](../assets/pubsub_benchmark.png)
-
----
 
 ## Abstraction layers
 
@@ -85,8 +130,6 @@ text "pub/sub API" at P.s + (0, -0.2in)
 
 We’ll go through these layers top-down.
 
----
-
 ## Using transports with blueprints
 
 See [Blueprints](/docs/usage/blueprints.md) for the blueprint API.
@@ -113,8 +156,6 @@ ros = nav.transports(
     }
 )
 ```
-
----
 
 ## Using transports with modules
 
@@ -207,8 +248,6 @@ Received: (480, 640, 3)
 
 See [Modules](/docs/usage/modules.md) for more on module architecture.
 
----
-
 ## Inspecting LCM traffic (CLI)
 
 `lcmspy` shows topic frequency/bandwidth stats:
@@ -221,8 +260,6 @@ See [Modules](/docs/usage/modules.md) for more on module architecture.
 Listening on /camera/rgb (inferring from typed LCM channels like '/camera/rgb#pkg.Msg')... (Ctrl+C to stop)
 Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2026-01-24 20:28:59)
 ```
-
----
 
 ## Implementing a transport
 
@@ -243,8 +280,6 @@ Encoding is an implementation detail, but we encourage using LCM-compatible mess
 ### Encoding helpers
 
 Many of our message types provide `lcm_encode` / `lcm_decode` for compact, language-agnostic binary encoding (often faster than pickle). For details, see [LCM](/docs/usage/lcm.md).
-
----
 
 ## PubSub transports
 
@@ -306,6 +341,43 @@ lcm.stop()
 Received velocity: x=1.0, y=0.0, z=0.5
 ```
 
+### Zenoh
+
+Zenoh provides network pubsub without relying on UDP multicast for the user-facing stream transport. In DimOS it carries the same typed messages by encoding them with `LCMEncoderMixin`, so existing `dimos.msgs.*` types still work.
+
+Use Zenoh when:
+
+* you want a transport that behaves better than UDP multicast on macOS
+* you are replaying large or high-rate data and want a more reliable network path
+* you want to keep the DimOS typed stream model while changing the transport backend
+
+At the stream level, the transport wrappers are `ZenohTransport` and `pZenohTransport`. Install, defaults, and CLI versus environment overrides are in the [Zenoh quickstart](#zenoh-quickstart) above.
+
+Performance note: zenoh's session-to-session path (modules in different processes, the common case) benchmarks faster than LCM for small messages and for >=2MiB ones. Delivery *within* one shared session (co-located modules in one worker) is its slow path for 256KiB-1MiB messages (a few GiB/s); pin shared memory transports for heavy co-located streams. The benchmark has both cases (`Zenoh` = shared session, `ZenohPeers` = separate sessions).
+
+The Rerun bridge also follows the global transport. When `transport=zenoh`, the bridge listens on Zenoh and on LCM for TF data.
+
+#### Per-topic QoS
+
+Zenoh publisher QoS lives on the Zenoh `Topic` object (see [`zenohpubsub.py`](/dimos/protocol/pubsub/impl/zenohpubsub.py#L27)):
+
+```python skip
+from dimos.core.transport import ZenohTransport
+from dimos.protocol.pubsub.impl.zenohpubsub import Topic, ZenohQoS
+
+blueprint = blueprint.transports(
+    {("image", CameraModule): ZenohTransport(Topic("dimos/image", Image, qos=ZenohQoS(reliability="best_effort", congestion_control="drop")))}
+)
+```
+
+When the factory builds transports from the global switch, it applies defaults (`default_zenoh_qos` in [`transport_factory.py`](/dimos/core/transport_factory.py#L65)):
+
+* RPC topics and the agent channels (`human_input`, `agent`, `agent_idle`): reliable, block under congestion (never drop).
+* `Image`/`PointCloud2` streams: best-effort, drop under congestion (latest wins).
+* Everything else: zenoh defaults (reliable, drop under congestion).
+
+The publisher for a key is declared with the first publish's QoS. LCM has no per-topic settings, so QoS only applies when `transport=zenoh`.
+
 ### Shared memory (IPC)
 
 Shared memory is highest performance, but only works on the **same machine**.
@@ -364,8 +436,6 @@ dds.stop()
 ```results
 Received: [SensorReading(value=22.5)]
 ```
----
-
 ## A minimal transport: `Memory`
 
 The simplest toy backend is `Memory` (single process). Start from there when implementing a new pubsub backend.
@@ -395,8 +465,6 @@ Received 2 messages:
 ```
 
 See [`pubsub/impl/memory.py`](/dimos/protocol/pubsub/impl/memory.py) for the complete source.
-
----
 
 ## Encode/decode mixins
 
@@ -448,8 +516,6 @@ class MyPicklePubSub(PickleEncoderMixin, Memory):
     pass
 ```
 
----
-
 ## Testing and benchmarks
 
 ### Spec tests
@@ -461,10 +527,8 @@ See [`pubsub/test_spec.py`](/dimos/protocol/pubsub/test_spec.py) for the grid te
 Add your backend to benchmarks to compare in context:
 
 ```sh skip
-python -m pytest -svm tool -k "not bytes" dimos/protocol/pubsub/benchmark/test_benchmark.py
+python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchmark.py
 ```
-
----
 
 # Available transports
 
@@ -473,6 +537,7 @@ python -m pytest -svm tool -k "not bytes" dimos/protocol/pubsub/benchmark/test_b
 | `Memory`       | Testing only, single process        | No            | No      | Minimal reference impl               |
 | `SharedMemory` | Multi-process on same machine       | Yes           | No      | Highest throughput (IPC)             |
 | `LCM`          | Robot LAN broadcast (UDP multicast) | Yes           | Yes     | Best-effort; can drop packets on LAN |
+| `Zenoh`        | Reliable network stream transport   | Yes           | Yes     | Recommended on macOS for heavy replay |
 | `Redis`        | Network pubsub via Redis server     | Yes           | Yes     | Central broker; adds hop             |
 | `ROS`          | ROS 2 topic communication           | Yes           | Yes     | Integrates with RViz/ROS tools       |
 | `DDS`          | Cyclone DDS without ROS (WIP)       | Yes           | Yes     | WIP                                  |

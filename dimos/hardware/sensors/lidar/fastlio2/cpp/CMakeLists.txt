@@ -57,9 +57,6 @@ find_package(Eigen3 REQUIRED)
 # PCL (only components we need — avoid full PCL which drags in VTK via io)
 find_package(PCL 1.8 REQUIRED COMPONENTS common filters)
 
-# yaml-cpp (FAST-LIO config parsing — standard YAML format)
-find_package(yaml-cpp REQUIRED)
-
 # Livox SDK2 (from nix or /usr/local fallback)
 find_library(LIVOX_SDK livox_lidar_sdk_shared)
 if(NOT LIVOX_SDK)
@@ -96,7 +93,6 @@ target_link_libraries(fastlio2_native PRIVATE
   ${LCM_LIBRARIES}
   ${LIVOX_SDK}
   ${PCL_LIBRARIES}
-  yaml-cpp::yaml-cpp
 )
 
 if(OpenMP_CXX_FOUND)

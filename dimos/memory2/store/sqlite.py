@@ -54,6 +54,10 @@ class SqliteStore(Store):
             raise FileNotFoundError(
                 f"SQLite database not found: {os.path.abspath(self.config.path)}"
             )
+        if not self.config.must_exist:
+            parent = os.path.dirname(self.config.path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
         self._registry_conn = self._open_connection()
         self._registry = RegistryStore(conn=self._registry_conn)
 

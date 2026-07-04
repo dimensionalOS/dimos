@@ -20,17 +20,17 @@ hardware. The underlying coordinator blueprints branch on `global_config.simulat
 """
 
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
-from dimos.control.blueprints.teleop import (
-    coordinator_teleop_dual,
-    coordinator_teleop_piper,
-    coordinator_teleop_xarm6,
-    coordinator_teleop_xarm7,
-)
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport, pSHMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.robot.manipulators.common.mixed import coordinator_teleop_dual
+from dimos.robot.manipulators.piper.blueprints.teleop import coordinator_teleop_piper
+from dimos.robot.manipulators.xarm.blueprints.teleop import (
+    coordinator_teleop_xarm6,
+    coordinator_teleop_xarm7,
+)
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.teleop.quest.quest_extensions import (
     ArmTeleopModule,
@@ -117,14 +117,3 @@ teleop_quest_go2 = (
     )
     .global_config(robot_model="unitree_go2")
 )
-
-
-__all__ = [
-    "teleop_quest_dual",
-    "teleop_quest_go2",
-    "teleop_quest_piper",
-    "teleop_quest_rerun",
-    "teleop_quest_xarm6",
-    "teleop_quest_xarm7",
-    "teleop_quest_xarm7_video",
-]

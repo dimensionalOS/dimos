@@ -35,6 +35,7 @@
       {
         "group": "Usage",
         "pages": [
+          "usage/index",
           "usage/modules",
           "usage/blueprints",
           "usage/configuration",
@@ -49,6 +50,7 @@
           {
             "group": "Data streams",
             "pages": [
+              "usage/data_streams/index",
               "usage/data_streams/advanced_streams",
               "usage/data_streams/quality_filter",
               "usage/data_streams/reactivex",
@@ -59,6 +61,7 @@
           {
             "group": "Sensor streams",
             "pages": [
+              "usage/sensor_streams/index",
               "usage/sensor_streams/advanced_streams",
               "usage/sensor_streams/quality_filter",
               "usage/sensor_streams/reactivex",
@@ -76,18 +79,19 @@
         ]
       },
       {
-        "group": "Agents",
+        "group": "Coding agents",
         "pages": [
-          "agents/index",
-          "agents/style",
-          "agents/code-quality-rules",
-          "agents/testing",
+          "coding-agents/index",
+          "coding-agents/style",
+          "coding-agents/code-quality-rules",
+          "coding-agents/testing",
+          "coding-agents/worktrees",
           {
             "group": "Authoring agent docs",
             "pages": [
-              "agents/docs/index",
-              "agents/docs/codeblocks",
-              "agents/docs/doclinks"
+              "coding-agents/docs/index",
+              "coding-agents/docs/codeblocks",
+              "coding-agents/docs/doclinks"
             ]
           }
         ]
@@ -96,10 +100,18 @@
         "group": "Capabilities",
         "pages": [
           {
+            "group": "Agents",
+            "pages": [
+              "capabilities/agents/index"
+            ]
+          },
+          {
             "group": "Manipulation",
             "pages": [
+              "capabilities/manipulation/index",
               "capabilities/manipulation/adding_a_custom_arm",
-              "capabilities/manipulation/openarm_integration"
+              "capabilities/manipulation/openarm_integration",
+              "capabilities/manipulation/a750"
             ]
           },
           {
@@ -113,13 +125,15 @@
           {
             "group": "Navigation",
             "pages": [
-              "capabilities/navigation/nav_stack",
-              {
-                "group": "Native",
-                "pages": [
-                  "capabilities/navigation/native/index"
-                ]
-              }
+              "capabilities/navigation/index",
+              "capabilities/navigation/deep_dive",
+              "capabilities/navigation/relocalization"
+            ]
+          },
+          {
+            "group": "Perception",
+            "pages": [
+              "capabilities/perception/index"
             ]
           },
           {
@@ -136,7 +150,14 @@
           {
             "group": "Quadruped",
             "pages": [
-              "platforms/quadruped/go2/index"
+              {
+                "group": "Unitree Go2",
+                "pages": [
+                  "platforms/quadruped/go2/index",
+                  "platforms/quadruped/go2/setup",
+                  "platforms/quadruped/go2/simulation"
+                ]
+              }
             ]
           },
           {
@@ -156,6 +177,7 @@
           "development/grid_testing",
           "development/large_file_management",
           "development/profiling_dimos",
+          "development/releasing",
           "development/writing_docs"
         ]
       }
@@ -168,14 +190,14 @@
   "navbar": {
     "links": [
       {
-        "label": "Dimensional",
-        "href": "/"
+        "type": "github",
+        "href": "https://github.com/dimensionalOS/dimos"
       }
     ],
     "primary": {
       "type": "button",
       "label": "Get started",
-      "href": "https://github.com/dimensionalOS/dimos"
+      "href": "https://dimensionalos.com/prototype"
     }
   },
   "contextual": {

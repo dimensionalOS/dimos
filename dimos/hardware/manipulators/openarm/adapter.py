@@ -436,6 +436,3 @@ class OpenArmAdapter:
 # ── Registry hook (required for auto-discovery) ───────────────────
 def register(registry: AdapterRegistry) -> None:
     registry.register("openarm", OpenArmAdapter)
-
-
-__all__ = ["OpenArmAdapter", "register"]

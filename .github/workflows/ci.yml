@@ -281,13 +281,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Run tests
-        run: uv run pytest --numprocesses=3 --cov=dimos/ --junitxml=junit.xml -m 'not (tool or self_hosted or mujoco or self_hosted_large)'
+        run: uv run pytest --numprocesses=3 --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large)'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m 'not (tool or self_hosted or mujoco or self_hosted_large)' && exit 1
+          uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or mujoco or self_hosted_large)' && exit 1
         shell: bash
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
@@ -315,11 +315,109 @@ jobs:
           use_pypi: true
           version: "11.2.8"
 
+  cmu-nav-natives-marker:
+    # Check whether the modules-for-this-config marker cache
+    # already exists. Used to skip cmu-nav-natives without using the cachix environment.
+    if: |
+      github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+    outputs:
+      cache-hit: ${{ steps.marker.outputs.cache-hit }}
+    steps:
+      - name: Checkout files used for cache key
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            bin/build-cmu-nav-natives
+            dimos/navigation/cmu_nav/modules
+          sparse-checkout-cone-mode: false
+      - name: Look up marker cache
+        id: marker
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/cmu-nav-natives-marker
+          key: cmu-nav-natives-${{ hashFiles('bin/build-cmu-nav-natives', 'dimos/navigation/cmu_nav/modules/**') }}
+          lookup-only: true
+
+  cmu-nav-natives:
+    # ⚠️ MUST NEVER RUN ON EXTERNAL PRs ⚠️
+    # This job has write access to CACHIX_AUTH_TOKEN. Any workflow change that
+    # reaches a `run:` step here could exfiltrate the token, letting an attacker
+    # push poisoned binaries to the Cachix cache — which subsequent CI runs and
+    # every dev with the substituter configured would unwittingly install. The
+    # `if:` guard below is the only thing keeping fork PRs out — DO NOT REMOVE.
+    if: |
+      !cancelled() &&
+      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      needs.cmu-nav-natives-marker.outputs.cache-hit != 'true'
+    needs: cmu-nav-natives-marker
+    timeout-minutes: 300
+    environment: cachix
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Free runner disk space
+        uses: BRAINSia/free-disk-space@v2.1.3
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install minimal dimos for module discovery
+        run: uv sync --no-default-groups --frozen
+      - name: Install Nix (with Cachix substituter)
+        env:
+          INPUT_EXTRA_NIX_CONFIG: |
+            extra-substituters = https://dimensionalos.cachix.org
+            extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
+          INPUT_SET_AS_TRUSTED_USER: "true"
+        run: bash docker/ros/install-nix.sh
+      - name: Cache Nix fetcher + eval cache
+        # ~/.cache/nix holds the flake fetcher cache (the github tarballs of
+        # each `nix build github:…` ref) and the eval cache (compiled flake
+        # outputs). ~/.local/state/nix holds profile/gcroot bookkeeping.
+        # Restoring these skips the ~20s/module evaluation cost, which is
+        # paid every cold run otherwise. /nix/store is intentionally NOT
+        # cached here — that's the slow heavy part that Cachix handles.
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/nix
+            ~/.local/state/nix
+          key: nix-fetcher-build-${{ runner.os }}-${{ hashFiles('bin/build-cmu-nav-natives', 'dimos/navigation/cmu_nav/modules/**/*.py') }}
+          restore-keys: nix-fetcher-build-${{ runner.os }}-
+      - name: Authenticate Cachix
+        uses: cachix/cachix-action@v15
+        with:
+          name: dimensionalos
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Build cmu_nav native modules
+        env:
+          BUILD_WORKERS: "2"
+        run: uv run bin/build-cmu-nav-natives
+      - name: Write marker file
+        run: install -D /dev/null /tmp/cmu-nav-natives-marker/ok
+      - name: Save marker cache
+        # Done as a final step (rather than via actions/cache's post-step) so
+        # a build failure doesn't poison the cache with a marker for a config
+        # we never actually pushed.
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/cmu-nav-natives-marker
+          key: cmu-nav-natives-${{ hashFiles('bin/build-cmu-nav-natives', 'dimos/navigation/cmu_nav/modules/**') }}
+
   self-hosted-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
     if: |
-      github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-    needs: compute-ros-pin
+      !cancelled() &&
+      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      contains(fromJSON('["success", "skipped"]'), needs.cmu-nav-natives.result)
+    needs: [compute-ros-pin, cmu-nav-natives]
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -333,6 +431,11 @@ jobs:
             # GitHub Actions only honours `container:` on Linux runners.
             container:
               image: ghcr.io/dimensionalos/ros-dev@${{ needs.compute-ros-pin.outputs.digest }}
+              # Persist Nix state on the self-hosted runner's filesystem so
+              # the ~3 GB module closures survive between jobs.
+              volumes:
+                - /var/cache/dimos-nix:/nix
+                - /var/cache/dimos-root-cache:/root/.cache
             markers: "self_hosted or skipif_no_ros"
             experimental: false
           - os: macOS
@@ -396,14 +499,43 @@ jobs:
             echo "ROS_VERSION=$ROS_VERSION"
             echo "ROS_PYTHON_VERSION=$ROS_PYTHON_VERSION"
           } >> "$GITHUB_ENV"
+      - name: Install Nix (with Cachix substituter)
+        if: contains(matrix.markers, 'skipif_no_ros')
+        # /nix is bind-mounted from the self-hosted runner's host filesystem
+        # (see this job's matrix container.volumes). On warm runs Nix is
+        # already installed; install-nix.sh's `type -p nix` check will exit
+        # early, but only if the profile bin is on PATH — prepend it before
+        # calling. If /nix is empty (first job on a fresh runner), nix isn't
+        # on PATH and the install proceeds normally. After install-nix.sh,
+        # we unconditionally (re-)write /etc/nix/nix.conf: on warm runs
+        # install-nix.sh exited before it would have written the config,
+        # which leaves `experimental-features = nix-command flakes` absent
+        # and the build dying with "experimental Nix feature 'nix-command'
+        # is disabled". Writing it here keeps cold and warm runs identical.
+        run: |
+          export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+          bash docker/ros/install-nix.sh
+          sudo mkdir -p /etc/nix
+          sudo tee /etc/nix/nix.conf > /dev/null <<'EOF'
+          experimental-features = nix-command flakes
+          extra-substituters = https://dimensionalos.cachix.org
+          extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
+          always-allow-substitutes = true
+          build-users-group =
+          max-jobs = auto
+          EOF
+          echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
+      - name: Fetch cmu_nav native modules from Cachix
+        if: contains(matrix.markers, 'skipif_no_ros')
+        run: uv run bin/build-cmu-nav-natives
       - name: Run tests
-        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not (tool or mujoco)'
+        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not mujoco'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m '(${{ matrix.markers }}) and not (tool or mujoco)' && exit 1
+          uv run pytest --no-cov -vvvvv --lf  -m '(${{ matrix.markers }}) and not mujoco' && exit 1
         shell: bash
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
@@ -559,6 +691,7 @@ jobs:
     - md-babel
     - docs-validate
     - tests
+    - cmu-nav-natives
     - self-hosted-tests
     #- self-hosted-large-tests
 
@@ -570,9 +703,7 @@ jobs:
     - name: Decide whether the needed jobs succeeded or failed
       uses: re-actors/alls-green@release/v1
       with:
-        allowed-skips: |
-          self-hosted-tests
-          self-hosted-large-tests
+        allowed-skips: cmu-nav-natives, self-hosted-tests, self-hosted-large-tests
         jobs: ${{ toJSON(needs) }}
     - name: Trigger Codecov notifications
       uses: codecov/codecov-action@v6

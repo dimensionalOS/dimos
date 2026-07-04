@@ -23,9 +23,11 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.manipulation.planning.factory import create_kinematics
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
+import dimos.manipulation.planning.kinematics.pink_ik as pink_ik
 from dimos.manipulation.planning.kinematics.pink_ik import (
     PinkIK,
     PinkIKConfig,
@@ -172,12 +174,11 @@ def _robot_config() -> RobotModelConfig:
     )
 
 
-def _pink_ik(converge: bool = True) -> PinkIK:
-    ik = PinkIK.__new__(PinkIK)
-    ik.config = PinkIKConfig(max_iterations=3)
-    ik._modules = _fake_modules(converge=converge)
-    ik._robot_contexts = {}
-    return ik
+def _pink_ik(mocker: MockerFixture, converge: bool = True) -> PinkIK:
+    mocker.patch.object(
+        pink_ik, "_load_optional_dependencies", return_value=_fake_modules(converge=converge)
+    )
+    return PinkIK(PinkIKConfig(max_iterations=3))
 
 
 def _context() -> _PinkRobotContext:
@@ -219,16 +220,14 @@ class _FakeWorld:
 
 
 def test_create_kinematics_pink_missing_dependency_is_actionable(
-    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
 ) -> None:
-    from dimos.manipulation.planning.kinematics import pink_ik
-
     def fake_import_module(name: str) -> ModuleType:
         if name == "pink":
             raise ImportError("missing pink")
         return ModuleType(name)
 
-    monkeypatch.setattr(pink_ik.importlib, "import_module", fake_import_module)
+    mocker.patch.object(pink_ik.importlib, "import_module", side_effect=fake_import_module)
 
     with pytest.raises(PinkIKDependencyError) as exc_info:
         create_kinematics("pink")
@@ -237,36 +236,30 @@ def test_create_kinematics_pink_missing_dependency_is_actionable(
 
 
 def test_create_kinematics_pink_unavailable_solver_mentions_manipulation_extra(
-    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
 ) -> None:
-    from dimos.manipulation.planning.kinematics import pink_ik
-
     def fake_import_module(name: str) -> ModuleType:
         module = ModuleType(name)
         if name == "qpsolvers":
             module.available_solvers = []  # type: ignore[attr-defined]
         return module
 
-    monkeypatch.setattr(pink_ik.importlib, "import_module", fake_import_module)
+    mocker.patch.object(pink_ik.importlib, "import_module", side_effect=fake_import_module)
 
     with pytest.raises(PinkIKDependencyError, match="--extra manipulation"):
         create_kinematics("pink")
 
 
-def test_create_kinematics_pink_returns_backend(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dimos.manipulation.planning.kinematics import pink_ik
-
-    monkeypatch.setattr(pink_ik, "_load_optional_dependencies", lambda solver: _fake_modules())
+def test_create_kinematics_pink_returns_backend(mocker: MockerFixture) -> None:
+    mocker.patch.object(pink_ik, "_load_optional_dependencies", return_value=_fake_modules())
 
     assert isinstance(create_kinematics("pink"), PinkIK)
 
 
 def test_create_kinematics_pink_config_passes_tuning(
-    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
 ) -> None:
-    from dimos.manipulation.planning.kinematics import pink_ik
-
-    monkeypatch.setattr(pink_ik, "_load_optional_dependencies", lambda solver: _fake_modules())
+    mocker.patch.object(pink_ik, "_load_optional_dependencies", return_value=_fake_modules())
 
     ik = create_kinematics(config=PinkKinematicsConfig(max_iterations=7, dt=0.02, posture_cost=0.0))
 
@@ -276,10 +269,8 @@ def test_create_kinematics_pink_config_passes_tuning(
     assert ik.config.posture_cost == 0.0
 
 
-def test_pink_ik_config_overrides_are_applied(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dimos.manipulation.planning.kinematics import pink_ik
-
-    monkeypatch.setattr(pink_ik, "_load_optional_dependencies", lambda solver: _fake_modules())
+def test_pink_ik_config_overrides_are_applied(mocker: MockerFixture) -> None:
+    mocker.patch.object(pink_ik, "_load_optional_dependencies", return_value=_fake_modules())
 
     ik = PinkIK(PinkIKConfig(solver="proxqp", dt=0.1), max_iterations=7, posture_cost=0.0)
 
@@ -307,8 +298,8 @@ def test_mapping_failure_for_missing_joint() -> None:
         _build_joint_mapping(_FakeModel(), config)
 
 
-def test_solve_single_returns_successful_ik_result() -> None:
-    ik = _pink_ik(converge=True)
+def test_solve_single_returns_successful_ik_result(mocker: MockerFixture) -> None:
+    ik = _pink_ik(mocker, converge=True)
     target = np.eye(4)
     target[:3, 3] = [0.1, 0.2, 0.3]
 
@@ -328,8 +319,8 @@ def test_solve_single_returns_successful_ik_result() -> None:
     assert result.joint_state.position == pytest.approx([0.2, 0.1, 0.3])
 
 
-def test_solve_single_reports_non_convergence() -> None:
-    ik = _pink_ik(converge=False)
+def test_solve_single_reports_non_convergence(mocker: MockerFixture) -> None:
+    ik = _pink_ik(mocker, converge=False)
     target = np.eye(4)
     target[:3, 3] = [0.1, 0.0, 0.0]
 
@@ -347,8 +338,8 @@ def test_solve_single_reports_non_convergence() -> None:
     assert "did not converge" in result.message
 
 
-def test_solve_rejects_collision_candidate() -> None:
-    ik = _pink_ik(converge=True)
+def test_solve_rejects_collision_candidate(mocker: MockerFixture) -> None:
+    ik = _pink_ik(mocker, converge=True)
     context = _context()
     ik._robot_contexts = {"robot": context}
 
@@ -367,8 +358,8 @@ def test_solve_rejects_collision_candidate() -> None:
     assert result.joint_state is None
 
 
-def test_solve_retries_after_joint_limit_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    ik = _pink_ik(converge=True)
+def test_solve_retries_after_joint_limit_failure(mocker: MockerFixture) -> None:
+    ik = _pink_ik(mocker, converge=True)
     context = _context()
     ik._robot_contexts = {"robot": context}
     calls = 0
@@ -393,7 +384,7 @@ def test_solve_retries_after_joint_limit_failure(monkeypatch: pytest.MonkeyPatch
             iterations=1,
         )
 
-    monkeypatch.setattr(ik, "_solve_single", fake_solve_single)
+    solve_single = mocker.patch.object(ik, "_solve_single", side_effect=fake_solve_single)
 
     result = ik.solve(
         world=cast("Any", _FakeWorld(collision_free=True)),
@@ -406,5 +397,5 @@ def test_solve_retries_after_joint_limit_failure(monkeypatch: pytest.MonkeyPatch
         max_attempts=2,
     )
 
-    assert calls == 2
+    assert solve_single.call_count == 2
     assert result.status == IKStatus.SUCCESS

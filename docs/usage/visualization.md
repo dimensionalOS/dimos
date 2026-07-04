@@ -1,17 +1,22 @@
-# Viewer Backends
+---
+title: "Viewer Backends"
+---
 
-Dimos supports Rerun as its visualization backend (`rerun` default, or `none` to disable).
+Dimos uses Rerun for visualizations. It can be disabled by using
+`dimos --viewer none ...`.
+
+Blueprints add Rerun stream visualization with `vis_module(...)`, which renders typed
+robot streams according to `GlobalConfig.viewer`.
 
 ## Quick Start
 
 Choose your viewer via the CLI:
 
 ```bash
-# Rerun native viewer (default) - dimos-viewer with built-in teleop + click-to-navigate
+# Rerun native viewer - dimos-viewer with built-in teleop + click-to-navigate
 dimos run unitree-go2
 
-# Explicitly select the viewer backend:
-dimos --viewer rerun run unitree-go2
+# Disable visualization:
 dimos --viewer none run unitree-go2
 ```
 

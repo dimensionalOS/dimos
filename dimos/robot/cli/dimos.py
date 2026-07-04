@@ -24,9 +24,8 @@ from pathlib import Path
 import sys
 import time
 import types
-from typing import TYPE_CHECKING, Any, Union, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Literal, Union, cast, get_args, get_origin
 
-import click
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
@@ -93,6 +92,11 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
     for field_name, field_info in fields.items():
         field_type = field_info.annotation
 
+        # Container generics (e.g. `tuple[...]` fields) have no single-flag CLI
+        # representation; they're configured via env/JSON. Skip like arg_help does.
+        if isinstance(field_type, types.GenericAlias):
+            continue
+
         # Handle Optional types
         # Check for Optional/Union with None
         if get_origin(field_type) is type(str | None):
@@ -137,7 +141,11 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 
     def callback(**kwargs) -> None:  # type: ignore[no-untyped-def]
         ctx = kwargs.pop("ctx")
-        ctx.obj = {k: v for k, v in kwargs.items() if v is not None}
+        overrides = {k: v for k, v in kwargs.items() if v is not None}
+        ctx.obj = overrides
+        # Apply overrides (e.g. --transport, --viewer) to the process-global config
+        # up front so every subcommand honors flags given before the subcommand name.
+        global_config.update(**overrides)
 
     callback.__signature__ = inspect.Signature(params)  # type: ignore[attr-defined]
 
@@ -249,10 +257,6 @@ def run(
     setup_exception_handler()
 
     cli_config_overrides: dict[str, Any] = ctx.obj
-
-    # this is a workaround until we have a proper way to have delayed-module-choice in blueprints
-    # ex: vis_module(viewer=global_config.viewer) is wrong (viewer will always be default value) without this patch
-    global_config.update(**cli_config_overrides)
 
     # Clean stale registry entries
     stale = cleanup_stale()
@@ -453,28 +457,30 @@ def mcp_list_tools() -> None:
     typer.echo(json.dumps(tools, indent=2))
 
 
-class _KeyValueType(click.ParamType):
-    """Parse KEY=VALUE arguments, auto-converting JSON values."""
+def _parse_key_value_arg(value: str) -> tuple[str, Any]:
+    """Parse a KEY=VALUE argument, auto-converting JSON values."""
+    if "=" not in value:
+        raise ValueError(f"expected KEY=VALUE, got: {value}")
+    key, val = value.split("=", 1)
+    try:
+        return (key, json.loads(val))
+    except (json.JSONDecodeError, ValueError):
+        return (key, val)
 
-    name = "KEY=VALUE"
 
-    def convert(
-        self, value: str, param: click.Parameter | None, ctx: click.Context | None
-    ) -> tuple[str, Any]:
+def _validate_key_value_args(values: list[str]) -> list[str]:
+    """Validate KEY=VALUE arguments during CLI parsing."""
+    for value in values:
         if "=" not in value:
-            self.fail(f"expected KEY=VALUE, got: {value}", param, ctx)
-        key, val = value.split("=", 1)
-        try:
-            return (key, json.loads(val))
-        except (json.JSONDecodeError, ValueError):
-            return (key, val)
+            raise typer.BadParameter(f"expected KEY=VALUE, got: {value}")
+    return values
 
 
 @mcp_app.command("call")
 def mcp_call_tool(
     tool_name: str = typer.Argument(..., help="Tool name to call"),
     args: list[str] = typer.Option(
-        [], "--arg", "-a", click_type=_KeyValueType(), help="Arguments as key=value"
+        [], "--arg", "-a", callback=_validate_key_value_args, help="Arguments as key=value"
     ),
     json_args: str = typer.Option("", "--json-args", "-j", help="Arguments as JSON string"),
 ) -> None:
@@ -487,8 +493,11 @@ def mcp_call_tool(
             typer.echo(f"Error: invalid JSON in --json-args: {e}", err=True)
             raise typer.Exit(1)
     else:
-        # _KeyValueType.convert() returns (key, val) tuples at runtime
-        arguments = dict(args)  # type: ignore[arg-type]
+        try:
+            arguments = dict(_parse_key_value_arg(arg) for arg in args)
+        except ValueError as e:
+            typer.echo(f"Error: invalid --arg: {e}", err=True)
+            raise typer.Exit(1)
 
     try:
         result = _get_adapter().call_tool(tool_name, arguments)
@@ -595,12 +604,8 @@ def restart(
 
 
 @main.command()
-def show_config(ctx: typer.Context) -> None:
+def show_config() -> None:
     """Show current config settings and their values."""
-
-    cli_config_overrides: dict[str, Any] = ctx.obj
-    global_config.update(**cli_config_overrides)
-
     for field_name, value in global_config.model_dump().items():
         typer.echo(f"{field_name}: {value}")
 
@@ -681,6 +686,42 @@ def send(
 map_app = typer.Typer(help="Voxel-map tools over recorded sqlite datasets")
 main.add_typer(map_app, name="map")
 map_app.command("global")(_map_main)
+
+
+dataprep_app = typer.Typer(help="Build and inspect learning datasets from recordings")
+main.add_typer(dataprep_app, name="dataprep")
+
+
+@dataprep_app.command("build")
+def dataprep_build(
+    source: Path | None = typer.Option(None, "--source", "-s", help="Recording .db to read"),
+    output: Path | None = typer.Option(None, "--output", help="Dataset output directory"),
+    output_format: str = typer.Option(None, "--format", "-f", help="Output format: lerobot | hdf5"),
+    config_path: Path | None = typer.Option(
+        None, "--config", "-c", help="JSON DataPrepConfig (needed for obs/action stream maps)"
+    ),
+) -> None:
+    """Build a dataset from a recording (lerobot/hdf5 + dimos_meta.json)."""
+    from dimos.learning.dataprep.cli import build
+
+    build(config_path, source, output, cast("Literal['lerobot', 'hdf5'] | None", output_format))
+
+
+@dataprep_app.command("inspect")
+def dataprep_inspect(
+    dataset: Path | None = typer.Argument(
+        None, help="Built dataset: a .hdf5 file or a lerobot directory"
+    ),
+    output_format: str = typer.Option(
+        None, "--format", "-f", help="lerobot | hdf5 (auto-detected from the path if omitted)"
+    ),
+) -> None:
+    """Summarize a built dataset: features, shapes, episode/frame counts, uniformity."""
+    from dimos.learning.dataprep.cli import inspect
+
+    inspect(dataset, cast("Literal['lerobot', 'hdf5'] | None", output_format))
+
+
 map_app.command("summary")(_map_summary_main)
 map_app.command("rename")(_map_rename_main)
 map_app.command("pose-fill")(_map_pose_fill_main)
