@@ -191,6 +191,33 @@ Review 风险:
 
 - 分层不能掩盖漏接模块。`test_all_blueprints_generation.py` 和 Layer 4 wiring test 是主要保护。
 
+组成部分:
+
+- `unitree_go2_agentic`: 完整 Go2 agentic stack，组合 physical body、structured world state、skill interface registry/containers、Layer 3 MCP/LLM brain。
+- `unitree_go2_spatial`: 没有 LLM brain 的 perception/world-state stack，用来单独验证 Layer 4 和 Layer 5。
+- `unitree_go2_temporal_memory`: 包住 agentic stack，并通过 Layer 4 factory 追加 temporal memory。
+- 各 layer package 的 `__init__.py`: lazy blueprint factories。它们不是普通 import 便利层，而是架构边界的一部分，避免过早 import 重型 perception/model 依赖。
+
+构建数据流:
+
+1. CLI 通过 registry 懒加载命名 blueprint。
+2. blueprint 只 import 需要的 layer handle。
+3. 每个 layer handle 构建自己的 `autoconnect()` blueprint。
+4. 最终仍是普通 DimOS blueprint 组合，stream wiring 和 Spec-based RPC injection 仍由 `ModuleCoordinator` 完成。
+5. 测试验证 Layer 3 能通过预期 contract 访问 Layer 4/5/6，并且 blueprint registry 是最新的。
+
+状态和持久化:
+
+- blueprint layer 本身不保存 robot 数据。
+- 状态由各层内部 module 持有: Layer 6 body state、Layer 4 memory/world snapshot、Layer 5 skill contracts、Layer 3 context/outcome/causal state。
+- 持久化属于具体 module，不属于 blueprint 文件。
+
+安全边界:
+
+- blueprint 决定哪些 module 部署在一起。
+- blueprint 不决定调用哪个 skill，也不执行 motion。
+- wiring 错误应该按安全风险看待，因为 LLM 可能看到错误工具或错误上下文。
+
 ### 2. Layer 6 Robot Body State
 
 相关文件:
@@ -209,6 +236,35 @@ Review 重点:
 
 - 是否提供了 agent preflight 足够使用的安全相关状态。
 - 是否避免重复持有或篡改真实控制权。
+
+组成部分:
+
+- `_Go2RobotBodyState`: 把低层 robot status 适配成紧凑 Layer 6 provider 的 module。
+- `robot_body_spec.py`: 上层消费的 typed RPC contract。
+- Layer 6 package factory: 把底层 Go2 robot blueprint 和 body-state module 接在一起。
+
+数据流:
+
+1. 底层 Go2 connection 和 robot modules 持有真实硬件/仿真通信。
+2. `_Go2RobotBodyState` 通过 spec 暴露 read-oriented body-state summary。
+3. Layer 4/Layer 3 把这些状态用于 safety preflight 和 context evidence。
+4. agent brain 看到的是摘要状态，不是直接硬件 handle。
+
+判断主体:
+
+- body-state module 不做任务决策。
+- 它是 evidence provider。Layer 3 确定性 preflight 和 LLM 会使用它的输出判断等待、澄清或调用 skill。
+
+状态和写边界:
+
+- 它应该被视为 current-state adapter。
+- 不应该持久化 memory，也不应该发控制命令。
+- 未来如果增加 body-state cache，必须有明确 bound 和 timestamp。
+
+失败形态:
+
+- 如果底层 robot state 缺失，应明确返回 unavailable/unknown，不应伪造 ready。
+- motion-sensitive preflight 应把缺失 robot body state 视为风险。
 
 ### 3. Layer 4 Structured World State
 
@@ -236,6 +292,36 @@ Review 重点:
 - memory backend 缺失时是否明确返回 unavailable，而不是静默空值。
 - snapshot schema 是否足够稳定，能被 prompt 和 dashboard 长期消费。
 
+组成部分:
+
+- `_Go2StructuredWorldState`: 把 robot/world 信息规范化成 compact snapshot provider。
+- `_Go2SemanticTemporalMap`: 融合 spatial memory 和 temporal memory summary，产出 agent context 使用的 semantic evidence。
+- `world_state_spec.py`: Layer 3 依赖的 RPC contract。
+- `_go2_temporal_memory_world_state()`: lazy factory，延迟 TemporalMemory 构建，确保 `--new-memory` 等 CLI flags 已经生效。
+
+数据流:
+
+1. SpatialMemory 和 TemporalMemory 仍是 storage/search 系统。
+2. Layer 4 查询或接收这些系统的 summary。
+3. Layer 4 把 summary 整形成稳定 world-state object，并明确 source availability。
+4. Layer 3 通过 spec 请求 world state，然后根据当前 task 选择 evidence。
+
+状态和持久化:
+
+- Layer 4 可以读取持久化 memory backend，但它自身的 structured snapshot 是 derived view。
+- Temporal memory 持久化由 TemporalMemory module 和 CLI config 控制。
+- Spatial memory 持久化由 `SpatialConfig` 和 `spatial_perception.py` 的 state-dir 路径逻辑控制。
+
+判断主体:
+
+- Layer 4 决定如何规范化 provider output。
+- Layer 4 不判断上下文是否足够行动。这个判断属于 Layer 3 preflight policy 和 LLM。
+
+失败形态:
+
+- provider unavailable 应在 snapshot 里明确表示。
+- search result empty 不等于 backend failure，review 时要确认二者有区别。
+
 ### 4. Layer 5 Skill Interface Registry
 
 相关文件:
@@ -260,6 +346,37 @@ Review 重点:
 
 - 每个 MCP action skill 是否都有准确 contract。
 - `risk_class`、`requires_context`、`requires_robot_state` 应按 safety-critical metadata 审查。
+
+组成部分:
+
+- 静态 `_SkillContract` 记录: 每个 action skill 的人工维护接口描述。
+- `_Go2SkillInterfaceRegistry`: 通过 RPC/MCP-facing 方法把 contracts 暴露给 Layer 3。
+- `skill_interface_spec.py`: 消费 skill metadata 的 typed contract。
+- Layer 5 blueprint factory: 接入 action skill containers、perception/security skills 和 registry。
+
+数据流:
+
+1. action modules 通过 MCP 暴露 `@skill` 方法。
+2. registry 提供并行 contract view，包含比 MCP JSON schema 更丰富的 safety/context metadata。
+3. ContextProvider 和 TaskFeasibility 读取 contracts，判断需要哪些 context、arguments、preflight checks。
+4. SkillProposal 读取同一份 contracts，避免提重复 skill。
+
+状态和写边界:
+
+- contracts 是代码/静态数据，不是 learned state。
+- registry 运行时只读。
+- self-evolution proposal 不会直接修改这个文件。开发者 review 后才编辑 contract。
+
+判断主体:
+
+- 人类维护 source-of-truth contract 文案和风险元数据。
+- Layer 3 确定性代码消费这些数据。
+- LLM 可以使用 contract 信息，但不应发明 registry/MCP list 之外的隐藏能力。
+
+失败形态:
+
+- 暴露的 skill 没有 contract 是 review failure，因为 preflight 无法知道 risk/context 需求。
+- contract 存在但 MCP tool 缺失也是 review failure，除非该 blueprint 有意禁用它。
 
 ### 5. Layer 3 Expert Router
 
@@ -286,6 +403,35 @@ Review 重点:
 - routing label 是否和实际 skill contract 对齐。
 - prompt 文案是否过度承诺自治或自动改代码能力。
 
+组成部分:
+
+- `_Go2ExpertRouter`: 确定性 task/domain router。
+- prompt policy helpers: 把 layer-specific instructions 合并进 agent system prompt。
+- router tests: 固定预期 label，避免行为无意扩大。
+
+数据流:
+
+1. user task 或 subtask 进入 router。
+2. router 把任务分类到少量 domain，例如 navigation、perception、person follow、类似 manipulation 但当前不支持的任务、general conversation。
+3. 返回 routing metadata 和 recommended next tools/preflight。
+4. ContextProvider 可以把 routing output 放进 context。
+5. LLM 把 routing 当作提示，而不是不可逆 planner。
+
+判断主体:
+
+- domain classification 是确定性的、可检查的。
+- tool choice 仍是 LLM/tool-calling decision，除非 deterministic preflight 明确拒绝或要求澄清。
+
+状态和持久化:
+
+- router 无状态。
+- 它自己不写 ledger event 或 feedback。
+
+失败形态:
+
+- 未知任务应该 route 到 uncertainty/general handling，不应伪造能力。
+- safety-sensitive domain 应偏向 preflight 和 clarification。
+
 ### 6. Context Provider 和 Evidence Selection
 
 相关文件:
@@ -309,13 +455,45 @@ Review 重点:
 - 这还不是基于 replay metric 学出来的策略。
 - LLM 会消费这些上下文，并且仍可以判断上下文不足。
 
-调用路径和归属:
+组成部分:
+
+- `_Go2ContextProvider`: MCP-facing context bundle provider。它是聚合器，读取可选 Layer 4/5/3 providers，并把结果整理成 agent 可用的 compact context。
+- `context_evidence.py`: 纯 evidence selector。它负责确定性的排序/过滤策略，可以在没有 robot、MCP server、memory backend 或 LLM 的情况下单测。
+- 可选 provider refs: world state、spatial/RAG memory、temporal memory、skill interface registry、skill outcome store、causal world model、context feedback store。
+- `context_evidence.v1`: 嵌在返回结果里的 review artifact。它记录哪些 evidence 被选中、丢弃或标成 low-confidence。
+
+输入:
+
+- 调用方传入的 task text 和 runtime metadata。
+- 已接线 DimOS modules 提供的 provider snapshot/summary。
+- policy 参数，例如 relevance 阈值、最大条数、low-confidence 处理方式、motion task 是否必须有 robot state。
+- 已接线时的历史 feedback、outcome、world-model summary。
+
+数据流:
 
 1. 调用方带着 task/runtime metadata 调用 `get_context()`。
 2. ContextProvider 向已接线 provider 请求 world state、memory summary、skill contract、outcome summary、causal-world-model state、context feedback。provider 没接线时，应贡献明确的 unavailable 状态，而不是静默丢掉该 source。
 3. metadata 被传给 `build_context_evidence()`。这个 helper 是纯函数: 给定 metadata 和 `ContextEvidencePolicy`，返回被选 evidence，不发 RPC、不写 memory、不调用 LLM。
 4. ContextProvider 格式化 compact context，并附加 `context_evidence.v1`，让 reviewer 能看到为什么选了这些 evidence。
 5. LLM 仍然是最终消费上下文、做用户可见推理和工具选择的主体。ContextProvider 本身不决定执行 skill。
+
+状态和写边界:
+
+- ContextProvider 本身基本是 read-mostly，不写 RAG/vector memory、temporal memory、skill contracts 或 robot state。
+- 唯一的 durable side channel 是间接的: 它可能包含来自 feedback/outcome/ledger-aware modules 的摘要，但写入由那些 module 自己负责。
+- 被选中的 context 是临时 prompt artifact，除非另一个调用方显式记录 feedback 或 evolution event。
+
+判断主体:
+
+- 确定性代码决定哪些 evidence 进入 context bundle。
+- LLM 决定如何消费这个 bundle、是否追问、是否调用已暴露 tool。
+- 人类 reviewer 判断确定性 policy 对当前机器人安全姿态是否足够保守。
+
+失败形态:
+
+- 缺失 provider 应显示为明确 unavailable metadata。
+- provider payload 格式错误时，应降级该 source，而不是清空整个 context bundle。
+- 低相关或低置信 evidence 应按 policy 丢弃或标注，不能静默升级为可信 evidence。
 
 没有实现的边界:
 
@@ -348,6 +526,35 @@ Review 重点:
 - 这是诊断工具，不是新的 memory scheduler。
 - 它不应该写入 RAG、spatial memory、temporal memory 或 Git。
 
+组成部分:
+
+- `_Go2MemoryBackendStatus`: 作为 MCP skill 暴露的诊断 module。
+- 可选 provider specs: world state、spatial memory、temporal memory、outcome store、causal world model、skill interface registry。
+- probe helpers: 小型 read attempt，用来报告 availability 和 error。
+
+数据流:
+
+1. skill 检查哪些可选 provider reference 已注入。
+2. 对每个 provider 记录 `wired`、`available` 和 probe result。
+3. probe failure 被捕获成 status metadata，而不是作为 hard crash 抛给 agent。
+4. 结果以 JSON/text 返回给 LLM 或 human operator。
+
+状态和写边界:
+
+- 它是 read-only。
+- 不持久化 status snapshot。
+- 不初始化缺失 database。如果 database 没运行或没接线，status 应明确说明。
+
+判断主体:
+
+- 这个 skill 不决定使用哪个 memory。
+- 它只回答“现在接了什么、能读什么”。ContextProvider 和 LLM 决定如何响应。
+
+失败形态:
+
+- probe failure 应标明 provider 和 error string。
+- missing provider 应足够明确地区分 blueprint wiring 问题和 memory result empty。
+
 ### 8. Git-backed Evolution Ledger
 
 相关文件:
@@ -370,6 +577,20 @@ Review 重点:
 - 默认 `commit=False`。
 - 如果 `commit=True`，只把该 event/proposal 文件提交到本地 Git。
 
+组成部分:
+
+- `evolution_event.py`: 低层自进化 observation 的 schema 和校验，例如 feasibility assessment、context feedback、runtime review note。
+- `evolution_proposal.py`: 更高层 proposed change 的 schema 和校验。这些 proposal 必须先经人工 review，才可能变成代码或配置。
+- `_EvolutionLedger`: filesystem 和可选 Git writer。它负责路径选择、JSON serialization、commit mode 下的 staging/commit 行为。
+- 测试: 覆盖 schema validation、路径形状、commit 隔离和 proposal 持久化。
+
+输入:
+
+- Layer 3 MCP tool 传入的 event/proposal payload。
+- 可选的 caller-controlled commit flag。
+- 可选的 `DIMOS_EVOLUTION_LEDGER_DIR` 覆盖。
+- commit mode 打开时的当前 Git repository context。
+
 Git 内容会提交到哪里:
 
 - 文件先进入当前本地仓库工作区。
@@ -377,7 +598,7 @@ Git 内容会提交到哪里:
 - 不会自动 push 到 GitHub。
 - 只有人类后续运行 `git push` 或开 PR，GitHub 才会收到这些记录。
 
-写入路径:
+写入数据流:
 
 1. 调用方调用 ledger-facing MCP skill，例如 `record_evolution_event()` 或 `record_skill_proposal()`。
 2. 模块验证 schema，并规范化 payload。
@@ -385,6 +606,25 @@ Git 内容会提交到哪里:
 4. 写入 JSON 文件，作为可 review artifact。
 5. 如果 `commit=False`，除了工作区文件外不碰 Git。
 6. 如果 `commit=True`，只 stage 并提交该 event/proposal 文件到本地 Git，不 push。
+
+状态和写边界:
+
+- ledger 是 durable filesystem state，不是内存学习模型。
+- 它只在配置的 ledger root 下面写 JSON artifact。
+- 它不修改 skill 代码、prompt、contracts、memory database 或 model weights。
+- commit mode 有意保持 local-only 且范围很窄: stage 该 artifact，创建本地 commit，然后停止。
+
+判断主体:
+
+- 调用方 module 决定何时值得记录 event/proposal。
+- ledger 只判断 artifact 是否符合 schema，以及应该存到哪里。
+- 人类 reviewer 决定这些 ledger artifact 后续是否变成代码改动、PR、被 ignore 的本地轨迹，或训练/评估数据。
+
+失败形态:
+
+- schema 无效应在写入前失败。
+- 不安全路径或路径穿越应在 filesystem access 前被拒绝。
+- Git commit 失败时，应让 JSON artifact 仍然在 worktree 可见，而不是假装已经提交。
 
 隐私和 review 边界:
 
@@ -416,7 +656,22 @@ Review 重点:
 - 这不是模型自训练。
 - 它是 agent self-assessment: 在行动前，agent 可以调用确定性 evaluator 判断任务是否具备上下文和能力支持。
 
-决策树:
+组成部分:
+
+- `_Go2TaskFeasibility`: deterministic preflight 的 MCP skill surface。
+- Skill contract reader: 消费 Layer 5 skill metadata，例如 required arguments、context requirements、risk class、motion sensitivity。
+- Context parser: 把显式 `context_json` 和已接线 world/robot provider summary 合并。
+- Ledger integration: 可选的 review trace event writer。
+
+输入:
+
+- `task`: 用户请求或 subtask 的自然语言文本。
+- `context_json`: 调用方可选传入的结构化 context。
+- Layer 5 skill contracts 和 availability metadata。
+- 已接线时的 Layer 4 robot/world state。
+- context bundle 中可用的 outcome/context feedback summary。
+
+决策/数据流:
 
 1. 解析 task 和可选 `context_json`。
 2. 把 task 匹配到已知 skill contract 和 expert domain。
@@ -426,11 +681,24 @@ Review 重点:
 6. 如果缺数据，推荐澄清问题或 context-gathering action。
 7. 如果缺能力，报告 missing capability evidence。这个 evidence 后续可以成为 skill-interface proposal 的依据。
 
-边界:
+状态和写边界:
 
+- 它对 robot state、memory 和 skill contracts 是 read-only。
 - 它不会调用目标 skill。
 - 它不会创建新 skill。
-- 它不会让 LLM 判断 feasibility。
+- 如果 ledger 已接线，它可以写一条描述 preflight result 的 audit event，但不是代码改动。
+
+判断主体:
+
+- feasibility classification 是确定性代码。
+- LLM 可以调用这个工具并消费结果，但 LLM 不是这个工具内部的 classifier。
+- 人类 review 判断这些确定性规则对真实硬件是否足够保守。
+
+失败形态:
+
+- 缺少 required arguments 应产生 clarification，而不是新 skill proposal。
+- 缺少 context 应产生 context-gathering 或 uncertainty，而不是误报 feasible。
+- missing capability evidence 要足够具体，方便 SkillProposal 把它和 transient runtime failure 区分开。
 
 Review 重点:
 
@@ -457,6 +725,36 @@ Review 重点:
 - feedback 默认是 session memory，除非 ledger 已接线。
 - 它不能无界增长，也不应该静默覆盖 RAG 或 temporal memory。
 
+组成部分:
+
+- `_Go2ContextFeedbackStore`: bounded in-memory store 和 MCP skill surface。
+- feedback entry schema: task/context identifiers、rating 或 usefulness signal、source labels、optional explanation、timestamp。
+- optional evolution ledger connection: 已接线时提供 durable audit trail。
+- ContextProvider integration: compact aggregate feedback summary。
+
+数据流:
+
+1. agent 或 human-facing process 在 context bundle 有帮助、不完整、过期或误导后调用 `record_context_feedback(...)`。
+2. store 验证并规范化 feedback fields。
+3. entry append 到最多 100 条的 deque。
+4. 如果 ledger 已接线，feedback 也写成 evolution event。
+5. ContextProvider 读取 summary，而不是完整 raw feedback list，避免 prompt 膨胀。
+
+状态和持久化:
+
+- 没有 ledger 时，feedback 是 process-local，重启丢失。
+- 有 ledger 时，feedback 成为可 review JSON，但不会自动训练 ranker。
+
+判断主体:
+
+- feedback recording 是输入信号。
+- evidence policy 和 LLM 决定如何使用该信号。没有自动 prompt rewrite 或 memory deletion。
+
+失败形态:
+
+- malformed feedback 应 validation fail。
+- feedback 超量时淘汰最旧 entry，不应无界增长。
+
 ### 11. Skill Outcome Store 和 Predictor
 
 相关文件:
@@ -476,6 +774,35 @@ Review 重点:
 
 - predictor 是启发式，不是学习模型。
 - 旧失败不应永久阻止可用 skill。
+
+组成部分:
+
+- `_Go2SkillOutcomeStore`: bounded recent outcome history。
+- `_Go2SkillOutcomePredictor`: 基于近期 history 和 skill contract metadata 的 heuristic scorer。
+- outcome summary methods: 按 skill 聚合 successes、failures、repeated errors、recent messages。
+
+数据流:
+
+1. skill call 后可以记录 skill name、success、error code、message、metadata。
+2. outcome store 把记录 append 到 bounded memory。
+3. summary 按 skill 和 error pattern 分组。
+4. predictor 把近期 outcome 和 skill contract risk/context metadata 合并，返回 risk 和 rationale。
+5. ContextProvider 可以把 summary 作为后续调用的 evidence。
+
+状态和持久化:
+
+- 当前 store 是 bounded runtime memory，除非未来接入其他持久化。
+- 它和 Git ledger 分离。ledger 记录 review/audit event；outcome store 支持即时 runtime adaptation。
+
+判断主体:
+
+- predictor 给出 heuristic risk hint。
+- 它不应单独 block 一个 skill；TaskFeasibility 或 LLM 应把它作为 evidence source 之一。
+
+失败形态:
+
+- unknown skill 应返回 low-confidence 或 no-history output。
+- repeated failure 应提高谨慎度，但不应阻止 recovery/stop skills。
 
 ### 12. Causal World Model 和 Dashboard Contract
 
@@ -588,6 +915,38 @@ Review 重点:
 - 这是最安全的自进化边界: 只生成 proposal，必须人工 review。
 - evidence requirement 要足够严格，避免用户表达不清时产生大量噪声 proposal。
 
+组成部分:
+
+- `_Go2SkillProposalGenerator`: proposal generation 的 MCP skill surface。
+- 现有 Layer 5 contracts: duplicate suppression 的 source of truth。
+- Evolution ledger: 可选 proposal writer。
+- Proposal schema: 描述 missing capability 和 proposed interface 的 review artifact，不是可执行代码。
+
+输入:
+
+- `task`: 失败的 user/subtask text。
+- `failure_context_json`: 描述为什么现有 skills 失败或不足的结构化 evidence。
+- 现有 contracts 和已知 MCP tool names。
+
+接受的 evidence:
+
+- 明确 missing capability。
+- repeated failure 显示没有可用 skill 能完成目标操作。
+- 现有 contracts 没覆盖的 domain/action gap。
+
+拒绝的 evidence:
+
+- 只是缺少现有 skill 的 required argument。
+- 只是缺 context 或 memory/provider unavailable。
+- 临时 runtime failure。
+- 能力已被现有 contract 覆盖。
+
+输出边界:
+
+- 输出是 JSON proposal 和可选 ledger 文件。
+- 不 import、不写入、不生成 Python code。
+- 不自动更新 prompt 或 registry。
+
 ### 14. MCP Runtime Plumbing
 
 相关文件:
@@ -613,6 +972,35 @@ Review 重点:
 - 启动路径不能等待依赖自身初始化的工具。
 - MCP 测试端口必须和 live robot session 隔离。
 
+组成部分:
+
+- `McpServer`: 暴露 MCP JSON-RPC endpoints、tool list/call handling、SSE progress stream、server status tools、capability gating、agent-send。
+- `McpClient`: LLM agent module，负责发现 tools 并暴露给 agent runtime。
+- `tool_stream.py`: 长运行 skill 的 progress/log notification path。
+- capability registry: server-side lock manager，用于 mutually exclusive tool capabilities。
+
+启动数据流:
+
+1. ModuleCoordinator 部署 worker 并启动 modules。
+2. `McpServer.start()` 启动 HTTP/SSE serving，并订阅 tool-stream frames。
+3. `on_system_modules()` 注册 tool schemas。对 server 自身和 actor-class backed modules，本地收集 schema，避免 RPC self-deadlock。
+4. `McpClient` 初始化 agent，但不在 RPC path 外阻塞等待 direct tool registration。
+
+Tool call 数据流:
+
+1. JSON-RPC `tools/call` 到达。
+2. server 解析 `SkillInfo` 和 RPC call target。
+3. 如果 skill 声明 `uses`，先申请 capability lock。
+4. progress token 和 capability token 通过保留 `_mcp_context` 注入。
+5. RPC call 在 executor 里运行。
+6. instant skill 返回后释放 capability；background skill 把 release 交给 tool-stream stopped frame。
+
+状态和失败边界:
+
+- server state 是 process-local: skills、rpc calls、SSE queues、capability registry。
+- port conflict 是外部环境失败。live server 存在时，测试必须用隔离 MCP port。
+- tool not found 应返回结构化 MCP text result，而不是 crash server。
+
 ### 15. Runtime Hardening
 
 相关文件:
@@ -636,6 +1024,33 @@ Review 重点:
 
 - 这些是运行时稳定性修复，重点审查 process lifecycle 和 stream rewiring，而不是 agent reasoning。
 
+组成部分:
+
+- ModuleCoordinator notification path: 控制 build/start/system-module notification 顺序。
+- WorkerManagerPython: 在 workers 中部署 modules，并管理 worker pool lifecycle。
+- MuJoCo process helpers: 处理 subprocess executable 选择和 stderr draining。
+- Go2 connection config: replay stop 行为和 WebRTC AES key forwarding。
+
+数据流:
+
+1. build/deploy 通过 ModuleCoordinator 和 worker managers 完成。
+2. modules 收到 system-module notification 前，stream transports 和 RPC refs 已经 wiring。
+3. 部分 notification 使用 nowait，避免等待正在通过 MCP 初始化的 agent client。
+4. restart/reload paths 必须保留 transports 并重新 wiring module refs。
+5. simulator helper code 把平台特定 process 问题隔离在机器人栈外层。
+
+状态和写边界:
+
+- Coordinator 持有 deployed module proxy maps、transport registry、module transports、reload aliases。
+- 这些改动不改变 skill semantics。
+- 它们影响 module 是否能干净 start、stop、reload、reconnect。
+
+失败形态:
+
+- build/start 卡住时应 stop managers 并暴露原始异常。
+- restart 不应遗留 old transports，也不应让 consumer 连在 dead proxy 上。
+- ReplayConnection stop 应该是 no-op，而不是 exception。
+
 ### 16. Rerun/Websocket Dashboard World-model State
 
 相关文件:
@@ -654,6 +1069,31 @@ Review 重点:
 
 - dashboard state 应保持展示用途。
 - dashboard consumer 不应依赖未 version 的内部 Python object。
+
+组成部分:
+
+- `websocket_vis_spec.py`: visualization update 的 typed surface。
+- `websocket_vis_module.py`: 存储/publish dashboard state 的 runtime module。
+- `rerun_dashboard.html`: browser-facing display surface。
+- `world_model_contract.py`: world-model dashboard payload 的 schema source。
+
+数据流:
+
+1. CausalWorldModel 使用 `dimos.world_model_dashboard.v1` 生成 dashboard payload。
+2. 如果 WebsocketVis 已接线，CausalWorldModel 调用 `set_world_model_state(...)`。
+3. WebsocketVis 保存并向 dashboard clients 提供 latest state。
+4. dashboard 把 state 渲染成人类 inspection data。
+
+状态和持久化:
+
+- dashboard state 是 latest display snapshot，不是 source of truth。
+- 如果配置了 durable state，它属于 CausalWorldModel save/load JSON。
+- browser/dashboard consumer 只应依赖 versioned payload fields。
+
+安全边界:
+
+- dashboard update 不能触发机器人动作。
+- UI 不应把 advisory prediction 展示成 guaranteed outcome。
 
 ## 推荐 Review 顺序
 
