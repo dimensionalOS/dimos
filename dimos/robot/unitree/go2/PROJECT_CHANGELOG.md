@@ -6,6 +6,157 @@ work so future contributors can understand why the fork differs from upstream.
 
 Entries are listed in reverse chronological order.
 
+## 2026-07-04
+
+- Branch: `refactor/go2-architecture-layers`
+- Summary: Implemented Go2 agent self-evolution plan Tasks 5-6 by extracting
+  context evidence selection into a pure policy helper and adding a
+  proposal-only skill-interface generator. The generator suppresses proposals
+  for missing arguments/context and duplicate existing contracts, and writes
+  only human-reviewable `dimos.skill_proposal.v1` proposals through the ledger.
+- Files/modules:
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/context_evidence.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/skill_proposal.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/context_provider.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/evolution_ledger.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/prompt_policy.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/__init__.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/test_context_evidence.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/test_skill_proposal.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/DESIGN.md`
+  - `dimos/robot/unitree/go2/PROJECT_CHANGELOG.md`
+- Validation:
+  - Ran focused context-evidence policy test:
+    `4 passed in 0.03s`.
+  - Ran focused ContextProvider regression test:
+    `4 passed in 0.67s`.
+  - Ran focused skill-proposal test:
+    `4 passed in 0.52s`.
+  - Ran full focused Layer 3 agent-brain suite:
+    `62 passed in 6.64s`.
+  - Ran focused Layer 4 world-state suite:
+    `3 passed, 1 warning in 6.13s`.
+  - Ran Ruff check/format-check on Layer 3 agent-brain files and
+    `git diff --check`.
+- Open items:
+  - Continue evaluating these policies against replay/simulation data before
+    promoting them to robot-agnostic agent modules.
+
+## 2026-07-04
+
+- Branch: `refactor/go2-architecture-layers`
+- Summary: Implemented Go2 agent self-evolution plan Tasks 2-4 by adding a
+  Git-backed evolution ledger, a deterministic task feasibility preflight, and
+  context evidence feedback recording. These modules add a low-volume
+  reviewable control plane without replacing SpatialMemory, TemporalMemory,
+  SkillOutcomeStore, CausalWorldModel, or Layer 5 skill contracts. Also added
+  explicit world-model output contracts and review-only proposal validation for
+  ledger proposal files.
+- Files/modules:
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/evolution_event.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/evolution_ledger.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/evolution_proposal.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/task_feasibility.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/context_feedback.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/world_model_contract.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/causal_world_model.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/context_provider.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/prompt_policy.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/__init__.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/test_evolution_ledger.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/test_evolution_proposal.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/test_world_model_contract.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/test_task_feasibility.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/test_context_feedback.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/DESIGN.md`
+  - `dimos/robot/unitree/go2/PROJECT_CHANGELOG.md`
+- Validation:
+  - Ran focused ledger test:
+    `4 passed in 0.76s`.
+  - Ran focused task-feasibility test:
+    `5 passed in 0.66s`.
+  - Ran focused context-feedback test:
+    `5 passed in 0.68s`.
+  - Ran focused world-model/proposal contract tests:
+    `8 passed in 0.33s`.
+  - Ran focused causal-world-model test:
+    `15 passed in 2.34s`.
+  - Ran full focused Layer 3 agent-brain suite:
+    `54 passed in 6.59s`.
+  - Ran focused Layer 4 world-state suite:
+    `3 passed, 1 warning in 7.77s`.
+  - Ran Ruff check/format-check on Layer 3 agent-brain files and
+    `git diff --check`.
+- Open items:
+  - Continue with Task 5, extracting context-evidence policy into a pure helper.
+  - Continue with Task 6, proposal-only skill interface evolution.
+
+## 2026-07-04
+
+- Branch: `refactor/go2-architecture-layers`
+- Summary: Implemented the first Go2 agent self-evolution plan task by adding a
+  read-only `memory_backend_status()` MCP skill. The status report shows which
+  context, RAG, temporal, outcome, causal, and skill-interface backends are
+  wired and whether small read probes succeed, without introducing another
+  memory store.
+- Files/modules:
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/memory_backend_status.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/test_memory_backend_status.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/__init__.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/DESIGN.md`
+  - `dimos/robot/unitree/go2/PROJECT_CHANGELOG.md`
+- Validation:
+  - Ran focused TDD test for `memory_backend_status()`:
+    `3 passed in 0.43s`.
+  - Ran full focused Layer 3 agent-brain suite:
+    `31 passed in 4.14s`.
+  - Ran focused Layer 4 world-state suite:
+    `3 passed, 1 warning in 9.20s`.
+  - Ran Ruff check/format-check on touched Python files and `git diff --check`.
+- Open items:
+  - Continue with the Git-backed evolution ledger task.
+
+## 2026-07-04
+
+- Branch: `refactor/go2-architecture-layers`
+- Summary: Added a six-step engineering implementation plan for Go2 agent
+  self-evolution, ordered to avoid redundant memory, skill, and decision
+  systems while building on the existing Layer 3/4/5 architecture.
+- Files/modules:
+  - `docs/plans/2026-07-04-agent-self-evolution-implementation-plan.md`
+  - `dimos/robot/unitree/go2/PROJECT_CHANGELOG.md`
+- Validation:
+  - Documentation-only planning change; no runtime tests required.
+- Open items:
+  - Execute the plan task-by-task with TDD, starting with
+    `memory_backend_status()`.
+
+## 2026-07-04
+
+- Branch: `refactor/go2-architecture-layers`
+- Summary: Added `context_evidence.v1` to the Go2 Layer 3 ContextProvider so
+  each compact context response records which task, runtime, robot, RAG,
+  temporal, skill, causal, and world-model evidence was selected and why. Also
+  made the Layer 4 package entrypoint lazy so Layer 3 imports no longer pull in
+  the heavy visual-memory stack when only specs/submodules are needed.
+- Files/modules:
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/context_provider.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/test_context_provider.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/DESIGN.md`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_4_world_state/__init__.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_4_world_state/DESIGN.md`
+  - `dimos/robot/unitree/go2/PROJECT_CHANGELOG.md`
+- Validation:
+  - Ran focused ContextProvider pytest with default plugins:
+    `4 passed in 0.61s`.
+  - Verified direct `ContextProvider` import no longer imports the heavy Layer
+    4 spatial-memory stack.
+- Open items:
+  - Persist selected context evidence and task outcomes to a Git-backed
+    evolution ledger in a later change.
+  - Replace coarse deterministic evidence labels with evaluated scoring once
+    replay/simulation metrics are available.
+
 ## 2026-05-28
 
 - Branch: `refactor/go2-architecture-layers`

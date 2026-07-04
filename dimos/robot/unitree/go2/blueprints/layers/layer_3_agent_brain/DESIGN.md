@@ -15,12 +15,29 @@ Current Layer 3 modules:
 - `McpClient`: existing LLM agent loop.
 - `McpServer`: exposes `@skill` methods as MCP tools.
 - `ContextProvider`: gathers compact task/world/robot/runtime/skill context.
+  It also emits `context_evidence.v1`, a deterministic evidence ledger that
+  records which sources were selected, why they were selected, and their
+  relevance/confidence/risk/cost labels.
+- `ContextEvidencePolicy`: pure helper policy for selecting and thresholding
+  `context_evidence.v1` entries.
+- `MemoryBackendStatus`: reports which context, memory, outcome, causal, and
+  skill-interface backends are wired and whether basic read probes succeed.
+- `EvolutionLedger`: writes low-volume self-evolution decisions, feedback, and
+  human-reviewable proposals to `.dimos/evolution` JSON files, with optional
+  local Git commits.
+- `TaskFeasibilityEvaluator`: evaluates whether a user task is possible and
+  safe before a physical skill is selected.
+- `ContextFeedbackStore`: records whether selected `context_evidence.v1`
+  sources helped or hurt observed task outcomes.
+- `SkillProposalGenerator`: creates human-reviewable skill-interface proposals
+  when repeated evidence shows a missing capability.
 - `ExpertRouter`: maps a task to an expert domain and recommended tools.
 - `PromptPolicy`: appends Layer 3 tool-use rules to the Go2 MCP client prompt.
 - `SkillOutcomeStore`: records recent skill outcomes in memory.
 - `SkillOutcomePredictor`: checks planned tool calls for obvious risk.
 - `CausalWorldModel`: records before/action/result/after transitions and
-  summarizes repeated failure causes.
+  summarizes repeated failure causes. Its predictions and dashboard state use
+  explicit DimOS world-model schemas.
 
 ## Runtime Flow
 
@@ -29,13 +46,16 @@ The intended task flow is:
 ```text
 user task
   -> McpClient / LLM
+  -> evaluate_task_feasibility(task)
   -> route_task(task)
   -> get_context(task, focus)
+  -> evaluate_task_feasibility(task, context_json)
   -> predict_skill_outcome(skill_name, args_json, context)
   -> call a Layer 5 skill
   -> McpClient auto-records the outcome through record_skill_outcome(...)
   -> get_context(task, focus) for after-context
   -> record_causal_transition(...)
+  -> record_context_feedback(...) when the context influenced the decision
   -> summarize_causal_patterns(...) before risky retries
 ```
 
@@ -50,9 +70,63 @@ through `McpClient`.
 
 - Reads task text passed by the agent.
 - Optionally reads `SpatialMemory`, `TemporalMemory`, navigation state, odom,
-  runtime config, and recent skill outcomes.
+  runtime config, recent skill outcomes, and recent context feedback.
 - Returns a compact `SkillResult` with text plus structured metadata.
 - Does not plan, execute skills, or own persistent state.
+
+`ContextEvidencePolicy`
+
+- Builds `context_evidence.v1` from already gathered ContextProvider metadata.
+- Applies relevance, confidence, max-entry, and motion robot-state retention
+  policy.
+- Has no Module, MCP, RPC, database, or robot dependencies.
+- Does not query RAG or decide which memory backend should be used.
+
+`MemoryBackendStatus`
+
+- Reads optional backend Specs already wired into the Layer 3 blueprint.
+- Reports availability and small health/count signals for world state, spatial
+  memory, temporal memory, skill outcomes, causal transitions, and Layer 5
+  skill contracts.
+- Catches backend probe failures and returns warnings instead of failing the
+  whole report.
+- Does not write memory, mutate stores, or decide which context is effective.
+
+`EvolutionLedger`
+
+- Writes low-volume JSON events under `.dimos/evolution/events/YYYY/MM/DD`.
+- Creates `.dimos/evolution/proposals` for later proposal files.
+- Optionally commits only the just-written event file with Git.
+- Validates proposal target files before writing proposal files.
+- Does not store raw images, embeddings, Chroma/SQLite data, or large logs.
+- Does not merge, push, or modify executable robot skill code.
+
+`TaskFeasibilityEvaluator`
+
+- Reads the user task, optional `get_context` metadata, Layer 5 skill
+  contracts, and the evolution ledger if wired.
+- Returns `yes`, `no`, or `uncertain` plus missing context, required skills,
+  safety risks, and the next recommended action.
+- Uses deterministic rules in V1; it does not call an LLM.
+- Does not execute skills or replace `SkillOutcomePredictor`.
+
+`ContextFeedbackStore`
+
+- Stores recent context-feedback records in a bounded in-memory `deque`.
+- Writes full feedback events to `EvolutionLedger` when available.
+- Aggregates helpful and harmful evidence-source counts for immediate
+  `ContextProvider` use.
+- Does not record skill success/failure generally; that remains
+  `SkillOutcomeStore`.
+
+`SkillProposalGenerator`
+
+- Reads Layer 5 skill contracts, recent outcome misuse signals, and optional
+  failure context.
+- Avoids proposals for missing arguments or missing context; those are better
+  handled by correct existing skill use.
+- Writes review-only proposals through `EvolutionLedger` when available.
+- Does not add `@skill` methods, patch executable code, or update prompts.
 
 `ExpertRouter`
 
@@ -123,7 +197,7 @@ Each implementation note should cover:
   - Stream state: latest `odom` message cached by `_on_odom`.
   - Optional injected Specs: `SpatialMemorySpec`, `TemporalMemorySpec`,
     `NavigationInterfaceSpec`, `SkillOutcomeStoreSpec`,
-    `SkillInterfaceSpec`.
+    `SkillInterfaceSpec`, and `ContextFeedbackSpec`.
   - Runtime config: `global_config.simulation`, `replay`, `robot_ip`, `viewer`,
     `mcp_port`, and `n_workers`.
 - Storage:
@@ -137,29 +211,282 @@ Each implementation note should cover:
   - Navigation: `get_state()` and `is_goal_reached()`.
   - Skill history: `get_recent_outcomes(limit=5)`.
   - Skill interface: `get_skill_interface_snapshot()`.
+  - Context feedback: `get_recent_context_feedback(limit=5)` and
+    `get_context_feedback_summary(limit=20)`.
+  - Causal/world model: recent transitions, model state, and recent
+    interventions when wired.
 - Algorithm:
   - Trim `task` and `focus`.
   - Reject empty `task` with `SkillResult.fail("INVALID_INPUT", ...)`.
   - Clamp `spatial_limit` to `0..10`.
   - Build a metadata dictionary with `sources`, `runtime`, `robot_state`,
-    `world_state`, `skill_state`, and `external_context`.
+    `world_state`, `skill_state`, `context_feedback`, `causal_state`,
+    `world_model_state`, and `external_context`.
   - Catch dependency failures per source and append readable warnings to
     `errors` instead of failing the whole context request.
   - Include Layer 5 skill-interface contracts under
     `skill_state.interface` when the registry is wired.
+  - Build `context_evidence` from the selected metadata sections. V1 uses a
+    deterministic source-coverage policy: always include task/runtime, then add
+    robot state, spatial RAG matches, temporal summaries, fused Layer 4 memory,
+    skill outcomes, skill contracts, causal transitions, and predictive
+    world-model state only when those sections are available and informative.
+  - Each evidence entry contains `source`, `query`, `relevance_score`,
+    `recency`, `confidence`, `risk_impact`, `cost`, `selected_reason`, and a
+    short `summary`.
   - Convert metadata through `_to_jsonable(...)` so MCP responses stay compact
     and serializable.
   - Format a short text summary for the LLM.
 - Return shape:
   - `SkillResult(success=True, message=<summary>, metadata=<jsonable dict>)`.
   - Metadata keys: `task`, `focus`, `sources`, `runtime`, `robot_state`,
-    `world_state`, `skill_state`, `external_context`, and optional `errors`.
+    `world_state`, `skill_state`, `context_feedback`, `causal_state`,
+    `world_model_state`, `context_evidence`, `external_context`, and optional
+    `errors`.
+  - `context_evidence` keys: `version`, `selection_policy`, `query`, `focus`,
+    `entry_count`, `selected_sources`, and `entries`.
 - Current limits:
   - External context is represented as unavailable.
-  - Context compression is deterministic formatting, not learned retrieval.
+  - Context compression and evidence selection are deterministic formatting,
+    not learned retrieval or reranking.
+  - Relevance/confidence/risk/cost labels are coarse heuristics over already
+    retrieved data. They explain why the context was admitted; they are not a
+    statistical success estimate.
   - It reads existing stores but does not decide whether a skill should run.
   - Layer 5 contract details are summarized; full contract validation stays in
     `SkillInterfaceRegistry`.
+
+### `build_context_evidence(...)`
+
+- File: `layer_3_agent_brain/context_evidence.py`
+- Entry point: pure helper function used by `ContextProvider`.
+- Purpose: build and threshold `context_evidence.v1` from already gathered
+  metadata. It does not fetch context, call memory backends, or use RPC.
+- Inputs:
+  - `metadata`: ContextProvider metadata dictionary.
+  - `ContextEvidencePolicy`: `min_relevance_score`, `max_entries`,
+    `include_low_confidence`, and `require_robot_state_for_motion`.
+- Storage:
+  - No database.
+  - No file writes.
+  - No module state.
+- Algorithm:
+  - Build the same deterministic source coverage entries used by
+    ContextProvider V1: task, runtime, robot state, spatial/temporal memory,
+    semantic-temporal map, skill outcomes, skill contracts, causal transitions,
+    and predictive world-model state.
+  - Apply relevance and low-confidence filtering while protecting task/runtime
+    evidence.
+  - For motion-like tasks, retain robot-state evidence when available.
+  - Enforce `max_entries` deterministically by preserving source order.
+- Return shape:
+  - Dict with `version`, `selection_policy`, `query`, `focus`, `entry_count`,
+    `selected_sources`, and `entries`.
+- Current limits:
+  - Scores remain coarse heuristics over already selected data.
+  - Feedback-driven threshold tuning is now possible but not automatic.
+
+### `_Go2MemoryBackendStatus.memory_backend_status(...)`
+
+- File: `layer_3_agent_brain/memory_backend_status.py`
+- Entry point: MCP skill exposed by `@skill`.
+- Purpose: give the agent and operator a compact, read-only status report for
+  the memory/context stack before relying on RAG, temporal summaries, outcome
+  history, causal transitions, or skill-interface contracts. It does not rank
+  context, execute skills, or choose a storage backend.
+- Inputs:
+  - No direct user arguments.
+  - Optional injected Specs: `WorldStateSpec`, `SpatialMemorySpec`,
+    `TemporalMemorySpec`, `SkillOutcomeStoreSpec`, `CausalWorldModelSpec`, and
+    `SkillInterfaceSpec`.
+- Storage:
+  - No database.
+  - No persistent file writes.
+  - No in-memory state beyond local variables while building the report.
+- Data read:
+  - World state: `get_world_snapshot(task="memory backend status",
+    spatial_limit=0)`.
+  - Spatial memory: `query_by_text("__memory_status_probe__", limit=1)`.
+  - Temporal memory: `get_state()` and `get_graph_db_stats()`.
+  - Skill history: `get_recent_outcomes(limit=5)`.
+  - Causal/world model: `get_recent_transitions(limit=5)` and optional
+    `get_model_state()`.
+  - Skill interface: `get_skill_interface_snapshot()`.
+- Algorithm:
+  - Build one status section for each optional backend.
+  - Mark a section `wired=False` when the Spec is not connected.
+  - Run only small read probes against connected backends.
+  - Catch each backend failure independently and append a readable warning such
+    as `spatial_memory: ...`.
+  - Count wired sections and return a short summary message.
+- Return shape:
+  - `SkillResult.ok("Memory backends: <n> wired, <m> warning(s)", ...)`.
+  - Metadata keys: `schema`, `world_state`, `spatial_memory`,
+    `temporal_memory`, `skill_outcomes`, `causal_world_model`,
+    `skill_interface`, and `warnings`.
+  - Schema version: `go2_memory_backend_status.v1`.
+- Current limits:
+  - Spatial status uses a harmless probe query, so `match_count_probe` is only a
+    liveness hint, not a corpus-size estimate.
+  - A wired backend with zero records is reported as available but empty.
+  - The skill reports whether backends can be read; it deliberately does not
+    judge whether a returned context is useful for a particular task.
+
+### `_Go2EvolutionLedger.record_evolution_event(...)`
+
+- File: `layer_3_agent_brain/evolution_ledger.py` and
+  `layer_3_agent_brain/evolution_event.py`; proposal validation lives in
+  `layer_3_agent_brain/evolution_proposal.py`
+- Entry point: MCP skill exposed by `@skill`; `write_evolution_event(...)` is
+  the RPC surface used by other Layer 3 modules. `record_skill_proposal(...)`
+  is a proposal-only MCP skill.
+- Purpose: record low-volume, reviewable self-evolution decisions and feedback
+  in a local ledger. It does not store raw observations or replace RAG memory.
+- Inputs:
+  - Direct skill arguments: `event_type`, `task`, `payload_json`, and `commit`.
+  - Environment: optional `DIMOS_EVOLUTION_LEDGER_DIR` override and
+    `DIMOS_RUN_ID` inherited from `dimos run`.
+- Storage:
+  - Default path: repo-root `.dimos/evolution`.
+  - Event path: `events/YYYY/MM/DD/<timestamp>-<event_type>.json`.
+  - Proposal directory: `proposals/`.
+  - Writes are atomic via a same-directory temp file and rename.
+- Data shape:
+  - Event schema: `dimos.evolution_event.v1`.
+  - Fields: `timestamp`, `event_type`, `task`, `run_id`, `payload`, and
+    `git.commit_requested` / `git.commit_sha`.
+  - Proposal schema: `dimos.skill_proposal.v1`.
+- Algorithm:
+  - Validate `event_type` and parse `payload_json` as a JSON object.
+  - Build the event with current UTC timestamp.
+  - Create the ledger directory, README, event day directory, and proposals
+    directory if needed.
+  - Write the event JSON file.
+  - If `commit=True`, detect the Git worktree and commit only the event file.
+  - If no Git worktree is present, keep the file and return a warning.
+  - For proposals, require human review, relative target files, no `..` path
+    traversal, no evolution event-log targets, and no large binary artifact
+    targets.
+- Return shape:
+  - Success: `SkillResult.ok("Recorded evolution event ...", ...)`.
+  - Metadata keys: `schema`, `event_type`, `task`, `ledger_dir`,
+    `event_path`, `commit_requested`, `commit_sha`, `warnings`, and `event`.
+  - Proposal success returns `proposal_path`, `ledger_dir`, `commit_requested`,
+    `commit_sha`, `warnings`, and the validated `proposal`.
+- Current limits:
+  - Commit SHA is returned in MCP metadata after the commit. The event file
+    itself is written before the commit and keeps `git.commit_sha=""`.
+  - There is no push, merge, branch creation, or automatic review workflow.
+
+### `_Go2TaskFeasibilityEvaluator.evaluate_task_feasibility(...)`
+
+- File: `layer_3_agent_brain/task_feasibility.py`
+- Entry point: MCP skill exposed by `@skill`.
+- Purpose: decide whether the current user task is feasible here and now before
+  a physical skill is selected. It complements `predict_skill_outcome(...)`,
+  which evaluates a concrete planned skill call.
+- Inputs:
+  - Direct arguments: `task` and optional `context_json`.
+  - Optional injected Specs: `SkillInterfaceSpec` and `EvolutionLedgerSpec`.
+- Storage:
+  - No local persistent state.
+  - Writes a `task_feasibility` event to `EvolutionLedger` when wired.
+- Data read:
+  - Layer 5 contracts through `get_skill_interface_snapshot()`.
+  - Optional `context_json` from `get_context` metadata, including robot state,
+    world state, and `context_evidence`.
+- Algorithm:
+  - Reject empty task and invalid/non-object context JSON.
+  - Map task keywords to likely required skills.
+  - Compare required skills against Layer 5 contracts.
+  - Check required context from contracts: robot state, world state, and
+    context evidence.
+  - Refuse clearly unsafe tasks such as disabling safety or running into a
+    person.
+  - Return `yes`, `no`, or `uncertain`, with a next action of `proceed`,
+    `get_context`, `ask_clarifying_question`, or `refuse`.
+- Return shape:
+  - Metadata keys: `feasible`, `missing_context`, `required_skills`,
+    `available_skills`, `safety_risks`, `recommended_next_action`,
+    `clarifying_question`, `evidence_sources`, `missing_skills`, and
+    `skill_interface_available`.
+- Current limits:
+  - V1 is deterministic keyword/rule matching, not semantic planning.
+  - It does not infer detailed tool arguments; Layer 5 validation still checks
+    concrete skill calls.
+
+### `_Go2ContextFeedbackStore.record_context_feedback(...)`
+
+- File: `layer_3_agent_brain/context_feedback.py`
+- Entry point: MCP skill exposed by `@skill`; read APIs are RPC-only.
+- Purpose: connect selected `context_evidence.v1` to observed task outcomes so
+  later evidence policy changes can be based on feedback. It does not replace
+  `SkillOutcomeStore`.
+- Inputs:
+  - Direct arguments: `task`, `context_evidence_json`, `selected_skill`,
+    `outcome_json`, `helpful_sources_json`, and `ignored_risks_json`.
+  - Optional injected Spec: `EvolutionLedgerSpec`.
+- Storage:
+  - Bounded in-memory `deque`, max 100 records.
+  - Full feedback event written to `EvolutionLedger` when available.
+- Data shape:
+  - Feedback schema: `go2_context_feedback.v1`.
+  - Each record includes task, selected skill, outcome success/error, evidence
+    sources, helpful sources, ignored risks, helpful source counts, and harmful
+    source counts.
+- Algorithm:
+  - Validate `context_evidence_json.version == "context_evidence.v1"`.
+  - Parse outcome, helpful sources, and ignored risks.
+  - Mark helpful sources from the explicit helpful list.
+  - Mark harmful sources from ignored risk/source labels and high-risk evidence
+    entries when the observed outcome failed.
+  - Append newest feedback to the bounded deque.
+  - Write a `context_feedback` ledger event when wired.
+- Related read APIs:
+  - `get_recent_context_feedback(limit, source)` returns newest records first.
+  - `get_context_feedback_summary(limit)` aggregates helpful/harmful source
+    counts and success/failure totals.
+- Current limits:
+  - Feedback is manual/LLM-triggered in V1. It is not automatically recorded
+    after every tool call.
+  - Harmful source counts are attribution hints, not causal proof.
+
+### `_Go2SkillProposalGenerator.propose_skill_interface(...)`
+
+- File: `layer_3_agent_brain/skill_proposal.py`
+- Entry point: MCP skill exposed by `@skill`.
+- Purpose: propose a new or revised skill interface when repeated evidence
+  shows the current Go2 skill contracts lack a capability. It never modifies
+  executable skill code.
+- Inputs:
+  - Direct arguments: `task` and `failure_context_json`.
+  - Optional injected Specs: `SkillInterfaceSpec`, `SkillOutcomeStoreSpec`,
+    and `EvolutionLedgerSpec`.
+- Storage:
+  - No local persistent state.
+  - Writes a proposal to `EvolutionLedger.record_skill_proposal(...)` when the
+    ledger is wired.
+- Data read:
+  - Layer 5 contracts through `get_skill_interface_snapshot()`.
+  - Recent outcomes only to detect repeated existing-skill misuse.
+- Algorithm:
+  - Reject empty task and invalid/non-object failure context JSON.
+  - Compare the requested capability with current skill contract names,
+    summaries, and domains to avoid duplicates.
+  - If repeated failures are missing arguments, invalid arguments, or missing
+    context, return no proposal and recommend correct existing skill use.
+  - Only create a proposal for explicit missing capability evidence.
+  - Generate a `dimos.skill_proposal.v1` payload with target files, proposed
+    interface, validation plan, and `requires_human_review=True`.
+  - Validate the proposal before writing it through the ledger.
+- Return shape:
+  - No proposal: metadata includes `proposal_created=False`,
+    `recommended_next_action`, and optional `existing_skill_matches`.
+  - Proposal: metadata includes `proposal_created=True`, `proposal`,
+    `recommended_next_action="review_proposal"`, and optional `proposal_path`.
+- Current limits:
+  - V1 generation is deterministic and conservative.
+  - It proposes interface contracts, not executable implementations.
 
 ### `_Go2ExpertRouter.route_task(...)`
 
@@ -312,8 +639,8 @@ Each implementation note should cover:
   - If the Layer 3 policy header is already present, return the prompt
     unchanged.
   - Otherwise append a policy block telling the agent to use
-    `route_task`, `get_context`, and `predict_skill_outcome` before risky
-    physical tools.
+    `evaluate_task_feasibility`, `route_task`, `get_context`, and
+    `predict_skill_outcome` before risky physical tools.
   - Tell the agent that normal MCP tool outcomes are recorded automatically and
     manual `record_skill_outcome(...)` is only for external/non-MCP events.
 - Return shape:
@@ -400,6 +727,9 @@ Each implementation note should cover:
   - Success: `SkillResult.ok("Recorded causal transition ...",
     transition=<dict>, total_transitions=<int>)`.
   - Failure: `SkillResult.fail("INVALID_INPUT", ...)`.
+  - `predict_next_state(...)` returns schema `dimos.world_model_prediction.v1`.
+  - Dashboard publications use schema `dimos.world_model_dashboard.v1`.
+  - `get_provider_contract()` returns schema `dimos.world_model_provider.v1`.
 - Current limits:
   - Cause inference is rule-based and coarse.
   - The agent must explicitly call this after important physical/recovery tool
@@ -458,11 +788,40 @@ V3 implemented:
 - `PromptPolicy` asks the agent to record causal transitions after important
   physical or recovery-sensitive tool calls.
 
+Self-evolution plan Task 1 implemented:
+
+- `MemoryBackendStatus` exposes a read-only MCP skill for checking whether
+  memory/context backends are wired and whether small read probes work.
+- The status report is observability only. It does not create a new memory
+  store, replace RAG retrieval, or decide context effectiveness.
+
+Self-evolution plan Tasks 2-4 implemented:
+
+- `EvolutionLedger` writes low-volume decision and feedback events to local
+  JSON files under `.dimos/evolution`, with optional event-only Git commits.
+- `TaskFeasibilityEvaluator` adds a deterministic task-level preflight before
+  physical skills are selected.
+- `ContextFeedbackStore` records whether selected context evidence helped or
+  hurt outcomes, then exposes recent summaries back to `ContextProvider`.
+- `EvolutionLedger` also validates and records human-reviewable proposal files
+  without applying patches or mutating skill code.
+- `CausalWorldModel` predictions, provider contracts, and dashboard snapshots
+  now carry explicit DimOS schemas.
+
+Self-evolution plan Tasks 5-6 implemented:
+
+- `ContextEvidencePolicy` moves evidence scoring and selection out of
+  `ContextProvider` into a pure helper with threshold and max-entry policy.
+- `SkillProposalGenerator` creates validated, human-reviewable skill-interface
+  proposals only when repeated evidence points to a missing capability.
+- Missing arguments, missing context, and existing skill contracts suppress new
+  skill proposals.
+
 Out of scope for this stage:
 
-- Do not promote Layer 3 pieces into robot-agnostic `dimos.agents` modules yet.
-  The current architecture work should stop at V3 until Layers 4, 5, and 6 have
-  clearer Go2 boundaries and the causal loop has been validated.
+- Do not promote these self-evolution pieces into robot-agnostic
+  `dimos.agents` modules yet. Keep validating them in the Go2 layered stack
+  until the contracts and feedback data prove stable.
 
 ## Design Rules
 
