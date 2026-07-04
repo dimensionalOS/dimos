@@ -36,9 +36,8 @@ class DimosCliCall:
             args = ["run", *args]
 
         # If a port was supplied, override `global_config.mcp_port` (used by
-        # `McpServer.start` to bind) and `McpClient.mcp_server_url` (which
-        # defaults to a hard-coded `http://localhost:9990/mcp`) so server
-        # and client agree on the same port.
+        # `McpServer.start` to bind) and `McpClient.mcp_server_url` so server
+        # and client agree on the same loopback interface and port.
         #
         # The McpClient URL goes through an env var rather than a `-o`
         # blueprint override: `load_config_args` silently skips env-var
@@ -49,7 +48,7 @@ class DimosCliCall:
         env = os.environ.copy()
         if self.mcp_port is not None:
             global_overrides += ["--mcp-port", str(self.mcp_port)]
-            env["MCPCLIENT__MCP_SERVER_URL"] = f"http://localhost:{self.mcp_port}/mcp"
+            env["MCPCLIENT__MCP_SERVER_URL"] = f"http://127.0.0.1:{self.mcp_port}/mcp"
 
         self.process = subprocess.Popen(
             [

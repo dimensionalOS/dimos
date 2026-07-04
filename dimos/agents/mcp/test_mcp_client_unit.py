@@ -15,13 +15,18 @@ from __future__ import annotations
 
 import json
 from queue import Empty, Queue
+from threading import Event
+import time
 from unittest.mock import MagicMock, patch
 
+import httpx
 from langchain_core.messages import HumanMessage
 from langchain_core.messages.base import BaseMessage
 import pytest
 
-from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.annotation import skill
+from dimos.agents.mcp.mcp_client import McpClient, McpClientConfig
+from dimos.core.module import SkillInfo
 from dimos.utils.sequential_ids import SequentialIds
 
 
@@ -105,9 +110,79 @@ def mcp_client() -> McpClient:
 
     client._http_client = mock_http
     client._seq_ids = SequentialIds()
+    client._tool_registry = {}
+    client._direct_tool_payload = None
+    client._direct_rpc_calls = {}
     client.config = MagicMock()
     client.config.mcp_server_url = "http://localhost:9990/mcp"
     return client
+
+
+def test_mcp_client_does_not_inherit_proxy_environment() -> None:
+    client: McpClient | None = None
+    with patch("dimos.agents.mcp.mcp_client.httpx.Client") as client_factory:
+        try:
+            client = McpClient()
+        finally:
+            if client is not None:
+                client.stop()
+
+    client_factory.assert_called_once_with(timeout=120.0, trust_env=False)
+
+
+def test_default_mcp_server_url_uses_ipv4_loopback() -> None:
+    assert McpClientConfig().mcp_server_url == "http://127.0.0.1:9990/mcp"
+
+
+def test_on_system_modules_initializes_agent_without_blocking_startup() -> None:
+    client = McpClient()
+    fetch_started = Event()
+
+    def slow_fetch_tools() -> list[object]:
+        fetch_started.set()
+        time.sleep(0.25)
+        return []
+
+    def fake_create_agent(**kwargs: object) -> MagicMock:
+        return MagicMock()
+
+    client._fetch_tools = slow_fetch_tools  # type: ignore[method-assign]
+
+    try:
+        with patch("langchain.agents.create_agent", side_effect=fake_create_agent):
+            started_at = time.monotonic()
+            client.on_system_modules([])
+            elapsed = time.monotonic() - started_at
+
+        assert elapsed < 0.1
+        assert fetch_started.wait(1.0)
+    finally:
+        client.stop()
+
+
+def test_on_system_modules_defers_direct_tool_registration_outside_rpc_path() -> None:
+    client = McpClient()
+    registration_started = Event()
+    release_registration = Event()
+
+    def slow_register_tools(modules: list[object]) -> None:
+        registration_started.set()
+        release_registration.wait(1.0)
+
+    client._register_direct_tools = slow_register_tools  # type: ignore[method-assign]
+    client._initialize_agent_graph = MagicMock()  # type: ignore[method-assign]
+
+    try:
+        with patch("dimos.agents.mcp.mcp_client._AGENT_INIT_START_DELAY_SECONDS", 0.0):
+            started_at = time.monotonic()
+            client.on_system_modules([MagicMock()])
+            elapsed = time.monotonic() - started_at
+
+        assert elapsed < 0.1
+        assert registration_started.wait(1.0)
+    finally:
+        release_registration.set()
+        client.stop()
 
 
 def test_fetch_tools_from_mcp_server(mcp_client: McpClient) -> None:
@@ -116,6 +191,83 @@ def test_fetch_tools_from_mcp_server(mcp_client: McpClient) -> None:
     assert len(tools) == 2
     assert tools[0].name == "add"
     assert tools[1].name == "greet"
+
+
+def test_try_fetch_tools_retries_transient_initialize_timeout(mcp_client: McpClient) -> None:
+    initialize_attempts = 0
+
+    def flaky_request(
+        method: str,
+        params: dict[str, object] | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, object]:
+        nonlocal initialize_attempts
+        if method == "initialize":
+            initialize_attempts += 1
+            if initialize_attempts == 1:
+                raise httpx.TimeoutException("server not accepting requests yet")
+            return {"protocolVersion": "2024-11-05"}
+        if method == "tools/list":
+            return {"tools": []}
+        raise AssertionError(f"Unexpected MCP request: {method}")
+
+    mcp_client._mcp_request = flaky_request  # type: ignore[method-assign]
+
+    result = mcp_client._try_fetch_tools(timeout=1.0, interval=0.01)
+
+    assert result == {"tools": []}
+    assert initialize_attempts == 2
+
+
+def test_register_direct_tools_from_system_modules(mcp_client: McpClient) -> None:
+    class DirectSkills:
+        @skill
+        def ping(self, name: str) -> str:
+            """Ping by name."""
+            return name
+
+    class DirectProxy:
+        remote_name = "DirectSkills"
+        actor_class = DirectSkills
+
+        def get_skills(self) -> list[SkillInfo]:
+            raise AssertionError("direct registration should prefer actor_class")
+
+    mcp_client.rpc = MagicMock()
+
+    mcp_client._register_direct_tools([DirectProxy()])
+
+    assert mcp_client._direct_tool_payload is not None
+    assert [tool["name"] for tool in mcp_client._direct_tool_payload["tools"]] == ["ping"]
+    assert set(mcp_client._direct_rpc_calls) == {"ping"}
+
+
+def test_fetch_tools_uses_direct_registry_without_http(mcp_client: McpClient) -> None:
+    direct_call = MagicMock(return_value="pong")
+    mcp_client._direct_tool_payload = {
+        "tools": [
+            {
+                "name": "ping",
+                "description": "Ping by name.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                    "required": ["name"],
+                },
+            }
+        ]
+    }
+    mcp_client._direct_rpc_calls = {"ping": direct_call}
+    mcp_client._mcp_request = MagicMock(side_effect=AssertionError("HTTP should not be used"))
+
+    tools = mcp_client._fetch_tools()
+
+    assert [tool.name for tool in tools] == ["ping"]
+    assert tools[0].func(name="agent") == "pong"
+    direct_call.assert_called_once_with(
+        name="agent",
+        _mcp_context={"progress_token": direct_call.call_args.kwargs["_mcp_context"]["progress_token"]},
+    )
 
 
 def test_tool_invocation_via_mcp(mcp_client: McpClient) -> None:

@@ -189,6 +189,39 @@ def test_worker_manager_parallel_deployment(create_worker_manager):
     module3.stop()
 
 
+def test_deploy_parallel_errors_identify_module_and_worker():
+    class FailingWorker:
+        dedicated = False
+        module_count = 0
+        worker_id = 42
+
+        def reserve_slot(self):
+            pass
+
+        def deploy_module(self, module_class, global_config, kwargs):
+            raise EOFError("worker pipe closed")
+
+        def shutdown(self):
+            pass
+
+    manager = WorkerManagerPython(g=GlobalConfig(n_workers=1))
+    manager._started = True
+    manager._workers = [FailingWorker()]  # type: ignore[list-item]
+
+    with pytest.raises(ExceptionGroup) as exc_info:
+        manager.deploy_parallel([(SimpleModule, global_config, {})], {})
+
+    errors = exc_info.value.exceptions
+    assert len(errors) == 1
+    error = errors[0]
+    assert isinstance(error, RuntimeError)
+    assert "SimpleModule" in str(error)
+    assert "worker 42" in str(error)
+    assert "EOFError" in str(error)
+    assert "worker pipe closed" in str(error)
+    assert isinstance(error.__cause__, EOFError)
+
+
 @pytest.mark.skipif_macos_bug
 def test_collect_stats(create_worker_manager):
     from dimos.core.resource_monitor.monitor import StatsMonitor

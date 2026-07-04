@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
-from dimos.agents.mcp.mcp_server import handle_request
+from dimos.agents.mcp.mcp_server import McpServer, app, handle_request
 from dimos.core.module import SkillInfo
+from dimos.core.tests.stress_test_module import StressTestModule
 
 
 def _make_rpc_calls(
@@ -161,3 +162,54 @@ def test_mcp_module_initialize_and_unknown() -> None:
 
     response = asyncio.run(handle_request({"method": "unknown/method", "id": 2}, [], {}))
     assert response["error"]["code"] == -32601
+
+
+def test_mcp_server_starts_uvicorn_in_dedicated_thread_without_module_loop() -> None:
+    server = McpServer.__new__(McpServer)
+    server._loop = None
+    server._uvicorn_server = None
+    server._uvicorn_server_thread = None
+    uvicorn_server = MagicMock()
+    thread = MagicMock()
+
+    with (
+        patch("dimos.agents.mcp.mcp_server.uvicorn.Server", return_value=uvicorn_server),
+        patch("dimos.agents.mcp.mcp_server.threading.Thread", return_value=thread) as thread_cls,
+    ):
+        server._start_server(port=0)
+
+    assert server._uvicorn_server is uvicorn_server
+    assert server._uvicorn_server_thread is thread
+    thread_cls.assert_called_once()
+    assert thread_cls.call_args.kwargs["daemon"] is True
+    thread.start.assert_called_once_with()
+
+
+def test_mcp_server_uses_local_skills_for_its_own_proxy() -> None:
+    class SelfProxy:
+        remote_name = "McpServer"
+
+        def get_skills(self) -> list[SkillInfo]:
+            raise AssertionError("self proxy should not be queried over RPC")
+
+    class OtherProxy:
+        remote_name = "StressTestModule"
+        actor_class = StressTestModule
+
+        def get_skills(self) -> list[SkillInfo]:
+            raise AssertionError("remote get_skills should not be used")
+
+    server_skill = SkillInfo(
+        class_name="McpServer",
+        func_name="server_status",
+        args_schema=json.dumps({"type": "object", "properties": {}}),
+    )
+    server = McpServer.__new__(McpServer)
+    server.rpc = MagicMock()
+    server.get_skills = MagicMock(return_value=[server_skill])
+
+    server.on_system_modules([SelfProxy(), OtherProxy()])
+
+    tool_names = {skill.func_name for skill in app.state.skills}
+    assert {"server_status", "echo", "ping", "slow", "info"} <= tool_names
+    server.get_skills.assert_called_once_with()

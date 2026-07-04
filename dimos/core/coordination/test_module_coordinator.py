@@ -85,6 +85,24 @@ class ModuleC(Module):
     data3: In[Data3]
 
 
+class ModuleWithSystemNotification(Module):
+    @rpc
+    def on_system_modules(self, _modules: list[object]) -> None:
+        pass
+
+
+class McpClient(Module):
+    @rpc
+    def on_system_modules(self, _modules: list[object]) -> None:
+        pass
+
+
+class McpServer(Module):
+    @rpc
+    def on_system_modules(self, _modules: list[object]) -> None:
+        pass
+
+
 class SourceModule(Module):
     color_image: Out[Data1]
 
@@ -191,6 +209,59 @@ def test_build_happy_path() -> None:
 
     finally:
         coordinator.stop()
+
+
+def test_mcp_client_system_module_notification_is_sent_without_waiting_for_response() -> None:
+    calls: list[tuple[str, tuple[list[object], dict[str, object]]]] = []
+
+    class Rpc:
+        def call_nowait(self, name: str, arguments: tuple[list[object], dict[str, object]]) -> None:
+            calls.append((name, arguments))
+
+    class RemoteProxy:
+        remote_name = "McpClient"
+        rpcs = {"on_system_modules"}
+        rpc = Rpc()
+
+        def on_system_modules(self, _modules: list[object]) -> None:
+            raise AssertionError("McpClient initialization must not block coordinator startup")
+
+    coordinator = ModuleCoordinator()
+    proxy = RemoteProxy()
+    coordinator._deployed_modules = {McpClient: proxy}  # type: ignore[dict-item]
+
+    coordinator._send_on_system_modules()
+
+    assert calls == [
+        (
+            "McpClient/on_system_modules",
+            ([[proxy]], {}),
+        )
+    ]
+
+
+def test_mcp_server_system_module_notification_waits_for_tool_registration() -> None:
+    calls: list[list[object]] = []
+
+    class Rpc:
+        def call_nowait(self, _name: str, _arguments: tuple[list[object], dict[str, object]]) -> None:
+            raise AssertionError("McpServer must register tools before startup continues")
+
+    class RemoteProxy:
+        remote_name = "McpServer"
+        rpcs = {"on_system_modules"}
+        rpc = Rpc()
+
+        def on_system_modules(self, modules: list[object]) -> None:
+            calls.append(modules)
+
+    coordinator = ModuleCoordinator()
+    proxy = RemoteProxy()
+    coordinator._deployed_modules = {McpServer: proxy}  # type: ignore[dict-item]
+
+    coordinator._send_on_system_modules()
+
+    assert calls == [[proxy]]
 
 
 def test_name_conflicts_are_reported() -> None:

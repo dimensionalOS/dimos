@@ -42,6 +42,8 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
+_SYSTEM_MODULES_NOWAIT_REMOTE_NAMES = frozenset({"McpClient"})
+
 
 class ModuleCoordinator(Resource):
     _managers: dict[str, WorkerManager]
@@ -212,6 +214,8 @@ class ModuleCoordinator(Resource):
     def _send_on_system_modules(self) -> None:
         modules = list(self._deployed_modules.values())
         for module in modules:
+            if _notify_remote_rpc_nowait(module, "on_system_modules", modules):
+                continue
             if hasattr(module, "on_system_modules"):
                 module.on_system_modules(modules)
 
@@ -663,6 +667,22 @@ def _ref_msg(module_name: str, ref: object, spec_name: str, detail: str) -> str:
         f"{module_name} has a module reference ({ref}) requesting a module that "
         f"satisfies the {spec_name} spec. {detail}"
     )
+
+
+def _notify_remote_rpc_nowait(module: Any, rpc_name: str, modules: list[Any]) -> bool:
+    rpcs = getattr(module, "rpcs", ())
+    if rpc_name not in rpcs:
+        return False
+
+    rpc_client = getattr(module, "rpc", None)
+    remote_name = getattr(module, "remote_name", None)
+    if rpc_client is None or remote_name is None:
+        return False
+    if remote_name not in _SYSTEM_MODULES_NOWAIT_REMOTE_NAMES:
+        return False
+
+    rpc_client.call_nowait(f"{remote_name}/{rpc_name}", ([modules], {}))
+    return True
 
 
 def _resolve_single_ref(

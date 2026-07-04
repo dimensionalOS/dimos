@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 from collections.abc import Callable
+import json
 from queue import Empty, Queue
 from threading import Event, RLock, Thread
 import time
@@ -21,7 +21,6 @@ from typing import Any
 import uuid
 
 import httpx
-from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from langchain_core.messages.base import BaseMessage
 from langchain_core.tools import StructuredTool
@@ -33,8 +32,8 @@ from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.agents.utils import pretty_print_langchain_message
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
-from dimos.core.rpc_client import RPCClient
+from dimos.core.module import Module, ModuleConfig, SkillInfo
+from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.core.stream import In, Out
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.sequential_ids import SequentialIds
@@ -70,13 +69,14 @@ _TOOL_DOMAINS = {
     "wait": "utility",
     "current_time": "utility",
 }
+_AGENT_INIT_START_DELAY_SECONDS = 0.25
 
 
 class McpClientConfig(ModuleConfig):
     system_prompt: str | None = SYSTEM_PROMPT
     model: str = "ollama:qwen3.6:latest"
     model_fixture: str | None = None
-    mcp_server_url: str = "http://localhost:9990/mcp"
+    mcp_server_url: str = "http://127.0.0.1:9990/mcp"
 
 
 class McpClient(Module):
@@ -86,11 +86,14 @@ class McpClient(Module):
     agent_idle: Out[bool]
 
     _lock: RLock
-    _state_graph: CompiledStateGraph[Any, Any, Any, Any] | None
+    _state_graph: "CompiledStateGraph[Any, Any, Any, Any] | None"
     _message_queue: Queue[BaseMessage]
     _tool_registry: dict[str, dict[str, Any]]
+    _direct_tool_payload: dict[str, Any] | None
+    _direct_rpc_calls: dict[str, Callable[..., Any]]
     _history: list[BaseMessage]
     _thread: Thread
+    _agent_init_thread: Thread | None
     _stop_event: Event
     _http_client: httpx.Client
     _seq_ids: SequentialIds
@@ -102,21 +105,29 @@ class McpClient(Module):
         self._state_graph = None
         self._message_queue = Queue()
         self._tool_registry = {}
+        self._direct_tool_payload = None
+        self._direct_rpc_calls = {}
         self._history = []
         self._thread = Thread(
             target=self._thread_loop,
             name=f"{self.__class__.__name__}-thread",
             daemon=True,
         )
+        self._agent_init_thread = None
         self._stop_event = Event()
-        self._http_client = httpx.Client(timeout=120.0)
+        self._http_client = httpx.Client(timeout=120.0, trust_env=False)
         self._seq_ids = SequentialIds()
         self._tool_stream_cleanup = None
 
     def __reduce__(self) -> Any:
         return (self.__class__, (), {})
 
-    def _mcp_request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _mcp_request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
         body: dict[str, Any] = {
             "jsonrpc": "2.0",
             "id": self._seq_ids.next(),
@@ -125,7 +136,10 @@ class McpClient(Module):
         if params is not None:
             body["params"] = params
 
-        resp = self._http_client.post(self.config.mcp_server_url, json=body)
+        request_kwargs: dict[str, Any] = {"json": body}
+        if timeout is not None:
+            request_kwargs["timeout"] = timeout
+        resp = self._http_client.post(self.config.mcp_server_url, **request_kwargs)
         resp.raise_for_status()
         data = resp.json()
 
@@ -140,14 +154,17 @@ class McpClient(Module):
     ) -> dict[str, Any]:
         progress_token = str(uuid.uuid4())
         try:
-            result = self._mcp_request(
-                "tools/call",
-                {
-                    "name": name,
-                    "arguments": arguments,
-                    "_meta": {"progressToken": progress_token},
-                },
-            )
+            if name in self._direct_rpc_calls:
+                result = self._direct_tool_call(name, arguments, progress_token)
+            else:
+                result = self._mcp_request(
+                    "tools/call",
+                    {
+                        "name": name,
+                        "arguments": arguments,
+                        "_meta": {"progressToken": progress_token},
+                    },
+                )
         except Exception as exc:
             if record_outcome:
                 self._record_tool_exception(name, exc)
@@ -186,6 +203,23 @@ class McpClient(Module):
         except Exception:
             logger.warning("Failed to record MCP tool outcome", tool=payload["skill_name"])
 
+    def _direct_tool_call(
+        self, name: str, arguments: dict[str, Any], progress_token: str
+    ) -> dict[str, Any]:
+        rpc_call = self._direct_rpc_calls[name]
+        call_kwargs = dict(arguments)
+        call_kwargs["_mcp_context"] = {"progress_token": progress_token}
+
+        try:
+            result = rpc_call(**call_kwargs)
+        except Exception as e:
+            logger.exception("MCP direct tool error", tool=name)
+            return {"content": [{"type": "text", "text": f"Error running tool '{name}': {e}"}]}
+
+        if hasattr(result, "agent_encode"):
+            return {"content": result.agent_encode()}
+        return {"content": [{"type": "text", "text": str(result)}]}
+
     def _on_tool_stream_message(self, msg: dict[str, Any]) -> None:
         method = msg.get("method")
         params = msg.get("params") or {}
@@ -202,11 +236,13 @@ class McpClient(Module):
         self._message_queue.put(HumanMessage(content=f"[tool:{tool_name}] {text}"))
 
     def _fetch_tools(self, timeout: float = 60.0, interval: float = 1.0) -> list[StructuredTool]:
-        result = self._try_fetch_tools(timeout=timeout, interval=interval)
+        result = self._direct_tool_payload
         if result is None:
-            raise RuntimeError(
-                f"Failed to fetch tools from MCP server {self.config.mcp_server_url}"
-            )
+            result = self._try_fetch_tools(timeout=timeout, interval=interval)
+            if result is None:
+                raise RuntimeError(
+                    f"Failed to fetch tools from MCP server {self.config.mcp_server_url}"
+                )
 
         raw_tools = result.get("tools", [])
         self._tool_registry = {t["name"]: t for t in raw_tools}
@@ -225,14 +261,14 @@ class McpClient(Module):
 
         while True:
             try:
-                self._mcp_request("initialize")
+                self._mcp_request("initialize", timeout=min(max(interval, 0.1), 5.0))
                 break
-            except (httpx.ConnectError, httpx.RemoteProtocolError):
+            except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.TimeoutException):
                 if time.monotonic() >= deadline:
                     return None
                 time.sleep(interval)
 
-        return self._mcp_request("tools/list")
+        return self._mcp_request("tools/list", timeout=5.0)
 
     def _mcp_tool_to_langchain(self, mcp_tool: dict[str, Any]) -> StructuredTool:
         name = mcp_tool["name"]
@@ -281,22 +317,102 @@ class McpClient(Module):
 
     @rpc
     def on_system_modules(self, _modules: list[RPCClient]) -> None:
-        tools = self._fetch_tools()
-
-        model: str | Any = self.config.model
-        if self.config.model_fixture is not None:
-            from dimos.agents.testing import MockModel
-
-            model = MockModel(json_path=self.config.model_fixture)
-
         with self._lock:
-            self._state_graph = create_agent(
-                model=model,
-                tools=tools,
-                system_prompt=self.config.system_prompt,
+            if self._state_graph is not None:
+                if not self._thread.is_alive():
+                    self._thread.start()
+                return
+            if self._agent_init_thread is not None and self._agent_init_thread.is_alive():
+                return
+            modules = list(_modules)
+            self._agent_init_thread = Thread(
+                target=self._delayed_register_and_initialize_agent_graph,
+                args=(modules,),
+                name=f"{self.__class__.__name__}-init-thread",
+                daemon=True,
             )
-            if not self._thread.is_alive():
-                self._thread.start()
+            self._agent_init_thread.start()
+
+    def _register_direct_tools(self, modules: list[RPCClient]) -> None:
+        from dimos.agents.mcp.mcp_server import _skill_infos_from_class
+
+        skills: list[SkillInfo] = []
+        for module in modules:
+            if getattr(module, "remote_name", None) == self.__class__.__name__:
+                continue
+            if actor_class := getattr(module, "actor_class", None):
+                skills.extend(_skill_infos_from_class(actor_class))
+                continue
+            try:
+                skills.extend(module.get_skills() or [])
+            except Exception:
+                logger.debug(
+                    "Skipping direct MCP tool registration for module.",
+                    module=getattr(module, "remote_name", None),
+                )
+
+        rpc_client = self.rpc
+        if not skills or rpc_client is None:
+            self._direct_tool_payload = None
+            self._direct_rpc_calls = {}
+            return
+        self._direct_tool_payload = _tools_payload_from_skill_infos(skills)
+        self._direct_rpc_calls = {
+            skill.func_name: RpcCall(
+                None,
+                rpc_client,
+                skill.func_name,
+                skill.class_name,
+                [],
+            )
+            for skill in skills
+        }
+
+    def _delayed_register_and_initialize_agent_graph(self, modules: list[RPCClient]) -> None:
+        # Let the on_system_modules RPC response flush before this thread
+        # starts direct tool registration, HTTP polling, and LangGraph setup.
+        if self._stop_event.wait(_AGENT_INIT_START_DELAY_SECONDS):
+            return
+        try:
+            self._register_direct_tools(modules)
+        except Exception:
+            logger.exception("MCP direct tool registration failed; falling back to HTTP tools.")
+        self._initialize_agent_graph()
+
+    def _initialize_agent_graph(self) -> None:
+        from langchain.agents import create_agent
+
+        retry_seconds = 2.0
+        while not self._stop_event.is_set():
+            try:
+                tools = self._fetch_tools()
+
+                model: str | Any = self.config.model
+                if self.config.model_fixture is not None:
+                    from dimos.agents.testing import MockModel
+
+                    model = MockModel(json_path=self.config.model_fixture)
+
+                state_graph = create_agent(
+                    model=model,
+                    tools=tools,
+                    system_prompt=self.config.system_prompt,
+                )
+            except Exception:
+                logger.exception(
+                    "MCP client agent initialization failed; retrying.",
+                    retry_seconds=retry_seconds,
+                )
+                self._stop_event.wait(retry_seconds)
+                continue
+
+            with self._lock:
+                if self._stop_event.is_set():
+                    return
+                self._state_graph = state_graph
+                if not self._thread.is_alive():
+                    self._thread.start()
+            return
 
     @rpc
     def stop(self) -> None:
@@ -306,6 +422,8 @@ class McpClient(Module):
             self._tool_stream_cleanup()
             self._tool_stream_cleanup = None
         self._stop_event.set()
+        if self._agent_init_thread is not None and self._agent_init_thread.is_alive():
+            self._agent_init_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         if self._thread.is_alive():
             self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         self._http_client.close()
@@ -387,7 +505,7 @@ class McpClient(Module):
                 self._process_message(self._state_graph, message)
 
     def _process_message(
-        self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage
+        self, state_graph: "CompiledStateGraph[Any, Any, Any, Any]", message: BaseMessage
     ) -> None:
         self.agent_idle.publish(False)
         self._history.append(message)
@@ -419,6 +537,19 @@ def _append_image_to_history(
             ]
         )
     )
+
+
+def _tools_payload_from_skill_infos(skills: list[SkillInfo]) -> dict[str, Any]:
+    tools = []
+    for skill in skills:
+        schema = json.loads(skill.args_schema)
+        description = schema.pop("description", None)
+        schema.pop("title", None)
+        tool: dict[str, Any] = {"name": skill.func_name, "inputSchema": schema}
+        if description:
+            tool["description"] = description
+        tools.append(tool)
+    return {"tools": tools}
 
 
 def _outcome_payload_from_result(name: str, result: dict[str, Any]) -> dict[str, Any]:
