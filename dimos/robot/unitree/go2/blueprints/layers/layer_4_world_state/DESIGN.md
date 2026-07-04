@@ -25,6 +25,10 @@ Layer 4 currently contains:
 - V3 snapshot policy: Layer 4 snapshots are explicitly ephemeral read-through
   views. Durable writes remain in `SpatialMemory` and `TemporalMemory` until a
   concrete snapshot retention requirement exists.
+- Package entrypoint laziness: importing Layer 4 specs or submodules does not
+  build `_go2_spatial_world_state` or import the heavy visual-memory stack.
+  The spatial world-state blueprint is constructed only when a blueprint asks
+  for `_go2_spatial_world_state`.
 
 ## Runtime Flow
 
@@ -80,6 +84,31 @@ memory, navigation, and odom remain as a fallback.
 - Current limits:
   - Fusion is deterministic metadata packaging.
   - It does not resolve contradictions between spatial and temporal evidence.
+
+### `layer_4_world_state.__getattr__(...)`
+
+- File: `layer_4_world_state/__init__.py`
+- Entry point: Python package attribute lookup for exported layer blueprints.
+- Purpose: keep Layer 4 package imports lightweight for callers that only need
+  specs or submodules, especially Layer 3 tests and type references. It does
+  not change the modules included when `_go2_spatial_world_state` is actually
+  requested.
+- Inputs:
+  - Requested package attribute name.
+- Storage:
+  - No database.
+  - Caches constructed blueprints in the process-local `_LAYER_BLUEPRINTS`
+    dictionary.
+- Algorithm:
+  - Return `_go2_temporal_memory_world_state` directly because it is already a
+    lazy factory.
+  - On `_go2_spatial_world_state`, import `SpatialMemory`,
+    `_Go2SemanticTemporalMap`, and `_Go2StructuredWorldState`, then compose the
+    same `autoconnect(...)` blueprint that used to be built at package import.
+- Current limits:
+  - This is import-time hygiene only. It does not make the underlying
+    `SpatialMemory` module lighter once the spatial world-state blueprint is
+    intentionally constructed.
 
 ### `_Go2StructuredWorldState.get_world_snapshot(...)`
 

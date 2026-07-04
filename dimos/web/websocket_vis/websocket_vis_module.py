@@ -32,7 +32,7 @@ from dimos_lcm.std_msgs import Bool
 from reactivex.disposable import Disposable
 import socketio  # type: ignore[import-untyped]
 from starlette.applications import Starlette
-from starlette.responses import FileResponse, RedirectResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 import uvicorn
 
@@ -44,6 +44,172 @@ _DASHBOARD_HTML = _TEMPLATES_DIR / "rerun_dashboard.html"
 _COMMAND_CENTER_DIR = (
     FilePath(__file__).parent.parent / "command-center-extension" / "dist-standalone"
 )
+_WORLD_MODEL_PANEL_HTML = """<!DOCTYPE html>
+<html>
+<head>
+    <title>World Model</title>
+    <style>
+        * { box-sizing: border-box; }
+        html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+        body {
+            background: #0b0d10;
+            color: #e7edf2;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 12px;
+        }
+        .shell { height: 100%; display: grid; grid-template-rows: auto 1fr; }
+        header {
+            display: grid;
+            grid-template-columns: auto 1fr auto auto;
+            gap: 12px;
+            align-items: center;
+            padding: 10px 12px;
+            border-bottom: 1px solid #242a31;
+            background: #11161b;
+        }
+        h1 { margin: 0; font-size: 13px; font-weight: 700; letter-spacing: 0; }
+        .meta { color: #92a0ac; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .pill {
+            min-width: 56px;
+            padding: 4px 8px;
+            border: 1px solid #38424c;
+            border-radius: 8px;
+            text-align: center;
+            font-weight: 700;
+        }
+        .risk-low { color: #6ee7a8; border-color: #24764a; }
+        .risk-medium { color: #f0c867; border-color: #79601f; }
+        .risk-high { color: #ff7c7c; border-color: #7a2929; }
+        main {
+            min-height: 0;
+            display: grid;
+            grid-template-columns: 0.8fr 1.2fr 1fr;
+            gap: 0;
+            overflow: hidden;
+        }
+        section {
+            min-width: 0;
+            min-height: 0;
+            padding: 10px 12px;
+            border-right: 1px solid #20262d;
+            overflow: auto;
+        }
+        section:last-child { border-right: 0; }
+        h2 { margin: 0 0 8px; color: #9fb2c3; font-size: 11px; font-weight: 700; letter-spacing: 0; }
+        dl { display: grid; grid-template-columns: 92px 1fr; gap: 5px 8px; margin: 0; }
+        dt { color: #778691; }
+        dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+        ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+        li { padding-bottom: 6px; border-bottom: 1px solid #1b2026; overflow-wrap: anywhere; }
+        li:last-child { border-bottom: 0; }
+        code { color: #d8dee9; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .empty { color: #687683; }
+    </style>
+</head>
+<body>
+    <div class="shell">
+        <header>
+            <h1>World Model</h1>
+            <div class="meta" id="wm-action">no action</div>
+            <div class="pill" id="wm-risk">unknown</div>
+            <div class="meta" id="wm-score">score --</div>
+        </header>
+        <main>
+            <section>
+                <h2>Prediction</h2>
+                <dl>
+                    <dt>success</dt><dd id="wm-success">--</dd>
+                    <dt>confidence</dt><dd id="wm-confidence">--</dd>
+                    <dt>samples</dt><dd id="wm-samples">0</dd>
+                    <dt>event</dt><dd id="wm-event">--</dd>
+                </dl>
+            </section>
+            <section>
+                <h2>Future State Delta</h2>
+                <code id="wm-delta" class="empty">waiting for state</code>
+            </section>
+            <section>
+                <h2>Causal</h2>
+                <ul id="wm-causal"><li class="empty">no causal evidence</li></ul>
+            </section>
+        </main>
+    </div>
+    <script>
+        const riskEl = document.getElementById('wm-risk');
+        const scoreEl = document.getElementById('wm-score');
+        const actionEl = document.getElementById('wm-action');
+        const successEl = document.getElementById('wm-success');
+        const confidenceEl = document.getElementById('wm-confidence');
+        const samplesEl = document.getElementById('wm-samples');
+        const eventEl = document.getElementById('wm-event');
+        const deltaEl = document.getElementById('wm-delta');
+        const causalEl = document.getElementById('wm-causal');
+
+        function text(value, fallback = '--') {
+            if (value === null || value === undefined || value === '') return fallback;
+            return String(value);
+        }
+
+        function renderList(items) {
+            causalEl.replaceChildren();
+            if (!items.length) {
+                const empty = document.createElement('li');
+                empty.className = 'empty';
+                empty.textContent = 'no causal evidence';
+                causalEl.appendChild(empty);
+                return;
+            }
+            for (const item of items.slice(0, 6)) {
+                const li = document.createElement('li');
+                li.textContent = item;
+                causalEl.appendChild(li);
+            }
+        }
+
+        function render(state) {
+            const prediction = state.prediction || {};
+            const action = state.action || {};
+            const modelState = state.model_state || {};
+            const risk = text(prediction.risk, 'unknown').toLowerCase();
+            riskEl.textContent = risk;
+            riskEl.className = `pill risk-${risk}`;
+            scoreEl.textContent = `score ${text(prediction.score, '--')}`;
+            const actionName = text(action.skill_name || action.action, 'no action');
+            const actionLabel = text(state.action_label, actionName === 'no action' ? '' : 'Action');
+            actionEl.textContent = actionLabel ? `${actionLabel}: ${actionName}` : actionName;
+            successEl.textContent = text(prediction.predicted_success);
+            confidenceEl.textContent = text(prediction.confidence);
+            samplesEl.textContent = text(modelState.sample_count, '0');
+            eventEl.textContent = text(state.event);
+            deltaEl.className = '';
+            deltaEl.textContent = JSON.stringify(prediction.predicted_state_delta || {}, null, 2);
+
+            const scm = prediction.structural_causal_model || {};
+            const attribution = prediction.causal_attribution || {};
+            const interventions = state.recent_interventions || [];
+            const causalItems = [
+                ...(prediction.reasons || []),
+                ...((scm.counterfactuals || []).map((item) => item.intervention)),
+                ...((attribution.risk_factors || []).map((item) => `${item.feature}: ${item.effect_on_success}`)),
+                ...(interventions.map((item) => `${item.intervention_name} -> ${item.target_variable}`)),
+            ];
+            renderList(causalItems);
+        }
+
+        async function refresh() {
+            try {
+                const response = await fetch('/api/world-model-state', { cache: 'no-store' });
+                render(await response.json());
+            } catch (error) {
+                renderList([String(error)]);
+            }
+        }
+
+        refresh();
+        setInterval(refresh, 700);
+    </script>
+</body>
+</html>"""
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
@@ -229,6 +395,24 @@ class WebsocketVisModule(Module):
         self.vis_state["gps_travel_goal_points"] = json_points
         self._emit("gps_travel_goal_points", json_points)
 
+    @rpc
+    def set_world_model_state(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Publish a compact predictive world-model state to dashboard clients."""
+        dashboard_state = _world_model_dashboard_state(state)
+        with self.state_lock:
+            self.vis_state["world_model_state"] = dashboard_state
+        self._emit("world_model_state", dashboard_state)
+        return _world_model_dashboard_summary(dashboard_state)
+
+    @rpc
+    def get_world_model_state(self) -> dict[str, Any]:
+        """Return the latest predictive world-model state for polling dashboards."""
+        with self.state_lock:
+            state = self.vis_state.get("world_model_state")
+        if isinstance(state, dict):
+            return state
+        return {"available": False, "prediction": {}, "recent_interventions": []}
+
     def _create_server(self) -> None:
         # Create SocketIO server
         self.sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
@@ -253,9 +437,19 @@ class WebsocketVisModule(Module):
                     media_type="text/plain",
                 )
 
+        async def serve_world_model_panel(request):  # type: ignore[no-untyped-def]
+            """Serve the polling world-model panel shown in the dashboard shell."""
+            return HTMLResponse(_WORLD_MODEL_PANEL_HTML)
+
+        async def serve_world_model_state(request):  # type: ignore[no-untyped-def]
+            """Serve the latest world-model dashboard state for polling clients."""
+            return JSONResponse(self.get_world_model_state())
+
         routes = [
             Route("/", serve_index),
             Route("/command-center", serve_command_center),
+            Route("/world-model", serve_world_model_panel),
+            Route("/api/world-model-state", serve_world_model_state),
         ]
 
         starlette_app = Starlette(routes=routes)
@@ -402,3 +596,47 @@ class WebsocketVisModule(Module):
     def _emit(self, event: str, data: Any) -> None:
         if self._broadcast_loop and not self._broadcast_loop.is_closed():
             asyncio.run_coroutine_threadsafe(self.sio.emit(event, data), self._broadcast_loop)
+
+
+def _world_model_dashboard_state(state: dict[str, Any]) -> dict[str, Any]:
+    dashboard_state = _bounded_jsonable(state)
+    if not isinstance(dashboard_state, dict):
+        dashboard_state = {}
+    dashboard_state["available"] = True
+    dashboard_state.setdefault("updated_at", round(time.time(), 3))
+    return dashboard_state
+
+
+def _world_model_dashboard_summary(state: dict[str, Any]) -> dict[str, Any]:
+    prediction = state.get("prediction") if isinstance(state.get("prediction"), dict) else {}
+    model_state = state.get("model_state") if isinstance(state.get("model_state"), dict) else {}
+    recent_interventions = (
+        state.get("recent_interventions")
+        if isinstance(state.get("recent_interventions"), list)
+        else []
+    )
+    return {
+        "available": bool(state.get("available")),
+        "risk": str(prediction.get("risk") or ""),
+        "score": prediction.get("score"),
+        "predicted_success": prediction.get("predicted_success"),
+        "transition_count": len(state.get("recent_transitions") or []),
+        "intervention_count": len(recent_interventions),
+        "model_samples": int(model_state.get("sample_count") or 0),
+    }
+
+
+def _bounded_jsonable(value: Any, max_string_length: int = 500) -> Any:
+    if value is None or isinstance(value, bool | int | float):
+        return value
+    if isinstance(value, str):
+        return value[:max_string_length]
+    if isinstance(value, dict):
+        return {
+            str(key): _bounded_jsonable(item, max_string_length)
+            for key, item in value.items()
+            if not str(key).startswith("_")
+        }
+    if isinstance(value, list | tuple):
+        return [_bounded_jsonable(item, max_string_length) for item in value[:10]]
+    return str(value)[:max_string_length]

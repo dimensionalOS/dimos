@@ -71,7 +71,9 @@ def test_predictor_uses_recent_failures() -> None:
         assert result.success is True
         assert result.metadata["risk"] == "high"
         assert result.metadata["predicted_success"] is False
-        assert "same skill failed repeatedly in recent outcomes" in result.metadata["failure_reasons"]
+        assert (
+            "same skill failed repeatedly in recent outcomes" in result.metadata["failure_reasons"]
+        )
     finally:
         _stop_modules(predictor, store)
 

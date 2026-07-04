@@ -84,8 +84,13 @@ class _Go2SkillOutcomePredictor(Module):
         # 5. causal_recent: same-skill transitions from CausalWorldModel.
         recent = self._recent_outcomes(skill_name)
         causal_recent = self._recent_causal_transitions(skill_name)
-        reasons = _risk_reasons(skill_name, parsed_args, context, recent, causal_recent)
+        world_prediction = self._world_model_prediction(skill_name, parsed_args, context)
+        reasons = _risk_reasons(
+            skill_name, parsed_args, context, recent, causal_recent, world_prediction
+        )
         risk = _risk_level(reasons)
+        if world_prediction.get("risk") == "high":
+            risk = "high"
         predicted_success = risk != "high"
         suggestions = _recovery_suggestions(skill_name, reasons)
 
@@ -98,6 +103,7 @@ class _Go2SkillOutcomePredictor(Module):
             "recovery_suggestions": suggestions,
             "recent_outcomes": recent,
             "recent_causal_transitions": causal_recent,
+            "world_model_prediction": world_prediction,
             "outcome_store_available": self._skill_outcomes is not None,
             "causal_world_model_available": self._causal_world_model is not None,
         }
@@ -118,6 +124,28 @@ class _Go2SkillOutcomePredictor(Module):
         if self._causal_world_model is None:
             return []
         return self._causal_world_model.get_recent_transitions(limit=5, skill_name=skill_name)
+
+    def _world_model_prediction(
+        self, skill_name: str, args: dict[str, Any], context: str
+    ) -> dict[str, Any]:
+        """Ask the world model for an action score when that RPC is available."""
+        if self._causal_world_model is None:
+            return {"available": False}
+        score_action = getattr(self._causal_world_model, "score_action", None)
+        if score_action is None:
+            return {"available": False}
+        snapshot_json = _extract_snapshot_json(context)
+        action_json = json.dumps({"skill_name": skill_name, "args": args})
+        try:
+            prediction = score_action(
+                snapshot_json=snapshot_json,
+                action_json=action_json,
+                goal="",
+            )
+        except Exception as exc:
+            return {"available": True, "error": str(exc)}
+        prediction["available"] = True
+        return prediction
 
 
 def _parse_args_json(args_json: str) -> dict[str, Any] | str:
@@ -144,6 +172,7 @@ def _risk_reasons(
     context: str,
     recent: list[dict[str, Any]],
     causal_recent: list[dict[str, Any]],
+    world_prediction: dict[str, Any] | None = None,
 ) -> list[str]:
     """Collect human-readable risk reasons.
 
@@ -178,6 +207,15 @@ def _risk_reasons(
     elif causal_failures:
         cause = causal_failures[0].get("inferred_cause") or "unknown_failure"
         reasons.append(f"same skill has a recent causal failure: {cause}")
+
+    if world_prediction and world_prediction.get("available"):
+        risk = str(world_prediction.get("risk") or "")
+        if risk and risk != "low":
+            reasons.append(f"world model predicted {risk} risk")
+        for mode in world_prediction.get("failure_modes") or []:
+            cause = str(mode.get("cause") or "")
+            if cause:
+                reasons.append(f"world model failure mode: {cause}")
 
     if name in {"navigate_with_text", "relative_move", "follow_person"}:
         # ContextProvider formats missing odom as "Robot pose: unavailable".
@@ -240,12 +278,36 @@ def _risk_level(reasons: list[str]) -> str:
         "navigation query is missing",
         "person-follow query is missing",
         "descriptions are missing",
+        "world model predicted high risk",
     )
     if any(any(marker in reason for marker in high_markers) for reason in reasons):
         return "high"
     if reasons:
         return "medium"
     return "low"
+
+
+def _extract_snapshot_json(context: str) -> str:
+    """Best-effort extraction for callers that pass ContextProvider text/JSON."""
+    context = context.strip()
+    if not context:
+        return "{}"
+    try:
+        parsed = json.loads(context)
+    except json.JSONDecodeError:
+        return "{}"
+    if not isinstance(parsed, dict):
+        return "{}"
+    metadata = parsed.get("metadata") if isinstance(parsed.get("metadata"), dict) else parsed
+    world_state = (
+        metadata.get("world_state") if isinstance(metadata.get("world_state"), dict) else {}
+    )
+    snapshot = world_state.get("snapshot") if isinstance(world_state.get("snapshot"), dict) else {}
+    if snapshot:
+        return json.dumps(snapshot)
+    if "robot_state" in metadata or "memory_state" in metadata:
+        return json.dumps(metadata)
+    return "{}"
 
 
 def _repeated_causal_cause(transitions: list[dict[str, Any]]) -> str:
