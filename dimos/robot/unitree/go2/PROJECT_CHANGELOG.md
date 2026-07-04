@@ -9,6 +9,26 @@ Entries are listed in reverse chronological order.
 ## 2026-07-05
 
 - Branch: `refactor/go2-architecture-layers`
+- Summary: Generated and added a review-oriented Go2 agent architecture diagram
+  showing Layer 3 agent brain, Layer 4 world state, Layer 5 skill interface,
+  Layer 6 robot body, local Git ledger artifacts, and dashboard observability.
+  Linked the image from both English and Chinese review guides.
+- Files/modules:
+  - `docs/reviews/2026-07-05-go2-agent-architecture.png`
+  - `docs/reviews/2026-07-05-go2-agent-architecture-review.md`
+  - `docs/reviews/2026-07-05-go2-agent-architecture-review.zh.md`
+  - `dimos/robot/unitree/go2/PROJECT_CHANGELOG.md`
+- Validation:
+  - Documentation/image-only change.
+  - Visually inspected the generated PNG.
+  - Ran `git diff --check` on the changed markdown/changelog files.
+- Open items:
+  - If exact editable labels are required, add a Mermaid or SVG version beside
+    the generated PNG.
+
+## 2026-07-05
+
+- Branch: `refactor/go2-architecture-layers`
 - Summary: Added explicit interface input/output references to the English and
   Chinese Go2 architecture review guides. The new quick reference enumerates
   Layer 4/5/6 Specs, Layer 3 MCP skills, ledger/proposal schemas, world-model

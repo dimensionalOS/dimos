@@ -77,6 +77,10 @@ things:
 - Self-evolution artifact: reviewable JSON events/proposals, not automatic code
   mutation.
 
+## Architecture Diagram
+
+![DimOS Go2 agent self-evolution architecture](2026-07-05-go2-agent-architecture.png)
+
 ## Interface Input/Output Quick Reference
 
 Use this section when reviewing API boundaries. It lists the stable public
