@@ -181,17 +181,16 @@ _TF_AVAILABLE = USE_TF and store.tf.has_transforms()
 def world_points(observation):
     """Nx3 world-registered points for a lidar observation.
 
-    The scan's own ``header.frame_id`` decides what to do: a scan already in
+    The scan's own ``frame_id`` decides what to do: a scan already in
     WORLD_FRAME is returned untouched (transforming it again double-registers
     it), otherwise it's brought into world via tf (``world <- frame_id``) at the
-    scan time. Falls back to LIDAR_FRAME when the header carries no frame, then
+    scan time. Falls back to LIDAR_FRAME when the scan carries no frame, then
     to the observation's stored pose, then to assuming it's already world.
     """
     points = np.asarray(observation.data.points_f32())
     if not len(points):
         return points
-    header = getattr(observation.data, "header", None)
-    scan_frame = getattr(header, "frame_id", "") or LIDAR_FRAME
+    scan_frame = getattr(observation.data, "frame_id", "") or LIDAR_FRAME
     if scan_frame == WORLD_FRAME:
         return points  # already world-registered per its own header
     if _TF_AVAILABLE:
@@ -210,7 +209,7 @@ print(f"recording: {REC}", flush=True)
 if _TF_AVAILABLE:
     print(
         f"world-registering {LIDAR_STREAM} via tf into {WORLD_FRAME} "
-        f"(per-scan header.frame_id; already-{WORLD_FRAME} scans left as-is)",
+        f"(per-scan frame_id; already-{WORLD_FRAME} scans left as-is)",
         flush=True,
     )
 print(

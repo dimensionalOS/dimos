@@ -121,8 +121,9 @@ def build(
                 float(tag_metrics["sharpness"]) >= GATE["s"]
                 and float(tag_metrics["reproj_px"]) <= GATE["r"]
                 and float(tag_metrics["tag_px"]) >= GATE["px"]
-                and float(tag_metrics["distance_m"]) <= GATE["d"]
-                and float(tag_metrics["view_angle_deg"]) <= GATE["a"]
+                # older tag streams lack distance/view-angle; unknown passes the gate
+                and float(tag_metrics.get("distance_m", 0.0)) <= GATE["d"]
+                and float(tag_metrics.get("view_angle_deg", 0.0)) <= GATE["a"]
                 and (
                     float(tag_metrics["lin_speed"]) < 0
                     or float(tag_metrics["lin_speed"]) <= GATE["lv"]
