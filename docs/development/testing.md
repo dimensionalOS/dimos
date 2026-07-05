@@ -1,4 +1,6 @@
-# Testing
+---
+title: "Testing"
+---
 
 `uv run` syncs the project deps + `tests` group on demand, so the default test suite needs no upfront install — just `uv run pytest --numprocesses=auto dimos` (xdist parallelizes across cores).
 
@@ -56,6 +58,8 @@ The default `addopts` in `pyproject.toml` includes a `-m` filter that excludes `
 ```
 
 (Shortcut for `pytest -m 'not mujoco' dimos` — runs the default suite *and* self-hosted tests, but not `mujoco`.)
+
+This includes slow agent and MCP-style integration tests in addition to slower transport and module tests. If one of those paths is broken, a failure can take close to a minute to surface because the harness waits for the agent flow to finish before timing out.
 
 When writing or debugging a specific self-hosted test, override `-m` yourself to run it:
 

@@ -47,11 +47,11 @@ def _render_path(msg: Any) -> Any:
 
 
 def _static_robot_body(rr: Any) -> list[Any]:
-    """Go2-shaped box on pointlio's body frame, counter-rotated for the lidar pitch."""
+    """Go2-shaped box on pointlio's sensor frame, counter-rotated for the lidar pitch."""
     return [
         rr.Boxes3D(half_sizes=[0.35, 0.155, 0.2], colors=[(0, 255, 127)]),
         rr.Transform3D(
-            parent_frame="tf#/body",
+            parent_frame="tf#/mid360_link",
             rotation=rr.RotationAxisAngle(axis=(0, 1, 0), degrees=-45.0),
         ),
     ]
@@ -66,9 +66,9 @@ _nav_rerun_config = {
     },
     "memory_limit": "256MB",
     # base_link tf comes from the go2 internal odometry, which is not the map
-    # frame. Anchor the robot box to pointlio's body frame instead and hide the
+    # frame. Anchor the robot box to pointlio's sensor frame instead and hide the
     # camera frustum that rides base_link.
-    "static": {"world/tf/body": _static_robot_body},
+    "static": {"world/tf/mid360_link": _static_robot_body},
     "visual_override": {
         **rerun_config["visual_override"],
         "world/global_map": _render_global_map,
@@ -85,13 +85,15 @@ _nav_rerun_config = {
 unitree_go2_nav_3d = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=_nav_rerun_config),
     # "mcf" for stair traversal
-    GO2Connection.blueprint(lidar=False, camera=False, motion_mode="mcf").remappings(
+    GO2Connection.blueprint(
+        lidar=False, camera=False, motion_mode="mcf", odom_frame_id="go2_odom"
+    ).remappings(
         [
             (GO2Connection, "lidar", "lidar_l1"),
             (GO2Connection, "odom", "odom_go2"),
         ]
     ),
-    PointLio.blueprint(child_frame_id="body"),
+    PointLio.blueprint(),
     RayTracingVoxelMap.blueprint(
         voxel_size=voxel_size,
         emit_every=1,

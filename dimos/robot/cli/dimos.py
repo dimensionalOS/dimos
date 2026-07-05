@@ -92,6 +92,11 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
     for field_name, field_info in fields.items():
         field_type = field_info.annotation
 
+        # Container generics (e.g. `tuple[...]` fields) have no single-flag CLI
+        # representation; they're configured via env/JSON. Skip like arg_help does.
+        if isinstance(field_type, types.GenericAlias):
+            continue
+
         # Handle Optional types
         # Check for Optional/Union with None
         if get_origin(field_type) is type(str | None):
@@ -136,7 +141,11 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 
     def callback(**kwargs) -> None:  # type: ignore[no-untyped-def]
         ctx = kwargs.pop("ctx")
-        ctx.obj = {k: v for k, v in kwargs.items() if v is not None}
+        overrides = {k: v for k, v in kwargs.items() if v is not None}
+        ctx.obj = overrides
+        # Apply overrides (e.g. --transport, --viewer) to the process-global config
+        # up front so every subcommand honors flags given before the subcommand name.
+        global_config.update(**overrides)
 
     callback.__signature__ = inspect.Signature(params)  # type: ignore[attr-defined]
 
@@ -248,10 +257,6 @@ def run(
     setup_exception_handler()
 
     cli_config_overrides: dict[str, Any] = ctx.obj
-
-    # this is a workaround until we have a proper way to have delayed-module-choice in blueprints
-    # ex: vis_module(viewer=global_config.viewer) is wrong (viewer will always be default value) without this patch
-    global_config.update(**cli_config_overrides)
 
     # Clean stale registry entries
     stale = cleanup_stale()
@@ -599,12 +604,8 @@ def restart(
 
 
 @main.command()
-def show_config(ctx: typer.Context) -> None:
+def show_config() -> None:
     """Show current config settings and their values."""
-
-    cli_config_overrides: dict[str, Any] = ctx.obj
-    global_config.update(**cli_config_overrides)
-
     for field_name, value in global_config.model_dump().items():
         typer.echo(f"{field_name}: {value}")
 
