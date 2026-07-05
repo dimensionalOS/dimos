@@ -8,8 +8,45 @@ use pyo3::prelude::*;
 use validator::Validate;
 
 use crate::voxel_ray_tracer::{
-    iter_global_normals, iter_global_points, update_map, Config, LocalBounds, VoxelMap,
+    batch_local_bounds, iter_global_normals, iter_global_points, update_map, Config, LocalBounds,
+    VoxelMap,
 };
+
+fn extract_tuples(arr: &Bound<'_, PyAny>, name: &str) -> PyResult<Vec<(f32, f32, f32)>> {
+    let arr: PyReadonlyArray2<'_, f32> = arr.extract().map_err(|_| {
+        PyValueError::new_err(format!("{name} must be a (N, 3) float32 numpy array"))
+    })?;
+    let shape = arr.shape();
+    if shape[1] != 3 {
+        return Err(PyValueError::new_err(format!(
+            "{name} must be (N, 3) float32, got shape {:?}",
+            shape
+        )));
+    }
+    let view = arr.as_array();
+    Ok((0..shape[0])
+        .filter_map(|i| {
+            let x = view[[i, 0]];
+            let y = view[[i, 1]];
+            let z = view[[i, 2]];
+            (x.is_finite() && y.is_finite() && z.is_finite()).then_some((x, y, z))
+        })
+        .collect())
+}
+
+/// Local region a batch of frames observed, as (cx, cy, radius, z_min, z_max).
+/// Non-finite points are ignored.
+#[pyfunction]
+fn local_bounds(
+    points: &Bound<'_, PyAny>,
+    origins: &Bound<'_, PyAny>,
+    percentile: f32,
+    margin: f32,
+) -> PyResult<(f32, f32, f32, f32, f32)> {
+    let pts = extract_tuples(points, "points")?;
+    let origs = extract_tuples(origins, "origins")?;
+    Ok(batch_local_bounds(&pts, &origs, percentile, margin))
+}
 
 #[pyclass]
 pub struct VoxelRayMapper {
@@ -54,6 +91,9 @@ impl VoxelRayMapper {
             max_health,
             graze_cos,
             recency_window,
+            emit_every: 1,
+            global_emit_every: 1,
+            region_percentile: 95.0,
         };
         config
             .validate()
@@ -70,26 +110,7 @@ impl VoxelRayMapper {
         points: &Bound<'_, PyAny>,
         origin: (f32, f32, f32),
     ) -> PyResult<()> {
-        let points: PyReadonlyArray2<'_, f32> = points
-            .extract()
-            .map_err(|_| PyValueError::new_err("points must be a (N, 3) float32 numpy array"))?;
-        let shape = points.shape();
-        if shape[1] != 3 {
-            return Err(PyValueError::new_err(format!(
-                "points must be (N, 3) float32, got shape {:?}",
-                shape
-            )));
-        }
-        let arr = points.as_array();
-        let n = shape[0];
-        let pts: Vec<(f32, f32, f32)> = (0..n)
-            .filter_map(|i| {
-                let x = arr[[i, 0]];
-                let y = arr[[i, 1]];
-                let z = arr[[i, 2]];
-                (x.is_finite() && y.is_finite() && z.is_finite()).then_some((x, y, z))
-            })
-            .collect();
+        let pts = extract_tuples(points, "points")?;
 
         let cfg = &self.config;
         let map = &mut self.map;
@@ -205,5 +226,6 @@ impl VoxelRayMapper {
 #[pymodule]
 fn dimos_voxel_ray_tracing(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<VoxelRayMapper>()?;
+    m.add_function(wrap_pyfunction!(local_bounds, m)?)?;
     Ok(())
 }

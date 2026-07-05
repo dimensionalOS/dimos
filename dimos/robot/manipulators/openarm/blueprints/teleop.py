@@ -19,7 +19,7 @@ from __future__ import annotations
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.robot.manipulators.common.blueprints import cartesian_ik_task
+from dimos.robot.manipulators.common.blueprints import eef_twist_task
 from dimos.robot.manipulators.openarm.config import (
     LEFT_CAN,
     OPENARM_V10_FK_MODEL,
@@ -31,14 +31,10 @@ from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 _teleop_hw = openarm_single_hardware()
 
 keyboard_teleop_openarm_mock = autoconnect(
-    KeyboardTeleopModule.blueprint(
-        model_path=OPENARM_V10_FK_MODEL,
-        ee_joint_id=7,
-        joint_names=_teleop_hw.joints,
-    ),
+    KeyboardTeleopModule.blueprint(),
     ControlCoordinator.blueprint(
         hardware=[_teleop_hw],
-        tasks=[cartesian_ik_task(_teleop_hw, model_path=OPENARM_V10_FK_MODEL, ee_joint_id=7)],
+        tasks=[eef_twist_task(_teleop_hw, model_path=OPENARM_V10_FK_MODEL, ee_joint_id=7)],
     ),
     ManipulationModule.blueprint(
         robots=[openarm_single_model_config()],
@@ -49,15 +45,11 @@ keyboard_teleop_openarm_mock = autoconnect(
 _teleop_real_hw = openarm_single_hardware(adapter_type="openarm", address=LEFT_CAN)
 
 keyboard_teleop_openarm = autoconnect(
-    KeyboardTeleopModule.blueprint(
-        model_path=OPENARM_V10_FK_MODEL,
-        ee_joint_id=7,
-        joint_names=_teleop_real_hw.joints,
-    ),
+    KeyboardTeleopModule.blueprint(),
     ControlCoordinator.blueprint(
         hardware=[_teleop_real_hw],
         tasks=[
-            cartesian_ik_task(
+            eef_twist_task(
                 _teleop_real_hw,
                 model_path=OPENARM_V10_FK_MODEL,
                 ee_joint_id=7,

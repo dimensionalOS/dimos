@@ -19,7 +19,8 @@ from typing import Any
 from reactivex import Observable, Subject
 
 from dimos.core.global_config import GlobalConfig
-from dimos.core.transport import LCMTransport
+from dimos.core.transport import PubSubTransport
+from dimos.core.transport_factory import make_transport, tf_backend
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -28,7 +29,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.protocol.tf.tf import LCMTF
 from dimos.simulation.dimsim.dimsim_process import DimSimProcess
 from dimos.utils.logging_config import setup_logger
 
@@ -50,9 +50,9 @@ class DimSimConnection:
 
     def __init__(self, global_config: GlobalConfig) -> None:
         self._dimsim_process: DimSimProcess = DimSimProcess(global_config)
-        self._odom_transport: LCMTransport[PoseStamped] = LCMTransport("/odom", PoseStamped)
+        self._odom_transport: PubSubTransport[PoseStamped] = make_transport("/odom", PoseStamped)
         self._unsubscribe_odom: Callable[[], None] | None = None
-        self._tf = LCMTF()
+        self._tf = tf_backend()()
 
     def start(self) -> None:
         self._dimsim_process.start()
@@ -79,6 +79,10 @@ class DimSimConnection:
     def video_stream(self) -> Observable[Image]:
         return Subject()
 
+    @functools.cache
+    def lowstate_stream(self) -> Observable[Any]:
+        return Subject()
+
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
         return True
 
@@ -94,7 +98,7 @@ class DimSimConnection:
     def set_obstacle_avoidance(self, enabled: bool = True) -> None:
         pass
 
-    def enable_rage_mode(self) -> bool:
+    def set_rage_mode(self, enable: bool) -> bool:
         return True
 
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
