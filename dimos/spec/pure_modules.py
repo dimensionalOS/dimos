@@ -19,6 +19,10 @@ same class runs live on pubsub ports or offline over stored memory2
 streams. See the implementation module for the declaration language.
 """
 
-from dimos.memory2.puremodule import PureModule, interpolate, latest, tick, window
-
-__all__ = ["PureModule", "interpolate", "latest", "tick", "window"]
+from dimos.memory2.puremodule import (
+    PureModule as PureModule,
+    interpolate as interpolate,
+    latest as latest,
+    tick as tick,
+    window as window,
+)

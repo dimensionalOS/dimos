@@ -31,6 +31,7 @@ IGNORED_FILES: set[str] = {
     "dimos/robot/test_all_blueprints_generation.py",
     "dimos/core/blueprints.py",
     "dimos/core/test_blueprints.py",
+    "dimos/memory2/puremodule_api_sketch.py",  # design sketch, not importable
 }
 # Terminal builder methods that mark a top-level blueprint expression. "blueprint"
 # is included so a bare single-module `X.blueprint(...)` (no transports/remappings
@@ -43,7 +44,7 @@ BLUEPRINT_METHODS = {
     "requirements",
     "configurators",
 }
-_EXCLUDED_MODULE_NAMES = {"Module", "ModuleBase", "StreamModule"}
+_EXCLUDED_MODULE_NAMES = {"Module", "ModuleBase", "StreamModule", "PureModule"}
 
 
 def test_all_blueprints_is_current() -> None:
@@ -117,7 +118,7 @@ def _build_module_class_set(root: Path) -> set[str]:
     all_classes: list[tuple[str, list[str]]] = []
 
     for path in sorted(root.rglob("*.py")):
-        if "__pycache__" in str(path):
+        if "__pycache__" in str(path) or str(path.relative_to(root.parent)) in IGNORED_FILES:
             continue
         try:
             tree = ast.parse(path.read_text("utf-8"), str(path))

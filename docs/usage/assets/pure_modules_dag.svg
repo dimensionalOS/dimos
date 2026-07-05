@@ -1,0 +1,24 @@
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 420.509 440.352" data-pikchr-date="20260403102956">
+<path d="M177.259,191.376L269.395,191.376A7.5 7.5 0 0 0 276.895 183.876L276.895,147.468A7.5 7.5 0 0 0 269.395 139.968L177.259,139.968A7.5 7.5 0 0 0 169.759 147.468L169.759,183.876A7.5 7.5 0 0 0 177.259 191.376Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="223.327" y="165.672" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">align</text>
+<polygon points="223.327,263.376 219.007,251.856 227.647,251.856" style="fill:rgb(255,255,255)"/>
+<path d="M223.327,191.376L223.327,257.616"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M190.68,314.784L255.974,314.784A7.5 7.5 0 0 0 263.474 307.284L263.474,270.876A7.5 7.5 0 0 0 255.974 263.376L190.68,263.376A7.5 7.5 0 0 0 183.18 270.876L183.18,307.284A7.5 7.5 0 0 0 190.68 314.784Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="223.327" y="289.08" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">step</text>
+<polygon points="223.327,386.784 219.007,375.264 227.647,375.264" style="fill:rgb(255,255,255)"/>
+<path d="M223.327,314.784L223.327,381.024"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M166.885,438.192L279.768,438.192A7.5 7.5 0 0 0 287.268 430.692L287.268,394.284A7.5 7.5 0 0 0 279.768 386.784L166.885,386.784A7.5 7.5 0 0 0 159.385 394.284L159.385,430.692A7.5 7.5 0 0 0 166.885 438.192Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="223.327" y="412.488" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">outputs</text>
+<path d="M9.66,53.568L120.193,53.568A7.5 7.5 0 0 0 127.693 46.068L127.693,9.66A7.5 7.5 0 0 0 120.193 2.16L9.66,2.16A7.5 7.5 0 0 0 2.16 9.66L2.16,46.068A7.5 7.5 0 0 0 9.66 53.568Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="64.9267" y="27.864" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">camera</text>
+<path d="M187.938,53.568L258.716,53.568A7.5 7.5 0 0 0 266.216 46.068L266.216,9.66A7.5 7.5 0 0 0 258.716 2.16L187.938,2.16A7.5 7.5 0 0 0 180.438 9.66L180.438,46.068A7.5 7.5 0 0 0 187.938 53.568Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="223.327" y="27.864" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">pose</text>
+<path d="M352.605,53.568L410.849,53.568A7.5 7.5 0 0 0 418.349 46.068L418.349,9.66A7.5 7.5 0 0 0 410.849 2.16L352.605,2.16A7.5 7.5 0 0 0 345.105 9.66L345.105,46.068A7.5 7.5 0 0 0 352.605 53.568Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="381.727" y="27.864" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">imu</text>
+<polygon points="171.955,142.165 160.327,138.147 165.836,131.491" style="fill:rgb(255,255,255)"/>
+<path d="M64.9267,53.568L167.518,138.492"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<polygon points="223.327,139.968 219.007,128.448 227.647,128.448" style="fill:rgb(255,255,255)"/>
+<path d="M223.327,53.568L223.327,134.208"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<polygon points="274.698,142.165 280.817,131.491 286.327,138.147" style="fill:rgb(255,255,255)"/>
+<path d="M381.727,53.568L279.135,138.492"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+</svg>

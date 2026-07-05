@@ -52,7 +52,6 @@ from abc import ABC, abstractmethod
 import bisect
 from dataclasses import dataclass, field
 import heapq
-import logging
 from typing import TYPE_CHECKING, Any
 
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -62,8 +61,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
     from dimos.memory2.type.observation import Observation
-
-logger = logging.getLogger(__name__)
 
 
 class _Blocked:
@@ -171,8 +168,7 @@ class Sampler(ABC):
     """How to read one input's value at a tick time *t* from its buffer.
 
     Samplers also carry the input's *declared health contracts*
-    (``expect_hz``, ``max_missing_ratio``) — class-level defaults that
-    deployment config may override per key. Alignment ignores them; the
+    (``expect_hz``, ``max_missing_ratio``). Alignment ignores them; the
     health monitor reads them off the plan.
     """
 
@@ -325,9 +321,8 @@ def tick(expect_hz: float | None = None) -> Any:
 
     Declared as a port default: ``image: In[Image] = tick()``. Exactly one
     input must be the tick. ``expect_hz`` declares the input's expected
-    arrival rate as a class-level health contract (deployment config
-    overrides). (Typed ``Any`` so it can sit on an ``In[X]`` annotation,
-    pydantic-``Field()`` style.)
+    arrival rate as a class-level health contract. (Typed ``Any`` so it
+    can sit on an ``In[X]`` annotation, pydantic-``Field()`` style.)
     """
     return Tick(expect_hz=expect_hz)
 
@@ -340,7 +335,7 @@ def latest(
     """Sample this input as the newest observation at the tick time (hold).
 
     ``expect_hz``/``max_missing_ratio`` declare class-level health
-    contracts for this input (deployment config overrides per key).
+    contracts for this input.
     """
     return Latest(max_age, expect_hz=expect_hz, max_missing_ratio=max_missing_ratio)
 

@@ -197,6 +197,7 @@ all_modules = {
     "local-planner": "dimos.navigation.cmu_nav.modules.local_planner.local_planner.LocalPlanner",
     "manipulation-module": "dimos.manipulation.manipulation_module.ManipulationModule",
     "map": "dimos.robot.unitree.type.map.Map",
+    "marker-detection-pure-module": "dimos.perception.fiducial.marker_detection_pure_module.MarkerDetectionPureModule",
     "marker-detection-stream-module": "dimos.perception.fiducial.marker_detection_stream_module.MarkerDetectionStreamModule",
     "marker-tf-module": "dimos.perception.fiducial.marker_tf_module.MarkerTfModule",
     "mcp-client": "dimos.agents.mcp.mcp_client.McpClient",

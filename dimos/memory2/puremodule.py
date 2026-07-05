@@ -115,11 +115,11 @@ from dimos.memory2.tick import (
     Tick,
     TickMachine,
     Window,
-    interpolate,
-    latest,
+    interpolate as interpolate,
+    latest as latest,
     merge_events,
-    tick,
-    window,
+    tick as tick,
+    window as window,
 )
 from dimos.memory2.type.observation import Observation
 from dimos.protocol.service.spec import Configurable
@@ -130,17 +130,6 @@ if TYPE_CHECKING:
     from dimos.memory2.stream import Stream
 
 logger = setup_logger()
-
-__all__ = [
-    "OutContract",
-    "Outputs",
-    "PureModule",
-    "contract",
-    "interpolate",
-    "latest",
-    "tick",
-    "window",
-]
 
 _STOP = object()
 

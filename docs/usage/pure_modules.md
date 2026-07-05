@@ -411,7 +411,7 @@ unacceptable". The other contracts are rates, and they're two numbers in
 the module config — deployment-side, because the robot, sim, and replay
 legitimately differ:
 
-Per-port rates are declared on the class, where the port is::
+Per-port rates are declared on the class, where the port is:
 
 ```python skip
 class Follower(PureModule):
@@ -485,7 +485,7 @@ The tutorial above shows the feel; this part states the exact rules.
 ## Declaration & binding
 
 One input must carry `tick()`; an `In` port with no sampler defaults to
-`latest()`. Input ports may not be named `ts` or `state` (reserved).
+`latest()`. Input ports may not be named `ts`, `state`, `out`, or `health` (reserved).
 `step` parameters bind to inputs **by name**; the annotation picks the
 shape:
 
@@ -579,8 +579,8 @@ can't accumulate ticks forever (evictions count as `drops_blocked`).
 Health: counters always (ticks resolved/stepped, drops by reason, step
 p50/p99, end-to-end tick latency p50/p99, per-input Hz, ages of consumed
 `latest()` values, output rates); a `_health` stream snapshot every
-`health_interval_s`; one warmup line comparing observed input rates to
-`expected_hz`; transition-logged `DEGRADED`/`STALLED` with the violated
+`interval_s` (in the `health` config); one warmup line comparing observed
+input rates to `expect_hz`; transition-logged `DEGRADED`/`STALLED` with the violated
 contracts, throttled reminders every `unhealthy_log_every_s`, recovery
 logged with duration. Stalls must persist `stall_after_s` and distinguish
 "ticks queued but none stepped (step stuck?)" from "inputs flowing but no
