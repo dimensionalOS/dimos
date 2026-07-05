@@ -995,10 +995,3 @@ def _tail_text(path: str, max_bytes: int) -> str:
             return f.read().decode(errors="replace")
     except OSError:
         return ""
-
-
-__all__ = [
-    "ArduinoModule",
-    "ArduinoModuleConfig",
-    "CTypeGenerator",
-]
