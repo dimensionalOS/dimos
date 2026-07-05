@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>repulsive-field local planner — wasm demo</title>
+    <style>
+        html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0e12; }
+        #hud {
+            position: fixed; top: 10px; left: 10px; color: #cfd8e3;
+            font: 13px/1.5 ui-monospace, monospace; background: #141a22cc;
+            padding: 10px 14px; border-radius: 8px; user-select: none;
+        }
+        #hud b { color: #7fd0ff }
+    </style>
+</head>
+<body>
+    <div id="hud">
+        <b>repulsive-field planner (rust → wasm)</b><br>
+        drag <b>orange boxes</b> = obstacles · drag <b>green disc</b> = goal<br>
+        scroll = zoom · right-drag = orbit<br>
+        <span id="stats">…</span>
+    </div>
+    <script type="module" src="./main.js"></script>
+</body>
+</html>

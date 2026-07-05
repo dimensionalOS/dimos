@@ -1,0 +1,39 @@
+[package]
+name = "dimos-repulsive-field"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust repulsive-field (navigation-function) local planner for dimos"
+license = "Apache-2.0"
+
+[lib]
+# Must match the #[pymodule] fn name in python.rs.
+name = "dimos_repulsive_field"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "repulsive_field"
+path = "src/main.rs"
+required-features = ["native"]
+
+[features]
+default = ["native"]
+native = ["dep:dimos-module", "dep:lcm-msgs", "dep:tokio", "dep:tracing", "dep:serde", "dep:validator"]
+python = ["dep:pyo3", "dep:numpy", "dep:serde"]
+wasm = ["dep:wasm-bindgen", "dep:serde", "dep:serde-wasm-bindgen"]
+
+[dependencies]
+dimos-module = { path = "../../../../../native/rust/dimos-module", optional = true }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "3555e97704ec4c727d96a7ac0769d5735bb44feb", optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+tracing = { version = "0.1", optional = true }
+validator = { version = "0.20", features = ["derive"], optional = true }
+pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"], optional = true }
+numpy = { version = "0.25", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+serde-wasm-bindgen = { version = "0.6", optional = true }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
