@@ -98,6 +98,40 @@ def test_record_skill_proposal_writes_validated_proposal(monkeypatch, tmp_path: 
         _stop_modules(ledger)
 
 
+def test_record_skill_proposal_preserves_reused_proposal_id(
+    monkeypatch, tmp_path: Path
+) -> None:
+    ledger_dir = tmp_path / ".dimos" / "evolution"
+    monkeypatch.setenv("DIMOS_EVOLUTION_LEDGER_DIR", str(ledger_dir))
+    ledger = _Go2EvolutionLedger()
+    try:
+        first = ledger.record_skill_proposal(
+            proposal_json=json.dumps(_proposal(title="First iteration of the proposal"))
+        )
+        second = ledger.record_skill_proposal(
+            proposal_json=json.dumps(_proposal(title="Second iteration of the proposal"))
+        )
+
+        assert first.success is True
+        assert second.success is True
+
+        first_path = Path(first.metadata["proposal_path"])
+        second_path = Path(second.metadata["proposal_path"])
+        assert first_path != second_path
+        assert first_path.exists()
+        assert second_path.exists()
+
+        first_data = json.loads(first_path.read_text())
+        second_data = json.loads(second_path.read_text())
+        # The author's proposal_id is preserved verbatim in both artifacts;
+        # only the filename is disambiguated.
+        assert first_data["proposal_id"] == second_data["proposal_id"]
+        assert first_data["title"] == "First iteration of the proposal"
+        assert second_data["title"] == "Second iteration of the proposal"
+    finally:
+        _stop_modules(ledger)
+
+
 def test_record_skill_proposal_rejects_invalid_target(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("DIMOS_EVOLUTION_LEDGER_DIR", str(tmp_path / "ledger"))
     ledger = _Go2EvolutionLedger()

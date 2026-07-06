@@ -122,7 +122,7 @@ def write_skill_proposal_file(
     proposal_dir.mkdir(parents=True, exist_ok=True)
     _ensure_readme(ledger_dir)
 
-    path = proposal_dir / f"{_safe_filename(normalized['proposal_id'])}.json"
+    path = _unique_proposal_path(proposal_dir, normalized["proposal_id"])
     payload = json.dumps(normalized, indent=2, sort_keys=True) + "\n"
     tmp_path = path.with_name(f".{path.name}.tmp-{os.getpid()}")
     tmp_path.write_text(payload, encoding="utf-8")
@@ -165,6 +165,22 @@ def _ensure_readme(ledger_dir: Path) -> None:
 
 def _safe_filename(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._-") or "proposal"
+
+
+def _unique_proposal_path(proposal_dir: Path, proposal_id: str) -> Path:
+    """Return a non-colliding proposal path, appending -1, -2, ... when needed.
+
+    A reused stable ``proposal_id`` (e.g. ``improve_navigation``) must not
+    silently overwrite an earlier review artifact. The JSON keeps the
+    author's ``proposal_id`` verbatim; only the filename is disambiguated.
+    """
+    stem = _safe_filename(str(proposal_id))
+    path = proposal_dir / f"{stem}.json"
+    suffix = 1
+    while path.exists():
+        path = proposal_dir / f"{stem}-{suffix}.json"
+        suffix += 1
+    return path
 
 
 __all__ = [
