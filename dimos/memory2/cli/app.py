@@ -18,12 +18,15 @@ from __future__ import annotations
 
 import typer
 
+from dimos.memory2.cli.summary import main as _summary_main
+
 mem_app = typer.Typer(help="memory2 store commands", no_args_is_help=True)
+mem_app.command("summary")(_summary_main)
 
 
 @mem_app.command()
 def rerun(
-    path: str = typer.Argument(..., help="Store to render (.mcap path/name or .db)"),
+    path: str = typer.Argument(..., help="Store: bare name (cwd, data/, LFS), .db or .mcap path"),
     out: str = typer.Option(None, "--out", help="Output .rrd (default: alongside the source)"),
     seconds: float = typer.Option(None, "--seconds", help="Only the first N seconds"),
     no_gui: bool = typer.Option(False, "--no-gui", help="Write the .rrd but don't open the viewer"),

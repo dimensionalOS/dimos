@@ -54,5 +54,9 @@ class BlobStore(Configurable, CompositeResource):
         """Delete a blob by stream name and observation id."""
         ...
 
+    def size_bytes(self, stream_name: str) -> int | None:
+        """Total stored payload bytes for a stream, or None if not cheaply knowable."""
+        return None
+
     def serialize(self) -> dict[str, Any]:
         return {"class": qual(type(self)), "config": self.config.model_dump()}

@@ -13,8 +13,9 @@ updates:
 
   - package-ecosystem: "uv"
     directory: "/"
+    # Can't use "all" because it exceeds the 55 min timeout and fails to open any PRs.
     allow:
-      - dependency-type: "all"
+      - dependency-type: "direct"
     schedule:
       interval: "daily"
     # https://blog.yossarian.net/2025/11/21/We-should-all-be-using-dependency-cooldowns
