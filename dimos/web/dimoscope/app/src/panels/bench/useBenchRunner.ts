@@ -108,8 +108,15 @@ export function useBenchRunner(history: BenchHistory) {
         setCells((cs) => cs.filter((c) => !set.has(c)));
         next.delete(rec.id);
       } else {
-        loadedCells.current.set(rec.id, rec.cells);
-        setCells((cs) => [...cs, ...rec.cells]);
+        // Append only cells not already in the table: a live/just-finished run shares cell object
+        // identity with its history record, and re-appending it duplicated every row in the
+        // copied Markdown. Track exactly what we appended so toggle-off removes only that.
+        setCells((cs) => {
+          const present = new Set(cs);
+          const fresh = rec.cells.filter((c) => !present.has(c));
+          loadedCells.current.set(rec.id, fresh);
+          return [...cs, ...fresh];
+        });
         next.add(rec.id);
       }
       return next;
@@ -297,6 +304,10 @@ export function useBenchRunner(history: BenchHistory) {
         history.upsert(
           synthRecord(runCells, meta, { id: runId, stamp, aborted: abortedRef.current || undefined }),
         );
+        // The finished run's cells ARE in the table — mark it loaded so its history button reads
+        // "loaded" (toggling it off works) instead of inviting a "load" that duplicates every row.
+        loadedCells.current.set(runId, [...runCells]);
+        setLoadedIds((prev) => new Set(prev).add(runId));
       }
       runningRef.current = false;
       setRunning(false);
