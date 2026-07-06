@@ -40,13 +40,12 @@ logger = setup_logger()
 
 class PGOConfig(NativeModuleConfig):
     # C++ + nix flake live in the standalone repo github.com/jeff-hykin/gsc_pgo.
-    # Pinned to a rev for reproducibility; bump when the C++ changes. The build
-    # runs in this module dir and drops a `result` symlink here (gitignored).
+    # Pinned to a version branch for reproducibility; bump when the C++ changes.
+    # The build runs in this module dir and drops a `result` symlink here (gitignored).
     cwd: str | None = str(Path(__file__).resolve().parent)
     executable: str = "result/bin/pgo"
     build_command: str | None = (
-        'nix build "github:jeff-hykin/gsc_pgo/e8d910f305719b81efabc6b8e1035ee7020369e9#default"'
-        " --no-write-lock-file"
+        'nix build "github:jeff-hykin/gsc_pgo/v1.1.0#default" --no-write-lock-file'
     )
 
     frame_id: str = "map"
