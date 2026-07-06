@@ -29,7 +29,177 @@ Textual app modeled on run_lcmspy.py (DataTable, 0.5s refresh, theme colors,
 
 from __future__ import annotations
 
+import time
+
+from rich.text import Text
+from textual.app import App, ComposeResult
+from textual.color import Color
+from textual.widgets import DataTable
+
+from dimos.protocol.pubsub.spy import (
+    SpyKey,
+    TopicStats,
+    TransportSpy,
+    default_sources,
+    split_type_suffix,
+)
+from dimos.utils.cli import theme
+from dimos.utils.human import human_bytes
+
+# Rows older than this (seconds since last message) render dimmed as "stale".
+STALE_AGE = 3.0
+# Window for freq / bandwidth readouts.
+STAT_WINDOW = 5.0
+
+
+def gradient(max_value: float, value: float) -> str:
+    """Gradient from cyan (low) to yellow (high) using DimOS theme colors."""
+    ratio = min(value / max_value, 1.0) if max_value else 0.0
+    cyan = Color.parse(theme.CYAN)
+    yellow = Color.parse(theme.YELLOW)
+    return cyan.blend(yellow, ratio).hex
+
+
+def topic_text(base: str) -> Text:
+    """Format a base topic name with DimOS theme colors."""
+    if base[:4] == "/rpc":
+        return Text(base[:4], style=theme.BLUE) + Text(base[4:], style=theme.BRIGHT_WHITE)
+    return Text(base, style=theme.BRIGHT_WHITE)
+
+
+def _parse_transports(argv: list[str]) -> list[str] | None:
+    """Parse repeated --transport flags; None means all default sources."""
+    transports: list[str] = []
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--transport":
+            i += 1
+            if i < len(argv):
+                transports.append(argv[i])
+        elif arg.startswith("--transport="):
+            transports.append(arg.split("=", 1)[1])
+        i += 1
+    return transports or None
+
+
+class SpyApp(App):  # type: ignore[type-arg]
+    """A real-time dashboard for all-transport pubsub traffic using Textual."""
+
+    CSS_PATH = "../dimos.tcss"
+
+    CSS = f"""
+    Screen {{
+        layout: vertical;
+        background: {theme.BACKGROUND};
+    }}
+    DataTable {{
+        height: 2fr;
+        width: 1fr;
+        border: solid {theme.BORDER};
+        background: {theme.BG};
+        scrollbar-size: 0 0;
+    }}
+    DataTable > .datatable--header {{
+        color: {theme.ACCENT};
+        background: transparent;
+    }}
+    """
+
+    refresh_interval: float = 0.5  # seconds
+
+    BINDINGS = [
+        ("q", "quit"),
+        ("ctrl+c", "quit"),
+    ]
+
+    def __init__(self, transports: list[str] | None = None, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(**kwargs)
+        sources = default_sources()
+        if transports is not None:
+            sources = [s for s in sources if s.name in transports]
+        # Warn about missing system config before entering TUI raw mode (LCM only).
+        if any(s.name == "lcm" for s in sources):
+            from dimos.protocol.service.lcmservice import autoconf
+
+            autoconf(check_only=True)
+
+        self.spy = TransportSpy(sources=sources)
+        self.spy.start()
+        self.table: DataTable | None = None  # type: ignore[type-arg]
+
+    def compose(self) -> ComposeResult:
+        self.table = DataTable(zebra_stripes=False, cursor_type=None)  # type: ignore[arg-type]
+        self.table.add_column("Transport")
+        self.table.add_column("Topic")
+        self.table.add_column("Type")
+        self.table.add_column("Freq (Hz)")
+        self.table.add_column("Bandwidth")
+        self.table.add_column("Total")
+        self.table.add_column("Age")
+        yield self.table
+
+    def on_mount(self) -> None:
+        self.set_interval(self.refresh_interval, self.refresh_table)
+
+    async def on_unmount(self) -> None:
+        self.spy.stop()
+
+    def refresh_table(self) -> None:
+        now = time.time()
+        snap = self.spy.snapshot()
+        rows: list[tuple[SpyKey, TopicStats]] = sorted(
+            snap.items(), key=lambda kv: kv[1].total_bytes, reverse=True
+        )
+        self.table.clear(columns=False)  # type: ignore[union-attr]
+
+        for key, stats in rows:
+            base, msg_type = split_type_suffix(key.topic)
+            freq = stats.freq(STAT_WINDOW, now)
+            bps = stats.bytes_per_sec(STAT_WINDOW, now)
+            age = now - stats.last_seen if stats.last_seen is not None else None
+            stale = age is not None and age > STALE_AGE
+
+            if stale:
+                # Liveness: dim the whole row for topics gone quiet.
+                self.table.add_row(  # type: ignore[union-attr]
+                    Text(key.transport, style=theme.DIM),
+                    Text(base, style=theme.DIM),
+                    Text(msg_type or "", style=theme.DIM),
+                    Text(f"{freq:.1f}", style=theme.DIM),
+                    Text(f"{human_bytes(bps)}/s", style=theme.DIM),
+                    Text(human_bytes(stats.total_bytes), style=theme.DIM),
+                    Text(f"{age:.0f}s", style=theme.DIM),
+                )
+                continue
+
+            age_str = f"{age:.1f}s" if age is not None else "-"
+            self.table.add_row(  # type: ignore[union-attr]
+                Text(key.transport, style=theme.BLUE),
+                topic_text(base),
+                Text(msg_type or "", style=theme.BLUE),
+                Text(f"{freq:.1f}", style=gradient(10, freq)),
+                Text(f"{human_bytes(bps)}/s", style=gradient(1024 * 3, bps)),
+                Text(human_bytes(stats.total_bytes)),
+                Text(age_str, style=theme.ACCENT),
+            )
+
 
 def main() -> None:
     """Entry point for `dimos spy` (argv: optional 'web', --transport filters)."""
-    raise NotImplementedError
+    import sys
+
+    argv = sys.argv[1:]
+    if argv and argv[0] == "web":
+        import os
+
+        from textual_serve.server import Server  # type: ignore[import-not-found]
+
+        server = Server(f"python {os.path.abspath(__file__)}")
+        server.serve()
+    else:
+        SpyApp(transports=_parse_transports(argv)).run()
+
+
+if __name__ == "__main__":
+    main()

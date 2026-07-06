@@ -126,6 +126,9 @@ class ExplicitPubSubOverride:
     def subscribe_all(self, callback):
         return lambda: None
 
+    def subscribe_latest(self, callback):
+        return lambda: None
+
 
 class TestBridgePubsubResolution:
     def test_legacy_lcm_pubsubs_defers_to_transport_default(self):

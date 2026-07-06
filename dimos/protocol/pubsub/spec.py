@@ -17,7 +17,12 @@ import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+import threading
 from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
+
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 MsgT = TypeVar("MsgT")
 TopicT = TypeVar("TopicT")
@@ -124,6 +129,22 @@ class SubscribeLatestMixin(Generic[TopicT, MsgT], ABC):
     @abstractmethod
     def subscribe_all(self, callback: Callable[[MsgT, TopicT], Any]) -> Callable[[], None]: ...
 
+    def _register_drain_stop(
+        self, stop_drain: Callable[[], None], thread: threading.Thread
+    ) -> bool:
+        """Start ``thread`` and record ``stop_drain`` for transport-level shutdown.
+
+        Default: just start the thread. Transports whose stop() must join live
+        drains (e.g. zenoh) override this to register under their own lock and
+        return False if already stopped (subscribe_latest then bails).
+        """
+        thread.start()
+        return True
+
+    def _unregister_drain_stop(self, stop_drain: Callable[[], None]) -> bool:
+        """Forget a drain stopper. Returns False if already removed."""
+        return True
+
     def subscribe_latest(self, callback: Callable[[MsgT, TopicT], Any]) -> Callable[[], None]:
         """Subscribe to all topics, conflated: newest message per topic wins.
 
@@ -140,7 +161,50 @@ class SubscribeLatestMixin(Generic[TopicT, MsgT], ABC):
         - The returned callable unsubscribes the underlying subscribe_all and
           stops+joins the drain thread.
         """
-        raise NotImplementedError
+        latest: dict[str, tuple[MsgT, TopicT]] = {}
+        lock = threading.Lock()
+        wake = threading.Event()
+        stop = threading.Event()
+
+        def collect(msg: MsgT, topic: TopicT) -> None:
+            # Fast path on the transport's delivery thread: keep only newest per topic.
+            with lock:
+                latest[str(topic)] = (msg, topic)
+            wake.set()
+
+        def drain() -> None:
+            while not stop.is_set():
+                wake.wait()
+                wake.clear()
+                with lock:
+                    batch = list(latest.values())
+                    latest.clear()
+                for msg, topic in batch:
+                    try:
+                        callback(msg, topic)
+                    except Exception:
+                        logger.error("Error in subscribe_latest callback", exc_info=True)
+
+        thread = threading.Thread(target=drain, name="subscribe-latest-drain", daemon=True)
+
+        def stop_drain() -> None:
+            stop.set()
+            wake.set()  # unblock the drain so it observes the stop flag
+            thread.join(timeout=2.0)
+
+        # Register + start the drain atomically w.r.t. transport shutdown, then
+        # subscribe. If the transport already stopped, bail without subscribing.
+        if not self._register_drain_stop(stop_drain, thread):
+            return lambda: None
+        inner_unsub = self.subscribe_all(collect)
+
+        def unsubscribe() -> None:
+            if not self._unregister_drain_stop(stop_drain):
+                return  # Already removed by stop() or a concurrent unsubscribe
+            inner_unsub()
+            stop_drain()
+
+        return unsubscribe
 
 
 class AllPubSub(SubscribeLatestMixin[TopicT, MsgT], PubSub[TopicT, MsgT], ABC):
@@ -222,4 +286,8 @@ class SubscribeAllCapable(Protocol[MsgT_co, TopicT_co]):
 
     def subscribe_all(self, callback: Callable[[Any, Any], Any]) -> Callable[[], None]:
         """Subscribe to all messages on all topics (every message, no conflation)."""
+        ...
+
+    def subscribe_latest(self, callback: Callable[[Any, Any], Any]) -> Callable[[], None]:
+        """Subscribe to all topics, conflated to the newest message per topic."""
         ...

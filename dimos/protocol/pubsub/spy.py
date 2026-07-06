@@ -28,7 +28,10 @@ is the spec'd hook, not implemented in v1.
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
+import threading
+import time
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -58,7 +61,8 @@ def split_type_suffix(topic: str) -> tuple[str, str | None]:
     >>> split_type_suffix("/plain")
     ('/plain', None)
     """
-    raise NotImplementedError
+    base, sep, suffix = topic.partition("#")
+    return (base, suffix) if sep else (topic, None)
 
 
 class TopicStats:
@@ -82,23 +86,43 @@ class TopicStats:
         total_bytes/total_msgs/last_seen survive eviction; only windowed stats
         (freq/bytes_per_sec/avg_size) forget evicted messages.
         """
-        raise NotImplementedError
+        self.history_window = history_window
+        self._history: deque[tuple[float, int]] = deque()  # (timestamp, nbytes)
+        self._lock = threading.Lock()
+        self.total_bytes = 0
+        self.total_msgs = 0
+        self.last_seen = None
 
     def record(self, nbytes: int, timestamp: float) -> None:
         """Hot path: O(1) amortized append + eviction of entries older than history_window."""
-        raise NotImplementedError
+        with self._lock:
+            self._history.append((timestamp, nbytes))
+            self.total_bytes += nbytes
+            self.total_msgs += 1
+            self.last_seen = timestamp
+            cutoff = timestamp - self.history_window
+            while self._history and self._history[0][0] < cutoff:
+                self._history.popleft()
+
+    def _in_window(self, window: float, now: float) -> list[tuple[float, int]]:
+        cutoff = now - window
+        with self._lock:
+            return [(ts, n) for ts, n in self._history if ts >= cutoff]
 
     def freq(self, window: float, now: float) -> float:
         """Messages per second over [now - window, now]. 0.0 if none."""
-        raise NotImplementedError
+        msgs = self._in_window(window, now)
+        return len(msgs) / window if msgs else 0.0
 
     def bytes_per_sec(self, window: float, now: float) -> float:
         """Payload bytes per second over [now - window, now]. 0.0 if none."""
-        raise NotImplementedError
+        msgs = self._in_window(window, now)
+        return sum(n for _, n in msgs) / window if msgs else 0.0
 
     def avg_size(self, window: float, now: float) -> float:
         """Mean payload size in bytes over [now - window, now]. 0.0 if none."""
-        raise NotImplementedError
+        msgs = self._in_window(window, now)
+        return sum(n for _, n in msgs) / len(msgs) if msgs else 0.0
 
 
 @runtime_checkable
@@ -138,16 +162,18 @@ class LCMSpySource:
 
     def __init__(self, **lcm_kwargs: Any) -> None:
         """lcm_kwargs forwarded to LCMPubSubBase (e.g. lcm_url)."""
-        raise NotImplementedError
+        from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase
+
+        self._bus = LCMPubSubBase(**lcm_kwargs)
 
     def start(self) -> None:
-        raise NotImplementedError
+        self._bus.start()
 
     def stop(self) -> None:
-        raise NotImplementedError
+        self._bus.stop()
 
     def tap(self, callback: Callable[[str, int], None]) -> Callable[[], None]:
-        raise NotImplementedError
+        return self._bus.subscribe_all(lambda msg, topic: callback(str(topic), len(msg)))
 
     def subscribe_decoded(self, topic: str, callback: Callable[[Any], None]) -> Callable[[], None]:
         """Opt-in per-topic decoded tap — OFF the spy hot path. Not implemented in v1."""
@@ -166,16 +192,18 @@ class ZenohSpySource:
 
     def __init__(self, **zenoh_kwargs: Any) -> None:
         """zenoh_kwargs forwarded to ZenohPubSubBase (e.g. mode/connect/listen, session_pool)."""
-        raise NotImplementedError
+        from dimos.protocol.pubsub.impl.zenohpubsub import ZenohPubSubBase
+
+        self._bus = ZenohPubSubBase(**zenoh_kwargs)
 
     def start(self) -> None:
-        raise NotImplementedError
+        self._bus.start()
 
     def stop(self) -> None:
-        raise NotImplementedError
+        self._bus.stop()
 
     def tap(self, callback: Callable[[str, int], None]) -> Callable[[], None]:
-        raise NotImplementedError
+        return self._bus.subscribe_all(lambda msg, topic: callback(str(topic), len(msg)))
 
     def subscribe_decoded(self, topic: str, callback: Callable[[Any], None]) -> Callable[[], None]:
         """Opt-in per-topic decoded tap — OFF the spy hot path. Not implemented in v1."""
@@ -200,17 +228,43 @@ class TransportSpy:
         self, sources: Sequence[SpySource] | None = None, history_window: float = 60.0
     ) -> None:
         """sources=None means default_sources()."""
-        raise NotImplementedError
+        self._sources = list(sources) if sources is not None else default_sources()
+        self._history_window = history_window
+        self._stats: dict[SpyKey, TopicStats] = {}
+        self._lock = threading.Lock()
+        self._untaps: list[Callable[[], None]] = []
+        self.totals = TopicStats(history_window=history_window)
+
+    def _tap_callback(self, transport: str) -> Callable[[str, int], None]:
+        def on_message(topic: str, nbytes: int) -> None:
+            now = time.time()
+            key = SpyKey(transport, topic)
+            with self._lock:
+                stats = self._stats.get(key)
+                if stats is None:
+                    stats = TopicStats(history_window=self._history_window)
+                    self._stats[key] = stats
+            stats.record(nbytes, now)
+            self.totals.record(nbytes, now)
+
+        return on_message
 
     def start(self) -> None:
-        raise NotImplementedError
+        for source in self._sources:
+            source.start()
+            self._untaps.append(source.tap(self._tap_callback(source.name)))
 
     def stop(self) -> None:
-        raise NotImplementedError
+        for untap in self._untaps:
+            untap()
+        self._untaps.clear()
+        for source in self._sources:
+            source.stop()
 
     def snapshot(self) -> dict[SpyKey, TopicStats]:
         """Current per-topic stats, safe to iterate while messages keep arriving."""
-        raise NotImplementedError
+        with self._lock:
+            return dict(self._stats)
 
 
 def default_sources() -> list[SpySource]:
@@ -218,4 +272,4 @@ def default_sources() -> list[SpySource]:
 
     v1: [LCMSpySource(), ZenohSpySource()]. SHM/ROS/DDS/Redis are future sources.
     """
-    raise NotImplementedError
+    return [LCMSpySource(), ZenohSpySource()]

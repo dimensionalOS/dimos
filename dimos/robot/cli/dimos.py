@@ -631,11 +631,12 @@ def spy(ctx: typer.Context) -> None:
 
 @main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def lcmspy(ctx: typer.Context) -> None:
-    """LCM spy tool for monitoring LCM messages."""
-    from dimos.utils.cli.lcmspy.run_lcmspy import main as lcmspy_main
+    """Deprecated alias for `dimos spy --transport lcm`."""
+    print("dimos lcmspy is deprecated; use `dimos spy --transport lcm`.", file=sys.stderr)
+    from dimos.utils.cli.spy.run_spy import main as spy_main
 
-    sys.argv = ["lcmspy", *ctx.args]
-    lcmspy_main()
+    sys.argv = ["spy", "--transport", "lcm", *ctx.args]
+    spy_main()
 
 
 @main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})

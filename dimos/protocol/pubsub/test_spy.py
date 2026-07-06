@@ -49,9 +49,7 @@ VEC = Vector3(1.0, 2.0, 3.0)
 VEC_BYTES = VEC.lcm_encode()
 
 
-# ---------------------------------------------------------------------------
 # TopicStats: pure, deterministic (injected timestamps, no sleeps)
-# ---------------------------------------------------------------------------
 
 
 def test_topic_stats_counts_and_totals():
@@ -94,9 +92,7 @@ def test_topic_stats_history_eviction_keeps_totals():
     assert s.total_bytes == 200
 
 
-# ---------------------------------------------------------------------------
 # split_type_suffix: render-time topic parsing
-# ---------------------------------------------------------------------------
 
 
 def test_split_type_suffix():
@@ -108,9 +104,7 @@ def test_split_type_suffix():
     assert split_type_suffix("/plain") == ("/plain", None)
 
 
-# ---------------------------------------------------------------------------
 # subscribe_all contract: EVERY message, no conflation (spec-level fix)
-# ---------------------------------------------------------------------------
 
 
 @contextmanager
@@ -168,9 +162,7 @@ def test_subscribe_all_delivers_every_message(bus_ctx):
         unsub()
 
 
-# ---------------------------------------------------------------------------
 # subscribe_latest contract: conflation is the explicit opt-in
-# ---------------------------------------------------------------------------
 
 
 class FakeAllPubSub(AllPubSub[str, bytes]):
@@ -272,9 +264,7 @@ def test_subscribe_latest_unsubscribe_stops_delivery():
     assert len(delivered) == count
 
 
-# ---------------------------------------------------------------------------
 # SpySources: every message counted, payloads never decoded
-# ---------------------------------------------------------------------------
 
 
 class _TapCollector:
@@ -374,9 +364,7 @@ def test_zenoh_source_counts_all_without_decoding(monkeypatch):
         pool.close_all()
 
 
-# ---------------------------------------------------------------------------
 # TransportSpy: merging + totals + lifecycle (fake sources, deterministic)
-# ---------------------------------------------------------------------------
 
 
 class FakeSource:
@@ -450,9 +438,7 @@ def test_fake_source_satisfies_protocol():
     assert isinstance(FakeSource("x"), SpySource)
 
 
-# ---------------------------------------------------------------------------
 # Lazy decode hook: spec'd now, implemented in a follow-up (stays off hot path)
-# ---------------------------------------------------------------------------
 
 
 def test_subscribe_decoded_is_not_implemented_in_v1():
