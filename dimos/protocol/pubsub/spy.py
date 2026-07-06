@@ -250,9 +250,20 @@ class TransportSpy:
         return on_message
 
     def start(self) -> None:
-        for source in self._sources:
-            source.start()
-            self._untaps.append(source.tap(self._tap_callback(source.name)))
+        """Start and tap every source; on failure roll back the ones already started."""
+        started: list[SpySource] = []
+        try:
+            for source in self._sources:
+                source.start()
+                started.append(source)
+                self._untaps.append(source.tap(self._tap_callback(source.name)))
+        except BaseException:
+            for untap in self._untaps:
+                untap()
+            self._untaps.clear()
+            for source in reversed(started):
+                source.stop()
+            raise
 
     def stop(self) -> None:
         for untap in self._untaps:
@@ -267,9 +278,16 @@ class TransportSpy:
             return dict(self._stats)
 
 
-def default_sources() -> list[SpySource]:
-    """The spy observes ALL transports simultaneously, regardless of DIMOS_TRANSPORT.
+SOURCE_FACTORIES: dict[str, Callable[[], SpySource]] = {
+    LCMSpySource.name: LCMSpySource,
+    ZenohSpySource.name: ZenohSpySource,
+}
+"""Known transports by name; each factory constructs its source only when called.
 
-    v1: [LCMSpySource(), ZenohSpySource()]. SHM/ROS/DDS/Redis are future sources.
-    """
-    return [LCMSpySource(), ZenohSpySource()]
+v1: lcm + zenoh. SHM/ROS/DDS/Redis are future sources.
+"""
+
+
+def default_sources() -> list[SpySource]:
+    """The spy observes ALL transports simultaneously, regardless of DIMOS_TRANSPORT."""
+    return [factory() for factory in SOURCE_FACTORIES.values()]

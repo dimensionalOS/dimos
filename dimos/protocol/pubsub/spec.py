@@ -196,7 +196,13 @@ class SubscribeLatestMixin(Generic[TopicT, MsgT], ABC):
         # subscribe. If the transport already stopped, bail without subscribing.
         if not self._register_drain_stop(stop_drain, thread):
             return lambda: None
-        inner_unsub = self.subscribe_all(collect)
+        try:
+            inner_unsub = self.subscribe_all(collect)
+        except BaseException:
+            # Don't leak the drain thread if the underlying subscribe fails.
+            if self._unregister_drain_stop(stop_drain):
+                stop_drain()
+            raise
 
         def unsubscribe() -> None:
             if not self._unregister_drain_stop(stop_drain):

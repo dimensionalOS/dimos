@@ -264,6 +264,23 @@ def test_subscribe_latest_unsubscribe_stops_delivery():
     assert len(delivered) == count
 
 
+def test_subscribe_latest_failed_subscribe_stops_drain_thread():
+    class FailingBus(FakeAllPubSub):
+        def subscribe_all(self, callback):
+            raise RuntimeError("subscriber declaration failed")
+
+    bus = FailingBus()
+    before = set(threading.enumerate())
+    with pytest.raises(RuntimeError, match="subscriber declaration failed"):
+        bus.subscribe_latest(lambda msg, topic: None)
+    leaked = [
+        t
+        for t in threading.enumerate()
+        if t not in before and t.name == "subscribe-latest-drain" and t.is_alive()
+    ]
+    assert not leaked  # drain thread must be stopped and joined on subscribe failure
+
+
 # SpySources: every message counted, payloads never decoded
 
 
@@ -430,6 +447,32 @@ def test_transport_spy_snapshot_is_stable_copy():
     assert SpyKey("lcm", "/new_topic_after_snapshot") not in snap  # snapshot doesn't mutate
     assert SpyKey("lcm", "/new_topic_after_snapshot") in spy.snapshot()
     spy.stop()
+
+
+def test_transport_spy_start_failure_stops_started_sources():
+    class FailingStartSource(FakeSource):
+        def start(self) -> None:
+            raise RuntimeError("no zenoh here")
+
+    a, b = FakeSource("lcm"), FailingStartSource("zenoh")
+    spy = TransportSpy(sources=[a, b])
+    with pytest.raises(RuntimeError, match="no zenoh here"):
+        spy.start()
+    assert not a.started  # rolled back, not left running
+    assert not a.taps
+
+
+def test_transport_spy_tap_failure_stops_started_sources():
+    class FailingTapSource(FakeSource):
+        def tap(self, callback):
+            raise RuntimeError("tap exploded")
+
+    a, b = FakeSource("lcm"), FailingTapSource("zenoh")
+    spy = TransportSpy(sources=[a, b])
+    with pytest.raises(RuntimeError, match="tap exploded"):
+        spy.start()
+    assert not a.started and not b.started
+    assert not a.taps
 
 
 def test_fake_source_satisfies_protocol():

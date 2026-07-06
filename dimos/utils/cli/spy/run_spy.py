@@ -37,10 +37,10 @@ from textual.color import Color
 from textual.widgets import DataTable
 
 from dimos.protocol.pubsub.spy import (
+    SOURCE_FACTORIES,
     SpyKey,
     TopicStats,
     TransportSpy,
-    default_sources,
     split_type_suffix,
 )
 from dimos.utils.cli import theme
@@ -68,7 +68,11 @@ def topic_text(base: str) -> Text:
 
 
 def _parse_transports(argv: list[str]) -> list[str] | None:
-    """Parse repeated --transport flags; None means all default sources."""
+    """Parse repeated --transport flags; None means all default sources.
+
+    Exits with an error (rather than launching an empty spy) if any requested
+    transport is not a known source name.
+    """
     transports: list[str] = []
     i = 0
     while i < len(argv):
@@ -80,6 +84,12 @@ def _parse_transports(argv: list[str]) -> list[str] | None:
         elif arg.startswith("--transport="):
             transports.append(arg.split("=", 1)[1])
         i += 1
+    unknown = [t for t in transports if t not in SOURCE_FACTORIES]
+    if unknown:
+        valid = ", ".join(SOURCE_FACTORIES)
+        raise SystemExit(
+            f"Error: unknown transport(s) {', '.join(unknown)} — valid choices: {valid}"
+        )
     return transports or None
 
 
@@ -115,15 +125,22 @@ class SpyApp(App):  # type: ignore[type-arg]
 
     def __init__(self, transports: list[str] | None = None, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**kwargs)
-        sources = default_sources()
-        if transports is not None:
-            sources = [s for s in sources if s.name in transports]
+        names = list(SOURCE_FACTORIES) if transports is None else list(transports)
+        unknown = [n for n in names if n not in SOURCE_FACTORIES]
+        if unknown:
+            raise ValueError(
+                f"unknown transport(s) {', '.join(unknown)} — valid choices: "
+                f"{', '.join(SOURCE_FACTORIES)}"
+            )
         # Warn about missing system config before entering TUI raw mode (LCM only).
-        if any(s.name == "lcm" for s in sources):
+        if "lcm" in names:
             from dimos.protocol.service.lcmservice import autoconf
 
             autoconf(check_only=True)
 
+        # Construct only the requested sources: a filtered-out transport must
+        # never be imported or instantiated.
+        sources = [SOURCE_FACTORIES[name]() for name in names]
         self.spy = TransportSpy(sources=sources)
         self.spy.start()
         self.table: DataTable | None = None  # type: ignore[type-arg]
