@@ -130,6 +130,40 @@ def test_spy_app_explicit_unavailable_transport_is_hard_error(monkeypatch):
         SpyApp(transports=["zenoh"])
 
 
+class _FailingStartSource(_StubSource):
+    name = "zenoh"
+
+    def start(self) -> None:
+        raise RuntimeError("zenoh start failed")
+
+
+def test_spy_app_default_survives_backend_start_failure(monkeypatch, capsys):
+    # A backend that constructs but dies during start() must not kill the
+    # default spy — the survivor keeps running.
+    survivors: list[_StubSource] = []
+
+    def good_factory() -> _StubSource:
+        source = _StubSource()
+        source.name = "lcm"
+        survivors.append(source)
+        return source
+
+    monkeypatch.setitem(SOURCE_FACTORIES, "lcm", good_factory)
+    monkeypatch.setitem(SOURCE_FACTORIES, "zenoh", _FailingStartSource)
+    app = SpyApp()  # default path: best-effort
+    try:
+        assert survivors and survivors[0].started
+    finally:
+        app.spy.stop()
+    assert "zenoh" in capsys.readouterr().err
+
+
+def test_spy_app_explicit_start_failure_is_hard_error(monkeypatch):
+    monkeypatch.setitem(SOURCE_FACTORIES, "zenoh", _FailingStartSource)
+    with pytest.raises(RuntimeError, match="zenoh start failed"):
+        SpyApp(transports=["zenoh"])  # explicit: strict, no degrade
+
+
 def test_lcm_only_argv_forwards_plain_args():
     assert _lcm_only_argv([]) == ["spy", "--transport", "lcm"]
     assert _lcm_only_argv(["--foo", "bar"]) == ["spy", "--transport", "lcm", "--foo", "bar"]

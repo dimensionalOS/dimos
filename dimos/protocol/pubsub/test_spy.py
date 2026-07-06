@@ -344,6 +344,31 @@ def test_transport_spy_tap_failure_stops_started_sources():
     assert not a.taps
 
 
+class _FailingStartSource(FakeSource):
+    def start(self) -> None:
+        raise RuntimeError("backend down")
+
+
+def test_transport_spy_best_effort_skips_failed_source(capsys):
+    good, bad = FakeSource("lcm"), _FailingStartSource("zenoh")
+    spy = TransportSpy(sources=[good, bad])
+    spy.start(best_effort=True)  # degrade to the survivor instead of dying
+    try:
+        assert good.started and good.taps  # survivor is live and tapped
+        assert not bad.started
+        good.emit("/t", 5)
+        assert spy.snapshot()[SpyKey("lcm", "/t")].total_bytes == 5
+    finally:
+        spy.stop()
+    assert "zenoh" in capsys.readouterr().err  # skipped source is warned about
+
+
+def test_transport_spy_best_effort_raises_when_all_fail():
+    spy = TransportSpy(sources=[_FailingStartSource("lcm"), _FailingStartSource("zenoh")])
+    with pytest.raises(RuntimeError, match="no spy transports could start"):
+        spy.start(best_effort=True)
+
+
 def test_default_sources_skips_unavailable_backend(monkeypatch, capsys):
     def unavailable():
         raise ImportError("zenoh backend missing")

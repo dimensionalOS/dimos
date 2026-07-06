@@ -29,6 +29,7 @@ is the spec'd hook, not implemented in v1.
 from __future__ import annotations
 
 from collections import deque
+import contextlib
 from dataclasses import dataclass
 import sys
 import threading
@@ -235,6 +236,7 @@ class TransportSpy:
         self._stats: dict[SpyKey, TopicStats] = {}
         self._lock = threading.Lock()
         self._untaps: list[Callable[[], None]] = []
+        self._live: list[SpySource] = []  # sources currently started + tapped
         self.totals = TopicStats(history_window=history_window)
 
     def _tap_callback(self, transport: str) -> Callable[[str, int], None]:
@@ -251,28 +253,50 @@ class TransportSpy:
 
         return on_message
 
-    def start(self) -> None:
-        """Start and tap every source; on failure roll back the ones already started."""
-        started: list[SpySource] = []
+    def _start_one(self, source: SpySource) -> None:
+        """Start + tap one source; if tap fails, stop it before propagating."""
+        source.start()
         try:
-            for source in self._sources:
-                source.start()
-                started.append(source)
-                self._untaps.append(source.tap(self._tap_callback(source.name)))
+            untap = source.tap(self._tap_callback(source.name))
         except BaseException:
-            for untap in self._untaps:
-                untap()
-            self._untaps.clear()
-            for source in reversed(started):
+            with contextlib.suppress(Exception):
                 source.stop()
             raise
+        self._live.append(source)
+        self._untaps.append(untap)
+
+    def start(self, best_effort: bool = False) -> None:
+        """Start and tap every source.
+
+        Strict (default): all-or-nothing — if any source fails to start or tap,
+        roll back the ones already started and re-raise.
+        best_effort: a source that fails start()/tap() is warned and skipped
+        (its own partial start is undone); the survivors keep running. Raises
+        only if no source starts at all.
+        """
+        try:
+            for source in self._sources:
+                try:
+                    self._start_one(source)
+                except Exception as exc:
+                    if not best_effort:
+                        raise
+                    print(f"spy: skipping transport {source.name!r}: {exc}", file=sys.stderr)
+        except BaseException:
+            self.stop()  # roll back everything started so far, then propagate
+            raise
+        if best_effort and not self._live:
+            raise RuntimeError(
+                f"no spy transports could start (tried: {', '.join(s.name for s in self._sources)})"
+            )
 
     def stop(self) -> None:
         for untap in self._untaps:
             untap()
         self._untaps.clear()
-        for source in self._sources:
+        for source in self._live:
             source.stop()
+        self._live.clear()
 
     def snapshot(self) -> dict[SpyKey, TopicStats]:
         """Current per-topic stats, safe to iterate while messages keep arriving."""

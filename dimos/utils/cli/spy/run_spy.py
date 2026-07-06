@@ -158,7 +158,9 @@ class SpyApp(App):  # type: ignore[type-arg]
             autoconf(check_only=True)
 
         self.spy = TransportSpy(sources=sources)
-        self.spy.start()
+        # Default (all transports): a backend that fails to start is skipped so
+        # the spy still shows the others. An explicit --transport hard-fails.
+        self.spy.start(best_effort=transports is None)
         self.table: DataTable | None = None  # type: ignore[type-arg]
 
     def compose(self) -> ComposeResult:
