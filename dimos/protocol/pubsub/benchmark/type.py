@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Generic
 
 from dimos.protocol.pubsub.spec import MsgT, PubSub, TopicT
+from dimos.utils.colors import HEAT_GRADIENT_ANSI256
 from dimos.utils.human import human_bytes, human_duration, human_number
 
 MsgGen = Callable[[int], tuple[TopicT, MsgT]]
@@ -164,29 +165,7 @@ class BenchmarkResults:
             return
         min_val, max_val = min(all_vals), max(all_vals)
 
-        # ANSI 256 gradient: red -> orange -> yellow -> green
-        gradient = [
-            52,
-            88,
-            124,
-            160,
-            196,
-            202,
-            208,
-            214,
-            220,
-            226,
-            190,
-            154,
-            148,
-            118,
-            82,
-            46,
-            40,
-            34,
-        ]
-        if not high_is_good:
-            gradient = gradient[::-1]
+        gradient = HEAT_GRADIENT_ANSI256 if high_is_good else HEAT_GRADIENT_ANSI256[::-1]
 
         def val_to_color(v: float) -> int:
             if v <= 0 or max_val == min_val:
