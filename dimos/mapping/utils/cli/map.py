@@ -526,49 +526,52 @@ def main(
     graph: PoseGraph | None = None
     if pgo:
         print("running PGO twopass map...")
-        prog = progress(total, "pgo pass 1 (optimizing)")
-        graph = lidar.tap(prog).transform(PGO()).last().data
+        with progress(total, "pgo pass 1 (optimizing)") as bar:
+            graph = lidar.tap(bar).transform(PGO()).last().data
 
         pgo_path = [
             (kf.optimized.translation.x, kf.optimized.translation.y, kf.optimized.translation.z)
             for kf in graph.keyframes
         ]
 
-        pgo_map = _accumulate(
-            kept,
-            voxel=voxel,
-            block_count=block_count,
-            device=device,
-            graph=graph,
-            register=register,
-            carve_columns=carve,
-            progress_cb=progress(n_kept, "pgo pass 2 (rebuilding)"),
-        )
+        with progress(n_kept, "pgo pass 2 (rebuilding)") as bar:
+            pgo_map = _accumulate(
+                kept,
+                voxel=voxel,
+                block_count=block_count,
+                device=device,
+                graph=graph,
+                register=register,
+                carve_columns=carve,
+                progress_cb=bar,
+            )
 
     full_pgo_map = None
     if full_pgo:
         assert graph is not None
-        full_pgo_map = _accumulate(
-            lidar,
+        with progress(total, "full pgo (rebuilding)") as bar:
+            full_pgo_map = _accumulate(
+                lidar,
+                voxel=voxel,
+                block_count=block_count,
+                device=device,
+                graph=graph,
+                register=register,
+                carve_columns=carve,
+                progress_cb=bar,
+            )
+
+    # Raw map: same dedup'd frames, no PGO correction.
+    with progress(n_kept, "reconstructing global map") as bar:
+        global_map = _accumulate(
+            kept,
             voxel=voxel,
             block_count=block_count,
             device=device,
-            graph=graph,
             register=register,
             carve_columns=carve,
-            progress_cb=progress(total, "full pgo (rebuilding)"),
+            progress_cb=bar,
         )
-
-    # Raw map: same dedup'd frames, no PGO correction.
-    global_map = _accumulate(
-        kept,
-        voxel=voxel,
-        block_count=block_count,
-        device=device,
-        register=register,
-        carve_columns=carve,
-        progress_cb=progress(n_kept, "reconstructing global map"),
-    )
 
     marker_dets: list[Observation[Any]] = []
     if markers:
@@ -596,17 +599,18 @@ def main(
         # Keep the sharpest frame per --marker-quality-window window, then
         # drop frames where the robot was moving (linear + rotational) faster
         # than the limits. Defaults match replay_marker.py so positions agree.
-        pipeline: Stream[Image] = color_image.tap(
-            progress(n_images, "detecting markers")
-        ).transform(QualityWindow(lambda img: img.sharpness, window=marker_quality_window))
-        if marker_max_speed > 0:
-            pipeline = pipeline.transform(
-                SpeedLimit(
-                    max_mps=marker_max_speed,
-                    max_dps=marker_max_rot_rate if marker_max_rot_rate > 0 else None,
-                )
+        with progress(n_images, "detecting markers") as bar:
+            pipeline: Stream[Image] = color_image.tap(bar).transform(
+                QualityWindow(lambda img: img.sharpness, window=marker_quality_window)
             )
-        all_dets = pipeline.transform(xf).to_list()
+            if marker_max_speed > 0:
+                pipeline = pipeline.transform(
+                    SpeedLimit(
+                        max_mps=marker_max_speed,
+                        max_dps=marker_max_rot_rate if marker_max_rot_rate > 0 else None,
+                    )
+                )
+            all_dets = pipeline.transform(xf).to_list()
         if marker_smoothing > 0:
             # Keep only the latest emission per track_id — that's the most
             # averaged pose, drawn once per tracked marker session.
