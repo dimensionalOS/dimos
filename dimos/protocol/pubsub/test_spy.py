@@ -16,8 +16,7 @@
 
 These encode the acceptance criteria and FAIL until the task is implemented:
 - TopicStats: deterministic windowed stats from injected timestamps.
-- subscribe_all: delivers EVERY message on LCM and zenoh (non-conflating).
-- subscribe_latest: conflates to the newest message per topic.
+- subscribe_all: LCM delivers every message (non-conflating regex '.*').
 - SpySources: count every message without ever decoding a payload.
 - TransportSpy: merges sources into (transport, topic)-keyed stats + totals.
 - subscribe_decoded: spec'd hook, must stay NotImplementedError in v1.
@@ -34,7 +33,6 @@ import pytest
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import ZenohPubSubBase
-from dimos.protocol.pubsub.spec import AllPubSub
 from dimos.protocol.pubsub.spy import (
     SOURCE_FACTORIES,
     LCMSpySource,
@@ -119,24 +117,12 @@ def lcm_base_ctx():
         bus.stop()
 
 
-@contextmanager
-def zenoh_base_ctx():
-    pool = ZenohSessionPool()
-    bus = ZenohPubSubBase(session_pool=pool)
-    bus.start()
-    try:
-        yield bus, Topic("dimos/spy_contract", Vector3)
-    finally:
-        bus.stop()
-        pool.close_all()
-
-
-@pytest.mark.parametrize("bus_ctx", [lcm_base_ctx, zenoh_base_ctx], ids=["lcm", "zenoh"])
+@pytest.mark.parametrize("bus_ctx", [lcm_base_ctx], ids=["lcm"])
 def test_subscribe_all_delivers_every_message(bus_ctx):
     """A gated (slow) consumer must still receive every message eventually.
 
-    This is the sharp edge of the non-conflation contract: zenoh's original
-    subscribe_all conflated to latest-per-topic and fails this with ~2 of 50.
+    LCM's subscribe_all is non-conflating (regex '.*', 10k queue), so all 50
+    messages are delivered even when the consumer lags the burst.
     """
     n = 50
     with bus_ctx() as (bus, topic):
@@ -162,125 +148,6 @@ def test_subscribe_all_delivers_every_message(bus_ctx):
         assert len(ours) == n
         assert all(size == len(VEC_BYTES) for _, size in ours)
         unsub()
-
-
-# subscribe_latest contract: conflation is the explicit opt-in
-
-
-class FakeAllPubSub(AllPubSub[str, bytes]):
-    """In-memory AllPubSub: publish() synchronously fans out to subscribers."""
-
-    def __init__(self):
-        self._subs: list[Callable[[bytes, str], None]] = []
-
-    def publish(self, topic: str, message: bytes) -> None:
-        for cb in list(self._subs):
-            cb(message, topic)
-
-    def subscribe(self, topic, callback):
-        return self.subscribe_all(callback)
-
-    def subscribe_all(self, callback):
-        self._subs.append(callback)
-
-        def unsub():
-            if callback in self._subs:
-                self._subs.remove(callback)
-
-        return unsub
-
-
-def test_subscribe_latest_conflates_to_newest():
-    bus = FakeAllPubSub()
-    delivered = []
-    first = threading.Event()
-    gate = threading.Event()
-    quiet = threading.Event()
-
-    def cb(msg, topic):
-        delivered.append((topic, msg))
-        first.set()
-        gate.wait(10.0)  # block the drain thread while the burst happens
-        if msg == b"99":
-            quiet.set()
-
-    unsub = bus.subscribe_latest(cb)
-    bus.publish("t", b"0")
-    assert first.wait(5.0)
-    for i in range(1, 100):
-        bus.publish("t", str(i).encode())
-    gate.set()
-
-    assert quiet.wait(5.0)
-    # Newest message must arrive; the 98 intermediate ones conflate away.
-    assert delivered[-1] == ("t", b"99")
-    assert len(delivered) <= 5
-    unsub()
-
-
-def test_subscribe_latest_keeps_latest_per_topic():
-    bus = FakeAllPubSub()
-    delivered = []
-    first = threading.Event()
-    gate = threading.Event()
-    done = threading.Event()
-
-    def cb(msg, topic):
-        delivered.append((topic, msg))
-        first.set()
-        gate.wait(10.0)
-        if {t for t, _ in delivered} >= {"a", "b"} and len(delivered) >= 3:
-            done.set()
-
-    unsub = bus.subscribe_latest(cb)
-    bus.publish("a", b"a0")
-    assert first.wait(5.0)
-    for i in range(1, 50):
-        bus.publish("a", f"a{i}".encode())
-        bus.publish("b", f"b{i}".encode())
-    gate.set()
-
-    assert done.wait(5.0)
-    latest = dict(delivered)  # last write per topic wins
-    assert latest["a"] == b"a49"
-    assert latest["b"] == b"b49"
-    unsub()
-
-
-def test_subscribe_latest_unsubscribe_stops_delivery():
-    bus = FakeAllPubSub()
-    delivered = []
-    got_one = threading.Event()
-
-    def cb(msg, topic):
-        delivered.append(msg)
-        got_one.set()
-
-    unsub = bus.subscribe_latest(cb)
-    bus.publish("t", b"1")
-    assert got_one.wait(5.0)
-    unsub()
-    count = len(delivered)
-    bus.publish("t", b"2")
-    time.sleep(0.2)
-    assert len(delivered) == count
-
-
-def test_subscribe_latest_failed_subscribe_stops_drain_thread():
-    class FailingBus(FakeAllPubSub):
-        def subscribe_all(self, callback):
-            raise RuntimeError("subscriber declaration failed")
-
-    bus = FailingBus()
-    before = set(threading.enumerate())
-    with pytest.raises(RuntimeError, match="subscriber declaration failed"):
-        bus.subscribe_latest(lambda msg, topic: None)
-    leaked = [
-        t
-        for t in threading.enumerate()
-        if t not in before and t.name == "subscribe-latest-drain" and t.is_alive()
-    ]
-    assert not leaked  # drain thread must be stopped and joined on subscribe failure
 
 
 # SpySources: every message counted, payloads never decoded

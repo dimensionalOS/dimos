@@ -131,8 +131,9 @@ class SpySource(Protocol):
     """One transport's raw firehose feeding the spy.
 
     Invariants for implementations:
-    - tap() delivers EVERY observable message exactly once per callback
-      (non-conflating; built on the raw-bytes bus's subscribe_all).
+    - tap() rides the raw-bytes bus's subscribe_all; delivery scope and
+      conflation follow that transport's semantics (LCM delivers every
+      message; zenoh's subscribe_all is latest-per-topic over dimos/**).
     - The tap callback receives (topic_str, nbytes) where topic_str is the
       uniform str(Topic) form and nbytes is the wire payload length.
     - Never decodes payloads, never retains them past the callback.
@@ -182,11 +183,11 @@ class LCMSpySource:
 
 
 class ZenohSpySource:
-    """Spy source over zenoh, via ZenohPubSubBase.subscribe_all (all keys, '**').
+    """Spy source over zenoh, via ZenohPubSubBase.subscribe_all.
 
-    Depends on the subscribe_all non-conflation fix (see TASK.md): every sample
-    must reach the tap. nbytes = payload length; topics arrive as str(Topic)
-    with the type suffix reconstructed from the key expression.
+    zenoh's subscribe_all is latest-per-topic over dimos/** (best-effort), so
+    same-topic bursts between drains conflate away. nbytes = payload length;
+    topics arrive as str(Topic) with the type suffix reconstructed from the key.
     """
 
     name = "zenoh"

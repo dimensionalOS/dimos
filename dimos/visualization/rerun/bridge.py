@@ -458,7 +458,7 @@ class RerunBridgeModule(Module):
             logger.info(f"bridge listening on {pubsub.__class__.__name__}")
             if hasattr(pubsub, "start"):
                 pubsub.start()
-            unsub = pubsub.subscribe_latest(self._on_message)
+            unsub = pubsub.subscribe_all(self._on_message)
             self.register_disposable(Disposable(unsub))
 
         # Add pubsub stop as disposable

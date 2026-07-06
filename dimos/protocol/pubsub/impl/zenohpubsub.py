@@ -197,31 +197,61 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
         return unsubscribe
 
     def subscribe_all(self, callback: Callable[[bytes, Topic], Any]) -> Callable[[], None]:
-        """Subscribe to every key, delivering every message (non-conflating).
+        """Subscribe to all dimos topics, delivering only the latest per topic.
 
-        "All topics" means everything this session can observe ('**'). Consumers
-        that only want the newest message per topic use subscribe_latest().
+        Unlike `subscribe`, this is best effort. If it's done otherwise, rerun lags behind.
         """
-        return self.subscribe(Topic("**"), callback)
+        latest: dict[str, tuple[bytes, Topic]] = {}
+        lock = threading.Lock()
+        wake = threading.Event()
+        stop = threading.Event()
 
-    def _register_drain_stop(
-        self, stop_drain: Callable[[], None], thread: threading.Thread
-    ) -> bool:
-        # Register + start under the subscriber lock so stop() can't run between
-        # them and miss the thread. If stop() already ran, bail without starting.
+        def collect(msg: bytes, topic: Topic) -> None:
+            # Fast path on the Zenoh delivery thread: keep only the newest per topic.
+            with lock:
+                latest[str(topic)] = (msg, topic)
+            wake.set()
+
+        def drain() -> None:
+            while not stop.is_set():
+                wake.wait()
+                wake.clear()
+                with lock:
+                    batch = list(latest.values())
+                    latest.clear()
+                for msg, topic in batch:
+                    try:
+                        callback(msg, topic)
+                    except Exception:
+                        logger.error("Error in subscribe_all callback", exc_info=True)
+
+        thread = threading.Thread(target=drain, name="zenoh-subscribe-all", daemon=True)
+
+        def stop_drain() -> None:
+            stop.set()
+            wake.set()  # unblock the drain so it observes the stop flag
+            thread.join(timeout=2.0)
+
+        # Register the stop callback and launch the drain thread under the lock so
+        # stop() can't run between them and miss the thread. If stop() already ran,
+        # bail without starting anything.
         with self._subscriber_lock:
             if self._stopped:
-                return False
+                return lambda: None
             self._drain_stops.append(stop_drain)
             thread.start()
-        return True
 
-    def _unregister_drain_stop(self, stop_drain: Callable[[], None]) -> bool:
-        with self._subscriber_lock:
-            if stop_drain not in self._drain_stops:
-                return False  # Already removed by stop() or a concurrent unsubscribe
-            self._drain_stops.remove(stop_drain)
-        return True
+        inner_unsub = self.subscribe(Topic("dimos/**"), collect)
+
+        def unsubscribe() -> None:
+            with self._subscriber_lock:
+                if stop_drain not in self._drain_stops:
+                    return  # Already removed by stop() or a concurrent unsubscribe
+                self._drain_stops.remove(stop_drain)
+            inner_unsub()
+            stop_drain()
+
+        return unsubscribe
 
     def stop(self) -> None:
         with self._subscriber_lock:
