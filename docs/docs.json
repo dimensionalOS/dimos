@@ -73,8 +73,7 @@
             "group": "Transports",
             "pages": [
               "usage/transports/index",
-              "usage/transports/dds",
-              "usage/transports/spy"
+              "usage/transports/dds"
             ]
           }
         ]

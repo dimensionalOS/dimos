@@ -14,7 +14,7 @@
 
 """Transport-agnostic pubsub spy: topic discovery, rates, sizes, liveness.
 
-Design doc: docs/usage/transports/spy.md. Task spec: TASK.md (branch agent/spy-architect).
+Docs: docs/usage/transports/index.md ("Inspecting traffic").
 
 HARD CONSTRAINT: the spy never decodes message payloads. Sources tap the
 raw-bytes pubsub layer (LCMPubSubBase, ZenohPubSubBase — beneath the encoder
