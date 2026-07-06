@@ -138,28 +138,10 @@ class SpyApp(App[None]):
         ("ctrl+c", "quit"),
     ]
 
-    def __init__(self, transports: list[str] | None = None, **kwargs: Any) -> None:
+    def __init__(self, spy: TransportSpy, **kwargs: Any) -> None:
+        """spy: an already-started TransportSpy; the caller owns its lifecycle."""
         super().__init__(**kwargs)
-        if transports is None:
-            # Default: every available transport; unavailable backends are
-            # skipped with a warning (see default_sources).
-            sources = default_sources()
-        else:
-            validate_transport_names(transports)
-            # Construct only the requested sources: a filtered-out transport is
-            # never imported or instantiated, and an unavailable one that was
-            # explicitly requested stays a hard error.
-            sources = [SOURCE_FACTORIES[name]() for name in transports]
-        # Warn about missing system config before entering TUI raw mode (LCM only).
-        if any(s.name == "lcm" for s in sources):
-            from dimos.protocol.service.lcmservice import autoconf
-
-            autoconf(check_only=True)
-
-        self.spy = TransportSpy(sources=sources)
-        # Default (all transports): a backend that fails to start is skipped so
-        # the spy still shows the others. An explicit --transport hard-fails.
-        self.spy.start(best_effort=transports is None)
+        self.spy = spy
         self.table: DataTable[Text] | None = None
 
     def compose(self) -> ComposeResult:
@@ -175,9 +157,6 @@ class SpyApp(App[None]):
 
     def on_mount(self) -> None:
         self.set_interval(self.refresh_interval, self.refresh_table)
-
-    async def on_unmount(self) -> None:
-        self.spy.stop()
 
     def refresh_table(self) -> None:
         table = self.table
@@ -222,9 +201,41 @@ class SpyApp(App[None]):
             )
 
 
+def start_spy(transports: list[str] | None = None) -> TransportSpy:
+    """Build sources for the requested transports and start a TransportSpy.
+
+    Runs before the TUI enters raw mode, so autoconf and degrade warnings
+    print to a normal terminal. transports=None means every available
+    transport, best-effort: a backend that fails to construct or start is
+    skipped with a warning so the spy still shows the others. An explicit
+    transport list is strict: unknown names and construction/start failures
+    are hard errors.
+    """
+    if transports is None:
+        sources = default_sources()
+    else:
+        validate_transport_names(transports)
+        # Construct only the requested sources: a filtered-out transport is
+        # never imported or instantiated, and an unavailable one that was
+        # explicitly requested stays a hard error.
+        sources = [SOURCE_FACTORIES[name]() for name in transports]
+    # Warn about missing system config before entering TUI raw mode (LCM only).
+    if any(s.name == "lcm" for s in sources):
+        from dimos.protocol.service.lcmservice import autoconf
+
+        autoconf(check_only=True)
+    spy = TransportSpy(sources=sources)
+    spy.start(best_effort=transports is None)
+    return spy
+
+
 def main() -> None:
     """Entry point for `dimos spy` (argv: --transport filters)."""
-    SpyApp(transports=_parse_transports(sys.argv[1:])).run()
+    spy = start_spy(_parse_transports(sys.argv[1:]))
+    try:
+        SpyApp(spy).run()
+    finally:
+        spy.stop()
 
 
 def lcm_only_argv(args: list[str]) -> list[str]:
