@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -168,19 +169,31 @@ def _safe_filename(value: str) -> str:
 
 
 def _unique_proposal_path(proposal_dir: Path, proposal_id: str) -> Path:
-    """Return a non-colliding proposal path, appending -1, -2, ... when needed.
+    """Return a non-colliding proposal path for ``proposal_id``.
 
-    A reused stable ``proposal_id`` (e.g. ``improve_navigation``) must not
-    silently overwrite an earlier review artifact. The JSON keeps the
-    author's ``proposal_id`` verbatim; only the filename is disambiguated.
+    The stem is anchored on a short digest of the *original* (un-sanitized)
+    ``proposal_id`` so that distinct ids never collapse onto the same file:
+    ``_safe_filename`` maps every non-alphanumeric character to ``_``, which
+    would otherwise make ``skill-v2`` and ``skill.v2`` share ``skill_v2.json``
+    and let a later proposal overwrite an earlier review artifact. With the
+    digest anchor, distinct ids land on distinct files; a genuine reuse of the
+    *same* id still disambiguates via ``-1``, ``-2``, ... The JSON keeps the
+    author's ``proposal_id`` verbatim; only the filename carries the digest.
     """
-    stem = _safe_filename(str(proposal_id))
+    stem = _proposal_stem(str(proposal_id))
     path = proposal_dir / f"{stem}.json"
     suffix = 1
     while path.exists():
         path = proposal_dir / f"{stem}-{suffix}.json"
         suffix += 1
     return path
+
+
+def _proposal_stem(proposal_id: str) -> str:
+    """Human-readable slug plus an injective digest of the original id."""
+    slug = _safe_filename(proposal_id)
+    digest = hashlib.sha1(proposal_id.strip().encode("utf-8")).hexdigest()[:8]
+    return f"{slug}-{digest}"
 
 
 __all__ = [

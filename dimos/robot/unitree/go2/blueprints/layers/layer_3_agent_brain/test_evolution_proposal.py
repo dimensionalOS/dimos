@@ -132,6 +132,50 @@ def test_record_skill_proposal_preserves_reused_proposal_id(
         _stop_modules(ledger)
 
 
+def test_record_skill_proposal_keeps_distinct_sanitized_ids_separate(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Distinct proposal_ids that sanitize to the same slug must not collide.
+
+    ``_safe_filename`` maps every non-alphanumeric character to ``_``, so
+    ``skill-v2`` and ``skill.v2`` both reduce to ``skill_v2``. They are
+    unrelated proposals and must land on distinct files — neither overwriting
+    the other, nor conflated as iterations (``-1``) of a single proposal.
+    """
+    ledger_dir = tmp_path / ".dimos" / "evolution"
+    monkeypatch.setenv("DIMOS_EVOLUTION_LEDGER_DIR", str(ledger_dir))
+    ledger = _Go2EvolutionLedger()
+    try:
+        dash = ledger.record_skill_proposal(
+            proposal_json=json.dumps(_proposal(proposal_id="skill-v2", title="Dash variant"))
+        )
+        dot = ledger.record_skill_proposal(
+            proposal_json=json.dumps(_proposal(proposal_id="skill.v2", title="Dot variant"))
+        )
+
+        assert dash.success is True
+        assert dot.success is True
+
+        dash_path = Path(dash.metadata["proposal_path"])
+        dot_path = Path(dot.metadata["proposal_path"])
+        assert dash_path != dot_path
+        assert dash_path.exists()
+        assert dot_path.exists()
+        # Neither is a ``-1`` iteration of the other: the digests anchored on
+        # the original ids differ, so both keep their unsuffixed base name.
+        assert dash_path.name != "skill_v2-1.json"
+        assert dot_path.name != "skill_v2-1.json"
+
+        dash_data = json.loads(dash_path.read_text())
+        dot_data = json.loads(dot_path.read_text())
+        assert dash_data["proposal_id"] == "skill-v2"
+        assert dot_data["proposal_id"] == "skill.v2"
+        assert dash_data["title"] == "Dash variant"
+        assert dot_data["title"] == "Dot variant"
+    finally:
+        _stop_modules(ledger)
+
+
 def test_record_skill_proposal_rejects_invalid_target(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("DIMOS_EVOLUTION_LEDGER_DIR", str(tmp_path / "ledger"))
     ledger = _Go2EvolutionLedger()
