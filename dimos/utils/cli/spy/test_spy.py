@@ -345,6 +345,20 @@ def test_transport_spy_tap_failure_stops_started_sources():
     assert not a.taps
 
 
+def test_transport_spy_stop_continues_past_failing_source(spy_warnings):
+    class FailingStopSource(FakeSource):
+        def stop(self) -> None:
+            raise RuntimeError("stop exploded")
+
+    a, b = FailingStopSource("lcm"), FakeSource("zenoh")
+    spy = TransportSpy(sources=[a, b])
+    spy.start()
+    spy.stop()  # must not raise, and must still stop the healthy source
+    assert not b.started
+    assert not a.taps and not b.taps
+    assert "stop exploded" in spy_warnings.text
+
+
 class _FailingStartSource(FakeSource):
     def start(self) -> None:
         raise RuntimeError("backend down")

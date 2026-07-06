@@ -304,11 +304,18 @@ class TransportSpy:
             )
 
     def stop(self) -> None:
+        """Untap and stop everything; an error in one source never skips the rest."""
         for untap in self._untaps:
-            untap()
+            try:
+                untap()
+            except Exception as exc:
+                logger.warning("Error untapping spy source", error=str(exc))
         self._untaps.clear()
         for source in self._live:
-            source.stop()
+            try:
+                source.stop()
+            except Exception as exc:
+                logger.warning("Error stopping spy source", transport=source.name, error=str(exc))
         self._live.clear()
 
     def snapshot(self) -> dict[SpyKey, TopicStats]:
