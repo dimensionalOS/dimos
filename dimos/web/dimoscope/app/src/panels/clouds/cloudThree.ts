@@ -4,6 +4,7 @@
 // three is loaded lazily (dynamic import) so it code-splits out of the main bundle, mirroring how the
 // Draco wasm is loaded. World is z-up (robot frame); height (z) drives the blue→amber colour ramp.
 import type * as THREE from "three";
+import { POINTS_FRAG, POINTS_VERT } from "./pointsShader";
 
 type Vec3 = [number, number, number];
 
@@ -18,26 +19,8 @@ export interface CloudTrio {
   dispose(): void;
 }
 
-const VERT = `
-uniform vec2 uZ;
-uniform float uSize;
-varying float vT;
-void main() {
-  vT = clamp((position.z - uZ.x) / max(0.001, uZ.y - uZ.x), 0.0, 1.0);
-  vec4 mv = modelViewMatrix * vec4(position, 1.0);
-  gl_PointSize = clamp(uSize * (12.0 / max(0.5, -mv.z)), 1.5, uSize + 1.5);  // small, mild depth cue
-  gl_Position = projectionMatrix * mv;
-}`;
-
-const FRAG = `
-varying float vT;
-void main() {
-  vec2 d = gl_PointCoord - vec2(0.5);
-  if (dot(d, d) > 0.25) discard;                       // round dot
-  vec3 lo = vec3(0.16, 0.42, 0.86);                    // blue (low)
-  vec3 hi = vec3(0.98, 0.75, 0.20);                    // amber (high)
-  gl_FragColor = vec4(mix(lo, hi, vT), 1.0);
-}`;
+const VERT = POINTS_VERT;
+const FRAG = POINTS_FRAG;
 
 /** Build the shared-camera three.js trio, or null if three / WebGL is unavailable (→ 2D fallback). */
 export async function createCloudTrio(

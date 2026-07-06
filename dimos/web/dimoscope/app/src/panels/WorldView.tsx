@@ -5,10 +5,12 @@ import { useEffect, useRef, useState } from "react";
 import type { TopicInfo } from "@dimos/react";
 import { useDimosClient, useTopicRef, useTopics, useTopicStats } from "../dimos";
 import { DRACO_TYPE } from "@dimos/web";
-import { type CloudLike, drawCloud, synthCloud } from "./clouds/drawCloud";
+import { type CloudLike, cloudExtent, cloudToXYZ, drawCloud, synthCloud } from "./clouds/drawCloud";
 import { decodeDracoGeometry } from "./clouds/dracoDecode";
+import { createWorldScene, type WorldScene } from "./worldThree";
 
 type LidarEnc = "raw" | "ds" | "draco";
+type ViewMode = "2d" | "3d";
 
 const LIDAR_CAP = 4000; // max points rendered per frame (stride-decimated)
 const DEFAULT_SCALE = 64; // px per metre at rest
@@ -100,12 +102,43 @@ export function WorldView() {
   const path = useTopicRef<any>(layers.path ? pathTopic : null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const gl3dRef = useRef<HTMLCanvasElement>(null);
   const trail = useRef<[number, number][]>([]);
   const goal = useRef<[number, number] | null>(null);
   // scale=px/m, (cx,cy)=world coords at canvas centre; follow=re-centre on the robot until the user pans/zooms.
   const view = useRef({ scale: DEFAULT_SCALE, cx: 0, cy: 0, follow: true });
 
+  // 2D top-down (default, best for click-to-goal) ⇄ 3D orbit scene. modeRef lets the rAF loops read it.
+  const [mode, setMode] = useState<ViewMode>("2d");
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const layersRef = useRef(layers);
+  layersRef.current = layers;
+  const sceneRef = useRef<WorldScene | null>(null);
+
+  // Ensure the Draco lidar frame is decoded (blob-identity trigger) and return the CloudLike the layer
+  // should render — shared by the 2D draw and the 3D feed (they run mutually-exclusively by mode).
+  const ensureLidarDraco = () => {
+    if (lidarEncRef.current !== "draco") return;
+    const env = lidar.current.data as { _draco?: Uint8Array } | undefined;
+    if (env?._draco && env._draco !== lidarBlob.current && !lidarDecoding.current) {
+      lidarDecoding.current = true;
+      lidarBlob.current = env._draco;
+      decodeDracoGeometry(env._draco)
+        .then((xyz) => {
+          if (xyz) lidarDraco.current = synthCloud(xyz);
+        })
+        .finally(() => (lidarDecoding.current = false));
+    }
+  };
+  const lidarCloud = (): CloudLike | null | undefined =>
+    lidarEncRef.current === "draco" ? lidarDraco.current : lidar.current.data;
+
   const recenter = () => {
+    if (modeRef.current === "3d") {
+      sceneRef.current?.reframe();
+      return;
+    }
     view.current.follow = true;
     view.current.scale = DEFAULT_SCALE;
   };
@@ -195,6 +228,7 @@ export function WorldView() {
 
     const draw = () => {
       raf = requestAnimationFrame(draw);
+      if (modeRef.current !== "2d") return; // 3D mode drives its own canvas
       const cw = cvs.clientWidth, ch = cvs.clientHeight;
       if (cw === 0 || ch === 0) return; // not laid out yet
       const dpr = window.devicePixelRatio || 1;
@@ -251,22 +285,9 @@ export function WorldView() {
       }
 
       // lidar PointCloud2 (world frame) — height-coloured top-down points (shared with CloudCompare).
-      // Draco encoding arrives as an envelope; decode per new blob → synthCloud → drawCloud.
-      if (lidarEncRef.current === "draco") {
-        const env = lidar.current.data as { _draco?: Uint8Array } | undefined;
-        if (env?._draco && env._draco !== lidarBlob.current && !lidarDecoding.current) {
-          lidarDecoding.current = true;
-          lidarBlob.current = env._draco;
-          decodeDracoGeometry(env._draco)
-            .then((xyz) => {
-              if (xyz) lidarDraco.current = synthCloud(xyz);
-            })
-            .finally(() => (lidarDecoding.current = false));
-        }
-        drawCloud(ctx, lidarDraco.current, W, H, LIDAR_CAP);
-      } else {
-        drawCloud(ctx, lidar.current.data, W, H, LIDAR_CAP);
-      }
+      // Draco arrives as an envelope; ensureLidarDraco decodes per new blob → synthCloud.
+      ensureLidarDraco();
+      drawCloud(ctx, lidarCloud(), W, H, LIDAR_CAP);
 
       const s = scan.current.data;
       if (s?.ranges) {
@@ -340,6 +361,116 @@ export function WorldView() {
     };
   }, [odom, map, lidar, scan, path]);
 
+  // 3D scene: lazily built the first time the user switches to 3D (keeps three.js code-split), then
+  // fed each frame from the same topic refs. Click-to-goal is a raycast onto the ground plane.
+  useEffect(() => {
+    const cvs = gl3dRef.current;
+    if (!cvs) return;
+    let alive = true;
+    let scene: WorldScene | null = null;
+    let ready = false;
+    let creating = false;
+    const ensureScene = () => {
+      if (scene || creating) return;
+      creating = true;
+      createWorldScene(cvs, cvs).then((s) => {
+        if (!alive) {
+          s?.dispose();
+          return;
+        }
+        scene = s;
+        ready = !!s?.ok;
+        sceneRef.current = s;
+        creating = false;
+      });
+    };
+
+    let framed = false;
+    let down = false, dx = 0, dy = 0, moved = 0;
+    const onDown = (e: PointerEvent) => {
+      down = true;
+      dx = e.clientX;
+      dy = e.clientY;
+      moved = 0;
+    };
+    const onMove = (e: PointerEvent) => {
+      if (down) moved = Math.max(moved, Math.hypot(e.clientX - dx, e.clientY - dy));
+    };
+    const onUp = (e: PointerEvent) => {
+      if (!down) return;
+      down = false;
+      if (moved < 4 && ready && scene && client) {
+        const g = scene.raycastGround(e.clientX, e.clientY);
+        if (g) {
+          goal.current = g;
+          client.navigate(g[0], g[1], 0);
+        }
+      }
+    };
+    cvs.addEventListener("pointerdown", onDown);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+
+    let raf = 0;
+    const feed = () => {
+      raf = requestAnimationFrame(feed);
+      if (modeRef.current !== "3d") return;
+      ensureScene();
+      if (!ready || !scene) return;
+      const L = layersRef.current;
+      const p = odom.current.data?.pose;
+      const rx = p?.position?.x ?? 0, ry = p?.position?.y ?? 0;
+      const yaw = p ? quatToYaw(p.orientation) : 0;
+      scene.setRobot(rx, ry, yaw, !!p && L.pose);
+      if (!framed && p) {
+        scene.reframe(); // nice 3/4 framing once the robot's position is known
+        framed = true;
+      }
+
+      ensureLidarDraco();
+      const cl = L.lidar ? lidarCloud() : null;
+      const xyz = cl ? cloudToXYZ(cl) : null;
+      let zr: [number, number] = [0, 1];
+      if (xyz) {
+        const e = cloudExtent(xyz);
+        zr = [e.zMin, e.zMax];
+      }
+      scene.setLidar(xyz, zr);
+
+      const s = L.scan ? scan.current.data : null;
+      if (s?.ranges) {
+        const pts = new Float32Array(s.ranges.length * 3);
+        let m = 0;
+        for (let i = 0; i < s.ranges.length; i++) {
+          const r = s.ranges[i];
+          if (!(r > s.range_min) || r >= s.range_max) continue;
+          const a = yaw + s.angle_min + i * s.angle_increment;
+          pts[m++] = rx + r * Math.cos(a);
+          pts[m++] = ry + r * Math.sin(a);
+          pts[m++] = 0.05;
+        }
+        scene.setScan(pts.subarray(0, m));
+      } else scene.setScan(null);
+
+      scene.setCostmap(L.map ? map.current.data : null);
+      scene.setPath(L.path ? path.current.data?.poses : null);
+      scene.setGoal(goal.current);
+      scene.render();
+    };
+    raf = requestAnimationFrame(feed);
+
+    return () => {
+      alive = false;
+      cancelAnimationFrame(raf);
+      cvs.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      scene?.dispose();
+      sceneRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client]);
+
   const tag = (l: string, t: string | null) => (t ? `${l}:${t}` : "");
   const title = [
     tag("pose", poseTopic),
@@ -372,16 +503,25 @@ export function WorldView() {
         style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}
       >
         <span>
-          WorldView · {title} · <span className="muted">scroll=zoom drag=pan click=goal</span>
+          WorldView · {title} ·{" "}
+          <span className="muted">
+            {mode === "3d" ? "drag=orbit scroll=zoom click=goal" : "scroll=zoom drag=pan click=goal"}
+          </span>
         </span>
-        <button
-          className="tab"
-          onClick={recenter}
-          title="recenter + follow robot"
-          style={{ padding: "2px 8px" }}
-        >
-          ⊙ recenter
-        </button>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <span className="enc-toggle" title="2D nav map ⇄ 3D orbit scene">
+            <button className={mode === "2d" ? "on" : ""} onClick={() => setMode("2d")}>2D</button>
+            <button className={mode === "3d" ? "on" : ""} onClick={() => setMode("3d")}>3D</button>
+          </span>
+          <button
+            className="tab"
+            onClick={recenter}
+            title={mode === "3d" ? "re-frame + follow robot" : "recenter + follow robot"}
+            style={{ padding: "2px 8px" }}
+          >
+            ⊙ recenter
+          </button>
+        </span>
       </div>
       {/* per-layer subscribe toggles — only for detected topics */}
       <div style={{ display: "flex", gap: 6, padding: "6px 10px 0", flexWrap: "wrap" }}>
@@ -428,7 +568,12 @@ export function WorldView() {
         <canvas
           ref={canvasRef}
           className="worldcanvas"
-          style={{ width: "100%", height: "100%", display: "block", cursor: "crosshair" }}
+          style={{ width: "100%", height: "100%", display: mode === "2d" ? "block" : "none", cursor: "crosshair" }}
+        />
+        <canvas
+          ref={gl3dRef}
+          className="worldcanvas"
+          style={{ width: "100%", height: "100%", display: mode === "3d" ? "block" : "none", cursor: "grab", touchAction: "none" }}
         />
       </div>
     </div>

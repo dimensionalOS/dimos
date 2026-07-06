@@ -111,6 +111,17 @@ a height legend, and a segmented `raw|ds|draco` control shared with WorldView (`
 `three ^0.169` + `@types/three` (three r169 ships no bundled types). Verified headless (SwiftShader):
 3 cells render + orbit together, frame-synced counts (raw == draco), badges live.
 
+### WorldView 3D scene (2026-07-06)
+WorldView gained a **2D / 3D toggle** (`app/src/panels/worldThree.ts` + `WorldView.tsx`). The 2D
+top-down nav map stays default (best for precise click-to-goal + follow-robot); 3D is an orbit scene
+fusing every layer: lidar cloud (height ramp, honoring the raw/ds/draco toggle), laser scan, the
+**costmap as a canvas-textured ground plane**, the path line, an **oriented robot marker** (a
+`0.7×0.31×0.4 m` box from the Go2 URDF + heading cone — no browser mesh exists) with a trail, and a
+goal ring. Camera follows the robot; **click-to-goal raycasts the z=0 plane** → `client.navigate`.
+Reuses the shared point shader (`clouds/pointsShader.ts`) + the cloudThree camera/orbit/grid pattern;
+three.js loads lazily **only when 3D is first opened**, staying code-split (main chunk +2.4 KB gzip
+only). Verified headless (SwiftShader): all layers render, orbit works, 2D↔3D toggles.
+
 ## Gaps / pending
 - **WebRTC (local)**: ICE fails on the Mac LAN (`webrtc-ice: no such remote` — the v4-mapping issue
   from the sidecar notes); ratios are transport-independent (identical on WS/WT) so this is a local
