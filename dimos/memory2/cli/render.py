@@ -28,6 +28,8 @@ import shutil
 import subprocess
 from typing import TYPE_CHECKING
 
+from dimos.utils.data import resolve_named_path
+
 if TYPE_CHECKING:
     from dimos.memory2.store.base import Store
 
@@ -38,8 +40,6 @@ def open_store(path: str) -> Store:
     Bare names resolve like the other db verbs: cwd, then ``data/``, then an
     LFS pull — defaulting to ``.db`` unless the name says ``.mcap``.
     """
-    from dimos.utils.data import resolve_named_path
-
     resolved = resolve_named_path(path, ".mcap" if str(path).endswith(".mcap") else ".db")
     if resolved.suffix == ".mcap":
         from dimos.robot.unitree.go2.dds.store import Go2McapStore  # lazy: robot-layer codec set

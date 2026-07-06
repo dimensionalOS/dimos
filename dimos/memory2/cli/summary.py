@@ -20,48 +20,46 @@ Usage:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import json
+from math import log
+import sqlite3
 from typing import TYPE_CHECKING, Any
 
 import typer
+
+from dimos.utils.colors import HEAT_GRADIENT_ANSI256
+from dimos.utils.data import resolve_named_path
+from dimos.utils.human import human_bytes
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from dimos.memory2.stream import Stream
 
-# Heavy dimos imports (memory2 store → codecs, msgs) are deferred into the
-# function bodies so that `dimos --help` — which imports this module just to
+# Heavy dimos imports (memory2 store → codecs, msgs) and rich are deferred into
+# the function bodies so that `dimos --help` — which imports this module just to
 # register the `mem summary` command — stays fast. See test_cli_startup.py.
 
 
-def _stream_payload_types(db_path: Path) -> dict[str, type]:
+def stream_payload_types(db_path: Path) -> dict[str, type]:
     """Read each stream's registered payload type from the _streams table."""
-    import json
-    import sqlite3
-
-    from dimos.memory2.codecs.base import _resolve_payload_type
+    from dimos.memory2.codecs.base import resolve_payload_type
 
     conn = sqlite3.connect(str(db_path))
     try:
         rows = conn.execute("SELECT name, config FROM _streams").fetchall()
     finally:
         conn.close()
-    return {name: _resolve_payload_type(json.loads(cfg)["payload_module"]) for name, cfg in rows}
-
-
-# ANSI 256 gradient: red -> orange -> yellow -> green (same as the pubsub
-# benchmark heatmaps in dimos/protocol/pubsub/benchmark/type.py).
-_GRADIENT = [52, 88, 124, 160, 196, 202, 208, 214, 220, 226, 190, 154, 148, 118, 82, 46, 40, 34]
+    return {name: resolve_payload_type(json.loads(cfg)["payload_module"]) for name, cfg in rows}
 
 
 def _shade(value: float, lo: float, hi: float) -> str:
     """Rich style for ``value`` relative to [lo, hi], log-scaled (columns span decades)."""
-    from math import log
-
     if value <= 0:
         return "dim"
     t = 0.5 if hi <= lo else (log(value) - log(lo)) / (log(hi) - log(lo))
-    return f"color({_GRADIENT[round(t * (len(_GRADIENT) - 1))]})"
+    return f"color({HEAT_GRADIENT_ANSI256[round(t * (len(HEAT_GRADIENT_ANSI256) - 1))]})"
 
 
 def _heat(text: str, value: float, column: list[float]) -> str:
@@ -75,18 +73,14 @@ def main(
     dataset: str = typer.Argument(..., help="Dataset .db: bare name (cwd or data/) or path"),
 ) -> None:
     """Print per-stream counts, time ranges, and payload sizes for a recorded SQLite dataset."""
-    from datetime import datetime, timezone
-
     from rich.console import Console
     from rich.progress import Progress
     from rich.table import Table
 
     from dimos.memory2.store.sqlite import SqliteStore
-    from dimos.utils.data import resolve_named_path
-    from dimos.utils.human import human_bytes
 
     db_path = resolve_named_path(dataset, ".db")
-    payload_types = _stream_payload_types(db_path)
+    payload_types = stream_payload_types(db_path)
 
     rows: list[tuple[str, int, float | None, float | None, int]] = []
     store = SqliteStore(path=str(db_path))
