@@ -89,7 +89,7 @@ class TopicStats:
         """history_window: seconds of per-message history kept for windowed stats.
 
         total_bytes/total_msgs/last_seen survive eviction; only windowed stats
-        (freq/bytes_per_sec/avg_size) forget evicted messages.
+        (freq/bytes_per_sec) forget evicted messages.
         """
         self.history_window = history_window
         self._history: deque[tuple[float, int]] = deque()  # (timestamp, nbytes)
@@ -123,11 +123,6 @@ class TopicStats:
         """Payload bytes per second over [now - window, now]. 0.0 if none."""
         msgs = self._in_window(window, now)
         return sum(n for _, n in msgs) / window if msgs else 0.0
-
-    def avg_size(self, window: float, now: float) -> float:
-        """Mean payload size in bytes over [now - window, now]. 0.0 if none."""
-        msgs = self._in_window(window, now)
-        return sum(n for _, n in msgs) / len(msgs) if msgs else 0.0
 
 
 @runtime_checkable

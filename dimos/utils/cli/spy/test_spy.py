@@ -71,7 +71,6 @@ def test_topic_stats_windowed_rates():
     now = t0 + 9.0
     assert s.freq(5.0, now) == pytest.approx(1.0, rel=0.25)
     assert s.bytes_per_sec(5.0, now) == pytest.approx(50.0, rel=0.25)
-    assert s.avg_size(5.0, now) == pytest.approx(50.0)
 
 
 def test_topic_stats_empty():
@@ -81,7 +80,6 @@ def test_topic_stats_empty():
     assert s.last_seen is None
     assert s.freq(5.0, now=123.0) == 0.0
     assert s.bytes_per_sec(5.0, now=123.0) == 0.0
-    assert s.avg_size(5.0, now=123.0) == 0.0
 
 
 def test_topic_stats_history_eviction_keeps_totals():
