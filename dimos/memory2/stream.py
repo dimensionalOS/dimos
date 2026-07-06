@@ -500,7 +500,15 @@ class Stream(CompositeResource, Generic[T, O]):
         """Total stored payload bytes, or None if unknown or the query narrows the stream."""
         from dimos.memory2.backend import Backend
 
-        if self._query.filters or self._query.limit_val is not None:
+        q = self._query
+        narrowed = (
+            q.filters
+            or q.limit_val is not None
+            or q.offset_val
+            or q.search_vec is not None
+            or q.search_text is not None
+        )
+        if narrowed:
             return None
         if isinstance(self._source, Backend):
             return self._source.size_bytes()

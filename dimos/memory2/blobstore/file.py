@@ -73,4 +73,4 @@ class FileBlobStore(BlobStore):
         stream_dir = self._root / stream_name
         if not stream_dir.is_dir():
             return 0
-        return sum(p.stat().st_size for p in stream_dir.iterdir())
+        return sum(p.stat().st_size for p in stream_dir.glob("*.bin") if p.is_file())
