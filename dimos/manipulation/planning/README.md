@@ -79,7 +79,7 @@ module = ManipulationModule(
     planning_timeout=10.0,
     enable_viz=True,
     planner_name="rrt_connect",           # Only option
-    kinematics_name="drake_optimization", # Or "jacobian"
+    kinematics={"backend": "drake_optimization"}, # Or "jacobian" / "pink"
 )
 module.start()
 module.plan_to_joints([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7])
@@ -117,6 +117,17 @@ module.execute()  # Sends to coordinator
 |--------|------|-------------|
 | `JacobianIK` | Backend-agnostic | Iterative damped least-squares |
 | `DrakeOptimizationIK` | Drake-specific | Full nonlinear optimization |
+| `PinkIK` | Pinocchio/Pink | Local differential IK with task QP composition |
+
+`PinkIK` is selectable with `kinematics={"backend": "pink"}` or the CLI override
+`-o manipulationmodule.kinematics.backend=pink`. Pink tuning fields are nested
+under the same config, for example
+`-o manipulationmodule.kinematics.max_iterations=100`. It is installed with the
+`manipulation` optional dependencies, which include the PyPI package `pin-pink`
+(import name `pink`) and a `qpsolvers` backend (`proxqp`). Pink is
+local/differential rather than global IK, so it can converge to local minima;
+collision checks remain enforced by the planning world before a candidate is
+accepted.
 
 ### World Backends
 
@@ -131,6 +142,7 @@ module.execute()  # Sends to coordinator
 | `xarm6_planner_only` | XArm 6-DOF standalone (no coordinator) |
 | `xarm7-planner-coordinator` | XArm 7-DOF with coordinator |
 | `dual-xarm6-planner` | Dual XArm 6-DOF |
+| `xarm-perception-sim` | XArm 7-DOF simulation perception stack |
 
 ## Directory Structure
 
@@ -142,7 +154,8 @@ planning/
 │   └── drake_world.py       # DrakeWorld implementation
 ├── kinematics/
 │   ├── jacobian_ik.py       # Backend-agnostic Jacobian IK
-│   └── drake_optimization_ik.py  # Drake nonlinear IK
+│   ├── drake_optimization_ik.py  # Drake nonlinear IK
+│   └── pink_ik.py           # Optional Pink differential IK
 ├── planners/
 │   └── rrt_planner.py       # RRTConnectPlanner
 ├── monitor/                 # WorldMonitor (live state sync)

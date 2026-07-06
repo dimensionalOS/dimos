@@ -48,7 +48,7 @@ logger = setup_logger()
 
 _NUM_MOTORS = 29
 
-_READY_WAIT_TIMEOUT_S = 60.0
+_READY_WAIT_TIMEOUT_S = 180.0
 _READY_WAIT_POLL_S = 0.1
 _ATTACH_RETRY_TIMEOUT_S = 30.0
 _ATTACH_RETRY_POLL_S = 0.2
@@ -192,6 +192,3 @@ class SimMujocoG1WholeBodyAdapter:
 def register(registry: WholeBodyAdapterRegistry) -> None:
     """Register with the whole-body adapter registry."""
     registry.register("sim_mujoco_g1", SimMujocoG1WholeBodyAdapter)
-
-
-__all__ = ["SimMujocoG1WholeBodyAdapter"]

@@ -64,12 +64,12 @@ WAYLAND_DISPLAY=wayland-0 XDG_SESSION_TYPE=wayland \
 ```
 
 All three use the `flowbase` adapter against `172.6.2.20:11323` and
-publish/subscribe on LCM `/cmd_vel` + `/coordinator/joint_state`.
+publish/subscribe on LCM `/cmd_vel` + `/coordinator_joint_state`.
 
 ### Blueprint notes
 
 - **`coordinator-flowbase-nav`** composes `FastLio2` SLAM +
-  `create_nav_stack(planner="simple")` + `MovementManager` (for click
+  `create_cmu_nav(planner="simple")` + `MovementManager` (for click
   forwarding and tele/nav velocity mux) + `ControlCoordinator` with the
   FlowBase adapter as the driver. Mirrors `unitree-g1-nav-onboard` for the
   perception/planning half. Click anywhere on the floor in the Rerun 3D

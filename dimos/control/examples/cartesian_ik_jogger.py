@@ -188,12 +188,12 @@ def run_jogger_ui(model_path: str | None = None, ee_joint_id: int = 6) -> None:
         model_path = _get_piper_model_path()
 
     print("Starting Cartesian IK Jogger UI...")
-    print("Publishing to /coordinator/cartesian_command")
+    print("Publishing to /coordinator_cartesian_command")
     print("(Coordinator must be running separately to receive commands)")
 
     # Create LCM publisher for sending cartesian commands
     transport: LCMTransport[PoseStamped] = LCMTransport(
-        "/coordinator/cartesian_command", PoseStamped
+        "/coordinator_cartesian_command", PoseStamped
     )
 
     # Initialize pygame

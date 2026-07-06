@@ -17,27 +17,9 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.mapping.costmapper import costmap_to_rerun
 from dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic import unitree_go2_agentic
+from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
 from dimos.visualization.vis_module import vis_module
-
-
-def _convert_camera_info(camera_info: Any) -> Any:
-    return camera_info.to_rerun(
-        image_topic="/world/color_image",
-        optical_frame="camera_optical",
-    )
-
-
-def _static_base_link(rr: Any) -> list[Any]:
-    return [
-        rr.Boxes3D(
-            half_sizes=[0.35, 0.155, 0.2],
-            colors=[(0, 255, 127)],
-            fill_mode="wireframe",
-        ),
-        rr.Transform3D(parent_frame="tf#/base_link"),
-    ]
 
 
 def _go2_rerun_blueprint() -> Any:
@@ -63,20 +45,10 @@ def _go2_rerun_blueprint() -> Any:
     )
 
 
-_rerun_config = {
-    "blueprint": _go2_rerun_blueprint,
-    "visual_override": {
-        "world/camera_info": _convert_camera_info,
-        "world/navigation_costmap": costmap_to_rerun,
-    },
-    "static": {
-        "world/tf/base_link": _static_base_link,
-    },
-}
-
 unitree_go2_security = autoconnect(
     unitree_go2_agentic,
-    vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config),
+    vis_module(
+        viewer_backend=global_config.viewer,
+        rerun_config={**rerun_config, "blueprint": _go2_rerun_blueprint},
+    ),
 )
-
-__all__ = ["unitree_go2_security"]

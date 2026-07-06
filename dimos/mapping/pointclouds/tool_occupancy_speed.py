@@ -1,0 +1,36 @@
+# Copyright 2025-2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import pickle
+
+from dimos.mapping.voxels import VoxelGrid
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.utils.data import get_data_dir
+from dimos.utils.testing.replay import TimedSensorReplay
+
+
+def test_build_map():
+    grid = VoxelGrid()
+
+    replay: TimedSensorReplay[PointCloud2] = TimedSensorReplay("go2_bigoffice/lidar")
+    for _ts, frame in replay.iterate_ts():
+        grid.add_frame(frame)
+
+    pickle_file = get_data_dir() / "unitree_go2_bigoffice_map.pickle"
+    global_pcd = grid.get_global_pointcloud2()
+
+    with open(pickle_file, "wb") as f:
+        pickle.dump(global_pcd, f)
+
+    grid.dispose()

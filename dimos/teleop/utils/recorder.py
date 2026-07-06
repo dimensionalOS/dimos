@@ -61,7 +61,7 @@ class TeleopRecorder(Recorder):
 
     left_controller_output: In[PoseStamped]
     right_controller_output: In[PoseStamped]
-    buttons: In[Buttons]
+    teleop_buttons: In[Buttons]
     cmd_vel_stamped: In[TwistStamped]
     video_stats: In[VideoStats]
     config: TeleopRecorderConfig
@@ -88,6 +88,3 @@ class TeleopRecorder(Recorder):
                 generate_report(db_path)
             except Exception:
                 logger.exception("generate_report failed for %s", db_path)
-
-
-__all__ = ["TeleopRecorder", "TeleopRecorderConfig"]
