@@ -20,27 +20,30 @@ Usage:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import json
+from math import log
+import sqlite3
 from typing import TYPE_CHECKING, Any
 
 import typer
 
 from dimos.utils.colors import HEAT_GRADIENT_ANSI256
+from dimos.utils.data import resolve_named_path
+from dimos.utils.human import human_bytes
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from dimos.memory2.stream import Stream
 
-# Heavy dimos imports (memory2 store → codecs, msgs) are deferred into the
-# function bodies so that `dimos --help` — which imports this module just to
+# Heavy dimos imports (memory2 store → codecs, msgs) and rich are deferred into
+# the function bodies so that `dimos --help` — which imports this module just to
 # register the `mem summary` command — stays fast. See test_cli_startup.py.
 
 
 def stream_payload_types(db_path: Path) -> dict[str, type]:
     """Read each stream's registered payload type from the _streams table."""
-    import json
-    import sqlite3
-
     from dimos.memory2.codecs.base import resolve_payload_type
 
     conn = sqlite3.connect(str(db_path))
@@ -53,8 +56,6 @@ def stream_payload_types(db_path: Path) -> dict[str, type]:
 
 def _shade(value: float, lo: float, hi: float) -> str:
     """Rich style for ``value`` relative to [lo, hi], log-scaled (columns span decades)."""
-    from math import log
-
     if value <= 0:
         return "dim"
     t = 0.5 if hi <= lo else (log(value) - log(lo)) / (log(hi) - log(lo))
@@ -72,15 +73,11 @@ def main(
     dataset: str = typer.Argument(..., help="Dataset .db: bare name (cwd or data/) or path"),
 ) -> None:
     """Print per-stream counts, time ranges, and payload sizes for a recorded SQLite dataset."""
-    from datetime import datetime, timezone
-
     from rich.console import Console
     from rich.progress import Progress
     from rich.table import Table
 
     from dimos.memory2.store.sqlite import SqliteStore
-    from dimos.utils.data import resolve_named_path
-    from dimos.utils.human import human_bytes
 
     db_path = resolve_named_path(dataset, ".db")
     payload_types = stream_payload_types(db_path)

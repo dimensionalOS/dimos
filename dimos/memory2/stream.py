@@ -26,6 +26,7 @@ else:
     from typing_extensions import TypeVar
 
 from dimos.core.resource import CompositeResource
+from dimos.memory2.backend import Backend
 from dimos.memory2.buffer import BackpressureBuffer, KeepLast
 from dimos.memory2.transform import FnIterTransformer, FnTransformer, Transformer
 from dimos.memory2.type.filter import (
@@ -41,6 +42,7 @@ from dimos.memory2.type.filter import (
 )
 from dimos.memory2.type.observation import EmbeddedObservation, Observation
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.utils.human import human_bytes
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -49,7 +51,6 @@ if TYPE_CHECKING:
     import reactivex
     from reactivex.abc import DisposableBase, ObserverBase
 
-    from dimos.memory2.backend import Backend
     from dimos.models.embedding.base import Embedding
 
 T = TypeVar("T")
@@ -498,8 +499,6 @@ class Stream(CompositeResource, Generic[T, O]):
 
     def size_bytes(self) -> int | None:
         """Total stored payload bytes, or None if unknown or the query narrows the stream."""
-        from dimos.memory2.backend import Backend
-
         q = self._query
         narrowed = (
             q.filters
@@ -517,8 +516,6 @@ class Stream(CompositeResource, Generic[T, O]):
     def summary(self) -> str:
         """Return a short human-readable summary: count, time range, avg frequency, size."""
         from datetime import datetime, timezone
-
-        from dimos.utils.human import human_bytes
 
         sz = self.size_bytes()
         size = f", {human_bytes(sz)}" if sz is not None else ""

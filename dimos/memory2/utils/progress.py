@@ -50,6 +50,7 @@ class ProgressBar:
     """Callable per-observation progress; ``close()`` finalizes an unfinished bar."""
 
     def __init__(self, total: int, label: str = "") -> None:
+        # lazy: keep rich off the CLI startup path (see test_cli_startup.py)
         from rich.progress import (
             BarColumn,
             MofNCompleteColumn,
