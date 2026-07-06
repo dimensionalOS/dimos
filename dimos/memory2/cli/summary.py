@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 # register the `mem summary` command — stays fast. See test_cli_startup.py.
 
 
-def _stream_payload_types(db_path: Path) -> dict[str, type]:
+def stream_payload_types(db_path: Path) -> dict[str, type]:
     """Read each stream's registered payload type from the _streams table."""
     import json
     import sqlite3
@@ -83,7 +83,7 @@ def main(
     from dimos.utils.human import human_bytes
 
     db_path = resolve_named_path(dataset, ".db")
-    payload_types = _stream_payload_types(db_path)
+    payload_types = stream_payload_types(db_path)
 
     rows: list[tuple[str, int, float | None, float | None, int]] = []
     store = SqliteStore(path=str(db_path))

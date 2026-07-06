@@ -175,7 +175,7 @@ def main(
 ) -> None:
     """Dump a recording to .rrd (lidar clouds + camera frames) and open it in rerun."""
     from dimos.mapping.voxels import VoxelMapTransformer
-    from dimos.memory2.cli.summary import _stream_payload_types
+    from dimos.memory2.cli.summary import stream_payload_types
     from dimos.memory2.store.sqlite import SqliteStore
     from dimos.memory2.transform import throttle
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -192,7 +192,7 @@ def main(
 
     # Resolve which streams to voxelize: all PointCloud2 streams, or the
     # explicit --map-source subset. Validate up front so typos fail fast.
-    pc_streams = [n for n, t in _stream_payload_types(db_path).items() if t is PointCloud2]
+    pc_streams = [n for n, t in stream_payload_types(db_path).items() if t is PointCloud2]
     map_sources = list(map_source) or pc_streams
     if (map or map_final) and (bad := [s for s in map_sources if s not in pc_streams]):
         raise typer.BadParameter(f"--map-source: not PointCloud2 stream(s): {', '.join(bad)}")
