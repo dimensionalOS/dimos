@@ -21,9 +21,6 @@ raw-bytes pubsub layer (LCMPubSubBase, ZenohPubSubBase — beneath the encoder
 mixins), so the hot path per message is (topic string, payload length,
 timestamp) and nothing else. Message *types* are still visible because they
 are embedded in the topic string ("/cmd_vel#geometry_msgs.Twist").
-
-Decoding is a separate, per-topic, opt-in concern: SpySource.subscribe_decoded
-is the spec'd hook, not implemented in v1.
 """
 
 from __future__ import annotations
@@ -281,7 +278,10 @@ class TransportSpy:
                 except Exception as exc:
                     if not best_effort:
                         raise
-                    print(f"spy: skipping transport {source.name!r}: {exc}", file=sys.stderr)
+                    print(
+                        f"spy: skipping transport {source.name!r}: {exc}",
+                        file=sys.stderr,
+                    )
         except BaseException:
             self.stop()  # roll back everything started so far, then propagate
             raise
