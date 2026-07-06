@@ -399,19 +399,30 @@ class McpServer(Module):
         # TODO: this is a bit hacky, also not thread-safe
         assert self.rpc is not None
         skills: list[SkillInfo] = []
+        func_to_remote: dict[str, str] = {}
         for module in modules:
-            if getattr(module, "remote_name", None) == self.__class__.__name__:
-                skills.extend(self.get_skills())
+            remote_name = getattr(module, "remote_name", None)
+            if remote_name == self.__class__.__name__:
+                own_skills = self.get_skills()
+                skills.extend(own_skills)
+                for s in own_skills:
+                    func_to_remote[s.func_name] = remote_name
             elif actor_class := getattr(module, "actor_class", None):
-                skills.extend(_skill_infos_from_class(actor_class))
+                module_skills = _skill_infos_from_class(actor_class)
+                skills.extend(module_skills)
+                for s in module_skills:
+                    func_to_remote[s.func_name] = remote_name
             else:
-                skills.extend(module.get_skills() or [])
+                module_skills = module.get_skills() or []
+                skills.extend(module_skills)
+                for s in module_skills:
+                    func_to_remote[s.func_name] = remote_name
 
         app.state.skills = skills
         app.state.skills_by_name = {s.func_name: s for s in app.state.skills}
         app.state.rpc_calls = {
             skill_info.func_name: RpcCall(
-                None, self.rpc, skill_info.func_name, skill_info.class_name, []
+                None, self.rpc, skill_info.func_name, func_to_remote[skill_info.func_name], []
             )
             for skill_info in app.state.skills
         }
