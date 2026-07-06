@@ -26,6 +26,7 @@ from pathlib import Path as FilePath
 import threading
 import time
 from typing import Any
+from urllib.parse import quote
 import webbrowser
 
 from dimos_lcm.std_msgs import Bool
@@ -227,6 +228,8 @@ from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.utils.logging_config import setup_logger
 
+from dimos.visualization.rerun.constants import RERUN_GRPC_PORT, RERUN_WEB_VIEWER_PORT
+
 from .optimized_costmap import OptimizedCostmapEncoder
 
 logger = setup_logger()
@@ -423,7 +426,16 @@ class WebsocketVisModule(Module):
                 self.config.g.viewer == "rerun" and self.config.g.rerun_open in ("web", "both")
             ):
                 return RedirectResponse(url="/command-center")
-            return FileResponse(_DASHBOARD_HTML, media_type="text/html")
+            # Resolve the Rerun host the same way the bridge does — honour
+            # DIMOS_RERUN_HOST / --rerun-host when set, otherwise use the
+            # listen address of *this* server.
+            host = self.config.g.rerun_host or self.config.g.listen_host
+            proxy_url = f"rerun+http://{host}:{RERUN_GRPC_PORT}/proxy"
+            iframe_src = f"http://{host}:{RERUN_WEB_VIEWER_PORT}/?url={quote(proxy_url, safe='')}"
+            html = _DASHBOARD_HTML.read_text(encoding="utf-8").replace(
+                "{{RERUN_IFRAME_URL}}", iframe_src
+            )
+            return HTMLResponse(html)
 
         async def serve_command_center(request):  # type: ignore[no-untyped-def]
             """Serve the command center 2D visualization (built React app)."""
