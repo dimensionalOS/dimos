@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import Annotated, Any
 
 from pydantic import BeforeValidator
 
@@ -31,9 +31,6 @@ from dimos.memory2.utils.sqlite import open_disposable_sqlite_connection
 from dimos.memory2.utils.validation import validate_identifier
 from dimos.memory2.vectorstore.base import VectorStore
 from dimos.memory2.vectorstore.sqlite import SqliteVectorStore
-
-if TYPE_CHECKING:
-    from dimos.memory2.db_tf import DbTf
 
 
 class SqliteStoreConfig(StoreConfig):
@@ -63,17 +60,6 @@ class SqliteStore(Store):
                 os.makedirs(parent, exist_ok=True)
         self._registry_conn = self._open_connection()
         self._registry = RegistryStore(conn=self._registry_conn)
-
-    @property
-    def tf(self) -> DbTf:
-        """Transform lookups over the sqlite graph stream (see :class:`DbTfSql`):
-        indexed per-lookup queries + loop-closure deformation correction, rather than
-        the base :class:`DbTfLive` in-RAM buffer."""
-        if self._tf is None:
-            from dimos.memory2.db_tf_sql import DbTfSql
-
-            self._tf = DbTfSql(self)
-        return self._tf
 
     def _open_connection(self) -> sqlite3.Connection:
         """Open a new WAL-mode connection with sqlite-vec loaded."""

@@ -373,7 +373,7 @@ class PubSubTFConfig(TFConfig):
     topic: Topic | None = None  # Required field but needs default for dataclass inheritance
     # Optional per-keyframe loop-closure deformation stream (e.g. gsc_pgo's
     # tf_deformation_nodes). When wired, get()/lookup() return loop-closure-corrected
-    # transforms live, matching the recorded DbTfSql behaviour. Unset = raw tf only.
+    # transforms live. Unset = raw tf only.
     deformation_topic: Topic | None = None
     pubsub: type[PubSub] | PubSub | None = None  # type: ignore[type-arg]
     autostart: bool = True

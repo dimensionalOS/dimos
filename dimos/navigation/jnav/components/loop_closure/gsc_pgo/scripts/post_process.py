@@ -73,6 +73,7 @@ from dimos.navigation.jnav.utils.apriltags import (
     detect_raw_detections,
     view_quality,
 )
+from dimos.navigation.jnav.utils.recording_tf import RecordingTF
 
 VISIT_GAP_S = 30.0
 WHAT = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else "both"
@@ -110,7 +111,6 @@ LCM_OUTLIER_STD = 2.0  # ...and std-ratio threshold (lower = more aggressive)
 LIDAR_FRAME = arg("--lidar-frame", "mid360_link")  # frame the raw lidar scans live in
 WORLD_FRAME = arg("--world-frame", "world")  # frame to register scans into
 USE_TF = "--no-tf" not in sys.argv  # world-register via recording tf (fallback: obs.pose)
-TF_TOL = float(arg("--tf-tol", "0.5"))  # max seconds to the nearest recorded transform
 
 # Per-glimpse gates (speed == -1 means "unknown" and always passes).
 GATE = dict(
@@ -175,7 +175,8 @@ def transform_matrix(transform):
     return rotation, translation
 
 
-_TF_AVAILABLE = USE_TF and store.tf.has_transforms()
+_STORE_TF = RecordingTF.from_store(store) if USE_TF else None
+_TF_AVAILABLE = _STORE_TF is not None
 
 
 def world_points(observation):
@@ -193,8 +194,11 @@ def world_points(observation):
     scan_frame = getattr(observation.data, "frame_id", "") or LIDAR_FRAME
     if scan_frame == WORLD_FRAME:
         return points  # already world-registered per its own header
-    if _TF_AVAILABLE:
-        transform = store.tf.get(WORLD_FRAME, scan_frame, float(observation.ts), TF_TOL)
+    if _STORE_TF is not None:
+        # tolerance=None -> nearest recorded sample per edge; RecordingTF keeps the
+        # whole recording buffered, so one-shot static frames stay resolvable and the
+        # densely-sampled odom->base_link edge lands within a few ms of the scan.
+        transform = _STORE_TF.get(WORLD_FRAME, scan_frame, float(observation.ts), None)
         if transform is not None:
             rotation, translation = transform_matrix(transform)
             return points @ rotation.T + translation

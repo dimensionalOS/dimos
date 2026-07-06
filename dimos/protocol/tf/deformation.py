@@ -23,8 +23,8 @@ a query-time correction on a raw edge transform:
   delta(t) = slerp/lerp blend of the two keyframes bracketing t
   corrected_edge = delta(t) ∘ raw_edge
 
-Used by both the recorded path (:class:`DbTfSql`) and the live path
-(:class:`PubSubTF`); the SE(3) helpers are shared so the two stay identical.
+Used by the live tf path (:class:`PubSubTF`) so that a running consumer's
+tf lookups reflect loop-closure corrections as the optimizer republishes nodes.
 """
 
 from __future__ import annotations
@@ -88,8 +88,7 @@ class DeformationBuffer:
 
     Feed it :class:`DeformationNode` messages via :meth:`receive`; it keeps, per node,
     the original (first-seen) and current (latest) pose. :meth:`correct` applies the
-    blended loop-closure delta to a raw edge transform at a query time. This is the
-    live-path analogue of the DB-backed correction in :class:`DbTfSql`."""
+    blended loop-closure delta to a raw edge transform at a query time."""
 
     def __init__(self) -> None:
         # tf_id -> node_id -> [original_4x4, current_4x4, keyframe_ts]
