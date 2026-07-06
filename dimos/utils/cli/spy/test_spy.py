@@ -33,7 +33,8 @@ import pytest
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import ZenohPubSubBase
-from dimos.protocol.pubsub.spy import (
+from dimos.protocol.service.zenohservice import ZenohSessionPool
+from dimos.utils.cli.spy.core import (
     SOURCE_FACTORIES,
     LCMSpySource,
     SpyKey,
@@ -43,7 +44,6 @@ from dimos.protocol.pubsub.spy import (
     default_sources,
     split_type_suffix,
 )
-from dimos.protocol.service.zenohservice import ZenohSessionPool
 
 VEC = Vector3(1.0, 2.0, 3.0)
 VEC_BYTES = VEC.lcm_encode()
@@ -391,7 +391,7 @@ def test_default_sources_errors_when_no_backend_available(monkeypatch):
 
 
 def test_fake_source_satisfies_protocol():
-    from dimos.protocol.pubsub.spy import SpySource
+    from dimos.utils.cli.spy.core import SpySource
 
     assert isinstance(FakeSource("x"), SpySource)
 

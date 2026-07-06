@@ -19,8 +19,8 @@ from typing import Any
 
 import pytest
 
-from dimos.protocol.pubsub.spy import SOURCE_FACTORIES
 from dimos.utils.cli.spy import run_spy
+from dimos.utils.cli.spy.core import SOURCE_FACTORIES
 from dimos.utils.cli.spy.run_spy import SpyApp, _lcm_only_argv, _parse_transports
 
 

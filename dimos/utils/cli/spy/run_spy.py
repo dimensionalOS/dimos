@@ -35,7 +35,8 @@ from textual.app import App, ComposeResult
 from textual.color import Color
 from textual.widgets import DataTable
 
-from dimos.protocol.pubsub.spy import (
+from dimos.utils.cli import theme
+from dimos.utils.cli.spy.core import (
     SOURCE_FACTORIES,
     SpyKey,
     TopicStats,
@@ -43,7 +44,6 @@ from dimos.protocol.pubsub.spy import (
     default_sources,
     split_type_suffix,
 )
-from dimos.utils.cli import theme
 from dimos.utils.human import human_bytes
 
 # Rows older than this (seconds since last message) render dimmed as "stale".
