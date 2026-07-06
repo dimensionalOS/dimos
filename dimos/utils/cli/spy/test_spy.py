@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Contract tests for `dimos spy` (TASK.md on branch agent/spy-architect).
+"""Contract tests for the spy core (`dimos spy`).
 
-These encode the acceptance criteria and FAIL until the task is implemented:
 - TopicStats: deterministic windowed stats from injected timestamps.
 - subscribe_all: LCM delivers every message (non-conflating regex '.*').
 - SpySources: count every message without ever decoding a payload.
