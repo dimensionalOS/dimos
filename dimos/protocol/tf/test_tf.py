@@ -20,11 +20,15 @@ import time
 
 import pytest
 
+from dimos.memory2.store.memory import MemoryStore
+from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory2.tf import StreamTF
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.protocol.tf.tf import TF, MultiTBuffer, TBuffer
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.protocol.tf.tf import TF, MultiTBuffer, TBuffer, TFLookup
 
 
 # from https://foxglove.dev/blog/understanding-ros-transforms
@@ -310,68 +314,6 @@ class TestMultiTBuffer:
 
         print(ttbuffer.graph())
 
-    def test_get_latest_transform(self) -> None:
-        ttbuffer = MultiTBuffer()
-
-        # Add multiple transforms
-        for i in range(3):
-            transform = Transform(
-                translation=Vector3(float(i), 0.0, 0.0),
-                frame_id="world",
-                child_frame_id="robot",
-                ts=time.time() + i * 0.1,
-            )
-            ttbuffer.receive_transform(transform)
-            time.sleep(0.01)
-
-        # Get latest transform
-        latest = ttbuffer.get("world", "robot")
-        assert latest is not None
-        assert latest.translation.x == 2.0
-
-    def test_get_transform_at_time(self) -> None:
-        ttbuffer = MultiTBuffer()
-        base_time = time.time()
-
-        # Add transforms at known times
-        for i in range(5):
-            transform = Transform(
-                translation=Vector3(float(i), 0.0, 0.0),
-                frame_id="world",
-                child_frame_id="robot",
-                ts=base_time + i * 0.5,
-            )
-            ttbuffer.receive_transform(transform)
-
-        # Get transform closest to middle time
-        middle_time = base_time + 1.25  # Should be closest to i=2 (t=1.0) or i=3 (t=1.5)
-        result = ttbuffer.get("world", "robot", time_point=middle_time)
-        assert result is not None
-        # At t=1.25, it's equidistant from i=2 (t=1.0) and i=3 (t=1.5)
-        # The implementation picks the later one when equidistant
-        assert result.translation.x == 3.0
-
-    def test_time_tolerance(self) -> None:
-        ttbuffer = MultiTBuffer()
-        base_time = time.time()
-
-        # Add single transform
-        transform = Transform(
-            translation=Vector3(1.0, 0.0, 0.0),
-            frame_id="world",
-            child_frame_id="robot",
-            ts=base_time,
-        )
-        ttbuffer.receive_transform(transform)
-
-        # Within tolerance
-        result = ttbuffer.get("world", "robot", time_point=base_time + 0.1, time_tolerance=0.2)
-        assert result is not None
-
-        # Outside tolerance
-        result = ttbuffer.get("world", "robot", time_point=base_time + 0.5, time_tolerance=0.1)
-        assert result is None
-
     def test_forward_tolerance_returns_when_buffer_fills(self) -> None:
         ttbuffer = MultiTBuffer()
         base_time = time.time()
@@ -464,39 +406,6 @@ class TestMultiTBuffer:
         assert result is not None
         assert result.translation.x == 1.0
         assert result.translation.y == 2.0
-
-    def test_same_frame_returns_identity(self) -> None:
-        ttbuffer = MultiTBuffer()
-
-        # Empty buffer: same-frame lookup still returns identity
-        result = ttbuffer.get("base_link", "base_link")
-        assert result is not None
-        assert result.frame_id == "base_link"
-        assert result.child_frame_id == "base_link"
-        assert result.translation.x == 0.0
-        assert result.translation.y == 0.0
-        assert result.translation.z == 0.0
-        assert result.rotation.x == 0.0
-        assert result.rotation.y == 0.0
-        assert result.rotation.z == 0.0
-        assert result.rotation.w == 1.0
-
-        # Same behavior when the frame happens to exist in the buffer
-        ttbuffer.receive_transform(
-            Transform(frame_id="world", child_frame_id="base_link", ts=time.time())
-        )
-        result = ttbuffer.get("world", "world")
-        assert result is not None
-        assert result.frame_id == "world"
-        assert result.child_frame_id == "world"
-        assert result.rotation.w == 1.0
-
-    def test_nonexistent_frame_pair(self) -> None:
-        ttbuffer = MultiTBuffer()
-
-        # Try to get transform for non-existent frame pair
-        result = ttbuffer.get("foo", "bar")
-        assert result is None
 
     def test_get_transform_search_direct(self) -> None:
         ttbuffer = MultiTBuffer()
@@ -705,103 +614,218 @@ class TestMultiTBuffer:
         assert "TBuffer(world -> robot2, 1 msgs" in ttbuffer_str
         assert "TBuffer(robot1 -> sensor, 1 msgs" in ttbuffer_str
 
-    def test_get_with_transform_chain_composition(self) -> None:
-        ttbuffer = MultiTBuffer()
-        base_time = time.time()
 
-        # Create transform chain: world -> robot -> sensor
-        # world -> robot: translate by (1, 0, 0)
-        transform1 = Transform(
-            translation=Vector3(1.0, 0.0, 0.0),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),  # Identity
-            frame_id="world",
-            child_frame_id="robot",
-            ts=base_time,
+# --- Grid tests: every get() scenario below runs against the live service and
+# --- against StreamTF replaying a recorded tf stream (memory- and sqlite-backed).
+
+T0 = 1_700_000_000.0
+
+
+def _t(parent: str, child: str, x: float, ts: float) -> Transform:
+    return Transform(
+        frame_id=parent,
+        child_frame_id=child,
+        translation=Vector3(x, 0.0, 0.0),
+        ts=ts,
+    )
+
+
+@pytest.fixture(
+    params=[
+        "live",
+        "stream_memory",
+        # sqlite-vec ships a 32-bit binary in the aarch64 wheel and fails to
+        # load on macOS CI (same guard as memory2/conftest.py).
+        pytest.param("stream_sqlite", marks=[pytest.mark.skipif_aarch64, pytest.mark.skipif_macos]),
+    ]
+)
+def make_tf(request, tmp_path):  # type: ignore[no-untyped-def]
+    """Builder fixture: feed it transforms, get back a TFLookup over them."""
+    stores = []
+
+    def build(*transforms: Transform) -> TFLookup:
+        if request.param == "live":
+            buf = MultiTBuffer()
+            buf.receive_transform(*transforms)
+            return buf
+        store = (
+            MemoryStore()
+            if request.param == "stream_memory"
+            else SqliteStore(path=str(tmp_path / "tf.db"))
         )
+        stores.append(store)
+        stream = store.stream("tf", TFMessage)
+        for t in transforms:
+            stream.append(TFMessage(t), ts=t.ts, pose=None)
+        return StreamTF(store.stream("tf", TFMessage))
 
-        # robot -> sensor: translate by (0, 2, 0) and rotate 90 degrees around Z
-        import math
+    yield build
+    for store in stores:
+        store.stop()
 
-        # 90 degrees around Z: quaternion (0, 0, sin(45°), cos(45°))
-        transform2 = Transform(
-            translation=Vector3(0.0, 2.0, 0.0),
-            rotation=Quaternion(0.0, 0.0, math.sin(math.pi / 4), math.cos(math.pi / 4)),
-            frame_id="robot",
-            child_frame_id="sensor",
-            ts=base_time,
+
+class TestLookupGrid:
+    """get() scenarios that must answer identically live and over a recording."""
+
+    def test_latest(self, make_tf) -> None:  # type: ignore[no-untyped-def]
+        tf = make_tf(*(_t("world", "robot", float(i), T0 + i * 0.1) for i in range(3)))
+        got = tf.get("world", "robot")
+        assert got is not None
+        assert got.translation.x == 2.0
+
+    def test_nearest_in_time(self, make_tf) -> None:  # type: ignore[no-untyped-def]
+        tf = make_tf(*(_t("world", "robot", float(i), T0 + i * 0.5) for i in range(5)))
+        got = tf.get("world", "robot", time_point=T0 + 1.25)
+        assert got is not None
+        # Equidistant between i=2 (t=1.0) and i=3 (t=1.5) — the later one wins.
+        assert got.translation.x == 3.0
+
+    def test_inverse(self, make_tf) -> None:  # type: ignore[no-untyped-def]
+        tf = make_tf(_t("world", "robot", 5.0, T0))
+        got = tf.get("robot", "world", time_point=T0)
+        assert got is not None
+        assert got.translation.x == pytest.approx(-5.0)
+
+    def test_time_tolerance(self, make_tf) -> None:  # type: ignore[no-untyped-def]
+        tf = make_tf(_t("world", "robot", 1.0, T0))
+        assert tf.get("world", "robot", time_point=T0 + 0.1, time_tolerance=0.2) is not None
+        assert tf.get("world", "robot", time_point=T0 + 0.5, time_tolerance=0.1) is None
+
+    def test_same_frame_identity(self, make_tf) -> None:  # type: ignore[no-untyped-def]
+        tf = make_tf(_t("world", "robot", 1.0, T0))
+        got = tf.get("world", "world", time_point=T0)
+        assert got is not None
+        assert got.frame_id == "world"
+        assert got.child_frame_id == "world"
+        assert got.translation.x == 0.0
+        assert got.rotation.w == 1.0
+
+    def test_unknown_frame(self, make_tf) -> None:  # type: ignore[no-untyped-def]
+        tf = make_tf(_t("world", "robot", 1.0, T0))
+        assert tf.get("foo", "bar", time_point=T0) is None
+
+    def test_chain_composition(self, make_tf) -> None:  # type: ignore[no-untyped-def]
+        # world -> robot: translate (1, 0, 0); robot -> sensor: translate
+        # (0, 2, 0) and rotate 90° around Z.
+        tf = make_tf(
+            Transform(
+                translation=Vector3(1.0, 0.0, 0.0),
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                frame_id="world",
+                child_frame_id="robot",
+                ts=T0,
+            ),
+            Transform(
+                translation=Vector3(0.0, 2.0, 0.0),
+                rotation=Quaternion(0.0, 0.0, math.sin(math.pi / 4), math.cos(math.pi / 4)),
+                frame_id="robot",
+                child_frame_id="sensor",
+                ts=T0,
+            ),
         )
-
-        ttbuffer.receive_transform(transform1, transform2)
-
-        # Get composed transform from world to sensor
-        result = ttbuffer.get("world", "sensor")
+        result = tf.get("world", "sensor", time_point=T0)
         assert result is not None
-
-        # The composed transform should:
-        # 1. Apply world->robot translation: (1, 0, 0)
-        # 2. Apply robot->sensor translation in robot frame: (0, 2, 0)
-        # Total translation: (1, 2, 0)
-        assert abs(result.translation.x - 1.0) < 1e-6
-        assert abs(result.translation.y - 2.0) < 1e-6
-        assert abs(result.translation.z - 0.0) < 1e-6
-
-        # Rotation should be 90 degrees around Z (same as transform2)
-        assert abs(result.rotation.x - 0.0) < 1e-6
-        assert abs(result.rotation.y - 0.0) < 1e-6
-        assert abs(result.rotation.z - math.sin(math.pi / 4)) < 1e-6
-        assert abs(result.rotation.w - math.cos(math.pi / 4)) < 1e-6
-
-        # Frame IDs should be correct
+        assert result.translation.x == pytest.approx(1.0)
+        assert result.translation.y == pytest.approx(2.0)
+        assert result.translation.z == pytest.approx(0.0)
+        assert result.rotation.z == pytest.approx(math.sin(math.pi / 4))
+        assert result.rotation.w == pytest.approx(math.cos(math.pi / 4))
         assert result.frame_id == "world"
         assert result.child_frame_id == "sensor"
 
-    def test_get_with_longer_transform_chain(self) -> None:
-        ttbuffer = MultiTBuffer()
-        base_time = time.time()
+    def test_chain_with_sparse_static_edge(self, make_tf) -> None:  # type: ignore[no-untyped-def]
+        # A static edge published once at startup composes with dynamic data
+        # arriving ten seconds later (default lookup reach = buffer_size).
+        tf = make_tf(
+            _t("world", "map", 100.0, T0),
+            *(_t("map", "base", i / 10, T0 + i / 10) for i in range(100)),
+        )
+        got = tf.get("world", "base", time_point=T0 + 9.0)
+        assert got is not None
+        assert got.translation.x == pytest.approx(109.0)
 
-        # Create longer chain: world -> base -> arm -> hand
-        # Each adds a translation along different axes
-        transforms = [
-            Transform(
-                translation=Vector3(1.0, 0.0, 0.0),  # Move 1 along X
-                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                frame_id="world",
-                child_frame_id="base",
-                ts=base_time,
-            ),
-            Transform(
-                translation=Vector3(0.0, 2.0, 0.0),  # Move 2 along Y
-                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                frame_id="base",
-                child_frame_id="arm",
-                ts=base_time,
-            ),
-            Transform(
-                translation=Vector3(0.0, 0.0, 3.0),  # Move 3 along Z
-                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                frame_id="arm",
-                child_frame_id="hand",
-                ts=base_time,
-            ),
-        ]
+    def test_conforms_to_tf_lookup(self, make_tf) -> None:  # type: ignore[no-untyped-def]
+        assert isinstance(make_tf(_t("world", "robot", 1.0, T0)), TFLookup)
 
-        for t in transforms:
-            ttbuffer.receive_transform(t)
 
-        # Get composed transform from world to hand
-        result = ttbuffer.get("world", "hand")
-        assert result is not None
+class TestStreamTF:
+    """Replay-specific surface: construction, bounded caching, and lookahead."""
 
-        # Total translation should be sum of all: (1, 2, 3)
-        assert abs(result.translation.x - 1.0) < 1e-6
-        assert abs(result.translation.y - 2.0) < 1e-6
-        assert abs(result.translation.z - 3.0) < 1e-6
+    @pytest.fixture
+    def store(self):  # type: ignore[no-untyped-def]
+        store = MemoryStore()
+        stream = store.stream("tf", TFMessage)
+        # Startup burst: a static stamped exactly at the stream start (regression:
+        # strict `ts >` range queries used to drop it), then dynamic map→base.
+        stream.append(TFMessage(_t("world", "map", 100.0, T0)), ts=T0, pose=None)
+        for i in range(100):
+            ts = T0 + i / 10
+            stream.append(TFMessage(_t("map", "base", i / 10, ts)), ts=ts, pose=None)
+        yield store
+        store.stop()
 
-        # Rotation should still be identity (all rotations were identity)
-        assert abs(result.rotation.x - 0.0) < 1e-6
-        assert abs(result.rotation.y - 0.0) < 1e-6
-        assert abs(result.rotation.z - 0.0) < 1e-6
-        assert abs(result.rotation.w - 1.0) < 1e-6
+    def test_from_store(self, store) -> None:  # type: ignore[no-untyped-def]
+        assert StreamTF.from_store(store) is not None
+        assert StreamTF.from_store(store, "nope") is None
 
-        assert result.frame_id == "world"
-        assert result.child_frame_id == "hand"
+    def test_missing_stream(self) -> None:
+        with pytest.raises(ValueError, match="Stream configuration"):
+            StreamTF()
+
+    def test_empty_stream(self) -> None:
+        store = MemoryStore()
+        store.stream("tf", TFMessage)
+        try:
+            tf = StreamTF(store.stream("tf", TFMessage))
+            assert tf.get("world", "base", time_point=T0) is None
+        finally:
+            store.stop()
+
+    def test_get_frames(self, store) -> None:  # type: ignore[no-untyped-def]
+        tf = StreamTF(store.stream("tf", TFMessage))
+        # Nothing is cached until a lookup pulls a window in.
+        assert tf.get_frames() == set()
+        tf.get("map", "base", time_point=T0 + 5.0)
+        assert tf.get_frames() == {"world", "map", "base"}
+
+    def test_read_only(self, store) -> None:  # type: ignore[no-untyped-def]
+        tf = StreamTF(store.stream("tf", TFMessage))
+        with pytest.raises(NotImplementedError):
+            tf.publish(_t("map", "base", 0.0, T0))
+
+    def test_get_pose(self, store) -> None:  # type: ignore[no-untyped-def]
+        tf = StreamTF(store.stream("tf", TFMessage))
+        pose = tf.get_pose("map", "base", time_point=T0 + 5.0)
+        assert pose is not None
+        assert pose.position.x == pytest.approx(5.0)
+
+    def test_cache_prefetch_and_eviction(self) -> None:
+        # 40 s of data with a small cache_span: a miss caches the query window
+        # plus cache_span ahead, follow-ups inside it are pure cache hits, and
+        # the first query past it evicts everything and re-caches.
+        store = MemoryStore()
+        stream = store.stream("tf", TFMessage)
+        for i in range(400):
+            ts = T0 + i / 10
+            stream.append(TFMessage(_t("map", "base", i / 10, ts)), ts=ts, pose=None)
+        try:
+            tf = StreamTF(store.stream("tf", TFMessage), cache_span=2.0)
+            got = tf.get("map", "base", time_point=T0 + 35.0, time_tolerance=0.5)
+            assert got is not None
+            assert got.translation.x == pytest.approx(35.0)
+            covered = tf._covered
+            assert covered == pytest.approx((T0 + 34.5, T0 + 37.5))
+            # Inside the prefetched span: served from cache, no re-query.
+            got = tf.get("map", "base", time_point=T0 + 37.0, time_tolerance=0.5)
+            assert got is not None
+            assert got.translation.x == pytest.approx(37.0)
+            assert tf._covered == covered
+            # Past the span: evict and re-cache around the new query.
+            got = tf.get("map", "base", time_point=T0 + 39.0, time_tolerance=0.5)
+            assert got is not None
+            assert got.translation.x == pytest.approx(39.0)
+            assert tf._covered == pytest.approx((T0 + 38.5, T0 + 41.5))
+            # Bounded: the buffer holds the re-cached span, not the stream.
+            assert len(tf.buffers[("map", "base")]) < 100
+        finally:
+            store.stop()

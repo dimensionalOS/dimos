@@ -1,4 +1,6 @@
-# LCM Messages
+---
+title: "LCM Messages"
+---
 
 DimOS uses [LCM (Lightweight Communications and Marshalling)](https://github.com/lcm-proj/lcm) for inter-process communication on a local machine (similar to how ROS uses DDS). LCM is a simple [UDP multicast](https://lcm-proj.github.io/lcm/content/udp-multicast-protocol.html#lcm-udp-multicast-protocol-description) pubsub protocol with a straightforward [message definition language](https://lcm-proj.github.io/lcm/content/lcm-type-ref.html#lcm-type-specification-language).
 

@@ -1,4 +1,6 @@
-# Code Style Guidelines
+---
+title: "Code Style Guidelines"
+---
 
 Rules for writing code in dimos. These address recurring issues found in code review.
 

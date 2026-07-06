@@ -134,6 +134,7 @@ jobs:
           path: wheelhouse/*.whl
 
   publish-testpypi:
+    if: ${{ inputs.dry-run }}
     needs: [validate, build-sdist, build-wheels]
     runs-on: ubuntu-latest
     environment:
@@ -163,7 +164,7 @@ jobs:
 
   publish-pypi:
     if: ${{ ! inputs.dry-run }}
-    needs: [validate, publish-testpypi]
+    needs: [validate, build-sdist, build-wheels]
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -177,6 +178,12 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+      - name: Install twine
+        run: uv tool install twine
+      - name: Validate distributions
+        run: twine check dist/*
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:

@@ -1,5 +1,6 @@
-
-# Code Blocks
+---
+title: "Code Blocks"
+---
 
 **All code blocks must be executable.**
 Never write illustrative/pseudo code blocks.

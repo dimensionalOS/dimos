@@ -19,15 +19,16 @@ A skill uses `ToolStream` to push text updates out to any connected MCP client
 still running.
 
 Transport: each `ToolStream.send` publishes a ready-made JSON-RPC
-`notifications/message` frame on the shared `/tool_streams` LCM topic. Skill
+`notifications/message` frame on the shared `/tool_streams` topic via the active
+transport backend (LCM or Zenoh; see `dimos.core.transport_factory`). Skill
 workers and the `McpServer` process typically live in different workers, so we
-lean on LCM's local-multicast bus to cross that boundary. `McpServer` subscribes
-to the topic once, forwards each frame to every connected `GET /mcp` SSE client,
-and drops frames when nobody is listening.
+lean on the transport's local pub/sub bus to cross that boundary. `McpServer`
+subscribes to the topic once, forwards each frame to every connected `GET /mcp`
+SSE client, and drops frames when nobody is listening.
 
-Each `ToolStream` instance owns its own `pLCMTransport`, created lazily on the
-first `send` and torn down by `stop`. There is no module-level or process-level
-state. The stream's lifetime is exactly the owning skill's lifetime.
+Each `ToolStream` instance owns its own transport, created lazily on the first
+`send` and torn down by `stop`. There is no module-level or process-level state.
+The stream's lifetime is exactly the owning skill's lifetime.
 """
 
 from __future__ import annotations
@@ -38,7 +39,8 @@ from typing import Any
 import uuid
 
 from dimos.agents.annotation import current_skill_context
-from dimos.core.transport import pLCMTransport
+from dimos.core.transport import PubSubTransport
+from dimos.core.transport_factory import make_transport
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -94,8 +96,8 @@ def make_stopped_notification(tool_name: str, token: str | None = None) -> dict[
 
 
 def subscribe(callback: ToolStreamCallback) -> Callable[[], None]:
-    """Subscribe to the tool-stream LCM topic and return a cleanup callable."""
-    transport: pLCMTransport[dict[str, Any]] = pLCMTransport(TOOL_STREAM_TOPIC)
+    """Subscribe to the tool-stream topic and return a cleanup callable."""
+    transport: PubSubTransport[dict[str, Any]] = make_transport(TOOL_STREAM_TOPIC)
     transport.start()
     unsubscribe = transport.subscribe(callback)
 
@@ -139,7 +141,7 @@ class ToolStream:
         self.id: str = str(uuid.uuid4())
         self._closed: threading.Event = threading.Event()
         self._lock = threading.Lock()
-        self._transport: pLCMTransport[dict[str, Any]] | None = None
+        self._transport: PubSubTransport[dict[str, Any]] | None = None
         context = current_skill_context()
         if context is None:
             raise RuntimeError(
@@ -177,7 +179,7 @@ class ToolStream:
                 logger.warning("send on closed ToolStream", stream_id=self.id)
                 return
             if self._transport is None:
-                self._transport = pLCMTransport(TOOL_STREAM_TOPIC)
+                self._transport = make_transport(TOOL_STREAM_TOPIC)
                 self._transport.start()
             self._progress += 1
             progress = self._progress
@@ -203,7 +205,7 @@ class ToolStream:
         # If no `send()` ever happened we spin up a transport here so the
         # lifecycle signal isn't lost.
         if transport is None:
-            transport = pLCMTransport(TOOL_STREAM_TOPIC)
+            transport = make_transport(TOOL_STREAM_TOPIC)
             transport.start()
         try:
             transport.publish(make_stopped_notification(self.tool_name, self._acquire_token))

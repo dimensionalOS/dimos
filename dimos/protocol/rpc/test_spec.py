@@ -25,9 +25,10 @@ from typing import Any
 
 import pytest
 
-from dimos.protocol.rpc.pubsubrpc import LCMRPC, ShmRPC
+from dimos.protocol.rpc.pubsubrpc import LCMRPC, ShmRPC, ZenohRPC
 from dimos.protocol.rpc.rpc_utils import RemoteError
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT
+from dimos.protocol.service.zenohservice import ZenohSessionPool
 
 
 class CustomTestError(Exception):
@@ -79,6 +80,31 @@ def shm_rpc_context():
 
 
 testdata.append((shm_rpc_context, "shm"))
+
+
+@contextmanager
+def zenoh_rpc_context():
+    """Context manager for ZenohRPC implementation.
+
+    Server and client share one session pool (one Zenoh session) -- the same
+    single-session self-delivery the Zenoh transport tests rely on -- so the grid
+    runs without cross-session discovery latency.
+    """
+    pool = ZenohSessionPool()
+    server = ZenohRPC(rpc_timeouts={}, default_rpc_timeout=DEFAULT_RPC_TIMEOUT, session_pool=pool)
+    client = ZenohRPC(rpc_timeouts={}, default_rpc_timeout=DEFAULT_RPC_TIMEOUT, session_pool=pool)
+    server.start()
+    client.start()
+
+    try:
+        yield server, client
+    finally:
+        server.stop()
+        client.stop()
+        pool.close_all()
+
+
+testdata.append((zenoh_rpc_context, "zenoh"))
 
 # Try to add RedisRPC if available
 try:

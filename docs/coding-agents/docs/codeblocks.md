@@ -1,4 +1,6 @@
-# Executable Code Blocks
+---
+title: "Executable Code Blocks"
+---
 
 We use [md-babel-py](https://github.com/leshy/md-babel-py/) to execute code blocks in markdown and insert results.
 

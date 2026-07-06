@@ -80,8 +80,8 @@ class State(enum.Enum):
 
 
 class Transport(Resource, ObservableMixin[T]):
-    # used by local Output
-    def broadcast(self, selfstream: Out[T], value: T) -> None:
+    # used by local Output; selfstream is None when publishing without a source stream
+    def broadcast(self, selfstream: Out[T] | None, value: T) -> None:
         raise NotImplementedError
 
     # used by local Input
@@ -91,7 +91,7 @@ class Transport(Resource, ObservableMixin[T]):
         raise NotImplementedError
 
     def publish(self, msg: T) -> None:
-        self.broadcast(None, msg)  # type: ignore[arg-type]
+        self.broadcast(None, msg)
 
 
 class Stream(Generic[T]):

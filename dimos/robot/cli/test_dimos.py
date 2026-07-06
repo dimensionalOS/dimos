@@ -15,10 +15,12 @@
 from typing import Literal
 
 import pytest
+from typer.testing import CliRunner
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
-from dimos.robot.cli.dimos import _normalize_simulation_argv, arg_help
+from dimos.robot.cli.dimos import _normalize_simulation_argv, arg_help, main
 
 
 @pytest.mark.parametrize(
@@ -43,6 +45,20 @@ from dimos.robot.cli.dimos import _normalize_simulation_argv, arg_help
 )
 def test_normalize_simulation_argv(argv: list[str], expected: list[str]):
     assert _normalize_simulation_argv(argv) == expected
+
+
+def test_global_config_flag_applies_before_subcommand():
+    """A GlobalConfig flag placed before the subcommand (e.g. --transport) must be
+    applied by the root callback so every subcommand sees it -- not just
+    run/show-config, which no longer apply it themselves."""
+    runner = CliRunner()
+    original = global_config.transport
+    try:
+        result = runner.invoke(main, ["--transport", "zenoh", "show-config"])
+        assert result.exit_code == 0, result.output
+        assert "transport: zenoh" in result.output
+    finally:
+        global_config.update(transport=original)
 
 
 def test_blueprint_arg_help():

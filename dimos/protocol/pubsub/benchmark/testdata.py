@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -21,6 +21,10 @@ import numpy as np
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.protocol.pubsub.benchmark.type import Case
+from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, Zenoh
+from dimos.protocol.pubsub.spec import PubSub
+from dimos.protocol.service.zenohservice import ZenohSessionPool
+from dimos.utils.testing.waiting import wait_until
 
 try:
     import cyclonedds as _cyclonedds  # noqa: F401
@@ -270,6 +274,82 @@ try:
 except (ConnectionError, ImportError):
     # either redis is not installed or the server is not running
     print("Redis not available")
+
+
+@contextmanager
+def zenoh_pubsub_channel() -> Generator[Zenoh, None, None]:
+    """Publisher and subscriber on one shared session (co-located modules).
+
+    This exercises zenoh's intra-session local routing, which is markedly
+    slower than the link path for messages >=256KiB; see zenoh_peers below.
+    """
+    pool = ZenohSessionPool()
+    zenoh_pubsub = Zenoh(session_pool=pool)
+    zenoh_pubsub.start()
+    yield zenoh_pubsub
+    zenoh_pubsub.stop()
+    pool.close_all()
+
+
+def zenoh_msggen(size: int) -> tuple[ZenohTopic, Image]:
+    return (ZenohTopic("dimos/benchmark/zenoh", Image), make_data_image(size))
+
+
+testcases.append(
+    Case(
+        pubsub_context=zenoh_pubsub_channel,
+        msg_gen=zenoh_msggen,
+    )
+)
+
+
+@dataclass
+class _SplitPubSub(PubSub[Any, Any]):
+    """Route publish and subscribe to different pubsub instances."""
+
+    pub_side: Zenoh
+    sub_side: Zenoh
+
+    def publish(self, topic: Any, msg: Any) -> None:
+        self.pub_side.publish(topic, msg)
+
+    def subscribe(self, topic: Any, callback: Any) -> Callable[[], None]:
+        return self.sub_side.subscribe(topic, callback)
+
+
+@contextmanager
+def zenoh_peers_pubsub_channel() -> Generator[_SplitPubSub, None, None]:
+    """Publisher and subscriber on separate peer sessions (cross-process shape).
+
+    Modules in different workers talk session-to-session over a link, which is
+    zenoh's fast path. Sessions live in one process here, but the wire path is
+    the same as between processes.
+    """
+    pub_pool, sub_pool = ZenohSessionPool(), ZenohSessionPool()
+    pub_side = Zenoh(session_pool=pub_pool)
+    sub_side = Zenoh(session_pool=sub_pool)
+    pub_side.start()
+    sub_side.start()
+    # Multicast scouting takes a moment; publishing before the peers connect
+    # would count as loss.
+    wait_until(
+        lambda: len(pub_side.session.info.peers_zid()) > 0,
+        timeout=5.0,
+        message="Zenoh peer sessions did not discover each other",
+    )
+    yield _SplitPubSub(pub_side=pub_side, sub_side=sub_side)
+    pub_side.stop()
+    sub_side.stop()
+    pub_pool.close_all()
+    sub_pool.close_all()
+
+
+testcases.append(
+    Case(
+        pubsub_context=zenoh_peers_pubsub_channel,
+        msg_gen=zenoh_msggen,
+    )
+)
 
 
 from dimos.protocol.pubsub.impl.rospubsub import (

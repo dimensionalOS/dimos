@@ -1,5 +1,6 @@
-# Agents
-
+---
+title: "Agents"
+---
 LLM agents run as native DimOS modules. They subscribe to camera, LiDAR, odometry, and spatial memory streams and they control the robot through skills.
 
 ## Architecture
@@ -37,8 +38,8 @@ class MySkillContainer(Module):
 
 **Rules:**
 - Parameters must be JSON-serializable primitives (`str`, `int`, `float`, `bool`, `list`, `dict`).
-- Docstrings become the tool description the LLM sees. Write them clearly so the agent has sufficent context.
-- The function must return a string or image which with be used by the agent to decide what to do next.
+- Docstrings become the tool description the LLM sees. Write them clearly so the agent has sufficient context.
+- The function must return a string or image which will be used by the agent to decide what to do next.
 
 ### Built-in Skills
 

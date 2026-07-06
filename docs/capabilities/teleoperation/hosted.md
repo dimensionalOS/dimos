@@ -1,4 +1,6 @@
-# Hosted Teleop
+---
+title: "Hosted Teleop"
+---
 
 Operate a DimOS robot remotely from any browser or Quest headset over WebRTC.
 The robot dials out to a hosted Cloudflare Realtime SFU broker

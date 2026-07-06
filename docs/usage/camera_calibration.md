@@ -1,4 +1,6 @@
-# Camera calibration
+---
+title: "Camera calibration"
+---
 
 Operator workflow for chessboard targets and `dimos cameracalibrate` (ROS-style CameraInfo YAML). The square size you pass to the CLI must match the board you actually print and measure.
 

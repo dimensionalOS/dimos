@@ -16,15 +16,22 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 import threading
 import time
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from dimos.control.components import HardwareComponent, HardwareType, make_joints
-from dimos.control.coordinator import ControlCoordinator
-from dimos.control.hardware_interface import ConnectedHardware
+from dimos.control.components import (
+    HardwareComponent,
+    HardwareType,
+    make_joints,
+    make_twist_base_joints,
+)
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.hardware_interface import ConnectedHardware, ConnectedTwistBase
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -39,6 +46,9 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 )
 from dimos.control.tick_loop import TickLoop
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
@@ -190,7 +200,114 @@ class TestConnectedHardware:
         mock_adapter.write_joint_positions.assert_called()
 
 
+@pytest.fixture
+def make_coordinator() -> Iterator[Callable[..., ControlCoordinator]]:
+    """Factory for real coordinators, all stopped on teardown."""
+    coordinators: list[ControlCoordinator] = []
+
+    def make(**kwargs: Any) -> ControlCoordinator:
+        coordinator = ControlCoordinator(publish_joint_state=False, **kwargs)
+        coordinators.append(coordinator)
+        return coordinator
+
+    try:
+        yield make
+    finally:
+        for coordinator in coordinators:
+            coordinator.stop()
+
+
 class TestControlCoordinatorLifecycle:
+    def test_on_ee_twist_command_routes_only_matching_frame_id(self, make_coordinator):
+        coordinator = make_coordinator()
+        matching_task = MagicMock(spec=["on_ee_twist_command"])
+        other_task = MagicMock(spec=["on_ee_twist_command"])
+        coordinator._tasks = {"eef": matching_task, "other": other_task}
+
+        coordinator._on_ee_twist_command(
+            TwistStamped(frame_id="eef", linear=[0.1, 0.0, 0.0], angular=[0.0, 0.0, 0.0])
+        )
+        coordinator._on_ee_twist_command(
+            TwistStamped(
+                frame_id="missing",
+                linear=[0.1, 0.0, 0.0],
+                angular=[0.0, 0.0, 0.0],
+            )
+        )
+        coordinator._on_ee_twist_command(
+            TwistStamped(frame_id="", linear=[0.1, 0.0, 0.0], angular=[0.0, 0.0, 0.0])
+        )
+
+        matching_task.on_ee_twist_command.assert_called_once()
+        other_task.on_ee_twist_command.assert_not_called()
+
+    def test_start_subscribes_ee_twist_only_for_eef_twist_tasks(self, make_coordinator, mocker):
+        mocker.patch("dimos.core.module.Module.start")
+        mocker.patch("dimos.control.coordinator.ControlCoordinator._setup_from_config")
+        mocker.patch("dimos.control.coordinator.TickLoop")
+
+        def start_coordinator(tasks):
+            coordinator = make_coordinator(tasks=tasks)
+            subscribe = mocker.patch.object(coordinator.coordinator_ee_twist_command, "subscribe")
+            coordinator.start()
+            return coordinator, subscribe
+
+        eef_coordinator, eef_twist_subscribe = start_coordinator(
+            [
+                TaskConfig(
+                    name="eef",
+                    type="eef_twist",
+                    joint_names=["arm/joint1"],
+                    params={"model_path": "fake", "ee_joint_id": 1},
+                )
+            ]
+        )
+        _, non_eef_twist_subscribe = start_coordinator(
+            [TaskConfig(name="traj", type="trajectory", joint_names=["arm/joint1"])]
+        )
+
+        eef_twist_subscribe.assert_called_once_with(eef_coordinator._on_ee_twist_command)
+        non_eef_twist_subscribe.assert_not_called()
+
+    def test_stop_unsubscribes_ee_twist_subscription(self, make_coordinator, mocker):
+        coordinator = make_coordinator()
+        unsubscribe = mocker.Mock()
+        coordinator._ee_twist_command_unsub = unsubscribe
+
+        coordinator.stop()
+
+        unsubscribe.assert_called_once_with()
+        assert coordinator._ee_twist_command_unsub is None
+
+    def test_on_twist_command_still_routes_planar_twist_to_base_and_velocity_tasks(
+        self, make_coordinator, mocker
+    ):
+        coordinator = make_coordinator()
+        component = HardwareComponent(
+            hardware_id="base",
+            hardware_type=HardwareType.BASE,
+            joints=make_twist_base_joints("base"),
+        )
+        coordinator._hardware = {"base": ConnectedTwistBase(MagicMock(), component)}
+        velocity_task = MagicMock()
+        velocity_task.claim.return_value = ResourceClaim(frozenset())
+        coordinator._tasks = {"velocity": velocity_task}
+        on_joint_command = mocker.patch.object(coordinator, "_on_joint_command")
+
+        try:
+            coordinator._on_twist_command(Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0]))
+        finally:
+            coordinator.stop()
+
+        joint_state = on_joint_command.call_args.args[0]
+        assert isinstance(joint_state, JointState)
+        assert joint_state.name == ["base/vx", "base/vy", "base/wz"]
+        assert joint_state.velocity == [1.0, 2.0, 3.0]
+        velocity_task.set_velocity_command.assert_called_once()
+        vx, vy, wz, t_now = velocity_task.set_velocity_command.call_args.args
+        assert (vx, vy, wz) == (1.0, 2.0, 3.0)
+        assert isinstance(t_now, float)
+
     def test_reset_runtime_state_calls_task_hooks(self):
         class ResettableTask(BaseControlTask):
             def __init__(self) -> None:

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Keyboard-based cartesian teleop module for arm teleoperation.
+"""Keyboard-based EEF twist teleop module for arm teleoperation.
 
 Wraps a pygame UI as a DimOS Module so it can be composed with coordinator
 blueprints via autoconnect.
@@ -24,30 +24,29 @@ Keyboard controls:
     R/F: +Roll/-Roll
     T/G: +Pitch/-Pitch
     Y/H: +Yaw/-Yaw
-    SPACE: Reset to home pose
     ESC: Quit
 """
 
-import os
-from pathlib import Path
-import threading
-import time
-from typing import Any
+from __future__ import annotations
 
-import numpy as np
+import os
+import threading
+from typing import TYPE_CHECKING, Any
 
 try:
     import pygame
 except ImportError:
     pygame = None  # type: ignore[assignment]
 
+if TYPE_CHECKING:
+    from pygame.key import ScancodeWrapper  # type: ignore[attr-defined]
+
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.control.examples.cartesian_ik_jogger import JogState
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.core.stream import Out
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -59,36 +58,22 @@ os.environ["SDL_VIDEODRIVER"] = "x11"
 LINEAR_SPEED = 0.05  # m/s
 ANGULAR_SPEED = 0.5  # rad/s
 
-# Workspace bounds
-X_LIMITS = (-0.5, 0.5)
-Y_LIMITS = (-0.5, 0.5)
-Z_LIMITS = (-0.2, 0.6)
-
-
-def _clamp(value: float, min_val: float, max_val: float) -> float:
-    return max(min_val, min(max_val, value))
+TwistVector = tuple[float, float, float]
 
 
 class KeyboardTeleopConfig(ModuleConfig):
-    # Accept str or Path-like (incl. LfsPath, which lazy-resolves on str()).
-    model_path: str | Path = ""
-    ee_joint_id: int = 6
-    task_name: str = "cartesian_ik_arm"
-    home_joints: list[float] | None = None
-    joint_names: list[str] | None = None
-    initial_state_timeout: float = 5.0
+    task_name: str = EEF_TWIST_TASK_NAME
 
 
 class KeyboardTeleopModule(Module):
-    """Pygame-based cartesian keyboard teleop as a DimOS Module.
+    """Pygame-based spatial EEF twist keyboard teleop as a DimOS Module.
 
-    Publishes absolute EE PoseStamped commands for CartesianIKTask.
+    Publishes routed TwistStamped commands for EEFTwistTask.
     """
 
     config: KeyboardTeleopConfig
 
-    coordinator_joint_state: In[JointState]
-    coordinator_cartesian_command: Out[PoseStamped]
+    coordinator_ee_twist_command: Out[TwistStamped]
 
     _stop_event: threading.Event
     _thread: threading.Thread | None = None
@@ -99,10 +84,11 @@ class KeyboardTeleopModule(Module):
 
     @rpc
     def start(self) -> None:
-        super().start()
         if pygame is None:
-            raise ImportError("pygame not installed. Install with: pip install pygame")
-
+            raise ImportError(
+                "pygame is required for keyboard teleop. Install it with: pip install pygame"
+            )
+        super().start()
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._pygame_loop, daemon=True)
         self._thread.start()
@@ -114,100 +100,36 @@ class KeyboardTeleopModule(Module):
             self._thread.join(DEFAULT_THREAD_JOIN_TIMEOUT)
         super().stop()
 
-    def _read_joint_positions(self, timeout: float) -> list[float] | None:
-        try:
-            msg = self.coordinator_joint_state.get_next(timeout)
-        except Exception:
-            return None
-        if not msg.position:
-            return None
-
-        if joint_names := self.config.joint_names:
-            name_to_position = dict(zip(msg.name, msg.position, strict=False))
-            if any(name not in name_to_position for name in joint_names):
-                return None
-            return [float(name_to_position[name]) for name in joint_names]
-
-        if len(msg.position) < self.config.ee_joint_id:
-            return None
-        return [float(position) for position in msg.position[: self.config.ee_joint_id]]
-
     def _pygame_loop(self) -> None:
-        model_path = str(self.config.model_path)
-        ee_joint_id = self.config.ee_joint_id
         task_name = self.config.task_name
-
-        initial_joints = self._read_joint_positions(self.config.initial_state_timeout)
-        if initial_joints is None:
-            logger.error(
-                f"Failed to read initial joint state within "
-                f"{self.config.initial_state_timeout}s; keyboard teleop exiting"
-            )
-            self._stop_event.set()
-            return
-        current_pose = JogState.from_fk(model_path, ee_joint_id, initial_joints).copy()
-
-        # Publish initial pose
-        self.coordinator_cartesian_command.publish(current_pose.to_pose_stamped(task_name))
 
         pygame.init()
         screen = pygame.display.set_mode((600, 400), pygame.SWSURFACE)
         pygame.display.set_caption(f"Keyboard Teleop — {task_name}")
         font = pygame.font.Font(None, 28)
         clock = pygame.time.Clock()
-        last_time = time.perf_counter()
+        was_moving = False
 
         while not self._stop_event.is_set():
-            dt = time.perf_counter() - last_time
-            last_time = time.perf_counter()
-
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self._stop_event.set()
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
                         self._stop_event.set()
-                    elif event.key == pygame.K_SPACE:
-                        if joints := self._read_joint_positions(timeout=0.1):
-                            current_pose = JogState.from_fk(model_path, ee_joint_id, joints).copy()
 
-            keys = pygame.key.get_pressed()
+            linear, angular = _twist_from_keys(pygame.key.get_pressed())
+            linear_x, linear_y, linear_z = linear
+            angular_x, angular_y, angular_z = angular
 
-            # Linear motion
-            if keys[pygame.K_w]:
-                current_pose.x += LINEAR_SPEED * dt
-            if keys[pygame.K_s]:
-                current_pose.x -= LINEAR_SPEED * dt
-            if keys[pygame.K_a]:
-                current_pose.y += LINEAR_SPEED * dt
-            if keys[pygame.K_d]:
-                current_pose.y -= LINEAR_SPEED * dt
-            if keys[pygame.K_q]:
-                current_pose.z += LINEAR_SPEED * dt
-            if keys[pygame.K_e]:
-                current_pose.z -= LINEAR_SPEED * dt
-
-            # Angular motion
-            if keys[pygame.K_r]:
-                current_pose.roll += ANGULAR_SPEED * dt
-            if keys[pygame.K_f]:
-                current_pose.roll -= ANGULAR_SPEED * dt
-            if keys[pygame.K_t]:
-                current_pose.pitch += ANGULAR_SPEED * dt
-            if keys[pygame.K_g]:
-                current_pose.pitch -= ANGULAR_SPEED * dt
-            if keys[pygame.K_y]:
-                current_pose.yaw += ANGULAR_SPEED * dt
-            if keys[pygame.K_h]:
-                current_pose.yaw -= ANGULAR_SPEED * dt
-
-            # Clamp to workspace limits
-            current_pose.x = _clamp(current_pose.x, *X_LIMITS)
-            current_pose.y = _clamp(current_pose.y, *Y_LIMITS)
-            current_pose.z = _clamp(current_pose.z, *Z_LIMITS)
-
-            # Publish
-            self.coordinator_cartesian_command.publish(current_pose.to_pose_stamped(task_name))
+            is_moving = any(value != 0.0 for value in (*linear, *angular))
+            if is_moving or was_moving:
+                self._publish_twist(
+                    task_name,
+                    linear=linear,
+                    angular=angular,
+                )
+                was_moving = is_moving
 
             # Draw UI
             screen.fill((30, 30, 30))
@@ -217,18 +139,14 @@ class KeyboardTeleopModule(Module):
             screen.blit(title, (20, y_pos))
             y_pos += 40
 
-            pos_text = (
-                f"Position: X={current_pose.x:.3f}  Y={current_pose.y:.3f}  Z={current_pose.z:.3f}"
-            )
-            screen.blit(font.render(pos_text, True, (100, 255, 100)), (20, y_pos))
+            twist_text = f"Linear twist: X={linear_x:.3f}  Y={linear_y:.3f}  Z={linear_z:.3f} m/s"
+            screen.blit(font.render(twist_text, True, (100, 255, 100)), (20, y_pos))
             y_pos += 30
 
-            ori_text = (
-                f"Orientation: R={np.degrees(current_pose.roll):.1f}°  "
-                f"P={np.degrees(current_pose.pitch):.1f}°  "
-                f"Y={np.degrees(current_pose.yaw):.1f}°"
+            angular_text = (
+                f"Angular twist: R={angular_x:.3f}  P={angular_y:.3f}  Y={angular_z:.3f} rad/s"
             )
-            screen.blit(font.render(ori_text, True, (100, 200, 255)), (20, y_pos))
+            screen.blit(font.render(angular_text, True, (100, 200, 255)), (20, y_pos))
             y_pos += 40
 
             controls = [
@@ -238,7 +156,6 @@ class KeyboardTeleopModule(Module):
                 ("R/F", "+Roll/-Roll"),
                 ("T/G", "+Pitch/-Pitch"),
                 ("Y/H", "+Yaw/-Yaw"),
-                ("SPACE", "Sync to current pose"),
                 ("ESC", "Quit"),
             ]
             for key, desc in controls:
@@ -248,4 +165,40 @@ class KeyboardTeleopModule(Module):
             pygame.display.flip()
             clock.tick(50)
 
+        self._publish_twist(task_name)
         pygame.quit()
+
+    def _publish_twist(
+        self,
+        task_name: str,
+        *,
+        linear: TwistVector = (0.0, 0.0, 0.0),
+        angular: TwistVector = (0.0, 0.0, 0.0),
+    ) -> None:
+        self.coordinator_ee_twist_command.publish(
+            TwistStamped(frame_id=task_name, linear=list(linear), angular=list(angular))
+        )
+
+
+def _twist_from_keys(keys: ScancodeWrapper) -> tuple[TwistVector, TwistVector]:
+    linear = [0.0, 0.0, 0.0]
+    angular = [0.0, 0.0, 0.0]
+    bindings = {
+        pygame.K_w: (linear, 0, LINEAR_SPEED),
+        pygame.K_s: (linear, 0, -LINEAR_SPEED),
+        pygame.K_a: (linear, 1, LINEAR_SPEED),
+        pygame.K_d: (linear, 1, -LINEAR_SPEED),
+        pygame.K_q: (linear, 2, LINEAR_SPEED),
+        pygame.K_e: (linear, 2, -LINEAR_SPEED),
+        pygame.K_r: (angular, 0, ANGULAR_SPEED),
+        pygame.K_f: (angular, 0, -ANGULAR_SPEED),
+        pygame.K_t: (angular, 1, ANGULAR_SPEED),
+        pygame.K_g: (angular, 1, -ANGULAR_SPEED),
+        pygame.K_y: (angular, 2, ANGULAR_SPEED),
+        pygame.K_h: (angular, 2, -ANGULAR_SPEED),
+    }
+    for key, (vector, axis, delta) in bindings.items():
+        if keys[key]:
+            vector[axis] += delta
+
+    return (linear[0], linear[1], linear[2]), (angular[0], angular[1], angular[2])

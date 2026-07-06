@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from dimos.core.coordination.python_worker import Actor, MethodCallProxy
 from dimos.core.stream import RemoteStream
-from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.core.transport_factory import rpc_backend
 from dimos.protocol.rpc.spec import RPCSpec
 from dimos.utils.logging_config import setup_logger
 
@@ -105,10 +105,10 @@ class RPCClient:
         actor_instance: Actor | None,
         actor_class: type[ModuleBase],
         *,
-        rpc: LCMRPC | None = None,
+        rpc: RPCSpec | None = None,
     ) -> None:
         if rpc is None:
-            self.rpc = LCMRPC()
+            self.rpc = rpc_backend()()
             self._owns_rpc = True
             self.rpc.start()
         else:
@@ -121,7 +121,7 @@ class RPCClient:
         self._unsub_fns: list = []  # type: ignore[type-arg]
 
     @classmethod
-    def remote(cls, actor_class: type[ModuleBase], *, rpc: LCMRPC | None = None) -> RPCClient:
+    def remote(cls, actor_class: type[ModuleBase], *, rpc: RPCSpec | None = None) -> RPCClient:
         """Build an RPCClient with no parent-side Actor (cross-process clients)."""
         return cls(None, actor_class, rpc=rpc)
 

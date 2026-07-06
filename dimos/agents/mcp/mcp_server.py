@@ -35,6 +35,7 @@ from dimos.agents.mcp import tool_stream
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.rpc_client import RpcCall, RPCClient
+from dimos.core.transport_factory import make_transport
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -419,13 +420,11 @@ class McpServer(Module):
 
     @skill
     def agent_send(self, message: str) -> str:
-        """Send a message to the running DimOS agent via LCM."""
+        """Send a message to the running DimOS agent over the active transport."""
         if not message:
             raise ValueError("Message cannot be empty")
 
-        from dimos.core.transport import pLCMTransport
-
-        transport: pLCMTransport[str] = pLCMTransport("/human_input")
+        transport = make_transport("/human_input")
         try:
             transport.start()
             transport.publish(message)

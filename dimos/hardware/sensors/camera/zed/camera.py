@@ -28,7 +28,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.core.transport import LCMTransport
+from dimos.core.transport_factory import make_transport
 from dimos.hardware.sensors.camera.spec import (
     OPTICAL_ROTATION,
     DepthCameraConfig,
@@ -494,11 +494,11 @@ def main() -> None:
     dimos.start()
 
     camera = dimos.deploy(ZEDCamera, enable_pointcloud=True, pointcloud_fps=5.0)
-    camera.color_image.transport = LCMTransport("/camera/color", Image)
-    camera.depth_image.transport = LCMTransport("/camera/depth", Image)
-    camera.pointcloud.transport = LCMTransport("/camera/pointcloud", PointCloud2)
-    camera.camera_info.transport = LCMTransport("/camera/color_info", CameraInfo)
-    camera.depth_camera_info.transport = LCMTransport("/camera/depth_info", CameraInfo)
+    camera.color_image.transport = make_transport("/camera/color", Image)
+    camera.depth_image.transport = make_transport("/camera/depth", Image)
+    camera.pointcloud.transport = make_transport("/camera/pointcloud", PointCloud2)
+    camera.camera_info.transport = make_transport("/camera/color_info", CameraInfo)
+    camera.depth_camera_info.transport = make_transport("/camera/depth_info", CameraInfo)
 
     def cleanup() -> None:
         try:

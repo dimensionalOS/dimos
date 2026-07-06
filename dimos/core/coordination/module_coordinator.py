@@ -29,7 +29,14 @@ from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.resource import Resource
-from dimos.core.transport import LCMTransport, PubSubTransport, pLCMTransport
+from dimos.core.transport import (
+    LCMTransport,
+    PubSubTransport,
+    ZenohTransport,
+    pLCMTransport,
+    pZenohTransport,
+)
+from dimos.core.transport_factory import make_transport
 from dimos.spec.utils import is_spec, spec_annotation_compliance, spec_structural_compliance
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
@@ -572,15 +579,37 @@ def _is_name_unique(blueprint: Blueprint, name: str) -> bool:
 
 
 def _get_transport_for(blueprint: Blueprint, name: str, stream_type: type) -> PubSubTransport[Any]:
-    transport = blueprint.transport_map.get((name, stream_type), None)
-    if transport:
+    mapped = blueprint.transport_map.get((name, stream_type), None)
+    if mapped is not None:
+        return _coerce_transport_to_backend(mapped)
+
+    topic = f"/{name}" if _is_name_unique(blueprint, name) else f"/{short_id()}"
+    return make_transport(topic, stream_type)
+
+
+def _coerce_transport_to_backend(transport: PubSubTransport[Any]) -> PubSubTransport[Any]:
+    """Rebuild an explicitly-mapped LCM/Zenoh transport for the active backend.
+
+    Blueprints pin specific channels in their `transport_map` with e.g. `LCMTransport("/cmd_vel",
+    Twist)`. So the global transport switch reaches those too, rebuild the plain LCM<->Zenoh pair
+    via the factory when it doesn't match `global_config.transport`. Deliberate non-default choices
+    (`JpegLcmTransport`, SHM, ROS, DDS, ...) are exact-type-checked out and left untouched.
+    """
+    want = global_config.transport
+    is_pickled = type(transport) in (pLCMTransport, pZenohTransport)
+    is_lcm = type(transport) in (LCMTransport, pLCMTransport)
+    is_zenoh = type(transport) in (ZenohTransport, pZenohTransport)
+    if not ((want == "zenoh" and is_lcm) or (want == "lcm" and is_zenoh)):
         return transport
 
-    use_pickled = getattr(stream_type, "lcm_encode", None) is None
-    topic = f"/{name}" if _is_name_unique(blueprint, name) else f"/{short_id()}"
-    transport = pLCMTransport(topic) if use_pickled else LCMTransport(topic, stream_type)
-
-    return transport
+    if is_pickled:
+        raw, msg_type = transport.topic, None
+    else:
+        raw, msg_type = transport.topic.topic, transport.topic.lcm_type
+    # Strip the Zenoh 'dimos/' namespace (if present) back to the logical name.
+    # The factory re-applies the right prefix for the target backend.
+    logical = raw[len("dimos/") :] if raw.startswith("dimos/") else raw
+    return make_transport(logical, msg_type)
 
 
 def _verify_no_name_conflicts(blueprint: Blueprint) -> None:
@@ -648,7 +677,8 @@ def _run_configurators(blueprint: Blueprint) -> None:
     from dimos.protocol.service.system_configurator.base import configure_system
     from dimos.protocol.service.system_configurator.lcm_config import lcm_configurators
 
-    configurators = [*lcm_configurators(), *blueprint.configurator_checks]
+    lcm_checks = lcm_configurators() if global_config.transport == "lcm" else []
+    configurators = [*lcm_checks, *blueprint.configurator_checks]
 
     try:
         configure_system(configurators)

@@ -1,4 +1,6 @@
-# For Agents
+---
+title: "For Agents"
+---
 
 ├── worktrees.md (creating provisioned worktrees with `bin/worktree`)
 ├── style.md (code style guidelines for dimos)

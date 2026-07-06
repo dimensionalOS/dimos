@@ -70,6 +70,9 @@ class ConnectionConfig(ModuleConfig):
     motion_mode: str | None = None
     # Per-device AES-128 key (Go2 fw >=1.1.15); defaults from GlobalConfig.
     aes_128_key: str | None = Field(default_factory=lambda m: m["g"].unitree_aes_128_key)
+    # TF parent frame of the internal odometry (odom_frame_id -> base_link).
+    # Rename (e.g. "go2_odom") when another odom source owns the tree root
+    odom_frame_id: str = "world"
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -323,6 +326,7 @@ class GO2Connection(Module, Camera, Pointcloud):
         ]
 
     def _publish_tf(self, msg: PoseStamped) -> None:
+        msg.frame_id = self.config.odom_frame_id
         transforms = self._odom_to_tf(msg)
         self.tf.publish(*transforms)
         if self.odom.transport:

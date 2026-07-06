@@ -25,6 +25,8 @@ import pytest
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 from dimos.protocol.pubsub.impl.memory import Memory
+from dimos.protocol.pubsub.impl.zenohpubsub import PickleZenoh, Zenoh
+from dimos.protocol.service.zenohservice import ZenohSessionPool
 from dimos.utils.testing.collector import CallbackCollector
 
 
@@ -141,6 +143,44 @@ testdata.append(
         shared_memory_cpu_context,
         "/shared_mem_topic_cpu",
         [b"shared_mem_value1", b"shared_mem_value2", b"shared_mem_value3"],
+    )
+)
+
+
+@contextmanager
+def zenoh_lcm_context() -> Generator[Zenoh, None, None]:
+    pool = ZenohSessionPool()
+    zenoh_pubsub = Zenoh(session_pool=pool)
+    zenoh_pubsub.start()
+    yield zenoh_pubsub
+    zenoh_pubsub.stop()
+    pool.close_all()
+
+
+testdata.append(
+    (
+        zenoh_lcm_context,
+        Topic(topic="dimos/test/spec", lcm_type=Vector3),
+        [Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9)],
+    )
+)
+
+
+@contextmanager
+def zenoh_pickle_context() -> Generator[PickleZenoh, None, None]:
+    pool = ZenohSessionPool()
+    zenoh_pubsub = PickleZenoh(session_pool=pool)
+    zenoh_pubsub.start()
+    yield zenoh_pubsub
+    zenoh_pubsub.stop()
+    pool.close_all()
+
+
+testdata.append(
+    (
+        zenoh_pickle_context,
+        Topic("dimos/test/spec/pickle"),
+        [{"key": "value1"}, {"key": "value2"}, {"key": "value3"}],
     )
 )
 

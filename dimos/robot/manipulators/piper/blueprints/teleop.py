@@ -21,7 +21,11 @@ from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.robot.manipulators.common.blueprints import cartesian_ik_task, teleop_ik_task
+from dimos.robot.manipulators.common.blueprints import (
+    cartesian_ik_task,
+    eef_twist_task,
+    teleop_ik_task,
+)
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.piper.config import (
     PIPER_FK_MODEL,
@@ -40,17 +44,13 @@ _piper_keyboard_hw = make_piper_hardware(
 )
 
 keyboard_teleop_piper = autoconnect(
-    KeyboardTeleopModule.blueprint(
-        model_path=PIPER_FK_MODEL,
-        ee_joint_id=6,
-        joint_names=_piper_keyboard_hw.joints,
-    ),
+    KeyboardTeleopModule.blueprint(),
     ControlCoordinator.blueprint(
         tick_rate=100.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
         hardware=[_piper_keyboard_hw],
-        tasks=[cartesian_ik_task(_piper_keyboard_hw, model_path=PIPER_FK_MODEL, ee_joint_id=6)],
+        tasks=[eef_twist_task(_piper_keyboard_hw, model_path=PIPER_FK_MODEL, ee_joint_id=6)],
     ),
     ManipulationModule.blueprint(
         robots=[make_piper_model_config()],

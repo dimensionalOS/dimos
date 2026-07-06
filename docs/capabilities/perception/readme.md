@@ -1,3 +1,0 @@
-# Perception
-
-## Detections
