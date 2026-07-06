@@ -28,6 +28,7 @@ Textual app (DataTable, 0.5s refresh, theme colors, 'q' to quit). One row per
 
 from __future__ import annotations
 
+import sys
 import time
 
 from rich.text import Text
@@ -104,7 +105,7 @@ def _parse_transports(argv: list[str]) -> list[str] | None:
     return transports or None
 
 
-class SpyApp(App):  # type: ignore[type-arg]
+class SpyApp(App[None]):
     """A real-time dashboard for all-transport pubsub traffic using Textual."""
 
     CSS_PATH = "../dimos.tcss"
@@ -222,8 +223,6 @@ class SpyApp(App):  # type: ignore[type-arg]
 
 def main() -> None:
     """Entry point for `dimos spy` (argv: --transport filters)."""
-    import sys
-
     SpyApp(transports=_parse_transports(sys.argv[1:])).run()
 
 
@@ -242,8 +241,6 @@ def _lcm_only_argv(args: list[str]) -> list[str]:
 
 def lcm_main() -> None:
     """`lcmspy` console-script shim: the spy over the LCM source only."""
-    import sys
-
     sys.argv = _lcm_only_argv(sys.argv[1:])
     main()
 
