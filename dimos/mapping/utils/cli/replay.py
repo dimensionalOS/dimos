@@ -31,7 +31,6 @@ their entity path (no parent transform). Entities written:
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 import subprocess
 from typing import TYPE_CHECKING, Any
@@ -39,22 +38,16 @@ from typing import TYPE_CHECKING, Any
 import rerun as rr
 import typer
 
+from dimos.memory2.utils.progress import progress
+
 # Heavy dimos imports (mapping/memory2 → torch, scipy, open3d) are deferred into
 # main() so that `dimos map --help` stays fast. See test_cli_startup.py and the
 # same pattern in dimos/mapping/utils/cli/map.py.
 if TYPE_CHECKING:
     from dimos.memory2.stream import Stream
-    from dimos.memory2.type.observation import Observation
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 TIMELINE = "ts"
-
-
-def _progress(total: int, label: str) -> Callable[[Observation[Any]], None]:
-    """Deferred alias for the shared rich progress bar (keeps module import light)."""
-    from dimos.memory2.utils.progress import progress
-
-    return progress(total, label)
 
 
 def _log_clouds(
@@ -74,7 +67,7 @@ def _log_clouds(
     whole pipeline.
     """
     n = total if total is not None else stream.count()
-    cb = _progress(n, label)
+    cb = progress(n, label)
     for obs in stream:
         cb(obs)
         rr.set_time(TIMELINE, timestamp=obs.ts)
@@ -97,7 +90,7 @@ def _log_path(
     without a pose are skipped.
     """
     n = stream.count()
-    cb = _progress(n, label)
+    cb = progress(n, label)
     points: list[tuple[float, float, float]] = []
     last_ts: float | None = None
     emit_count = 0
@@ -284,7 +277,7 @@ def main(
         # fastlio pose axis + path from fastlio_odometry stream.
         if "fastlio_odometry" in store.streams:
             odometry = clipped("fastlio_odometry", Odometry)
-            cb = _progress(odometry.count(), "fastlio_odometry")
+            cb = progress(odometry.count(), "fastlio_odometry")
             for obs in odometry:
                 cb(obs)
                 if obs.pose_tuple is None:
@@ -308,7 +301,7 @@ def main(
         # Go2 native odom pose axis + path.
         if "odom" in store.streams:
             odom = clipped("odom", PoseStamped)
-            cb = _progress(odom.count(), "        odom")
+            cb = progress(odom.count(), "        odom")
             for odom_obs in odom:
                 cb(odom_obs)
                 if odom_obs.pose_tuple is None:
@@ -334,7 +327,7 @@ def main(
             color_image.transform(throttle(1.0 / camera_hz)) if camera_hz > 0 else color_image
         )
         n_img = cam_pipeline.count()
-        cb = _progress(n_img, "  color_image")
+        cb = progress(n_img, "  color_image")
         for img_obs in cam_pipeline:
             cb(img_obs)
             rr.set_time(TIMELINE, timestamp=img_obs.ts)
