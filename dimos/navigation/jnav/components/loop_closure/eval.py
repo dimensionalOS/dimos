@@ -101,6 +101,7 @@ from dimos.navigation.jnav.utils.recording_db import (
     store,
     stream_count,
 )
+from dimos.navigation.jnav.utils.recording_tf import RecordingTF
 from dimos.navigation.jnav.utils.trajectory_metrics import (
     GraphPose,
     drifted_lookup,
@@ -544,8 +545,6 @@ def run_module_graph(
     return graph, int(data["closures"]), replay_stats  # type: ignore[return-value]
 
 
-# Tolerance for composing world->body from the recording's tf at an odom time.
-TF_LOOKUP_TOLERANCE_S = 0.1
 # tf may come online slightly after the odom stream starts (sensor/static warmup);
 # odom samples before tf is available are skipped only within this opening window.
 TF_STARTUP_TOLERANCE_S = 2.0
@@ -567,7 +566,8 @@ def tf_pose_samples(
     odom start. Missing samples after tf is online (sporadic lookup gaps) are
     skipped."""
     db_store = store(db_path)
-    if "tf" not in db_store.list_streams() or not db_store.tf.has_transforms():
+    tf = RecordingTF.from_store(db_store)
+    if tf is None:
         raise SystemExit(
             f"{db_path}: no tf tree — eval requires tf (run add_tf first); odom fallback removed"
         )
@@ -578,7 +578,9 @@ def tf_pose_samples(
     for timestamp, _payload in iterate_stream(db_path, odom_stream):
         if odom_t0 is None:
             odom_t0 = timestamp
-        transform = db_store.tf.get(world_frame, body_frame, timestamp, TF_LOOKUP_TOLERANCE_S)
+        # tolerance=None -> nearest recorded sample per edge; RecordingTF keeps the
+        # whole recording buffered so one-shot static frames stay resolvable.
+        transform = tf.get(world_frame, body_frame, timestamp, None)
         if transform is None:
             if tf_online:
                 continue  # sporadic gap once tf is up — skip this sample
