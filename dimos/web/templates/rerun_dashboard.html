@@ -51,9 +51,20 @@
             <iframe class="world-model" src="/world-model"></iframe>
         </div>
         <div class="divider" role="separator" aria-label="Resize panels"></div>
-        <iframe class="rerun" src="{{RERUN_IFRAME_URL}}"></iframe>
+        <iframe class="rerun" id="rerun-frame" src="about:blank"></iframe>
     </div>
     <script>
+        (function () {
+            // Build the Rerun iframe URL from the same host the browser used to
+            // load this dashboard.  Using a server-resolved IP (listen_host or
+            // rerun_host) would fail when the browser is on a different machine.
+            var host = window.location.hostname;
+            var webPort = 9878;
+            var grpcPort = 9877;
+            var proxyUrl = 'rerun+http://' + host + ':' + grpcPort + '/proxy';
+            document.getElementById('rerun-frame').src =
+                'http://' + host + ':' + webPort + '/?url=' + encodeURIComponent(proxyUrl);
+        })();
         (function () {
             const container = document.querySelector('.container');
             const divider = document.querySelector('.divider');
