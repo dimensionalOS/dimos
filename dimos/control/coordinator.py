@@ -56,6 +56,7 @@ from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
@@ -153,6 +154,10 @@ class ControlCoordinator(Module):
     # Uses frame_id as task name for routing
     coordinator_cartesian_command: In[PoseStamped]
 
+    # Input: Routed spatial EEF twist commands for EEFTwistTask.
+    # Uses frame_id as task name for routing.
+    coordinator_ee_twist_command: In[TwistStamped]
+
     # Input: Streaming twist commands for velocity-commanded platforms
     twist_command: In[Twist]
 
@@ -193,6 +198,7 @@ class ControlCoordinator(Module):
         # Subscription handles for streaming commands
         self._joint_command_unsub: Callable[[], None] | None = None
         self._cartesian_command_unsub: Callable[[], None] | None = None
+        self._ee_twist_command_unsub: Callable[[], None] | None = None
         self._twist_command_unsub: Callable[[], None] | None = None
         self._buttons_unsub: Callable[[], None] | None = None
         self._path_unsub: Callable[[], None] | None = None
@@ -500,6 +506,25 @@ class ControlCoordinator(Module):
 
             task.on_cartesian_command(msg, t_now)
 
+    def _on_ee_twist_command(self, msg: TwistStamped) -> None:
+        """Route incoming TwistStamped to EEFTwistTask by task name.
+
+        Uses frame_id as the target task name. Unmatched commands are ignored
+        without fallback to planar/base twist semantics.
+        """
+        task_name = msg.frame_id
+        if not task_name:
+            logger.warning("Received coordinator_ee_twist_command with empty frame_id")
+            return
+
+        t_now = time.perf_counter()
+        with self._task_lock:
+            task = self._tasks.get(task_name)
+            if task is None:
+                logger.warning("EEF twist command for unknown task", task_name=task_name)
+                return
+            task.on_ee_twist_command(msg, t_now)
+
     def _on_twist_command(self, msg: Twist) -> None:
         """Convert Twist → virtual joint velocities and route via _on_joint_command.
 
@@ -620,6 +645,24 @@ class ControlCoordinator(Module):
                         logger.exception(f"set_dry_run() raised on task {task.name!r}")
 
     @rpc
+    def reset_runtime_state(self, reactivate: bool | None = None) -> dict[str, bool]:
+        """Reset transient state on tasks that expose ``reset_runtime_state``.
+
+        This is meant for simulation/runtime discontinuities such as MuJoCo
+        respawn, where task histories and latched commands must be cleared
+        without tearing down the coordinator.
+        """
+        results: dict[str, bool] = {}
+        with self._task_lock:
+            for task in self._tasks.values():
+                try:
+                    results[task.name] = bool(task.reset_runtime_state(reactivate=reactivate))
+                except Exception:
+                    logger.exception(f"reset_runtime_state() raised on task {task.name!r}")
+                    results[task.name] = False
+        return results
+
+    @rpc
     def task_invoke(
         self, task_name: TaskName, method: str, kwargs: dict[str, Any] | None = None
     ) -> Any:
@@ -732,6 +775,19 @@ class ControlCoordinator(Module):
                     "Use task_invoke RPC or set transport via blueprint."
                 )
 
+        has_eef_twist = any(t.type == "eef_twist" for t in self.config.tasks)
+        if has_eef_twist:
+            try:
+                self._ee_twist_command_unsub = self.coordinator_ee_twist_command.subscribe(
+                    self._on_ee_twist_command
+                )
+                logger.info("Subscribed to coordinator_ee_twist_command for EEFTwist tasks")
+            except Exception:
+                logger.warning(
+                    "EEFTwist tasks configured but could not subscribe to "
+                    "coordinator_ee_twist_command. Use task_invoke RPC or set transport via blueprint."
+                )
+
         # Twist commands drive either base hardware or velocity-capable tasks.
         has_twist_base = any(c.hardware_type == HardwareType.BASE for c in self.config.hardware)
         with self._task_lock:
@@ -801,6 +857,9 @@ class ControlCoordinator(Module):
         if self._cartesian_command_unsub:
             self._cartesian_command_unsub()
             self._cartesian_command_unsub = None
+        if self._ee_twist_command_unsub:
+            self._ee_twist_command_unsub()
+            self._ee_twist_command_unsub = None
         if self._twist_command_unsub:
             self._twist_command_unsub()
             self._twist_command_unsub = None

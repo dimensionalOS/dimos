@@ -26,7 +26,6 @@ import time
 import types
 from typing import TYPE_CHECKING, Any, Literal, Union, cast, get_args, get_origin
 
-import click
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
@@ -453,28 +452,30 @@ def mcp_list_tools() -> None:
     typer.echo(json.dumps(tools, indent=2))
 
 
-class _KeyValueType(click.ParamType):
-    """Parse KEY=VALUE arguments, auto-converting JSON values."""
+def _parse_key_value_arg(value: str) -> tuple[str, Any]:
+    """Parse a KEY=VALUE argument, auto-converting JSON values."""
+    if "=" not in value:
+        raise ValueError(f"expected KEY=VALUE, got: {value}")
+    key, val = value.split("=", 1)
+    try:
+        return (key, json.loads(val))
+    except (json.JSONDecodeError, ValueError):
+        return (key, val)
 
-    name = "KEY=VALUE"
 
-    def convert(
-        self, value: str, param: click.Parameter | None, ctx: click.Context | None
-    ) -> tuple[str, Any]:
+def _validate_key_value_args(values: list[str]) -> list[str]:
+    """Validate KEY=VALUE arguments during CLI parsing."""
+    for value in values:
         if "=" not in value:
-            self.fail(f"expected KEY=VALUE, got: {value}", param, ctx)
-        key, val = value.split("=", 1)
-        try:
-            return (key, json.loads(val))
-        except (json.JSONDecodeError, ValueError):
-            return (key, val)
+            raise typer.BadParameter(f"expected KEY=VALUE, got: {value}")
+    return values
 
 
 @mcp_app.command("call")
 def mcp_call_tool(
     tool_name: str = typer.Argument(..., help="Tool name to call"),
     args: list[str] = typer.Option(
-        [], "--arg", "-a", click_type=_KeyValueType(), help="Arguments as key=value"
+        [], "--arg", "-a", callback=_validate_key_value_args, help="Arguments as key=value"
     ),
     json_args: str = typer.Option("", "--json-args", "-j", help="Arguments as JSON string"),
 ) -> None:
@@ -487,8 +488,11 @@ def mcp_call_tool(
             typer.echo(f"Error: invalid JSON in --json-args: {e}", err=True)
             raise typer.Exit(1)
     else:
-        # _KeyValueType.convert() returns (key, val) tuples at runtime
-        arguments = dict(args)  # type: ignore[arg-type]
+        try:
+            arguments = dict(_parse_key_value_arg(arg) for arg in args)
+        except ValueError as e:
+            typer.echo(f"Error: invalid --arg: {e}", err=True)
+            raise typer.Exit(1)
 
     try:
         result = _get_adapter().call_tool(tool_name, arguments)
