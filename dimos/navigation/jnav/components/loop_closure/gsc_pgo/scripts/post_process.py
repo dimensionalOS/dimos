@@ -56,9 +56,9 @@ import numpy as np
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.DeformationNode import DeformationNode, tf_id_for
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.navigation.jnav.msgs.DeformationNode import DeformationNode, tf_id_for
 from dimos.navigation.jnav.msgs.Graph3D import Graph3D
 from dimos.navigation.jnav.utils import recording_db as rdb
 from dimos.navigation.jnav.utils.apriltags import (

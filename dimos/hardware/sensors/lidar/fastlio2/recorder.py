@@ -52,6 +52,4 @@ class FastLio2Recorder(Recorder):
 
     @pose_setter_for("fastlio_lidar")
     async def _lidar_pose(self, msg: PointCloud2) -> Pose | None:
-        # Most-recent odometry pose, stamped directly (no tf). None before the
-        # first odometry -> frame stored unposed, map-skipped.
-        return self._last_odom_pose
+        return getattr(self, "_last_odom_pose", None)
