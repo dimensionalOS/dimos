@@ -28,16 +28,19 @@ from __future__ import annotations
 from collections import deque
 import contextlib
 from dataclasses import dataclass
-import sys
 import threading
 import time
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     # The entire hot-path event: (topic string incl. '#type' suffix, wire payload length).
     TapCallback = Callable[[str, int], None]
+
+logger = setup_logger()
 
 # Seconds of per-message history kept for windowed stats.
 DEFAULT_HISTORY_WINDOW = 60.0
@@ -287,9 +290,10 @@ class TransportSpy:
                 except Exception as exc:
                     if not best_effort:
                         raise
-                    print(
-                        f"spy: skipping transport {source.name!r}: {exc}",
-                        file=sys.stderr,
+                    logger.warning(
+                        "Skipping spy transport that failed to start",
+                        transport=source.name,
+                        error=str(exc),
                     )
         except BaseException:
             self.stop()  # roll back everything started so far, then propagate
@@ -346,7 +350,7 @@ def default_sources() -> list[SpySource]:
         try:
             sources.append(factory())
         except Exception as exc:  # degrade on any backend init failure, not just imports
-            print(f"spy: skipping unavailable transport {name!r}: {exc}", file=sys.stderr)
+            logger.warning("Skipping unavailable spy transport", transport=name, error=str(exc))
     if not sources:
         raise RuntimeError(f"no spy transports available (tried: {', '.join(SOURCE_FACTORIES)})")
     return sources

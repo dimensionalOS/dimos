@@ -350,7 +350,7 @@ class _FailingStartSource(FakeSource):
         raise RuntimeError("backend down")
 
 
-def test_transport_spy_best_effort_skips_failed_source(capsys):
+def test_transport_spy_best_effort_skips_failed_source(spy_warnings):
     good, bad = FakeSource("lcm"), _FailingStartSource("zenoh")
     spy = TransportSpy(sources=[good, bad])
     spy.start(best_effort=True)  # degrade to the survivor instead of dying
@@ -361,7 +361,7 @@ def test_transport_spy_best_effort_skips_failed_source(capsys):
         assert spy.snapshot()[SpyKey("lcm", "/t")].total_bytes == 5
     finally:
         spy.stop()
-    assert "zenoh" in capsys.readouterr().err  # skipped source is warned about
+    assert "zenoh" in spy_warnings.text  # skipped source is warned about
 
 
 def test_transport_spy_best_effort_raises_when_all_fail():
@@ -370,7 +370,7 @@ def test_transport_spy_best_effort_raises_when_all_fail():
         spy.start(best_effort=True)
 
 
-def test_default_sources_skips_unavailable_backend(monkeypatch, capsys):
+def test_default_sources_skips_unavailable_backend(monkeypatch, spy_warnings):
     def unavailable():
         raise ImportError("zenoh backend missing")
 
@@ -378,7 +378,7 @@ def test_default_sources_skips_unavailable_backend(monkeypatch, capsys):
     monkeypatch.setitem(SOURCE_FACTORIES, "zenoh", unavailable)
     sources = default_sources()
     assert [s.name for s in sources] == ["lcm"]  # degrades instead of crashing
-    assert "zenoh" in capsys.readouterr().err
+    assert "zenoh" in spy_warnings.text
 
 
 def test_default_sources_errors_when_no_backend_available(monkeypatch):

@@ -92,7 +92,7 @@ def spy_starter(request):
     return _start
 
 
-def test_start_spy_default_skips_unavailable_backend(monkeypatch, capsys, spy_starter):
+def test_start_spy_default_skips_unavailable_backend(monkeypatch, spy_warnings, spy_starter):
     def unavailable():
         raise ImportError("lcm backend missing")
 
@@ -107,10 +107,10 @@ def test_start_spy_default_skips_unavailable_backend(monkeypatch, capsys, spy_st
     monkeypatch.setitem(SOURCE_FACTORIES, "zenoh", stub_factory)
     spy_starter()  # no --transport: degrades to the available backend
     assert [s.started for s in created] == [True]
-    assert "lcm" in capsys.readouterr().err
+    assert "lcm" in spy_warnings.text
 
 
-def test_start_spy_default_skips_non_import_backend_failure(monkeypatch, capsys, spy_starter):
+def test_start_spy_default_skips_non_import_backend_failure(monkeypatch, spy_warnings, spy_starter):
     # Any construction failure (e.g. a native init error), not just ImportError,
     # must degrade rather than kill the default spy.
     def broken():
@@ -127,8 +127,7 @@ def test_start_spy_default_skips_non_import_backend_failure(monkeypatch, capsys,
     monkeypatch.setitem(SOURCE_FACTORIES, "zenoh", stub_factory)
     spy_starter()  # no --transport: degrades past the broken backend
     assert [s.started for s in created] == [True]
-    err = capsys.readouterr().err
-    assert "lcm" in err and "native init failed" in err
+    assert "lcm" in spy_warnings.text and "native init failed" in spy_warnings.text
 
 
 def test_start_spy_explicit_unavailable_transport_is_hard_error(monkeypatch):
@@ -147,7 +146,7 @@ class _FailingStartSource(_StubSource):
         raise RuntimeError("zenoh start failed")
 
 
-def test_start_spy_default_survives_backend_start_failure(monkeypatch, capsys, spy_starter):
+def test_start_spy_default_survives_backend_start_failure(monkeypatch, spy_warnings, spy_starter):
     # A backend that constructs but dies during start() must not kill the
     # default spy — the survivor keeps running.
     survivors: list[_StubSource] = []
@@ -162,7 +161,7 @@ def test_start_spy_default_survives_backend_start_failure(monkeypatch, capsys, s
     monkeypatch.setitem(SOURCE_FACTORIES, "zenoh", _FailingStartSource)
     spy_starter()  # default path: best-effort
     assert survivors and survivors[0].started
-    assert "zenoh" in capsys.readouterr().err
+    assert "zenoh" in spy_warnings.text
 
 
 def test_start_spy_explicit_start_failure_is_hard_error(monkeypatch):
