@@ -272,9 +272,14 @@ class RelativeSensorConnection(Module, Camera, Pointcloud):
 
     config: RelativeSensorConfig
     cmd_vel: In[Twist]
+    # Point-LIO's Mid-360 cloud (topic `pointlio_lidar`). Its most recent frame is
+    # merged into the re-expressed L1 cloud before publishing on `lidar`.
+    pointlio_lidar: In[PointCloud2]
     pointcloud: Out[PointCloud2]
     odom: Out[PoseStamped]
     lidar: Out[PointCloud2]
+    lidar_relative: Out[PointCloud2]
+    lidar_full: Out[PointCloud2]
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
 
@@ -287,6 +292,7 @@ class RelativeSensorConnection(Module, Camera, Pointcloud):
     _latest_pose: PoseStamped | None = None
     _transform: Transform | None = None
     _previous_points: np.ndarray | None = None
+    _latest_pointlio_cloud: PointCloud2 | None = None
 
     @classmethod
     def rerun_views(cls):  # type: ignore[no-untyped-def]
@@ -327,6 +333,9 @@ class RelativeSensorConnection(Module, Camera, Pointcloud):
 
         if self.config.lidar:
             self.register_disposable(self.connection.lidar_stream().subscribe(self._publish_lidar))
+            self.register_disposable(
+                Disposable(self.pointlio_lidar.subscribe(self._on_pointlio_lidar))
+            )
         self.register_disposable(self.connection.odom_stream().subscribe(self._publish_tf))
         self.register_disposable(self.connection.lowstate_stream().subscribe(self._on_lowstate))
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
@@ -399,6 +408,7 @@ class RelativeSensorConnection(Module, Camera, Pointcloud):
         pose = self._latest_pose
         if pose is None:
             return
+        self.lidar_full.publish(cloud)
         if self.config.un_accumulate:
             cloud = self._only_new_points(cloud)
         # from_pose gives the base frame's pose in world; its inverse maps the
@@ -408,7 +418,24 @@ class RelativeSensorConnection(Module, Camera, Pointcloud):
         if self._transform is not None:
             base_cloud = base_cloud.transform(self._transform)
         base_cloud.frame_id = self.config.lidar_frame or self.config.base_frame
-        self.lidar.publish(base_cloud)
+        self.lidar_relative.publish(base_cloud)
+        self.lidar.publish(self._merge_with_pointlio(base_cloud))
+
+    def _merge_with_pointlio(self, cloud: PointCloud2) -> PointCloud2:
+        """Concatenate the latest Point-LIO cloud with the re-expressed L1 cloud.
+
+        Both are stamped in the Mid-360 frame here (lidar_frame="mid360_link"),
+        so the points share a frame and can be stacked directly.
+        """
+        latest = self._latest_pointlio_cloud
+        if latest is None:
+            return cloud
+        merged = np.vstack((latest.points_f32(), cloud.points_f32()))
+        return PointCloud2.from_numpy(merged, frame_id=cloud.frame_id, timestamp=cloud.ts)
+
+    def _on_pointlio_lidar(self, cloud: PointCloud2) -> None:
+        """Cache the most recent Point-LIO (Mid-360) cloud for the next L1 merge."""
+        self._latest_pointlio_cloud = cloud
 
     def _only_new_points(self, cloud: PointCloud2) -> PointCloud2:
         points = cloud.points_f32()
