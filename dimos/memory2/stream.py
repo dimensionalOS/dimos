@@ -497,8 +497,22 @@ class Stream(CompositeResource, Generic[T, O]):
         return (first.ts, last.ts)
 
     def summary(self) -> str:
-        """Return a short human-readable summary: count, time range, avg frequency."""
+        """Return a short human-readable summary: count, time range, avg frequency, size."""
         from datetime import datetime, timezone
+
+        from dimos.memory2.backend import Backend
+        from dimos.utils.human import human_bytes
+
+        # Size is whole-stream (blob totals), so only report it when the query
+        # doesn't narrow the stream.
+        unfiltered = not self._query.filters and self._query.limit_val is None
+        size = ""
+        if (
+            unfiltered
+            and isinstance(self._source, Backend)
+            and (sz := self._source.size_bytes()) is not None
+        ):
+            size = f", {human_bytes(sz)}"
 
         n = self.count()
         if n == 0:
@@ -510,7 +524,7 @@ class Stream(CompositeResource, Generic[T, O]):
         dt1 = datetime.fromtimestamp(t1, tz=timezone.utc).strftime(fmt)
         dur = t1 - t0
         hz = f", {(n - 1) / dur:.2f} Hz" if dur > 0 else ""
-        return f"{self}: {n} items, {dt0} — {dt1} ({dur:.1f}s{hz})"
+        return f"{self}: {n} items, {dt0} — {dt1} ({dur:.1f}s{hz}{size})"
 
     def materialize(self) -> Stream[T, O]:
         """Materialize into memory and return a replayable stream.

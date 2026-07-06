@@ -15,24 +15,30 @@
 """Print ``Store.summary()`` for a memory2 sqlite recording.
 
 Usage:
-    uv run dimos map summary mid360
+    uv run dimos mem summary mid360
 """
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-import sqlite3
+from typing import TYPE_CHECKING
 
 import typer
 
-from dimos.memory2.codecs.base import _resolve_payload_type
-from dimos.memory2.store.sqlite import SqliteStore
-from dimos.utils.data import resolve_named_path
+if TYPE_CHECKING:
+    from pathlib import Path
+
+# Heavy dimos imports (memory2 store → codecs, msgs) are deferred into the
+# function bodies so that `dimos --help` — which imports this module just to
+# register the `mem summary` command — stays fast. See test_cli_startup.py.
 
 
 def _stream_payload_types(db_path: Path) -> dict[str, type]:
     """Read each stream's registered payload type from the _streams table."""
+    import json
+    import sqlite3
+
+    from dimos.memory2.codecs.base import _resolve_payload_type
+
     conn = sqlite3.connect(str(db_path))
     try:
         rows = conn.execute("SELECT name, config FROM _streams").fetchall()
@@ -44,7 +50,10 @@ def _stream_payload_types(db_path: Path) -> dict[str, type]:
 def main(
     dataset: str = typer.Argument(..., help="Dataset .db: bare name (cwd or data/) or path"),
 ) -> None:
-    """Print per-stream counts and time ranges for a recorded SQLite dataset."""
+    """Print per-stream counts, time ranges, and payload sizes for a recorded SQLite dataset."""
+    from dimos.memory2.store.sqlite import SqliteStore
+    from dimos.utils.data import resolve_named_path
+
     db_path = resolve_named_path(dataset, ".db")
     payload_types = _stream_payload_types(db_path)
 

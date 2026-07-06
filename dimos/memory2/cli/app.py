@@ -18,7 +18,10 @@ from __future__ import annotations
 
 import typer
 
+from dimos.memory2.cli.summary import main as _summary_main
+
 mem_app = typer.Typer(help="memory2 store commands", no_args_is_help=True)
+mem_app.command("summary")(_summary_main)
 
 
 @mem_app.command()

@@ -206,8 +206,8 @@ def main(
     ),
 ) -> None:
     """Dump a recording to .rrd (lidar clouds + camera frames) and open it in rerun."""
-    from dimos.mapping.utils.cli.summary import _stream_payload_types
     from dimos.mapping.voxels import VoxelMapTransformer
+    from dimos.memory2.cli.summary import _stream_payload_types
     from dimos.memory2.store.sqlite import SqliteStore
     from dimos.memory2.transform import throttle
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
