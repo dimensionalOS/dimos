@@ -464,7 +464,10 @@ class NativeModule(Module):
             transport = getattr(stream, "_transport", None)
             if transport is None:
                 continue
-            topic = getattr(transport, "topic", None)
-            if topic is not None:
-                topics[name] = str(topic)
+            channel = getattr(transport, "channel", None)
+            if channel is None:
+                topic = getattr(transport, "topic", None)
+                channel = str(topic) if topic is not None else None
+            if channel is not None:
+                topics[name] = channel
         return topics

@@ -75,6 +75,11 @@ class PubSubTransport(Transport[T]):
     def __init__(self, topic: Any) -> None:
         self.topic = topic
 
+    @property
+    def channel(self) -> str:
+        """The literal channel string this transport publishes and subscribes on."""
+        return str(self.topic)
+
     def __str__(self) -> str:
         return (
             colors.green(f"{self.__class__.__name__}(")
@@ -357,6 +362,10 @@ class ZenohTransport(PubSubTransport[T]):
         self.zenoh = Zenoh(**kwargs)
         self._start_lock = threading.RLock()
 
+    @property
+    def channel(self) -> str:
+        return self.topic.key_expr
+
     def __reduce__(self) -> tuple[Any, ...]:
         return (ZenohTransport, (self.topic,))
 
@@ -399,6 +408,10 @@ class pZenohTransport(PubSubTransport[T]):
         super().__init__(self._zenoh_topic.pattern)
         self.zenoh = PickleZenoh(**kwargs)
         self._start_lock = threading.RLock()
+
+    @property
+    def channel(self) -> str:
+        return self._zenoh_topic.key_expr
 
     def __reduce__(self) -> tuple[Any, ...]:
         return (pZenohTransport, (self._zenoh_topic,))
