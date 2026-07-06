@@ -58,15 +58,34 @@ Publisher (`/load/cloud` @ 10 Hz) → gateway transcode (`_ds` + `_draco`) → b
 `WorldView` renders the cloud (height-colored points, canvas draw confirmed); all three variants are
 discovered with correct types incl. the custom `draco.PointCloud2`. WS + WT full parity.
 
+## Live 3-way visual comparison (2026-07-05, real dog lidar)
+A **Clouds tab** (`app/src/panels/clouds/CloudCompare.tsx`, `?tab=clouds`) renders the SAME live
+`PointCloud2` three ways side-by-side, sharing one auto-fit view, each captioned with live kB/s +
+point count. Source is the dog sim (`--simulation mujoco run unitree-go2` → real fused `/lidar` @ 2 Hz;
+the cloud plane auto-transcodes it — no gateway change). Measured on `/lidar` (headless, WT):
+
+| cell | wire | points | vs raw |
+|------|------|--------|--------|
+| Raw (`/lidar`) | 267 kB/s | 8,336 | 1.0× |
+| Downsampled (`/lidar_ds`) | 54 kB/s | 1,668 | **≈5×**, visibly sparse |
+| Draco (`/lidar_draco`) | 36 kB/s | 8,335 | **≈7.4×**, full density ≈ raw |
+
+The visual is the "why a codec, not just decimation" proof: downsample drops 80–90% of points (sparse);
+**Draco keeps every point at reduced precision and is even smaller than the sparse downsample**, so it
+looks like the raw scene at 7.4× less bandwidth. In-browser Draco decode is real (draco3d wasm,
+`app/src/panels/clouds/dracoDecode.ts`, supplied `wasmBinary` so the emscripten glue never touches
+node `fs`); production `vite build` emits the wasm as an asset and succeeds.
+
 ## Gaps / pending
 - **WebRTC (local)**: ICE fails on the Mac LAN (`webrtc-ice: no such remote` — the v4-mapping issue
   from the sidecar notes); ratios are transport-independent (identical on WS/WT) so this is a local
   connectivity gap, not a cloud-plane issue. WebRTC's bulk collapse under load is already characterized.
-- **netem loss matrix**: needs a Linux VPS (macOS has no `tc`); contabo SSH was fail2ban-blocked this
-  session. The compression win is proven clean; the "survives loss better because smaller" matrix is
-  the pending VPS step.
-- **In-browser Draco render**: needs `draco3d` installed + Vite wasm wiring; today `_draco` is
-  measured on the wire and `_ds` is what renders. Installing `draco3d` enables the geometry decode.
+- **netem loss matrix**: needs a Linux VPS (macOS has no `tc`); contabo SSH was fail2ban-blocked.
+  The compression win is proven clean; the "survives loss better because smaller" matrix is pending.
+- **WT last-value replay**: over WebTransport a newly-subscribed slow/stalled topic shows empty until
+  its next frame (WS replays the LVC on subscribe; the WT path doesn't). A *continuously* publishing
+  source (mujoco @2 Hz, cloudpub @10 Hz) makes the Clouds tab work on any transport; a stalled replay
+  only renders over WS. Adding LVC-replay to the WT path would remove this wart — noted, not built.
 
 ## Reproduce
 ```
@@ -77,5 +96,15 @@ deno task serve   ;   deno task app
 # 3. headless bench
 deno run -A scripts/bench-headless.ts \
   "http://localhost:5173/?gw=localhost:8080&transport=ws&profiles=cloud,cloud-ds,cloud-draco&net=clean&dur=15000&drive=0&run=1"
+```
+
+Live 3-way visual (real dog lidar):
+```
+# 1. a continuously-publishing structured source (mujoco opens no egl on mac → CGL):
+DIMOS_TRANSPORT=zenoh uv run dimos --simulation mujoco --mujoco-headless run unitree-go2   # /lidar @2Hz
+#   (or --replay run unitree-go2 for recorded MID360, but replay stalls → use WS; or cloudpub.py)
+# 2. deno task serve  ;  deno task app
+# 3. open the Clouds tab:
+open "http://localhost:5173/?gw=localhost:8080&tab=clouds"
 ```
 Env knobs (`gateway/cloud.py`): `CLOUD_DS_MAX_POINTS` (2000), `CLOUD_DRACO` (1), `CLOUD_QUANT_BITS` (11).

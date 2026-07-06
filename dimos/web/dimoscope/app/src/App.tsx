@@ -15,15 +15,17 @@ import { TeleopPad } from "./panels/TeleopPad";
 import { StatsBar } from "./panels/StatsBar";
 import { CommandsPanel } from "./panels/CommandsPanel";
 import { StreamsTab } from "./panels/streams/StreamsTab";
+import { CloudCompare } from "./panels/clouds/CloudCompare";
 import { BenchDrawer, hasBenchParams } from "./panels/bench/BenchDrawer";
 import { TopbarNetem } from "./panels/TopbarNetem";
 import { normalizeGateway, recentGateways, useGateway } from "./gateway";
 import { NetemProvider } from "./netem";
 import { getParam, setUrlParam } from "./urlState";
 
-// ?tab=worldview|topics picks the page; bench params imply the Topics tab (where the drawer lives).
-type Tab = "2d" | "streams";
-const TAB_IDS: Record<string, Tab> = { worldview: "2d", topics: "streams" };
+// ?tab=worldview|topics|clouds picks the page; bench params imply the Topics tab (where the drawer lives).
+type Tab = "2d" | "streams" | "clouds";
+const TAB_IDS: Record<string, Tab> = { worldview: "2d", topics: "streams", clouds: "clouds" };
+const TAB_PARAM: Record<Tab, string | null> = { "2d": null, streams: "topics", clouds: "clouds" };
 const initialTab = (): Tab => TAB_IDS[getParam("tab") ?? ""] ?? (hasBenchParams() ? "streams" : "2d");
 
 function Inspector({ topic }: { topic: string }) {
@@ -59,7 +61,7 @@ export function App() {
   const [tab, setTabState] = useState<Tab>(initialTab);
   const setTab = (t: Tab) => {
     setTabState(t);
-    setUrlParam("tab", t === "2d" ? null : "topics"); // worldview is the default → keep the URL clean
+    setUrlParam("tab", TAB_PARAM[t]); // worldview is the default → keep the URL clean
   };
   const [mediaMode, setMediaMode] = useState<MediaMode>("auto");
   const { gateway, setGateway } = useGateway();
@@ -100,6 +102,12 @@ export function App() {
             onClick={() => setTab("streams")}
           >
             Topics
+          </button>
+          <button
+            className={`tab ${tab === "clouds" ? "tab-active" : ""}`}
+            onClick={() => setTab("clouds")}
+          >
+            Clouds
           </button>
         </div>
         <div className="topbar-right">
@@ -210,6 +218,13 @@ export function App() {
         {tab === "streams" && <StreamsTab />}
         <BenchDrawer />
       </div>
+
+      {/* Clouds tab: conditional so its per-cell cloud subscriptions stop when the tab is left. */}
+      {tab === "clouds" && (
+        <div className="clouds-full">
+          <CloudCompare />
+        </div>
+      )}
     </div>
     </NetemProvider>
   );

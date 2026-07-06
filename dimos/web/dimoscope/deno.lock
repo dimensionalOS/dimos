@@ -5,6 +5,7 @@
     "npm:@types/react-dom@^18.3.1": "18.3.7_@types+react@18.3.31",
     "npm:@types/react@^18.3.12": "18.3.31",
     "npm:@vitejs/plugin-react@^4.3.4": "4.7.0_vite@5.4.21",
+    "npm:draco3d@^1.5.7": "1.5.7",
     "npm:playwright-core@1.49.1": "1.49.1",
     "npm:playwright@1.58.2": "1.58.2",
     "npm:react-dom@^18.3.1": "18.3.1_react@18.3.1",
@@ -516,6 +517,9 @@
         "ms"
       ]
     },
+    "draco3d@1.5.7": {
+      "integrity": "sha512-m6WCKt/erDXcw+70IJXnG7M3awwQPAsZvJGX5zY7beBqpELw6RDGkYVU0W43AFxye4pDZ5i2Lbyc/NNGqwjUVQ=="
+    },
     "electron-to-chromium@1.5.381": {
       "integrity": "sha512-n9Wa6yB+vDsGuA8AKbl/0z7HbvWqt5jxIdvr1IUicd0ryPrk7/xzwqLv8D9AbbvZ6avVNtXYLTfmgFHkwkyelg=="
     },
@@ -737,6 +741,7 @@
             "npm:@types/react-dom@^18.3.1",
             "npm:@types/react@^18.3.12",
             "npm:@vitejs/plugin-react@^4.3.4",
+            "npm:draco3d@^1.5.7",
             "npm:react-dom@^18.3.1",
             "npm:react@^18.3.1",
             "npm:typescript@^5.6.3",

@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { TopicInfo } from "@dimos/react";
 import { useDimosClient, useTopicRef, useTopics, useTopicStats } from "../dimos";
+import { drawCloud } from "./clouds/drawCloud";
 
 const LIDAR_CAP = 4000; // max points rendered per frame (stride-decimated)
 const DEFAULT_SCALE = 64; // px per metre at rest
@@ -230,29 +231,8 @@ export function WorldView() {
         }
       }
 
-      // lidar PointCloud2 (world frame) — height-coloured top-down points.
-      const lc = lidar.current.data;
-      if (lc?.data?.byteLength && lc.point_step && lc.fields?.length) {
-        const fx = lc.fields.find((f: any) => f.name === "x");
-        const fy = lc.fields.find((f: any) => f.name === "y");
-        const fz = lc.fields.find((f: any) => f.name === "z");
-        if (fx && fy) {
-          const dv = new DataView(lc.data.buffer, lc.data.byteOffset, lc.data.byteLength);
-          const le = !lc.is_bigendian;
-          const n = Math.floor(lc.data.byteLength / lc.point_step);
-          const stride = Math.max(1, Math.ceil(n / LIDAR_CAP));
-          for (let i = 0; i < n; i += stride) {
-            const b = i * lc.point_step;
-            const x = dv.getFloat32(b + fx.offset, le);
-            const y = dv.getFloat32(b + fy.offset, le);
-            if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-            const z = fz ? dv.getFloat32(b + fz.offset, le) : 0;
-            const t = Math.max(0, Math.min(1, (z + 0.2) / 2)); // ~[-0.2,1.8]m → 0..1
-            ctx.fillStyle = `hsl(${200 - t * 160}, 85%, ${42 + t * 18}%)`; // blue→amber by height
-            ctx.fillRect(W(x), H(y), 1.6, 1.6);
-          }
-        }
-      }
+      // lidar PointCloud2 (world frame) — height-coloured top-down points (shared with CloudCompare).
+      drawCloud(ctx, lidar.current.data, W, H, LIDAR_CAP);
 
       const s = scan.current.data;
       if (s?.ranges) {
