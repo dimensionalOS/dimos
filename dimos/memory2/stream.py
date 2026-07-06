@@ -496,23 +496,24 @@ class Stream(CompositeResource, Generic[T, O]):
         last = self.last()
         return (first.ts, last.ts)
 
+    def size_bytes(self) -> int | None:
+        """Total stored payload bytes, or None if unknown or the query narrows the stream."""
+        from dimos.memory2.backend import Backend
+
+        if self._query.filters or self._query.limit_val is not None:
+            return None
+        if isinstance(self._source, Backend):
+            return self._source.size_bytes()
+        return None
+
     def summary(self) -> str:
         """Return a short human-readable summary: count, time range, avg frequency, size."""
         from datetime import datetime, timezone
 
-        from dimos.memory2.backend import Backend
         from dimos.utils.human import human_bytes
 
-        # Size is whole-stream (blob totals), so only report it when the query
-        # doesn't narrow the stream.
-        unfiltered = not self._query.filters and self._query.limit_val is None
-        size = ""
-        if (
-            unfiltered
-            and isinstance(self._source, Backend)
-            and (sz := self._source.size_bytes()) is not None
-        ):
-            size = f", {human_bytes(sz)}"
+        sz = self.size_bytes()
+        size = f", {human_bytes(sz)}" if sz is not None else ""
 
         n = self.count()
         if n == 0:
