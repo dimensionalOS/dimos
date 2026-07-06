@@ -73,4 +73,7 @@ class FileBlobStore(BlobStore):
         stream_dir = self._root / stream_name
         if not stream_dir.is_dir():
             return 0
-        return sum(p.stat().st_size for p in stream_dir.glob("*.bin") if p.is_file())
+        # Only integer-keyed files — the layout put() writes.
+        return sum(
+            p.stat().st_size for p in stream_dir.glob("*.bin") if p.is_file() and p.stem.isdigit()
+        )
