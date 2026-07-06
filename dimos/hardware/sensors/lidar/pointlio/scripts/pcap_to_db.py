@@ -86,6 +86,11 @@ _TUNING_FIELDS: tuple[tuple[str, Any, str], ...] = (
     ),
     ("scan_line", "int", "number of scan lines"),
     ("scan_rate", "int", "scan rate (Hz)"),
+    (
+        "timestamp_unit",
+        ("second", "millisecond", "microsecond", "nanosecond"),
+        "per-point timestamp unit",
+    ),
     ("blind", "float", "spherical min range (m); nearer points dropped"),
     ("point_filter_num", "int", "keep every Nth raw point (1 = all)"),
     # mapping
@@ -106,6 +111,8 @@ _TUNING_FIELDS: tuple[tuple[str, Any, str], ...] = (
         ("center", "nearby6", "nearby18", "nearby26"),
         "iVox neighbour stencil",
     ),
+    ("cube_side_length", "float", "map cube side length (m)"),
+    ("det_range", "float", "max detection range (m)"),
     ("fov_degree", "float", "horizontal FOV (deg)"),
     ("imu_en", "bool", "use the IMU"),
     ("start_in_aggressive_motion", "bool", "skip the static IMU-init assumption"),
@@ -129,6 +136,7 @@ _TUNING_FIELDS: tuple[tuple[str, Any, str], ...] = (
     ("extrinsic_r", "vec", "IMU->lidar rotation: 9 values row-major"),
     # odometry
     ("publish_odometry_without_downsample", "bool", "publish odom per scan, no downsample"),
+    ("odom_only", "bool", "odometry only, skip map publishing"),
 )
 
 

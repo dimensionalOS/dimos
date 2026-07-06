@@ -325,6 +325,9 @@ int main(int argc, char** argv) {
     std::string lidar_type = mod.arg("lidar_type", "avia");
     params.lidar_type = lidar_type == "velodyne" ? 2 : lidar_type == "ouster" ? 3 :
                         lidar_type == "hesai" ? 4 : lidar_type == "unilidar" ? 5 : 1;
+    std::string ts_unit = mod.arg("timestamp_unit", "nanosecond");
+    params.timestamp_unit = ts_unit == "second" ? 0 : ts_unit == "millisecond" ? 1 :
+                            ts_unit == "microsecond" ? 2 : 3;
     // mapping
     params.use_imu_as_input = mod.arg_bool("use_imu_as_input", params.use_imu_as_input);
     params.prop_at_freq_of_imu = mod.arg_bool("prop_at_freq_of_imu", params.prop_at_freq_of_imu);
@@ -341,6 +344,8 @@ int main(int argc, char** argv) {
     std::string ivox_nearby = mod.arg("ivox_nearby_type", "nearby6");
     params.ivox_nearby_type = ivox_nearby == "center" ? 0 : ivox_nearby == "nearby18" ? 18 :
                               ivox_nearby == "nearby26" ? 26 : 6;
+    params.cube_side_length = mod.arg_float("cube_side_length", params.cube_side_length);
+    params.det_range = mod.arg_float("det_range", params.det_range);
     params.fov_degree = mod.arg_float("fov_degree", params.fov_degree);
     params.imu_en = mod.arg_bool("imu_en", params.imu_en);
     params.start_in_aggressive_motion = mod.arg_bool("start_in_aggressive_motion", params.start_in_aggressive_motion);
@@ -365,6 +370,7 @@ int main(int argc, char** argv) {
     // odometry
     params.publish_odometry_without_downsample =
         mod.arg_bool("publish_odometry_without_downsample", params.publish_odometry_without_downsample);
+    params.odom_only = mod.arg_bool("odom_only", params.odom_only);
 
     // Point-LIO internal processing rates
     double msr_freq = mod.arg_float("msr_freq", 50.0f);

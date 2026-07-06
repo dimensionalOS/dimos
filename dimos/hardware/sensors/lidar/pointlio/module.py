@@ -66,6 +66,7 @@ from dimos.spec import perception
 # LID_TYPE enum (Point-LIO src/preprocess.h). avia = 1 selects the Livox branch
 # the Mid-360 emits.
 LidarType = Literal["avia", "velodyne", "ouster", "hesai", "unilidar"]
+TimestampUnit = Literal["second", "millisecond", "microsecond", "nanosecond"]
 # iVox local-map neighbour stencil.
 IvoxNearbyType = Literal["center", "nearby6", "nearby18", "nearby26"]
 
@@ -105,6 +106,7 @@ class PointLioConfig(NativeModuleConfig):
     lidar_type: LidarType = "avia"  # 1 = AVIA (Livox) branch the Mid-360 emits
     scan_line: int = 4
     scan_rate: int = 10
+    timestamp_unit: TimestampUnit = "nanosecond"
     blind: float = 0.5  # spherical min range (m)
     point_filter_num: int = 3  # pre-KF decimation: keep every Nth raw point (1 = all)
     # mapping
@@ -121,6 +123,8 @@ class PointLioConfig(NativeModuleConfig):
     filter_size_map: float = 0.5
     ivox_grid_resolution: float = 2.0  # iVox local-map grid (m)
     ivox_nearby_type: IvoxNearbyType = "nearby6"
+    cube_side_length: float = 1000.0
+    det_range: float = 100.0
     fov_degree: float = 360.0
     imu_en: bool = True
     start_in_aggressive_motion: bool = False
@@ -146,6 +150,7 @@ class PointLioConfig(NativeModuleConfig):
     )
     # odometry
     publish_odometry_without_downsample: bool = False
+    odom_only: bool = False
 
     # SDK port configuration (see livox/ports.py for defaults)
     cmd_data_port: int = SDK_CMD_DATA_PORT
