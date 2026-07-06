@@ -39,6 +39,9 @@ if TYPE_CHECKING:
     # The entire hot-path event: (topic string incl. '#type' suffix, wire payload length).
     TapCallback = Callable[[str, int], None]
 
+# Seconds of per-message history kept for windowed stats.
+DEFAULT_HISTORY_WINDOW = 60.0
+
 
 @dataclass(frozen=True, slots=True)
 class SpyKey:
@@ -79,7 +82,7 @@ class TopicStats:
     total_msgs: int
     last_seen: float | None  # timestamp of newest recorded message, None if none yet
 
-    def __init__(self, history_window: float = 60.0) -> None:
+    def __init__(self, history_window: float = DEFAULT_HISTORY_WINDOW) -> None:
         """history_window: seconds of per-message history kept for windowed stats.
 
         total_bytes/total_msgs/last_seen survive eviction; only windowed stats
@@ -229,7 +232,9 @@ class TransportSpy:
     totals: TopicStats  # all messages across all sources
 
     def __init__(
-        self, sources: Sequence[SpySource] | None = None, history_window: float = 60.0
+        self,
+        sources: Sequence[SpySource] | None = None,
+        history_window: float = DEFAULT_HISTORY_WINDOW,
     ) -> None:
         """sources=None means default_sources()."""
         self._sources = list(sources) if sources is not None else default_sources()
