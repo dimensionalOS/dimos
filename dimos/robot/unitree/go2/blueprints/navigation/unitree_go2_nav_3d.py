@@ -25,16 +25,18 @@ from dimos.navigation.basic_path_follower.module import BasicPathFollower
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
-from dimos.navigation.nav_3d.repulsive_local_planner.repulsive_field_native import (
-    RepulsiveFieldNative,
-)
+
+# Local planner disabled for testing; re-enable with the RepulsiveFieldNative block below.
+# from dimos.navigation.nav_3d.repulsive_local_planner.repulsive_field_native import (
+#     RepulsiveFieldNative,
+# )
 from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
 from dimos.robot.unitree.go2.connect_relative_sensor import RelativeSensorConnection
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import FRAMES
 from dimos.visualization.vis_module import vis_module
 
-voxel_size = 0.08
+voxel_size = 0.04
 # Height of the head-mounted lidar above the ground while standing.
 go2_lidar_height = 0.5
 
@@ -108,11 +110,16 @@ unitree_go2_nav_3d = autoconnect(
         transform=_mid360_from_base_link,
     ).remappings(
         [
+            # Merged (Mid-360 + re-expressed L1) cloud consumed by the ray-tracing map.
             (RelativeSensorConnection, "lidar", "pointlio_lidar"),
+            # Listen to Point-LIO's raw Mid-360 cloud so it can be folded into the L1
+            # scan before publishing. A distinct topic from `lidar` above avoids a
+            # self-feedback loop where the merged output re-enters the merge.
+            (RelativeSensorConnection, "pointlio_lidar", "pointlio_raw"),
             (RelativeSensorConnection, "odom", "odom_go2"),
         ]
     ),
-    PointLio.blueprint().remappings([(PointLio, "lidar", "pointlio_lidar")]),
+    PointLio.blueprint().remappings([(PointLio, "lidar", "pointlio_raw")]),
     RayTracingVoxelMap.blueprint(
         voxel_size=voxel_size,
         emit_every=1,
@@ -134,22 +141,22 @@ unitree_go2_nav_3d = autoconnect(
         viz_publish_hz=0.0,
     ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
     GoalRelay.blueprint(),
+    # Local planner disabled for testing — BasicPathFollower follows the MLS
+    # global route (`path`) directly instead of a smoothed local path.
     # Smooths the MLS global route into an obstacle-avoiding local path, solving
     # fresh on the ray-tracing terrain cloud (its own internal costmap — no
     # CostMapper needed). output_base_frame=False: BasicPathFollower consumes a
     # world-frame path + odometry, not a vehicle-frame route.
-    RepulsiveFieldNative.blueprint(
-        world_frame="odom",
-        output_base_frame=False,
-    ).remappings(
-        [
-            (RepulsiveFieldNative, "terrain_map", "local_map"),
-            (RepulsiveFieldNative, "global_path", "path"),
-        ]
-    ),
-    # Follow the local planner's output instead of the raw global path.
-    BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6).remappings(
-        [(BasicPathFollower, "path", "local_path")]
-    ),
+    # RepulsiveFieldNative.blueprint(
+    #     world_frame="odom",
+    #     output_base_frame=False,
+    # ).remappings(
+    #     [
+    #         (RepulsiveFieldNative, "terrain_map", "local_map"),
+    #         (RepulsiveFieldNative, "global_path", "path"),
+    #     ]
+    # ),
+    # Follow the MLS global route directly (`path` is BasicPathFollower's default topic).
+    BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6),
     MovementManager.blueprint(),
 ).global_config(n_workers=10, robot_model="unitree_go2", obstacle_avoidance=False)

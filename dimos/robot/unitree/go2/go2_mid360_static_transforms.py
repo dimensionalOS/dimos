@@ -37,7 +37,7 @@ from dimos.protocol.tf.static_tf_publisher import (
     frames_to_edge_transforms,
 )
 
-MID360_PITCH_DOWN = math.radians(44.0)
+MID360_PITCH_DOWN = math.radians(50.0)
 
 # rpy that maps a sensor frame to its optical frame (z-forward, x-right, y-down)
 OPTICAL_RPY = (-math.pi / 2, 0.0, -math.pi / 2)
