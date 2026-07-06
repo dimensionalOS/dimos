@@ -180,8 +180,8 @@ class ManipulationModuleConfig(ModuleConfig):
     trajectory_parametrization: TrajectoryParametrizationConfig = Field(
         default_factory=TrajectoryParametrizationConfig
     )
-    execution_settle_timeout: float = 7.0
-    execution_joint_tolerance: float = 0.04
+    execution_settle_timeout: float = 15.0
+    execution_joint_tolerance: float = 0.08
     execution_poll_interval: float = 0.1
 
 

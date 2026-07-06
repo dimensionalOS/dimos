@@ -369,6 +369,15 @@ class ObjectSceneRegistrationModule(Module):
                 0.1,
             )
             if camera_transform is None:
+                # The camera can be mounted under a moving robot link (for example
+                # world -> link7 -> wrist_camera_color_optical_frame).  The image,
+                # robot-link TF, and camera-link TF publishers do not always share
+                # exactly the same timestamp, so a strict image-time chain lookup can
+                # miss even when the latest TF tree is valid.  Falling back to the
+                # latest composed transform keeps the single-parent TF tree intact
+                # while allowing perception to proceed in simulation.
+                camera_transform = self.tf.get(self._target_frame, color_image.frame_id)
+            if camera_transform is None:
                 logger.info("Failed to lookup transform from camera frame to target frame")
                 return
 
