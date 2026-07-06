@@ -107,23 +107,6 @@ class EntityCookPlan:
             metadata["prototype_id"] = self.prototype_id
         return metadata
 
-    def to_json_dict(self) -> dict[str, Any]:
-        raw = {
-            "id": self.spec.id,
-            "safe_id": self.safe_id,
-            "matched_prim_paths": list(self.matched_prim_paths),
-            "visual_node_patterns": list(self.visual_node_patterns),
-            "aabb": {"min": list(self.aabb_min), "max": list(self.aabb_max)},
-            "center": list(self.center),
-            "synthetic": self.spec.is_synthetic,
-            "descriptor": self.descriptor,
-            "visual_path": str(self.visual_path) if self.visual_path else None,
-            "remove_from_static": self.spec.remove_from_static,
-        }
-        if self.prototype_id is not None:
-            raw["prototype_id"] = self.prototype_id
-        return raw
-
 
 @dataclass(frozen=True)
 class EntityPrototypePlan:
@@ -163,6 +146,11 @@ class SceneCookPlan:
         return [entity.to_metadata() for entity in self.entities]
 
     def to_json_dict(self) -> dict[str, Any]:
+        """Cook-stats summary of the plan.
+
+        Entities appear as a count only — their full records already live
+        in ``scene.meta.json`` via ``entities_metadata()``.
+        """
         return {
             "source_path": str(self.source_path),
             "alignment": {
@@ -172,7 +160,7 @@ class SceneCookPlan:
                 "y_up": self.alignment.y_up,
             },
             "sidecar_path": str(self.sidecar.path) if self.sidecar.path else None,
-            "entities": [entity.to_json_dict() for entity in self.entities],
+            "entities": len(self.entities),
             "prototypes": [prototype.to_json_dict() for prototype in self.prototypes],
             "stats": self.stats,
         }

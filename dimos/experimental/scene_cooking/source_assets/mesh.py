@@ -365,20 +365,6 @@ def load_scene_mesh(
     return mesh
 
 
-def make_raycasting_scene(
-    mesh: o3d.geometry.TriangleMesh,
-) -> o3d.t.geometry.RaycastingScene:
-    """Wrap a TriangleMesh into Open3D's BVH-backed ray-casting scene.
-
-    No caller in this package yet: the pimsim mesh-camera sensor (raycast
-    depth camera, on pim/dev) builds its scene with this and lands here
-    with that port.
-    """
-    scene = o3d.t.geometry.RaycastingScene()
-    scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))
-    return scene
-
-
 @dataclass
 class ScenePrimMesh:
     """One USD ``Mesh`` prim's geometry, ready to write to OBJ.

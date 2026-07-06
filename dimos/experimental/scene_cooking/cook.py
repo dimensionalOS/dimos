@@ -131,13 +131,7 @@ def cook_scene_package(
         output_dir=package_dir,
         collision_spec=collision_spec,
     )
-    stats["cook_plan"] = {
-        "source_path": str(plan.source_path),
-        "sidecar_path": str(plan.sidecar.path) if plan.sidecar.path else None,
-        "entities": len(plan.entities),
-        "prototypes": [prototype.to_json_dict() for prototype in plan.prototypes],
-        "stats": plan.stats,
-    }
+    stats["cook_plan"] = plan.to_json_dict()
 
     entities = plan.entities_metadata()
     if entities:
