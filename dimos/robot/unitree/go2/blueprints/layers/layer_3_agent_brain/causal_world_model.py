@@ -677,7 +677,20 @@ class _Go2CausalWorldModel(Module):
     def _save_world_model_state_to_path(self, path: Path) -> dict[str, Any]:
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = self._state_payload()
-        path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        content = json.dumps(payload, indent=2, sort_keys=True)
+        # Atomic write via temp file + rename: prevents truncation on crash
+        # and ensures readers always see a complete file.  Still last-writer-
+        # wins across concurrent instances, but no interleaved corruption.
+        tmp = path.with_name("." + path.name + ".tmp")
+        try:
+            tmp.write_text(content, encoding="utf-8")
+            os.replace(tmp, path)
+        finally:
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
         return _state_summary(payload, str(path))
 
     def _load_world_model_state_from_path(
