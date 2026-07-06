@@ -102,23 +102,22 @@ def render_store(
     rr.save(out)
 
     for name, stream in renderable:
-        report = progress(stream.count(), label=name)
-        for obs in stream:
-            if seconds is not None and obs.ts - t0 > seconds:
-                print()  # terminate the windowed (sub-100%) progress line
-                break
-            if obs.data is None:  # e.g. a truncated/corrupt frame that failed to decode
+        with progress(stream.count(), label=name) as report:
+            for obs in stream:
+                if seconds is not None and obs.ts - t0 > seconds:
+                    break  # the context manager finalizes the windowed (sub-100%) bar
+                if obs.data is None:  # e.g. a truncated/corrupt frame that failed to decode
+                    report(obs)
+                    continue
+                rr.set_time("time", duration=obs.ts - t0)
+                data = obs.data.to_rerun()
+                path = entity(name)
+                if isinstance(data, list):  # RerunMulti: [(subpath, archetype), ...]
+                    for sub, arch in data:
+                        rr.log(f"{path}/{sub}", arch)
+                else:
+                    rr.log(path, data)
                 report(obs)
-                continue
-            rr.set_time("time", duration=obs.ts - t0)
-            data = obs.data.to_rerun()
-            path = entity(name)
-            if isinstance(data, list):  # RerunMulti: [(subpath, archetype), ...]
-                for sub, arch in data:
-                    rr.log(f"{path}/{sub}", arch)
-            else:
-                rr.log(path, data)
-            report(obs)
 
     rr.rerun_shutdown()  # flush + close the .rrd before opening it
     print(f"wrote {out}")

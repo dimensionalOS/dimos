@@ -32,7 +32,7 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
-from dimos.memory2.replay import Replay, resolve_db_path
+from dimos.memory2.replay import Replay, ReplayStream, resolve_db_path
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -188,13 +188,29 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
     def set_rage_mode(self, enable: bool) -> bool:
         return True
 
+    def _stream_name(self, *names: str) -> str:
+        """Return the first of ``names`` present in the dataset (stream naming
+        changed over time: mid360 recordings use go2_lidar/go2_odom, older ones
+        lidar/odom)."""
+        available = self.replay.list_streams()
+        for name in names:
+            if name in available:
+                return name
+        raise KeyError(f"None of {names!r} in dataset {self.dataset!r}; available: {available}")
+
     @simple_mcache
     def lidar_stream(self) -> Observable[PointCloud2]:
-        return self.replay.streams.lidar.observable()
+        stream: ReplayStream[PointCloud2] = self.replay.stream(
+            self._stream_name("go2_lidar", "lidar")
+        )
+        return stream.observable()
 
     @simple_mcache
     def odom_stream(self) -> Observable[PoseStamped]:
-        return self.replay.streams.odom.observable()
+        stream: ReplayStream[PoseStamped] = self.replay.stream(
+            self._stream_name("go2_odom", "odom")
+        )
+        return stream.observable()
 
     @simple_mcache
     def video_stream(self) -> Observable[Image]:
