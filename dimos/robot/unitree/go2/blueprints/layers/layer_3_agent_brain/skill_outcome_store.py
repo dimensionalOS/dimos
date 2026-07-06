@@ -38,7 +38,7 @@ class SkillOutcomeStoreSpec(Spec, Protocol):
     """
 
     def get_recent_outcomes(
-        self, limit: int = 5, skill_name: str = "", domain: str = ""
+        self, limit: int = 5, skill_name: str = "", domain: str = "", task: str = ""
     ) -> list[dict[str, Any]]: ...
 
 
@@ -60,6 +60,7 @@ class _SkillOutcome:
     message: str
     risk: RiskLevel
     recovery: str
+    task: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -71,6 +72,7 @@ class _SkillOutcome:
             "message": self.message,
             "risk": self.risk,
             "recovery": self.recovery,
+            "task": self.task,
         }
 
 
@@ -113,6 +115,7 @@ class _Go2SkillOutcomeStore(Module):
         message: str = "",
         risk: str = "unknown",
         recovery: str = "",
+        task: str = "",
     ) -> SkillResult:
         """Record the outcome of a skill call for later routing and prediction.
 
@@ -128,12 +131,14 @@ class _Go2SkillOutcomeStore(Module):
             message: Short result message from the skill.
             risk: Optional observed risk level.
             recovery: Optional recovery suggestion.
+            task: Optional user goal or agent subtask that triggered the skill.
         """
         skill_name = skill_name.strip()
         domain = domain.strip()
         error_code = error_code.strip()
         message = message.strip()
         recovery = recovery.strip()
+        task = task.strip()
 
         # Keep the MCP-facing API simple and defensive. A missing skill name
         # would make later filtering/prediction meaningless.
@@ -158,6 +163,7 @@ class _Go2SkillOutcomeStore(Module):
             message=message,
             risk=risk,
             recovery=recovery,
+            task=task,
         )
 
         # The only write path in V2 first pass: append to the bounded deque.
@@ -194,7 +200,7 @@ class _Go2SkillOutcomeStore(Module):
 
     @rpc
     def get_recent_outcomes(
-        self, limit: int = 5, skill_name: str = "", domain: str = ""
+        self, limit: int = 5, skill_name: str = "", domain: str = "", task: str = ""
     ) -> list[dict[str, Any]]:
         """Return newest outcomes first, optionally filtered.
 
@@ -205,6 +211,7 @@ class _Go2SkillOutcomeStore(Module):
         limit = max(0, min(limit, self._max_outcomes))
         skill_name = skill_name.strip()
         domain = domain.strip()
+        task = task.strip()
 
         # Iterate newest-to-oldest so predictors see the most relevant failures
         # first. Filters are exact-match to avoid surprising fuzzy behavior.
@@ -213,6 +220,7 @@ class _Go2SkillOutcomeStore(Module):
             for outcome in reversed(self._outcomes)
             if (not skill_name or outcome.skill_name == skill_name)
             and (not domain or outcome.domain == domain)
+            and (not task or outcome.task == task)
         ]
         return [outcome.to_dict() for outcome in outcomes[:limit]]
 

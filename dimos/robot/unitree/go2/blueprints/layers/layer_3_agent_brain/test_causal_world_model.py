@@ -97,6 +97,7 @@ def test_record_causal_transition_can_use_latest_skill_outcome() -> None:
             success=False,
             domain="navigation",
             message="No matching location found",
+            task="go to the kitchen",
         )
 
         model._skill_outcomes = store

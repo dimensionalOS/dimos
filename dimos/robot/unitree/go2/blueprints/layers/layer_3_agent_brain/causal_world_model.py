@@ -237,7 +237,7 @@ class _Go2CausalWorldModel(Module):
         if isinstance(outcome, str):
             return SkillResult.fail("INVALID_INPUT", outcome)
         if not outcome:
-            outcome = self._latest_outcome(skill_name)
+            outcome = self._latest_outcome(skill_name, task)
 
         prediction_view = _metadata_view(prediction)
         outcome_view = _metadata_view(outcome)
@@ -798,10 +798,12 @@ class _Go2CausalWorldModel(Module):
             dashboard_state["prediction"] = prediction.get("prediction") or {}
         return _bounded_jsonable(dashboard_state)
 
-    def _latest_outcome(self, skill_name: str) -> dict[str, Any]:
+    def _latest_outcome(self, skill_name: str, task: str = "") -> dict[str, Any]:
         if self._skill_outcomes is None:
             return {}
-        outcomes = self._skill_outcomes.get_recent_outcomes(limit=1, skill_name=skill_name)
+        outcomes = self._skill_outcomes.get_recent_outcomes(
+            limit=1, skill_name=skill_name, task=task
+        )
         return outcomes[0] if outcomes else {}
 
 
