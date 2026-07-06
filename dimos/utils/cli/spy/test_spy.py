@@ -73,6 +73,19 @@ def test_topic_stats_windowed_rates():
     assert s.bytes_per_sec(5.0, now) == pytest.approx(50.0, rel=0.25)
 
 
+def test_topic_stats_window_stats_single_reading():
+    s = TopicStats(history_window=60.0)
+    t0 = 1000.0
+    for i in range(10):  # 1 Hz, 50 bytes each
+        s.record(50, t0 + i)
+    view = s.window_stats(5.0, now=t0 + 9.0)
+    assert view.freq == pytest.approx(1.0, rel=0.25)
+    assert view.bytes_per_sec == pytest.approx(50.0, rel=0.25)
+    assert view.total_bytes == 500
+    assert view.total_msgs == 10
+    assert view.last_seen == pytest.approx(t0 + 9.0)
+
+
 def test_topic_stats_empty():
     s = TopicStats()
     assert s.total_msgs == 0

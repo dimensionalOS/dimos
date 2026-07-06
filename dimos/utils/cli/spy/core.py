@@ -70,6 +70,21 @@ def split_type_suffix(topic: str) -> tuple[str, str | None]:
     return (base, suffix) if sep else (topic, None)
 
 
+@dataclass(frozen=True, slots=True)
+class WindowStats:
+    """One consistent reading of a TopicStats: windowed rates + lifetime totals.
+
+    Built in a single pass under the stats lock (see TopicStats.window_stats),
+    so a UI thread never sees values torn by a concurrent record().
+    """
+
+    freq: float  # messages per second over the window
+    bytes_per_sec: float  # payload bytes per second over the window
+    total_bytes: int
+    total_msgs: int
+    last_seen: float | None
+
+
 class TopicStats:
     """Sliding-window traffic statistics for one spied topic.
 
@@ -78,7 +93,8 @@ class TopicStats:
     values), so all stats are deterministic functions of recorded data.
 
     Thread-safety: record() may be called from transport threads while readers
-    query from a UI thread.
+    query from a UI thread; readers must go through window_stats() (or the
+    freq/bytes_per_sec wrappers), which take the lock.
     """
 
     total_bytes: int
@@ -109,20 +125,31 @@ class TopicStats:
             while self._history and self._history[0][0] < cutoff:
                 self._history.popleft()
 
-    def _in_window(self, window: float, now: float) -> list[tuple[float, int]]:
+    def window_stats(self, window: float, now: float) -> WindowStats:
+        """Rates over [now - window, now] plus totals, in one locked pass."""
         cutoff = now - window
+        count = 0
+        nbytes = 0
         with self._lock:
-            return [(ts, n) for ts, n in self._history if ts >= cutoff]
+            for ts, n in self._history:
+                if ts >= cutoff:
+                    count += 1
+                    nbytes += n
+            return WindowStats(
+                freq=count / window if count else 0.0,
+                bytes_per_sec=nbytes / window if count else 0.0,
+                total_bytes=self.total_bytes,
+                total_msgs=self.total_msgs,
+                last_seen=self.last_seen,
+            )
 
     def freq(self, window: float, now: float) -> float:
         """Messages per second over [now - window, now]. 0.0 if none."""
-        msgs = self._in_window(window, now)
-        return len(msgs) / window if msgs else 0.0
+        return self.window_stats(window, now).freq
 
     def bytes_per_sec(self, window: float, now: float) -> float:
         """Payload bytes per second over [now - window, now]. 0.0 if none."""
-        msgs = self._in_window(window, now)
-        return sum(n for _, n in msgs) / window if msgs else 0.0
+        return self.window_stats(window, now).bytes_per_sec
 
 
 @runtime_checkable

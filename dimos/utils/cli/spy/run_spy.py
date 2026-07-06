@@ -41,8 +41,8 @@ from dimos.utils.cli import theme
 from dimos.utils.cli.spy.core import (
     SOURCE_FACTORIES,
     SpyKey,
-    TopicStats,
     TransportSpy,
+    WindowStats,
     default_sources,
     split_type_suffix,
     validate_transport_names,
@@ -164,15 +164,17 @@ class SpyApp(App[None]):
             return
         now = time.time()
         snap = self.spy.snapshot()
-        rows: list[tuple[SpyKey, TopicStats]] = sorted(
-            snap.items(), key=lambda kv: kv[1].total_bytes, reverse=True
+        rows: list[tuple[SpyKey, WindowStats]] = sorted(
+            ((key, stats.window_stats(STAT_WINDOW, now)) for key, stats in snap.items()),
+            key=lambda kv: kv[1].total_bytes,
+            reverse=True,
         )
         table.clear(columns=False)
 
         for key, stats in rows:
             base, msg_type = split_type_suffix(key.topic)
-            freq = stats.freq(STAT_WINDOW, now)
-            bps = stats.bytes_per_sec(STAT_WINDOW, now)
+            freq = stats.freq
+            bps = stats.bytes_per_sec
             age = now - stats.last_seen if stats.last_seen is not None else None
             stale = age is not None and age > STALE_AGE
 
