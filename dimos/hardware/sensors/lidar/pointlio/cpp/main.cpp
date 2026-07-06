@@ -77,7 +77,6 @@ static std::vector<double> parse_doubles(const std::string& csv) {
 static std::string g_lidar_topic;
 static std::string g_odometry_topic;
 static std::string g_frame_id;          // required via --frame_id
-static std::string g_child_frame_id;     // required via --child_frame_id
 static std::string g_sensor_frame_id;    // required via --sensor_frame_id
 static float g_frequency = 10.0f;
 
@@ -158,7 +157,7 @@ static void publish_odometry(const custom_messages::Odometry& odom, double times
 
     nav_msgs::Odometry msg;
     msg.header = make_header(g_frame_id, timestamp);
-    msg.child_frame_id = g_child_frame_id;
+    msg.child_frame_id = g_sensor_frame_id;
 
     // Pose in the SLAM/sensor frame.
     msg.pose.pose.position.x = odom.pose.pose.position.x;
@@ -382,7 +381,6 @@ int main(int argc, char** argv) {
     std::string lidar_ip = mod.arg("lidar_ip", "192.168.1.155");
     g_frequency = mod.arg_float("frequency", 10.0f);
     g_frame_id = mod.arg_required("frame_id");
-    g_child_frame_id = mod.arg_required("child_frame_id");
     g_sensor_frame_id = mod.arg_required("sensor_frame_id");
     float pointcloud_freq = mod.arg_float("pointcloud_freq", 5.0f);
     float odom_freq = mod.arg_float("odom_freq", 50.0f);

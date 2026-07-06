@@ -18,6 +18,7 @@ import os
 import platform
 import tempfile
 import threading
+import time
 import uuid
 
 # With pytest-xdist, pick a per-worker bucket and pin env vars *before*
@@ -67,6 +68,7 @@ import pytest
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.coordination.process_lifecycle import spawn_watchdog
+from dimos.utils.testing.waiting import retry_until as _retry_until, wait_until as _wait_until
 
 load_dotenv()
 
@@ -132,6 +134,18 @@ def lcm_url() -> str:
     return os.environ.get("LCM_DEFAULT_URL", "udpm://239.255.76.67:7667?ttl=0")
 
 
+@pytest.fixture
+def wait_until():
+    """Poll a predicate until it's true or a timeout elapses. See dimos.utils.testing.waiting."""
+    return _wait_until
+
+
+@pytest.fixture
+def retry_until():
+    """Retry an action until a threading.Event fires. See dimos.utils.testing.waiting."""
+    return _retry_until
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items):
     _skipif_markers = {
@@ -176,11 +190,13 @@ def pytest_sessionfinish(session):
 
     yield
 
-    # Check for session-level thread leaks at teardown
+    # Check for session-level thread leaks at teardown. A stopped thread that
+    # lingers in the registry (e.g. a zenoh pyo3-closure thread awaiting reaping)
+    # is not a leak, so only count threads that are still running.
     final_threads = [
         t
         for t in threading.enumerate()
-        if t.name != "MainThread" and t.ident not in _session_threads
+        if t.name != "MainThread" and t.ident not in _session_threads and t.is_alive()
     ]
 
     if final_threads:
@@ -204,47 +220,57 @@ def monitor_threads(request):
 
     with _seen_threads_lock:
         before = _before_test_threads.get(test_name, set())
-        current = {t.ident for t in threading.enumerate() if t.ident is not None}
 
-        # New threads are ones that exist now but didn't exist before this test
-        new_thread_ids = current - before
+    # Threads intentionally left running for the whole process and cleaned up on
+    # exit, so they don't count as per-test leaks.
+    expected_persistent_thread_prefixes = [
+        "Dask-Offload",
+        # HuggingFace safetensors conversion thread - no user cleanup API
+        # https://github.com/huggingface/transformers/issues/29513
+        "Thread-auto_conversion",
+    ]
 
-        if not new_thread_ids:
-            return
+    def live_new_threads():
+        # Threads created during this test that are still running. A thread that
+        # has already stopped is not a leak -- it's done, just not yet reaped
+        # from threading's registry -- so we key on is_alive(), not presence.
+        result = []
+        for t in threading.enumerate():
+            if t.ident is None or t.ident in before or t.name == "MainThread":
+                continue
+            if any(t.name.startswith(prefix) for prefix in expected_persistent_thread_prefixes):
+                continue
+            if t.is_alive():
+                result.append(t)
+        return result
 
-        # Get the actual thread objects for new threads
-        new_threads = [
-            t for t in threading.enumerate() if t.ident in new_thread_ids and t.name != "MainThread"
-        ]
+    # Some C extensions tear their callback threads down asynchronously, so a
+    # thread can stay alive briefly after the test cleaned up its owner (notably
+    # zenoh's pyo3-closure threads, freed shortly after the session is closed).
+    # A single snapshot races that teardown and flags a thread that is about to
+    # exit. Give new threads a grace period to drain; only ones that stay alive
+    # are real leaks (a genuinely leaked thread never exits).
+    deadline = time.monotonic() + 5.0
+    leaked = live_new_threads()
+    while leaked and time.monotonic() < deadline:
+        time.sleep(0.02)
+        leaked = live_new_threads()
 
-        # Filter out expected persistent threads that are shared globally
-        # These threads are intentionally left running and cleaned up on process exit
-        expected_persistent_thread_prefixes = [
-            "Dask-Offload",
-            # HuggingFace safetensors conversion thread - no user cleanup API
-            # https://github.com/huggingface/transformers/issues/29513
-            "Thread-auto_conversion",
-        ]
-        new_threads = [
-            t
-            for t in new_threads
-            if not any(t.name.startswith(prefix) for prefix in expected_persistent_thread_prefixes)
-        ]
+    if not leaked:
+        return
 
-        # Filter out threads we've already seen (from previous tests)
-        truly_new = [t for t in new_threads if t.ident not in _seen_threads]
+    with _seen_threads_lock:
+        # Report each leaked thread only once across the session.
+        truly_new = [t for t in leaked if t.ident not in _seen_threads]
+        for t in leaked:
+            _seen_threads.add(t.ident)
 
-        # Mark all new threads as seen
-        for t in new_threads:
-            if t.ident is not None:
-                _seen_threads.add(t.ident)
+    if not truly_new:
+        return
 
-        if not truly_new:
-            return
+    thread_names = [t.name for t in truly_new]
 
-        thread_names = [t.name for t in truly_new]
-
-        pytest.fail(
-            f"Non-closed threads created during this test. Thread names: {thread_names}. "
-            "Please look at the first test that fails and fix that."
-        )
+    pytest.fail(
+        f"Non-closed threads created during this test. Thread names: {thread_names}. "
+        "Please look at the first test that fails and fix that."
+    )
