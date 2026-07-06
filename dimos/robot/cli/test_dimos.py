@@ -200,3 +200,18 @@ def test_lcmspy_rejects_stray_positional(monkeypatch):
     result = CliRunner().invoke(main, ["lcmspy", "foo"])
     assert result.exit_code == 1
     assert "unexpected" in result.output.lower()
+
+
+def test_spy_rejects_root_transport(monkeypatch, spy_main_argv):
+    # A root-level `--transport` (before the subcommand) sets the stack backend,
+    # which the spy ignores. Rather than silently show all transports, error and
+    # point at the subcommand-level filter.
+    monkeypatch.setattr(sys, "argv", ["dimos"])
+    original = global_config.transport
+    try:
+        result = CliRunner().invoke(main, ["--transport", "zenoh", "spy"])
+    finally:
+        global_config.update(transport=original)
+    assert result.exit_code == 2
+    assert "dimos spy --transport" in result.output
+    assert spy_main_argv == []  # never reaches the spy
