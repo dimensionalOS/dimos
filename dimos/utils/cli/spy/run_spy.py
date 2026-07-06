@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import sys
 import time
+from typing import Any
 
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -108,7 +109,7 @@ def _parse_transports(argv: list[str]) -> list[str] | None:
     return transports or None
 
 
-class SpyApp(App):  # type: ignore[type-arg]
+class SpyApp(App[None]):
     """A real-time dashboard for all-transport pubsub traffic using Textual."""
 
     CSS_PATH = "../dimos.tcss"
@@ -138,7 +139,7 @@ class SpyApp(App):  # type: ignore[type-arg]
         ("ctrl+c", "quit"),
     ]
 
-    def __init__(self, transports: list[str] | None = None, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, transports: list[str] | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         if transports is None:
             # Default: every available transport; unavailable backends are
@@ -165,10 +166,10 @@ class SpyApp(App):  # type: ignore[type-arg]
         # Default (all transports): a backend that fails to start is skipped so
         # the spy still shows the others. An explicit --transport hard-fails.
         self.spy.start(best_effort=transports is None)
-        self.table: DataTable | None = None  # type: ignore[type-arg]
+        self.table: DataTable[Text] | None = None
 
     def compose(self) -> ComposeResult:
-        self.table = DataTable(zebra_stripes=False, cursor_type=None)  # type: ignore[arg-type]
+        self.table = DataTable(cursor_type="none")
         self.table.add_column("Transport")
         self.table.add_column("Topic")
         self.table.add_column("Type")
@@ -185,12 +186,15 @@ class SpyApp(App):  # type: ignore[type-arg]
         self.spy.stop()
 
     def refresh_table(self) -> None:
+        table = self.table
+        if table is None:
+            return
         now = time.time()
         snap = self.spy.snapshot()
         rows: list[tuple[SpyKey, TopicStats]] = sorted(
             snap.items(), key=lambda kv: kv[1].total_bytes, reverse=True
         )
-        self.table.clear(columns=False)  # type: ignore[union-attr]
+        table.clear(columns=False)
 
         for key, stats in rows:
             base, msg_type = split_type_suffix(key.topic)
@@ -201,7 +205,7 @@ class SpyApp(App):  # type: ignore[type-arg]
 
             if stale:
                 # Liveness: dim the whole row for topics gone quiet.
-                self.table.add_row(  # type: ignore[union-attr]
+                table.add_row(
                     Text(key.transport, style=theme.DIM),
                     Text(base, style=theme.DIM),
                     Text(msg_type or "", style=theme.DIM),
@@ -213,7 +217,7 @@ class SpyApp(App):  # type: ignore[type-arg]
                 continue
 
             age_str = f"{age:.1f}s" if age is not None else "-"
-            self.table.add_row(  # type: ignore[union-attr]
+            table.add_row(
                 Text(key.transport, style=theme.BLUE),
                 topic_text(base),
                 Text(msg_type or "", style=theme.BLUE),
