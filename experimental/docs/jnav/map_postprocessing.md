@@ -27,7 +27,7 @@ The scripts live in `dimos/navigation/jnav/components/loop_closure/gsc_pgo/scrip
 python dimos/navigation/jnav/components/loop_closure/gsc_pgo/scripts/add_april.py --rec=PATH
 ```
 
-`add_april.py` writes `raw_april_tags` (every detection, unfiltered, with its quality numbers attached — this is what postprocessing reads), the gated/clustered `april_tags` stream, and an `april_tags` section in the recording's `summary.json` (see below). Leaving `raw_april_tags` unfiltered matters: you tune the quality gates later without re-running detection, which is the slow part. (`detect_tags.py` writes just the raw stream if that's all you want; `--dynamic 17` keeps a moving tag in raw but drops it from the gated stream.)
+`add_april.py` writes `raw_april_tags` (every detection, unfiltered, with its quality numbers attached — this is what postprocessing reads), the gated/clustered `april_tags` stream, and an `april_tags` section in the recording's `summary.json` (see below). Leaving `raw_april_tags` unfiltered matters: you tune the quality gates later without re-running detection, which is the slow part. (`--dynamic 17` keeps a moving tag in raw but drops it from the gated stream.)
 
 Inspect what was found without rebuilding anything — per tag, raw count and revisit count, flagging any tag never revisited (your fast check for whether a recording even has loop constraints):
 

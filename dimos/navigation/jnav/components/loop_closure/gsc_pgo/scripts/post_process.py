@@ -16,7 +16,7 @@
 # mypy: ignore-errors
 """AprilTag-loop-closed + ICP-refined ground-truth post-processing for a go2 recording.
 
-Source of tags = the UNFILTERED tag stream (build it first with detect_tags.py). Each raw
+Source of tags = the UNFILTERED tag stream (build it first with add_april.py). Each raw
 detection carries its gate diagnostics, so gates are applied here post-hoc (no re-detection)
 and are easy to relax. Factors: one robust (best-reproj) observation per keyframe x marker ->
 denser, balanced loop closure than one-medoid-per-visit.

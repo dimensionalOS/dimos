@@ -43,6 +43,11 @@ from scipy.spatial.transform import Rotation
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.fiducial.marker_pose import (
+    create_aruco_detector,
+    estimate_marker_pose,
+    marker_reprojection_error,
+)
 
 DEFAULT_MAX_DISTANCE_M = 1.0
 DEFAULT_MAX_VIEW_ANGLE_DEG = 45.0
@@ -61,35 +66,6 @@ _HUBER_ITERATIONS = 5
 # One tag observation: ts, marker_id, t_cam_marker (xyz + xyzw quat), and the
 # per-glimpse quality fields (sharpness, reproj_px, tag_px, speed).
 Detection = dict[str, Any]
-
-
-def make_detector(dictionary_name: str) -> cv2.aruco.ArucoDetector:
-    d = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, dictionary_name))
-    return cv2.aruco.ArucoDetector(d, cv2.aruco.DetectorParameters())
-
-
-def _object_points(marker_length_m: float) -> np.ndarray:
-    h = marker_length_m / 2.0
-    return np.array([[-h, h, 0.0], [h, h, 0.0], [h, -h, 0.0], [-h, -h, 0.0]], dtype=np.float32)
-
-
-def estimate_marker_pose(
-    corners_pixels: np.ndarray,
-    marker_length_m: float,
-    intrinsics: np.ndarray,
-    distortion: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray] | None:
-    """solvePnP a single tag -> (rotation_vector, translation_vector) in the
-    camera_optical frame, or None if it failed."""
-    image_corners = corners_pixels.reshape(4, 1, 2).astype(np.float32)
-    found, rotation_vector, translation_vector = cv2.solvePnP(
-        _object_points(marker_length_m),
-        image_corners,
-        intrinsics,
-        distortion,
-        flags=cv2.SOLVEPNP_IPPE_SQUARE,
-    )
-    return (rotation_vector, translation_vector) if found else None
 
 
 def view_quality(t_cam_marker: list[float]) -> tuple[float, float]:
@@ -146,24 +122,6 @@ def cluster_medoid(cluster: list[Detection], rotation_weight_m_per_rad: float) -
         if cost < best_cost:
             best_cost, best_index = cost, i
     return cluster[best_index]
-
-
-def reprojection_error_px(
-    corners_pixels: np.ndarray,
-    rotation_vector: np.ndarray,
-    translation_vector: np.ndarray,
-    marker_length_m: float,
-    intrinsics: np.ndarray,
-    distortion: np.ndarray,
-) -> float:
-    """RMS pixel distance between detected corners and the solvePnP pose reprojected
-    back onto the image — a direct measure of how well the pose explains the tag."""
-    projected, _ = cv2.projectPoints(
-        _object_points(marker_length_m), rotation_vector, translation_vector, intrinsics, distortion
-    )
-    measured = corners_pixels.reshape(4, 2).astype(np.float64)
-    diff = projected.reshape(4, 2) - measured
-    return float(np.sqrt(np.mean(np.sum(diff * diff, axis=1))))
 
 
 def tag_pixel_size(corners_pixels: np.ndarray) -> float:
@@ -303,7 +261,7 @@ def detect_apriltags(
     far/oblique views, fast motion), cluster same-id detections by time, drop thin
     clusters, and (re)write the `april_tags` stream from one Huber-refined medoid
     representative per cluster. Returns that list of representatives."""
-    detector = make_detector(dictionary)
+    detector = create_aruco_detector(dictionary)
     raw_detections: list[Detection] = []
     images = store.stream(image_stream, Image).to_list()
     speed_by_ts, speed_available = _camera_speeds(images)
@@ -336,13 +294,13 @@ def detect_apriltags(
                     "marker_id": int(marker_id),
                     "t_cam_marker": tag_in_camera,
                     "sharpness": tag_sharpness(gray, corners),
-                    "reproj_px": reprojection_error_px(
+                    "reproj_px": marker_reprojection_error(
                         corners,
-                        rotation_vector,
-                        translation_vector,
                         marker_length,
                         intrinsics,
                         distortion,
+                        rotation_vector,
+                        translation_vector,
                     ),
                     "tag_px": tag_pixel_size(corners),
                     "speed": speed_by_ts.get(float(image_obs.ts)),
@@ -508,7 +466,7 @@ def pure_get_tags(img: Any, camera_intrinsics: Any) -> list[TagInfo]:
     if bgr.ndim == 2:
         bgr = cv2.cvtColor(bgr, cv2.COLOR_GRAY2BGR)
 
-    detector = make_detector(dictionary)
+    detector = create_aruco_detector(dictionary)
     all_corners, marker_ids, _ = detector.detectMarkers(bgr)
     if marker_ids is None:
         return []
@@ -530,13 +488,13 @@ def pure_get_tags(img: Any, camera_intrinsics: Any) -> list[TagInfo]:
             float(quaternion[2]),
             float(quaternion[3]),
         ]
-        reproj = reprojection_error_px(
+        reproj = marker_reprojection_error(
             corners,
-            rotation_vector,
-            translation_vector,
             marker_length,
             intrinsics,
             distortion,
+            rotation_vector,
+            translation_vector,
         )
         confidence = max(0.0, 1.0 - reproj / DEFAULT_MAX_REPROJ_PX)
         tags.append(
@@ -673,7 +631,7 @@ def detect_raw_detections(
     dictionary: str = "DICT_APRILTAG_36h11",
 ) -> tuple[list[Detection], bool, int]:
     """Every valid-PnP tag detection over `image_stream`, unfiltered, with gate diagnostics."""
-    detector = make_detector(dictionary)
+    detector = create_aruco_detector(dictionary)
     raw_detections: list[Detection] = []
     images = store.stream(image_stream, Image).to_list()
     speed_by_ts, speed_available = _camera_speeds(images)
@@ -706,13 +664,13 @@ def detect_raw_detections(
                     "marker_id": int(marker_id),
                     "t_cam_marker": tag_in_camera,
                     "sharpness": tag_sharpness(gray, corners),
-                    "reproj_px": reprojection_error_px(
+                    "reproj_px": marker_reprojection_error(
                         corners,
-                        rotation_vector,
-                        translation_vector,
                         marker_length,
                         intrinsics,
                         distortion,
+                        rotation_vector,
+                        translation_vector,
                     ),
                     "tag_px": tag_pixel_size(corners),
                     "speed": speed_by_ts.get(float(image_obs.ts)),
