@@ -18,9 +18,10 @@
 
 Renders a rich progress bar: label, percent, count, data-seconds covered,
 speed relative to wall-clock (``x rt``), and per-frame latency. On completion
-the bar persists as one plain line. All bars share a single live display, so
-sequential or interleaved streams compose; call :meth:`ProgressBar.close` when
-abandoning a stream early (e.g. a bounded time window).
+the live bar is replaced by one plain persisted line. One bar is live at a
+time — starting a new bar finalizes a dangling one (rich allows a single live
+display); call :meth:`ProgressBar.close` when abandoning a stream early
+(e.g. a bounded time window).
 """
 
 from __future__ import annotations
@@ -30,19 +31,25 @@ import time
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from rich.progress import Progress, TaskID
-
     from dimos.memory2.type.observation import Observation
 
-_REFRESH_S = 0.1  # manual refresh cap; keeps 200 Hz streams from redrawing per frame
+_REFRESH_S = 0.1  # refresh cap; keeps 200 Hz streams from redrawing per frame
 
-_shared: Progress | None = None
+_current: ProgressBar | None = None
 
 
-def _shared_progress() -> Progress:
-    """One Progress (one live display) shared by every bar in the process."""
-    global _shared
-    if _shared is None:
+def _close_current() -> None:
+    if _current is not None:
+        _current.close()
+
+
+atexit.register(_close_current)  # restore the cursor if a bar is abandoned
+
+
+class ProgressBar:
+    """Callable per-observation progress; ``close()`` finalizes an unfinished bar."""
+
+    def __init__(self, total: int, label: str = "") -> None:
         from rich.progress import (
             BarColumn,
             MofNCompleteColumn,
@@ -51,30 +58,21 @@ def _shared_progress() -> Progress:
             TextColumn,
         )
 
-        # auto_refresh=False: no background render thread to leak if a stream
-        # ends short of ``total`` — bars refresh (throttled) from the callback.
+        self._total = total
+        self._label = label or "processing"
         # transient: close() prints its own persisted line, the live bar clears.
-        _shared = Progress(
+        # auto_refresh=False: no render thread; refreshes (throttled) from the callback.
+        self._prog = Progress(
             TextColumn("[progress.description]{task.description}"),
             BarColumn(),
             TaskProgressColumn(),
             MofNCompleteColumn(),
             TextColumn("{task.fields[stats]}", style="dim"),
-            auto_refresh=False,
             transient=True,
+            auto_refresh=False,
         )
-        atexit.register(_shared.stop)  # restore the cursor if a bar is abandoned
-    return _shared
-
-
-class ProgressBar:
-    """Callable per-observation progress; ``close()`` finalizes an unfinished bar."""
-
-    def __init__(self, total: int, label: str = "") -> None:
-        self._total = total
-        self._label = label or "processing"
-        self._prog = _shared_progress()
-        self._task: TaskID | None = self._prog.add_task(self._label, total=total, stats="")
+        self._task = self._prog.add_task(self._label, total=total, stats="")
+        self._closed = False
         self._seen = 0
         self._wall_start: float | None = None
         self._last_wall: float | None = None
@@ -83,10 +81,14 @@ class ProgressBar:
         self._stats = ""
 
     def __call__(self, obs: Observation[Any]) -> None:
-        if self._task is None:
-            return  # closed; observations may keep flowing (e.g. a tap after close)
+        if self._closed:
+            return  # observations may keep flowing after close (e.g. a tap downstream)
         now = time.monotonic()
         if self._wall_start is None:
+            global _current
+            if _current is not None:
+                _current.close()  # only one live display may be active
+            _current = self
             self._wall_start = now
             self._first_ts = obs.ts
             self._prog.start()
@@ -106,19 +108,16 @@ class ProgressBar:
             self._prog.refresh()
 
     def close(self) -> None:
-        """Persist the bar as a plain line and release it from the live display."""
-        if self._task is None:
-            return  # already closed
-        self._prog.remove_task(self._task)  # before print: Live re-renders on print
-        self._task = None
+        """Clear the live bar and persist it as a plain line."""
+        global _current
+        if self._closed:
+            return
+        self._closed = True
+        if _current is self:
+            _current = None
+        self._prog.stop()  # transient: wipes the live bar
         pct = 100 * self._seen // self._total if self._total else 100
-        self._prog.console.print(
-            f"{self._label} {pct}% [{self._seen}/{self._total}] {self._stats}",
-            markup=False,
-            highlight=False,
-        )
-        if not self._prog.tasks:
-            self._prog.stop()
+        print(f"{self._label} {pct}% [{self._seen}/{self._total}] {self._stats}")
 
 
 def progress(total: int, label: str = "") -> ProgressBar:
