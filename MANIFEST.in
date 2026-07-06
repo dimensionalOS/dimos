@@ -34,3 +34,6 @@ prune .pytest_cache
 prune .ruff_cache
 prune .vscode
 prune dimos/web/command-center-extension
+
+global-exclude test_*.py
+global-exclude conftest.py

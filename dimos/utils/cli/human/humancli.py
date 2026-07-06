@@ -36,7 +36,7 @@ from textual.strip import Strip
 from textual.widgets import Input, RichLog, Static
 
 from dimos.agents.mcp import tool_stream
-from dimos.core.transport import pLCMTransport
+from dimos.core.transport_factory import apply_transport_arg, make_transport
 from dimos.utils.cli import theme
 from dimos.utils.generic import truncate_display_string
 
@@ -268,9 +268,9 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
-        self._human_transport = pLCMTransport("/human_input")  # type: ignore[var-annotated]
-        self._agent_transport = pLCMTransport("/agent")  # type: ignore[var-annotated]
-        self._agent_idle = pLCMTransport("/agent_idle")  # type: ignore[var-annotated]
+        self._human_transport = make_transport("/human_input")
+        self._agent_transport = make_transport("/agent")
+        self._agent_idle = make_transport("/agent_idle")
         self.chat_log: RichLog | None = None
         self.input_widget: Input | None = None
         self._subscription_thread: threading.Thread | None = None
@@ -657,6 +657,8 @@ Tool calls are displayed in cyan with ▶ prefix"""
 
 
 def main() -> None:
+    apply_transport_arg(sys.argv)
+
     if len(sys.argv) > 1 and sys.argv[1] == "web":
         from textual_serve.server import Server  # type: ignore[import-not-found]
 
