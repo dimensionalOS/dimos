@@ -36,11 +36,13 @@ from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import ZenohPubSubBase
 from dimos.protocol.pubsub.spec import AllPubSub
 from dimos.protocol.pubsub.spy import (
+    SOURCE_FACTORIES,
     LCMSpySource,
     SpyKey,
     TopicStats,
     TransportSpy,
     ZenohSpySource,
+    default_sources,
     split_type_suffix,
 )
 from dimos.protocol.service.zenohservice import ZenohSessionPool
@@ -473,6 +475,27 @@ def test_transport_spy_tap_failure_stops_started_sources():
         spy.start()
     assert not a.started and not b.started
     assert not a.taps
+
+
+def test_default_sources_skips_unavailable_backend(monkeypatch, capsys):
+    def unavailable():
+        raise ImportError("zenoh backend missing")
+
+    monkeypatch.setitem(SOURCE_FACTORIES, "lcm", lambda: FakeSource("lcm"))
+    monkeypatch.setitem(SOURCE_FACTORIES, "zenoh", unavailable)
+    sources = default_sources()
+    assert [s.name for s in sources] == ["lcm"]  # degrades instead of crashing
+    assert "zenoh" in capsys.readouterr().err
+
+
+def test_default_sources_errors_when_no_backend_available(monkeypatch):
+    def unavailable():
+        raise ImportError("backend missing")
+
+    for name in SOURCE_FACTORIES:
+        monkeypatch.setitem(SOURCE_FACTORIES, name, unavailable)
+    with pytest.raises(RuntimeError, match="no spy transports available"):
+        default_sources()
 
 
 def test_fake_source_satisfies_protocol():

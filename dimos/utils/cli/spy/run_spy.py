@@ -41,6 +41,7 @@ from dimos.protocol.pubsub.spy import (
     SpyKey,
     TopicStats,
     TransportSpy,
+    default_sources,
     split_type_suffix,
 )
 from dimos.utils.cli import theme
@@ -125,22 +126,27 @@ class SpyApp(App):  # type: ignore[type-arg]
 
     def __init__(self, transports: list[str] | None = None, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**kwargs)
-        names = list(SOURCE_FACTORIES) if transports is None else list(transports)
-        unknown = [n for n in names if n not in SOURCE_FACTORIES]
-        if unknown:
-            raise ValueError(
-                f"unknown transport(s) {', '.join(unknown)} — valid choices: "
-                f"{', '.join(SOURCE_FACTORIES)}"
-            )
+        if transports is None:
+            # Default: every available transport; unavailable backends are
+            # skipped with a warning (see default_sources).
+            sources = default_sources()
+        else:
+            unknown = [n for n in transports if n not in SOURCE_FACTORIES]
+            if unknown:
+                raise ValueError(
+                    f"unknown transport(s) {', '.join(unknown)} — valid choices: "
+                    f"{', '.join(SOURCE_FACTORIES)}"
+                )
+            # Construct only the requested sources: a filtered-out transport is
+            # never imported or instantiated, and an unavailable one that was
+            # explicitly requested stays a hard error.
+            sources = [SOURCE_FACTORIES[name]() for name in transports]
         # Warn about missing system config before entering TUI raw mode (LCM only).
-        if "lcm" in names:
+        if any(s.name == "lcm" for s in sources):
             from dimos.protocol.service.lcmservice import autoconf
 
             autoconf(check_only=True)
 
-        # Construct only the requested sources: a filtered-out transport must
-        # never be imported or instantiated.
-        sources = [SOURCE_FACTORIES[name]() for name in names]
         self.spy = TransportSpy(sources=sources)
         self.spy.start()
         self.table: DataTable | None = None  # type: ignore[type-arg]
@@ -202,17 +208,26 @@ class SpyApp(App):  # type: ignore[type-arg]
             )
 
 
+def _web_command(argv: list[str]) -> str:
+    """Command line for the textual-serve child: rerun this script with the filter args."""
+    import os
+    import shlex
+    import sys
+
+    return shlex.join([sys.executable, os.path.abspath(__file__), *argv])
+
+
 def main() -> None:
     """Entry point for `dimos spy` (argv: optional 'web', --transport filters)."""
     import sys
 
     argv = sys.argv[1:]
     if argv and argv[0] == "web":
-        import os
-
         from textual_serve.server import Server  # type: ignore[import-not-found]
 
-        server = Server(f"python {os.path.abspath(__file__)}")
+        rest = argv[1:]
+        _parse_transports(rest)  # reject unknown transports before serving
+        server = Server(_web_command(rest))
         server.serve()
     else:
         SpyApp(transports=_parse_transports(argv)).run()
