@@ -70,10 +70,12 @@ def topic_text(base: str) -> Text:
 def _parse_transports(argv: list[str]) -> list[str] | None:
     """Parse repeated --transport flags; None means all default sources.
 
-    Exits with an error (rather than launching an empty spy) if any requested
-    transport is not a known source name.
+    `dimos spy` accepts only `--transport <name>` (repeatable). Any other token
+    — a stray positional or unknown flag — is rejected with a clear error rather
+    than silently ignored.
     """
     transports: list[str] = []
+    extra: list[str] = []
     i = 0
     while i < len(argv):
         arg = argv[i]
@@ -81,9 +83,18 @@ def _parse_transports(argv: list[str]) -> list[str] | None:
             i += 1
             if i < len(argv):
                 transports.append(argv[i])
+            else:
+                raise SystemExit("Error: --transport requires a transport name")
         elif arg.startswith("--transport="):
             transports.append(arg.split("=", 1)[1])
+        else:
+            extra.append(arg)
         i += 1
+    if extra:
+        raise SystemExit(
+            f"Error: unexpected argument(s) {', '.join(extra)} — "
+            "`dimos spy` accepts only --transport <name> (repeatable)."
+        )
     unknown = [t for t in transports if t not in SOURCE_FACTORIES]
     if unknown:
         valid = ", ".join(SOURCE_FACTORIES)

@@ -44,6 +44,19 @@ def test_parse_transports_error_lists_valid_choices():
         _parse_transports(["--transport=nope"])
 
 
+def test_parse_transports_rejects_unexpected_positional():
+    # A stray positional must fail loudly, not be silently ignored.
+    with pytest.raises(SystemExit, match="unexpected"):
+        _parse_transports(["foo"])
+    with pytest.raises(SystemExit, match="unexpected"):
+        _parse_transports(["--transport", "lcm", "foo"])
+
+
+def test_parse_transports_missing_value_errors():
+    with pytest.raises(SystemExit, match="requires a transport name"):
+        _parse_transports(["--transport"])
+
+
 class _StubSource:
     name = "zenoh"
 
@@ -84,12 +97,36 @@ def test_spy_app_default_skips_unavailable_backend(monkeypatch, capsys):
     assert "lcm" in capsys.readouterr().err
 
 
+def test_spy_app_default_skips_non_import_backend_failure(monkeypatch, capsys):
+    # Any construction failure (e.g. a native init error), not just ImportError,
+    # must degrade rather than kill the default spy.
+    def broken():
+        raise RuntimeError("zenoh native init failed")
+
+    created: list[_StubSource] = []
+
+    def stub_factory() -> _StubSource:
+        source = _StubSource()
+        created.append(source)
+        return source
+
+    monkeypatch.setitem(SOURCE_FACTORIES, "lcm", broken)
+    monkeypatch.setitem(SOURCE_FACTORIES, "zenoh", stub_factory)
+    app = SpyApp()  # no --transport: degrades past the broken backend
+    try:
+        assert [s.started for s in created] == [True]
+    finally:
+        app.spy.stop()
+    err = capsys.readouterr().err
+    assert "lcm" in err and "native init failed" in err
+
+
 def test_spy_app_explicit_unavailable_transport_is_hard_error(monkeypatch):
     def unavailable():
-        raise ImportError("zenoh backend missing")
+        raise RuntimeError("zenoh backend missing")
 
     monkeypatch.setitem(SOURCE_FACTORIES, "zenoh", unavailable)
-    with pytest.raises(ImportError, match="zenoh backend missing"):
+    with pytest.raises(RuntimeError, match="zenoh backend missing"):
         SpyApp(transports=["zenoh"])
 
 

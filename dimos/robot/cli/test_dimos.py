@@ -180,14 +180,23 @@ def test_lcmspy_alias_prepends_lcm_transport(spy_main_argv):
     assert spy_main_argv == [["spy", "--transport", "lcm"]]
 
 
-def test_lcmspy_alias_forwards_extra_args(spy_main_argv):
-    result = CliRunner().invoke(main, ["lcmspy", "--foo"])
-    assert result.exit_code == 0, result.output
-    assert spy_main_argv == [["spy", "--transport", "lcm", "--foo"]]
-
-
 def test_lcmspy_alias_rejects_transport_override(spy_main_argv):
     result = CliRunner().invoke(main, ["lcmspy", "--transport", "zenoh"])
     assert result.exit_code == 1
     assert "LCM-only" in result.output
     assert spy_main_argv == []  # never reaches the spy
+
+
+def test_spy_cmd_rejects_stray_positional(monkeypatch):
+    # A stray positional must fail loudly, not silently launch the TUI.
+    monkeypatch.setattr(sys, "argv", ["dimos"])
+    result = CliRunner().invoke(main, ["spy", "foo"])
+    assert result.exit_code == 1
+    assert "unexpected" in result.output.lower()
+
+
+def test_lcmspy_rejects_stray_positional(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["dimos"])
+    result = CliRunner().invoke(main, ["lcmspy", "foo"])
+    assert result.exit_code == 1
+    assert "unexpected" in result.output.lower()

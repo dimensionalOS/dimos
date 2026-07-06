@@ -293,15 +293,16 @@ v1: lcm + zenoh. SHM/ROS/DDS/Redis are future sources.
 def default_sources() -> list[SpySource]:
     """The spy observes ALL transports simultaneously, regardless of DIMOS_TRANSPORT.
 
-    A backend that is not importable is skipped with a warning, so the default
-    spy degrades to whatever transports are available. Requesting a transport
-    explicitly (constructing its SOURCE_FACTORIES entry) keeps the hard error.
+    A backend that fails to construct (missing import, native init error, …) is
+    skipped with a warning, so the default spy degrades to whatever transports
+    are available. Requesting a transport explicitly (constructing its
+    SOURCE_FACTORIES entry) keeps the hard error.
     """
     sources: list[SpySource] = []
     for name, factory in SOURCE_FACTORIES.items():
         try:
             sources.append(factory())
-        except ImportError as exc:
+        except Exception as exc:  # degrade on any backend init failure, not just imports
             print(f"spy: skipping unavailable transport {name!r}: {exc}", file=sys.stderr)
     if not sources:
         raise RuntimeError(f"no spy transports available (tried: {', '.join(SOURCE_FACTORIES)})")
