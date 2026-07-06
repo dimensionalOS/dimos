@@ -14,9 +14,9 @@
 
 """`dimos spy` TUI: live table of all topics across all pubsub transports.
 
-Textual app modeled on run_lcmspy.py (DataTable, 0.5s refresh, theme colors,
-'q' to quit, optional `spy web` mode via textual-serve). One row per
-(transport, topic) from TransportSpy.snapshot():
+Textual app (DataTable, 0.5s refresh, theme colors, 'q' to quit, optional
+`spy web` mode via textual-serve). One row per (transport, topic) from
+TransportSpy.snapshot():
 
     Transport | Topic | Type | Freq (Hz) | Bandwidth | Total | Age
 
@@ -24,7 +24,7 @@ Textual app modeled on run_lcmspy.py (DataTable, 0.5s refresh, theme colors,
 - Age is seconds since TopicStats.last_seen (liveness: dims/greys out stale rows).
 - `--transport lcm --transport zenoh` (repeatable) filters sources; default all.
 - LCM system config warning: call lcmservice.autoconf(check_only=True) before
-  entering raw TUI mode, like run_lcmspy does.
+  entering raw TUI mode.
 """
 
 from __future__ import annotations
@@ -216,6 +216,14 @@ def main() -> None:
         server.serve()
     else:
         SpyApp(transports=_parse_transports(argv)).run()
+
+
+def lcm_main() -> None:
+    """`lcmspy` console-script shim: the spy over the LCM source only."""
+    import sys
+
+    sys.argv = ["lcmspy", "--transport", "lcm"]
+    main()
 
 
 if __name__ == "__main__":
