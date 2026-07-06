@@ -42,8 +42,9 @@ from dimos_runtime_protocol import (
     StepResponse,
 )
 
-ActionMode = Literal["motor", "native"]
+ActionMode = Literal["motor", "native", "native_absolute"]
 NATIVE_ACTION_SPACE_ID = "libero.ee_delta_6d_gripper.normalized.v1"
+NATIVE_ABSOLUTE_ACTION_SPACE_ID = "libero.ee_pose_axis_angle_gripper.absolute.v1"
 NATIVE_LIBERO_CONTROLLER = "OSC_POSE"
 NATIVE_RESET_SETTLE_STEPS = 10
 
@@ -178,6 +179,8 @@ class RealLiberoBackend:
         )
         if config.action_mode == "native":
             _set_controller_use_delta(self._env)
+        elif config.action_mode == "native_absolute":
+            _set_controller_use_delta(self._env, use_delta=False)
         self.action_low, self.action_high = _action_bounds(self._env)
 
     def reset(self, init_state_index: int) -> dict[str, object]:
@@ -188,18 +191,21 @@ class RealLiberoBackend:
             for _ in range(NATIVE_RESET_SETTLE_STEPS):
                 obs, _, _, _ = self._env.step([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0])
             _set_controller_use_delta(self._env)
-        return cast("dict[str, object]", obs)
+        elif self._action_mode == "native_absolute":
+            _set_controller_use_delta(self._env, use_delta=False)
+        return _with_controller_state(cast("dict[str, object]", obs), self._env)
 
     def step(
         self, action: Sequence[float]
     ) -> tuple[dict[str, object], float, bool, dict[str, object]]:
         obs, reward, done, info = self._env.step(action)
+        obs = _with_controller_state(cast("dict[str, object]", obs), self._env)
         typed_info = cast("dict[str, object]", info)
         if not any(key in typed_info for key in ("success", "is_success", "task_success")):
             check_success = getattr(self._env, "check_success", None)
             if callable(check_success):
                 typed_info["success"] = bool(check_success())
-        return cast("dict[str, object]", obs), float(reward), bool(done), typed_info
+        return obs, float(reward), bool(done), typed_info
 
     def render(self) -> None:
         render = getattr(self._env, "render", None)
@@ -237,7 +243,10 @@ class LiberoProRuntimeState:
 
     def _validate_action_surface(self) -> None:
         if self.config.action_mode == "native":
-            self._validate_native_action_surface()
+            self._validate_native_delta_action_surface()
+            return
+        if self.config.action_mode == "native_absolute":
+            self._validate_native_absolute_action_surface()
             return
         if self.config.action_mode != "motor":
             raise RuntimeError(f"unsupported LIBERO-PRO action mode: {self.config.action_mode}")
@@ -254,7 +263,7 @@ class LiberoProRuntimeState:
                 f"action_dim={len(self._action_low)} motors={len(self.motor_names)}"
             )
 
-    def _validate_native_action_surface(self) -> None:
+    def _validate_native_delta_action_surface(self) -> None:
         if len(self._action_low) != 7 or len(self._action_high) != 7:
             raise RuntimeError(
                 f"native LIBERO action mode expects action_dim=7, got {len(self._action_low)}"
@@ -267,6 +276,13 @@ class LiberoProRuntimeState:
         if incompatible:
             raise RuntimeError(
                 "native LIBERO action mode requires action_spec bounds compatible with [-1, 1]"
+            )
+
+    def _validate_native_absolute_action_surface(self) -> None:
+        if len(self._action_low) != 7 or len(self._action_high) != 7:
+            raise RuntimeError(
+                "absolute native LIBERO action mode expects action_dim=7, "
+                f"got {len(self._action_low)}"
             )
 
     def describe(self) -> RuntimeDescription:
@@ -323,7 +339,7 @@ class LiberoProRuntimeState:
                     "task_name": self._backend.task_name,
                     "init_state_index": self.config.init_state_index,
                 },
-                "native_action_space_id": NATIVE_ACTION_SPACE_ID,
+                "native_action_space_id": _native_action_space_id(self.config.action_mode),
             },
         )
 
@@ -343,7 +359,7 @@ class LiberoProRuntimeState:
         )
 
     def step(self, request: StepRequest) -> StepResponse:
-        if self.config.action_mode == "native":
+        if self.config.action_mode in {"native", "native_absolute"}:
             action = self._native_step_action(request.action)
         else:
             action = self._motor_step_action(request.action)
@@ -393,7 +409,8 @@ class LiberoProRuntimeState:
     ) -> list[float]:
         if isinstance(action_frame, MotorActionFrame):
             raise ValueError("native action mode requires RuntimeActionFrame, got MotorActionFrame")
-        if action_frame.space_id != NATIVE_ACTION_SPACE_ID:
+        expected_space_id = _native_action_space_id(self.config.action_mode)
+        if action_frame.space_id != expected_space_id:
             raise ValueError(f"unexpected runtime action space_id {action_frame.space_id!r}")
         if len(action_frame.values) != 7:
             raise ValueError(f"expected 7 runtime action values, got {len(action_frame.values)}")
@@ -457,7 +474,11 @@ class LiberoProRuntimeState:
                 stream="robot_state",
                 kind=ObservationKind.STATE,
                 inline_text=f"tick={tick_id} reward={self._last_reward}",
-                metadata={"sequence": self._sequence, "state": self._policy_robot_state()},
+                metadata={
+                    "sequence": self._sequence,
+                    "state": self._policy_robot_state(),
+                    "xvla_robot_state": self._xvla_policy_robot_state(),
+                },
             )
         ]
         for camera_name in self.config.camera_names:
@@ -492,6 +513,15 @@ class LiberoProRuntimeState:
         )
         gripper_qpos = _padded(_float_list(self._last_obs.get("robot0_gripper_qpos", [])), 2)
         return [*eef_pos, *eef_axis_angle, *gripper_qpos]
+
+    def _xvla_policy_robot_state(self) -> dict[str, object]:
+        eef_pos = _padded(_float_list(self._last_obs.get("robot0_eef_pos", [])), 3)
+        eef_mat = _matrix3(self._last_obs.get("robot0_eef_mat"))
+        if eef_mat is None:
+            eef_mat = _quat_to_matrix(
+                _padded(_float_list(self._last_obs.get("robot0_eef_quat", [])), 4, fill=0.0)
+            )
+        return {"eef.pos": [eef_pos], "eef.mat": [eef_mat]}
 
     def _store_payload(self, stream: str, tick_id: int, value: object) -> tuple[str, bytes]:
         payload_id = f"{stream}-{tick_id:06d}-{self._sequence:06d}.npy"
@@ -618,7 +648,7 @@ def _task_bddl_file(config: LiberoProRuntimeConfig, benchmark: object, task: obj
 
 
 def _env_controller(config: LiberoProRuntimeConfig) -> str:
-    if config.action_mode == "native":
+    if config.action_mode in {"native", "native_absolute"}:
         return NATIVE_LIBERO_CONTROLLER
     return config.controller
 
@@ -627,11 +657,36 @@ def _reset_settle_steps(config: LiberoProRuntimeConfig) -> int:
     return NATIVE_RESET_SETTLE_STEPS if config.action_mode == "native" else 0
 
 
-def _set_controller_use_delta(env: object) -> None:
+def _native_action_space_id(action_mode: ActionMode) -> str:
+    if action_mode == "native_absolute":
+        return NATIVE_ABSOLUTE_ACTION_SPACE_ID
+    return NATIVE_ACTION_SPACE_ID
+
+
+def _set_controller_use_delta(env: object, *, use_delta: bool = True) -> None:
     for robot in getattr(env, "robots", ()) or ():
         controller = getattr(robot, "controller", None)
         if controller is not None and hasattr(controller, "use_delta"):
-            controller.use_delta = True
+            controller.use_delta = use_delta
+
+
+def _with_controller_state(obs: dict[str, object], env: object) -> dict[str, object]:
+    enriched = dict(obs)
+    matrix = _controller_eef_matrix(env)
+    if matrix is not None:
+        enriched["robot0_eef_mat"] = matrix
+    return enriched
+
+
+def _controller_eef_matrix(env: object) -> list[list[float]] | None:
+    for robot in getattr(env, "robots", ()) or ():
+        controller = getattr(robot, "controller", None)
+        if controller is None:
+            continue
+        matrix = _matrix3(getattr(controller, "ee_ori_mat", None))
+        if matrix is not None:
+            return matrix
+    return None
 
 
 def _load_init_states(
@@ -722,6 +777,37 @@ def _quat_to_axis_angle(quat: Sequence[float]) -> list[float]:
     if scale < 1e-8:
         return [0.0, 0.0, 0.0]
     return [x / scale * angle, y / scale * angle, z / scale * angle]
+
+
+def _quat_to_matrix(quat: Sequence[float]) -> list[list[float]]:
+    if len(quat) != 4 or not any(quat):
+        return _identity_matrix3()
+    x, y, z, w = (float(item) for item in quat)
+    norm = (x * x + y * y + z * z + w * w) ** 0.5
+    if norm == 0.0:
+        return _identity_matrix3()
+    x, y, z, w = x / norm, y / norm, z / norm, w / norm
+    return [
+        [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w)],
+        [2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w)],
+        [2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y)],
+    ]
+
+
+def _matrix3(value: object) -> list[list[float]] | None:
+    rows = getattr(value, "tolist", lambda: value)()
+    if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)) or len(rows) != 3:
+        return None
+    matrix: list[list[float]] = []
+    for row in rows:
+        if not isinstance(row, Sequence) or isinstance(row, (str, bytes)) or len(row) != 3:
+            return None
+        matrix.append([float(item) for item in row])
+    return matrix
+
+
+def _identity_matrix3() -> list[list[float]]:
+    return [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
 
 
 def _shape_list(value: object) -> list[int]:

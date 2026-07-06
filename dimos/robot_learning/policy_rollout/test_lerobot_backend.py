@@ -99,7 +99,8 @@ def test_initialize_loads_policy_sets_device_eval_and_processors(mocker) -> None
     postprocessor_calls: list[object] = []
     factory_calls: list[dict[str, object]] = []
 
-    def make_pre_post_processors(**kwargs: object) -> tuple[object, object]:
+    def make_pre_post_processors(spec: object, **kwargs: object) -> tuple[object, object]:
+        del spec
         factory_calls.append(dict(kwargs))
         return (
             lambda batch: _record(preprocessor_calls, batch),
@@ -107,7 +108,7 @@ def test_initialize_loads_policy_sets_device_eval_and_processors(mocker) -> None
         )
 
     mocker.patch(
-        "dimos.robot_learning.policy_rollout.backends.lerobot.backend._load_vla_jepa_policy_class",
+        "dimos.robot_learning.policy_rollout.backends.lerobot.backend._load_policy_class",
         return_value=FakePolicyClass,
     )
     mocker.patch(
@@ -140,10 +141,53 @@ def test_initialize_loads_policy_sets_device_eval_and_processors(mocker) -> None
     assert postprocessor_calls == [(0.0, 0.1, -0.1, 0.2, -0.2, 0.3, 1.0)]
     assert output.output == pytest.approx((0.0, 0.1, -0.1, 0.2, -0.2, 0.3, 1.0))
     assert output.metadata["inference_method"] == "select_action"
+    assert output.metadata["policy_family"] == "vla_jepa"
     assert output.metadata["output_shape"] == [7]
     assert description.policy_class is not None
     assert description.device == "cpu"
     assert description.metadata["processor_source"] == "checkpoint"
+    assert description.metadata["policy_family"] == "vla_jepa"
+    assert description.metadata["configured_policy_class"] == (
+        "lerobot.policies.vla_jepa.modeling_vla_jepa.VLAJEPAPolicy"
+    )
+    assert description.metadata["supports_action_chunk_inference"] is True
+
+
+def test_lerobot_backend_can_select_xvla_policy_family(mocker) -> None:
+    policy = FakePolicy()
+    FakePolicyClass.policy = policy
+    FakePolicyClass.checkpoint_ids = []
+
+    load_policy = mocker.patch(
+        "dimos.robot_learning.policy_rollout.backends.lerobot.backend._load_policy_class",
+        return_value=FakePolicyClass,
+    )
+    mocker.patch(
+        "dimos.robot_learning.policy_rollout.backends.lerobot.backend._make_pre_post_processors",
+        return_value=(lambda batch: batch, lambda output: output),
+    )
+    mocker.patch(
+        "dimos.robot_learning.policy_rollout.backends.lerobot.backend._torch_no_grad",
+        return_value=FakeNoGrad(),
+    )
+    backend = LeRobotBackend(policy_family="xvla", device="cpu", use_action_chunk=True)
+
+    output = backend.infer_batch(BackendBatch(payload={"observation.state": "state"}))
+    description = backend.describe()
+
+    family_spec = load_policy.call_args.args[0]
+    assert family_spec.family == "xvla"
+    assert FakePolicyClass.checkpoint_ids == ["lerobot/xvla-libero"]
+    assert policy.chunk_batches == [{"observation.state": "state"}]
+    assert output.metadata["policy_family"] == "xvla"
+    assert output.metadata["checkpoint_id"] == "lerobot/xvla-libero"
+    assert description.checkpoint_id == "lerobot/xvla-libero"
+    assert description.metadata["policy_family"] == "xvla"
+    assert description.metadata["configured_policy_class"] == (
+        "lerobot.policies.xvla.modeling_xvla.XVLAPolicy"
+    )
+    assert description.metadata["inference_method"] == "predict_action_chunk"
+    assert description.metadata["supports_action_chunk_inference"] is True
 
 
 def test_lerobot_backend_can_route_to_action_chunk(mocker) -> None:
@@ -152,7 +196,7 @@ def test_lerobot_backend_can_route_to_action_chunk(mocker) -> None:
     FakePolicyClass.checkpoint_ids = []
 
     mocker.patch(
-        "dimos.robot_learning.policy_rollout.backends.lerobot.backend._load_vla_jepa_policy_class",
+        "dimos.robot_learning.policy_rollout.backends.lerobot.backend._load_policy_class",
         return_value=FakePolicyClass,
     )
     mocker.patch(
@@ -181,7 +225,7 @@ def test_lerobot_backend_accepts_singleton_batch_action_chunk(mocker) -> None:
     FakePolicyClass.checkpoint_ids = []
 
     mocker.patch(
-        "dimos.robot_learning.policy_rollout.backends.lerobot.backend._load_vla_jepa_policy_class",
+        "dimos.robot_learning.policy_rollout.backends.lerobot.backend._load_policy_class",
         return_value=FakePolicyClass,
     )
     mocker.patch(
@@ -227,13 +271,18 @@ def test_lerobot_backend_tensorizes_numpy_inputs_before_lerobot_preprocessor() -
 
 def test_lerobot_backend_missing_dependency_error(mocker) -> None:
     mocker.patch(
-        "dimos.robot_learning.policy_rollout.backends.lerobot.backend._load_vla_jepa_policy_class",
-        side_effect=RuntimeError("Install LeRobot"),
+        "dimos.robot_learning.policy_rollout.backends.lerobot.backend._load_policy_class",
+        side_effect=RuntimeError("Install LeRobot from GitHub main with the xvla extra"),
     )
-    backend = LeRobotBackend()
+    backend = LeRobotBackend(policy_family="xvla")
 
-    with pytest.raises(RuntimeError, match="Install LeRobot"):
+    with pytest.raises(RuntimeError, match="xvla extra"):
         backend.initialize()
+
+
+def test_lerobot_backend_rejects_unknown_policy_family() -> None:
+    with pytest.raises(ValueError, match="unsupported LeRobot policy family"):
+        LeRobotBackend(policy_family="unknown")
 
 
 def _record(calls: list[object], value: object) -> object:

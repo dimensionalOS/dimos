@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager, nullcontext
+from dataclasses import dataclass
+from importlib import import_module
 from typing import cast
 
 import numpy as np
@@ -26,39 +28,74 @@ from dimos.robot_learning.policy_rollout.models import (
     PolicyBackendDescription,
 )
 
-_vla_jepa_policy_class: object | None
 _lerobot_make_pre_post_processors: object | None
-_LEROBOT_IMPORT_ERROR: ImportError | None
+_LEROBOT_PROCESSOR_IMPORT_ERROR: ImportError | None
 
 try:
     from lerobot.policies import (  # type: ignore[import-not-found]
         make_pre_post_processors as _lerobot_make_pre_post_processors,
     )
-    from lerobot.policies.vla_jepa.modeling_vla_jepa import (  # type: ignore[import-not-found]
-        VLAJEPAPolicy,
-    )
 
-    _vla_jepa_policy_class = VLAJEPAPolicy
-    _LEROBOT_IMPORT_ERROR = None
+    _LEROBOT_PROCESSOR_IMPORT_ERROR = None
 except ImportError as exc:
-    _vla_jepa_policy_class = None
-    _lerobot_make_pre_post_processors = None
-    _LEROBOT_IMPORT_ERROR = exc
+    try:
+        from lerobot.policies.factory import (  # type: ignore[import-not-found]
+            make_pre_post_processors as _lerobot_make_pre_post_processors,
+        )
 
-_DEFAULT_CHECKPOINT = "lerobot/VLA-JEPA-LIBERO"
+        _LEROBOT_PROCESSOR_IMPORT_ERROR = None
+    except ImportError:
+        _lerobot_make_pre_post_processors = None
+        _LEROBOT_PROCESSOR_IMPORT_ERROR = exc
+
+_DEFAULT_POLICY_FAMILY = "vla_jepa"
+
+
+@dataclass(frozen=True)
+class _LeRobotPolicyFamilySpec:
+    family: str
+    default_checkpoint: str
+    module: str
+    class_name: str
+    install_extra: str
+
+    @property
+    def class_path(self) -> str:
+        return f"{self.module}.{self.class_name}"
+
+
+_POLICY_FAMILIES = {
+    "vla_jepa": _LeRobotPolicyFamilySpec(
+        family="vla_jepa",
+        default_checkpoint="lerobot/VLA-JEPA-LIBERO",
+        module="lerobot.policies.vla_jepa.modeling_vla_jepa",
+        class_name="VLAJEPAPolicy",
+        install_extra="vla_jepa",
+    ),
+    "xvla": _LeRobotPolicyFamilySpec(
+        family="xvla",
+        default_checkpoint="lerobot/xvla-libero",
+        module="lerobot.policies.xvla.modeling_xvla",
+        class_name="XVLAPolicy",
+        install_extra="xvla",
+    ),
+}
+_DEFAULT_CHECKPOINT = _POLICY_FAMILIES[_DEFAULT_POLICY_FAMILY].default_checkpoint
 
 
 class LeRobotBackend:
-    """Optional in-process LeRobot policy backend for VLA-JEPA LIBERO."""
+    """Optional in-process LeRobot policy backend for LIBERO policy families."""
 
     def __init__(
         self,
         *,
-        checkpoint_id: str = _DEFAULT_CHECKPOINT,
+        checkpoint_id: str | None = None,
+        policy_family: str = _DEFAULT_POLICY_FAMILY,
         device: str | None = None,
         use_action_chunk: bool = False,
     ) -> None:
-        self._checkpoint_id = checkpoint_id
+        self._family_spec = _policy_family_spec(policy_family)
+        self._checkpoint_id = checkpoint_id or self._family_spec.default_checkpoint
         self._device = device
         self._use_action_chunk = use_action_chunk
         self._policy: object | None = None
@@ -66,16 +103,22 @@ class LeRobotBackend:
         self._postprocessor: Callable[[object], object] | None = None
         self._policy_class_name: str | None = None
         self._processor_source: str | None = None
+        self._supports_action_chunk_inference: bool | None = None
 
     def initialize(self) -> None:
         if self._policy is not None:
             return
-        policy_cls = _load_vla_jepa_policy_class()
+        policy_cls = _load_policy_class(self._family_spec)
         from_pretrained = getattr(policy_cls, "from_pretrained", None)
         if not callable(from_pretrained):
-            raise RuntimeError("LeRobot VLAJEPAPolicy.from_pretrained was not found")
+            raise RuntimeError(
+                f"LeRobot {self._family_spec.class_name}.from_pretrained was not found"
+            )
         policy = from_pretrained(self._checkpoint_id)
         self._policy_class_name = _qualified_name(policy)
+        self._supports_action_chunk_inference = callable(
+            getattr(policy, "predict_action_chunk", None)
+        )
         self._configure_device(policy)
         eval_policy = getattr(policy, "eval", None)
         if callable(eval_policy):
@@ -103,6 +146,7 @@ class LeRobotBackend:
             output=action,
             metadata={
                 "backend_type": "lerobot",
+                "policy_family": self._family_spec.family,
                 "checkpoint_id": self._checkpoint_id,
                 "inference_method": "predict_action_chunk"
                 if self._use_action_chunk
@@ -125,8 +169,13 @@ class LeRobotBackend:
             policy_class=self._policy_class_name,
             supports_episode_reset=True,
             metadata={
-                "policy_family": "vla_jepa",
+                "policy_family": self._family_spec.family,
                 "use_action_chunk": self._use_action_chunk,
+                "inference_method": "predict_action_chunk"
+                if self._use_action_chunk
+                else "select_action",
+                "configured_policy_class": self._family_spec.class_path,
+                "supports_action_chunk_inference": self._supports_action_chunk_inference,
                 "processor_source": self._processor_source,
             },
         )
@@ -135,7 +184,9 @@ class LeRobotBackend:
         method_name = "predict_action_chunk" if self._use_action_chunk else "select_action"
         infer = getattr(policy, method_name, None)
         if not callable(infer):
-            raise RuntimeError(f"LeRobot policy does not expose {method_name}")
+            raise RuntimeError(
+                f"LeRobot {self._family_spec.family} policy does not expose {method_name}"
+            )
         return infer(batch)
 
     def _configure_device(self, policy: object) -> None:
@@ -154,6 +205,7 @@ class LeRobotBackend:
             raise RuntimeError("LeRobot policy does not expose config for processors")
         device = self._resolved_device()
         processors = _make_pre_post_processors(
+            self._family_spec,
             policy_cfg=config,
             pretrained_path=self._checkpoint_id,
             preprocessor_overrides={"device_processor": {"device": str(device)}}
@@ -188,21 +240,44 @@ class LeRobotBackend:
         return str(device) if device is not None else None
 
 
-def _load_vla_jepa_policy_class() -> type[object]:
-    if _vla_jepa_policy_class is None:
-        raise RuntimeError(
-            "Install LeRobot from GitHub main with the vla_jepa extra to use "
-            "LeRobotBackend for lerobot/VLA-JEPA-LIBERO. Example: uv run --with "
-            '"lerobot[vla_jepa] @ git+https://github.com/huggingface/lerobot.git" ...'
-        ) from _LEROBOT_IMPORT_ERROR
-    return cast("type[object]", _vla_jepa_policy_class)
+def _policy_family_spec(policy_family: str) -> _LeRobotPolicyFamilySpec:
+    try:
+        return _POLICY_FAMILIES[policy_family]
+    except KeyError as exc:
+        families = ", ".join(sorted(_POLICY_FAMILIES))
+        raise ValueError(
+            f"unsupported LeRobot policy family {policy_family!r}; expected one of {families}"
+        ) from exc
 
 
-def _make_pre_post_processors(**kwargs: object) -> tuple[object, object]:
+def _load_policy_class(spec: _LeRobotPolicyFamilySpec) -> type[object]:
+    try:
+        module = import_module(spec.module)
+    except ImportError as exc:
+        raise RuntimeError(_family_install_hint(spec)) from exc
+    policy_cls = getattr(module, spec.class_name, None)
+    if policy_cls is None:
+        raise RuntimeError(f"LeRobot {spec.class_path} was not found")
+    return cast("type[object]", policy_cls)
+
+
+def _family_install_hint(spec: _LeRobotPolicyFamilySpec) -> str:
+    return (
+        f"Install LeRobot from GitHub main with the {spec.install_extra} extra to use "
+        f"LeRobotBackend policy_family={spec.family!r} for {spec.default_checkpoint}. "
+        "Example: uv run --with "
+        f'"lerobot[{spec.install_extra}] @ git+https://github.com/huggingface/lerobot.git" ...'
+    )
+
+
+def _make_pre_post_processors(
+    spec: _LeRobotPolicyFamilySpec,
+    **kwargs: object,
+) -> tuple[object, object]:
     if not callable(_lerobot_make_pre_post_processors):
         raise RuntimeError(
-            "LeRobot processor factory was not found; install LeRobot with the vla_jepa extra"
-        ) from _LEROBOT_IMPORT_ERROR
+            "LeRobot processor factory was not found; " + _family_install_hint(spec)
+        ) from _LEROBOT_PROCESSOR_IMPORT_ERROR
     return cast("tuple[object, object]", _lerobot_make_pre_post_processors(**kwargs))
 
 
@@ -290,11 +365,13 @@ def _shape_of(value: object) -> list[int]:
 
 
 def create_backend(**params: object) -> LeRobotBackend:
-    checkpoint_id = params.get("checkpoint_id", _DEFAULT_CHECKPOINT)
+    checkpoint_id = params.get("checkpoint_id")
+    policy_family = params.get("policy_family", _DEFAULT_POLICY_FAMILY)
     device = params.get("device")
     use_action_chunk = params.get("use_action_chunk", False)
     return LeRobotBackend(
-        checkpoint_id=str(checkpoint_id),
+        checkpoint_id=str(checkpoint_id) if checkpoint_id is not None else None,
+        policy_family=str(policy_family),
         device=cast("str | None", device),
         use_action_chunk=bool(use_action_chunk),
     )

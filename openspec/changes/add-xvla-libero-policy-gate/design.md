@@ -21,7 +21,7 @@ ControlCoordinator.robot_policy_action_chunk
 PolicyChunkControlTask → LIBERO native runtime step
 ```
 
-That path is architecturally policy-oriented, but the current concrete LeRobot backend imports VLA-JEPA directly and the live parity gate is named and configured around `lerobot/VLA-JEPA-LIBERO`. X-VLA gives us a useful second policy because it is a separate LeRobot policy class/checkpoint (`lerobot/xvla-libero`) with LIBERO evaluation support, while still targeting the same LIBERO observation/action surface: agent-view image, wrist image, robot state, task language, and normalized 7D action chunks.
+That path is architecturally policy-oriented, but the current concrete LeRobot backend imports VLA-JEPA directly and the live parity gate is named and configured around `lerobot/VLA-JEPA-LIBERO`. X-VLA gives us a useful second policy because it is a separate LeRobot policy class/checkpoint (`lerobot/xvla-libero`) with LIBERO evaluation support. Implementation discovery showed X-VLA does **not** share VLA-JEPA's normalized delta action semantics: it needs X-VLA-specific observation preprocessing, domain id `3`, main-camera 180° rotation, and absolute 7D end-effector pose/axis-angle/gripper actions.
 
 ## Goals / Non-Goals
 
@@ -71,14 +71,15 @@ Alternatives considered:
 - **Separate `lerobot_xvla` backend type**: simpler first patch, but duplicates processor/device/chunk handling and makes future policy-family additions noisier.
 - **Fully dynamic import from checkpoint config only**: attractive long term, but riskier because error messages and optional dependency guidance become less explicit.
 
-### Decision 3: Reuse the existing LIBERO contract if X-VLA semantics match
+### Decision 3: Use a narrow X-VLA LIBERO contract and absolute native action space
 
-The current `vla_jepa_libero` contract maps DimOS robot policy observations to LeRobot LIBERO batch keys and validates `libero.ee_delta_6d_gripper.normalized.v1` 7D outputs. X-VLA should reuse this contract if its checkpoint processor expects the same observation keys and emits the same action shape/range. If X-VLA requires different key names, action-mode metadata, domain id, or prompt formatting, introduce a narrow `xvla_libero` contract rather than contaminating the VLA-JEPA contract with conditional behavior.
+The current `vla_jepa_libero` contract maps DimOS robot policy observations to LeRobot LIBERO batch keys and validates `libero.ee_delta_6d_gripper.normalized.v1` 7D outputs. Real X-VLA smoke testing showed different semantics: installed LeRobot's checkpoint processor expects precomputed `observation.state` and `domain_id`, X-VLA's LIBERO processor convention flips the main camera by 180°, and postprocessed actions are absolute end-effector pose axis-angle/gripper commands that can legitimately exceed `[-1, 1]`. Therefore X-VLA uses a separate `xvla_libero` contract and `libero.ee_pose_axis_angle_gripper.absolute.v1` action-space id, while the LIBERO runtime uses a `native_absolute` mode that leaves the OSC pose controller in absolute mode.
 
 Alternatives considered:
 
 - **Rename the existing contract immediately to `lerobot_libero`**: good eventual direction, but it can hide policy-specific semantic drift unless X-VLA is first verified against the same mapping.
-- **Always create an X-VLA contract**: safer isolation, but unnecessary if the checkpoint-saved LeRobot processor handles policy-specific prompt/action-mode details and the existing LIBERO observation/action semantics match.
+- **Force X-VLA into VLA-JEPA's normalized delta action id**: rejected because it silently mixes incompatible action spaces and collapsed the real benchmark gate to 0/10.
+- **Clamp X-VLA actions to `[-1, 1]`**: rejected because it destroys the absolute pose semantics needed by the policy.
 
 ### Decision 4: Use a two-stage X-VLA gate
 
@@ -105,7 +106,7 @@ Because X-VLA dependency shape, chunk method availability, and processor expecta
 
 - **X-VLA optional dependencies differ from VLA-JEPA** → Keep dependency guidance family-specific and run real gates with `uv run --with ...` rather than modifying main `pyproject.toml`.
 - **X-VLA does not expose `predict_action_chunk` under the same method name** → Detect method availability in backend tests and fail with a clear unsupported-policy message; do not silently fall back to single-action live execution unless the spec is updated.
-- **X-VLA action semantics differ despite 7D LIBERO output** → Add or select an X-VLA-specific contract if smoke tests show different keys, action mode, or prompt handling.
+- **X-VLA action semantics differ despite 7D LIBERO output** → Use the X-VLA-specific absolute action-space contract and runtime mode; do not reinterpret those actions as normalized deltas.
 - **X-VLA is too heavy or locally unstable** → Keep the change scoped so VLA-JEPA remains the primary existing gate; record setup/integration aborts separately from policy failures.
 - **A single episode gives misleading signal** → Use the 10-episode gate for acceptance in both benchmark and live stages, not a cherry-picked single episode.
 - **Live failures can obscure policy failures** → Require the synchronous benchmark stage first so backend/contract/policy viability is established before diagnosing live-control topology.

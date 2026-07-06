@@ -19,9 +19,9 @@ The system SHALL allow RobotPolicyModule to load and run a LeRobot X-VLA LIBERO 
 The system SHALL convert X-VLA LIBERO policy outputs into runtime-independent robot policy action chunks before any runtime or ControlCoordinator execution mapping.
 
 #### Scenario: X-VLA chunk output is published as robot policy chunk
-- **WHEN** X-VLA live inference produces a finite LIBERO action chunk compatible with the normalized 7D LIBERO action surface
-- **THEN** RobotPolicyModule publishes a `RobotPolicyActionChunk` with action-space id `libero.ee_delta_6d_gripper.normalized.v1`, ordered action values, policy metadata, and no controller-specific command mapping
+- **WHEN** X-VLA live inference produces a finite LIBERO absolute end-effector pose chunk compatible with X-VLA's 7D axis-angle/gripper action surface
+- **THEN** RobotPolicyModule publishes a `RobotPolicyActionChunk` with action-space id `libero.ee_pose_axis_angle_gripper.absolute.v1`, ordered action values, policy metadata, and no controller-specific command mapping
 
 #### Scenario: X-VLA semantic mismatch is rejected before execution
-- **WHEN** X-VLA backend output has an incompatible shape, non-finite value, unsupported action-space semantics, or unsupported action range
+- **WHEN** X-VLA backend output has an incompatible shape, non-finite value, or unsupported action-space semantics
 - **THEN** the robot policy contract rejects the output before ControlCoordinator receives an executable policy chunk

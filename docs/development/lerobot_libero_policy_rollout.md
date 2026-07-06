@@ -1,7 +1,9 @@
 # LeRobot LIBERO policy rollout gate
 
-This optional/manual gate evaluates the official LeRobot VLA-JEPA LIBERO
-checkpoint through DimOS robot-learning seams. There are two runnable paths:
+This optional/manual gate evaluates LeRobot LIBERO checkpoints through DimOS
+robot-learning seams. The default policy is the official VLA-JEPA LIBERO
+checkpoint. The script also has an X-VLA LIBERO configuration for a two-stage
+policy-agnostic gate. There are two runnable paths:
 
 - **Fast benchmark path** (default): lockstep reset/snapshot/inference/action/step
   ownership stays in the benchmark runner so simulation can remain simple,
@@ -38,10 +40,22 @@ Policy backends and contracts are selected through lazy registries:
 ```text
 RobotPolicyModule.blueprint(
     backend_type="lerobot",
-    backend_params={"checkpoint_id": "lerobot/VLA-JEPA-LIBERO"},
+    backend_params={"policy_family": "vla_jepa", "checkpoint_id": "lerobot/VLA-JEPA-LIBERO"},
     contract_type="vla_jepa_libero",
 )
 ```
+
+Supported policy-family defaults:
+
+| `--policy-family` | Default checkpoint | Default contract | LeRobot extra |
+| --- | --- | --- | --- |
+| `vla_jepa` | `lerobot/VLA-JEPA-LIBERO` | `vla_jepa_libero` | `vla_jepa` |
+| `xvla` | `lerobot/xvla-libero` | `xvla_libero` | `xvla` |
+
+Override `--checkpoint` or `--contract-type` only when testing a known-compatible
+variant. A checkpoint swap alone is not enough for policy-family changes because
+LeRobot policy families can use different processor inputs, action modes, and
+optional dependency extras.
 
 The helper `lerobot_libero_policy_eval_blueprint(...)` returns a blueprint-shaped
 composition of `RobotPolicyModule` and `BenchmarkPolicyEvalModule` for this gate.
@@ -86,9 +100,9 @@ Run this only in an environment with:
   package `bddl_files` and `init_files` roots. You can still pass explicit
   `--bddl-root` and `--init-states-root` paths for custom or offline assets.
 - LeRobot from GitHub main. The PyPI `lerobot` release may not include the
-  VLA-JEPA policy yet.
-- The `lerobot/VLA-JEPA-LIBERO` checkpoint accessible from Hugging Face, unless
-  using the fake-backend smoke path.
+  newest policy families yet.
+- The selected checkpoint accessible from Hugging Face, unless using the
+  fake-backend smoke path.
 
 On current Python/CMake environments, LIBERO's `egl-probe` dependency may need
 the CMake compatibility policy set during install/run:
@@ -117,6 +131,85 @@ success_rate > 0.50
 ```
 
 Use `--device cuda` or another LeRobot-supported device when needed.
+
+## X-VLA two-stage gate
+
+X-VLA support is selected with `--policy-family xvla`. The backend resolves
+`lerobot.policies.xvla.modeling_xvla.XVLAPolicy`, defaults to
+`lerobot/xvla-libero`, and writes `policy_family`, `contract_type`, `gate_stage`,
+and checkpoint metadata into artifacts.
+
+Install X-VLA outside the main project dependencies. In the LIBERO sidecar or
+another disposable environment, PyPI `lerobot[xvla]` is sufficient for the
+current smoke/gate path:
+
+```bash
+uv pip install 'lerobot[xvla]'
+PYTEST_VERSION=1 uv run python scripts/benchmarks/demo_lerobot_libero_policy_rollout.py --help
+```
+
+If validating against LeRobot source instead, use an isolated `uv run --with`
+invocation or sidecar virtualenv and verify dependency resolution before running
+the gate. Do not add X-VLA dependencies to the main DimOS `pyproject.toml`.
+
+Stage 1 validates the synchronous benchmark path without ControlCoordinator
+policy-chunk execution:
+
+```bash
+CMAKE_POLICY_VERSION_MINIMUM=3.5 \
+PYTEST_VERSION=1 uv run python scripts/benchmarks/demo_lerobot_libero_policy_rollout.py \
+  --policy-family xvla \
+  --device cuda \
+  --episodes-limit 10 \
+  --gate-stage benchmark \
+  --artifact-dir artifacts/benchmark/lerobot-xvla-libero-benchmark-10
+```
+
+Stage 2 runs the module-native live policy stream path after Stage 1 passes:
+
+```bash
+CMAKE_POLICY_VERSION_MINIMUM=3.5 \
+PYTEST_VERSION=1 uv run python scripts/benchmarks/demo_lerobot_libero_policy_rollout.py \
+  --policy-family xvla \
+  --live-policy-stream \
+  --device cuda \
+  --episodes-limit 10 \
+  --save-videos \
+  --gate-stage live \
+  --artifact-dir artifacts/benchmark/lerobot-xvla-libero-live-10-videos
+```
+
+Both X-VLA stages use the same hard threshold:
+
+```text
+success_rate > 0.50
+```
+
+LeRobot's X-VLA docs identify the LIBERO checkpoint with `control_mode=absolute`
+and `domain_id=3`. The DimOS `xvla_libero` contract prepares a 20D X-VLA state,
+passes `domain_id=3`, flips the main camera by 180° to match LeRobot's LIBERO
+processor convention, and emits absolute end-effector pose actions with:
+
+```text
+space_id = libero.ee_pose_axis_angle_gripper.absolute.v1
+shape = (7,)
+bounds = finite values; axis-angle entries are not normalized to [-1, 1]
+```
+
+The LIBERO runtime uses `native_absolute` for X-VLA so OSC pose control keeps
+`use_delta=False`. Do not clamp or reinterpret X-VLA actions as
+`libero.ee_delta_6d_gripper.normalized.v1`; that action space is reserved for
+VLA-JEPA's normalized delta path. If the real gate fails during setup or
+contract smoke, check whether the installed LeRobot checkpoint processor or the
+local LIBERO runtime action mode changed before treating the failure as a
+policy-quality regression.
+
+Latest local Stage 1 artifact:
+
+```text
+artifacts/benchmark/lerobot-xvla-libero-benchmark-10-image-flip-videos/summary.json
+episodes=10 successes=9 success_rate=0.9 passed=true
+```
 
 ## Live policy stream parity gate
 
@@ -157,8 +250,9 @@ uv run --with libero \
   --no-enforce-gate
 ```
 
-This still constructs the module-backed workflow and uses the real
-`VlaJepaLiberoRobotContract`, but the backend returns a fixed 7D action or a
+This still constructs the module-backed workflow and uses the selected real
+contract (`vla_jepa_libero` by default, `xvla_libero` with
+`--policy-family xvla`), but the backend returns a fixed 7D action or a
 single-row action chunk when `--live-policy-stream` is set.
 
 ## Artifacts

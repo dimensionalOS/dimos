@@ -267,6 +267,9 @@ class LiberoRobotPolicyObservationBuilder:
                 state = frame.metadata.get("state", frame.metadata.get("values"))
                 if state is not None:
                     values[frame.stream] = state
+                xvla_robot_state = frame.metadata.get("xvla_robot_state")
+                if xvla_robot_state is not None:
+                    values["xvla_robot_state"] = xvla_robot_state
         language = runtime_description.metadata.get("language")
         task = language if isinstance(language, str) else None
         metadata: dict[str, object] = {

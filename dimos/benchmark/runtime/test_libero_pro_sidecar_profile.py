@@ -32,6 +32,7 @@ sys.path.insert(0, str(PROTOCOL_SRC))
 sys.path.insert(0, str(LIBERO_PRO_SIDECAR_SRC))
 
 from dimos_libero_pro_sidecar.server import (
+    NATIVE_ABSOLUTE_ACTION_SPACE_ID,
     NATIVE_ACTION_SPACE_ID,
     LiberoProRuntimeConfig,
     LiberoProRuntimeState,
@@ -98,9 +99,15 @@ class _BadNativeBoundsBackend(_FakeNativeBackend):
     action_high = [1.0] * 7
 
 
+class _FakeAbsoluteNativeBackend(_FakeNativeBackend):
+    action_low = [-10.0] * 7
+    action_high = [10.0] * 7
+
+
 class _FakeController:
     def __init__(self) -> None:
         self.use_delta = False
+        self.ee_ori_mat = np.eye(3, dtype=np.float32)
 
 
 class _FakeRobot:
@@ -150,6 +157,11 @@ def test_libero_pro_profile_maps_actions_states_score_and_payloads(tmp_path: Pat
 
     reset = state.reset(EpisodeResetRequest(episode_id="episode", task_id="task"))
     assert {frame.stream for frame in reset.observations} == {"robot_state", "agentview"}
+    state_frame = next(frame for frame in reset.observations if frame.stream == "robot_state")
+    assert state_frame.metadata["xvla_robot_state"] == {
+        "eef.pos": [[0.0, 0.0, 0.0]],
+        "eef.mat": [[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]],
+    }
 
     response = state.step(
         StepRequest(
@@ -243,6 +255,35 @@ def test_libero_pro_native_mode_steps_runtime_action_directly(tmp_path: Path) ->
     assert response.reward == 0.5
 
 
+def test_libero_pro_absolute_native_mode_accepts_absolute_runtime_action(
+    tmp_path: Path,
+) -> None:
+    backend = _FakeAbsoluteNativeBackend()
+    state = LiberoProRuntimeState(_config(tmp_path, action_mode="native_absolute"), backend=backend)
+
+    description = state.describe()
+    response = state.step(
+        StepRequest(
+            episode_id="episode",
+            tick_id=1,
+            action=RuntimeActionFrame(
+                frame_type="runtime_action",
+                space_id=NATIVE_ABSOLUTE_ACTION_SPACE_ID,
+                values=[0.1, 0.2, 0.3, 1.4, -2.5, 0.6, 1.0],
+                tick_id=1,
+            ),
+        )
+    )
+
+    assert description.metadata["action_mode"] == "native_absolute"
+    assert description.metadata["native_action_space_id"] == NATIVE_ABSOLUTE_ACTION_SPACE_ID
+    assert description.metadata["effective_controller"] == "OSC_POSE"
+    assert description.metadata["effective_horizon"] == 1000
+    assert description.metadata["reset_settle_steps"] == 0
+    assert backend.last_action == [0.1, 0.2, 0.3, 1.4, -2.5, 0.6, 1.0]
+    assert response.reward == 0.5
+
+
 def test_real_backend_native_reset_runs_lerobot_noops_and_use_delta(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -279,7 +320,52 @@ def test_real_backend_native_reset_runs_lerobot_noops_and_use_delta(
     assert env.kwargs["horizon"] == 1010
     assert env.robots[0].controller.use_delta is True
     assert env.actions == [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0]] * 10
-    assert obs == {"noop_count": 10}
+    assert obs == {
+        "noop_count": 10,
+        "robot0_eef_mat": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    }
+
+
+def test_real_backend_absolute_native_reset_preserves_absolute_controller(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    envs: list[_FakeNativeEnv] = []
+
+    class FakeBenchmark:
+        def get_task(self, task_index: int) -> object:
+            return type("Task", (), {"name": "task", "language": "language"})()
+
+    def fake_env_cls(**kwargs: object) -> _FakeNativeEnv:
+        env = _FakeNativeEnv(**kwargs)
+        envs.append(env)
+        return env
+
+    monkeypatch.setattr(
+        "dimos_libero_pro_sidecar.server.require_libero",
+        lambda *, visualize=False: (
+            type(
+                "BenchmarkModule",
+                (),
+                {"get_benchmark": lambda self, name: lambda order: FakeBenchmark()},
+            )(),
+            fake_env_cls,
+        ),
+    )
+    monkeypatch.setattr("dimos_libero_pro_sidecar.server.ensure_libero_config", lambda *_: None)
+    monkeypatch.setattr("dimos_libero_pro_sidecar.server._load_init_states", lambda *_: ["init"])
+
+    backend = RealLiberoBackend(_config(tmp_path, action_mode="native_absolute"))
+    obs = backend.reset(0)
+
+    env = envs[0]
+    assert env.kwargs["controller"] == "OSC_POSE"
+    assert env.kwargs["horizon"] == 1000
+    assert env.robots[0].controller.use_delta is False
+    assert env.actions == []
+    assert obs == {
+        "state": "init",
+        "robot0_eef_mat": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    }
 
 
 def test_libero_pro_native_mode_rejects_motor_frame(tmp_path: Path) -> None:
@@ -385,7 +471,7 @@ def _config(
         benchmark_name="libero_pro",
         bddl_root=bddl_root,
         init_states_root=init_states_root,
-        action_mode=cast("Literal['motor', 'native']", action_mode),
+        action_mode=cast("Literal['motor', 'native', 'native_absolute']", action_mode),
         controller=controller,
         camera_names=("agentview",),
         init_state_index=2,
@@ -399,6 +485,8 @@ def _fake_obs(joint_q: list[float], gripper_q: list[float]) -> dict[str, object]
         "robot0_joint_vel": [0.0] * len(joint_q),
         "robot0_gripper_qpos": gripper_q,
         "robot0_gripper_qvel": [0.0] * len(gripper_q),
+        "robot0_eef_pos": [0.0, 0.0, 0.0],
+        "robot0_eef_quat": [0.0, 0.0, 0.0, 1.0],
         "agentview_image": _pure_color_image(),
     }
 

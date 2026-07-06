@@ -13,11 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run the LeRobot VLA-JEPA LIBERO policy rollout gate through DimOS seams.
+"""Run LeRobot LIBERO policy rollout gates through DimOS seams.
 
 The default run evaluates the official `lerobot/VLA-JEPA-LIBERO` checkpoint over
 the 50-episode LIBERO object matrix: task indices 0..9 crossed with init states
 0..4. The pass condition is strict: success_rate > 0.50.
+
+Pass `--policy-family xvla --episodes-limit 10` to run the X-VLA LIBERO gate
+configuration with `lerobot/xvla-libero`; run once without `--live-policy-stream`
+for the synchronous benchmark stage, then again with `--live-policy-stream` for
+the module-native live stage.
 
 For a lightweight native-action smoke test that does not download LeRobot, pass
 `--fake-backend --episodes-limit 1 --no-enforce-gate`.
@@ -81,13 +86,34 @@ from dimos.robot_learning.policy_rollout.models import (
 from dimos.robot_learning.policy_rollout.robot_policy_module import RobotPolicyModule
 from dimos.robot_learning.policy_rollout.vla_jepa_libero_contract import (
     VLA_JEPA_LIBERO_ACTION_SPACE_ID,
-    VlaJepaLiberoRobotContract,
+)
+from dimos.robot_learning.policy_rollout.xvla_libero_contract import (
+    XVLA_LIBERO_ABSOLUTE_ACTION_SPACE_ID,
 )
 from dimos.simulation.runtime_client.shm_motor import MotorShmOwner
 
 DEFAULT_CAMERAS = ("agentview", "robot0_eye_in_hand")
-DEFAULT_CHECKPOINT = "lerobot/VLA-JEPA-LIBERO"
 DEFAULT_ARTIFACT_DIR = REPO_ROOT / "artifacts" / "benchmark" / "lerobot-vla-jepa-libero"
+DEFAULT_POLICY_FAMILY = "vla_jepa"
+POLICY_FAMILY_DEFAULTS: Mapping[str, Mapping[str, object]] = {
+    "vla_jepa": {
+        "checkpoint": "lerobot/VLA-JEPA-LIBERO",
+        "contract_type": "vla_jepa_libero",
+        "action_space_id": VLA_JEPA_LIBERO_ACTION_SPACE_ID,
+        "runtime_action_mode": "native",
+        "expected_benchmark_episodes": 50,
+        "expected_live_episodes": 10,
+    },
+    "xvla": {
+        "checkpoint": "lerobot/xvla-libero",
+        "contract_type": "xvla_libero",
+        "action_space_id": XVLA_LIBERO_ABSOLUTE_ACTION_SPACE_ID,
+        "runtime_action_mode": "native_absolute",
+        "expected_benchmark_episodes": 10,
+        "expected_live_episodes": 10,
+        "documented_control_mode": "absolute",
+    },
+}
 
 
 class DescribedPolicyModule(Protocol):
@@ -240,7 +266,7 @@ class _LivePolicyCoordinator:
                     joint_names=self._action_names,
                     auto_start=True,
                     params={
-                        "accepted_action_space_id": VLA_JEPA_LIBERO_ACTION_SPACE_ID,
+                        "accepted_action_space_id": _action_space_id(self._args),
                         "ticks_per_action": 1,
                         "execute_first_n": 1,
                         "stale_timeout_ticks": 1,
@@ -282,17 +308,18 @@ class _LivePolicyCoordinator:
                     "action": _fixed_action_values(self._args.fixed_action),
                     "use_action_chunk": True,
                 },
-                contract_type="vla_jepa_libero",
+                contract_type=_contract_type(self._args),
                 contract_params={},
             )
         return RobotPolicyModule.blueprint(
             backend_type="lerobot",
             backend_params={
-                "checkpoint_id": self._args.checkpoint,
+                "policy_family": _policy_family(self._args),
+                "checkpoint_id": _checkpoint(self._args),
                 "device": self._args.device,
                 "use_action_chunk": True,
             },
-            contract_type="vla_jepa_libero",
+            contract_type=_contract_type(self._args),
             contract_params={},
         )
 
@@ -530,7 +557,7 @@ def _run_live_episode_loop(
                 tick_id=tick_id,
                 action=RuntimeActionFrame(
                     frame_type="runtime_action",
-                    space_id=VLA_JEPA_LIBERO_ACTION_SPACE_ID,
+                    space_id=_action_space_id(args),
                     values=list(command_values),
                     tick_id=tick_id,
                 ),
@@ -646,16 +673,21 @@ def _policy_module(args: argparse.Namespace) -> RobotPolicyModule:
             _fixed_action_values(args.fixed_action),
             use_action_chunk=bool(args.live_policy_stream),
         )
-        return RobotPolicyModule(backend=backend, contract=VlaJepaLiberoRobotContract())
+        return RobotPolicyModule(
+            backend=backend,
+            contract_type=_contract_type(args),
+            contract_params={},
+        )
     else:
         return RobotPolicyModule(
             backend_type="lerobot",
             backend_params={
-                "checkpoint_id": args.checkpoint,
+                "policy_family": _policy_family(args),
+                "checkpoint_id": _checkpoint(args),
                 "device": args.device,
                 "use_action_chunk": bool(args.live_policy_stream),
             },
-            contract_type="vla_jepa_libero",
+            contract_type=_contract_type(args),
             contract_params={},
         )
 
@@ -671,7 +703,7 @@ def _start_runtime(
         task_order_index=0,
         task_index=episode.task_index,
         init_state_index=episode.init_state_index,
-        action_mode="native",
+        action_mode=_runtime_action_mode(args),
         camera_names=tuple(args.camera_names),
         camera_height=args.camera_height,
         camera_width=args.camera_width,
@@ -731,13 +763,19 @@ def _write_aggregate_artifacts(
     write_json(
         artifact_dir / "run_config.json",
         {
-            "checkpoint": args.checkpoint,
+            "policy_family": _policy_family(args),
+            "checkpoint": _checkpoint(args),
+            "contract_type": _contract_type(args),
+            "action_space_id": _action_space_id(args),
+            "runtime_action_mode": _runtime_action_mode(args),
+            "gate_stage": _gate_stage(args),
+            "documented_control_mode": _documented_control_mode(args),
             "fake_backend": args.fake_backend,
             "live_policy_stream": args.live_policy_stream,
             "live_chunk_timeout_s": args.live_chunk_timeout_s,
             "live_max_stale_waits": args.live_max_stale_waits,
             "episodes": len(results),
-            "expected_gate_episodes": 10 if args.live_policy_stream else 50,
+            "expected_gate_episodes": _expected_gate_episodes(args),
             "success_threshold": args.success_threshold,
             "enforce_gate": args.enforce_gate,
             "save_videos": args.save_videos,
@@ -772,7 +810,13 @@ def _write_setup_failure_artifacts(
             "traceback": traceback.format_exc(),
             "gate_verified": False,
             "policy_executed": False,
-            "expected_gate_episodes": 10 if args.live_policy_stream else 50,
+            "policy_family": _policy_family(args),
+            "checkpoint": _checkpoint(args),
+            "contract_type": _contract_type(args),
+            "action_space_id": _action_space_id(args),
+            "runtime_action_mode": _runtime_action_mode(args),
+            "gate_stage": _gate_stage(args),
+            "expected_gate_episodes": _expected_gate_episodes(args),
             "success_threshold": args.success_threshold,
             "hint": "Check per-episode sidecar logs and prepare LIBERO assets before rerunning.",
         },
@@ -783,12 +827,16 @@ def _write_setup_failure_artifacts(
     write_json(
         artifact_dir / "run_config.json",
         {
-            "checkpoint": args.checkpoint,
+            "policy_family": _policy_family(args),
+            "checkpoint": _checkpoint(args),
+            "contract_type": _contract_type(args),
+            "gate_stage": _gate_stage(args),
+            "documented_control_mode": _documented_control_mode(args),
             "fake_backend": args.fake_backend,
             "live_policy_stream": args.live_policy_stream,
             "live_chunk_timeout_s": args.live_chunk_timeout_s,
             "live_max_stale_waits": args.live_max_stale_waits,
-            "expected_gate_episodes": 10 if args.live_policy_stream else 50,
+            "expected_gate_episodes": _expected_gate_episodes(args),
             "success_threshold": args.success_threshold,
             "enforce_gate": args.enforce_gate,
             "save_videos": args.save_videos,
@@ -812,6 +860,61 @@ def _fixed_action_values(raw: str) -> tuple[float, ...]:
     if len(values) != 7:
         raise ValueError("--fixed-action must contain exactly 7 comma-separated values")
     return values
+
+
+def _policy_family(args: argparse.Namespace) -> str:
+    family = str(getattr(args, "policy_family", DEFAULT_POLICY_FAMILY))
+    if family not in POLICY_FAMILY_DEFAULTS:
+        families = ", ".join(sorted(POLICY_FAMILY_DEFAULTS))
+        raise ValueError(f"unsupported policy family {family!r}; expected one of {families}")
+    return family
+
+
+def _policy_defaults(args: argparse.Namespace) -> Mapping[str, object]:
+    return POLICY_FAMILY_DEFAULTS[_policy_family(args)]
+
+
+def _checkpoint(args: argparse.Namespace) -> str:
+    checkpoint = getattr(args, "checkpoint", None)
+    if checkpoint:
+        return str(checkpoint)
+    return str(_policy_defaults(args)["checkpoint"])
+
+
+def _contract_type(args: argparse.Namespace) -> str:
+    contract_type = getattr(args, "contract_type", None)
+    if contract_type:
+        return str(contract_type)
+    return str(_policy_defaults(args)["contract_type"])
+
+
+def _action_space_id(args: argparse.Namespace) -> str:
+    return str(_policy_defaults(args)["action_space_id"])
+
+
+def _runtime_action_mode(args: argparse.Namespace) -> str:
+    return str(_policy_defaults(args)["runtime_action_mode"])
+
+
+def _gate_stage(args: argparse.Namespace) -> str:
+    stage = getattr(args, "gate_stage", None)
+    if stage:
+        return str(stage)
+    return "live" if bool(getattr(args, "live_policy_stream", False)) else "benchmark"
+
+
+def _expected_gate_episodes(args: argparse.Namespace) -> int:
+    key = (
+        "expected_live_episodes"
+        if bool(getattr(args, "live_policy_stream", False))
+        else "expected_benchmark_episodes"
+    )
+    return int(str(_policy_defaults(args)[key]))
+
+
+def _documented_control_mode(args: argparse.Namespace) -> str:
+    mode = _policy_defaults(args).get("documented_control_mode", "native")
+    return str(mode)
 
 
 def _repo_path(path: Path) -> Path:
@@ -881,7 +984,28 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-steps", type=int, default=1000)
     parser.add_argument("--control-step-hz", type=int, default=20)
     parser.add_argument("--success-threshold", type=float, default=0.50)
-    parser.add_argument("--checkpoint", default=DEFAULT_CHECKPOINT)
+    parser.add_argument(
+        "--policy-family",
+        choices=tuple(sorted(POLICY_FAMILY_DEFAULTS)),
+        default=DEFAULT_POLICY_FAMILY,
+        help="LeRobot policy family to load for real-policy gates.",
+    )
+    parser.add_argument(
+        "--checkpoint",
+        default=None,
+        help="Policy checkpoint id/path. Defaults to the selected policy family checkpoint.",
+    )
+    parser.add_argument(
+        "--contract-type",
+        default=None,
+        help="Robot policy contract type. Defaults to the selected policy family contract.",
+    )
+    parser.add_argument(
+        "--gate-stage",
+        choices=("benchmark", "live"),
+        default=None,
+        help="Artifact stage label. Defaults to benchmark or live from --live-policy-stream.",
+    )
     parser.add_argument("--device", default=None)
     parser.add_argument(
         "--live-policy-stream",
@@ -924,6 +1048,9 @@ def _parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = _parser()
     args = parser.parse_args()
+    args.checkpoint = _checkpoint(args)
+    args.contract_type = _contract_type(args)
+    args.gate_stage = _gate_stage(args)
     args.camera_names = tuple(args.camera_names or DEFAULT_CAMERAS)
     args.bddl_root, args.init_states_root = _resolve_asset_roots(
         args.bddl_root, args.init_states_root

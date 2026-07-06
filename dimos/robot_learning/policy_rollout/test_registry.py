@@ -24,13 +24,19 @@ from dimos.robot_learning.policy_rollout.registry import (
 from dimos.robot_learning.policy_rollout.vla_jepa_libero_contract import (
     VlaJepaLiberoRobotContract,
 )
+from dimos.robot_learning.policy_rollout.xvla_libero_contract import XvlaLiberoRobotContract
 
 
 def test_backend_registry_discovers_lerobot_without_importing_lerobot_policy() -> None:
+    lerobot_policy_modules_before = {
+        module_name for module_name in sys.modules if module_name.startswith("lerobot.policies")
+    }
     registry = PolicyBackendRegistry()
 
     assert "lerobot" in registry.available()
-    assert "lerobot.policies" not in sys.modules
+    assert {
+        module_name for module_name in sys.modules if module_name.startswith("lerobot.policies")
+    } == lerobot_policy_modules_before
 
 
 def test_backend_registry_creates_lerobot_backend() -> None:
@@ -47,6 +53,12 @@ def test_contract_registry_creates_vla_jepa_libero_contract() -> None:
     contract = RobotPolicyContractRegistry().create("vla_jepa_libero")
 
     assert isinstance(contract, VlaJepaLiberoRobotContract)
+
+
+def test_contract_registry_creates_xvla_libero_contract() -> None:
+    contract = RobotPolicyContractRegistry().create("xvla_libero")
+
+    assert isinstance(contract, XvlaLiberoRobotContract)
 
 
 def test_registry_unknown_type_and_duplicate_path_errors() -> None:
