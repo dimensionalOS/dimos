@@ -97,6 +97,20 @@ nav-map lidar between `/lidar`, `/lidar_ds`, `/lidar_draco`; the LayerChip kB/s 
 (≈259 → 52 → 34 kB/s), and the Draco option decodes in-browser via the same path as CloudCompare.
 WorldView stays the 2D nav map (its purpose); only the source encoding changes.
 
+### three.js viewer + UX redesign (2026-07-06)
+The Clouds tab moved from hand-rolled WebGL to **three.js** (`app/src/panels/clouds/cloudThree.ts`,
+replaces `cloudGL.ts`): one shared `PerspectiveCamera` + damped `OrbitControls` drives all three cells
+(drag any → all orbit), a `GridHelper` floor gives depth, and a small `ShaderMaterial` keeps the
+blue→amber height ramp on crisp round points. three is **lazy-loaded/code-split** — `three.module.js`
+(177 KB gzip) + `OrbitControls.js` load only when the tab opens; the main chunk is unchanged (146 KB
+gzip). Falls back to the 2D `drawCloud` path if WebGL is unavailable.
+The comparison was redesigned to the app's design system (was hardcoded hex + 11px inline styles):
+titled cards with a **semantic dot** per encoding (raw = cyan baseline, downsampled = amber/lossy,
+Draco = green/best), the `.metric` treatment for live **kB/s**, a **compression badge** (`↓4×` / `↓8×`),
+a height legend, and a segmented `raw|ds|draco` control shared with WorldView (`.enc-toggle`). Deps:
+`three ^0.169` + `@types/three` (three r169 ships no bundled types). Verified headless (SwiftShader):
+3 cells render + orbit together, frame-synced counts (raw == draco), badges live.
+
 ## Gaps / pending
 - **WebRTC (local)**: ICE fails on the Mac LAN (`webrtc-ice: no such remote` — the v4-mapping issue
   from the sidecar notes); ratios are transport-independent (identical on WS/WT) so this is a local

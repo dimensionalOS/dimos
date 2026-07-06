@@ -454,6 +454,186 @@ body {
   min-height: 0;
   min-width: 0;
 }
+
+/* Point-cloud compare (Clouds tab) — three encodings of one scan, side by side in 3D. */
+.cloud-compare {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  min-width: 0;
+}
+.cloud-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.cloud-title {
+  font: 600 15px var(--sans);
+  color: var(--text);
+}
+.cloud-sub {
+  font: 500 11px var(--mono);
+  color: var(--muted);
+  margin-top: 3px;
+}
+.cloud-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.cloud-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font: 500 10px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: var(--track);
+  color: var(--muted);
+}
+.cloud-source select {
+  font: 500 12px var(--mono);
+  color: var(--text);
+  background: var(--elev);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 5px 8px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.cloud-row {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  min-height: 0;
+  touch-action: none;
+}
+.cloud-cell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+.cloud-cell-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.cloud-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.cloud-name {
+  font: 600 11px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: var(--track);
+  color: var(--text);
+}
+.cloud-ratio {
+  margin-left: auto;
+  font: 600 10px var(--mono);
+  border: 1px solid;
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-variant-numeric: tabular-nums;
+}
+.cloud-canvas {
+  position: relative;
+  flex: 1;
+  min-height: 220px;
+  background: var(--bg);
+  cursor: grab;
+}
+.cloud-canvas:active {
+  cursor: grabbing;
+}
+.cloud-canvas canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.cloud-note {
+  position: absolute;
+  left: 10px;
+  bottom: 8px;
+  font: 500 10px var(--mono);
+  color: var(--muted);
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  padding: 2px 7px;
+  border-radius: var(--r-sm);
+}
+.cloud-metric {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+}
+.cloud-pts {
+  font: 500 11px var(--mono);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.cloud-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font: 500 10px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: var(--track);
+  color: var(--muted);
+}
+.cloud-legend-label {
+  color: var(--text);
+}
+.cloud-legend-bar {
+  width: 150px;
+  height: 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  /* matches the shader ramp: blue rgb(41,107,219) → amber rgb(250,191,51) */
+  background: linear-gradient(90deg, rgb(41, 107, 219), rgb(250, 191, 51));
+}
+
+/* Segmented control — lidar encoding toggle (WorldView) + anywhere a raw/ds/draco switch is needed. */
+.enc-toggle {
+  display: inline-flex;
+  align-items: center;
+  background: var(--elev);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 2px;
+}
+.enc-toggle > button {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font: 500 10px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 3px 9px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.enc-toggle > button:hover {
+  color: var(--text);
+}
+.enc-toggle > button.on {
+  background: color-mix(in srgb, var(--accent) 14%, var(--elev));
+  color: var(--text);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
+}
 .streams-tab {
   display: flex;
   flex-direction: column;

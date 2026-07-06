@@ -64,6 +64,31 @@ export function cloudToXYZ(cloud: CloudLike | null | undefined): Float32Array | 
   return m === out.length ? out : out.subarray(0, m);
 }
 
+/** Centroid + a fit radius + z range from an interleaved xyz buffer, for auto-framing a 3D camera
+ *  and for the shared height-colour range. */
+export function cloudExtent(
+  xyz: Float32Array,
+): { center: [number, number, number]; radius: number; zMin: number; zMax: number } {
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (let i = 0; i < xyz.length; i += 3) {
+    const x = xyz[i], y = xyz[i + 1], z = xyz[i + 2];
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+    if (z < minZ) minZ = z;
+    if (z > maxZ) maxZ = z;
+  }
+  if (minX === Infinity) return { center: [0, 0, 0], radius: 5, zMin: 0, zMax: 1 };
+  return {
+    center: [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2],
+    radius: Math.max(0.5, Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) / 2),
+    zMin: minZ,
+    zMax: maxZ,
+  };
+}
+
 /** Wrap a Draco-decoded interleaved xyz Float32Array as a PointCloud2-shaped object so the 2D
  *  `drawCloud` renders it unchanged (contiguous float32 xyz → point_step 12, little-endian). */
 export function synthCloud(xyz: Float32Array): CloudLike {

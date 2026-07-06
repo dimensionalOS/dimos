@@ -398,18 +398,30 @@ export function WorldView() {
             />
           ))}
         {layers.lidar && encOpts.length > 1 && (
-          <div className="enc-toggle" title="lidar encoding — raw vs gateway-compressed" style={{ display: "flex", gap: 2, marginLeft: 2 }}>
-            {encOpts.map(([e, label]) => (
-              <button
-                key={e}
-                className={enc === e ? "tab tab-active" : "tab"}
-                onClick={() => setLidarEnc(e)}
-                style={{ padding: "2px 7px", fontSize: 10 }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <span
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, marginLeft: 4 }}
+            title="lidar encoding — raw vs gateway-compressed (see the kB/s on the lidar chip)"
+          >
+            <span
+              className="muted"
+              style={{
+                fontFamily: "var(--mono)",
+                fontSize: 9,
+                fontWeight: 500,
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+              }}
+            >
+              lidar
+            </span>
+            <span className="enc-toggle">
+              {encOpts.map(([e, label]) => (
+                <button key={e} className={enc === e ? "on" : ""} onClick={() => setLidarEnc(e)}>
+                  {label}
+                </button>
+              ))}
+            </span>
+          </span>
         )}
       </div>
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
