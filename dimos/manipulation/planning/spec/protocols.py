@@ -20,6 +20,7 @@ Use factory functions from dimos.manipulation.planning.factory to create instanc
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
+    from dimos.manipulation.planning.groups.models import PlanningGroup
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.manipulation.planning.spec.models import (
         IKResult,
@@ -236,6 +238,20 @@ class KinematicsSpec(Protocol):
         max_attempts: int = 10,
     ) -> IKResult:
         """Solve IK with optional collision checking."""
+        ...
+
+    def solve_pose_targets(
+        self,
+        world: WorldSpec,
+        pose_targets: Mapping[PlanningGroup, PoseStamped],
+        auxiliary_groups: Sequence[PlanningGroup] = (),
+        seed: JointState | None = None,
+        position_tolerance: float = 0.001,
+        orientation_tolerance: float = 0.01,
+        check_collision: bool = True,
+        max_attempts: int = 10,
+    ) -> IKResult:
+        """Solve planning-group-scoped pose targets."""
         ...
 
 

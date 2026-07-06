@@ -16,19 +16,21 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
 
+from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
+from dimos.manipulation.planning.groups.utils import filter_joint_state_to_selected_joints
 from dimos.manipulation.planning.spec.enums import IKStatus
-from dimos.manipulation.planning.spec.models import IKResult, WorldRobotID
+from dimos.manipulation.planning.spec.models import IKResult, RobotName, WorldRobotID
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import pose_to_matrix
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -84,6 +86,13 @@ class DrakeOptimizationIK:
         if error is not None:
             return error
 
+        target_frame_name = _unique_pose_target_frame_for_robot(world, robot_id)
+        if target_frame_name is None:
+            return _create_failure_result(
+                IKStatus.NO_SOLUTION,
+                "DrakeOptimizationIK requires exactly one pose-targetable planning group for legacy solve()",
+            )
+
         # Convert PoseStamped to 4x4 matrix via Transform
         target_matrix = Transform(
             translation=target_pose.position,
@@ -127,6 +136,7 @@ class DrakeOptimizationIK:
                 orientation_tolerance=orientation_tolerance,
                 lower_limits=lower_limits,
                 upper_limits=upper_limits,
+                target_frame_name=target_frame_name,
             )
 
             if result.is_success() and result.joint_state is not None:
@@ -156,6 +166,114 @@ class DrakeOptimizationIK:
             f"IK failed after {max_attempts} attempts",
         )
 
+    def solve_pose_targets(
+        self,
+        world: WorldSpec,
+        pose_targets: Mapping[PlanningGroup, PoseStamped],
+        auxiliary_groups: Sequence[PlanningGroup] = (),
+        seed: JointState | None = None,
+        position_tolerance: float = 0.001,
+        orientation_tolerance: float = 0.01,
+        check_collision: bool = True,
+        max_attempts: int = 10,
+    ) -> IKResult:
+        """Solve a planning-group-scoped pose target with Drake IK."""
+        error = self._validate_world(world)
+        if error is not None:
+            return error
+        if not pose_targets:
+            return _create_failure_result(
+                IKStatus.NO_SOLUTION, "At least one pose target is required"
+            )
+        if len(pose_targets) != 1 or auxiliary_groups:
+            return _create_failure_result(
+                IKStatus.NO_SOLUTION,
+                "DrakeOptimizationIK supports exactly one pose target and no auxiliary planning groups",
+            )
+
+        target_group = next(iter(pose_targets.keys()))
+        if not target_group.has_pose_target or target_group.tip_link is None:
+            return _create_failure_result(
+                IKStatus.NO_SOLUTION,
+                f"Planning group '{target_group.id}' has no pose target frame",
+            )
+
+        try:
+            selection = PlanningGroupSelection.from_groups((target_group,))
+            robot_ids_by_name = _robot_ids_by_name(world, selection.robot_names)
+        except ValueError as exc:
+            return _create_failure_result(IKStatus.NO_SOLUTION, str(exc))
+        robot_id = robot_ids_by_name[target_group.robot_name]
+        config = world.get_robot_config(robot_id)
+        joint_names = list(config.joint_names)
+        try:
+            seed_positions = _seed_positions_with_world_fallback(
+                world, robot_id, config.name, joint_names, seed
+            )
+            group_indices = [joint_names.index(name) for name in target_group.local_joint_names]
+        except ValueError as exc:
+            return _create_failure_result(IKStatus.NO_SOLUTION, str(exc))
+
+        lower_limits, upper_limits = world.get_joint_limits(robot_id)
+        target_matrix = Transform(
+            translation=pose_targets[target_group].position,
+            rotation=pose_targets[target_group].orientation,
+        ).to_matrix()
+        target_transform = RigidTransform(target_matrix)
+        locked_positions = {
+            index: float(seed_positions[index])
+            for index in range(len(joint_names))
+            if index not in set(group_indices)
+        }
+
+        best_result: IKResult | None = None
+        best_error = float("inf")
+        for attempt in range(max_attempts):
+            if attempt == 0:
+                current_seed = seed_positions
+            else:
+                current_seed = seed_positions.copy()
+                random_group_positions = np.random.uniform(
+                    lower_limits[group_indices], upper_limits[group_indices]
+                )
+                current_seed[group_indices] = random_group_positions
+
+            result = self._solve_single(
+                world=world,
+                robot_id=robot_id,
+                target_transform=target_transform,
+                seed=current_seed,
+                joint_names=joint_names,
+                position_tolerance=position_tolerance,
+                orientation_tolerance=orientation_tolerance,
+                lower_limits=lower_limits,
+                upper_limits=upper_limits,
+                target_frame_name=target_group.tip_link,
+                locked_joint_positions=locked_positions,
+            )
+            if not result.is_success() or result.joint_state is None:
+                continue
+            if check_collision and not world.check_config_collision_free(
+                robot_id, result.joint_state
+            ):
+                continue
+            total_error = result.position_error + result.orientation_error
+            if total_error < best_error:
+                best_error = total_error
+                best_result = result
+            if (
+                result.position_error <= position_tolerance
+                and result.orientation_error <= orientation_tolerance
+            ):
+                return _filter_result_to_group(result, target_group)
+
+        if best_result is not None:
+            return _filter_result_to_group(best_result, target_group)
+        return _create_failure_result(
+            IKStatus.NO_SOLUTION,
+            f"IK failed after {max_attempts} attempts",
+        )
+
     def _solve_single(
         self,
         world: WorldSpec,
@@ -167,6 +285,8 @@ class DrakeOptimizationIK:
         orientation_tolerance: float,
         lower_limits: NDArray[np.float64],
         upper_limits: NDArray[np.float64],
+        target_frame_name: str,
+        locked_joint_positions: Mapping[int, float] | None = None,
     ) -> IKResult:
         # Get robot data from world internals (Drake-specific access)
         robot_data = world._robots[robot_id]  # type: ignore[attr-defined]
@@ -175,12 +295,13 @@ class DrakeOptimizationIK:
         # Create IK problem
         ik = InverseKinematics(plant)
 
-        # Get end-effector frame
-        ee_frame = robot_data.ee_frame
+        target_frame = plant.GetBodyByName(
+            target_frame_name, robot_data.model_instance
+        ).body_frame()
 
         # Add position constraint
         ik.AddPositionConstraint(
-            frameB=ee_frame,
+            frameB=target_frame,
             p_BQ=np.array([0.0, 0.0, 0.0]),  # type: ignore[arg-type]
             frameA=plant.world_frame(),
             p_AQ_lower=target_transform.translation() - np.array([position_tolerance] * 3),
@@ -191,7 +312,7 @@ class DrakeOptimizationIK:
         ik.AddOrientationConstraint(
             frameAbar=plant.world_frame(),
             R_AbarA=target_transform.rotation(),
-            frameBbar=ee_frame,
+            frameBbar=target_frame,
             R_BbarB=RotationMatrix(),
             theta_bound=orientation_tolerance,
         )
@@ -199,6 +320,10 @@ class DrakeOptimizationIK:
         # Get program and set initial guess
         prog = ik.get_mutable_prog()
         q = ik.q()
+
+        for local_index, value in (locked_joint_positions or {}).items():
+            joint_idx = robot_data.joint_indices[local_index]
+            prog.AddBoundingBoxConstraint(value, value, q[joint_idx])
 
         # Set initial guess (full positions vector)
         full_seed = np.zeros(plant.num_positions())
@@ -223,13 +348,13 @@ class DrakeOptimizationIK:
         joint_solution = np.clip(joint_solution, lower_limits, upper_limits)
 
         # Compute actual error using FK
-        solution_state = JointState(name=joint_names, position=joint_solution.tolist())
+        solution_state = JointState({"name": joint_names, "position": joint_solution.tolist()})
         with world.scratch_context() as ctx:
             world.set_joint_state(ctx, robot_id, solution_state)
-            actual_pose = world.get_ee_pose(ctx, robot_id)
+            actual_matrix = world.get_link_pose(ctx, robot_id, target_frame_name)
 
         position_error, orientation_error = compute_pose_error(
-            pose_to_matrix(actual_pose),
+            actual_matrix,
             target_transform.GetAsMatrix4(),  # type: ignore[arg-type]
         )
 
@@ -251,7 +376,7 @@ def _create_success_result(
 ) -> IKResult:
     return IKResult(
         status=IKStatus.SUCCESS,
-        joint_state=JointState(name=joint_names, position=joint_positions.tolist()),
+        joint_state=JointState({"name": joint_names, "position": joint_positions.tolist()}),
         position_error=position_error,
         orientation_error=orientation_error,
         iterations=iterations,
@@ -269,4 +394,135 @@ def _create_failure_result(
         joint_state=None,
         iterations=iterations,
         message=message,
+    )
+
+
+def _unique_pose_target_frame_for_robot(
+    world: WorldSpec,
+    robot_id: WorldRobotID,
+) -> str | None:
+    config = world.get_robot_config(robot_id)
+    pose_target_frames = [
+        group.tip_link for group in config.planning_groups if group.tip_link is not None
+    ]
+    unique_frames = list(dict.fromkeys(pose_target_frames))
+    if len(unique_frames) != 1:
+        return None
+    return unique_frames[0]
+
+
+def _robot_ids_by_name(
+    world: WorldSpec,
+    robot_names: tuple[RobotName, ...],
+) -> dict[RobotName, WorldRobotID]:
+    robot_ids_by_name: dict[RobotName, WorldRobotID] = {}
+    for robot_name in robot_names:
+        matches = [
+            robot_id
+            for robot_id in world.get_robot_ids()
+            if world.get_robot_config(robot_id).name == robot_name
+        ]
+        if not matches:
+            raise ValueError(f"Robot '{robot_name}' not found")
+        if len(matches) > 1:
+            raise ValueError(f"Robot name '{robot_name}' is not unique in planning world")
+        robot_ids_by_name[robot_name] = matches[0]
+    return robot_ids_by_name
+
+
+def _seed_positions_with_world_fallback(
+    world: WorldSpec,
+    robot_id: WorldRobotID,
+    robot_name: RobotName,
+    local_joint_names: list[str],
+    seed: JointState | None,
+) -> NDArray[np.float64]:
+    """Return full robot positions, reading world only for absent seed joints."""
+    if seed is None:
+        with world.scratch_context() as ctx:
+            current = world.get_joint_state(ctx, robot_id)
+        return _positions_by_local_name(current, robot_name, local_joint_names)
+
+    try:
+        return _positions_by_local_name(seed, robot_name, local_joint_names)
+    except ValueError:
+        with world.scratch_context() as ctx:
+            current = world.get_joint_state(ctx, robot_id)
+        fallback_positions = _positions_by_local_name(current, robot_name, local_joint_names)
+        seed_positions = _partial_positions_by_local_name(seed, robot_name, local_joint_names)
+        local_indices = {name: index for index, name in enumerate(local_joint_names)}
+        for local_name, position in seed_positions.items():
+            fallback_positions[local_indices[local_name]] = position
+        return fallback_positions
+
+
+def _positions_by_local_name(
+    joint_state: JointState,
+    robot_name: RobotName,
+    local_joint_names: list[str],
+) -> NDArray[np.float64]:
+    if not joint_state.name:
+        if len(joint_state.position) != len(local_joint_names):
+            raise ValueError(
+                f"JointState has {len(joint_state.position)} positions for "
+                f"{len(local_joint_names)} joints"
+            )
+        return np.asarray(joint_state.position, dtype=np.float64)
+
+    positions_by_name = dict(zip(joint_state.name, joint_state.position, strict=True))
+    positions: list[float] = []
+    missing: list[str] = []
+    for local_name in local_joint_names:
+        global_name = f"{robot_name}/{local_name}"
+        if local_name in positions_by_name:
+            positions.append(float(positions_by_name[local_name]))
+        elif global_name in positions_by_name:
+            positions.append(float(positions_by_name[global_name]))
+        else:
+            missing.append(local_name)
+    if missing:
+        raise ValueError(f"JointState missing joints: {missing}")
+    return np.asarray(positions, dtype=np.float64)
+
+
+def _partial_positions_by_local_name(
+    joint_state: JointState,
+    robot_name: RobotName,
+    local_joint_names: list[str],
+) -> dict[str, float]:
+    if len(joint_state.name) != len(joint_state.position):
+        raise ValueError(
+            f"Seed has {len(joint_state.name)} names but {len(joint_state.position)} positions"
+        )
+    positions_by_name = dict(zip(joint_state.name, joint_state.position, strict=True))
+    known_local_names = set(local_joint_names)
+    positions: dict[str, float] = {}
+    for name, position in positions_by_name.items():
+        if name in known_local_names:
+            positions[name] = float(position)
+            continue
+        prefix = f"{robot_name}/"
+        if name.startswith(prefix):
+            local_name = name[len(prefix) :]
+            if local_name in known_local_names:
+                positions[local_name] = float(position)
+                continue
+        raise ValueError(f"Unrecognized seed joint '{name}'")
+    return positions
+
+
+def _filter_result_to_group(result: IKResult, group: PlanningGroup) -> IKResult:
+    if result.joint_state is None:
+        return result
+    return IKResult(
+        status=result.status,
+        joint_state=filter_joint_state_to_selected_joints(
+            result.joint_state,
+            group.joint_names,
+            group.local_joint_names,
+        ),
+        position_error=result.position_error,
+        orientation_error=result.orientation_error,
+        iterations=result.iterations,
+        message=result.message,
     )

@@ -26,7 +26,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.manipulation.planning.factory import create_kinematics
-from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
+from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupDefinition
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 import dimos.manipulation.planning.kinematics.pink_ik as pink_ik
 from dimos.manipulation.planning.kinematics.pink_ik import (
@@ -54,8 +54,9 @@ class _FakeJoint:
 
 
 class _FakeFrame:
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, parent_joint: int = 0) -> None:
         self.name = name
+        self.parentJoint = parent_joint
 
 
 class _FakePlacement:
@@ -67,7 +68,7 @@ class _FakePlacement:
 class _FakeData:
     def __init__(self) -> None:
         self.q = np.zeros(3)
-        self.oMf = [_FakePlacement(np.zeros(3))]
+        self.oMf = [_FakePlacement(np.zeros(3)), _FakePlacement(np.zeros(3))]
 
 
 class _FakeModel:
@@ -76,9 +77,9 @@ class _FakeModel:
     def __init__(self) -> None:
         self.names = ["universe", "joint_b", "joint_a", "joint_c"]
         self.joints = [SimpleNamespace(idx_q=-1, nq=0), _FakeJoint(0), _FakeJoint(1), _FakeJoint(2)]
-        self.frames = [_FakeFrame("tool")]
+        self.frames = [_FakeFrame("base", 0), _FakeFrame("tool", 3)]
         self._joint_ids = {"joint_b": 1, "joint_a": 2, "joint_c": 3}
-        self._frame_ids = {"tool": 0}
+        self._frame_ids = {"base": 0, "tool": 1}
 
     def createData(self) -> _FakeData:
         return _FakeData()
@@ -138,7 +139,7 @@ def _fake_modules(converge: bool = True) -> _PinkModules:
         data.q = q.copy()
 
     def update_frame_placements(model: _FakeModel, data: _FakeData) -> None:
-        data.oMf[0] = _FakePlacement(data.q.copy())
+        data.oMf[1] = _FakePlacement(data.q.copy())
 
     pinocchio.forwardKinematics = forward_kinematics  # type: ignore[attr-defined]
     pinocchio.updateFramePlacements = update_frame_placements  # type: ignore[attr-defined]
@@ -195,7 +196,7 @@ def _context() -> _PinkRobotContext:
     return _PinkRobotContext(
         model=model,
         data=model.createData(),
-        frame_id=0,
+        frame_id=1,
         frame_name="tool",
         mapping=mapping,
     )
@@ -207,6 +208,30 @@ class _FakeWorld:
     def __init__(self, collision_free: bool = True) -> None:
         self.config = _robot_config()
         self.collision_free = collision_free
+        self.joint_state_calls = 0
+        self.groups = {
+            "arm/manipulator": PlanningGroup(
+                id="arm/manipulator",
+                robot_name="arm",
+                group_name="manipulator",
+                joint_names=("arm/joint_a", "arm/joint_b"),
+                local_joint_names=("joint_a", "joint_b"),
+                base_link="base",
+                tip_link="tool",
+            ),
+            "arm/no_tip": PlanningGroup(
+                id="arm/no_tip",
+                robot_name="arm",
+                group_name="no_tip",
+                joint_names=("arm/joint_c",),
+                local_joint_names=("joint_c",),
+                base_link="base",
+                tip_link=None,
+            ),
+        }
+
+    def get_robot_ids(self) -> list[str]:
+        return ["robot"]
 
     def get_robot_config(self, robot_id: str) -> RobotModelConfig:
         return self.config
@@ -215,6 +240,7 @@ class _FakeWorld:
         return nullcontext(None)
 
     def get_joint_state(self, ctx: object, robot_id: str) -> JointState:
+        self.joint_state_calls += 1
         return JointState(
             name=["joint_b", "joint_c", "joint_a"],
             position=[0.0, 0.0, 0.0],
@@ -349,7 +375,7 @@ def test_solve_single_reports_non_convergence(mocker: MockerFixture) -> None:
 def test_solve_rejects_collision_candidate(mocker: MockerFixture) -> None:
     ik = _pink_ik(mocker, converge=True)
     context = _context()
-    ik._robot_contexts = {"robot": context}
+    ik._robot_contexts = {("robot", "tool"): context}
 
     result = ik.solve(
         world=cast("Any", _FakeWorld(collision_free=False)),
@@ -369,7 +395,7 @@ def test_solve_rejects_collision_candidate(mocker: MockerFixture) -> None:
 def test_solve_retries_after_joint_limit_failure(mocker: MockerFixture) -> None:
     ik = _pink_ik(mocker, converge=True)
     context = _context()
-    ik._robot_contexts = {"robot": context}
+    ik._robot_contexts = {("robot", "tool"): context}
     calls = 0
 
     def fake_solve_single(**_: object) -> IKResult:
@@ -407,3 +433,125 @@ def test_solve_retries_after_joint_limit_failure(mocker: MockerFixture) -> None:
 
     assert solve_single.call_count == 2
     assert result.status == IKStatus.SUCCESS
+
+
+def test_robot_context_cache_key_includes_tip_frame(mocker: MockerFixture, tmp_path: Path) -> None:
+    modules = _fake_modules()
+    modules.pinocchio.buildModelFromUrdf = lambda path: _FakeModel()  # type: ignore[attr-defined]
+    mocker.patch.object(pink_ik, "_load_optional_dependencies", return_value=modules)
+    mocker.patch.object(pink_ik, "prepare_urdf_for_drake", return_value=tmp_path / "prepared.urdf")
+    model_path = tmp_path / "fake.urdf"
+    model_path.write_text("<robot/>")
+    world = _FakeWorld()
+    world.config.model_path = model_path
+    ik = PinkIK(PinkIKConfig(max_iterations=1))
+
+    first = ik._get_robot_context(cast("Any", world), "robot", "tool")
+    second = ik._get_robot_context(cast("Any", world), "robot", "base")
+
+    assert first is not second
+    assert set(ik._robot_contexts) == {("robot", "tool"), ("robot", "base")}
+
+
+def test_build_robot_context_rejects_base_link_not_model_root(
+    mocker: MockerFixture, tmp_path: Path
+) -> None:
+    model = _FakeModel()
+    model.frames[0] = _FakeFrame("base", parent_joint=1)
+    modules = _fake_modules()
+    modules.pinocchio.buildModelFromUrdf = lambda path: model  # type: ignore[attr-defined]
+    mocker.patch.object(pink_ik, "_load_optional_dependencies", return_value=modules)
+    mocker.patch.object(pink_ik, "prepare_urdf_for_drake", return_value=tmp_path / "prepared.urdf")
+    model_path = tmp_path / "fake.urdf"
+    model_path.write_text("<robot/>")
+    config = _robot_config()
+    config.model_path = model_path
+
+    with pytest.raises(ValueError, match="base_link 'base'.*model root"):
+        PinkIK(PinkIKConfig(max_iterations=1))._build_robot_context(config, "tool")
+
+
+def test_solve_pose_targets_uses_group_tip_and_filters_group_joints(
+    mocker: MockerFixture,
+) -> None:
+    ik = _pink_ik(mocker, converge=True)
+    context = _context()
+    get_context = mocker.patch.object(ik, "_get_robot_context", return_value=context)
+    mocker.patch.object(
+        ik,
+        "_solve_single",
+        return_value=IKResult(
+            status=IKStatus.SUCCESS,
+            joint_state=JointState(
+                {"name": ["joint_a", "joint_b", "joint_c"], "position": [0.1, 0.2, 0.3]}
+            ),
+        ),
+    )
+    world = _FakeWorld()
+
+    result = ik.solve_pose_targets(
+        world=cast("Any", world),
+        pose_targets={
+            world.groups["arm/manipulator"]: PoseStamped(
+                position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+            )
+        },
+        seed=JointState(
+            {"name": ["arm/joint_a", "arm/joint_b", "arm/joint_c"], "position": [0.0, 0.0, 0.0]}
+        ),
+        max_attempts=1,
+    )
+
+    get_context.assert_called_once_with(cast("Any", world), "robot", "tool")
+    assert result.status == IKStatus.SUCCESS
+    assert result.joint_state is not None
+    assert result.joint_state.name == ["arm/joint_a", "arm/joint_b"]
+    assert result.joint_state.position == [0.1, 0.2]
+    assert world.joint_state_calls == 0
+
+
+def test_solve_pose_targets_rejects_group_without_tip(mocker: MockerFixture) -> None:
+    ik = _pink_ik(mocker)
+    world = _FakeWorld()
+
+    result = ik.solve_pose_targets(
+        world=cast("Any", world),
+        pose_targets={
+            world.groups["arm/no_tip"]: PoseStamped(
+                position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+            )
+        },
+    )
+
+    assert result.status == IKStatus.NO_SOLUTION
+    assert "no pose target frame" in result.message
+
+
+def test_solve_pose_targets_partial_seed_reads_world_state(mocker: MockerFixture) -> None:
+    ik = _pink_ik(mocker)
+    mocker.patch.object(ik, "_get_robot_context", return_value=_context())
+    mocker.patch.object(
+        ik,
+        "_solve_single",
+        return_value=IKResult(
+            status=IKStatus.SUCCESS,
+            joint_state=JointState(
+                {"name": ["joint_a", "joint_b", "joint_c"], "position": [0.1, 0.2, 0.3]}
+            ),
+        ),
+    )
+    world = _FakeWorld()
+
+    result = ik.solve_pose_targets(
+        world=cast("Any", world),
+        pose_targets={
+            world.groups["arm/manipulator"]: PoseStamped(
+                position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+            )
+        },
+        seed=JointState({"name": ["arm/joint_a"], "position": [0.0]}),
+        max_attempts=1,
+    )
+
+    assert result.status == IKStatus.SUCCESS
+    assert world.joint_state_calls == 1

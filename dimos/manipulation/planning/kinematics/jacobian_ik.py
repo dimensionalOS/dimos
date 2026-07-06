@@ -24,12 +24,14 @@ For full nonlinear optimization IK with Drake, use DrakeOptimizationIK.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
 
+from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.spec.enums import IKStatus
-from dimos.manipulation.planning.spec.models import IKResult, WorldRobotID
+from dimos.manipulation.planning.spec.models import IKResult, RobotName, WorldRobotID
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.kinematics_utils import (
     check_singularity,
@@ -145,7 +147,9 @@ class JacobianIK:
             else:
                 # Random seed within joint limits
                 random_positions = np.random.uniform(lower_limits, upper_limits)
-                current_seed = JointState(name=joint_names, position=random_positions.tolist())
+                current_seed = JointState(
+                    {"name": joint_names, "position": random_positions.tolist()}
+                )
 
             # Solve iterative IK
             result = self.solve_iterative(
@@ -183,6 +187,176 @@ class JacobianIK:
         return _create_failure_result(
             IKStatus.NO_SOLUTION,
             f"IK failed after {max_attempts} attempts",
+        )
+
+    def solve_pose_targets(
+        self,
+        world: WorldSpec,
+        pose_targets: Mapping[PlanningGroup, PoseStamped],
+        auxiliary_groups: Sequence[PlanningGroup] = (),
+        seed: JointState | None = None,
+        position_tolerance: float = 0.001,
+        orientation_tolerance: float = 0.01,
+        check_collision: bool = True,
+        max_attempts: int = 10,
+    ) -> IKResult:
+        """Solve a planning-group pose target using group FK/Jacobian."""
+        if not world.is_finalized:
+            return _create_failure_result(IKStatus.NO_SOLUTION, "World must be finalized before IK")
+        if not pose_targets:
+            return _create_failure_result(
+                IKStatus.NO_SOLUTION, "At least one pose target is required"
+            )
+        if len(pose_targets) != 1 or auxiliary_groups:
+            return _create_failure_result(
+                IKStatus.NO_SOLUTION,
+                "JacobianIK supports exactly one pose target and no auxiliary planning groups",
+            )
+
+        target_group = next(iter(pose_targets.keys()))
+        if not target_group.has_pose_target:
+            return _create_failure_result(
+                IKStatus.NO_SOLUTION,
+                f"Planning group '{target_group.id}' has no pose target frame",
+            )
+
+        try:
+            selection = PlanningGroupSelection.from_groups((target_group,))
+            robot_ids_by_name = _robot_ids_by_name(world, selection.robot_names)
+        except ValueError as exc:
+            return _create_failure_result(IKStatus.NO_SOLUTION, str(exc))
+
+        if len(selection.robot_names) != 1:
+            return _create_failure_result(
+                IKStatus.NO_SOLUTION,
+                "JacobianIK does not support cross-robot pose IK",
+            )
+
+        robot_id = robot_ids_by_name[target_group.robot_name]
+        config = world.get_robot_config(robot_id)
+        try:
+            seed_positions = _seed_positions_with_world_fallback(
+                world,
+                robot_id,
+                config.name,
+                list(config.joint_names),
+                seed,
+            )
+            group_indices = [
+                list(config.joint_names).index(name) for name in target_group.local_joint_names
+            ]
+        except ValueError as exc:
+            return _create_failure_result(IKStatus.NO_SOLUTION, str(exc))
+
+        lower_limits, upper_limits = world.get_joint_limits(robot_id)
+        group_lower = lower_limits[group_indices]
+        group_upper = upper_limits[group_indices]
+
+        result = self._solve_group_iterative(
+            world=world,
+            robot_id=robot_id,
+            group=target_group,
+            target_pose=pose_targets[target_group],
+            base_positions=seed_positions,
+            group_indices=group_indices,
+            lower_limits=group_lower,
+            upper_limits=group_upper,
+            max_iterations=self._max_iterations * max(1, max_attempts),
+            position_tolerance=position_tolerance,
+            orientation_tolerance=orientation_tolerance,
+        )
+        if not result.is_success() or result.joint_state is None:
+            return result
+
+        if check_collision:
+            full_positions = seed_positions.copy()
+            full_positions[group_indices] = np.asarray(
+                result.joint_state.position, dtype=np.float64
+            )
+            full_state = JointState(
+                {"name": list(config.joint_names), "position": full_positions.tolist()}
+            )
+            if not world.check_config_collision_free(robot_id, full_state):
+                return _create_failure_result(IKStatus.COLLISION, "IK solution is in collision")
+        return result
+
+    def _solve_group_iterative(
+        self,
+        world: WorldSpec,
+        robot_id: WorldRobotID,
+        group: PlanningGroup,
+        target_pose: PoseStamped,
+        base_positions: NDArray[np.float64],
+        group_indices: list[int],
+        lower_limits: NDArray[np.float64],
+        upper_limits: NDArray[np.float64],
+        max_iterations: int,
+        position_tolerance: float,
+        orientation_tolerance: float,
+    ) -> IKResult:
+        target_matrix = Transform(
+            translation=target_pose.position,
+            rotation=target_pose.orientation,
+        ).to_matrix()
+        current_group_positions = base_positions[group_indices].copy()
+
+        for iteration in range(max_iterations):
+            full_positions = base_positions.copy()
+            full_positions[group_indices] = current_group_positions
+            current_state = JointState(
+                {
+                    "name": list(world.get_robot_config(robot_id).joint_names),
+                    "position": full_positions.tolist(),
+                }
+            )
+            with world.scratch_context() as ctx:
+                world.set_joint_state(ctx, robot_id, current_state)
+                current_pose = pose_to_matrix(world.get_group_ee_pose(ctx, group.id))
+                pos_error, ori_error = compute_pose_error(current_pose, target_matrix)
+                if pos_error <= position_tolerance and ori_error <= orientation_tolerance:
+                    return _create_success_result(
+                        joint_names=list(group.joint_names),
+                        joint_positions=current_group_positions,
+                        position_error=pos_error,
+                        orientation_error=ori_error,
+                        iterations=iteration + 1,
+                    )
+                twist = compute_error_twist(current_pose, target_matrix, gain=0.5)
+                jacobian = world.get_group_jacobian(ctx, group.id)
+
+            effective_damping = (
+                self._damping * 10.0
+                if check_singularity(jacobian, threshold=self._singularity_threshold)
+                else self._damping
+            )
+            q_dot = damped_pseudoinverse(jacobian, effective_damping) @ twist
+            max_delta = 0.1
+            max_change = np.max(np.abs(q_dot)) if q_dot.size else 0.0
+            if max_change > max_delta:
+                q_dot = q_dot * (max_delta / max_change)
+            current_group_positions = np.clip(
+                current_group_positions + q_dot,
+                lower_limits,
+                upper_limits,
+            )
+
+        full_positions = base_positions.copy()
+        full_positions[group_indices] = current_group_positions
+        final_state = JointState(
+            {
+                "name": list(world.get_robot_config(robot_id).joint_names),
+                "position": full_positions.tolist(),
+            }
+        )
+        with world.scratch_context() as ctx:
+            world.set_joint_state(ctx, robot_id, final_state)
+            final_pose = pose_to_matrix(world.get_group_ee_pose(ctx, group.id))
+            pos_error, ori_error = compute_pose_error(final_pose, target_matrix)
+
+        return _create_failure_result(
+            IKStatus.NO_SOLUTION,
+            f"Did not converge after {max_iterations} iterations (pos_err={pos_error:.4f}, ori_err={ori_error:.4f})",
+            iterations=max_iterations,
         )
 
     def solve_iterative(
@@ -226,7 +400,9 @@ class JacobianIK:
         for iteration in range(max_iterations):
             with world.scratch_context() as ctx:
                 # Set current position (convert to JointState for API)
-                current_state = JointState(name=joint_names, position=current_joints.tolist())
+                current_state = JointState(
+                    {"name": joint_names, "position": current_joints.tolist()}
+                )
                 world.set_joint_state(ctx, robot_id, current_state)
 
                 # Get current pose (as matrix for error computation)
@@ -275,7 +451,7 @@ class JacobianIK:
 
         # Compute final error
         with world.scratch_context() as ctx:
-            final_state = JointState(name=joint_names, position=current_joints.tolist())
+            final_state = JointState({"name": joint_names, "position": current_joints.tolist()})
             world.set_joint_state(ctx, robot_id, final_state)
             final_pose = pose_to_matrix(world.get_ee_pose(ctx, robot_id))
             pos_error, ori_error = compute_pose_error(final_pose, target_matrix)
@@ -349,7 +525,7 @@ class JacobianIK:
                 if max_ratio > 1.0:
                     q_dot = q_dot / max_ratio
 
-        return JointState(name=joint_names, velocity=q_dot.tolist())
+        return JointState({"name": joint_names, "velocity": q_dot.tolist()})
 
     def solve_differential_position_only(
         self,
@@ -397,7 +573,7 @@ class JacobianIK:
 
         # Compute joint velocities
         q_dot = J_pinv @ vel_array
-        return JointState(name=joint_names, velocity=q_dot.tolist())
+        return JointState({"name": joint_names, "velocity": q_dot.tolist()})
 
 
 # Result Helpers
@@ -413,7 +589,7 @@ def _create_success_result(
     """Create a successful IK result."""
     return IKResult(
         status=IKStatus.SUCCESS,
-        joint_state=JointState(name=joint_names, position=joint_positions.tolist()),
+        joint_state=JointState({"name": joint_names, "position": joint_positions.tolist()}),
         position_error=position_error,
         orientation_error=orientation_error,
         iterations=iterations,
@@ -433,3 +609,98 @@ def _create_failure_result(
         iterations=iterations,
         message=message,
     )
+
+
+def _robot_ids_by_name(
+    world: WorldSpec,
+    robot_names: tuple[RobotName, ...],
+) -> dict[RobotName, WorldRobotID]:
+    robot_ids_by_name: dict[RobotName, WorldRobotID] = {}
+    for robot_name in robot_names:
+        matches = [
+            robot_id
+            for robot_id in world.get_robot_ids()
+            if world.get_robot_config(robot_id).name == robot_name
+        ]
+        if not matches:
+            raise ValueError(f"Robot '{robot_name}' not found")
+        if len(matches) > 1:
+            raise ValueError(f"Robot name '{robot_name}' is not unique in planning world")
+        robot_ids_by_name[robot_name] = matches[0]
+    return robot_ids_by_name
+
+
+def _seed_positions_with_world_fallback(
+    world: WorldSpec,
+    robot_id: WorldRobotID,
+    robot_name: RobotName,
+    local_joint_names: list[str],
+    seed: JointState | None,
+) -> NDArray[np.float64]:
+    """Return full robot positions, reading world only for missing seed joints."""
+    if seed is None:
+        with world.scratch_context() as ctx:
+            current = world.get_joint_state(ctx, robot_id)
+        return _positions_by_local_name(current, robot_name, local_joint_names)
+
+    try:
+        return _positions_by_local_name(seed, robot_name, local_joint_names)
+    except ValueError:
+        with world.scratch_context() as ctx:
+            current = world.get_joint_state(ctx, robot_id)
+        fallback_positions = _positions_by_local_name(current, robot_name, local_joint_names)
+        seed_positions = _partial_positions_by_local_name(seed, robot_name, local_joint_names)
+        for local_name, position in seed_positions.items():
+            fallback_positions[local_joint_names.index(local_name)] = position
+        return fallback_positions
+
+
+def _positions_by_local_name(
+    joint_state: JointState,
+    robot_name: RobotName,
+    local_joint_names: list[str],
+) -> NDArray[np.float64]:
+    if not joint_state.name:
+        if len(joint_state.position) != len(local_joint_names):
+            raise ValueError(
+                f"JointState has {len(joint_state.position)} positions for "
+                f"{len(local_joint_names)} joints"
+            )
+        return np.asarray(joint_state.position, dtype=np.float64)
+
+    positions_by_name = dict(zip(joint_state.name, joint_state.position, strict=True))
+    positions: list[float] = []
+    missing: list[str] = []
+    for local_name in local_joint_names:
+        global_name = f"{robot_name}/{local_name}"
+        if local_name in positions_by_name:
+            positions.append(float(positions_by_name[local_name]))
+        elif global_name in positions_by_name:
+            positions.append(float(positions_by_name[global_name]))
+        else:
+            missing.append(local_name)
+    if missing:
+        raise ValueError(f"JointState missing joints: {missing}")
+    return np.asarray(positions, dtype=np.float64)
+
+
+def _partial_positions_by_local_name(
+    joint_state: JointState,
+    robot_name: RobotName,
+    local_joint_names: list[str],
+) -> dict[str, float]:
+    positions_by_name = dict(zip(joint_state.name, joint_state.position, strict=True))
+    known_local_names = set(local_joint_names)
+    positions: dict[str, float] = {}
+    for name, position in positions_by_name.items():
+        if name in known_local_names:
+            positions[name] = float(position)
+            continue
+        prefix = f"{robot_name}/"
+        if name.startswith(prefix):
+            local_name = name[len(prefix) :]
+            if local_name in known_local_names:
+                positions[local_name] = float(position)
+                continue
+        raise ValueError(f"Unrecognized seed joint '{name}'")
+    return positions
