@@ -22,6 +22,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.robot.cli.dimos import _normalize_simulation_argv, arg_help, main
+import dimos.utils.cli.spy.run_spy as run_spy
 
 
 @pytest.mark.parametrize(
@@ -166,8 +167,6 @@ def test_blueprint_arg_help_required():
 @pytest.fixture
 def spy_main_argv(monkeypatch):
     """Stub run_spy.main and capture the sys.argv the lcmspy alias hands it."""
-    import dimos.utils.cli.spy.run_spy as run_spy
-
     captured: list[list[str]] = []
     monkeypatch.setattr(sys, "argv", ["dimos"])
     monkeypatch.setattr(run_spy, "main", lambda: captured.append(list(sys.argv)))

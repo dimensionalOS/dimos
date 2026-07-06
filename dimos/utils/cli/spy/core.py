@@ -162,6 +162,8 @@ class LCMSpySource:
 
     def __init__(self, **lcm_kwargs: Any) -> None:
         """lcm_kwargs forwarded to LCMPubSubBase (e.g. lcm_url)."""
+        # Inline import: an unavailable LCM backend must not break the other
+        # spy sources (see default_sources).
         from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase
 
         self._bus = LCMPubSubBase(**lcm_kwargs)
@@ -192,6 +194,8 @@ class ZenohSpySource:
 
     def __init__(self, **zenoh_kwargs: Any) -> None:
         """zenoh_kwargs forwarded to ZenohPubSubBase (e.g. mode/connect/listen, session_pool)."""
+        # Inline import: an unavailable zenoh backend must not break the other
+        # spy sources (see default_sources).
         from dimos.protocol.pubsub.impl.zenohpubsub import ZenohPubSubBase
 
         self._bus = ZenohPubSubBase(**zenoh_kwargs)

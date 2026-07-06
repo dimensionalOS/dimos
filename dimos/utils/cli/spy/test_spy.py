@@ -38,6 +38,7 @@ from dimos.utils.cli.spy.core import (
     SOURCE_FACTORIES,
     LCMSpySource,
     SpyKey,
+    SpySource,
     TopicStats,
     TransportSpy,
     ZenohSpySource,
@@ -391,8 +392,6 @@ def test_default_sources_errors_when_no_backend_available(monkeypatch):
 
 
 def test_fake_source_satisfies_protocol():
-    from dimos.utils.cli.spy.core import SpySource
-
     assert isinstance(FakeSource("x"), SpySource)
 
 
