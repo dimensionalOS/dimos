@@ -58,7 +58,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.cmu_nav.frames import FRAME_BODY, FRAME_ODOM
+from dimos.navigation.cmu_nav.frames import FRAME_ODOM
 from dimos.spec import perception
 
 # Human-readable enums; the C++ binary (main.cpp) maps these strings to
@@ -81,12 +81,9 @@ class PointLioConfig(NativeModuleConfig):
     lidar_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_POINTLIO_LIDAR_IP"))
     frequency: float = 10.0
 
-    # Odometry is published as frame_id (fixed) -> child_frame_id (moving body),
+    # Odometry is published as frame_id (fixed) -> sensor_frame_id (moving sensor),
     # and also broadcast on TF. The point cloud is stamped with sensor_frame_id
-    # (the lidar's own frame — get_body_cloud is the undistorted scan, not yet
-    # transformed into the body frame).
     frame_id: str = FRAME_ODOM
-    child_frame_id: str = FRAME_BODY
     sensor_frame_id: str = "mid360_link"
 
     # Point-LIO internal processing rates (Hz)
@@ -186,7 +183,7 @@ class PointLio(NativeModule, perception.Lidar, perception.Odometry):
         self.tf.publish(
             Transform(
                 frame_id=self.frame_id,
-                child_frame_id=self.config.child_frame_id,
+                child_frame_id=self.config.sensor_frame_id,
                 translation=Vector3(
                     msg.pose.position.x,
                     msg.pose.position.y,

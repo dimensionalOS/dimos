@@ -262,14 +262,14 @@ def skill_context():
 
 @pytest.fixture()
 def stream_with_transport_mock(mocker, skill_context):
-    """ToolStream wired to a mock pLCMTransport so unit tests can inspect publishes.
+    """ToolStream wired to a mock transport so unit tests can inspect publishes.
 
     Constructs the stream inside a simulated `@skill` context with no progress
     token, so the strict-construction rule is satisfied and the stream takes the
     `notifications/message` fallback path.
     """
     mock_transport = mocker.MagicMock()
-    mocker.patch("dimos.agents.mcp.tool_stream.pLCMTransport", return_value=mock_transport)
+    mocker.patch("dimos.agents.mcp.tool_stream.make_transport", return_value=mock_transport)
     stream = ToolStream("test_tool")
     return stream, mock_transport
 
@@ -374,7 +374,7 @@ def test_stop_frame_carries_acquire_token(mocker, skill_context) -> None:
     McpServer can release the hold for that specific invocation."""
     skill_context({"acquire_token": "tok-1"})
     mock_transport = mocker.MagicMock()
-    mocker.patch("dimos.agents.mcp.tool_stream.pLCMTransport", return_value=mock_transport)
+    mocker.patch("dimos.agents.mcp.tool_stream.make_transport", return_value=mock_transport)
     stream = ToolStream("follow_person")
     stream.stop()
     frame = mock_transport.publish.call_args.args[0]
@@ -403,7 +403,7 @@ def test_make_progress_notification_shape() -> None:
 def stream_with_progress_context(mocker, skill_context):
     """ToolStream constructed with a skill-context progress_token set."""
     mock_transport = mocker.MagicMock()
-    mocker.patch("dimos.agents.mcp.tool_stream.pLCMTransport", return_value=mock_transport)
+    mocker.patch("dimos.agents.mcp.tool_stream.make_transport", return_value=mock_transport)
     skill_context({"progress_token": "pt-unit-1"})
     stream = ToolStream("progress_tool")
     return stream, mock_transport
@@ -518,7 +518,7 @@ def tool_helper_module(mocker):
     start_tool/tool_update/stop_tool helpers.
     """
     mock_transport = mocker.MagicMock()
-    mocker.patch("dimos.agents.mcp.tool_stream.pLCMTransport", return_value=mock_transport)
+    mocker.patch("dimos.agents.mcp.tool_stream.make_transport", return_value=mock_transport)
     mocker.patch("dimos.core.module.get_loop", return_value=(None, None))
     mocker.patch.object(LCMRPC, "__init__", return_value=None)
     mocker.patch.object(LCMRPC, "serve_module_rpc")
@@ -571,7 +571,7 @@ def test_rebind_acquire_token_noops_when_closed_or_no_context(mocker, skill_cont
     """`rebind_acquire_token` updates the live token, but is a no-op outside a
     skill context or once the stream is closed."""
     mock_transport = mocker.MagicMock()
-    mocker.patch("dimos.agents.mcp.tool_stream.pLCMTransport", return_value=mock_transport)
+    mocker.patch("dimos.agents.mcp.tool_stream.make_transport", return_value=mock_transport)
 
     skill_context({"acquire_token": "T1"})
     stream = ToolStream("job")

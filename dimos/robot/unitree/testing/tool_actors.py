@@ -63,7 +63,6 @@ class Counter(Module):
         return x + 10
 
 
-@pytest.mark.tool
 def test_basic(dimos) -> None:
     counter = dimos.deploy(Counter)
     consumer = dimos.deploy(
@@ -82,14 +81,12 @@ def test_basic(dimos) -> None:
     assert res == 20
 
 
-@pytest.mark.tool
 def test_mapper_start(dimos) -> None:
     mapper = dimos.deploy(Mapper)
     mapper.lidar.transport = LCMTransport("/lidar", PointCloud2)
     print("start res", mapper.start().result())
 
 
-@pytest.mark.tool
 def test_counter(dimos) -> None:
     counter = dimos.deploy(Counter)
     assert counter.addten(10) == 20
