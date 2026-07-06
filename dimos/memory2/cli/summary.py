@@ -78,6 +78,7 @@ def main(
     from datetime import datetime, timezone
 
     from rich.console import Console
+    from rich.progress import Progress
     from rich.table import Table
 
     from dimos.memory2.store.sqlite import SqliteStore
@@ -89,12 +90,15 @@ def main(
 
     rows: list[tuple[str, int, float | None, float | None, int]] = []
     store = SqliteStore(path=str(db_path))
-    with store:
+    with store, Progress(transient=True) as prog:
+        task = prog.add_task("scanning", total=len(payload_types))
         for name, ptype in payload_types.items():
+            prog.update(task, description=name)
             stream: Stream[Any] = store.stream(name, ptype)
             n = stream.count()
             t0, t1 = stream.get_time_range() if n else (None, None)
             rows.append((name, n, t0, t1, stream.size_bytes() or 0))
+            prog.advance(task)
     rows.sort(key=lambda r: r[4], reverse=True)
 
     table = Table(title=db_path.name)
