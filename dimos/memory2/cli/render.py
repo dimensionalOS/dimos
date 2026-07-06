@@ -112,7 +112,7 @@ def render_store(
         report = progress(stream.count(), label=name)
         for obs in stream:
             if seconds is not None and obs.ts - t0 > seconds:
-                print()  # terminate the windowed (sub-100%) progress line
+                report.close()  # finalize the windowed (sub-100%) bar
                 break
             if obs.data is None:  # e.g. a truncated/corrupt frame that failed to decode
                 report(obs)
