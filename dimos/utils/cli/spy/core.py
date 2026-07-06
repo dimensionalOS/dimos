@@ -323,6 +323,16 @@ v1: lcm + zenoh. SHM/ROS/DDS/Redis are future sources.
 """
 
 
+def validate_transport_names(names: Sequence[str]) -> None:
+    """Raise ValueError if any name is not a known SOURCE_FACTORIES transport."""
+    unknown = [n for n in names if n not in SOURCE_FACTORIES]
+    if unknown:
+        raise ValueError(
+            f"unknown transport(s) {', '.join(unknown)} — valid choices: "
+            f"{', '.join(SOURCE_FACTORIES)}"
+        )
+
+
 def default_sources() -> list[SpySource]:
     """The spy observes ALL transports simultaneously, regardless of DIMOS_TRANSPORT.
 

@@ -45,6 +45,7 @@ from dimos.utils.cli.spy.core import (
     TransportSpy,
     default_sources,
     split_type_suffix,
+    validate_transport_names,
 )
 from dimos.utils.human import human_bytes
 
@@ -100,12 +101,10 @@ def _parse_transports(argv: list[str]) -> list[str] | None:
             f"Error: unexpected argument(s) {', '.join(extra)} — "
             "`dimos spy` accepts only --transport <name> (repeatable)."
         )
-    unknown = [t for t in transports if t not in SOURCE_FACTORIES]
-    if unknown:
-        valid = ", ".join(SOURCE_FACTORIES)
-        raise SystemExit(
-            f"Error: unknown transport(s) {', '.join(unknown)} — valid choices: {valid}"
-        )
+    try:
+        validate_transport_names(transports)
+    except ValueError as exc:
+        raise SystemExit(f"Error: {exc}") from None
     return transports or None
 
 
@@ -146,12 +145,7 @@ class SpyApp(App[None]):
             # skipped with a warning (see default_sources).
             sources = default_sources()
         else:
-            unknown = [n for n in transports if n not in SOURCE_FACTORIES]
-            if unknown:
-                raise ValueError(
-                    f"unknown transport(s) {', '.join(unknown)} — valid choices: "
-                    f"{', '.join(SOURCE_FACTORIES)}"
-                )
+            validate_transport_names(transports)
             # Construct only the requested sources: a filtered-out transport is
             # never imported or instantiated, and an unavailable one that was
             # explicitly requested stays a hard error.
