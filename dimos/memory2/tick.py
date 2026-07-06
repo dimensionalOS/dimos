@@ -412,12 +412,6 @@ class TickMachine:
                 fs.buf.append(obs)
         return self._resolve()
 
-    def end_of_stream(self, name: str) -> list[tuple[Observation[Any], dict[str, Any]]]:
-        """Mark one input as finished (no more observations will arrive)."""
-        if name != self.trigger:
-            self.fields[name].exhausted = True
-        return self._resolve()
-
     def flush(self) -> list[tuple[Observation[Any], dict[str, Any]]]:
         """Mark every input finished and resolve all pending ticks."""
         for fs in self.fields.values():

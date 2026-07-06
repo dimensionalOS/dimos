@@ -32,12 +32,12 @@ mature ladder implemented here:
 
 Contracts come from two places, deliberately split:
 
-- *semantic tolerances in code* — ``latest(max_age=...)`` already declares
-  "older than this is unacceptable"; its violation shows up as
-  ``missing_input`` drops;
-- *rates in deployment config* — ``expected_hz`` per input and
-  ``min_output_hz``, because sim, replay, and the robot legitimately
-  differ.
+- *per-port contracts in the class declaration* — ``latest(max_age=...)``
+  already declares "older than this is unacceptable" (violations show up
+  as ``missing_input`` drops); ``tick(expect_hz=...)`` and
+  ``contract(min_hz=...)`` declare the rates the module was built for;
+- *module-wide promises in deployment config* — :class:`ModuleContracts`,
+  because sim, replay, and the robot legitimately differ.
 
 The monitor is pure bookkeeping with an injectable clock — no threads, no
 streams — so the contract messages are unit-testable.
@@ -48,6 +48,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 import threading
+import time
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
@@ -125,7 +126,7 @@ class _Window:
     missing: dict[str, int] = field(default_factory=dict)  # drops by field
     blocked: int = 0  # ticks evicted while waiting for interpolation brackets
     outputs: dict[str, int] = field(default_factory=dict)
-    latencies_s: list[float] = field(default_factory=list)  # trigger ts -> publish
+    latencies_s: list[float] = field(default_factory=list)  # trigger arrival -> publish
 
 
 class HealthMonitor:
@@ -150,11 +151,8 @@ class HealthMonitor:
         clock: Callable[[], float] | None = None,
     ) -> None:
         """``contracts`` = module-wide promises; ``health`` = reporting
-        mechanics; the three dicts are the *resolved* per-port contracts
-        (class declarations already merged with deployment overrides by
-        the caller)."""
-        import time
-
+        mechanics; the three dicts are the per-port contracts from the
+        class declaration."""
         contracts = contracts if contracts is not None else ModuleContracts()
         cfg = health if health is not None else HealthConfig()
 
@@ -239,7 +237,7 @@ class HealthMonitor:
         latency_s: float | None = None,
     ) -> None:
         """One step completed. ``latency_s`` is end-to-end tick latency —
-        trigger timestamp to outputs published — covering queue wait,
+        trigger arrival to outputs published — covering queue wait,
         alignment wait, buffer wait, and the step itself."""
         with self._lock:
             self._win.stepped += 1
@@ -268,7 +266,14 @@ class HealthMonitor:
             win, self._win = self._win, _Window()
             dt = now - self._last_report
             self._last_report = now
-        return self._report(win, dt, now)
+            health = self._report(win, dt, now)
+        # Sink outside the lock — it does store I/O and must not stall hooks.
+        if self.sink is not None:
+            try:
+                self.sink(health)
+            except Exception:
+                logger.exception("%s: health sink failed", self.name)
+        return health
 
     def _report(self, win: _Window, dt: float, now: float) -> Health:
         metrics = self._metrics(win, dt)
@@ -283,11 +288,6 @@ class HealthMonitor:
 
         health = Health(ts=now, state=state, violations=tuple(violations), metrics=metrics)
         self._latest = health
-        if self.sink is not None:
-            try:
-                self.sink(health)
-            except Exception:
-                logger.exception("%s: health sink failed", self.name)
         return health
 
     def _metrics(self, win: _Window, dt: float) -> dict[str, float]:
@@ -400,12 +400,14 @@ class HealthMonitor:
 
     @property
     def state(self) -> str:
-        return self._state
+        with self._lock:
+            return self._state
 
     @property
     def latest(self) -> Health | None:
         """The most recent snapshot, or ``None`` before the first report."""
-        return self._latest
+        with self._lock:
+            return self._latest
 
     def counters(self) -> dict[str, Any]:
         """Current window counters — for tests and debugging."""

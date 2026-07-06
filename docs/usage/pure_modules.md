@@ -389,6 +389,8 @@ alerts got 2: ['boundary at x=2.0 (t=101.5)', 'boundary at x=2.5 (t=102.0)']
 
 Note the timestamps: sourced inputs keep their **recorded** time, so
 alignment, `ts`, and `max_age` behave exactly as they did on the robot.
+(Tick latency is measured from *arrival*, not the recorded time, so
+`max_tick_latency_s` contracts stay meaningful against a recording.)
 This differs from `over()` on purpose — `over()` is the pull-based exact
 path for development; `input_sources` exercises the *real live machinery*
 (threads, backpressure policy, health contracts) against recorded data.
@@ -616,11 +618,8 @@ class Follower(PureModule):
 ```
 
 These are the rates the module was built for, declared once where the
-port is. (Per-port *deployment* overrides were tried and removed — three
-ways to say one thing with no consumer; module-wide `contracts=` and
-`health=` remain the deployment knobs, and per-port overrides can return
-if a real deployment needs them.) Per-output contracts fix the
-multi-output gap: `contracts.min_output_hz` counts ticks that emitted
+port is; module-wide `contracts=` and `health=` remain the deployment
+knobs. Per-output contracts fix the multi-output gap: `contracts.min_output_hz` counts ticks that emitted
 *anything*, which a deliberately sparse `alerts` port would drag down —
 `contract(min_hz=...)` checks each port on its own.
 

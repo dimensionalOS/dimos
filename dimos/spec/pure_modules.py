@@ -20,7 +20,9 @@ streams. See the implementation module for the declaration language.
 """
 
 from dimos.memory2.puremodule import (
+    Outputs as Outputs,
     PureModule as PureModule,
+    contract as contract,
     interpolate as interpolate,
     latest as latest,
     tick as tick,

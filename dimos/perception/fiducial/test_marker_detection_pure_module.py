@@ -20,6 +20,8 @@ import pytest
 
 pytest.importorskip("cv2.aruco")
 
+from pydantic import ValidationError
+
 from dimos.memory2.store.memory import MemoryStore
 from dimos.memory2.tick import Interpolate, Tick
 from dimos.memory2.transform import QualityWindow
@@ -119,13 +121,10 @@ def test_frame_without_camera_pose_is_dropped(store: MemoryStore) -> None:
         module().over(_strict=True, color_image=images, camera_pose=poses).to_list()
 
 
-def test_without_camera_info_emits_nothing(store: MemoryStore) -> None:
-    images = store.stream("color_image", Image)
-    images.append(synthetic_marker_image(7, ts=10.0), ts=10.0)
-    poses = fill_poses(store, 9.9, 10.1)
-
-    bare = MarkerDetectionPureModule.offline(marker_length_m=MARKER_LENGTH_M)
-    assert bare.over(color_image=images, camera_pose=poses).to_list() == []
+def test_camera_info_is_required() -> None:
+    """A module without intrinsics would be silently dead — fail at construction."""
+    with pytest.raises(ValidationError, match="camera_info"):
+        MarkerDetectionPureModule.offline(marker_length_m=MARKER_LENGTH_M)
 
 
 def test_step_is_directly_callable() -> None:

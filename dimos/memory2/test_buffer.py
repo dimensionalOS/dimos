@@ -84,3 +84,21 @@ class TestBackpressureBuffers:
         result.append(buf.take(timeout=2.0))
         t.join()
         assert result == [42]
+
+    def test_clone_is_fresh_with_same_policy(self):
+        """clone() returns an empty buffer that keeps the capacity settings."""
+        bounded = Bounded[int](maxlen=2)
+        bounded.put(1)
+        b = bounded.clone()
+        assert len(b) == 0
+        b.put(1)
+        b.put(2)
+        b.put(3)  # drops 1 — maxlen carried over
+        assert b.take() == 2
+
+        dropnew = DropNew[int](maxlen=1)
+        dropnew.put(1)
+        d = dropnew.clone()
+        assert len(d) == 0
+        assert d.put(1) is True
+        assert d.put(2) is False  # maxlen carried over

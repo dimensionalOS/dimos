@@ -46,6 +46,7 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 from pydantic import Field
 
 from dimos.core.stream import In, Out
@@ -79,7 +80,7 @@ class MarkerDetectionPureModuleConfig(PureModuleConfig):
     marker_length_m: float = Field(
         ..., gt=0.0, description="Physical square marker edge length in meters."
     )
-    camera_info: CameraInfo | None = None
+    camera_info: CameraInfo = Field(..., description="Camera intrinsics used to pose markers.")
 
 
 class MarkerDetectionPureModule(PureModule):
@@ -95,11 +96,14 @@ class MarkerDetectionPureModule(PureModule):
 
     # Lazy per-intrinsics calibration cache (class defaults: `offline()`
     # constructs instances without running __init__).
-    _calibration: tuple[Any, np.ndarray, np.ndarray] | None = None
+    _calibration: tuple[Any, NDArray[np.float64], NDArray[np.float64]] | None = None
     _calibration_key: tuple[Any, ...] | None = None
     _warned_distortion: bool = False
+    _warned_size: bool = False
 
-    def _resolve_calibration(self, info: CameraInfo) -> tuple[Any, np.ndarray, np.ndarray]:
+    def _resolve_calibration(
+        self, info: CameraInfo
+    ) -> tuple[Any, NDArray[np.float64], NDArray[np.float64]]:
         key = _camera_info_key(info)
         if key != self._calibration_key or self._calibration is None:
             model = (info.distortion_model or "").strip().lower()
@@ -121,21 +125,20 @@ class MarkerDetectionPureModule(PureModule):
         self, color_image: Image, camera_pose: PoseStamped, ts: float
     ) -> Detection3DArray | None:
         info = self.config.camera_info
-        if info is None:
-            logger.debug("MarkerDetectionPureModule: no CameraInfo configured; skipping frame")
-            return None
         if (
             info.width
             and info.height
             and (color_image.width != info.width or color_image.height != info.height)
         ):
-            logger.debug(
-                "MarkerDetectionPureModule: image %sx%s != CameraInfo %sx%s; skipping frame",
-                color_image.width,
-                color_image.height,
-                info.width,
-                info.height,
-            )
+            if not self._warned_size:
+                logger.warning(
+                    "MarkerDetectionPureModule: image %sx%s != CameraInfo %sx%s; skipping frames",
+                    color_image.width,
+                    color_image.height,
+                    info.width,
+                    info.height,
+                )
+                self._warned_size = True
             return None
 
         detector, camera_matrix, dist_coeffs = self._resolve_calibration(info)

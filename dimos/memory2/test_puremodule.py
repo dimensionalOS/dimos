@@ -40,6 +40,7 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
+    from pathlib import Path
 
     from dimos.memory2.stream import Stream
 
@@ -839,3 +840,41 @@ def test_live_backpressure_unbounded_processes_everything() -> None:
         gates.unblock()
         unsub()
         module.stop()
+
+
+@pytest.mark.tool
+def test_stop_records_the_tail(tmp_path: Path) -> None:
+    """stop() drains and joins the tick threads before the recording store closes."""
+    from dimos.core.transport import pLCMTransport
+    from dimos.memory2.buffer import Unbounded
+    from dimos.memory2.store.sqlite import SqliteStore
+
+    db = tmp_path / "rec.db"
+
+    class Recorder(PureModule):
+        frame: In[int] = tick()
+        doubled: Out[int]
+        backpressure = Unbounded()
+
+        def make_store(self) -> SqliteStore:
+            return SqliteStore(path=db)
+
+        def step(self, frame: int) -> int:
+            return frame * 2
+
+    module = Recorder()
+    module.frame.transport = pLCMTransport("/test/rec/frame")
+    try:
+        module.start()
+        for i in range(50):
+            module._queue.put(("frame", obs(float(i + 1), i)))
+    finally:
+        module.stop()  # must flush and record the tail before the store closes
+
+    replay = SqliteStore(path=db, must_exist=True)
+    replay.start()
+    try:
+        recorded = replay.stream("doubled", int).to_list()
+        assert [o.data for o in recorded] == [i * 2 for i in range(50)]
+    finally:
+        replay.dispose()

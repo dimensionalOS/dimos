@@ -248,10 +248,8 @@ class PureModuleConfig(ModuleConfig):
 
     Per-port contracts live in the module's class declaration only —
     samplers (``tick(expect_hz=30)``, ``latest(max_missing_ratio=...)``)
-    and ``contract(min_hz=...)`` on ``Out`` ports. Per-port *deployment*
-    overrides were tried and removed (no consumer; three ways to say one
-    thing) — re-add when a real deployment needs them. This config
-    carries what genuinely varies per deployment::
+    and ``contract(min_hz=...)`` on ``Out`` ports. This config carries
+    what genuinely varies per deployment::
 
         Follower(
             contracts={"max_drop_ratio": 0.8},
@@ -453,7 +451,13 @@ class PureModule(Module):
         sig = inspect.signature(cls.step)
         try:
             step_hints = get_type_hints(cls.step, include_extras=True)
-        except (NameError, AttributeError, TypeError):
+        except (NameError, AttributeError, TypeError) as e:
+            logger.warning(
+                "%s: step() type hints failed to resolve (%s) — "
+                "treating every parameter as required",
+                cls.__name__,
+                e,
+            )
             step_hints = {}
 
         params: list[_Param] = []
@@ -684,7 +688,17 @@ class PureModule(Module):
         plan = self._plan()
         cfg = self.config
 
-        store = self._store = self.register_disposable(self.make_store())
+        sources = dict(self.input_sources or {})
+        unknown_sources = set(sources) - set(plan.ins)
+        if unknown_sources:
+            raise TypeError(
+                f"{type(self).__name__}.input_sources has unknown inputs "
+                f"{sorted(unknown_sources)} — declared: {sorted(plan.ins)}"
+            )
+
+        # Registered as a disposable after the input subscriptions, so FIFO
+        # disposal stops ingest before the store closes.
+        store = self._store = self.make_store()
         store.start()
         self._streams = {name: store.stream(name, port.type) for name, port in self.inputs.items()}
         self._out_streams = {
@@ -722,23 +736,22 @@ class PureModule(Module):
             buffer_len=lambda: len(ticks), pending_len=lambda: len(machine.pending)
         )
 
-        sources = dict(self.input_sources or {})
-        unknown_sources = set(sources) - set(plan.ins)
-        if unknown_sources:
-            raise TypeError(
-                f"{type(self).__name__}.input_sources has unknown inputs "
-                f"{sorted(unknown_sources)} — declared: {sorted(plan.ins)}"
-            )
-
         def _ingest(name: str, item: Any) -> None:
             """Feed one arrival — a raw payload (port/replay) or an Observation."""
+            arrival = time.time()
             if isinstance(item, Observation):
                 obs = item  # sourced from a store: keep the recorded ts
                 self._streams[name].append(obs.data, ts=obs.ts)
             else:
-                ts = getattr(item, "ts", None) or time.time()
+                ts = getattr(item, "ts", None)
+                if not ts:  # unstamped (None or a default-constructed 0.0)
+                    ts = arrival
                 self._streams[name].append(item, ts=ts)
                 obs = Observation(ts=ts, data_type=type(item), _data=item)
+            if name == plan.trigger:
+                # Latency is measured from arrival — a sourced trigger keeps a
+                # recorded ts that can be arbitrarily old.
+                obs._arrival_ts = arrival  # type: ignore[attr-defined]
             monitor.on_input(name)
             q.put((name, obs))
 
@@ -761,6 +774,7 @@ class PureModule(Module):
                         on_error=functools.partial(_source_error, name),
                     )
                 )
+        self.register_disposable(store)
 
         def _align_loop() -> None:
             """Drain raw events fast; resolve + bind ticks; never blocks on step."""
@@ -816,13 +830,14 @@ class PureModule(Module):
                         self._out_streams[out_name].append(value, ts=tobs.ts)
                     except Exception:
                         logger.exception("%s: publishing %s failed", self, out_name)
-                # Live observation ts is arrival wall-clock, so this spans the
-                # whole path: queue wait + alignment + buffer wait + step + publish.
+                # Latency from trigger *arrival*, spanning the whole path:
+                # queue wait + alignment + buffer wait + step + publish.
+                arrival = getattr(tobs, "_arrival_ts", tobs.ts)
                 monitor.on_step(
                     duration,
                     ages,
                     emitted=bool(outs),
-                    latency_s=max(0.0, time.time() - tobs.ts),
+                    latency_s=max(0.0, time.time() - arrival),
                 )
                 monitor.maybe_report()
 
@@ -833,13 +848,14 @@ class PureModule(Module):
         for t in self._threads:
             t.start()
 
-        def _shutdown() -> None:
-            q.put(_STOP)
-            for t in self._threads:
-                t.join(2.0)
-
-        self.register_disposable(Disposable(_shutdown))
-
     @rpc
     def stop(self) -> None:
+        # Drain and join the tick threads first — super().stop() disposes the
+        # subscriptions and store, which must outlive the final flush.
+        threads = getattr(self, "_threads", [])
+        if threads:
+            self._queue.put(_STOP)
+            for t in threads:
+                t.join(2.0)
+            self._threads = []
         super().stop()
