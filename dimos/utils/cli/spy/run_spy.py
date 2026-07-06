@@ -51,6 +51,9 @@ from dimos.utils.human import human_bytes
 STALE_AGE = 3.0
 # Window for freq / bandwidth readouts.
 STAT_WINDOW = 5.0
+# Values at which the freq / bandwidth cell colors saturate.
+FREQ_GRADIENT_MAX_HZ = 10.0
+BANDWIDTH_GRADIENT_MAX_BPS = 3 * 1024
 
 
 def gradient(max_value: float, value: float) -> str:
@@ -214,8 +217,8 @@ class SpyApp(App):  # type: ignore[type-arg]
                 Text(key.transport, style=theme.BLUE),
                 topic_text(base),
                 Text(msg_type or "", style=theme.BLUE),
-                Text(f"{freq:.1f}", style=gradient(10, freq)),
-                Text(f"{human_bytes(bps)}/s", style=gradient(1024 * 3, bps)),
+                Text(f"{freq:.1f}", style=gradient(FREQ_GRADIENT_MAX_HZ, freq)),
+                Text(f"{human_bytes(bps)}/s", style=gradient(BANDWIDTH_GRADIENT_MAX_BPS, bps)),
                 Text(human_bytes(stats.total_bytes)),
                 Text(age_str, style=theme.ACCENT),
             )
