@@ -644,9 +644,9 @@ def spy(ctx: typer.Context) -> None:
 @main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def lcmspy(ctx: typer.Context) -> None:
     """Alias for `dimos spy --transport lcm`."""
-    from dimos.utils.cli.spy.run_spy import _lcm_only_argv, main as spy_main
+    from dimos.utils.cli.spy.run_spy import lcm_only_argv, main as spy_main
 
-    sys.argv = _lcm_only_argv(list(ctx.args))
+    sys.argv = lcm_only_argv(list(ctx.args))
     spy_main()
 
 

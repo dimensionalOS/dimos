@@ -20,8 +20,8 @@ from typing import Any
 import pytest
 
 from dimos.utils.cli.spy import run_spy
-from dimos.utils.cli.spy.core import SOURCE_FACTORIES
-from dimos.utils.cli.spy.run_spy import SpyApp, _lcm_only_argv, _parse_transports
+from dimos.utils.cli.spy.core import SOURCE_FACTORIES, TransportSpy
+from dimos.utils.cli.spy.run_spy import _parse_transports, lcm_only_argv, start_spy
 
 
 def test_parse_transports_default_is_none():
@@ -76,7 +76,23 @@ class _StubSource:
         raise NotImplementedError
 
 
-def test_spy_app_default_skips_unavailable_backend(monkeypatch, capsys):
+@pytest.fixture
+def spy_starter(request):
+    """start_spy wrapper whose spies are stopped on teardown, even on failure.
+
+    A factory (not a started spy) so each test can patch SOURCE_FACTORIES
+    before construction happens.
+    """
+
+    def _start(transports: list[str] | None = None) -> TransportSpy:
+        spy = start_spy(transports)
+        request.addfinalizer(spy.stop)
+        return spy
+
+    return _start
+
+
+def test_start_spy_default_skips_unavailable_backend(monkeypatch, spy_warnings, spy_starter):
     def unavailable():
         raise ImportError("lcm backend missing")
 
@@ -89,15 +105,12 @@ def test_spy_app_default_skips_unavailable_backend(monkeypatch, capsys):
 
     monkeypatch.setitem(SOURCE_FACTORIES, "lcm", unavailable)
     monkeypatch.setitem(SOURCE_FACTORIES, "zenoh", stub_factory)
-    app = SpyApp()  # no --transport: degrades to the available backend
-    try:
-        assert [s.started for s in created] == [True]
-    finally:
-        app.spy.stop()
-    assert "lcm" in capsys.readouterr().err
+    spy_starter()  # no --transport: degrades to the available backend
+    assert [s.started for s in created] == [True]
+    assert "lcm" in spy_warnings.text
 
 
-def test_spy_app_default_skips_non_import_backend_failure(monkeypatch, capsys):
+def test_start_spy_default_skips_non_import_backend_failure(monkeypatch, spy_warnings, spy_starter):
     # Any construction failure (e.g. a native init error), not just ImportError,
     # must degrade rather than kill the default spy.
     def broken():
@@ -112,22 +125,18 @@ def test_spy_app_default_skips_non_import_backend_failure(monkeypatch, capsys):
 
     monkeypatch.setitem(SOURCE_FACTORIES, "lcm", broken)
     monkeypatch.setitem(SOURCE_FACTORIES, "zenoh", stub_factory)
-    app = SpyApp()  # no --transport: degrades past the broken backend
-    try:
-        assert [s.started for s in created] == [True]
-    finally:
-        app.spy.stop()
-    err = capsys.readouterr().err
-    assert "lcm" in err and "native init failed" in err
+    spy_starter()  # no --transport: degrades past the broken backend
+    assert [s.started for s in created] == [True]
+    assert "lcm" in spy_warnings.text and "native init failed" in spy_warnings.text
 
 
-def test_spy_app_explicit_unavailable_transport_is_hard_error(monkeypatch):
+def test_start_spy_explicit_unavailable_transport_is_hard_error(monkeypatch):
     def unavailable():
         raise RuntimeError("zenoh backend missing")
 
     monkeypatch.setitem(SOURCE_FACTORIES, "zenoh", unavailable)
     with pytest.raises(RuntimeError, match="zenoh backend missing"):
-        SpyApp(transports=["zenoh"])
+        start_spy(transports=["zenoh"])
 
 
 class _FailingStartSource(_StubSource):
@@ -137,7 +146,7 @@ class _FailingStartSource(_StubSource):
         raise RuntimeError("zenoh start failed")
 
 
-def test_spy_app_default_survives_backend_start_failure(monkeypatch, capsys):
+def test_start_spy_default_survives_backend_start_failure(monkeypatch, spy_warnings, spy_starter):
     # A backend that constructs but dies during start() must not kill the
     # default spy — the survivor keeps running.
     survivors: list[_StubSource] = []
@@ -150,30 +159,27 @@ def test_spy_app_default_survives_backend_start_failure(monkeypatch, capsys):
 
     monkeypatch.setitem(SOURCE_FACTORIES, "lcm", good_factory)
     monkeypatch.setitem(SOURCE_FACTORIES, "zenoh", _FailingStartSource)
-    app = SpyApp()  # default path: best-effort
-    try:
-        assert survivors and survivors[0].started
-    finally:
-        app.spy.stop()
-    assert "zenoh" in capsys.readouterr().err
+    spy_starter()  # default path: best-effort
+    assert survivors and survivors[0].started
+    assert "zenoh" in spy_warnings.text
 
 
-def test_spy_app_explicit_start_failure_is_hard_error(monkeypatch):
+def test_start_spy_explicit_start_failure_is_hard_error(monkeypatch):
     monkeypatch.setitem(SOURCE_FACTORIES, "zenoh", _FailingStartSource)
     with pytest.raises(RuntimeError, match="zenoh start failed"):
-        SpyApp(transports=["zenoh"])  # explicit: strict, no degrade
+        start_spy(transports=["zenoh"])  # explicit: strict, no degrade
 
 
 def test_lcm_only_argv_forwards_plain_args():
-    assert _lcm_only_argv([]) == ["spy", "--transport", "lcm"]
-    assert _lcm_only_argv(["--foo", "bar"]) == ["spy", "--transport", "lcm", "--foo", "bar"]
+    assert lcm_only_argv([]) == ["spy", "--transport", "lcm"]
+    assert lcm_only_argv(["--foo", "bar"]) == ["spy", "--transport", "lcm", "--foo", "bar"]
 
 
 def test_lcm_only_argv_rejects_transport_override():
     with pytest.raises(SystemExit, match="LCM-only"):
-        _lcm_only_argv(["--transport", "zenoh"])
+        lcm_only_argv(["--transport", "zenoh"])
     with pytest.raises(SystemExit, match="LCM-only"):
-        _lcm_only_argv(["--transport=zenoh"])
+        lcm_only_argv(["--transport=zenoh"])
 
 
 def test_lcm_main_forwards_args_to_spy(monkeypatch):

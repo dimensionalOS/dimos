@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import sys
 import time
+from typing import Any
 
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -40,10 +41,11 @@ from dimos.utils.cli import theme
 from dimos.utils.cli.spy.core import (
     SOURCE_FACTORIES,
     SpyKey,
-    TopicStats,
     TransportSpy,
+    WindowStats,
     default_sources,
     split_type_suffix,
+    validate_transport_names,
 )
 from dimos.utils.human import human_bytes
 
@@ -51,6 +53,9 @@ from dimos.utils.human import human_bytes
 STALE_AGE = 3.0
 # Window for freq / bandwidth readouts.
 STAT_WINDOW = 5.0
+# Values at which the freq / bandwidth cell colors saturate.
+FREQ_GRADIENT_MAX_HZ = 10.0
+BANDWIDTH_GRADIENT_MAX_BPS = 3 * 1024
 
 
 def gradient(max_value: float, value: float) -> str:
@@ -96,12 +101,10 @@ def _parse_transports(argv: list[str]) -> list[str] | None:
             f"Error: unexpected argument(s) {', '.join(extra)} — "
             "`dimos spy` accepts only --transport <name> (repeatable)."
         )
-    unknown = [t for t in transports if t not in SOURCE_FACTORIES]
-    if unknown:
-        valid = ", ".join(SOURCE_FACTORIES)
-        raise SystemExit(
-            f"Error: unknown transport(s) {', '.join(unknown)} — valid choices: {valid}"
-        )
+    try:
+        validate_transport_names(transports)
+    except ValueError as exc:
+        raise SystemExit(f"Error: {exc}") from None
     return transports or None
 
 
@@ -135,37 +138,14 @@ class SpyApp(App[None]):
         ("ctrl+c", "quit"),
     ]
 
-    def __init__(self, transports: list[str] | None = None, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, spy: TransportSpy, **kwargs: Any) -> None:
+        """spy: an already-started TransportSpy; the caller owns its lifecycle."""
         super().__init__(**kwargs)
-        if transports is None:
-            # Default: every available transport; unavailable backends are
-            # skipped with a warning (see default_sources).
-            sources = default_sources()
-        else:
-            unknown = [n for n in transports if n not in SOURCE_FACTORIES]
-            if unknown:
-                raise ValueError(
-                    f"unknown transport(s) {', '.join(unknown)} — valid choices: "
-                    f"{', '.join(SOURCE_FACTORIES)}"
-                )
-            # Construct only the requested sources: a filtered-out transport is
-            # never imported or instantiated, and an unavailable one that was
-            # explicitly requested stays a hard error.
-            sources = [SOURCE_FACTORIES[name]() for name in transports]
-        # Warn about missing system config before entering TUI raw mode (LCM only).
-        if any(s.name == "lcm" for s in sources):
-            from dimos.protocol.service.lcmservice import autoconf
-
-            autoconf(check_only=True)
-
-        self.spy = TransportSpy(sources=sources)
-        # Default (all transports): a backend that fails to start is skipped so
-        # the spy still shows the others. An explicit --transport hard-fails.
-        self.spy.start(best_effort=transports is None)
-        self.table: DataTable | None = None  # type: ignore[type-arg]
+        self.spy = spy
+        self.table: DataTable[Text] | None = None
 
     def compose(self) -> ComposeResult:
-        self.table = DataTable(zebra_stripes=False, cursor_type=None)  # type: ignore[arg-type]
+        self.table = DataTable(cursor_type="none")
         self.table.add_column("Transport")
         self.table.add_column("Topic")
         self.table.add_column("Type")
@@ -178,27 +158,29 @@ class SpyApp(App[None]):
     def on_mount(self) -> None:
         self.set_interval(self.refresh_interval, self.refresh_table)
 
-    async def on_unmount(self) -> None:
-        self.spy.stop()
-
     def refresh_table(self) -> None:
+        table = self.table
+        if table is None:
+            return
         now = time.time()
         snap = self.spy.snapshot()
-        rows: list[tuple[SpyKey, TopicStats]] = sorted(
-            snap.items(), key=lambda kv: kv[1].total_bytes, reverse=True
+        rows: list[tuple[SpyKey, WindowStats]] = sorted(
+            ((key, stats.window_stats(STAT_WINDOW, now)) for key, stats in snap.items()),
+            key=lambda kv: kv[1].total_bytes,
+            reverse=True,
         )
-        self.table.clear(columns=False)  # type: ignore[union-attr]
+        table.clear(columns=False)
 
         for key, stats in rows:
             base, msg_type = split_type_suffix(key.topic)
-            freq = stats.freq(STAT_WINDOW, now)
-            bps = stats.bytes_per_sec(STAT_WINDOW, now)
+            freq = stats.freq
+            bps = stats.bytes_per_sec
             age = now - stats.last_seen if stats.last_seen is not None else None
             stale = age is not None and age > STALE_AGE
 
             if stale:
                 # Liveness: dim the whole row for topics gone quiet.
-                self.table.add_row(  # type: ignore[union-attr]
+                table.add_row(
                     Text(key.transport, style=theme.DIM),
                     Text(base, style=theme.DIM),
                     Text(msg_type or "", style=theme.DIM),
@@ -210,23 +192,55 @@ class SpyApp(App[None]):
                 continue
 
             age_str = f"{age:.1f}s" if age is not None else "-"
-            self.table.add_row(  # type: ignore[union-attr]
+            table.add_row(
                 Text(key.transport, style=theme.BLUE),
                 topic_text(base),
                 Text(msg_type or "", style=theme.BLUE),
-                Text(f"{freq:.1f}", style=gradient(10, freq)),
-                Text(f"{human_bytes(bps)}/s", style=gradient(1024 * 3, bps)),
+                Text(f"{freq:.1f}", style=gradient(FREQ_GRADIENT_MAX_HZ, freq)),
+                Text(f"{human_bytes(bps)}/s", style=gradient(BANDWIDTH_GRADIENT_MAX_BPS, bps)),
                 Text(human_bytes(stats.total_bytes)),
                 Text(age_str, style=theme.ACCENT),
             )
 
 
+def start_spy(transports: list[str] | None = None) -> TransportSpy:
+    """Build sources for the requested transports and start a TransportSpy.
+
+    Runs before the TUI enters raw mode, so autoconf and degrade warnings
+    print to a normal terminal. transports=None means every available
+    transport, best-effort: a backend that fails to construct or start is
+    skipped with a warning so the spy still shows the others. An explicit
+    transport list is strict: unknown names and construction/start failures
+    are hard errors.
+    """
+    if transports is None:
+        sources = default_sources()
+    else:
+        validate_transport_names(transports)
+        # Construct only the requested sources: a filtered-out transport is
+        # never imported or instantiated, and an unavailable one that was
+        # explicitly requested stays a hard error.
+        sources = [SOURCE_FACTORIES[name]() for name in transports]
+    # Warn about missing system config before entering TUI raw mode (LCM only).
+    if any(s.name == "lcm" for s in sources):
+        from dimos.protocol.service.lcmservice import autoconf
+
+        autoconf(check_only=True)
+    spy = TransportSpy(sources=sources)
+    spy.start(best_effort=transports is None)
+    return spy
+
+
 def main() -> None:
     """Entry point for `dimos spy` (argv: --transport filters)."""
-    SpyApp(transports=_parse_transports(sys.argv[1:])).run()
+    spy = start_spy(_parse_transports(sys.argv[1:]))
+    try:
+        SpyApp(spy).run()
+    finally:
+        spy.stop()
 
 
-def _lcm_only_argv(args: list[str]) -> list[str]:
+def lcm_only_argv(args: list[str]) -> list[str]:
     """Build the `spy` argv for the LCM-only entry points (`lcmspy` / `dimos lcmspy`).
 
     Rejects an explicit --transport override (these entry points can't choose
@@ -241,7 +255,7 @@ def _lcm_only_argv(args: list[str]) -> list[str]:
 
 def lcm_main() -> None:
     """`lcmspy` console-script shim: the spy over the LCM source only."""
-    sys.argv = _lcm_only_argv(sys.argv[1:])
+    sys.argv = lcm_only_argv(sys.argv[1:])
     main()
 
 

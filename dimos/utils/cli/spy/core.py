@@ -28,16 +28,22 @@ from __future__ import annotations
 from collections import deque
 import contextlib
 from dataclasses import dataclass
-import sys
 import threading
 import time
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     # The entire hot-path event: (topic string incl. '#type' suffix, wire payload length).
     TapCallback = Callable[[str, int], None]
+
+logger = setup_logger()
+
+# Seconds of per-message history kept for windowed stats.
+DEFAULT_HISTORY_WINDOW = 60.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +70,21 @@ def split_type_suffix(topic: str) -> tuple[str, str | None]:
     return (base, suffix) if sep else (topic, None)
 
 
+@dataclass(frozen=True, slots=True)
+class WindowStats:
+    """One consistent reading of a TopicStats: windowed rates + lifetime totals.
+
+    Built in a single pass under the stats lock (see TopicStats.window_stats),
+    so a UI thread never sees values torn by a concurrent record().
+    """
+
+    freq: float  # messages per second over the window
+    bytes_per_sec: float  # payload bytes per second over the window
+    total_bytes: int
+    total_msgs: int
+    last_seen: float | None
+
+
 class TopicStats:
     """Sliding-window traffic statistics for one spied topic.
 
@@ -72,18 +93,19 @@ class TopicStats:
     values), so all stats are deterministic functions of recorded data.
 
     Thread-safety: record() may be called from transport threads while readers
-    query from a UI thread.
+    query from a UI thread; readers must go through window_stats() (or the
+    freq/bytes_per_sec wrappers), which take the lock.
     """
 
     total_bytes: int
     total_msgs: int
     last_seen: float | None  # timestamp of newest recorded message, None if none yet
 
-    def __init__(self, history_window: float = 60.0) -> None:
+    def __init__(self, history_window: float = DEFAULT_HISTORY_WINDOW) -> None:
         """history_window: seconds of per-message history kept for windowed stats.
 
         total_bytes/total_msgs/last_seen survive eviction; only windowed stats
-        (freq/bytes_per_sec/avg_size) forget evicted messages.
+        (freq/bytes_per_sec) forget evicted messages.
         """
         self.history_window = history_window
         self._history: deque[tuple[float, int]] = deque()  # (timestamp, nbytes)
@@ -103,25 +125,31 @@ class TopicStats:
             while self._history and self._history[0][0] < cutoff:
                 self._history.popleft()
 
-    def _in_window(self, window: float, now: float) -> list[tuple[float, int]]:
+    def window_stats(self, window: float, now: float) -> WindowStats:
+        """Rates over [now - window, now] plus totals, in one locked pass."""
         cutoff = now - window
+        count = 0
+        nbytes = 0
         with self._lock:
-            return [(ts, n) for ts, n in self._history if ts >= cutoff]
+            for ts, n in self._history:
+                if ts >= cutoff:
+                    count += 1
+                    nbytes += n
+            return WindowStats(
+                freq=count / window if count else 0.0,
+                bytes_per_sec=nbytes / window if count else 0.0,
+                total_bytes=self.total_bytes,
+                total_msgs=self.total_msgs,
+                last_seen=self.last_seen,
+            )
 
     def freq(self, window: float, now: float) -> float:
         """Messages per second over [now - window, now]. 0.0 if none."""
-        msgs = self._in_window(window, now)
-        return len(msgs) / window if msgs else 0.0
+        return self.window_stats(window, now).freq
 
     def bytes_per_sec(self, window: float, now: float) -> float:
         """Payload bytes per second over [now - window, now]. 0.0 if none."""
-        msgs = self._in_window(window, now)
-        return sum(n for _, n in msgs) / window if msgs else 0.0
-
-    def avg_size(self, window: float, now: float) -> float:
-        """Mean payload size in bytes over [now - window, now]. 0.0 if none."""
-        msgs = self._in_window(window, now)
-        return sum(n for _, n in msgs) / len(msgs) if msgs else 0.0
+        return self.window_stats(window, now).bytes_per_sec
 
 
 @runtime_checkable
@@ -162,6 +190,8 @@ class LCMSpySource:
 
     def __init__(self, **lcm_kwargs: Any) -> None:
         """lcm_kwargs forwarded to LCMPubSubBase (e.g. lcm_url)."""
+        # Inline import: an unavailable LCM backend must not break the other
+        # spy sources (see default_sources).
         from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase
 
         self._bus = LCMPubSubBase(**lcm_kwargs)
@@ -192,6 +222,8 @@ class ZenohSpySource:
 
     def __init__(self, **zenoh_kwargs: Any) -> None:
         """zenoh_kwargs forwarded to ZenohPubSubBase (e.g. mode/connect/listen, session_pool)."""
+        # Inline import: an unavailable zenoh backend must not break the other
+        # spy sources (see default_sources).
         from dimos.protocol.pubsub.impl.zenohpubsub import ZenohPubSubBase
 
         self._bus = ZenohPubSubBase(**zenoh_kwargs)
@@ -225,7 +257,9 @@ class TransportSpy:
     totals: TopicStats  # all messages across all sources
 
     def __init__(
-        self, sources: Sequence[SpySource] | None = None, history_window: float = 60.0
+        self,
+        sources: Sequence[SpySource] | None = None,
+        history_window: float = DEFAULT_HISTORY_WINDOW,
     ) -> None:
         """sources=None means default_sources()."""
         self._sources = list(sources) if sources is not None else default_sources()
@@ -278,9 +312,10 @@ class TransportSpy:
                 except Exception as exc:
                     if not best_effort:
                         raise
-                    print(
-                        f"spy: skipping transport {source.name!r}: {exc}",
-                        file=sys.stderr,
+                    logger.warning(
+                        "Skipping spy transport that failed to start",
+                        transport=source.name,
+                        error=str(exc),
                     )
         except BaseException:
             self.stop()  # roll back everything started so far, then propagate
@@ -291,11 +326,18 @@ class TransportSpy:
             )
 
     def stop(self) -> None:
+        """Untap and stop everything; an error in one source never skips the rest."""
         for untap in self._untaps:
-            untap()
+            try:
+                untap()
+            except Exception as exc:
+                logger.warning("Error untapping spy source", error=str(exc))
         self._untaps.clear()
         for source in self._live:
-            source.stop()
+            try:
+                source.stop()
+            except Exception as exc:
+                logger.warning("Error stopping spy source", transport=source.name, error=str(exc))
         self._live.clear()
 
     def snapshot(self) -> dict[SpyKey, TopicStats]:
@@ -314,6 +356,16 @@ v1: lcm + zenoh. SHM/ROS/DDS/Redis are future sources.
 """
 
 
+def validate_transport_names(names: Sequence[str]) -> None:
+    """Raise ValueError if any name is not a known SOURCE_FACTORIES transport."""
+    unknown = [n for n in names if n not in SOURCE_FACTORIES]
+    if unknown:
+        raise ValueError(
+            f"unknown transport(s) {', '.join(unknown)} — valid choices: "
+            f"{', '.join(SOURCE_FACTORIES)}"
+        )
+
+
 def default_sources() -> list[SpySource]:
     """The spy observes ALL transports simultaneously, regardless of DIMOS_TRANSPORT.
 
@@ -327,7 +379,7 @@ def default_sources() -> list[SpySource]:
         try:
             sources.append(factory())
         except Exception as exc:  # degrade on any backend init failure, not just imports
-            print(f"spy: skipping unavailable transport {name!r}: {exc}", file=sys.stderr)
+            logger.warning("Skipping unavailable spy transport", transport=name, error=str(exc))
     if not sources:
         raise RuntimeError(f"no spy transports available (tried: {', '.join(SOURCE_FACTORIES)})")
     return sources
