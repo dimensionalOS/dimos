@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import cv2
+import cv2.aruco
 import numpy as np
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -24,15 +25,6 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
-
-try:
-    import cv2.aruco
-except (ImportError, AttributeError) as e:
-    raise ImportError(
-        "dimos.perception.fiducial requires cv2.aruco. Install with: "
-        "uv sync --inexact --extra apriltag"
-    ) from e
-
 
 _FISHEYE_MODELS = frozenset({"equidistant", "fisheye", "kannala_brandt"})
 

@@ -52,7 +52,7 @@ from dimos.core.stream import In
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.lidar.livox.module import Mid360
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
-from dimos.hardware.sensors.lidar.pointlio.pose_recorder import PointlioPoseRecorder
+from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -125,7 +125,7 @@ class Mid360RealsenseStaticTf(StaticTfPublisher):
         return frames_to_edge_transforms(FRAMES)
 
 
-class Mid360RealsenseRecorder(PointlioPoseRecorder):
+class Mid360RealsenseRecorder(PointlioRecorder):
     """Records Point-LIO odom+lidar plus the RealSense streams into a memory2 db.
 
     Trajectory is baked into ``pointlio_lidar`` via the inherited ``@pose_setter_for``.
@@ -134,7 +134,7 @@ class Mid360RealsenseRecorder(PointlioPoseRecorder):
     static mount frames published on tf.
     """
 
-    # pointlio_odometry / pointlio_lidar are inherited from PointlioPoseRecorder.
+    # pointlio_odometry / pointlio_lidar are inherited from PointlioRecorder.
     color_image: In[Image]
     realsense_depth_image: In[Image]
     realsense_pointcloud: In[PointCloud2]

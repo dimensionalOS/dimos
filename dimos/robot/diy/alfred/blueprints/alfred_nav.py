@@ -40,6 +40,7 @@ nav_config: dict[str, Any] = dict(
         "publish_free_paths": False,
     },
     simple_planner={
+        "body_frame": "mid360_link",
         "cell_size": 0.2,
         "obstacle_height_threshold": 0.15,
         "inflation_radius": 0.3,

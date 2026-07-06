@@ -15,8 +15,6 @@
 import numpy as np
 import pytest
 
-pytest.importorskip("cv2.aruco")
-
 from dimos.memory2.type.observation import Observation
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat

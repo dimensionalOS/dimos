@@ -1,4 +1,6 @@
-# Native Modules
+---
+title: "Native Modules"
+---
 
 Prerequisite for this is to understand dimos [Modules](/docs/usage/modules.md) and [Blueprints](/docs/usage/blueprints.md).
 
@@ -268,3 +270,13 @@ class MyLidarConfig(NativeModuleConfig):
 `cwd` is used for both the build command and the runtime subprocess. Relative paths are resolved against the directory of the Python file that defines the module
 
 If the executable already exists, the build step is skipped entirely.
+
+### Faster builds via the Cachix substituter
+
+CI pre-builds the `cmu_nav` native modules and pushes the Nix store paths to the `dimensionalos` Cachix cache. Opt in locally to skip cold compiles when the cache has them:
+
+```
+# ~/.config/nix/nix.conf  (single-user)  or  /etc/nix/nix.conf  (multi-user)
+extra-substituters = https://dimensionalos.cachix.org
+extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
+```
