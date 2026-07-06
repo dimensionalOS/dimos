@@ -714,30 +714,35 @@ class _Go2CausalWorldModel(Module):
         if payload.get("schema") != _STATE_SCHEMA:
             raise ValueError(f"unsupported world model state schema: {payload.get('schema')}")
 
-        self._transitions.clear()
+        # Build new state in temporaries BEFORE mutating in-memory state.
+        # If any step fails the running model is untouched.
         raw_transitions = (
             payload.get("transitions") if isinstance(payload.get("transitions"), list) else []
         )
+        new_transitions: deque[_WorldTransition] = deque(maxlen=self._max_transitions)
         for item in raw_transitions[-self._max_transitions :]:
             if isinstance(item, dict):
-                self._transitions.append(_transition_from_dict(item))
+                new_transitions.append(_transition_from_dict(item))
 
-        outcome_model = (
+        outcome_model_data = (
             payload.get("outcome_model") if isinstance(payload.get("outcome_model"), dict) else {}
         )
-        self._outcome_model.load_dict(outcome_model)
-        causal_estimator = (
+        causal_estimator_data = (
             payload.get("causal_estimator")
             if isinstance(payload.get("causal_estimator"), dict)
             else {}
         )
-        self._causal_estimator.load_dict(causal_estimator)
-        intervention_log = (
+        intervention_log_data = (
             payload.get("intervention_log")
             if isinstance(payload.get("intervention_log"), dict)
             else {}
         )
-        self._intervention_log.load_dict(intervention_log)
+
+        # Swap in only after all parsing succeeded.
+        self._transitions = new_transitions
+        self._outcome_model.load_dict(outcome_model_data)
+        self._causal_estimator.load_dict(causal_estimator_data)
+        self._intervention_log.load_dict(intervention_log_data)
         return _state_summary(payload, str(path)) | {"loaded": True}
 
     def _state_payload(self) -> dict[str, Any]:

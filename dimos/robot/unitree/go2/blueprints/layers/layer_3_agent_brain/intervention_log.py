@@ -159,7 +159,9 @@ class InterventionLog:
     def load_dict(self, state: dict[str, Any]) -> None:
         raw_records = state.get("records") if isinstance(state.get("records"), list) else []
         max_records = self._records.maxlen or len(raw_records)
-        self._records.clear()
+        # Build in temp list first — if any record fails to parse the
+        # running log stays intact.
+        new_records: list[InterventionRecord] = []
         for item in raw_records[-max_records:]:
             if not isinstance(item, dict):
                 continue
@@ -173,7 +175,7 @@ class InterventionLog:
             outcome_success = item.get("outcome_success")
             if not isinstance(outcome_success, bool):
                 outcome_success = None
-            self._records.append(
+            new_records.append(
                 InterventionRecord(
                     timestamp=float(item.get("timestamp") or time.time()),
                     task=str(item.get("task") or ""),
@@ -189,6 +191,9 @@ class InterventionLog:
                     causal_hypothesis=str(item.get("causal_hypothesis") or ""),
                 )
             )
+        self._records.clear()
+        for record in new_records:
+            self._records.append(record)
 
     def _suggestions(
         self,
