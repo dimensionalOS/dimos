@@ -137,17 +137,19 @@ def test_subscribe_all_delivers_every_message(bus_ctx):
                 done.set()
 
         unsub = bus.subscribe_all(cb)
-        time.sleep(0.5)  # let the wildcard subscription establish
+        try:
+            time.sleep(0.5)  # let the wildcard subscription establish
 
-        for _ in range(n):
-            bus.publish(topic, VEC_BYTES)
-        gate.set()
+            for _ in range(n):
+                bus.publish(topic, VEC_BYTES)
+            gate.set()
 
-        done.wait(10.0)
-        ours = [g for g in got if g[0] == str(topic)]
-        assert len(ours) == n
-        assert all(size == len(VEC_BYTES) for _, size in ours)
-        unsub()
+            done.wait(10.0)
+            ours = [g for g in got if g[0] == str(topic)]
+            assert len(ours) == n
+            assert all(size == len(VEC_BYTES) for _, size in ours)
+        finally:
+            unsub()
 
 
 # SpySources: every message counted, payloads never decoded
@@ -286,22 +288,23 @@ def test_transport_spy_merges_sources_and_totals():
     a, b = FakeSource("lcm"), FakeSource("zenoh")
     spy = TransportSpy(sources=[a, b])
     spy.start()
-    assert a.started and b.started
+    try:
+        assert a.started and b.started
 
-    a.emit("/t#geometry_msgs.Twist", 10)
-    a.emit("/t#geometry_msgs.Twist", 10)
-    b.emit("dimos/t#geometry_msgs.Twist", 20)
-    a.emit("/u", 5)
+        a.emit("/t#geometry_msgs.Twist", 10)
+        a.emit("/t#geometry_msgs.Twist", 10)
+        b.emit("dimos/t#geometry_msgs.Twist", 20)
+        a.emit("/u", 5)
 
-    snap = spy.snapshot()
-    assert snap[SpyKey("lcm", "/t#geometry_msgs.Twist")].total_msgs == 2
-    assert snap[SpyKey("lcm", "/t#geometry_msgs.Twist")].total_bytes == 20
-    assert snap[SpyKey("zenoh", "dimos/t#geometry_msgs.Twist")].total_msgs == 1
-    assert snap[SpyKey("lcm", "/u")].total_bytes == 5
-    assert spy.totals.total_msgs == 4
-    assert spy.totals.total_bytes == 45
-
-    spy.stop()
+        snap = spy.snapshot()
+        assert snap[SpyKey("lcm", "/t#geometry_msgs.Twist")].total_msgs == 2
+        assert snap[SpyKey("lcm", "/t#geometry_msgs.Twist")].total_bytes == 20
+        assert snap[SpyKey("zenoh", "dimos/t#geometry_msgs.Twist")].total_msgs == 1
+        assert snap[SpyKey("lcm", "/u")].total_bytes == 5
+        assert spy.totals.total_msgs == 4
+        assert spy.totals.total_bytes == 45
+    finally:
+        spy.stop()
     assert not a.started and not b.started
     assert not a.taps and not b.taps  # untapped on stop
 
@@ -310,12 +313,14 @@ def test_transport_spy_snapshot_is_stable_copy():
     a = FakeSource("lcm")
     spy = TransportSpy(sources=[a])
     spy.start()
-    a.emit("/t", 1)
-    snap = spy.snapshot()
-    a.emit("/new_topic_after_snapshot", 1)
-    assert SpyKey("lcm", "/new_topic_after_snapshot") not in snap  # snapshot doesn't mutate
-    assert SpyKey("lcm", "/new_topic_after_snapshot") in spy.snapshot()
-    spy.stop()
+    try:
+        a.emit("/t", 1)
+        snap = spy.snapshot()
+        a.emit("/new_topic_after_snapshot", 1)
+        assert SpyKey("lcm", "/new_topic_after_snapshot") not in snap  # snapshot doesn't mutate
+        assert SpyKey("lcm", "/new_topic_after_snapshot") in spy.snapshot()
+    finally:
+        spy.stop()
 
 
 def test_transport_spy_start_failure_stops_started_sources():
