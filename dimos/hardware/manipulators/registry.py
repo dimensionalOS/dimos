@@ -31,9 +31,11 @@ Usage:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import importlib
 from typing import TYPE_CHECKING, Any
 
+from dimos.hardware.registry_utils import normalize_adapter_name
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -46,11 +48,23 @@ class AdapterRegistry:
     """Registry for manipulator adapters with auto-discovery."""
 
     def __init__(self) -> None:
-        self._adapters: dict[str, type[ManipulatorAdapter]] = {}
+        self._adapters: dict[str, Callable[..., ManipulatorAdapter]] = {}
 
-    def register(self, name: str, cls: type[ManipulatorAdapter]) -> None:
-        """Register an adapter class."""
-        self._adapters[name.lower()] = cls
+    def register(self, name: str, factory: Callable[..., ManipulatorAdapter]) -> None:
+        """Register an adapter factory.
+
+        Re-registering the same name with the same factory object is
+        idempotent. Re-registering the same name with a different factory is a
+        configuration error because it would otherwise silently change which
+        adapter a blueprint resolves.
+        """
+        key = normalize_adapter_name(name)
+        existing = self._adapters.get(key)
+        if existing is factory:
+            return
+        if existing is not None:
+            raise ValueError(f"Duplicate manipulator adapter {key!r}")
+        self._adapters[key] = factory
 
     def create(self, name: str, **kwargs: Any) -> ManipulatorAdapter:
         """Create an adapter instance by name.
@@ -65,7 +79,7 @@ class AdapterRegistry:
         Raises:
             KeyError: If adapter name is not found
         """
-        key = name.lower()
+        key = normalize_adapter_name(name)
         if key not in self._adapters:
             raise KeyError(f"Unknown adapter: {name}. Available: {self.available()}")
 
