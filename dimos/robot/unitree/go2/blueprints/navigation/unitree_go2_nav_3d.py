@@ -108,8 +108,7 @@ def _static_body_axes(rr: Any) -> Any:
 
 
 def _static_sensor_axes(rr: Any) -> list[Any]:
-    """XYZ triad on pointlio's raw sensor frame, tilted by the lidar pitch. This
-    is the frame the ray tracer registers clouds in, versus the leveled body."""
+    """XYZ triad on pointlio's raw sensor frame, tilted by the lidar pitch."""
     return [_axis_triad(rr), rr.Transform3D(parent_frame="tf#/body")]
 
 

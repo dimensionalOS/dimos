@@ -51,11 +51,7 @@ FRAMES: list[FrameSpec] = [
 
 
 def base_link_from_mid360() -> Transform:
-    """Composed base_link -> mid360_link transform from the static mount tree.
-
-    Lets the live nav stack re-reference PointLio's tilted-sensor odometry into
-    the level body frame, so a change to MID360_PITCH_DOWN flows through to it.
-    """
+    """Composed base_link -> mid360_link transform from the static mount tree."""
     edges = {t.child_frame_id: t for t in frames_to_edge_transforms(FRAMES)}
     return edges["front_camera"] + edges["mid360_link"]
 

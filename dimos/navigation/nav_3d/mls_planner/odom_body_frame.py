@@ -26,9 +26,7 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 
 
 class OdomBodyFrameConfig(ModuleConfig):
-    # base_link <- sensor mount rotation, xyzw. The sensor orientation is composed
-    # with its inverse so the odometry reads out the level body frame. Identity is
-    # a pass-through.
+    # base_link from sensor mount rotation, xyzw.
     mount_rotation: list[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0, 1.0])
     body_frame_id: str = "base_link"
 
@@ -36,10 +34,8 @@ class OdomBodyFrameConfig(ModuleConfig):
 class OdomBodyFrame(Module):
     """Re-express tilted-sensor LIO odometry in the level robot body frame.
 
-    A LIO estimates the pose of the pitched lidar. Composing out the fixed mount
-    rotation restores a body orientation whose Euler yaw is the true heading,
-    avoiding the gimbal lock a near-vertical sensor hits in yaw. Position and
-    twist pass through, so the mapping and planner geometry are untouched.
+    Composes out the fixed mount rotation from the orientation. Position and
+    twist pass through.
     """
 
     config: OdomBodyFrameConfig

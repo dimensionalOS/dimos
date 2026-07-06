@@ -113,9 +113,7 @@ def _log_path_wp(waypoints: NDArray[np.float32] | None, entity: str, color: list
 def _log_odometry(
     pose: tuple[float, ...], ts: float, trail: list[tuple[float, float, float]]
 ) -> None:
-    """Log the odometry pose as a moving body-frame transform with an XYZ axis
-    triad, plus the trajectory trail growing over time. The triad is a static
-    child of world/odom, so it inherits this transform and sweeps along the path."""
+    """Log the odometry pose as a moving body-frame transform and the growing trail."""
     px, py, pz, qx, qy, qz, qw = pose
     rr.set_time(TIMELINE, timestamp=ts)
     rr.log(

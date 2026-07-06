@@ -124,8 +124,6 @@ pub fn place_nodes_region(
     scratch: &mut NodeScratch,
     nodes: &mut Vec<NodeData>,
 ) {
-    let perf = crate::mls_planner::perf_on();
-    let t = std::time::Instant::now();
     let mut wall_seeds: Vec<CellId> = Vec::new();
     collect_wall_adjacent_in_window(
         cells,
@@ -135,12 +133,8 @@ pub fn place_nodes_region(
         window,
         &mut wall_seeds,
     );
-    let t_collect = t.elapsed();
-    let t = std::time::Instant::now();
     dijkstra_region(cells, &wall_seeds, window, wall_state, Weight::Base);
-    let t_dij = t.elapsed();
 
-    let t = std::time::Instant::now();
     nodes.retain(|n| cells.is_live(n.cell_id) && !window.contains(&n.cell_id));
     let kept: Vec<CellId> = nodes.iter().map(|n| n.cell_id).collect();
 
@@ -159,18 +153,14 @@ pub fn place_nodes_region(
         node_spacing_m,
         nodes,
     );
-    let t_nms = t.elapsed();
 
-    let t = std::time::Instant::now();
     let domain: Vec<CellId> = window
         .iter()
         .copied()
         .filter(|&id| cells.is_live(id))
         .collect();
     ensure_node_per_component(cells, &wall_state.dist, voxel_size, &domain, scratch, nodes);
-    let t_ensure = t.elapsed();
 
-    let t = std::time::Instant::now();
     apply_wall_safe_penalty_region(
         cells,
         &wall_state.dist,
@@ -181,16 +171,6 @@ pub fn place_nodes_region(
         window,
         scratch,
     );
-    if perf {
-        eprintln!(
-            "MLS_PERF_NODES collect={:.1} dijkstra={:.1} nms={:.1} ensure={:.1} penalty={:.1}",
-            t_collect.as_secs_f64() * 1e3,
-            t_dij.as_secs_f64() * 1e3,
-            t_nms.as_secs_f64() * 1e3,
-            t_ensure.as_secs_f64() * 1e3,
-            t.elapsed().as_secs_f64() * 1e3,
-        );
-    }
 }
 
 /// Wall-adjacency over a cell subset, matching collect_wall_adjacent_cells.
@@ -304,16 +284,14 @@ fn apply_wall_safe_penalty_region(
             }
         }
     }
-    // Rescale the affected cells in parallel. iter_edges_mut yields disjoint
-    // edge lists, so writing them concurrently is sound.
-    let seen = &scratch.seen;
-    let subset: Vec<(CellId, &mut Vec<Edge>)> = cells
-        .iter_edges_mut()
-        .filter(|(id, _)| seen[*id as usize])
-        .collect();
-    subset.into_par_iter().for_each(|(id, edges)| {
+    for &id in &affected {
+        scratch.seen[id as usize] = false;
+    }
+    // Rescale only the affected cells. Their count is bounded by the window, so
+    // this stays region-sized rather than scanning the whole accumulated graph.
+    for &id in &affected {
         scale_edges(
-            edges,
+            cells.edges_mut(id),
             id,
             dist,
             clearance_m,
@@ -321,9 +299,6 @@ fn apply_wall_safe_penalty_region(
             buffer_weight,
             step_weight,
         );
-    });
-    for &id in &affected {
-        scratch.seen[id as usize] = false;
     }
 }
 

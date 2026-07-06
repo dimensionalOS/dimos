@@ -303,8 +303,7 @@ fn refresh_voxels(
     }
 }
 
-/// Spare a clearing miss when a grazing ray skims a planar surface. Voxels with
-/// no plane are left to the health checks.
+/// Spare a clearing miss when a grazing ray skims a planar surface.
 fn should_spare(c: &Voxel, ray_unit: Vector3<f32>, graze_cos: f32) -> bool {
     match c.normal {
         Some(n) => ray_unit.dot(&n).abs() < graze_cos,
@@ -394,7 +393,7 @@ pub fn iter_global_normals(
 }
 
 /// Whether at least `support_min` of a voxel's 26 neighbors are surface
-/// (health > 0). Stops counting once the threshold is met.
+/// (health > 0).
 fn has_support(voxels: &AHashMap<VoxelKey, Voxel>, key: VoxelKey, support_min: i32) -> bool {
     let mut n = 0;
     for dx in -1..=1 {
@@ -416,13 +415,11 @@ fn has_support(voxels: &AHashMap<VoxelKey, Voxel>, key: VoxelKey, support_min: i
     false
 }
 
-/// Points for an emitted cloud, the single source of truth for both the live
-/// module and the offline wrapper. Healthy surface voxels are clipped to
-/// `bounds` (the whole map when `None`) and kept only with at least
-/// `support_min` occupied neighbors. This frame's `live` voxels are added inside
-/// `bounds`, never support-filtered, and skipped where already healthy. Support
-/// is counted over the whole map, so a voxel at the region edge still sees its
-/// true surroundings.
+/// Points for an emitted cloud, shared by the live module and the offline
+/// wrapper. Healthy surface voxels within `bounds` (the whole map when `None`)
+/// are kept only with at least `support_min` occupied neighbors, counted over
+/// the whole map. This frame's `live` voxels within `bounds` are added
+/// unfiltered, skipping any already healthy.
 pub fn emit_points(
     map: &VoxelMap,
     voxel_size: f32,
