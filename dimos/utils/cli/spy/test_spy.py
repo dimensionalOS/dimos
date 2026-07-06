@@ -22,7 +22,6 @@
 """
 
 from collections.abc import Callable
-from contextlib import contextmanager
 import threading
 import time
 from typing import Any
@@ -118,47 +117,43 @@ def test_split_type_suffix():
 # subscribe_all contract: EVERY message, no conflation (spec-level fix)
 
 
-@contextmanager
-def lcm_base_ctx():
+@pytest.fixture
+def lcm_bus():
     bus = LCMPubSubBase()
     bus.start()
-    try:
-        yield bus, Topic("/spy_contract", Vector3)
-    finally:
-        bus.stop()
+    yield bus, Topic("/spy_contract", Vector3)
+    bus.stop()
 
 
-@pytest.mark.parametrize("bus_ctx", [lcm_base_ctx], ids=["lcm"])
-def test_subscribe_all_delivers_every_message(bus_ctx):
+def test_subscribe_all_delivers_every_message(lcm_bus):
     """A gated (slow) consumer must still receive every message eventually.
 
     LCM's subscribe_all is non-conflating (regex '.*', 10k queue), so all 50
     messages are delivered even when the consumer lags the burst.
     """
     n = 50
-    with bus_ctx() as (bus, topic):
-        gate = threading.Event()
-        got = []
-        done = threading.Event()
+    bus, topic = lcm_bus
+    gate = threading.Event()
+    got = []
+    done = threading.Event()
 
-        def cb(msg, t):
-            gate.wait(15.0)  # simulate a consumer slower than the burst
-            got.append((str(t), len(msg)))
-            if len(got) >= n:
-                done.set()
+    def cb(msg, t):
+        gate.wait(15.0)  # simulate a consumer slower than the burst
+        got.append((str(t), len(msg)))
+        if len(got) >= n:
+            done.set()
 
-        unsub = bus.subscribe_all(cb)
-        time.sleep(0.5)  # let the wildcard subscription establish
+    bus.subscribe_all(cb)
+    time.sleep(0.5)  # let the wildcard subscription establish
 
-        for _ in range(n):
-            bus.publish(topic, VEC_BYTES)
-        gate.set()
+    for _ in range(n):
+        bus.publish(topic, VEC_BYTES)
+    gate.set()
 
-        done.wait(10.0)
-        ours = [g for g in got if g[0] == str(topic)]
-        assert len(ours) == n
-        assert all(size == len(VEC_BYTES) for _, size in ours)
-        unsub()
+    done.wait(10.0)
+    ours = [g for g in got if g[0] == str(topic)]
+    assert len(ours) == n
+    assert all(size == len(VEC_BYTES) for _, size in ours)
 
 
 # SpySources: every message counted, payloads never decoded
@@ -189,76 +184,86 @@ def _assert_no_decode(monkeypatch):
     monkeypatch.setattr(Vector3, "lcm_decode", staticmethod(boom))
 
 
-def test_lcm_source_counts_all_without_decoding(monkeypatch):
+@pytest.fixture
+def lcm_spy_source():
+    src = LCMSpySource()
+    src.start()
+    yield src
+    src.stop()
+
+
+@pytest.fixture
+def lcm_pub():
+    pub = LCMPubSubBase()
+    pub.start()
+    yield pub
+    pub.stop()
+
+
+def test_lcm_source_counts_all_without_decoding(monkeypatch, lcm_spy_source, lcm_pub):
     _assert_no_decode(monkeypatch)
     topic = Topic("/spy_e2e", Vector3)
     collector = _TapCollector(str(topic), 20)
 
-    src = LCMSpySource()
-    src.start()
-    untap = src.tap(collector)
-    pub = LCMPubSubBase()
-    pub.start()
-    try:
-        time.sleep(0.3)
-        for _ in range(20):
-            pub.publish(topic, VEC_BYTES)
-            time.sleep(0.01)
-        assert collector.done.wait(10.0)
-        assert [n for _, n in collector.ours()] == [len(VEC_BYTES)] * 20
-    finally:
-        untap()
-        src.stop()
-        pub.stop()
+    lcm_spy_source.tap(collector)
+    time.sleep(0.3)
+    for _ in range(20):
+        lcm_pub.publish(topic, VEC_BYTES)
+        time.sleep(0.01)
+    assert collector.done.wait(10.0)
+    assert [n for _, n in collector.ours()] == [len(VEC_BYTES)] * 20
 
 
-def test_lcm_source_counts_undecodable_garbage(monkeypatch):
+def test_lcm_source_counts_undecodable_garbage(monkeypatch, lcm_spy_source, lcm_pub):
     """Payloads that would crash a decoder must still be counted (proves raw tap)."""
     _assert_no_decode(monkeypatch)
     topic = Topic("/spy_garbage", Vector3)
     collector = _TapCollector(str(topic), 5)
 
-    src = LCMSpySource()
+    lcm_spy_source.tap(collector)
+    time.sleep(0.3)
+    for _ in range(5):
+        lcm_pub.publish(topic, b"\x00garbage-not-lcm")
+        time.sleep(0.01)
+    assert collector.done.wait(10.0)
+    assert [n for _, n in collector.ours()] == [len(b"\x00garbage-not-lcm")] * 5
+
+
+@pytest.fixture
+def zenoh_pool():
+    pool = ZenohSessionPool()
+    yield pool
+    pool.close_all()
+
+
+@pytest.fixture
+def zenoh_spy_source(zenoh_pool):
+    src = ZenohSpySource(session_pool=zenoh_pool)
     src.start()
-    untap = src.tap(collector)
-    pub = LCMPubSubBase()
+    yield src
+    src.stop()
+
+
+@pytest.fixture
+def zenoh_pub(zenoh_pool):
+    pub = ZenohPubSubBase(session_pool=zenoh_pool)
     pub.start()
-    try:
-        time.sleep(0.3)
-        for _ in range(5):
-            pub.publish(topic, b"\x00garbage-not-lcm")
-            time.sleep(0.01)
-        assert collector.done.wait(10.0)
-        assert [n for _, n in collector.ours()] == [len(b"\x00garbage-not-lcm")] * 5
-    finally:
-        untap()
-        src.stop()
-        pub.stop()
+    yield pub
+    pub.stop()
 
 
-def test_zenoh_source_counts_all_without_decoding(monkeypatch):
+def test_zenoh_source_counts_all_without_decoding(monkeypatch, zenoh_spy_source, zenoh_pub):
     _assert_no_decode(monkeypatch)
     topic = Topic("dimos/spy_e2e", Vector3)
     collector = _TapCollector(str(topic), 20)
 
-    pool = ZenohSessionPool()
-    src = ZenohSpySource(session_pool=pool)
-    src.start()
-    untap = src.tap(collector)
-    pub = ZenohPubSubBase(session_pool=pool)
-    pub.start()
-    try:
-        time.sleep(0.5)
-        for _ in range(20):
-            pub.publish(topic, VEC_BYTES)
-            time.sleep(0.01)
-        assert collector.done.wait(10.0)
-        assert [n for _, n in collector.ours()] == [len(VEC_BYTES)] * 20
-    finally:
-        untap()
-        src.stop()
-        pub.stop()
-        pool.close_all()
+    zenoh_spy_source.tap(collector)
+    time.sleep(0.5)
+    for _ in range(20):
+        zenoh_pub.publish(topic, VEC_BYTES)
+        time.sleep(0.01)
+    assert collector.done.wait(10.0)
+    assert [n for _, n in collector.ours()] == [len(VEC_BYTES)] * 20
 
 
 # TransportSpy: merging + totals + lifecycle (fake sources, deterministic)
@@ -374,17 +379,15 @@ class _FailingStartSource(FakeSource):
         raise RuntimeError("backend down")
 
 
-def test_transport_spy_best_effort_skips_failed_source(spy_warnings):
+def test_transport_spy_best_effort_skips_failed_source(request, spy_warnings):
     good, bad = FakeSource("lcm"), _FailingStartSource("zenoh")
     spy = TransportSpy(sources=[good, bad])
     spy.start(best_effort=True)  # degrade to the survivor instead of dying
-    try:
-        assert good.started and good.taps  # survivor is live and tapped
-        assert not bad.started
-        good.emit("/t", 5)
-        assert spy.snapshot()[SpyKey("lcm", "/t")].total_bytes == 5
-    finally:
-        spy.stop()
+    request.addfinalizer(spy.stop)
+    assert good.started and good.taps  # survivor is live and tapped
+    assert not bad.started
+    good.emit("/t", 5)
+    assert spy.snapshot()[SpyKey("lcm", "/t")].total_bytes == 5
     assert "zenoh" in spy_warnings.text  # skipped source is warned about
 
 
