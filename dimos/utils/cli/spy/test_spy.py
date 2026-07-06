@@ -125,6 +125,15 @@ def lcm_bus():
     bus.stop()
 
 
+def _publish_probes_until(pub, probe_topic: Topic, established: Callable[[], bool]) -> None:
+    """Publish probes until the subscription delivers one, instead of a fixed sleep."""
+    deadline = time.time() + 10.0
+    while not established():
+        assert time.time() < deadline, f"subscription never saw a probe on {probe_topic}"
+        pub.publish(probe_topic, VEC_BYTES)
+        time.sleep(0.01)
+
+
 def test_subscribe_all_delivers_every_message(lcm_bus):
     """A gated (slow) consumer must still receive every message eventually.
 
@@ -133,18 +142,23 @@ def test_subscribe_all_delivers_every_message(lcm_bus):
     """
     n = 50
     bus, topic = lcm_bus
+    probe_topic = Topic("/spy_contract_probe", Vector3)
+    probe_seen = threading.Event()
     gate = threading.Event()
     got = []
     done = threading.Event()
 
     def cb(msg, t):
+        if str(t) == str(probe_topic):
+            probe_seen.set()
+            return
         gate.wait(15.0)  # simulate a consumer slower than the burst
         got.append((str(t), len(msg)))
         if len(got) >= n:
             done.set()
 
     bus.subscribe_all(cb)
-    time.sleep(0.5)  # let the wildcard subscription establish
+    _publish_probes_until(bus, probe_topic, probe_seen.is_set)
 
     for _ in range(n):
         bus.publish(topic, VEC_BYTES)
@@ -173,6 +187,9 @@ class _TapCollector:
 
     def ours(self) -> list[tuple[str, int]]:
         return [e for e in self.events if e[0] == self.topic_str]
+
+    def saw(self, topic_str: str) -> bool:
+        return any(t == topic_str for t, _ in self.events)
 
 
 def _assert_no_decode(monkeypatch):
@@ -203,10 +220,11 @@ def lcm_pub():
 def test_lcm_source_counts_all_without_decoding(monkeypatch, lcm_spy_source, lcm_pub):
     _assert_no_decode(monkeypatch)
     topic = Topic("/spy_e2e", Vector3)
+    probe = Topic("/spy_e2e_probe", Vector3)
     collector = _TapCollector(str(topic), 20)
 
     lcm_spy_source.tap(collector)
-    time.sleep(0.3)
+    _publish_probes_until(lcm_pub, probe, lambda: collector.saw(str(probe)))
     for _ in range(20):
         lcm_pub.publish(topic, VEC_BYTES)
         time.sleep(0.01)
@@ -218,10 +236,11 @@ def test_lcm_source_counts_undecodable_garbage(monkeypatch, lcm_spy_source, lcm_
     """Payloads that would crash a decoder must still be counted (proves raw tap)."""
     _assert_no_decode(monkeypatch)
     topic = Topic("/spy_garbage", Vector3)
+    probe = Topic("/spy_garbage_probe", Vector3)
     collector = _TapCollector(str(topic), 5)
 
     lcm_spy_source.tap(collector)
-    time.sleep(0.3)
+    _publish_probes_until(lcm_pub, probe, lambda: collector.saw(str(probe)))
     for _ in range(5):
         lcm_pub.publish(topic, b"\x00garbage-not-lcm")
         time.sleep(0.01)
@@ -255,10 +274,11 @@ def zenoh_pub(zenoh_pool):
 def test_zenoh_source_counts_all_without_decoding(monkeypatch, zenoh_spy_source, zenoh_pub):
     _assert_no_decode(monkeypatch)
     topic = Topic("dimos/spy_e2e", Vector3)
+    probe = Topic("dimos/spy_e2e_probe", Vector3)
     collector = _TapCollector(str(topic), 20)
 
     zenoh_spy_source.tap(collector)
-    time.sleep(0.5)
+    _publish_probes_until(zenoh_pub, probe, lambda: collector.saw(str(probe)))
     for _ in range(20):
         zenoh_pub.publish(topic, VEC_BYTES)
         time.sleep(0.01)
