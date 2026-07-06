@@ -15,8 +15,8 @@
 """Blueprint snippet demonstrating Runtime Project registration and placement."""
 
 import os
-import sys
 from pathlib import Path
+import sys
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.runtime_environment import PythonProjectRuntimeEnvironment, RuntimePlacement

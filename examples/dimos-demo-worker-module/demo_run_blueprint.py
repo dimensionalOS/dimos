@@ -17,6 +17,9 @@
 This script is intentionally outside ``src/``: run it with the repository's main
 environment, and the blueprint will reconcile/spawn the module inside this
 example project's locked Runtime Project environment.
+
+Run from an environment where this example package is installed, or set
+``PYTHONPATH=examples/dimos-demo-worker-module/src:.``.
 """
 
 from __future__ import annotations
@@ -24,24 +27,12 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
-EXAMPLE_ROOT = Path(__file__).resolve().parent
-REPO_ROOT = EXAMPLE_ROOT.parents[1]
-EXAMPLE_SRC = EXAMPLE_ROOT / "src"
-
-
-def _prepend_import_path(path: Path) -> None:
-    path_text = str(path)
-    if path_text not in sys.path:
-        sys.path.insert(0, path_text)
-
-
-_prepend_import_path(REPO_ROOT)
-_prepend_import_path(EXAMPLE_SRC)
-
 from dimos_demo_worker_module.blueprint import demo_worker_runtime_blueprint
 from dimos_demo_worker_module.contract import DemoWorkerModule
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
+
+EXAMPLE_ROOT = Path(__file__).resolve().parent
 
 
 def main() -> None:

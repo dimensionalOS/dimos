@@ -18,6 +18,7 @@ import sys
 
 from dimos.core.core import rpc
 from dimos_demo_worker_module.contract import DemoWorkerModule
+from inflection import camelize
 
 
 class DemoWorkerRuntimeModule(DemoWorkerModule):
@@ -36,6 +37,4 @@ class DemoWorkerRuntimeModule(DemoWorkerModule):
     @rpc
     def runtime_dependency_label(self) -> str:
         """Return a label formatted with a runtime-only dependency."""
-        from inflection import camelize
-
         return camelize("runtime_dependency")
