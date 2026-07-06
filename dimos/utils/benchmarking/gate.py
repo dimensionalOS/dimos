@@ -21,5 +21,3 @@ from __future__ import annotations
 GATE_ADVANCE = 0
 GATE_SKIP = 1
 GATE_QUIT = 2
-
-__all__ = ["GATE_ADVANCE", "GATE_QUIT", "GATE_SKIP"]

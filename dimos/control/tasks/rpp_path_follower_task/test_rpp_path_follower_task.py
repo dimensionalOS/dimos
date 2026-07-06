@@ -228,7 +228,7 @@ def test_drives_to_arrival_forward_only(artifact_path):
     assert arrived
 
 
-# --- tangent-heading synthesis (for position-only planners e.g. MLS) -----------
+# tangent-heading synthesis (for position-only planners e.g. MLS)
 
 import math
 

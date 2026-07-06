@@ -39,6 +39,7 @@ from dataclasses import asdict, dataclass, field
 import json
 from pathlib import Path
 import subprocess
+from typing import Any, cast
 
 from dimos.control.tasks.feedforward_gain_compensator import FeedforwardGainConfig
 from dimos.utils.benchmarking.plant import TwistBasePlantParams
@@ -57,7 +58,7 @@ SCHEMA_VERSION = 1
 #   v2 — dense sweep + floor/ceiling probes.
 METHODOLOGY_VERSION = 2
 
-# --- DERIVE tunable constants (documented; single source of truth) -------
+# DERIVE tunable constants (documented; single source of truth)
 
 # Cross-track headroom margin on the measured angular-rate ceiling. The
 # baseline P-controller adds a cross-track correction term on top of the
@@ -90,7 +91,7 @@ RECOMMENDED_CONTROLLER_EVIDENCE = (
 )
 
 
-# --- Artifact schema -----------------------------------------------------
+# Artifact schema
 
 
 @dataclass
@@ -178,7 +179,7 @@ class VelocityProfileDC:
 @dataclass
 class RecommendedControllerDC:
     name: str = "baseline"
-    params: dict = field(default_factory=lambda: {"k_angular": 0.5})
+    params: dict[str, Any] = field(default_factory=lambda: {"k_angular": 0.5})
     evidence: str = RECOMMENDED_CONTROLLER_EVIDENCE
 
 
@@ -205,7 +206,7 @@ class OperatingPointMap:
     tolerance_inversion: list[ToleranceRow]
 
 
-# --- methodology v2: floor/ceiling envelope + per-amplitude tables -------
+# methodology v2: floor/ceiling envelope + per-amplitude tables
 
 
 @dataclass
@@ -287,7 +288,7 @@ class TuningConfig:
     valid_for_tuning: bool = True
     schema_version: int = SCHEMA_VERSION
 
-    # --- serialization ---
+    # serialization
 
     def to_json(self, path: str | Path) -> Path:
         path = Path(path)
@@ -301,7 +302,7 @@ class TuningConfig:
         return cls.from_dict(data)
 
     @classmethod
-    def from_dict(cls, data: dict) -> TuningConfig:
+    def from_dict(cls, data: dict[str, Any]) -> TuningConfig:
         sv = data.get("schema_version")
         if sv != SCHEMA_VERSION:
             raise ValueError(
@@ -309,7 +310,7 @@ class TuningConfig:
                 f"(this build understands {SCHEMA_VERSION})"
             )
 
-        def _chan(d: dict) -> FopdtChannelDC:
+        def _chan(d: dict[str, Any]) -> FopdtChannelDC:
             return FopdtChannelDC(K=d["K"], tau=d["tau"], L=d["L"])
 
         opm = None
@@ -371,7 +372,7 @@ class TuningConfig:
         )
 
 
-# --- helpers -------------------------------------------------------------
+# helpers
 
 
 def git_sha() -> str:
@@ -397,7 +398,7 @@ def _safe_inv_gain(K: float) -> float:
     return 1.0 / K
 
 
-def _output_ceiling(fits: list[dict | AmplitudeFitDC], cap: float) -> tuple[float, bool]:
+def _output_ceiling(fits: list[dict[str, Any] | AmplitudeFitDC], cap: float) -> tuple[float, bool]:
     """Operational ceiling for one channel: ``min(max(|K·amp|), cap)``.
 
     Falls back to ``cap`` and ``not_found=True`` when no fits are given."""
@@ -424,7 +425,7 @@ def _output_ceiling(fits: list[dict | AmplitudeFitDC], cap: float) -> tuple[floa
 
 
 def _saturating_at_amp(
-    fits: list[dict | AmplitudeFitDC], K_linear: float, sag_threshold: float
+    fits: list[dict[str, Any] | AmplitudeFitDC], K_linear: float, sag_threshold: float
 ) -> float | None:
     """Forensic-only: the lowest amp where |K| drops below
     ``(1 - sag) · |K_linear|``. ``None`` if no fit saturates."""
@@ -449,7 +450,7 @@ def _saturating_at_amp(
     return min(saturating) if saturating else None
 
 
-def _floor_from_probe(probe_rows: list, fallback_amps: list[float]) -> tuple[float, bool]:
+def _floor_from_probe(probe_rows: list[Any], fallback_amps: list[float]) -> tuple[float, bool]:
     """Floor = lowest amp where D3 ``motion_detected`` is true. Falls back
     to max probed amp when nothing passes."""
     passing: list[float] = []
@@ -513,7 +514,7 @@ def compute_envelope(
     return VelocityEnvelopeDC(vx=out["vx"], vy=out["vy"], wz=out["wz"])
 
 
-def _channel_ceiling(per_amplitude: dict | None, channel: str, fallback: float) -> float:
+def _channel_ceiling(per_amplitude: dict[str, Any] | None, channel: str, fallback: float) -> float:
     """Measured steady-state magnitude ceiling for a channel:
     ``max(K_at_amp * |amplitude|)`` over the swept amplitudes. Falls back
     to the robot's saturation envelope when per-amplitude data is missing
@@ -536,14 +537,14 @@ def _channel_ceiling(per_amplitude: dict | None, channel: str, fallback: float) 
     return max(vals)
 
 
-# --- DERIVE: pure model -> config ---------------------------------------
+# DERIVE: pure model -> config
 
 
 def derive_config(
     plant: TwistBasePlantParams,
     provenance: Provenance,
     *,
-    per_amplitude: dict | None = None,
+    per_amplitude: dict[str, Any] | None = None,
     vx_max: float = GO2_VX_MAX,
     wz_max: float = GO2_WZ_MAX,
     velocity_envelope: VelocityEnvelopeDC | None = None,
@@ -596,7 +597,7 @@ def derive_config(
         wz_ceiling = min(_channel_ceiling(per_amplitude, "wz", wz_max), wz_max)
 
     # RG min_speed: prefer measured floor, then profile hard-clamp.
-    legacy_min_speed = VelocityProfileDC.__dataclass_fields__["min_speed"].default
+    legacy_min_speed = cast("float", VelocityProfileDC.__dataclass_fields__["min_speed"].default)
     if velocity_envelope is not None and not velocity_envelope.vx.floor_not_found:
         min_speed = max(velocity_envelope.vx.floor, min_speed_floor)
     else:
@@ -716,7 +717,7 @@ def re_derive_config(
     )
 
 
-def FopdtChannelParamsLike(dc: FopdtChannelDC):
+def FopdtChannelParamsLike(dc: FopdtChannelDC) -> Any:
     """Lightweight adapter: derive_config wants a TwistBasePlantParams
     (made of FopdtChannelParams), but the artifact stores them as
     FopdtChannelDC. Return a duck-typed object with .K, .tau, .L."""
@@ -725,7 +726,7 @@ def FopdtChannelParamsLike(dc: FopdtChannelDC):
     return FopdtChannelParams(K=dc.K, tau=dc.tau, L=dc.L)
 
 
-# --- tolerance -> max-safe-speed inversion (pure) ------------------------
+# tolerance -> max-safe-speed inversion (pure)
 
 
 def invert_tolerance(
@@ -767,28 +768,3 @@ def invert_tolerance(
         else:
             rows.append(ToleranceRow(tol_cm=tol, max_speed=None, binding_path=None))
     return rows
-
-
-__all__ = [
-    "METHODOLOGY_VERSION",
-    "SCHEMA_VERSION",
-    "AmplitudeFitDC",
-    "ChannelEnvelopeDC",
-    "DynamicsByAmplitude",
-    "FeedforwardDC",
-    "FloorProbeResultDC",
-    "FloorProbeResults",
-    "FopdtChannelDC",
-    "OperatingPoint",
-    "OperatingPointMap",
-    "PlantModelDC",
-    "Provenance",
-    "RecommendedControllerDC",
-    "ToleranceRow",
-    "TuningConfig",
-    "VelocityEnvelopeDC",
-    "VelocityProfileDC",
-    "derive_config",
-    "git_sha",
-    "invert_tolerance",
-]

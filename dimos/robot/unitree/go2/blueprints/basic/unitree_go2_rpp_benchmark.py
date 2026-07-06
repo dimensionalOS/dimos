@@ -48,6 +48,8 @@ controller alone: ``dimos run unitree-go2-rpp-controller``.
 
 from __future__ import annotations
 
+from typing import Any
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -59,7 +61,7 @@ from dimos.utils.benchmarking.benchmark import Benchmarker
 # The Benchmarker's ``odom`` In must read the same topic the controller emits leg
 # odom on (/go2/odom). path/speed/cmd_vel/gate already share names+topics with
 # the controller blueprint, so they wire up by the controller's transports.
-_BENCHMARK_TRANSPORTS = {
+_BENCHMARK_TRANSPORTS: dict[tuple[str, type], Any] = {
     ("odom", PoseStamped): LCMTransport("/go2/odom", PoseStamped),
 }
 
@@ -75,5 +77,3 @@ unitree_go2_rpp_benchmark = (
     .transports(_BENCHMARK_TRANSPORTS)
     .global_config(obstacle_avoidance=False, n_workers=6)
 )
-
-__all__ = ["unitree_go2_rpp_benchmark"]

@@ -210,7 +210,7 @@ class TwistBasePlantSim:
         self.yaw = (self.yaw + self.wz * dt + math.pi) % (2 * math.pi) - math.pi
 
 
-# --- Vendored fitted FOPDT plant for the Go2 base ------------------------
+# Vendored fitted FOPDT plant for the Go2 base
 #
 # Source: concrete surface, normal/default mode, data collected
 # 2026-05-07, fitted by the characterization pipeline. RISE tau/L
@@ -238,7 +238,7 @@ GO2_PLANT_FITTED = TwistBasePlantParams(
 )
 
 
-# --- Vendored fitted FOPDT plant for the FlowBase ------------------------
+# Vendored fitted FOPDT plant for the FlowBase
 #
 # Source: concrete surface, default mode, real FlowBase over LCM SI,
 # characterized 2026-06-09 (git 704a591f5, methodology v2, 17 fit points).
@@ -270,7 +270,7 @@ def flowbase_command_limiter() -> CommandLimiter:
     return CommandLimiter(max_vel=FLOWBASE_CMD_MAX_VEL, max_acc=FLOWBASE_CMD_MAX_ACC)
 
 
-# --- Per-robot profile (single source of truth for robot specifics) -----
+# Per-robot profile (single source of truth for robot specifics)
 
 
 @dataclass(frozen=True)
@@ -485,31 +485,3 @@ ROBOT_PLANT_PROFILES: dict[str, RobotPlantProfile] = {
     "flowbase": FLOWBASE_PLANT_PROFILE,
     "flowbase-slow": FLOWBASE_SLOW_PLANT_PROFILE,
 }
-
-
-__all__ = [
-    "FLOWBASE_CMD_MAX_ACC",
-    "FLOWBASE_CMD_MAX_VEL",
-    "FLOWBASE_PLANT_FITTED",
-    "FLOWBASE_PLANT_PROFILE",
-    "FLOWBASE_SLOW_PLANT_PROFILE",
-    "FLOWBASE_VX_FIT",
-    "FLOWBASE_VY_FIT",
-    "FLOWBASE_WZ_FIT",
-    "GO2_PLANT_FITTED",
-    "GO2_PLANT_PROFILE",
-    "GO2_VX_RISE",
-    "GO2_WZ_RISE",
-    "ROBOT_PLANT_PROFILES",
-    "AmplitudeFit",
-    "ChannelEnvelope",
-    "CommandLimiter",
-    "FOPDTChannel",
-    "FloorProbeResult",
-    "FopdtChannelParams",
-    "RobotPlantProfile",
-    "TwistBasePlantParams",
-    "TwistBasePlantSim",
-    "VelocityEnvelope",
-    "flowbase_command_limiter",
-]

@@ -65,9 +65,7 @@ class ScoreResult:
     n_ticks: int = 0
 
 
-# ---------------------------------------------------------------------------
 # Geometry helpers
-# ---------------------------------------------------------------------------
 
 
 def _path_xy(path: Path) -> NDArray[np.float64]:
@@ -112,9 +110,7 @@ def _segment_yaw(path_xy: NDArray[np.float64], seg_idx: int) -> float:
     return float(math.atan2(dy, dx))
 
 
-# ---------------------------------------------------------------------------
 # Scoring
-# ---------------------------------------------------------------------------
 
 
 def _twist_linear_speed(t: Twist) -> float:

@@ -57,9 +57,7 @@ def _pose(x=0.0, y=0.0, yaw=0.0) -> PoseStamped:
     )
 
 
-# ---------------------------------------------------------------------------
 # Recording round-trip
-# ---------------------------------------------------------------------------
 
 
 def test_recording_round_trip(tmp_path):
@@ -109,9 +107,7 @@ def test_anchor_shifts_path_to_pose():
     assert p0.x == 5.0 and p0.y == 3.0
 
 
-# ---------------------------------------------------------------------------
 # Odom recorder
-# ---------------------------------------------------------------------------
 
 
 def test_odom_recorder_differentiates_forward_velocity():
@@ -134,9 +130,7 @@ def test_odom_recorder_reset_clears_ticks():
     assert rec.latest_pose() is not None  # latest pose is retained for warm-up
 
 
-# ---------------------------------------------------------------------------
 # Completion monitor (odom-only)
-# ---------------------------------------------------------------------------
 
 
 def _monitor(ref, dwell_s=0.3):
@@ -191,9 +185,7 @@ def test_completion_never_fires_when_robot_never_reaches_goal():
     assert not done  # never covered the path -> would hit the per-run timeout
 
 
-# ---------------------------------------------------------------------------
 # End-to-end: RPP follower vs sim plant -> benchmark record -> score
-# ---------------------------------------------------------------------------
 
 
 def _state(x, y, yaw, t):

@@ -121,9 +121,7 @@ def shift_path_to_start_at_pose(path: NavPath, start_pose: PoseStamped) -> NavPa
     return NavPath(poses=new)
 
 
-# ---------------------------------------------------------------------------
 # Recording (flat per-run JSON) + round-trip
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -192,9 +190,7 @@ class RunRecording:
         )
 
 
-# ---------------------------------------------------------------------------
 # Odom recorder — accumulates ticks; recovers body-frame velocity by diff
-# ---------------------------------------------------------------------------
 
 
 class OdomRecorder:
@@ -291,9 +287,7 @@ class OdomRecorder:
         raise RuntimeError(f"no odom within {timeout_s:.1f}s")
 
 
-# ---------------------------------------------------------------------------
 # Completion monitor — odom-only arrival detection
-# ---------------------------------------------------------------------------
 
 
 class CompletionMonitor:
@@ -347,9 +341,7 @@ class CompletionMonitor:
         return False
 
 
-# ---------------------------------------------------------------------------
 # Benchmarker module
-# ---------------------------------------------------------------------------
 
 
 class BenchmarkerConfig(ModuleConfig):

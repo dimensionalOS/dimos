@@ -60,7 +60,7 @@ def _start_aligned(task: PathFollowerTask, path) -> None:
     assert task.start_path(path, odom)
 
 
-# --- adaptive lookahead ----------------------------------------------------
+# adaptive lookahead
 
 
 def test_adaptive_lookahead_grows_from_min_with_speed():
@@ -100,7 +100,7 @@ def test_fixed_lookahead_when_scale_zero():
         assert math.isclose(task._distancer._lookahead_dist, 0.5, abs_tol=1e-9)
 
 
-# --- yaw-rate clamp --------------------------------------------------------
+# yaw-rate clamp
 
 
 def test_max_yaw_rate_clamps_commanded_wz():
@@ -134,7 +134,7 @@ def test_no_yaw_clamp_when_none():
     assert peak > 0.25
 
 
-# --- forward-only contract -------------------------------------------------
+# forward-only contract
 
 
 def test_forward_only_holds_over_a_run():
@@ -158,7 +158,7 @@ def test_forward_only_holds_over_a_run():
         assert vx >= 0.0
 
 
-# --- configure() signature -------------------------------------------------
+# configure() signature
 
 
 def test_configure_sets_rpp_knobs_and_ignores_unknown():

@@ -236,11 +236,3 @@ def create_task(cfg: Any, hardware: Any) -> RPPPathFollowerTask:
         artifact_path=params.artifact_path,
         v_max_override=params.v_max_override,
     )
-
-
-__all__ = [
-    "DEFAULT_ARTIFACT_PATH",
-    "RPPPathFollowerTask",
-    "RPPPathFollowerTaskParams",
-    "create_task",
-]

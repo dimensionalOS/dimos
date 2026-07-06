@@ -29,6 +29,7 @@ from dataclasses import asdict
 import json
 import math
 from pathlib import Path
+from typing import Any
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -93,10 +94,10 @@ def load_recordings(recordings_dir: str | Path) -> list[RunRecording]:
 
 def score_recordings(
     recs: list[RunRecording], tolerances_cm: list[float]
-) -> tuple[OperatingPointMap, list[dict]]:
+) -> tuple[OperatingPointMap, list[dict[str, Any]]]:
     """Score every recording into an operating-point map + per-run diagnostics."""
     points: list[OperatingPoint] = []
-    runs: list[dict] = []
+    runs: list[dict[str, Any]] = []
     for rec in recs:
         ref = rec.reference_path()
         executed = _executed_from_recording(rec)
@@ -127,9 +128,7 @@ def score_recordings(
     return OperatingPointMap(speeds=speeds, points=points, tolerance_inversion=inversion), runs
 
 
-# ---------------------------------------------------------------------------
 # Diagnostic plots (optional; reused from the prior inline benchmark)
-# ---------------------------------------------------------------------------
 
 
 def _plot_cte_vs_speed(points: list[OperatingPoint], out: Path, robot: str) -> None:
@@ -153,7 +152,7 @@ def _plot_cte_vs_speed(points: list[OperatingPoint], out: Path, robot: str) -> N
     plt.close(fig)
 
 
-def _canonicalize(ref: list, exec_: list) -> tuple[list, list]:
+def _canonicalize(ref: list[Any], exec_: list[Any]) -> tuple[list[Any], list[Any]]:
     """Rigid-transform a run into the canonical path frame: reference start ->
     (0,0), initial heading -> +x; same transform on the executed trajectory."""
     if len(ref) < 2:
@@ -166,13 +165,13 @@ def _canonicalize(ref: list, exec_: list) -> tuple[list, list]:
             break
     c, s = math.cos(-th), math.sin(-th)
 
-    def tf(pts):
+    def tf(pts: list[Any]) -> list[tuple[float, float]]:
         return [((x - ox) * c - (y - oy) * s, (x - ox) * s + (y - oy) * c) for x, y in pts]
 
     return tf(ref), tf(exec_)
 
 
-def _plot_xy(runs: list[dict], out: Path, robot: str) -> None:
+def _plot_xy(runs: list[dict[str, Any]], out: Path, robot: str) -> None:
     import matplotlib
 
     matplotlib.use("Agg")
