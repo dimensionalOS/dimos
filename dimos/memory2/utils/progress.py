@@ -14,36 +14,30 @@
 
 """A per-observation progress bar, shaped for ``Stream.tap``.
 
-    stream.tap(progress(stream.count(), "render")).drain()
+    with progress(stream.count(), "render") as bar:
+        stream.tap(bar).drain()
 
 Renders a rich progress bar: label, percent, count, data-seconds covered,
 speed relative to wall-clock (``x rt``), and per-frame latency. On completion
-the live bar is replaced by one plain persisted line. One bar is live at a
-time — starting a new bar finalizes a dangling one (rich allows a single live
-display); call :meth:`ProgressBar.close` when abandoning a stream early
-(e.g. a bounded time window).
+the live bar is replaced by one plain persisted line. ``progress`` is a
+context manager: exiting the ``with`` block finalizes the bar (and restores
+the cursor), even when the stream is abandoned early (e.g. a bounded time
+window) or the pipeline raises. rich allows a single live display, so keep
+one bar per ``with`` block at a time.
 """
 
 from __future__ import annotations
 
-import atexit
+from contextlib import contextmanager
 import time
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from dimos.memory2.type.observation import Observation
 
 _REFRESH_S = 0.1  # refresh cap; keeps 200 Hz streams from redrawing per frame
-
-_current: ProgressBar | None = None
-
-
-def _close_current() -> None:
-    if _current is not None:
-        _current.close()
-
-
-atexit.register(_close_current)  # restore the cursor if a bar is abandoned
 
 
 class ProgressBar:
@@ -86,10 +80,6 @@ class ProgressBar:
             return  # observations may keep flowing after close (e.g. a tap downstream)
         now = time.monotonic()
         if self._wall_start is None:
-            global _current
-            if _current is not None:
-                _current.close()  # only one live display may be active
-            _current = self
             self._wall_start = now
             self._first_ts = obs.ts
             self._prog.start()
@@ -110,17 +100,23 @@ class ProgressBar:
 
     def close(self) -> None:
         """Clear the live bar and persist it as a plain line."""
-        global _current
         if self._closed:
             return
         self._closed = True
-        if _current is self:
-            _current = None
         self._prog.stop()  # transient: wipes the live bar
         pct = 100 * self._seen // self._total if self._total else 100
         print(f"{self._label} {pct}% [{self._seen}/{self._total}] {self._stats}")
 
 
-def progress(total: int, label: str = "") -> ProgressBar:
-    """Return a callback that renders streaming progress, one call per observation."""
-    return ProgressBar(total, label)
+@contextmanager
+def progress(total: int, label: str = "") -> Iterator[ProgressBar]:
+    """Yield a per-observation progress callback; the bar finalizes on exit.
+
+    with progress(stream.count(), "render") as bar:
+        stream.tap(bar).drain()
+    """
+    bar = ProgressBar(total, label)
+    try:
+        yield bar
+    finally:
+        bar.close()

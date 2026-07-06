@@ -67,14 +67,14 @@ def _log_clouds(
     whole pipeline.
     """
     n = total if total is not None else stream.count()
-    cb = progress(n, label)
-    for obs in stream:
-        cb(obs)
-        rr.set_time(TIMELINE, timestamp=obs.ts)
-        rr.log(
-            entity,
-            obs.data.to_rerun(voxel_size=voxel, mode=point_mode, bottom_cutoff=bottom_cutoff),
-        )
+    with progress(n, label) as bar:
+        for obs in stream:
+            bar(obs)
+            rr.set_time(TIMELINE, timestamp=obs.ts)
+            rr.log(
+                entity,
+                obs.data.to_rerun(voxel_size=voxel, mode=point_mode, bottom_cutoff=bottom_cutoff),
+            )
 
 
 def _log_path(
@@ -90,22 +90,22 @@ def _log_path(
     without a pose are skipped.
     """
     n = stream.count()
-    cb = progress(n, label)
     points: list[tuple[float, float, float]] = []
     last_ts: float | None = None
     emit_count = 0
-    for obs in stream:
-        cb(obs)
-        if obs.pose_tuple is None:
-            continue
-        points.append(
-            (float(obs.pose_tuple[0]), float(obs.pose_tuple[1]), float(obs.pose_tuple[2]))
-        )
-        last_ts = obs.ts
-        emit_count += 1
-        if emit_every > 0 and emit_count % emit_every == 0 and len(points) >= 2:
-            rr.set_time(TIMELINE, timestamp=obs.ts)
-            rr.log(entity, rr.LineStrips3D([points], colors=[color]))
+    with progress(n, label) as bar:
+        for obs in stream:
+            bar(obs)
+            if obs.pose_tuple is None:
+                continue
+            points.append(
+                (float(obs.pose_tuple[0]), float(obs.pose_tuple[1]), float(obs.pose_tuple[2]))
+            )
+            last_ts = obs.ts
+            emit_count += 1
+            if emit_every > 0 and emit_count % emit_every == 0 and len(points) >= 2:
+                rr.set_time(TIMELINE, timestamp=obs.ts)
+                rr.log(entity, rr.LineStrips3D([points], colors=[color]))
     if (
         last_ts is not None
         and len(points) >= 2
@@ -277,20 +277,20 @@ def main(
         # fastlio pose axis + path from fastlio_odometry stream.
         if "fastlio_odometry" in store.streams:
             odometry = clipped("fastlio_odometry", Odometry)
-            cb = progress(odometry.count(), "fastlio_odometry")
-            for obs in odometry:
-                cb(obs)
-                if obs.pose_tuple is None:
-                    continue
-                rr.set_time(TIMELINE, timestamp=obs.ts)
-                x, y, z, qx, qy, qz, qw = obs.pose_tuple
-                rr.log(
-                    "world/fastlio",
-                    rr.Transform3D(
-                        translation=[x, y, z],
-                        quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw]),
-                    ),
-                )
+            with progress(odometry.count(), "fastlio_odometry") as bar:
+                for obs in odometry:
+                    bar(obs)
+                    if obs.pose_tuple is None:
+                        continue
+                    rr.set_time(TIMELINE, timestamp=obs.ts)
+                    x, y, z, qx, qy, qz, qw = obs.pose_tuple
+                    rr.log(
+                        "world/fastlio",
+                        rr.Transform3D(
+                            translation=[x, y, z],
+                            quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw]),
+                        ),
+                    )
             _log_path(
                 "  fastlio_path",
                 clipped("fastlio_odometry", Odometry),
@@ -301,20 +301,20 @@ def main(
         # Go2 native odom pose axis + path.
         if "odom" in store.streams:
             odom = clipped("odom", PoseStamped)
-            cb = progress(odom.count(), "        odom")
-            for odom_obs in odom:
-                cb(odom_obs)
-                if odom_obs.pose_tuple is None:
-                    continue
-                rr.set_time(TIMELINE, timestamp=odom_obs.ts)
-                x, y, z, qx, qy, qz, qw = odom_obs.pose_tuple
-                rr.log(
-                    "world/odom",
-                    rr.Transform3D(
-                        translation=[x, y, z],
-                        quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw]),
-                    ),
-                )
+            with progress(odom.count(), "        odom") as bar:
+                for odom_obs in odom:
+                    bar(odom_obs)
+                    if odom_obs.pose_tuple is None:
+                        continue
+                    rr.set_time(TIMELINE, timestamp=odom_obs.ts)
+                    x, y, z, qx, qy, qz, qw = odom_obs.pose_tuple
+                    rr.log(
+                        "world/odom",
+                        rr.Transform3D(
+                            translation=[x, y, z],
+                            quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw]),
+                        ),
+                    )
             _log_path(
                 "     odom_path",
                 clipped("odom", PoseStamped),
@@ -327,19 +327,19 @@ def main(
             color_image.transform(throttle(1.0 / camera_hz)) if camera_hz > 0 else color_image
         )
         n_img = cam_pipeline.count()
-        cb = progress(n_img, "  color_image")
-        for img_obs in cam_pipeline:
-            cb(img_obs)
-            rr.set_time(TIMELINE, timestamp=img_obs.ts)
-            if img_obs.pose_tuple is not None:
-                x, y, z, qx, qy, qz, qw = img_obs.pose_tuple
-                rr.log(
-                    "world/camera",
-                    rr.Transform3D(
-                        translation=[x, y, z], quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw])
-                    ),
-                )
-            rr.log("world/camera/image", img_obs.data.to_rerun())
+        with progress(n_img, "  color_image") as bar:
+            for img_obs in cam_pipeline:
+                bar(img_obs)
+                rr.set_time(TIMELINE, timestamp=img_obs.ts)
+                if img_obs.pose_tuple is not None:
+                    x, y, z, qx, qy, qz, qw = img_obs.pose_tuple
+                    rr.log(
+                        "world/camera",
+                        rr.Transform3D(
+                            translation=[x, y, z], quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw])
+                        ),
+                    )
+                rr.log("world/camera/image", img_obs.data.to_rerun())
 
     print(f"wrote {out}")
     if no_gui:
