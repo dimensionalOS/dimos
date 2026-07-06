@@ -227,7 +227,7 @@ def main() -> None:
     SpyApp(transports=_parse_transports(sys.argv[1:])).run()
 
 
-def _lcm_only_argv(args: list[str]) -> list[str]:
+def lcm_only_argv(args: list[str]) -> list[str]:
     """Build the `spy` argv for the LCM-only entry points (`lcmspy` / `dimos lcmspy`).
 
     Rejects an explicit --transport override (these entry points can't choose
@@ -244,7 +244,7 @@ def lcm_main() -> None:
     """`lcmspy` console-script shim: the spy over the LCM source only."""
     import sys
 
-    sys.argv = _lcm_only_argv(sys.argv[1:])
+    sys.argv = lcm_only_argv(sys.argv[1:])
     main()
 
 

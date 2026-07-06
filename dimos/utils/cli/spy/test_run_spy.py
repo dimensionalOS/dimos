@@ -21,7 +21,7 @@ import pytest
 
 from dimos.utils.cli.spy import run_spy
 from dimos.utils.cli.spy.core import SOURCE_FACTORIES
-from dimos.utils.cli.spy.run_spy import SpyApp, _lcm_only_argv, _parse_transports
+from dimos.utils.cli.spy.run_spy import SpyApp, _parse_transports, lcm_only_argv
 
 
 def test_parse_transports_default_is_none():
@@ -165,15 +165,15 @@ def test_spy_app_explicit_start_failure_is_hard_error(monkeypatch):
 
 
 def test_lcm_only_argv_forwards_plain_args():
-    assert _lcm_only_argv([]) == ["spy", "--transport", "lcm"]
-    assert _lcm_only_argv(["--foo", "bar"]) == ["spy", "--transport", "lcm", "--foo", "bar"]
+    assert lcm_only_argv([]) == ["spy", "--transport", "lcm"]
+    assert lcm_only_argv(["--foo", "bar"]) == ["spy", "--transport", "lcm", "--foo", "bar"]
 
 
 def test_lcm_only_argv_rejects_transport_override():
     with pytest.raises(SystemExit, match="LCM-only"):
-        _lcm_only_argv(["--transport", "zenoh"])
+        lcm_only_argv(["--transport", "zenoh"])
     with pytest.raises(SystemExit, match="LCM-only"):
-        _lcm_only_argv(["--transport=zenoh"])
+        lcm_only_argv(["--transport=zenoh"])
 
 
 def test_lcm_main_forwards_args_to_spy(monkeypatch):
