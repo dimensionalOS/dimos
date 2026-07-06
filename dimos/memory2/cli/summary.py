@@ -41,14 +41,14 @@ def stream_payload_types(db_path: Path) -> dict[str, type]:
     import json
     import sqlite3
 
-    from dimos.memory2.codecs.base import _resolve_payload_type
+    from dimos.memory2.codecs.base import resolve_payload_type
 
     conn = sqlite3.connect(str(db_path))
     try:
         rows = conn.execute("SELECT name, config FROM _streams").fetchall()
     finally:
         conn.close()
-    return {name: _resolve_payload_type(json.loads(cfg)["payload_module"]) for name, cfg in rows}
+    return {name: resolve_payload_type(json.loads(cfg)["payload_module"]) for name, cfg in rows}
 
 
 def _shade(value: float, lo: float, hi: float) -> str:
