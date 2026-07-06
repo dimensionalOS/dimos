@@ -618,14 +618,9 @@ exclude_also = [
 ]
 
 [tool.largefiles]
-max_size_kb = 50
+max_size_kb = 75
 ignore = [
     "uv.lock",
     "*/package-lock.json",
-    "dimos/dashboard/dimos.rbl",
     "dimos/web/dimos_interface/themes.json",
-    "dimos/manipulation/manipulation_module.py",
-    "dimos/manipulation/visualization/viser/test_viser_visualization.py",
-    "dimos/navigation/cmu_nav/modules/*/main.cpp",
-    "dimos/navigation/cmu_nav/common/*.hpp",
 ]
