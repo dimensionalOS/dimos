@@ -49,10 +49,10 @@ def summary(
     with store:
         for name in store.list_streams():
             store.streams[name]  # register so summary() includes it
-        print(store.summary())
+        typer.echo(store.summary())
 
         # mcap files may carry channels we have no codec for (e.g. h264 video);
         # list them so the inventory is complete rather than silently filtered.
         uncodec = getattr(store, "uncodec_channels", None)
         for topic, (count, schema) in sorted(uncodec().items()) if uncodec else []:
-            print(f"  (no codec) {topic}: {count} msgs [{schema or '?'}]")
+            typer.echo(f"  (no codec) {topic}: {count} msgs [{schema or '?'}]")

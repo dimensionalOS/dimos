@@ -34,7 +34,7 @@ dropped until the next keyframe re-syncs it.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from dimos.memory2.transform import Transformer
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -53,16 +53,26 @@ class H264Decoder(Transformer[CompressedVideo, Image]):
         import av  # optional dep (go2/unitree extra)
 
         decoder = av.codec.CodecContext.create("h264", "r")
+        last: Observation[CompressedVideo] | None = None
         for obs in upstream:
             packet = obs.data
             if packet is None:
                 continue
+            last = obs
             try:
                 frames = decoder.decode(av.packet.Packet(packet.data.tobytes()))
             except av.error.FFmpegError:
                 continue  # P-frame with no reference yet (e.g. seeked past a keyframe)
             for frame in frames:
-                bgr = frame.to_ndarray(format="bgr24")
-                yield obs.derive(
-                    data=Image.from_numpy(bgr, ImageFormat.BGR, packet.frame_id, obs.ts)
-                )
+                yield self._emit(frame, obs)
+
+        # Flush: delayed frames (B-frames / reordering) still buffered after the
+        # last packet. decode(None) drains them so the tail of the stream isn't lost.
+        if last is not None:
+            for frame in decoder.decode(None):
+                yield self._emit(frame, last)
+
+    @staticmethod
+    def _emit(frame: Any, obs: Observation[CompressedVideo]) -> Observation[Image]:
+        bgr = frame.to_ndarray(format="bgr24")
+        return obs.derive(data=Image.from_numpy(bgr, ImageFormat.BGR, obs.data.frame_id, obs.ts))
