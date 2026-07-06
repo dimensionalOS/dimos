@@ -325,6 +325,7 @@ jobs:
       contents: read  # For checkout
     outputs:
       cache-hit: ${{ steps.marker.outputs.cache-hit }}
+      key: ${{ steps.cache-key.outputs.key }}
     steps:
       - name: Checkout files used for cache key
         uses: actions/checkout@v7
@@ -333,12 +334,17 @@ jobs:
             bin/build-cmu-nav-natives
             dimos/navigation/cmu_nav/modules
           sparse-checkout-cone-mode: false
+      - name: Compute cache key
+        # Recomputing the key in cmu-nav-natives after build breaks the key.
+        # Save here so it can be reused verbatim.
+        id: cache-key
+        run: echo "key=cmu-nav-natives-${{ hashFiles('bin/build-cmu-nav-natives', 'dimos/navigation/cmu_nav/modules/**') }}" >> "$GITHUB_OUTPUT"
       - name: Look up marker cache
         id: marker
         uses: actions/cache/restore@v6
         with:
           path: /tmp/cmu-nav-natives-marker
-          key: cmu-nav-natives-${{ hashFiles('bin/build-cmu-nav-natives', 'dimos/navigation/cmu_nav/modules/**') }}
+          key: ${{ steps.cache-key.outputs.key }}
           lookup-only: true
 
   cmu-nav-natives:
@@ -409,7 +415,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: /tmp/cmu-nav-natives-marker
-          key: cmu-nav-natives-${{ hashFiles('bin/build-cmu-nav-natives', 'dimos/navigation/cmu_nav/modules/**') }}
+          key: ${{ needs.cmu-nav-natives-marker.outputs.key }}
 
   self-hosted-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
