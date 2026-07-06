@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 
+from dimos.utils.colors import HEAT_GRADIENT_ANSI256
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -49,11 +51,6 @@ def _stream_payload_types(db_path: Path) -> dict[str, type]:
     return {name: _resolve_payload_type(json.loads(cfg)["payload_module"]) for name, cfg in rows}
 
 
-# ANSI 256 gradient: red -> orange -> yellow -> green (same as the pubsub
-# benchmark heatmaps in dimos/protocol/pubsub/benchmark/type.py).
-_GRADIENT = [52, 88, 124, 160, 196, 202, 208, 214, 220, 226, 190, 154, 148, 118, 82, 46, 40, 34]
-
-
 def _shade(value: float, lo: float, hi: float) -> str:
     """Rich style for ``value`` relative to [lo, hi], log-scaled (columns span decades)."""
     from math import log
@@ -61,7 +58,7 @@ def _shade(value: float, lo: float, hi: float) -> str:
     if value <= 0:
         return "dim"
     t = 0.5 if hi <= lo else (log(value) - log(lo)) / (log(hi) - log(lo))
-    return f"color({_GRADIENT[round(t * (len(_GRADIENT) - 1))]})"
+    return f"color({HEAT_GRADIENT_ANSI256[round(t * (len(HEAT_GRADIENT_ANSI256) - 1))]})"
 
 
 def _heat(text: str, value: float, column: list[float]) -> str:
