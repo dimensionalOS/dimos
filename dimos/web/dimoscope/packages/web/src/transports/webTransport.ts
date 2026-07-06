@@ -29,6 +29,77 @@ function hexToBytes(hex: string): Uint8Array {
   return out;
 }
 
+/// Ack the sidecar every this many raw bulk-stream bytes consumed ({op:"bulk-ack", n:cumulative}).
+/// The sidecar's bulk drain gates on written − acked (credit), so on a rate-capped link the
+/// standing queue stays ~WT_BULK_TARGET_MS instead of send_window ÷ link-rate. Byte-granular
+/// (headers + partial frames count) — the sidecar gates mid-frame, so frame-granular acks would
+/// deadlock. ~40 B per ack; at 19 MB/s that is ~600 control lines/s.
+export const BULK_ACK_QUANTUM = 32768;
+
+/// Accumulates raw bulk-stream bytes and emits the cumulative total every BULK_ACK_QUANTUM.
+export function createBulkAckCounter(send: (cumulative: number) => void): (n: number) => void {
+  let read = 0;
+  let acked = 0;
+  return (n: number) => {
+    read += n;
+    if (read - acked >= BULK_ACK_QUANTUM) {
+      acked = read;
+      send(read);
+    }
+  };
+}
+
+// Large frames arrive as [u32be length][frame]… on one persistent unidirectional stream (the
+// gateway opens it on the first big frame). Reassemble across read chunks without concatenating
+// the whole backlog per chunk. `onBytes` sees every raw byte read off the stream (bulk-ack credit).
+export async function readBulkStream(
+  stream: ReadableStream<Uint8Array>,
+  deliver: (frame: Uint8Array) => void,
+  onBytes?: (n: number) => void,
+) {
+  const sr = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  const take = (n: number): Uint8Array => { // caller guarantees total >= n
+    const out = new Uint8Array(n);
+    let off = 0;
+    while (off < n) {
+      const c = chunks[0];
+      const want = n - off;
+      if (c.length <= want) {
+        out.set(c, off);
+        off += c.length;
+        chunks.shift();
+      } else {
+        out.set(c.subarray(0, want), off);
+        chunks[0] = c.subarray(want);
+        off = n;
+      }
+    }
+    total -= n;
+    return out;
+  };
+  let need = -1; // payload bytes of the frame being assembled; -1 = header not read yet
+  for (;;) {
+    const { value, done } = await sr.read();
+    if (done) break;
+    if (!value?.length) continue;
+    chunks.push(value);
+    total += value.length;
+    onBytes?.(value.length);
+    for (;;) {
+      if (need < 0) {
+        if (total < 4) break;
+        const h = take(4);
+        need = ((h[0] << 24) | (h[1] << 16) | (h[2] << 8) | h[3]) >>> 0;
+      }
+      if (total < need) break;
+      deliver(take(need));
+      need = -1;
+    }
+  }
+}
+
 export const createWebTransportTransport = (deps: WebTransportDeps): Transport => {
   // Same gateway as the WS adapter: server-side downsampling + per-client priority outbox.
   const caps: TransportCaps = {
@@ -67,58 +138,17 @@ export const createWebTransportTransport = (deps: WebTransportDeps): Transport =
     }
   }
 
-  // Large frames arrive as [u32be length][frame]… on one persistent unidirectional stream (the
-  // gateway opens it on the first big frame). Reassemble across read chunks without concatenating
-  // the whole backlog per chunk.
-  async function readBulkStream(stream: ReadableStream<Uint8Array>) {
-    const sr = stream.getReader();
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    const take = (n: number): Uint8Array => { // caller guarantees total >= n
-      const out = new Uint8Array(n);
-      let off = 0;
-      while (off < n) {
-        const c = chunks[0];
-        const want = n - off;
-        if (c.length <= want) {
-          out.set(c, off);
-          off += c.length;
-          chunks.shift();
-        } else {
-          out.set(c.subarray(0, want), off);
-          chunks[0] = c.subarray(want);
-          off = n;
-        }
-      }
-      total -= n;
-      return out;
-    };
-    let need = -1; // payload bytes of the frame being assembled; -1 = header not read yet
-    for (;;) {
-      const { value, done } = await sr.read();
-      if (done) break;
-      if (!value?.length) continue;
-      chunks.push(value);
-      total += value.length;
-      for (;;) {
-        if (need < 0) {
-          if (total < 4) break;
-          const h = take(4);
-          need = ((h[0] << 24) | (h[1] << 16) | (h[2] << 8) | h[3]) >>> 0;
-        }
-        if (total < need) break;
-        deliver(take(need));
-        need = -1;
-      }
-    }
-  }
+  // Cumulative bulk-ack credit for the sidecar's drain gate. Counted across all incoming uni
+  // streams (the sidecar opens exactly one per session); recreated per connect() — the sidecar's
+  // written counter starts at 0 for each new session.
+  let onBulkBytes = createBulkAckCounter((n) => sendControl({ op: "bulk-ack", n }));
 
   async function readStreams(streams: ReadableStream<ReadableStream<Uint8Array>>) {
     const reader = streams.getReader();
     for (;;) {
       const { value: stream, done } = await reader.read();
       if (done) break;
-      if (stream) readBulkStream(stream).catch(() => {});
+      if (stream) readBulkStream(stream, deliver, onBulkBytes).catch(() => {});
     }
   }
 
@@ -212,6 +242,7 @@ export const createWebTransportTransport = (deps: WebTransportDeps): Transport =
     });
     await wt.ready;
     statusCb?.("open");
+    onBulkBytes = createBulkAckCounter((n) => sendControl({ op: "bulk-ack", n }));
     // Bidirectional control stream: our subscribe/list ops out, the gateway's hello/topic in.
     const ctl = await wt.createBidirectionalStream();
     ctlWriter = ctl.writable.getWriter();

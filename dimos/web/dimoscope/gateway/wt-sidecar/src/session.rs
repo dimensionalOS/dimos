@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use serde_json::{json, Value};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 
 use crate::outbox::{declared_to_class, default_priority, Lane, PriorityOutbox};
 
@@ -69,6 +69,9 @@ impl Hub {
             dgram: PriorityOutbox::new(),
             bulk: PriorityOutbox::new(),
             ctl,
+            bulk_written: AtomicU64::new(0),
+            bulk_acked: AtomicU64::new(0),
+            bulk_credit: Notify::new(),
         });
         self.sessions
             .lock()
@@ -177,6 +180,14 @@ pub struct Session {
     pub bulk: PriorityOutbox,
     /// Control JSON to the browser (hello/topic/pong/rpc-res), written by the control-stream task.
     pub ctl: mpsc::UnboundedSender<Value>,
+    /// WT bulk credit: cumulative raw bytes written to / acked consumed from the bulk uni stream
+    /// (browser sends {op:"bulk-ack", n} — webTransport.ts). written − acked is the end-to-end
+    /// standing queue (quinn buffer + qdisc + network + browser) the bulk drain gates on. Stays 0
+    /// on the RTC plane, which has SCTP buffered_amount natively.
+    pub bulk_written: AtomicU64,
+    pub bulk_acked: AtomicU64,
+    /// Pinged on every bulk-ack so a gated drain re-checks its budget without polling.
+    pub bulk_credit: Notify,
 }
 
 impl Session {
@@ -258,6 +269,14 @@ impl Session {
             }
             "list" => {
                 let _ = self.ctl.send(self.hello(hub));
+            }
+            // WT bulk credit: cumulative bytes the browser has read off the bulk uni stream.
+            // fetch_max — acks are monotonic, so a reordered/duplicate line is harmless.
+            "bulk-ack" => {
+                if let Some(n) = m.get("n").and_then(Value::as_u64) {
+                    self.bulk_acked.fetch_max(n, Ordering::Relaxed);
+                    self.bulk_credit.notify_one();
+                }
             }
             "ping" => {
                 // clock-sync probe: echo our clock (same host as the gateway → semantics hold)

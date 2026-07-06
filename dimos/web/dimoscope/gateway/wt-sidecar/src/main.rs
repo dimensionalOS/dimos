@@ -9,7 +9,9 @@
 //! (/tmp/dimoscope-wt.sock) · WT_CERT_HASH_FILE (/tmp/dimoscope-wt-cert.hash, served by the gateway
 //! /cert) · EGRESS_KBPS (optional per-session drain pacer, mirrors gateway/data.py; 0/unset = rely
 //! on QUIC flow-control backpressure) · QOS_RULES (operator lane rules, default ./qos.rules.json —
-//! the same file the gateway loads, so both planes classify identically).
+//! the same file the gateway loads, so both planes classify identically) · WT_BULK_TARGET_MS (250;
+//! bulk credit gate: keep ≤ this many ms of standing bulk queue, 0 = off) · WT_BULK_MIN (65536;
+//! credit budget floor in bytes) · WT_STATS_S (0; >0 = per-session queue diagnostics every N s).
 
 mod cert;
 mod outbox;
@@ -86,6 +88,21 @@ async fn main() -> Result<()> {
     // bound), and keep quinn's datagram send buffer small so newest-wins by drop-oldest.
     let dgram_ttl_ms: f64 = env_or("WT_DGRAM_TTL_MS", "200").parse().unwrap_or(200.0);
     let dgram_buf: usize = env_or("WT_DGRAM_BUF", "16384").parse().unwrap_or(16384);
+    // Belt-and-braces: explicitly advertise datagram support (an unset receive buffer would leave
+    // max_datagram_size() None and every small frame undeliverable). Measured sessions negotiate
+    // Some(~1295) with quinn's defaults too — this pins the behavior rather than changing it.
+    let dgram_recv_buf: usize = env_or("WT_DGRAM_RECV_BUF", "1048576").parse().unwrap_or(1_048_576);
+    // Bulk credit gate: the browser acks consumed bulk-stream bytes (bulk-ack op) and the drain
+    // keeps written − acked ≤ ack-rate × target — i.e. at most ~target ms of standing queue across
+    // quinn buffer + qdisc + network, whatever the link rate. A static send_window can't do this:
+    // 1.5 MB is fine on a clean WAN but 6 s of queue at 2 Mbit. 0 disables the gate (A/B baseline).
+    let knobs = SessionKnobs {
+        egress_kbps,
+        dgram_ttl_ms,
+        bulk_target_ms: env_or("WT_BULK_TARGET_MS", "250").parse().unwrap_or(250.0),
+        bulk_min: env_or("WT_BULK_MIN", "65536").parse().unwrap_or(65536),
+        stats_s: env_or("WT_STATS_S", "0").parse().unwrap_or(0.0),
+    };
     load_qos_rules(&env_or("QOS_RULES", "qos.rules.json"));
 
     // Cert FIRST: the gateway's /cert serves 503 until this file exists.
@@ -114,7 +131,8 @@ async fn main() -> Result<()> {
             wtransport::quinn::congestion::BbrConfig::default(),
         ))
         .send_window(send_window)
-        .datagram_send_buffer_size(dgram_buf);
+        .datagram_send_buffer_size(dgram_buf)
+        .datagram_receive_buffer_size(Some(dgram_recv_buf));
 
     // with_bind_default binds [::] dual-stack — required on IPv6-first macOS, where a 0.0.0.0
     // bind leaves `localhost` (resolving to ::1 first) unreachable.
@@ -129,26 +147,32 @@ async fn main() -> Result<()> {
         let incoming = server.accept().await;
         let hub = hub.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_session(hub, incoming, egress_kbps, dgram_ttl_ms).await {
+            if let Err(e) = handle_session(hub, incoming, knobs).await {
                 info!("session ended: {e:#}");
             }
         });
     }
 }
 
-async fn handle_session(
-    hub: Arc<Hub>,
-    incoming: IncomingSession,
+/// Per-session drain tuning, read once from env in main().
+#[derive(Clone, Copy)]
+struct SessionKnobs {
     egress_kbps: f64,
     dgram_ttl_ms: f64,
-) -> Result<()> {
+    bulk_target_ms: f64,
+    bulk_min: u64,
+    stats_s: f64,
+}
+
+async fn handle_session(hub: Arc<Hub>, incoming: IncomingSession, knobs: SessionKnobs) -> Result<()> {
     let request = incoming.await?;
     // Accept regardless of URL path — the wire protocol doesn't route on :path.
     let conn = Arc::new(request.accept().await?);
     let (ctl_tx, ctl_rx) = mpsc::unbounded_channel();
     let sess = hub.add_session(ctl_tx, "WT-rs");
     let sid = sess.sid;
-    info!(sid, max_datagram = ?conn.max_datagram_size(), "session established");
+    // max_datagram_size() is logged live by session_stats (WT_STATS_S), not sampled here.
+    info!(sid, "session established");
 
     let ctl = tokio::spawn(control_stream(
         hub.clone(),
@@ -156,21 +180,13 @@ async fn handle_session(
         sess.clone(),
         ctl_rx,
     ));
-    // Two drain tasks so a flow-control-stalled bulk write can never head-of-line-block datagrams;
-    // the fallback channel carries the rare datagram that stopped fitting the path MTU.
-    let (fallback_tx, fallback_rx) = mpsc::unbounded_channel();
-    let dgrams = tokio::spawn(drain_datagrams(
-        conn.clone(),
-        sess.clone(),
-        fallback_tx,
-        dgram_ttl_ms,
-    ));
-    let bulk = tokio::spawn(drain_bulk(
-        conn.clone(),
-        sess.clone(),
-        fallback_rx,
-        egress_kbps,
-    ));
+    // Two independent drain tasks: small lanes on datagrams (drain_datagrams, drop-if-undeliverable),
+    // big frames on the credit-gated bulk stream (drain_bulk) — a stalled bulk write can never
+    // head-of-line-block a datagram.
+    let dgrams = tokio::spawn(drain_datagrams(conn.clone(), sess.clone(), knobs.dgram_ttl_ms));
+    let bulk = tokio::spawn(drain_bulk(conn.clone(), sess.clone(), knobs));
+    let stats = (knobs.stats_s > 0.0)
+        .then(|| tokio::spawn(session_stats(conn.clone(), sess.clone(), knobs.stats_s)));
 
     // The connection closing (tab close, network drop) tears everything down; remove_session sends
     // disconnect{sid} upstream → the gateway cancels the deadman and stops the robot for this sid.
@@ -178,6 +194,9 @@ async fn handle_session(
     ctl.abort();
     dgrams.abort();
     bulk.abort();
+    if let Some(s) = stats {
+        s.abort();
+    }
     hub.remove_session(sid);
     info!(sid, "session closed");
     Ok(())
@@ -237,15 +256,15 @@ async fn control_stream(
     }
 }
 
-/// Small frames on datagrams (unreliable, no HoL blocking). send_datagram never awaits flow
-/// control, so pose stays fresh even while a 1 MB bulk write is stalled on a shaped link; if the
-/// path MTU shrinks below a frame, it's handed to the bulk writer instead of dropped.
-async fn drain_datagrams(
-    conn: Arc<Connection>,
-    sess: Arc<Session>,
-    fallback: mpsc::UnboundedSender<Bytes>,
-    ttl_ms: f64,
-) {
+/// Small frames on datagrams (unreliable, no HoL blocking). send_datagram never awaits flow control,
+/// so pose stays fresh even while a 1 MB bulk write is stalled on a shaped link. A frame that can't
+/// be a datagram (MTU shrank, or datagrams not negotiated → max_datagram_size None) is DROPPED, not
+/// queued onto the reliable bulk stream: the dgram outbox is conflate/sensor (pose), where freshness
+/// beats completeness, and a fallback would couple the small lane to the bulk queue's latency.
+/// (The ×40 pose bufferbloat itself was bulk bytes in flight standing in the qdisc — datagrams were
+/// negotiated and sent all along, transmitting behind that queue; the credit gate is the cure.)
+async fn drain_datagrams(conn: Arc<Connection>, sess: Arc<Session>, ttl_ms: f64) {
+    let mut dropped = 0u64;
     loop {
         let frame = sess.dgram.get().await;
         // frame = [f64be ingress-ms][LC02]; skip if it aged past the TTL waiting to drain.
@@ -256,45 +275,76 @@ async fn drain_datagrams(
             }
         }
         let max_dgram = conn.max_datagram_size().unwrap_or(0);
-        if frame.len() <= max_dgram {
-            match conn.send_datagram(&frame) {
-                Ok(()) | Err(SendDatagramError::NotConnected) => {}
-                Err(SendDatagramError::TooLarge) | Err(SendDatagramError::UnsupportedByPeer) => {
-                    let _ = fallback.send(frame);
-                }
-            }
-        } else {
-            let _ = fallback.send(frame);
+        let send = matches!(dgram_action(frame.len(), max_dgram), DgramAction::Send)
+            && !matches!(
+                conn.send_datagram(&frame),
+                Err(SendDatagramError::TooLarge) | Err(SendDatagramError::UnsupportedByPeer),
+            );
+        if !send {
+            drop_datagram(&sess, &mut dropped, max_dgram, frame.len());
         }
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum DgramAction {
+    Send,
+    Drop,
+}
+
+/// Whether a datagram-outbox frame can leave as a QUIC datagram. `max_dgram == 0` = datagrams not
+/// negotiated yet (`max_datagram_size()` is None) → Drop rather than couple the small lane to the
+/// bulk queue. Pure so it's unit-tested without a live Connection.
+fn dgram_action(frame_len: usize, max_dgram: usize) -> DgramAction {
+    if max_dgram > 0 && frame_len <= max_dgram {
+        DgramAction::Send
+    } else {
+        DgramAction::Drop
+    }
+}
+
+/// Power-of-two rate-limited warn so an unnegotiated session (drop-every-frame) can't flood the log.
+fn drop_datagram(sess: &Session, dropped: &mut u64, max_dgram: usize, frame_len: usize) {
+    *dropped += 1;
+    if dropped.is_power_of_two() {
+        warn!(
+            sid = sess.sid,
+            dropped, max_dgram, frame_len, "datagram undeliverable — dropped (freshness > completeness)"
+        );
+    }
+}
+
+/// Per-chunk granularity of the credit gate inside one frame (mirrors rtc.rs CHUNK): the gate can
+/// close mid-frame, but a pulled frame is always finished — the [u32be len] framing forbids
+/// abandoning it — so the worst-case overshoot past the budget is one chunk.
+const BULK_CHUNK: usize = 65536;
+
 /// Big frames, length-prefixed on ONE persistent low-priority uni stream. Writes are awaited on
 /// purpose: QUIC flow control pushes backpressure into the bulk outbox, where WRR + conflation keep
-/// the backlog fresh. EGRESS_KBPS>0 adds an explicit pacer on top (mirrors gateway/data.py).
-async fn drain_bulk(
-    conn: Arc<Connection>,
-    sess: Arc<Session>,
-    mut fallback: mpsc::UnboundedReceiver<Bytes>,
-    egress_kbps: f64,
-) {
+/// the backlog fresh. The credit gate (wait_credit) bounds the standing queue *below* quinn on
+/// rate-capped links, where send_window alone is seconds of bufferbloat. EGRESS_KBPS>0 adds an
+/// explicit pacer on top (mirrors gateway/data.py).
+async fn drain_bulk(conn: Arc<Connection>, sess: Arc<Session>, knobs: SessionKnobs) {
     let mut bulk: Option<wtransport::SendStream> = None;
+    let mut rate = AckRate::default();
     loop {
-        // Both sources are cancellation-safe here: outbox.get() only completes when it has already
-        // picked a frame, and an unbounded recv() holds no partial state.
-        let frame = tokio::select! {
-            f = sess.bulk.get() => f,
-            Some(f) = fallback.recv() => f,
-        };
-        if send_bulk(&conn, &mut bulk, &frame).await.is_err() {
+        // Gate BEFORE pulling: while credit is exhausted the backlog stays in the outbox, where
+        // per-topic conflation keeps only the freshest frame.
+        wait_credit(&sess, &mut rate, &knobs).await;
+        // Cancellation-safe: outbox.get() only completes once it has already picked a frame.
+        let frame = sess.bulk.get().await;
+        if send_bulk(&conn, &mut bulk, &frame, &sess, &mut rate, &knobs)
+            .await
+            .is_err()
+        {
             error!(
                 sid = sess.sid,
                 "bulk stream write failed — session drain stopped"
             );
             return;
         }
-        if egress_kbps > 0.0 {
-            let secs = frame.len() as f64 * 8.0 / (egress_kbps * 1000.0);
+        if knobs.egress_kbps > 0.0 {
+            let secs = frame.len() as f64 * 8.0 / (knobs.egress_kbps * 1000.0);
             tokio::time::sleep(std::time::Duration::from_secs_f64(secs)).await;
         }
     }
@@ -304,6 +354,9 @@ async fn send_bulk(
     conn: &Connection,
     bulk: &mut Option<wtransport::SendStream>,
     frame: &Bytes,
+    sess: &Session,
+    rate: &mut AckRate,
+    knobs: &SessionKnobs,
 ) -> Result<()> {
     if bulk.is_none() {
         let s = conn.open_uni().await?.await?;
@@ -313,6 +366,152 @@ async fn send_bulk(
     let s = bulk.as_mut().expect("bulk stream just opened");
     // [u32be length][frame] per message on the persistent stream (webTransport.ts readBulkStream)
     s.write_all(&(frame.len() as u32).to_be_bytes()).await?;
-    s.write_all(frame).await?;
+    sess.bulk_written
+        .fetch_add(4, std::sync::atomic::Ordering::Relaxed);
+    let mut off = 0;
+    while off < frame.len() {
+        if off > 0 {
+            wait_credit(sess, rate, knobs).await; // drain_bulk gated before the first chunk
+        }
+        let end = (off + BULK_CHUNK).min(frame.len());
+        s.write_all(&frame[off..end]).await?;
+        sess.bulk_written
+            .fetch_add((end - off) as u64, std::sync::atomic::Ordering::Relaxed);
+        off = end;
+    }
     Ok(())
+}
+
+/// EMA of the browser's bulk-ack byte rate (bytes/ms), sampled from the cumulative bulk_acked
+/// counter at irregular intervals. τ ≈ 500 ms: fast enough to open the budget during ramp-up,
+/// slow enough to ride out the 32 KB ack quantization.
+#[derive(Default)]
+struct AckRate {
+    last_acked: u64,
+    last_ms: f64,
+    per_ms: f64,
+    /// Set when a client never acked within the pre-ack grace — a legacy build without bulk-ack.
+    /// Only consulted while acked == 0; the first real ack switches to the normal budget path.
+    legacy: bool,
+    wait_start_ms: f64,
+}
+
+impl AckRate {
+    const TAU_MS: f64 = 500.0;
+
+    fn update(&mut self, acked: u64, now: f64) {
+        if self.last_ms == 0.0 {
+            (self.last_acked, self.last_ms) = (acked, now);
+            return;
+        }
+        let dt = now - self.last_ms;
+        if dt < 20.0 {
+            return; // too short a window to divide meaningfully
+        }
+        let inst = acked.saturating_sub(self.last_acked) as f64 / dt;
+        let alpha = 1.0 - (-dt / Self::TAU_MS).exp();
+        self.per_ms += alpha * (inst - self.per_ms);
+        (self.last_acked, self.last_ms) = (acked, now);
+    }
+}
+
+/// Bulk credit gate: block while outstanding = written − acked exceeds the budget
+/// max(WT_BULK_MIN, ack-rate × WT_BULK_TARGET_MS) — i.e. keep at most ~target ms of standing bulk
+/// queue across quinn's buffer, the qdisc and the network, whatever the link rate. The receiver's
+/// consumption rate is the only trustworthy congestion signal here (quinn-BBR's cwnd was measured
+/// ≥ send_window on a 2 Mbit shaped link, its min-rtt filter poisoned by its own standing queue).
+///
+/// Before the first ack the budget is the WT_BULK_MIN floor — assuming the worst-case link until
+/// the receiver proves otherwise. Opening the gate pre-ack instead let the drain stuff the whole
+/// send_window in the ~400 ms before the first ack, and that one-time queue took ~6 s to drain at
+/// 2 Mbit, poisoning every lane's p95 for the entire run. A client that never acks (legacy build)
+/// gets one 3 s gated grace, then today's send_window-bounded behavior. Requires the client ack
+/// quantum (32 KB) < WT_BULK_MIN or the pre-ack gate would deadlock before the first ack fires.
+async fn wait_credit(sess: &Session, rate: &mut AckRate, knobs: &SessionKnobs) {
+    if knobs.bulk_target_ms <= 0.0 {
+        return;
+    }
+    loop {
+        let written = sess
+            .bulk_written
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let acked = sess.bulk_acked.load(std::sync::atomic::Ordering::Relaxed);
+        let budget = if acked == 0 {
+            if rate.legacy {
+                return;
+            }
+            knobs.bulk_min
+        } else {
+            rate.update(acked, now_ms());
+            (rate.per_ms * knobs.bulk_target_ms).max(knobs.bulk_min as f64) as u64
+        };
+        if written.saturating_sub(acked) < budget {
+            return;
+        }
+        if acked == 0 {
+            let now = now_ms();
+            if rate.wait_start_ms == 0.0 {
+                rate.wait_start_ms = now;
+            } else if now - rate.wait_start_ms > 3000.0 {
+                rate.legacy = true;
+                return;
+            }
+        }
+        // The 100 ms timeout kills any missed-notify race and refreshes the budget while acks
+        // are sparse (a stalled reader parks us here without blocking datagrams or control).
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            sess.bulk_credit.notified(),
+        )
+        .await;
+    }
+}
+
+/// WT_STATS_S > 0: one line every interval answering "where does the standing queue live?" —
+/// written−acked spans quinn's send buffer + qdisc + network + browser; cwnd/rtt say what quinn's
+/// congestion controller believes about the link; udp_tx_Bps is what actually left the socket.
+async fn session_stats(conn: Arc<Connection>, sess: Arc<Session>, interval_s: f64) {
+    let q = conn.quic_connection();
+    let mut last_tx = 0u64;
+    let mut tick = tokio::time::interval(std::time::Duration::from_secs_f64(interval_s));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tick.tick().await;
+        let stats = q.stats();
+        let tx = stats.udp_tx.bytes;
+        let written = sess
+            .bulk_written
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let acked = sess.bulk_acked.load(std::sync::atomic::Ordering::Relaxed);
+        info!(
+            sid = sess.sid,
+            cwnd = stats.path.cwnd,
+            rtt_ms = stats.path.rtt.as_millis() as u64,
+            udp_tx_bps = ((tx.saturating_sub(last_tx)) as f64 / interval_s) as u64,
+            dgram_buf_space = q.datagram_send_buffer_space(),
+            max_dgram = ?q.max_datagram_size(),
+            bulk_written = written,
+            bulk_acked = acked,
+            outstanding = written.saturating_sub(acked),
+            "wt-stats"
+        );
+        last_tx = tx;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{dgram_action, DgramAction};
+
+    #[test]
+    fn dgram_action_sends_only_when_negotiated_and_fits() {
+        // datagrams not negotiated (max_datagram_size None → 0): drop, never fall back to bulk
+        assert_eq!(dgram_action(143, 0), DgramAction::Drop);
+        // negotiated and fits: send
+        assert_eq!(dgram_action(143, 1200), DgramAction::Send);
+        // negotiated but frame larger than the path can carry: drop
+        assert_eq!(dgram_action(1300, 1200), DgramAction::Drop);
+        // exact boundary fits
+        assert_eq!(dgram_action(1200, 1200), DgramAction::Send);
+    }
 }
