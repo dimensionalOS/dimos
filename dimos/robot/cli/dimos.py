@@ -621,6 +621,15 @@ def list_blueprints() -> None:
 
 
 @main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def spy(ctx: typer.Context) -> None:
+    """Universal transport spy: topics, rates, sizes across all pubsub transports."""
+    from dimos.utils.cli.spy.run_spy import main as spy_main
+
+    sys.argv = ["spy", *ctx.args]
+    spy_main()
+
+
+@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def lcmspy(ctx: typer.Context) -> None:
     """LCM spy tool for monitoring LCM messages."""
     from dimos.utils.cli.lcmspy.run_lcmspy import main as lcmspy_main

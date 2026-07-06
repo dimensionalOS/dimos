@@ -115,7 +115,35 @@ class PubSub(PubSubBaseMixin[TopicT, MsgT], ABC):
 #
 # - DiscoveryPubSub: Native support for discovering new topics as they appear.
 #   Provides a default subscribe_all() by subscribing to each discovered topic.
-class AllPubSub(PubSub[TopicT, MsgT], ABC):
+class SubscribeLatestMixin(Generic[TopicT, MsgT], ABC):
+    """Conflated subscribe-all, built on top of subscribe_all().
+
+    Mixed into AllPubSub and DiscoveryPubSub so both expose subscribe_latest().
+    """
+
+    @abstractmethod
+    def subscribe_all(self, callback: Callable[[MsgT, TopicT], Any]) -> Callable[[], None]: ...
+
+    def subscribe_latest(self, callback: Callable[[MsgT, TopicT], Any]) -> Callable[[], None]:
+        """Subscribe to all topics, conflated: newest message per topic wins.
+
+        For consumers that only need the current value per topic and must not
+        lag behind a fast producer (e.g. the rerun bridge). When the callback
+        is slower than the message flow, intermediate messages on a topic are
+        dropped and only the latest is delivered.
+
+        Contract:
+        - The callback runs on a dedicated drain thread, never on the
+          transport's delivery thread.
+        - Per topic, the newest pending message is always eventually delivered
+          (no starvation); intermediate ones may be skipped.
+        - The returned callable unsubscribes the underlying subscribe_all and
+          stops+joins the drain thread.
+        """
+        raise NotImplementedError
+
+
+class AllPubSub(SubscribeLatestMixin[TopicT, MsgT], PubSub[TopicT, MsgT], ABC):
     """Mixin for PubSub that supports subscribing to all topics.
 
     Subclass from this if you support native subscribe-all (e.g. MQTT #, Redis *).
@@ -124,7 +152,13 @@ class AllPubSub(PubSub[TopicT, MsgT], ABC):
 
     @abstractmethod
     def subscribe_all(self, callback: Callable[[MsgT, TopicT], Any]) -> Callable[[], None]:
-        """Subscribe to all topics."""
+        """Subscribe to all topics.
+
+        Contract: delivers EVERY message on every topic this transport can
+        observe — implementations must not conflate, sample, or drop beyond
+        the transport's own delivery semantics. Consumers that only want the
+        newest message per topic use subscribe_latest() instead.
+        """
         ...
 
     def subscribe_new_topics(self, callback: Callable[[TopicT], Any]) -> Callable[[], None]:
@@ -144,7 +178,7 @@ class AllPubSub(PubSub[TopicT, MsgT], ABC):
 
 
 # This is for ros for now
-class DiscoveryPubSub(PubSub[TopicT, MsgT], ABC):
+class DiscoveryPubSub(SubscribeLatestMixin[TopicT, MsgT], PubSub[TopicT, MsgT], ABC):
     """Mixin for PubSub that supports discovery of topics.
 
     Subclass from this if you support topic discovery (e.g. MQTT, Redis, NATS, RabbitMQ).
@@ -187,5 +221,5 @@ class SubscribeAllCapable(Protocol[MsgT_co, TopicT_co]):
     """
 
     def subscribe_all(self, callback: Callable[[Any, Any], Any]) -> Callable[[], None]:
-        """Subscribe to all messages on all topics."""
+        """Subscribe to all messages on all topics (every message, no conflation)."""
         ...
