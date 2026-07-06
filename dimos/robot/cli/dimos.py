@@ -632,7 +632,8 @@ def spy(ctx: typer.Context) -> None:
 @main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def lcmspy(ctx: typer.Context) -> None:
     """Alias for `dimos spy --transport lcm`."""
-    if any(arg == "--transport" or arg.startswith("--transport=") for arg in ctx.args):
+    args = list(ctx.args)
+    if any(arg == "--transport" or arg.startswith("--transport=") for arg in args):
         typer.echo(
             "Error: dimos lcmspy is LCM-only; use `dimos spy --transport ...` "
             "to choose transports.",
@@ -641,7 +642,12 @@ def lcmspy(ctx: typer.Context) -> None:
         raise typer.Exit(2)
     from dimos.utils.cli.spy.run_spy import main as spy_main
 
-    sys.argv = ["spy", "--transport", "lcm", *ctx.args]
+    # `web` must stay first for run_spy.main() to enter web mode; the LCM
+    # filter then applies inside the served child.
+    if args and args[0] == "web":
+        sys.argv = ["spy", "web", "--transport", "lcm", *args[1:]]
+    else:
+        sys.argv = ["spy", "--transport", "lcm", *args]
     spy_main()
 
 

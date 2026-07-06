@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
 from typing import Literal
 
 import pytest
@@ -160,3 +161,32 @@ def test_blueprint_arg_help_required():
         "      * testmodule.spam: str (default: eggs)",
         "",
     ]
+
+
+@pytest.fixture
+def spy_main_argv(monkeypatch):
+    """Stub run_spy.main and capture the sys.argv the lcmspy alias hands it."""
+    import dimos.utils.cli.spy.run_spy as run_spy
+
+    captured: list[list[str]] = []
+    monkeypatch.setattr(sys, "argv", ["dimos"])
+    monkeypatch.setattr(run_spy, "main", lambda: captured.append(list(sys.argv)))
+    return captured
+
+
+def test_lcmspy_alias_prepends_lcm_transport(spy_main_argv):
+    result = CliRunner().invoke(main, ["lcmspy"])
+    assert result.exit_code == 0, result.output
+    assert spy_main_argv == [["spy", "--transport", "lcm"]]
+
+
+def test_lcmspy_alias_keeps_web_mode_first(spy_main_argv):
+    result = CliRunner().invoke(main, ["lcmspy", "web"])
+    assert result.exit_code == 0, result.output
+    assert spy_main_argv == [["spy", "web", "--transport", "lcm"]]
+
+
+def test_lcmspy_alias_rejects_transport_override(spy_main_argv):
+    result = CliRunner().invoke(main, ["lcmspy", "--transport", "zenoh"])
+    assert result.exit_code == 2
+    assert spy_main_argv == []  # never reaches the spy
