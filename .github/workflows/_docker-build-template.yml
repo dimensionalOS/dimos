@@ -132,7 +132,6 @@ jobs:
         if: ${{ inputs.should-run }}
         with:
           driver: docker-container
-          install: true
           use: true
 
       - uses: docker/build-push-action@v7.2.0
