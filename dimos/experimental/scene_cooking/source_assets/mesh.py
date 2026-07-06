@@ -44,11 +44,6 @@ from dimos.simulation.scene_assets.spec import SceneMeshAlignment
 
 _TRIMESH_DUPLICATE_SUFFIX_RE = re.compile(r"_[0-9a-f]{6}$", re.IGNORECASE)
 
-#: Height (metres) the downward probe ray in ``floor_z_under_origin`` starts
-#: from. Must clear any plausible scene ceiling; the hit depth is measured
-#: from this same height, so the two uses must stay equal.
-_FLOOR_PROBE_RAY_HEIGHT_M = 1000.0
-
 
 def _fan_triangulate(
     face_counts: NDArray[np.int32], face_verts: NDArray[np.int32]
@@ -370,33 +365,15 @@ def load_scene_mesh(
     return mesh
 
 
-def floor_z_under_origin(
-    scene_mesh_path: str | Path,
-    alignment: SceneMeshAlignment | None = None,
-) -> float:
-    """Return the first scene surface under world ``x=0, y=0``.
-
-    Falls back to the mesh bbox minimum when the origin ray misses.
-    """
-    import open3d.core as o3c  # type: ignore[import-untyped]
-
-    mesh = load_scene_mesh(scene_mesh_path, alignment=alignment)
-    scene = make_raycasting_scene(mesh)
-    rays = o3c.Tensor(
-        np.array([[0.0, 0.0, _FLOOR_PROBE_RAY_HEIGHT_M, 0.0, 0.0, -1.0]], dtype=np.float32),
-        dtype=o3c.Dtype.Float32,
-    )
-    t_hit = float(scene.cast_rays(rays)["t_hit"].numpy()[0])
-    if np.isfinite(t_hit):
-        return _FLOOR_PROBE_RAY_HEIGHT_M - t_hit
-    bbox = mesh.get_axis_aligned_bounding_box()
-    return float(bbox.min_bound[2])
-
-
 def make_raycasting_scene(
     mesh: o3d.geometry.TriangleMesh,
 ) -> o3d.t.geometry.RaycastingScene:
-    """Wrap a TriangleMesh into Open3D's BVH-backed ray-casting scene."""
+    """Wrap a TriangleMesh into Open3D's BVH-backed ray-casting scene.
+
+    No caller in this package yet: the pimsim mesh-camera sensor (raycast
+    depth camera, on pim/dev) builds its scene with this and lands here
+    with that port.
+    """
     scene = o3d.t.geometry.RaycastingScene()
     scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))
     return scene

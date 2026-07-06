@@ -159,10 +159,6 @@ class SceneCookPlan:
     prototypes: tuple[EntityPrototypePlan, ...] = ()
     stats: dict[str, Any] = field(default_factory=dict)
 
-    @property
-    def has_entities(self) -> bool:
-        return bool(self.entities)
-
     def entities_metadata(self) -> list[dict[str, Any]]:
         return [entity.to_metadata() for entity in self.entities]
 
