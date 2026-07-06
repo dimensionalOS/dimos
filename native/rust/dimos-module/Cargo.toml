@@ -5,9 +5,6 @@ edition = "2021"
 description = "Rust native module SDK for dimos NativeModule framework"
 license = "Apache-2.0"
 
-[features]
-zenoh = ["dep:zenoh"]
-
 [dependencies]
 dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 dimos-module-macros = { version = "=0.1.0", path = "../dimos-module-macros" }
@@ -17,7 +14,7 @@ serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 validator = { version = "0.20", features = ["derive"] }
-zenoh = { version = "1", optional = true }
+zenoh = { version = "1" }
 
 [dev-dependencies]
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
@@ -25,4 +22,3 @@ tracing-test = "0.2"
 
 [[example]]
 name = "transport_bench"
-required-features = ["zenoh"]

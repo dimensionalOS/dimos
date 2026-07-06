@@ -1,4 +1,5 @@
-use dimos_module::{native_config, run, Input, Module, Output, ZenohTransport};
+use dimos_module::{native_config, Input, Module, Output};
+use dimos_native_module_examples::run_over_selected_transport;
 use lcm_msgs::geometry_msgs::{Twist, Vector3};
 
 #[native_config]
@@ -35,8 +36,5 @@ impl Pong {
 
 #[tokio::main]
 async fn main() {
-    let transport = ZenohTransport::new()
-        .await
-        .expect("Failed to create transport");
-    run::<Pong, _>(transport).await;
+    run_over_selected_transport::<Pong>().await;
 }

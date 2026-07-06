@@ -228,6 +228,10 @@ class NativeModule(Module):
 
         env = {**os.environ, **self.config.extra_env}
 
+        # The binary opens whichever transport the coordinator resolved, so its
+        # channels match the topic strings we built for the same backend.
+        env["DIMOS_TRANSPORT"] = global_config.transport
+
         # set Rust logging to match Python level
         env["RUST_LOG"] = _PYTHON_TO_RUST_LEVELS.get(
             os.environ.get("DIMOS_LOG_LEVEL", "").upper(), "info"
