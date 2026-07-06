@@ -113,6 +113,7 @@ def mcp_client() -> McpClient:
     client._tool_registry = {}
     client._direct_tool_payload = None
     client._direct_rpc_calls = {}
+    client._last_user_task = ""
     client.config = MagicMock()
     client.config.mcp_server_url = "http://localhost:9990/mcp"
     return client

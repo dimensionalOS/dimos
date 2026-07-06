@@ -98,6 +98,7 @@ class McpClient(Module):
     _http_client: httpx.Client
     _seq_ids: SequentialIds
     _tool_stream_cleanup: Callable[[], None] | None
+    _last_user_task: str
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -118,6 +119,7 @@ class McpClient(Module):
         self._http_client = httpx.Client(timeout=120.0, trust_env=False)
         self._seq_ids = SequentialIds()
         self._tool_stream_cleanup = None
+        self._last_user_task = ""
 
     def __reduce__(self) -> Any:
         return (self.__class__, (), {})
@@ -189,13 +191,16 @@ class McpClient(Module):
                 "message": _truncate(f"MCP request failed: {exc}"),
                 "risk": "high",
                 "recovery": "Inspect the tool error before retrying.",
+                "task": self._last_user_task,
             }
         )
 
     def _record_tool_outcome(self, name: str, result: dict[str, Any]) -> None:
         if not self._should_record_tool_outcome(name):
             return
-        self._record_tool_payload(_outcome_payload_from_result(name, result))
+        self._record_tool_payload(
+            _outcome_payload_from_result(name, result, task=self._last_user_task)
+        )
 
     def _record_tool_payload(self, payload: dict[str, Any]) -> None:
         try:
@@ -304,6 +309,7 @@ class McpClient(Module):
         super().start()
 
         def _on_human_input(string: str) -> None:
+            self._last_user_task = string.strip()[:200]
             self._message_queue.put(HumanMessage(content=string))
 
         self.register_disposable(Disposable(self.human_input.subscribe(_on_human_input)))
@@ -560,7 +566,9 @@ def _tools_payload_from_skill_infos(skills: list[SkillInfo]) -> dict[str, Any]:
     return {"tools": tools}
 
 
-def _outcome_payload_from_result(name: str, result: dict[str, Any]) -> dict[str, Any]:
+def _outcome_payload_from_result(
+    name: str, result: dict[str, Any], task: str = ""
+) -> dict[str, Any]:
     text = _content_text(result)
     structured = _parse_skill_result_text(text)
     if structured is not None:
@@ -587,6 +595,7 @@ def _outcome_payload_from_result(name: str, result: dict[str, Any]) -> dict[str,
         "message": _truncate(message),
         "risk": _normalize_risk(risk),
         "recovery": _truncate(recovery),
+        "task": task,
     }
 
 
