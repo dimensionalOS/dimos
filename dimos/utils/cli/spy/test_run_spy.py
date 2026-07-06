@@ -12,19 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CLI arg handling for `dimos spy`: --transport parsing, validation, web mode."""
+"""CLI arg handling for `dimos spy`: --transport parsing, validation, LCM-only alias."""
 
+import sys
 from typing import Any
 
 import pytest
 
 from dimos.protocol.pubsub.spy import SOURCE_FACTORIES
-from dimos.utils.cli.spy.run_spy import SpyApp, _parse_transports, _web_command
+from dimos.utils.cli.spy import run_spy
+from dimos.utils.cli.spy.run_spy import SpyApp, _lcm_only_argv, _parse_transports
 
 
 def test_parse_transports_default_is_none():
     assert _parse_transports([]) is None
-    assert _parse_transports(["web"]) is None
 
 
 def test_parse_transports_collects_repeated_flags():
@@ -92,10 +93,27 @@ def test_spy_app_explicit_unavailable_transport_is_hard_error(monkeypatch):
         SpyApp(transports=["zenoh"])
 
 
-def test_web_command_forwards_transport_filters():
-    cmd = _web_command(["--transport", "zenoh"])
-    assert cmd.endswith("run_spy.py --transport zenoh")
+def test_lcm_only_argv_forwards_plain_args():
+    assert _lcm_only_argv([]) == ["spy", "--transport", "lcm"]
+    assert _lcm_only_argv(["--foo", "bar"]) == ["spy", "--transport", "lcm", "--foo", "bar"]
 
 
-def test_web_command_without_filters_serves_bare_script():
-    assert _web_command([]).endswith("run_spy.py")
+def test_lcm_only_argv_rejects_transport_override():
+    with pytest.raises(SystemExit, match="LCM-only"):
+        _lcm_only_argv(["--transport", "zenoh"])
+    with pytest.raises(SystemExit, match="LCM-only"):
+        _lcm_only_argv(["--transport=zenoh"])
+
+
+def test_lcm_main_forwards_args_to_spy(monkeypatch):
+    seen: list[str] = []
+    monkeypatch.setattr(run_spy, "main", lambda: seen.extend(sys.argv))
+    monkeypatch.setattr(sys, "argv", ["lcmspy", "--foo"])
+    run_spy.lcm_main()
+    assert seen == ["spy", "--transport", "lcm", "--foo"]
+
+
+def test_lcm_main_rejects_transport_override(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["lcmspy", "--transport", "zenoh"])
+    with pytest.raises(SystemExit, match="LCM-only"):
+        run_spy.lcm_main()

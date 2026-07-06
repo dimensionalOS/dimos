@@ -92,7 +92,6 @@ because unknown/untyped keys already fail type resolution and are skipped by its
 ```bash
 dimos spy                     # everything, all transports
 dimos spy --transport zenoh   # filter to one transport (repeatable flag)
-dimos spy web                 # serve the TUI in a browser (textual-serve)
 dimos lcmspy                  # deprecated alias for: dimos spy --transport lcm
 ```
 

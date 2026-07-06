@@ -14,9 +14,8 @@
 
 """`dimos spy` TUI: live table of all topics across all pubsub transports.
 
-Textual app (DataTable, 0.5s refresh, theme colors, 'q' to quit, optional
-`spy web` mode via textual-serve). One row per (transport, topic) from
-TransportSpy.snapshot():
+Textual app (DataTable, 0.5s refresh, theme colors, 'q' to quit). One row per
+(transport, topic) from TransportSpy.snapshot():
 
     Transport | Topic | Type | Freq (Hz) | Bandwidth | Total | Age
 
@@ -208,36 +207,31 @@ class SpyApp(App):  # type: ignore[type-arg]
             )
 
 
-def _web_command(argv: list[str]) -> str:
-    """Command line for the textual-serve child: rerun this script with the filter args."""
-    import os
-    import shlex
-    import sys
-
-    return shlex.join([sys.executable, os.path.abspath(__file__), *argv])
-
-
 def main() -> None:
-    """Entry point for `dimos spy` (argv: optional 'web', --transport filters)."""
+    """Entry point for `dimos spy` (argv: --transport filters)."""
     import sys
 
-    argv = sys.argv[1:]
-    if argv and argv[0] == "web":
-        from textual_serve.server import Server  # type: ignore[import-not-found]
+    SpyApp(transports=_parse_transports(sys.argv[1:])).run()
 
-        rest = argv[1:]
-        _parse_transports(rest)  # reject unknown transports before serving
-        server = Server(_web_command(rest))
-        server.serve()
-    else:
-        SpyApp(transports=_parse_transports(argv)).run()
+
+def _lcm_only_argv(args: list[str]) -> list[str]:
+    """Build the `spy` argv for the LCM-only entry points (`lcmspy` / `dimos lcmspy`).
+
+    Rejects an explicit --transport override (these entry points can't choose
+    transports); all other args pass through to `spy`.
+    """
+    if any(a == "--transport" or a.startswith("--transport=") for a in args):
+        raise SystemExit(
+            "Error: lcmspy is LCM-only; use `dimos spy --transport ...` to choose transports."
+        )
+    return ["spy", "--transport", "lcm", *args]
 
 
 def lcm_main() -> None:
     """`lcmspy` console-script shim: the spy over the LCM source only."""
     import sys
 
-    sys.argv = ["lcmspy", "--transport", "lcm"]
+    sys.argv = _lcm_only_argv(sys.argv[1:])
     main()
 
 
