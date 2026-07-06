@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
 from typing import Any
@@ -41,6 +41,10 @@ logger = setup_logger()
 
 OBJECTS_SIDECAR_NAME = "objects.json"
 
+#: Bump to force a rebuild of artifacts cooked by earlier manifest schemas.
+_MANIFEST_VERSION = 1
+_MANIFEST_SUFFIX = ".manifest.json"
+
 
 @dataclass(frozen=True)
 class BrowserCollisionCookResult:
@@ -63,6 +67,12 @@ def cook_browser_collision(
     For scene packages this should stay in source-asset coordinates; the
     browser applies the package alignment to the visual and collision roots
     together.
+
+    Idempotent per input set: a manifest of the effective cook inputs is
+    written next to the artifacts, and they are reused only while it
+    matches. Changing the source, alignment, browser spec, or the resolved
+    collision policy (sidecar skips, split settings, ...) rebuilds both
+    ``collision.glb`` and ``objects.json`` without needing ``rebake``.
     """
     browser_spec = spec or BrowserCollisionSpec()
     if not browser_spec.enabled:
@@ -73,47 +83,97 @@ def cook_browser_collision(
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / browser_spec.output_name
     objects_path = out_dir / OBJECTS_SIDECAR_NAME
+    manifest_path = out_path.with_suffix(_MANIFEST_SUFFIX)
 
-    mesh_cached = out_path.exists() and not rebake
-    objects_cached = objects_path.exists() and not rebake
-    if mesh_cached and objects_cached:
+    effective_collision = collision_spec or CollisionSpec.auto_discover(source)
+    effective_alignment = alignment or SceneMeshAlignment(y_up=False)
+    manifest = _cook_inputs_json(
+        source,
+        alignment=effective_alignment,
+        browser_spec=browser_spec,
+        collision_spec=effective_collision,
+    )
+
+    cached = (
+        not rebake
+        and out_path.exists()
+        and objects_path.exists()
+        and _manifest_matches(manifest_path, manifest)
+    )
+    if cached:
         return BrowserCollisionCookResult(
             path=out_path,
             stats=inspect_scene_asset(out_path).to_json_dict(),
             objects_path=objects_path,
         )
 
-    prims = _load_collision_prims(source, alignment=alignment, collision_spec=collision_spec)
-    stats: dict[str, Any]
-    if mesh_cached:
-        stats = inspect_scene_asset(out_path).to_json_dict()
-    else:
-        mesh = _build_fused_collision_mesh(
-            prims, collision_spec or CollisionSpec.auto_discover(source)
+    prims = _load_collision_prims(
+        source, alignment=effective_alignment, collision_spec=effective_collision
+    )
+    mesh = _build_fused_collision_mesh(prims, effective_collision)
+    original_triangles = len(mesh.triangles)
+    target_faces = int(browser_spec.target_faces)
+    if target_faces > 0 and original_triangles > target_faces:
+        logger.info(
+            "browser collision: simplifying %s triangles -> %s",
+            original_triangles,
+            target_faces,
         )
-        original_triangles = len(mesh.triangles)
-        target_faces = int(browser_spec.target_faces)
-        if target_faces > 0 and original_triangles > target_faces:
-            logger.info(
-                "browser collision: simplifying %s triangles -> %s",
-                original_triangles,
-                target_faces,
-            )
-            mesh = mesh.simplify_quadric_decimation(target_number_of_triangles=target_faces)
-            mesh.remove_degenerate_triangles()
-            mesh.remove_duplicated_triangles()
-            mesh.remove_duplicated_vertices()
-            mesh.remove_non_manifold_edges()
-        _write_glb(mesh, out_path)
-        stats = inspect_scene_asset(out_path).to_json_dict()
-        stats["source_triangles"] = original_triangles
-        stats["target_faces"] = target_faces
+        mesh = mesh.simplify_quadric_decimation(target_number_of_triangles=target_faces)
+        mesh.remove_degenerate_triangles()
+        mesh.remove_duplicated_triangles()
+        mesh.remove_duplicated_vertices()
+        mesh.remove_non_manifold_edges()
+    _write_glb(mesh, out_path)
+    stats: dict[str, Any] = inspect_scene_asset(out_path).to_json_dict()
+    stats["source_triangles"] = original_triangles
+    stats["target_faces"] = target_faces
 
     objects = extract_scene_objects(prims)
-    if not objects_cached:
-        _write_objects_json(objects_path, objects)
+    _write_objects_json(objects_path, objects)
     stats["objects"] = len(objects)
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     return BrowserCollisionCookResult(path=out_path, stats=stats, objects_path=objects_path)
+
+
+def _cook_inputs_json(
+    source: Path,
+    *,
+    alignment: SceneMeshAlignment,
+    browser_spec: BrowserCollisionSpec,
+    collision_spec: CollisionSpec,
+) -> dict[str, Any]:
+    """Effective inputs that shape ``collision.glb`` / ``objects.json``.
+
+    Round-tripped through JSON so comparing against the loaded manifest
+    is exact (tuples become lists, keys sorted).
+    """
+    st = source.stat()
+    return json.loads(  # type: ignore[no-any-return]
+        json.dumps(
+            {
+                "manifest_version": _MANIFEST_VERSION,
+                "source": {
+                    "name": source.name,
+                    "size": st.st_size,
+                    "mtime_ns": st.st_mtime_ns,
+                },
+                "alignment": asdict(alignment),
+                "browser_spec": asdict(browser_spec),
+                "collision_spec": asdict(collision_spec),
+            },
+            sort_keys=True,
+        )
+    )
+
+
+def _manifest_matches(path: Path, expected: dict[str, Any]) -> bool:
+    if not path.exists():
+        return False
+    try:
+        return bool(json.loads(path.read_text()) == expected)
+    except json.JSONDecodeError:
+        return False
 
 
 def _write_glb(mesh: o3d.geometry.TriangleMesh, path: Path) -> None:
