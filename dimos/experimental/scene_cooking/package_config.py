@@ -54,23 +54,9 @@ class BrowserVisualSpec:
         return self.output_name or f"visual.{self.target_key}.glb"
 
 
+#: Per-target overrides layered on top of ``BrowserVisualSpec``'s defaults.
+#: "rerun" has no entry here -- its values *are* the dataclass defaults.
 _BROWSER_VISUAL_PROFILES: dict[str, dict[str, Any]] = {
-    "rerun": {
-        "optimizer": "gltfpack",
-        "simplify_ratio": 0.3,
-        "simplify_error": 0.02,
-        "texture_format": None,
-        "max_texture_size": None,
-        "normalize_textures": True,
-        "quantize": False,
-        "use_gpu_instancing": False,
-        "demote_required_extensions": ("KHR_texture_transform",),
-        "max_meshes": 200,
-        "max_materials": 50,
-        "max_textures": 750,
-        "max_vertices": 750_000,
-        "max_vertex_growth_ratio": 1.25,
-    },
     "babylon": {
         "optimizer": "gltfpack",
         "simplify_ratio": 0.3,
@@ -104,7 +90,7 @@ _BROWSER_VISUAL_PROFILES: dict[str, dict[str, Any]] = {
         "max_vertex_growth_ratio": 1.5,
     },
 }
-BROWSER_VISUAL_TARGETS = tuple(sorted(_BROWSER_VISUAL_PROFILES))
+BROWSER_VISUAL_TARGETS = tuple(sorted({"rerun", *_BROWSER_VISUAL_PROFILES}))
 
 
 def browser_visual_spec_for_target(
@@ -113,13 +99,10 @@ def browser_visual_spec_for_target(
 ) -> BrowserVisualSpec:
     """Build a visual cook spec for a named browser/viewer target."""
     target_key = target.strip().lower()
-    try:
-        values = dict(_BROWSER_VISUAL_PROFILES[target_key])
-    except KeyError as exc:
+    if target_key not in BROWSER_VISUAL_TARGETS:
         known = ", ".join(BROWSER_VISUAL_TARGETS)
-        raise ValueError(
-            f"unknown browser visual target {target!r}; expected one of: {known}"
-        ) from exc
+        raise ValueError(f"unknown browser visual target {target!r}; expected one of: {known}")
+    values = dict(_BROWSER_VISUAL_PROFILES.get(target_key, {}))
     values.update(overrides)
     return BrowserVisualSpec(target=target_key, **values)
 

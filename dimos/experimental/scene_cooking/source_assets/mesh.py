@@ -37,14 +37,52 @@ import re
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 import open3d as o3d  # type: ignore[import-untyped]
 
 from dimos.simulation.scene_assets.spec import SceneMeshAlignment
 
 _TRIMESH_DUPLICATE_SUFFIX_RE = re.compile(r"_[0-9a-f]{6}$", re.IGNORECASE)
 
+#: Height (metres) the downward probe ray in ``floor_z_under_origin`` starts
+#: from. Must clear any plausible scene ceiling; the hit depth is measured
+#: from this same height, so the two uses must stay equal.
+_FLOOR_PROBE_RAY_HEIGHT_M = 1000.0
 
-def _world_rotation(alignment: SceneMeshAlignment) -> np.ndarray:
+
+def _fan_triangulate(
+    face_counts: NDArray[np.int32], face_verts: NDArray[np.int32]
+) -> NDArray[np.int32]:
+    """Vectorized fan triangulation of USD polygonal faces.
+
+    For a face with local vertex indices ``v0..v_{n-1}`` (``n =
+    face_counts[i]``), emits ``(v0, vk, vk+1)`` for ``k = 1..n-2`` -- the
+    same result as nested Python loops over faces and ``k``, without the
+    per-triangle Python overhead. Returns ``(T, 3)`` int32 indices into
+    ``face_verts``' referent (empty when every face is a degenerate
+    <3-gon).
+    """
+    counts = np.asarray(face_counts, dtype=np.int64)
+    if len(counts) == 0:
+        return np.empty((0, 3), dtype=np.int32)
+    face_starts = np.concatenate(([0], np.cumsum(counts)[:-1]))
+    tri_counts = np.maximum(counts - 2, 0)
+    total_tris = int(tri_counts.sum())
+    if total_tris == 0:
+        return np.empty((0, 3), dtype=np.int32)
+
+    face_id = np.repeat(np.arange(len(counts)), tri_counts)
+    tri_start_in_face = np.repeat(np.cumsum(tri_counts) - tri_counts, tri_counts)
+    k = np.arange(total_tris) - tri_start_in_face + 1  # 1-based fan index
+
+    base = face_starts[face_id]
+    v0 = face_verts[base]
+    v1 = face_verts[base + k]
+    v2 = face_verts[base + k + 1]
+    return np.stack([v0, v1, v2], axis=1).astype(np.int32)
+
+
+def _world_rotation(alignment: SceneMeshAlignment) -> NDArray[np.float64]:
     """Compose the y-up swap + ZYX Euler into one 3x3."""
     rad = np.radians(alignment.rotation_zyx_deg)
     cz, sz = np.cos(rad[0]), np.sin(rad[0])
@@ -64,8 +102,8 @@ def _world_rotation(alignment: SceneMeshAlignment) -> np.ndarray:
 
 
 def _average_per_face_vertex(
-    per_fv: np.ndarray, face_verts: np.ndarray, n_verts: int
-) -> np.ndarray:
+    per_fv: NDArray[np.floating[Any]], face_verts: NDArray[np.int32], n_verts: int
+) -> NDArray[np.float64]:
     """Scatter-average ``(n_face_verts, 3)`` values onto ``(n_verts, 3)`` indices."""
     out = np.zeros((n_verts, 3), dtype=np.float32)
     counts = np.zeros(n_verts, dtype=np.int32)
@@ -78,9 +116,9 @@ def _average_per_face_vertex(
 def _color_from_displaycolor(
     mesh: Any,
     n_verts: int,
-    face_counts: np.ndarray,
-    face_verts: np.ndarray,
-) -> np.ndarray | None:
+    face_counts: NDArray[np.int32],
+    face_verts: NDArray[np.int32],
+) -> NDArray[np.floating[Any]] | None:
     """Per-vertex RGB from ``primvars:displayColor`` if present and valued.
 
     Handles the four standard interpolations: ``constant`` / ``vertex`` /
@@ -118,8 +156,8 @@ def _color_from_displaycolor(
 
 
 def _color_from_material(
-    prim: Any, material_color_cache: dict[str, np.ndarray | None]
-) -> np.ndarray | None:
+    prim: Any, material_color_cache: dict[str, NDArray[np.float32] | None]
+) -> NDArray[np.float32] | None:
     """Per-prim RGB from the bound material's ``inputs:diffuseColor``.
 
     Walks ``UsdShadeMaterialBindingAPI`` → surface shader → ``inputs:diffuseColor``,
@@ -146,7 +184,7 @@ def _color_from_material(
     return color
 
 
-def _resolve_diffuse_color(material: Any) -> np.ndarray | None:
+def _resolve_diffuse_color(material: Any) -> NDArray[np.float32] | None:
     """Pull a literal ``diffuseColor`` out of a UsdShade material's surface shader."""
     from pxr import UsdShade  # type: ignore[import-not-found, import-untyped]
 
@@ -188,12 +226,12 @@ def _load_usd_mesh(path: Path) -> o3d.geometry.TriangleMesh:
     if stage is None:
         raise RuntimeError(f"could not open USD stage: {path}")
 
-    all_pts: list[np.ndarray] = []
-    all_tris: list[np.ndarray] = []
-    all_colors: list[np.ndarray] = []
+    all_pts: list[NDArray[np.float32]] = []
+    all_tris: list[NDArray[np.int32]] = []
+    all_colors: list[NDArray[np.floating[Any]]] = []
     any_color = False
     vtx_offset = 0
-    material_color_cache: dict[str, np.ndarray | None] = {}
+    material_color_cache: dict[str, NDArray[np.float32] | None] = {}
 
     for prim in stage.Traverse():
         if not prim.IsA(UsdGeom.Mesh):
@@ -229,23 +267,11 @@ def _load_usd_mesh(path: Path) -> o3d.geometry.TriangleMesh:
             prim_colors = np.full((len(pts), 3), 0.7, dtype=np.float32)
 
         # USD allows quads / n-gons; fan-triangulate so o3d gets pure tris.
-        tris: list[tuple[int, int, int]] = []
-        cursor = 0
-        for n in face_counts:
-            for k in range(1, n - 1):
-                tris.append(
-                    (
-                        int(face_verts[cursor]) + vtx_offset,
-                        int(face_verts[cursor + k]) + vtx_offset,
-                        int(face_verts[cursor + k + 1]) + vtx_offset,
-                    )
-                )
-            cursor += n
-
-        if not tris:
+        tris = _fan_triangulate(face_counts, face_verts)
+        if len(tris) == 0:
             continue
         all_pts.append(pts_world)
-        all_tris.append(np.asarray(tris, dtype=np.int32))
+        all_tris.append((tris + vtx_offset).astype(np.int32))
         all_colors.append(prim_colors)
         vtx_offset += len(pts_world)
 
@@ -302,8 +328,8 @@ def load_scene_mesh(
             faces_world = np.asarray(scene_or_mesh.faces, dtype=np.int64)
         else:
             scene = scene_or_mesh
-            verts_chunks: list[np.ndarray] = []
-            faces_chunks: list[np.ndarray] = []
+            verts_chunks: list[NDArray[np.float64]] = []
+            faces_chunks: list[NDArray[np.int64]] = []
             v_off = 0
             for node_name in scene.graph.nodes_geometry:
                 xform, geom_name = scene.graph[node_name]
@@ -357,12 +383,12 @@ def floor_z_under_origin(
     mesh = load_scene_mesh(scene_mesh_path, alignment=alignment)
     scene = make_raycasting_scene(mesh)
     rays = o3c.Tensor(
-        np.array([[0.0, 0.0, 1000.0, 0.0, 0.0, -1.0]], dtype=np.float32),
+        np.array([[0.0, 0.0, _FLOOR_PROBE_RAY_HEIGHT_M, 0.0, 0.0, -1.0]], dtype=np.float32),
         dtype=o3c.Dtype.Float32,
     )
     t_hit = float(scene.cast_rays(rays)["t_hit"].numpy()[0])
     if np.isfinite(t_hit):
-        return 1000.0 - t_hit
+        return _FLOOR_PROBE_RAY_HEIGHT_M - t_hit
     bbox = mesh.get_axis_aligned_bounding_box()
     return float(bbox.min_bound[2])
 
@@ -390,10 +416,10 @@ class ScenePrimMesh:
     """Sanitized identifier (safe for MJCF asset names) — typically the
     USD prim path with non-alphanumerics replaced."""
 
-    vertices: np.ndarray
+    vertices: NDArray[np.float32]
     """``(N, 3)`` float32, in world frame after alignment."""
 
-    triangles: np.ndarray
+    triangles: NDArray[np.int32]
     """``(M, 3)`` int32 vertex indices."""
 
     prim_path: str | None = None
@@ -670,19 +696,8 @@ def load_scene_prims(
         pts_world = (R @ (s * pts_stage).T).T + T
 
         # Triangulate any quads / n-gons (vertex indices are local to this prim now).
-        tris: list[tuple[int, int, int]] = []
-        cursor = 0
-        for n in face_counts:
-            for k in range(1, n - 1):
-                tris.append(
-                    (
-                        int(face_verts[cursor]),
-                        int(face_verts[cursor + k]),
-                        int(face_verts[cursor + k + 1]),
-                    )
-                )
-            cursor += n
-        if not tris:
+        tris = _fan_triangulate(face_counts, face_verts)
+        if len(tris) == 0:
             continue
 
         # MJCF asset names: strip the leading slash, swap remaining

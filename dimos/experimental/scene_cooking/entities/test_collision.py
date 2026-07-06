@@ -16,13 +16,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
+import coacd  # noqa: F401  ensures collection fails loudly if coacd is missing
+import open3d as o3d
 
 from dimos.experimental.scene_cooking.entities.collision import cook_entity_collision_hulls
 
 
 def _write_box_mesh(path: Path) -> None:
-    o3d = pytest.importorskip("open3d")
     mesh = o3d.geometry.TriangleMesh.create_box(0.1, 0.1, 0.1)
     o3d.io.write_triangle_mesh(str(path), mesh)
 
@@ -30,7 +30,6 @@ def _write_box_mesh(path: Path) -> None:
 def test_cook_entity_collision_hulls(tmp_path: Path) -> None:
     source = tmp_path / "visual.obj"
     _write_box_mesh(source)
-    pytest.importorskip("coacd")
     out_dir = tmp_path / "mujoco_collision"
 
     hulls = cook_entity_collision_hulls(source, out_dir)
@@ -44,7 +43,6 @@ def test_cook_entity_collision_hulls(tmp_path: Path) -> None:
 def test_cook_entity_collision_hulls_is_idempotent(tmp_path: Path) -> None:
     source = tmp_path / "visual.obj"
     _write_box_mesh(source)
-    pytest.importorskip("coacd")
     out_dir = tmp_path / "mujoco_collision"
 
     first = cook_entity_collision_hulls(source, out_dir)
@@ -60,7 +58,6 @@ def test_cook_entity_collision_hulls_is_idempotent(tmp_path: Path) -> None:
 
 
 def test_cook_entity_collision_hulls_unreadable_mesh(tmp_path: Path) -> None:
-    pytest.importorskip("open3d")
     source = tmp_path / "visual.obj"
     source.write_text("not a mesh\n")
 

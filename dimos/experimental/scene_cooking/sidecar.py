@@ -225,12 +225,12 @@ class SceneCookSidecar:
         for suffix in _COOK_SIDECAR_SUFFIXES:
             sidecar = source.with_suffix(suffix)
             if sidecar.exists():
-                logger.info("loading scene cook sidecar: %s", sidecar)
+                logger.info("loading scene cook sidecar", path=sidecar)
                 return cls.from_json(sidecar)
 
         legacy_collision = source.with_suffix(".collision.json")
         if legacy_collision.exists():
-            logger.info("loading legacy collision sidecar: %s", legacy_collision)
+            logger.info("loading legacy collision sidecar", path=legacy_collision)
             return cls(path=legacy_collision, collision=CollisionSpec.from_json(legacy_collision))
         return cls()
 

@@ -1605,8 +1605,6 @@ all = [
     { name = "onnxruntime" },
     { name = "onnxruntime-gpu", marker = "platform_machine == 'x86_64'" },
     { name = "open-clip-torch" },
-    { name = "open3d", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
-    { name = "open3d-unofficial-arm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "openai" },
     { name = "opencv-contrib-python" },
     { name = "pillow" },
@@ -1739,8 +1737,6 @@ perception = [
 ]
 scene = [
     { name = "coacd" },
-    { name = "open3d", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
-    { name = "open3d-unofficial-arm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "trimesh" },
     { name = "usd-core" },
 ]
@@ -2035,9 +2031,7 @@ requires-dist = [
     { name = "onnxruntime-gpu", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = ">=1.17.1" },
     { name = "open-clip-torch", marker = "extra == 'misc'", specifier = "==3.2.0" },
     { name = "open3d", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'", specifier = ">=0.18.0" },
-    { name = "open3d", marker = "(platform_machine != 'aarch64' and extra == 'scene') or (sys_platform != 'linux' and extra == 'scene')", specifier = ">=0.18.0" },
     { name = "open3d-unofficial-arm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = ">=0.19.0.post9" },
-    { name = "open3d-unofficial-arm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'scene'", specifier = ">=0.19.0.post9" },
     { name = "openai", marker = "extra == 'agents'" },
     { name = "opencv-contrib-python", marker = "extra == 'apriltag'", specifier = "==4.10.0.84" },
     { name = "opencv-python" },

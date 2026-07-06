@@ -22,6 +22,12 @@ import struct
 from PIL import Image
 
 from dimos.experimental.scene_cooking.source_assets.glb import (
+    GLB_BIN_CHUNK_TYPE,
+    GLB_CHUNK_HEADER_SIZE,
+    GLB_HEADER_SIZE,
+    GLB_JSON_CHUNK_TYPE,
+    GLB_MAGIC,
+    GLB_VERSION,
     buffer_view_bytes,
     demote_required_extensions,
     normalize_embedded_textures,
@@ -115,12 +121,18 @@ def _write_test_glb(
     json_chunk = json.dumps(gltf, separators=(",", ":")).encode("utf-8")
     json_chunk = _padded(json_chunk, b" ")
     bin_bytes = bytes(bin_chunk)
-    total_length = 12 + 8 + len(json_chunk) + 8 + len(bin_bytes)
+    total_length = (
+        GLB_HEADER_SIZE
+        + GLB_CHUNK_HEADER_SIZE
+        + len(json_chunk)
+        + GLB_CHUNK_HEADER_SIZE
+        + len(bin_bytes)
+    )
     with path.open("wb") as file:
-        file.write(struct.pack("<4sII", b"glTF", 2, total_length))
-        file.write(struct.pack("<II", len(json_chunk), 0x4E4F534A))
+        file.write(struct.pack("<4sII", GLB_MAGIC, GLB_VERSION, total_length))
+        file.write(struct.pack("<II", len(json_chunk), GLB_JSON_CHUNK_TYPE))
         file.write(json_chunk)
-        file.write(struct.pack("<II", len(bin_bytes), 0x004E4942))
+        file.write(struct.pack("<II", len(bin_bytes), GLB_BIN_CHUNK_TYPE))
         file.write(bin_bytes)
 
 

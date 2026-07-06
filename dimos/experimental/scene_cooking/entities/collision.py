@@ -36,7 +36,11 @@ decomposition and no per-machine cache; the package is self-contained.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
+import numpy as np
+
+from dimos.experimental.scene_cooking.coacd_util import silence_coacd_logging
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -59,9 +63,9 @@ def cook_entity_collision_hulls(
     """Decompose one entity mesh into convex hulls under ``out_dir``.
 
     Idempotent: existing ``hull_*.obj`` files are reused unless ``rebake``.
-    Falls back to a single convex hull when CoACD is unavailable or fails
-    on the mesh. Returns ``[]`` (with a warning) when the mesh can't be
-    read at all — the runtime composer then uses an AABB box.
+    Falls back to a single convex hull when CoACD fails on the mesh.
+    Returns ``[]`` (with a warning) when the mesh can't be read at all —
+    the runtime composer then uses an AABB box.
     """
     mesh_path = Path(visual_mesh_path)
     out_dir = Path(out_dir)
@@ -88,8 +92,6 @@ def cook_entity_collision_hulls(
     for stale in out_dir.glob("hull_*.obj"):
         stale.unlink()
 
-    import numpy as np
-
     out_paths: list[Path] = []
     if parts:
         for i, (vertices, triangles) in enumerate(parts):
@@ -108,19 +110,16 @@ def cook_entity_collision_hulls(
     return out_paths
 
 
-def _run_coacd(mesh: object, mesh_path: Path) -> list[tuple[object, object]]:
+def _run_coacd(mesh: Any, mesh_path: Path) -> list[tuple[Any, Any]]:
     """CoACD parts for an open3d mesh; ``[]`` means fall back to one hull."""
+    import coacd  # type: ignore[import-not-found, import-untyped]
+
+    silence_coacd_logging()
+
     try:
-        import coacd  # type: ignore[import-not-found, import-untyped]
-        import numpy as np
-
-        if not getattr(_run_coacd, "_coacd_silenced", False):
-            coacd.set_log_level("error")
-            _run_coacd._coacd_silenced = True  # type: ignore[attr-defined]
-
         cm = coacd.Mesh(
-            np.asarray(mesh.vertices, dtype=np.float64),  # type: ignore[attr-defined]
-            np.asarray(mesh.triangles, dtype=np.int32),  # type: ignore[attr-defined]
+            np.asarray(mesh.vertices, dtype=np.float64),
+            np.asarray(mesh.triangles, dtype=np.int32),
         )
         parts = coacd.run_coacd(
             cm,
@@ -130,9 +129,9 @@ def _run_coacd(mesh: object, mesh_path: Path) -> list[tuple[object, object]]:
             mcts_iterations=_COACD_MCTS_ITERATIONS,
             mcts_nodes=_COACD_MCTS_NODES,
         )
-        return list(parts)
-    except Exception as exc:
+    except (AssertionError, RuntimeError, ValueError) as exc:
         logger.warning(
             "entity hulls: CoACD failed for %s (%s); using single convex hull", mesh_path, exc
         )
         return []
+    return list(parts)
