@@ -16,8 +16,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import coacd  # noqa: F401  ensures collection fails loudly if coacd is missing
+# coacd must load after open3d: importing coacd first segfaults open3d's
+# extension module (clashing vendored native libs). Plain import (not
+# importorskip) so collection fails loudly if coacd is missing.
+# isort: off
 import open3d as o3d
+import coacd  # noqa: F401
+
+# isort: on
 
 from dimos.experimental.scene_cooking.entities.collision import cook_entity_collision_hulls
 

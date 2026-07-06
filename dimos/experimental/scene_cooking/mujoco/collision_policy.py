@@ -899,7 +899,15 @@ def _coacd_decompose(
     CoACD is imported lazily — it ships its own C library and we don't
     want every import of ``collision_spec`` to pay that cost.
     """
+    # open3d must load before coacd — importing coacd into a process that
+    # later loads open3d segfaults open3d's extension module (clashing
+    # vendored native libs). This function only needs numpy, so force the
+    # safe order for whatever loads open3d afterwards.
+    # isort: off
+    import open3d  # noqa: F401  # type: ignore[import-untyped]
     import coacd  # type: ignore[import-not-found, import-untyped]
+
+    # isort: on
 
     silence_coacd_logging()
 
