@@ -26,7 +26,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-06-24T02:38:16.593447473Z"
+exclude-newer = "2026-06-29T13:45:42.580627695Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -1891,6 +1891,7 @@ project-deps = [
 ]
 tests = [
     { name = "chromadb" },
+    { name = "coacd" },
     { name = "coverage" },
     { name = "dimos", extra = ["apriltag", "cpu", "drone", "learning", "mapping", "visualization", "web"] },
     { name = "einops" },
@@ -1927,6 +1928,7 @@ tests = [
     { name = "torch" },
     { name = "torchreid" },
     { name = "transformers", extra = ["torch"] },
+    { name = "trimesh" },
     { name = "ultralytics" },
     { name = "unitree-webrtc-connect" },
     { name = "viser", extra = ["urdf"], marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
@@ -1935,6 +1937,7 @@ tests = [
 ]
 tests-self-hosted = [
     { name = "chromadb" },
+    { name = "coacd" },
     { name = "coverage" },
     { name = "dimos", extra = ["agents", "apriltag", "cpu", "drone", "learning", "manipulation", "mapping", "misc", "perception", "sim", "unitree", "visualization", "web"] },
     { name = "einops" },
@@ -1973,6 +1976,7 @@ tests-self-hosted = [
     { name = "torch" },
     { name = "torchreid" },
     { name = "transformers", extra = ["torch"] },
+    { name = "trimesh" },
     { name = "ultralytics" },
     { name = "unitree-webrtc-connect" },
     { name = "viser", extra = ["urdf"], marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
@@ -2160,6 +2164,7 @@ project-deps = [
 ]
 tests = [
     { name = "chromadb", specifier = ">=1.0.0" },
+    { name = "coacd", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
     { name = "dimos", extras = ["web", "visualization"] },
@@ -2197,6 +2202,7 @@ tests = [
     { name = "torch" },
     { name = "torchreid", specifier = "==0.2.5" },
     { name = "transformers", extras = ["torch"], specifier = "==4.53.3" },
+    { name = "trimesh", specifier = ">=4.0.0" },
     { name = "ultralytics", specifier = ">=8.3.70" },
     { name = "unitree-webrtc-connect", specifier = ">=2.1.2" },
     { name = "viser", extras = ["urdf"], marker = "platform_machine != 'aarch64' or sys_platform != 'linux'", specifier = ">=1.0.29" },
@@ -2205,6 +2211,7 @@ tests = [
 ]
 tests-self-hosted = [
     { name = "chromadb", specifier = ">=1.0.0" },
+    { name = "coacd", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },
     { name = "dimos", extras = ["agents", "perception", "manipulation", "sim", "unitree", "misc"] },
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
@@ -2245,6 +2252,7 @@ tests-self-hosted = [
     { name = "torch" },
     { name = "torchreid", specifier = "==0.2.5" },
     { name = "transformers", extras = ["torch"], specifier = "==4.53.3" },
+    { name = "trimesh", specifier = ">=4.0.0" },
     { name = "ultralytics", specifier = ">=8.3.70" },
     { name = "unitree-webrtc-connect", specifier = ">=2.1.2" },
     { name = "viser", extras = ["urdf"], marker = "platform_machine != 'aarch64' or sys_platform != 'linux'", specifier = ">=1.0.29" },

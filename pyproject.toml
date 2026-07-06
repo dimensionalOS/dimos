@@ -393,6 +393,10 @@ tests = [
     # Deps the lint job swaps for stubs (`stubs/<pkg>/` or `types-*`):
     # the real packages are needed at test time, stubs cover mypy.
     "dimos[apriltag,mapping,drone,cpu,learning]",
+    # Scene-cooking tests need these two from the `scene` extra. The full
+    # extra can't be included: usd-core ships no linux-aarch64 wheel.
+    "coacd>=1.0.0",
+    "trimesh>=4.0.0",
     "mujoco>=3.3.4",
     "pygame>=2.6.1",
     "python-can>=4",
