@@ -4,7 +4,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { TopicInfo } from "@dimos/react";
 import { useDimosClient, useTopicRef, useTopics, useTopicStats } from "../dimos";
-import { drawCloud } from "./clouds/drawCloud";
+import { DRACO_TYPE } from "@dimos/web";
+import { type CloudLike, drawCloud, synthCloud } from "./clouds/drawCloud";
+import { decodeDracoGeometry } from "./clouds/dracoDecode";
+
+type LidarEnc = "raw" | "ds" | "draco";
 
 const LIDAR_CAP = 4000; // max points rendered per frame (stride-decimated)
 const DEFAULT_SCALE = 64; // px per metre at rest
@@ -62,8 +66,23 @@ export function WorldView() {
   const topics = useTopics();
   const poseTopic = pick(topics, "geometry_msgs.PoseStamped", ["/odom"]);
   const mapTopic = pick(topics, "nav_msgs.OccupancyGrid", ["/map", "/navigation_costmap"]);
-  const lidarTopic = pick(topics, "sensor_msgs.PointCloud2", ["/lidar"]);
+  const lidarBase = pick(topics, "sensor_msgs.PointCloud2", ["/lidar"]);
   const scanTopic = pick(topics, "sensor_msgs.LaserScan", ["/scan"]);
+  // lidar encoding toggle: view the lidar layer as raw / gateway-downsampled (_ds) / Draco (_draco).
+  const [lidarEnc, setLidarEnc] = useState<LidarEnc>("raw");
+  const hasDs = !!lidarBase && topics.some((t) => t.topic === lidarBase + "_ds");
+  const hasDraco = !!lidarBase &&
+    topics.some((t) => t.topic === lidarBase + "_draco" && t.type === DRACO_TYPE);
+  const enc: LidarEnc = (lidarEnc === "ds" && !hasDs) || (lidarEnc === "draco" && !hasDraco)
+    ? "raw"
+    : lidarEnc;
+  const lidarTopic = !lidarBase ? null : enc === "raw" ? lidarBase : lidarBase + "_" + enc;
+  const lidarEncRef = useRef(enc);
+  lidarEncRef.current = enc;
+  // Draco decode-then-store (blob-identity trigger, world frame → drawCloud via synthCloud).
+  const lidarDraco = useRef<CloudLike | null>(null);
+  const lidarBlob = useRef<Uint8Array | null>(null);
+  const lidarDecoding = useRef(false);
   const pathTopic = pick(topics, "nav_msgs.Path", ["/path"]);
 
   // on/off gates the subscription — OFF passes null to useTopicRef, which ref-counts down and unsubscribes.
@@ -232,7 +251,22 @@ export function WorldView() {
       }
 
       // lidar PointCloud2 (world frame) — height-coloured top-down points (shared with CloudCompare).
-      drawCloud(ctx, lidar.current.data, W, H, LIDAR_CAP);
+      // Draco encoding arrives as an envelope; decode per new blob → synthCloud → drawCloud.
+      if (lidarEncRef.current === "draco") {
+        const env = lidar.current.data as { _draco?: Uint8Array } | undefined;
+        if (env?._draco && env._draco !== lidarBlob.current && !lidarDecoding.current) {
+          lidarDecoding.current = true;
+          lidarBlob.current = env._draco;
+          decodeDracoGeometry(env._draco)
+            .then((xyz) => {
+              if (xyz) lidarDraco.current = synthCloud(xyz);
+            })
+            .finally(() => (lidarDecoding.current = false));
+        }
+        drawCloud(ctx, lidarDraco.current, W, H, LIDAR_CAP);
+      } else {
+        drawCloud(ctx, lidar.current.data, W, H, LIDAR_CAP);
+      }
 
       const s = scan.current.data;
       if (s?.ranges) {
@@ -325,6 +359,8 @@ export function WorldView() {
     ["scan", scanTopic, "#27d3e0"],
     ["path", pathTopic, "#4ade80"],
   ];
+  // encoding options for the lidar layer, offered only when the cloud plane is transcoding it.
+  const encOpts: [LidarEnc, string][] = [["raw", "raw"], ...(hasDs ? [["ds", "ds"]] as [LidarEnc, string][] : []), ...(hasDraco ? [["draco", "draco"]] as [LidarEnc, string][] : [])];
 
   return (
     <div
@@ -361,6 +397,20 @@ export function WorldView() {
               onToggle={() => setLayers((s) => ({ ...s, [k]: !s[k] }))}
             />
           ))}
+        {layers.lidar && encOpts.length > 1 && (
+          <div className="enc-toggle" title="lidar encoding — raw vs gateway-compressed" style={{ display: "flex", gap: 2, marginLeft: 2 }}>
+            {encOpts.map(([e, label]) => (
+              <button
+                key={e}
+                className={enc === e ? "tab tab-active" : "tab"}
+                onClick={() => setLidarEnc(e)}
+                style={{ padding: "2px 7px", fontSize: 10 }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
         <canvas

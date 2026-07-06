@@ -38,6 +38,43 @@ export function cloudBounds(
   return minX === Infinity ? null : { minX, maxX, minY, maxY };
 }
 
+/** Extract ALL points as an interleaved xyz Float32Array (N×3) — the vertex buffer a WebGL point
+ *  renderer wants. Skips non-finite points; z defaults to 0 if the cloud has no z field. */
+export function cloudToXYZ(cloud: CloudLike | null | undefined): Float32Array | null {
+  if (!cloud?.data?.byteLength || !cloud.point_step || !cloud.fields?.length) return null;
+  const fx = cloud.fields.find((f) => f.name === "x");
+  const fy = cloud.fields.find((f) => f.name === "y");
+  const fz = cloud.fields.find((f) => f.name === "z");
+  if (!fx || !fy) return null;
+  const dv = new DataView(cloud.data.buffer, cloud.data.byteOffset, cloud.data.byteLength);
+  const le = !cloud.is_bigendian;
+  const n = Math.floor(cloud.data.byteLength / cloud.point_step);
+  const out = new Float32Array(n * 3);
+  let m = 0;
+  for (let i = 0; i < n; i++) {
+    const b = i * cloud.point_step;
+    const x = dv.getFloat32(b + fx.offset, le);
+    const y = dv.getFloat32(b + fy.offset, le);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    const z = fz ? dv.getFloat32(b + fz.offset, le) : 0;
+    out[m++] = x;
+    out[m++] = y;
+    out[m++] = z;
+  }
+  return m === out.length ? out : out.subarray(0, m);
+}
+
+/** Wrap a Draco-decoded interleaved xyz Float32Array as a PointCloud2-shaped object so the 2D
+ *  `drawCloud` renders it unchanged (contiguous float32 xyz → point_step 12, little-endian). */
+export function synthCloud(xyz: Float32Array): CloudLike {
+  return {
+    data: new Uint8Array(xyz.buffer, xyz.byteOffset, xyz.byteLength),
+    point_step: 12,
+    fields: [{ name: "x", offset: 0 }, { name: "y", offset: 4 }, { name: "z", offset: 8 }],
+    is_bigendian: 0,
+  };
+}
+
 /** Draw the cloud height-coloured (blue→amber by z), stride-decimated to `cap` points. Returns the
  *  total point count in the frame. */
 export function drawCloud(

@@ -1,17 +1,20 @@
 // CloudCompare — the same live PointCloud2 rendered three ways side-by-side: raw, gateway-downsampled
-// (_ds), and Draco-decoded (_draco). All three share ONE auto-fit view (computed from the raw cloud's
-// xy bounds) so the comparison is honest — differences are density/fidelity, not zoom. Each cell shows
-// live kB/s (useTopicStats) + point count, so you see the bandwidth win beside the visual fidelity.
-// The Draco cell decodes the wasm geometry in an async decoding-guarded rAF (mirrors useImageTopic);
-// if draco3d isn't installed it falls back to the on-wire stats with a note.
+// (_ds), and Draco-decoded (_draco), in a shared 3D orbit view (drag any cell → all rotate together).
+// The three cells are FRAME-SYNCED by source timestamp so "same cloud" is literally the same scan
+// (equal point counts), and the Draco cell decodes per NEW frame (not per frame_id — real sensors have
+// a non-numeric frame_id, which used to freeze Draco on its first frame). Each cell shows live kB/s +
+// point count. Falls back to a 2D top-down render if WebGL is unavailable, and to wire-stats-only if
+// draco3d isn't installed.
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { TopicInfo } from "@dimos/react";
 import { useTopicRef, useTopics, useTopicStats } from "../../dimos";
 import { DRACO_TYPE } from "@dimos/web";
 import { decodeDracoGeometry } from "./dracoDecode";
-import { type CloudLike, cloudBounds, drawCloud } from "./drawCloud";
+import { type CloudLike, cloudToXYZ, drawCloud, synthCloud } from "./drawCloud";
+import { type CloudGL, cloudExtent, createCloudGL, defaultCam, type OrbitCam } from "./cloudGL";
 
-const CAP = 8000; // per-cell render cap (higher than WorldView — this is the detail view)
+const RING = 12; // frames kept per encoding for timestamp matching
+const TS_BUCKET = 10; // ms — round source ts so raw/ds/draco (same source frame) share a key
 
 function fmtBw(bps?: number): string {
   if (!bps) return "—";
@@ -33,27 +36,25 @@ function baseClouds(topics: TopicInfo[]): string[] {
   });
 }
 
-/** Build a PointCloud2-shaped object from a Draco-decoded interleaved xyz Float32Array so drawCloud
- *  renders it unchanged (contiguous float32 xyz → point_step 12, little-endian). */
-function synthCloud(xyz: Float32Array): CloudLike {
-  return {
-    data: new Uint8Array(xyz.buffer, xyz.byteOffset, xyz.byteLength),
-    point_step: 12,
-    fields: [{ name: "x", offset: 0 }, { name: "y", offset: 4 }, { name: "z", offset: 8 }],
-    is_bigendian: 0,
-  };
+type Frame = { key: number; ts: number; xyz: Float32Array };
+
+/** Push a frame into a ring, deduped by ts bucket (replace same-bucket), capped to RING. */
+function pushFrame(ring: Frame[], ts: number, xyz: Float32Array) {
+  const key = Math.round(ts / TS_BUCKET);
+  if (ring.length && ring[ring.length - 1].key === key) {
+    ring[ring.length - 1] = { key, ts, xyz };
+  } else {
+    ring.push({ key, ts, xyz });
+    if (ring.length > RING) ring.shift();
+  }
 }
+const findKey = (ring: Frame[], key: number) => ring.find((f) => f.key === key);
 
-type View = { scale: number; cx: number; cy: number };
-
-/** Fit the raw cloud's xy bounds into a wxh canvas (px/m + world centre), with a 10% margin. */
-function fitView(cloud: CloudLike | null | undefined, w: number, h: number): View {
-  const b = cloudBounds(cloud);
-  if (!b) return { scale: 40, cx: 0, cy: 0 };
-  const spanX = Math.max(0.5, b.maxX - b.minX);
-  const spanY = Math.max(0.5, b.maxY - b.minY);
-  const scale = Math.min(w / spanX, h / spanY) * 0.9;
-  return { scale, cx: (b.minX + b.maxX) / 2, cy: (b.minY + b.maxY) / 2 };
+/** Newest ts-key present in ALL THREE rings (the synced scan), or null if none overlap. */
+function commonKey(a: Frame[], b: Frame[], c: Frame[]): number | null {
+  const bk = new Set(b.map((f) => f.key)), ck = new Set(c.map((f) => f.key));
+  for (let i = a.length - 1; i >= 0; i--) if (bk.has(a[i].key) && ck.has(a[i].key)) return a[i].key;
+  return null;
 }
 
 function CloudCell(
@@ -75,7 +76,10 @@ function CloudCell(
         </span>
       </div>
       <div style={{ position: "relative", flex: 1, minHeight: 200, background: "#0b0e14", borderRadius: 6 }}>
-        <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
+        <canvas
+          ref={canvasRef}
+          style={{ width: "100%", height: "100%", display: "block", cursor: "grab" }}
+        />
         {note && (
           <div
             className="muted"
@@ -93,7 +97,6 @@ export function CloudCompare() {
   const topics = useTopics();
   const bases = useMemo(() => baseClouds(topics), [topics]);
   const [base, setBase] = useState<string | null>(null);
-  // default to the first available base (prefers /lidar) until the user picks
   const activeBase = base && bases.includes(base) ? base : bases[0] ?? null;
   const dsTopic = activeBase ? activeBase + "_ds" : null;
   const drTopic = activeBase ? activeBase + "_draco" : null;
@@ -102,91 +105,186 @@ export function CloudCompare() {
   const ds = useTopicRef<any>(dsTopic);
   const dr = useTopicRef<any>(drTopic); // .current.data = {frame_id,n_points,ts,_draco}
 
+  const rowRef = useRef<HTMLDivElement>(null);
   const rawCv = useRef<HTMLCanvasElement>(null);
   const dsCv = useRef<HTMLCanvasElement>(null);
   const drCv = useRef<HTMLCanvasElement>(null);
 
-  // async Draco decode state (mirrors useImageTopic's decoding guard — never await in a subscribe cb)
-  const dracoGeom = useRef<CloudLike | null>(null);
-  const decoding = useRef(false);
-  const lastDecoded = useRef<string | null>(null);
+  const cam = useRef<OrbitCam>(defaultCam());
+  const refit = useRef(true); // re-frame the orbit cam on next frame (source change / reset view)
+  const activeBaseRef = useRef(activeBase);
+  activeBaseRef.current = activeBase;
+
   const [dracoStatus, setDracoStatus] = useState<"idle" | "ok" | "unavailable">("idle");
-
   const counts = useRef({ raw: 0, ds: 0, draco: 0 });
-  const [, force] = useState(0); // low-rate re-render so the pt-count captions update
-
+  const [, force] = useState(0);
   const drTypeIsDraco = topics.find((t) => t.topic === drTopic)?.type === DRACO_TYPE;
 
   useEffect(() => {
     let alive = true;
-    const sizeTo = (cv: HTMLCanvasElement | null) => {
-      if (!cv) return null;
-      const dpr = window.devicePixelRatio || 1;
-      const w = cv.clientWidth, h = cv.clientHeight;
-      if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
-        cv.width = Math.round(w * dpr);
-        cv.height = Math.round(h * dpr);
-      }
-      const ctx = cv.getContext("2d");
-      if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      return ctx ? { ctx, w, h } : null;
+    const gls: Record<"raw" | "ds" | "draco", CloudGL | null> = {
+      raw: rawCv.current && createCloudGL(rawCv.current),
+      ds: dsCv.current && createCloudGL(dsCv.current),
+      draco: drCv.current && createCloudGL(drCv.current),
+    };
+    const use3D = !!gls.raw?.ok;
+
+    const rings: Record<"raw" | "ds" | "draco", Frame[]> = { raw: [], ds: [], draco: [] };
+    const lastTs = { raw: -1, ds: -1 };
+    let lastBase = activeBaseRef.current;
+    let lastBlob: Uint8Array | null = null;
+    let decoding = false;
+    let zRange: [number, number] = [0, 1];
+
+    // --- orbit interaction (shared cam → all cells rotate together) ---
+    let dragging = false, px = 0, py = 0;
+    const onDown = (e: PointerEvent) => {
+      dragging = true;
+      px = e.clientX;
+      py = e.clientY;
+      (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+    };
+    const onMove = (e: PointerEvent) => {
+      if (!dragging) return;
+      const dx = e.clientX - px, dy = e.clientY - py;
+      px = e.clientX;
+      py = e.clientY;
+      cam.current.azimuth -= dx * 0.008;
+      cam.current.elevation = Math.max(-1.4, Math.min(1.4, cam.current.elevation + dy * 0.008));
+    };
+    const onUp = () => (dragging = false);
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      cam.current.distance = Math.max(0.5, Math.min(200, cam.current.distance * Math.exp(e.deltaY * 0.001)));
+    };
+    const row = rowRef.current;
+    row?.addEventListener("pointerdown", onDown);
+    row?.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    row?.addEventListener("wheel", onWheel, { passive: false });
+
+    const sample = (which: "raw" | "ds", ref: { current: { data?: unknown; meta?: any } }) => {
+      const ts = ref.current.meta?.srcTs;
+      if (typeof ts !== "number" || ts === lastTs[which]) return;
+      const xyz = cloudToXYZ(ref.current.data as CloudLike | undefined);
+      if (!xyz) return;
+      lastTs[which] = ts;
+      pushFrame(rings[which], ts, xyz);
     };
 
-    const paint = (cv: HTMLCanvasElement | null, cloud: CloudLike | null | undefined, view: View) => {
-      const s = sizeTo(cv);
-      if (!s) return 0;
-      const { ctx, w, h } = s;
+    const paint2D = (cv: HTMLCanvasElement | null, xyz: Float32Array | null) => {
+      if (!cv) return;
+      const dpr = window.devicePixelRatio || 1;
+      const w = Math.round(cv.clientWidth * dpr), h = Math.round(cv.clientHeight * dpr);
+      if (cv.width !== w || cv.height !== h) {
+        cv.width = w;
+        cv.height = h;
+      }
+      const ctx = cv.getContext("2d");
+      if (!ctx) return;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.fillStyle = "#0b0e14";
-      ctx.fillRect(0, 0, w, h);
-      const W = (wx: number) => w / 2 + (wx - view.cx) * view.scale;
-      const H = (wy: number) => h / 2 - (wy - view.cy) * view.scale;
-      return drawCloud(ctx, cloud, W, H, CAP);
+      ctx.fillRect(0, 0, cv.clientWidth, cv.clientHeight);
+      if (!xyz) return;
+      const ext = cloudExtent(xyz);
+      const cw = cv.clientWidth, ch = cv.clientHeight;
+      const spanX = Math.max(0.5, (ext.radius) * 2), s = Math.min(cw, ch) / spanX * 0.9;
+      const W = (x: number) => cw / 2 + (x - ext.center[0]) * s;
+      const H = (y: number) => ch / 2 - (y - ext.center[1]) * s;
+      drawCloud(ctx, synthCloud(xyz), W, H, 20000);
     };
 
     const loop = () => {
       if (!alive) return;
-      const rawCloud = raw.current.data as CloudLike | undefined;
-      // one shared view from the raw cloud → identical framing in all three cells
-      const cw = rawCv.current?.clientWidth ?? 300;
-      const ch = rawCv.current?.clientHeight ?? 200;
-      const view = fitView(rawCloud, cw, ch);
+      // reset on source change
+      if (activeBaseRef.current !== lastBase) {
+        lastBase = activeBaseRef.current;
+        rings.raw = [];
+        rings.ds = [];
+        rings.draco = [];
+        lastTs.raw = lastTs.ds = -1;
+        lastBlob = null;
+        refit.current = true;
+      }
 
-      counts.current.raw = paint(rawCv.current, rawCloud, view);
-      counts.current.ds = paint(dsCv.current, ds.current.data as CloudLike | undefined, view);
+      sample("raw", raw);
+      sample("ds", ds);
 
-      // Draco: kick an async decode when the frame changed and we're free; draw the last decoded.
-      const env = dr.current.data as { frame_id?: string; _draco?: Uint8Array } | undefined;
-      if (env?._draco && env.frame_id !== lastDecoded.current && !decoding.current) {
-        decoding.current = true;
-        const fid = env.frame_id ?? "";
-        const blob = env._draco;
-        decodeDracoGeometry(blob)
+      // Draco: decode when a NEW blob arrives (ref identity changes per delivery), not per frame_id.
+      const env = dr.current.data as { ts?: number; _draco?: Uint8Array } | undefined;
+      if (env?._draco && env._draco !== lastBlob && !decoding) {
+        decoding = true;
+        lastBlob = env._draco;
+        const ts = (env.ts ?? 0) * 1000;
+        decodeDracoGeometry(env._draco)
           .then((xyz) => {
             if (!alive) return;
             if (xyz) {
-              dracoGeom.current = synthCloud(xyz);
-              lastDecoded.current = fid;
+              pushFrame(rings.draco, ts, xyz);
               setDracoStatus("ok");
-            } else {
-              setDracoStatus("unavailable");
-            }
+            } else setDracoStatus("unavailable");
           })
-          .finally(() => {
-            decoding.current = false;
-          });
+          .finally(() => (decoding = false));
       }
-      counts.current.draco = paint(drCv.current, dracoGeom.current, view);
+
+      // pick the synced triple (newest ts common to all three), else each-latest (live, never stall)
+      const key = commonKey(rings.raw, rings.ds, rings.draco);
+      const pick = (r: Frame[]) => (key != null ? findKey(r, key) : r[r.length - 1]);
+      const fr = pick(rings.raw), fd = pick(rings.ds), fdr = pick(rings.draco);
+
+      const rawXyz = fr?.xyz ?? rings.raw[rings.raw.length - 1]?.xyz ?? null;
+      if (rawXyz) {
+        const e = cloudExtent(rawXyz);
+        zRange = [e.zMin, e.zMax];
+        if (refit.current) {
+          cam.current.target = e.center;
+          cam.current.distance = e.radius * 2.4;
+          refit.current = false;
+        }
+      }
+
+      counts.current.raw = (fr?.xyz.length ?? 0) / 3;
+      counts.current.ds = (fd?.xyz.length ?? 0) / 3;
+      counts.current.draco = (fdr?.xyz.length ?? 0) / 3;
+
+      if (use3D) {
+        gls.raw!.setPoints(fr?.xyz ?? rawXyz, zRange);
+        gls.raw!.render(cam.current);
+        gls.ds?.setPoints(fd?.xyz ?? null, zRange);
+        gls.ds?.render(cam.current);
+        gls.draco?.setPoints(fdr?.xyz ?? null, zRange);
+        gls.draco?.render(cam.current);
+      } else {
+        paint2D(rawCv.current, fr?.xyz ?? rawXyz);
+        paint2D(dsCv.current, fd?.xyz ?? null);
+        paint2D(drCv.current, fdr?.xyz ?? null);
+      }
 
       raf = requestAnimationFrame(loop);
     };
     let raf = requestAnimationFrame(loop);
-    const tick = setInterval(() => alive && force((n) => n + 1), 500); // refresh captions
+    const tick = setInterval(() => alive && force((n) => n + 1), 500);
+
     return () => {
       alive = false;
       cancelAnimationFrame(raf);
       clearInterval(tick);
+      row?.removeEventListener("pointerdown", onDown);
+      row?.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      row?.removeEventListener("wheel", onWheel);
+      gls.raw?.dispose();
+      gls.ds?.dispose();
+      gls.draco?.dispose();
     };
-  }, [activeBase]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const resetView = () => {
+    cam.current.azimuth = defaultCam().azimuth;
+    cam.current.elevation = defaultCam().elevation;
+    refit.current = true; // re-frame target + distance on the next rendered frame
+  };
 
   if (!activeBase) {
     return (
@@ -212,15 +310,16 @@ export function CloudCompare() {
     <div className="cloud-compare" style={{ height: "100%", display: "flex", flexDirection: "column", padding: 12, gap: 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <strong>Point-cloud compare</strong>
-        <span className="muted small">same cloud, three encodings — raw vs downsampled vs Draco</span>
+        <span className="muted small">same cloud, three encodings — drag to orbit (all together)</span>
         <span style={{ flex: 1 }} />
+        <button className="tab" onClick={resetView} style={{ padding: "2px 8px" }}>reset view</button>
         <label className="muted small">source&nbsp;
           <select value={activeBase} onChange={(e) => setBase(e.target.value)}>
             {bases.map((b) => <option key={b} value={b}>{b}</option>)}
           </select>
         </label>
       </div>
-      <div style={{ flex: 1, display: "flex", gap: 10, minHeight: 0 }}>
+      <div ref={rowRef} style={{ flex: 1, display: "flex", gap: 10, minHeight: 0, touchAction: "none" }}>
         <CloudCell title="Raw" topic={activeBase} canvasRef={rawCv} count={counts.current.raw} />
         <CloudCell title="Downsampled" topic={dsTopic} canvasRef={dsCv} count={counts.current.ds} />
         <CloudCell title="Draco" topic={drTopic} note={drNote} canvasRef={drCv} count={counts.current.draco} />

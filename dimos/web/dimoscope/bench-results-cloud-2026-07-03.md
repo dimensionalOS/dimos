@@ -76,6 +76,27 @@ looks like the raw scene at 7.4× less bandwidth. In-browser Draco decode is rea
 `app/src/panels/clouds/dracoDecode.ts`, supplied `wasmBinary` so the emscripten glue never touches
 node `fs`); production `vite build` emits the wasm as an asset and succeeds.
 
+### 3D orbit viewer + frame-sync fixes (2026-07-06)
+The Clouds tab is now a **shared 3D orbit view** (`app/src/panels/clouds/cloudGL.ts` — dependency-free
+`gl.POINTS` + a hand-rolled mat4/orbit camera, no three.js): drag any cell → all three rotate together,
+GPU renders ALL points (no 4000 cap). This fixes the top-down flatten that aliased a depth scan into a
+grid. Two correctness fixes shipped with it:
+- **Draco un-frozen.** The gateway derives the Draco envelope seq from `frame_id` (`_seq_of`), but a
+  real lidar's `frame_id` is `"world"` → seq `0` every frame, so the old "decode only when seq changes"
+  gate decoded once and froze (why Draco read 8,329 pts vs raw 7,702). Now the client decodes per **new
+  blob** (Uint8Array identity) — live for any source.
+- **Frame-synced by source `ts`.** Each cell buffers recent frames keyed by the source timestamp (raw/ds
+  via `meta.srcTs`, draco via the envelope `ts`, which the gateway stamps identically); each frame the
+  three cells render the newest `ts` common to all three (fallback to each-latest, never stall). Result:
+  Raw and Draco now show the **same scan with equal point counts** (verified headless: 8,102 == 8,102).
+Falls back to the 2D top-down render if WebGL is unavailable; headless verified via SwiftShader.
+
+### WorldView lidar encoding toggle (2026-07-06)
+WorldView's lidar layer has a `raw | ds | draco` toggle (`app/src/panels/WorldView.tsx`) — switch the
+nav-map lidar between `/lidar`, `/lidar_ds`, `/lidar_draco`; the LayerChip kB/s reflects it live
+(≈259 → 52 → 34 kB/s), and the Draco option decodes in-browser via the same path as CloudCompare.
+WorldView stays the 2D nav map (its purpose); only the source encoding changes.
+
 ## Gaps / pending
 - **WebRTC (local)**: ICE fails on the Mac LAN (`webrtc-ice: no such remote` — the v4-mapping issue
   from the sidecar notes); ratios are transport-independent (identical on WS/WT) so this is a local
