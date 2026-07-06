@@ -18,6 +18,7 @@ import threading
 import uuid
 
 import numpy as np
+import pytest
 
 from dimos.protocol.pubsub.shm.ipc_factory import CpuShmQueue
 
@@ -167,3 +168,19 @@ def test_attach_roundtrip() -> None:
             reader.close()
     finally:
         writer.close()
+
+
+def test_layout_mismatch_rejected() -> None:
+    """Opening a segment a peer built with a different `slots` fails loudly.
+
+    The segment name keys on topic+capacity+class but not slots, so a slots
+    (or ring-size) mismatch would otherwise index off the end of the segment.
+    """
+    tag = uuid.uuid4().hex[:12]
+    data_name, ctrl_name = f"tq_{tag}_data", f"tq_{tag}_ctrl"
+    owner = CpuShmQueue((CAP,), np.uint8, data_name=data_name, ctrl_name=ctrl_name, slots=4)
+    try:
+        with pytest.raises(AssertionError, match="slots/capacity mismatch"):
+            CpuShmQueue((CAP,), np.uint8, data_name=data_name, ctrl_name=ctrl_name, slots=256)
+    finally:
+        owner.close()

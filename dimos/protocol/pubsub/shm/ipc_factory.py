@@ -363,6 +363,15 @@ class CpuShmQueue(FrameChannel):
             # unlink the segment it created or it leaks.
             self._shm_data, self._own_data = _create_or_open(data_name, data_size)
             self._shm_ctrl, self._own_ctrl = _create_or_open(ctrl_name, ctrl_size)
+            # A segment we opened (didn't create) must be at least our layout
+            # size. It won't be if a peer built it with a different slots/capacity:
+            # the segment name keys on topic+capacity+class, not slots, so a custom
+            # slots -- or a rolling upgrade with a different ring size -- collides on
+            # the name and would index off the end.
+            assert self._own_data or self._shm_data.size >= data_size, (
+                f"opened SHM {data_name!r} is {self._shm_data.size}B < {data_size}B needed: "
+                f"CpuShmQueue slots/capacity mismatch with the segment's creator"
+            )
 
         self._ctrl: NDArray[np.int64] = np.ndarray(
             (self._CTRL_SLOTS,), dtype=np.int64, buffer=self._shm_ctrl.buf
