@@ -37,6 +37,7 @@ import pytest
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.simulation.unity import module as unity_module
 from dimos.simulation.unity.module import (
     UnityBridgeConfig,
     UnityBridgeModule,
@@ -160,8 +161,17 @@ class TestPlatformValidation:
         else:
             pytest.skip("Not on Linux x86_64")
 
-    @pytest.mark.skipif(_is_linux_x86, reason="Only tests rejection on unsupported platforms")
-    def test_rejects_unsupported_platform(self):
+    def test_rejects_non_linux(self, monkeypatch):
+        # Mock the platform so the rejection path runs regardless of the
+        # actual runner (otherwise this only runs on non-Linux-x86 hosts).
+        monkeypatch.setattr(unity_module.platform, "system", lambda: "Darwin")
+        monkeypatch.setattr(unity_module.platform, "machine", lambda: "arm64")
+        with pytest.raises(RuntimeError, match="requires"):
+            _validate_platform()
+
+    def test_rejects_non_x86(self, monkeypatch):
+        monkeypatch.setattr(unity_module.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(unity_module.platform, "machine", lambda: "aarch64")
         with pytest.raises(RuntimeError, match="requires"):
             _validate_platform()
 
