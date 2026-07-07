@@ -70,7 +70,9 @@ MAX_MSG_SIZE = 16 * 1024
 def _dc_name(topic: str) -> str:
     """CF DataChannel name for a topic (ASCII, <=64 chars, collision-safe)."""
     safe = re.sub(r"[^a-zA-Z0-9_-]", "_", topic)
-    if safe != topic:
+    # Hash-suffix on sanitization OR truncation: names differing only past
+    # char 64 must not map to the same channel.
+    if safe != topic or len(safe) > 64:
         safe = f"{safe[:55]}_{hashlib.sha1(topic.encode()).hexdigest()[:8]}"
     return safe[:64] or "dc"
 

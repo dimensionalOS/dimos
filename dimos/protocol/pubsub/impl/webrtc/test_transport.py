@@ -337,6 +337,19 @@ def test_backend_coercion_leaves_webrtc_untouched() -> None:
         global_config.update(transport=original)
 
 
+def test_dc_name_no_collisions() -> None:
+    """Sanitized OR truncated topics must stay distinct (<=64 char CF limit)."""
+    if not WEBRTC_AVAILABLE:
+        pytest.skip("aiortc not installed")
+    from dimos.protocol.pubsub.impl.webrtc.providers.cloudflare import _dc_name
+
+    assert _dc_name("cmd_unreliable") == "cmd_unreliable"  # safe short names untouched
+    assert _dc_name("cmd/vel") != _dc_name("cmd_vel")  # sanitization can't collide
+    long_x, long_y = "a" * 64 + "x", "a" * 64 + "y"  # differ only past the cap
+    assert _dc_name(long_x) != _dc_name(long_y)
+    assert len(_dc_name(long_x)) <= 64
+
+
 # ─── Provider lifecycle error paths ──────────────────────────────────
 
 

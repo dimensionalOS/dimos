@@ -127,6 +127,7 @@ class AsyncProviderBase:
             )
             self._thread.start()
             if not ready.wait(timeout=5.0):
+                self._teardown()  # same cleanup contract as a failed _connect()
                 raise RuntimeError(f"{type(self).__name__} event loop failed to start")
             try:
                 self._run_sync(self._connect())
