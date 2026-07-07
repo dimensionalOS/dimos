@@ -69,7 +69,7 @@ def m20_rerun_blueprint() -> Any:
 rerun = autoconnect(
     RerunBridgeModule.blueprint(
         blueprint=m20_rerun_blueprint,
-        memory_limit="4GB",
+        memory_limit="1GB",
         max_hz={
             "world/color_image": 0,
             "world/color_image_rear": 0,
