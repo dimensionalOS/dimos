@@ -42,8 +42,8 @@ class MLSPlan(Transformer[PointCloud2, Path]):
         self,
         *,
         goal: tuple[float, float, float],
-        voxel_size: float = 0.1,
-        robot_height: float = 1.5,
+        voxel_size: float = 0.08,
+        robot_height: float = 0.3,
         **planner_kwargs: Any,
     ) -> None:
         self.goal = goal
@@ -83,7 +83,7 @@ class MLSPlan(Transformer[PointCloud2, Path]):
 
             ox, oy, radius, z_min, z_max = obs.tags["region_bounds"]
             t_update = time.perf_counter()
-            planner.update_region(obs.data.points_f32(), (ox, oy), radius, z_min, z_max)
+            planner.update_region(obs.data.points_f32(), (ox, oy), radius, z_min, z_max, float(z))
             t_plan = time.perf_counter()
             waypoints = planner.plan(start, self.goal)
             t_done = time.perf_counter()

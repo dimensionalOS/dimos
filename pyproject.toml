@@ -139,7 +139,9 @@ dependencies = [
     "toolz>=1.1.0",
     "protobuf>=6.33.5,<7",
     "psutil>=7.0.0",
-    "sqlite-vec>=0.1.6",
+    # >=0.1.7: the 0.1.6 linux-aarch64 wheel shipped a 32-bit armv7 vec0.so
+    # (wrong ELF class), which fails to load on aarch64. Fixed from 0.1.7 on.
+    "sqlite-vec>=0.1.7",
     "lz4>=4.4.5",
     "bleak>=3.0.2",
     "cryptography>=46.0.5",
