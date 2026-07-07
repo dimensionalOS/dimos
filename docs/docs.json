@@ -1,7 +1,7 @@
 {
   "theme": "mint",
   "name": "Dimensional",
-  "description": "Official documentation for Dimensional (DimOS) \u2014 the modern operating system for generalist robotics: Python-first, agent-native, and hardware-agnostic.",
+  "description": "Official documentation for Dimensional — the modern operating system for generalist robotics: Python-first, agent-native, and hardware-agnostic.",
   "colors": {
     "primary": "#1682a3",
     "light": "#1682a3",
@@ -216,5 +216,55 @@
     "socials": {
       "github": "https://github.com/dimensionalOS/dimos"
     }
-  }
+  },
+  "redirects": [
+    {
+      "source": "/docs/capabilities/navigation/index.md",
+      "destination": "/capabilities/navigation/index"
+    },
+    {
+      "source": "/docs/capabilities/navigation/deep_dive.md",
+      "destination": "/capabilities/navigation/deep_dive"
+    },
+    {
+      "source": "/docs/capabilities/navigation/relocalization.md",
+      "destination": "/capabilities/navigation/relocalization"
+    },
+    {
+      "source": "/docs/platforms/quadruped/go2/index.md",
+      "destination": "/platforms/quadruped/go2/index"
+    },
+    {
+      "source": "/docs/platforms/quadruped/go2/setup.md",
+      "destination": "/platforms/quadruped/go2/setup"
+    },
+    {
+      "source": "/docs/platforms/quadruped/go2/simulation.md",
+      "destination": "/platforms/quadruped/go2/simulation"
+    },
+    {
+      "source": "/docs/usage/visualization.md",
+      "destination": "/usage/visualization"
+    },
+    {
+      "source": "/docs/usage/data_streams/index.md",
+      "destination": "/usage/data_streams/index"
+    },
+    {
+      "source": "/docs/usage/transports/index.md",
+      "destination": "/usage/transports/index"
+    },
+    {
+      "source": "/docs/usage/blueprints.md",
+      "destination": "/usage/blueprints"
+    },
+    {
+      "source": "/dimos/:slug*",
+      "destination": "https://github.com/dimensionalOS/dimos/blob/main/dimos/:slug*"
+    },
+    {
+      "source": "/docs/:slug*",
+      "destination": "/:slug*"
+    }
+  ]
 }
