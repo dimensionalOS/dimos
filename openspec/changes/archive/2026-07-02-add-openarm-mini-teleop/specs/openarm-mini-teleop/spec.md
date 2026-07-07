@@ -34,7 +34,7 @@ The OpenArm Mini teleop adapter SHALL support side-specific calibration path con
 - **THEN** the adapter uses the configured path for that side instead of the default DimOS state-directory path
 
 ### Requirement: OpenArm Mini to OpenArm joint command mapping
-The OpenArm Mini teleop adapter SHALL convert OpenArm Mini leader readings into OpenArm follower `JointState` commands using OpenArm follower joint names and adapter-owned mapping rules.
+The OpenArm Mini teleop adapter SHALL convert calibrated OpenArm Mini leader arm-joint readings into OpenArm follower arm-joint `JointState` commands in radians using OpenArm follower joint names.
 
 #### Scenario: Leader joint readings are available
 - **WHEN** calibrated OpenArm Mini leader joint readings are available and teleop authority is active
@@ -42,18 +42,49 @@ The OpenArm Mini teleop adapter SHALL convert OpenArm Mini leader readings into 
 
 #### Scenario: OpenArm Mini transform rules are applied
 - **WHEN** the adapter converts leader readings into follower commands
-- **THEN** it applies the OpenArm Mini side-specific sign/order mapping, joint_6/joint_7 remap, gripper conversion, and OpenArm joint limits before returning the command
+- **THEN** it converts raw Feetech encoder ticks to radians around each calibrated homing offset
+- **AND** it applies the per-joint `flip` value from the calibration artifact
+- **AND** it clamps each outgoing command to the OpenArm follower joint limits before returning the command
+
+#### Scenario: Leader joint assignment is calibrated
+- **WHEN** the calibration artifact maps a semantic leader joint name to a physical Feetech motor id
+- **THEN** the adapter reads that motor id for the semantic joint instead of applying a hardcoded runtime joint remap
+
+#### Scenario: Gripper is out of scope for v1
+- **WHEN** the adapter returns an OpenArm follower command
+- **THEN** the command contains only OpenArm arm-joint names
+- **AND** it does not include gripper names or gripper command values
 
 ### Requirement: Manual OpenArm Mini calibration/demo script
 The system SHALL provide a manual OpenArm Mini calibration/demo script for interactive leader setup outside normal teleop runtime.
 
 #### Scenario: Calibration script is run
 - **WHEN** the OpenArm Mini calibration/demo script is run by an operator
-- **THEN** it connects only to the OpenArm Mini leader hardware, performs interactive setup/calibration, and writes side-specific calibration artifacts
+- **THEN** it connects only to the OpenArm Mini leader arm-joint hardware, captures the current leader zero pose, and writes side-specific calibration artifacts
 
 #### Scenario: Calibration script is run near follower hardware
 - **WHEN** the calibration/demo script is running
 - **THEN** it does not connect to follower OpenArm hardware and does not start `ControlCoordinator`
+
+#### Scenario: Leader zero pose is captured
+- **WHEN** the operator places an OpenArm Mini side in its designed natural pose and runs calibration
+- **THEN** the script reads each arm-joint Feetech motor's raw position
+- **AND** it writes those raw positions as homing offsets for the semantic `joint_1` through `joint_7` entries
+
+#### Scenario: Calibration artifact is arm-only and minimal
+- **WHEN** the calibration script writes a side-specific calibration artifact
+- **THEN** the artifact contains exactly `joint_1` through `joint_7`
+- **AND** each motor entry contains only the physical motor id, homing offset, and flip value
+- **AND** it does not contain gripper entries, drive-mode fields, observed ranges, or gripper placeholders
+
+#### Scenario: Calibration avoids follower startup
+- **WHEN** the calibration/demo script runs
+- **THEN** it does not touch gripper motor 8, does not connect to follower OpenArm hardware, and does not start `ControlCoordinator`
+
+#### Scenario: Startup alignment is required
+- **WHEN** an operator enables v1 OpenArm Mini teleop
+- **THEN** the operator is responsible for placing the follower near the leader-implied command before enabling authority
+- **AND** v1 does not claim automatic first-command follower-state gating
 
 ### Requirement: OpenArm Mini teleop blueprint
 The system SHALL provide an OpenArm Mini teleop blueprint that wires the generic teleop module to the existing OpenArm control coordinator through `joint_command`.

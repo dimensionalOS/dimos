@@ -92,19 +92,16 @@ Alternative considered: dynamic module IO based on configuration. DimOS supports
 `OpenArmMiniTeleopAdapter` owns safety and validation requiring device or robot meaning:
 
 - calibration artifact validity
-- OpenArm Mini → OpenArm unit conversion
-- OpenArm-specific sign/order mapping
-- joint_6 / joint_7 remap
-- gripper conversion
+- OpenArm Mini raw encoder tick → radians conversion around calibrated zero offsets
+- calibration-defined leader joint assignment and per-joint flip handling
 - OpenArm follower joint names
-- OpenArm joint limits
-- leader/follower jump threshold when measured in joint space
+- sender-side OpenArm follower-limit clamping before publishing commands
 
 Alternative considered: putting all safety in the generic module. This would force generic code to understand robot-specific units and joint semantics.
 
 ### Implement OpenArm Mini directly on the Feetech library
 
-DimOS will implement OpenArm Mini teleop directly using the lower-level Feetech motor communication library. It will not import LeRobot at runtime. The implementation should mirror the relevant OpenArm Mini behavior discovered from LeRobot: two physical serial buses, side-specific transforms, joint_6/joint_7 remap, gripper conversion, and saved calibration.
+DimOS will implement OpenArm Mini teleop directly using the lower-level Feetech motor communication library. It will not import LeRobot at runtime. The implementation should mirror the relevant OpenArm Mini arm-joint behavior discovered from LeRobot: two physical serial buses, saved calibration, raw encoder ticks interpreted around calibrated zero offsets, and arm-joint commands emitted in radians. Gripper teleop is out of scope for v1 because the OpenArm follower gripper path is not yet a formal coordinator-controllable API.
 
 The dependency should live in a narrow optional extra for OpenArm Mini teleop rather than broad `manipulation`, so users who do not use this device do not install serial servo dependencies.
 
@@ -119,7 +116,23 @@ Runtime OpenArm Mini teleop startup is non-interactive:
 - connect/configure Feetech buses
 - fail fast with a clear message if calibration is missing or invalid
 
-Calibration is a special OpenArm Mini maintenance workflow, not part of the generic `TeleopAdapter` contract. A manual script such as `dimos/teleop/openarm_mini/demo_calibrate_openarm_mini.py` performs interactive setup/calibration for the leader only, writes calibration artifacts, and may optionally print live leader readings.
+Calibration is a special OpenArm Mini maintenance workflow, not part of the generic `TeleopAdapter` contract. A manual script such as `dimos/teleop/openarm_mini/demo_calibrate_openarm_mini.py` calibrates the leader arm joints only, writes calibration artifacts, and may optionally print calibrated leader readings.
+
+The v1 calibration UX is zero-capture, not a live range dashboard. For one side at a time, the operator places the OpenArm Mini leader in its designed natural pose corresponding to the OpenArm follower all-zero arm pose, then runs the calibration script. The script reads the raw Feetech position for each semantic arm joint and stores it as that joint's `homing_offset`.
+
+The calibration artifact is strict arm-only and minimal. It contains exactly `joint_1` through `joint_7`; each entry contains the physical Feetech motor id, the captured homing offset, and a flip boolean. The semantic joint name plus motor id is the leader joint assignment, so physical wrist motor ordering differences are represented by assigning the desired motor id to the desired semantic joint instead of hardcoding a runtime joint_6/joint_7 remap.
+
+The runtime conversion is:
+
+```text
+radians = (raw_ticks - homing_offset) * 2π / FEETECH_ENCODER_SPAN
+if flip:
+  radians = -radians
+```
+
+The adapter then clamps each follower arm-joint command to the OpenArm follower's legal joint limits before publishing a `JointState`. Existing coordinator/follower-side defensive handling remains in place. V1 does not implement an automatic first-command follower-state gate; operators must perform startup alignment by placing the follower near the leader-implied command before enabling live authority.
+
+Gripper motor 8 is not touched by the main calibration path, not required in the calibration artifact, and not emitted in v1 commands. Gripper endpoint calibration and follower gripper actuation should be added later when a formal OpenArm follower gripper API/path exists.
 
 Default calibration directories are side-specific and under DimOS state storage:
 
@@ -142,9 +155,9 @@ Alternative considered: storing calibration in cache or using a `teleop_id` dire
 ## Risks / Trade-offs
 
 - Feetech library packaging/name may differ from LeRobot internals → verify the package and import surface before implementation; keep imports localized to the OpenArm Mini adapter with a clear missing-extra error.
-- Directly owning OpenArm Mini transforms can drift from upstream LeRobot behavior → document the transform rules in code and add unit tests for mapping, remap, sign, and gripper conversion.
+- Directly owning OpenArm Mini transforms can drift from upstream LeRobot behavior → document the transform rules in code and add unit tests for raw tick conversion, flip handling, leader joint assignment, and follower-limit clamping.
 - Hardcoding OpenArm Mini → OpenArm mapping limits reuse → acceptable for v1; introduce profiles/bindings or ordered array commands only when a second follower or behavior needs them.
-- Calibration mistakes can cause unsafe leader/follower jumps → default runtime must refuse missing/invalid calibration, and the adapter should enforce jump/limit checks before publishing.
+- Calibration mistakes can cause unsafe leader/follower jumps → default runtime must refuse missing/invalid calibration, the calibration script should make captured zero offsets visible, the adapter should clamp outgoing commands to follower limits, and startup alignment remains an explicit operator responsibility until an automatic follower-state gate exists.
 - Adding a generic `TeleopModule` without migrating Quest may leave two teleop patterns temporarily → acceptable to keep v1 focused and avoid destabilizing Quest.
 
 ## Migration Plan
@@ -160,4 +173,4 @@ Rollback is straightforward: remove the new blueprint from use. Existing Quest a
 ## Open Questions
 
 - Exact Feetech Python package name and import surface must be verified during implementation.
-- Exact OpenArm Mini calibration JSON schema should be finalized while implementing the calibration script and adapter loader.
+- Exact future gripper command path should be revisited once OpenArm follower gripper control is exposed through a formal coordinator-compatible API.

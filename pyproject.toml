@@ -280,6 +280,15 @@ manipulation-toppra = [
     "roboplan>=0.0.100",
 ]
 
+openarm-mini-teleop = [
+    "ftservo-python-sdk",
+    "rich",
+]
+
+openarm = [
+    "dimos[openarm-mini-teleop]",
+]
+
 grasp = [
     # Experimental learned grasp proposal backend. VGN's catkin-style package
     # metadata omits most Python runtime dependencies, so list the import-time
@@ -343,7 +352,7 @@ apriltag = [
 ]
 
 all = [
-    "dimos[agents,apriltag,base,cpu,cuda,drone,grasp,learning,manipulation,manipulation-toppra,misc,perception,sim,unitree,visualization,web]",
+    "dimos[agents,apriltag,base,cpu,cuda,drone,grasp,learning,manipulation,manipulation-toppra,misc,openarm,perception,sim,unitree,visualization,web]",
 ]
 
 [dependency-groups]

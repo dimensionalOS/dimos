@@ -140,6 +140,38 @@ _Avoid_: heavy implementation module, connection-only shim, runtime sidecar
 The coordinator-visible set of typed stream inputs and outputs a DimOS Module exposes for blueprint wiring.
 _Avoid_: stream schema, port list, dynamic ports
 
+**Follower-limit clamp**:
+A teleoperation safety boundary where commands derived from a leader device are constrained to the follower robot's legal joint range before execution. Sender-side clamping improves teleop behavior, while downstream control and hardware layers may still clamp defensively.
+_Avoid_: leader limit, calibration range clamp, normalization range
+
+**Gripper endpoint calibration**:
+A leader-gripper calibration step that records the raw positions corresponding to fully open and fully closed gripper states. It is distinct from arm-joint zero calibration because gripper control is based on an open/close interval rather than a neutral joint angle.
+_Avoid_: arm range calibration, gripper zero pose, generic min/max dashboard
+
+**Leader zero pose**:
+The designed natural pose of a teleoperation leader arm that corresponds to the follower arm's all-zero joint configuration. Capturing this pose defines the leader's zero offsets for arm-joint teleoperation.
+_Avoid_: arbitrary neutral pose, comfort pose, range calibration pose
+
+**Leader joint assignment**:
+The calibration-level association between a semantic leader joint name and the physical motor id that supplies that joint's reading. It is used when the physical motor ordering differs from the follower joint order.
+_Avoid_: hardcoded wrist remap, runtime joint swap, follower joint alias
+
+**Startup alignment**:
+The operator responsibility to place a teleoperation follower near the leader-implied command before enabling live authority. It prevents first-command jumps when no automatic follower-state gate is present.
+_Avoid_: calibration, homing, sender-side clamp
+
+**Visualization-only teleop test**:
+A teleoperation validation mode where a real leader device drives commands rendered against a follower model without connecting to follower hardware or executing physical motion. "Visualization-only" describes the follower side, not the leader input.
+_Avoid_: hardware validation, fake leader demo, dry run when physical execution is possible
+
+**Real-hardware opt-in**:
+A teleoperation bring-up boundary where follower hardware remains mocked unless the operator provides an explicit hardware connection setting. The presence of that setting means the follower may connect and physically move.
+_Avoid_: implicit hardware fallback, hidden arming flag, visualization-only mode
+
+**Follower-observed teleop visualization**:
+A teleoperation visualization mode that renders the follower-side state reported through the control stack rather than the leader-derived command alone. It answers "what is the follower doing or reporting?" rather than only "what is the leader commanding?"
+_Avoid_: command-only visualization, leader preview, visualization-only teleop test
+
 **Configuration-resolved module IO**:
 A module IO contract whose streams are determined from the module's final configuration before blueprint wiring.
 _Avoid_: runtime dynamic IO, late-bound ports, generated subclass IO
