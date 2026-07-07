@@ -161,17 +161,18 @@ class TestPlatformValidation:
         else:
             pytest.skip("Not on Linux x86_64")
 
-    def test_rejects_non_linux(self, monkeypatch):
+    @pytest.mark.parametrize(
+        "system, machine",
+        [
+            ("Darwin", "arm64"),  # not Linux
+            ("Linux", "aarch64"),  # Linux but not x86_64
+        ],
+    )
+    def test_rejects_unsupported_platform(self, monkeypatch, system, machine):
         # Mock the platform so the rejection path runs regardless of the
         # actual runner (otherwise this only runs on non-Linux-x86 hosts).
-        monkeypatch.setattr(unity_module.platform, "system", lambda: "Darwin")
-        monkeypatch.setattr(unity_module.platform, "machine", lambda: "arm64")
-        with pytest.raises(RuntimeError, match="requires"):
-            _validate_platform()
-
-    def test_rejects_non_x86(self, monkeypatch):
-        monkeypatch.setattr(unity_module.platform, "system", lambda: "Linux")
-        monkeypatch.setattr(unity_module.platform, "machine", lambda: "aarch64")
+        monkeypatch.setattr(unity_module.platform, "system", lambda: system)
+        monkeypatch.setattr(unity_module.platform, "machine", lambda: machine)
         with pytest.raises(RuntimeError, match="requires"):
             _validate_platform()
 
