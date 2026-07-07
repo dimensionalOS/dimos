@@ -44,14 +44,10 @@ COLORS = {
     "naive": [90, 200, 90],
     "no_normal_gate": [235, 120, 60],
     "defaults": [70, 170, 235],
-    "no_recency": [200, 80, 200],
 }
 
-# A window large enough to never expire, i.e. recency gating off.
-RECENCY_OFF = 1_000_000_000
-
 # Variants whose normal gate is active, so their normals are worth drawing.
-NORMAL_VARIANTS = {"defaults", "no_recency"}
+NORMAL_VARIANTS = {"defaults"}
 
 
 def _height_colors(centers: np.ndarray, base: list[int]) -> np.ndarray:
@@ -125,9 +121,6 @@ def main(
         ),
         "no_normal_gate": VoxelRayMapper(voxel_size=voxel_size, max_range=max_range, graze_cos=0.0),
         "defaults": VoxelRayMapper(voxel_size=voxel_size, max_range=max_range),
-        "no_recency": VoxelRayMapper(
-            voxel_size=voxel_size, max_range=max_range, recency_window=RECENCY_OFF
-        ),
     }
 
     store = SqliteStore(path=str(db_path))
