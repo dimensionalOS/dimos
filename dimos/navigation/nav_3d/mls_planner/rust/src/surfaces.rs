@@ -31,7 +31,13 @@ pub type ColumnIz = AHashMap<(i32, i32), Vec<i32>>;
 
 /// A cell is standable if it has at least the robot's height of clear space
 /// above it.
-fn is_standable(ix: i32, iy: i32, iz: i32, by_col: &ColumnIz, clearance_cells: i32) -> bool {
+pub(crate) fn is_standable(
+    ix: i32,
+    iy: i32,
+    iz: i32,
+    by_col: &ColumnIz,
+    clearance_cells: i32,
+) -> bool {
     let Some(zs) = by_col.get(&(ix, iy)) else {
         return true;
     };
@@ -184,6 +190,22 @@ fn close_surface_holes(
     );
 }
 
+/// Whether an occupied voxel lies near this cell at a compatible height.
+fn has_support(by_col: &ColumnIz, ix: i32, iy: i32, iz: i32) -> bool {
+    const R: i32 = 3;
+    const Z_TOL: i32 = 3;
+    for dx in -R..=R {
+        for dy in -R..=R {
+            if let Some(zs) = by_col.get(&(ix + dx, iy + dy)) {
+                if zs.iter().any(|&oz| (oz - iz).abs() <= Z_TOL) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Close holes on an xy slice of the surfaces.
 fn close_at_z(
     xys: &[(i32, i32)],
@@ -192,7 +214,7 @@ fn close_at_z(
     closing_passes: u32,
     clearance_cells: i32,
 ) -> Vec<VoxelKey> {
-    let pad = (2 * closing_passes) as i32;
+    let pad = closing_passes as i32;
     let mut min_x = i32::MAX;
     let mut max_x = i32::MIN;
     let mut min_y = i32::MAX;
@@ -218,6 +240,7 @@ fn close_at_z(
     img = dilate(&img, Norm::L1, k);
     img = erode(&img, Norm::L1, k);
 
+    let original: AHashSet<(i32, i32)> = xys.iter().copied().collect();
     let mut out = Vec::new();
     for py in 0..h {
         for px in 0..w {
@@ -228,6 +251,10 @@ fn close_at_z(
             let iy = y0 + py as i32;
 
             if !is_standable(ix, iy, iz, by_col, clearance_cells) {
+                continue;
+            }
+            // Keep a filled cell only with nearby occupied evidence.
+            if !original.contains(&(ix, iy)) && !has_support(by_col, ix, iy, iz) {
                 continue;
             }
             out.push((ix, iy, iz));
@@ -291,6 +318,25 @@ mod tests {
             s.contains(&(0, 0, 0)),
             "closing should fill the center hole"
         );
+    }
+
+    #[test]
+    fn closing_does_not_fill_unsupported_void() {
+        // A ring with a large empty center: closing reaches it geometrically but
+        // has no occupied support there, so it must stay a hole.
+        let mut cells = Vec::new();
+        for d in -5..=5 {
+            cells.push((d, -5, 0));
+            cells.push((d, 5, 0));
+            cells.push((-5, d, 0));
+            cells.push((5, d, 0));
+        }
+        let s = run(&cells, 5, 6);
+        assert!(
+            !s.contains(&(0, 0, 0)),
+            "unsupported void center must not be filled"
+        );
+        assert!(s.contains(&(0, -5, 0)), "the real ring stays");
     }
 
     #[test]

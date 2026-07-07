@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::VecDeque;
 use std::time::Duration;
 
-use ahash::AHashSet;
 use dimos_module::{error_throttled, run, warn_throttled, Input, LcmTransport, Module, Output};
 use dimos_voxel_ray_tracing::voxel_ray_tracer::{
-    batch_local_bounds, iter_global_points, update_map, Config, LocalBounds, VoxelKey, VoxelMap,
+    batch_local_bounds, emit_points, update_map, Config, LocalBounds, VoxelMap,
 };
 use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Odometry;
@@ -48,7 +48,7 @@ struct RayTracingVoxelMap {
     config: Config,
 
     map: VoxelMap,
-    last_pose: Option<(Vector3<f32>, UnitQuaternion<f32>)>,
+    poses: VecDeque<(f64, Vector3<f32>, UnitQuaternion<f32>)>,
     frame_count: u32,
     batch_points: Vec<(f32, f32, f32)>,
     batch_origins: Vec<(f32, f32, f32)>,
@@ -58,17 +58,26 @@ impl RayTracingVoxelMap {
     async fn on_odometry(&mut self, msg: Odometry) {
         let p = &msg.pose.pose.position;
         let q = &msg.pose.pose.orientation;
-        self.last_pose = Some((
-            Vector3::new(p.x as f32, p.y as f32, p.z as f32),
-            UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(
-                q.w as f32, q.x as f32, q.y as f32, q.z as f32,
-            )),
-        ));
+        push_pose(
+            &mut self.poses,
+            (
+                time_secs(&msg.header.stamp),
+                Vector3::new(p.x as f32, p.y as f32, p.z as f32),
+                UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(
+                    q.w as f32, q.x as f32, q.y as f32, q.z as f32,
+                )),
+            ),
+        );
     }
 
     async fn on_lidar(&mut self, msg: PointCloud2) {
-        let Some((translation, rotation)) = self.last_pose else {
-            // Need an odometry sample before we can raycast.
+        // Register with the pose nearest the cloud stamp, never a stale one.
+        let Some((translation, rotation)) = nearest_pose(&self.poses, time_secs(&msg.header.stamp))
+        else {
+            warn_throttled!(
+                Duration::from_secs(1),
+                "No odometry within tolerance of the cloud stamp, dropped a cloud.",
+            );
             return;
         };
         let origin = (translation.x, translation.y, translation.z);
@@ -166,20 +175,16 @@ impl RayTracingVoxelMap {
         let global_due = emit_due(self.frame_count, self.config.global_emit_every);
 
         let stamp = msg.header.stamp;
-        if let Some(cyl) = &cylinder {
-            if global_due {
-                let (global, local) =
-                    build_global_and_local(&self.map, &live, voxel_size, cyl, out_frame_id, stamp);
-                publish_cloud(&self.global_map, &global).await;
-                publish_cloud(&self.local_map, &local).await;
-            } else {
-                let local =
-                    build_local_cloud(&self.map, &live, voxel_size, cyl, out_frame_id, stamp);
-                publish_cloud(&self.local_map, &local).await;
-            }
-        } else if global_due {
-            let global = build_global_cloud(&self.map, &live, voxel_size, out_frame_id, stamp);
+        let support_min = self.config.support_min;
+        if global_due {
+            let points = emit_points(&self.map, voxel_size, None, 0, &live);
+            let global = points_to_cloud(&points, out_frame_id, stamp.clone());
             publish_cloud(&self.global_map, &global).await;
+        }
+        if let Some(cyl) = &cylinder {
+            let points = emit_points(&self.map, voxel_size, Some(cyl), support_min, &live);
+            let local = points_to_cloud(&points, out_frame_id, stamp);
+            publish_cloud(&self.local_map, &local).await;
         }
     }
 }
@@ -187,6 +192,48 @@ impl RayTracingVoxelMap {
 /// Whether the Nth-frame output fires this frame. Zero disables it.
 fn emit_due(frame_count: u32, every: u32) -> bool {
     every != 0 && frame_count.is_multiple_of(every)
+}
+
+/// Odometry samples kept for cloud-stamp matching.
+const POSE_BUFFER_LEN: usize = 256;
+
+/// Max stamp gap between a cloud and the pose used to register it (s).
+const POSE_MATCH_TOLERANCE_S: f64 = 0.1;
+
+fn time_secs(t: &Time) -> f64 {
+    t.sec as f64 + t.nsec as f64 * 1e-9
+}
+
+/// Append a pose sample, evicting the oldest to keep the buffer bounded.
+fn push_pose(
+    poses: &mut VecDeque<(f64, Vector3<f32>, UnitQuaternion<f32>)>,
+    sample: (f64, Vector3<f32>, UnitQuaternion<f32>),
+) {
+    poses.push_back(sample);
+    if poses.len() > POSE_BUFFER_LEN {
+        poses.pop_front();
+    }
+}
+
+/// The buffered pose with the stamp nearest the cloud stamp, within tolerance.
+fn nearest_pose(
+    poses: &VecDeque<(f64, Vector3<f32>, UnitQuaternion<f32>)>,
+    stamp: f64,
+) -> Option<(Vector3<f32>, UnitQuaternion<f32>)> {
+    let mut best_gap = f64::INFINITY;
+    let mut best = None;
+    for &(t, v, q) in poses {
+        let gap = (t - stamp).abs();
+        if gap < best_gap {
+            best_gap = gap;
+            best = Some((v, q));
+        }
+    }
+    if best_gap <= POSE_MATCH_TOLERANCE_S {
+        best
+    } else {
+        None
+    }
 }
 
 struct ExtractError(&'static str);
@@ -263,25 +310,6 @@ fn write_point(data: &mut Vec<u8>, n: &mut i32, x: f32, y: f32, z: f32) {
     *n += 1;
 }
 
-/// Centers of live voxels not yet healthy enough to appear in the map.
-fn unhealthy_live_centers<'a>(
-    map: &'a VoxelMap,
-    live: &'a AHashSet<VoxelKey>,
-    voxel_size: f32,
-) -> impl Iterator<Item = (f32, f32, f32)> + 'a {
-    let half = voxel_size * 0.5;
-    live.iter().filter_map(move |&(kx, ky, kz)| {
-        if matches!(map.voxels.get(&(kx, ky, kz)), Some(c) if c.health > 0) {
-            return None;
-        }
-        Some((
-            kx as f32 * voxel_size + half,
-            ky as f32 * voxel_size + half,
-            kz as f32 * voxel_size + half,
-        ))
-    })
-}
-
 fn make_cloud(data: Vec<u8>, n: i32, frame_id: &str, stamp: Time) -> PointCloud2 {
     let make_field = |name: &str, off: i32| PointField {
         name: name.into(),
@@ -311,78 +339,14 @@ fn make_cloud(data: Vec<u8>, n: i32, frame_id: &str, stamp: Time) -> PointCloud2
     }
 }
 
-/// All healthy voxels plus this frame's live voxels.
-fn build_global_cloud(
-    map: &VoxelMap,
-    live: &AHashSet<VoxelKey>,
-    voxel_size: f32,
-    frame_id: &str,
-    stamp: Time,
-) -> PointCloud2 {
-    let mut data = Vec::with_capacity((map.voxels.len() + live.len()) * 16);
+/// Pack selected points into an LCM cloud message.
+fn points_to_cloud(points: &[(f32, f32, f32)], frame_id: &str, stamp: Time) -> PointCloud2 {
+    let mut data = Vec::with_capacity(points.len() * 16);
     let mut n: i32 = 0;
-    for (x, y, z) in iter_global_points(map, voxel_size) {
-        write_point(&mut data, &mut n, x, y, z);
-    }
-    for (x, y, z) in unhealthy_live_centers(map, live, voxel_size) {
+    for &(x, y, z) in points {
         write_point(&mut data, &mut n, x, y, z);
     }
     make_cloud(data, n, frame_id, stamp)
-}
-
-/// Healthy voxels and this frame's live voxels, all inside the cylinder.
-fn build_local_cloud(
-    map: &VoxelMap,
-    live: &AHashSet<VoxelKey>,
-    voxel_size: f32,
-    cylinder: &LocalBounds,
-    frame_id: &str,
-    stamp: Time,
-) -> PointCloud2 {
-    let mut data = Vec::with_capacity(live.len() * 2 * 16);
-    let mut n: i32 = 0;
-    for (x, y, z) in iter_global_points(map, voxel_size) {
-        if cylinder.contains(x, y, z) {
-            write_point(&mut data, &mut n, x, y, z);
-        }
-    }
-    for (x, y, z) in unhealthy_live_centers(map, live, voxel_size) {
-        if cylinder.contains(x, y, z) {
-            write_point(&mut data, &mut n, x, y, z);
-        }
-    }
-    make_cloud(data, n, frame_id, stamp)
-}
-
-/// Build the global and local clouds in one pass over the map.
-fn build_global_and_local(
-    map: &VoxelMap,
-    live: &AHashSet<VoxelKey>,
-    voxel_size: f32,
-    cylinder: &LocalBounds,
-    frame_id: &str,
-    stamp: Time,
-) -> (PointCloud2, PointCloud2) {
-    let mut g_data = Vec::with_capacity((map.voxels.len() + live.len()) * 16);
-    let mut g_n: i32 = 0;
-    let mut l_data = Vec::with_capacity(live.len() * 2 * 16);
-    let mut l_n: i32 = 0;
-    let mut push = |x: f32, y: f32, z: f32| {
-        write_point(&mut g_data, &mut g_n, x, y, z);
-        if cylinder.contains(x, y, z) {
-            write_point(&mut l_data, &mut l_n, x, y, z);
-        }
-    };
-    for (x, y, z) in iter_global_points(map, voxel_size) {
-        push(x, y, z);
-    }
-    for (x, y, z) in unhealthy_live_centers(map, live, voxel_size) {
-        push(x, y, z);
-    }
-    (
-        make_cloud(g_data, g_n, frame_id, stamp.clone()),
-        make_cloud(l_data, l_n, frame_id, stamp),
-    )
 }
 
 async fn publish_cloud(out: &Output<PointCloud2>, cloud: &PointCloud2) {
@@ -407,7 +371,41 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dimos_voxel_ray_tracing::voxel_ray_tracer::Voxel;
+    use ahash::AHashSet;
+    use dimos_voxel_ray_tracing::voxel_ray_tracer::{Voxel, VoxelKey};
+
+    #[test]
+    fn nearest_pose_picks_by_stamp_and_gates_on_tolerance() {
+        let mut poses: VecDeque<(f64, Vector3<f32>, UnitQuaternion<f32>)> = VecDeque::new();
+        for (t, x) in [(1.0, 1.0f32), (2.0, 2.0), (3.0, 3.0)] {
+            poses.push_back((t, Vector3::new(x, 0.0, 0.0), UnitQuaternion::identity()));
+        }
+        let (v, _) = nearest_pose(&poses, 2.04).expect("within tolerance");
+        assert_eq!(v.x, 2.0, "nearest stamp wins, not the latest");
+        assert!(
+            nearest_pose(&poses, 3.5).is_none(),
+            "stale poses must not register a cloud"
+        );
+        assert!(nearest_pose(&VecDeque::new(), 1.0).is_none());
+    }
+
+    #[test]
+    fn push_pose_evicts_oldest_beyond_capacity() {
+        let mut poses: VecDeque<(f64, Vector3<f32>, UnitQuaternion<f32>)> = VecDeque::new();
+        for i in 0..(POSE_BUFFER_LEN + 10) {
+            push_pose(
+                &mut poses,
+                (i as f64, Vector3::zeros(), UnitQuaternion::identity()),
+            );
+        }
+        assert_eq!(
+            poses.len(),
+            POSE_BUFFER_LEN,
+            "buffer capped at POSE_BUFFER_LEN"
+        );
+        assert_eq!(poses.front().unwrap().0, 10.0, "oldest 10 evicted");
+        assert_eq!(poses.back().unwrap().0, (POSE_BUFFER_LEN + 9) as f64);
+    }
 
     fn cloud_points(c: &PointCloud2) -> AHashSet<(u32, u32, u32)> {
         let mut out = AHashSet::new();
@@ -455,8 +453,16 @@ mod tests {
             z_min: 0.0,
             z_max: 1.0,
         };
-        let global = build_global_cloud(&map, &live, 1.0, "world", Time::default());
-        let local = build_local_cloud(&map, &live, 1.0, &cylinder, "world", Time::default());
+        let global = points_to_cloud(
+            &emit_points(&map, 1.0, None, 0, &live),
+            "world",
+            Time::default(),
+        );
+        let local = points_to_cloud(
+            &emit_points(&map, 1.0, Some(&cylinder), 0, &live),
+            "world",
+            Time::default(),
+        );
         assert!(cloud_points(&global).contains(&voxel_center(0, 0, 0)));
         assert!(cloud_points(&local).contains(&voxel_center(0, 0, 0)));
     }
@@ -473,8 +479,16 @@ mod tests {
             z_min: -10.0,
             z_max: 10.0,
         };
-        let global = build_global_cloud(&map, &live, 1.0, "world", Time::default());
-        let local = build_local_cloud(&map, &live, 1.0, &cylinder, "world", Time::default());
+        let global = points_to_cloud(
+            &emit_points(&map, 1.0, None, 0, &live),
+            "world",
+            Time::default(),
+        );
+        let local = points_to_cloud(
+            &emit_points(&map, 1.0, Some(&cylinder), 0, &live),
+            "world",
+            Time::default(),
+        );
         assert!(cloud_points(&global).contains(&voxel_center(5, 0, 0)));
         assert!(!cloud_points(&local).contains(&voxel_center(5, 0, 0)));
         assert_eq!(local.width, 0);
@@ -492,8 +506,16 @@ mod tests {
             z_min: 0.0,
             z_max: 1.0,
         };
-        let global = build_global_cloud(&map, &live, 1.0, "world", Time::default());
-        let local = build_local_cloud(&map, &live, 1.0, &cylinder, "world", Time::default());
+        let global = points_to_cloud(
+            &emit_points(&map, 1.0, None, 0, &live),
+            "world",
+            Time::default(),
+        );
+        let local = points_to_cloud(
+            &emit_points(&map, 1.0, Some(&cylinder), 0, &live),
+            "world",
+            Time::default(),
+        );
         assert!(cloud_points(&global).contains(&voxel_center(0, 0, 5)));
         assert!(!cloud_points(&local).contains(&voxel_center(0, 0, 5)));
         assert_eq!(local.width, 0);
@@ -512,11 +534,56 @@ mod tests {
             z_min: 0.0,
             z_max: 1.0,
         };
-        let global = build_global_cloud(&map, &live, 1.0, "world", Time::default());
-        let local = build_local_cloud(&map, &live, 1.0, &cylinder, "world", Time::default());
+        let global = points_to_cloud(
+            &emit_points(&map, 1.0, None, 0, &live),
+            "world",
+            Time::default(),
+        );
+        let local = points_to_cloud(
+            &emit_points(&map, 1.0, Some(&cylinder), 0, &live),
+            "world",
+            Time::default(),
+        );
         assert!(cloud_points(&global).contains(&voxel_center(1, 0, 0)));
         assert!(cloud_points(&global).contains(&voxel_center(10, 10, 10)));
         assert!(cloud_points(&local).contains(&voxel_center(1, 0, 0)));
         assert!(!cloud_points(&local).contains(&voxel_center(10, 10, 10)));
+    }
+
+    #[test]
+    fn local_map_applies_support_min() {
+        // The live local cloud must honor support_min, so an isolated healthy
+        // voxel is dropped while a dense patch survives. Live voxels bypass it.
+        let mut map = VoxelMap::default();
+        for x in 0..3 {
+            for y in 0..3 {
+                map.voxels.insert((x, y, 0), Voxel::with_health(1));
+            }
+        }
+        map.voxels.insert((20, 0, 0), Voxel::with_health(1));
+        let mut live: AHashSet<VoxelKey> = AHashSet::new();
+        live.insert((25, 0, 0));
+        let cylinder = LocalBounds {
+            origin_x: 0.0,
+            origin_y: 0.0,
+            r_xy_max_sq: 1e6,
+            z_min: -10.0,
+            z_max: 10.0,
+        };
+        let local = points_to_cloud(
+            &emit_points(&map, 1.0, Some(&cylinder), 3, &live),
+            "world",
+            Time::default(),
+        );
+        let pts = cloud_points(&local);
+        assert!(pts.contains(&voxel_center(1, 1, 0)), "dense patch kept");
+        assert!(
+            !pts.contains(&voxel_center(20, 0, 0)),
+            "isolated healthy voxel dropped by support_min"
+        );
+        assert!(
+            pts.contains(&voxel_center(25, 0, 0)),
+            "live voxel bypasses support_min"
+        );
     }
 }
