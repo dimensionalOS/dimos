@@ -23,12 +23,11 @@ Go2McapStore. Use :func:`open_store` when the path is already resolved.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 
 from dimos.utils.data import resolve_named_path
 
 if TYPE_CHECKING:
-    from dimos.memory2.backend import Backend
     from dimos.memory2.store.base import Store
 
 
@@ -58,7 +57,4 @@ def open_dataset(dataset: str | Path) -> Store:
 
 def stream_payload_types(store: Store) -> dict[str, type]:
     """Map each stream name in *store* to its payload type (any backend)."""
-    return {
-        name: cast("Backend[Any]", store.stream(name)._source).data_type
-        for name in store.list_streams()
-    }
+    return {name: store.stream(name).data_type or object for name in store.list_streams()}
