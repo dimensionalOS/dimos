@@ -4,7 +4,7 @@ title: "Go2 Navigation Deep Dive"
 
 The Go2 navigation stack runs entirely without ROS. It uses a **column-carving voxel map** strategy: each new LiDAR frame replaces the corresponding region of the global map entirely, ensuring the map always reflects the latest observations.
 
-![output](assets/noros_nav.gif)
+![Live Go2 navigation in Rerun](assets/noros_nav.gif)
 
 For return visits to a known space, use [premap relocalization](/docs/capabilities/navigation/relocalization.md) instead of relying on live mapping alone.
 
@@ -57,7 +57,7 @@ The [`VoxelGridMapper`](/dimos/mapping/voxels.py) maintains a sparse 3D occupanc
 
 Voxel hash map provides O(1) insert/erase/lookup, so this is efficient even with millions of voxels. The grid runs on **CUDA** by default for speed, with CPU fallback.
 
-Each incoming LiDAR frame is spliced into the global map via column carving. We consider any previously mapped voxels in the space of a received LiDAR frame stale, by erasing entire Z-columns in the footprint, we guarantee:
+Each incoming LiDAR frame is spliced into the global map via column carving: any previously mapped voxels in the space of a received LiDAR frame are considered stale, and entire Z-columns in its footprint are erased before the new frame is written. This guarantees:
 
 - No ghost obstacles from previous passes
 - Dynamic objects (people, doors) get cleared automatically
@@ -82,7 +82,7 @@ Live column-carving has no loop closure. We trust Go2 odometry, which is stable 
 
 The [`CostMapper`](/dimos/mapping/costmapper.py) converts the 3D voxel map into a 2D occupancy grid. The default algorithm (`height_cost`) maps rate of change of Z, with some smoothing.
 
-algo settings are in [`occupancy.py`](/dimos/mapping/pointclouds/occupancy.py) and can be configured per robot
+Algorithm settings live in [`occupancy.py`](/dimos/mapping/pointclouds/occupancy.py) and can be configured per robot.
 
 
 #### Configuration
@@ -108,17 +108,21 @@ class HeightCostConfig(OccupancyConfig):
 
 ### 4. Navigation Costmap ([`ReplanningAStarPlanner`](/dimos/navigation/replanning_a_star/module.py))
 
-The planner will process the terrain gradient and compute it's own algo-relevant costmap, prioritizing safe free paths, while be willing to path aggressively through tight spaces if it has to
+The planner processes the terrain gradient and computes its own planning costmap, preferring safe free paths but willing to path aggressively through tight spaces when it has to.
 
-We run the planner in a constant loop so it will dynamically react to obstacles encountered.
+We run the planner in a constant loop so it dynamically reacts to obstacles as they appear.
 
 ![Navigation costmap with path](assets/4-navcostmap.png)
 
 ### 5. All Layers Combined
 
-All visualization layers shown together
+All visualization layers shown together:
 
 ![All layers](assets/5-all.png)
+
+## Frontier Exploration
+
+The [`WavefrontFrontierExplorer`](/dimos/navigation/frontier_exploration/wavefront_frontier_goal_selector.py) drives autonomous exploration of unknown space. It scans the costmap for frontiers, the boundaries between mapped and unmapped cells, picks the best candidate with a wavefront BFS from the robot's position, and publishes it as a navigation goal. When a goal is reached (or fails), it selects the next frontier until the space is fully mapped. Like patrolling below, it is exposed as an agent skill: an LLM agent can call `explore` and `end_exploration`.
 
 ## Patrolling
 
@@ -181,4 +185,4 @@ unitree_go2 = autoconnect(
 
 to_svg(unitree_go2, "assets/go2_blueprint.svg")
 ```
-![output](assets/go2_blueprint.svg)
+![unitree_go2 blueprint module graph](assets/go2_blueprint.svg)
