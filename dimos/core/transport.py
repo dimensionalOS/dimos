@@ -364,7 +364,7 @@ class ZenohTransport(PubSubTransport[T]):
 
     @property
     def channel(self) -> str:
-        return self.topic.key_expr
+        return cast("str", self.topic.key_expr)
 
     def __reduce__(self) -> tuple[Any, ...]:
         return (ZenohTransport, (self.topic,))
