@@ -48,6 +48,54 @@ _Avoid_: combined URDF, merged robot scene
 The authoritative belief state for manipulation planning, including robot state and scene state used by planners.
 _Avoid_: planner context, backend instance
 
+**Planning-scene synchronization**:
+The capability that keeps the Planning world's obstacle state consistent with selected authoritative scene sources.
+_Avoid_: environment sync, world sync, simulator sync
+
+**Visualization scene mirroring**:
+The non-authoritative capability that renders Scene Registry state or Planning world projections for user inspection without serving as the planner's safety source.
+_Avoid_: planning-scene synchronization when referring only to display updates, visualization sync as a planner guarantee
+
+**Scene Registry**:
+The authoritative catalog of scene entities known to DimOS across perception, simulation, and explicit declarations.
+_Avoid_: object registration module, obstacle monitor, planning world
+
+**Scene entity**:
+A spatial item represented in the Scene Registry, including physical objects, simulator-authored geometry, declared regions, dense maps, pointcloud maps, voxel maps, or other environment representations. A Scene entity does not require semantic object meaning; downstream modules decide how to interpret and project it.
+_Avoid_: obstacle when referring to the registry-level item, registered object when the source is not perception
+
+**Scene payload**:
+A typed data payload carried inline by a Scene entity, such as primitive geometry, mesh geometry, object bounds, pointcloud data, voxel map, occupancy grid, TSDF, or surface graph. Downstream modules inspect payload type to decide whether and how they can consume the Scene entity.
+_Avoid_: semantic type when referring to the spatial data form, obstacle type when the entity is not specifically a planning obstacle, representation when referring to the concrete carried data, external payload references in v1
+
+**Camera-pose odometry**:
+A pose stream that reports a depth or lidar sensor frame's pose in the mapping frame for spatial mapping. For wrist-mounted cameras, Camera-pose odometry is derived from robot forward kinematics plus the camera extrinsic transform; it is not necessarily mobile-base odometry.
+_Avoid_: robot odometry when referring specifically to the sensor pose needed for pointcloud integration
+
+**Self-filtering**:
+The removal of a robot's own body, gripper, sensor mount, or other ego geometry from perceived scene data before that data is treated as environment belief.
+_Avoid_: obstacle filtering when the filtered geometry belongs to the observing robot itself
+
+**Scene source**:
+A producer that asserts Scene entities into the Scene Registry, such as perception, simulation, or explicit operator declarations.
+_Avoid_: obstacle source when the producer is not planner-specific, perception source when referring to all scene producers
+
+**Planning projection**:
+The planner-facing spatial representation of a Scene entity, which may be simplified, inflated, omitted, or otherwise adapted for collision checking.
+_Avoid_: object geometry when referring to planner-specific collision geometry, source geometry
+
+**Scene source snapshot**:
+A complete statement of the Scene entities currently asserted by one scene source, used to reconcile the Scene Registry with that source's latest authoritative state.
+_Avoid_: global scene dump, planning-world snapshot
+
+**Scene entity delta**:
+An incremental add, update, or remove assertion for one Scene entity in the Scene Registry.
+_Avoid_: obstacle command when the change is registry-level, collision object message
+
+**Source-scoped identity**:
+A Scene entity identity formed from the scene source and that source's stable local identifier, without assuming entities from different sources refer to the same physical thing.
+_Avoid_: global object id, automatic semantic merge
+
 **Trajectory parametrization**:
 The manipulation-planning capability that assigns time to a geometric joint path under motion constraints.
 _Avoid_: trajectory generation, retiming when referring to the broader capability
