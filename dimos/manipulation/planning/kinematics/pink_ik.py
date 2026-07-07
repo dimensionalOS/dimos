@@ -294,11 +294,6 @@ class PinkIK:
                     if fallback_result is None:
                         fallback_result = result
                     continue
-                if check_collision and not world.check_config_collision_free(
-                    robot_id, result.joint_state
-                ):
-                    fallback_result = _collision_failure(result)
-                    continue
                 results_by_robot[robot_name] = result
                 break
             else:
@@ -356,6 +351,12 @@ class PinkIK:
             iterations=iterations,
             message="Pink IK solution found",
         )
+        if check_collision and not _combined_robot_results_collision_free(
+            world,
+            robot_ids_by_name,
+            results_by_robot,
+        ):
+            return _collision_failure(combined)
         return combined
 
     def _solve_multi(
@@ -763,6 +764,23 @@ def _within_limits(
         np.all(positions >= lower_limits - tolerance)
         and np.all(positions <= upper_limits + tolerance)
     )
+
+
+def _combined_robot_results_collision_free(
+    world: WorldSpec,
+    robot_ids_by_name: Mapping[RobotName, WorldRobotID],
+    results_by_robot: Mapping[RobotName, IKResult],
+) -> bool:
+    with world.scratch_context() as ctx:
+        for robot_name, result in results_by_robot.items():
+            if result.joint_state is None:
+                return False
+            world.set_joint_state(ctx, robot_ids_by_name[robot_name], result.joint_state)
+        return all(
+            world.is_collision_free(ctx, robot_id)
+            for robot_name, robot_id in robot_ids_by_name.items()
+            if robot_name in results_by_robot
+        )
 
 
 def _success(

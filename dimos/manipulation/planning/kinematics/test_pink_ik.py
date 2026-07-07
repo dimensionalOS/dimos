@@ -250,16 +250,79 @@ class _FakeWorld:
 
     def get_joint_state(self, ctx: object, robot_id: str) -> JointState:
         self.joint_state_calls += 1
-        return JointState(
-            name=["joint_b", "joint_c", "joint_a"],
-            position=[0.0, 0.0, 0.0],
-        )
+        return JointState({"name": ["joint_b", "joint_c", "joint_a"], "position": [0.0, 0.0, 0.0]})
 
     def get_joint_limits(self, robot_id: str) -> tuple[np.ndarray, np.ndarray]:
         return np.array([-1.0, -1.0, -1.0]), np.array([1.0, 1.0, 1.0])
 
     def check_config_collision_free(self, robot_id: str, joint_state: JointState) -> bool:
         return self.collision_free
+
+    def set_joint_state(self, ctx: object, robot_id: str, joint_state: JointState) -> None:
+        self.joint_state = joint_state
+
+    def is_collision_free(self, ctx: object, robot_id: str) -> bool:
+        return self.collision_free
+
+
+class _MultiRobotCollisionWorld:
+    is_finalized = True
+
+    def __init__(self) -> None:
+        left_config = _robot_config()
+        left_config.name = "left"
+        right_config = _robot_config()
+        right_config.name = "right"
+        self.configs = {"left-id": left_config, "right-id": right_config}
+        self.groups = {
+            "left/manipulator": PlanningGroup(
+                id="left/manipulator",
+                robot_name="left",
+                group_name="manipulator",
+                joint_names=("left/joint_a", "left/joint_b"),
+                local_joint_names=("joint_a", "joint_b"),
+                base_link="base",
+                tip_link="tool",
+            ),
+            "right/manipulator": PlanningGroup(
+                id="right/manipulator",
+                robot_name="right",
+                group_name="manipulator",
+                joint_names=("right/joint_a", "right/joint_b"),
+                local_joint_names=("joint_a", "joint_b"),
+                base_link="base",
+                tip_link="tool",
+            ),
+        }
+        self.config_collision_checks = 0
+        self.context_collision_checks = 0
+        self.context_states: dict[str, JointState] = {}
+
+    def get_robot_ids(self) -> list[str]:
+        return ["left-id", "right-id"]
+
+    def get_robot_config(self, robot_id: str) -> RobotModelConfig:
+        return self.configs[robot_id]
+
+    def scratch_context(self) -> nullcontext[None]:
+        return nullcontext(None)
+
+    def get_joint_state(self, ctx: object, robot_id: str) -> JointState:
+        return JointState({"name": ["joint_a", "joint_b", "joint_c"], "position": [0.0, 0.0, 0.0]})
+
+    def get_joint_limits(self, robot_id: str) -> tuple[np.ndarray, np.ndarray]:
+        return np.array([-1.0, -1.0, -1.0]), np.array([1.0, 1.0, 1.0])
+
+    def check_config_collision_free(self, robot_id: str, joint_state: JointState) -> bool:
+        self.config_collision_checks += 1
+        return True
+
+    def set_joint_state(self, ctx: object, robot_id: str, joint_state: JointState) -> None:
+        self.context_states[robot_id] = joint_state
+
+    def is_collision_free(self, ctx: object, robot_id: str) -> bool:
+        self.context_collision_checks += 1
+        return len(self.context_states) < 2
 
 
 def test_create_kinematics_pink_missing_dependency_is_actionable(
@@ -604,6 +667,64 @@ def test_solve_pose_targets_multi_target_uses_multi_frame_solve(mocker: MockerFi
     assert result.joint_state is not None
     assert result.joint_state.name == ["arm/joint_a", "arm/joint_b", "arm/joint_c"]
     assert result.joint_state.position == [0.1, 0.2, 0.3]
+
+
+def test_solve_pose_targets_checks_multi_robot_solution_together(
+    mocker: MockerFixture,
+) -> None:
+    ik = _pink_ik(mocker)
+    world = _MultiRobotCollisionWorld()
+    mocker.patch.object(ik, "_get_robot_context", return_value=_context())
+    solve_single = mocker.patch.object(
+        ik,
+        "_solve_single",
+        side_effect=[
+            IKResult(
+                status=IKStatus.SUCCESS,
+                joint_state=JointState(
+                    {"name": ["joint_a", "joint_b", "joint_c"], "position": [0.1, 0.2, 0.3]}
+                ),
+            ),
+            IKResult(
+                status=IKStatus.SUCCESS,
+                joint_state=JointState(
+                    {"name": ["joint_a", "joint_b", "joint_c"], "position": [0.4, 0.5, 0.6]}
+                ),
+            ),
+        ],
+    )
+
+    result = ik.solve_pose_targets(
+        world=cast("Any", world),
+        pose_targets={
+            world.groups["left/manipulator"]: PoseStamped(
+                position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+            ),
+            world.groups["right/manipulator"]: PoseStamped(
+                position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+            ),
+        },
+        seed=JointState(
+            {
+                "name": [
+                    "left/joint_a",
+                    "left/joint_b",
+                    "left/joint_c",
+                    "right/joint_a",
+                    "right/joint_b",
+                    "right/joint_c",
+                ],
+                "position": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            }
+        ),
+        max_attempts=1,
+    )
+
+    assert solve_single.call_count == 2
+    assert result.status == IKStatus.COLLISION
+    assert world.config_collision_checks == 0
+    assert world.context_collision_checks == 1
+    assert set(world.context_states) == {"left-id", "right-id"}
 
 
 def test_solve_pose_targets_auxiliary_only_retains_seed_selection_order(
