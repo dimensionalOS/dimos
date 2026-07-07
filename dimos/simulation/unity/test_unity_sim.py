@@ -163,10 +163,10 @@ class TestPlatformValidation:
 
     @pytest.mark.parametrize(
         "system, machine",
-        [
+        (
             ("Darwin", "arm64"),  # not Linux
             ("Linux", "aarch64"),  # Linux but not x86_64
-        ],
+        ),
     )
     def test_rejects_unsupported_platform(self, monkeypatch, system, machine):
         # Mock the platform so the rejection path runs regardless of the
