@@ -36,7 +36,7 @@ EXAMPLE_SRC = EXAMPLE_ROOT / "src"
 
 
 def _example_pythonpath() -> str:
-    paths = [str(EXAMPLE_SRC), str(REPO_ROOT)]
+    paths = [str(EXAMPLE_SRC)]
     paths.extend(
         path for path in sys.path if path and ("site-packages" in path or "dist-packages" in path)
     )
@@ -111,7 +111,6 @@ def test_example_pythonpath_excludes_host_stdlib(monkeypatch) -> None:
     entries = _example_pythonpath().split(os.pathsep)
 
     assert str(EXAMPLE_SRC) in entries
-    assert str(REPO_ROOT) in entries
     assert site_packages in entries
     assert stdlib not in entries
 

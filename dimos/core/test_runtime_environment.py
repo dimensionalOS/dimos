@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -88,6 +89,24 @@ def test_resolve_python_project_requires_prepared_python_after_validation(tmp_pa
     runtime.prepared_python.write_text("#!/usr/bin/env python\n", encoding="utf-8")
 
     material = runtime.resolve_python_project()
-    assert material.argv_prefix == ("uv", "run", "--no-sync", "python")
+    assert material.argv_prefix == (str(runtime.prepared_python),)
     assert material.has_pixi is False
     assert material.prepared_python == runtime.prepared_python
+    assert str(Path(__file__).resolve().parents[2]) in material.env["PYTHONPATH"].split(os.pathsep)
+
+
+def test_resolve_python_project_preserves_runtime_pythonpath(tmp_path: Path) -> None:
+    runtime = PythonProjectRuntimeEnvironment(
+        name="project",
+        project=tmp_path,
+        env={"PYTHONPATH": "/runtime/src"},
+    )
+    runtime.pyproject_path.write_text("[project]\nname = 'example'\n", encoding="utf-8")
+    runtime.uv_lock_path.write_text("version = 1\n", encoding="utf-8")
+    runtime.prepared_python.parent.mkdir(parents=True)
+    runtime.prepared_python.write_text("#!/usr/bin/env python\n", encoding="utf-8")
+
+    entries = runtime.resolve_python_project().env["PYTHONPATH"].split(os.pathsep)
+
+    assert entries[0] == str(Path(__file__).resolve().parents[2])
+    assert "/runtime/src" in entries

@@ -23,12 +23,11 @@ from dimos.core.runtime_environment import PythonProjectRuntimeEnvironment, Runt
 from dimos_demo_worker_module.contract import DemoWorkerModule
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-REPO_ROOT = PROJECT_ROOT.parents[1]
 EXAMPLE_SRC = PROJECT_ROOT / "src"
 
 
 def _worker_pythonpath() -> str:
-    paths = [str(EXAMPLE_SRC), str(REPO_ROOT)]
+    paths = [str(EXAMPLE_SRC)]
     paths.extend(
         path for path in sys.path if path and ("site-packages" in path or "dist-packages" in path)
     )

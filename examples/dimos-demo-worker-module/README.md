@@ -13,8 +13,9 @@ Contract from a worker-only Runtime Implementation.
 
 The project intentionally keeps dependencies minimal, but includes `inflection`
 as a runtime-only dependency to prove the contract can be imported without the
-worker dependency stack. The demo points the worker at the local repository
-checkout via `PYTHONPATH`, so the example lockfile only captures the runtime-only
+worker dependency stack. DimOS automatically adds its own import path when
+launching the runtime worker; the demo only adds the example package source and
+compatible dependency paths. The example lockfile only captures the runtime-only
 dependency closure. Sync from the checked-in lockfile before running it:
 
 ```bash

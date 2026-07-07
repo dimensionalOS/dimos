@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 
 
@@ -112,15 +113,12 @@ class PythonProjectRuntimeEnvironment(RuntimeEnvironment):
                 f"missing {self.prepared_python}. Deployment reconciliation should create or update "
                 "runtime environment state without changing project files."
             )
-        argv_prefix = (
-            ("pixi", "run", "uv", "run", "--no-sync", "python")
-            if self.has_pixi
-            else ("uv", "run", "--no-sync", "python")
-        )
+        env = dict(self.env)
+        env["PYTHONPATH"] = _merge_pythonpath(str(_dimos_import_path()), env.get("PYTHONPATH", ""))
         return PythonProjectLaunchMaterial(
-            argv_prefix=argv_prefix,
+            argv_prefix=(str(self.prepared_python),),
             cwd=self.project_path,
-            env=dict(self.env),
+            env=env,
             runtime_name=self.name,
             project=self.project_path,
             has_pixi=self.has_pixi,
@@ -179,3 +177,14 @@ def _validate_unique_project_paths(environments: Mapping[str, RuntimeEnvironment
                 f"Runtime Project path {project_path}"
             )
         paths[project_path] = name
+
+
+def _dimos_import_path() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _merge_pythonpath(*values: str) -> str:
+    paths: list[str] = []
+    for value in values:
+        paths.extend(path for path in value.split(os.pathsep) if path)
+    return os.pathsep.join(dict.fromkeys(paths))
