@@ -2,13 +2,13 @@
 
 Two crates:
 
-- **`dimos-module`**: runtime. `Module` trait, `Builder`, `Input`/`Output`, `Transport`/`LcmTransport`, `run()`.
+- **`dimos-module`**: runtime. `Module` trait, `Builder`, `Input`/`Output`, `Transport` (`LcmTransport`/`ZenohTransport`), `run_with_transport()`.
 - **`dimos-module-macros`**: `#[derive(Module)]` and `#[native_config]` proc-macros.
 
 ## Writing a module
 
 ```rust
-use dimos_module::{native_config, run, Input, LcmTransport, Module, Output};
+use dimos_module::{native_config, run_with_transport, Input, Module, Output};
 use lcm_msgs::geometry_msgs::Twist;
 
 #[native_config]
@@ -43,10 +43,13 @@ impl MyModule {
 
 #[tokio::main]
 async fn main() {
-    let transport = LcmTransport::new().await.unwrap();
-    run::<MyModule, _>(transport).await;
+    run_with_transport::<MyModule>().await;
 }
 ```
+
+## Transport
+
+Every transport is compiled into the binary. `run_with_transport` opens the one named by the `DIMOS_TRANSPORT` env var (`lcm` or `zenoh`), which the Python coordinator sets from `global_config.transport` (the `--transport` flag). The module never names a transport, so the same binary runs over either.
 
 ## Attributes
 
