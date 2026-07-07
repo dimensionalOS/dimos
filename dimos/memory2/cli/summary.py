@@ -60,16 +60,11 @@ def main(
 
     db_path = resolve_dataset(dataset)
     if db_path.suffix == ".mcap":
-        # mcap stores don't speak the sqlite _streams table; print the store's
-        # own summary, plus channels we have no codec for so nothing is hidden.
-        from dimos.memory2.store.mcap import McapStore
-
+        # mcap stores don't speak the sqlite _streams table; print the store's own
+        # summary. Codecless channels appear as Stream[bytes], flagged [raw bytes: …].
         store = open_store(db_path)
         with store:
             typer.echo(store.summary())
-            if isinstance(store, McapStore):
-                for topic, (count, schema) in sorted(store.uncodec_channels().items()):
-                    typer.echo(f"  (no codec) {topic}: {count} msgs [{schema or '?'}]")
         return
 
     from rich.console import Console
