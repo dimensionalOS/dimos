@@ -101,6 +101,7 @@ classifiers = [
 dependencies = [
     # Transport Protocols
     "dimos-lcm>=0.1.3",
+    "eclipse-zenoh>=1.0.0,<2.0",
     "PyTurboJPEG==1.8.2",
     # Core
     "numpy>=1.26.4",
@@ -115,7 +116,10 @@ dependencies = [
     # Logging
     "structlog>=25.5.0,<26",
     # Core Msgs
-    "opencv-python",
+    # Contrib variant (superset of opencv-python) because cv2.legacy CSRT
+    # trackers (perception/drone) are contrib-only. <5 defers the OpenCV 5
+    # major bump. See also the opencv-python entry in override-dependencies.
+    "opencv-contrib-python>=4.8,<5",
     "open3d-unofficial-arm>=0.19.0.post9; platform_system == 'Linux' and platform_machine == 'aarch64'",
     "open3d>=0.18.0; platform_system != 'Linux' or platform_machine != 'aarch64'",
     # CLI
@@ -135,7 +139,9 @@ dependencies = [
     "toolz>=1.1.0",
     "protobuf>=6.33.5,<7",
     "psutil>=7.0.0",
-    "sqlite-vec>=0.1.6",
+    # >=0.1.7: the 0.1.6 linux-aarch64 wheel shipped a 32-bit armv7 vec0.so
+    # (wrong ELF class), which fails to load on aarch64. Fixed from 0.1.7 on.
+    "sqlite-vec>=0.1.7",
     "lz4>=4.4.5",
     "bleak>=3.0.2",
     "cryptography>=46.0.5",
@@ -326,7 +332,6 @@ base = [
 
 # All extras except dds and unitree-dds (which require special system setup).
 apriltag = [
-    "opencv-contrib-python==4.10.0.84",
     "reportlab>=4.5.0",
 ]
 
@@ -444,6 +449,10 @@ default-groups = ["tests"]
 exclude-newer = "7 days"
 exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false }
 override-dependencies = [
+    # ultralytics, unitree-sdk2py-dimos and unitree-webrtc-connect depend on
+    # opencv-python, which ships the same cv2/ tree as our opencv-contrib-python
+    # core dep and clobbers it. Contrib is a superset, so never install plain.
+    "opencv-python; sys_platform == 'never'",
     # moondream pins pillow<11 but we need >=12.2.0 for security fixes
     # (CVE-2026-25990, CVE-2026-40192, CVE-2026-42311).
     "pillow>=12.2.0",
@@ -511,6 +520,7 @@ python_version = "3.12"
 incremental = true
 strict = true
 warn_unused_ignores = false
+untyped_calls_exclude = ["zenoh"]
 explicit_package_bases = true
 exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/tool_.|.*/conftest.py*"
 
@@ -610,14 +620,9 @@ exclude_also = [
 ]
 
 [tool.largefiles]
-max_size_kb = 50
+max_size_kb = 75
 ignore = [
     "uv.lock",
     "*/package-lock.json",
-    "dimos/dashboard/dimos.rbl",
     "dimos/web/dimos_interface/themes.json",
-    "dimos/manipulation/manipulation_module.py",
-    "dimos/manipulation/visualization/viser/test_viser_visualization.py",
-    "dimos/navigation/cmu_nav/modules/*/main.cpp",
-    "dimos/navigation/cmu_nav/common/*.hpp",
 ]

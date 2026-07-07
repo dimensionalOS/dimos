@@ -26,6 +26,7 @@ else:
     from typing_extensions import TypeVar
 
 from dimos.core.resource import CompositeResource
+from dimos.memory2.backend import Backend
 from dimos.memory2.buffer import BackpressureBuffer, KeepLast
 from dimos.memory2.transform import FnIterTransformer, FnTransformer, Transformer
 from dimos.memory2.type.filter import (
@@ -41,6 +42,7 @@ from dimos.memory2.type.filter import (
 )
 from dimos.memory2.type.observation import EmbeddedObservation, Observation
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.utils.human import human_bytes
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -49,7 +51,6 @@ if TYPE_CHECKING:
     import reactivex
     from reactivex.abc import DisposableBase, ObserverBase
 
-    from dimos.memory2.backend import Backend
     from dimos.models.embedding.base import Embedding
 
 T = TypeVar("T")
@@ -496,9 +497,28 @@ class Stream(CompositeResource, Generic[T, O]):
         last = self.last()
         return (first.ts, last.ts)
 
+    def size_bytes(self) -> int | None:
+        """Total stored payload bytes, or None if unknown or the query narrows the stream."""
+        q = self._query
+        narrowed = (
+            q.filters
+            or q.limit_val is not None
+            or q.offset_val
+            or q.search_vec is not None
+            or q.search_text is not None
+        )
+        if narrowed:
+            return None
+        if isinstance(self._source, Backend):
+            return self._source.size_bytes()
+        return None
+
     def summary(self) -> str:
-        """Return a short human-readable summary: count, time range, avg frequency."""
+        """Return a short human-readable summary: count, time range, avg frequency, size."""
         from datetime import datetime, timezone
+
+        sz = self.size_bytes()
+        size = f", {human_bytes(sz)}" if sz is not None else ""
 
         n = self.count()
         if n == 0:
@@ -510,7 +530,7 @@ class Stream(CompositeResource, Generic[T, O]):
         dt1 = datetime.fromtimestamp(t1, tz=timezone.utc).strftime(fmt)
         dur = t1 - t0
         hz = f", {(n - 1) / dur:.2f} Hz" if dur > 0 else ""
-        return f"{self}: {n} items, {dt0} — {dt1} ({dur:.1f}s{hz})"
+        return f"{self}: {n} items, {dt0} — {dt1} ({dur:.1f}s{hz}{size})"
 
     def materialize(self) -> Stream[T, O]:
         """Materialize into memory and return a replayable stream.

@@ -19,18 +19,14 @@ Topics derived from hardware_id: /{hardware_id}/cmd_vel, /{hardware_id}/odom.
 
 from __future__ import annotations
 
-from functools import partial
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.hardware.drive_trains.registry import TwistBaseAdapterRegistry
 
 logger = setup_logger()
 
@@ -147,8 +143,15 @@ class TransportTwistAdapter:
             self._latest_odom = [msg.x, msg.y, msg.yaw]
 
 
-def register(registry: TwistBaseAdapterRegistry) -> None:
+def transport_lcm_factory(**kwargs: Any) -> TransportTwistAdapter:
+    """Factory for the ``transport_lcm`` adapter (see ``_registry.py``)."""
+    kwargs.setdefault("transport_cls", LCMTransport)
+    return TransportTwistAdapter(**kwargs)
+
+
+def transport_ros_factory(**kwargs: Any) -> TransportTwistAdapter:
+    """Factory for the ``transport_ros`` adapter (see ``_registry.py``)."""
     from dimos.core.transport import ROSTransport
 
-    registry.register("transport_lcm", partial(TransportTwistAdapter, transport_cls=LCMTransport))
-    registry.register("transport_ros", partial(TransportTwistAdapter, transport_cls=ROSTransport))
+    kwargs.setdefault("transport_cls", ROSTransport)
+    return TransportTwistAdapter(**kwargs)

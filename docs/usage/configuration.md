@@ -1,4 +1,6 @@
-# Configuration
+---
+title: "Configuration"
+---
 
 Dimos provides a `Configurable` base class. See [`service/spec.py`](/dimos/protocol/service/spec.py#L22).
 
