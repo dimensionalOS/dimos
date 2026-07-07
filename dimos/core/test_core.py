@@ -14,6 +14,7 @@
 
 import time
 
+import pytest
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
