@@ -14,7 +14,7 @@
 
 """WholeBodyAdapter registry with lazy manifest discovery.
 
-Adapter packages declare factories in ``__registry__.py`` manifests
+Adapter packages declare factories in ``_registry.py`` manifests
 (see ``dimos.hardware.adapter_registry``). Two roots are scanned:
 
 * ``dimos/hardware/whole_body/`` — real-hardware adapters (Unitree DDS,

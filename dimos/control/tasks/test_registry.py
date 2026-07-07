@@ -44,12 +44,11 @@ def test_every_task_dir_has_a_manifest() -> None:
                 continue
             if child.name in UNREGISTERED_TASK_DIRS:
                 continue
-            manifest = child / "__registry__.py"
+            manifest = child / "_registry.py"
             assert manifest.exists(), (
-                f"{child} contains task code but no __registry__.py; "
-                f"discover() would silently skip it"
+                f"{child} contains task code but no _registry.py; discover() would silently skip it"
             )
-            manifest_mod = importlib.import_module(f"dimos.control.tasks.{child.name}.__registry__")
+            manifest_mod = importlib.import_module(f"dimos.control.tasks.{child.name}._registry")
             names = set(manifest_mod.TASK_FACTORIES)
             assert names, f"{manifest} declares no tasks"
             missing = names - set(control_task_registry.available())

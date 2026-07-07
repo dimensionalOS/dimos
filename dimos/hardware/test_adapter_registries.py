@@ -98,12 +98,12 @@ def test_every_adapter_dir_has_a_manifest(registry, family) -> None:
                 f"{dir_path} is deeper than the registry scan depth ({max_depth}); "
                 f"its manifest would never be discovered"
             )
-            manifest = dir_path / "__registry__.py"
+            manifest = dir_path / "_registry.py"
             assert manifest.exists(), (
-                f"{dir_path} contains adapter.py but no __registry__.py; "
+                f"{dir_path} contains adapter.py but no _registry.py; "
                 f"its adapters would silently vanish from the registry"
             )
-            manifest_mod = importlib.import_module(f"{sub_pkg}.__registry__")
+            manifest_mod = importlib.import_module(f"{sub_pkg}._registry")
             names = set(manifest_mod.ADAPTER_FACTORIES)
             assert names, f"{manifest} declares no adapters"
             missing = names - set(registry.available())
@@ -115,7 +115,7 @@ def test_every_adapter_dir_has_a_manifest(registry, family) -> None:
 def test_every_sim_whole_body_module_is_declared() -> None:
     """Sim whole-body adapters are flat modules; each must appear in the root manifest."""
     pkg = importlib.import_module("dimos.simulation.adapters.whole_body")
-    manifest = importlib.import_module("dimos.simulation.adapters.whole_body.__registry__")
+    manifest = importlib.import_module("dimos.simulation.adapters.whole_body._registry")
     names = set(manifest.ADAPTER_FACTORIES)
     assert "sim_mujoco_g1" in names
     assert names <= set(whole_body_adapter_registry.available())
@@ -126,7 +126,7 @@ def test_every_sim_whole_body_module_is_declared() -> None:
                 continue
             mod_name = f"dimos.simulation.adapters.whole_body.{mod_file.stem}"
             assert mod_name in declared_modules, (
-                f"{mod_file} is not referenced by __registry__.py; "
+                f"{mod_file} is not referenced by _registry.py; "
                 f"its adapter would silently vanish from the registry"
             )
 

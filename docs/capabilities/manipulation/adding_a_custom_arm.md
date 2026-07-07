@@ -52,7 +52,7 @@ dimos/hardware/manipulators/
 ├── piper/
 └── yourarm/             # ← New directory
     ├── __init__.py
-    ├── __registry__.py  # Declares your adapter (name → import path)
+    ├── _registry.py  # Declares your adapter (name → import path)
     └── adapter.py
 ```
 
@@ -342,10 +342,10 @@ class YourArmAdapter:
         return None
 ```
 
-Then declare the adapter in a `__registry__.py` manifest next to it:
+Then declare the adapter in a `_registry.py` manifest next to it:
 
 ```py
-# dimos/hardware/manipulators/yourarm/__registry__.py
+# dimos/hardware/manipulators/yourarm/_registry.py
 ADAPTER_FACTORIES = {
     "yourarm": "dimos.hardware.manipulators.yourarm.adapter:YourArmAdapter",
 }
@@ -372,10 +372,10 @@ ADAPTER_FACTORIES = {
 
 ### How discovery works
 
-The `AdapterRegistry` in `dimos/hardware/manipulators/registry.py` discovers adapters from `__registry__.py` manifests at import time:
+The `AdapterRegistry` in `dimos/hardware/manipulators/registry.py` discovers adapters from `_registry.py` manifests at import time:
 
 1. It iterates over all subpackages under `dimos/hardware/manipulators/`
-2. For each subpackage, it loads `<subpackage>.__registry__` and records each `ADAPTER_FACTORIES` entry (name → `"module:attr"` import path)
+2. For each subpackage, it loads `<subpackage>._registry` and records each `ADAPTER_FACTORIES` entry (name → `"module:attr"` import path)
 3. Your adapter module is imported only when `create("yourarm")` is first called
 
 The manifest must import nothing beyond stdlib — it is loaded even when your vendor SDK is missing, so the name always shows up in `available()` and a missing SDK fails loudly at `create()` instead of silently dropping the adapter. A CI test (`dimos/hardware/test_adapter_registries.py`) fails if an adapter directory has no manifest or a manifest path doesn't resolve.
@@ -673,7 +673,7 @@ Files to create:
 
 - [ ] `dimos/hardware/manipulators/yourarm/__init__.py`
 - [ ] `dimos/hardware/manipulators/yourarm/adapter.py` (implements Protocol)
-- [ ] `dimos/hardware/manipulators/yourarm/__registry__.py` (declares `ADAPTER_FACTORIES`)
+- [ ] `dimos/hardware/manipulators/yourarm/_registry.py` (declares `ADAPTER_FACTORIES`)
 - [ ] `dimos/robot/yourarm/__init__.py`
 - [ ] `dimos/robot/yourarm/blueprints.py` (coordinator + planning blueprints)
 

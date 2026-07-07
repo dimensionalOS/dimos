@@ -14,7 +14,7 @@
 
 """Manipulator adapter registry with lazy manifest discovery.
 
-Adapter subpackages declare factories in ``__registry__.py`` manifests
+Adapter subpackages declare factories in ``_registry.py`` manifests
 (see ``dimos.hardware.adapter_registry``).
 
 Usage:

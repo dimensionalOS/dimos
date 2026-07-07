@@ -144,13 +144,13 @@ class TransportTwistAdapter:
 
 
 def transport_lcm_factory(**kwargs: Any) -> TransportTwistAdapter:
-    """Factory for the ``transport_lcm`` adapter (see ``__registry__.py``)."""
+    """Factory for the ``transport_lcm`` adapter (see ``_registry.py``)."""
     kwargs.setdefault("transport_cls", LCMTransport)
     return TransportTwistAdapter(**kwargs)
 
 
 def transport_ros_factory(**kwargs: Any) -> TransportTwistAdapter:
-    """Factory for the ``transport_ros`` adapter (see ``__registry__.py``)."""
+    """Factory for the ``transport_ros`` adapter (see ``_registry.py``)."""
     from dimos.core.transport import ROSTransport
 
     kwargs.setdefault("transport_cls", ROSTransport)

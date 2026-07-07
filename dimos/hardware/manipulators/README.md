@@ -33,15 +33,15 @@ This module provides manipulator arm drivers: Protocol-only with injectable adap
 ```
 manipulators/
 ├── spec.py              # ManipulatorAdapter Protocol + shared types
-├── registry.py          # Adapter registry (lazy __registry__.py manifests)
+├── registry.py          # Adapter registry (lazy _registry.py manifests)
 ├── mock/
-│   ├── __registry__.py  # Declares "mock" → adapter import path
+│   ├── _registry.py  # Declares "mock" → adapter import path
 │   └── adapter.py       # MockAdapter for testing
 ├── xarm/
-│   ├── __registry__.py
+│   ├── _registry.py
 │   ├── adapter.py       # XArmAdapter (SDK wrapper)
 └── piper/
-    ├── __registry__.py
+    ├── _registry.py
     ├── adapter.py       # PiperAdapter (SDK wrapper)
 ```
 
@@ -96,7 +96,7 @@ class MyArmAdapter:  # No inheritance needed - just match the Protocol
     # ... implement other Protocol methods
 ```
 
-2. **Declare it in a manifest** (`__registry__.py`, stdlib imports only):
+2. **Declare it in a manifest** (`_registry.py`, stdlib imports only):
 
 ```python
 ADAPTER_FACTORIES = {

@@ -14,7 +14,7 @@
 
 """Lazy adapter registry shared by the hardware adapter families.
 
-Adapter packages declare factories in dependency-free ``__registry__.py``
+Adapter packages declare factories in dependency-free ``_registry.py``
 manifests mapping name to a ``"module:attr"`` import path::
 
     ADAPTER_FACTORIES = {
@@ -43,7 +43,7 @@ class LazyAdapterRegistry(Generic[AdapterT]):
     """Human-readable adapter kind used in error messages."""
 
     manifest_roots: ClassVar[tuple[tuple[str, int], ...]]
-    """``(package, max_depth)`` roots scanned for ``__registry__.py`` manifests."""
+    """``(package, max_depth)`` roots scanned for ``_registry.py`` manifests."""
 
     def __init__(self) -> None:
         self._factory_paths: dict[str, str] = {}
@@ -119,7 +119,7 @@ class LazyAdapterRegistry(Generic[AdapterT]):
             self._scan(sub_pkg, entry_path, depth - 1)
 
     def _load_manifest(self, pkg_name: str) -> None:
-        module_name = f"{pkg_name}.__registry__"
+        module_name = f"{pkg_name}._registry"
         try:
             module = importlib.import_module(module_name)
         except ModuleNotFoundError as exc:
