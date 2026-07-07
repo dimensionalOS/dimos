@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Define the planning-group-aware IK and selected-joint planning algorithm contracts.
+
+## Requirements
 
 ### Requirement: IK solvers must use planning-group target frames
 IK solvers MUST resolve pose target frames from the requested planning group's `tip_link` rather than from robot-scoped end-effector metadata.
