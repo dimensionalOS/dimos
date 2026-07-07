@@ -20,6 +20,7 @@ Usage:
     dimos run coordinator-flowbase                       # FlowBase holonomic base (Portal RPC)
     dimos run coordinator-flowbase-keyboard-teleop       # FlowBase + WASD pygame teleop
     dimos run coordinator-flowbase-nav                   # FlowBase + FastLio2 + nav stack (click-to-drive)
+    dimos run coordinator-flowbase-stereo-nav            # FlowBase + RealSense D435i stereo depth + nav stack
 """
 
 from __future__ import annotations
@@ -34,9 +35,12 @@ from dimos.control.components import (
 )
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
+from dimos.mapping.costmapper import CostMapper
 from dimos.navigation.cmu_nav.main import cmu_nav_rerun_config, create_cmu_nav
 from dimos.navigation.movement_manager.movement_manager import MovementManager
+from dimos.perception.stereo_point_cloud import StereoPointCloud
 from dimos.robot.unitree.g1.config import G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -212,3 +216,34 @@ coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
         ),
     ],
 ).remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
+
+
+# FlowBase + RealSense D435i stereo depth + CostMapper + nav stack
+coordinator_flowbase_stereo_nav = (
+    autoconnect(
+        RealSenseCamera.blueprint(enable_depth=True, enable_pointcloud=False),
+        StereoPointCloud.blueprint(),
+        CostMapper.blueprint(),
+        MovementManager.blueprint(),
+        ControlCoordinator.blueprint(
+            hardware=[_flowbase_twist_base()],
+            tasks=[
+                TaskConfig(
+                    name="vel_base",
+                    type="velocity",
+                    joint_names=_base_joints,
+                    priority=10,
+                ),
+            ],
+        ),
+        RerunBridgeModule.blueprint(rerun_open="web"),
+        RerunWebSocketServer.blueprint(),
+    )
+    .remappings(
+        [
+            (MovementManager, "way_point", "_mgr_way_point_unused"),
+            (ControlCoordinator, "twist_command", "cmd_vel"),
+        ]
+    )
+    .global_config(n_workers=8)
+)
