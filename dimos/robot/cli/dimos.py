@@ -478,6 +478,11 @@ def mcp_call_tool(
         [], "--arg", "-a", callback=_validate_key_value_args, help="Arguments as key=value"
     ),
     json_args: str = typer.Option("", "--json-args", "-j", help="Arguments as JSON string"),
+    timeout: int = typer.Option(
+        600, "--timeout", help="Seconds to wait for the tool to finish before assuming the "
+        "server died (a liveness check, not a work limit — robot skills like a catch-up "
+        "scan legitimately run for minutes). 0 = wait forever."
+    ),
 ) -> None:
     """Call an MCP tool by name."""
     arguments: dict[str, Any] = {}
@@ -495,7 +500,11 @@ def mcp_call_tool(
             raise typer.Exit(1)
 
     try:
-        result = _get_adapter().call_tool(tool_name, arguments)
+        adapter = _get_adapter()
+        # Long-running robot skills own this command; quick introspection commands
+        # (status, list-tools) keep the short default via their own paths.
+        adapter.timeout = timeout if timeout > 0 else None
+        result = adapter.call_tool(tool_name, arguments)
     except requests.ConnectionError:
         typer.echo("Error: no running MCP server (is DimOS running?)", err=True)
         raise typer.Exit(1)

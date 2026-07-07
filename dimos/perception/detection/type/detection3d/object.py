@@ -61,9 +61,6 @@ class Object(Detection3D):
     detections_count: int = 1
     embedding: np.ndarray[Any, np.dtype[np.float32]] | None = None
     visual_embedding: np.ndarray[Any, np.dtype[np.float32]] | None = None
-    visual_embedding_model: str | None = None
-    visual_embedding_device: str | None = None
-    visual_embedding_dim: int | None = None
     observation_partial: bool = False
     observation_partial_from_camera_motion: bool = False
     detector_id: str | None = None
@@ -114,9 +111,6 @@ class Object(Detection3D):
             self.embedding_dim = other.embedding_dim
         if other.visual_embedding is not None:
             self.visual_embedding = other.visual_embedding
-            self.visual_embedding_model = other.visual_embedding_model
-            self.visual_embedding_device = other.visual_embedding_device
-            self.visual_embedding_dim = other.visual_embedding_dim
         self.observation_partial = other.observation_partial
         self.observation_partial_from_camera_motion = other.observation_partial_from_camera_motion
         self.detector_id = other.detector_id

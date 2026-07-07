@@ -71,10 +71,6 @@ class DINOModel(EmbeddingModel, HuggingFaceModel):
             embeddings.append(Embedding(vector=feat, timestamp=images[i].ts))
         return embeddings[0] if len(images) == 1 else embeddings
 
-    @overload
-    def embed_text(self, text: str, /) -> Embedding: ...
-    @overload
-    def embed_text(self, *texts: str) -> list[Embedding]: ...
     def embed_text(self, *texts: str) -> Embedding | list[Embedding]:
         raise NotImplementedError("DINOModel does not support text embeddings")
 
