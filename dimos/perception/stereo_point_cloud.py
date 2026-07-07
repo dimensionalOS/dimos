@@ -12,25 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Stereo depth → per-frame cloud + persistent global map for CostMapper.
-
-Pose source (in priority order):
-  1. TF lookup (world → camera_color_optical_frame) — used when a robot TF stack is running.
-  2. ICP fallback — rotation-decoupled point-cloud odometry for translation when TF is
-     unavailable. Rotation is assumed near-identity (no IMU in Module context).
-
-Global map frame:
-  - TF mode:  full world frame — TF translation is reliable so no rotation-only trick needed.
-  - ICP mode: rotation-only frame (xyz_world - t) — strips ICP translation to prevent
-    ±2 cm ICP centroid noise from accumulating duplicate voxels, matching the behaviour
-    of the standalone realsense_stereo_nav.py script.
-
-Floor calibration:
-  Histogram-based one-shot estimator (ported from realsense_stereo_nav.py): skips the
-  first SKIP_FRAMES, then histograms candidate floor-point Z values over CALIB_FRAMES
-  and takes the mode.  More robust than a rolling percentile when the floor is partially
-  occluded or when the camera tilts slightly at startup.
-"""
+"""D435i depth → per-frame voxel cloud + persistent global map (Madgwick + ICP VIO)."""
 
 from __future__ import annotations
 
@@ -58,12 +40,15 @@ logger = setup_logger()
 _VOFF  = np.int64(100_000)
 _VMASK = np.int64(0x3FFFF)
 
+# Optical frame (X=right, Y=down, Z=depth) → camera_link (X=fwd, Y=left, Z=up)
+_R_OPT_TO_LINK = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=np.float32)
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _pack(vkeys: np.ndarray) -> np.ndarray:
     v = (vkeys.astype(np.int64) + _VOFF) & _VMASK
-    return (v[:, 0] << 36) | (v[:, 1] << 18) | v[:, 2]
+    return (v[:, 0] << np.int64(36)) | (v[:, 1] << np.int64(18)) | v[:, 2]
 
 
 def _gradient_mask(depth: np.ndarray, threshold: float) -> np.ndarray:
@@ -73,51 +58,34 @@ def _gradient_mask(depth: np.ndarray, threshold: float) -> np.ndarray:
     return valid & (grad < threshold)
 
 
-def _raycast_free_keys(
-    origin: np.ndarray,
-    surface_pts: np.ndarray,
-    vox: float,
-    n_rays: int = 400,
-) -> np.ndarray:
-    """World-frame voxel keys on rays from origin to surface_pts.
-
-    Fully vectorised. Stops 1.5 voxels short of each surface so the surface
-    voxel itself is never cleared. Keys use floor(pts/vox) world voxelisation —
-    directly comparable with accumulated-point world-frame keys.
-    """
-    if len(surface_pts) == 0:
-        return np.array([], dtype=np.int64)
-
-    n    = min(len(surface_pts), n_rays)
-    idx  = (np.random.choice(len(surface_pts), n, replace=False)
-            if len(surface_pts) > n else np.arange(n))
-    vecs = (surface_pts[idx] - origin).astype(np.float32)
-    dist = np.linalg.norm(vecs, axis=1)
-    ok   = dist > vox * 2
-    vecs, dist = vecs[ok], dist[ok]
+def _raycast_free_keys(surface_pts: np.ndarray, vox_size: float, n_rays: int = 400) -> np.ndarray:
+    """Free-space voxel keys on rays from camera origin (rotation-only frame) to surface_pts."""
+    origin = np.zeros(3, dtype=np.float32)
+    n = min(len(surface_pts), n_rays)
+    if n == 0:
+        return np.empty(0, dtype=np.int64)
+    idx   = np.random.choice(len(surface_pts), n, replace=False) if len(surface_pts) > n else np.arange(n)
+    pts   = surface_pts[idx]
+    vecs  = pts - origin
+    dists = np.linalg.norm(vecs, axis=1)
+    ok    = dists > vox_size * 2
+    vecs, dists = vecs[ok], dists[ok]
     if not len(vecs):
-        return np.array([], dtype=np.int64)
-
-    dirs      = vecs / dist[:, None]
-    max_steps = int(np.ceil(dist.max() / vox))
-    t_vals    = np.arange(max_steps, dtype=np.float32) * vox
-    t_end     = (dist - vox * 1.5)[:, None]
+        return np.empty(0, dtype=np.int64)
+    dirs      = vecs / dists[:, None]
+    max_steps = int(np.ceil(dists.max() / vox_size))
+    t_vals    = np.arange(max_steps, dtype=np.float32) * vox_size
+    t_end     = (dists - vox_size * 1.5)[:, None]
     valid_m   = (t_vals[None, :] >= 0) & (t_vals[None, :] < t_end)
-
-    pts = origin + dirs[:, None, :] * t_vals[None, :, None]
-    vk  = np.floor(pts.reshape(-1, 3) / vox).astype(np.int32)
-    return np.unique(_pack(vk)[valid_m.ravel()])
+    ray_pts   = origin + dirs[:, None, :] * t_vals[None, :, None]
+    vk_flat   = np.floor(ray_pts.reshape(-1, 3) / vox_size).astype(np.int32)
+    return np.unique(_pack(vk_flat)[valid_m.ravel()])
 
 
 # ── Floor calibration ─────────────────────────────────────────────────────────
 
 class _FloorCalibrator:
-    """One-shot floor height estimator.
-
-    Skips SKIP_FRAMES for sensor settle, then histograms candidate floor-point
-    depths over CALIB_FRAMES and takes the mode bin centre. More robust than a
-    rolling percentile when the floor is partially visible or the camera tilts.
-    """
+    """Histogram-based one-shot floor height estimator in camera_link frame (Z=up)."""
 
     SKIP_FRAMES  = 30
     CALIB_FRAMES = 30
@@ -126,7 +94,7 @@ class _FloorCalibrator:
     def __init__(self) -> None:
         self._frame   = 0
         self._samples: list[float] = []
-        self.floor_z:   float | None = None
+        self.floor_z:    float | None = None
         self.cam_height: float | None = None
 
     @property
@@ -134,40 +102,87 @@ class _FloorCalibrator:
         return self.floor_z is not None
 
     def update(self, xyz_cam: np.ndarray) -> None:
-        """xyz_cam: (N,3) points in camera_link frame (Z = up)."""
         self._frame += 1
         if self.ready or self._frame <= self.SKIP_FRAMES:
             return
-
         z    = xyz_cam[:, 2]
         dist = np.linalg.norm(xyz_cam[:, :2], axis=1)
         mask = (z < -0.30) & (dist < 4.0)
         if mask.sum() < 200:
             return
-
         z_floor = z[mask]
         lo, hi  = z_floor.min(), z_floor.max()
         if hi - lo < self.BIN_M:
             return
         bins          = np.arange(lo, hi + self.BIN_M, self.BIN_M)
         counts, edges = np.histogram(z_floor, bins=bins)
-        mode_z        = float(edges[int(np.argmax(counts))] + self.BIN_M / 2)
-        self._samples.append(mode_z)
-
+        self._samples.append(float(edges[int(np.argmax(counts))] + self.BIN_M / 2))
         if len(self._samples) >= self.CALIB_FRAMES:
             self.floor_z    = float(np.median(self._samples))
             self.cam_height = -self.floor_z
             logger.info(f"StereoPointCloud: floor calibrated — camera {self.cam_height:.3f} m above floor")
 
 
-# ── ICP translation odometry (fallback when TF unavailable) ──────────────────
+# ── Madgwick AHRS ─────────────────────────────────────────────────────────────
 
-class _PointCloudOdometry:
-    """Frame-to-frame translation via rotation-decoupled ICP.
+class MadgwickFilter:
+    """Gyro + accel → orientation R (camera_link → world, Z-up). beta=0.033."""
 
-    Rotation is assumed near-identity (no IMU available in Module context).
-    Used only when TF lookup fails — on a robot TF is always preferred.
-    """
+    def __init__(self, beta: float = 0.033) -> None:
+        self._q      = np.array([1., 0., 0., 0.], dtype=np.float64)
+        self._beta   = beta
+        self._t_prev: float | None = None
+
+    def update(self, gyro: np.ndarray, accel: np.ndarray, t: float) -> None:
+        if self._t_prev is None:
+            self._t_prev = t
+            return
+        dt = min(t - self._t_prev, 0.1)
+        self._t_prev = t
+        if dt <= 0:
+            return
+        q0, q1, q2, q3 = self._q
+        gx, gy, gz = gyro.astype(np.float64)
+        a_n = np.linalg.norm(accel)
+        if a_n > 0.5:
+            ax, ay, az = accel.astype(np.float64) / a_n
+            f1 = 2*(q1*q3 - q0*q2) - ax
+            f2 = 2*(q0*q1 + q2*q3) - ay
+            f3 = 2*(0.5 - q1**2 - q2**2) - az
+            J  = np.array([
+                [-2*q2,  2*q3, -2*q0, 2*q1],
+                [ 2*q1,  2*q0,  2*q3, 2*q2],
+                [    0, -4*q1, -4*q2,    0],
+            ])
+            grad = J.T @ np.array([f1, f2, f3])
+            gn   = np.linalg.norm(grad)
+            if gn > 1e-9:
+                grad /= gn
+        else:
+            grad = np.zeros(4)
+        q_dot = 0.5 * np.array([
+            -q1*gx - q2*gy - q3*gz,
+             q0*gx + q2*gz - q3*gy,
+             q0*gy - q1*gz + q3*gx,
+             q0*gz + q1*gy - q2*gx,
+        ]) - self._beta * grad
+        self._q = self._q + q_dot * dt
+        self._q /= np.linalg.norm(self._q) + 1e-12
+
+    @property
+    def R(self) -> np.ndarray:
+        q0, q1, q2, q3 = self._q
+        return np.array([
+            [1-2*(q2**2+q3**2), 2*(q1*q2-q0*q3),   2*(q1*q3+q0*q2)  ],
+            [2*(q1*q2+q0*q3),   1-2*(q1**2+q3**2), 2*(q2*q3-q0*q1)  ],
+            [2*(q1*q3-q0*q2),   2*(q2*q3+q0*q1),   1-2*(q1**2+q2**2)],
+        ], dtype=np.float32)
+
+
+# ── Point-cloud odometry ──────────────────────────────────────────────────────
+
+class PointCloudOdometry:
+    """Rotation-decoupled ICP for translation t. Takes R from Madgwick, converges in 3-4 iters."""
 
     ITERS    = 4
     MAX_DIST = 0.40
@@ -185,16 +200,16 @@ class _PointCloudOdometry:
         with self._lock:
             return self._t.copy()
 
-    def update(self, xyz_cam: np.ndarray) -> np.ndarray:
+    def update(self, xyz_cam: np.ndarray, R: np.ndarray) -> np.ndarray:
+        pts_ga = (xyz_cam @ R.T).astype(np.float32)
         with self._lock:
             t_est = self._t.copy()
-
-        if self._prev_world is None or len(xyz_cam) < 50:
+        if self._prev_world is None or len(pts_ga) < 50:
             t_new = t_est
         else:
-            n_src = min(self.N_SRC, len(xyz_cam))
+            n_src = min(self.N_SRC, len(pts_ga))
             n_dst = min(self.N_DST, len(self._prev_world))
-            src   = xyz_cam[np.random.choice(len(xyz_cam), n_src, replace=False)]
+            src   = pts_ga[np.random.choice(len(pts_ga), n_src, replace=False)]
             dst   = self._prev_world[np.random.choice(len(self._prev_world), n_dst, replace=False)]
             tree  = cKDTree(dst)
             for _ in range(self.ITERS):
@@ -205,10 +220,9 @@ class _PointCloudOdometry:
                 delta = dst[idx[mask]].mean(axis=0) - (src[mask] + t_est).mean(axis=0)
                 t_est = (t_est + 0.7 * delta).astype(np.float32)
             t_new = t_est
-
-        n_st = min(self.N_STORE, len(xyz_cam))
-        self._prev_world = (xyz_cam[np.random.choice(len(xyz_cam), n_st, replace=False)] + t_new).astype(np.float32)
-
+        n_st  = min(self.N_STORE, len(pts_ga))
+        idx_s = np.random.choice(len(pts_ga), n_st, replace=False)
+        self._prev_world = (pts_ga[idx_s] + t_new).astype(np.float32)
         with self._lock:
             self._t = t_new
         return t_new
@@ -217,27 +231,20 @@ class _PointCloudOdometry:
 # ── Module ────────────────────────────────────────────────────────────────────
 
 class Config(ModuleConfig):
-    min_depth: float          = 0.3
+    min_depth: float          = 0.1
     max_depth: float          = 8.0
     gradient_threshold: float = 0.30
     vox_size: float           = 0.020
     global_vox_size: float    = 0.020
-    floor_margin: float       = 0.03
-    max_global_pts: int       = 200_000
-    publish_every: int        = 3
+    floor_margin: float       = 0.04
+    max_global_pts: int       = 500_000
+    publish_every: int        = 1
     world_frame: str          = "world"
-    camera_frame: str         = "camera_color_optical_frame"
-    base_frame: str           = "base_link"
-    tf_timeout: float         = 0.2
+    madgwick_beta: float      = 0.033
 
 
 class StereoPointCloud(Module):
-    """Gradient filter → backproject → floor removal → voxel dedup → ray-cast ghost clearing → global_map.
-
-    Mirrors the realsense_stereo_nav.py standalone pipeline as a dimos Module.
-    Uses TF for pose when available; falls back to ICP odometry with rotation-only
-    global map frame to prevent translation-drift accumulation.
-    """
+    """D435i depth → frame_cloud + global_map. Pose from Madgwick IMU + ICP odometry."""
 
     config: Config
 
@@ -249,31 +256,104 @@ class StereoPointCloud(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._lock                           = threading.Lock()
+        self._lock                       = threading.Lock()
         self._latest_info: CameraInfo | None = None
-        self._last_tf                        = None
-        self._floor_calib                    = _FloorCalibrator()
-        self._odom                           = _PointCloudOdometry()
-        self._acc_pts: np.ndarray            = np.empty((0, 3), dtype=np.float32)
-        self._map_ready                      = False
-        self._world_floor_z: float           = 0.0
-        self._frame                          = 0
+        self._floor_calib                = _FloorCalibrator()
+        self._madgwick: MadgwickFilter | None = None
+        self._odom                       = PointCloudOdometry()
+        self._imu_lock                   = threading.Lock()
+        self._last_accel                 = np.array([0.0, 0.0, -9.81], dtype=np.float32)
+        self._R_imu_to_link: np.ndarray  = np.eye(3, dtype=np.float32)
+        self._motion_sensor              = None
+        self._acc_pts: np.ndarray        = np.empty((0, 3), dtype=np.float32)
+        self._map_ready                  = False
+        self._world_floor_z: float       = 0.0
+        self._frame                      = 0
 
     @rpc
     def start(self) -> None:
         super().start()
+        self._madgwick = MadgwickFilter(beta=self.config.madgwick_beta)
+        if not self._init_imu():
+            logger.warning("StereoPointCloud: no IMU — R=identity, translation from ICP only")
         self.register_disposable(Disposable(self.depth_camera_info.subscribe(self._on_info)))
         self.register_disposable(Disposable(self.depth_image.subscribe(self._on_depth)))
 
     @rpc
     def stop(self) -> None:
+        if self._motion_sensor is not None:
+            try:
+                self._motion_sensor.stop()
+                self._motion_sensor.close()
+            except Exception:
+                pass
+            self._motion_sensor = None
         super().stop()
+
+    def _init_imu(self) -> bool:
+        try:
+            import pyrealsense2 as rs
+        except ImportError:
+            return False
+        ctx     = rs.context()
+        devices = ctx.query_devices()
+        if not devices:
+            return False
+        device = devices[0]
+        depth_profile = None
+        for sensor in device.query_sensors():
+            if sensor.is_motion_sensor():
+                continue
+            for p in sensor.get_stream_profiles():
+                if p.stream_type() == rs.stream.depth:
+                    depth_profile = p
+                    break
+            if depth_profile is not None:
+                break
+        for sensor in device.query_sensors():
+            if not sensor.is_motion_sensor():
+                continue
+            all_profiles   = sensor.get_stream_profiles()
+            gyro_profiles  = [p for p in all_profiles if p.stream_type() == rs.stream.gyro]
+            accel_profiles = [p for p in all_profiles if p.stream_type() == rs.stream.accel]
+            if not gyro_profiles or not accel_profiles:
+                break
+            gyro_p  = max(gyro_profiles,  key=lambda p: p.fps())
+            accel_p = max(accel_profiles, key=lambda p: p.fps())
+            if depth_profile is not None:
+                ext                 = accel_p.get_extrinsics_to(depth_profile)
+                R_imu_to_depth      = np.array(ext.rotation, dtype=np.float32).reshape(3, 3)
+                self._R_imu_to_link = _R_OPT_TO_LINK @ R_imu_to_depth
+            sensor.open([gyro_p, accel_p])
+            sensor.start(self._on_motion)
+            self._motion_sensor = sensor
+            logger.info(f"StereoPointCloud: IMU — gyro@{gyro_p.fps()}Hz accel@{accel_p.fps()}Hz")
+            return True
+        return False
+
+    def _on_motion(self, frame: Any) -> None:
+        try:
+            import pyrealsense2 as rs
+            st = frame.get_profile().stream_type()
+            if st == rs.stream.gyro:
+                g        = frame.as_motion_frame().get_motion_data()
+                gyro_lnk = self._R_imu_to_link @ np.array([g.x, g.y, g.z], dtype=np.float32)
+                ts_s     = frame.get_timestamp() / 1000.0
+                with self._imu_lock:
+                    if self._madgwick is not None:
+                        self._madgwick.update(gyro_lnk, self._last_accel, ts_s)
+            elif st == rs.stream.accel:
+                a = frame.as_motion_frame().get_motion_data()
+                with self._imu_lock:
+                    self._last_accel = self._R_imu_to_link @ np.array([a.x, a.y, a.z], dtype=np.float32)
+        except Exception:
+            pass
 
     def _on_info(self, info: CameraInfo) -> None:
         with self._lock:
             self._latest_info = info
 
-    def _on_depth(self, img: Image) -> None:
+    def _on_depth(self, img: Image) -> None:  # noqa: C901
         with self._lock:
             info = self._latest_info
 
@@ -283,11 +363,13 @@ class StereoPointCloud(Module):
         if depth.ndim == 3:
             depth = depth[:, :, 0]
         depth = depth.astype(np.float32)
-        if np.nanmedian(depth[depth > 0]) > 100:
+        valid_d = depth[depth > 0]
+        if len(valid_d) and np.median(valid_d) > 100:
             depth /= 1000.0
+        invalid = (depth <= 0) | (depth < self.config.min_depth) | (depth > self.config.max_depth)
+        depth[invalid] = np.nan
 
         H, W = depth.shape
-
         if info is not None:
             K = info.get_K_matrix()
             fx, fy, cx, cy = float(K[0, 0]), float(K[1, 1]), float(K[0, 2]), float(K[1, 2])
@@ -295,116 +377,86 @@ class StereoPointCloud(Module):
             fx = fy = float(max(H, W)) / 2.0
             cx, cy  = W / 2.0, H / 2.0
 
-        mask = (
-            _gradient_mask(depth, self.config.gradient_threshold)
-            & (depth > self.config.min_depth)
-            & (depth < self.config.max_depth)
-        )
-        if not mask.any():
+        stable = _gradient_mask(depth, self.config.gradient_threshold)
+        valid  = np.isfinite(depth) & stable
+        if not valid.any():
             return
 
         uu, vv  = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32))
-        dd      = depth[mask]
+        dd      = depth[valid]
         xyz_opt = np.column_stack([
-            (uu[mask] - cx) * dd / fx,
-            (vv[mask] - cy) * dd / fy,
+            (uu[valid] - cx) * dd / fx,
+            (vv[valid] - cy) * dd / fy,
             dd,
         ]).astype(np.float32)
 
-        # ── Pose: TF primary, ICP fallback ───────────────────────────────────
-        tf = self.tf.get(
-            self.config.world_frame, self.config.camera_frame, img.ts, self.config.tf_timeout
-        )
-        if tf is not None:
-            self._last_tf = tf
+        with self._imu_lock:
+            R = self._madgwick.R.copy() if self._madgwick is not None else np.eye(3, dtype=np.float32)
+        t = self._odom.t
 
-        use_tf = self._last_tf is not None
-        if use_tf:
-            R = self._last_tf.rotation.to_rotation_matrix().astype(np.float32)
-            t = np.array([
-                self._last_tf.translation.x,
-                self._last_tf.translation.y,
-                self._last_tf.translation.z,
-            ], dtype=np.float32)
-            xyz_world = (xyz_opt @ R.T + t).astype(np.float32)
-            # xyz_cam approximation for floor calibration (R ~ optical→link not critical here)
-            xyz_cam = xyz_opt
-        else:
-            # ICP fallback: no rotation (no IMU), translation from ICP
-            t         = self._odom.t
-            xyz_world = (xyz_opt + t).astype(np.float32)
-            xyz_cam   = xyz_opt
+        xyz_cam   = xyz_opt @ _R_OPT_TO_LINK.T
+        xyz_world = (xyz_cam @ R.T + t).astype(np.float32)
+        cam_z     = float(t[2])
 
-        # ── Floor calibration (histogram-based, camera-frame Z) ───────────────
         self._floor_calib.update(xyz_cam)
 
-        cam_z = float(t[2]) if use_tf else 0.0
-
-        # ── Per-frame voxel map with floor filter ─────────────────────────────
         if self._floor_calib.ready:
-            floor_z_world = cam_z + self._floor_calib.floor_z if use_tf else self._floor_calib.floor_z
-            keep = xyz_world[:, 2] > floor_z_world + self.config.floor_margin
+            keep = xyz_cam[:, 2] > (self._floor_calib.floor_z + self.config.floor_margin)
         else:
-            keep = (xyz_world[:, 2] - cam_z >= -1.4) & (xyz_world[:, 2] - cam_z <= 1.5)
+            keep = (xyz_cam[:, 2] >= -1.4) & (xyz_cam[:, 2] <= 1.5)
 
-        xyz_kept = xyz_world[keep]
-        if not len(xyz_kept):
+        xyz_world_kept = xyz_world[keep]
+        xyz_cam_kept   = xyz_cam[keep]
+        if not len(xyz_world_kept):
             self._frame += 1
             return
 
-        vk       = np.floor(xyz_kept / self.config.vox_size).astype(np.int32)
+        vk       = np.floor(xyz_world_kept / self.config.vox_size).astype(np.int32)
         _, first = np.unique(_pack(vk), return_index=True)
-        xyz_vox  = xyz_kept[first]
+        xyz_vox  = xyz_world_kept[first]
 
         self.frame_cloud.publish(
             PointCloud2.from_numpy(xyz_vox, frame_id=self.config.world_frame, timestamp=img.ts)
         )
 
-        # ── ICP update (runs even when TF available, for future fallback) ─────
-        if not use_tf and len(xyz_cam[keep]) >= 50:
-            self._odom.update(xyz_cam[keep])
+        if len(xyz_cam_kept) >= 50:
+            self._odom.update(xyz_cam_kept, R)
 
-        # ── Global map ────────────────────────────────────────────────────────
         if not self._floor_calib.ready:
             self._frame += 1
             return
 
         if not self._map_ready:
-            self._map_ready   = True
-            self._world_floor_z = floor_z_world if self._floor_calib.ready else 0.0
-            logger.info("StereoPointCloud: global map started")
+            self._map_ready     = True
+            self._world_floor_z = cam_z + self._floor_calib.floor_z
+            logger.info(f"StereoPointCloud: global map started — floor at Z ≈ {self._world_floor_z:.3f} m")
 
-        if use_tf:
-            # Full world frame — TF translation is reliable
-            xyz_for_map = xyz_vox[xyz_vox[:, 2] > self._world_floor_z + self.config.floor_margin]
-        else:
-            # Rotation-only frame — strips ICP translation drift
-            xyz_ronly = xyz_vox - t
-            vk_r      = np.floor(xyz_ronly / self.config.vox_size).astype(np.int32)
-            _, fr     = np.unique(_pack(vk_r), return_index=True)
-            xyz_ronly = xyz_ronly[fr]
-            xyz_for_map = xyz_ronly[xyz_ronly[:, 2] > self._world_floor_z + self.config.floor_margin]
+        # Rotation-only frame: strip ICP translation so ±2 cm t-noise doesn't shift voxel keys
+        xyz_ronly  = xyz_vox - t
+        vk_r       = np.floor(xyz_ronly / self.config.vox_size).astype(np.int32)
+        _, first_r = np.unique(_pack(vk_r), return_index=True)
+        xyz_vox_r  = xyz_ronly[first_r]
+        xyz_for_map = xyz_vox_r[xyz_vox_r[:, 2] > self._world_floor_z + self.config.floor_margin]
 
         pts_snap = None
         with self._lock:
             if len(self._acc_pts) > 0 and len(xyz_for_map) > 0:
-                origin_for_clear = t if use_tf else np.zeros(3, dtype=np.float32)
-                free = _raycast_free_keys(origin_for_clear, xyz_for_map, self.config.global_vox_size)
-                if len(free):
-                    keys_acc  = _pack(np.floor(self._acc_pts / self.config.global_vox_size).astype(np.int32))
-                    self._acc_pts = self._acc_pts[~np.isin(keys_acc, free)]
+                free_keys = _raycast_free_keys(xyz_for_map, self.config.global_vox_size)
+                if len(free_keys):
+                    keys_acc      = _pack(np.floor(self._acc_pts / self.config.global_vox_size).astype(np.int32))
+                    self._acc_pts = self._acc_pts[~np.isin(keys_acc, free_keys)]
 
             if len(xyz_for_map):
                 self._acc_pts = (
-                    np.vstack([self._acc_pts, xyz_for_map])
-                    if len(self._acc_pts) else xyz_for_map.copy()
+                    np.vstack([self._acc_pts, xyz_for_map]) if len(self._acc_pts) else xyz_for_map.copy()
                 )
-                vk_g    = np.floor(self._acc_pts / self.config.global_vox_size).astype(np.int32)
-                _, ui_g = np.unique(_pack(vk_g), return_index=True)
-                self._acc_pts = self._acc_pts[ui_g]
-
+                _, ui         = np.unique(
+                    _pack(np.floor(self._acc_pts / self.config.global_vox_size).astype(np.int32)),
+                    return_index=True,
+                )
+                self._acc_pts = self._acc_pts[ui]
                 if len(self._acc_pts) > self.config.max_global_pts:
-                    keep_idx = np.random.choice(len(self._acc_pts), self.config.max_global_pts, replace=False)
+                    keep_idx      = np.random.choice(len(self._acc_pts), self.config.max_global_pts, replace=False)
                     self._acc_pts = self._acc_pts[keep_idx]
 
             self._frame += 1
