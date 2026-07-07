@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
@@ -54,6 +55,11 @@ class ViserVisualizationConfig(BaseModel):
         default=0.02,
         validation_alias=AliasChoices("current_match_tolerance", "viser_current_match_tolerance"),
     )
+    reachability_maps: dict[str, Path] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("reachability_maps", "viser_reachability_maps"),
+    )
+    allow_plan_execute: bool = False
 
     @property
     def requires_world_visualization(self) -> bool:

@@ -366,7 +366,12 @@ class WorldMonitor:
     def get_ee_pose(
         self, robot_id: WorldRobotID, joint_state: JointState | None = None
     ) -> PoseStamped:
-        """Get end-effector pose. Uses current state if joint_state is None."""
+        """Get grasp-center pose (end-effector link + configured grasp_offset).
+
+        Uses current state if joint_state is None.
+        """
+        from dimos.manipulation.planning.utils.kinematics_utils import link_to_grasp_pose
+
         with self._world.scratch_context() as ctx:
             # If no state provided, fetch current from state monitor
             if joint_state is None:
@@ -375,7 +380,8 @@ class WorldMonitor:
             if joint_state is not None:
                 self._world.set_joint_state(ctx, robot_id, joint_state)
 
-            return self._world.get_ee_pose(ctx, robot_id)
+            link_pose = self._world.get_ee_pose(ctx, robot_id)
+        return link_to_grasp_pose(link_pose, self._world.get_robot_config(robot_id).grasp_offset)
 
     def get_link_pose(
         self, robot_id: WorldRobotID, link_name: str, joint_state: JointState | None = None

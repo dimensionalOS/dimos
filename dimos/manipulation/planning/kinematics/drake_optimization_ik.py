@@ -78,6 +78,8 @@ class DrakeOptimizationIK:
         orientation_tolerance: float = 0.01,
         check_collision: bool = True,
         max_attempts: int = 10,
+        # No iterative streaming in this backend; accepted for KinematicsSpec parity.
+        on_step: IKStepCallback | None = None,
     ) -> IKResult:
         """Solve IK with multiple random restarts, returning the best collision-free solution."""
         error = self._validate_world(world)

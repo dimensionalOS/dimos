@@ -122,6 +122,9 @@ class FakeOperationAdapter(InProcessViserAdapter):
     def get_current_joint_state(self, robot_name: str) -> None:
         return None
 
+    def get_planned_trajectory_duration(self, robot_name: str) -> float | None:
+        return None
+
     def get_ee_pose(self, robot_name: str, joint_state: JointState | None = None) -> None:
         return None
 
@@ -214,7 +217,9 @@ def test_gui_only_preview_submits_timeout_override(monkeypatch: pytest.MonkeyPat
     gui._submit_preview()
 
     assert "timeout_seconds" not in submissions[0]
-    assert submissions[1]["timeout_seconds"] == 0.25
+    # Preview timeout scales with the planned animation (default 3 s when the
+    # duration is unknown): max(config 0.25, 3 * 2 + 5).
+    assert submissions[1]["timeout_seconds"] == 11.0
 
 
 def test_gui_cancel_bypasses_operation_worker(monkeypatch: pytest.MonkeyPatch) -> None:

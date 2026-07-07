@@ -71,7 +71,7 @@ def robot_config() -> RobotModelConfig:
 
 def test_create_world_unknown_backend() -> None:
     with pytest.raises(
-        ValueError, match=r"Unknown backend: fake\. Available: \['drake', 'roboplan'\]"
+        ValueError, match=r"Unknown backend: fake\. Available: \['drake', 'mujoco', 'roboplan'\]"
     ):
         create_world(backend="fake")
 

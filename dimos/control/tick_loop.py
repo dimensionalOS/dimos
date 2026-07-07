@@ -113,6 +113,9 @@ class TickLoop:
         self._tick_thread: threading.Thread | None = None
         self._last_tick_time: float = 0.0
         self._tick_count: int = 0
+        # Previous tick's preemption map, so on_preempted fires on edges
+        # (task newly loses a joint / winner changes), not at tick rate.
+        self._last_preemptions: dict[str, dict[str, str]] = {}
 
     @property
     def tick_count(self) -> int:
@@ -329,16 +332,33 @@ class TickLoop:
         return joint_commands, preemptions
 
     def _notify_preemptions(self, preemptions: dict[str, dict[str, str]]) -> None:
-        """Notify each preempted task with affected joints, grouped by winning task."""
+        """Notify each preempted task with affected joints, grouped by winning task.
+
+        Notification is edge-triggered: a task hears about a (joint, winner)
+        pair once when it first loses the joint, not every tick the
+        preemption persists (a long-held preemption would otherwise spam
+        on_preempted at tick rate).
+        """
+        last = self._last_preemptions
+        self._last_preemptions = preemptions
         with self._task_lock:
             for task_name, joint_winners in preemptions.items():
                 task = self._tasks.get(task_name)
                 if not task:
                     continue
 
+                prev = last.get(task_name, {})
+                new_losses = {
+                    joint: winner
+                    for joint, winner in joint_winners.items()
+                    if prev.get(joint) != winner
+                }
+                if not new_losses:
+                    continue
+
                 # Group joints by winning task
                 by_winner: dict[str, set[str]] = {}
-                for joint, winner in joint_winners.items():
+                for joint, winner in new_losses.items():
                     if winner not in by_winner:
                         by_winner[winner] = set()
                     by_winner[winner].add(joint)

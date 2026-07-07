@@ -54,9 +54,18 @@ class RobotModelConfig(ModuleConfig):
 
     name: str
     model_path: Path
+    # URDF used only for visualization. Set when model_path is not a URDF
+    # (e.g. an MJCF planning model): viewers that render URDFs fall back to
+    # this instead of failing to parse the planning model.
+    display_model_path: Path | None = None
     base_pose: PoseStamped
     joint_names: list[str]
     end_effector_link: str
+    # Grasp-center (TCP) offset from end_effector_link's origin, expressed in
+    # that link's local frame. FK/IK targets (get_ee_pose, plan_to_pose,
+    # evaluate_pose_target, the viser gizmo) address this point rather than
+    # the raw link origin. Same convention as the reachability capability maps.
+    grasp_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
     base_link: str = "base_link"
     package_paths: dict[str, Path] = Field(default_factory=dict)
     joint_limits_lower: list[float] | None = None

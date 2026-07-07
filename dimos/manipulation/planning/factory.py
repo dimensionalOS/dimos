@@ -23,6 +23,7 @@ from dimos.manipulation.planning.kinematics.config import (
     DrakeOptimizationKinematicsConfig,
     JacobianKinematicsConfig,
     ManipulationKinematicsConfig,
+    MinkKinematicsConfig,
     PinkKinematicsConfig,
     kinematics_config_from_name,
 )
@@ -49,9 +50,9 @@ class PlanningSpecs:
     planner: PlannerSpec
 
 
-WorldBackend: TypeAlias = Literal["drake", "roboplan"]
+WorldBackend: TypeAlias = Literal["drake", "mujoco", "roboplan"]
 PlannerName: TypeAlias = Literal["rrt_connect", "roboplan"]
-KinematicsName: TypeAlias = Literal["jacobian", "drake_optimization", "pink"]
+KinematicsName: TypeAlias = Literal["jacobian", "drake_optimization", "pink", "mink"]
 
 SUPPORTED_WORLD_BACKENDS = get_args(WorldBackend)
 SUPPORTED_PLANNERS = get_args(PlannerName)
@@ -101,6 +102,10 @@ def create_world(
         from dimos.manipulation.planning.world.drake_world import DrakeWorld
 
         return DrakeWorld(enable_viz=enable_viz, **kwargs)
+    if backend == "mujoco":
+        from dimos.manipulation.planning.world.mujoco_world import MujocoWorld
+
+        return MujocoWorld(**kwargs)
     if backend == "roboplan":
         from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
 
@@ -132,6 +137,10 @@ def create_kinematics(
         from dimos.manipulation.planning.kinematics.pink_ik import PinkIK
 
         return PinkIK(config, **kwargs)
+    elif isinstance(config, MinkKinematicsConfig):
+        from dimos.manipulation.planning.kinematics.mink_ik import MinkIK
+
+        return MinkIK(config, **kwargs)
     else:
         raise TypeError(f"Unsupported kinematics config: {type(config).__name__}")
 

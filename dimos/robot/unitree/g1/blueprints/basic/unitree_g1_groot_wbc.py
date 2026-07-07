@@ -72,12 +72,19 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
+from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.unitree.g1.config import G1
 from dimos.robot.unitree.g1.g1_rerun import (
     G1_RERUN_ROOT,
     g1_costmap,
     g1_urdf_joint_state,
+    g1_urdf_static_joints,
     g1_urdf_static_robot,
+)
+from dimos.robot.unitree.g1.manipulation import (
+    G1_ARM_SIDES,
+    g1_arm_model_config,
+    g1_arm_trajectory_task,
 )
 from dimos.simulation.scene_assets.spec import ScenePackage
 from dimos.utils.data import LfsPath
@@ -118,6 +125,9 @@ _MUJOCO_LIDAR_BASE_KWARGS: dict[str, Any] = {
     "mujoco_lidar_raycast_width": 64,
     "mujoco_lidar_raycast_height": 32,
     "mujoco_lidar_robot_exclusion_radius": G1.width_clearance,
+    # Base-frame scans + the odometry output = the LIO contract, so the
+    # raytracing mapper wires identically in sim and on real hardware.
+    "mujoco_lidar_frame": "base",
 }
 _G1_COMPOSED_MJB_KEY = "unitree-g1-groot-wbc_spawn_9p2_11p8_yaw_m1p57_static_only_lidar"
 _G1_COMPOSED_MJB_ROBOT = "unitree-g1-groot-wbc"
@@ -141,7 +151,7 @@ if global_config.simulation and global_config.simulation != "mujoco":
     raise ValueError("unitree-g1-groot-wbc only supports --simulation mujoco")
 
 if global_config.simulation == "mujoco":
-    from dimos.mapping.voxels import VoxelGridMapper
+    from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
     from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
     from dimos.simulation.engines.robot_sim_binding import (
         RobotSimSpec,
@@ -264,6 +274,7 @@ if global_config.simulation == "mujoco":
     _auto_dry_run = False
     _default_ramp_seconds = 0.0
     _decimation: int | None = 1
+    _n_workers = 2  # sim: keep the default worker count
     _arm_holder = TaskConfig(
         name="servo_arms",
         type="servo",
@@ -272,7 +283,16 @@ if global_config.simulation == "mujoco":
         auto_start=True,
         params={"default_positions": ARM_DEFAULT_POSE},
     )
-    _mapper = VoxelGridMapper.blueprint(emit_every=1)
+    # Same mapper as real hardware for sim/real parity: the sim lidar is
+    # configured to publish base-frame scans (mujoco_lidar_frame below) and
+    # the sim module publishes ground-truth Odometry, so the raytracer gets
+    # exactly the contract the LIO provides on the robot. Lidar frames
+    # arrive at ~1 Hz, so emit per frame.
+    _mapper = RayTracingVoxelMap.blueprint(
+        voxel_size=_G1_NAV_VOXEL_RESOLUTION,
+        emit_every=0,
+        global_emit_every=1,
+    )
     _nav_stack = autoconnect(
         _mapper,
         CostMapper.blueprint(
@@ -290,23 +310,38 @@ if global_config.simulation == "mujoco":
         MovementManager.blueprint(),
     )
     _remappings = [
-        (VoxelGridMapper, "lidar", "pointcloud"),
+        (RayTracingVoxelMap, "lidar", "pointcloud"),
         (ControlCoordinator, "twist_command", "cmd_vel"),
     ]
 else:
+    import os
+
+    from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+    from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
     from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
     # Real-hw backend: DDS connection module + transport_lcm adapter.
     _backend = G1WholeBodyConnection.blueprint(release_sport_mode=True)
     _adapter_type = "transport_lcm"
     _adapter_address = ""
-    _tick_rate = 500.0
+    # 100 Hz outer loop: policy runs at 50 Hz (decimation 2) and lowcmd
+    # streams at 100 Hz. The onboard Jetson can't sustain a 500 Hz Python
+    # tick loop -- it collapses to ~90 Hz and starves the policy of fresh
+    # state, so balance decays. 100 Hz holds cleanly and matches the
+    # reference deployment's rate.
+    _tick_rate = 100.0
     # Real hardware: come up unarmed + dry-run; operator must click
     # Activate (10 s ramp) after verifying commands.
     _auto_arm = False
     _auto_dry_run = True
     _default_ramp_seconds = 10.0
-    _decimation = None  # task default (10) pairs with 500 Hz tick.
+    _decimation = 2  # 100 Hz tick / 2 = 50 Hz policy (training + sim rate).
+    # Give each heavy module (Rerun bridge, connection, coordinator, websocket
+    # servers) its own process. The bridge is already dedicated_worker, but
+    # with too few workers the other modules crowd one process and the
+    # system-wide contention starves the bridge's gRPC senders -- the viewer
+    # falls behind. Isolating everything keeps it streaming live.
+    _n_workers = 10
     # Real hardware needs the arms held -- kd damping alone would let
     # them sag toward singular configurations between trajectories.
     _arm_holder = TaskConfig(
@@ -317,8 +352,71 @@ else:
         auto_start=True,
         params={"default_positions": ARM_DEFAULT_POSE},
     )
-    _nav_stack = MovementManager.blueprint()
+    # Real-hw nav: the unitree-g1-nav-simple middle (raytracing voxel map ->
+    # height costmap -> replanning A*) fed by the Livox MID-360 through
+    # Point-LIO (the go2 nav-3d front-end; our FAST-LIO2 build segfaulted and
+    # Point-LIO is the actively maintained LIO), executed through the
+    # coordinator's twist_command by the WBC policy instead of sport mode.
+    # The LIO world frame originates at the lidar boot pose (ground ~1.2 m
+    # below z=0); visuals account for it below.
+    _nav_stack = autoconnect(
+        PointLio.blueprint(
+            host_ip=os.getenv("LIDAR_HOST_IP", "192.168.123.164"),
+            lidar_ip=os.getenv("LIDAR_IP", "192.168.123.120"),
+        ),
+        RayTracingVoxelMap.blueprint(
+            voxel_size=_G1_NAV_VOXEL_RESOLUTION,
+            # No /local_map: it is the MLS planner's incremental feed and has
+            # no consumer here -- it was 4.5 MB/s of pure bus + encode waste.
+            emit_every=0,
+            # Global map at ~1 Hz (lidar runs ~4-5 Hz effective). CostMapper
+            # recomputes per emit, so this also paces the costmap. Full-rate
+            # emits saturated the Orin (load ~26/8) and starved the LIO.
+            global_emit_every=4,
+        ),
+        CostMapper.blueprint(
+            config=HeightCostConfig(
+                resolution=_G1_NAV_VOXEL_RESOLUTION,
+                can_pass_under=G1.height_clearance + _G1_NAV_OVERHEAD_SAFETY_MARGIN,
+                can_climb=_G1_NAV_MAX_STEP_HEIGHT,
+            ),
+            initial_safe_radius_meters=G1.width_clearance + _G1_NAV_SAFE_RADIUS_MARGIN,
+        ),
+        ReplanningAStarPlanner.blueprint(
+            robot_width=G1.width_clearance,
+            robot_rotation_diameter=_G1_NAV_ROTATION_DIAMETER,
+        ),
+        MovementManager.blueprint(),
+    )
     _remappings = [(ControlCoordinator, "twist_command", "cmd_vel")]
+
+# Arm manipulation planner (sim and real: plans are kinematic either way and
+# execution is gated behind the coordinator's arm/dry-run state on hardware).
+# Plans against the pelvis-rooted arm models from the reachability registry
+# and executes through the per-arm trajectory tasks below. Viser is the
+# interactive test surface; execute stays disabled unless
+# -o manipulationmodule.visualization.allow_plan_execute=true is passed.
+# Reachability map overlays are opt-in:
+#   -o manipulationmodule.visualization.reachability_maps.g1-left=<map.npz>
+_manipulation_stack: tuple[Any, ...] = (
+    planner(
+        robots=[g1_arm_model_config(side) for side in G1_ARM_SIDES],
+        world_backend="mujoco",
+        kinematics={"backend": "mink"},
+        floor_z=0.0,
+        # Deploy-branch defaults: viser reachable over the LAN and execute
+        # enabled (still gated by the coordinator's arm/dry-run state).
+        # Mainline keeps host=127.0.0.1 and allow_plan_execute=False;
+        # baked in here because -o overrides replace this whole dict, so
+        # per-flag opt-ins would silently drop backend/port.
+        visualization={
+            "backend": "viser",
+            "port": 8095,
+            "host": "0.0.0.0",
+            "allow_plan_execute": True,
+        },
+    ),
+)
 
 
 def _g1_groot_rerun_blueprint() -> Any:
@@ -342,29 +440,118 @@ def _g1_nav_path(path: NavPath) -> Any:
     return path.to_rerun(z_offset=0.3)
 
 
+# Robot mesh root. Sim: MujocoSimModule publishes /odom (PoseStamped), which
+# the bridge logs as a Transform3D at world/odom -- the mesh lives underneath.
+# Real hw: the LIO publishes /odometry (Odometry) instead, logged at
+# world/odometry, so the mesh roots there and _g1_real_odometry_root shapes
+# the transform.
+_G1_ROOT = G1_RERUN_ROOT if global_config.simulation == "mujoco" else "world/odometry/g1"
+
+
+# The LIO world frame originates at the lidar's boot pose (the physical
+# ground sits ~1.2 m below z=0). Like the nav blueprints' sensor-attached
+# robot marker, everything drawn for the robot derives from the sensor pose;
+# here the offsets come from the URDF itself instead of magic numbers.
+_G1_URDF_PATH = Path(__file__).resolve().parents[2] / "g1.urdf"
+# Nominal standing pelvis height; matches G1GrootWBCTask's height_cmd.
+_G1_NOMINAL_PELVIS_Z = 0.74
+_g1_pelvis_mid360_cache: list[Any] = []
+
+
+def _g1_pelvis_to_mid360() -> Any:
+    """Rest-pose pelvis->mid360_link transform from the G1 URDF (cached)."""
+    if not _g1_pelvis_mid360_cache:
+        import numpy as np
+        import yourdfpy
+
+        urdf = yourdfpy.URDF.load(str(_G1_URDF_PATH), load_meshes=False)
+        urdf.update_cfg(np.zeros(len(urdf.actuated_joint_names)))
+        _g1_pelvis_mid360_cache.append(urdf.get_transform("mid360_link", "pelvis"))
+    return _g1_pelvis_mid360_cache[0]
+
+
+def _g1_real_odometry_root(odom: Any) -> Any:
+    """Robot-mesh root: pelvis pose composed from LIO odometry.
+
+    The odometry tracks the mid360 body frame, so the pelvis pose is
+    T_world_mid360 @ inverse(pelvis->mid360 at rest). Waist articulation
+    between pelvis and head is ignored (rest offset), the same approximation
+    as the nav blueprints' fixed sensor-attached marker.
+    """
+    import numpy as np
+    import rerun as rr
+
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+
+    t_world_mid360 = np.eye(4)
+    # The MID-360 is physically mounted upside down on the G1 head (the
+    # URDF's mid360_joint doesn't carry the flip), so un-roll the sensor
+    # body by pi about x before composing: Rx(pi) == diag(1, -1, -1).
+    t_world_mid360[:3, :3] = odom.orientation.to_rotation_matrix() @ np.diag([1.0, -1.0, -1.0])
+    t_world_mid360[:3, 3] = (odom.x, odom.y, odom.z)
+    t_world_pelvis = t_world_mid360 @ np.linalg.inv(_g1_pelvis_to_mid360())
+    q = Quaternion.from_rotation_matrix(t_world_pelvis[:3, :3])
+    return rr.Transform3D(
+        translation=t_world_pelvis[:3, 3].tolist(),
+        rotation=rr.Quaternion(xyzw=[q.x, q.y, q.z, q.w]),
+    )
+
+
+def _g1_real_ground_z() -> float:
+    """Ground height in the LIO boot frame: -(mount z + nominal pelvis z)."""
+    return -(float(_g1_pelvis_to_mid360()[2, 3]) + _G1_NOMINAL_PELVIS_Z)
+
+
+def _g1_real_costmap(grid: Any) -> Any:
+    """Costmap rendered on the actual ground plane of the boot frame."""
+    return g1_costmap(grid, z_offset=_g1_real_ground_z() + 0.02)
+
+
 _static_rerun_entities: dict[str, Any] = {
-    # MujocoSimModule logs odom as a Transform3D at world/odom; the robot
-    # mesh lives underneath and link transforms are driven by joint state.
-    G1_RERUN_ROOT: g1_urdf_static_robot(root_path=G1_RERUN_ROOT),
+    _G1_ROOT: g1_urdf_static_robot(root_path=_G1_ROOT),
+    # Fixed-joint (and rest-pose) link transforms, logged once. The per-frame
+    # animator (g1_urdf_joint_state) then only updates the movable joints.
+    f"{_G1_ROOT}/_joint_rest": g1_urdf_static_joints(root_path=_G1_ROOT),
 }
 _static_rerun_entities.update(scene_package_static_entities(global_config.scene_package))
 
 _rerun_config = {
+    # Cap the in-RAM recording so a late-connecting viewer replays a small
+    # recent slice instead of a multi-GB backlog; 512MB fits the onboard
+    # Jetson. This knob also sets the auto-spawned viewer's budget, and the
+    # 1 Hz full-snapshot nav streams (global map, costmaps) fill a small
+    # budget in minutes -- the viewer GC then evicts them between updates
+    # ("the map disappears"). Sim runs on the workstation, so give it room.
+    "memory_limit": "512MB" if global_config.simulation != "mujoco" else "8GB",
     "blueprint": _g1_groot_rerun_blueprint,
     "visual_override": {
         # This blueprint uses raycast lidar, so suppress raw camera streams
         # in Rerun.
         "world/color_image": None,
+        # Raw scans are in the sensor/base frame (LIO contract), not world --
+        # the voxel map is the live view. Same rationale as world/lidar on
+        # real hardware below.
+        "world/pointcloud": None,
         "world/camera_info": None,
         "world/depth_image": None,
         "world/depth_camera_info": None,
-        "world/coordinator_joint_state": g1_urdf_joint_state(root_path=G1_RERUN_ROOT),
+        "world/coordinator_joint_state": g1_urdf_joint_state(root_path=_G1_ROOT),
         "world/global_costmap": g1_costmap,
         "world/navigation_costmap": g1_costmap,
         "world/path": _g1_nav_path,
     },
     "max_hz": {
-        "world/coordinator_joint_state": 20.0,
+        # 50 Hz mesh animation. The 15 Hz cap predates the newest_first serve
+        # fix; with serving healthy the produce rate no longer outruns the
+        # viewer. Drop back toward 15 if the viewer ever drifts behind again.
+        "world/coordinator_joint_state": 50.0,
+        # Raw whole-body state streams arrive at ~440 Hz. The mesh animates
+        # from coordinator_joint_state (above); these are only useful as debug
+        # plots, so throttle them hard instead of flooding Rerun's store.
+        "world/g1/imu": 10.0,
+        "world/g1/motor_states": 10.0,
+        "world/g1/motor_command": 10.0,
+        "world/odometry": 15.0,
         "world/global_map": 1.0,
         "world/global_costmap": 2.0,
         "world/navigation_costmap": 2.0,
@@ -374,6 +561,18 @@ _rerun_config = {
     },
     "static": _static_rerun_entities,
 }
+
+if global_config.simulation != "mujoco":
+    # Real hw: root the robot mesh on FAST-LIO odometry, draw the costmap on
+    # the boot frame's actual ground plane, and throttle the raw registered
+    # scan over the WiFi link (the voxel map is the useful view).
+    _rerun_config["visual_override"]["world/odometry"] = _g1_real_odometry_root
+    _rerun_config["visual_override"]["world/global_costmap"] = _g1_real_costmap
+    _rerun_config["visual_override"]["world/navigation_costmap"] = _g1_real_costmap
+    # The raw FAST-LIO scan is in the (upside-down) sensor frame, not the
+    # world frame -- registration happens in RayTracingVoxelMap. Hide it like
+    # the nav blueprints do; the voxel map is the live view.
+    _rerun_config["visual_override"]["world/lidar"] = None
 
 
 def _viewer() -> Any:
@@ -409,6 +608,10 @@ _coordinator = ControlCoordinator.blueprint(
             },
         ),
         *([_arm_holder] if _arm_holder is not None else []),
+        # Per-arm trajectory execution for the ManipulationModule. Idle tasks
+        # emit nothing (servo_arms keeps the hold); an executing task outranks
+        # the hold for its 7 joints only.
+        *(g1_arm_trajectory_task(side) for side in G1_ARM_SIDES),
     ],
 ).transports(
     {
@@ -425,7 +628,7 @@ _coordinator = ControlCoordinator.blueprint(
 )
 
 unitree_g1_groot_wbc = (
-    autoconnect(_backend, _coordinator, _nav_stack, _viewer())
+    autoconnect(_backend, _coordinator, _nav_stack, *_manipulation_stack, _viewer())
     .remappings(cast("Any", _remappings))
-    .global_config(robot_model="unitree_g1")
+    .global_config(robot_model="unitree_g1", n_workers=_n_workers)
 )

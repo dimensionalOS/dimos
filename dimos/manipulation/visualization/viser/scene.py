@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Protocol, TypeAlias, cast
+from typing import TYPE_CHECKING, Protocol, TypeAlias, cast
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
@@ -53,6 +53,9 @@ except ImportError as e:
         raise
     raise ModuleNotFoundError(VISER_URDF_INSTALL_HINT) from e
 
+if TYPE_CHECKING:
+    from dimos.manipulation.visualization.viser.reachability import ReachabilityMapLayer
+
 logger = setup_logger()
 
 GOAL_ROBOT_FEASIBLE_COLOR = (255, 122, 0)
@@ -86,8 +89,17 @@ class ViserManipulationScene:
         self.viser_urdf = viser_urdf
         self.preview_fps = preview_fps
         self._configs_by_id: dict[str, RobotModelConfig] = {}
+        # URDF instances are shared per display group (same display model +
+        # base pose), so e.g. the two G1 arm robots render one live robot,
+        # one target ghost, and one preview ghost instead of two overlapping
+        # full-body copies each. Joint values from group members are merged.
         self._urdfs: dict[str, ViserUrdf] = {}
+        self._group_by_robot: dict[str, str] = {}
+        self._group_members: dict[str, set[str]] = {}
+        self._group_joint_values: dict[str, dict[str, float]] = {}
+        self._group_key_ids: dict[tuple[object, ...], str] = {}
         self._handles: dict[str, TransformControlsHandle] = {}
+        self._root_frames: dict[str, object] = {}
         self._grid_handle: GridHandle | None = None
         self._grid_visible = True
         self._preview_visible: dict[str, bool] = {}
@@ -105,9 +117,38 @@ class ViserManipulationScene:
 
     def register_robot(self, robot_id: str, config: RobotModelConfig) -> None:
         self._configs_by_id[robot_id] = config
+        group = self._display_group_key(config)
+        self._group_by_robot[robot_id] = group
+        self._group_members.setdefault(group, set()).add(robot_id)
         self._preview_visible.setdefault(robot_id, False)
         self._target_tracks_current.setdefault(robot_id, True)
-        self._ensure_robot_urdfs(robot_id, config)
+        self._ensure_group_urdfs(group, config)
+
+    def unregister_robot(self, robot_id: str) -> None:
+        """Remove robot visuals and target controls for one robot ID."""
+        self._remove_handle(f"{robot_id}:ee_control")
+        group = self._group_by_robot.pop(robot_id, None)
+        members = self._group_members.get(group, set()) if group is not None else set()
+        members.discard(robot_id)
+        if group is not None and not members:
+            self._group_members.pop(group, None)
+            for kind in ("current", "target", "preview"):
+                urdf = self._urdfs.pop(f"{group}:{kind}", None)
+                if urdf is not None:
+                    self._remove_scene_handle(urdf)
+                root = self._root_frames.pop(f"{group}:{kind}", None)
+                if root is not None:
+                    self._remove_scene_handle(root)
+                self._group_joint_values.pop(f"{group}:{kind}", None)
+        self._configs_by_id.pop(robot_id, None)
+        self._preview_visible.pop(robot_id, None)
+        self._target_tracks_current.pop(robot_id, None)
+
+    def create_reachability_layer(self, root: str = "/reachability") -> ReachabilityMapLayer:
+        """Create a reachability-map layer attached to this scene."""
+        from dimos.manipulation.visualization.viser.reachability import ReachabilityMapLayer
+
+        return ReachabilityMapLayer(self, root=root)
 
     def _ensure_reference_grid(self) -> None:
         try:
@@ -159,9 +200,11 @@ class ViserManipulationScene:
         config = self._configs_by_id.get(robot_id)
         if config is None or joint_state is None:
             return
-        self._ensure_robot_urdfs(robot_id, config)
-        current = self._urdfs.get(f"{robot_id}:current")
-        self.set_urdf_joints(current, config.joint_names, joint_state.position)
+        group = self._group_by_robot.get(robot_id)
+        if group is None:
+            return
+        self._ensure_group_urdfs(group, config)
+        self._apply_group_joints(group, "current", config.joint_names, joint_state.position)
         if self._target_tracks_current.get(robot_id, True):
             self._set_target_joints(robot_id, config.joint_names, joint_state.position)
             self._set_target_visibility(robot_id, True)
@@ -194,8 +237,7 @@ class ViserManipulationScene:
     def set_target_joints(
         self, robot_id: str, joint_names: Sequence[str], joints: Sequence[float]
     ) -> bool:
-        target = self._urdfs.get(f"{robot_id}:target")
-        if target is None:
+        if self._urdf_for(robot_id, "target") is None:
             return False
         self._target_tracks_current[robot_id] = False
         self._set_target_joints(robot_id, joint_names, joints)
@@ -209,14 +251,50 @@ class ViserManipulationScene:
     def _set_target_joints(
         self, robot_id: str, joint_names: Sequence[str], joints: Sequence[float]
     ) -> None:
-        target = self._urdfs.get(f"{robot_id}:target")
-        self.set_urdf_joints(target, joint_names, joints)
+        group = self._group_by_robot.get(robot_id)
+        if group is not None:
+            self._apply_group_joints(group, "target", joint_names, joints)
 
     def _set_preview_ghost_joints(
         self, robot_id: str, joint_names: Sequence[str], joints: Sequence[float]
     ) -> None:
-        ghost = self._urdfs.get(f"{robot_id}:preview")
-        self.set_urdf_joints(ghost, joint_names, joints)
+        group = self._group_by_robot.get(robot_id)
+        if group is not None:
+            self._apply_group_joints(group, "preview", joint_names, joints)
+
+    def _urdf_for(self, robot_id: str, kind: str) -> ViserUrdf | None:
+        group = self._group_by_robot.get(robot_id)
+        if group is None:
+            return None
+        return self._urdfs.get(f"{group}:{kind}")
+
+    def _apply_group_joints(
+        self, group: str, kind: str, joint_names: Sequence[str], joints: Sequence[float]
+    ) -> None:
+        """Merge one robot's joint values into the group's shared URDF.
+
+        Group members control disjoint joints of the same display model (e.g.
+        the two G1 arms in one full-body URDF), so values are accumulated per
+        group and the merged configuration is applied on every update.
+        """
+        urdf = self._urdfs.get(f"{group}:{kind}")
+        if urdf is None:
+            return
+        store = self._group_joint_values.setdefault(f"{group}:{kind}", {})
+        for name, value in zip(joint_names, joints, strict=False):
+            store[name] = float(value)
+            store[name.rsplit("/", 1)[-1]] = float(value)
+        allowed_names = self.viser_actuated_joint_names(urdf)
+        if not allowed_names:
+            return
+        cfg = [store.get(name, 0.0) for name in allowed_names]
+        update_cfg = getattr(urdf, "update_cfg", None)
+        if callable(update_cfg):
+            update_cfg(cfg)
+            return
+        update_configuration = getattr(urdf, "update_configuration", None)
+        if callable(update_configuration):
+            update_configuration(cfg)
 
     def set_target_pose(self, robot_id: str, pose: Pose | None) -> None:
         handle = self._handles.get(f"{robot_id}:ee_control")
@@ -241,8 +319,9 @@ class ViserManipulationScene:
         handle = self._handles.get(f"{robot_id}:ee_control")
         if handle is not None:
             cast("_ColorHandle", handle).color = color
-        target = self._urdfs.get(f"{robot_id}:target")
-        self._set_urdf_mesh_material(target, mesh_color, mesh_opacity)
+        # The target ghost is shared across the display group; feasibility of
+        # the robot being edited colors the whole ghost.
+        self._set_urdf_mesh_material(self._urdf_for(robot_id, "target"), mesh_color, mesh_opacity)
 
     def close(self) -> None:
         for key in list(self._handles):
@@ -252,23 +331,49 @@ class ViserManipulationScene:
             self._grid_handle = None
         for urdf in self._urdfs.values():
             self._remove_scene_handle(urdf)
+        for root in self._root_frames.values():
+            self._remove_scene_handle(root)
         self._urdfs.clear()
+        self._root_frames.clear()
         self._configs_by_id.clear()
+        self._group_by_robot.clear()
+        self._group_members.clear()
+        self._group_joint_values.clear()
         self._preview_visible.clear()
         self._target_tracks_current.clear()
 
-    def _ensure_robot_urdfs(self, robot_id: str, config: RobotModelConfig) -> None:
+    def _display_group_key(self, config: RobotModelConfig) -> str:
+        """Robots with the same display model and base pose share URDF instances."""
+        pose = getattr(config, "base_pose", None)
+        pose_signature: tuple[float, ...] = ()
+        if pose is not None:
+            pose_signature = (
+                round(float(pose.position.x), 6),
+                round(float(pose.position.y), 6),
+                round(float(pose.position.z), 6),
+                round(float(pose.orientation.w), 6),
+                round(float(pose.orientation.x), 6),
+                round(float(pose.orientation.y), 6),
+                round(float(pose.orientation.z), 6),
+            )
+        signature = (
+            str(getattr(config, "display_model_path", None) or config.model_path),
+            *pose_signature,
+        )
+        if signature not in self._group_key_ids:
+            self._group_key_ids[signature] = f"display_{len(self._group_key_ids) + 1}"
+        return self._group_key_ids[signature]
+
+    def _ensure_group_urdfs(self, group: str, config: RobotModelConfig) -> None:
         if not config.model_path:
             return
         for kind in ("current", "target", "preview"):
-            key = f"{robot_id}:{kind}"
+            key = f"{group}:{kind}"
+            root_node_name = self._root_node_name(group, kind)
             if key in self._urdfs:
+                self._ensure_root_frame(key, root_node_name, config)
                 continue
-            root_node_name = {
-                "current": f"/robots/{robot_id}/current",
-                "target": f"/targets/{robot_id}/target",
-                "preview": f"/previews/{robot_id}/ghost",
-            }[kind]
+            self._ensure_root_frame(key, root_node_name, config)
             mesh_color_override = {
                 "current": None,
                 "target": GOAL_ROBOT_MESH_COLOR,
@@ -289,15 +394,66 @@ class ViserManipulationScene:
                 self._set_urdf_mesh_material(
                     self._urdfs[key], PREVIEW_ROBOT_COLOR, PREVIEW_ROBOT_OPACITY
                 )
-                self._set_handle_visibility(
-                    self._urdfs[key], self._preview_visible.get(robot_id, False)
-                )
+                self._set_handle_visibility(self._urdfs[key], self._group_preview_visible(group))
+
+    @staticmethod
+    def _root_node_name(group: str, kind: str) -> str:
+        return {
+            "current": f"/robots/{group}/current",
+            "target": f"/targets/{group}/target",
+            "preview": f"/previews/{group}/ghost",
+        }[kind]
+
+    def _group_preview_visible(self, group: str) -> bool:
+        members = self._group_members.get(group, set())
+        return any(self._preview_visible.get(robot_id, False) for robot_id in members)
+
+    def _ensure_root_frame(self, key: str, root_node_name: str, config: RobotModelConfig) -> None:
+        if key in self._root_frames:
+            self._set_root_frame_pose(self._root_frames[key], config)
+            return
+        add_frame = getattr(self.server.scene, "add_frame", None)
+        if not callable(add_frame):
+            return
+        pose = config.base_pose
+        self._root_frames[key] = add_frame(
+            root_node_name,
+            show_axes=False,
+            position=(
+                float(pose.position.x),
+                float(pose.position.y),
+                float(pose.position.z),
+            ),
+            wxyz=(
+                float(pose.orientation.w),
+                float(pose.orientation.x),
+                float(pose.orientation.y),
+                float(pose.orientation.z),
+            ),
+        )
+
+    @staticmethod
+    def _set_root_frame_pose(frame: object, config: RobotModelConfig) -> None:
+        pose = config.base_pose
+        if hasattr(frame, "position"):
+            frame.position = (
+                float(pose.position.x),
+                float(pose.position.y),
+                float(pose.position.z),
+            )
+        if hasattr(frame, "wxyz"):
+            frame.wxyz = (
+                float(pose.orientation.w),
+                float(pose.orientation.x),
+                float(pose.orientation.y),
+                float(pose.orientation.z),
+            )
 
     def prepared_urdf_path(self, config: RobotModelConfig) -> Path:
         package_paths = {package: Path(path) for package, path in config.package_paths.items()}
         return Path(
             prepare_urdf_for_drake(
-                Path(str(config.model_path)),
+                Path(str(config.display_model_path or config.model_path)),
                 package_paths=package_paths,
                 xacro_args={str(key): str(value) for key, value in config.xacro_args.items()},
                 convert_meshes=bool(config.auto_convert_meshes),
@@ -339,10 +495,16 @@ class ViserManipulationScene:
         return tuple(str(name) for name in urdf._urdf.actuated_joint_names)
 
     def _set_preview_visibility(self, robot_id: str, visible: bool) -> None:
-        self._set_handle_visibility(self._urdfs.get(f"{robot_id}:preview"), visible)
+        group = self._group_by_robot.get(robot_id)
+        if group is None:
+            return
+        # Shared ghost: stays visible while any group member is previewing.
+        self._set_handle_visibility(
+            self._urdfs.get(f"{group}:preview"), visible or self._group_preview_visible(group)
+        )
 
     def _set_target_visibility(self, robot_id: str, visible: bool) -> None:
-        self._set_handle_visibility(self._urdfs.get(f"{robot_id}:target"), visible)
+        self._set_handle_visibility(self._urdf_for(robot_id, "target"), visible)
 
     def _set_handle_visibility(self, handle: SceneHandle | None, visible: bool) -> None:
         if handle is None:

@@ -74,6 +74,12 @@ def rerun_init(
             server_uri = rr.serve_grpc(
                 grpc_port=grpc_port,
                 server_memory_limit=server_memory_limit,
+                # Send the newest data first so a late-connecting viewer shows
+                # the live state immediately and backfills history behind it,
+                # instead of replaying the whole buffer from the oldest message
+                # (which looks like the viewer running behind / slower than
+                # real time on a long-lived server).
+                newest_first=True,
             )
             logger.info(f"Rerun gRPC server ready at {server_uri}")
 

@@ -25,6 +25,7 @@ import pytest
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
+from dimos.manipulation.reachability.capability_map import CapabilityMap, MapParams
 from dimos.manipulation.visualization.types import RobotInfo, TargetEvaluation
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.animation import (
@@ -47,6 +48,9 @@ from dimos.manipulation.visualization.viser.state import (
 )
 from dimos.manipulation.visualization.viser.theme import _dimos_logo_data_url, apply_dimos_theme
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 GuiCallback = Callable[[SimpleNamespace], None]
@@ -172,6 +176,47 @@ class FakeHandle:
         self.removed = True
 
 
+class FakeReachabilityLayer:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object]] = []
+
+    def show_points(self, points: np.ndarray, colors: np.ndarray, *, point_size: float) -> None:
+        self.calls.append(("points", (len(points), len(colors), point_size)))
+
+    def show_voxel_mesh(self, mesh: object | None) -> None:
+        self.calls.append(("voxels", mesh is not None))
+
+    def show_vertical_slice(
+        self,
+        image: np.ndarray,
+        *,
+        width: float,
+        height: float,
+        center_z: float,
+        wxyz: tuple[float, float, float, float],
+    ) -> None:
+        self.calls.append(("vertical", (image.shape, width, height, center_z, wxyz)))
+
+    def show_horizontal_slice(
+        self,
+        image: np.ndarray,
+        *,
+        width: float,
+        height: float,
+        z: float,
+    ) -> None:
+        self.calls.append(("horizontal", (image.shape, width, height, z)))
+
+    def clear_vertical_slice(self) -> None:
+        self.calls.append(("clear_vertical", None))
+
+    def clear_horizontal_slice(self) -> None:
+        self.calls.append(("clear_horizontal", None))
+
+    def close(self) -> None:
+        self.calls.append(("close", None))
+
+
 class FakeUrdf:
     def __init__(self, names: tuple[str, ...]) -> None:
         self._urdf = SimpleNamespace(actuated_joint_names=names)
@@ -255,6 +300,29 @@ class FakeTransformServer(FakeServer):
         handle.path = path
         handle.scale = scale
         self.transform_controls.append(handle)
+        return handle
+
+
+class FakeFrameServer(FakeGridServer):
+    def __init__(self) -> None:
+        super().__init__()
+        self.frames = []
+        self.scene.add_frame = self.add_frame
+
+    def add_frame(
+        self,
+        name: str,
+        *,
+        show_axes: bool,
+        position: tuple[float, float, float],
+        wxyz: tuple[float, float, float, float],
+    ) -> FakeTransformHandle:
+        handle = FakeTransformHandle()
+        handle.name = name
+        handle.show_axes = show_axes
+        handle.position = position
+        handle.wxyz = wxyz
+        self.frames.append(handle)
         return handle
 
 
@@ -477,9 +545,16 @@ def make_panel() -> Iterator[Callable[..., ViserPanelGui]]:
         adapter: InProcessViserAdapter,
         config: ViserVisualizationConfig | None = None,
         scene: ViserManipulationScene | None = None,
+        reachability_maps: dict[str, CapabilityMap] | None = None,
+        reachability_layer: FakeReachabilityLayer | None = None,
     ) -> ViserPanelGui:
         gui = ViserPanelGui(
-            server, adapter, config or ViserVisualizationConfig(panel_enabled=True), scene
+            server,
+            adapter,
+            config or ViserVisualizationConfig(panel_enabled=True),
+            scene,
+            reachability_maps=reachability_maps,
+            reachability_layer=reachability_layer,  # type: ignore[arg-type]
         )
         gui.start()
         panels.append(gui)
@@ -529,6 +604,45 @@ def test_gui_scene_grid_checkbox_toggles_reference_grid(
         SimpleNamespace(target=SimpleNamespace(value=True))
     )
     assert grid_server.grids[0].visible is True
+
+
+def test_gui_reachability_controls_render_layer(make_panel: Callable[..., ViserPanelGui]) -> None:
+    params = MapParams(r_xy=0.2, z_min=0.0, z_max=0.2, cell=0.1, n_theta=4, n_inplane=2)
+    cap = CapabilityMap(params, robot="arm")
+    positions = np.array([[0.05, 0.05, 0.05], [0.15, -0.05, 0.05]], dtype=np.float64)
+    rotations = np.repeat(np.eye(3)[None, :, :], len(positions), axis=0)
+    cap.record_batch(positions, rotations)
+    layer = FakeReachabilityLayer()
+    gui = make_panel(
+        FakeGuiServer(),
+        make_adapter_with_robot(),
+        ViserVisualizationConfig(panel_enabled=True),
+        reachability_maps={"arm": cap},
+        reachability_layer=layer,
+    )
+
+    assert "reachability_folder" in gui._handles
+    assert "reachability_map" not in gui._handles
+    visible = gui._handles["reachability_visible"]
+    assert isinstance(visible, GuiCheckboxHandle)
+    visible.value = True
+    assert visible.update_callback is not None
+    visible.update_callback(SimpleNamespace(target=visible))
+    assert any(call[0] == "points" for call in layer.calls)
+
+    vertical = gui._handles["reachability_vertical_slice"]
+    assert isinstance(vertical, GuiCheckboxHandle)
+    vertical.value = True
+    assert vertical.update_callback is not None
+    vertical.update_callback(SimpleNamespace(target=vertical))
+    assert any(call[0] == "vertical" for call in layer.calls)
+
+    horizontal = gui._handles["reachability_horizontal_slice"]
+    assert isinstance(horizontal, GuiCheckboxHandle)
+    horizontal.value = True
+    assert horizontal.update_callback is not None
+    horizontal.update_callback(SimpleNamespace(target=horizontal))
+    assert any(call[0] == "horizontal" for call in layer.calls)
 
 
 def test_gui_close_removes_handles_and_late_callbacks_are_noops(
@@ -701,6 +815,39 @@ def test_viser_joint_configuration_maps_names_to_urdf_order() -> None:
     assert urdf.cfg == [1.5, 2.5, 0.0]
 
 
+def test_scene_places_robot_roots_at_base_pose() -> None:
+    server = FakeFrameServer()
+    urdfs = [FakeUrdf(("joint1",)) for _ in range(3)]
+    scene = ViserManipulationScene(server, lambda *args, **kwargs: urdfs.pop(0), preview_fps=10.0)
+    scene.prepared_urdf_path = lambda config: "dummy.urdf"
+    config = SimpleNamespace(
+        name="arm",
+        model_path="/tmp/arm.urdf",
+        package_paths={},
+        xacro_args={},
+        auto_convert_meshes=False,
+        joint_names=["joint1"],
+        base_pose=PoseStamped(
+            position=Vector3(0.1, -0.2, 0.74),
+            orientation=Quaternion(0.2, 0.3, 0.4, 0.5),
+        ),
+    )
+
+    scene.register_robot("robot1", config)
+
+    # Root frames are keyed by display group (shared across robots with the
+    # same display model + base pose), not by robot ID.
+    roots = {frame.name: frame for frame in server.frames}
+    for name in (
+        "/robots/display_1/current",
+        "/targets/display_1/target",
+        "/previews/display_1/ghost",
+    ):
+        assert roots[name].position == (0.1, -0.2, 0.74)
+        assert roots[name].wxyz == (0.5, 0.2, 0.3, 0.4)
+        assert roots[name].show_axes is False
+
+
 def test_scene_adds_reference_grid_when_supported() -> None:
     server = FakeGridServer()
     scene = ViserManipulationScene(
@@ -735,8 +882,8 @@ def test_preview_visibility_only_affects_preview_ghost_and_close_removes_handles
         joint_names=["joint1"],
     )
     scene.register_robot("robot1", config)
-    target = scene._urdfs["robot1:target"]
-    preview = scene._urdfs["robot1:preview"]
+    target = scene._urdf_for("robot1", "target")
+    preview = scene._urdf_for("robot1", "preview")
     assert all(mesh.visible is True for mesh in target._meshes)
     assert all(mesh.visible is False for mesh in preview._meshes)
     scene.show_preview("robot1")
@@ -764,9 +911,9 @@ def test_target_ghost_is_visible_and_tracks_current_until_target_moves_it() -> N
         joint_names=["joint1"],
     )
     scene.register_robot("robot1", config)
-    current = scene._urdfs["robot1:current"]
-    target = scene._urdfs["robot1:target"]
-    preview = scene._urdfs["robot1:preview"]
+    current = scene._urdf_for("robot1", "current")
+    target = scene._urdf_for("robot1", "target")
+    preview = scene._urdf_for("robot1", "preview")
 
     assert all(mesh.visible is True for mesh in target._meshes)
     assert all(mesh.visible is False for mesh in preview._meshes)
@@ -796,8 +943,8 @@ def test_preview_animation_uses_separate_colored_ghost_and_hides_after_playback(
         joint_names=["joint1"],
     )
     scene.register_robot("robot1", config)
-    target = scene._urdfs["robot1:target"]
-    preview = scene._urdfs["robot1:preview"]
+    target = scene._urdf_for("robot1", "target")
+    preview = scene._urdf_for("robot1", "preview")
 
     assert all(mesh.color == (255, 122, 0) for mesh in target._meshes)
     assert all(mesh.color == (80, 180, 255) for mesh in preview._meshes)
@@ -910,7 +1057,7 @@ def test_adapter_copies_joint_state_and_delegates_to_module() -> None:
         preview_path=lambda robot_name=None: robot_name,
         execute=lambda robot_name=None: robot_name,
         cancel=lambda: True,
-        clear_planned_path=lambda: True,
+        clear_planned_path=lambda robot_name=None: True,
     )
     world_monitor = SimpleNamespace(
         get_current_joint_state=lambda robot_id: copied,
@@ -1016,8 +1163,8 @@ def test_scene_registers_goal_robot_coloring_and_updates_visibility() -> None:
     )
 
     scene.register_robot("robot1", config)
-    target = scene._urdfs["robot1:target"]
-    preview = scene._urdfs["robot1:preview"]
+    target = scene._urdf_for("robot1", "target")
+    preview = scene._urdf_for("robot1", "preview")
 
     assert all(mesh.color == (255, 122, 0) for mesh in target._meshes)
     assert all(mesh.opacity == 0.7 for mesh in target._meshes)
@@ -1064,8 +1211,8 @@ def test_scene_transform_controls_update_pose_callback_and_visual_state() -> Non
     assert control.wxyz == (1.0, 0.0, 0.0, 0.0)
 
     scene.set_target_visual_state("robot1", feasible=False)
-    target = scene._urdfs["robot1:target"]
-    preview = scene._urdfs["robot1:preview"]
+    target = scene._urdf_for("robot1", "target")
+    preview = scene._urdf_for("robot1", "preview")
     assert control.color == (255, 40, 40)
     assert all(mesh.color == (255, 30, 30) for mesh in target._meshes)
     assert all(mesh.opacity == 0.75 for mesh in target._meshes)
@@ -1096,7 +1243,7 @@ def test_scene_target_controls_update_target_ghost_pose_and_feasibility() -> Non
     assert scene.set_target_pose("robot1", pose) is None
     assert scene.set_target_visual_state("robot1", feasible=False) is None
 
-    target = scene._urdfs["robot1:target"]
+    target = scene._urdf_for("robot1", "target")
     handle = scene._handles["robot1:ee_control"]
     assert target.cfg == [0.7, 0.9]
     assert handle.position == (0.1, 0.2, 0.3)
@@ -1349,6 +1496,52 @@ def test_gui_cartesian_ik_result_does_not_rewrite_active_gizmo(
     assert target_pose_updates == []
 
 
+def test_gui_cartesian_failed_candidate_still_moves_target_configuration(
+    make_panel: Callable[..., ViserPanelGui],
+) -> None:
+    current = FakeJointState(["j1", "j2"], position=[0.0, 0.0])
+    config = make_robot_config(joint_names=["j1", "j2"], home_joints=[0.5, 0.6])
+    module = FakeManipulationModule(
+        _robots={"arm": ("robot-1", config, None)}, _planned_paths={}, _planned_trajectories={}
+    )
+    world_monitor = SimpleNamespace(
+        get_current_joint_state=lambda robot_id: current,
+        is_state_stale=lambda robot_id, max_age=1.0: False,
+        is_state_valid=lambda robot_id, joint_state: True,
+        get_ee_pose=lambda robot_id, joint_state=None: None,
+    )
+    adapter = InProcessViserAdapter(world_monitor=world_monitor, manipulation_module=module)
+    target_joint_updates = []
+    visual_states = []
+    scene = SimpleNamespace(
+        has_reference_grid=lambda: False,
+        ensure_target_controls=lambda *args: None,
+        set_target_joints=lambda *args: target_joint_updates.append(args) or True,
+        set_target_pose=lambda *args: None,
+        set_target_visual_state=lambda *args: visual_states.append(args),
+    )
+    gui = make_panel(FakeGuiServer(), adapter, ViserVisualizationConfig(panel_enabled=True), scene)
+    request = TargetEvaluationRequest(sequence_id=1, source="cartesian", robot_name="arm")
+    gui.state.latest_sequence_id = 1
+
+    gui._apply_target_evaluation_result(
+        request,
+        {
+            "success": False,
+            "status": "NO_SOLUTION",
+            "message": "not converged",
+            "collision_free": True,
+            "joint_state": adapter.joints_from_values(["j1", "j2"], [0.4, 0.8]),
+        },
+    )
+
+    assert gui.state.target_status == TargetStatus.INFEASIBLE
+    assert gui.state.feasibility.status == FeasibilityStatus.IK_FAILED
+    assert [gui._joint_sliders[name].value for name in ("j1", "j2")] == [0.4, 0.8]
+    assert target_joint_updates[-1] == ("robot-1", ["j1", "j2"], [0.4, 0.8])
+    assert visual_states[-1] == ("robot-1", False)
+
+
 def test_gui_collision_evaluation_marks_target_infeasible_and_colors_scene(
     make_panel: Callable[..., ViserPanelGui],
 ) -> None:
@@ -1404,7 +1597,7 @@ def test_gui_safe_execute_requires_fresh_matching_plan_and_clear_resets_path(
         _planned_trajectories={},
         _state=NamedState(name="IDLE"),
         execute=lambda robot_name=None: executed.append(robot_name) or True,
-        clear_planned_path=lambda: cleared.append(True) or True,
+        clear_planned_path=lambda robot_name=None: cleared.append(True) or True,
     )
     world_monitor = SimpleNamespace(
         get_current_joint_state=lambda robot_id: current,
@@ -1585,3 +1778,88 @@ def test_operation_worker_reports_timeout() -> None:
 
     assert errors == ["Operation timed out after 0.0s"]
     assert finished.wait(timeout=1.0)
+
+
+def test_scene_shares_ghosts_across_display_group_and_merges_joints() -> None:
+    server = FakeServer()
+    created: list[FakeUrdf] = []
+
+    def factory(*args: object, **kwargs: object) -> FakeUrdf:
+        urdf = FakeUrdf(("j_left", "j_right"))
+        created.append(urdf)
+        return urdf
+
+    scene = ViserManipulationScene(server, factory, preview_fps=10.0)
+    scene.prepared_urdf_path = lambda config: "dummy.urdf"
+    left = SimpleNamespace(
+        name="g1-left",
+        model_path="/tmp/g1.urdf",
+        package_paths={},
+        xacro_args={},
+        auto_convert_meshes=False,
+        joint_names=["j_left"],
+    )
+    right = SimpleNamespace(
+        name="g1-right",
+        model_path="/tmp/g1.urdf",
+        package_paths={},
+        xacro_args={},
+        auto_convert_meshes=False,
+        joint_names=["j_right"],
+    )
+
+    scene.register_robot("robot1", left)
+    scene.register_robot("robot2", right)
+
+    # One shared current/target/preview set, not one per robot.
+    assert len(created) == 3
+    assert scene._urdf_for("robot1", "target") is scene._urdf_for("robot2", "target")
+
+    # Each arm's target merges into the shared ghost.
+    assert scene.set_target_joints("robot1", ["j_left"], [1.0]) is True
+    assert scene.set_target_joints("robot2", ["j_right"], [2.0]) is True
+    target = scene._urdf_for("robot1", "target")
+    assert target is not None and target.cfg == [1.0, 2.0]
+
+    # An arm still tracking current only overwrites its own joints.
+    scene.update_current_robot("robot1", FakeJointState(["j_left"], [0.5]))
+    current = scene._urdf_for("robot1", "current")
+    assert current is not None and current.cfg == [0.5, 0.0]
+    assert target.cfg == [1.0, 2.0]  # robot1 stopped tracking when targeted
+
+    # Unregistering one arm keeps the shared ghosts for the other.
+    scene.unregister_robot("robot1")
+    assert scene._urdf_for("robot2", "target") is target
+    assert target.removed is False
+    scene.unregister_robot("robot2")
+    assert target.removed is True
+
+
+def test_gui_ik_step_animator_moves_ghost_and_aborts_stale(
+    make_panel: Callable[..., ViserPanelGui],
+) -> None:
+    adapter = make_adapter_with_robot()
+    gui = make_panel(FakeGuiServer(), adapter)
+    gui.state.selected_robot = "arm"
+    moved: list[tuple[str, list[float]]] = []
+    gui.scene = SimpleNamespace(
+        set_target_joints=lambda robot_id, names, joints: moved.append((robot_id, list(joints)))
+    )
+
+    sequence_id = gui.state.next_sequence_id()
+    request = TargetEvaluationRequest(sequence_id=sequence_id, source="cartesian", robot_name="arm")
+    on_step = gui._ik_step_animator(request)
+
+    # Live request: intermediate guesses stream to the target ghost.
+    guess = FakeJointState(["j1", "j2"], position=[0.3, 0.4])
+    assert on_step(guess, 0.05, 0) is False
+    assert moved and moved[-1][1] == [0.3, 0.4]
+
+    # A newer target supersedes this request: the search must abort.
+    gui.state.next_sequence_id()
+    assert on_step(guess, 0.05, 0) is True
+
+    # Closed panel also aborts.
+    gui.state.latest_sequence_id = request.sequence_id
+    gui.close()
+    assert on_step(guess, 0.05, 0) is True

@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from dimos.manipulation.planning.spec.models import Jacobian
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
 def damped_pseudoinverse(
@@ -294,3 +295,42 @@ def rotation_matrix_to_axis_angle(R: NDArray[np.float64]) -> tuple[NDArray[np.fl
     ) / (2 * sin_angle)
 
     return axis, angle
+
+
+def grasp_to_link_pose(pose: PoseStamped, grasp_offset: tuple[float, float, float]) -> PoseStamped:
+    """Convert a grasp-center target pose into the end-effector-link pose.
+
+    ``grasp_offset`` is the grasp center expressed in the link's local frame,
+    so the link origin sits at ``p_grasp - R @ offset`` with the same
+    orientation (reachability capability-map convention).
+    """
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+
+    offset = np.asarray(grasp_offset, dtype=np.float64)
+    if not offset.any():
+        return pose
+    rotation = pose.orientation.to_rotation_matrix()
+    position = pose.position.to_numpy() - rotation @ offset
+    return PoseStamped(
+        frame_id=pose.frame_id,
+        position=Vector3(float(position[0]), float(position[1]), float(position[2])),
+        orientation=pose.orientation,
+    )
+
+
+def link_to_grasp_pose(pose: PoseStamped, grasp_offset: tuple[float, float, float]) -> PoseStamped:
+    """Convert an end-effector-link pose into the grasp-center pose."""
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+
+    offset = np.asarray(grasp_offset, dtype=np.float64)
+    if not offset.any():
+        return pose
+    rotation = pose.orientation.to_rotation_matrix()
+    position = pose.position.to_numpy() + rotation @ offset
+    return PoseStamped(
+        frame_id=pose.frame_id,
+        position=Vector3(float(position[0]), float(position[1]), float(position[2])),
+        orientation=pose.orientation,
+    )

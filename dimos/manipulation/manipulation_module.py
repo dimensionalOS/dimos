@@ -25,6 +25,7 @@ Subclass PickAndPlaceModule (pick_and_place_module.py) adds perception integrati
 from __future__ import annotations
 
 from enum import Enum
+import math
 import threading
 import time
 from typing import TYPE_CHECKING, Any, TypeAlias
@@ -59,7 +60,11 @@ from dimos.manipulation.planning.spec.models import (
     RobotName,
     WorldRobotID,
 )
-from dimos.manipulation.planning.spec.protocols import KinematicsSpec, PlannerSpec
+from dimos.manipulation.planning.spec.protocols import (
+    IKStepCallback,
+    KinematicsSpec,
+    PlannerSpec,
+)
 from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
     JointTrajectoryGenerator,
 )
@@ -81,6 +86,15 @@ if TYPE_CHECKING:
     from dimos.core.rpc_client import RPCClient
 
 logger = setup_logger()
+
+# Interactive (gizmo) evaluation criterion, matching the original reachability
+# demo viewer: success is position-gated at 2 cm and orientation is a soft
+# task cost, never pass/fail. A 7-DOF arm frequently cannot hit an arbitrary
+# gizmo orientation exactly; failing the whole pose for a few degrees made
+# clearly-reachable targets read as unreachable. The achieved errors are
+# reported in the result so the panel can display them.
+_EVAL_POSITION_TOLERANCE_M = 0.02
+_EVAL_ORIENTATION_TOLERANCE_RAD = math.pi
 
 # Composite type aliases for readability (using semantic IDs from planning.spec)
 RobotEntry: TypeAlias = tuple[WorldRobotID, RobotModelConfig, JointTrajectoryGenerator]
@@ -505,11 +519,20 @@ class ManipulationModule(Module):
         pose: Pose,
         seed: JointState,
         check_collision: bool,
+        position_tolerance: float = 0.001,
+        orientation_tolerance: float = 0.01,
+        on_step: IKStepCallback | None = None,
     ) -> IKResult:
-        """Run the configured kinematics backend for a world-frame pose."""
+        """Run the configured kinematics backend for a world-frame pose.
+
+        The pose addresses the grasp center; it is converted to the
+        end-effector-link frame (via the robot's grasp_offset) before the
+        solve, mirroring the grasp-frame FK in WorldMonitor.get_ee_pose.
+        """
         assert self._world_monitor and self._kinematics
 
         # Convert Pose to PoseStamped for the IK solver
+        from dimos.manipulation.planning.utils.kinematics_utils import grasp_to_link_pose
         from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
         target_pose = PoseStamped(
@@ -517,13 +540,18 @@ class ManipulationModule(Module):
             position=pose.position,
             orientation=pose.orientation,
         )
+        grasp_offset = self._world_monitor.get_robot_config(robot_id).grasp_offset
+        target_pose = grasp_to_link_pose(target_pose, grasp_offset)
 
         return self._kinematics.solve(
             world=self._world_monitor.world,
             robot_id=robot_id,
             target_pose=target_pose,
             seed=seed,
+            position_tolerance=position_tolerance,
+            orientation_tolerance=orientation_tolerance,
             check_collision=check_collision,
+            on_step=on_step,
         )
 
     @rpc
@@ -713,13 +741,16 @@ class ManipulationModule(Module):
         return True
 
     @rpc
-    def has_planned_path(self) -> bool:
+    def has_planned_path(self, robot_name: RobotName | None = None) -> bool:
         """Check if there's a planned path ready.
+
+        Args:
+            robot_name: Robot to check (required if multiple robots configured)
 
         Returns:
             True if a path is planned and ready
         """
-        robot = self._get_robot()
+        robot = self._get_robot(robot_name)
         if robot is None:
             return False
         robot_name, _, _, _ = robot
@@ -739,15 +770,18 @@ class ManipulationModule(Module):
         return self._world_monitor.get_visualization_url()
 
     @rpc
-    def clear_planned_path(self) -> bool:
+    def clear_planned_path(self, robot_name: RobotName | None = None) -> bool:
         """Clear the stored planned path.
+
+        Args:
+            robot_name: Robot to clear (required if multiple robots configured)
 
         Returns:
             True if cleared
         """
         if self._world_monitor is None:
             return False
-        robot = self._get_robot()
+        robot = self._get_robot(robot_name)
         if robot is None:
             return False
         robot_name, _, _, _ = robot
@@ -865,8 +899,17 @@ class ManipulationModule(Module):
             "joint_state": target,
         }
 
-    def evaluate_pose_target(self, pose: Pose, robot_name: RobotName) -> TargetEvaluation:
-        """Evaluate a Cartesian target for visualization without planning a path."""
+    def evaluate_pose_target(
+        self,
+        pose: Pose,
+        robot_name: RobotName,
+        on_step: IKStepCallback | None = None,
+    ) -> TargetEvaluation:
+        """Evaluate a Cartesian target for visualization without planning a path.
+
+        ``on_step`` streams the IK search's intermediate guesses (in-process
+        callers only -- callbacks cannot cross the RPC boundary).
+        """
         robot_id = self.robot_id_for_name(robot_name)
         if robot_id is None:
             return {
@@ -893,19 +936,40 @@ class ManipulationModule(Module):
                 "message": "Planning is not initialized or current state is unavailable",
                 "collision_free": False,
             }
-        ik = self._solve_ik_for_pose(robot_id, pose, current, check_collision=True)
-        joint_state = JointState(ik.joint_state) if ik.is_success() and ik.joint_state else None
+        # Collision-checked solve: mink retries seeds until it finds a
+        # self-collision-free configuration (matching plan_to_pose), so the
+        # target ghost shows a plan-valid candidate instead of the first
+        # kinematic solution phasing through the torso. If every seed
+        # collides, the best (colliding) candidate is still returned and
+        # reported as COLLISION below.
+        ik = self._solve_ik_for_pose(
+            robot_id,
+            pose,
+            current,
+            check_collision=True,
+            position_tolerance=_EVAL_POSITION_TOLERANCE_M,
+            orientation_tolerance=_EVAL_ORIENTATION_TOLERANCE_RAD,
+            on_step=on_step,
+        )
+        joint_state = JointState(ik.joint_state) if ik.joint_state else None
         collision_free = bool(
             joint_state is not None and self._world_monitor.is_state_valid(robot_id, joint_state)
         )
+        success = ik.is_success() and collision_free
+        ee_pose = self._world_monitor.get_ee_pose(robot_id, joint_state) if joint_state else None
+        status = "COLLISION" if ik.is_success() and not collision_free else ik.status.name
+        message = (
+            "IK solution is in collision" if ik.is_success() and not collision_free else ik.message
+        )
         return {
-            "success": joint_state is not None and collision_free,
+            "success": success,
             "joint_state": joint_state,
-            "status": ik.status.name,
-            "message": ik.message,
+            "status": status,
+            "message": message,
             "position_error": ik.position_error,
             "orientation_error": ik.orientation_error,
             "collision_free": collision_free,
+            "ee_pose": ee_pose,
         }
 
     def get_planned_path(self, robot_name: RobotName) -> JointPath | None:

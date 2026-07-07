@@ -51,8 +51,27 @@ class PinkKinematicsConfig(BaseConfig):
     safety_break: bool = True
 
 
+class MinkKinematicsConfig(BaseConfig):
+    """Configuration for the Mink MuJoCo task/QP IK solver."""
+
+    backend: Literal["mink"] = "mink"
+    solver: str = "daqp"
+    dt: float = 0.05
+    max_iterations: int = 300
+    damping: float = 1e-12
+    position_cost: float = 1.0
+    orientation_cost: float = 1.0
+    lm_damping: float = 1.0
+    gain: float = 1.0
+    safety_break: bool = False
+    velocity_tolerance: float = 1e-4
+
+
 ManipulationKinematicsConfig = Annotated[
-    JacobianKinematicsConfig | DrakeOptimizationKinematicsConfig | PinkKinematicsConfig,
+    JacobianKinematicsConfig
+    | DrakeOptimizationKinematicsConfig
+    | PinkKinematicsConfig
+    | MinkKinematicsConfig,
     Field(discriminator="backend"),
 ]
 
@@ -65,6 +84,9 @@ def kinematics_config_from_name(name: str) -> ManipulationKinematicsConfig:
         return DrakeOptimizationKinematicsConfig()
     if name == "pink":
         return PinkKinematicsConfig()
+    if name == "mink":
+        return MinkKinematicsConfig()
     raise ValueError(
-        f"Unknown kinematics solver: {name}. Available: ['jacobian', 'drake_optimization', 'pink']"
+        f"Unknown kinematics solver: {name}. "
+        "Available: ['jacobian', 'drake_optimization', 'pink', 'mink']"
     )

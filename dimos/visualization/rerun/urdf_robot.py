@@ -55,15 +55,6 @@ def _matrix_to_rerun_transform(rr: Any, matrix: np.ndarray) -> Any:
     )
 
 
-def _rerun_transform_without_frames(rr: Any, transform: Any) -> Any:
-    translation = transform.translation.as_arrow_array().to_pylist()[0]
-    quaternion = transform.quaternion.as_arrow_array().to_pylist()[0]
-    return rr.Transform3D(
-        translation=translation,
-        rotation=rr.Quaternion(xyzw=quaternion),
-    )
-
-
 def _mesh_to_rerun(rr: Any, mesh: Any) -> Any:
     color: tuple[int, int, int, int] = (178, 178, 178, 255)
     face_colors = getattr(getattr(mesh, "visual", None), "face_colors", None)
@@ -118,6 +109,64 @@ def _build_link_paths(
             break
 
     return link_paths
+
+
+_MOVABLE_JOINT_TYPES = frozenset({"revolute", "continuous", "prismatic"})
+
+
+def _load_urdf_tree_and_paths(urdf_path: str | Path, root_path: str) -> tuple[Any, dict[str, str]]:
+    """Load the rerun ``UrdfTree`` and map every joint name to its child-link path.
+
+    Shared by the static rest-pose logger and the per-frame animator so both
+    target *identical* entity paths -- if they diverged, static fixed-joint
+    transforms and per-frame updates would land on different entities and the
+    mesh would break.
+    """
+    import rerun.urdf as rr_urdf
+
+    resolved = _resolve_urdf_path(urdf_path)
+    robot = _yourdfpy_urdf().load(str(resolved))
+    link_paths = _build_link_paths(root_path, str(robot.base_link), list(robot.robot.joints))
+    tree = rr_urdf.UrdfTree.from_file_path(resolved)
+    joint_paths = {
+        joint.name: link_paths.get(
+            joint.child_link, f"{root_path}/{_rerun_path_part(joint.child_link)}"
+        )
+        for joint in tree.joints()
+    }
+    return tree, joint_paths
+
+
+@dataclass
+class UrdfRobotStaticJointsRerunFactory:
+    """Log every URDF joint's rest transform once, as static.
+
+    Fixed joints are constant, so this is their permanent transform; movable
+    joints get an initial rest pose that ``UrdfRobotJointStateRerunFactory``
+    then overrides per frame. Logging fixed joints here (rather than re-sending
+    them every message from the animator) is what lets the animator skip them
+    while keeping the transform tree complete.
+    """
+
+    urdf_path: str | Path
+    root_path: str
+    clamp_joint_limits: bool = False
+
+    def __call__(self, rr: Any) -> list[tuple[str, Any]]:
+        tree, joint_paths = _load_urdf_tree_and_paths(self.urdf_path, self.root_path)
+        out: list[tuple[str, Any]] = []
+        for joint in tree.joints():
+            result = joint._inner.compute_transform(0.0, clamp=self.clamp_joint_limits)
+            out.append(
+                (
+                    joint_paths[joint.name],
+                    rr.Transform3D(
+                        translation=result["translation"],
+                        rotation=rr.Quaternion(xyzw=result["quaternion_xyzw"]),
+                    ),
+                )
+            )
+        return out
 
 
 @dataclass
@@ -178,56 +227,47 @@ class UrdfRobotJointStateRerunFactory:
     _tree: Any = field(default=None, init=False, repr=False)
     _joints: list[Any] = field(default_factory=list, init=False, repr=False)
     _joint_paths: dict[str, str] = field(default_factory=dict, init=False, repr=False)
-    _joint_values: dict[str, float] = field(default_factory=dict, init=False, repr=False)
+    _movable_by_name: dict[str, Any] = field(default_factory=dict, init=False, repr=False)
 
     def __call__(self, msg: Any) -> list[tuple[str, Any]]:
         self._load_tree()
 
-        for name, position in zip(msg.name, msg.position, strict=False):
-            urdf_joint = self.joint_name_mapper(str(name))
-            if urdf_joint in self._joint_values:
-                self._joint_values[urdf_joint] = float(position)
-
         import rerun as rr
 
-        return [
-            (
-                self._joint_paths[joint.name],
-                _rerun_transform_without_frames(
-                    rr,
-                    joint.compute_transform(
-                        self._joint_values.get(joint.name, 0.0),
-                        clamp=self.clamp_joint_limits,
+        # Animate only the joints present in this message, straight from the
+        # Rust FK result. Two wins over the original:
+        #   * skip the old joint.compute_transform() -> Arrow round-trip
+        #     (as_arrow_array().to_pylist()) -> rebuild dance (~3x the work).
+        #   * skip fixed joints and any undriven movable joints (e.g. the hands):
+        #     they're seeded once as static by UrdfRobotStaticJointsRerunFactory
+        #     and Rerun holds each entity's last transform, so we log one
+        #     transform per commanded joint (~29) instead of one per URDF joint
+        #     (52). Both cut the per-message load on the bridge's LCM thread.
+        out: list[tuple[str, Any]] = []
+        for name, position in zip(msg.name, msg.position, strict=False):
+            joint = self._movable_by_name.get(self.joint_name_mapper(str(name)))
+            if joint is None:
+                continue
+            result = joint._inner.compute_transform(float(position), clamp=self.clamp_joint_limits)
+            out.append(
+                (
+                    self._joint_paths[joint.name],
+                    rr.Transform3D(
+                        translation=result["translation"],
+                        rotation=rr.Quaternion(xyzw=result["quaternion_xyzw"]),
                     ),
-                ),
+                )
             )
-            for joint in self._joints
-        ]
+        return out
 
     def _load_tree(self) -> None:
         if self._tree is None:
-            import rerun.urdf as rr_urdf
-
-            URDF = _yourdfpy_urdf()
-            urdf_path = _resolve_urdf_path(self.urdf_path)
-            robot = URDF.load(str(urdf_path))
-            link_paths = _build_link_paths(
-                self.root_path,
-                str(robot.base_link),
-                list(robot.robot.joints),
+            self._tree, self._joint_paths = _load_urdf_tree_and_paths(
+                self.urdf_path, self.root_path
             )
-
-            self._tree = rr_urdf.UrdfTree.from_file_path(urdf_path)
             self._joints = self._tree.joints()
-            self._joint_paths = {
-                joint.name: link_paths.get(
-                    joint.child_link,
-                    f"{self.root_path}/{_rerun_path_part(joint.child_link)}",
-                )
+            self._movable_by_name = {
+                joint.name: joint
                 for joint in self._joints
-            }
-            self._joint_values = {
-                joint.name: 0.0
-                for joint in self._joints
-                if joint.joint_type in {"revolute", "continuous", "prismatic"}
+                if joint.joint_type in _MOVABLE_JOINT_TYPES
             }

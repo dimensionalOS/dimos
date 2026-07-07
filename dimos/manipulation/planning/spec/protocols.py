@@ -20,6 +20,7 @@ Use factory functions from dimos.manipulation.planning.factory to create instanc
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -39,6 +40,12 @@ if TYPE_CHECKING:
     )
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.sensor_msgs.JointState import JointState
+
+# Streaming hook for interactive IK: called with the solver's current guess
+# ``(joint_state, position_error_m, attempt)`` every few descent iterations
+# so a caller can animate the search. Returning True aborts the search (the
+# target is stale). In-process only; RPC callers cannot pass callbacks.
+IKStepCallback = Callable[["JointState", float, int], "bool | None"]
 
 
 @runtime_checkable
@@ -225,8 +232,14 @@ class KinematicsSpec(Protocol):
         orientation_tolerance: float = 0.01,
         check_collision: bool = True,
         max_attempts: int = 10,
+        on_step: IKStepCallback | None = None,
     ) -> IKResult:
-        """Solve IK with optional collision checking."""
+        """Solve IK with optional collision checking.
+
+        ``on_step`` streams the solver's intermediate guesses to interactive
+        callers (see ``IKStepCallback``); backends without iterative search
+        may ignore it.
+        """
         ...
 
 
