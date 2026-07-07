@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from dimos.navigation.jnav.utils.apriltag_agreement import (
+from dimos.navigation.jnav.utils.apriltags import (
     agreement_improvement,
     agreement_report,
     tag_spread,

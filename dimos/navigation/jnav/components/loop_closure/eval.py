@@ -74,17 +74,15 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.jnav.msgs.Graph3D import Graph3D
 from dimos.navigation.jnav.msgs.GraphDelta3D import GraphDelta3D
-from dimos.navigation.jnav.utils.apriltag_agreement import (
+from dimos.navigation.jnav.utils.apriltags import (
     VISIT_GAP_S,
     AgreementReport,
     agreement_improvement,
     agreement_report,
-    paired_tag_visit_positions,
-)
-from dimos.navigation.jnav.utils.apriltags import (
     detect_apriltags,
     load_intrinsics_json,
     load_or_detect_sightings,
+    paired_tag_visit_positions,
 )
 from dimos.navigation.jnav.utils.module_loading import (
     filter_config_for_module,
