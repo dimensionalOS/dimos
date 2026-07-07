@@ -31,55 +31,23 @@ their entity path (no parent transform). Entities written:
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 import subprocess
-import time
 from typing import TYPE_CHECKING, Any
 
 import rerun as rr
 import typer
+
+from dimos.memory2.utils.progress import progress
 
 # Heavy dimos imports (mapping/memory2 → torch, scipy, open3d) are deferred into
 # main() so that `dimos map --help` stays fast. See test_cli_startup.py and the
 # same pattern in dimos/mapping/utils/cli/map.py.
 if TYPE_CHECKING:
     from dimos.memory2.stream import Stream
-    from dimos.memory2.type.observation import Observation
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 TIMELINE = "ts"
-
-
-def _progress(total: int, label: str) -> Callable[[Observation[Any]], None]:
-    """Matches dimos/mapping/utils/cli/map.py:progress."""
-    seen = 0
-    wall_start: float | None = None
-    last_wall: float | None = None
-    first_ts: float | None = None
-
-    def tick(obs: Observation[Any]) -> None:
-        nonlocal seen, wall_start, last_wall, first_ts
-        now = time.monotonic()
-        if wall_start is None:
-            wall_start = now
-            first_ts = obs.ts
-        assert first_ts is not None
-        frame_ms = (now - last_wall) * 1000 if last_wall is not None else 0.0
-        last_wall = now
-        seen += 1
-        pct = 100 * seen // total if total else 100
-        wall = now - wall_start
-        data = obs.ts - first_ts
-        speed = data / wall if wall > 0 else 0.0
-        end = "\n" if seen >= total else ""
-        print(
-            f"\r{label} {pct:>3}% [{seen}/{total}] {data:.1f}s ({speed:.1f} x rt) {frame_ms:.0f}ms/frame",
-            end=end,
-            flush=True,
-        )
-
-    return tick
 
 
 def _log_clouds(
@@ -99,14 +67,14 @@ def _log_clouds(
     whole pipeline.
     """
     n = total if total is not None else stream.count()
-    cb = _progress(n, label)
-    for obs in stream:
-        cb(obs)
-        rr.set_time(TIMELINE, timestamp=obs.ts)
-        rr.log(
-            entity,
-            obs.data.to_rerun(voxel_size=voxel, mode=point_mode, bottom_cutoff=bottom_cutoff),
-        )
+    with progress(n, label) as bar:
+        for obs in stream:
+            bar(obs)
+            rr.set_time(TIMELINE, timestamp=obs.ts)
+            rr.log(
+                entity,
+                obs.data.to_rerun(voxel_size=voxel, mode=point_mode, bottom_cutoff=bottom_cutoff),
+            )
 
 
 def _log_path(
@@ -122,22 +90,22 @@ def _log_path(
     without a pose are skipped.
     """
     n = stream.count()
-    cb = _progress(n, label)
     points: list[tuple[float, float, float]] = []
     last_ts: float | None = None
     emit_count = 0
-    for obs in stream:
-        cb(obs)
-        if obs.pose_tuple is None:
-            continue
-        points.append(
-            (float(obs.pose_tuple[0]), float(obs.pose_tuple[1]), float(obs.pose_tuple[2]))
-        )
-        last_ts = obs.ts
-        emit_count += 1
-        if emit_every > 0 and emit_count % emit_every == 0 and len(points) >= 2:
-            rr.set_time(TIMELINE, timestamp=obs.ts)
-            rr.log(entity, rr.LineStrips3D([points], colors=[color]))
+    with progress(n, label) as bar:
+        for obs in stream:
+            bar(obs)
+            if obs.pose_tuple is None:
+                continue
+            points.append(
+                (float(obs.pose_tuple[0]), float(obs.pose_tuple[1]), float(obs.pose_tuple[2]))
+            )
+            last_ts = obs.ts
+            emit_count += 1
+            if emit_every > 0 and emit_count % emit_every == 0 and len(points) >= 2:
+                rr.set_time(TIMELINE, timestamp=obs.ts)
+                rr.log(entity, rr.LineStrips3D([points], colors=[color]))
     if (
         last_ts is not None
         and len(points) >= 2
@@ -206,8 +174,8 @@ def main(
     ),
 ) -> None:
     """Dump a recording to .rrd (lidar clouds + camera frames) and open it in rerun."""
-    from dimos.mapping.utils.cli.summary import _stream_payload_types
     from dimos.mapping.voxels import VoxelMapTransformer
+    from dimos.memory2.cli.summary import stream_payload_types
     from dimos.memory2.store.sqlite import SqliteStore
     from dimos.memory2.transform import throttle
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -224,7 +192,7 @@ def main(
 
     # Resolve which streams to voxelize: all PointCloud2 streams, or the
     # explicit --map-source subset. Validate up front so typos fail fast.
-    pc_streams = [n for n, t in _stream_payload_types(db_path).items() if t is PointCloud2]
+    pc_streams = [n for n, t in stream_payload_types(db_path).items() if t is PointCloud2]
     map_sources = list(map_source) or pc_streams
     if (map or map_final) and (bad := [s for s in map_sources if s not in pc_streams]):
         raise typer.BadParameter(f"--map-source: not PointCloud2 stream(s): {', '.join(bad)}")
@@ -309,20 +277,20 @@ def main(
         # fastlio pose axis + path from fastlio_odometry stream.
         if "fastlio_odometry" in store.streams:
             odometry = clipped("fastlio_odometry", Odometry)
-            cb = _progress(odometry.count(), "fastlio_odometry")
-            for obs in odometry:
-                cb(obs)
-                if obs.pose_tuple is None:
-                    continue
-                rr.set_time(TIMELINE, timestamp=obs.ts)
-                x, y, z, qx, qy, qz, qw = obs.pose_tuple
-                rr.log(
-                    "world/fastlio",
-                    rr.Transform3D(
-                        translation=[x, y, z],
-                        quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw]),
-                    ),
-                )
+            with progress(odometry.count(), "fastlio_odometry") as bar:
+                for obs in odometry:
+                    bar(obs)
+                    if obs.pose_tuple is None:
+                        continue
+                    rr.set_time(TIMELINE, timestamp=obs.ts)
+                    x, y, z, qx, qy, qz, qw = obs.pose_tuple
+                    rr.log(
+                        "world/fastlio",
+                        rr.Transform3D(
+                            translation=[x, y, z],
+                            quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw]),
+                        ),
+                    )
             _log_path(
                 "  fastlio_path",
                 clipped("fastlio_odometry", Odometry),
@@ -333,20 +301,20 @@ def main(
         # Go2 native odom pose axis + path.
         if "odom" in store.streams:
             odom = clipped("odom", PoseStamped)
-            cb = _progress(odom.count(), "        odom")
-            for odom_obs in odom:
-                cb(odom_obs)
-                if odom_obs.pose_tuple is None:
-                    continue
-                rr.set_time(TIMELINE, timestamp=odom_obs.ts)
-                x, y, z, qx, qy, qz, qw = odom_obs.pose_tuple
-                rr.log(
-                    "world/odom",
-                    rr.Transform3D(
-                        translation=[x, y, z],
-                        quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw]),
-                    ),
-                )
+            with progress(odom.count(), "        odom") as bar:
+                for odom_obs in odom:
+                    bar(odom_obs)
+                    if odom_obs.pose_tuple is None:
+                        continue
+                    rr.set_time(TIMELINE, timestamp=odom_obs.ts)
+                    x, y, z, qx, qy, qz, qw = odom_obs.pose_tuple
+                    rr.log(
+                        "world/odom",
+                        rr.Transform3D(
+                            translation=[x, y, z],
+                            quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw]),
+                        ),
+                    )
             _log_path(
                 "     odom_path",
                 clipped("odom", PoseStamped),
@@ -359,19 +327,19 @@ def main(
             color_image.transform(throttle(1.0 / camera_hz)) if camera_hz > 0 else color_image
         )
         n_img = cam_pipeline.count()
-        cb = _progress(n_img, "  color_image")
-        for img_obs in cam_pipeline:
-            cb(img_obs)
-            rr.set_time(TIMELINE, timestamp=img_obs.ts)
-            if img_obs.pose_tuple is not None:
-                x, y, z, qx, qy, qz, qw = img_obs.pose_tuple
-                rr.log(
-                    "world/camera",
-                    rr.Transform3D(
-                        translation=[x, y, z], quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw])
-                    ),
-                )
-            rr.log("world/camera/image", img_obs.data.to_rerun())
+        with progress(n_img, "  color_image") as bar:
+            for img_obs in cam_pipeline:
+                bar(img_obs)
+                rr.set_time(TIMELINE, timestamp=img_obs.ts)
+                if img_obs.pose_tuple is not None:
+                    x, y, z, qx, qy, qz, qw = img_obs.pose_tuple
+                    rr.log(
+                        "world/camera",
+                        rr.Transform3D(
+                            translation=[x, y, z], quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw])
+                        ),
+                    )
+                rr.log("world/camera/image", img_obs.data.to_rerun())
 
     print(f"wrote {out}")
     if no_gui:

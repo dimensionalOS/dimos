@@ -28,19 +28,26 @@ import shutil
 import subprocess
 from typing import TYPE_CHECKING
 
+from dimos.utils.data import resolve_named_path
+
 if TYPE_CHECKING:
     from dimos.memory2.store.base import Store
 
 
 def open_store(path: str) -> Store:
-    """Open a store by file type (``.db`` -> SqliteStore, else Go2 mcap)."""
-    if str(path).endswith(".db"):
-        from dimos.memory2.store.sqlite import SqliteStore
+    """Open a store by name or path (``.db`` -> SqliteStore, ``.mcap`` -> Go2 mcap).
 
-        return SqliteStore(path=path, must_exist=True)
-    from dimos.robot.unitree.go2.dds.store import Go2McapStore  # lazy: robot-layer codec set
+    Bare names resolve like the other db verbs: cwd, then ``data/``, then an
+    LFS pull — defaulting to ``.db`` unless the name says ``.mcap``.
+    """
+    resolved = resolve_named_path(path, ".mcap" if str(path).endswith(".mcap") else ".db")
+    if resolved.suffix == ".mcap":
+        from dimos.robot.unitree.go2.dds.store import Go2McapStore  # lazy: robot-layer codec set
 
-    return Go2McapStore(path=path)
+        return Go2McapStore(path=str(resolved))
+    from dimos.memory2.store.sqlite import SqliteStore
+
+    return SqliteStore(path=str(resolved), must_exist=True)
 
 
 def _open_viewer(rrd: str) -> None:
@@ -102,22 +109,21 @@ def render_store(
     rr.save(out)
 
     for name, stream in renderable:
-        report = progress(stream.count(), label=name)
-        for obs in stream:
-            if seconds is not None and obs.ts - t0 > seconds:
-                print()  # terminate the windowed (sub-100%) progress line
-                break
-            if obs.data is None:  # e.g. a truncated/corrupt frame that failed to decode
+        with progress(stream.count(), label=name) as report:
+            for obs in stream:
+                if seconds is not None and obs.ts - t0 > seconds:
+                    break  # the context manager finalizes the windowed (sub-100%) bar
+                if obs.data is None:  # e.g. a truncated/corrupt frame that failed to decode
+                    report(obs)
+                    continue
+                rr.set_time("time", duration=obs.ts - t0)
+                data = obs.data.to_rerun()
+                if isinstance(data, list):  # RerunMulti: [(subpath, archetype), ...]
+                    for sub, arch in data:
+                        rr.log(f"{name}/{sub}", arch)
+                else:
+                    rr.log(name, data)
                 report(obs)
-                continue
-            rr.set_time("time", duration=obs.ts - t0)
-            data = obs.data.to_rerun()
-            if isinstance(data, list):  # RerunMulti: [(subpath, archetype), ...]
-                for sub, arch in data:
-                    rr.log(f"{name}/{sub}", arch)
-            else:
-                rr.log(name, data)
-            report(obs)
 
     rr.rerun_shutdown()  # flush + close the .rrd before opening it
     print(f"wrote {out}")
