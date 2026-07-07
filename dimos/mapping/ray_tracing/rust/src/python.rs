@@ -109,6 +109,16 @@ impl VoxelRayMapper {
         })
     }
 
+    #[getter]
+    fn voxel_size(&self) -> f32 {
+        self.config.voxel_size
+    }
+
+    #[getter]
+    fn shadow_depth(&self) -> f32 {
+        self.config.shadow_depth
+    }
+
     fn add_frame(
         &mut self,
         py: Python<'_>,

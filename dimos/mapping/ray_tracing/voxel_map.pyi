@@ -31,6 +31,10 @@ class VoxelRayMapper:
         graze_cos: float = 0.7,
         support_min: int = 4,
     ) -> None: ...
+    @property
+    def voxel_size(self) -> float: ...
+    @property
+    def shadow_depth(self) -> float: ...
     def add_frame(
         self,
         points: NDArray[np.float32],
