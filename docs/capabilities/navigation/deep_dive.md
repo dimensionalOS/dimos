@@ -130,13 +130,13 @@ The patrolling system drives the robot to systematically cover a **known** area.
 
 ### How it works
 
-1. **Visitation tracking.** As the robot moves, a visitation grid aligned to the costmap marks cells around the robot's position as visited. This gives the system a running picture of where the robot has and has not been. Visits expire over time and cells must be covered again.
+1. **Visitation tracking:** As the robot moves, a visitation grid aligned to the costmap marks cells around the robot's position as visited. This gives the system a running picture of where the robot has and has not been. Visits expire over time and cells must be covered again.
 
-2. **Goal selection.** A patrol router picks the next goal. The default strategy is coverage: it samples candidate points from unvisited, obstacle-free cells, plans a path to each one, and picks the candidate whose path would cover the most new ground. Candidates are weighted by a Voronoi skeleton so goals spread evenly across the map rather than clustering in large open areas.
+2. **Goal selection:** A patrol router picks the next goal. The default strategy is coverage: it samples candidate points from unvisited, obstacle-free cells, plans a path to each one, and picks the candidate whose path would cover the most new ground. Candidates are weighted by a Voronoi skeleton so goals spread evenly across the map rather than clustering in large open areas.
 
-3. **Navigation loop.** The module sends each goal to the planner and waits for a `goal_reached` signal before requesting the next one. If no valid goal is available, for example when the map has not loaded yet, it retries after a short delay.
+3. **Navigation loop:** The module sends each goal to the planner and waits for a `goal_reached` signal before requesting the next one. If no valid goal is available, for example when the map has not loaded yet, it retries after a short delay.
 
-4. **Stopping.** When patrol is stopped, the module cancels in-progress navigation by publishing the robot's current pose as the goal, then re-enables the planner's normal replanning behavior.
+4. **Stopping:** When patrol is stopped, the module cancels in-progress navigation by publishing the robot's current pose as the goal, then re-enables the planner's normal replanning behavior.
 
 ### Patrol router strategies
 

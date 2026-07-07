@@ -3,36 +3,18 @@ title: "Premap & Relocalization"
 description: "Record a Go2 run, export a loop-closed premap with dimos map, and relocalize on replay or live hardware."
 ---
 
-Relocalization lets a Go2 navigate on a previously built map instead of only on what it sees right now. You record a walk-through, build a loop-closed premap offline, then at runtime `RelocalizationModule` aligns live LiDAR to that premap and publishes a `world → map` transform. The costmap and planner then operate on the merged live scan and premap together.
+Relocalization lets a Go2 navigate on a previously built map instead of only on what it sees right now. At runtime, `RelocalizationModule` aligns live LiDAR to a saved premap and publishes a `world → map` transform, so the costmap and planner operate on the live scan and premap together.
 
 ![Relocalize on a live Go2 and navigate to a goal on the premap](assets/reloc_and_nav_to.webp)
 
 > **Note:** Requires DimOS v0.0.13 or newer for PGO loop closure and `dimos map` export.
 
-This guide follows the stable stock Go2 recording path: `unitree-go2-memory`, then `dimos map global --export`, then `unitree-go2-relocalization`. Mid-360 and Point-LIO recording live under `experimental/` in the repo and are not covered here.
+This guide takes four steps:
 
-## Runtime architecture
-
-```mermaid
-flowchart LR
-  GO2[Go2Connection] --> VGM[VoxelGridMapper]
-  VGM -->|global_map| REL[RelocalizationModule]
-  PRE[".pc2.lcm premap"] -.->|load at startup| REL
-  REL -->|merged_map| CM[CostMapper]
-  VGM -->|global_map| CM
-  CM -->|global_costmap| NAV[ReplanningAStarPlanner]
-  REL -->|world→map TF| TF[TF tree]
-```
-
-`CostMapper` prefers `merged_map` when relocalization has published a transform. Otherwise it falls back to `global_map` alone. See [`RelocalizationModule`](/dimos/mapping/relocalization/module.py) and [`CostMapper`](/dimos/mapping/costmapper.py).
-
-### File formats
-
-| File | Format | Produced by | Consumed by |
-|------|--------|-------------|-------------|
-| `{name}.db` | memory2 SQLite (`lidar`, `odom`, `color_image`, …) | `unitree-go2-memory` | `dimos map *`, `--replay-db` |
-| `{name}.pc2.lcm` | LCM-encoded `PointCloud2` premap | `dimos map global --export` | `RelocalizationModule` (`map_file`) |
-| `{name}.rrd` | Rerun recording (visual QA) | `dimos map global` | Rerun viewer |
+1. Record a walk-through with `unitree-go2-memory`
+2. Build the premap with `dimos map global {DB_NAME} --export`
+3. Test relocalization in replay, no robot needed
+4. Deploy on the live Go2
 
 Throughout this guide, `{DB_NAME}` is the stem of your recording, for example `recording_go2` for `recording_go2.db`. For `map_file`, pass the same stem and DimOS appends `.pc2.lcm` automatically.
 
@@ -41,7 +23,7 @@ Throughout this guide, `{DB_NAME}` is the stem of your recording, for example `r
 Drive the Go2 through the space you want as your premap. Close loops when you can because PGO uses revisits to correct drift.
 
 ```bash
-dimos --robot-ip $ROBOT_IP run unitree-go2-memory
+dimos --robot-ip {YOUR_ROBOT_IP} run unitree-go2-memory
 ```
 
 If `DIMOS_ROBOT_IP` is set in the environment or `.env`, you can omit `--robot-ip`:
@@ -50,7 +32,7 @@ If `DIMOS_ROBOT_IP` is set in the environment or `.env`, you can omit `--robot-i
 dimos run unitree-go2-memory
 ```
 
-This writes `recording_go2.db` to the repo root (`DIMOS_PROJECT_ROOT`) and records `lidar`, `odom`, and `color_image` plus the live TF tree. The recorder stamps lidar frames with the latest odom pose so `dimos map global` can reconstruct poses later — see [`Go2Memory`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py).
+This writes `recording_go2.db` to the repo root (`DIMOS_PROJECT_ROOT`) and records `lidar`, `odom`, and `color_image` plus the live TF tree. The recorder stamps lidar frames with the latest odom pose so `dimos map global` can reconstruct poses later- see [`Go2Memory`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py).
 
 ### Quick validation (optional)
 
@@ -123,7 +105,7 @@ relocalize rejected: fitness=0.433 < threshold=0.45 time_cost=8.1s n_pts=57385
 relocalize: fitness=0.657 time_cost=3.0s n_pts=64703 reloc_t=[-0.007, -0.01, -0.102] TF 'world' -> 'map' published_t=[0.007, 0.009, 0.102]
 ```
 
-`relocalize skipped` means the live submap is still warming up — fewer than `MIN_LOCAL_POINTS` points accumulated. `relocalize rejected` means a candidate alignment was found but its fitness was below the threshold, so no transform is published. Once `relocalize:` lines appear at info level, the `world → map` TF is live.
+`relocalize skipped` means the live submap is still warming up- fewer than `MIN_LOCAL_POINTS` points accumulated. `relocalize rejected` means a candidate alignment was found but its fitness was below the threshold, so no transform is published. Once `relocalize:` lines appear at info level, the `world → map` TF is live.
 
 You can replay a different `.db` from the same physical space against the same premap to test generalization.
 
@@ -139,7 +121,7 @@ Watch alignment in Rerun, which is enabled by default on Go2 blueprints:
 Run the replay test first. On hardware, use the same blueprint and `map_file`:
 
 ```bash
-dimos --robot-ip $ROBOT_IP run unitree-go2-relocalization \
+dimos --robot-ip {YOUR_ROBOT_IP} run unitree-go2-relocalization \
   -o relocalizationmodule.map_file=recording_go2
 ```
 
@@ -149,6 +131,29 @@ Before sending navigation goals, walk through this checklist:
 2. Wait for `relocalize:` info lines. Skipped and rejected lines are normal for the first 30 to 60 seconds.
 3. Confirm stable `world → map` TF in Rerun before sending navigation goals.
 4. Click to navigate or use agent skills such as `nav_to` on the aligned costmap.
+
+## How it works
+
+```mermaid
+flowchart LR
+  GO2[Go2Connection] --> VGM[VoxelGridMapper]
+  VGM -->|global_map| REL[RelocalizationModule]
+  PRE[".pc2.lcm premap"] -.->|load at startup| REL
+  REL -->|merged_map| CM[CostMapper]
+  VGM -->|global_map| CM
+  CM -->|global_costmap| NAV[ReplanningAStarPlanner]
+  REL -->|world→map TF| TF[TF tree]
+```
+
+`CostMapper` prefers `merged_map` when relocalization has published a transform. Otherwise it falls back to `global_map` alone. See [`RelocalizationModule`](/dimos/mapping/relocalization/module.py) and [`CostMapper`](/dimos/mapping/costmapper.py).
+
+### File formats
+
+| File | Format | Produced by | Consumed by |
+|------|--------|-------------|-------------|
+| `{name}.db` | memory2 SQLite (`lidar`, `odom`, `color_image`, …) | `unitree-go2-memory` | `dimos map *`, `--replay-db` |
+| `{name}.pc2.lcm` | LCM-encoded `PointCloud2` premap | `dimos map global --export` | `RelocalizationModule` (`map_file`) |
+| `{name}.rrd` | Rerun recording (visual QA) | `dimos map global` | Rerun viewer |
 
 ## Configuration reference
 
