@@ -17,7 +17,7 @@ use std::io;
 use std::sync::Arc;
 
 /// Per-channel dispatch closure handed to a transport on `subscribe`. The
-/// transport calls it with each message's raw payload; decode and routing
+/// transport calls it with each message's raw payload. Decode and routing
 /// happen inside it.
 pub type Dispatch = Arc<dyn Fn(&[u8]) + Send + Sync>;
 

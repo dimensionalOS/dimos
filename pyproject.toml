@@ -625,6 +625,5 @@ ignore = [
     "uv.lock",
     "*/package-lock.json",
     "*/Cargo.lock",
-    "dimos/dashboard/dimos.rbl",
     "dimos/web/dimos_interface/themes.json",
 ]

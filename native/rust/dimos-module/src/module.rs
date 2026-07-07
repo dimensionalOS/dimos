@@ -456,7 +456,7 @@ mod tests {
 
     /// Mock push transport for testing receive/publish concurrency.
     ///
-    /// `subscribe` registers callbacks; one delivery loop drains an inbound queue
+    /// `subscribe` registers callbacks. One delivery loop drains an inbound queue
     /// into them, independent of the publish path.
     struct ControllableMockTransport {
         inbound: Arc<InboundQueue>,
@@ -872,6 +872,47 @@ mod tests {
     #[test]
     fn ok_does_not_panic() {
         propagate_task_failure("recv", Ok(()));
+    }
+
+    // subscribe_routes panic isolation
+
+    struct PanicRoute;
+    impl Route for PanicRoute {
+        fn try_dispatch(&self, _data: &[u8]) {
+            panic!("handler blew up");
+        }
+    }
+
+    struct CountingRoute(Arc<AtomicU64>);
+    impl Route for CountingRoute {
+        fn try_dispatch(&self, _data: &[u8]) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn panicking_route_does_not_starve_siblings_on_same_channel() {
+        let transport = ControllableMockTransport::new();
+        let inbound = transport.inbound.clone();
+        let inbound_notify = transport.inbound_notify.clone();
+
+        let delivered = Arc::new(AtomicU64::new(0));
+        let mut routes: HashMap<String, Vec<Box<dyn Route>>> = HashMap::new();
+        routes.insert(
+            "/data".to_string(),
+            vec![
+                Box::new(PanicRoute),
+                Box::new(CountingRoute(Arc::clone(&delivered))),
+            ],
+        );
+
+        subscribe_routes(&transport, routes).await.unwrap();
+        inject_inbound(&inbound, &inbound_notify, "/data", vec![7u8]);
+
+        wait_for("sibling route to receive despite the panic", || {
+            delivered.load(Ordering::SeqCst) == 1
+        })
+        .await;
     }
 
     #[test]

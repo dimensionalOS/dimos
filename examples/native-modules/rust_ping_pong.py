@@ -14,10 +14,6 @@
 
 """A single ping-pong example that runs over either transport.
 
-The same two Rust binaries (ping / pong) run over LCM or Zenoh. `--transport`
-sets `global_config.transport`, which picks the topic format the coordinator
-builds and the transport each binary opens, so the module code stays identical.
-
 Run with:
     python examples/native-modules/rust_ping_pong.py --transport lcm
     python examples/native-modules/rust_ping_pong.py --transport zenoh

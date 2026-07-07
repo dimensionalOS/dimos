@@ -77,7 +77,7 @@ class PubSubTransport(Transport[T]):
 
     @property
     def channel(self) -> str:
-        """The literal channel string this transport publishes and subscribes on."""
+        """The channel string this transport publishes and subscribes on."""
         return str(self.topic)
 
     def __str__(self) -> str:

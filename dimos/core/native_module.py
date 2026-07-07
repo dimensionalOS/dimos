@@ -228,8 +228,7 @@ class NativeModule(Module):
 
         env = {**os.environ, **self.config.extra_env}
 
-        # The binary opens whichever transport the coordinator resolved, so its
-        # channels match the topic strings we built for the same backend.
+        # Binary opens the same transport the coordinator resolved.
         env["DIMOS_TRANSPORT"] = global_config.transport
 
         # set Rust logging to match Python level
@@ -469,9 +468,6 @@ class NativeModule(Module):
             if transport is None:
                 continue
             channel = getattr(transport, "channel", None)
-            if channel is None:
-                topic = getattr(transport, "topic", None)
-                channel = str(topic) if topic is not None else None
             if channel is not None:
                 topics[name] = channel
         return topics

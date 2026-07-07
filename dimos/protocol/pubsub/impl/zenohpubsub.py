@@ -76,9 +76,7 @@ class Topic(LCMTopic):
 
     @property
     def key_expr(self) -> str:
-        """The literal Zenoh key expression for this topic.
-
-        Embeds the lcm_type using '/' instead of '#' (what LCM does).
+        """The Zenoh key expression for this topic, embedding lcm_type after a '/'.
 
         Examples:
             Topic("dimos/cmd_vel", Twist) -> "dimos/cmd_vel/geometry_msgs.Twist"

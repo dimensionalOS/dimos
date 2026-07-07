@@ -1,16 +1,24 @@
+// Copyright 2026 Dimensional Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 //! Closed-loop ping/pong throughput benchmark for the `Transport` impls.
 //!
-//! Two transport instances act as two nodes: ping publishes a payload and waits
-//! for pong to echo it back before publishing the next one, so exactly one
-//! message is ever in flight and throughput is round-trip-latency bound. Each
-//! payload size runs for a fixed window; the same generic loop runs once over
-//! LCM and once over Zenoh, then prints a comparison table.
-//!
-//! This measures transport-stack overhead on loopback, not cross-host network
-//! cost (both nodes share one process).
+//! One generic loop runs over LCM and then Zenoh and prints a comparison table,
+//! measuring transport-stack overhead on loopback rather than cross-host cost.
 //!
 //! Run with:
-//!     cargo run --release --example transport_bench --features zenoh
+//!     cargo run --release --example transport_bench
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
