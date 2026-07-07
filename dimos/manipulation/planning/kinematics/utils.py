@@ -14,16 +14,29 @@
 
 """Shared IK-only helpers for planning-group-scoped kinematics backends."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import NDArray
 
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.groups.utils import filter_joint_state_to_selected_joints
+from dimos.manipulation.planning.spec.enums import IKStatus
 from dimos.manipulation.planning.spec.models import IKResult, RobotName, WorldRobotID
 from dimos.manipulation.planning.spec.protocols import WorldSpec
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+
+
+@dataclass(frozen=True)
+class SinglePoseTargetRequest:
+    group: PlanningGroup
+    target_pose: PoseStamped
+    robot_id: WorldRobotID
+    joint_names: list[str]
+    seed_positions: NDArray[np.float64]
+    group_indices: list[int]
 
 
 def unique_pose_target_frame_for_robot(world: WorldSpec, robot_id: WorldRobotID) -> str | None:
@@ -80,6 +93,57 @@ def seed_positions_with_world_fallback(
         for local_name, position in seed_positions.items():
             fallback_positions[local_indices[local_name]] = position
         return fallback_positions
+
+
+def resolve_single_pose_target_request(
+    world: WorldSpec,
+    pose_targets: dict[PlanningGroup, PoseStamped] | Mapping[PlanningGroup, PoseStamped],
+    auxiliary_groups: Sequence[PlanningGroup],
+    seed: JointState | None,
+    backend_name: str,
+) -> tuple[SinglePoseTargetRequest | None, IKResult | None]:
+    if not pose_targets:
+        return None, _failure(IKStatus.NO_SOLUTION, "At least one pose target is required")
+    if len(pose_targets) != 1 or auxiliary_groups:
+        return None, _failure(
+            IKStatus.UNSUPPORTED,
+            f"{backend_name} supports exactly one pose target and no auxiliary planning groups",
+        )
+
+    target_group = next(iter(pose_targets.keys()))
+    if not target_group.has_pose_target:
+        return None, _failure(
+            IKStatus.UNSUPPORTED,
+            f"Planning group '{target_group.id}' has no pose target frame",
+        )
+
+    try:
+        selection = PlanningGroupSelection.from_groups((target_group,))
+        robot_id = robot_ids_by_name(world, selection.robot_names)[target_group.robot_name]
+        config = world.get_robot_config(robot_id)
+        joint_names = list(config.joint_names)
+        seed_positions = seed_positions_with_world_fallback(
+            world,
+            robot_id,
+            config.name,
+            joint_names,
+            seed,
+        )
+        group_indices = [joint_names.index(name) for name in target_group.local_joint_names]
+    except ValueError as exc:
+        return None, _failure(IKStatus.NO_SOLUTION, str(exc))
+
+    return (
+        SinglePoseTargetRequest(
+            group=target_group,
+            target_pose=pose_targets[target_group],
+            robot_id=robot_id,
+            joint_names=joint_names,
+            seed_positions=seed_positions,
+            group_indices=group_indices,
+        ),
+        None,
+    )
 
 
 def positions_by_local_name(
@@ -166,3 +230,7 @@ def groups_by_robot(groups: Sequence[PlanningGroup]) -> dict[RobotName, list[Pla
     for group in groups:
         grouped.setdefault(group.robot_name, []).append(group)
     return grouped
+
+
+def _failure(status: IKStatus, message: str) -> IKResult:
+    return IKResult(status=status, joint_state=None, message=message)

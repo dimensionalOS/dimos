@@ -21,11 +21,10 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
+from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.kinematics.utils import (
     filter_result_to_group as _filter_result_to_group,
-    robot_ids_by_name as _robot_ids_by_name,
-    seed_positions_with_world_fallback as _seed_positions_with_world_fallback,
+    resolve_single_pose_target_request as _resolve_single_pose_target_request,
     unique_pose_target_frame_for_robot as _unique_pose_target_frame_for_robot,
 )
 from dimos.manipulation.planning.spec.enums import IKStatus
@@ -186,80 +185,62 @@ class DrakeOptimizationIK:
         error = self._validate_world(world)
         if error is not None:
             return error
-        if not pose_targets:
-            return _create_failure_result(
-                IKStatus.NO_SOLUTION, "At least one pose target is required"
-            )
-        if len(pose_targets) != 1 or auxiliary_groups:
-            return _create_failure_result(
-                IKStatus.UNSUPPORTED,
-                "DrakeOptimizationIK supports exactly one pose target and no auxiliary planning groups",
-            )
-
-        target_group = next(iter(pose_targets.keys()))
-        if not target_group.has_pose_target or target_group.tip_link is None:
+        request, request_error = _resolve_single_pose_target_request(
+            world,
+            pose_targets,
+            auxiliary_groups,
+            seed,
+            "DrakeOptimizationIK",
+        )
+        if request_error is not None:
+            return request_error
+        if request is None or request.group.tip_link is None:
             return _create_failure_result(
                 IKStatus.UNSUPPORTED,
-                f"Planning group '{target_group.id}' has no pose target frame",
+                "DrakeOptimizationIK requires a pose-targetable planning group",
             )
 
-        try:
-            selection = PlanningGroupSelection.from_groups((target_group,))
-            robot_ids_by_name = _robot_ids_by_name(world, selection.robot_names)
-        except ValueError as exc:
-            return _create_failure_result(IKStatus.NO_SOLUTION, str(exc))
-        robot_id = robot_ids_by_name[target_group.robot_name]
-        config = world.get_robot_config(robot_id)
-        joint_names = list(config.joint_names)
-        try:
-            seed_positions = _seed_positions_with_world_fallback(
-                world, robot_id, config.name, joint_names, seed
-            )
-            group_indices = [joint_names.index(name) for name in target_group.local_joint_names]
-        except ValueError as exc:
-            return _create_failure_result(IKStatus.NO_SOLUTION, str(exc))
-
-        lower_limits, upper_limits = world.get_joint_limits(robot_id)
+        lower_limits, upper_limits = world.get_joint_limits(request.robot_id)
         target_matrix = Transform(
-            translation=pose_targets[target_group].position,
-            rotation=pose_targets[target_group].orientation,
+            translation=request.target_pose.position,
+            rotation=request.target_pose.orientation,
         ).to_matrix()
         target_transform = RigidTransform(target_matrix)
         locked_positions = {
-            index: float(seed_positions[index])
-            for index in range(len(joint_names))
-            if index not in set(group_indices)
+            index: float(request.seed_positions[index])
+            for index in range(len(request.joint_names))
+            if index not in set(request.group_indices)
         }
 
         best_result: IKResult | None = None
         best_error = float("inf")
         for attempt in range(max_attempts):
             if attempt == 0:
-                current_seed = seed_positions
+                current_seed = request.seed_positions
             else:
-                current_seed = seed_positions.copy()
+                current_seed = request.seed_positions.copy()
                 random_group_positions = np.random.uniform(
-                    lower_limits[group_indices], upper_limits[group_indices]
+                    lower_limits[request.group_indices], upper_limits[request.group_indices]
                 )
-                current_seed[group_indices] = random_group_positions
+                current_seed[request.group_indices] = random_group_positions
 
             result = self._solve_single(
                 world=world,
-                robot_id=robot_id,
+                robot_id=request.robot_id,
                 target_transform=target_transform,
                 seed=current_seed,
-                joint_names=joint_names,
+                joint_names=request.joint_names,
                 position_tolerance=position_tolerance,
                 orientation_tolerance=orientation_tolerance,
                 lower_limits=lower_limits,
                 upper_limits=upper_limits,
-                target_frame_name=target_group.tip_link,
+                target_frame_name=request.group.tip_link,
                 locked_joint_positions=locked_positions,
             )
             if not result.is_success() or result.joint_state is None:
                 continue
             if check_collision and not world.check_config_collision_free(
-                robot_id, result.joint_state
+                request.robot_id, result.joint_state
             ):
                 continue
             total_error = result.position_error + result.orientation_error
@@ -270,10 +251,10 @@ class DrakeOptimizationIK:
                 result.position_error <= position_tolerance
                 and result.orientation_error <= orientation_tolerance
             ):
-                return _filter_result_to_group(result, target_group)
+                return _filter_result_to_group(result, request.group)
 
         if best_result is not None:
-            return _filter_result_to_group(best_result, target_group)
+            return _filter_result_to_group(best_result, request.group)
         return _create_failure_result(
             IKStatus.NO_SOLUTION,
             f"IK failed after {max_attempts} attempts",
