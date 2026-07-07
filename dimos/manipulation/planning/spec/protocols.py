@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
-    from dimos.manipulation.planning.groups.models import PlanningGroup
+    from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.manipulation.planning.spec.models import (
         IKResult,
@@ -277,6 +277,18 @@ class PlannerSpec(Protocol):
         timeout: float = 10.0,
     ) -> PlanningResult:
         """Plan a collision-free joint-space path."""
+        ...
+
+    def plan_selected_joint_path(
+        self,
+        world: WorldSpec,
+        selection: PlanningGroupSelection,
+        start: JointState,
+        goal: JointState,
+        timeout: float = 10.0,
+        max_iterations: int = 5000,
+    ) -> PlanningResult:
+        """Plan a collision-free path for an ordered planning-group selection."""
         ...
 
     def get_name(self) -> str:

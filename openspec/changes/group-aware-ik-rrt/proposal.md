@@ -5,7 +5,8 @@ After world backends understand planning groups, the solver and planner layer mu
 ## What Changes
 
 - Update PinkIK, Jacobian IK, and Drake optimization IK to resolve target frames from planning groups.
-- Update RRT planning to handle group-local joint targets, group candidate selection, collision checking, and result projection.
+- Treat `solve_pose_targets` as a pose-target set IK API: PinkIK supports multi-target pose-target sets and auxiliary groups, while Drake/Jacobian clearly report unsupported target-set shapes.
+- Update the planner protocol and RRT planning to handle group-local joint targets, group candidate selection, collision checking, and result projection; unsupported planner backends report unsupported selected planning.
 - Add focused IK/planner tests.
 
 ## Capabilities

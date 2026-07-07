@@ -228,6 +228,15 @@ class _FakeWorld:
                 base_link="base",
                 tip_link=None,
             ),
+            "arm/wrist": PlanningGroup(
+                id="arm/wrist",
+                robot_name="arm",
+                group_name="wrist",
+                joint_names=("arm/joint_c",),
+                local_joint_names=("joint_c",),
+                base_link="base",
+                tip_link="base",
+            ),
         }
 
     def get_robot_ids(self) -> list[str]:
@@ -523,7 +532,7 @@ def test_solve_pose_targets_rejects_group_without_tip(mocker: MockerFixture) -> 
         },
     )
 
-    assert result.status == IKStatus.NO_SOLUTION
+    assert result.status == IKStatus.UNSUPPORTED
     assert "no pose target frame" in result.message
 
 
@@ -555,3 +564,65 @@ def test_solve_pose_targets_partial_seed_reads_world_state(mocker: MockerFixture
 
     assert result.status == IKStatus.SUCCESS
     assert world.joint_state_calls == 1
+
+
+def test_solve_pose_targets_multi_target_uses_multi_frame_solve(mocker: MockerFixture) -> None:
+    ik = _pink_ik(mocker)
+    world = _FakeWorld()
+    mocker.patch.object(ik, "_get_robot_context", return_value=_context())
+    solve_multi = mocker.patch.object(
+        ik,
+        "_solve_multi",
+        return_value=IKResult(
+            status=IKStatus.SUCCESS,
+            joint_state=JointState(
+                {"name": ["joint_a", "joint_b", "joint_c"], "position": [0.1, 0.2, 0.3]}
+            ),
+            position_error=0.0,
+            orientation_error=0.0,
+        ),
+    )
+
+    result = ik.solve_pose_targets(
+        world=cast("Any", world),
+        pose_targets={
+            world.groups["arm/manipulator"]: PoseStamped(
+                position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+            ),
+            world.groups["arm/wrist"]: PoseStamped(
+                position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+            ),
+        },
+        seed=JointState(
+            {"name": ["arm/joint_a", "arm/joint_b", "arm/joint_c"], "position": [0.0, 0.0, 0.0]}
+        ),
+        max_attempts=1,
+    )
+
+    solve_multi.assert_called_once()
+    assert len(solve_multi.call_args.kwargs["targets"]) == 2
+    assert result.joint_state is not None
+    assert result.joint_state.name == ["arm/joint_a", "arm/joint_b", "arm/joint_c"]
+    assert result.joint_state.position == [0.1, 0.2, 0.3]
+
+
+def test_solve_pose_targets_auxiliary_only_retains_seed_selection_order(
+    mocker: MockerFixture,
+) -> None:
+    ik = _pink_ik(mocker)
+    world = _FakeWorld()
+
+    result = ik.solve_pose_targets(
+        world=cast("Any", world),
+        pose_targets={},
+        auxiliary_groups=[world.groups["arm/no_tip"], world.groups["arm/manipulator"]],
+        seed=JointState(
+            {"name": ["arm/joint_a", "arm/joint_b", "arm/joint_c"], "position": [0.1, 0.2, 0.3]}
+        ),
+    )
+
+    assert result.status == IKStatus.SUCCESS
+    assert result.joint_state is not None
+    assert result.joint_state.name == ["arm/joint_c", "arm/joint_a", "arm/joint_b"]
+    assert result.joint_state.position == [0.3, 0.1, 0.2]
+    assert world.joint_state_calls == 0

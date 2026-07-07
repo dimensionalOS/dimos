@@ -45,7 +45,7 @@ from dimos.manipulation.planning.groups.identifiers import (
     make_global_joint_names,
     make_planning_group_id,
 )
-from dimos.manipulation.planning.groups.models import PlanningGroup
+from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.groups.utils import joint_state_to_ordered_positions
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
@@ -413,6 +413,21 @@ class RoboPlanWorld:
             planning_time=time.time() - start_time,
             path_length=compute_path_length(path),
             message="RoboPlan path found",
+        )
+
+    def plan_selected_joint_path(
+        self,
+        world: WorldSpec,
+        selection: PlanningGroupSelection,
+        start: JointState,
+        goal: JointState,
+        timeout: float = 10.0,
+        max_iterations: int = 5000,
+    ) -> PlanningResult:
+        """PlanningGroupSelection planning is not implemented by RoboPlanWorld."""
+        return PlanningResult(
+            status=PlanningStatus.UNSUPPORTED,
+            message="RoboPlanWorld does not support selected planning-group joint paths",
         )
 
     def get_name(self) -> str:

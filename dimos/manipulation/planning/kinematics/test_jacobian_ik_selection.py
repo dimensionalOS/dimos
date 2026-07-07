@@ -136,12 +136,12 @@ def test_solve_pose_targets_rejects_auxiliary_groups() -> None:
         auxiliary_groups=[_group()],
     )
 
-    assert result.status == IKStatus.NO_SOLUTION
+    assert result.status == IKStatus.UNSUPPORTED
     assert "no auxiliary" in result.message
 
 
 def test_solve_pose_targets_rejects_group_without_pose_target_frame() -> None:
     result = JacobianIK().solve_pose_targets(world=_World(), pose_targets={_group(None): _pose()})
 
-    assert result.status == IKStatus.NO_SOLUTION
+    assert result.status == IKStatus.UNSUPPORTED
     assert "no pose target frame" in result.message

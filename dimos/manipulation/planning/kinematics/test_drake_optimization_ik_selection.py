@@ -98,6 +98,7 @@ def test_solve_pose_targets_uses_group_tip_locks_seed_fallback_and_filters(monke
         )
 
     monkeypatch.setattr(DrakeOptimizationIK, "_solve_single", fake_solve_single)
+    monkeypatch.setattr(drake_ik, "RigidTransform", lambda matrix: matrix, raising=False)
 
     result = DrakeOptimizationIK().solve_pose_targets(
         world=world,  # type: ignore[arg-type]
@@ -221,9 +222,9 @@ class _FakeRobotData:
 def test_solve_single_uses_target_frame_for_constraints_error_and_joint_locks(monkeypatch) -> None:
     FakeInverseKinematics.instances.clear()
     monkeypatch.setattr(drake_ik, "DRAKE_AVAILABLE", True)
-    monkeypatch.setattr(drake_ik, "InverseKinematics", FakeInverseKinematics)
-    monkeypatch.setattr(drake_ik, "RotationMatrix", lambda: "identity-rotation")
-    monkeypatch.setattr(drake_ik, "Solve", lambda prog: FakeSolveResult())
+    monkeypatch.setattr(drake_ik, "InverseKinematics", FakeInverseKinematics, raising=False)
+    monkeypatch.setattr(drake_ik, "RotationMatrix", lambda: "identity-rotation", raising=False)
+    monkeypatch.setattr(drake_ik, "Solve", lambda prog: FakeSolveResult(), raising=False)
     monkeypatch.setattr(drake_ik, "compute_pose_error", lambda actual, target: (0.01, 0.02))
 
     world = FakeDrakeWorld()

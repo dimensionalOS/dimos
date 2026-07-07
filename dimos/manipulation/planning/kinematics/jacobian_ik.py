@@ -30,8 +30,12 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
+from dimos.manipulation.planning.kinematics.utils import (
+    robot_ids_by_name as _robot_ids_by_name,
+    seed_positions_with_world_fallback as _seed_positions_with_world_fallback,
+)
 from dimos.manipulation.planning.spec.enums import IKStatus
-from dimos.manipulation.planning.spec.models import IKResult, RobotName, WorldRobotID
+from dimos.manipulation.planning.spec.models import IKResult, WorldRobotID
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.kinematics_utils import (
     check_singularity,
@@ -209,14 +213,14 @@ class JacobianIK:
             )
         if len(pose_targets) != 1 or auxiliary_groups:
             return _create_failure_result(
-                IKStatus.NO_SOLUTION,
+                IKStatus.UNSUPPORTED,
                 "JacobianIK supports exactly one pose target and no auxiliary planning groups",
             )
 
         target_group = next(iter(pose_targets.keys()))
         if not target_group.has_pose_target:
             return _create_failure_result(
-                IKStatus.NO_SOLUTION,
+                IKStatus.UNSUPPORTED,
                 f"Planning group '{target_group.id}' has no pose target frame",
             )
 
@@ -609,98 +613,3 @@ def _create_failure_result(
         iterations=iterations,
         message=message,
     )
-
-
-def _robot_ids_by_name(
-    world: WorldSpec,
-    robot_names: tuple[RobotName, ...],
-) -> dict[RobotName, WorldRobotID]:
-    robot_ids_by_name: dict[RobotName, WorldRobotID] = {}
-    for robot_name in robot_names:
-        matches = [
-            robot_id
-            for robot_id in world.get_robot_ids()
-            if world.get_robot_config(robot_id).name == robot_name
-        ]
-        if not matches:
-            raise ValueError(f"Robot '{robot_name}' not found")
-        if len(matches) > 1:
-            raise ValueError(f"Robot name '{robot_name}' is not unique in planning world")
-        robot_ids_by_name[robot_name] = matches[0]
-    return robot_ids_by_name
-
-
-def _seed_positions_with_world_fallback(
-    world: WorldSpec,
-    robot_id: WorldRobotID,
-    robot_name: RobotName,
-    local_joint_names: list[str],
-    seed: JointState | None,
-) -> NDArray[np.float64]:
-    """Return full robot positions, reading world only for missing seed joints."""
-    if seed is None:
-        with world.scratch_context() as ctx:
-            current = world.get_joint_state(ctx, robot_id)
-        return _positions_by_local_name(current, robot_name, local_joint_names)
-
-    try:
-        return _positions_by_local_name(seed, robot_name, local_joint_names)
-    except ValueError:
-        with world.scratch_context() as ctx:
-            current = world.get_joint_state(ctx, robot_id)
-        fallback_positions = _positions_by_local_name(current, robot_name, local_joint_names)
-        seed_positions = _partial_positions_by_local_name(seed, robot_name, local_joint_names)
-        for local_name, position in seed_positions.items():
-            fallback_positions[local_joint_names.index(local_name)] = position
-        return fallback_positions
-
-
-def _positions_by_local_name(
-    joint_state: JointState,
-    robot_name: RobotName,
-    local_joint_names: list[str],
-) -> NDArray[np.float64]:
-    if not joint_state.name:
-        if len(joint_state.position) != len(local_joint_names):
-            raise ValueError(
-                f"JointState has {len(joint_state.position)} positions for "
-                f"{len(local_joint_names)} joints"
-            )
-        return np.asarray(joint_state.position, dtype=np.float64)
-
-    positions_by_name = dict(zip(joint_state.name, joint_state.position, strict=True))
-    positions: list[float] = []
-    missing: list[str] = []
-    for local_name in local_joint_names:
-        global_name = f"{robot_name}/{local_name}"
-        if local_name in positions_by_name:
-            positions.append(float(positions_by_name[local_name]))
-        elif global_name in positions_by_name:
-            positions.append(float(positions_by_name[global_name]))
-        else:
-            missing.append(local_name)
-    if missing:
-        raise ValueError(f"JointState missing joints: {missing}")
-    return np.asarray(positions, dtype=np.float64)
-
-
-def _partial_positions_by_local_name(
-    joint_state: JointState,
-    robot_name: RobotName,
-    local_joint_names: list[str],
-) -> dict[str, float]:
-    positions_by_name = dict(zip(joint_state.name, joint_state.position, strict=True))
-    known_local_names = set(local_joint_names)
-    positions: dict[str, float] = {}
-    for name, position in positions_by_name.items():
-        if name in known_local_names:
-            positions[name] = float(position)
-            continue
-        prefix = f"{robot_name}/"
-        if name.startswith(prefix):
-            local_name = name[len(prefix) :]
-            if local_name in known_local_names:
-                positions[local_name] = float(position)
-                continue
-        raise ValueError(f"Unrecognized seed joint '{name}'")
-    return positions
