@@ -27,14 +27,12 @@ from pathlib import Path
 from typing import Any
 
 from dimos.navigation.jnav.utils import recording_db
-from dimos.navigation.jnav.utils.apriltag_agreement import (
-    VISIT_GAP_S,
-    split_visits,
-)
 from dimos.navigation.jnav.utils.apriltags import (
+    VISIT_GAP_S,
     ensure_april_streams,
     gate_params,
     load_intrinsics_json,
+    split_visits,
 )
 
 RAW_STREAM = "raw_april_tags"
