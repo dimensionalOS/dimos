@@ -1,9 +1,12 @@
 ---
-title: "Go2 Non-ROS Navigation"
+title: "Go2 Navigation Deep Dive"
 ---
-![output](assets/noros_nav.gif)
 
 The Go2 navigation stack runs entirely without ROS. It uses a **column-carving voxel map** strategy: each new LiDAR frame replaces the corresponding region of the global map entirely, ensuring the map always reflects the latest observations.
+
+![output](assets/noros_nav.gif)
+
+For return visits to a known space, use [premap relocalization](/docs/capabilities/navigation/relocalization.md) instead of relying on live mapping alone.
 
 ## Data Flow
 
@@ -11,7 +14,7 @@ The Go2 navigation stack runs entirely without ROS. It uses a **column-carving v
 <summary>diagram source</summary>
 
 ```pikchr fold output=assets/go2nav_dataflow.svg
-color = white
+color = #1e293b
 fill = none
 
 Go2: box "Go2" rad 5px fit wid 170% ht 170%
@@ -38,17 +41,17 @@ text "Twist" italic at (M4.x, Nav.s.y - 0.45in)
 
 </details>
 
-![output](assets/go2nav_dataflow.svg)
+![Go2 navigation data flow](assets/go2nav_dataflow.svg)
 
 ## Pipeline Steps
 
-### 1. LiDAR Frame — [`GO2Connection`](/dimos/robot/unitree/go2/connection.py)
+### 1. LiDAR Frame ([`GO2Connection`](/dimos/robot/unitree/go2/connection.py))
 
-We don't connect to the LiDAR directly — instead we use Unitree's WebRTC client (via [legion's webrtc driver](https://github.com/legion1581/unitree_webrtc_connect)), which streams a heavily preprocessed 5cm voxel grid rather than raw point cloud data. This allows us to support stock, unjailbroken Go2 Air and Pro models out of the box.
+We do not connect to the LiDAR directly. Instead we use Unitree's WebRTC client via [legion's webrtc driver](https://github.com/legion1581/unitree_webrtc_connect), which streams a heavily preprocessed 5cm voxel grid rather than raw point cloud data. This lets us support stock, unjailbroken Go2 Air and Pro models out of the box.
 
 ![LiDAR frame](assets/1-lidar.png)
 
-### 2. Global Voxel Map — [`VoxelGridMapper`](/dimos/mapping/voxels.py)
+### 2. Global Voxel Map ([`VoxelGridMapper`](/dimos/mapping/voxels.py))
 
 The [`VoxelGridMapper`](/dimos/mapping/voxels.py) maintains a sparse 3D occupancy grid using Open3D's `VoxelBlockGrid` backed by a hash map. Each voxel is a 5cm cube by default.
 
@@ -60,7 +63,7 @@ Each incoming LiDAR frame is spliced into the global map via column carving. We 
 - Dynamic objects (people, doors) get cleared automatically
 - The latest observation always wins
 
-We don't have proper loop closure and stable odometry, we trust the data go2 odom reports, which is surprisingly stable but does drift eventually, You will reliably map and nav through very large spaces (500sqm in our tests) but you won't go down the street to a super market.
+Live column-carving has no loop closure. We trust Go2 odometry, which is stable but drifts over distance. You can reliably map and navigate large spaces around 500 m² in our tests, but not kilometer-scale outdoor routes. For return visits with loop-closed maps, use [premap relocalization](/docs/capabilities/navigation/relocalization.md) and build the premap offline with `dimos map global --export`.
 
 
 #### Configuration
@@ -75,7 +78,7 @@ We don't have proper loop closure and stable odometry, we trust the data go2 odo
 
 ![Global map](assets/2-globalmap.png)
 
-### 3. Global Costmap — [`CostMapper`](/dimos/mapping/costmapper.py)
+### 3. Global Costmap ([`CostMapper`](/dimos/mapping/costmapper.py))
 
 The [`CostMapper`](/dimos/mapping/costmapper.py) converts the 3D voxel map into a 2D occupancy grid. The default algorithm (`height_cost`) maps rate of change of Z, with some smoothing.
 
@@ -103,7 +106,7 @@ class HeightCostConfig(OccupancyConfig):
 
 ![Global costmap](assets/3-globalcostmap.png)
 
-### 4. Navigation Costmap — [`ReplanningAStarPlanner`](/dimos/navigation/replanning_a_star/module.py)
+### 4. Navigation Costmap ([`ReplanningAStarPlanner`](/dimos/navigation/replanning_a_star/module.py))
 
 The planner will process the terrain gradient and compute it's own algo-relevant costmap, prioritizing safe free paths, while be willing to path aggressively through tight spaces if it has to
 
@@ -123,13 +126,13 @@ The patrolling system drives the robot to systematically cover a **known** area.
 
 ### How it works
 
-1. **Visitation tracking** — As the robot moves, a visitation grid (aligned to the costmap) marks cells around the robot's position as visited. This gives the system a running picture of where the robot has and hasn't been. This expires over time, and has to be visited again.
+1. **Visitation tracking.** As the robot moves, a visitation grid aligned to the costmap marks cells around the robot's position as visited. This gives the system a running picture of where the robot has and has not been. Visits expire over time and cells must be covered again.
 
-2. **Goal selection** — A *patrol router* picks the next goal. The default strategy is **coverage**: it samples a handful of candidate points from unvisited, obstacle-free cells, plans a path to each one, and picks the candidate whose path would cover the most new ground. Candidates are weighted by a Voronoi skeleton so goals are more likely to be spread evenly across the map, rather than clustering in large open areas.
+2. **Goal selection.** A patrol router picks the next goal. The default strategy is coverage: it samples candidate points from unvisited, obstacle-free cells, plans a path to each one, and picks the candidate whose path would cover the most new ground. Candidates are weighted by a Voronoi skeleton so goals spread evenly across the map rather than clustering in large open areas.
 
-3. **Navigation loop** — The module sends each goal to the planner and waits for a `goal_reached` signal before requesting the next one. If no valid goal is available (e.g. the map hasn't loaded yet), it retries after a short delay.
+3. **Navigation loop.** The module sends each goal to the planner and waits for a `goal_reached` signal before requesting the next one. If no valid goal is available, for example when the map has not loaded yet, it retries after a short delay.
 
-4. **Stopping** — When patrol is stopped, the module cancels in-progress navigation by publishing the robot's current pose as the goal, then re-enables the planner's normal replanning behavior.
+4. **Stopping.** When patrol is stopped, the module cancels in-progress navigation by publishing the robot's current pose as the goal, then re-enables the planner's normal replanning behavior.
 
 ### Patrol router strategies
 
@@ -141,7 +144,7 @@ The patrolling system drives the robot to systematically cover a **known** area.
 
 ### Safety
 
-Goal candidates are filtered through a **safe mask** — the free-space region eroded by the robot's clearance radius — so the robot is never sent to a position too close to walls or obstacles. The planner's safe-goal clearance is also tightened while patrolling to ensure the robot can rotate in place at every goal.
+Goal candidates are filtered through a safe mask, which is the free-space region eroded by the robot's clearance radius, so the robot is never sent too close to walls or obstacles. The planner's safe-goal clearance is also tightened while patrolling so the robot can rotate in place at every goal.
 
 ### Router comparison
 
