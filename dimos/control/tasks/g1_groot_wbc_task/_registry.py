@@ -15,3 +15,7 @@
 TASK_FACTORIES = {
     "g1_groot_wbc": "dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task:create_task",
 }
+
+TASK_CONSUMES: dict[str, dict[str, tuple[str, str]]] = {
+    "g1_groot_wbc": {},  # its twist input is wired to cards in a later PR
+}

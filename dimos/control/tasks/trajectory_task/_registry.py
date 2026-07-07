@@ -15,3 +15,7 @@
 TASK_FACTORIES = {
     "trajectory": "dimos.control.tasks.trajectory_task.trajectory_task:create_task",
 }
+
+TASK_CONSUMES: dict[str, dict[str, tuple[str, str]]] = {
+    "trajectory": {},  # command-driven only; consumes no input streams
+}
