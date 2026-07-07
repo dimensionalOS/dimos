@@ -1,5 +1,4 @@
-use dimos_module::{Input, Module, Output};
-use dimos_native_module_examples::run_over_selected_transport;
+use dimos_module::{run_with_transport, Input, Module, Output};
 use lcm_msgs::geometry_msgs::{Twist, Vector3};
 use tokio::time::{interval, Duration};
 
@@ -50,5 +49,5 @@ impl Ping {
 
 #[tokio::main]
 async fn main() {
-    run_over_selected_transport::<Ping>().await;
+    run_with_transport::<Ping>().await;
 }

@@ -3,10 +3,6 @@ name = "dimos-native-module-examples"
 version = "0.1.0"
 edition = "2021"
 
-[lib]
-name = "dimos_native_module_examples"
-path = "src/lib.rs"
-
 [[bin]]
 name = "ping"
 path = "src/ping.rs"

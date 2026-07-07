@@ -1,5 +1,4 @@
-use dimos_module::{native_config, Input, Module, Output};
-use dimos_native_module_examples::run_over_selected_transport;
+use dimos_module::{native_config, run_with_transport, Input, Module, Output};
 use lcm_msgs::geometry_msgs::{Twist, Vector3};
 
 #[native_config]
@@ -36,5 +35,5 @@ impl Pong {
 
 #[tokio::main]
 async fn main() {
-    run_over_selected_transport::<Pong>().await;
+    run_with_transport::<Pong>().await;
 }
