@@ -85,7 +85,7 @@ This means most contributions start as a discussion, not an issue or a PR.
 
 1. **Match the PR to its weight:** Small, safe changes like typo and doc fixes can go straight to a PR. Anything non-trivial should map to an accepted issue first. Core architecture changes — modules, streams, transports, blueprints, agents, public APIs, robot or platform support, and major dependency changes — should start as a [discussion](https://github.com/dimensionalOS/dimos/discussions) before any code. Unscoped PRs are expensive to review, so they may sit unreviewed or be closed. When in doubt, open a discussion and link your branch.
 2. **Sign the CLA:** All contributions require a signed [Contributor License Agreement](CLA.md). See [Contributor License Agreement](#contributor-license-agreement) below.
-3. **Follow the build and style conventions in [`AGENTS.md`](AGENTS.md):** Use branch prefixes (`feat/`, `fix/`, `docs/`, and so on), target `main`, run the fast test suite (`uv run pytest`), pass pre-commit, and do not force-push or spam pushes. Every push triggers roughly an hour of CI.
+3. **Make every push count:** Use branch prefixes (`feat/`, `fix/`, `docs/`, and so on), target `main`, and run `uv run pytest` and pre-commit locally before pushing. Do not force-push or spam pushes; every push triggers roughly an hour of CI.
 4. **Fill out the PR description template:** GitHub pre-fills it when you open the pull request. Do not clear it. Complete every section:
 
    - Contribution path: Link the issue or discussion, or tick the small-safe-change box.
