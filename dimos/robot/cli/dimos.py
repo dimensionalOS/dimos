@@ -42,7 +42,6 @@ from dimos.mapping.utils.cli.pose_fill import main as _map_pose_fill_main
 from dimos.mapping.utils.cli.rename import main as _map_rename_main
 from dimos.mapping.utils.cli.replay import main as _map_replay_main
 from dimos.mapping.utils.cli.replay_marker import main as _map_replay_marker_main
-from dimos.mapping.utils.cli.summary import main as _map_summary_main
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import RerunOpenOption
@@ -722,7 +721,6 @@ def dataprep_inspect(
     inspect(dataset, cast("Literal['lerobot', 'hdf5'] | None", output_format))
 
 
-map_app.command("summary")(_map_summary_main)
 map_app.command("rename")(_map_rename_main)
 map_app.command("pose-fill")(_map_pose_fill_main)
 map_app.command("replay")(_map_replay_main)
