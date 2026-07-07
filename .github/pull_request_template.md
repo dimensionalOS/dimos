@@ -29,6 +29,6 @@
 
 - [ ] This PR is scoped to one issue or clearly stated problem.
 - [ ] I ran the relevant checks (`uv run pytest`, pre-commit) for the files I changed.
-- [ ] I have reviewed and understand every line in this PR.
+- [ ] I have reviewed and understood every line in this PR.
 - [ ] I disclosed AI assistance above.
 - [ ] I have read and approved the [CLA](https://github.com/dimensionalOS/dimos/blob/main/CLA.md).
