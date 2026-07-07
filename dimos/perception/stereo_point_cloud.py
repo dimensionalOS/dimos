@@ -38,9 +38,6 @@ logger = setup_logger()
 _VOFF  = np.int64(100_000)
 _VMASK = np.int64(0x3FFFF)
 
-# Optical frame (X=right, Y=down, Z=depth) → camera_link (X=fwd, Y=left, Z=up)
-_R_OPT_TO_LINK = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=np.float32)
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -58,23 +55,24 @@ def _gradient_mask(depth: np.ndarray, threshold: float) -> np.ndarray:
 
 
 def _raycast_free_keys(
-    xyz_rel: np.ndarray,
+    origin: np.ndarray,
+    surface_pts: np.ndarray,
     vox: float,
     n_rays: int = 200,
     max_steps: int = 40,
 ) -> np.ndarray:
-    """Keys of free-space voxels on rays from camera origin to observed surfaces (xyz_rel is camera-relative)."""
-    if len(xyz_rel) == 0:
+    """World-frame voxel keys on rays from origin to surface_pts. Keys match floor(pts/vox) world voxelisation."""
+    if len(surface_pts) == 0:
         return np.array([], dtype=np.int64)
 
-    idx  = np.random.choice(len(xyz_rel), min(n_rays, len(xyz_rel)), replace=False)
-    dirs = xyz_rel[idx].astype(np.float32)
-    dist = np.linalg.norm(dirs, axis=1, keepdims=True)
+    idx  = np.random.choice(len(surface_pts), min(n_rays, len(surface_pts)), replace=False)
+    vecs = (surface_pts[idx] - origin).astype(np.float32)
+    dist = np.linalg.norm(vecs, axis=1, keepdims=True)
     dist = np.where(dist < 1e-6, 1e-6, dist)
-    dirs /= dist
+    dirs = vecs / dist
 
     steps = np.linspace(0.1, 0.9, max_steps, dtype=np.float32)
-    pts   = dirs[:, None, :] * (dist[:, None, :] * steps[None, :, None])
+    pts   = origin + dirs[:, None, :] * (dist[:, None, :] * steps[None, :, None])
     pts   = pts.reshape(-1, 3)
     return np.unique(_pack(np.floor(pts / vox).astype(np.int32)))
 
@@ -91,7 +89,7 @@ class Config(ModuleConfig):
     max_global_pts: int       = 200_000
     publish_every: int        = 3       # emit global_map every N frames
     world_frame: str          = "world"
-    camera_frame: str         = "camera_depth_optical_frame"
+    camera_frame: str         = "camera_color_optical_frame"
     base_frame: str           = "base_link"
     tf_timeout: float         = 0.2
 
@@ -167,7 +165,6 @@ class StereoPointCloud(Module):
             (vv[mask] - cy) * dd / fy,
             dd,
         ]).astype(np.float32)
-        xyz_cam = xyz_opt @ _R_OPT_TO_LINK.T
 
         tf = self.tf.get(
             self.config.world_frame, self.config.camera_frame, img.ts, self.config.tf_timeout
@@ -185,7 +182,7 @@ class StereoPointCloud(Module):
         else:
             R, t = np.eye(3, dtype=np.float32), np.zeros(3, dtype=np.float32)
 
-        xyz_world = (xyz_cam @ R.T + t).astype(np.float32)
+        xyz_world = (xyz_opt @ R.T + t).astype(np.float32)
 
         # TF-primary floor detection; falls back to rolling low-Z percentile
         base_tf = self.tf.get(
@@ -213,15 +210,13 @@ class StereoPointCloud(Module):
             PointCloud2.from_numpy(xyz_vox, frame_id=self.config.world_frame, timestamp=img.ts)
         )
 
-        xyz_rel  = xyz_vox - t
         pts_snap = None
 
         with self._lock:
             if len(self._acc_pts) > 0:
-                free = _raycast_free_keys(xyz_rel, self.config.global_vox_size)
+                free = _raycast_free_keys(t, xyz_vox, self.config.global_vox_size)
                 if len(free):
-                    acc_rel  = self._acc_pts - t
-                    keys_acc = _pack(np.floor(acc_rel / self.config.global_vox_size).astype(np.int32))
+                    keys_acc = _pack(np.floor(self._acc_pts / self.config.global_vox_size).astype(np.int32))
                     self._acc_pts = self._acc_pts[~np.isin(keys_acc, free)]
 
             self._acc_pts = (
