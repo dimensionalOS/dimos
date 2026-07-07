@@ -1,5 +1,16 @@
 // Copyright 2026 Dimensional Inc.
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -234,13 +245,21 @@ impl Worker {
                         return false;
                     }
                 };
-                let bounds = RegionBounds {
-                    origin_x: bounds.pose.position.x as f32,
-                    origin_y: bounds.pose.position.y as f32,
-                    radius: bounds.pose.orientation.x as f32,
-                    z_min: bounds.pose.orientation.y as f32,
-                    z_max: bounds.pose.orientation.z as f32,
-                };
+                let z_max = bounds.pose.orientation.z as f32;
+                let sensor_z = self
+                    .latest_start
+                    .lock()
+                    .expect("start mutex")
+                    .map_or(z_max, |(_, _, z)| z);
+                let bounds = RegionBounds::capped(
+                    bounds.pose.position.x as f32,
+                    bounds.pose.position.y as f32,
+                    bounds.pose.orientation.x as f32,
+                    bounds.pose.orientation.y as f32,
+                    z_max,
+                    sensor_z,
+                    self.config.max_overhead_m,
+                );
 
                 let update_start = Instant::now();
                 planner.update_region(&points, &bounds, &self.config);
@@ -295,6 +314,8 @@ impl Worker {
         let Some(start) = *self.latest_start.lock().expect("start mutex") else {
             return;
         };
+        // Ground-project the sensor pose so the start snaps to the supporting surface.
+        let start = (start.0, start.1, start.2 - self.config.robot_height);
         let goal = {
             let mut guard = self.active_goal.lock().expect("goal mutex");
             let Some(goal) = *guard else {
