@@ -75,7 +75,7 @@ class _FloorCalibrator:
     SKIP_FRAMES      = 30
     CALIB_FRAMES     = 30
     BIN_M            = 0.02
-    FLOOR_MAX_Z      = -0.30
+    FLOOR_MAX_Z      = -0.05
     FLOOR_MAX_DIST_M = 4.0
     FLOOR_MIN_PTS    = 200
 
@@ -104,8 +104,13 @@ class _FloorCalibrator:
             return
         bins          = np.arange(lo, hi + self.BIN_M, self.BIN_M)
         counts, edges = np.histogram(z_floor, bins=bins)
-        prominent     = np.where(counts >= counts.max() * 0.20)[0]
-        self._samples.append(float(edges[prominent[0]] + self.BIN_M / 2))
+        # Use absolute count threshold so a nearby chair with many points can't
+        # drown out a distant floor with fewer points — floor is always the lowest
+        # significant bin regardless of what dominates the histogram.
+        significant   = np.where(counts >= self.FLOOR_MIN_PTS)[0]
+        if not len(significant):
+            return
+        self._samples.append(float(edges[significant[0]] + self.BIN_M / 2))
         if len(self._samples) >= self.CALIB_FRAMES:
             self.floor_z    = float(np.median(self._samples))
             self.cam_height = -self.floor_z
