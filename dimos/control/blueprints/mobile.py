@@ -219,20 +219,14 @@ coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
 
 
 def _stereo_nav_blueprint():
-    """Rerun blueprint for stereo-depth nav: grid at z=0 (the floor datum).
-
-    The default bridge blueprint puts the grid at z=+0.5, which sits above the
-    floor and makes all sub-50cm obstacles appear underground. Moving it to z=0
-    means floor=grid and everything above is visible above the line.
-    """
-    import rerun as rr
+    """Default bridge blueprint with the grid removed — floor at z=0 is the datum."""
     import rerun.blueprint as rrb
     return rrb.Blueprint(
         rrb.Spatial3DView(
             origin="world",
             background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
-            line_grid=rrb.LineGrid3D(visible=False),
-        )
+        ),
+        auto_views=True,
     )
 
 
