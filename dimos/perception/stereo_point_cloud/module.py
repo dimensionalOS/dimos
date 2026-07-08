@@ -19,7 +19,6 @@ from __future__ import annotations
 import threading
 from typing import Any
 
-import cv2
 import numpy as np
 from reactivex.disposable import Disposable
 
@@ -181,14 +180,6 @@ class StereoPointCloud(Module):
         depth = depth.astype(np.float32)
         valid_d = depth[depth > 0]
         is_mm = len(valid_d) > 0 and np.median(valid_d) > _DEPTH_MM_THRESHOLD
-        valid_mask = depth > 0
-        kernel = np.ones((3, 3), np.uint8)
-        dilated = cv2.dilate(depth, kernel)
-        depth_tmp = np.where(valid_mask, depth, dilated).astype(np.float32)
-        smoothed = cv2.bilateralFilter(depth_tmp, d=5, sigmaColor=30.0, sigmaSpace=5.0)
-        depth[valid_mask] = smoothed[valid_mask]
-        depth_after = cv2.dilate(depth, kernel)
-        depth[~valid_mask & (depth_after > 0)] = depth_after[~valid_mask & (depth_after > 0)]
         if is_mm:
             depth /= 1000.0
         invalid = (depth <= 0) | (depth < self.config.min_depth) | (depth > self.config.max_depth)
