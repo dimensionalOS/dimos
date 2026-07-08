@@ -72,11 +72,17 @@ async function _setupLiveKitInner(sessionId) {
         if (track.kind !== 'video') return;
         const existed = !!document.getElementById('robot-cam');
         const v = ensureRobotCam();
+        // Detach the prior track before rebinding — on a robot republish this
+        // fires again, and the old track + its receiver (still held by the
+        // stats sampler) would otherwise leak.
+        if (videoTrack && videoTrack !== track) {
+            try { videoTrack.detach(v); } catch (_) {}
+        }
         track.attach(v);
         if (existed) v.style.display = 'block';
         v.play?.().catch(() => {});
         videoTrack = track;
-        maybeStartStats();  // no-op until the state-channel shim exists below
+        maybeStartStats();  // restarts the sampler against the new receiver
     });
 
     // Robot replies on the back channel by protocol; LiveKit never echoes our
