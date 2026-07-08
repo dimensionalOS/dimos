@@ -371,13 +371,16 @@ def test_high_volume_messages(
         for _ in range(num_messages):
             x.publish(topic, values[0])
 
-        # Wait until no messages received for 0.5 seconds
-        timeout = 2.0  # Maximum time to wait
-        stable_duration = 0.1  # Time without new messages to consider done
-        start_time = time.time()
+        # Wait until everything arrives; bail out early only if delivery stalls.
+        # On loaded CI runners the ros transport can pause well over the old
+        # 0.1s "no new messages" window mid-burst, so waiting for silence made
+        # this test give up with a partial count. The deadline only binds when
+        # messages keep trickling in; the happy path exits on the full count.
+        deadline = time.time() + 30.0
+        stall_duration = 2.0
 
-        while time.time() - start_time < timeout:
-            if time.time() - last_message_time[0] >= stable_duration:
+        while time.time() < deadline and len(received_messages) < num_messages:
+            if time.time() - last_message_time[0] >= stall_duration:
                 break
             time.sleep(0.1)
 

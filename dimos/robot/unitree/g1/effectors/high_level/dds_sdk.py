@@ -21,16 +21,6 @@ import time
 from typing import Any
 
 from reactivex.disposable import Disposable
-from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import (  # type: ignore[import-not-found]
-    MotionSwitcherClient,
-)
-from unitree_sdk2py.core.channel import ChannelFactoryInitialize  # type: ignore[import-not-found]
-from unitree_sdk2py.g1.loco.g1_loco_api import (  # type: ignore[import-not-found]
-    ROBOT_API_ID_LOCO_GET_BALANCE_MODE,
-    ROBOT_API_ID_LOCO_GET_FSM_ID,
-    ROBOT_API_ID_LOCO_GET_FSM_MODE,
-)
-from unitree_sdk2py.g1.loco.g1_loco_client import LocoClient  # type: ignore[import-not-found]
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -54,12 +44,6 @@ from dimos.robot.unitree.g1.effectors.high_level.high_level_spec import HighLeve
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
-
-_LOCO_API_IDS = {
-    "GET_FSM_ID": ROBOT_API_ID_LOCO_GET_FSM_ID,
-    "GET_FSM_MODE": ROBOT_API_ID_LOCO_GET_FSM_MODE,
-    "GET_BALANCE_MODE": ROBOT_API_ID_LOCO_GET_BALANCE_MODE,
-}
 
 
 class FsmState(IntEnum):
@@ -107,10 +91,33 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
         self._mode_selected = False
         self.motion_switcher: Any = None
         self.loco_client: Any = None
+        self._loco_api_ids: dict[str, int] = {}
 
     @rpc
     def start(self) -> None:
         super().start()
+
+        # Lazy SDK imports - file must import cleanly outside the [unitree-dds] extra.
+        from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import (  # type: ignore[import-not-found]
+            MotionSwitcherClient,
+        )
+        from unitree_sdk2py.core.channel import (  # type: ignore[import-not-found]
+            ChannelFactoryInitialize,
+        )
+        from unitree_sdk2py.g1.loco.g1_loco_api import (  # type: ignore[import-not-found]
+            ROBOT_API_ID_LOCO_GET_BALANCE_MODE,
+            ROBOT_API_ID_LOCO_GET_FSM_ID,
+            ROBOT_API_ID_LOCO_GET_FSM_MODE,
+        )
+        from unitree_sdk2py.g1.loco.g1_loco_client import (  # type: ignore[import-not-found]
+            LocoClient,
+        )
+
+        self._loco_api_ids = {
+            "GET_FSM_ID": ROBOT_API_ID_LOCO_GET_FSM_ID,
+            "GET_FSM_MODE": ROBOT_API_ID_LOCO_GET_FSM_MODE,
+            "GET_BALANCE_MODE": ROBOT_API_ID_LOCO_GET_BALANCE_MODE,
+        }
 
         network_interface = self.config.network_interface
 
@@ -129,9 +136,9 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
         self.loco_client.SetTimeout(self.config.loco_client_timeout)
         self.loco_client.Init()
 
-        self.loco_client._RegistApi(_LOCO_API_IDS["GET_FSM_ID"], 0)
-        self.loco_client._RegistApi(_LOCO_API_IDS["GET_FSM_MODE"], 0)
-        self.loco_client._RegistApi(_LOCO_API_IDS["GET_BALANCE_MODE"], 0)
+        self.loco_client._RegistApi(self._loco_api_ids["GET_FSM_ID"], 0)
+        self.loco_client._RegistApi(self._loco_api_ids["GET_FSM_MODE"], 0)
+        self.loco_client._RegistApi(self._loco_api_ids["GET_BALANCE_MODE"], 0)
 
         self._select_motion_mode()
         self._running = True
@@ -379,7 +386,7 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
 
     def _get_fsm_id(self) -> int | None:
         try:
-            code, data = self.loco_client._Call(_LOCO_API_IDS["GET_FSM_ID"], "{}")
+            code, data = self.loco_client._Call(self._loco_api_ids["GET_FSM_ID"], "{}")
             if code == 0 and data:
                 result = json.loads(data) if isinstance(data, str) else data
                 fsm_id = result.get("data") if isinstance(result, dict) else result
