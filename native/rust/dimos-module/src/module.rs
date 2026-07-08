@@ -355,8 +355,7 @@ pub(crate) async fn subscribe_routes<T: Transport>(
     Ok(())
 }
 
-/// Spawn one worker per output channel so a stalled block-QoS channel
-/// backpressures only its own producer, not the others.
+/// Spawn one worker per output channel so they don't block each other
 pub(crate) fn spawn_publish_tasks<T: Transport>(
     transport: Arc<T>,
     outputs: Vec<(String, mpsc::Receiver<Vec<u8>>)>,
@@ -866,9 +865,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn blocked_channel_does_not_stall_other_channels() {
-        // A transport whose publish never returns on the block channel,
-        // modeling a block-QoS channel wedged by congestion. Others complete
-        // instantly.
+        // Publish never returns on the block channel, other channels complete instantly.
         struct HeadOfLineMock {
             delivered: Arc<Mutex<Vec<String>>>,
         }

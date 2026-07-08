@@ -131,13 +131,13 @@ impl ::dimos_module::Module for MyModule {
 }
 ```
 
-`builder.input` registers a route from the resolved topic into an mpsc channel that backs `Input<T>`. `builder.output` hands back an `Output<T>` carrying a sender into the shared publish channel.
+`builder.input` registers a route from the resolved topic into an mpsc channel that backs `Input<T>`. `builder.output` hands back an `Output<T>` carrying a sender into its own per-channel publish queue.
 
 ## Lifecycle inside `run()`
 
-1. Read one JSON line from stdin, parse into `(topics, config)`.
+1. Read one JSON line from stdin, parse into topics, config, and per-channel publisher QoS.
 2. `M::build(&mut builder, config)`: macro-generated, populates each field.
-3. Spawn two tokio tasks: one drives `transport.recv()` and dispatches to input channels; one drains the publish channel into `transport.publish()`. The two run independently so a slow publish can't block recv.
+3. Subscribe each input channel on the transport (push callbacks into the input mpsc channels), and spawn one publish worker per output channel, each draining its queue into `transport.publish()`. Receive and publish run independently, and a stalled publish on one channel can't block the others.
 4. `module.setup().await`.
 5. `module.handle().await`, racing ctrl-c.
 6. `module.teardown().await`.

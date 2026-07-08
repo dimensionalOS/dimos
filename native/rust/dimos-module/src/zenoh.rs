@@ -54,10 +54,7 @@ fn parse_channel_qos(value: &serde_json::Value) -> HashMap<String, ChannelQos> {
     map
 }
 
-/// Zenoh transport. Each subscribed channel is its own per-key Zenoh
-/// subscription, so the network only delivers topics the module asked for.
-/// Publishers are declared once per channel and cached with the per-topic QoS
-/// from `set_publisher_qos`.
+/// Zenoh transport for a native module.
 pub struct ZenohTransport {
     session: Session,
     qos: OnceLock<HashMap<String, ChannelQos>>,
@@ -98,9 +95,7 @@ impl ZenohTransport {
 
 impl Transport for ZenohTransport {
     async fn publish(&self, channel: &str, data: Vec<u8>) -> io::Result<()> {
-        // Resolve the cached publisher and release the lock before `put`, so a
-        // block-QoS channel stalled in `put` never holds the cache and blocks
-        // publishes on other channels.
+        // Release the lock before `put` so a stalled channel can't block others.
         let publisher = {
             let mut publishers = self.publishers.lock().await;
             match publishers.get(channel) {
@@ -133,8 +128,7 @@ fn to_io(e: ::zenoh::Error) -> io::Error {
     io::Error::other(e)
 }
 
-/// Zenoh keys can't start with '/'. Strips the leading slash so an unmapped
-/// port's `/{port}` fallback is a valid inert key rather than a fatal error.
+/// Zenoh keys can't start with '/'
 fn zenoh_key(channel: &str) -> &str {
     channel.strip_prefix('/').unwrap_or(channel)
 }

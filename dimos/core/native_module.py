@@ -124,8 +124,6 @@ class NativeModuleConfig(ModuleConfig):
     log_format: LogFormat = LogFormat.JSON
     auto_build: bool = False
 
-    # New version of Native Modules read json configs from stdin
-    # Enable this to read from stdin instead of cli args
     stdin_config: bool = False
 
     cli_exclude: frozenset[str] = frozenset()
@@ -228,7 +226,7 @@ class NativeModule(Module):
 
         env = {**os.environ, **self.config.extra_env}
 
-        # Binary opens the same transport the coordinator resolved.
+        # set transport so native modules know which one to spawn
         env["DIMOS_TRANSPORT"] = global_config.transport
 
         # set Rust logging to match Python level
