@@ -137,9 +137,12 @@ def _hex_to_rgba(hex_color: str) -> int:
 
 
 def _set_rerun_message_time(msg: Any) -> None:
+    # set_time is sticky per-thread, so always stamp: a message without a
+    # usable ts must not inherit the previous message's timestamp.
     ts = getattr(msg, "ts", None)
-    if isinstance(ts, (int, float)) and ts > 0:
-        rr.set_time("dimos_time", timestamp=float(ts))
+    if not (isinstance(ts, (int, float)) and ts > 0):
+        ts = time.time()
+    rr.set_time("dimos_time", timestamp=float(ts))
 
 
 def _with_graph_tab(bp: Blueprint) -> Blueprint:

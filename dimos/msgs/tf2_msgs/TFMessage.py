@@ -100,6 +100,11 @@ class TFMessage:
 
         return cls(*transforms)
 
+    @property
+    def ts(self) -> float:
+        """Latest transform timestamp, 0.0 when empty."""
+        return max((t.ts for t in self.transforms), default=0.0)
+
     def __len__(self) -> int:
         """Return number of transforms."""
         return len(self.transforms)
