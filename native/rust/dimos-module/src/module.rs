@@ -133,14 +133,11 @@ impl<T> Output<T> {
     }
 }
 
-/// Parse a JSON config line as written by the Python NativeModule coordinator.
-/// Returns `(topics, config)`. Extracted so it can be unit-tested without stdin.
-fn parse_config_json<C: DeserializeOwned + Serialize>(
-    line: &str,
+/// Extract `(topics, config)` from an already-parsed config object. `run`
+/// parses the line once and also reads `qos` from it, so this takes the value.
+fn parse_config_value<C: DeserializeOwned + Serialize>(
+    json: &serde_json::Value,
 ) -> io::Result<(HashMap<String, String>, C)> {
-    let json: serde_json::Value = serde_json::from_str(line.trim())
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
     let mut topics = HashMap::new();
     if let Some(t) = json.get("topics").and_then(|v| v.as_object()) {
         for (port, topic) in t {
@@ -402,8 +399,11 @@ where
     BufReader::new(tokio::io::stdin())
         .read_line(&mut line)
         .await?;
-    let (topics, config) = parse_config_json::<M::Config>(&line)?;
+    let json: serde_json::Value = serde_json::from_str(line.trim())
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let (topics, config) = parse_config_value::<M::Config>(&json)?;
     validate_config(&config)?;
+    transport.set_publisher_qos(json.get("qos").unwrap_or(&serde_json::Value::Null));
 
     let exe = std::env::current_exe()
         .ok()
@@ -451,6 +451,16 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
     use tokio::sync::Notify;
+
+    /// Parse a raw config line the way `run` does, for exercising
+    /// `parse_config_value` from the string form the coordinator sends.
+    fn parse_config_json<C: DeserializeOwned + Serialize>(
+        line: &str,
+    ) -> io::Result<(HashMap<String, String>, C)> {
+        let json: serde_json::Value = serde_json::from_str(line.trim())
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        parse_config_value(&json)
+    }
 
     type InboundQueue = Mutex<VecDeque<(String, Vec<u8>)>>;
 

@@ -57,6 +57,15 @@ class ZenohQoS:
             kwargs["congestion_control"] = _CONGESTION_CONTROL[self.congestion_control]
         return kwargs
 
+    def to_wire(self) -> dict[str, str]:
+        """Serializable QoS sent to native modules over stdin. Only set fields."""
+        wire: dict[str, str] = {}
+        if self.reliability is not None:
+            wire["reliability"] = self.reliability
+        if self.congestion_control is not None:
+            wire["congestion_control"] = self.congestion_control
+        return wire
+
 
 # The two delivery classes used across DimOS. Everything else keeps zenoh's
 # publisher defaults (reliable, drop under congestion).

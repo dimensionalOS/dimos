@@ -257,9 +257,11 @@ class NativeModule(Module):
         assert self._process.stdin is not None
         if self.config.stdin_config:
             config_dict = self.config.to_config_dict()
-            stdin_blob = (
-                json.dumps({"topics": topics, "config": config_dict or None}).encode() + b"\n"
-            )
+            blob: dict[str, Any] = {"topics": topics, "config": config_dict or None}
+            qos = self._collect_output_qos()
+            if qos:
+                blob["qos"] = qos
+            stdin_blob = json.dumps(blob).encode() + b"\n"
             self._process.stdin.write(stdin_blob)
         self._process.stdin.close()
         logger.info(
@@ -471,3 +473,19 @@ class NativeModule(Module):
             if channel is not None:
                 topics[name] = channel
         return topics
+
+    def _collect_output_qos(self) -> dict[str, dict[str, str]]:
+        """Publisher QoS per output channel, keyed by channel."""
+        qos_map: dict[str, dict[str, str]] = {}
+        for name in self.outputs:
+            stream = getattr(self, name, None)
+            if stream is None:
+                continue
+            transport = getattr(stream, "_transport", None)
+            if transport is None:
+                continue
+            channel = getattr(transport, "channel", None)
+            qos = getattr(transport, "publish_qos", None)
+            if channel is not None and qos:
+                qos_map[channel] = qos
+        return qos_map

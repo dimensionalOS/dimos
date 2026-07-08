@@ -552,6 +552,11 @@ class ZenohTransport(PubSubTransport[T]):
     def channel(self) -> str:
         return cast("str", self.topic.key_expr)
 
+    @property
+    def publish_qos(self) -> dict[str, str] | None:
+        qos = self.topic.qos
+        return qos.to_wire() if qos is not None else None
+
     def __reduce__(self) -> tuple[Any, ...]:
         return (ZenohTransport, (self.topic,))
 
@@ -598,6 +603,11 @@ class pZenohTransport(PubSubTransport[T]):
     @property
     def channel(self) -> str:
         return self._zenoh_topic.key_expr
+
+    @property
+    def publish_qos(self) -> dict[str, str] | None:
+        qos = self._zenoh_topic.qos
+        return qos.to_wire() if qos is not None else None
 
     def __reduce__(self) -> tuple[Any, ...]:
         return (pZenohTransport, (self._zenoh_topic,))
