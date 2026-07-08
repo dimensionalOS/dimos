@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -43,6 +44,11 @@ class VoxelGrid:
 
     No Module/framework dependency. Can be used standalone or wrapped
     by VoxelGridMapper (Module) or VoxelMapTransformer (memory2 Transformer).
+
+    ``time_window`` controls how long voxels live (by frame timestamp):
+    ``-1`` (default) keeps every frame forever (a growing global map); ``0``
+    keeps only the current frame; ``N`` keeps the last ``N`` seconds (a rolling
+    window that tracks the local surface). Windowing overrides ``carve_columns``.
     """
 
     def __init__(
@@ -53,10 +59,13 @@ class VoxelGrid:
         carve_columns: bool = True,
         frame_id: str = "world",
         show_startup_log: bool = True,
+        time_window: float = -1.0,
     ) -> None:
         self._voxel_size = voxel_size
         self._carve_columns = carve_columns
         self._frame_id = frame_id
+        self._time_window = time_window
+        self._frames: deque[tuple[float, o3c.Tensor]] = deque()  # (ts, voxel keys) for windowing
 
         dev = (
             o3c.Device(device)
@@ -101,7 +110,9 @@ class VoxelGrid:
         vox = (pts / self._voxel_size).floor().to(self._key_dtype)
         keys_Nx3 = vox.contiguous()
 
-        if self._carve_columns:
+        if self._time_window >= 0:
+            self._add_windowed(keys_Nx3)
+        elif self._carve_columns:
             self._carve_and_insert(keys_Nx3)
         else:
             self._voxel_hashmap.activate(keys_Nx3)
@@ -116,6 +127,24 @@ class VoxelGrid:
         # are released. Without this call, VRAM grows ~0.8 MB/call until OOM.
         if str(self._dev).startswith("CUDA"):
             o3c.cuda.release_cache()
+
+    def _add_windowed(self, new_keys: o3c.Tensor) -> None:
+        """Keep only voxels from frames within ``time_window`` s of the latest frame.
+
+        Buffers each frame's keys, drops frames that have aged out, then rebuilds
+        the active set as the union of the survivors (``activate`` dedups). Always
+        keeps at least the current frame, so ``time_window == 0`` is single-frame.
+        """
+        ts = self._latest_frame_ts
+        self._frames.append((ts, new_keys))
+        while len(self._frames) > 1 and ts - self._frames[0][0] > self._time_window:
+            self._frames.popleft()
+
+        active = self._voxel_hashmap.active_buf_indices()
+        if active.shape[0] > 0:
+            self._voxel_hashmap.erase(self._voxel_hashmap.key_tensor()[active].contiguous())
+        for _, keys in self._frames:
+            self._voxel_hashmap.activate(keys)
 
     def _carve_and_insert(self, new_keys: o3c.Tensor) -> None:
         """Column carving: remove all existing voxels sharing (X,Y) with new_keys, then insert."""
@@ -251,6 +280,7 @@ class VoxelGridMapperConfig(ModuleConfig):
     carve_columns: bool = True
     frame_id: str = "world"
     emit_every: int = 1
+    time_window: float = -1.0
 
 
 class VoxelGridMapper(StreamModule[PointCloud2, PointCloud2]):
