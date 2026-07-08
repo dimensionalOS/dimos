@@ -19,9 +19,9 @@ from __future__ import annotations
 import threading
 from typing import Any
 
+import cv2
 import numpy as np
 from reactivex.disposable import Disposable
-from scipy.ndimage import median_filter
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -179,12 +179,17 @@ class StereoPointCloud(Module):
             depth = depth[:, :, 0]
         depth = depth.astype(np.float32)
         valid_d = depth[depth > 0]
-        if len(valid_d) and np.median(valid_d) > _DEPTH_MM_THRESHOLD:
-            depth /= 1000.0
+        is_mm = len(valid_d) > 0 and np.median(valid_d) > _DEPTH_MM_THRESHOLD
         valid_mask = depth > 0
-        depth[valid_mask] = median_filter(depth, size=3)[valid_mask]
-        fill = median_filter(np.where(valid_mask, depth, 0.0), size=5)
-        depth[~valid_mask & (fill > 0)] = fill[~valid_mask & (fill > 0)]
+        depth_u16 = depth.clip(0, 65535).astype(np.uint16)
+        depth_u16[~valid_mask] = 65535
+        depth_u16 = cv2.medianBlur(depth_u16, 3)
+        depth_u16[~valid_mask] = 0
+        hole_fill = cv2.medianBlur(depth_u16, 5)
+        depth_u16[(depth_u16 == 0) & (hole_fill > 0) & (hole_fill < 60000)] = hole_fill[(depth_u16 == 0) & (hole_fill > 0) & (hole_fill < 60000)]
+        depth = depth_u16.astype(np.float32)
+        if is_mm:
+            depth /= 1000.0
         invalid = (depth <= 0) | (depth < self.config.min_depth) | (depth > self.config.max_depth)
         depth[invalid] = np.nan
 
@@ -258,7 +263,7 @@ class StereoPointCloud(Module):
         vk_r       = np.floor(xyz_ronly / self.config.vox_size).astype(np.int32)
         _, first_r = np.unique(_pack(vk_r), return_index=True)
         xyz_vox_r  = xyz_ronly[first_r]
-        xyz_for_map = xyz_vox_r
+        xyz_for_map = xyz_vox_r[xyz_vox_r[:, 2] > self._world_floor_z + self.config.floor_margin]
 
         pts_snap = None
         with self._lock:
