@@ -221,12 +221,12 @@ class StereoPointCloud(Module):
         xyz_cam   = xyz_opt @ _R_OPT_TO_LINK.T
         xyz_world = (xyz_cam @ R.T + t).astype(np.float32)
 
-        # FIX: calibrate the floor on GRAVITY-ALIGNED points (xyz_world - t ==
-        # xyz_cam @ R.T), not raw camera_link points. In the raw frame any
-        # mount pitch turns the floor into a slanted plane, the z-histogram
-        # smears, and the estimated height is wrong — which is why the floor
-        # cut used to slice obstacles at the wrong height.
-        self._floor_calib.update(xyz_world - t)
+        # Calibrate on xyz_cam (camera_link, Z=up). For a level mount the floor
+        # is always at z_cam == -cam_height regardless of horizontal distance,
+        # so floor_z is always negative and cam_height always positive.
+        # Using xyz_world - t (Madgwick-rotated) biases the estimate as the
+        # filter drifts from identity over the first ~5 s.
+        self._floor_calib.update(xyz_cam)
 
         # FIX (rerun black plane): publish with the floor at z = 0. The rest
         # of dimos assumes this datum — the rerun viewer's ground grid/floor
