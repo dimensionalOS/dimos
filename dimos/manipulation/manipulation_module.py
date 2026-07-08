@@ -626,11 +626,36 @@ class ManipulationModule(Module):
             logger.error("Failed to resolve generated plan: %s", exc)
             return None
 
+        selected_joint_names = tuple(plan.path[0].name) if plan.path else ()
+        try:
+            assert_global_joint_names(selected_joint_names)
+        except ValueError as exc:
+            logger.error("Cannot project plan: %s", exc)
+            return None
+        if any(
+            len(waypoint.name) != len(waypoint.position)
+            or tuple(waypoint.name) != selected_joint_names
+            for waypoint in plan.path
+        ):
+            logger.error("Cannot project plan: inconsistent waypoint joint names")
+            return None
+        selected_joint_indices = dict(
+            zip(selected_joint_names, range(len(selected_joint_names)), strict=True)
+        )
+        selected_joint_set = set(selected_joint_names)
+        waypoint_positions = [
+            [float(position) for position in waypoint.position] for waypoint in plan.path
+        ]
+
         for robot_name in affected:
             robot = self._get_robot(robot_name)
             if robot is None:
                 return None
             resolved_name, robot_id, config, _ = robot
+            if not waypoint_positions:
+                paths[resolved_name] = []
+                continue
+
             current = self._world_monitor.get_current_joint_state(robot_id)
             current_by_name = (
                 dict(zip(current.name, current.position, strict=False))
@@ -638,39 +663,33 @@ class ManipulationModule(Module):
                 else {}
             )
             global_joint_names = make_global_joint_names(resolved_name, config.joint_names)
-            local_path: JointPath = []
+            joint_pairs = list(zip(config.joint_names, global_joint_names, strict=True))
+            try:
+                base_positions = [
+                    0.0 if global_name in selected_joint_set else float(current_by_name[local_name])
+                    for local_name, global_name in joint_pairs
+                ]
+            except KeyError as exc:
+                logger.error(
+                    "Cannot project plan for '%s': missing joint '%s'",
+                    resolved_name,
+                    exc.args[0],
+                )
+                return None
+            overlay_indices = [
+                (local_index, selected_joint_indices[global_name])
+                for local_index, (_, global_name) in enumerate(joint_pairs)
+                if global_name in selected_joint_indices
+            ]
 
-            for waypoint in plan.path:
-                if len(waypoint.name) != len(waypoint.position):
-                    logger.error(
-                        "Cannot project plan for '%s': waypoint has %d names but %d positions",
-                        resolved_name,
-                        len(waypoint.name),
-                        len(waypoint.position),
-                    )
-                    return None
-                try:
-                    assert_global_joint_names(waypoint.name)
-                except ValueError as exc:
-                    logger.error("Cannot project plan for '%s': %s", resolved_name, exc)
-                    return None
-                selected_positions = dict(zip(waypoint.name, waypoint.position, strict=True))
-                positions: list[float] = []
-                for local_name, global_name in zip(
-                    config.joint_names, global_joint_names, strict=True
-                ):
-                    if global_name in selected_positions:
-                        positions.append(float(selected_positions[global_name]))
-                    elif local_name in current_by_name:
-                        positions.append(float(current_by_name[local_name]))
-                    else:
-                        logger.error(
-                            "Cannot project plan for '%s': missing joint '%s'",
-                            resolved_name,
-                            global_name,
-                        )
-                        return None
-                local_path.append(JointState(name=list(config.joint_names), position=positions))
+            local_path: JointPath = []
+            for waypoint_positions_by_joint in waypoint_positions:
+                projected_positions = base_positions.copy()
+                for local_index, selected_index in overlay_indices:
+                    projected_positions[local_index] = waypoint_positions_by_joint[selected_index]
+                local_path.append(
+                    JointState(name=list(config.joint_names), position=projected_positions)
+                )
             paths[resolved_name] = local_path
         return paths
 
