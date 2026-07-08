@@ -83,6 +83,8 @@ class MarkerLocalizationModule(Module):
         if not self._marker_map or info is None:
             return
         detections = detect_markers(msg.to_grayscale().as_numpy(), self._detector)
+        if not detections:
+            return  # no tags in view: the normal case, not worth logging
         pose = localize_from_detections(detections, self._marker_map, info, self._cfg, msg.ts)
         if pose is None:
             logger.warning(f"MarkerLocalizationModule: gate rejected ({len(detections)} tags seen)")
