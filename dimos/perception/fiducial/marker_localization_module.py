@@ -48,6 +48,9 @@ class MarkerLocalizationModuleConfig(ModuleConfig):
     marker_length_m: float = Field(..., gt=0.0)
     min_tags: int = Field(1, ge=1)  # tags that must clear the gate before a fix is trusted
     max_reprojection_error_px: float = Field(3.0, gt=0.0)
+    # best-vs-runner-up IPPE candidate reprojection ratio below which a tag's
+    # view is mirror-ambiguous and rejected; 1.0 disables (see LocalizationConfig)
+    ambiguity_ratio_min: float = Field(2.0, ge=1.0)
     camera_info: CameraInfo | None = None  # static, MarkerDetectionStreamModule convention
     camera_optical_frame: str = OPTICAL_FRAME
 
@@ -65,6 +68,7 @@ class MarkerLocalizationModule(Module):
             c.marker_length_m,
             min_tags=c.min_tags,
             max_reprojection_error_px=c.max_reprojection_error_px,
+            ambiguity_ratio_min=c.ambiguity_ratio_min,
         )
 
     @rpc
