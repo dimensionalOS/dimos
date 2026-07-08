@@ -231,7 +231,7 @@ def _stereo_nav_blueprint():
         rrb.Spatial3DView(
             origin="world",
             background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
-            line_grid=rrb.LineGrid3D(plane=rr.components.Plane3D.XY),  # z=0
+            line_grid=rrb.LineGrid3D(visible=False),
         )
     )
 
