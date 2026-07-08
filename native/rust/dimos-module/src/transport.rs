@@ -35,8 +35,8 @@ pub trait Transport: Send + Sync + 'static {
         on_msg: Dispatch,
     ) -> impl Future<Output = io::Result<()>> + Send;
 
-    /// Apply per-channel publisher QoS sent by the coordinator (keyed by
-    /// channel). The value is the `qos` object from the stdin config, or null
-    /// when absent. Transports without per-topic QoS ignore it.
+    /// Apply the per-channel publisher QoS the coordinator sends. The value is
+    /// the `qos` object from the stdin config, or null when absent. Transports
+    /// without per-topic QoS ignore it.
     fn set_publisher_qos(&self, _qos: &serde_json::Value) {}
 }

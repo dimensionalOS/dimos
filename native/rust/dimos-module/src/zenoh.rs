@@ -83,7 +83,9 @@ impl ZenohTransport {
             .and_then(|map| map.get(channel))
             .cloned()
             .unwrap_or_default();
-        let mut builder = self.session.declare_publisher(channel.to_string());
+        let mut builder = self
+            .session
+            .declare_publisher(zenoh_key(channel).to_string());
         if let Some(congestion_control) = qos.congestion_control {
             builder = builder.congestion_control(congestion_control);
         }
@@ -115,7 +117,7 @@ impl Transport for ZenohTransport {
 
     async fn subscribe(&self, channel: &str, on_msg: Dispatch) -> io::Result<()> {
         self.session
-            .declare_subscriber(channel.to_string())
+            .declare_subscriber(zenoh_key(channel).to_string())
             .callback(move |sample| on_msg(&sample.payload().to_bytes()))
             .background()
             .await
@@ -129,6 +131,12 @@ impl Transport for ZenohTransport {
 
 fn to_io(e: ::zenoh::Error) -> io::Error {
     io::Error::other(e)
+}
+
+/// Zenoh keys can't start with '/'. Strips the leading slash so an unmapped
+/// port's `/{port}` fallback is a valid inert key rather than a fatal error.
+fn zenoh_key(channel: &str) -> &str {
+    channel.strip_prefix('/').unwrap_or(channel)
 }
 
 #[cfg(test)]
@@ -209,6 +217,17 @@ mod tests {
     #[test]
     fn parse_channel_qos_ignores_non_object() {
         assert!(parse_channel_qos(&serde_json::Value::Null).is_empty());
+    }
+
+    #[test]
+    fn zenoh_key_strips_only_the_leading_slash_fallback() {
+        // Unmapped-port fallback `/{port}` is invalid as a Zenoh key; strip it.
+        assert_eq!(zenoh_key("/cmd_vel"), "cmd_vel");
+        // Mapped channels are already slash-free and pass through untouched.
+        assert_eq!(
+            zenoh_key("dimos/cmd_vel/geometry_msgs.Twist"),
+            "dimos/cmd_vel/geometry_msgs.Twist"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
