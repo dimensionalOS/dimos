@@ -20,7 +20,7 @@ import math
 import os
 from typing import Any
 
-from dimos.constants import STATE_DIR
+from dimos.constants import RECORDINGS_DIR
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.stream import In
@@ -72,7 +72,7 @@ def _recording_db_path() -> str:
     stamp = (
         now.strftime("%Y-%m-%d") + "_" + now.strftime("%I-%M%p").lower() + "-" + now.strftime("%Z")
     )
-    return str(STATE_DIR / "recordings" / stamp / "mem2.db")
+    return str(RECORDINGS_DIR / stamp / "mem2.db")
 
 
 def _render_global_map(msg: Any) -> Any:
