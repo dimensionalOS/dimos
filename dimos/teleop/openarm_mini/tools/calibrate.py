@@ -32,12 +32,10 @@ from dimos.teleop.openarm_mini.calibration import (
     OPENARM_MINI_ARM_JOINT_NAMES,
     OpenArmMiniCalibration,
     OpenArmMiniMotorCalibration,
-    load_calibration,
-    save_calibration,
-)
-from dimos.teleop.openarm_mini.config import (
     OpenArmMiniSide,
     default_calibration_path,
+    load_calibration,
+    save_calibration,
 )
 from dimos.teleop.openarm_mini.feetech import FeetechLeaderReader, _calibrated_motor_radians
 from dimos.teleop.openarm_mini.mapping import map_side_readings

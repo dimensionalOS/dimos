@@ -29,7 +29,7 @@ from dimos.robot.manipulators.openarm.config import (
     openarm_single_model_config,
 )
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
-from dimos.teleop.openarm_mini.config import OpenArmMiniSide
+from dimos.teleop.openarm_mini.calibration import OpenArmMiniSide
 from dimos.teleop.openarm_mini.teleop_module import OpenArmMiniTeleopModule
 
 

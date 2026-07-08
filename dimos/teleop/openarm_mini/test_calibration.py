@@ -23,15 +23,13 @@ from dimos.constants import STATE_DIR
 from dimos.teleop.openarm_mini.calibration import (
     OPENARM_MINI_ARM_JOINT_NAMES,
     OpenArmMiniCalibration,
+    OpenArmMiniCalibrationError,
     OpenArmMiniMotorCalibration,
+    default_calibration_path,
     load_calibration,
     save_calibration,
 )
-from dimos.teleop.openarm_mini.config import (
-    OpenArmMiniCalibrationError,
-    default_calibration_path,
-    missing_dependency_error,
-)
+from dimos.teleop.openarm_mini.feetech import missing_dependency_error
 from dimos.teleop.openarm_mini.teleop_module import OpenArmMiniTeleopModuleConfig
 
 

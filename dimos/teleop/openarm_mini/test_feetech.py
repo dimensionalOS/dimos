@@ -20,9 +20,9 @@ from types import ModuleType
 
 import pytest
 
-from dimos.teleop.openarm_mini.config import OpenArmMiniDependencyError
 from dimos.teleop.openarm_mini.feetech import (
     FeetechLeaderReader,
+    OpenArmMiniDependencyError,
     _create_sdk_handlers,
     _read_motor_position,
 )

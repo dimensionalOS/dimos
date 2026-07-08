@@ -21,8 +21,7 @@ from dataclasses import dataclass
 
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.openarm.config import openarm_joints
-from dimos.teleop.openarm_mini.calibration import OPENARM_MINI_ARM_JOINT_NAMES
-from dimos.teleop.openarm_mini.config import OpenArmMiniSide
+from dimos.teleop.openarm_mini.calibration import OPENARM_MINI_ARM_JOINT_NAMES, OpenArmMiniSide
 
 LEADER_JOINT_NAMES = OPENARM_MINI_ARM_JOINT_NAMES
 LEADER_MOTOR_NAMES = LEADER_JOINT_NAMES

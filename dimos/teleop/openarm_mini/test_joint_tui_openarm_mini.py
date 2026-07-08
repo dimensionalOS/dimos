@@ -17,6 +17,7 @@ from __future__ import annotations
 from io import StringIO
 import math
 from pathlib import Path
+import re
 
 import pytest
 from rich.console import Console
@@ -133,10 +134,11 @@ def test_resolve_calibration_path_uses_side_default(
 def test_joint_tui_cli_uses_side_and_single_port_without_side_specific_ports() -> None:
     runner = CliRunner()
     result = runner.invoke(_joint_tui_app(), ["--help"])
+    output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
 
     assert result.exit_code == 0
-    assert "--side" in result.output
-    assert "--port" in result.output
-    assert "--calibration-path" in result.output
-    assert "--port-left" not in result.output
-    assert "--port-right" not in result.output
+    assert "--side" in output
+    assert "--port" in output
+    assert "--calibration-path" in output
+    assert "--port-left" not in output
+    assert "--port-right" not in output

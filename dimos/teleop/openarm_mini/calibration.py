@@ -21,13 +21,15 @@ from typing import Literal, Self
 
 from pydantic import StrictBool, StrictInt, ValidationError, model_validator
 
+from dimos.constants import STATE_DIR
 from dimos.protocol.service.spec import BaseConfig
-from dimos.teleop.openarm_mini.config import OpenArmMiniCalibrationError, OpenArmMiniSide
 
 CALIBRATION_FILENAME = "calibration.json"
 FEETECH_RAW_MIN = 0
 FEETECH_RAW_MAX = 4095
 FEETECH_POSITION_SPAN = FEETECH_RAW_MAX - FEETECH_RAW_MIN
+OPENARM_MINI_STATE_DIR = STATE_DIR / "teleop" / "openarm_mini"
+OpenArmMiniSide = Literal["left", "right"]
 OPENARM_MINI_ARM_JOINT_NAMES = (
     "joint_1",
     "joint_2",
@@ -38,6 +40,15 @@ OPENARM_MINI_ARM_JOINT_NAMES = (
     "joint_7",
 )
 OPENARM_MINI_MOTOR_NAMES = OPENARM_MINI_ARM_JOINT_NAMES
+
+
+def default_calibration_path(side: OpenArmMiniSide) -> Path:
+    """Return the default persistent calibration directory for an OpenArm Mini side."""
+    return OPENARM_MINI_STATE_DIR / side
+
+
+class OpenArmMiniCalibrationError(RuntimeError):
+    """Raised when OpenArm Mini calibration is missing or invalid."""
 
 
 class OpenArmMiniMotorCalibration(BaseConfig):

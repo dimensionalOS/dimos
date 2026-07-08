@@ -25,11 +25,27 @@ from dimos.teleop.openarm_mini.calibration import (
     OPENARM_MINI_ARM_JOINT_NAMES,
     OpenArmMiniCalibration,
     OpenArmMiniMotorCalibration,
+    OpenArmMiniSide,
 )
-from dimos.teleop.openarm_mini.config import OpenArmMiniSide, missing_dependency_error
 
+OPENARM_MINI_TELEOP_EXTRA = "openarm-mini-teleop"
+OPENARM_MINI_DEFAULT_BAUDRATE = 1_000_000
 FEETECH_COMM_SUCCESS = 0
 _FEETECH_ENCODER_TICKS = FEETECH_POSITION_SPAN + 1
+
+
+class OpenArmMiniDependencyError(ImportError):
+    """Raised when the optional Feetech SDK dependency is unavailable."""
+
+
+def missing_dependency_error() -> OpenArmMiniDependencyError:
+    """Build the localized missing dependency error for OpenArm Mini teleop."""
+    return OpenArmMiniDependencyError(
+        "OpenArm Mini teleop requires the Feetech SDK. Install it with "
+        "`uv sync --extra openarm`, "
+        f"`uv sync --extra {OPENARM_MINI_TELEOP_EXTRA}`, or "
+        f"`pip install 'dimos[{OPENARM_MINI_TELEOP_EXTRA}]'`."
+    )
 
 
 def _create_sdk_handlers(port: str) -> tuple[Any, Any]:

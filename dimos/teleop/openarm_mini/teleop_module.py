@@ -23,22 +23,24 @@ from typing import Annotated, Literal, Self
 from pydantic import Field, model_validator
 
 from dimos.robot.manipulators.openarm.config import openarm_joints
-from dimos.teleop.openarm_mini.calibration import load_calibration
-from dimos.teleop.openarm_mini.config import (
-    OPENARM_MINI_DEFAULT_BAUDRATE,
-    OPENARM_MINI_UNCONFIGURED_PORT,
+from dimos.teleop.openarm_mini.calibration import (
     OpenArmMiniCalibrationError,
-    OpenArmMiniDependencyError,
     OpenArmMiniSide,
     default_calibration_path,
+    load_calibration,
 )
-from dimos.teleop.openarm_mini.feetech import OpenArmMiniLeaderReader
+from dimos.teleop.openarm_mini.feetech import (
+    OPENARM_MINI_DEFAULT_BAUDRATE,
+    OpenArmMiniDependencyError,
+    OpenArmMiniLeaderReader,
+)
 from dimos.teleop.openarm_mini.mapping import combine_side_commands, map_side_readings
 from dimos.teleop.runtime.teleop_module import TeleopModule, TeleopModuleConfig
 from dimos.teleop.runtime.types import TeleopCommand
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+OPENARM_MINI_UNCONFIGURED_PORT = ""
 OpenArmMiniTargetJointNames = Annotated[tuple[str, ...], Field(min_length=7, max_length=7)]
 
 

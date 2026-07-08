@@ -34,14 +34,15 @@ import typer
 from dimos.teleop.openarm_mini.calibration import (
     OPENARM_MINI_ARM_JOINT_NAMES,
     OpenArmMiniCalibration,
-    load_calibration,
-)
-from dimos.teleop.openarm_mini.config import (
-    OPENARM_MINI_DEFAULT_BAUDRATE,
     OpenArmMiniSide,
     default_calibration_path,
+    load_calibration,
 )
-from dimos.teleop.openarm_mini.feetech import FeetechLeaderReader, _calibrated_motor_radians
+from dimos.teleop.openarm_mini.feetech import (
+    OPENARM_MINI_DEFAULT_BAUDRATE,
+    FeetechLeaderReader,
+    _calibrated_motor_radians,
+)
 from dimos.teleop.openarm_mini.mapping import map_side_readings
 from dimos.teleop.openarm_mini.tools.calibrate import DEFAULT_MOTOR_IDS
 

@@ -25,7 +25,7 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.cli.dimos import load_config_args
 from dimos.robot.manipulators.openarm.blueprints import teleop
-from dimos.teleop.openarm_mini.config import OPENARM_MINI_DEFAULT_BAUDRATE
+from dimos.teleop.openarm_mini.feetech import OPENARM_MINI_DEFAULT_BAUDRATE
 from dimos.teleop.openarm_mini.teleop_module import (
     OpenArmMiniTeleopModule,
     OpenArmMiniTeleopModuleConfig,
