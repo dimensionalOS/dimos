@@ -117,7 +117,8 @@ def _sim_module() -> Any:
     from mujoco_playground._src import mjx_env
 
     mjx_env.ensure_menagerie_exists()
-    robot_meshdir = mjx_env.MENAGERIE_PATH / "unitree_go1" / "assets"
+    # str(): MENAGERIE_PATH is an etils GPath, which pydantic rejects.
+    robot_meshdir = str(mjx_env.MENAGERIE_PATH / "unitree_go1" / "assets")
 
     return MujocoSimModule.blueprint(
         scene_xml=scene_xml,
