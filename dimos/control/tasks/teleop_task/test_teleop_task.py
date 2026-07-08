@@ -27,7 +27,7 @@ def test_on_teleop_buttons_delegates_to_on_buttons() -> None:
         seen.append(msg)
         return True
 
-    task.on_buttons = fake_on_buttons  # type: ignore[method-assign]
+    task.on_buttons = fake_on_buttons
     sentinel = object()
-    assert task.on_teleop_buttons(sentinel, 0.0) is True  # type: ignore[arg-type]
+    assert task.on_teleop_buttons(sentinel, 0.0) is True
     assert seen == [sentinel]

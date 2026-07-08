@@ -182,7 +182,7 @@ def test_bindings_for_unknown_type_is_empty() -> None:
     assert bindings.consumes == ()
     assert not bindings.exposes
     with pytest.raises(TypeError):
-        bindings.exposes["poison"] = "x:Y"  # type: ignore[index]
+        bindings.exposes["poison"] = "x:Y"
 
 
 def test_register_bindings_runtime_and_conflict() -> None:
@@ -258,9 +258,9 @@ def test_create_fails_loudly_on_missing_handler() -> None:
     with pytest.raises(
         TypeError, match=r"fake_missing_handler.+on_joint_command.+fake_manifest\._registry"
     ):
-        reg.create("fake_missing_handler", None)  # type: ignore[arg-type]
+        reg.create("fake_missing_handler", None)
 
     reg.register_path("fake_with_handler", f"{__name__}:_make_handled_task")
     reg.register_bindings("fake_with_handler", consumes=card)
-    task = reg.create("fake_with_handler", None)  # type: ignore[arg-type]
+    task = reg.create("fake_with_handler", None)
     assert isinstance(task, _HandledTask)
