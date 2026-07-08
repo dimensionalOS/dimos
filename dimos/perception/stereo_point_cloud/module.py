@@ -29,8 +29,8 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.stereo_point_cloud.utils import (
-    _FloorCalibrator,
     _R_OPT_TO_LINK,
+    _FloorCalibrator,
     _gradient_mask,
     _pack,
     _raycast_free_keys,
@@ -44,17 +44,17 @@ _DEPTH_MM_THRESHOLD = 100
 
 
 class Config(ModuleConfig):
-    min_depth: float          = 0.1
-    max_depth: float          = 8.0
+    min_depth: float = 0.1
+    max_depth: float = 8.0
     gradient_threshold: float = 0.30
-    vox_size: float           = 0.020
-    global_vox_size: float    = 0.020
-    floor_margin: float       = 0.03
+    vox_size: float = 0.020
+    global_vox_size: float = 0.020
+    floor_margin: float = 0.03
     global_floor_margin: float = 0.04
-    max_global_pts: int       = 500_000
-    publish_every: int        = 1
-    world_frame: str          = "world"
-    madgwick_beta: float      = 0.033
+    max_global_pts: int = 500_000
+    publish_every: int = 1
+    world_frame: str = "world"
+    madgwick_beta: float = 0.033
 
 
 class StereoPointCloud(Module):
@@ -62,28 +62,28 @@ class StereoPointCloud(Module):
 
     config: Config
 
-    depth_image:       In[Image]
+    depth_image: In[Image]
     depth_camera_info: In[CameraInfo]
 
     frame_cloud: Out[PointCloud2]
-    global_map:  Out[PointCloud2]
+    global_map: Out[PointCloud2]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._lock                       = threading.Lock()
+        self._lock = threading.Lock()
         self._latest_info: CameraInfo | None = None
-        self._floor_calib                = _FloorCalibrator()
+        self._floor_calib = _FloorCalibrator()
         self._madgwick: MadgwickFilter | None = None
-        self._odom                       = PointCloudOdometry()
-        self._imu_lock                   = threading.Lock()
-        self._last_accel                 = np.array([0.0, 0.0, -9.81], dtype=np.float32)
-        self._R_imu_to_link: np.ndarray  = np.eye(3, dtype=np.float32)
-        self._motion_sensor              = None
-        self._acc_pts: np.ndarray        = np.empty((0, 3), dtype=np.float32)
-        self._map_ready                  = False
-        self._world_floor_z: float       = 0.0
-        self._frame                      = 0
-        self._warned_no_intrinsics       = False
+        self._odom = PointCloudOdometry()
+        self._imu_lock = threading.Lock()
+        self._last_accel = np.array([0.0, 0.0, -9.81], dtype=np.float32)
+        self._R_imu_to_link: np.ndarray = np.eye(3, dtype=np.float32)
+        self._motion_sensor = None
+        self._acc_pts: np.ndarray = np.empty((0, 3), dtype=np.float32)
+        self._map_ready = False
+        self._world_floor_z: float = 0.0
+        self._frame = 0
+        self._warned_no_intrinsics = False
 
     @rpc
     def start(self) -> None:
@@ -110,7 +110,7 @@ class StereoPointCloud(Module):
             import pyrealsense2 as rs
         except ImportError:
             return False
-        ctx     = rs.context()
+        ctx = rs.context()
         devices = ctx.query_devices()
         if not devices:
             return False
@@ -128,16 +128,16 @@ class StereoPointCloud(Module):
         for sensor in device.query_sensors():
             if not sensor.is_motion_sensor():
                 continue
-            all_profiles   = sensor.get_stream_profiles()
-            gyro_profiles  = [p for p in all_profiles if p.stream_type() == rs.stream.gyro]
+            all_profiles = sensor.get_stream_profiles()
+            gyro_profiles = [p for p in all_profiles if p.stream_type() == rs.stream.gyro]
             accel_profiles = [p for p in all_profiles if p.stream_type() == rs.stream.accel]
             if not gyro_profiles or not accel_profiles:
                 break
-            gyro_p  = max(gyro_profiles,  key=lambda p: p.fps())
+            gyro_p = max(gyro_profiles, key=lambda p: p.fps())
             accel_p = max(accel_profiles, key=lambda p: p.fps())
             if depth_profile is not None:
-                ext                 = accel_p.get_extrinsics_to(depth_profile)
-                R_imu_to_depth      = np.array(ext.rotation, dtype=np.float32).reshape(3, 3)
+                ext = accel_p.get_extrinsics_to(depth_profile)
+                R_imu_to_depth = np.array(ext.rotation, dtype=np.float32).reshape(3, 3)
                 self._R_imu_to_link = _R_OPT_TO_LINK @ R_imu_to_depth
             sensor.open([gyro_p, accel_p])
             sensor.start(self._on_motion)
@@ -149,18 +149,21 @@ class StereoPointCloud(Module):
     def _on_motion(self, frame: Any) -> None:
         try:
             import pyrealsense2 as rs
+
             st = frame.get_profile().stream_type()
             if st == rs.stream.gyro:
-                g        = frame.as_motion_frame().get_motion_data()
+                g = frame.as_motion_frame().get_motion_data()
                 gyro_lnk = self._R_imu_to_link @ np.array([g.x, g.y, g.z], dtype=np.float32)
-                ts_s     = frame.get_timestamp() / 1000.0
+                ts_s = frame.get_timestamp() / 1000.0
                 with self._imu_lock:
                     if self._madgwick is not None:
                         self._madgwick.update(gyro_lnk, self._last_accel, ts_s)
             elif st == rs.stream.accel:
                 a = frame.as_motion_frame().get_motion_data()
                 with self._imu_lock:
-                    self._last_accel = self._R_imu_to_link @ np.array([a.x, a.y, a.z], dtype=np.float32)
+                    self._last_accel = self._R_imu_to_link @ np.array(
+                        [a.x, a.y, a.z], dtype=np.float32
+                    )
         except Exception:
             pass
 
@@ -168,7 +171,7 @@ class StereoPointCloud(Module):
         with self._lock:
             self._latest_info = info
 
-    def _on_depth(self, img: Image) -> None:  # noqa: C901
+    def _on_depth(self, img: Image) -> None:
         with self._lock:
             info = self._latest_info
 
@@ -191,31 +194,39 @@ class StereoPointCloud(Module):
             fx, fy, cx, cy = float(K[0, 0]), float(K[1, 1]), float(K[0, 2]), float(K[1, 2])
         else:
             if not self._warned_no_intrinsics:
-                logger.warning("StereoPointCloud: no camera intrinsics — falling back to rough guess, check depth_camera_info is connected")
+                logger.warning(
+                    "StereoPointCloud: no camera intrinsics — falling back to rough guess, check depth_camera_info is connected"
+                )
                 self._warned_no_intrinsics = True
             fx = fy = float(max(H, W)) / 2.0
-            cx, cy  = W / 2.0, H / 2.0
+            cx, cy = W / 2.0, H / 2.0
 
         stable = _gradient_mask(depth, self.config.gradient_threshold)
-        valid  = np.isfinite(depth) & stable
+        valid = np.isfinite(depth) & stable
         if not valid.any():
             return
 
-        uu, vv  = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32))
-        dd      = depth[valid]
-        xyz_opt = np.column_stack([
-            (uu[valid] - cx) * dd / fx,
-            (vv[valid] - cy) * dd / fy,
-            dd,
-        ]).astype(np.float32)
+        uu, vv = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32))
+        dd = depth[valid]
+        xyz_opt = np.column_stack(
+            [
+                (uu[valid] - cx) * dd / fx,
+                (vv[valid] - cy) * dd / fy,
+                dd,
+            ]
+        ).astype(np.float32)
 
         with self._imu_lock:
-            R = self._madgwick.R.copy() if self._madgwick is not None else np.eye(3, dtype=np.float32)
+            R = (
+                self._madgwick.R.copy()
+                if self._madgwick is not None
+                else np.eye(3, dtype=np.float32)
+            )
         t = self._odom.t
 
-        xyz_cam   = xyz_opt @ _R_OPT_TO_LINK.T
+        xyz_cam = xyz_opt @ _R_OPT_TO_LINK.T
         xyz_world = (xyz_cam @ R.T + t).astype(np.float32)
-        cam_z     = float(t[2])
+        cam_z = float(t[2])
 
         self._floor_calib.update(xyz_cam)
 
@@ -227,14 +238,14 @@ class StereoPointCloud(Module):
         #     keep = np.ones(len(xyz_cam), dtype=bool)
 
         xyz_world_kept = xyz_world
-        xyz_cam_kept   = xyz_cam
+        xyz_cam_kept = xyz_cam
         if not len(xyz_world_kept):
             self._frame += 1
             return
 
-        vk       = np.floor(xyz_world_kept / self.config.vox_size).astype(np.int32)
+        vk = np.floor(xyz_world_kept / self.config.vox_size).astype(np.int32)
         _, first = np.unique(_pack(vk), return_index=True)
-        xyz_vox  = xyz_world_kept[first]
+        xyz_vox = xyz_world_kept[first]
 
         self.frame_cloud.publish(
             PointCloud2.from_numpy(xyz_vox, frame_id=self.config.world_frame, timestamp=img.ts)
@@ -248,36 +259,46 @@ class StereoPointCloud(Module):
             return
 
         if not self._map_ready:
-            self._map_ready     = True
+            self._map_ready = True
             self._world_floor_z = cam_z + self._floor_calib.floor_z
-            logger.info(f"StereoPointCloud: global map started — floor at Z ≈ {self._world_floor_z:.3f} m")
+            logger.info(
+                f"StereoPointCloud: global map started — floor at Z ≈ {self._world_floor_z:.3f} m"
+            )
 
         # Rotation-only frame: strip ICP translation so ±2 cm t-noise doesn't shift voxel keys
-        xyz_ronly  = xyz_vox - t
-        vk_r       = np.floor(xyz_ronly / self.config.vox_size).astype(np.int32)
+        xyz_ronly = xyz_vox - t
+        vk_r = np.floor(xyz_ronly / self.config.vox_size).astype(np.int32)
         _, first_r = np.unique(_pack(vk_r), return_index=True)
-        xyz_vox_r  = xyz_ronly[first_r]
-        xyz_for_map = xyz_vox_r[xyz_vox_r[:, 2] > self._world_floor_z + self.config.global_floor_margin]
+        xyz_vox_r = xyz_ronly[first_r]
+        xyz_for_map = xyz_vox_r[
+            xyz_vox_r[:, 2] > self._world_floor_z + self.config.global_floor_margin
+        ]
 
         pts_snap = None
         with self._lock:
             if len(self._acc_pts) > 0 and len(xyz_for_map) > 0:
                 free_keys = _raycast_free_keys(xyz_for_map, self.config.global_vox_size)
                 if len(free_keys):
-                    keys_acc      = _pack(np.floor(self._acc_pts / self.config.global_vox_size).astype(np.int32))
+                    keys_acc = _pack(
+                        np.floor(self._acc_pts / self.config.global_vox_size).astype(np.int32)
+                    )
                     self._acc_pts = self._acc_pts[~np.isin(keys_acc, free_keys)]
 
             if len(xyz_for_map):
                 self._acc_pts = (
-                    np.vstack([self._acc_pts, xyz_for_map]) if len(self._acc_pts) else xyz_for_map.copy()
+                    np.vstack([self._acc_pts, xyz_for_map])
+                    if len(self._acc_pts)
+                    else xyz_for_map.copy()
                 )
-                _, ui         = np.unique(
+                _, ui = np.unique(
                     _pack(np.floor(self._acc_pts / self.config.global_vox_size).astype(np.int32)),
                     return_index=True,
                 )
                 self._acc_pts = self._acc_pts[ui]
                 if len(self._acc_pts) > self.config.max_global_pts:
-                    keep_idx      = np.random.choice(len(self._acc_pts), self.config.max_global_pts, replace=False)
+                    keep_idx = np.random.choice(
+                        len(self._acc_pts), self.config.max_global_pts, replace=False
+                    )
                     self._acc_pts = self._acc_pts[keep_idx]
 
             self._frame += 1

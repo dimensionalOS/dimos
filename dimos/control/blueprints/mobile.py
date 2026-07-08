@@ -36,10 +36,10 @@ from dimos.control.components import (
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
-from dimos.perception.stereo_point_cloud.filtered_realsense import FilteredRealSenseCamera
 from dimos.mapping.costmapper import CostMapper
 from dimos.navigation.cmu_nav.main import cmu_nav_rerun_config, create_cmu_nav
 from dimos.navigation.movement_manager.movement_manager import MovementManager
+from dimos.perception.stereo_point_cloud.filtered_realsense import FilteredRealSenseCamera
 from dimos.perception.stereo_point_cloud.module import StereoPointCloud
 from dimos.robot.unitree.g1.config import G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
