@@ -60,10 +60,13 @@ class Config(ModuleConfig):
     publish_every: int        = 1
     world_frame: str          = "world"
     madgwick_beta: float      = 0.033
-    # Applied as z_shift before floor calibration converges so floor stays at
-    # z=0 from the first frame. Set to None for fully automatic (camera-centred
-    # until calibration fires at ~4 s).
+    # Applied as z_shift before floor calibration converges; avoids a scene
+    # snap from 0 → cam_height when the calibration fires at ~4 s.
     cam_height_prior: float   = 1.0
+    # The floor is published at this z in world frame. Set to 0.5 to align
+    # with the Rerun ground grid (Plane3D.XY.with_distance(0.5) = z=+0.5),
+    # so all obstacles appear above the grid. Set to 0.0 for nav-only use.
+    floor_publish_z: float    = 0.5
 
 
 class StereoPointCloud(Module):
@@ -242,12 +245,15 @@ class StereoPointCloud(Module):
         # z ≈ -1, chairs/tables/mat in between) rendered UNDER the viewer's
         # ground plane. Shift is 0 until calibration completes (~4 s), then
         # the cloud snaps up by cam_height.
+        # floor_publish_z offsets the whole cloud so the floor lands at z=0.5
+        # (the Rerun grid). Without it, floor=0 and low obstacles sit below the
+        # grid even when correctly calibrated.
         cam_h = (
             float(self._floor_calib.cam_height)  # type: ignore[arg-type]
             if self._floor_calib.ready
             else float(self.config.cam_height_prior)
         )
-        z_shift = cam_h  # floor at z=0; Rerun grid moved to z=0 in mobile.py blueprint
+        z_shift = cam_h + self.config.floor_publish_z
         z_off = np.array([0.0, 0.0, z_shift], dtype=np.float32)
 
         # Per-frame floor filter disabled — calibration cuts obstacles at wrong height.
