@@ -16,8 +16,8 @@
 """Probe an OpenArm on a SocketCAN interface.
 
 Enumerates all 8 expected Damiao motors (7 arm joints + gripper) on one CAN bus
-(classical by default, use --fd for CAN-FD), enables each, reads back one state
-frame, then disables. Phase-0 hardware-verification script.
+(CAN-FD by default, use --no-fd for classical CAN), enables each, reads back
+one state frame, then disables. Phase-0 hardware-verification script.
 
 Run AFTER bringing the bus up with dimos/robot/manipulators/openarm/scripts/openarm_can_up.sh.
 
@@ -60,7 +60,7 @@ DEFAULT_MOTORS: list[tuple[int, str]] = [
 ENABLE = bytes([0xFF] * 7 + [0xFC])
 DISABLE = bytes([0xFF] * 7 + [0xFD])
 
-FD = False  # set by --fd at runtime; defaults to classical CAN @ 1 Mbit
+FD = True  # set by CLI at runtime; defaults to CAN-FD @ 1M/5M
 
 
 def uint_to_float(x: int, lo: float, hi: float, bits: int) -> float:
@@ -149,8 +149,16 @@ def main() -> int:
     ap.add_argument("--channel", default="can0", help="SocketCAN interface (default: can0)")
     ap.add_argument(
         "--fd",
+        dest="fd",
         action="store_true",
-        help="Use CAN-FD (requires FD-capable adapter). Default is classical CAN @ 1 Mbit, which is what most gs_usb adapters support.",
+        default=True,
+        help="Use CAN-FD (default).",
+    )
+    ap.add_argument(
+        "--no-fd",
+        dest="fd",
+        action="store_false",
+        help="Use classical CAN @ 1 Mbit.",
     )
     ap.add_argument("--ids", default=None, help="Comma-separated send IDs to probe (default: 1..8)")
     ap.add_argument("--timeout", type=float, default=0.2, help="Reply timeout per motor (s)")

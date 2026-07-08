@@ -29,14 +29,14 @@ Run once per motor after CAN bring-up. The value is persistent across power
 cycles.
 
 Usage:
-    # All 8 motors on can0 (classical CAN @ 1 Mbit, default)
+    # All 8 motors on can0 (CAN-FD @ 1M/5M, default)
     python dimos/robot/manipulators/openarm/scripts/openarm_set_mit_mode.py --channel can0
 
     # Single motor
     python dimos/robot/manipulators/openarm/scripts/openarm_set_mit_mode.py --channel can0 --id 0x05
 
-    # CAN-FD (only if your adapter supports it)
-    python dimos/robot/manipulators/openarm/scripts/openarm_set_mit_mode.py --channel can0 --fd
+    # Classical CAN
+    python dimos/robot/manipulators/openarm/scripts/openarm_set_mit_mode.py --channel can0 --no-fd
 """
 
 from __future__ import annotations
@@ -99,7 +99,10 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("--channel", default="can0")
-    ap.add_argument("--fd", action="store_true", help="Use CAN-FD (default: classical CAN)")
+    ap.add_argument(
+        "--fd", dest="fd", action="store_true", default=True, help="Use CAN-FD (default)"
+    )
+    ap.add_argument("--no-fd", dest="fd", action="store_false", help="Use classical CAN")
     ap.add_argument(
         "--id", type=lambda s: int(s, 0), default=None, help="Single send ID (default: all 8)"
     )

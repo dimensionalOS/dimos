@@ -19,6 +19,7 @@ import time
 import pytest
 
 from dimos.hardware.manipulators.openarm.adapter import OpenArmAdapter, register
+from dimos.hardware.manipulators.openarm.driver import MotorType
 from dimos.hardware.manipulators.registry import AdapterRegistry
 from dimos.hardware.manipulators.spec import ControlMode, ManipulatorAdapter
 
@@ -106,6 +107,20 @@ def test_side_selects_openarm_identity_limits_and_modes() -> None:
     assert left.set_control_mode(ControlMode.CARTESIAN) is False
 
 
+def test_openarm_v10_motor_types_align_with_reference() -> None:
+    adapter = OpenArmAdapter(gravity_comp=False)
+
+    assert [motor.motor_type for motor in adapter._motors] == [
+        MotorType.DM8009,
+        MotorType.DM8009,
+        MotorType.DM4340,
+        MotorType.DM4340,
+        MotorType.DM4310,
+        MotorType.DM4310,
+        MotorType.DM4310,
+    ]
+
+
 def test_disconnected_surface_returns_safe_defaults() -> None:
     adapter = OpenArmAdapter(gravity_comp=False)
 
@@ -126,9 +141,11 @@ def test_lifecycle_state_commands_and_disconnect(monkeypatch: pytest.MonkeyPatch
     bus = FakeOpenArmBus.last
     assert bus is not None
     assert bus.opened is True
+    assert bus.fd is True
 
     assert adapter.write_enable(True) is True
     assert adapter.read_enabled() is True
+    assert bus.mit_commands[-1] == [(0.0, 0.0, 0.0, 0.0, 0.0)] * 7
     assert [round(position, 1) for position in adapter.read_joint_positions()] == [
         0.0,
         0.1,

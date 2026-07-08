@@ -49,11 +49,12 @@ def _socketcan_iface_up(name: str) -> bool:
         return False
 
 
-# OpenArm v10 BOM — (send_id, MotorType) per joint, derived from the torque
-# column of data/openarm_description/config/arm/v10/joint_limits.yaml.
+# OpenArm v10 BOM — (send_id, MotorType) per joint.  Matches the dm_control_rs
+# OpenArm reference example: joints 1-2 are DM8009, joints 3-4 are DM4340, and
+# joints 5-7 are DM4310.
 _OPENARM_V10_ARM_MOTORS: list[tuple[int, MotorType]] = [
-    (0x01, MotorType.DM8006),  # joint1
-    (0x02, MotorType.DM8006),  # joint2
+    (0x01, MotorType.DM8009),  # joint1
+    (0x02, MotorType.DM8009),  # joint2
     (0x03, MotorType.DM4340),  # joint3
     (0x04, MotorType.DM4340),  # joint4
     (0x05, MotorType.DM4310),  # joint5
@@ -93,7 +94,7 @@ class OpenArmAdapter:
         dof: int = 7,
         *,
         side: str = "left",
-        fd: bool = False,
+        fd: bool = True,
         interface: str = "socketcan",
         kp: list[float] | None = None,
         kd: list[float] | None = None,
@@ -135,7 +136,8 @@ class OpenArmAdapter:
         if self._interface == "socketcan" and not _socketcan_iface_up(self._address):
             print(
                 f"ERROR: SocketCAN interface '{self._address}' is not UP.\n"
-                f"  Run: sudo ip link set {self._address} up type can bitrate 1000000\n"
+                f"  Run: sudo ip link set {self._address} up type can "
+                "bitrate 1000000 dbitrate 5000000 fd on\n"
                 f"  (or: sudo ./dimos/robot/manipulators/openarm/scripts/openarm_can_up.sh {self._address})"
             )
             return False
@@ -312,6 +314,25 @@ class OpenArmAdapter:
         limits = [m.limits for m in self._motors]  # (p_max, v_max, t_max)
         return [float(np.clip(tau_g[i], -lim[2], lim[2])) for i, lim in enumerate(limits)]
 
+    def _send_zero_torque_poll(self) -> None:
+        if self._bus is None:
+            raise RuntimeError("bus not connected")
+        self._bus.send_mit_many([(0.0, 0.0, 0.0, 0.0, 0.0)] * self._dof)
+
+    def _prime_state_cache_after_enable(self, timeout_s: float = 0.5) -> bool:
+        # Damiao motors generally report state only in response to a command or
+        # refresh frame.  Seed the RX cache with zero-torque MIT polls before the
+        # control stack tries to read initial positions.
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            self._send_zero_torque_poll()
+            try:
+                self._states_or_raise()
+                return True
+            except RuntimeError:
+                time.sleep(0.01)
+        return False
+
     def write_joint_positions(
         self,
         positions: list[float],
@@ -398,6 +419,13 @@ class OpenArmAdapter:
         except Exception:
             return False
         self._enabled = enable
+        if enable and not self._prime_state_cache_after_enable():
+            try:
+                self._bus.disable_all()
+            except Exception:
+                pass
+            self._enabled = False
+            return False
         return True
 
     def read_enabled(self) -> bool:

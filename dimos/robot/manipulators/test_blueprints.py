@@ -266,6 +266,7 @@ def test_openarm_mini_right_teleop_uses_real_follower_when_can_port_is_set() -> 
     assert hardware.address == "can-test"
     assert hardware.adapter_kwargs["side"] == "right"
     assert hardware.adapter_kwargs["auto_set_mit_mode"] is True
+    assert hardware.adapter_kwargs["fd"] is True
     assert hardware.adapter_kwargs["kp"] == _dual_gain_kp()
     assert hardware.adapter_kwargs["kd"] == _dual_gain_kd()
 

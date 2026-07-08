@@ -234,6 +234,26 @@ def test_send_mit_many_fans_out_one_per_motor() -> None:
         listener.shutdown()
 
 
+def test_fd_enabled_bus_still_sends_classical_damiao_frames() -> None:
+    motors = [DamiaoMotor(0x01, MotorType.DM8009)]
+    bus = OpenArmBus(
+        channel="openarm-test-fd-classical", motors=motors, fd=True, interface="virtual"
+    )
+    listener = can.Bus(interface="virtual", channel="openarm-test-fd-classical", fd=True)
+    try:
+        bus.open()
+        bus.send_mit_many([(0.1, 0.0, 10.0, 0.5, 0.0)])
+        msg = listener.recv(timeout=0.5)
+
+        assert msg is not None
+        assert int(msg.arbitration_id) == 0x01
+        assert msg.is_fd is False
+        assert msg.bitrate_switch is False
+    finally:
+        bus.close()
+        listener.shutdown()
+
+
 def test_send_mit_many_size_mismatch() -> None:
     bus = _make_bus(
         "openarm-test-mismatch",

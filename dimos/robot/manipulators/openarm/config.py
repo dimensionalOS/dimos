@@ -43,7 +43,7 @@ RIGHT_CAN = "can0"
 # Leave true for normal operation; it is idempotent and ensures motors are in
 # the expected CTRL_MODE=MIT mode at connect time.
 AUTO_SET_MIT_MODE = True
-OPENARM_ADAPTER_KWARGS = {"auto_set_mit_mode": AUTO_SET_MIT_MODE}
+OPENARM_ADAPTER_KWARGS = {"auto_set_mit_mode": AUTO_SET_MIT_MODE, "fd": True}
 OPENARM_DUAL_DEFAULT_KP = (70.0, 70.0, 70.0, 60.0, 10.0, 10.0, 10.0)
 OPENARM_DUAL_DEFAULT_KD = (2.75, 2.5, 2.0, 2.0, 0.7, 0.6, 0.5)
 OPENARM_DUAL_GAIN_ADAPTER_KWARGS = {
