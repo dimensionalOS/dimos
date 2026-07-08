@@ -29,6 +29,20 @@ export function healthColor() {
     return { good: HUD_GOOD, warn: HUD_WARN, bad: HUD_BAD }[statsHealth()];
 }
 
+// Roll the shared send counter into cmdHz over `dtSec` and reset it. Called
+// from each view's ~1Hz tick (DOM HUD, go2 cockpit, VR frame loop).
+export function sampleCmdHz(dtSec) {
+    if (dtSec > 0) state.liveStats.cmdHz = state.cmdSendCount / dtSec;
+    state.cmdSendCount = 0;
+}
+
+// SOC → health level (good/warn/bad) — shared cutoffs; each view maps to its
+// own colours (DOM hex vs VR palette).
+export function socHealth(soc) {
+    if (soc == null) return null;
+    return soc > 40 ? 'good' : soc > 15 ? 'warn' : 'bad';
+}
+
 // SFU the operator is connected through.
 export function transportLabel() {
     return state.activeRobot?.transport === 'livekit' ? 'LiveKit' : 'Cloudflare';
@@ -175,11 +189,8 @@ export function mountHud() {
 
     let lastSampleMs = performance.now();
     state.hudTimer = setInterval(() => {
-        // Sample cmd rate from the send() counter (kb twists + VR poses).
         const now = performance.now();
-        const dt = (now - lastSampleMs) / 1000;
-        if (dt > 0) state.liveStats.cmdHz = state.cmdSendCount / dt;
-        state.cmdSendCount = 0;
+        sampleCmdHz((now - lastSampleMs) / 1000);
         lastSampleMs = now;
         refreshHud();
     }, 1000);

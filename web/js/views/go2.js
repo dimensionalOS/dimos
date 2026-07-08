@@ -8,8 +8,8 @@
 // Preview with no broker:  window._teleopDev.previewGo2()
 
 import { disconnect } from '../disconnect.js';
-import { CONFIRM_ACTIONS, POSTURE_STATE, SPEEDS } from '../go2cmd.js';
-import { applyStampCrop, hudDetailRows, hudSummaryLine, statsHealth, transportLabel } from '../hud.js';
+import { CONFIRM_ACTIONS, POSTURE_STATE, SPEEDS, sendEstop, sendEstopClear } from '../go2cmd.js';
+import { applyStampCrop, hudDetailRows, hudSummaryLine, sampleCmdHz, socHealth, statsHealth, transportLabel } from '../hud.js';
 import { escHtml, state } from '../state.js';
 import { startKeyboardLoop } from './keyboard.js';
 
@@ -301,25 +301,14 @@ function wireGo2() {
 
     document.getElementById('estop').addEventListener('click', () => {
         ui.estopped = true;
-        // Dedicated estop type: new robots latch (move() refuses twists,
-        // commands rejected until estop_clear) AND Damp urgently. The legacy
-        // sport_cmd Damp follows for older robots that don't know estop —
-        // on new ones it's an idempotent second Damp (urgent path, harmless).
-        // Fire-and-forget — don't gate the local latch on an ack.
-        if (state.stateChannel && state.stateChannel.readyState === 'open') {
-            state.stateChannel.send(JSON.stringify({ type: 'estop', nonce: ++ui.nonce }));
-            state.stateChannel.send(JSON.stringify({ type: 'sport_cmd', name: 'Damp', nonce: ++ui.nonce }));
-        }
+        sendEstop(state.stateChannel, () => ++ui.nonce);  // don't gate the latch on an ack
         document.querySelectorAll('.cmd-btn').forEach((b) => (b.dataset.status = 'idle'));
         ui.posture = 'Damp';
         refreshControls();
     });
     document.getElementById('rearm').addEventListener('click', () => {
         ui.estopped = false;  // re-arm; operator must Stand/Drive-ready to resume
-        // Clear the robot-side latch too (older robots ignore unknown types).
-        if (state.stateChannel && state.stateChannel.readyState === 'open') {
-            state.stateChannel.send(JSON.stringify({ type: 'estop_clear', nonce: ++ui.nonce }));
-        }
+        sendEstopClear(state.stateChannel, () => ++ui.nonce);
         refreshControls();
     });
 
@@ -974,7 +963,7 @@ function renderBattery() {
     }
     const p = Math.max(0, Math.min(100, soc));
     pct.textContent = `${p}%`;
-    pct.style.color = p > 40 ? '#c4e7f3' : p > 15 ? '#eab308' : '#f3b4b4';
+    pct.style.color = { good: '#c4e7f3', warn: '#eab308', bad: '#f3b4b4' }[socHealth(p)];
 }
 
 // Telemetry value tint by per-metric health (matches the .pill palette).
@@ -1005,11 +994,8 @@ function startTick() {
     _lastHudSample = performance.now();
     _noVideoSinceMs = 0;
     tickTimer = setInterval(() => {
-        // Sample command send rate (cmdSendCount incremented in the drive loop).
         const now = performance.now();
-        const dt = (now - _lastHudSample) / 1000;
-        if (dt > 0) state.liveStats.cmdHz = state.cmdSendCount / dt;
-        state.cmdSendCount = 0;
+        sampleCmdHz((now - _lastHudSample) / 1000);  // cmdSendCount from the drive loop
         _lastHudSample = now;
 
         // Bail if the cockpit DOM is gone (failed connect / view teardown) —

@@ -27,3 +27,16 @@ export const POSTURE_STATE = {
     StandReady: 'StandReady', PoseStand: 'PoseStand', StandDown: 'StandDown',
     RecoveryStand: 'RecoveryStand', Sit: 'Sit',
 };
+
+// E-STOP send, shared by all three cockpits (DOM/VR-panel/VR-button). Latch via
+// the dedicated estop type (new robots) + a legacy Damp for older ones; fire-
+// and-forget on the reliable channel. `nonce` bumps and returns the view's id.
+export function sendEstop(chan, nonce) {
+    if (!chan || chan.readyState !== 'open') return;
+    chan.send(JSON.stringify({ type: 'estop', nonce: nonce() }));
+    chan.send(JSON.stringify({ type: 'sport_cmd', name: 'Damp', nonce: nonce() }));
+}
+export function sendEstopClear(chan, nonce) {
+    if (!chan || chan.readyState !== 'open') return;
+    chan.send(JSON.stringify({ type: 'estop_clear', nonce: nonce() }));
+}

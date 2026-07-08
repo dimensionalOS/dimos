@@ -7,8 +7,8 @@
 
 import * as THREE from 'three';
 
-import { CONFIRM_ACTIONS, POSTURE_STATE, SPEEDS } from './go2cmd.js';
-import { hudDetailRows, healthColor, statsHealth, transportLabel } from './hud.js';
+import { CONFIRM_ACTIONS, POSTURE_STATE, SPEEDS, sendEstop, sendEstopClear } from './go2cmd.js';
+import { hudDetailRows, healthColor, socHealth, statsHealth, transportLabel } from './hud.js';
 import { state } from './state.js';
 
 // Palette (matches index.html cockpit CSS + hud.js).
@@ -212,14 +212,13 @@ function setLight(v, panel, region) {
 
 function estop(panel) {
     vui.estopped = true;
-    sendJSON({ type: 'estop', nonce: ++vui.nonce });
-    sendJSON({ type: 'sport_cmd', name: 'Damp', nonce: ++vui.nonce });  // legacy fallback
+    sendEstop(state.stateChannel, () => ++vui.nonce);
     vui.posture = 'Damp';
     panel.markDirty();
 }
 function rearm(panel) {
     vui.estopped = false;
-    sendJSON({ type: 'estop_clear', nonce: ++vui.nonce });
+    sendEstopClear(state.stateChannel, () => ++vui.nonce);
     panel.markDirty();
 }
 
@@ -364,7 +363,7 @@ function renderStats(p) {
     x.fillStyle = C.text; x.font = '600 20px ui-monospace,monospace';
     x.fillText(transportLabel(), 48, 40);
     const soc = state.liveStats?.soc;
-    x.fillStyle = soc == null ? C.dim : (soc > 40 ? C.cyan : soc > 15 ? C.warn : C.bad);
+    x.fillStyle = soc == null ? C.dim : { good: C.cyan, warn: C.warn, bad: C.bad }[socHealth(soc)];
     x.textAlign = 'right'; x.fillText(soc == null ? '—%' : `${Math.round(soc)}%`, p.cw - 24, 40);
     x.textAlign = 'left';
 

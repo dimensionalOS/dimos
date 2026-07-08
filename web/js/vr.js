@@ -8,6 +8,8 @@ import * as THREE from 'three';
 
 import { geometry_msgs, std_msgs } from 'https://esm.sh/jsr/@dimos/msgs@0.1.4';
 import { disconnect } from './disconnect.js';
+import { sendEstop } from './go2cmd.js';
+import { sampleCmdHz } from './hud.js';
 import { createStallGate, videoMediaTime } from './stall.js';
 import { sendInterval, state } from './state.js';
 import { send } from './webrtc.js';
@@ -172,21 +174,16 @@ function triggerEstop() {
     if (now < _estopCooldown || vui.estopped) return;
     _estopCooldown = now + 1500;  // debounce the physical button
     vui.estopped = true;
-    if (state.stateChannel && state.stateChannel.readyState === 'open') {
-        state.stateChannel.send(JSON.stringify({ type: 'estop', nonce: ++vui.nonce }));
-        state.stateChannel.send(JSON.stringify({ type: 'sport_cmd', name: 'Damp', nonce: ++vui.nonce }));
-    }
+    sendEstop(state.stateChannel, () => ++vui.nonce);
     cockpit.panels.forEach((p) => p.markDirty());
 }
 
-// Roll cmdSendCount → liveStats.cmdHz once/sec (VR has no DOM hudTimer).
+// Roll cmdSendCount → cmdHz once/sec off the frame loop (VR has no DOM hudTimer).
 let lastCmdSampleMs = 0;
-function sampleCmdHz(nowMs) {
+function tickCmdHz(nowMs) {
     if (!lastCmdSampleMs) { lastCmdSampleMs = nowMs; return; }
-    const dt = (nowMs - lastCmdSampleMs) / 1000;
-    if (dt < 1.0) return;
-    state.liveStats.cmdHz = state.cmdSendCount / dt;
-    state.cmdSendCount = 0;
+    if (nowMs - lastCmdSampleMs < 1000) return;
+    sampleCmdHz((nowMs - lastCmdSampleMs) / 1000);
     lastCmdSampleMs = nowMs;
 }
 
@@ -219,7 +216,7 @@ function onFrame(timeMs, frame) {
         videoMesh.material.color.setHex(stalled ? 0x552222 : 0xffffff);
     }
     cockpit.tick(timeMs);
-    sampleCmdHz(timeMs);
+    tickCmdHz(timeMs);
     renderer.render(scene, camera);
 }
 
