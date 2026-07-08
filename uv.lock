@@ -1572,6 +1572,7 @@ all = [
     { name = "fastapi" },
     { name = "faster-whisper" },
     { name = "ffmpeg-python" },
+    { name = "ftservo-python-sdk" },
     { name = "gdown" },
     { name = "googlemaps" },
     { name = "gtsam-extended" },
@@ -1608,6 +1609,7 @@ all = [
     { name = "qpsolvers", extra = ["proxqp"] },
     { name = "reportlab" },
     { name = "rerun-sdk" },
+    { name = "rich" },
     { name = "roboplan" },
     { name = "sounddevice" },
     { name = "soundfile" },
@@ -1708,6 +1710,10 @@ misc = [
     { name = "timm" },
     { name = "torchreid" },
     { name = "xarm-python-sdk" },
+]
+openarm-mini-teleop = [
+    { name = "ftservo-python-sdk" },
+    { name = "rich" },
 ]
 perception = [
     { name = "chromadb" },
@@ -1974,7 +1980,7 @@ requires-dist = [
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = "==13.6.0" },
     { name = "cyclonedds", marker = "extra == 'dds'", specifier = ">=0.10.5" },
     { name = "cyclonedds", marker = "extra == 'unitree-dds'", specifier = ">=0.10.5" },
-    { name = "dimos", extras = ["agents", "apriltag", "base", "cpu", "cuda", "drone", "manipulation", "misc", "perception", "sim", "unitree", "visualization", "web", "webrtc"], marker = "extra == 'all'" },
+    { name = "dimos", extras = ["agents", "apriltag", "base", "cpu", "cuda", "drone", "manipulation", "misc", "openarm-mini-teleop", "perception", "sim", "unitree", "visualization", "web", "webrtc"], marker = "extra == 'all'" },
     { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'base'" },
     { name = "dimos", extras = ["base", "mapping"], marker = "extra == 'unitree'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
@@ -1989,6 +1995,7 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.115.6" },
     { name = "faster-whisper", marker = "extra == 'agents'", specifier = ">=1.0.0" },
     { name = "ffmpeg-python", marker = "extra == 'web'" },
+    { name = "ftservo-python-sdk", marker = "extra == 'openarm-mini-teleop'" },
     { name = "gdown", marker = "extra == 'misc'", specifier = ">=5.2.2" },
     { name = "googlemaps", marker = "extra == 'misc'", specifier = ">=4.10.0" },
     { name = "gtsam-extended", marker = "extra == 'mapping'", specifier = ">=4.3a1.post1" },
@@ -2047,6 +2054,7 @@ requires-dist = [
     { name = "reportlab", marker = "extra == 'apriltag'", specifier = ">=4.5.0" },
     { name = "rerun-sdk", specifier = "==0.32.0" },
     { name = "rerun-sdk", marker = "extra == 'visualization'", specifier = "==0.32.0" },
+    { name = "rich", marker = "extra == 'openarm-mini-teleop'" },
     { name = "roboplan", marker = "extra == 'manipulation'" },
     { name = "scipy", specifier = ">=1.15.1" },
     { name = "sortedcontainers", specifier = "==2.4.0" },
@@ -2077,7 +2085,7 @@ requires-dist = [
     { name = "xarm-python-sdk", marker = "extra == 'misc'", specifier = ">=1.17.0" },
     { name = "yourdfpy", marker = "(platform_machine != 'aarch64' and extra == 'visualization') or (sys_platform != 'linux' and extra == 'visualization')", specifier = ">=0.0.60" },
 ]
-provides-extras = ["misc", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "sim", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "all"]
+provides-extras = ["misc", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "openarm-mini-teleop", "cpu", "cuda", "sim", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "all"]
 
 [package.metadata.requires-dev]
 autofix = [{ name = "ruff", specifier = "==0.14.3" }]
@@ -2918,6 +2926,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a5/d3/8650919bc3c7c6e90ee3fa7fd618bf373cbbe55dff043bd67353dbb20cd8/ftfy-6.3.1.tar.gz", hash = "sha256:9b3c3d90f84fb267fe64d375a07b7f8912d817cf86009ae134aa03e1819506ec", size = 308927, upload-time = "2024-10-26T00:50:35.149Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ab/6e/81d47999aebc1b155f81eca4477a616a70f238a2549848c38983f3c22a82/ftfy-6.3.1-py3-none-any.whl", hash = "sha256:7c70eb532015cd2f9adb53f101fb6c7945988d023a085d127d1573dc49dd0083", size = 44821, upload-time = "2024-10-26T00:50:33.425Z" },
+]
+
+[[package]]
+name = "ftservo-python-sdk"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyserial" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fe/da/d3f07d88136d338d075df06eaee4e4ada90da03f37dbdea63d339b3341d0/ftservo_python_sdk-2.0.0.tar.gz", hash = "sha256:4ffad15e4d31ecd386fe941abcb8bb23b9f50f2825e5681786c5170c34dc9a5f", size = 13354, upload-time = "2025-04-17T12:31:07.401Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a2/a5/a7dad40ae9ae48180c7c595b4af62df63fcf0ce83c097bf4307f4ebfaa16/ftservo_python_sdk-2.0.0-py3-none-any.whl", hash = "sha256:c8303df01b2c772f3e1dffbb3b789e2d39545f6fb187ec45032c7737356be2a4", size = 12172, upload-time = "2025-04-17T12:31:05.78Z" },
 ]
 
 [[package]]
@@ -6988,6 +7008,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/f8/c1/0b5cd6737dc34e23d57a9da59ba5f18f91bc8238f642f3410f227e603357/pyrealsense2_extended-2.58.1.10581.post1-cp312-cp312-manylinux1_x86_64.whl", hash = "sha256:e24187e0fd874c67f0de9a2639908fda90e320220f88d1d200307cf632189544", size = 12392172, upload-time = "2026-05-31T20:50:03.661Z" },
     { url = "https://files.pythonhosted.org/packages/22/95/149ec7777fc6545664cc543e4ffaf350976f164edac7f8827405fcf8d421/pyrealsense2_extended-2.58.1.10581.post1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:004634383f25e13c66fa71229184c4ddd1931f7235a19851ef976e9489ad186c", size = 6340752, upload-time = "2026-05-31T20:50:05.61Z" },
     { url = "https://files.pythonhosted.org/packages/a6/9b/f81c8009a3bf8cd2b1d1ce74321c6f8bdb7d7075895fb04800f3795b431d/pyrealsense2_extended-2.58.1.10581.post1-cp312-cp312-win_amd64.whl", hash = "sha256:76ddf1dadd4dd8c542d4249d50dc4507962808f9ae3b6e807f317f319abeead3", size = 8754299, upload-time = "2026-05-31T20:50:09.02Z" },
+]
+
+[[package]]
+name = "pyserial"
+version = "3.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/1e/7d/ae3f0a63f41e4d2f6cb66a5b57197850f919f59e558159a4dd3a818f5082/pyserial-3.5.tar.gz", hash = "sha256:3c77e014170dfffbd816e6ffc205e9842efb10be9f58ec16d3e8675b4925cddb", size = 159125, upload-time = "2020-11-23T03:59:15.045Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/bc/587a445451b253b285629263eb51c2d8e9bcea4fc97826266d186f96f558/pyserial-3.5-py2.py3-none-any.whl", hash = "sha256:c4451db6ba391ca6ca299fb3ec7bae67a5c55dde170964c7a14ceefec02f2cf0", size = 90585, upload-time = "2020-11-23T03:59:13.41Z" },
 ]
 
 [[package]]

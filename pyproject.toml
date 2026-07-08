@@ -285,6 +285,11 @@ manipulation = [
     "roboplan",
 ]
 
+openarm-mini-teleop = [
+    "ftservo-python-sdk",
+    "rich",
+]
+
 cpu = [
     # CPU inference backends
     "onnxruntime",
@@ -342,7 +347,7 @@ apriltag = [
 ]
 
 all = [
-    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,sim,unitree,visualization,web,webrtc]",
+    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,openarm-mini-teleop,perception,sim,unitree,visualization,web,webrtc]",
 ]
 
 [dependency-groups]
@@ -568,6 +573,8 @@ module = [
     "reportlab",
     "reportlab.*",
     "sam2.*",
+    "scservo_sdk",
+    "scservo_sdk.*",
     "scipy",
     "scipy.*",
     "sensor_msgs.*",
