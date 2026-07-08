@@ -341,8 +341,18 @@ apriltag = [
     "reportlab>=4.5.0",
 ]
 
+# Offline scene-package cooking + loading: USD import (usd-core), convex
+# decomposition for collision (coacd), and mesh ops (trimesh). open3d is
+# already a core dependency. The Blender visual bake is an optional external
+# `blender` binary, not a wheel.
+scene = [
+    "trimesh>=4.0.0",
+    "coacd>=1.0.0",
+    "usd-core>=23.11",
+]
+
 all = [
-    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,sim,unitree,visualization,web,webrtc]",
+    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,scene,sim,unitree,visualization,web,webrtc]",
 ]
 
 [dependency-groups]
@@ -401,6 +411,10 @@ tests = [
     # Deps the lint job swaps for stubs (`stubs/<pkg>/` or `types-*`):
     # the real packages are needed at test time, stubs cover mypy.
     "dimos[apriltag,mapping,drone,cpu,learning]",
+    # Scene-cooking tests need these two from the `scene` extra. The full
+    # extra can't be included: usd-core ships no linux-aarch64 wheel.
+    "coacd>=1.0.0",
+    "trimesh>=4.0.0",
     "mujoco>=3.3.4",
     "pygame>=2.6.1",
     "python-can>=4",
@@ -586,6 +600,13 @@ module = [
     "websocket",
     "xarm.*",
     "ament_index_python.*",
+    "coacd",
+    "open3d",
+    "open3d.*",
+    "pxr",
+    "pxr.*",
+    "trimesh",
+    "trimesh.*",
 ]
 ignore_missing_imports = true
 
