@@ -693,12 +693,33 @@ def list_blueprints() -> None:
 
 
 @main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
-def lcmspy(ctx: typer.Context) -> None:
-    """LCM spy tool for monitoring LCM messages."""
-    from dimos.utils.cli.lcmspy.run_lcmspy import main as lcmspy_main
+def spy(ctx: typer.Context) -> None:
+    """Universal transport spy: topics, rates, sizes across all pubsub transports."""
+    # A root-level `--transport` (before the subcommand) sets the stack's pubsub
+    # backend — which single transport dimos processes participate on. The spy is an
+    # observer: it watches every transport and takes its own repeatable `--transport`
+    # filter *after* the subcommand. The two look alike but mean different things, so
+    # reject the root placement rather than silently ignoring the requested filter.
+    if (ctx.obj or {}).get("transport") is not None:
+        typer.echo(
+            "Error: `--transport` before `spy` sets the stack backend, which the spy "
+            "ignores. Put the filter after the subcommand: `dimos spy --transport <name>`.",
+            err=True,
+        )
+        raise typer.Exit(2)
+    from dimos.utils.cli.spy.run_spy import main as spy_main
 
-    sys.argv = ["lcmspy", *ctx.args]
-    lcmspy_main()
+    sys.argv = ["spy", *ctx.args]
+    spy_main()
+
+
+@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def lcmspy(ctx: typer.Context) -> None:
+    """Alias for `dimos spy --transport lcm`."""
+    from dimos.utils.cli.spy.run_spy import lcm_only_argv, main as spy_main
+
+    sys.argv = lcm_only_argv(list(ctx.args))
+    spy_main()
 
 
 @main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
