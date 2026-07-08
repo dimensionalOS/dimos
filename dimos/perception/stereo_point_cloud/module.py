@@ -40,6 +40,8 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+_DEPTH_MM_THRESHOLD = 100
+
 
 class Config(ModuleConfig):
     min_depth: float          = 0.1
@@ -47,7 +49,13 @@ class Config(ModuleConfig):
     gradient_threshold: float = 0.30
     vox_size: float           = 0.020
     global_vox_size: float    = 0.020
-    floor_margin: float       = 0.04
+    floor_margin: float       = 0.03
+    # Cut for the global-map floor filter, above the CALIBRATED floor plane.
+    # Must stay below the thinnest obstacle we want to keep: a 2 cm mat's top
+    # surface sits ~2 cm above the floor, so 0.015 keeps it while still
+    # removing the floor itself. (Was 0.04 — that deleted the mat once the
+    # floor height was estimated correctly.)
+    global_floor_margin: float = 0.015
     max_global_pts: int       = 500_000
     publish_every: int        = 1
     world_frame: str          = "world"
@@ -80,6 +88,7 @@ class StereoPointCloud(Module):
         self._map_ready                  = False
         self._world_floor_z: float       = 0.0
         self._frame                      = 0
+        self._warned_no_intrinsics       = False
 
     @rpc
     def start(self) -> None:
@@ -175,7 +184,8 @@ class StereoPointCloud(Module):
             depth = depth[:, :, 0]
         depth = depth.astype(np.float32)
         valid_d = depth[depth > 0]
-        if len(valid_d) and np.median(valid_d) > 100:
+        is_mm = len(valid_d) > 0 and np.median(valid_d) > _DEPTH_MM_THRESHOLD
+        if is_mm:
             depth /= 1000.0
         invalid = (depth <= 0) | (depth < self.config.min_depth) | (depth > self.config.max_depth)
         depth[invalid] = np.nan
@@ -185,6 +195,9 @@ class StereoPointCloud(Module):
             K = info.get_K_matrix()
             fx, fy, cx, cy = float(K[0, 0]), float(K[1, 1]), float(K[0, 2]), float(K[1, 2])
         else:
+            if not self._warned_no_intrinsics:
+                logger.warning("StereoPointCloud: no camera intrinsics — falling back to rough guess, check depth_camera_info is connected")
+                self._warned_no_intrinsics = True
             fx = fy = float(max(H, W)) / 2.0
             cx, cy  = W / 2.0, H / 2.0
 
@@ -207,17 +220,37 @@ class StereoPointCloud(Module):
 
         xyz_cam   = xyz_opt @ _R_OPT_TO_LINK.T
         xyz_world = (xyz_cam @ R.T + t).astype(np.float32)
-        cam_z     = float(t[2])
 
+        # Calibrate on xyz_cam (camera_link, Z=up). For a level mount the floor
+        # is always at z_cam == -cam_height regardless of horizontal distance,
+        # so floor_z is always negative and cam_height always positive.
+        # Using xyz_world - t (Madgwick-rotated) biases the estimate as the
+        # filter drifts from identity over the first ~5 s.
         self._floor_calib.update(xyz_cam)
 
-        if self._floor_calib.ready:
-            keep = xyz_cam[:, 2] > (self._floor_calib.floor_z + self.config.floor_margin)
-        else:
-            keep = (xyz_cam[:, 2] >= -1.4) & (xyz_cam[:, 2] <= 1.5)
+        # FIX (rerun black plane): publish with the floor at z = 0. The rest
+        # of dimos assumes this datum — the rerun viewer's ground grid/floor
+        # mesh sits at z ≈ 0 and the occupancy algos treat z as height above
+        # ground. With the old camera-origin datum the whole scene (floor at
+        # z ≈ -1, chairs/tables/mat in between) rendered UNDER the viewer's
+        # ground plane. Shift is 0 until calibration completes (~4 s), then
+        # the cloud snaps up by cam_height.
+        z_shift = (
+            float(self._floor_calib.cam_height)  # type: ignore[arg-type]
+            if self._floor_calib.ready
+            else 0.0
+        )
+        z_off = np.array([0.0, 0.0, z_shift], dtype=np.float32)
 
-        xyz_world_kept = xyz_world[keep]
-        xyz_cam_kept   = xyz_cam[keep]
+        # Per-frame floor filter disabled — calibration cuts obstacles at wrong height.
+        # Floor is removed by the global map filter below; frame cloud shows all points.
+        # if self._floor_calib.ready:
+        #     keep = xyz_cam[:, 2] > (self._floor_calib.floor_z + self.config.floor_margin)
+        # else:
+        #     keep = np.ones(len(xyz_cam), dtype=bool)
+
+        xyz_world_kept = xyz_world
+        xyz_cam_kept   = xyz_cam
         if not len(xyz_world_kept):
             self._frame += 1
             return
@@ -227,10 +260,12 @@ class StereoPointCloud(Module):
         xyz_vox  = xyz_world_kept[first]
 
         self.frame_cloud.publish(
-            PointCloud2.from_numpy(xyz_vox, frame_id=self.config.world_frame, timestamp=img.ts)
+            PointCloud2.from_numpy(
+                xyz_vox + z_off, frame_id=self.config.world_frame, timestamp=img.ts
+            )
         )
 
-        if len(xyz_cam_kept) >= 50:
+        if len(xyz_cam_kept) >= PointCloudOdometry.MIN_PTS:
             self._odom.update(xyz_cam_kept, R)
 
         if not self._floor_calib.ready:
@@ -238,16 +273,24 @@ class StereoPointCloud(Module):
             return
 
         if not self._map_ready:
-            self._map_ready     = True
-            self._world_floor_z = cam_z + self._floor_calib.floor_z
-            logger.info(f"StereoPointCloud: global map started — floor at Z ≈ {self._world_floor_z:.3f} m")
+            self._map_ready = True
+            # FIX: the filter below runs on xyz_ronly = xyz_vox - t, which is
+            # CAMERA-CENTERED — so the threshold must be the camera-relative
+            # floor height (floor_z), not cam_z + floor_z. Adding the ICP z
+            # (a different frame) shifted the cut plane by whatever the ICP
+            # translation happened to be at calibration time.
+            self._world_floor_z = float(self._floor_calib.floor_z)  # type: ignore[arg-type]
+            logger.info(
+                f"StereoPointCloud: global map started — floor at "
+                f"Z ≈ {self._world_floor_z:.3f} m below camera (published at Z ≈ 0)"
+            )
 
         # Rotation-only frame: strip ICP translation so ±2 cm t-noise doesn't shift voxel keys
         xyz_ronly  = xyz_vox - t
         vk_r       = np.floor(xyz_ronly / self.config.vox_size).astype(np.int32)
         _, first_r = np.unique(_pack(vk_r), return_index=True)
         xyz_vox_r  = xyz_ronly[first_r]
-        xyz_for_map = xyz_vox_r[xyz_vox_r[:, 2] > self._world_floor_z + self.config.floor_margin]
+        xyz_for_map = xyz_vox_r[xyz_vox_r[:, 2] > self._world_floor_z + self.config.global_floor_margin]
 
         pts_snap = None
         with self._lock:
@@ -276,5 +319,7 @@ class StereoPointCloud(Module):
 
         if pts_snap is not None:
             self.global_map.publish(
-                PointCloud2.from_numpy(pts_snap, frame_id=self.config.world_frame, timestamp=img.ts)
+                PointCloud2.from_numpy(
+                    pts_snap + z_off, frame_id=self.config.world_frame, timestamp=img.ts
+                )
             )

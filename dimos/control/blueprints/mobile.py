@@ -35,8 +35,8 @@ from dimos.control.components import (
 )
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
+from dimos.perception.stereo_point_cloud.filtered_realsense import FilteredRealSenseCamera
 from dimos.mapping.costmapper import CostMapper
 from dimos.navigation.cmu_nav.main import cmu_nav_rerun_config, create_cmu_nav
 from dimos.navigation.movement_manager.movement_manager import MovementManager
@@ -221,7 +221,7 @@ coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
 # FlowBase + RealSense D435i stereo depth + CostMapper + nav stack
 coordinator_flowbase_stereo_nav = (
     autoconnect(
-        RealSenseCamera.blueprint(enable_depth=True, enable_pointcloud=False),
+        FilteredRealSenseCamera.blueprint(enable_depth=True, enable_pointcloud=False),
         StereoPointCloud.blueprint(),
         CostMapper.blueprint(),
         MovementManager.blueprint(),

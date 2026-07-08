@@ -29,6 +29,9 @@ _VMASK = np.int64(0x3FFFF)
 # Optical frame (X=right, Y=down, Z=depth) → camera_link (X=fwd, Y=left, Z=up)
 _R_OPT_TO_LINK = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=np.float32)
 
+_RAYCAST_MIN_RAY_VOXELS = 2
+_RAYCAST_SURFACE_MARGIN = 1.5
+
 
 def _pack(vkeys: np.ndarray) -> np.ndarray:
     v = (vkeys.astype(np.int64) + _VOFF) & _VMASK
@@ -52,14 +55,14 @@ def _raycast_free_keys(surface_pts: np.ndarray, vox_size: float, n_rays: int = 4
     pts   = surface_pts[idx]
     vecs  = pts - origin
     dists = np.linalg.norm(vecs, axis=1)
-    ok    = dists > vox_size * 2
+    ok    = dists > vox_size * _RAYCAST_MIN_RAY_VOXELS
     vecs, dists = vecs[ok], dists[ok]
     if not len(vecs):
         return np.empty(0, dtype=np.int64)
     dirs      = vecs / dists[:, None]
     max_steps = int(np.ceil(dists.max() / vox_size))
     t_vals    = np.arange(max_steps, dtype=np.float32) * vox_size
-    t_end     = (dists - vox_size * 1.5)[:, None]
+    t_end     = (dists - vox_size * _RAYCAST_SURFACE_MARGIN)[:, None]
     valid_m   = (t_vals[None, :] >= 0) & (t_vals[None, :] < t_end)
     ray_pts   = origin + dirs[:, None, :] * t_vals[None, :, None]
     vk_flat   = np.floor(ray_pts.reshape(-1, 3) / vox_size).astype(np.int32)
@@ -67,11 +70,22 @@ def _raycast_free_keys(surface_pts: np.ndarray, vox_size: float, n_rays: int = 4
 
 
 class _FloorCalibrator:
-    """Histogram-based one-shot floor height estimator in camera_link frame (Z=up)."""
+    """Histogram-based one-shot floor height estimator (Z=up).
 
-    SKIP_FRAMES  = 30
-    CALIB_FRAMES = 30
-    BIN_M        = 0.02
+    Feed :meth:`update` with GRAVITY-ALIGNED camera-centered points
+    (``xyz_world - t``, i.e. ``xyz_cam @ R.T``) — in that frame the floor is a
+    horizontal plane and its z-histogram is sharp regardless of mount pitch.
+    """
+
+    SKIP_FRAMES      = 30
+    CALIB_FRAMES     = 30
+    BIN_M            = 0.02
+    FLOOR_MAX_Z      = -0.30
+    FLOOR_MIN_Z      = -3.0
+    FLOOR_MAX_DIST_M = 4.0
+    FLOOR_MIN_PTS    = 200
+    # mode-search window above the lowest significant bin (3 bins = 6 cm)
+    CLUSTER_BINS     = 3
 
     def __init__(self) -> None:
         self._frame   = 0
@@ -89,8 +103,8 @@ class _FloorCalibrator:
             return
         z    = xyz_cam[:, 2]
         dist = np.linalg.norm(xyz_cam[:, :2], axis=1)
-        mask = (z < -0.30) & (dist < 4.0)
-        if mask.sum() < 200:
+        mask = (z < self.FLOOR_MAX_Z) & (z > self.FLOOR_MIN_Z) & (dist < self.FLOOR_MAX_DIST_M)
+        if mask.sum() < self.FLOOR_MIN_PTS:
             return
         z_floor = z[mask]
         lo, hi  = z_floor.min(), z_floor.max()
@@ -98,7 +112,18 @@ class _FloorCalibrator:
             return
         bins          = np.arange(lo, hi + self.BIN_M, self.BIN_M)
         counts, edges = np.histogram(z_floor, bins=bins)
-        self._samples.append(float(edges[int(np.argmax(counts))] + self.BIN_M / 2))
+        significant   = np.where(counts >= self.FLOOR_MIN_PTS)[0]
+        if not len(significant):
+            return
+        # FIX: take the DOMINANT bin within the lowest significant cluster
+        # instead of the lowest significant bin. The lowest bin sits on the
+        # noise skirt of the floor peak (and is pulled further down by
+        # hole-filling/spatial-filter artifacts below the true floor), which
+        # biased the floor estimate 1-2 cm low — enough to leak floor points
+        # past the global_floor_margin cut.
+        window = significant[significant <= significant[0] + self.CLUSTER_BINS]
+        best   = int(window[np.argmax(counts[window])])
+        self._samples.append(float(edges[best] + self.BIN_M / 2))
         if len(self._samples) >= self.CALIB_FRAMES:
             self.floor_z    = float(np.median(self._samples))
             self.cam_height = -self.floor_z
