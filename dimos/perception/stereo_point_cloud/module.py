@@ -32,6 +32,7 @@ from dimos.perception.stereo_point_cloud.utils import (
     _FloorCalibrator,
     _R_OPT_TO_LINK,
     _gradient_mask,
+    _isolation_filter,
     _pack,
     _raycast_free_keys,
 )
@@ -291,6 +292,8 @@ class StereoPointCloud(Module):
         _, first_r = np.unique(_pack(vk_r), return_index=True)
         xyz_vox_r  = xyz_ronly[first_r]
         xyz_for_map = xyz_vox_r[xyz_vox_r[:, 2] > self._world_floor_z + self.config.global_floor_margin]
+        if len(xyz_for_map) > 4:
+            xyz_for_map = xyz_for_map[_isolation_filter(xyz_for_map, radius=self.config.global_vox_size * 3)]
 
         pts_snap = None
         with self._lock:

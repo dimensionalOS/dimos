@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import numpy as np
 from scipy.ndimage import sobel
+from scipy.spatial import cKDTree
 
 from dimos.utils.logging_config import setup_logger
 
@@ -43,6 +44,14 @@ def _gradient_mask(depth: np.ndarray, threshold: float) -> np.ndarray:
     depth_f = np.where(valid, depth, 0.0).astype(np.float64)
     grad    = np.hypot(sobel(depth_f, axis=1), sobel(depth_f, axis=0))
     return valid & (grad < threshold)
+
+
+def _isolation_filter(pts: np.ndarray, radius: float, min_neighbors: int = 2) -> np.ndarray:
+    """Keep only points that have at least min_neighbors within radius — kills flying pixels."""
+    if len(pts) <= min_neighbors:
+        return np.ones(len(pts), dtype=bool)
+    counts = cKDTree(pts).query_ball_point(pts, r=radius, return_length=True)
+    return np.asarray(counts) > min_neighbors
 
 
 def _raycast_free_keys(surface_pts: np.ndarray, vox_size: float, n_rays: int = 2000) -> np.ndarray:
