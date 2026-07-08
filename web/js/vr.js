@@ -13,6 +13,7 @@ import { sampleCmdHz } from './hud.js';
 import { createStallGate, videoMediaTime } from './stall.js';
 import { sendInterval, state } from './state.js';
 import { send } from './webrtc.js';
+import { getVRRenderer } from './vrrenderer.js';
 import { buildCockpit, onCmdAck, onMap, onOdom, onRobotState, vui } from './vrui.js';
 
 const HEAD = new THREE.Vector3(0, 1.55, 0);  // nominal eye point panels face
@@ -224,18 +225,8 @@ export async function startVR() {
     lastCmdSampleMs = 0; lastDriveSend = 0; wasDriving = false;
     stallGate = createStallGate();
     state.videoStall = { stalled: false, blocked: false, armed: false };
-    const canvas = document.getElementById('canvas');
-    canvas.style.display = 'block';
-
-    if (!renderer) {
-        // xrCompatible: true at context creation — on Quest, without it the GL
-        // context is not usable by the immersive session, so VideoTextures that
-        // render fine in the flat page come up black in VR.
-        renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, xrCompatible: true });
-        renderer.autoClear = true;
-        renderer.xr.enabled = true;
-        renderer.xr.setReferenceSpaceType('local-floor');
-    }
+    document.getElementById('canvas').style.display = 'block';
+    renderer = getVRRenderer();  // one shared renderer across all VR cockpits
     // Fresh scene per session so panels/hover state don't leak across connects.
     buildScene();
     controllers = [];

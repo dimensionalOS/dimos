@@ -17,6 +17,7 @@ import { createStallGate, videoMediaTime } from './stall.js';
 import { disconnect } from './disconnect.js';
 import { sendInterval, state } from './state.js';
 import { buildArmCockpit, aui, onCmdAck, onRobotState } from './vrarmui.js';
+import { getVRRenderer } from './vrrenderer.js';
 import { buildJoy, buildPoseStamped, sendEstop } from './xarmcmd.js';
 
 const HEAD = new THREE.Vector3(0, 1.55, 0);
@@ -193,17 +194,8 @@ export async function startArmVR() {
     lastCmdSampleMs = 0; lastSend = 0;
     stallGate = createStallGate();
     state.videoStall = { stalled: false, blocked: false, armed: false };
-    const canvas = document.getElementById('canvas');
-    canvas.style.display = 'block';
-
-    if (!renderer) {
-        // xrCompatible at context creation — on Quest, without it the GL context
-        // is unusable by the immersive session and video panels come up black.
-        renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, xrCompatible: true });
-        renderer.autoClear = true;
-        renderer.xr.enabled = true;
-        renderer.xr.setReferenceSpaceType('local-floor');
-    }
+    document.getElementById('canvas').style.display = 'block';
+    renderer = getVRRenderer();  // one shared renderer across all VR cockpits
     buildScene();
     controllers = [];
 
