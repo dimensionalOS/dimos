@@ -23,7 +23,8 @@ the bus when changing IDs, especially if they may share the same current ID.
 
 ```bash
 python -m dimos.teleop.openarm_mini.tools.setup_motor_id \
-  --port /dev/ttyUSB1 \
+  --port <feetech-port> \
+  --baudrate <feetech-baudrate> \
   --new-id 3
 ```
 
@@ -31,7 +32,8 @@ If the current ID is known, skip scanning:
 
 ```bash
 python -m dimos.teleop.openarm_mini.tools.setup_motor_id \
-  --port /dev/ttyUSB1 \
+  --port <feetech-port> \
+  --baudrate <feetech-baudrate> \
   --old-id 1 \
   --new-id 3
 ```
@@ -67,8 +69,9 @@ formal coordinator-controllable API.
 ```bash
 python -m dimos.teleop.openarm_mini.tools.calibrate \
   --side both \
-  --port-left /dev/ttyUSB1 \
-  --port-right /dev/ttyUSB0
+  --port-left <left-feetech-port> \
+  --port-right <right-feetech-port> \
+  --baudrate <feetech-baudrate>
 ```
 
 The script prints a confirmation table with each semantic arm joint, physical
@@ -86,7 +89,8 @@ when needed:
 ```bash
 python -m dimos.teleop.openarm_mini.tools.calibrate \
   --side left \
-  --port-left /dev/ttyUSB1 \
+  --port-left <left-feetech-port> \
+  --baudrate <feetech-baudrate> \
   --left-flips joint_1,joint_3,joint_4,joint_5,joint_6,joint_7
 ```
 
@@ -105,7 +109,8 @@ To inspect calibrated leader readings without starting robot control:
 ```bash
 python -m dimos.teleop.openarm_mini.tools.calibrate \
   --side left \
-  --port-left /dev/ttyUSB1 \
+  --port-left <left-feetech-port> \
+  --baudrate <feetech-baudrate> \
   --live-readout
 ```
 
@@ -115,8 +120,9 @@ sender-side clamped follower radians, motor ids, and flip values:
 ```bash
 python -m dimos.teleop.openarm_mini.tools.joint_tui \
   --side both \
-  --port-left /dev/ttyUSB1 \
-  --port-right /dev/ttyUSB0
+  --port-left <left-feetech-port> \
+  --port-right <right-feetech-port> \
+  --baudrate <feetech-baudrate>
 ```
 
 The TUI is also leader-only: it reads OpenArm Mini Feetech ports and existing
@@ -134,13 +140,14 @@ before connecting any OpenArm follower hardware:
 ```bash
 dimos run openarm-mini-left-teleop-viser \
   -o teleopmodule.adapter.backend=openarm_mini \
-  -o teleopmodule.adapter.port_left=/dev/ttyUSB1
+  -o teleopmodule.adapter.port_left=<left-feetech-port> \
+  -o teleopmodule.adapter.baudrate=<feetech-baudrate>
 ```
 
 The blueprint requires:
 
 - a real OpenArm Mini left leader connected to the configured left Feetech serial
-  port (default `/dev/ttyUSB1`)
+  port
 - a valid left calibration artifact
 - Viser dependencies from `uv sync --extra manipulation` or `uv sync --extra all`
 
@@ -156,28 +163,22 @@ through `ControlCoordinator` and render the right follower state in
 `ManipulationModule`'s Viser backend. The leader is always physical; the follower
 is always mock in this blueprint.
 
-Mock follower, safe for coordinator/Viser validation without a connected OpenArm
-follower:
+Run with the required right leader connection settings:
 
 ```bash
-uv run dimos run openarm-mini-right-teleop-viser
+uv run dimos run openarm-mini-right-teleop-viser \
+  -o teleopmodule.adapter.backend=openarm_mini \
+  -o teleopmodule.adapter.port_right=<right-feetech-port> \
+  -o teleopmodule.adapter.baudrate=<feetech-baudrate>
 ```
 
 The blueprint requires:
 
 - a real OpenArm Mini right leader connected to the configured right Feetech
-  serial port (default `/dev/ttyUSB0`)
+  serial port
 - a valid right calibration artifact at the default right calibration path, or a
   configured `right_calibration_path`
 - Viser dependencies from `uv sync --extra manipulation` or `uv sync --extra all`
-
-Override the right leader serial port with a module option:
-
-```bash
-uv run dimos run openarm-mini-right-teleop-viser \
-  -o teleopmodule.adapter.backend=openarm_mini \
-  -o teleopmodule.adapter.port_right=/dev/ttyUSB0
-```
 
 The right blueprint publishes ManipulationModule-compatible global coordinator
 joint names (`right_arm/openarm_right_joint1` through
@@ -189,24 +190,18 @@ follower hardware is intentionally out of scope for these Viser demo blueprints.
 ## Dual-arm coordinator + Viser bring-up
 
 Use `openarm-mini-dual-teleop-viser` for bimanual OpenArm Mini leader teleop with
-the same coordinator-observed Viser path. It uses one bimanual
-generic `TeleopModule` with the OpenArm Mini adapter backend, one `ControlCoordinator`, and one `ManipulationModule`
-with both left and right OpenArm models.
+the same coordinator-observed Viser path. It uses one bimanual generic
+`TeleopModule` with the OpenArm Mini adapter backend, one `ControlCoordinator`,
+and one `ManipulationModule` with both left and right OpenArm models.
 
-Mock followers, safe for coordinator/Viser validation without connected OpenArm
-followers:
-
-```bash
-uv run dimos run openarm-mini-dual-teleop-viser
-```
-
-Override leader serial ports with module options:
+Run with the required leader connection settings:
 
 ```bash
 uv run dimos run openarm-mini-dual-teleop-viser \
   -o teleopmodule.adapter.backend=openarm_mini \
-  -o teleopmodule.adapter.port_left=/dev/ttyUSB1 \
-  -o teleopmodule.adapter.port_right=/dev/ttyACM0
+  -o teleopmodule.adapter.port_left=<left-feetech-port> \
+  -o teleopmodule.adapter.port_right=<right-feetech-port> \
+  -o teleopmodule.adapter.baudrate=<feetech-baudrate>
 ```
 
 The dual blueprint publishes ManipulationModule-compatible global coordinator
