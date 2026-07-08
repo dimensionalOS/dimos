@@ -218,6 +218,24 @@ coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
 ).remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
 
 
+def _stereo_nav_blueprint():
+    """Rerun blueprint for stereo-depth nav: grid at z=0 (the floor datum).
+
+    The default bridge blueprint puts the grid at z=+0.5, which sits above the
+    floor and makes all sub-50cm obstacles appear underground. Moving it to z=0
+    means floor=grid and everything above is visible above the line.
+    """
+    import rerun as rr
+    import rerun.blueprint as rrb
+    return rrb.Blueprint(
+        rrb.Spatial3DView(
+            origin="world",
+            background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
+            line_grid=rrb.LineGrid3D(plane=rr.components.Plane3D.XY),  # z=0
+        )
+    )
+
+
 # FlowBase + RealSense D435i stereo depth + CostMapper + nav stack
 coordinator_flowbase_stereo_nav = (
     autoconnect(
@@ -236,7 +254,7 @@ coordinator_flowbase_stereo_nav = (
                 ),
             ],
         ),
-        RerunBridgeModule.blueprint(rerun_open="web"),
+        RerunBridgeModule.blueprint(rerun_open="web", blueprint=_stereo_nav_blueprint),
         RerunWebSocketServer.blueprint(),
     )
     .remappings(
