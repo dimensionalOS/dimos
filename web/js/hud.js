@@ -19,8 +19,10 @@ export function statsHealth() {
     const fps = v.fps ?? 0;
     const rtt = state.liveStats.rttMs ?? Infinity;
     const cmdLat = c ? (c.latency_ms ?? 0) : 0;
-    if (fps < 8 || rtt > 200 || cmdLat > 200) return 'bad';
-    if (fps < 18 || rtt > 100 || (v.loss_pct ?? 0) > 3 || cmdLat > 100) return 'warn';
+    // Go2 source is ~14–15fps, so 15 is a healthy link (not the 30 a webcam
+    // gives). Bands scaled to that: bad < 8, warn < 12, good ≥ 12.
+    if (fps < 6 || rtt > 200 || cmdLat > 200) return 'bad';
+    if (fps < 12 || rtt > 100 || (v.loss_pct ?? 0) > 3 || cmdLat > 100) return 'warn';
     return 'good';
 }
 export function healthColor() {
@@ -94,7 +96,7 @@ export function hudDetailRows() {
             { label: 'RTT', value: `${fmt(rtt)} ms`, health: band(rtt, 100, 200) },
         ]},
         { group: 'Video', rows: [
-            { label: 'FPS', value: fmt(fps), health: band(fps, 18, 8, true) },
+            { label: 'FPS', value: fmt(fps), health: band(fps, 12, 6, true) },
             { label: 'Bitrate', value: `${fmt((v.kbps ?? 0) / 1000, 1)} mbps`, health: null },
             { label: 'Resolution', value: `${v.width ?? '—'}×${v.height ?? '—'}`, health: null },
             // H.264 → hardware decode (green); VP8 → usually software (warn).
