@@ -49,6 +49,7 @@ class Config(ModuleConfig):
     gradient_threshold: float = 0.30
     vox_size: float           = 0.020
     global_vox_size: float    = 0.020
+    floor_margin: float       = 0.03
     global_floor_margin: float = 0.04
     max_global_pts: int       = 500_000
     publish_every: int        = 1
@@ -217,6 +218,13 @@ class StereoPointCloud(Module):
         cam_z     = float(t[2])
 
         self._floor_calib.update(xyz_cam)
+
+        # Per-frame floor filter disabled — calibration cuts obstacles at wrong height.
+        # Floor is removed by the global map filter below; frame cloud shows all points.
+        # if self._floor_calib.ready:
+        #     keep = xyz_cam[:, 2] > (self._floor_calib.floor_z + self.config.floor_margin)
+        # else:
+        #     keep = np.ones(len(xyz_cam), dtype=bool)
 
         xyz_world_kept = xyz_world
         xyz_cam_kept   = xyz_cam

@@ -104,8 +104,8 @@ class _FloorCalibrator:
             return
         bins          = np.arange(lo, hi + self.BIN_M, self.BIN_M)
         counts, edges = np.histogram(z_floor, bins=bins)
-        peak          = np.argmax(counts)
-        self._samples.append(float(edges[peak] + self.BIN_M / 2))
+        prominent     = np.where(counts >= counts.max() * 0.20)[0]
+        self._samples.append(float(edges[prominent[0]] + self.BIN_M / 2))
         if len(self._samples) >= self.CALIB_FRAMES:
             self.floor_z    = float(np.median(self._samples))
             self.cam_height = -self.floor_z
