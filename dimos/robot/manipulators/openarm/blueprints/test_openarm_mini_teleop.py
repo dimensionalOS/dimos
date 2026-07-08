@@ -26,7 +26,10 @@ from dimos.core.coordination.worker_manager_python import _merge_config_args
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.cli.dimos import load_config_args
 from dimos.robot.manipulators.openarm.blueprints import teleop
-from dimos.teleop.openarm_mini.config import OpenArmMiniTeleopConfig
+from dimos.teleop.openarm_mini.config import (
+    OPENARM_MINI_DEFAULT_BAUDRATE,
+    OpenArmMiniTeleopConfig,
+)
 from dimos.teleop.openarm_mini.teleop_module import (
     OpenArmMiniTeleopModule,
     OpenArmMiniTeleopModuleConfig,
@@ -123,6 +126,7 @@ def test_right_openarm_mini_cli_port_override_preserves_right_side_default() -> 
     assert isinstance(config.openarm_mini, OpenArmMiniTeleopConfig)
     assert config.openarm_mini.enabled_sides == ("right",)
     assert config.openarm_mini.port_right == "/dev/ttyACM0"
+    assert config.openarm_mini.connection_baudrate() == OPENARM_MINI_DEFAULT_BAUDRATE
 
 
 def test_dual_openarm_mini_cli_port_override_preserves_dual_side_default() -> None:
@@ -136,3 +140,4 @@ def test_dual_openarm_mini_cli_port_override_preserves_dual_side_default() -> No
     assert isinstance(config.openarm_mini, OpenArmMiniTeleopConfig)
     assert config.openarm_mini.enabled_sides == ("left", "right")
     assert config.openarm_mini.port_right == "/dev/ttyACM0"
+    assert config.openarm_mini.connection_baudrate() == OPENARM_MINI_DEFAULT_BAUDRATE

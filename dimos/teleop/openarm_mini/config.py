@@ -31,7 +31,7 @@ OPENARM_MINI_STATE_DIR = STATE_DIR / "teleop" / "openarm_mini"
 OpenArmMiniSide = Literal["left", "right"]
 OPENARM_MINI_SIDES: tuple[OpenArmMiniSide, OpenArmMiniSide] = ("left", "right")
 OPENARM_MINI_UNCONFIGURED_PORT = ""
-OPENARM_MINI_UNCONFIGURED_BAUDRATE = 0
+OPENARM_MINI_DEFAULT_BAUDRATE = 1_000_000
 
 
 def default_calibration_path(side: str) -> Path:
@@ -62,7 +62,7 @@ class OpenArmMiniTeleopConfig(BaseConfig):
     port_right: str = OPENARM_MINI_UNCONFIGURED_PORT
     left_calibration_path: Path | None = None
     right_calibration_path: Path | None = None
-    baudrate: int = OPENARM_MINI_UNCONFIGURED_BAUDRATE
+    baudrate: int = OPENARM_MINI_DEFAULT_BAUDRATE
     max_joint_jump_radians: float = 0.75
     authority_active: bool = True
     enabled_sides: tuple[OpenArmMiniSide, ...] = OPENARM_MINI_SIDES

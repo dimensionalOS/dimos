@@ -137,9 +137,12 @@ before connecting any OpenArm follower hardware:
 
 ```bash
 dimos run openarm-mini-left-teleop-viser \
-  -o openarmminiteleopmodule.openarm_mini.port_left=<left-feetech-port> \
-  -o openarmminiteleopmodule.openarm_mini.baudrate=<feetech-baudrate>
+  -o openarmminiteleopmodule.openarm_mini.port_left=<left-feetech-port>
 ```
+
+Teleop defaults to the standard Feetech serial baudrate of `1000000`. Override
+`openarmminiteleopmodule.openarm_mini.baudrate` only if your leader was
+configured differently.
 
 The blueprint requires:
 
@@ -164,8 +167,7 @@ Run with the required right leader connection settings:
 
 ```bash
 uv run dimos run openarm-mini-right-teleop-viser \
-  -o openarmminiteleopmodule.openarm_mini.port_right=<right-feetech-port> \
-  -o openarmminiteleopmodule.openarm_mini.baudrate=<feetech-baudrate>
+  -o openarmminiteleopmodule.openarm_mini.port_right=<right-feetech-port>
 ```
 
 The blueprint requires:
@@ -177,10 +179,11 @@ The blueprint requires:
 - Viser dependencies from `uv sync --extra manipulation` or `uv sync --extra all`
 
 The right blueprint publishes ManipulationModule-compatible coordinator joint
-names (`openarm_right_joint1` through `openarm_right_joint7`). Viser renders follower-observed
-`coordinator_joint_state`, not the raw sender-side command, so mock mode validates
-the same coordinator routing used before real hardware is connected. Real
-follower hardware is intentionally out of scope for these Viser demo blueprints.
+names (`openarm_right_joint1` through `openarm_right_joint7`). Viser renders
+follower-observed `coordinator_joint_state`, not the raw sender-side command, so
+mock mode validates the same coordinator routing used before real hardware is
+connected. Real follower hardware is intentionally out of scope for these Viser
+demo blueprints.
 
 ## Dual-arm coordinator + Viser bring-up
 
@@ -194,8 +197,7 @@ Run with the required leader connection settings:
 ```bash
 uv run dimos run openarm-mini-dual-teleop-viser \
   -o openarmminiteleopmodule.openarm_mini.port_left=<left-feetech-port> \
-  -o openarmminiteleopmodule.openarm_mini.port_right=<right-feetech-port> \
-  -o openarmminiteleopmodule.openarm_mini.baudrate=<feetech-baudrate>
+  -o openarmminiteleopmodule.openarm_mini.port_right=<right-feetech-port>
 ```
 
 The dual blueprint publishes ManipulationModule-compatible coordinator joint
