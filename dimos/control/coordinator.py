@@ -436,7 +436,8 @@ class ControlCoordinator(Module):
             for entries in self._routes.values():
                 entries[:] = [entry for entry in entries if entry[0] is not task]
             logger.info(f"Removed task {task_name}")
-            return True
+        self._sync_stream_subscriptions()
+        return True
 
     def _register_routes(self, task: ControlTask, task_type: str) -> None:
         """Extend the route table with the type's card-declared streams (under _task_lock)."""
@@ -448,15 +449,17 @@ class ControlCoordinator(Module):
             )
 
     def _sync_stream_subscriptions(self) -> None:
-        """Subscribe every routed stream that has no subscription yet."""
+        """Reconcile stream subscriptions with the route table.
+
+        Subscribes any routed stream that is not yet subscribed and drops the
+        subscription for any stream whose last card-bound consumer was removed.
+        """
         if not (self._tick_loop and self._tick_loop.is_running):
             return
         with self._task_lock:
-            streams = [stream for stream, entries in self._routes.items() if entries]
+            active = {stream for stream, entries in self._routes.items() if entries}
         with self._subscribe_lock:
-            for stream in streams:
-                if stream in self._stream_unsubs:
-                    continue
+            for stream in active - self._stream_unsubs.keys():
                 try:
                     unsub = getattr(self, stream).subscribe(self._make_stream_cb(stream))
                 except Exception:
@@ -467,6 +470,9 @@ class ControlCoordinator(Module):
                     continue
                 self._stream_unsubs[stream] = unsub
                 logger.info(f"Subscribed to {stream} for card-bound tasks")
+            for stream in self._stream_unsubs.keys() - active:
+                self._stream_unsubs.pop(stream)()
+                logger.info(f"Unsubscribed from {stream}; last card-bound consumer removed")
 
     def _make_stream_cb(self, stream: str) -> "Callable[[Any], None]":
         def _on_message(msg: Any) -> None:

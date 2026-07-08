@@ -459,6 +459,31 @@ class ProbeTask(RecordingTask):
         return True
 
 
+class RaisingProbeTask(ProbeTask):
+    """Probe whose handler raises, to test per-task dispatch isolation."""
+
+    def on_probe_command(self, msg: Any, t_now: float) -> bool:
+        _ = msg, t_now
+        raise RuntimeError("handler boom")
+
+
+@pytest.fixture
+def probe_card_type() -> Iterator[str]:
+    """Register a claim_overlap card bound to on_probe_command; clean up after."""
+    from dimos.control.tasks.registry import control_task_registry
+
+    task_type = "routing_probe_task"
+    control_task_registry.register_bindings(
+        task_type,
+        consumes={"joint_command": ("on_probe_command", "claim_overlap")},
+    )
+    try:
+        yield task_type
+    finally:
+        control_task_registry._bindings.pop(task_type, None)
+        control_task_registry._binding_sources.pop(task_type, None)
+
+
 class TestCardRoutingContract:
     """Contract introduced by card routing: intentional deltas and new seams."""
 
@@ -514,26 +539,66 @@ class TestCardRoutingContract:
         taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.3, 0.4]))
         assert task._target == [0.3, 0.4]
 
-    def test_runtime_registered_card_routes_with_zero_coordinator_edits(self, make_coordinator):
-        from dimos.control.tasks.registry import control_task_registry
+    def test_runtime_registered_card_routes_with_zero_coordinator_edits(
+        self, make_coordinator, probe_card_type
+    ):
+        coordinator, taps = make_coordinator()
+        coordinator.start()
+        probe = ProbeTask("probe1", frozenset(ARM_JOINTS))
+        assert coordinator.add_task(probe, task_type=probe_card_type)
 
-        task_type = "routing_probe_task"
-        control_task_registry.register_bindings(
-            task_type,
-            consumes={"joint_command": ("on_probe_command", "claim_overlap")},
+        taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
+
+        assert len(probe.probe_commands) == 1
+        msg, t_now = probe.probe_commands[0]
+        assert list(msg.name) == ARM_JOINTS
+        assert isinstance(t_now, float)
+
+    def test_claim_overlap_gate_blocks_non_overlapping_and_empty(
+        self, make_coordinator, probe_card_type
+    ):
+        # A pure recorder (no self-filtering) pins the dispatcher's own overlap
+        # gate — the real servo/velocity tasks would silently no-op and hide it.
+        coordinator, taps = make_coordinator()
+        coordinator.start()
+        probe = ProbeTask("probe1", frozenset(ARM_JOINTS))
+        assert coordinator.add_task(probe, task_type=probe_card_type)
+
+        taps["joint_command"].emit(JointState(name=["other/joint9"], position=[1.0]))
+        taps["joint_command"].emit(JointState(name=[], position=[]))
+        assert probe.probe_commands == []
+
+        taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
+        assert len(probe.probe_commands) == 1
+
+    def test_dispatch_isolates_raising_handler_from_siblings(
+        self, make_coordinator, probe_card_type
+    ):
+        coordinator, taps = make_coordinator()
+        coordinator.start()
+        raiser = RaisingProbeTask("raiser", frozenset(ARM_JOINTS))
+        recorder = ProbeTask("recorder", frozenset(ARM_JOINTS))
+        assert coordinator.add_task(raiser, task_type=probe_card_type)
+        assert coordinator.add_task(recorder, task_type=probe_card_type)
+
+        # raiser is first in the route list; its exception must neither abort
+        # delivery to recorder nor propagate out of the port callback (emit).
+        taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
+
+        assert len(recorder.probe_commands) == 1
+
+    def test_removing_last_consumer_unsubscribes_stream(self, make_coordinator):
+        coordinator, taps = make_coordinator(
+            tasks=[
+                TaskConfig(name="servo1", type="servo", joint_names=ARM_JOINTS),
+                TaskConfig(name="vel1", type="velocity", joint_names=ARM_JOINTS),
+            ]
         )
-        try:
-            coordinator, taps = make_coordinator()
-            coordinator.start()
-            probe = ProbeTask("probe1", frozenset(ARM_JOINTS))
-            assert coordinator.add_task(probe, task_type=task_type)
+        coordinator.start()
+        assert taps["joint_command"].subscribed
 
-            taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
+        assert coordinator.remove_task("servo1")
+        taps["joint_command"].unsub.assert_not_called()  # vel1 still consumes
 
-            assert len(probe.probe_commands) == 1
-            msg, t_now = probe.probe_commands[0]
-            assert list(msg.name) == ARM_JOINTS
-            assert isinstance(t_now, float)
-        finally:
-            control_task_registry._bindings.pop(task_type, None)
-            control_task_registry._binding_sources.pop(task_type, None)
+        assert coordinator.remove_task("vel1")
+        taps["joint_command"].unsub.assert_called_once()  # last consumer gone
