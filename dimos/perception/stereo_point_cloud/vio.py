@@ -22,11 +22,6 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 
-_MAX_DT_S        = 0.1  # don't integrate more than 100ms at once — big gaps would blow up the filter
-_ACCEL_MIN_NORM  = 0.5  # skip accel correction if reading is basically zero (noise or free-fall)
-_MIN_ICP_INLIERS = 30   # need at least 30 matched point pairs to trust the ICP translation update
-
-
 class MadgwickFilter:
     """Gyro + accel → orientation R (camera_link → world, Z-up). beta=0.033."""
 
@@ -39,14 +34,14 @@ class MadgwickFilter:
         if self._t_prev is None:
             self._t_prev = t
             return
-        dt = min(t - self._t_prev, _MAX_DT_S)
+        dt = min(t - self._t_prev, 0.1)
         self._t_prev = t
         if dt <= 0:
             return
         q0, q1, q2, q3 = self._q
         gx, gy, gz = gyro.astype(np.float64)
         a_n = np.linalg.norm(accel)
-        if a_n > _ACCEL_MIN_NORM:
+        if a_n > 0.5:
             ax, ay, az = accel.astype(np.float64) / a_n
             f1 = 2*(q1*q3 - q0*q2) - ax
             f2 = 2*(q0*q1 + q2*q3) - ay
@@ -86,7 +81,6 @@ class PointCloudOdometry:
 
     ITERS    = 4
     MAX_DIST = 0.40
-    MIN_PTS  = 50     # minimum points needed to run ICP at all
     N_SRC    = 1_500
     N_DST    = 8_000
     N_STORE  = 10_000
@@ -105,7 +99,7 @@ class PointCloudOdometry:
         pts_ga = (xyz_cam @ R.T).astype(np.float32)
         with self._lock:
             t_est = self._t.copy()
-        if self._prev_world is None or len(pts_ga) < self.MIN_PTS:
+        if self._prev_world is None or len(pts_ga) < 50:
             t_new = t_est
         else:
             n_src = min(self.N_SRC, len(pts_ga))
@@ -116,7 +110,7 @@ class PointCloudOdometry:
             for _ in range(self.ITERS):
                 dists, idx = tree.query(src + t_est, k=1, workers=1)
                 mask = dists < self.MAX_DIST
-                if mask.sum() < _MIN_ICP_INLIERS:
+                if mask.sum() < 30:
                     break
                 delta = dst[idx[mask]].mean(axis=0) - (src[mask] + t_est).mean(axis=0)
                 t_est = (t_est + 0.7 * delta).astype(np.float32)
