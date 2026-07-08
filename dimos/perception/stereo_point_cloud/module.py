@@ -60,13 +60,16 @@ class Config(ModuleConfig):
     publish_every: int        = 1
     world_frame: str          = "world"
     madgwick_beta: float      = 0.033
-    # Applied as z_shift before floor calibration converges; avoids a scene
-    # snap from 0 → cam_height when the calibration fires at ~4 s.
-    cam_height_prior: float   = 1.0
-    # The floor is published at this z in world frame. Set to 0.5 to align
-    # with the Rerun ground grid (Plane3D.XY.with_distance(0.5) = z=+0.5),
-    # so all obstacles appear above the grid. Set to 0.0 for nav-only use.
-    floor_publish_z: float    = 0.5
+    # OPTIONAL camera mount height (m). Height-agnostic floor calibration is
+    # the primary datum source and works at ANY mount height; the prior, when
+    # set, is only a fallback used before calibration converges (so the
+    # floor-at-z=0 shift is active from the very first frame) and after
+    # calib_timeout_frames if the floor is never seen. Leave None for fully
+    # automatic operation.
+    cam_height_prior: float | None = None
+    # If calibration hasn't converged after this many depth frames AND a
+    # prior is set, start the global map with the prior instead of waiting.
+    calib_timeout_frames: int = 150
 
 
 class StereoPointCloud(Module):
@@ -96,10 +99,24 @@ class StereoPointCloud(Module):
         self._world_floor_z: float       = 0.0
         self._frame                      = 0
         self._warned_no_intrinsics       = False
+        self._calib_applied              = False
+        self._prior_warned               = False
 
     @rpc
     def start(self) -> None:
         super().start()
+        # Deployment marker — if this line doesn't appear in the logs, the
+        # running dimos is NOT using this file (e.g. a pip-installed copy).
+        prior_str = (
+            f"{self.config.cam_height_prior:.2f} m"
+            if self.config.cam_height_prior is not None
+            else "none (fully automatic)"
+        )
+        logger.info(
+            f"StereoPointCloud: floor-datum fix v3 active — height-agnostic "
+            f"floor calibration, publishing with floor at z=0, "
+            f"cam_height_prior={prior_str}"
+        )
         self._madgwick = MadgwickFilter(beta=self.config.madgwick_beta)
         if not self._init_imu():
             logger.warning("StereoPointCloud: no IMU — R=identity, translation from ICP only")
@@ -221,39 +238,66 @@ class StereoPointCloud(Module):
             dd,
         ]).astype(np.float32)
 
-        # R=identity: camera_link already has Z=up for the D435i, so no gravity
-        # alignment is needed for a near-level mount. Madgwick converges toward a
-        # 180° X-flip (it tries to align measured [0,0,-g] → [0,0,+1]), which
-        # corrupts xyz_world and mismatches the floor filter's calibration frame.
-        R = np.eye(3, dtype=np.float32)
+        with self._imu_lock:
+            R = self._madgwick.R.copy() if self._madgwick is not None else np.eye(3, dtype=np.float32)
         t = self._odom.t
 
         xyz_cam   = xyz_opt @ _R_OPT_TO_LINK.T
         xyz_world = (xyz_cam @ R.T + t).astype(np.float32)
 
-        # Calibrate on xyz_cam (camera_link, Z=up). For a level mount the floor
-        # is always at z_cam == -cam_height regardless of horizontal distance,
-        # so floor_z is always negative and cam_height always positive.
-        # Using xyz_world - t (Madgwick-rotated) biases the estimate as the
-        # filter drifts from identity over the first ~5 s.
-        self._floor_calib.update(xyz_cam)
+        # FIX: calibrate the floor on GRAVITY-ALIGNED points (xyz_world - t ==
+        # xyz_cam @ R.T), not raw camera_link points. In the raw frame any
+        # mount pitch turns the floor into a slanted plane, the z-histogram
+        # smears, and the estimated height is wrong — which is why the floor
+        # cut used to slice obstacles at the wrong height.
+        self._floor_calib.update(xyz_world - t)
 
         # FIX (rerun black plane): publish with the floor at z = 0. The rest
         # of dimos assumes this datum — the rerun viewer's ground grid/floor
         # mesh sits at z ≈ 0 and the occupancy algos treat z as height above
         # ground. With the old camera-origin datum the whole scene (floor at
         # z ≈ -1, chairs/tables/mat in between) rendered UNDER the viewer's
-        # ground plane. Shift is 0 until calibration completes (~4 s), then
-        # the cloud snaps up by cam_height.
-        # floor_publish_z offsets the whole cloud so the floor lands at z=0.5
-        # (the Rerun grid). Without it, floor=0 and low obstacles sit below the
-        # grid even when correctly calibrated.
-        cam_h = (
-            float(self._floor_calib.cam_height)  # type: ignore[arg-type]
-            if self._floor_calib.ready
-            else float(self.config.cam_height_prior)
-        )
-        z_shift = cam_h + self.config.floor_publish_z
+        # ground plane. The shift is active from the FIRST frame using the
+        # known mount height (cam_height_prior); in-band calibration replaces
+        # it when it converges.
+        prior = self.config.cam_height_prior
+        if self._floor_calib.ready:
+            # Height-agnostic calibration is the primary datum source — the
+            # slice validation in _FloorCalibrator (area + spread) makes it
+            # trustworthy at any mount height without a prior.
+            z_shift = float(self._floor_calib.cam_height)  # type: ignore[arg-type]
+            if not self._calib_applied:
+                self._calib_applied = True
+                logger.info(
+                    f"StereoPointCloud: floor datum → calibrated camera height "
+                    f"{z_shift:.3f} m"
+                )
+                if prior is not None and abs(z_shift - float(prior)) > 0.10:
+                    logger.info(
+                        f"StereoPointCloud: calibrated height differs from "
+                        f"cam_height_prior {float(prior):.2f} m — using the "
+                        f"calibrated value"
+                    )
+        elif prior is not None:
+            z_shift = float(prior)
+            if self._frame > 0 and self._frame % 60 == 0:
+                logger.info(
+                    f"StereoPointCloud: floor not calibrated yet (frame "
+                    f"{self._frame}, {self._floor_calib.last_candidates} "
+                    f"floor-band points in last frame) — publishing with prior "
+                    f"height {z_shift:.2f} m"
+                )
+        else:
+            z_shift = 0.0
+            if self._frame > 0 and self._frame % 60 == 0:
+                logger.warning(
+                    f"StereoPointCloud: floor not calibrated yet (frame "
+                    f"{self._frame}, {self._floor_calib.last_candidates} "
+                    f"floor-band points in last frame) and no cam_height_prior "
+                    f"set — publishing camera-centered until the floor is "
+                    f"detected. Make sure some open floor is in view (a level "
+                    f"camera at height h first sees it at ~1.8*h m)."
+                )
         z_off = np.array([0.0, 0.0, z_shift], dtype=np.float32)
 
         # Per-frame floor filter disabled — calibration cuts obstacles at wrong height.
@@ -282,22 +326,37 @@ class StereoPointCloud(Module):
         if len(xyz_cam_kept) >= PointCloudOdometry.MIN_PTS:
             self._odom.update(xyz_cam_kept, R)
 
-        if not self._floor_calib.ready:
+        # Start the global map when calibration converges, or — if a prior is
+        # configured — after the timeout using the prior. With no prior and no
+        # calibration there is no floor datum yet, so mapping waits (the floor
+        # height genuinely cannot be known before the floor has been seen).
+        can_map = self._floor_calib.ready or (
+            prior is not None and self._frame >= self.config.calib_timeout_frames
+        )
+        if not can_map:
             self._frame += 1
             return
 
         if not self._map_ready:
             self._map_ready = True
-            # FIX: the filter below runs on xyz_ronly = xyz_vox - t, which is
-            # CAMERA-CENTERED — so the threshold must be the camera-relative
-            # floor height (floor_z), not cam_z + floor_z. Adding the ICP z
-            # (a different frame) shifted the cut plane by whatever the ICP
-            # translation happened to be at calibration time.
-            self._world_floor_z = float(self._floor_calib.floor_z)  # type: ignore[arg-type]
-            logger.info(
-                f"StereoPointCloud: global map started — floor at "
-                f"Z ≈ {self._world_floor_z:.3f} m below camera (published at Z ≈ 0)"
-            )
+            if self._floor_calib.ready:
+                logger.info(
+                    f"StereoPointCloud: global map started — calibrated floor at "
+                    f"{z_shift:.3f} m below camera (published at Z ≈ 0)"
+                )
+            else:
+                logger.warning(
+                    f"StereoPointCloud: floor calibration did not converge within "
+                    f"{self.config.calib_timeout_frames} frames — global map "
+                    f"started with cam_height_prior={z_shift:.2f} m; calibration "
+                    f"keeps running and will take over when the floor is seen."
+                )
+
+        # FIX: the filter below runs on xyz_ronly = xyz_vox - t, which is
+        # CAMERA-CENTERED — so the threshold must be the camera-relative floor
+        # height, not cam_z + floor_z (that mixed two frames). Recomputed each
+        # frame so it tracks late calibration and downward recalibration.
+        self._world_floor_z = -z_shift
 
         # Rotation-only frame: strip ICP translation so ±2 cm t-noise doesn't shift voxel keys
         xyz_ronly  = xyz_vox - t
