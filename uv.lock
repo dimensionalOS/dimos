@@ -1561,6 +1561,7 @@ agents = [
 ]
 all = [
     { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "aiortc" },
     { name = "chromadb" },
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64'" },
     { name = "dimos-viewer" },
@@ -1574,6 +1575,7 @@ all = [
     { name = "gdown" },
     { name = "googlemaps" },
     { name = "gtsam-extended" },
+    { name = "httpx" },
     { name = "hydra-core" },
     { name = "ipykernel" },
     { name = "jinja2" },
@@ -1801,6 +1803,10 @@ web = [
     { name = "sse-starlette" },
     { name = "uvicorn" },
 ]
+webrtc = [
+    { name = "aiortc" },
+    { name = "httpx" },
+]
 
 [package.dev-dependencies]
 autofix = [
@@ -1809,7 +1815,7 @@ autofix = [
 lint = [
     { name = "aiortc" },
     { name = "chromadb" },
-    { name = "dimos", extra = ["visualization", "web"] },
+    { name = "dimos", extra = ["visualization", "web", "webrtc"] },
     { name = "einops" },
     { name = "gdown" },
     { name = "googlemaps" },
@@ -1847,7 +1853,7 @@ lint = [
 ]
 project-deps = [
     { name = "chromadb" },
-    { name = "dimos", extra = ["visualization", "web"] },
+    { name = "dimos", extra = ["visualization", "web", "webrtc"] },
     { name = "einops" },
     { name = "gdown" },
     { name = "googlemaps" },
@@ -1870,7 +1876,7 @@ project-deps = [
 tests = [
     { name = "chromadb" },
     { name = "coverage" },
-    { name = "dimos", extra = ["apriltag", "cpu", "drone", "learning", "mapping", "visualization", "web"] },
+    { name = "dimos", extra = ["apriltag", "cpu", "drone", "learning", "mapping", "visualization", "web", "webrtc"] },
     { name = "einops" },
     { name = "gdown" },
     { name = "googlemaps" },
@@ -1914,7 +1920,7 @@ tests = [
 tests-self-hosted = [
     { name = "chromadb" },
     { name = "coverage" },
-    { name = "dimos", extra = ["agents", "apriltag", "cpu", "drone", "learning", "manipulation", "mapping", "misc", "perception", "sim", "unitree", "visualization", "web"] },
+    { name = "dimos", extra = ["agents", "apriltag", "cpu", "drone", "learning", "manipulation", "mapping", "misc", "perception", "sim", "unitree", "visualization", "web", "webrtc"] },
     { name = "einops" },
     { name = "gdown" },
     { name = "googlemaps" },
@@ -1961,13 +1967,14 @@ tests-self-hosted = [
 [package.metadata]
 requires-dist = [
     { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'manipulation'" },
+    { name = "aiortc", marker = "extra == 'webrtc'", specifier = ">=1.14.0" },
     { name = "bleak", specifier = ">=3.0.2" },
     { name = "chromadb", marker = "extra == 'perception'", specifier = ">=1.0.0" },
     { name = "cryptography", specifier = ">=46.0.5" },
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = "==13.6.0" },
     { name = "cyclonedds", marker = "extra == 'dds'", specifier = ">=0.10.5" },
     { name = "cyclonedds", marker = "extra == 'unitree-dds'", specifier = ">=0.10.5" },
-    { name = "dimos", extras = ["agents", "apriltag", "base", "cpu", "cuda", "drone", "manipulation", "misc", "perception", "sim", "unitree", "visualization", "web"], marker = "extra == 'all'" },
+    { name = "dimos", extras = ["agents", "apriltag", "base", "cpu", "cuda", "drone", "manipulation", "misc", "perception", "sim", "unitree", "visualization", "web", "webrtc"], marker = "extra == 'all'" },
     { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'base'" },
     { name = "dimos", extras = ["base", "mapping"], marker = "extra == 'unitree'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
@@ -1986,6 +1993,7 @@ requires-dist = [
     { name = "googlemaps", marker = "extra == 'misc'", specifier = ">=4.10.0" },
     { name = "gtsam-extended", marker = "extra == 'mapping'", specifier = ">=4.3a1.post1" },
     { name = "h5py", marker = "extra == 'learning'" },
+    { name = "httpx", marker = "extra == 'webrtc'", specifier = ">=0.27.0" },
     { name = "hydra-core", marker = "extra == 'perception'", specifier = ">=1.3.0" },
     { name = "ipykernel", marker = "extra == 'misc'" },
     { name = "jinja2", marker = "extra == 'web'", specifier = ">=3.1.6" },
@@ -2069,14 +2077,14 @@ requires-dist = [
     { name = "xarm-python-sdk", marker = "extra == 'misc'", specifier = ">=1.17.0" },
     { name = "yourdfpy", marker = "(platform_machine != 'aarch64' and extra == 'visualization') or (sys_platform != 'linux' and extra == 'visualization')", specifier = ">=0.0.60" },
 ]
-provides-extras = ["misc", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "sim", "mapping", "drone", "dds", "base", "apriltag", "all"]
+provides-extras = ["misc", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "sim", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "all"]
 
 [package.metadata.requires-dev]
 autofix = [{ name = "ruff", specifier = "==0.14.3" }]
 lint = [
     { name = "aiortc", specifier = ">=1.14.0" },
     { name = "chromadb", specifier = ">=1.0.0" },
-    { name = "dimos", extras = ["web", "visualization"] },
+    { name = "dimos", extras = ["web", "visualization", "webrtc"] },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
     { name = "googlemaps", specifier = ">=4.10.0" },
@@ -2113,7 +2121,7 @@ lint = [
 ]
 project-deps = [
     { name = "chromadb", specifier = ">=1.0.0" },
-    { name = "dimos", extras = ["web", "visualization"] },
+    { name = "dimos", extras = ["web", "visualization", "webrtc"] },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
     { name = "googlemaps", specifier = ">=4.10.0" },
@@ -2137,7 +2145,7 @@ tests = [
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
-    { name = "dimos", extras = ["web", "visualization"] },
+    { name = "dimos", extras = ["web", "visualization", "webrtc"] },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
     { name = "googlemaps", specifier = ">=4.10.0" },
@@ -2183,7 +2191,7 @@ tests-self-hosted = [
     { name = "coverage", specifier = ">=7.0" },
     { name = "dimos", extras = ["agents", "perception", "manipulation", "sim", "unitree", "misc"] },
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
-    { name = "dimos", extras = ["web", "visualization"] },
+    { name = "dimos", extras = ["web", "visualization", "webrtc"] },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
     { name = "googlemaps", specifier = ">=4.10.0" },

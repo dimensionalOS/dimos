@@ -179,11 +179,13 @@ def arg_help(
         if inspect.isclass(t) and issubclass(t, BaseModel):
             output += f"{indent}{module}{k}:\n"
             if _atom is None:
-                # Root BlueprintConfig fields are blueprint atoms. Nested BaseModel
-                # fields belong to the current atom and must not be atom-looked-up.
-                bp = next(bp for bp in blueprint.blueprints if bp.module.name == k)
-                defaults = bp.kwargs
+                # Root BlueprintConfig fields are blueprint atoms, except schema
+                # branches such as transports.* that have no backing atom.
+                bp = next((bp for bp in blueprint.blueprints if bp.module.name == k), None)
+                defaults = bp.kwargs if bp is not None else field_defaults
             else:
+                # Nested BaseModel fields belong to the current atom and must not
+                # be atom-looked-up.
                 bp = _atom
                 defaults = field_defaults
             output += arg_help(
@@ -195,7 +197,6 @@ def arg_help(
                 _defaults=defaults,
             )
         else:
-            assert _atom is not None
             # Use __name__ to avoid "<class 'int'>" style output on basic types.
             display_type = t.__name__ if isinstance(t, type) else t
             has_default = _has_default_value(_defaults, k)
