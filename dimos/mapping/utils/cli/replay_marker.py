@@ -66,16 +66,16 @@ def main(
     ),
 ) -> None:
     """Dump an AprilTag detection replay to .rrd and open it in rerun."""
-    from dimos.memory2.store.sqlite import SqliteStore
+    from dimos.memory2.cli.dataset import open_store, resolve_dataset
     from dimos.memory2.transform import QualityWindow, SpeedLimit
     from dimos.memory2.vis.color import Color
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.perception.fiducial.marker_transformer import DetectMarkers
     from dimos.robot.unitree.go2.connection import _camera_info_static
-    from dimos.utils.data import resolve_named_path
 
-    db_path = resolve_named_path(dataset, ".db")
+    db_path = resolve_dataset(dataset)
+    store = open_store(db_path)
     if out is None:
         out = Path.cwd() / f"{db_path.stem}.rrd"
     cam_info = _camera_info_static()
@@ -89,7 +89,6 @@ def main(
     assert not isinstance(pinhole, list)
     rr.log("world/camera", pinhole, static=True)
 
-    store = SqliteStore(path=str(db_path))
     with store:
         color_image = store.stream("color_image", Image).from_time(seek or None).to_time(duration)
         lidar = store.stream("lidar", PointCloud2).from_time(seek or None).to_time(duration)
