@@ -104,12 +104,6 @@ RobotEntry: TypeAlias = tuple[WorldRobotID, RobotModelConfig, JointTrajectoryGen
 RobotRegistry: TypeAlias = dict[RobotName, RobotEntry]
 """Maps robot_name -> RobotEntry"""
 
-PlannedPaths: TypeAlias = dict[RobotName, JointPath]
-"""Maps robot_name -> planned joint path"""
-
-PlannedTrajectories: TypeAlias = dict[RobotName, JointTrajectory]
-"""Maps robot_name -> planned trajectory"""
-
 RobotInfoValue: TypeAlias = (
     str | bool | float | list[str] | list[float] | list[PlanningGroup] | None
 )
@@ -176,9 +170,8 @@ class ManipulationModule(Module):
         # Robot registry: maps robot_name -> (world_robot_id, config, trajectory_gen)
         self._robots: RobotRegistry = {}
 
-        # Stored path for plan/preview/execute workflow (per robot)
-        self._planned_paths: PlannedPaths = {}
-        self._planned_trajectories: PlannedTrajectories = {}
+        # Canonical generated plan for plan/preview/execute workflow.
+        # Robot-local paths and trajectories are derived from this plan on demand.
         self._last_plan: GeneratedPlan | None = None
 
         # Coordinator integration (lazy initialized)
@@ -520,7 +513,7 @@ class ManipulationModule(Module):
                 logger.warning(f"Cannot plan: state is {self._state.name}")
                 return None
             self._planning_epoch += 1
-            self._clear_cached_plan()
+            self._last_plan = None
             self._state = ManipulationState.PLANNING
             return self._planning_epoch
 
@@ -607,12 +600,6 @@ class ManipulationModule(Module):
         )
         return self._last_plan
 
-    def _clear_cached_plan(self) -> None:
-        """Clear generated-plan and legacy per-robot plan caches."""
-        self._last_plan = None
-        self._planned_paths.clear()
-        self._planned_trajectories.clear()
-
     def _project_plan_to_robot_paths(
         self, plan: GeneratedPlan
     ) -> dict[RobotName, JointPath] | None:
@@ -693,26 +680,39 @@ class ManipulationModule(Module):
             paths[resolved_name] = local_path
         return paths
 
-    def _cache_generated_plan_paths(self, plan: GeneratedPlan) -> bool:
-        """Populate legacy per-robot path and trajectory caches from a generated plan."""
+    def _trajectory_from_robot_path(
+        self, robot_name: RobotName, path: JointPath
+    ) -> JointTrajectory | None:
+        """Generate a local trajectory for one projected robot path."""
+        if len(path) < 2:
+            logger.error("Plan projection for '%s' has fewer than two waypoints", robot_name)
+            return None
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return None
+        _, _, config, traj_gen = robot
+        local_trajectory = traj_gen.generate([list(state.position) for state in path])
+        return JointTrajectory(
+            joint_names=list(config.joint_names),
+            points=local_trajectory.points,
+            timestamp=local_trajectory.timestamp,
+        )
+
+    def _trajectories_for_plan(
+        self, plan: GeneratedPlan
+    ) -> dict[RobotName, JointTrajectory] | None:
+        """Derive robot-local trajectories from a generated plan."""
         projected = self._project_plan_to_robot_paths(plan)
         if projected is None:
-            return False
+            return None
+        trajectories: dict[RobotName, JointTrajectory] = {}
         for robot_name, path in projected.items():
-            if len(path) < 2:
-                logger.error("Plan projection for '%s' has fewer than two waypoints", robot_name)
-                return False
-            _, config, traj_gen = self._robots[robot_name]
-            local_trajectory = traj_gen.generate([list(state.position) for state in path])
-            trajectory = JointTrajectory(
-                joint_names=list(config.joint_names),
-                points=local_trajectory.points,
-                timestamp=local_trajectory.timestamp,
-            )
-            self._planned_paths[robot_name] = path
-            self._planned_trajectories[robot_name] = trajectory
+            trajectory = self._trajectory_from_robot_path(robot_name, path)
+            if trajectory is None:
+                return None
+            trajectories[robot_name] = trajectory
             logger.info("Trajectory for %s: %.3fs", robot_name, trajectory.duration)
-        return True
+        return trajectories
 
     def _plan_selected_path(
         self,
@@ -746,8 +746,9 @@ class ManipulationModule(Module):
             iterations=result.iterations,
             message=result.message,
         )
-        if not self._cache_generated_plan_paths(plan):
-            self._clear_cached_plan()
+        projected = self._project_plan_to_robot_paths(plan)
+        if projected is None or any(len(path) < 2 for path in projected.values()):
+            self._last_plan = None
             return self._fail("Failed to project generated plan")
         self._last_plan = plan
         self._state = ManipulationState.COMPLETED
@@ -1007,56 +1008,40 @@ class ManipulationModule(Module):
         goal = JointState(name=goal_names, position=goal_positions)
         return self._plan_selected_path(group_ids, start, goal, planning_epoch)
 
-    def _plan_path_only(
+    def _preview_projected_path(
         self,
-        robot_name: RobotName,
         robot_id: WorldRobotID,
-        goal: JointState,
-        planning_epoch: int,
+        planned_path: JointPath,
+        trajectory: JointTrajectory,
+        duration: float | None,
+        target_fps: float,
     ) -> bool:
-        """Plan path from current position to goal, store result."""
-        assert self._world_monitor and self._planner  # guaranteed by _begin_planning
-        self._dismiss_preview(robot_id)
-        start = self._world_monitor.get_current_joint_state(robot_id)
-        if start is None:
-            return self._fail("No joint state")
-
-        # Trim goal to planner DOF (e.g. strip gripper joint from coordinator state)
-        planner_dof = len(start.position)
-        if len(goal.position) > planner_dof:
-            goal = JointState(
-                name=list(goal.name[:planner_dof]) if goal.name else [],
-                position=list(goal.position[:planner_dof]),
-            )
-
-        result = self._planner.plan_joint_path(
-            world=self._world_monitor.world,
-            robot_id=robot_id,
-            start=start,
-            goal=goal,
-            timeout=self.config.planning_timeout,
-        )
-        if self._state != ManipulationState.PLANNING or planning_epoch != self._planning_epoch:
-            logger.info("Discarding cancelled planning result")
+        """Animate a projected local path with optional trajectory interpolation."""
+        if self._world_monitor is None or len(planned_path) == 0:
             return False
-        if not result.is_success():
-            return self._fail(f"Planning failed: {result.status.name}")
 
-        logger.info(f"Path: {len(result.path)} waypoints")
-        self._planned_paths[robot_name] = result.path
-
-        _, config, traj_gen = self._robots[robot_name]
-        # Convert JointState path to list of position lists for trajectory generator
-        local_trajectory = traj_gen.generate([list(state.position) for state in result.path])
-        traj = JointTrajectory(
-            joint_names=list(result.path[0].name or config.joint_names),
-            points=local_trajectory.points,
-            timestamp=local_trajectory.timestamp,
-        )
-        self._planned_trajectories[robot_name] = traj
-        logger.info(f"Trajectory: {traj.duration:.3f}s")
-
-        self._state = ManipulationState.COMPLETED
+        animation_duration = duration if duration is not None else trajectory.duration
+        interpolated = list(planned_path)
+        if target_fps > 0 and animation_duration > 0:
+            times = np.array(
+                [point.time_from_start for point in trajectory.points], dtype=np.float64
+            )
+            positions = np.array([point.positions for point in trajectory.points], dtype=np.float64)
+            if len(times) > 1 and positions.ndim == 2 and times[-1] > times[0]:
+                frame_count = int(np.ceil(animation_duration * target_fps)) + 1
+                sample_times = np.linspace(times[0], times[-1], frame_count)
+                joint_names = trajectory.joint_names or planned_path[0].name
+                sampled_positions = np.column_stack(
+                    [
+                        np.interp(sample_times, times, positions[:, joint])
+                        for joint in range(positions.shape[1])
+                    ]
+                )
+                interpolated = [
+                    JointState(name=joint_names, position=position.tolist())
+                    for position in sampled_positions
+                ]
+        self._world_monitor.animate_path(robot_id, interpolated, animation_duration)
         return True
 
     @rpc
@@ -1081,40 +1066,20 @@ class ManipulationModule(Module):
             return False
         robot_name, robot_id, _, _ = robot
 
-        planned_path = self._planned_paths.get(robot_name)
-        if planned_path is None or len(planned_path) == 0:
-            logger.warning(f"No planned path to preview for {robot_name}")
+        plan = self._last_plan
+        if plan is None or not plan.path:
+            logger.warning("No generated plan to preview")
             return False
-
-        if duration is None:
-            trajectory = self._planned_trajectories.get(robot_name)
-            animation_duration = trajectory.duration if trajectory is not None else 3.0
-        else:
-            trajectory = self._planned_trajectories.get(robot_name)
-            animation_duration = duration
-
-        interpolated = list(planned_path)
-        if trajectory is not None and target_fps > 0 and animation_duration > 0:
-            times = np.array(
-                [point.time_from_start for point in trajectory.points], dtype=np.float64
-            )
-            positions = np.array([point.positions for point in trajectory.points], dtype=np.float64)
-            if len(times) > 1 and positions.ndim == 2 and times[-1] > times[0]:
-                frame_count = int(np.ceil(animation_duration * target_fps)) + 1
-                sample_times = np.linspace(times[0], times[-1], frame_count)
-                joint_names = trajectory.joint_names or planned_path[0].name
-                sampled_positions = np.column_stack(
-                    [
-                        np.interp(sample_times, times, positions[:, joint])
-                        for joint in range(positions.shape[1])
-                    ]
-                )
-                interpolated = [
-                    JointState(name=joint_names, position=position.tolist())
-                    for position in sampled_positions
-                ]
-        self._world_monitor.animate_path(robot_id, interpolated, animation_duration)
-        return True
+        projected = self._project_plan_to_robot_paths(plan)
+        if projected is None or (planned_path := projected.get(robot_name)) is None:
+            logger.warning("No planned path to preview for %s", robot_name)
+            return False
+        trajectory = self._trajectory_from_robot_path(robot_name, planned_path)
+        if trajectory is None:
+            return False
+        return self._preview_projected_path(
+            robot_id, planned_path, trajectory, duration, target_fps
+        )
 
     @rpc
     def preview_plan(
@@ -1124,7 +1089,7 @@ class ManipulationModule(Module):
         robot_name: RobotName | None = None,
     ) -> bool:
         """Preview a generated plan using the existing per-robot path preview API."""
-        plan = plan or getattr(self, "_last_plan", None)
+        plan = plan or self._last_plan
         if plan is None or not plan.path:
             logger.warning("No generated plan to preview")
             return False
@@ -1138,9 +1103,20 @@ class ManipulationModule(Module):
                 logger.error("Generated plan does not affect robot '%s'", robot_name)
                 return False
             affected = [robot_name]
-        if not self._cache_generated_plan_paths(plan):
+        projected = self._project_plan_to_robot_paths(plan)
+        if projected is None:
             return False
-        return all(self.preview_path(duration=duration, robot_name=name) for name in affected)
+        for name in affected:
+            robot = self._get_robot(name)
+            if robot is None or (planned_path := projected.get(name)) is None:
+                return False
+            _, robot_id, _, _ = robot
+            trajectory = self._trajectory_from_robot_path(name, planned_path)
+            if trajectory is None or not self._preview_projected_path(
+                robot_id, planned_path, trajectory, duration, 30.0
+            ):
+                return False
+        return True
 
     @rpc
     def has_planned_path(self) -> bool:
@@ -1149,17 +1125,7 @@ class ManipulationModule(Module):
         Returns:
             True if a path is planned and ready
         """
-        last_plan = getattr(self, "_last_plan", None)
-        if last_plan is not None and bool(last_plan.path):
-            return True
-        if len(self._robots) > 1:
-            return any(bool(path) for path in self._planned_paths.values())
-        robot = self._get_robot()
-        if robot is None:
-            return False
-        robot_name, _, _, _ = robot
-        path = self._planned_paths.get(robot_name)
-        return path is not None and len(path) > 0
+        return self._last_plan is not None and bool(self._last_plan.path)
 
     @rpc
     def get_visualization_url(self) -> str | None:
@@ -1181,7 +1147,7 @@ class ManipulationModule(Module):
         """
         if self._world_monitor is None:
             return False
-        self._clear_cached_plan()
+        self._last_plan = None
         return True
 
     @rpc
@@ -1364,14 +1330,23 @@ class ManipulationModule(Module):
 
     def get_planned_path(self, robot_name: RobotName) -> JointPath | None:
         """Return a copy of the stored planned path for visualization."""
-        path = self._planned_paths.get(robot_name)
-        if path is None:
+        plan = self._last_plan
+        if plan is None or not plan.path:
+            return None
+        projected = self._project_plan_to_robot_paths(plan)
+        if projected is None or (path := projected.get(robot_name)) is None:
             return None
         return [JointState(point) for point in path]
 
     def get_planned_trajectory_duration(self, robot_name: RobotName) -> float | None:
         """Return the stored planned trajectory duration for visualization."""
-        trajectory = self._planned_trajectories.get(robot_name)
+        plan = self._last_plan
+        if plan is None or not plan.path:
+            return None
+        projected = self._project_plan_to_robot_paths(plan)
+        if projected is None or (path := projected.get(robot_name)) is None:
+            return None
+        trajectory = self._trajectory_from_robot_path(robot_name, path)
         if trajectory is None:
             return None
         return float(trajectory.duration)
@@ -1461,15 +1436,12 @@ class ManipulationModule(Module):
             timestamp=trajectory.timestamp,
         )
 
-    def _execute_cached_robot_trajectory(self, robot_name: RobotName | None = None) -> bool:
-        """Execute one robot's cached local trajectory through ControlCoordinator."""
+    def _execute_robot_trajectory(self, robot_name: RobotName, trajectory: JointTrajectory) -> bool:
+        """Execute one robot's local trajectory through ControlCoordinator."""
         if (robot := self._get_robot(robot_name)) is None:
             return False
         resolved_name, _, config, _ = robot
 
-        if (traj := self._planned_trajectories.get(resolved_name)) is None:
-            logger.warning("No planned trajectory")
-            return False
         if not config.coordinator_task_name:
             logger.error(f"No coordinator_task_name for '{resolved_name}'")
             return False
@@ -1477,7 +1449,7 @@ class ManipulationModule(Module):
             logger.error("No coordinator client")
             return False
 
-        translated = self._translate_trajectory_to_coordinator(traj, config)
+        translated = self._translate_trajectory_to_coordinator(trajectory, config)
         logger.info(
             f"Executing: task='{config.coordinator_task_name}', {len(translated.points)} pts, {translated.duration:.2f}s"
         )
@@ -1493,12 +1465,22 @@ class ManipulationModule(Module):
     @rpc
     def execute(self, robot_name: RobotName | None = None) -> bool:
         """Execute planned trajectory via ControlCoordinator."""
-        last_plan = getattr(self, "_last_plan", None)
-        if robot_name is None and last_plan is not None and last_plan.path:
+        last_plan = self._last_plan
+        if last_plan is None or not last_plan.path:
+            logger.warning("No generated plan")
+            return False
+        if robot_name is None:
             return self.execute_plan(last_plan)
+        projected = self._project_plan_to_robot_paths(last_plan)
+        if projected is None or (path := projected.get(robot_name)) is None:
+            logger.warning("No planned path for '%s'", robot_name)
+            return False
+        trajectory = self._trajectory_from_robot_path(robot_name, path)
+        if trajectory is None:
+            return False
         previous_state = self._state
         self._state = ManipulationState.EXECUTING
-        if self._execute_cached_robot_trajectory(robot_name):
+        if self._execute_robot_trajectory(robot_name, trajectory):
             self._state = ManipulationState.COMPLETED
             return True
         if self._state == ManipulationState.EXECUTING:
@@ -1508,7 +1490,7 @@ class ManipulationModule(Module):
     @rpc
     def execute_plan(self, plan: GeneratedPlan | None = None) -> bool:
         """Execute a generated planning-group plan through affected trajectory tasks."""
-        plan = plan or getattr(self, "_last_plan", None)
+        plan = plan or self._last_plan
         if plan is None or not plan.path:
             logger.warning("No generated plan")
             return False
@@ -1519,7 +1501,8 @@ class ManipulationModule(Module):
             affected = self._affected_robot_names(plan)
         except Exception as exc:
             return self._fail(f"Failed to resolve generated plan: {exc}")
-        if not self._cache_generated_plan_paths(plan):
+        trajectories = self._trajectories_for_plan(plan)
+        if trajectories is None:
             return self._fail("Failed to project generated plan")
 
         self._state = ManipulationState.EXECUTING
@@ -1531,7 +1514,7 @@ class ManipulationModule(Module):
             if not config.coordinator_task_name:
                 logger.error(f"No coordinator_task_name for '{robot_name}'")
                 return self._fail(f"No coordinator_task_name for '{robot_name}'")
-            traj = self._planned_trajectories.get(robot_name)
+            traj = trajectories.get(robot_name)
             if traj is None:
                 logger.warning("No planned trajectory for '%s'", robot_name)
                 return self._fail(f"No planned trajectory for '{robot_name}'")
@@ -1555,7 +1538,7 @@ class ManipulationModule(Module):
     @rpc
     def get_trajectory_status(self, robot_name: RobotName | None = None) -> dict[str, Any] | None:
         """Get trajectory execution status via coordinator task_invoke."""
-        last_plan = getattr(self, "_last_plan", None)
+        last_plan = self._last_plan
         if robot_name is None and last_plan is not None and last_plan.path:
             statuses = {
                 name: self.get_trajectory_status(name)
@@ -1719,7 +1702,7 @@ class ManipulationModule(Module):
         Returns:
             True if trajectory completed successfully
         """
-        last_plan = getattr(self, "_last_plan", None)
+        last_plan = self._last_plan
         if robot_name is None and last_plan is not None and last_plan.path:
             try:
                 affected = self._affected_robot_names(last_plan)
@@ -1736,13 +1719,19 @@ class ManipulationModule(Module):
             return True
         rname, _, config, _ = robot
         client = self._get_coordinator_client()
+        trajectory: JointTrajectory | None = None
+        if last_plan is not None and last_plan.path:
+            projected = self._project_plan_to_robot_paths(last_plan)
+            if projected is not None and (path := projected.get(rname)) is not None:
+                trajectory = self._trajectory_from_robot_path(rname, path)
 
         if client is None or not config.coordinator_task_name:
             # No coordinator — wait for trajectory duration as fallback
-            traj = self._planned_trajectories.get(rname)
-            if traj is not None:
-                logger.info(f"No coordinator status — waiting {traj.duration:.1f}s for trajectory")
-                time.sleep(traj.duration + 0.5)
+            if trajectory is not None:
+                logger.info(
+                    f"No coordinator status — waiting {trajectory.duration:.1f}s for trajectory"
+                )
+                time.sleep(trajectory.duration + 0.5)
             return True
 
         # Poll task state via task_invoke
@@ -1764,9 +1753,8 @@ class ManipulationModule(Module):
                     return True
             except Exception:
                 # Fallback: wait for trajectory duration
-                traj = self._planned_trajectories.get(rname)
-                if traj is not None:
-                    remaining = traj.duration - (time.time() - start)
+                if trajectory is not None:
+                    remaining = trajectory.duration - (time.time() - start)
                     if remaining > 0:
                         logger.info(f"Status poll failed — waiting {remaining:.1f}s for trajectory")
                         time.sleep(remaining + 0.5)

@@ -169,10 +169,14 @@ class TestManipulationModuleIntegration:
         assert module._state == ManipulationState.COMPLETED
         assert module.has_planned_path() is True
 
-        assert "test_arm" in module._planned_trajectories
-        traj = module._planned_trajectories["test_arm"]
+        path = module.get_planned_path("test_arm")
+        assert path is not None and len(path) > 1
+        duration = module.get_planned_trajectory_duration("test_arm")
+        assert duration is not None and duration > 0
+
+        traj = module._trajectory_from_robot_path("test_arm", path)
+        assert traj is not None
         assert len(traj.points) > 1
-        assert traj.duration > 0
 
         assert module._last_plan is not None
         assert module._last_plan.group_ids == ("test_arm/manipulator",)
@@ -190,7 +194,7 @@ class TestManipulationModuleIntegration:
         assert module._last_plan is not None
         assert module._last_plan.group_ids == ("test_arm/manipulator",)
         assert module.has_planned_path() is True
-        assert "test_arm" in module._planned_trajectories
+        assert module.get_planned_path("test_arm") is not None
 
     def test_add_and_remove_obstacle(self, module, joint_state_zeros):
         """Test adding and removing obstacles."""
@@ -243,13 +247,15 @@ class TestManipulationModuleIntegration:
         success = module.plan_to_joints(JointState(position=[0.05] * 7))
         assert success is True
 
-        traj = module._planned_trajectories["test_arm"]
+        path = module.get_planned_path("test_arm")
+        assert path is not None
+        traj = module._trajectory_from_robot_path("test_arm", path)
+        assert traj is not None
         robot_config = module._robots["test_arm"][1]
 
         translated = module._translate_trajectory_to_coordinator(traj, robot_config)
 
-        for name in translated.joint_names:
-            assert name.startswith("arm_")  # Should have arm_ prefix
+        assert translated.joint_names == list(robot_config.joint_name_mapping.keys())
 
 
 @pytest.mark.skipif(not _drake_available(), reason="Drake not installed")
@@ -284,7 +290,8 @@ class TestCoordinatorIntegration:
         trajectory = kwargs["trajectory"]
         assert len(trajectory.points) > 1
         # Joint names should be translated
-        assert all(n.startswith("arm_") for n in trajectory.joint_names)
+        robot_config = module._robots["test_arm"][1]
+        assert trajectory.joint_names == list(robot_config.joint_name_mapping.keys())
 
     def test_execute_rejected_by_coordinator(self, module, joint_state_zeros):
         """Test handling of coordinator rejection."""

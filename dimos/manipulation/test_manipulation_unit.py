@@ -34,7 +34,12 @@ from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus, PlanningStatus
-from dimos.manipulation.planning.spec.models import IKResult, PlanningResult, PlanningSceneInfo
+from dimos.manipulation.planning.spec.models import (
+    GeneratedPlan,
+    IKResult,
+    PlanningResult,
+    PlanningSceneInfo,
+)
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -117,8 +122,6 @@ class _ManipulationModuleHarness(ManipulationModule):
         self._error_message = ""
         self._planning_epoch = 0
         self._robots = {}
-        self._planned_paths = {}
-        self._planned_trajectories = {}
         self._last_plan = None
         self._world_monitor = None
         self._planner = None
@@ -130,6 +133,49 @@ class _ManipulationModuleHarness(ManipulationModule):
 def _make_module() -> ManipulationModule:
     """Create a lightweight ManipulationModule harness for behavior tests."""
     return _ManipulationModuleHarness()
+
+
+def _one_joint_config(name: str = "arm") -> RobotModelConfig:
+    return RobotModelConfig(
+        name=name,
+        model_path=Path("/path"),
+        base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        joint_names=["j0"],
+        base_link="base_link",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="manipulator", joint_names=("j0",), base_link="base_link", tip_link="ee"
+            )
+        ],
+        coordinator_task_name=f"traj_{name}",
+    )
+
+
+def _install_generated_plan(
+    module: ManipulationModule,
+    config: RobotModelConfig,
+    traj_gen: MagicMock,
+    *points: list[float],
+) -> None:
+    """Install a generated plan and enough monitor state to derive robot paths."""
+    module._robots = {config.name: ("robot_id", config, traj_gen)}
+    module._world_monitor = MagicMock()
+    module._world_monitor.planning_groups = PlanningGroupRegistry([config])
+    module._world_monitor.get_current_joint_state.return_value = JointState(
+        name=config.joint_names,
+        position=[0.0 for _ in config.joint_names],
+    )
+    module._last_plan = GeneratedPlan(
+        group_ids=(f"{config.name}/manipulator",),
+        status=PlanningStatus.SUCCESS,
+        path=[
+            JointState(
+                name=[f"{config.name}/{joint}" for joint in config.joint_names],
+                position=list(point),
+            )
+            for point in points
+        ],
+    )
 
 
 class TestStateMachine:
@@ -348,7 +394,7 @@ class TestPlanningInitialization:
 
         assert result is expected
         assert module._state == ManipulationState.COMPLETED
-        assert module._planned_paths == {}
+        assert module._last_plan is None
         module._kinematics.solve_pose_targets.assert_called_once()
         _, kwargs = module._kinematics.solve_pose_targets.call_args
         assert kwargs["world"] is module._world_monitor.world
@@ -472,8 +518,10 @@ class TestPlanningGroupApis:
         assert module._last_plan is not None
         assert module._last_plan.group_ids == ("test_arm/manipulator",)
         assert module._last_plan.path == result_path
-        assert module._planned_paths["test_arm"][1].position == [0.1, 0.2, 0.3]
-        assert module._planned_trajectories["test_arm"].joint_names == robot_config.joint_names
+        planned_path = module.get_planned_path("test_arm")
+        assert planned_path is not None
+        assert planned_path[1].position == [0.1, 0.2, 0.3]
+        assert module.get_planned_trajectory_duration("test_arm") is not None
         module._planner.plan_selected_joint_path.assert_called_once()
         _, kwargs = module._planner.plan_selected_joint_path.call_args
         assert kwargs["selection"].group_ids == ("test_arm/manipulator",)
@@ -567,8 +615,6 @@ class TestPlanningGroupApis:
             ],
         )
         module._last_plan = module._store_generated_plan(("test_arm/manipulator",), stale_result)
-        module._planned_paths = {"test_arm": stale_result.path}
-        module._planned_trajectories = {"test_arm": simple_trajectory}
         module._planner = MagicMock()
         module._planner.plan_selected_joint_path.return_value = PlanningResult(
             status=PlanningStatus.SUCCESS,
@@ -587,8 +633,6 @@ class TestPlanningGroupApis:
         assert success is False
         assert module._state == ManipulationState.FAULT
         assert module._last_plan is None
-        assert module._planned_paths == {}
-        assert module._planned_trajectories == {}
         assert module.has_planned_path() is False
 
     def test_execute_plan_dispatches_each_affected_robot(self, robot_config, simple_trajectory):
@@ -730,7 +774,6 @@ class TestExecute:
         """Execute fails without planned trajectory."""
         module = _make_module()
         module._robots = {"test_arm": ("id", robot_config, MagicMock())}
-        module._planned_trajectories = {}
 
         assert module.execute() is False
         assert module._state == ManipulationState.IDLE
@@ -749,10 +792,11 @@ class TestExecute:
                 )
             ],
         )
-        module._robots = {"arm": ("id", config_no_task, MagicMock())}
-        module._planned_trajectories = {"arm": MagicMock()}
+        traj_gen = MagicMock()
+        traj_gen.generate.return_value = _make_trajectory((0.0, [0.0]), (1.0, [0.1]))
+        _install_generated_plan(module, config_no_task, traj_gen, [0.0], [0.1])
 
-        assert module.execute() is False
+        assert module.execute("arm") is False
         assert module._state == ManipulationState.IDLE
 
     def test_execute_plan_requires_task_name_without_sticking_executing(self, robot_config):
@@ -801,30 +845,36 @@ class TestExecute:
     def test_execute_success(self, robot_config, simple_trajectory):
         """Successful execute calls coordinator via task_invoke."""
         module = _make_module()
-        module._robots = {"test_arm": ("id", robot_config, MagicMock())}
-        module._planned_trajectories = {"test_arm": simple_trajectory}
+        traj_gen = MagicMock()
+        traj_gen.generate.return_value = simple_trajectory
+        _install_generated_plan(module, robot_config, traj_gen, [0.0, 0.0, 0.0], [0.1, 0.2, 0.3])
 
         mock_client = MagicMock()
         mock_client.task_invoke.return_value = True
         module._coordinator_client = mock_client
 
-        assert module.execute() is True
+        assert module.execute("test_arm") is True
         assert module._state == ManipulationState.COMPLETED
-        mock_client.task_invoke.assert_called_once_with(
-            "traj_arm", "execute", {"trajectory": simple_trajectory}
-        )
+        mock_client.task_invoke.assert_called_once()
+        task_name, method_name, payload = mock_client.task_invoke.call_args.args
+        assert task_name == "traj_arm"
+        assert method_name == "execute"
+        trajectory = payload["trajectory"]
+        assert trajectory.joint_names == simple_trajectory.joint_names
+        assert trajectory.points == simple_trajectory.points
 
     def test_execute_rejected(self, robot_config, simple_trajectory):
         """Rejected execution sets FAULT state."""
         module = _make_module()
-        module._robots = {"test_arm": ("id", robot_config, MagicMock())}
-        module._planned_trajectories = {"test_arm": simple_trajectory}
+        traj_gen = MagicMock()
+        traj_gen.generate.return_value = simple_trajectory
+        _install_generated_plan(module, robot_config, traj_gen, [0.0, 0.0, 0.0], [0.1, 0.2, 0.3])
 
         mock_client = MagicMock()
         mock_client.task_invoke.return_value = False
         module._coordinator_client = mock_client
 
-        assert module.execute() is False
+        assert module.execute("test_arm") is False
         assert module._state == ManipulationState.FAULT
 
 
@@ -1090,10 +1140,10 @@ class TestManipulationPreview:
 
     def test_preview_path_uses_trajectory_duration_and_interpolates(self):
         module = _make_module()
-        module._world_monitor = MagicMock()
-        module._robots = {"arm": ("robot_id", MagicMock(), MagicMock())}
-        module._planned_paths = {"arm": _make_path([0.0], [2.0])}
-        module._planned_trajectories = {"arm": _make_trajectory((0.0, [0.0]), (2.0, [2.0]))}
+        config = _one_joint_config()
+        traj_gen = MagicMock()
+        traj_gen.generate.return_value = _make_trajectory((0.0, [0.0]), (2.0, [2.0]))
+        _install_generated_plan(module, config, traj_gen, [0.0], [2.0])
 
         assert module.preview_path(robot_name="arm", target_fps=2.0) is True
 
@@ -1105,10 +1155,10 @@ class TestManipulationPreview:
 
     def test_preview_path_explicit_duration_overrides_and_fps_densifies(self):
         module = _make_module()
-        module._world_monitor = MagicMock()
-        module._robots = {"arm": ("robot_id", MagicMock(), MagicMock())}
-        module._planned_paths = {"arm": _make_path([0.0], [9.0])}
-        module._planned_trajectories = {"arm": _make_trajectory((0.0, [0.0]), (9.0, [9.0]))}
+        config = _one_joint_config()
+        traj_gen = MagicMock()
+        traj_gen.generate.return_value = _make_trajectory((0.0, [0.0]), (9.0, [9.0]))
+        _install_generated_plan(module, config, traj_gen, [0.0], [9.0])
 
         assert module.preview_path(duration=1.5, robot_name="arm", target_fps=2.0) is True
 
@@ -1118,42 +1168,39 @@ class TestManipulationPreview:
         assert duration == 1.5
         assert [state.position for state in preview_path] == [[0.0], [3.0], [6.0], [9.0]]
 
-    def test_preview_path_missing_trajectory_uses_default_duration(self):
+    def test_preview_path_returns_false_when_trajectory_cannot_be_derived(self):
         module = _make_module()
-        module._world_monitor = MagicMock()
-        module._robots = {"arm": ("robot_id", MagicMock(), MagicMock())}
-        module._planned_paths = {"arm": _make_path([0.0], [1.0])}
-        module._planned_trajectories = {}
+        config = _one_joint_config()
+        traj_gen = MagicMock()
+        _install_generated_plan(module, config, traj_gen, [0.0])
 
-        assert module.preview_path(robot_name="arm", target_fps=10.0) is True
-
-        module._world_monitor.animate_path.assert_called_once_with(
-            "robot_id", module._planned_paths["arm"], 3.0
-        )
+        assert module.preview_path(robot_name="arm", target_fps=10.0) is False
+        module._world_monitor.animate_path.assert_not_called()
 
     def test_preview_path_skips_interpolation_for_nonpositive_fps_or_duration(self):
         module = _make_module()
-        module._world_monitor = MagicMock()
-        module._robots = {"arm": ("robot_id", MagicMock(), MagicMock())}
-        module._planned_paths = {"arm": _make_path([0.0], [1.0])}
-        module._planned_trajectories = {"arm": _make_trajectory((0.0, [0.0]), (2.0, [1.0]))}
+        config = _one_joint_config()
+        traj_gen = MagicMock()
+        traj_gen.generate.return_value = _make_trajectory((0.0, [0.0]), (2.0, [1.0]))
+        _install_generated_plan(module, config, traj_gen, [0.0], [1.0])
 
         assert module.preview_path(robot_name="arm", target_fps=0.0) is True
         assert module.preview_path(duration=0.0, robot_name="arm", target_fps=20.0) is True
 
-        assert (
-            module._world_monitor.animate_path.call_args_list[0].args[1]
-            == module._planned_paths["arm"]
-        )
-        assert (
-            module._world_monitor.animate_path.call_args_list[1].args[1]
-            == module._planned_paths["arm"]
-        )
+        assert [
+            state.position for state in module._world_monitor.animate_path.call_args_list[0].args[1]
+        ] == [[0.0], [1.0]]
+        assert [
+            state.position for state in module._world_monitor.animate_path.call_args_list[1].args[1]
+        ] == [[0.0], [1.0]]
 
     def test_preview_path_returns_false_for_missing_inputs(self):
         module = _make_module()
-        module._planned_paths = {"arm": _make_path([0.0], [1.0])}
-        module._robots = {"arm": ("robot_id", MagicMock(), MagicMock())}
+        config = _one_joint_config()
+        traj_gen = MagicMock()
+        traj_gen.generate.return_value = _make_trajectory((0.0, [0.0]), (1.0, [1.0]))
+        _install_generated_plan(module, config, traj_gen, [0.0], [1.0])
+        module._world_monitor = None
 
         assert module.preview_path(robot_name="arm") is False
 
@@ -1161,6 +1208,5 @@ class TestManipulationPreview:
         module._robots = {}
         assert module.preview_path(robot_name="arm") is False
 
-        module._robots = {"arm": ("robot_id", MagicMock(), MagicMock())}
-        module._planned_paths = {"arm": []}
+        _install_generated_plan(module, config, traj_gen)
         assert module.preview_path(robot_name="arm") is False
