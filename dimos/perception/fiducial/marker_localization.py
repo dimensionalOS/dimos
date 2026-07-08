@@ -119,6 +119,8 @@ def _validated_entry(marker_id: int, entry: dict[str, Any]) -> Transform:
         raise ValueError(f"marker {marker_id}: translation must be [x, y, z], got {translation!r}")
     if not isinstance(rotation, (list, tuple)) or len(rotation) != 4:
         raise ValueError(f"marker {marker_id}: rotation must be [x, y, z, w], got {rotation!r}")
+    if not np.all(np.isfinite(np.asarray(translation, dtype=np.float64))):
+        raise ValueError(f"marker {marker_id}: translation must be finite, got {translation!r}")
     norm = float(np.linalg.norm(np.asarray(rotation, dtype=np.float64)))
     if not np.isfinite(norm) or norm < 1e-6:
         raise ValueError(f"marker {marker_id}: rotation quaternion norm is {norm}, not usable")

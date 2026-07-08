@@ -305,6 +305,9 @@ def test_load_marker_map_no_markers_key_returns_empty(tmp_path: Path) -> None:
         ("1.0", "[0.0, 0.0, 0.0, 1.0]"),  # scalar translation, same silent Vector3 branch
         ("[1.0, 2.0, 3.0]", "[0.0, 0.0, 1.0]"),  # 3-element rotation is not a quaternion
         ("[1.0, 2.0, 3.0]", "[0.0, 0.0, 0.0, 0.0]"),  # zero norm crashes inverse() much later
+        ("[.nan, 2.0, 3.0]", "[0.0, 0.0, 0.0, 1.0]"),  # NaN translation would publish as a pose
+        ("[1.0, .inf, 3.0]", "[0.0, 0.0, 0.0, 1.0]"),  # infinite translation, same silent path
+        ("[1.0, 2.0, 3.0]", "[.nan, 0.0, 0.0, 1.0]"),  # NaN rotation: norm is NaN, not usable
     ],
 )
 def test_load_marker_map_malformed_values_raise(
