@@ -124,7 +124,6 @@ def ik_pose(
     pitch: float | None = None,
     yaw: float | None = None,
     robot_name: str | None = None,
-    check_collision: bool = True,
     seed_joints: list[float] | JointState | None = None,
 ) -> IKResult:
     """Solve IK for a Cartesian pose without path planning.
@@ -137,13 +136,12 @@ def ik_pose(
         pitch: Optional target pitch. Preserves current orientation if omitted.
         yaw: Optional target yaw. Preserves current orientation if omitted.
         robot_name: Robot to solve for when multiple robots are configured.
-        check_collision: Whether to reject IK candidates in collision.
         seed_joints: Optional initial joint configuration for local IK. Pass either
             a list of joint positions in robot joint order or a named JointState.
     """
     target = _make_target_pose(x, y, z, roll, pitch, yaw, robot_name)
     seed = _make_seed_joint_state(seed_joints, robot_name)
-    return _client.solve_ik(target, robot_name, check_collision, seed)
+    return _client.inverse_kinematics_single(target, robot_name, seed)
 
 
 def plan_pose(
@@ -163,10 +161,9 @@ def plan_pose(
 def preview(
     duration: float | None = None,
     robot_name: str | None = None,
-    target_fps: float = 30.0,
 ) -> bool:
-    """Preview planned path in Meshcat."""
-    return _client.preview_path(duration, robot_name, target_fps)
+    """Preview the last generated plan in the visualizer."""
+    return _client.preview_plan(None, duration, robot_name)
 
 
 def execute(robot_name: str | None = None) -> bool:

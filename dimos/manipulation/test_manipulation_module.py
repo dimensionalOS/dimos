@@ -174,6 +174,24 @@ class TestManipulationModuleIntegration:
         assert len(traj.points) > 1
         assert traj.duration > 0
 
+        assert module._last_plan is not None
+        assert module._last_plan.group_ids == ("test_arm/manipulator",)
+
+    def test_plan_to_explicit_joint_target(self, module, joint_state_zeros):
+        """Test planning to an explicit planning-group joint target."""
+        module._on_joint_state(joint_state_zeros)
+
+        success = module.plan_to_joint_targets(
+            {"test_arm/manipulator": JointState(position=[0.05] * 7)}
+        )
+
+        assert success is True
+        assert module._state == ManipulationState.COMPLETED
+        assert module._last_plan is not None
+        assert module._last_plan.group_ids == ("test_arm/manipulator",)
+        assert module.has_planned_path() is True
+        assert "test_arm" in module._planned_trajectories
+
     def test_add_and_remove_obstacle(self, module, joint_state_zeros):
         """Test adding and removing obstacles."""
         module._on_joint_state(joint_state_zeros)
@@ -200,6 +218,12 @@ class TestManipulationModuleIntegration:
         assert info["end_effector_link"] == "link7"
         assert info["coordinator_task_name"] == "traj_arm"
         assert info["has_joint_name_mapping"] is True
+        groups = info["planning_groups"]
+        assert len(groups) == 1
+        assert groups[0].id == "test_arm/manipulator"
+
+        all_groups = module.list_planning_groups()
+        assert [group.id for group in all_groups] == ["test_arm/manipulator"]
 
     def test_ee_pose(self, module, joint_state_zeros):
         """Test getting end-effector pose."""

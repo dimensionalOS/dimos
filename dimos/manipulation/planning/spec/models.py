@@ -151,6 +151,23 @@ class PlanningResult:
 
 
 @dataclass
+class GeneratedPlan:
+    """Canonical selected-planning-group path exposed by ManipulationModule."""
+
+    group_ids: tuple[PlanningGroupID, ...]
+    path: list[JointState] = field(default_factory=list)
+    status: PlanningStatus = PlanningStatus.NO_SOLUTION
+    planning_time: float = 0.0
+    path_length: float = 0.0
+    iterations: int = 0
+    message: str = ""
+
+    def is_success(self) -> bool:
+        """Check if the generated plan was successful."""
+        return self.status == PlanningStatus.SUCCESS
+
+
+@dataclass
 class CollisionObjectMessage:
     """Message for adding/updating/removing obstacles.
 
