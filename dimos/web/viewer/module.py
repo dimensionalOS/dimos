@@ -205,7 +205,9 @@ class BabylonViewerModule(Module):
                 assets = {
                     mesh.name: mesh.read_bytes()
                     for mesh in Path(self._mesh_dir).iterdir()
-                    if mesh.is_file()
+                    # skip .DS_Store / AppleDouble "._*" junk that rides
+                    # along in LFS-extracted asset dirs
+                    if mesh.is_file() and not mesh.name.startswith(".")
                 }
             self._robot = load_robot_meshes(self._mjcf_path, assets=assets)
 
@@ -368,7 +370,9 @@ class BabylonViewerModule(Module):
         label = message.get("label", "viewer")
         payload = message.get("payload")
         if isinstance(payload, dict):
-            logger.info("BabylonViewer debug", label=label, **payload)
+            # Client-controlled keys must not be splatted into structlog
+            # kwargs (an "event" key would collide with the message itself).
+            logger.info("BabylonViewer debug", label=label, payload=payload)
         return JSONResponse({"ok": True}, headers=_NO_CACHE_HEADERS)
 
     async def _robot_json(self, request: Request) -> JSONResponse:

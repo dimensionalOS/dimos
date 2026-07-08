@@ -2349,7 +2349,8 @@ function subscribeLcmTopics() {
 }
 
 function connectStreamWorker() {
-  const worker = new Worker("/static/stream_worker.js");
+  const suffix = staticVersionToken ? `?v=${encodeURIComponent(staticVersionToken)}` : "";
+  const worker = new Worker(`/static/stream_worker.js${suffix}`);
   streamRef.worker = worker;
   streamRef.ready = false;
   worker.onmessage = (event) => {
