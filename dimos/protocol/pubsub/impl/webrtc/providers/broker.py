@@ -407,14 +407,30 @@ class BrokerProvider(AsyncProviderBase):
         ack = r.json()
         # state_reliable_back first so the state_reliable ping handler can
         # find it in _dcs if a ping arrives during channel bring-up.
-        ids = {
-            "cmd_unreliable": ack.get("cmd_channel_subscriber_id"),
-            "state_reliable_back": ack.get("state_back_channel_publisher_id"),
-            "state_reliable": ack.get("state_channel_subscriber_id"),
-            "map_unreliable": ack.get("map_channel_publisher_id"),
-        }
-        # Track the broker's view: open on join, close on leave, re-open on
-        # rejoin (the broker assigns fresh SCTP ids per operator session).
+        self._reconcile_channels(
+            {
+                "cmd_unreliable": ack.get("cmd_channel_subscriber_id"),
+                "state_reliable_back": ack.get("state_back_channel_publisher_id"),
+                "state_reliable": ack.get("state_channel_subscriber_id"),
+                "map_unreliable": ack.get("map_channel_publisher_id"),
+            }
+        )
+
+        # CF renegotiation offer (operator audio pulled onto our session): answer
+        # it. The broker hands each offer exactly once — a failed answer is
+        # retried only when the broker re-offers on a later ack.
+        offer_sdp = ack.get("renegotiate_offer")
+        if offer_sdp:
+            await self._answer_renegotiation(offer_sdp)
+        return 200
+
+    def _reconcile_channels(self, ids: dict[str, Any]) -> None:
+        """Track the broker's view: open on join, close on leave, re-open on
+        rejoin (the broker assigns fresh SCTP ids per operator session).
+
+        The id is recorded only after a successful open — if createDataChannel
+        raises, the stale entry keeps the delta alive so the next heartbeat
+        retries instead of skipping the channel forever."""
         for name, raw_id in ids.items():
             sctp_id = int(raw_id) if raw_id is not None else None
             if sctp_id != self._dc_ids.get(name):
@@ -430,14 +446,6 @@ class BrokerProvider(AsyncProviderBase):
                 if sctp_id is not None:
                     self._open_channel(name, sctp_id)
                 self._dc_ids[name] = sctp_id
-
-        # CF renegotiation offer (operator audio pulled onto our session): answer
-        # it. The broker hands each offer exactly once — a failed answer is
-        # retried only when the broker re-offers on a later ack.
-        offer_sdp = ack.get("renegotiate_offer")
-        if offer_sdp:
-            await self._answer_renegotiation(offer_sdp)
-        return 200
 
     async def _answer_renegotiation(self, offer_sdp: str) -> None:
         """setRemoteDescription(CF offer) → answer → POST back to the broker.
