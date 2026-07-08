@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Scene package contracts for offline asset cooking.
+"""Runtime scene package metadata contract.
 
-Runtime modules consume the artifacts described here; they do not perform
-the heavy bake themselves.
+Runtime modules consume the artifacts described here; cook-time policy lives
+under ``dimos.experimental.scene_cooking``.
 """
 
 from __future__ import annotations
@@ -46,52 +46,6 @@ class SceneMeshAlignment:
     translation: tuple[float, float, float] = (0.0, 0.0, 0.0)
     rotation_zyx_deg: tuple[float, float, float] = (0.0, 0.0, 0.0)
     y_up: bool = True
-
-
-@dataclass(frozen=True)
-class BrowserVisualSpec:
-    """Browser-rendered asset policy."""
-
-    enabled: bool = True
-    output_name: str = "visual.glb"
-    optimizer: str = "gltfpack"
-    simplify_ratio: float = 0.3
-    simplify_error: float = 0.02
-    texture_format: str | None = None
-    max_texture_size: int | None = None
-    max_meshes: int = 200
-    max_materials: int = 50
-    max_textures: int = 750
-    max_vertices: int = 750_000
-    max_vertex_growth_ratio: float = 1.25
-
-
-@dataclass(frozen=True)
-class BrowserCollisionSpec:
-    """Browser raycast/physics collision asset policy."""
-
-    enabled: bool = True
-    output_name: str = "collision.glb"
-    target_faces: int = 100_000
-
-
-@dataclass(frozen=True)
-class MujocoSceneSpec:
-    """MuJoCo collision asset policy."""
-
-    enabled: bool = True
-    include_visual_mesh: bool = False
-
-
-@dataclass(frozen=True)
-class SceneCookSpec:
-    """Complete cook input for one source scene."""
-
-    source_path: Path
-    alignment: SceneMeshAlignment = field(default_factory=SceneMeshAlignment)
-    browser_visual: BrowserVisualSpec = field(default_factory=BrowserVisualSpec)
-    browser_collision: BrowserCollisionSpec = field(default_factory=BrowserCollisionSpec)
-    mujoco: MujocoSceneSpec = field(default_factory=MujocoSceneSpec)
 
 
 @dataclass(frozen=True)
@@ -270,7 +224,7 @@ def _validate_artifact_frames(raw: dict[str, Any], metadata_path: Path) -> None:
     if frames is None:
         raise ValueError(
             f"scene package is missing artifact frame metadata: {metadata_path}. "
-            "Recook it with dimos.experimental.pimsim.scene.cook."
+            "Recook it with dimos.experimental.scene_cooking.cook."
         )
 
     artifacts = raw.get("artifacts", {})
