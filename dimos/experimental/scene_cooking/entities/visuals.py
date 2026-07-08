@@ -23,6 +23,7 @@ import tempfile
 from typing import Any
 
 from dimos.experimental.scene_cooking.command import (
+    blender_command_env,
     blender_output_line_is_interesting,
     run_logged_command,
 )
@@ -271,6 +272,7 @@ def cook_plan_visual_assets(
             ],
             "blender visual plan cook",
             line_log_filter=blender_output_line_is_interesting,
+            env=blender_command_env(),
         )
     finally:
         plan_path.unlink(missing_ok=True)

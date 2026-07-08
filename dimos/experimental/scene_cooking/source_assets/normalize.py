@@ -26,6 +26,7 @@ from typing import Any
 
 from dimos.constants import CACHE_DIR
 from dimos.experimental.scene_cooking.command import (
+    blender_command_env,
     blender_output_line_is_interesting,
     run_logged_command,
 )
@@ -171,6 +172,7 @@ def _run_command(args: list[str], label: str) -> str:
         label,
         tail_lines=40,
         line_log_filter=blender_output_line_is_interesting,
+        env=blender_command_env(),
     )
 
 

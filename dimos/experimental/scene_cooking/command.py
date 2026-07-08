@@ -17,8 +17,9 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 import contextlib
+import os
 import selectors
 import shlex
 import subprocess
@@ -31,6 +32,27 @@ logger = setup_logger()
 _DEFAULT_HEARTBEAT_SECONDS = 30.0
 _DEFAULT_TAIL_LINES = 30
 
+# Ubuntu's Blender package uses the system Python rather than a bundled one, so
+# a host Python environment (uv/venv/asdf/ROS) leaks in and makes Blender adopt
+# an ABI-incompatible interpreter -> "undefined symbol" errors on import. The
+# active virtualenv is the main culprit: `uv run` puts its bin dir first on PATH
+# and its `python` symlinks to a non-system interpreter that Blender resolves as
+# its own. Drop that bin dir plus the Python override vars so Blender falls back
+# to the system interpreter it was linked against.
+_BLENDER_ENV_STRIP = ("PYTHONHOME", "PYTHONPATH", "PYTHONSTARTUP", "VIRTUAL_ENV")
+
+
+def blender_command_env() -> dict[str, str]:
+    """Return the current environment sanitized for launching Blender."""
+
+    env = {k: v for k, v in os.environ.items() if k not in _BLENDER_ENV_STRIP}
+    venv = os.environ.get("VIRTUAL_ENV")
+    path = env.get("PATH")
+    if venv and path:
+        venv_bin = os.path.join(venv, "bin")
+        env["PATH"] = os.pathsep.join(p for p in path.split(os.pathsep) if p != venv_bin)
+    return env
+
 
 def run_logged_command(
     args: Sequence[str],
@@ -39,6 +61,7 @@ def run_logged_command(
     heartbeat_seconds: float = _DEFAULT_HEARTBEAT_SECONDS,
     tail_lines: int = _DEFAULT_TAIL_LINES,
     line_log_filter: Callable[[str], bool] | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> str:
     """Run a command while streaming output and emitting heartbeat logs.
 
@@ -60,6 +83,7 @@ def run_logged_command(
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
+        env=dict(env) if env is not None else None,
     )
     assert proc.stdout is not None
     stdout = proc.stdout
