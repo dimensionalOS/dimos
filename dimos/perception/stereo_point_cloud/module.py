@@ -288,16 +288,19 @@ class StereoPointCloud(Module):
                 f"Z ≈ {self._world_floor_z:.3f} m below camera (published at Z ≈ 0)"
             )
 
-        # Accumulate in world frame so the same physical point always hashes to
-        # the same voxel key regardless of camera position. Floor threshold is
-        # offset by t[2] (ICP z) so it tracks the camera's actual elevation.
-        world_floor_z = self._world_floor_z + float(t[2])
-        xyz_for_map   = xyz_vox[xyz_vox[:, 2] > world_floor_z + self.config.global_floor_margin]
+        # Rotation-only frame (= xyz_cam with R=identity): strip ICP translation
+        # so voxel keys are stable across small t-noise. Raycasting from (0,0,0)
+        # is the true camera origin in this frame, so free-space carving is correct.
+        xyz_ronly  = xyz_vox - t
+        vk_r       = np.floor(xyz_ronly / self.config.vox_size).astype(np.int32)
+        _, first_r = np.unique(_pack(vk_r), return_index=True)
+        xyz_vox_r  = xyz_ronly[first_r]
+        xyz_for_map = xyz_vox_r[xyz_vox_r[:, 2] > self._world_floor_z + self.config.global_floor_margin]
 
         pts_snap = None
         with self._lock:
             if len(self._acc_pts) > 0 and len(xyz_for_map) > 0:
-                free_keys = _raycast_free_keys(xyz_for_map, self.config.global_vox_size, origin=t)
+                free_keys = _raycast_free_keys(xyz_for_map, self.config.global_vox_size)
                 if len(free_keys):
                     keys_acc      = _pack(np.floor(self._acc_pts / self.config.global_vox_size).astype(np.int32))
                     self._acc_pts = self._acc_pts[~np.isin(keys_acc, free_keys)]
