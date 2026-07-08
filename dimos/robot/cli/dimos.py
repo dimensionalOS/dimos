@@ -167,7 +167,7 @@ def arg_help(
     for k, info in config.model_fields.items():
         if k == "g":
             continue
-        t = info.annotation
+        t: object = info.annotation
         if isinstance(t, types.GenericAlias):
             # Can't be specified on CLI
             continue
@@ -249,8 +249,7 @@ def _backend_default(defaults: object) -> object:
 
 def _has_default_value(defaults: BaseModel | dict[str, Any] | None, key: str) -> bool:
     if isinstance(defaults, BaseModel):
-        model_defaults = cast("BaseModel", defaults)
-        return key in model_defaults.model_fields_set
+        return key in defaults.model_fields_set
     if isinstance(defaults, dict):
         return key in defaults
     return False
@@ -258,9 +257,8 @@ def _has_default_value(defaults: BaseModel | dict[str, Any] | None, key: str) ->
 
 def _get_default_value(defaults: object, key: str, fallback: Any) -> Any:
     if isinstance(defaults, BaseModel):
-        model_defaults = cast("BaseModel", defaults)
-        if key in model_defaults.model_fields_set:
-            return getattr(model_defaults, key)
+        if key in defaults.model_fields_set:
+            return getattr(defaults, key)
     if isinstance(defaults, dict):
         return defaults.get(key, fallback)
     return fallback

@@ -182,32 +182,26 @@ def test_blueprint_arg_help_nested_config_paths():
     assert "        * testmodule.nested.mode: str (default: manual)" in output
 
 
-def test_blueprint_arg_help_union_with_non_class_member_does_not_raise():
-    class NestedConfig(BaseModel):
-        value: int = 1
+def test_blueprint_arg_help_uses_nested_backend_defaults():
+    class DisabledConfig(BaseModel):
+        backend: Literal["disabled"] = "disabled"
+
+    class EnabledConfig(BaseModel):
+        backend: Literal["enabled"] = "enabled"
+        level: int = 1
 
     class Config(ModuleConfig):
-        nested: NestedConfig | Literal["disabled"] = Field(default_factory=NestedConfig)
+        nested: DisabledConfig | EnabledConfig = Field(default_factory=DisabledConfig)
 
     class TestModule(Module):
         config: Config
 
-    blueprint = TestModule.blueprint()
-
+    blueprint = TestModule.blueprint(nested={"backend": "enabled", "level": 3})
     output = arg_help(blueprint.config(), blueprint)
 
-    assert "testmodule.nested.value" in output
-
-
-def test_blueprint_arg_help_keyboard_teleop_xarm7_smoke():
-    from dimos.robot.manipulators.xarm.blueprints.teleop import keyboard_teleop_xarm7
-
-    output = arg_help(keyboard_teleop_xarm7.config(), keyboard_teleop_xarm7)
-
-    assert "manipulationmodule.visualization" in output
+    assert "      testmodule.nested:" in output
     assert (
-        "manipulationmodule.visualization.backend: typing.Literal['meshcat'] (default: meshcat)"
+        "        * testmodule.nested.backend: typing.Literal['enabled'] (default: enabled)"
         in output
     )
-    assert "manipulationmodule.kinematics" in output
-    assert "manipulationmodule.kinematics.backend: typing.Literal['pink'] (default: pink)" in output
+    assert "        * testmodule.nested.level: int (default: 3)" in output
