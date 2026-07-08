@@ -520,6 +520,7 @@ class ManipulationModule(Module):
                 logger.warning(f"Cannot plan: state is {self._state.name}")
                 return None
             self._planning_epoch += 1
+            self._clear_cached_plan()
             self._state = ManipulationState.PLANNING
             return self._planning_epoch
 
@@ -605,6 +606,12 @@ class ManipulationModule(Module):
             message=result.message,
         )
         return self._last_plan
+
+    def _clear_cached_plan(self) -> None:
+        """Clear generated-plan and legacy per-robot plan caches."""
+        self._last_plan = None
+        self._planned_paths.clear()
+        self._planned_trajectories.clear()
 
     def _project_plan_to_robot_paths(
         self, plan: GeneratedPlan
@@ -711,9 +718,19 @@ class ManipulationModule(Module):
             return self._fail(f"Planning failed: {result.status.name}")
 
         logger.info("Path: %d waypoints, groups=%s", len(result.path), group_ids)
-        plan = self._store_generated_plan(group_ids, result)
+        plan = GeneratedPlan(
+            group_ids=group_ids,
+            path=result.path,
+            status=result.status,
+            planning_time=result.planning_time,
+            path_length=result.path_length,
+            iterations=result.iterations,
+            message=result.message,
+        )
         if not self._cache_generated_plan_paths(plan):
+            self._clear_cached_plan()
             return self._fail("Failed to project generated plan")
+        self._last_plan = plan
         self._state = ManipulationState.COMPLETED
         return True
 
@@ -1145,9 +1162,7 @@ class ManipulationModule(Module):
         """
         if self._world_monitor is None:
             return False
-        self._last_plan = None
-        self._planned_paths.clear()
-        self._planned_trajectories.clear()
+        self._clear_cached_plan()
         return True
 
     @rpc
@@ -1462,10 +1477,13 @@ class ManipulationModule(Module):
         last_plan = getattr(self, "_last_plan", None)
         if robot_name is None and last_plan is not None and last_plan.path:
             return self.execute_plan(last_plan)
+        previous_state = self._state
         self._state = ManipulationState.EXECUTING
         if self._execute_cached_robot_trajectory(robot_name):
             self._state = ManipulationState.COMPLETED
             return True
+        if self._state == ManipulationState.EXECUTING:
+            self._state = previous_state
         return False
 
     @rpc
@@ -1489,15 +1507,15 @@ class ManipulationModule(Module):
         for robot_name in affected:
             robot = self._get_robot(robot_name)
             if robot is None:
-                return False
+                return self._fail(f"Robot '{robot_name}' not found")
             _, _, config, _ = robot
             if not config.coordinator_task_name:
                 logger.error(f"No coordinator_task_name for '{robot_name}'")
-                return False
+                return self._fail(f"No coordinator_task_name for '{robot_name}'")
             traj = self._planned_trajectories.get(robot_name)
             if traj is None:
                 logger.warning("No planned trajectory for '%s'", robot_name)
-                return False
+                return self._fail(f"No planned trajectory for '{robot_name}'")
             translated = self._translate_trajectory_to_coordinator(traj, config)
             logger.info(
                 "Executing: task='%s', %d pts, %.2fs",

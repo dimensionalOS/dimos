@@ -483,6 +483,114 @@ class TestPlanningGroupApis:
             "test_arm/joint3",
         ]
 
+    def test_plan_to_pose_targets_uses_group_ik_and_selected_path(self, robot_config):
+        module = _make_module()
+        registry = PlanningGroupRegistry([robot_config])
+        traj_gen = MagicMock()
+        traj_gen.generate.return_value = _make_trajectory(
+            (0.0, [0.0, 0.0, 0.0]), (1.0, [0.1, 0.2, 0.3])
+        )
+        module._robots = {"test_arm": ("robot_id", robot_config, traj_gen)}
+        module._world_monitor = MagicMock()
+        module._world_monitor.world = MagicMock()
+        module._world_monitor.planning_groups = registry
+        module._world_monitor.current_global_joint_state.return_value = JointState(
+            name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
+            position=[0.0, 0.0, 0.0],
+        )
+        module._world_monitor.get_current_joint_state.return_value = JointState(
+            name=robot_config.joint_names,
+            position=[0.0, 0.0, 0.0],
+        )
+        ik_goal = JointState(
+            name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
+            position=[0.1, 0.2, 0.3],
+        )
+        module._kinematics = MagicMock()
+        module._kinematics.solve_pose_targets.return_value = IKResult(
+            status=IKStatus.SUCCESS,
+            joint_state=ik_goal,
+        )
+        module._planner = MagicMock()
+        module._planner.plan_selected_joint_path.return_value = PlanningResult(
+            status=PlanningStatus.SUCCESS,
+            path=[
+                JointState(
+                    name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
+                    position=[0.0, 0.0, 0.0],
+                ),
+                ik_goal,
+            ],
+        )
+        pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
+
+        success = module.plan_to_pose_targets({"test_arm/manipulator": pose})
+
+        assert success is True
+        module._kinematics.solve_pose_targets.assert_called_once()
+        _, ik_kwargs = module._kinematics.solve_pose_targets.call_args
+        target_groups = list(ik_kwargs["pose_targets"].keys())
+        assert [group.id for group in target_groups] == ["test_arm/manipulator"]
+        target_pose = ik_kwargs["pose_targets"][target_groups[0]]
+        assert target_pose.position.x == 0.45
+        assert ik_kwargs["seed"].name == [
+            "test_arm/joint1",
+            "test_arm/joint2",
+            "test_arm/joint3",
+        ]
+        _, planner_kwargs = module._planner.plan_selected_joint_path.call_args
+        assert planner_kwargs["goal"] is ik_goal
+
+    def test_failed_plan_projection_clears_generated_plan(self, robot_config, simple_trajectory):
+        module = _make_module()
+        registry = PlanningGroupRegistry([robot_config])
+        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
+        module._world_monitor = MagicMock()
+        module._world_monitor.world = MagicMock()
+        module._world_monitor.planning_groups = registry
+        module._world_monitor.current_global_joint_state.return_value = JointState(
+            name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
+            position=[0.0, 0.0, 0.0],
+        )
+        module._world_monitor.get_current_joint_state.return_value = None
+        stale_result = PlanningResult(
+            status=PlanningStatus.SUCCESS,
+            path=[
+                JointState(
+                    name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
+                    position=[0.0, 0.0, 0.0],
+                ),
+                JointState(
+                    name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
+                    position=[0.2, 0.2, 0.2],
+                ),
+            ],
+        )
+        module._last_plan = module._store_generated_plan(("test_arm/manipulator",), stale_result)
+        module._planned_paths = {"test_arm": stale_result.path}
+        module._planned_trajectories = {"test_arm": simple_trajectory}
+        module._planner = MagicMock()
+        module._planner.plan_selected_joint_path.return_value = PlanningResult(
+            status=PlanningStatus.SUCCESS,
+            path=[
+                JointState(
+                    name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
+                    position=[0.1, 0.2, 0.3],
+                )
+            ],
+        )
+
+        success = module.plan_to_joint_targets(
+            {"test_arm/manipulator": JointState(position=[0.1, 0.2, 0.3])}
+        )
+
+        assert success is False
+        assert module._state == ManipulationState.FAULT
+        assert module._last_plan is None
+        assert module._planned_paths == {}
+        assert module._planned_trajectories == {}
+        assert module.has_planned_path() is False
+
     def test_execute_plan_dispatches_each_affected_robot(self, robot_config, simple_trajectory):
         module = _make_module()
         registry = PlanningGroupRegistry([robot_config])
@@ -556,6 +664,43 @@ class TestPlanningGroupApis:
         assert result.status == IKStatus.NO_SOLUTION
         assert "no pose-targetable planning group" in result.message
 
+    def test_pose_wrappers_fail_safely_with_multiple_pose_groups(self, robot_config):
+        multi_pose_config = RobotModelConfig(
+            name="test_arm",
+            model_path=robot_config.model_path,
+            base_pose=robot_config.base_pose,
+            joint_names=robot_config.joint_names,
+            base_link=robot_config.base_link,
+            planning_groups=[
+                PlanningGroupDefinition(
+                    name="wrist",
+                    joint_names=("joint1", "joint2"),
+                    base_link="link_base",
+                    tip_link="link_wrist",
+                ),
+                PlanningGroupDefinition(
+                    name="tool",
+                    joint_names=("joint1", "joint2", "joint3"),
+                    base_link="link_base",
+                    tip_link="link_tcp",
+                ),
+            ],
+        )
+        module = _make_module()
+        module._robots = {"test_arm": ("robot_id", multi_pose_config, MagicMock())}
+        module._world_monitor = MagicMock()
+        module._world_monitor.planning_groups = PlanningGroupRegistry([multi_pose_config])
+        module._world_monitor.get_ee_pose.side_effect = ValueError("multiple pose groups")
+        module._kinematics = MagicMock()
+
+        pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
+
+        assert module.get_ee_pose() is None
+        assert module.plan_to_pose(pose) is False
+        result = module.inverse_kinematics_single(pose)
+        assert result.status == IKStatus.NO_SOLUTION
+        assert "2 pose-targetable planning groups" in result.message
+
 
 class TestJointNameTranslation:
     """Test trajectory joint name translation for coordinator."""
@@ -588,6 +733,7 @@ class TestExecute:
         module._planned_trajectories = {}
 
         assert module.execute() is False
+        assert module._state == ManipulationState.IDLE
 
     def test_execute_requires_task_name(self):
         """Execute fails without coordinator_task_name."""
@@ -607,6 +753,50 @@ class TestExecute:
         module._planned_trajectories = {"arm": MagicMock()}
 
         assert module.execute() is False
+        assert module._state == ManipulationState.IDLE
+
+    def test_execute_plan_requires_task_name_without_sticking_executing(self, robot_config):
+        module = _make_module()
+        config_no_task = RobotModelConfig(
+            name="test_arm",
+            model_path=robot_config.model_path,
+            base_pose=robot_config.base_pose,
+            joint_names=robot_config.joint_names,
+            base_link=robot_config.base_link,
+            planning_groups=robot_config.planning_groups,
+            gripper_hardware_id="test_gripper",
+        )
+        traj_gen = MagicMock()
+        traj_gen.generate.return_value = _make_trajectory(
+            (0.0, [0.0, 0.0, 0.0]), (1.0, [0.1, 0.2, 0.3])
+        )
+        module._robots = {"test_arm": ("id", config_no_task, traj_gen)}
+        module._world_monitor = MagicMock()
+        module._world_monitor.planning_groups = PlanningGroupRegistry([config_no_task])
+        module._world_monitor.get_current_joint_state.return_value = JointState(
+            name=robot_config.joint_names,
+            position=[0.0, 0.0, 0.0],
+        )
+        module._coordinator_client = MagicMock()
+        module._last_plan = module._store_generated_plan(
+            ("test_arm/manipulator",),
+            PlanningResult(
+                status=PlanningStatus.SUCCESS,
+                path=[
+                    JointState(
+                        name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
+                        position=[0.0, 0.0, 0.0],
+                    ),
+                    JointState(
+                        name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
+                        position=[0.1, 0.2, 0.3],
+                    ),
+                ],
+            ),
+        )
+
+        assert module.execute_plan() is False
+        assert module._state == ManipulationState.FAULT
 
     def test_execute_success(self, robot_config, simple_trajectory):
         """Successful execute calls coordinator via task_invoke."""
