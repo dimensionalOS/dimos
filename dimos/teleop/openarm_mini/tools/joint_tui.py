@@ -32,11 +32,16 @@ from rich.table import Table
 from rich.text import Text
 import typer
 
-from dimos.teleop.openarm_mini.adapter import _calibrated_motor_radians
 from dimos.teleop.openarm_mini.calibration import OPENARM_MINI_ARM_JOINT_NAMES, load_calibration
-from dimos.teleop.openarm_mini.config import OpenArmMiniTeleopConfig, default_calibration_path
+from dimos.teleop.openarm_mini.config import (
+    OPENARM_MINI_DEFAULT_BAUDRATE,
+    OPENARM_MINI_DEFAULT_PORT_LEFT,
+    OPENARM_MINI_DEFAULT_PORT_RIGHT,
+    default_calibration_path,
+)
+from dimos.teleop.openarm_mini.feetech import FeetechLeaderReader, _calibrated_motor_radians
 from dimos.teleop.openarm_mini.mapping import map_side_readings
-from dimos.teleop.openarm_mini.tools.calibrate import _RawFeetechReader
+from dimos.teleop.openarm_mini.tools.calibrate import DEFAULT_MOTOR_IDS
 
 
 @dataclass(frozen=True)
@@ -53,9 +58,9 @@ class OpenArmMiniJointRow:
 
 def main(
     side: Literal["left", "right", "both"] = typer.Option("both"),
-    port_left: str = typer.Option(OpenArmMiniTeleopConfig.port_left),
-    port_right: str = typer.Option(OpenArmMiniTeleopConfig.port_right),
-    baudrate: int = typer.Option(OpenArmMiniTeleopConfig.baudrate),
+    port_left: str = typer.Option(OPENARM_MINI_DEFAULT_PORT_LEFT),
+    port_right: str = typer.Option(OPENARM_MINI_DEFAULT_PORT_RIGHT),
+    baudrate: int = typer.Option(OPENARM_MINI_DEFAULT_BAUDRATE),
     left_calibration_path: Path = typer.Option(default_calibration_path("left")),
     right_calibration_path: Path = typer.Option(default_calibration_path("right")),
     refresh_hz: float = typer.Option(10.0),
@@ -63,7 +68,7 @@ def main(
     """Display OpenArm Mini leader joints in a Rich TUI."""
     refresh_seconds = 1.0 / refresh_hz
     sides = ("left", "right") if side == "both" else (side,)
-    readers: dict[str, _RawFeetechReader] = {}
+    readers: dict[str, FeetechLeaderReader] = {}
     calibration_paths: dict[str, Path] = {
         "left": left_calibration_path,
         "right": right_calibration_path,
@@ -71,7 +76,7 @@ def main(
     try:
         for selected_side in sides:
             port = port_left if selected_side == "left" else port_right
-            reader = _RawFeetechReader(port, baudrate)
+            reader = FeetechLeaderReader(port, baudrate)
             reader.connect()
             readers[selected_side] = reader
 
@@ -83,7 +88,7 @@ def main(
                         _read_side_rows(
                             selected_side,
                             calibration_paths[selected_side],
-                            reader.read_raw_positions(),
+                            reader.read_raw_positions(DEFAULT_MOTOR_IDS),
                         )
                     )
                 live.update(_build_joint_dashboard(rows))

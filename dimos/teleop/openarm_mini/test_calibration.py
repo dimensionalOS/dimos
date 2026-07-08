@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic import ValidationError
 import pytest
 
 from dimos.constants import STATE_DIR
@@ -95,19 +96,19 @@ def test_invalid_calibration_rejects_gripper_or_legacy_fields() -> None:
     with pytest.raises(OpenArmMiniCalibrationError, match="extra"):
         OpenArmMiniCalibration(side="left", motors=motors)
 
-    data = _valid_calibration().to_dict()
+    data = _valid_calibration().model_dump(mode="json")
     data["motors"]["joint_1"]["drive_mode"] = 0  # type: ignore[index]
 
-    with pytest.raises(OpenArmMiniCalibrationError, match="extra"):
-        OpenArmMiniCalibration.from_dict(data)  # type: ignore[arg-type]
+    with pytest.raises(ValidationError, match="extra"):
+        OpenArmMiniCalibration.model_validate(data)
 
 
 def test_invalid_calibration_rejects_non_bool_flip() -> None:
-    data = _valid_calibration().to_dict()
+    data = _valid_calibration().model_dump(mode="json")
     data["motors"]["joint_1"]["flip"] = 0  # type: ignore[index]
 
-    with pytest.raises(OpenArmMiniCalibrationError, match="flip"):
-        OpenArmMiniCalibration.from_dict(data)  # type: ignore[arg-type]
+    with pytest.raises(ValidationError, match="flip"):
+        OpenArmMiniCalibration.model_validate(data)
 
 
 def test_invalid_calibration_rejects_side_mismatch(tmp_path: Path) -> None:

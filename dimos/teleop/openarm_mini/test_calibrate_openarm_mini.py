@@ -118,5 +118,5 @@ class _FakeRawReader:
     def disconnect(self) -> None:
         self.disconnected = True
 
-    def read_raw_positions(self) -> dict[str, int]:
+    def read_raw_positions(self, _motor_ids_by_name: object) -> dict[str, int]:
         return self._snapshot

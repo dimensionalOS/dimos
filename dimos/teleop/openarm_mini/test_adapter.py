@@ -21,11 +21,7 @@ import pytest
 
 from dimos.msgs.sensor_msgs.JointState import JointState
 import dimos.teleop.openarm_mini.adapter as adapter_module
-from dimos.teleop.openarm_mini.adapter import (
-    OpenArmMiniTeleopAdapter,
-    _calibrated_motor_radians,
-    _normalize_motor_position,
-)
+from dimos.teleop.openarm_mini.adapter import OpenArmMiniTeleopAdapter
 from dimos.teleop.openarm_mini.calibration import (
     FEETECH_POSITION_SPAN,
     OPENARM_MINI_ARM_JOINT_NAMES,
@@ -34,6 +30,10 @@ from dimos.teleop.openarm_mini.calibration import (
     save_calibration,
 )
 from dimos.teleop.openarm_mini.config import OpenArmMiniTeleopConfig
+from dimos.teleop.openarm_mini.feetech import (
+    _calibrated_motor_radians,
+    _normalize_motor_position,
+)
 
 
 class _FakeBus:
@@ -123,7 +123,7 @@ def test_adapter_loads_calibration_connects_both_buses_and_returns_joint_command
         assert "gripper" not in calibration.motors
         return buses[side]
 
-    monkeypatch.setattr(adapter_module, "_ScservoSideBus", bus_factory)
+    monkeypatch.setattr(adapter_module, "OpenArmMiniLeaderReader", bus_factory)
 
     adapter = OpenArmMiniTeleopAdapter(
         OpenArmMiniTeleopConfig(
@@ -170,7 +170,7 @@ def test_adapter_left_only_connects_left_bus_and_emits_left_joints(
         assert calibration.side == "left"
         return left_bus
 
-    monkeypatch.setattr(adapter_module, "_ScservoSideBus", bus_factory)
+    monkeypatch.setattr(adapter_module, "OpenArmMiniLeaderReader", bus_factory)
 
     adapter = OpenArmMiniTeleopAdapter(
         OpenArmMiniTeleopConfig(
@@ -230,7 +230,7 @@ def test_adapter_returns_none_without_authority(
     ) -> _FakeBus:
         return buses[side]
 
-    monkeypatch.setattr(adapter_module, "_ScservoSideBus", bus_factory)
+    monkeypatch.setattr(adapter_module, "OpenArmMiniLeaderReader", bus_factory)
 
     adapter = OpenArmMiniTeleopAdapter(
         OpenArmMiniTeleopConfig(
@@ -264,7 +264,7 @@ def test_adapter_emits_configured_global_target_joint_names(
         assert side == "right"
         return right_bus
 
-    monkeypatch.setattr(adapter_module, "_ScservoSideBus", bus_factory)
+    monkeypatch.setattr(adapter_module, "OpenArmMiniLeaderReader", bus_factory)
 
     adapter = OpenArmMiniTeleopAdapter(
         OpenArmMiniTeleopConfig(
@@ -300,7 +300,7 @@ def test_adapter_rejects_jump_threshold_by_returning_no_command(
     ) -> _FakeBus:
         return buses[side]
 
-    monkeypatch.setattr(adapter_module, "_ScservoSideBus", bus_factory)
+    monkeypatch.setattr(adapter_module, "OpenArmMiniLeaderReader", bus_factory)
 
     adapter = OpenArmMiniTeleopAdapter(
         OpenArmMiniTeleopConfig(
@@ -350,7 +350,7 @@ def test_adapter_clamps_over_limit_sender_side(
     ) -> _FakeBus:
         return buses[side]
 
-    monkeypatch.setattr(adapter_module, "_ScservoSideBus", bus_factory)
+    monkeypatch.setattr(adapter_module, "OpenArmMiniLeaderReader", bus_factory)
 
     adapter = OpenArmMiniTeleopAdapter(
         OpenArmMiniTeleopConfig(
@@ -394,7 +394,7 @@ def test_adapter_returns_none_when_bus_reports_invalid_reading(
     ) -> _FailingBus | _FakeBus:
         return _FailingBus() if side == "left" else _FakeBus(_readings())
 
-    monkeypatch.setattr(adapter_module, "_ScservoSideBus", bus_factory)
+    monkeypatch.setattr(adapter_module, "OpenArmMiniLeaderReader", bus_factory)
 
     adapter = OpenArmMiniTeleopAdapter(
         OpenArmMiniTeleopConfig(

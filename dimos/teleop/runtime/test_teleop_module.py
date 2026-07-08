@@ -22,6 +22,7 @@ import pytest
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.teleop.openarm_mini.config import OpenArmMiniTeleopConfig
 from dimos.teleop.runtime.teleop_module import TeleopModule
 from dimos.teleop.runtime.types import TeleopCommand
 
@@ -53,7 +54,11 @@ class _Adapter:
 
 
 def _module(adapter: _Adapter) -> TeleopModule:
-    module = TeleopModule(adapter, max_publish_rate_hz=100.0, stale_command_timeout_s=1.0)
+    module = TeleopModule(
+        runtime_adapter=adapter,
+        max_publish_rate_hz=100.0,
+        stale_command_timeout_s=1.0,
+    )
     module.joint_command = _PublishedCommands()  # type: ignore[assignment]
     module.coordinator_cartesian_command = _PublishedCommands()  # type: ignore[assignment]
     module.twist_command = _PublishedCommands()  # type: ignore[assignment]
@@ -69,6 +74,16 @@ def test_command_envelope_requires_payload_unless_stopping() -> None:
         TeleopCommand()
     with pytest.raises(ValueError, match="payload"):
         TeleopCommand(joint, stop=True)
+
+
+def test_module_config_creates_adapter_from_discriminated_backend() -> None:
+    module = TeleopModule(adapter={"backend": "openarm_mini", "enabled_sides": ("right",)})
+
+    try:
+        assert isinstance(module.teleop_config.adapter, OpenArmMiniTeleopConfig)
+        assert module.teleop_config.adapter.enabled_sides == ("right",)
+    finally:
+        module.stop()
 
 
 def test_explicit_stop_command_is_not_published(mocker: Any) -> None:
@@ -131,7 +146,11 @@ def test_rate_limiting_skips_commands(mocker: Any) -> None:
             TeleopCommand(second, timestamp=1.0),
         ]
     )
-    module = TeleopModule(adapter, max_publish_rate_hz=10.0, stale_command_timeout_s=1.0)
+    module = TeleopModule(
+        runtime_adapter=adapter,
+        max_publish_rate_hz=10.0,
+        stale_command_timeout_s=1.0,
+    )
     module.joint_command = _PublishedCommands()  # type: ignore[assignment]
     module.coordinator_cartesian_command = _PublishedCommands()  # type: ignore[assignment]
     module.twist_command = _PublishedCommands()  # type: ignore[assignment]

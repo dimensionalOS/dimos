@@ -133,7 +133,8 @@ before connecting any OpenArm follower hardware:
 
 ```bash
 dimos run openarm-mini-left-teleop-viser \
-  -o openarmminiteleopmodule.openarm_mini.port_left=/dev/ttyUSB1
+  -o teleopmodule.adapter.backend=openarm_mini \
+  -o teleopmodule.adapter.port_left=/dev/ttyUSB1
 ```
 
 The blueprint requires:
@@ -174,7 +175,8 @@ Override the right leader serial port with a module option:
 
 ```bash
 uv run dimos run openarm-mini-right-teleop-viser \
-  -o openarmminiteleopmodule.openarm_mini.port_right=/dev/ttyUSB0
+  -o teleopmodule.adapter.backend=openarm_mini \
+  -o teleopmodule.adapter.port_right=/dev/ttyUSB0
 ```
 
 The right blueprint publishes ManipulationModule-compatible global coordinator
@@ -188,7 +190,7 @@ follower hardware is intentionally out of scope for these Viser demo blueprints.
 
 Use `openarm-mini-dual-teleop-viser` for bimanual OpenArm Mini leader teleop with
 the same coordinator-observed Viser path. It uses one bimanual
-`OpenArmMiniTeleopModule`, one `ControlCoordinator`, and one `ManipulationModule`
+generic `TeleopModule` with the OpenArm Mini adapter backend, one `ControlCoordinator`, and one `ManipulationModule`
 with both left and right OpenArm models.
 
 Mock followers, safe for coordinator/Viser validation without connected OpenArm
@@ -202,8 +204,9 @@ Override leader serial ports with module options:
 
 ```bash
 uv run dimos run openarm-mini-dual-teleop-viser \
-  -o openarmminiteleopmodule.openarm_mini.port_left=/dev/ttyUSB1 \
-  -o openarmminiteleopmodule.openarm_mini.port_right=/dev/ttyACM0
+  -o teleopmodule.adapter.backend=openarm_mini \
+  -o teleopmodule.adapter.port_left=/dev/ttyUSB1 \
+  -o teleopmodule.adapter.port_right=/dev/ttyACM0
 ```
 
 The dual blueprint publishes ManipulationModule-compatible global coordinator

@@ -174,13 +174,12 @@ def arg_help(
         # TODO(PY314): if isinstance(t, Union):
         if get_origin(t) in {Union, types.UnionType}:
             with suppress(StopIteration):
-                t = next(u for u in get_args(t) if inspect.isclass(u) and issubclass(u, BaseModel))
+                t = next(u for u in get_args(t) if issubclass(u, BaseModel))
 
         if inspect.isclass(t) and issubclass(t, BaseModel):
             output += f"{indent}{module}{k}:\n"
-            # Find blueprint atom. Nested config models inside a module config do
-            # not have their own blueprint atom, so keep the current atom.
-            bp = next((bp for bp in blueprint.blueprints if bp.module.name == k), _atom)
+            # Find blueprint atom
+            bp = next(bp for bp in blueprint.blueprints if bp.module.name == k)
             output += arg_help(
                 t, blueprint, indent=indent + "  ", module=module + k + ".", _atom=bp
             )

@@ -28,9 +28,6 @@ from typing import Any, Literal
 
 import typer
 
-from dimos.teleop.openarm_mini.adapter import (
-    _calibrated_motor_radians,
-)
 from dimos.teleop.openarm_mini.calibration import (
     OPENARM_MINI_ARM_JOINT_NAMES,
     OpenArmMiniCalibration,
@@ -38,8 +35,13 @@ from dimos.teleop.openarm_mini.calibration import (
     load_calibration,
     save_calibration,
 )
-from dimos.teleop.openarm_mini.config import OpenArmMiniTeleopConfig, default_calibration_path
-from dimos.teleop.openarm_mini.feetech import FeetechLeaderReader
+from dimos.teleop.openarm_mini.config import (
+    OPENARM_MINI_DEFAULT_BAUDRATE,
+    OPENARM_MINI_DEFAULT_PORT_LEFT,
+    OPENARM_MINI_DEFAULT_PORT_RIGHT,
+    default_calibration_path,
+)
+from dimos.teleop.openarm_mini.feetech import FeetechLeaderReader, _calibrated_motor_radians
 from dimos.teleop.openarm_mini.mapping import map_side_readings
 
 DEFAULT_MOTOR_IDS = {
@@ -51,16 +53,11 @@ DEFAULT_FLIPS_BY_SIDE: dict[str, frozenset[str]] = {
 }
 
 
-class _RawFeetechReader(FeetechLeaderReader):
-    def read_raw_positions(self) -> dict[str, int]:  # type: ignore[override]
-        return super().read_raw_positions(DEFAULT_MOTOR_IDS)
-
-
 def main(
     side: Literal["left", "right", "both"] = typer.Option("both"),
-    port_left: str = typer.Option(OpenArmMiniTeleopConfig.port_left),
-    port_right: str = typer.Option(OpenArmMiniTeleopConfig.port_right),
-    baudrate: int = typer.Option(OpenArmMiniTeleopConfig.baudrate),
+    port_left: str = typer.Option(OPENARM_MINI_DEFAULT_PORT_LEFT),
+    port_right: str = typer.Option(OPENARM_MINI_DEFAULT_PORT_RIGHT),
+    baudrate: int = typer.Option(OPENARM_MINI_DEFAULT_BAUDRATE),
     left_calibration_path: Path = typer.Option(default_calibration_path("left")),
     right_calibration_path: Path = typer.Option(default_calibration_path("right")),
     left_flips: str | None = typer.Option(
@@ -105,14 +102,14 @@ def _calibrate_side(
     baudrate: int,
     *,
     flips: set[str] | frozenset[str] | None = None,
-    reader_factory: Callable[[str, int], Any] = _RawFeetechReader,
+    reader_factory: Callable[[str, int], Any] = FeetechLeaderReader,
 ) -> None:
     reader = reader_factory(port, baudrate)
     reader.connect()
     try:
         print(f"\nCalibrating {side} OpenArm Mini leader on {port}")
         print("Place the leader in its natural zero pose; reading arm-joint motors now.")
-        raw_positions = reader.read_raw_positions()
+        raw_positions = reader.read_raw_positions(DEFAULT_MOTOR_IDS)
         calibration = _capture_zero_calibration(
             side,
             raw_positions,
@@ -127,12 +124,12 @@ def _calibrate_side(
 
 def _live_readout(side: str, port: str, path: Path, baudrate: int) -> None:
     calibration = load_calibration(path, side)
-    reader = _RawFeetechReader(port, baudrate)
+    reader = FeetechLeaderReader(port, baudrate)
     reader.connect()
     try:
         print(f"\nLive calibrated {side} arm readout from {port}; press Ctrl-C to stop.")
         while True:
-            raw_positions = reader.read_raw_positions()
+            raw_positions = reader.read_raw_positions(DEFAULT_MOTOR_IDS)
             calibrated_readings = {
                 joint_name: _calibrated_motor_radians(raw_position, calibration.motors[joint_name])
                 for joint_name, raw_position in raw_positions.items()

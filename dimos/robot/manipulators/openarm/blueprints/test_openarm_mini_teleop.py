@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -26,10 +27,7 @@ from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.cli.dimos import load_config_args
 from dimos.robot.manipulators.openarm.blueprints import teleop
 from dimos.teleop.openarm_mini.config import OpenArmMiniTeleopConfig
-from dimos.teleop.openarm_mini.teleop_module import (
-    OpenArmMiniTeleopModule,
-    OpenArmMiniTeleopModuleConfig,
-)
+from dimos.teleop.runtime.teleop_module import TeleopModule, TeleopModuleConfig
 
 
 def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
@@ -42,16 +40,16 @@ def _module_types(blueprint: Blueprint) -> list[type]:
 
 def _teleop_config_after_cli_override(
     blueprint: Blueprint,
-    override: str,
-) -> OpenArmMiniTeleopModuleConfig:
+    overrides: Sequence[str],
+) -> TeleopModuleConfig:
     config_args = load_config_args(
         blueprint.config(),
-        [override],
+        overrides,
         Path("/tmp/nonexistent-dimos-config.json"),
     )
-    module_kwargs = _module_kwargs(blueprint, OpenArmMiniTeleopModule).copy()
-    module_kwargs = _merge_config_args(module_kwargs, config_args[OpenArmMiniTeleopModule.name])
-    return OpenArmMiniTeleopModuleConfig(**module_kwargs)
+    module_kwargs = _module_kwargs(blueprint, TeleopModule).copy()
+    module_kwargs = _merge_config_args(module_kwargs, config_args[TeleopModule.name])
+    return TeleopModuleConfig(**module_kwargs)
 
 
 @pytest.mark.parametrize(
@@ -83,12 +81,12 @@ def test_openarm_mini_viser_blueprints_use_teleop_coordinator_and_manipulation(
     hardware_ids: list[str],
 ) -> None:
     assert _module_types(blueprint) == [
-        OpenArmMiniTeleopModule,
+        TeleopModule,
         ControlCoordinator,
         ManipulationModule,
     ]
 
-    teleop_config = _module_kwargs(blueprint, OpenArmMiniTeleopModule)["openarm_mini"]
+    teleop_config = _module_kwargs(blueprint, TeleopModule)["adapter"]
     assert isinstance(teleop_config, OpenArmMiniTeleopConfig)
     assert teleop_config.enabled_sides == enabled_sides
 
@@ -114,18 +112,26 @@ def test_openarm_mini_real_follower_blueprint_is_not_registered() -> None:
 def test_right_openarm_mini_cli_port_override_preserves_right_side_default() -> None:
     config = _teleop_config_after_cli_override(
         teleop.openarm_mini_right_teleop_viser,
-        "openarmminiteleopmodule.openarm_mini.port_right=/dev/ttyACM0",
+        [
+            "teleopmodule.adapter.backend=openarm_mini",
+            "teleopmodule.adapter.port_right=/dev/ttyACM0",
+        ],
     )
 
-    assert config.openarm_mini.enabled_sides == ("right",)
-    assert config.openarm_mini.port_right == "/dev/ttyACM0"
+    assert isinstance(config.adapter, OpenArmMiniTeleopConfig)
+    assert config.adapter.enabled_sides == ("right",)
+    assert config.adapter.port_right == "/dev/ttyACM0"
 
 
 def test_dual_openarm_mini_cli_port_override_preserves_dual_side_default() -> None:
     config = _teleop_config_after_cli_override(
         teleop.openarm_mini_dual_teleop_viser,
-        "openarmminiteleopmodule.openarm_mini.port_right=/dev/ttyACM0",
+        [
+            "teleopmodule.adapter.backend=openarm_mini",
+            "teleopmodule.adapter.port_right=/dev/ttyACM0",
+        ],
     )
 
-    assert config.openarm_mini.enabled_sides == ("left", "right")
-    assert config.openarm_mini.port_right == "/dev/ttyACM0"
+    assert isinstance(config.adapter, OpenArmMiniTeleopConfig)
+    assert config.adapter.enabled_sides == ("left", "right")
+    assert config.adapter.port_right == "/dev/ttyACM0"

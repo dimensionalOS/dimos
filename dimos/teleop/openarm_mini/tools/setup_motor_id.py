@@ -26,8 +26,8 @@ from typing import Any
 
 import typer
 
-from dimos.teleop.openarm_mini.config import OpenArmMiniTeleopConfig
-from dimos.teleop.openarm_mini.feetech import _load_scservo_sdk
+from dimos.teleop.openarm_mini.config import OPENARM_MINI_DEFAULT_BAUDRATE
+from dimos.teleop.openarm_mini.feetech import _create_sdk_handlers
 
 FEETECH_ID_ADDRESS = 5
 FEETECH_TORQUE_ENABLE_ADDRESS = 40
@@ -44,7 +44,7 @@ def main(
         "--old-id",
         help="Current motor ID. If omitted, scan for exactly one connected motor.",
     ),
-    baudrate: int = typer.Option(OpenArmMiniTeleopConfig.baudrate),
+    baudrate: int = typer.Option(OPENARM_MINI_DEFAULT_BAUDRATE),
     yes: bool = typer.Option(False, "--yes", help="Skip the safety confirmation prompt."),
 ) -> None:
     _validate_motor_id(new_id, "new-id")
@@ -68,9 +68,7 @@ def setup_motor_id(port: str, baudrate: int, new_id: int, old_id: int | None = N
     if old_id is not None:
         _validate_motor_id(old_id, "old-id")
 
-    sdk = _load_scservo_sdk()
-    port_handler = sdk.PortHandler(port)
-    packet_handler = sdk.sms_sts(port_handler)
+    port_handler, packet_handler = _create_sdk_handlers(port)
     if not port_handler.openPort():
         raise RuntimeError(f"failed to open Feetech port {port}")
     try:

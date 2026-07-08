@@ -222,7 +222,6 @@ all_modules = {
     "object-tracker3-d": "dimos.perception.object_tracker_3d.ObjectTracker3D",
     "object-tracking": "dimos.perception.object_tracker.ObjectTracking",
     "odom-body-frame": "dimos.navigation.nav_3d.mls_planner.odom_body_frame.OdomBodyFrame",
-    "open-arm-mini-teleop-module": "dimos.teleop.openarm_mini.teleop_module.OpenArmMiniTeleopModule",
     "osm-skill": "dimos.agents.skills.osm.OsmSkill",
     "path-follower": "dimos.navigation.cmu_nav.modules.path_follower.path_follower.PathFollower",
     "patrolling-module": "dimos.navigation.patrolling.module.PatrollingModule",

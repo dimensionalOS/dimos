@@ -76,18 +76,6 @@ class OpenArmMiniCalibration(BaseConfig):
                 raise OpenArmMiniCalibrationError(f"{motor_name} has invalid id {motor.id}")
         return self
 
-    @classmethod
-    def from_dict(cls, data: dict[str, object]) -> OpenArmMiniCalibration:
-        """Build a calibration artifact from decoded JSON data."""
-        try:
-            return cls.model_validate(data)
-        except (OpenArmMiniCalibrationError, ValidationError) as exc:
-            raise OpenArmMiniCalibrationError(str(exc)) from exc
-
-    def to_dict(self) -> dict[str, object]:
-        """Return a JSON-serializable representation."""
-        return self.model_dump(mode="json")
-
 
 def calibration_file(path: Path) -> Path:
     """Resolve a calibration directory or file to the artifact file path."""

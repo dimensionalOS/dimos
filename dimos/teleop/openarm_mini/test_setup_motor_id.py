@@ -71,21 +71,6 @@ class _FakePortHandler:
         self.closed = True
 
 
-class _FakeSdk:
-    def __init__(self, packet_handler: _FakePacketHandler, port_handler: _FakePortHandler) -> None:
-        self.packet_handler = packet_handler
-        self.port_handler = port_handler
-        self.ports: list[str] = []
-
-    def PortHandler(self, port: str) -> _FakePortHandler:
-        self.ports.append(port)
-        return self.port_handler
-
-    def sms_sts(self, port_handler: _FakePortHandler) -> _FakePacketHandler:
-        assert port_handler is self.port_handler
-        return self.packet_handler
-
-
 def test_write_motor_id_disables_torque_unlocks_writes_locks_and_verifies() -> None:
     packet_handler = _FakePacketHandler({3})
 
@@ -111,13 +96,18 @@ def test_setup_motor_id_scans_when_old_id_is_omitted_and_closes_port(
 ) -> None:
     packet_handler = _FakePacketHandler({5})
     port_handler = _FakePortHandler()
-    sdk = _FakeSdk(packet_handler, port_handler)
-    monkeypatch.setattr(setup_motor_id_module, "_load_scservo_sdk", lambda: sdk)
+    ports: list[str] = []
+
+    def create_handlers(port: str) -> tuple[_FakePortHandler, _FakePacketHandler]:
+        ports.append(port)
+        return port_handler, packet_handler
+
+    monkeypatch.setattr(setup_motor_id_module, "_create_sdk_handlers", create_handlers)
 
     previous_id = setup_motor_id("/dev/test-feetech", baudrate=123456, new_id=9)
 
     assert previous_id == 5
-    assert sdk.ports == ["/dev/test-feetech"]
+    assert ports == ["/dev/test-feetech"]
     assert port_handler.opened
     assert port_handler.baudrate == 123456
     assert port_handler.closed

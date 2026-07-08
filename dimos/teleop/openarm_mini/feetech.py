@@ -17,18 +17,26 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-import importlib
+import math
 from typing import Any
 
-from dimos.teleop.openarm_mini.config import missing_dependency_error
+from dimos.teleop.openarm_mini.calibration import (
+    FEETECH_POSITION_SPAN,
+    OPENARM_MINI_ARM_JOINT_NAMES,
+    OpenArmMiniCalibration,
+    OpenArmMiniMotorCalibration,
+)
+from dimos.teleop.openarm_mini.config import missing_dependency_error, validate_side
 
 
-def _load_scservo_sdk() -> Any:
-    """Load the optional, untyped Feetech SDK at the hardware boundary."""
+def _create_sdk_handlers(port: str) -> tuple[Any, Any]:
+    """Create optional Feetech SDK port and packet handlers at the hardware boundary."""
     try:
-        return importlib.import_module("scservo_sdk")
+        from scservo_sdk import PortHandler, sms_sts  # type: ignore[import-untyped]
     except ImportError as exc:
         raise missing_dependency_error() from exc
+    port_handler = PortHandler(port)
+    return port_handler, sms_sts(port_handler)
 
 
 def _read_motor_position(packet_handler: Any, motor_id: int) -> int:
@@ -51,9 +59,7 @@ class FeetechLeaderReader:
         self._packet_handler: Any | None = None
 
     def connect(self) -> None:
-        sdk = _load_scservo_sdk()
-        port_handler = sdk.PortHandler(self._port)
-        packet_handler = sdk.sms_sts(port_handler)
+        port_handler, packet_handler = _create_sdk_handlers(self._port)
         if not port_handler.openPort():
             raise RuntimeError(f"failed to open {self._label} port {self._port}")
         if not port_handler.setBaudRate(self._baudrate):
@@ -78,3 +84,55 @@ class FeetechLeaderReader:
             joint_name: _read_motor_position(self._packet_handler, motor_id)
             for joint_name, motor_id in motor_ids_by_name.items()
         }
+
+
+class OpenArmMiniLeaderReader:
+    """Concrete calibrated reader for one OpenArm Mini leader side."""
+
+    def __init__(
+        self,
+        side: str,
+        port: str,
+        calibration: OpenArmMiniCalibration,
+        baudrate: int,
+    ) -> None:
+        validate_side(side)
+        self._calibration = calibration
+        self._reader = FeetechLeaderReader(
+            port,
+            baudrate,
+            label=f"OpenArm Mini {side} Feetech",
+        )
+
+    def connect(self) -> None:
+        self._reader.connect()
+
+    def disconnect(self) -> None:
+        self._reader.disconnect()
+
+    def read_positions(self) -> dict[str, float]:
+        motor_ids_by_name = {
+            joint_name: self._calibration.motors[joint_name].id
+            for joint_name in OPENARM_MINI_ARM_JOINT_NAMES
+        }
+        raw_positions = self._reader.read_raw_positions(motor_ids_by_name)
+        return {
+            joint_name: _calibrated_motor_radians(
+                raw_positions[joint_name],
+                self._calibration.motors[joint_name],
+            )
+            for joint_name in OPENARM_MINI_ARM_JOINT_NAMES
+        }
+
+
+def _calibrated_motor_radians(raw_position: int, calibration: OpenArmMiniMotorCalibration) -> float:
+    centered = raw_position - calibration.homing_offset
+    radians = centered * math.tau / FEETECH_POSITION_SPAN
+    if calibration.flip:
+        radians = -radians
+    return radians
+
+
+def _normalize_motor_position(raw_position: int, calibration: OpenArmMiniMotorCalibration) -> float:
+    """Backward-compatible helper for tests; returns calibrated radians."""
+    return _calibrated_motor_radians(raw_position, calibration)

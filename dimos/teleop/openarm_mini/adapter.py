@@ -16,17 +16,11 @@
 
 from __future__ import annotations
 
-import math
-
 from dimos.teleop.openarm_mini.calibration import (
-    FEETECH_POSITION_SPAN,
-    OPENARM_MINI_ARM_JOINT_NAMES,
-    OpenArmMiniCalibration,
-    OpenArmMiniMotorCalibration,
     load_calibration,
 )
-from dimos.teleop.openarm_mini.config import OpenArmMiniTeleopConfig, validate_side
-from dimos.teleop.openarm_mini.feetech import FeetechLeaderReader
+from dimos.teleop.openarm_mini.config import OpenArmMiniTeleopConfig
+from dimos.teleop.openarm_mini.feetech import OpenArmMiniLeaderReader
 from dimos.teleop.openarm_mini.mapping import combine_side_commands, map_side_readings
 from dimos.teleop.runtime.types import TeleopCommand
 
@@ -36,7 +30,7 @@ class OpenArmMiniTeleopAdapter:
 
     def __init__(self, config: OpenArmMiniTeleopConfig | None = None) -> None:
         self.config = config if config is not None else OpenArmMiniTeleopConfig()
-        self._buses: dict[str, _ScservoSideBus] = {}
+        self._buses: dict[str, OpenArmMiniLeaderReader] = {}
         self._previous_positions_by_side: dict[str, dict[str, float]] = {}
         self._connected = False
 
@@ -44,11 +38,11 @@ class OpenArmMiniTeleopAdapter:
         """Load calibration and connect configured OpenArm Mini leader sides."""
         if self._connected:
             return
-        buses: dict[str, _ScservoSideBus] = {}
+        buses: dict[str, OpenArmMiniLeaderReader] = {}
         try:
             for side in self.config.sides():
                 calibration = load_calibration(self.config.calibration_path(side), side)
-                bus = _ScservoSideBus(
+                bus = OpenArmMiniLeaderReader(
                     side, self.config.port(side), calibration, self.config.baudrate
                 )
                 bus.connect()
@@ -92,55 +86,3 @@ class OpenArmMiniTeleopAdapter:
 
         self._previous_positions_by_side = next_previous_positions_by_side
         return TeleopCommand(payload=combine_side_commands(side_commands))
-
-
-class _ScservoSideBus:
-    """Small Feetech SDK wrapper for OpenArm Mini leader position reads."""
-
-    def __init__(
-        self,
-        side: str,
-        port: str,
-        calibration: OpenArmMiniCalibration,
-        baudrate: int,
-    ) -> None:
-        validate_side(side)
-        self._side = side
-        self._calibration = calibration
-        self._reader = FeetechLeaderReader(
-            port,
-            baudrate,
-            label=f"OpenArm Mini {side} Feetech",
-        )
-
-    def connect(self) -> None:
-        self._reader.connect()
-
-    def disconnect(self) -> None:
-        self._reader.disconnect()
-
-    def read_positions(self) -> dict[str, float]:
-        motor_ids_by_name = {
-            joint_name: self._calibration.motors[joint_name].id
-            for joint_name in OPENARM_MINI_ARM_JOINT_NAMES
-        }
-        raw_positions = self._reader.read_raw_positions(motor_ids_by_name)
-        positions: dict[str, float] = {}
-        for joint_name in OPENARM_MINI_ARM_JOINT_NAMES:
-            motor_calibration = self._calibration.motors[joint_name]
-            raw_position = raw_positions[joint_name]
-            positions[joint_name] = _calibrated_motor_radians(raw_position, motor_calibration)
-        return positions
-
-
-def _calibrated_motor_radians(raw_position: int, calibration: OpenArmMiniMotorCalibration) -> float:
-    centered = raw_position - calibration.homing_offset
-    radians = centered * math.tau / FEETECH_POSITION_SPAN
-    if calibration.flip:
-        radians = -radians
-    return radians
-
-
-def _normalize_motor_position(raw_position: int, calibration: OpenArmMiniMotorCalibration) -> float:
-    """Backward-compatible helper for tests; returns calibrated radians."""
-    return _calibrated_motor_radians(raw_position, calibration)

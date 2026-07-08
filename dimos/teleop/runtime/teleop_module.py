@@ -19,6 +19,8 @@ import threading
 import time
 from typing import Any
 
+from pydantic import Field
+
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -26,10 +28,13 @@ from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.teleop.openarm_mini.config import OpenArmMiniTeleopConfig
+from dimos.teleop.runtime.adapters import TeleopAdapterConfig, create_teleop_adapter
 from dimos.teleop.runtime.types import TeleopAdapter, TeleopCommand
 
 
 class TeleopModuleConfig(ModuleConfig):
+    adapter: TeleopAdapterConfig = Field(default_factory=OpenArmMiniTeleopConfig)
     tick_period_s: float = 0.02
     max_publish_rate_hz: float = 50.0
     stale_command_timeout_s: float = 0.25
@@ -44,13 +49,17 @@ class TeleopModule(Module):
     coordinator_cartesian_command: Out[PoseStamped]
     twist_command: Out[Twist]
 
-    def __init__(self, adapter: TeleopAdapter, **kwargs: Any) -> None:
+    def __init__(self, runtime_adapter: TeleopAdapter | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         if self.teleop_config.max_publish_rate_hz <= 0.0:
             raise ValueError("max_publish_rate_hz must be positive")
         if self.teleop_config.stale_command_timeout_s < 0.0:
             raise ValueError("stale_command_timeout_s must be non-negative")
-        self._adapter = adapter
+        self._adapter = (
+            runtime_adapter
+            if runtime_adapter is not None
+            else create_teleop_adapter(self.teleop_config.adapter)
+        )
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_publish_time = 0.0
