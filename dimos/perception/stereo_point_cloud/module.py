@@ -60,6 +60,9 @@ class Config(ModuleConfig):
     publish_every: int        = 1
     world_frame: str          = "world"
     madgwick_beta: float      = 0.033
+    # Applied as z_shift before floor calibration converges; avoids a scene
+    # snap from 0 → cam_height when the calibration fires at ~4 s.
+    cam_height_prior: float   = 1.0
 
 
 class StereoPointCloud(Module):
@@ -214,8 +217,11 @@ class StereoPointCloud(Module):
             dd,
         ]).astype(np.float32)
 
-        with self._imu_lock:
-            R = self._madgwick.R.copy() if self._madgwick is not None else np.eye(3, dtype=np.float32)
+        # R=identity: camera_link already has Z=up for the D435i, so no gravity
+        # alignment is needed for a near-level mount. Madgwick converges toward a
+        # 180° X-flip (it tries to align measured [0,0,-g] → [0,0,+1]), which
+        # corrupts xyz_world and mismatches the floor filter's calibration frame.
+        R = np.eye(3, dtype=np.float32)
         t = self._odom.t
 
         xyz_cam   = xyz_opt @ _R_OPT_TO_LINK.T
@@ -235,10 +241,11 @@ class StereoPointCloud(Module):
         # z ≈ -1, chairs/tables/mat in between) rendered UNDER the viewer's
         # ground plane. Shift is 0 until calibration completes (~4 s), then
         # the cloud snaps up by cam_height.
+        # Use the prior until calibration converges so there's no scene snap at ~4 s.
         z_shift = (
             float(self._floor_calib.cam_height)  # type: ignore[arg-type]
             if self._floor_calib.ready
-            else 0.0
+            else float(self.config.cam_height_prior)
         )
         z_off = np.array([0.0, 0.0, z_shift], dtype=np.float32)
 
