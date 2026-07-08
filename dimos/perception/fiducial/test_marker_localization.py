@@ -220,6 +220,28 @@ def test_load_marker_map_no_markers_key_returns_empty(tmp_path: Path) -> None:
     assert load_marker_map(yaml_path) == {}
 
 
+@pytest.mark.parametrize(
+    "translation,rotation",
+    [
+        ("[1.0]", "[0.0, 0.0, 0.0, 1.0]"),  # short translation would zero-fill silently
+        ("1.0", "[0.0, 0.0, 0.0, 1.0]"),  # scalar translation, same silent Vector3 branch
+        ("[1.0, 2.0, 3.0]", "[0.0, 0.0, 1.0]"),  # 3-element rotation is not a quaternion
+        ("[1.0, 2.0, 3.0]", "[0.0, 0.0, 0.0, 0.0]"),  # zero norm crashes inverse() much later
+    ],
+)
+def test_load_marker_map_malformed_values_raise(
+    tmp_path: Path, translation: str, rotation: str
+) -> None:
+    """Malformed *values* fail loudly at load time, naming the marker — never a silent
+    zero-fill into a published correction, never a deferred ``Quaternion.inverse()`` crash."""
+    yaml_path = tmp_path / "bad_values.yaml"
+    yaml_path.write_text(
+        f"markers:\n  7:\n    translation: {translation}\n    rotation: {rotation}\n"
+    )
+    with pytest.raises(ValueError, match="marker 7"):
+        load_marker_map(yaml_path)
+
+
 # --- MarkerLocalizationModule ----------------------------------------------
 
 
@@ -301,3 +323,39 @@ def test_module_config_rejects_non_positive_marker_length() -> None:
 def test_module_config_rejects_non_positive_reprojection_threshold() -> None:
     with pytest.raises(ValidationError):
         MarkerLocalizationModule(marker_length_m=_MARKER_LENGTH_M, max_reprojection_error_px=0.0)
+
+
+def test_module_config_threads_min_tags_into_gate() -> None:
+    """``min_tags`` is exposed on the module config and reaches the localization gate."""
+    module = MarkerLocalizationModule(marker_length_m=_MARKER_LENGTH_M, min_tags=2)
+    try:
+        assert module._cfg.min_tags == 2
+    finally:
+        module.stop()
+    with pytest.raises(ValidationError):
+        MarkerLocalizationModule(marker_length_m=_MARKER_LENGTH_M, min_tags=0)
+
+
+async def test_module_uses_configured_camera_frame_and_warns_on_tf_miss() -> None:
+    """A non-default ``camera_optical_frame`` is used for the TF lookup, and a lookup miss
+    (mis-named frame, missing static chain) warns instead of going dark."""
+    module = MarkerLocalizationModule(
+        marker_length_m=_MARKER_LENGTH_M, camera_info=camera_info(), camera_optical_frame="cam_x"
+    )
+    module._marker_map = _MARKER_MAP
+    try:
+        module.tf.publish(Transform(frame_id="world", child_frame_id="cam_x", ts=10.0))
+        await module.handle_color_image(synthetic_marker_image(_MARKER_ID, ts=10.0))
+        assert module.tf.get("world", "map") is not None  # lookup used cam_x, not the default
+    finally:
+        module.stop()
+
+    missing = MarkerLocalizationModule(marker_length_m=_MARKER_LENGTH_M, camera_info=camera_info())
+    missing._marker_map = _MARKER_MAP
+    try:  # no world -> camera_optical TF published at all -> warning, no publish
+        with patch("dimos.perception.fiducial.marker_localization_module.logger.warning") as warned:
+            await missing.handle_color_image(synthetic_marker_image(_MARKER_ID, ts=10.0))
+        assert any("no TF" in str(c.args[0]) for c in warned.call_args_list)
+        assert missing.tf.get("world", "map") is None
+    finally:
+        missing.stop()

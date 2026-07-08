@@ -46,8 +46,10 @@ class MarkerLocalizationModuleConfig(ModuleConfig):
     marker_map_file: str | None = None  # via `resolve_named_path`, RelocalizationModule convention
     aruco_dictionary: str = "DICT_APRILTAG_36h11"
     marker_length_m: float = Field(..., gt=0.0)
+    min_tags: int = Field(1, ge=1)  # tags that must clear the gate before a fix is trusted
     max_reprojection_error_px: float = Field(3.0, gt=0.0)
     camera_info: CameraInfo | None = None  # static, MarkerDetectionStreamModule convention
+    camera_optical_frame: str = OPTICAL_FRAME
 
 
 class MarkerLocalizationModule(Module):
@@ -60,7 +62,9 @@ class MarkerLocalizationModule(Module):
         self._detector = create_aruco_detector(self.config.aruco_dictionary)
         c = self.config
         self._cfg = LocalizationConfig(
-            c.marker_length_m, max_reprojection_error_px=c.max_reprojection_error_px
+            c.marker_length_m,
+            min_tags=c.min_tags,
+            max_reprojection_error_px=c.max_reprojection_error_px,
         )
 
     @rpc
@@ -79,6 +83,11 @@ class MarkerLocalizationModule(Module):
         if pose is None:
             logger.warning(f"MarkerLocalizationModule: gate rejected ({len(detections)} tags seen)")
             return
-        if (world_T_optical := self.tf.get(WORLD_FRAME, OPTICAL_FRAME, time_point=msg.ts)) is None:
+        optical = self.config.camera_optical_frame
+        if (world_T_optical := self.tf.get(WORLD_FRAME, optical, time_point=msg.ts)) is None:
+            logger.warning(
+                f"MarkerLocalizationModule: no TF {WORLD_FRAME} -> {optical} at {msg.ts}; "
+                "check camera_optical_frame against the camera's static TF chain"
+            )
             return
         self.tf.publish((world_T_optical + pose.inverse()).now())
