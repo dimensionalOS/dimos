@@ -34,6 +34,18 @@ def copy_joint_state(joint_state: JointState | None) -> JointState | None:
     return None if joint_state is None else JointState(joint_state)
 
 
+def _string_list(value: object) -> list[str]:
+    return [str(item) for item in value] if isinstance(value, list) else []
+
+
+def _float_list_or_none(value: object) -> list[float] | None:
+    return [float(item) for item in value] if isinstance(value, list) else None
+
+
+def _float_value(value: object, default: float = 0.0) -> float:
+    return float(value) if isinstance(value, int | float | str) else default
+
+
 class InProcessViserAdapter:
     """Small in-process boundary between Viser callbacks and manipulation internals."""
 
@@ -65,26 +77,24 @@ class InProcessViserAdapter:
         info = self._module.get_robot_info(robot_name)
         if info is None:
             return None
-        return {
+
+        robot_info: RobotInfo = {
             "name": str(info["name"]),
             "world_robot_id": str(info["world_robot_id"]),
-            "joint_names": [str(name) for name in info["joint_names"]],
+            "joint_names": _string_list(info["joint_names"]),
             "end_effector_link": str(info["end_effector_link"]),
             "base_link": str(info["base_link"]),
-            "max_velocity": float(info["max_velocity"]),
-            "max_acceleration": float(info["max_acceleration"]),
+            "max_velocity": _float_value(info["max_velocity"]),
+            "max_acceleration": _float_value(info["max_acceleration"]),
             "has_joint_name_mapping": bool(info["has_joint_name_mapping"]),
             "coordinator_task_name": None
             if info["coordinator_task_name"] is None
             else str(info["coordinator_task_name"]),
-            "home_joints": None
-            if info["home_joints"] is None
-            else [float(value) for value in info["home_joints"]],
-            "pre_grasp_offset": float(info["pre_grasp_offset"]),
-            "init_joints": None
-            if info["init_joints"] is None
-            else [float(value) for value in info["init_joints"]],
+            "home_joints": _float_list_or_none(info["home_joints"]),
+            "pre_grasp_offset": _float_value(info["pre_grasp_offset"]),
+            "init_joints": _float_list_or_none(info["init_joints"]),
         }
+        return robot_info
 
     def get_init_joints(self, robot_name: RobotName) -> JointState | None:
         return copy_joint_state(self._module.get_init_joints(robot_name))
