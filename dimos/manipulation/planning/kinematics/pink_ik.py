@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import importlib
 from pathlib import Path
@@ -24,10 +25,17 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
+from dimos.manipulation.planning.kinematics.utils import (
+    groups_by_robot as _groups_by_robot,
+    robot_ids_by_name as _robot_ids_by_name,
+    seed_positions_with_world_fallback as _seed_positions_with_world_fallback,
+    unique_pose_target_frame_for_robot as _unique_pose_target_frame_for_robot,
+)
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus
-from dimos.manipulation.planning.spec.models import IKResult, WorldRobotID
+from dimos.manipulation.planning.spec.models import IKResult, RobotName, WorldRobotID
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
@@ -98,7 +106,7 @@ class PinkIK:
         config_values.update(overrides)
         self.config = PinkKinematicsConfig(**config_values)
         self._modules = _load_optional_dependencies(self.config.solver)
-        self._robot_contexts: dict[str, _PinkRobotContext] = {}
+        self._robot_contexts: dict[tuple[str, str], _PinkRobotContext] = {}
 
     def solve(
         self,
@@ -115,8 +123,15 @@ class PinkIK:
         if not world.is_finalized:
             return _failure(IKStatus.NO_SOLUTION, "World must be finalized before IK")
 
+        target_frame_name = _unique_pose_target_frame_for_robot(world, robot_id)
+        if target_frame_name is None:
+            return _failure(
+                IKStatus.NO_SOLUTION,
+                "PinkIK requires exactly one pose-targetable planning group for legacy solve()",
+            )
+
         try:
-            robot_context = self._get_robot_context(world, robot_id)
+            robot_context = self._get_robot_context(world, robot_id, target_frame_name)
         except (FileNotFoundError, ImportError, ValueError) as exc:
             return _failure(IKStatus.NO_SOLUTION, f"Pink IK model setup failed: {exc}")
 
@@ -164,6 +179,265 @@ class PinkIK:
 
         return _failure(IKStatus.NO_SOLUTION, f"Pink IK failed after {max_attempts} attempts")
 
+    def solve_pose_targets(
+        self,
+        world: WorldSpec,
+        pose_targets: Mapping[PlanningGroup, PoseStamped],
+        auxiliary_groups: Sequence[PlanningGroup] = (),
+        seed: JointState | None = None,
+        position_tolerance: float = 0.001,
+        orientation_tolerance: float = 0.01,
+        check_collision: bool = True,
+        max_attempts: int = 10,
+    ) -> IKResult:
+        """Solve planning-group-scoped pose targets with Pink IK."""
+        if not world.is_finalized:
+            return _failure(IKStatus.NO_SOLUTION, "World must be finalized before IK")
+        all_groups = tuple(pose_targets.keys()) + tuple(auxiliary_groups)
+        if not all_groups:
+            return _failure(
+                IKStatus.NO_SOLUTION, "At least one pose target or auxiliary group is required"
+            )
+        bad_groups = [
+            group.id
+            for group in pose_targets
+            if not group.has_pose_target or group.tip_link is None
+        ]
+        if bad_groups:
+            return _failure(
+                IKStatus.UNSUPPORTED,
+                f"Planning groups have no pose target frame: {bad_groups}",
+            )
+
+        try:
+            selection = PlanningGroupSelection.from_groups(all_groups)
+            robot_ids_by_name = _robot_ids_by_name(world, selection.robot_names)
+        except ValueError as exc:
+            return _failure(IKStatus.NO_SOLUTION, str(exc))
+
+        results_by_robot: dict[RobotName, IKResult] = {}
+        for robot_name, groups in _groups_by_robot(all_groups).items():
+            robot_id = robot_ids_by_name[robot_name]
+            config = world.get_robot_config(robot_id)
+            joint_names = list(config.joint_names)
+            try:
+                selected_indices = [
+                    joint_names.index(name) for group in groups for name in group.local_joint_names
+                ]
+                seed_positions = _seed_positions_with_world_fallback(
+                    world, robot_id, config.name, joint_names, seed
+                )
+            except ValueError as exc:
+                return _failure(IKStatus.NO_SOLUTION, f"Pink IK mapping failed: {exc}")
+            robot_pose_targets = [group for group in groups if group in pose_targets]
+            if not robot_pose_targets:
+                robot_result = _success(joint_names, seed_positions, 0.0, 0.0, 0)
+                results_by_robot[robot_name] = robot_result
+                continue
+
+            lower_limits, upper_limits = world.get_joint_limits(robot_id)
+            locked_positions = {
+                index: float(seed_positions[index])
+                for index in range(len(joint_names))
+                if index not in set(selected_indices)
+            }
+            targets: list[tuple[_PinkRobotContext, NDArray[np.float64]]] = []
+            try:
+                for group in robot_pose_targets:
+                    if group.tip_link is None:
+                        raise ValueError(f"Planning group '{group.id}' has no pose target frame")
+                    targets.append(
+                        (
+                            self._get_robot_context(world, robot_id, group.tip_link),
+                            self._target_in_model_frame(config, pose_targets[group]),
+                        )
+                    )
+            except (FileNotFoundError, ImportError, ValueError) as exc:
+                return _failure(IKStatus.NO_SOLUTION, f"Pink IK model setup failed: {exc}")
+
+            fallback_result: IKResult | None = None
+            for attempt in range(max_attempts):
+                current_positions = seed_positions.copy()
+                if attempt > 0:
+                    current_positions[selected_indices] = np.random.uniform(
+                        lower_limits[selected_indices], upper_limits[selected_indices]
+                    )
+                try:
+                    q0 = self._q_from_dimos_positions(targets[0][0], current_positions)
+                    if len(targets) == 1:
+                        result = self._solve_single(
+                            robot_context=targets[0][0],
+                            target_model=targets[0][1],
+                            seed_q=q0,
+                            lower_limits=lower_limits,
+                            upper_limits=upper_limits,
+                            position_tolerance=position_tolerance,
+                            orientation_tolerance=orientation_tolerance,
+                            locked_joint_positions=locked_positions,
+                        )
+                    else:
+                        result = self._solve_multi(
+                            targets=targets,
+                            seed_q=q0,
+                            lower_limits=lower_limits,
+                            upper_limits=upper_limits,
+                            position_tolerance=position_tolerance,
+                            orientation_tolerance=orientation_tolerance,
+                            locked_joint_positions=locked_positions,
+                        )
+                except ValueError as exc:
+                    return _failure(IKStatus.NO_SOLUTION, f"Pink IK mapping failed: {exc}")
+                except Exception as exc:
+                    return _failure(IKStatus.NO_SOLUTION, f"Pink IK solver failed: {exc}")
+
+                if not result.is_success() or result.joint_state is None:
+                    if fallback_result is None:
+                        fallback_result = result
+                    continue
+                results_by_robot[robot_name] = result
+                break
+            else:
+                if fallback_result is not None:
+                    return fallback_result
+                return _failure(
+                    IKStatus.NO_SOLUTION, f"Pink IK failed after {max_attempts} attempts"
+                )
+
+        positions_by_robot: dict[RobotName, dict[str, float]] = {}
+        max_position_error = 0.0
+        max_orientation_error = 0.0
+        iterations = 0
+        for robot_name, result in results_by_robot.items():
+            if not result.is_success() or result.joint_state is None:
+                return result
+            positions_by_robot[robot_name] = dict(
+                zip(result.joint_state.name, result.joint_state.position, strict=True)
+            )
+            max_position_error = max(max_position_error, result.position_error)
+            max_orientation_error = max(max_orientation_error, result.orientation_error)
+            iterations = max(iterations, result.iterations)
+
+        selected_names: list[str] = []
+        selected_positions: list[float] = []
+        for group in selection.groups:
+            robot_positions = positions_by_robot[group.robot_name]
+            for global_name, local_name in zip(
+                group.joint_names,
+                group.local_joint_names,
+                strict=True,
+            ):
+                if global_name in robot_positions:
+                    position = robot_positions[global_name]
+                elif local_name in robot_positions:
+                    position = robot_positions[local_name]
+                else:
+                    return _failure(
+                        IKStatus.NO_SOLUTION,
+                        f"Pink IK result is missing selected joint '{global_name}'",
+                    )
+                selected_names.append(global_name)
+                selected_positions.append(float(position))
+
+        combined = IKResult(
+            status=IKStatus.SUCCESS,
+            joint_state=JointState(
+                {
+                    "name": selected_names,
+                    "position": selected_positions,
+                }
+            ),
+            position_error=max_position_error,
+            orientation_error=max_orientation_error,
+            iterations=iterations,
+            message="Pink IK solution found",
+        )
+        if check_collision and not _combined_robot_results_collision_free(
+            world,
+            robot_ids_by_name,
+            results_by_robot,
+        ):
+            return _collision_failure(combined)
+        return combined
+
+    def _solve_multi(
+        self,
+        targets: Sequence[tuple[_PinkRobotContext, NDArray[np.float64]]],
+        seed_q: NDArray[np.float64],
+        lower_limits: NDArray[np.float64],
+        upper_limits: NDArray[np.float64],
+        position_tolerance: float,
+        orientation_tolerance: float,
+        locked_joint_positions: Mapping[int, float] | None = None,
+    ) -> IKResult:
+        robot_context = targets[0][0]
+        pink = self._modules.pink
+        pinocchio = self._modules.pinocchio
+        configuration = pink.Configuration(robot_context.model, robot_context.data, seed_q.copy())
+        tasks: list[Any] = []
+        for target_context, target_model in targets:
+            frame_task = pink.tasks.FrameTask(
+                target_context.frame_name,
+                position_cost=self.config.position_cost,
+                orientation_cost=self.config.orientation_cost,
+                lm_damping=self.config.lm_damping,
+                gain=self.config.gain,
+            )
+            frame_task.set_target(_matrix_to_se3(pinocchio, target_model))
+            tasks.append(frame_task)
+        if self.config.posture_cost > 0.0:
+            posture_task = pink.tasks.PostureTask(cost=self.config.posture_cost)
+            posture_task.set_target_from_configuration(configuration)
+            tasks.append(posture_task)
+        final_position_error = float("inf")
+        final_orientation_error = float("inf")
+        for iteration in range(self.config.max_iterations):
+            errors = [
+                compute_pose_error(self._current_frame_matrix(ctx, configuration.q), target_model)
+                for ctx, target_model in targets
+            ]
+            final_position_error = max(error[0] for error in errors)
+            final_orientation_error = max(error[1] for error in errors)
+            if (
+                final_position_error <= position_tolerance
+                and final_orientation_error <= orientation_tolerance
+            ):
+                return _success(
+                    robot_context.mapping.dimos_joint_names,
+                    self._q_to_dimos_positions(robot_context, configuration.q),
+                    final_position_error,
+                    final_orientation_error,
+                    iteration + 1,
+                )
+            velocity = pink.solve_ik(
+                configuration,
+                tasks,
+                self.config.dt,
+                solver=self.config.solver,
+                damping=self.config.damping,
+                safety_break=self.config.safety_break,
+            )
+            configuration.integrate_inplace(velocity, self.config.dt)
+            for local_index, value in (locked_joint_positions or {}).items():
+                configuration.q[robot_context.mapping.idx_q[local_index]] = value
+            joint_positions = self._q_to_dimos_positions(robot_context, configuration.q)
+            if not _within_limits(joint_positions, lower_limits, upper_limits):
+                return IKResult(
+                    status=IKStatus.JOINT_LIMITS,
+                    joint_state=None,
+                    position_error=final_position_error,
+                    orientation_error=final_orientation_error,
+                    iterations=iteration + 1,
+                    message="Pink IK candidate violates DimOS joint limits",
+                )
+        return IKResult(
+            status=IKStatus.NO_SOLUTION,
+            joint_state=None,
+            position_error=final_position_error,
+            orientation_error=final_orientation_error,
+            iterations=self.config.max_iterations,
+            message="Pink IK did not converge within the iteration budget",
+        )
+
     def _solve_single(
         self,
         robot_context: _PinkRobotContext,
@@ -173,6 +447,7 @@ class PinkIK:
         upper_limits: NDArray[np.float64],
         position_tolerance: float,
         orientation_tolerance: float,
+        locked_joint_positions: Mapping[int, float] | None = None,
     ) -> IKResult:
         pink = self._modules.pink
         pinocchio = self._modules.pinocchio
@@ -224,6 +499,8 @@ class PinkIK:
                 safety_break=self.config.safety_break,
             )
             configuration.integrate_inplace(velocity, self.config.dt)
+            for local_index, value in (locked_joint_positions or {}).items():
+                configuration.q[robot_context.mapping.idx_q[local_index]] = value
 
             joint_positions = self._q_to_dimos_positions(robot_context, configuration.q)
             if not _within_limits(joint_positions, lower_limits, upper_limits):
@@ -245,15 +522,20 @@ class PinkIK:
             message="Pink IK did not converge within the iteration budget",
         )
 
-    def _get_robot_context(self, world: WorldSpec, robot_id: WorldRobotID) -> _PinkRobotContext:
-        cache_key = str(robot_id)
+    def _get_robot_context(
+        self,
+        world: WorldSpec,
+        robot_id: WorldRobotID,
+        frame_name: str,
+    ) -> _PinkRobotContext:
+        cache_key = (str(robot_id), frame_name)
         if cache_key not in self._robot_contexts:
             self._robot_contexts[cache_key] = self._build_robot_context(
-                world.get_robot_config(robot_id)
+                world.get_robot_config(robot_id), frame_name
             )
         return self._robot_contexts[cache_key]
 
-    def _build_robot_context(self, config: RobotModelConfig) -> _PinkRobotContext:
+    def _build_robot_context(self, config: RobotModelConfig, frame_name: str) -> _PinkRobotContext:
         pinocchio = self._modules.pinocchio
         model_path = Path(config.model_path).resolve()
         if not model_path.exists():
@@ -271,13 +553,14 @@ class PinkIK:
             model = pinocchio.buildModelFromUrdf(str(prepared_path))
 
         data = model.createData()
-        frame_id = _get_frame_id(model, config.end_effector_link)
+        _assert_base_link_is_model_root(model, config.base_link)
+        frame_id = _get_frame_id(model, frame_name)
         mapping = _build_joint_mapping(model, config)
         return _PinkRobotContext(
             model=model,
             data=data,
             frame_id=frame_id,
-            frame_name=config.end_effector_link,
+            frame_name=frame_name,
             mapping=mapping,
         )
 
@@ -298,6 +581,21 @@ class PinkIK:
         else:
             positions = np.random.uniform(lower_limits, upper_limits)
 
+        for value, idx_q in zip(positions, context.mapping.idx_q, strict=True):
+            q[idx_q] = value
+        return q
+
+    def _q_from_dimos_positions(
+        self,
+        context: _PinkRobotContext,
+        positions: NDArray[np.float64],
+    ) -> NDArray[np.float64]:
+        pinocchio = self._modules.pinocchio
+        q = np.array(pinocchio.neutral(context.model), dtype=np.float64)
+        if len(positions) != len(context.mapping.idx_q):
+            raise ValueError(
+                f"Seed has {len(positions)} positions for {len(context.mapping.idx_q)} joints"
+            )
         for value, idx_q in zip(positions, context.mapping.idx_q, strict=True):
             q[idx_q] = value
         return q
@@ -407,6 +705,18 @@ def _get_frame_id(model: Any, frame_name: str) -> int:
     return frame_id
 
 
+def _assert_base_link_is_model_root(model: Any, base_link: str) -> None:
+    """Validate that the configured base link is fixed at the Pinocchio model root."""
+    frame_id = _get_frame_id(model, base_link)
+    frame = model.frames[frame_id]
+    parent_joint = int(getattr(frame, "parentJoint", 0))
+    if parent_joint != 0:
+        raise ValueError(
+            f"PinkIK expects RobotModelConfig.base_link '{base_link}' to be the model root; "
+            f"Pinocchio frame parentJoint is {parent_joint}"
+        )
+
+
 def _missing_joint_message(model: Any, joint_name: str) -> str:
     available = [str(name) for name in getattr(model, "names", [])]
     return f"Joint '{joint_name}' not found in Pinocchio model. Available joints: {available}"
@@ -456,6 +766,23 @@ def _within_limits(
     )
 
 
+def _combined_robot_results_collision_free(
+    world: WorldSpec,
+    robot_ids_by_name: Mapping[RobotName, WorldRobotID],
+    results_by_robot: Mapping[RobotName, IKResult],
+) -> bool:
+    with world.scratch_context() as ctx:
+        for robot_name, result in results_by_robot.items():
+            if result.joint_state is None:
+                return False
+            world.set_joint_state(ctx, robot_ids_by_name[robot_name], result.joint_state)
+        return all(
+            world.is_collision_free(ctx, robot_id)
+            for robot_name, robot_id in robot_ids_by_name.items()
+            if robot_name in results_by_robot
+        )
+
+
 def _success(
     joint_names: list[str],
     joint_positions: NDArray[np.float64],
@@ -465,7 +792,7 @@ def _success(
 ) -> IKResult:
     return IKResult(
         status=IKStatus.SUCCESS,
-        joint_state=JointState(name=joint_names, position=joint_positions.tolist()),
+        joint_state=JointState({"name": joint_names, "position": joint_positions.tolist()}),
         position_error=position_error,
         orientation_error=orientation_error,
         iterations=iterations,
