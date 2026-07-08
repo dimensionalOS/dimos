@@ -36,6 +36,7 @@ from dimos.manipulation.planning.groups.utils import (
     joint_target_to_global_names,
     matching_global_joint_name,
     planning_group_id_from_selector,
+    project_global_joint_path_to_robot,
 )
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -362,6 +363,75 @@ def test_registry_preserves_order_and_exposes_defaults() -> None:
     assert registry.get("left/manipulator").source == "srdf"
     assert registry.groups_for_robot("missing") == ()
     assert registry.default_group_id_for_robot("missing") is None
+
+
+def test_registry_uses_single_group_as_robot_scoped_default() -> None:
+    registry = PlanningGroupRegistry(
+        [
+            _robot_config(
+                "solo",
+                planning_groups=[PlanningGroupDefinition("arm", ("joint1",), "base", "tool")],
+            ),
+            _robot_config(
+                "multi",
+                planning_groups=[
+                    PlanningGroupDefinition("arm", ("joint1",), "base", "tool"),
+                    PlanningGroupDefinition("gripper", ("joint2",), "tool"),
+                ],
+            ),
+        ]
+    )
+
+    assert registry.default_group_id_for_robot("solo") == "solo/arm"
+    assert registry.default_group_id_for_robot("multi") is None
+
+
+def test_project_global_joint_path_to_robot_overlays_selected_joints() -> None:
+    path = [
+        JointState(name=["robot/joint1", "robot/joint3"], position=[0.1, 0.3]),
+        JointState(name=["robot/joint1", "robot/joint3"], position=[0.2, 0.4]),
+    ]
+    current = JointState(name=["joint1", "joint2", "joint3"], position=[0.0, 0.5, 0.0])
+
+    projected = project_global_joint_path_to_robot(
+        path,
+        robot_name="robot",
+        local_joint_names=("joint1", "joint2", "joint3"),
+        current_joint_state=current,
+    )
+
+    assert [point.name for point in projected] == [
+        ["joint1", "joint2", "joint3"],
+        ["joint1", "joint2", "joint3"],
+    ]
+    assert [point.position for point in projected] == [[0.1, 0.5, 0.3], [0.2, 0.5, 0.4]]
+
+
+def test_project_global_joint_path_to_robot_rejects_inconsistent_path() -> None:
+    path = [
+        JointState(name=["robot/joint1"], position=[0.1]),
+        JointState(name=["robot/joint2"], position=[0.2]),
+    ]
+
+    with pytest.raises(ValueError, match="inconsistent waypoint joint names"):
+        project_global_joint_path_to_robot(
+            path,
+            robot_name="robot",
+            local_joint_names=("joint1", "joint2"),
+            current_joint_state=JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+        )
+
+
+def test_project_global_joint_path_to_robot_requires_current_non_selected_joints() -> None:
+    path = [JointState(name=["robot/joint1"], position=[0.1])]
+
+    with pytest.raises(ValueError, match="missing joint 'joint2'"):
+        project_global_joint_path_to_robot(
+            path,
+            robot_name="robot",
+            local_joint_names=("joint1", "joint2"),
+            current_joint_state=JointState(name=["joint1"], position=[0.0]),
+        )
 
 
 def test_registry_rejects_duplicate_robot_and_unknown_group() -> None:

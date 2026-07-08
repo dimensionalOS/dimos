@@ -89,9 +89,18 @@ class PlanningGroupRegistry:
         return tuple(self._groups_by_robot.get(robot_name, ()))
 
     def default_group_id_for_robot(self, robot_name: RobotName) -> PlanningGroupID | None:
-        """Return the generated fallback group ID for robot-scoped wrappers."""
+        """Return the group ID used by robot-scoped joint wrappers.
+
+        Prefer the generated whole-robot fallback group. If a robot only has one
+        configured planning group, use that group as the unambiguous fallback.
+        """
         group_id = make_planning_group_id(robot_name, FALLBACK_PLANNING_GROUP_NAME)
-        return group_id if group_id in self._groups else None
+        if group_id in self._groups:
+            return group_id
+        robot_groups = self.groups_for_robot(robot_name)
+        if len(robot_groups) == 1:
+            return robot_groups[0].id
+        return None
 
     def primary_pose_group_id_for_robot(self, robot_name: RobotName) -> PlanningGroupID | None:
         """Return the unique pose-targetable group ID for robot-scoped wrappers."""

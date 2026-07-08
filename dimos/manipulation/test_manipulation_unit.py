@@ -601,7 +601,8 @@ class TestPlanningGroupApis:
             position=[0.0, 0.0, 0.0],
         )
         module._world_monitor.get_current_joint_state.return_value = None
-        stale_result = PlanningResult(
+        module._last_plan = GeneratedPlan(
+            group_ids=("test_arm/manipulator",),
             status=PlanningStatus.SUCCESS,
             path=[
                 JointState(
@@ -614,7 +615,6 @@ class TestPlanningGroupApis:
                 ),
             ],
         )
-        module._last_plan = module._store_generated_plan(("test_arm/manipulator",), stale_result)
         module._planner = MagicMock()
         module._planner.plan_selected_joint_path.return_value = PlanningResult(
             status=PlanningStatus.SUCCESS,
@@ -647,7 +647,8 @@ class TestPlanningGroupApis:
             name=robot_config.joint_names,
             position=[0.0, 0.0, 0.0],
         )
-        module._last_plan = PlanningResult(
+        module._last_plan = GeneratedPlan(
+            group_ids=("test_arm/manipulator",),
             status=PlanningStatus.SUCCESS,
             path=[
                 JointState(
@@ -659,9 +660,6 @@ class TestPlanningGroupApis:
                     position=[0.1, 0.2, 0.3],
                 ),
             ],
-        )
-        module._last_plan = module._store_generated_plan(
-            ("test_arm/manipulator",), module._last_plan
         )
         mock_client = MagicMock()
         mock_client.task_invoke.return_value = True
@@ -822,21 +820,19 @@ class TestExecute:
             position=[0.0, 0.0, 0.0],
         )
         module._coordinator_client = MagicMock()
-        module._last_plan = module._store_generated_plan(
-            ("test_arm/manipulator",),
-            PlanningResult(
-                status=PlanningStatus.SUCCESS,
-                path=[
-                    JointState(
-                        name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
-                        position=[0.0, 0.0, 0.0],
-                    ),
-                    JointState(
-                        name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
-                        position=[0.1, 0.2, 0.3],
-                    ),
-                ],
-            ),
+        module._last_plan = GeneratedPlan(
+            group_ids=("test_arm/manipulator",),
+            status=PlanningStatus.SUCCESS,
+            path=[
+                JointState(
+                    name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
+                    position=[0.0, 0.0, 0.0],
+                ),
+                JointState(
+                    name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
+                    position=[0.1, 0.2, 0.3],
+                ),
+            ],
         )
 
         assert module.execute_plan() is False
