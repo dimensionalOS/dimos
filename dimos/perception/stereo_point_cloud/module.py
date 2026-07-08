@@ -40,6 +40,10 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+_DEPTH_MM_THRESHOLD = 100
+_FALLBACK_FLOOR_Z   = -1.4
+_FALLBACK_CEILING_Z =  1.5
+
 
 class Config(ModuleConfig):
     min_depth: float          = 0.1
@@ -80,6 +84,7 @@ class StereoPointCloud(Module):
         self._map_ready                  = False
         self._world_floor_z: float       = 0.0
         self._frame                      = 0
+        self._warned_no_intrinsics       = False
 
     @rpc
     def start(self) -> None:
@@ -175,7 +180,7 @@ class StereoPointCloud(Module):
             depth = depth[:, :, 0]
         depth = depth.astype(np.float32)
         valid_d = depth[depth > 0]
-        if len(valid_d) and np.median(valid_d) > 100:
+        if len(valid_d) and np.median(valid_d) > _DEPTH_MM_THRESHOLD:
             depth /= 1000.0
         invalid = (depth <= 0) | (depth < self.config.min_depth) | (depth > self.config.max_depth)
         depth[invalid] = np.nan
@@ -185,6 +190,9 @@ class StereoPointCloud(Module):
             K = info.get_K_matrix()
             fx, fy, cx, cy = float(K[0, 0]), float(K[1, 1]), float(K[0, 2]), float(K[1, 2])
         else:
+            if not self._warned_no_intrinsics:
+                logger.warning("StereoPointCloud: no camera intrinsics — falling back to rough guess, check depth_camera_info is connected")
+                self._warned_no_intrinsics = True
             fx = fy = float(max(H, W)) / 2.0
             cx, cy  = W / 2.0, H / 2.0
 
@@ -214,7 +222,7 @@ class StereoPointCloud(Module):
         if self._floor_calib.ready:
             keep = xyz_cam[:, 2] > (self._floor_calib.floor_z + self.config.floor_margin)
         else:
-            keep = (xyz_cam[:, 2] >= -1.4) & (xyz_cam[:, 2] <= 1.5)
+            keep = (xyz_cam[:, 2] >= _FALLBACK_FLOOR_Z) & (xyz_cam[:, 2] <= _FALLBACK_CEILING_Z)
 
         xyz_world_kept = xyz_world[keep]
         xyz_cam_kept   = xyz_cam[keep]
@@ -230,7 +238,7 @@ class StereoPointCloud(Module):
             PointCloud2.from_numpy(xyz_vox, frame_id=self.config.world_frame, timestamp=img.ts)
         )
 
-        if len(xyz_cam_kept) >= 50:
+        if len(xyz_cam_kept) >= PointCloudOdometry.MIN_PTS:
             self._odom.update(xyz_cam_kept, R)
 
         if not self._floor_calib.ready:
