@@ -25,6 +25,7 @@ from pydantic import ValidationError
 import pytest
 
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.perception.fiducial.marker_localization import (
     MAP_FRAME,
     OPTICAL_FRAME,
@@ -37,6 +38,7 @@ from dimos.perception.fiducial.marker_localization_module import MarkerLocalizat
 from dimos.perception.fiducial.marker_pose import (
     camera_info_to_cv_matrices,
     create_aruco_detector,
+    estimate_marker_pose_candidates,
     rvec_tvec_to_transform,
 )
 from dimos.perception.fiducial.test_helpers import (
@@ -150,7 +152,13 @@ def test_localize_from_detections_uses_lowest_error_tag_when_multiple_pass_gate(
         1: Transform(frame_id=MAP_FRAME, child_frame_id="marker_1"),
         2: Transform(frame_id=MAP_FRAME, child_frame_id="marker_2"),
     }
-    cfg = LocalizationConfig(_MARKER_LENGTH_M, min_tags=2, max_reprojection_error_px=5.0)
+    # ambiguity_ratio_min=1.0 disables the mirror-ambiguity gate: this test pins
+    # the lowest-error-wins fusion order-independence, and the injected corner
+    # noise deliberately degrades the noisy tag enough that the (separately
+    # tested) ambiguity gate would reject it outright.
+    cfg = LocalizationConfig(
+        _MARKER_LENGTH_M, min_tags=2, max_reprojection_error_px=5.0, ambiguity_ratio_min=1.0
+    )
     truth = rvec_tvec_to_transform(
         rvec0, tvec0, frame_id=OPTICAL_FRAME, child_frame_id="marker_truth", ts=10.0
     ).inverse()
@@ -164,7 +172,9 @@ def test_localize_from_detections_uses_lowest_error_tag_when_multiple_pass_gate(
     assert noisy_first is not None
     assert clean_first is not None
 
-    solo_cfg = LocalizationConfig(_MARKER_LENGTH_M, max_reprojection_error_px=5.0)
+    solo_cfg = LocalizationConfig(
+        _MARKER_LENGTH_M, max_reprojection_error_px=5.0, ambiguity_ratio_min=1.0
+    )
     best_single = localize_from_detections([(2, clean_corners)], marker_map, info, solo_cfg, 10.0)
     assert best_single is not None
     best_error = truth.translation.distance(best_single.translation)
@@ -174,6 +184,74 @@ def test_localize_from_detections_uses_lowest_error_tag_when_multiple_pass_gate(
         truth.translation.distance(clean_first.translation), abs=1e-6
     )
     assert truth.translation.distance(noisy_first.translation) <= best_error + 1e-6
+
+
+def _projected_corners(
+    rvec: np.ndarray, tvec: np.ndarray, info: CameraInfo, perturb: np.ndarray
+) -> np.ndarray:
+    """Project the marker square through the test camera and add a fixed sub-pixel
+    perturbation (deterministic stand-in for corner-detection noise)."""
+    k, d = camera_info_to_cv_matrices(info)
+    h = _MARKER_LENGTH_M / 2.0
+    obj = np.array([[-h, h, 0.0], [h, h, 0.0], [h, -h, 0.0], [-h, -h, 0.0]], dtype=np.float32)
+    pts, _ = cv2.projectPoints(obj, rvec, tvec, k, d)
+    corners: np.ndarray = (pts.reshape(4, 2) + perturb).astype(np.float32)
+    return corners
+
+
+_SUBPIXEL_NOISE = np.array(
+    [[0.3, -0.2], [-0.25, 0.15], [0.2, 0.3], [-0.3, -0.25]], dtype=np.float32
+)
+
+
+def test_ambiguity_gate_rejects_mirror_ambiguous_view() -> None:
+    """Weak perspective (small, near-head-on tag): the flipped IPPE candidate reprojects
+    almost as well as the true one (ratio ~1.2 here, measured), so neither can be trusted —
+    the absolute reprojection gate alone would happily accept it (~0.26px). The rejection
+    must come from the ambiguity gate specifically: disabling it (ratio_min=1.0) accepts."""
+    info = camera_info()
+    corners = _projected_corners(
+        np.array([[0.05], [0.03], [0.0]]), np.array([[0.1], [0.05], [5.0]]), info, _SUBPIXEL_NOISE
+    )
+    gated = LocalizationConfig(_MARKER_LENGTH_M)  # default ambiguity_ratio_min=2.0
+    assert localize_from_detections([(_MARKER_ID, corners)], _MARKER_MAP, info, gated, 10.0) is None
+    ungated = LocalizationConfig(_MARKER_LENGTH_M, ambiguity_ratio_min=1.0)
+    assert (
+        localize_from_detections([(_MARKER_ID, corners)], _MARKER_MAP, info, ungated, 10.0)
+        is not None
+    )
+
+
+def test_ambiguity_gate_accepts_unambiguous_view() -> None:
+    """Strong perspective (close, tilted tag): the runner-up candidate reprojects ~38x worse
+    (measured), the view is geometrically unambiguous, and the default gate accepts it."""
+    info = camera_info()
+    rvec0, tvec0 = np.array([[0.5], [0.2], [0.0]]), np.array([[0.05], [0.02], [0.6]])
+    corners = _projected_corners(rvec0, tvec0, info, _SUBPIXEL_NOISE)
+    pose = localize_from_detections(
+        [(_MARKER_ID, corners)], _MARKER_MAP, info, LocalizationConfig(_MARKER_LENGTH_M), 10.0
+    )
+    assert pose is not None
+    truth = rvec_tvec_to_transform(
+        rvec0, tvec0, frame_id=OPTICAL_FRAME, child_frame_id="marker_truth", ts=10.0
+    ).inverse()
+    assert truth.translation.distance(pose.translation) < 0.05
+
+
+def test_estimate_marker_pose_candidates_returns_only_finite_poses() -> None:
+    """The multi-candidate helper returns both IPPE solutions on a clean view and never a
+    non-finite pose on degenerate input (solvePnPGeneric can emit all-NaN solutions there)."""
+    info = camera_info()
+    k, d = camera_info_to_cv_matrices(info)
+    corners = _projected_corners(
+        np.array([[0.05], [0.03], [0.0]]), np.array([[0.1], [0.05], [5.0]]), info, _SUBPIXEL_NOISE
+    )
+    candidates = estimate_marker_pose_candidates(corners, _MARKER_LENGTH_M, k, d)
+    assert len(candidates) == 2
+    assert all(np.all(np.isfinite(r)) and np.all(np.isfinite(t)) for r, t in candidates)
+    degenerate = np.array([[320.0, 240.0]] * 4, dtype=np.float32)
+    for r, t in estimate_marker_pose_candidates(degenerate, _MARKER_LENGTH_M, k, d):
+        assert np.all(np.isfinite(r)) and np.all(np.isfinite(t))
 
 
 # --- load_marker_map ------------------------------------------------------
@@ -334,6 +412,19 @@ def test_module_config_threads_min_tags_into_gate() -> None:
         module.stop()
     with pytest.raises(ValidationError):
         MarkerLocalizationModule(marker_length_m=_MARKER_LENGTH_M, min_tags=0)
+
+
+def test_module_config_threads_ambiguity_ratio_into_gate() -> None:
+    """``ambiguity_ratio_min`` is exposed on the module config, reaches the localization
+    gate, and rejects sub-1.0 values (a ratio below 1 is meaningless — the best candidate
+    always beats itself)."""
+    module = MarkerLocalizationModule(marker_length_m=_MARKER_LENGTH_M, ambiguity_ratio_min=3.0)
+    try:
+        assert module._cfg.ambiguity_ratio_min == 3.0
+    finally:
+        module.stop()
+    with pytest.raises(ValidationError):
+        MarkerLocalizationModule(marker_length_m=_MARKER_LENGTH_M, ambiguity_ratio_min=0.5)
 
 
 async def test_module_uses_configured_camera_frame_and_warns_on_tf_miss() -> None:

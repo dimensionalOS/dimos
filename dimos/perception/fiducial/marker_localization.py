@@ -28,7 +28,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.perception.fiducial.marker_pose import (
     camera_info_to_cv_matrices,
-    estimate_marker_pose,
+    estimate_marker_pose_candidates,
     marker_reprojection_error,
     rvec_tvec_to_transform,
 )
@@ -43,6 +43,12 @@ class LocalizationConfig(NamedTuple):
     marker_length_m: float
     min_tags: int = 1
     max_reprojection_error_px: float = 3.0
+    # IPPE mirror-ambiguity gate: the best PnP candidate is only trusted when it
+    # beats the runner-up by this reprojection-error ratio. Near-tied candidates
+    # mean the flipped mirror pose explains the pixels almost as well (weak
+    # perspective: small/near-head-on tag) and neither can be trusted. 1.0
+    # disables the gate.
+    ambiguity_ratio_min: float = 2.0
 
 
 def detect_markers(gray_image: np.ndarray, detector: Any) -> list[tuple[int, np.ndarray]]:
@@ -61,23 +67,44 @@ def localize_from_detections(
 ) -> Transform | None:
     """Per known tag: invert solvePnP (``pose_in_map = map_T_marker . (optical_T_marker)^-1``).
 
-    When multiple tags clear the gate, the lowest-reprojection-error estimate wins
-    (never worse than the single best tag) instead of an arbitrary detection-order pick.
+    Solves with ``solvePnPGeneric`` (both IPPE candidates) and gates each tag two
+    ways: the best candidate's absolute reprojection error, AND the mirror-
+    ambiguity ratio — at weak perspective the flipped IPPE solution can reproject
+    as well as the correct one, so a near-tied runner-up means the view is
+    geometrically ambiguous and the tag is skipped (``config.ambiguity_ratio_min``).
+    When multiple tags clear both gates, the lowest-reprojection-error estimate
+    wins (never worse than the single best tag) instead of an arbitrary
+    detection-order pick.
     """
     k, d = camera_info_to_cv_matrices(camera_info)
     good: list[tuple[float, Transform]] = []
     for marker_id, corners_px in detections:
         if (map_T_marker := marker_map.get(marker_id)) is None:
             continue
-        if (pose := estimate_marker_pose(corners_px, config.marker_length_m, k, d)) is None:
+        candidates = estimate_marker_pose_candidates(corners_px, config.marker_length_m, k, d)
+        if not candidates:
             continue
-        rvec, tvec = pose
+        scored = sorted(
+            (
+                (
+                    marker_reprojection_error(corners_px, config.marker_length_m, k, d, rvec, tvec),
+                    rvec,
+                    tvec,
+                )
+                for rvec, tvec in candidates
+            ),
+            key=lambda item: item[0],
+        )
+        error, rvec, tvec = scored[0]
+        if len(scored) > 1 and error > 1e-12:
+            if scored[1][0] / error < config.ambiguity_ratio_min:
+                continue  # mirror pose explains the pixels almost as well: untrustworthy view
+        if error > config.max_reprojection_error_px:
+            continue
         optical_T_marker = rvec_tvec_to_transform(
             rvec, tvec, frame_id=OPTICAL_FRAME, child_frame_id=map_T_marker.child_frame_id, ts=ts
         )
-        error = marker_reprojection_error(corners_px, config.marker_length_m, k, d, rvec, tvec)
-        if error <= config.max_reprojection_error_px:
-            good.append((error, map_T_marker + optical_T_marker.inverse()))
+        good.append((error, map_T_marker + optical_T_marker.inverse()))
     if not good or len(good) < config.min_tags:
         return None
     return min(good, key=lambda item: item[0])[1]

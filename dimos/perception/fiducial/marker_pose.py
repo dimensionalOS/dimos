@@ -67,6 +67,29 @@ def _aruco_marker_object_points(marker_length_m: float) -> np.ndarray:
     )
 
 
+def _solve_pnp_inputs(
+    corners_px: np.ndarray,
+    camera_matrix: np.ndarray,
+    dist_coeffs: np.ndarray,
+    distortion_model: str | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return ``(image_points, solve_dist)`` for solvePnP, undistorting fisheye
+    corners into pinhole-equivalent pixels (shared by the single- and
+    multi-candidate estimators)."""
+    img: np.ndarray = corners_px.reshape(4, 1, 2).astype(np.float32)
+    if is_fisheye_model(distortion_model):
+        d_flat = np.asarray(dist_coeffs, dtype=np.float64).reshape(-1)
+        if d_flat.size < 4:
+            raise ValueError(
+                f"Fisheye/equidistant distortion model requires at least 4 coefficients; "
+                f"got {d_flat.size}. Check CameraInfo.D."
+            )
+        d_fisheye = d_flat[:4].reshape(4, 1)
+        img = cv2.fisheye.undistortPoints(img, camera_matrix, d_fisheye, P=camera_matrix)
+        return img, np.zeros((0, 1), dtype=np.float64)
+    return img, dist_coeffs
+
+
 def estimate_marker_pose(
     corners_px: np.ndarray,
     marker_length_m: float,
@@ -82,19 +105,7 @@ def estimate_marker_pose(
     pixels. Otherwise the radtan ``dist_coeffs`` are passed straight through.
     """
     obj = _aruco_marker_object_points(marker_length_m)
-    img: np.ndarray = corners_px.reshape(4, 1, 2).astype(np.float32)
-    if is_fisheye_model(distortion_model):
-        d_flat = np.asarray(dist_coeffs, dtype=np.float64).reshape(-1)
-        if d_flat.size < 4:
-            raise ValueError(
-                f"Fisheye/equidistant distortion model requires at least 4 coefficients; "
-                f"got {d_flat.size}. Check CameraInfo.D."
-            )
-        d_fisheye = d_flat[:4].reshape(4, 1)
-        img = cv2.fisheye.undistortPoints(img, camera_matrix, d_fisheye, P=camera_matrix)
-        solve_dist: np.ndarray = np.zeros((0, 1), dtype=np.float64)
-    else:
-        solve_dist = dist_coeffs
+    img, solve_dist = _solve_pnp_inputs(corners_px, camera_matrix, dist_coeffs, distortion_model)
     ok, rvec, tvec = cv2.solvePnP(
         obj,
         img,
@@ -105,6 +116,39 @@ def estimate_marker_pose(
     if not ok:
         return None
     return rvec, tvec
+
+
+def estimate_marker_pose_candidates(
+    corners_px: np.ndarray,
+    marker_length_m: float,
+    camera_matrix: np.ndarray,
+    dist_coeffs: np.ndarray,
+    *,
+    distortion_model: str | None = None,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Return every finite ``(rvec, tvec)`` candidate from ``solvePnPGeneric``.
+
+    A planar square has two IPPE solutions (Collins & Bartoli); at weak
+    perspective the *wrong* mirror pose can reproject as well as the right one,
+    which :func:`estimate_marker_pose` (best-solution-only) silently hides.
+    Callers that must not trust a flipped pose compare the candidates'
+    reprojection errors (see ``marker_localization.localize_from_detections``).
+    Non-finite solver output (observed on degenerate corner input) is dropped.
+    """
+    obj = _aruco_marker_object_points(marker_length_m)
+    img, solve_dist = _solve_pnp_inputs(corners_px, camera_matrix, dist_coeffs, distortion_model)
+    n_solutions, rvecs, tvecs, _errors = cv2.solvePnPGeneric(
+        obj,
+        img,
+        camera_matrix,
+        solve_dist,
+        flags=cv2.SOLVEPNP_IPPE_SQUARE,
+    )
+    return [
+        (rvecs[i], tvecs[i])
+        for i in range(n_solutions)
+        if np.all(np.isfinite(rvecs[i])) and np.all(np.isfinite(tvecs[i]))
+    ]
 
 
 def rvec_tvec_to_transform(
