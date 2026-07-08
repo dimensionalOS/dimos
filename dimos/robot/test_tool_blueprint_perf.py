@@ -223,6 +223,29 @@ def test_negative_tail_count_parse_error(flag: str) -> None:
         parse_args([flag, "-1"])
 
 
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [
+        ("--duration-seconds", "-1"),
+        ("--duration-seconds", "0"),
+        ("--duration-seconds", "nan"),
+        ("--duration-seconds", "inf"),
+        ("--duration-seconds", "-inf"),
+        ("--warmup-seconds", "-1"),
+        ("--warmup-seconds", "nan"),
+        ("--warmup-seconds", "inf"),
+        ("--warmup-seconds", "-inf"),
+        ("--command-timeout-seconds", "-1"),
+        ("--command-timeout-seconds", "nan"),
+        ("--command-timeout-seconds", "inf"),
+        ("--command-timeout-seconds", "-inf"),
+    ],
+)
+def test_invalid_runtime_float_parse_error(flag: str, value: str) -> None:
+    with pytest.raises(SystemExit, match="2"):
+        parse_args([flag, value])
+
+
 def test_main_returns_nonzero_on_startup_failure(tmp_path: Path, mocker) -> None:
     mocker.patch(
         "dimos.robot.tool_blueprint_perf.run_blueprint_perf",

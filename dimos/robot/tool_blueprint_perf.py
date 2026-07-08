@@ -21,6 +21,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
+import math
 from pathlib import Path
 import subprocess
 import sys
@@ -95,6 +96,20 @@ def _nonnegative_int(value: str) -> int:
     return parsed
 
 
+def _positive_finite_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise ValueError("must be finite and > 0")
+    return parsed
+
+
+def _nonnegative_finite_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed < 0:
+        raise ValueError("must be finite and >= 0")
+    return parsed
+
+
 def parse_args(argv: Sequence[str] | None = None) -> ToolArgs:
     import argparse
 
@@ -116,13 +131,13 @@ def parse_args(argv: Sequence[str] | None = None) -> ToolArgs:
     parser.add_argument("--viewer", default=DEFAULT_VIEWER, help="Viewer mode to pass to DimOS.")
     parser.add_argument(
         "--duration-seconds",
-        type=float,
+        type=_positive_finite_float,
         default=DEFAULT_DURATION_SECONDS,
         help="How long to let the command run before terminating it.",
     )
     parser.add_argument(
         "--warmup-seconds",
-        type=float,
+        type=_nonnegative_finite_float,
         default=DEFAULT_WARMUP_SECONDS,
         help="How long the process must stay alive to count startup as successful.",
     )
@@ -134,7 +149,7 @@ def parse_args(argv: Sequence[str] | None = None) -> ToolArgs:
     )
     parser.add_argument(
         "--command-timeout-seconds",
-        type=float,
+        type=_nonnegative_finite_float,
         default=DEFAULT_COMMAND_TIMEOUT_SECONDS,
         help="How long to wait after terminate() before escalating to kill().",
     )
