@@ -134,18 +134,30 @@ Before sending navigation goals, walk through this checklist:
 
 ## How it works
 
-```mermaid
-flowchart LR
-  GO2[Go2Connection] --> VGM[VoxelGridMapper]
-  VGM -->|global_map| REL[RelocalizationModule]
-  PRE[".pc2.lcm premap"] -.->|load at startup| REL
-  REL -->|merged_map| CM[CostMapper]
-  VGM -->|global_map| CM
-  CM -->|global_costmap| NAV[ReplanningAStarPlanner]
-  REL -->|world→map TF| TF[TF tree]
+The `unitree-go2-relocalization` blueprint is the standard [Go2 navigation stack](/docs/capabilities/navigation/deep_dive.md) plus `RelocalizationModule`:
+
+<details>
+<summary>diagram source</summary>
+
+```python skip fold output=assets/go2_reloc_blueprint.svg
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.introspection.svg import to_svg
+from dimos.mapping.relocalization.module import RelocalizationModule
+from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
+
+unitree_go2_relocalization = autoconnect(
+    unitree_go2,
+    RelocalizationModule.blueprint(),
+).global_config(n_workers=11)
+
+to_svg(unitree_go2_relocalization, "assets/go2_reloc_blueprint.svg")
 ```
 
-`CostMapper` prefers `merged_map` when relocalization has published a transform. Otherwise it falls back to `global_map` alone. See [`RelocalizationModule`](/dimos/mapping/relocalization/module.py) and [`CostMapper`](/dimos/mapping/costmapper.py).
+</details>
+
+![unitree-go2-relocalization blueprint module graph](assets/go2_reloc_blueprint.svg)
+
+Note that [`CostMapper`](/dimos/mapping/costmapper.py) builds the costmap from the merged map only while [`RelocalizationModule`](/dimos/mapping/relocalization/module.py) has a good alignment; until then it falls back to the live map alone.
 
 ### File formats
 

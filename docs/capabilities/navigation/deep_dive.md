@@ -14,7 +14,7 @@ For return visits to a known space, use [premap relocalization](/docs/capabiliti
 <summary>diagram source</summary>
 
 ```pikchr fold output=assets/go2nav_dataflow.svg
-color = #1e293b
+color = 0x64748B
 fill = none
 
 Go2: box "Go2" rad 5px fit wid 170% ht 170%
