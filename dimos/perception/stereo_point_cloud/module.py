@@ -59,7 +59,7 @@ class Config(ModuleConfig):
     max_global_pts: int       = 500_000
     publish_every: int        = 1
     world_frame: str          = "world"
-    madgwick_beta: float      = 0.033
+    madgwick_beta: float      = 0.0
 
 
 class StereoPointCloud(Module):
