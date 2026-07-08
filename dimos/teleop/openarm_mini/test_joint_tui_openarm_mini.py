@@ -14,13 +14,11 @@
 
 from __future__ import annotations
 
+from io import StringIO
 import math
 from pathlib import Path
 
-import pytest
-
-rich_console = pytest.importorskip("rich.console")
-Console = rich_console.Console
+from rich.console import Console
 
 from dimos.teleop.openarm_mini.calibration import (
     FEETECH_POSITION_SPAN,
@@ -78,7 +76,7 @@ def test_build_joint_dashboard_contains_key_columns(tmp_path: Path) -> None:
     rows = _read_side_rows(
         "right", calibration_path, {joint: 100 for joint in OPENARM_MINI_ARM_JOINT_NAMES}
     )
-    console = Console(record=True, width=140)
+    console = Console(record=True, width=140, file=StringIO())
 
     console.print(_build_joint_dashboard(rows))
     rendered = console.export_text()

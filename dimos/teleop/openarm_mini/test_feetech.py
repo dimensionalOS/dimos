@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import builtins
+from collections.abc import Iterator, Mapping, Sequence
 import sys
 from types import ModuleType
 
@@ -49,18 +50,33 @@ class _FakePacketHandler:
         return (1000 + motor_id, 0, 0)
 
 
-def test_feetech_reader_uses_direct_optional_sdk_import(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_sdk = ModuleType("scservo_sdk")
-    fake_sdk.PortHandler = _FakePortHandler  # type: ignore[attr-defined]
-    fake_sdk.sms_sts = _FakePacketHandler  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "scservo_sdk", fake_sdk)
-    reader = FeetechLeaderReader("/dev/fake", 123456)
+class _FakeScservoSdk(ModuleType):
+    PortHandler: type[_FakePortHandler]
+    sms_sts: type[_FakePacketHandler]
 
+
+@pytest.fixture
+def fake_sdk(monkeypatch: pytest.MonkeyPatch) -> _FakeScservoSdk:
+    sdk = _FakeScservoSdk("scservo_sdk")
+    sdk.PortHandler = _FakePortHandler
+    sdk.sms_sts = _FakePacketHandler
+    monkeypatch.setitem(sys.modules, "scservo_sdk", sdk)
+    return sdk
+
+
+@pytest.fixture
+def connected_reader(fake_sdk: _FakeScservoSdk) -> Iterator[FeetechLeaderReader]:
+    del fake_sdk
+    reader = FeetechLeaderReader("/dev/fake", 123456)
     reader.connect()
-    try:
-        raw_positions = reader.read_raw_positions({"joint_1": 1, "joint_2": 7})
-    finally:
-        reader.disconnect()
+    yield reader
+    reader.disconnect()
+
+
+def test_feetech_reader_uses_direct_optional_sdk_import(
+    connected_reader: FeetechLeaderReader,
+) -> None:
+    raw_positions = connected_reader.read_raw_positions({"joint_1": 1, "joint_2": 7})
 
     assert raw_positions == {"joint_1": 1001, "joint_2": 1007}
 
@@ -72,10 +88,16 @@ def test_create_sdk_handlers_raises_openarm_mini_dependency_error(
 
     real_import = builtins.__import__
 
-    def fake_import(name: str, *args: object, **kwargs: object) -> object:
+    def fake_import(
+        name: str,
+        globals: Mapping[str, object] | None = None,
+        locals: Mapping[str, object] | None = None,
+        fromlist: Sequence[str] = (),
+        level: int = 0,
+    ) -> object:
         if name == "scservo_sdk":
             raise ImportError("missing scservo_sdk")
-        return real_import(name, *args, **kwargs)
+        return real_import(name, globals, locals, fromlist, level)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
 
