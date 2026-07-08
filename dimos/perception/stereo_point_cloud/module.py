@@ -60,6 +60,7 @@ class Config(ModuleConfig):
     publish_every: int        = 1
     world_frame: str          = "world"
     madgwick_beta: float      = 0.033
+    min_observations: int     = 3
 
 
 class StereoPointCloud(Module):
@@ -85,6 +86,7 @@ class StereoPointCloud(Module):
         self._R_imu_to_link: np.ndarray  = np.eye(3, dtype=np.float32)
         self._motion_sensor              = None
         self._acc_pts: np.ndarray        = np.empty((0, 3), dtype=np.float32)
+        self._acc_counts: np.ndarray     = np.empty(0, dtype=np.int32)
         self._map_ready                  = False
         self._world_floor_z: float       = 0.0
         self._frame                      = 0
@@ -293,25 +295,45 @@ class StereoPointCloud(Module):
             if len(self._acc_pts) > 0 and len(xyz_for_map) > 0:
                 free_keys = _raycast_free_keys(xyz_for_map, self.config.global_vox_size, origin=t)
                 if len(free_keys):
-                    keys_acc      = _pack(np.floor(self._acc_pts / self.config.global_vox_size).astype(np.int32))
-                    self._acc_pts = self._acc_pts[~np.isin(keys_acc, free_keys)]
+                    keys_acc          = _pack(np.floor(self._acc_pts / self.config.global_vox_size).astype(np.int32))
+                    keep              = ~np.isin(keys_acc, free_keys)
+                    self._acc_pts     = self._acc_pts[keep]
+                    self._acc_counts  = self._acc_counts[keep]
 
             if len(xyz_for_map):
-                self._acc_pts = (
-                    np.vstack([self._acc_pts, xyz_for_map]) if len(self._acc_pts) else xyz_for_map.copy()
-                )
-                _, ui         = np.unique(
-                    _pack(np.floor(self._acc_pts / self.config.global_vox_size).astype(np.int32)),
-                    return_index=True,
-                )
-                self._acc_pts = self._acc_pts[ui]
+                vox_size = self.config.global_vox_size
+                new_vk   = _pack(np.floor(xyz_for_map / vox_size).astype(np.int32))
+                if len(self._acc_pts) == 0:
+                    self._acc_pts    = xyz_for_map.copy()
+                    self._acc_counts = np.ones(len(xyz_for_map), dtype=np.int32)
+                else:
+                    acc_vk = _pack(np.floor(self._acc_pts / vox_size).astype(np.int32))
+                    # Increment count for voxels seen again this frame
+                    self._acc_counts[np.isin(acc_vk, new_vk)] += 1
+                    # Append only voxels not already in the map
+                    is_new = ~np.isin(new_vk, acc_vk)
+                    if is_new.any():
+                        self._acc_pts    = np.vstack([self._acc_pts, xyz_for_map[is_new]])
+                        self._acc_counts = np.concatenate([self._acc_counts, np.ones(is_new.sum(), dtype=np.int32)])
+
                 if len(self._acc_pts) > self.config.max_global_pts:
-                    keep_idx      = np.random.choice(len(self._acc_pts), self.config.max_global_pts, replace=False)
-                    self._acc_pts = self._acc_pts[keep_idx]
+                    # Evict unconfirmed voxels first, then random sample
+                    unconf = self._acc_counts < self.config.min_observations
+                    if unconf.any() and (len(self._acc_pts) - unconf.sum()) <= self.config.max_global_pts:
+                        keep = ~unconf
+                    else:
+                        keep_idx = np.random.choice(len(self._acc_pts), self.config.max_global_pts, replace=False)
+                        keep = np.zeros(len(self._acc_pts), dtype=bool)
+                        keep[keep_idx] = True
+                    self._acc_pts    = self._acc_pts[keep]
+                    self._acc_counts = self._acc_counts[keep]
 
             self._frame += 1
             if self._frame % self.config.publish_every == 0 and len(self._acc_pts):
-                pts_snap = self._acc_pts.copy()
+                # Only publish voxels confirmed by enough observations — filters pose-error ghosts
+                confirmed = self._acc_counts >= self.config.min_observations
+                if confirmed.any():
+                    pts_snap = self._acc_pts[confirmed].copy()
 
         if pts_snap is not None:
             self.global_map.publish(
