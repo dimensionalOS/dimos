@@ -24,7 +24,7 @@ from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.rpc_client import ModuleProxyProtocol, RPCClient
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.safe_thread_map import safe_thread_map
+from dimos.utils.safe_thread_map import ExceptionGroup, safe_thread_map
 
 if TYPE_CHECKING:
     from dimos.core.resource_monitor.monitor import StatsMonitor
@@ -201,7 +201,7 @@ class WorkerManagerPython:
 
         try:
             return safe_thread_map(assignments, _deploy)
-        except:
+        except ExceptionGroup:
             self.stop()
             raise
 
