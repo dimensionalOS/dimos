@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dimos.control.task import (
     BaseControlTask,
@@ -36,6 +36,9 @@ from dimos.control.task import (
 )
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.msgs.sensor_msgs.JointState import JointState
 
 logger = setup_logger()
 
@@ -239,6 +242,14 @@ class JointVelocityTask(BaseControlTask):
             ordered.append(velocities[name])
 
         return self.set_velocities(ordered, t_now)
+
+    def on_joint_command(self, msg: JointState, t_now: float) -> bool:
+        """Uniform stream handler: digest the velocity half of a joint_command."""
+        # Position-bearing messages belong to the servo half (the coordinator
+        # routes position XOR velocity; positions win when both are present).
+        if msg.position or not msg.velocity:
+            return False
+        return self.set_velocities_by_name(dict(zip(msg.name, msg.velocity, strict=False)), t_now)
 
     def start(self) -> None:
         """Activate the task (start accepting and outputting commands)."""

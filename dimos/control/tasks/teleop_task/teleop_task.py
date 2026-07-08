@@ -316,6 +316,10 @@ class TeleopIKTask(BaseControlTask):
 
         return True
 
+    def on_teleop_buttons(self, msg: Buttons, t_now: float) -> bool:
+        """Uniform stream handler; ``on_buttons`` predates the (msg, t_now) contract."""
+        return self.on_buttons(msg)
+
     def on_cartesian_command(self, pose: Pose | PoseStamped, t_now: float) -> bool:
         """Handle incoming cartesian command (delta pose from teleop)"""
         with self._lock:

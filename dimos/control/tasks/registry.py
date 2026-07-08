@@ -28,17 +28,30 @@ Usage:
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 import importlib
 import os
+from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
+from dimos.control.routing import (
+    CONSUMABLE_STREAMS,
+    DEFERRED_STREAMS,
+    Routing,
+    StreamBinding,
+    TaskBindings,
+)
+
 if TYPE_CHECKING:
+    from types import ModuleType
+
     from dimos.control.coordinator import TaskConfig
     from dimos.control.hardware_interface import ConnectedHardware, ConnectedWholeBody
     from dimos.control.task import ControlTask
 
 TaskFactory = Callable[..., "ControlTask"]
+
+_EMPTY_BINDINGS = TaskBindings()
 
 
 class ControlTaskRegistry:
@@ -47,6 +60,8 @@ class ControlTaskRegistry:
     def __init__(self) -> None:
         self._factory_paths: dict[str, str] = {}
         self._factories: dict[str, TaskFactory] = {}
+        self._bindings: dict[str, TaskBindings] = {}
+        self._binding_sources: dict[str, str] = {}
         self.discover()
 
     def discover(self) -> None:
@@ -75,6 +90,7 @@ class ControlTaskRegistry:
                     if not isinstance(name, str) or not isinstance(factory_path, str):
                         raise TypeError(f"{module_name}.TASK_FACTORIES must map strings to strings")
                     self.register_path(name, factory_path)
+                self._load_manifest_bindings(module_name, module, task_factories)
 
     def register_path(self, name: str, factory_path: str) -> None:
         """Register a lazy task factory import path."""
@@ -85,6 +101,43 @@ class ControlTaskRegistry:
         if existing is not None and existing != factory_path:
             raise ValueError(f"Duplicate task type {key!r}: {existing!r} vs {factory_path!r}")
         self._factory_paths[key] = factory_path
+
+    def register_bindings(
+        self,
+        task_type: str,
+        *,
+        consumes: Mapping[str, tuple[str, str]] | None = None,
+        exposes: Mapping[str, str] | None = None,
+        source: str | None = None,
+    ) -> None:
+        """Register a task type's binding card; conflicting duplicates raise.
+
+        ``consumes`` maps a coordinator input stream name to a
+        ``(handler_method, routing)`` pair of strings; ``exposes`` maps a
+        command name to a ``"module:PydanticModel"`` argument-schema path
+        (stored only for now). ``source`` names the manifest for error
+        messages; runtime callers can omit it.
+        """
+        key = task_type.lower()
+        origin = source or "register_bindings()"
+        bindings = TaskBindings(
+            consumes=self._parse_consumes(key, consumes, origin),
+            exposes=self._parse_exposes(key, exposes, origin),
+        )
+        existing = self._bindings.get(key)
+        if existing is not None:
+            if existing != bindings:
+                raise ValueError(
+                    f"Duplicate bindings for task type {key!r}: {existing!r} "
+                    f"(from {self._binding_sources[key]}) vs {bindings!r} (from {origin})"
+                )
+            return
+        self._bindings[key] = bindings
+        self._binding_sources[key] = origin
+
+    def bindings_for(self, task_type: str) -> TaskBindings:
+        """Declared bindings for a task type; empty for unknown or card-less types."""
+        return self._bindings.get(task_type.lower(), _EMPTY_BINDINGS)
 
     def create(
         self,
@@ -105,10 +158,126 @@ class ControlTaskRegistry:
         """
         key = name.lower()
         factory = self._resolve_factory(key)
-        return factory(cfg=cfg, hardware=hardware or {})
+        task = factory(cfg=cfg, hardware=hardware or {})
+        self._validate_bound_handlers(key, task)
+        return task
 
     def available(self) -> list[str]:
         return sorted(self._factory_paths.keys())
+
+    def _load_manifest_bindings(
+        self, module_name: str, module: ModuleType, task_factories: Mapping[str, str]
+    ) -> None:
+        consumes_by_type = getattr(module, "TASK_CONSUMES", None)
+        exposes_by_type = getattr(module, "TASK_EXPOSES", None)
+        declared_types = {name.lower() for name in task_factories}
+        for label, per_type in (
+            ("TASK_CONSUMES", consumes_by_type),
+            ("TASK_EXPOSES", exposes_by_type),
+        ):
+            if per_type is None:
+                continue
+            if not isinstance(per_type, Mapping):
+                raise TypeError(f"{module_name}.{label} must be a mapping keyed by task type")
+            seen: set[str] = set()
+            for name in per_type:
+                if not isinstance(name, str):
+                    raise TypeError(f"{module_name}.{label} keys must be task-type strings")
+                if name.lower() in seen:
+                    raise ValueError(
+                        f"{module_name}.{label} declares task type {name!r} more than once"
+                    )
+                seen.add(name.lower())
+                if name.lower() not in declared_types:
+                    raise ValueError(
+                        f"{module_name}.{label} declares task type {name!r} "
+                        "not present in the same manifest's TASK_FACTORIES"
+                    )
+        consumes_by_key = {name.lower(): card for name, card in (consumes_by_type or {}).items()}
+        exposes_by_key = {name.lower(): card for name, card in (exposes_by_type or {}).items()}
+        for name in sorted({*consumes_by_key, *exposes_by_key}):
+            self.register_bindings(
+                name,
+                consumes=consumes_by_key.get(name),
+                exposes=exposes_by_key.get(name),
+                source=module_name,
+            )
+
+    def _parse_consumes(
+        self,
+        task_type: str,
+        consumes: Mapping[str, tuple[str, str]] | None,
+        source: str,
+    ) -> tuple[StreamBinding, ...]:
+        if consumes is None:
+            return ()
+        if not isinstance(consumes, Mapping):
+            raise TypeError(f"{source}: consumes for task type {task_type!r} must be a mapping")
+        bindings = []
+        for stream, spec in consumes.items():
+            where = f"{source}: task type {task_type!r}, stream {stream!r}"
+            if not isinstance(stream, str):
+                raise TypeError(f"{where}: stream name must be a string")
+            if stream in DEFERRED_STREAMS:
+                raise ValueError(
+                    f"{where}: not card-routable yet; the twist path is deliberately "
+                    "deferred to a later PR, so this restriction is temporary"
+                )
+            if stream not in CONSUMABLE_STREAMS:
+                raise ValueError(f"{where}: unknown stream; allowed: {sorted(CONSUMABLE_STREAMS)}")
+            if (
+                not isinstance(spec, Sequence)
+                or isinstance(spec, str)
+                or len(spec) != 2
+                or not all(isinstance(part, str) for part in spec)
+            ):
+                raise TypeError(f"{where}: binding must be a (handler, routing) pair of strings")
+            handler, routing_value = spec
+            try:
+                routing = Routing(routing_value)
+            except ValueError:
+                raise ValueError(
+                    f"{where}: unknown routing {routing_value!r}; "
+                    f"valid: {[r.value for r in Routing]}"
+                ) from None
+            bindings.append(StreamBinding(stream=stream, handler=handler, routing=routing))
+        return tuple(sorted(bindings, key=lambda binding: binding.stream))
+
+    def _parse_exposes(
+        self,
+        task_type: str,
+        exposes: Mapping[str, str] | None,
+        source: str,
+    ) -> Mapping[str, str]:
+        if exposes is None:
+            return MappingProxyType({})
+        if not isinstance(exposes, Mapping):
+            raise TypeError(f"{source}: exposes for task type {task_type!r} must be a mapping")
+        for command, schema_path in exposes.items():
+            if not isinstance(command, str) or not isinstance(schema_path, str):
+                raise TypeError(
+                    f"{source}: exposes for task type {task_type!r} must map strings to strings"
+                )
+            if ":" not in schema_path:
+                raise ValueError(
+                    f"{source}: task type {task_type!r} command {command!r} has invalid "
+                    f"argument-schema path {schema_path!r} (expected 'module:Model')"
+                )
+        return MappingProxyType(dict(exposes))
+
+    def _validate_bound_handlers(self, key: str, task: ControlTask) -> None:
+        bindings = self._bindings.get(key)
+        if bindings is None:
+            return
+        source = self._binding_sources.get(key, "register_bindings()")
+        for binding in bindings.consumes:
+            handler = getattr(task, binding.handler, None)
+            if not callable(handler):
+                raise TypeError(
+                    f"Task type {key!r} binds stream {binding.stream!r} to handler "
+                    f"{binding.handler!r} (declared in {source}), but the created "
+                    f"{type(task).__name__} has no callable {binding.handler!r}"
+                )
 
     def _resolve_factory(self, key: str) -> TaskFactory:
         if key in self._factories:
