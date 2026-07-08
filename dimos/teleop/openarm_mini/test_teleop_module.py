@@ -31,12 +31,14 @@ from dimos.teleop.openarm_mini.calibration import (
     OpenArmMiniMotorCalibration,
     save_calibration,
 )
-from dimos.teleop.openarm_mini.config import OpenArmMiniTeleopConfig
 from dimos.teleop.openarm_mini.feetech import (
     _calibrated_motor_radians,
     _normalize_motor_position,
 )
-from dimos.teleop.openarm_mini.teleop_module import OpenArmMiniTeleopModule
+from dimos.teleop.openarm_mini.teleop_module import (
+    OpenArmMiniTeleopModule,
+    OpenArmMiniTeleopModuleConfig,
+)
 from dimos.teleop.runtime.types import TeleopCommand
 
 
@@ -103,8 +105,8 @@ def _configured_config(
     left_path: Path,
     right_path: Path,
     **kwargs: Any,
-) -> OpenArmMiniTeleopConfig:
-    return OpenArmMiniTeleopConfig(
+) -> OpenArmMiniTeleopModuleConfig:
+    return OpenArmMiniTeleopModuleConfig(
         port_left="left-port",
         port_right="right-port",
         left_calibration_path=left_path,
@@ -145,13 +147,13 @@ def _patch_buses(
     return created
 
 
-def _module(config: OpenArmMiniTeleopConfig) -> OpenArmMiniTeleopModule:
+def _module(config: OpenArmMiniTeleopModuleConfig) -> OpenArmMiniTeleopModule:
     return OpenArmMiniTeleopModule(**config.model_dump())
 
 
 @contextmanager
 def _connected_module(
-    config: OpenArmMiniTeleopConfig,
+    config: OpenArmMiniTeleopModuleConfig,
 ) -> Iterator[OpenArmMiniTeleopModule]:
     module = _module(config)
     try:
@@ -170,12 +172,13 @@ def test_teleop_module_loads_calibration_connects_both_buses_and_returns_joint_c
     created = _patch_buses(monkeypatch, buses)
 
     with _connected_module(
-        OpenArmMiniTeleopConfig(
+        OpenArmMiniTeleopModuleConfig(
             port_left="left-port",
             port_right="right-port",
             left_calibration_path=left_path,
             right_calibration_path=right_path,
             baudrate=123,
+            enabled_sides=("left", "right"),
         )
     ) as module:
         command = module.get_current_command()
@@ -213,25 +216,25 @@ def test_teleop_module_left_only_connects_left_bus_and_emits_left_joints(
 
 
 def test_config_rejects_invalid_or_duplicate_enabled_sides() -> None:
-    with pytest.raises(ValueError, match="at least one side"):
-        OpenArmMiniTeleopConfig(enabled_sides=())
+    with pytest.raises(ValueError, match="at least 1"):
+        OpenArmMiniTeleopModuleConfig(enabled_sides=())
     with pytest.raises(ValueError, match="Input should be 'left' or 'right'"):
-        OpenArmMiniTeleopConfig(enabled_sides=("center",))
+        OpenArmMiniTeleopModuleConfig(enabled_sides=("center",))
     with pytest.raises(ValueError, match="duplicate"):
-        OpenArmMiniTeleopConfig(enabled_sides=("left", "left"))
+        OpenArmMiniTeleopModuleConfig(enabled_sides=("left", "left"))
 
 
 def test_config_resolves_default_and_configured_target_joint_names() -> None:
     right_target_names = tuple(f"right_arm/openarm_right_joint{i}" for i in range(1, 8))
-    config = OpenArmMiniTeleopConfig(target_joint_names_by_side={"right": right_target_names})
+    config = OpenArmMiniTeleopModuleConfig(target_joint_names_by_side={"right": right_target_names})
 
     assert config.target_joint_names("left") == tuple(f"openarm_left_joint{i}" for i in range(1, 8))
     assert config.target_joint_names("right") == right_target_names
 
 
 def test_config_rejects_wrong_target_joint_name_count() -> None:
-    with pytest.raises(ValueError, match="exactly 7"):
-        OpenArmMiniTeleopConfig(target_joint_names_by_side={"right": ("only_one",)})
+    with pytest.raises(ValueError, match="at least 7"):
+        OpenArmMiniTeleopModuleConfig(target_joint_names_by_side={"right": ("only_one",)})
 
 
 def test_teleop_module_returns_none_without_authority(

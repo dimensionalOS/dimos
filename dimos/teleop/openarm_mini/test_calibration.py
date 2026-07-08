@@ -29,10 +29,10 @@ from dimos.teleop.openarm_mini.calibration import (
 )
 from dimos.teleop.openarm_mini.config import (
     OpenArmMiniCalibrationError,
-    OpenArmMiniTeleopConfig,
     default_calibration_path,
     missing_dependency_error,
 )
+from dimos.teleop.openarm_mini.teleop_module import OpenArmMiniTeleopModuleConfig
 
 
 def _valid_calibration(side: str = "left") -> OpenArmMiniCalibration:
@@ -50,7 +50,7 @@ def _valid_calibration(side: str = "left") -> OpenArmMiniCalibration:
 
 
 def test_default_calibration_paths_use_dimos_state_dir() -> None:
-    config = OpenArmMiniTeleopConfig()
+    config = OpenArmMiniTeleopModuleConfig()
 
     assert default_calibration_path("left") == STATE_DIR / "teleop" / "openarm_mini" / "left"
     assert config.calibration_path("right") == STATE_DIR / "teleop" / "openarm_mini" / "right"
@@ -58,7 +58,7 @@ def test_default_calibration_paths_use_dimos_state_dir() -> None:
 
 def test_explicit_calibration_paths_override_defaults(tmp_path: Path) -> None:
     left_path = tmp_path / "left-cal"
-    config = OpenArmMiniTeleopConfig(left_calibration_path=left_path)
+    config = OpenArmMiniTeleopModuleConfig(left_calibration_path=left_path)
 
     assert config.calibration_path("left") == left_path
     assert config.calibration_path("right") == STATE_DIR / "teleop" / "openarm_mini" / "right"

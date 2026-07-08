@@ -22,7 +22,7 @@ from typing import Literal, Self
 from pydantic import StrictBool, StrictInt, ValidationError, model_validator
 
 from dimos.protocol.service.spec import BaseConfig
-from dimos.teleop.openarm_mini.config import OpenArmMiniCalibrationError, validate_side
+from dimos.teleop.openarm_mini.config import OpenArmMiniCalibrationError, OpenArmMiniSide
 
 CALIBRATION_FILENAME = "calibration.json"
 FEETECH_RAW_MIN = 0
@@ -57,13 +57,12 @@ class OpenArmMiniMotorCalibration(BaseConfig):
 class OpenArmMiniCalibration(BaseConfig):
     """Side-specific OpenArm Mini calibration artifact."""
 
-    side: str
+    side: OpenArmMiniSide
     motors: dict[str, OpenArmMiniMotorCalibration]
     schema_version: Literal[1] = 1
 
     @model_validator(mode="after")
     def _validate_calibration(self) -> Self:
-        validate_side(self.side)
         missing = set(OPENARM_MINI_ARM_JOINT_NAMES) - set(self.motors)
         extra = set(self.motors) - set(OPENARM_MINI_ARM_JOINT_NAMES)
         if missing or extra:
@@ -84,9 +83,8 @@ def calibration_file(path: Path) -> Path:
     return path / CALIBRATION_FILENAME
 
 
-def load_calibration(path: Path, side: str) -> OpenArmMiniCalibration:
+def load_calibration(path: Path, side: OpenArmMiniSide) -> OpenArmMiniCalibration:
     """Load and validate a side-specific calibration artifact."""
-    validate_side(side)
     artifact_path = calibration_file(path)
     if not artifact_path.exists():
         raise OpenArmMiniCalibrationError(

@@ -36,6 +36,7 @@ from dimos.teleop.openarm_mini.calibration import (
     save_calibration,
 )
 from dimos.teleop.openarm_mini.config import (
+    OpenArmMiniSide,
     default_calibration_path,
 )
 from dimos.teleop.openarm_mini.feetech import FeetechLeaderReader, _calibrated_motor_radians
@@ -44,7 +45,7 @@ from dimos.teleop.openarm_mini.mapping import map_side_readings
 DEFAULT_MOTOR_IDS = {
     joint_name: index + 1 for index, joint_name in enumerate(OPENARM_MINI_ARM_JOINT_NAMES)
 }
-DEFAULT_FLIPS_BY_SIDE: dict[str, frozenset[str]] = {
+DEFAULT_FLIPS_BY_SIDE: dict[OpenArmMiniSide, frozenset[str]] = {
     "left": frozenset(("joint_1", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7")),
     "right": frozenset(("joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6")),
 }
@@ -77,7 +78,13 @@ def main(
     ),
 ) -> None:
     """Zero-calibrate OpenArm Mini leader teleop."""
-    sides = ("left", "right") if side == "both" else (side,)
+    sides: tuple[OpenArmMiniSide, ...]
+    if side == "both":
+        sides = ("left", "right")
+    elif side == "left":
+        sides = ("left",)
+    else:
+        sides = ("right",)
     print("OpenArm Mini leader calibration only connects to Feetech leader ports.")
     print("It never starts ControlCoordinator or connects follower OpenArm hardware.")
     print("Place each selected leader side in its natural zero pose before calibration.")
@@ -93,7 +100,7 @@ def main(
 
 
 def _calibrate_side(
-    side: str,
+    side: OpenArmMiniSide,
     port: str,
     path: Path,
     baudrate: int,
@@ -119,7 +126,7 @@ def _calibrate_side(
         reader.disconnect()
 
 
-def _live_readout(side: str, port: str, path: Path, baudrate: int) -> None:
+def _live_readout(side: OpenArmMiniSide, port: str, path: Path, baudrate: int) -> None:
     calibration = load_calibration(path, side)
     reader = FeetechLeaderReader(port, baudrate)
     reader.connect()
@@ -146,7 +153,7 @@ def _live_readout(side: str, port: str, path: Path, baudrate: int) -> None:
 
 
 def _capture_zero_calibration(
-    side: str,
+    side: OpenArmMiniSide,
     raw_positions: dict[str, int],
     flips: set[str] | frozenset[str],
 ) -> OpenArmMiniCalibration:
@@ -179,7 +186,7 @@ def _format_calibration_confirmation(calibration: OpenArmMiniCalibration) -> str
     return "\n".join(lines)
 
 
-def _parse_flip_overrides(value: str | None, side: str) -> set[str]:
+def _parse_flip_overrides(value: str | None, side: OpenArmMiniSide) -> set[str]:
     if value is None:
         return set(DEFAULT_FLIPS_BY_SIDE[side])
     stripped = value.strip()

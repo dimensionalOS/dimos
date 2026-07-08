@@ -16,15 +16,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Literal, Self
-
-from pydantic import model_validator
+from typing import Literal
 
 from dimos.constants import STATE_DIR
-from dimos.protocol.service.spec import BaseConfig
-from dimos.robot.manipulators.openarm.config import openarm_joints
 
 OPENARM_MINI_TELEOP_EXTRA = "openarm-mini-teleop"
 OPENARM_MINI_STATE_DIR = STATE_DIR / "teleop" / "openarm_mini"
@@ -34,94 +29,9 @@ OPENARM_MINI_UNCONFIGURED_PORT = ""
 OPENARM_MINI_DEFAULT_BAUDRATE = 1_000_000
 
 
-def default_calibration_path(side: str) -> Path:
+def default_calibration_path(side: OpenArmMiniSide) -> Path:
     """Return the default persistent calibration directory for an OpenArm Mini side."""
-    valid_side = validate_side(side)
-    return OPENARM_MINI_STATE_DIR / valid_side
-
-
-def validate_side(side: str) -> OpenArmMiniSide:
-    """Validate an OpenArm Mini side string."""
-    if side == "left":
-        return "left"
-    if side == "right":
-        return "right"
-    raise ValueError(f"side must be 'left' or 'right', got {side!r}")
-
-
-class OpenArmMiniTeleopConfig(BaseConfig):
-    """Runtime configuration for a bimanual OpenArm Mini leader.
-
-    Runtime startup is intentionally non-interactive: calibration paths point to
-    pre-existing side-specific calibration directories created by the package
-    calibration utility.
-    """
-
-    backend: Literal["openarm_mini"] = "openarm_mini"
-    port_left: str = OPENARM_MINI_UNCONFIGURED_PORT
-    port_right: str = OPENARM_MINI_UNCONFIGURED_PORT
-    left_calibration_path: Path | None = None
-    right_calibration_path: Path | None = None
-    baudrate: int = OPENARM_MINI_DEFAULT_BAUDRATE
-    max_joint_jump_radians: float = 0.75
-    authority_active: bool = True
-    enabled_sides: tuple[OpenArmMiniSide, ...] = OPENARM_MINI_SIDES
-    target_joint_names_by_side: Mapping[OpenArmMiniSide, Sequence[str]] | None = None
-
-    @model_validator(mode="after")
-    def _validate_config(self) -> Self:
-        """Validate selected OpenArm Mini leader sides."""
-        if not self.enabled_sides:
-            raise ValueError("enabled_sides must include at least one side")
-        for side in self.enabled_sides:
-            validate_side(side)
-        if len(set(self.enabled_sides)) != len(self.enabled_sides):
-            raise ValueError("enabled_sides must not contain duplicate sides")
-        if self.target_joint_names_by_side is not None:
-            for side, target_joint_names in self.target_joint_names_by_side.items():
-                validate_side(side)
-                if len(target_joint_names) != 7:
-                    raise ValueError(
-                        f"target_joint_names_by_side[{side!r}] must contain exactly 7 names"
-                    )
-        return self
-
-    def calibration_path(self, side: str) -> Path:
-        """Return the configured or default calibration directory for a side."""
-        validate_side(side)
-        if side == "left" and self.left_calibration_path is not None:
-            return self.left_calibration_path
-        if side == "right" and self.right_calibration_path is not None:
-            return self.right_calibration_path
-        return default_calibration_path(side)
-
-    def port(self, side: str) -> str:
-        """Return the configured serial port for a side."""
-        validate_side(side)
-        port = self.port_left if side == "left" else self.port_right
-        if not port:
-            raise ValueError(f"port_{side} must be configured for OpenArm Mini teleop")
-        return port
-
-    def connection_baudrate(self) -> int:
-        """Return the configured Feetech serial baudrate."""
-        if self.baudrate <= 0:
-            raise ValueError("baudrate must be configured for OpenArm Mini teleop")
-        return self.baudrate
-
-    def sides(self) -> tuple[OpenArmMiniSide, ...]:
-        """Return the selected leader sides in runtime order."""
-        return self.enabled_sides
-
-    def target_joint_names(self, side: str) -> tuple[str, ...]:
-        """Return the follower joint names emitted for a leader side."""
-        valid_side = validate_side(side)
-        if self.target_joint_names_by_side is None:
-            return tuple(openarm_joints(valid_side))
-        configured = self.target_joint_names_by_side.get(valid_side)
-        if configured is None:
-            return tuple(openarm_joints(valid_side))
-        return tuple(configured)
+    return OPENARM_MINI_STATE_DIR / side
 
 
 class OpenArmMiniDependencyError(ImportError):

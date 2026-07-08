@@ -26,7 +26,7 @@ from dimos.teleop.openarm_mini.calibration import (
     OpenArmMiniCalibration,
     OpenArmMiniMotorCalibration,
 )
-from dimos.teleop.openarm_mini.config import missing_dependency_error, validate_side
+from dimos.teleop.openarm_mini.config import OpenArmMiniSide, missing_dependency_error
 
 FEETECH_COMM_SUCCESS = 0
 _FEETECH_ENCODER_TICKS = FEETECH_POSITION_SPAN + 1
@@ -104,12 +104,11 @@ class OpenArmMiniLeaderReader:
 
     def __init__(
         self,
-        side: str,
+        side: OpenArmMiniSide,
         port: str,
         calibration: OpenArmMiniCalibration,
         baudrate: int,
     ) -> None:
-        validate_side(side)
         self._calibration = calibration
         self._reader = FeetechLeaderReader(
             port,

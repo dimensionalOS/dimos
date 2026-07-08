@@ -16,12 +16,21 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Annotated, Literal, Self
+
+from pydantic import Field, model_validator
+
+from dimos.robot.manipulators.openarm.config import openarm_joints
 from dimos.teleop.openarm_mini.calibration import load_calibration
 from dimos.teleop.openarm_mini.config import (
+    OPENARM_MINI_DEFAULT_BAUDRATE,
+    OPENARM_MINI_UNCONFIGURED_PORT,
     OpenArmMiniCalibrationError,
     OpenArmMiniDependencyError,
     OpenArmMiniSide,
-    OpenArmMiniTeleopConfig,
+    default_calibration_path,
 )
 from dimos.teleop.openarm_mini.feetech import OpenArmMiniLeaderReader
 from dimos.teleop.openarm_mini.mapping import combine_side_commands, map_side_readings
@@ -30,14 +39,68 @@ from dimos.teleop.runtime.types import TeleopCommand
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+OpenArmMiniTargetJointNames = Annotated[tuple[str, ...], Field(min_length=7, max_length=7)]
 
 
-class OpenArmMiniTeleopModuleConfig(TeleopModuleConfig, OpenArmMiniTeleopConfig):
-    """Config for OpenArm Mini leader teleoperation."""
+class OpenArmMiniTeleopModuleConfig(TeleopModuleConfig):
+    """Config for OpenArm Mini leader teleoperation.
+
+    Runtime startup is intentionally non-interactive: calibration paths point to
+    pre-existing side-specific calibration directories created by the package
+    calibration utility.
+    """
 
     # Default to one side so running the concrete module directly only requires
     # one leader calibration/port override. Dual-arm blueprints opt into both.
-    enabled_sides: tuple[OpenArmMiniSide, ...] = ("left",)
+    backend: Literal["openarm_mini"] = "openarm_mini"
+    port_left: str = OPENARM_MINI_UNCONFIGURED_PORT
+    port_right: str = OPENARM_MINI_UNCONFIGURED_PORT
+    left_calibration_path: Path | None = None
+    right_calibration_path: Path | None = None
+    baudrate: int = Field(default=OPENARM_MINI_DEFAULT_BAUDRATE, gt=0)
+    max_joint_jump_radians: float = 0.75
+    authority_active: bool = True
+    enabled_sides: tuple[OpenArmMiniSide, ...] = Field(default=("left",), min_length=1)
+    target_joint_names_by_side: Mapping[OpenArmMiniSide, OpenArmMiniTargetJointNames] | None = None
+
+    @model_validator(mode="after")
+    def _validate_openarm_mini_config(self) -> Self:
+        """Validate OpenArm Mini-specific configuration."""
+        if len(set(self.enabled_sides)) != len(self.enabled_sides):
+            raise ValueError("enabled_sides must not contain duplicate sides")
+        return self
+
+    def calibration_path(self, side: OpenArmMiniSide) -> Path:
+        """Return the configured or default calibration directory for a side."""
+        if side == "left" and self.left_calibration_path is not None:
+            return self.left_calibration_path
+        if side == "right" and self.right_calibration_path is not None:
+            return self.right_calibration_path
+        return default_calibration_path(side)
+
+    def port(self, side: OpenArmMiniSide) -> str:
+        """Return the configured serial port for a side."""
+        port = self.port_left if side == "left" else self.port_right
+        if not port:
+            raise ValueError(f"port_{side} must be configured for OpenArm Mini teleop")
+        return port
+
+    def connection_baudrate(self) -> int:
+        """Return the configured Feetech serial baudrate."""
+        return self.baudrate
+
+    def sides(self) -> tuple[OpenArmMiniSide, ...]:
+        """Return the selected leader sides in runtime order."""
+        return self.enabled_sides
+
+    def target_joint_names(self, side: OpenArmMiniSide) -> tuple[str, ...]:
+        """Return the follower joint names emitted for a leader side."""
+        if self.target_joint_names_by_side is None:
+            return tuple(openarm_joints(side))
+        configured = self.target_joint_names_by_side.get(side)
+        if configured is None:
+            return tuple(openarm_joints(side))
+        return tuple(configured)
 
 
 class OpenArmMiniTeleopModule(TeleopModule):
@@ -53,7 +116,7 @@ class OpenArmMiniTeleopModule(TeleopModule):
         self._teleop_connected = False
 
     @property
-    def openarm_mini_config(self) -> OpenArmMiniTeleopConfig:
+    def openarm_mini_config(self) -> OpenArmMiniTeleopModuleConfig:
         return self.config
 
     def connect_teleop(self) -> None:
