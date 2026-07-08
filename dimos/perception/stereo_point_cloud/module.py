@@ -32,6 +32,7 @@ from dimos.perception.stereo_point_cloud.utils import (
     _FloorCalibrator,
     _R_OPT_TO_LINK,
     _gradient_mask,
+    _isolation_filter,
     _pack,
     _raycast_free_keys,
 )
@@ -214,15 +215,12 @@ class StereoPointCloud(Module):
             dd,
         ]).astype(np.float32)
 
-        # R=identity: camera_link Z is already up for a level D435i. Madgwick
-        # converges toward a 180° X-flip (gravity is -Z in camera_link), which
-        # rotates xyz_ronly away from the true camera frame and makes raycasting
-        # fire from the wrong origin — causing ghost-ray carving artifacts.
-        R = np.eye(3, dtype=np.float32)
+        with self._imu_lock:
+            R = self._madgwick.R.copy() if self._madgwick is not None else np.eye(3, dtype=np.float32)
         t = self._odom.t
 
         xyz_cam   = xyz_opt @ _R_OPT_TO_LINK.T
-        xyz_world = (xyz_cam + t).astype(np.float32)
+        xyz_world = (xyz_cam @ R.T + t).astype(np.float32)
 
         # Calibrate on xyz_cam (camera_link, Z=up). For a level mount the floor
         # is always at z_cam == -cam_height regardless of horizontal distance,
@@ -288,14 +286,14 @@ class StereoPointCloud(Module):
                 f"Z ≈ {self._world_floor_z:.3f} m below camera (published at Z ≈ 0)"
             )
 
-        # Rotation-only frame (= xyz_cam with R=identity): strip ICP translation
-        # so voxel keys are stable across small t-noise. Raycasting from (0,0,0)
-        # is the true camera origin in this frame, so free-space carving is correct.
+        # Rotation-only frame: strip ICP translation so ±2 cm t-noise doesn't shift voxel keys
         xyz_ronly  = xyz_vox - t
         vk_r       = np.floor(xyz_ronly / self.config.vox_size).astype(np.int32)
         _, first_r = np.unique(_pack(vk_r), return_index=True)
         xyz_vox_r  = xyz_ronly[first_r]
         xyz_for_map = xyz_vox_r[xyz_vox_r[:, 2] > self._world_floor_z + self.config.global_floor_margin]
+        if len(xyz_for_map) > 4:
+            xyz_for_map = xyz_for_map[_isolation_filter(xyz_for_map, radius=self.config.global_vox_size * 3)]
 
         pts_snap = None
         with self._lock:
