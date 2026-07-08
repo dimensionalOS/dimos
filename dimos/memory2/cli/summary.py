@@ -21,37 +21,20 @@ Usage:
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import json
 from math import log
-import sqlite3
 from typing import TYPE_CHECKING, Any
 
 import typer
 
 from dimos.utils.colors import HEAT_GRADIENT_ANSI256
-from dimos.utils.data import resolve_named_path
 from dimos.utils.human import human_bytes
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from dimos.memory2.stream import Stream
 
 # Heavy dimos imports (memory2 store → codecs, msgs) and rich are deferred into
 # the function bodies so that `dimos --help` — which imports this module just to
 # register the `mem summary` command — stays fast. See test_cli_startup.py.
-
-
-def stream_payload_types(db_path: Path) -> dict[str, type]:
-    """Read each stream's registered payload type from the _streams table."""
-    from dimos.memory2.codecs.base import resolve_payload_type
-
-    conn = sqlite3.connect(str(db_path))
-    try:
-        rows = conn.execute("SELECT name, config FROM _streams").fetchall()
-    finally:
-        conn.close()
-    return {name: resolve_payload_type(json.loads(cfg)["payload_module"]) for name, cfg in rows}
 
 
 def _shade(value: float, lo: float, hi: float) -> str:
@@ -70,25 +53,34 @@ def _heat(text: str, value: float, column: list[float]) -> str:
 
 
 def main(
-    dataset: str = typer.Argument(..., help="Dataset .db: bare name (cwd or data/) or path"),
+    dataset: str = typer.Argument(..., help="Dataset .db/.mcap: bare name (cwd or data/) or path"),
 ) -> None:
-    """Print per-stream counts, time ranges, and payload sizes for a recorded SQLite dataset."""
+    """Print per-stream counts, time ranges, and payload sizes for a recorded dataset."""
+    from dimos.memory2.cli.dataset import open_store, resolve_dataset
+
+    db_path = resolve_dataset(dataset)
+    if db_path.suffix == ".mcap":
+        # mcap stores don't speak the sqlite _streams table; print the store's own
+        # summary. Codecless channels appear as Stream[bytes], flagged [raw bytes: …].
+        store = open_store(db_path)
+        with store:
+            typer.echo(store.summary())
+        return
+
     from rich.console import Console
     from rich.progress import Progress
     from rich.table import Table
 
     from dimos.memory2.store.sqlite import SqliteStore
 
-    db_path = resolve_named_path(dataset, ".db")
-    payload_types = stream_payload_types(db_path)
-
     rows: list[tuple[str, int, float | None, float | None, int]] = []
     store = SqliteStore(path=str(db_path))
     with store, Progress(transient=True) as prog:
-        task = prog.add_task("scanning", total=len(payload_types))
-        for name, ptype in payload_types.items():
+        names = store.list_streams()
+        task = prog.add_task("scanning", total=len(names))
+        for name in names:
             prog.update(task, description=name)
-            stream: Stream[Any] = store.stream(name, ptype)
+            stream: Stream[Any] = store.stream(name)
             n = stream.count()
             t0, t1 = stream.get_time_range() if n else (None, None)
             rows.append((name, n, t0, t1, stream.size_bytes() or 0))
