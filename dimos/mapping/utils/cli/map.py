@@ -159,6 +159,16 @@ def _accumulate(
     return result.data if result is not None else None
 
 
+def _denoise(cloud: PointCloud2 | None) -> PointCloud2 | None:
+    """Statistical outlier removal via o3d; drops sparse floaters, keeps colors."""
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+    if cloud is None or len(cloud.pointcloud.points) < 20:
+        return cloud
+    clean, _ = cloud.pointcloud_tensor.remove_statistical_outliers(nb_neighbors=20, std_ratio=2.0)
+    return PointCloud2(pointcloud=clean, frame_id=cloud.frame_id, ts=cloud.ts)
+
+
 def _log_reconstruction(
     *,
     voxel: float,
@@ -394,6 +404,12 @@ def main(
         "--bottom-cutoff",
         help="Drop global-map points below this Z (m) when rendering; e.g. 0 strips the floor",
     ),
+    denoise: bool = typer.Option(
+        False,
+        "--denoise",
+        help="Statistical outlier removal on the finished maps (o3d, nb_neighbors=20, "
+        "std_ratio=2.0): drops sparse floaters before rendering/export",
+    ),
 ) -> None:
     """Rebuild a voxel map from a recorded SQLite dataset, write a .rrd, and open it in rerun."""
     from dimos.mapping.loop_closure.pgo import PGO
@@ -571,6 +587,12 @@ def main(
             carve_columns=carve,
             progress_cb=bar,
         )
+
+    if denoise:
+        print("denoising maps (statistical outlier removal)...")
+        global_map = _denoise(global_map)
+        pgo_map = _denoise(pgo_map)
+        full_pgo_map = _denoise(full_pgo_map)
 
     marker_dets: list[Observation[Any]] = []
     if markers:
