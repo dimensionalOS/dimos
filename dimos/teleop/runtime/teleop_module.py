@@ -99,9 +99,12 @@ class TeleopModule(Module):
         self._last_publish_time = self._now()
 
     def _run_loop(self) -> None:
+        next_tick_time = time.monotonic()
         while not self._stop_event.is_set():
             self.tick()
-            time.sleep(self.teleop_config.tick_period_s)
+            next_tick_time += self.teleop_config.tick_period_s
+            sleep_s = max(0.0, next_tick_time - time.monotonic())
+            self._stop_event.wait(sleep_s)
 
     def _is_stale(self, command: TeleopCommand) -> bool:
         return self._now() - command.timestamp > self.teleop_config.stale_command_timeout_s
