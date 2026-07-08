@@ -5,7 +5,7 @@
  * identical output to the LCM C++ encode (minus the 8-byte fingerprint hash).
  *
  * Build & run:
- *   cd dimos/hardware/arduino/test
+ *   cd dimos/experimental/arduino/test
  *   nix build && ./result/bin/test_wire_compat
  */
 

@@ -32,7 +32,7 @@ Requirements:
 
 Run with::
 
-    uv run pytest dimos/hardware/arduino/examples/arduino_twist_echo/test_e2e_virtual.py -v -m "slow and tool"
+    uv run pytest dimos/experimental/arduino/examples/arduino_twist_echo/test_e2e_virtual.py -v -m "slow and tool"
 """
 
 from __future__ import annotations
@@ -96,10 +96,10 @@ def test_virtual_arduino_round_trip() -> None:
     # Deferred imports — pulling in ModuleCoordinator spins up a lot of
     # machinery, no reason to pay for it on a skip.
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
-    from dimos.hardware.arduino.examples.arduino_twist_echo.blueprint import (
+    from dimos.experimental.arduino.examples.arduino_twist_echo.blueprint import (
         arduino_msg_example,
     )
-    from dimos.hardware.arduino.examples.arduino_twist_echo.test_publisher import (
+    from dimos.experimental.arduino.examples.arduino_twist_echo.test_publisher import (
         TestPublisher,
     )
 

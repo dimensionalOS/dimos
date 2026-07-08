@@ -16,7 +16,7 @@
 
 Generates a ``dimos_arduino.h`` header, compiles/flashes the user's sketch,
 then runs a C++ bridge relaying data between the Arduino's USB serial and the
-DimOS LCM bus. See ``dimos/hardware/arduino/`` for C headers and protocol docs.
+DimOS LCM bus. See ``dimos/experimental/arduino/`` for C headers and protocol docs.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-_ARDUINO_HW_DIR = Path(__file__).resolve().parent.parent / "hardware" / "arduino"
+_ARDUINO_HW_DIR = Path(__file__).resolve().parent
 _COMMON_DIR = _ARDUINO_HW_DIR / "common"
 _DSP_PROTOCOL_PATH = _COMMON_DIR / "dsp_protocol.h"
 
@@ -136,7 +136,7 @@ class CTypeGenerator:
 # Registry of known Arduino-compatible message type header paths.
 #
 # This list is kept in sync with two other places:
-#   - dimos/hardware/arduino/cpp/main.cpp :: init_hash_registry()
+#   - dimos/experimental/arduino/cpp/main.cpp :: init_hash_registry()
 #   - dimos-lcm :: generated/arduino_c_msgs/**
 # `tests/test_arduino_msg_registry_sync.py` fails CI if any drift appears.
 _KNOWN_TYPE_HEADERS: dict[str, str] = {

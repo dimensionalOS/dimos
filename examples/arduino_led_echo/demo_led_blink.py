@@ -23,12 +23,12 @@ from __future__ import annotations
 
 import time
 
-from dimos.core.arduino_module import ArduinoModule, ArduinoModuleConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.experimental.arduino.arduino_module import ArduinoModule, ArduinoModuleConfig
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.utils.logging_config import setup_logger
 

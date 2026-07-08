@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for dimos.core.arduino_module.
+"""Unit tests for dimos.experimental.arduino.arduino_module.
 
 Host-side logic only — header generation, topic enum, registry sync, port
 detection (mocked arduino-cli), QEMU cleanup. No real Arduino or QEMU.
@@ -30,16 +30,17 @@ from unittest import mock
 
 import pytest
 
+from dimos.core.stream import In, Out
+
 # Captured at import time — the autouse fixture patches the module attribute,
 # so tests exercising the *real* resolver reach it through this unpatched ref.
-from dimos.core.arduino_module import (
+from dimos.experimental.arduino.arduino_module import (
     _ARDUINO_HW_DIR,
     _KNOWN_TYPE_HEADERS,
     ArduinoModule,
     ArduinoModuleConfig,
     _arduino_tools_bin_dir as _real_arduino_tools_bin_dir,
 )
-from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
 from dimos.msgs.geometry_msgs.Twist import Twist
 
@@ -50,7 +51,7 @@ def _fake_arduino_tools_bin_dir(tmp_path_factory):
     fake_bin = tmp_path_factory.mktemp("fake_arduino_tools") / "bin"
     fake_bin.mkdir()
     with mock.patch(
-        "dimos.core.arduino_module._arduino_tools_bin_dir",
+        "dimos.experimental.arduino.arduino_module._arduino_tools_bin_dir",
         return_value=fake_bin,
     ):
         yield fake_bin
@@ -105,7 +106,7 @@ def test_build_topic_enum_assigns_1_based_alphabetical() -> None:
 
 
 def test_build_full_config_combines_connection_and_topics() -> None:
-    """Keep in sync with parse_args() in dimos/hardware/arduino/cpp/main.cpp."""
+    """Keep in sync with parse_args() in dimos/experimental/arduino/cpp/main.cpp."""
     mod = _with_topics(
         _make_module(),
         {
@@ -249,7 +250,7 @@ def test_detect_port_matches_fqbn() -> None:
         ]
     }
     with mock.patch(
-        "dimos.core.arduino_module.subprocess.run",
+        "dimos.experimental.arduino.arduino_module.subprocess.run",
         return_value=_run_result(json.dumps(payload)),
     ):
         assert mod._detect_port() == "/dev/ttyACM1"
@@ -259,7 +260,7 @@ def test_detect_port_raises_on_no_match() -> None:
     mod = _make_module()
     payload: dict[str, list[Any]] = {"detected_ports": []}
     with mock.patch(
-        "dimos.core.arduino_module.subprocess.run",
+        "dimos.experimental.arduino.arduino_module.subprocess.run",
         return_value=_run_result(json.dumps(payload)),
     ):
         with pytest.raises(RuntimeError, match="No Arduino board found matching FQBN"):
@@ -269,7 +270,7 @@ def test_detect_port_raises_on_no_match() -> None:
 def test_detect_port_wraps_invalid_json() -> None:
     mod = _make_module()
     with mock.patch(
-        "dimos.core.arduino_module.subprocess.run",
+        "dimos.experimental.arduino.arduino_module.subprocess.run",
         return_value=_run_result("not-json-at-all"),
     ):
         with pytest.raises(RuntimeError, match="invalid JSON"):
@@ -283,7 +284,7 @@ def test_arduino_tools_bin_dir_raises_on_missing_nix() -> None:
     _real_arduino_tools_bin_dir.cache_clear()
     try:
         with mock.patch(
-            "dimos.core.arduino_module.subprocess.run",
+            "dimos.experimental.arduino.arduino_module.subprocess.run",
             side_effect=FileNotFoundError,
         ):
             with pytest.raises(RuntimeError, match="nix"):
@@ -295,7 +296,7 @@ def test_arduino_tools_bin_dir_raises_on_missing_nix() -> None:
 def test_detect_port_wraps_non_zero_exit() -> None:
     mod = _make_module()
     with mock.patch(
-        "dimos.core.arduino_module.subprocess.run",
+        "dimos.experimental.arduino.arduino_module.subprocess.run",
         return_value=subprocess.CompletedProcess(
             args=[], returncode=1, stdout="", stderr="permission denied"
         ),
@@ -420,12 +421,12 @@ def test_registry_matches_main_cpp_hash_registry() -> None:
     assert not only_in_py, (
         f"These message types are in _KNOWN_TYPE_HEADERS but NOT in "
         f"main.cpp::init_hash_registry: {sorted(only_in_py)}. Add them to "
-        f"dimos/hardware/arduino/cpp/main.cpp or remove from the Python registry."
+        f"dimos/experimental/arduino/cpp/main.cpp or remove from the Python registry."
     )
     assert not only_in_cpp, (
         f"These message types are in main.cpp::init_hash_registry but NOT "
         f"in _KNOWN_TYPE_HEADERS: {sorted(only_in_cpp)}. Add them to "
-        f"dimos/core/arduino_module.py::_KNOWN_TYPE_HEADERS or remove from main.cpp."
+        f"dimos/experimental/arduino/arduino_module.py::_KNOWN_TYPE_HEADERS or remove from main.cpp."
     )
 
 

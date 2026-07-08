@@ -19,8 +19,8 @@ Validates serialization and float64->float32 precision on AVR.
 
 from __future__ import annotations
 
-from dimos.core.arduino_module import ArduinoModule, ArduinoModuleConfig
 from dimos.core.stream import In, Out
+from dimos.experimental.arduino.arduino_module import ArduinoModule, ArduinoModuleConfig
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.std_msgs.Bool import Bool

@@ -23,7 +23,7 @@ Requires:
     - nix on PATH
 
 Run:
-    uv run python dimos/hardware/arduino/examples/arduino_multi_echo/test_multi_echo_hardware.py
+    uv run python dimos/experimental/arduino/examples/arduino_multi_echo/test_multi_echo_hardware.py
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.hardware.arduino.examples.arduino_multi_echo.module import ArduinoMultiEcho
+from dimos.experimental.arduino.examples.arduino_multi_echo.module import ArduinoMultiEcho
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.std_msgs.Bool import Bool

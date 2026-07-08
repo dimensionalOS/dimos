@@ -16,8 +16,8 @@
 
 from __future__ import annotations
 
-from dimos.core.arduino_module import ArduinoModule, ArduinoModuleConfig
 from dimos.core.stream import In, Out
+from dimos.experimental.arduino.arduino_module import ArduinoModule, ArduinoModuleConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
 
 

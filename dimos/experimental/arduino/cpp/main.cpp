@@ -223,8 +223,8 @@ static void init_hash_registry(Bridge &b)
     /* NOTE: this list is kept in sync with three other places and there is
      * a Python test (`test_arduino_msg_registry_sync`) that fails CI if any
      * of them drift:
-     *   - dimos/core/arduino_module.py :: _KNOWN_TYPE_HEADERS
-     *   - dimos/hardware/arduino/common/arduino_msgs (Arduino-side .h)
+     *   - dimos/experimental/arduino/arduino_module.py :: _KNOWN_TYPE_HEADERS
+     *   - dimos/experimental/arduino/common/arduino_msgs (Arduino-side .h)
      *   - this function (C++ bridge hash registry)
      */
     b.hash_registry["std_msgs.Time"]       = std_msgs::Time::getHash();

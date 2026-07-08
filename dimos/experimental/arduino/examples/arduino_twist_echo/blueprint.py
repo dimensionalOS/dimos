@@ -17,8 +17,8 @@
 from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.hardware.arduino.examples.arduino_twist_echo.module import ArduinoTwistEcho
-from dimos.hardware.arduino.examples.arduino_twist_echo.test_publisher import (
+from dimos.experimental.arduino.examples.arduino_twist_echo.module import ArduinoTwistEcho
+from dimos.experimental.arduino.examples.arduino_twist_echo.test_publisher import (
     TestPublisher,
 )
 
