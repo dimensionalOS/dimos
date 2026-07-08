@@ -12,18 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""On-demand scene scanning — the complete adaptive fold over recorded frames.
-
-A ``scan`` advances the world model over the ENTIRE recorded interval since the last
-fold — never a sampled window, so there are never observation holes between scans.
-Folding everything is affordable because density adapts to the recorded camera pose:
-coarse 1 s keyframes while static, 7.5 Hz while moving (> 0.02 m/s or > 0.05 rad/s),
-plus bisection (depth ≤ 4) wherever the detection set changes between consecutive
-selected frames — so scene events get dense coverage even under a static camera.
-Benchmark cost: 11-18 % of recorded frames folded, every scripted event covered.
-
-Pass ``history_path`` for cross-session identity (memory2 vec0 galleries).
-"""
+"""On-demand scene scanning: adaptive fold over recorded frames."""
 
 from __future__ import annotations
 
@@ -56,6 +45,7 @@ _NMS_IOU = 0.5  # class-agnostic NMS across prompts (one region can fire several
 _NMS_CONTAINMENT = 0.7  # a bbox ≥70% inside a stronger det's bbox is a sub-region candidate
 _SUBREGION_COLOCATED_M = 0.13  # same surface iff also 3D-co-located within the noise envelope
 _DEPTH_TOLERANCE_S = 0.1  # max color↔depth frame skew for a lift
+_NEG_INF = -float("inf")  # sentinel: "no strict lower bound" for a fresh (non-catch-up) scan
 
 
 def _bbox_area(b: tuple[float, float, float, float]) -> float:
@@ -78,24 +68,16 @@ def _bbox_containment(inner: tuple[float, float, float, float], outer: tuple[flo
 
 
 class SceneScanner:
-    """Runs detection + 2D→3D lift + embeddings on demand and folds into a WorldBelief.
-
-    The belief (and, with ``history_path``, its vec0 galleries) persists across scans;
-    the scanner owns frame selection, all identity/trust/absence logic lives in the
-    world model. Call :meth:`present` for the current object set.
-    """
+    """Stateless scan engine: detect + 2D→3D lift + embed recorded frames."""
 
     def __init__(
         self,
         detector: Detector | None = None,
         *,
         target_frame: str = "world",
-        min_frames: int = 3,
-        min_span_s: float = 1.5,
         text_prompts: list[str] | None = None,
         embed: bool = True,
-        visual_embedder: Any = None,  # test-only injection point (FakeEmbedder)
-        history_path: str | None = None,
+        visual_embedder: Any = None,
         detector_conf: float = 0.6,
     ) -> None:
         self._detector = detector
@@ -103,23 +85,11 @@ class SceneScanner:
         self._text_prompts = list(text_prompts) if text_prompts else None
         self._embed = embed
         self._visual_embedder = visual_embedder
-        # 0.6: lower (0.4) proved noisy on the arm — sub-0.5 junk kept entering the
-        # lifecycle; every benchmark prompt (incl. "green can" at 0.89-0.97) clears 0.6.
         self._detector_conf = detector_conf
-        self._belief = WorldBelief(
-            min_frames=min_frames,
-            min_span_s=min_span_s,
-            history_path=history_path,
-        )
-        if history_path is None and embed:
-            # Without a history store, identity does NOT survive a restart — say so.
-            logger.info("SceneScanner: no history_path — identity will not persist across sessions")
 
     # ── model plumbing ─────────────────────────────────────────────────────────────
 
     def _resolve_device(self) -> str:
-        """GPU when torch sees one, else CPU. (The stack's default auto-detect uses
-        ``pycuda``, often absent even when torch's CUDA works — resolve via torch.)"""
         try:
             import torch
 
@@ -143,9 +113,7 @@ class SceneScanner:
         return self._detector
 
     def _get_embedders(self) -> Any:
-        """The visual (DINO) identity embedder, or None when embeddings are disabled.
-        (Identity is DINO-only: per-crop CLIP was measured as dead weight; whole-frame
-        CLIP semantic recall belongs to the recall index.)"""
+        """The visual (DINO) identity embedder, or None when embeddings are disabled."""
         if not self._embed:
             return None
         if self._visual_embedder is None:
@@ -158,37 +126,54 @@ class SceneScanner:
         return self._visual_embedder
 
     def warmup(self) -> None:
-        """Pre-build the detector + embedders so the first :meth:`scan` doesn't pay the
-        one-time model-load stall on the caller's thread."""
+        """Pre-build detector + embedders so the first scan() skips the model-load stall."""
         self._get_detector()
         self._get_embedders()
 
     # ── the scan ───────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _resolve_window(
+        belief: WorldBelief,
+        color: Any,
+        start: float | None,
+        end: float | None,
+        initial_lookback_s: float | None,
+    ) -> tuple[float, float, float] | None:
+        """Fold interval as ``(start, end, after)``, or None when nothing is recorded.
+        ``after`` is a strict-exclusive cutoff on the inclusive ``time_range``: only
+        catch-up sets it (== watermark) to drop the already-folded boundary frame."""
+        if end is None:
+            try:
+                end = float(color.last().ts)
+            except LookupError:
+                return None  # nothing recorded yet
+        if start is not None:
+            return start, end, _NEG_INF  # caller pinned start → honor it inclusively
+        watermark = belief.last_fold_ts
+        if watermark > 0.0:
+            return watermark, end, watermark  # catch-up: fold STRICTLY after the last folded frame
+        if initial_lookback_s is not None and initial_lookback_s > 0.0:
+            return end - initial_lookback_s, end, _NEG_INF  # first scan, bounded lookback
+        return 0.0, end, _NEG_INF  # first scan: from the beginning of the recording
+
     def scan(
         self,
         store: Store,
+        belief: WorldBelief,
         *,
         prompt: list[str] | None = None,
         start: float | None = None,
         end: float | None = None,
         initial_lookback_s: float | None = None,
     ) -> list[Object]:
-        """Advance the fold over ``[start, end]`` and return the present object set.
-
-        No ``start`` = CATCH UP from the last folded frame to ``end`` (newest frame) —
-        repeated scans cover the recording completely, no holes. First-ever scan:
-        ``initial_lookback_s`` bounds the lookback (None = recording start). Explicit
-        ``start`` overrides; the model skips frames at/before its watermark (time only
-        moves forward)."""
+        """Advance ``belief``'s fold over ``[start, end]`` and return its present set."""
         detector = self._get_detector()
         prompts = prompt or self._text_prompts
         set_prompts = getattr(detector, "set_prompts", None)
         if prompts and callable(set_prompts):
             set_prompts(text=list(prompts))
         elif not prompts:
-            # An open-vocab detector (YOLOe) with no prompt defaults to class "nothing"
-            # and silently returns []. Make that visible rather than a mystery.
             logger.warning("scan: no prompt/text_prompts set — an open-vocab detector will detect nothing")
 
         color = store.stream("color_image", Image)
@@ -198,37 +183,22 @@ class SceneScanner:
             camera_info = info.last().data
         except LookupError:
             logger.warning("scan: no camera_info in store; cannot lift")
-            return self.present()
-        if end is None:
-            try:
-                end = float(color.last().ts)
-            except LookupError:
-                return self.present()  # nothing recorded yet
-        after = -float("inf")  # exclusive lower bound (catch-up must not refetch the boundary)
-        if start is None:
-            watermark = self._belief.last_fold_ts
-            if watermark > 0.0:
-                # Catch-up: fold everything STRICTLY AFTER the last folded frame — the
-                # boundary frame itself was already folded (re-detecting it wasted one
-                # full GPU frame per scan call).
-                start = watermark
-                after = watermark
-            elif initial_lookback_s is not None and initial_lookback_s > 0.0:
-                start = end - initial_lookback_s
-            else:
-                start = 0.0  # first scan: from the beginning of the recording
+            return belief.present()
+        window = self._resolve_window(belief, color, start, end, initial_lookback_s)
+        if window is None:
+            return belief.present()  # nothing recorded yet
+        start, end, after = window
 
-        # Materialize observation HANDLES only — reading obs.data here would JPEG-decode
-        # and pin every frame in the interval; only the selected ~13-19 % may decode.
-        # Pose-less frames (tf not yet up in the first ~1 s of a real recording) can't be
-        # placed in the target frame and are skipped — unless the recording itself is in
-        # the target frame (probed ONCE, from a single frame).
+        # Collect frame HANDLES only — obs.data would JPEG-decode and pin every frame;
+        # only the ~13-19% selected later decode. Pose-less frames can't be placed in the
+        # target frame, so skip them unless the recording is already in it (probed once).
+        interval = color.time_range(start, end)
+        if after > _NEG_INF:
+            interval = interval.after(after)  # catch-up: strict ts > watermark, pushed to SQL
         skipped = 0
         frames = []
         poseless_in_target: bool | None = None
-        for obs in color.time_range(start, end):
-            if obs.ts <= after:
-                continue
+        for obs in interval:
             if obs.pose is None:
                 if poseless_in_target is None:
                     frame_id = obs.data.frame_id or ""  # one decode, first pose-less frame only
@@ -240,7 +210,7 @@ class SceneScanner:
         if skipped:
             logger.info("scan: skipped %d frame(s) without a camera pose", skipped)
         if not frames:
-            return self.present()
+            return belief.present()
 
         # per-scan detection cache: ts → (objects, depth_m, camera_transform) | None
         cache: dict[float, tuple[list[Object], Any, Transform | None] | None] = {}
@@ -257,27 +227,28 @@ class SceneScanner:
             if got is None:
                 continue  # no matching depth frame — cannot lift or vote absence
             objects, depth_arr, camera_transform = got
-            self._belief.observe(
+            belief.observe(
                 objects,
                 frame_ts=obs.ts,
                 camera_transform=camera_transform,
                 camera_info=camera_info,
                 depth_m=depth_arr,
             )
-        return self.present()
+        return belief.present()
 
     def scan_recent(
         self,
         store: Store,
+        belief: WorldBelief,
         *,
         window: float,
         prompt: list[str] | None = None,
     ) -> list[Object]:
-        """Catch-up scan to the newest recorded frame. ``window`` bounds only the FIRST
-        scan's lookback (``<= 0`` = recording start); later calls fold the complete
-        interval since the previous scan."""
+        """Catch ``belief`` up to the newest frame; ``window`` caps only the first scan's
+        lookback (<=0 = recording start), later scans fold everything since the last."""
         return self.scan(
             store,
+            belief,
             prompt=prompt,
             initial_lookback_s=window if window > 0 else None,
         )
@@ -286,8 +257,7 @@ class SceneScanner:
 
     @staticmethod
     def _select_frames(frames: list[Any]) -> list[Any]:
-        """Coarse keyframes while the camera is still, dense while it moves — judged from
-        the recorded pose deltas (free and exact; no models involved)."""
+        """Coarse keyframes while still, dense while moving — judged from pose deltas alone."""
         selected = [frames[0]]
         last_kept = frames[0]
         for prev, cur in itertools.pairwise(frames):
@@ -309,9 +279,8 @@ class SceneScanner:
 
     @staticmethod
     def _refine(selected: list[Any], frames: list[Any], detect: Any) -> list[Any]:
-        """Bisect-insert midpoint frames wherever the detection label-set changes between
-        consecutive selected frames — scene events get dense coverage even when the
-        camera is static (a hand rearranging objects fires no pose trigger)."""
+        """Bisect-insert midpoints where the detected label-set changes between selected
+        frames — catches static scene events (e.g. rearranged objects) pose deltas miss."""
 
         by_ts = {f.ts: f for f in frames}
         ts_sorted = sorted(by_ts)
@@ -347,8 +316,7 @@ class SceneScanner:
     def _detect_frame(
         self, obs: Any, camera_info: CameraInfo, depth_stream: Any, depth_tolerance: float
     ) -> tuple[list[Object], Any, Transform | None] | None:
-        """Detector + NMS + 2D→3D lift + embeddings for one recorded frame, or None when
-        no depth frame lands within ``depth_tolerance``."""
+        """Detect + NMS + 2D→3D lift + embed one frame; None if no depth within tolerance."""
         color_img: Image = obs.data
         depth_img = self._nearest_depth(depth_stream, obs.ts, depth_tolerance)
         if depth_img is None:
@@ -365,15 +333,10 @@ class SceneScanner:
             camera_transform=camera_transform,
         )
         objects = [o for o in objects if float(o.confidence) >= self._detector_conf]
-        # Class-agnostic NMS across prompts (one region may fire several prompts) — keep
-        # the highest-confidence reading per region. Two rules, both physical:
-        #  - IoU > 0.5: the same region under two prompts.
-        #  - CONTAINMENT + 3D co-location (0.13 m sensor-noise envelope): a det mostly
-        #    inside a stronger det's bbox at the same lifted depth is a SUB-REGION
-        #    reading of the same surface (e.g. a cup's green print firing 'green can' —
-        #    label and appearance lie together; only per-frame geometry can call it).
-        #    Two rigid objects cannot co-locate in 3D; a real small object IN FRONT of a
-        #    big one keeps a different center depth and survives.
+        # Class-agnostic NMS across prompts (one region may fire several) — keep the
+        # highest-confidence det per region. Drop a det if it overlaps a kept one
+        # (IoU > 0.5), or sits mostly inside it AND at the same lifted depth (a sub-region
+        # of the same surface). A real object in front keeps a different depth and survives.
         objects.sort(key=lambda o: -float(o.confidence))
         kept: list[Object] = []
         for o in objects:
@@ -386,8 +349,7 @@ class SceneScanner:
                 kept.append(o)
         if kept:
             for o in kept:
-                # Border-touching bbox = PARTIAL view: lifted geometry is untrustworthy;
-                # the world model still credits identity/support but freezes geometry.
+                # Bbox on the frame edge = partial view: trust identity, freeze geometry.
                 x1, y1, x2, y2 = o.bbox
                 o.observation_partial = (
                     x1 <= 3 or y1 <= 3 or x2 >= color_img.width - 3 or y2 >= color_img.height - 3
@@ -397,8 +359,7 @@ class SceneScanner:
         return kept, depth_arr, camera_transform
 
     def _attach_embeddings(self, objects: list[Object], color_img: Image) -> None:
-        """Attach DINO identity embeddings to each object's crop (feeds the belief's
-        appearance galleries for re-ID); failures skip the frame, not crash it."""
+        """Attach DINO identity embeddings per object crop for re-ID; failures skip, not crash."""
         visual = self._get_embedders()
         if visual is None:
             return
@@ -425,11 +386,8 @@ class SceneScanner:
 
     @staticmethod
     def _nearest_depth(depth_stream: Any, ts: float, tolerance: float) -> Image | None:
-        """Nearest depth frame to ``ts``, converted to float32 meters (DEPTH format).
-
-        Genuinely nearest: ``at(...).first()`` returns the EARLIEST frame in the band
-        (insertion order), which is systematically ~tolerance stale exactly when the
-        camera moves. The band holds only a handful of handles; blobs stay lazy."""
+        """Nearest depth frame to ``ts`` as float32 meters. Truly nearest — not
+        ``at().first()``, which returns the earliest (stale) frame in the band when moving."""
         candidates = list(depth_stream.at(ts, tolerance))
         if not candidates:
             return None
@@ -442,12 +400,3 @@ class SceneScanner:
             cv = cv.astype("float32")
         return Image(data=cv, format=ImageFormat.DEPTH, frame_id=raw.frame_id, ts=raw.ts)
 
-    # ── queries ────────────────────────────────────────────────────────────────────
-
-    def present(self) -> list[Object]:
-        """Objects believed present now — see :meth:`WorldBelief.present` for semantics."""
-        return self._belief.present()
-
-    def close(self) -> None:
-        """Close the belief's history store (see :meth:`WorldBelief.close`)."""
-        self._belief.close()

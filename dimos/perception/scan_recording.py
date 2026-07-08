@@ -33,24 +33,19 @@ import argparse
 
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.detection.world_belief import WorldBelief, WorldBeliefConfig
 from dimos.perception.recall import build_frame_clip_index, index_stream_name, recall
 from dimos.perception.scene_scan import SceneScanner
-from dimos.robot.manipulators.xarm.worldbelief_recorder import xarm6_worldbelief_history_path
+from dimos.perception.worldbelief_module import worldbelief_history_path
 
 
 def _run_scan(store: SqliteStore, args: argparse.Namespace) -> None:
-    history = xarm6_worldbelief_history_path() if args.history else None
-    scanner = SceneScanner(
-        target_frame="world",
-        history_path=history,
-        min_frames=args.min_frames,
-        detector_conf=args.conf,
-    )
+    belief = WorldBelief(WorldBeliefConfig(min_frames=args.min_frames, history_path=args.history))
+    scanner = SceneScanner(target_frame="world", detector_conf=args.conf)
     prompt = args.prompt or None
-    # --window bounds the (single, fresh-scanner) scan's lookback; default = whole recording.
-    present = scanner.scan_recent(store, window=args.window, prompt=prompt)
+    # --window bounds the (single, fresh-belief) scan's lookback; default = whole recording.
+    present = scanner.scan_recent(store, belief, window=args.window, prompt=prompt)
     print(f"present objects: {len(present)}")
-    belief = scanner._belief
     for o in present:
         c = o.center
         print(
@@ -88,7 +83,8 @@ def main() -> None:
     p.add_argument("--recall", help="recall text query instead of a scan")
     p.add_argument("--min-frames", type=int, default=3, dest="min_frames")
     p.add_argument("--conf", type=float, default=0.6, help="detector confidence threshold")
-    p.add_argument("--history", action="store_true", help="use the shared cross-session history db")
+    p.add_argument("--history", nargs="?", const=worldbelief_history_path(), default=None,
+                   help="history db path (bare flag = shared default)")
     p.add_argument("--snapshot", help="save the recalled frame to this path")
     args = p.parse_args()
 

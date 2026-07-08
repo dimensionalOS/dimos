@@ -31,6 +31,3 @@ from dimos.robot.manipulators.xarm.blueprints.perception import xarm_perception 
 from dimos.robot.manipulators.xarm.blueprints.simulation import (
     xarm_perception_sim as xarm_perception_sim,
 )
-from dimos.robot.manipulators.xarm.blueprints.worldbelief import (
-    xarm6_worldbelief as xarm6_worldbelief,
-)

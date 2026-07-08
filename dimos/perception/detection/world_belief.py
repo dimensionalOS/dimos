@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass, field
 import math
 from typing import TYPE_CHECKING, Any
 import uuid
@@ -22,6 +23,7 @@ import uuid
 import numpy as np
 
 from dimos.models.embedding.base import Embedding
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.absence import ABSENT, PRESENT, classify_visibility
@@ -30,11 +32,15 @@ from dimos.perception.detection.identity_features import (
     gallery_cos,
     normalize_embedding,
 )
+from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from numpy.typing import NDArray
 
+    from dimos.msgs.geometry_msgs.Pose import Pose
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
     from dimos.perception.detection.type.detection3d.object import Object
@@ -44,29 +50,46 @@ logger = setup_logger()
 TENTATIVE = "tentative"  # seen enough to report, but NOT verified from multiple viewpoints
 CONFIRMED = "confirmed"  # seen from >= min_viewpoints distinct camera vantages — safe to act on
 
-# How the entity's identity was last established 
+# How the entity's identity was last established
 BASIS_NEW = "new"
 BASIS_TRACKED = "tracked"
 BASIS_REACQUIRED = "reacquired"
 BASIS_TWIN_ANCHOR = "twin-anchor"
 BASIS_RESTORED = "restored"  # past-session identity restored from the gallery store
 
-Viewpoint = tuple["NDArray[np.float64]", "NDArray[np.float64]"]  # (camera position, forward)
-
-_CANDIDATE_TTL_S = 5.0  # never-established junk is dropped after this long unseen
-_MAX_ABSENT = 128  # geometric death never times out, so cap retained corpses
-_POSITION_WINDOW = 9  # running-median window for the entity center
+Viewpoint = tuple[Vector3, Vector3]  # (camera position, forward direction)
 
 
-def camera_viewpoint(world_from_camera: NDArray[np.float64]) -> Viewpoint:
-    """The camera vantage (world position, forward direction) from its pose matrix.
+class WorldBeliefConfig(BaseConfig):
+    """Tuning constants for the identity core; each consuming rule's docstring gives the
+    rationale."""
 
-    Derived purely from the (accurate, FK/tf-based) camera pose — never the noisy object
-    center — so a static camera yields a *constant* vantage that cannot be jittered into a
-    second viewpoint.
-    """
-    mat = np.asarray(world_from_camera, dtype=np.float64)
-    return mat[:3, 3].copy(), mat[:3, 2].copy()  # translation, +z axis (viewing direction)
+    radius_base: float = 0.18
+    radius_growth: float = 0.15  # match radius growth per second unobserved
+    radius_cap: float = 0.40
+    mint_guard: float = 0.13  # noise envelope: max static-lift jump
+    label_override_cos: float = 0.8
+    reacq_cos: float = 0.5
+    reacq_margin: float = 0.05
+    min_frames: int = 3  # establishment: frames AND span both required
+    min_span_s: float = 1.5
+    absent_threshold: int = 2  # depth-sees-through votes before state flips to absent
+    min_viewpoints: int = 2  # distinct vantages for `confirmed` trust
+    viewpoint_angle_deg: float = 10.0
+    min_baseline_m: float = 0.05
+    gallery_novelty: float = 0.9
+    gallery_max: int = 8
+    candidate_ttl_s: float = 5.0  # never-established junk is dropped after this long unseen
+    max_absent: int = 128  # geometric death never times out, so cap retained corpses
+    position_window: int = 9  # running-median window for the entity center
+    frame_id: str = "world"  # frame the fold (and every track position) lives in
+    history_path: str | None = None  # cross-session gallery store; None = RAM only
+
+
+def camera_viewpoint(pose: Pose) -> Viewpoint:
+    """Camera vantage (world position, forward) from the FK/tf pose — never the noisy
+    object center, so a static camera can't jitter into a second viewpoint."""
+    return pose.position, pose.orientation.rotate_vector(Vector3.unit_z())
 
 
 def is_novel_viewpoint(
@@ -80,16 +103,27 @@ def is_novel_viewpoint(
     pos, fwd = viewpoint
     cos_thresh = math.cos(math.radians(angle_deg))
     for prev_pos, prev_fwd in existing:
-        near_in_space = float(np.linalg.norm(pos - prev_pos)) < min_baseline_m
-        near_in_angle = float(np.dot(fwd, prev_fwd)) > cos_thresh
+        near_in_space = pos.distance(prev_pos) < min_baseline_m
+        near_in_angle = fwd.dot(prev_fwd) > cos_thresh
         if near_in_space and near_in_angle:
             return False
     return True
 
 
+def _dist(a: Vector3 | PointStamped, b: Vector3 | PointStamped) -> float:
+    """Euclidean distance across the position types (bare ``Point`` has no helpers)."""
+    return math.dist((a.x, a.y, a.z), (b.x, b.y, b.z))
+
+
+def _stamp(center: Vector3, ts: float, frame_id: str) -> PointStamped:
+    p = PointStamped(center.x, center.y, center.z, ts=ts, frame_id=frame_id)
+    p.ts = ts  # the ctor swaps ts=0.0 for wall-clock; fold time is authoritative
+    return p
+
+
 def _appearance_vec(obj: Object) -> NDArray[np.float32] | None:
-    """The object's identity embedding: DINO visual preferred (what the gates were
-    measured on), CLIP semantic as fallback when no visual embedder is configured."""
+    """The object's identity embedding: DINO visual preferred (the gates are calibrated
+    for it), CLIP semantic as fallback when no visual embedder is configured."""
     for attr in ("visual_embedding", "embedding"):
         vec = normalize_embedding(getattr(obj, attr, None))
         if vec is not None:
@@ -97,43 +131,59 @@ def _appearance_vec(obj: Object) -> NDArray[np.float32] | None:
     return None
 
 
+@dataclass(slots=True)
 class _Track:
     """One believed entity: the folded Object plus its identity/lifecycle state."""
 
-    __slots__ = (
-        "absent_votes", "basis", "established", "first_ts", "gallery", "label_counts",
-        "last_pos", "last_seen", "latest_emb", "n_frames", "obj", "positions",
-        "sizes", "state", "viewpoints",
-    )
+    # ── physical state: where/what the entity is ──────────────────────────────────
+    obj: Object
+    # Association anchors on the LAST raw position (follows a carried object); the
+    # REPORTED center is the running median. The stamp doubles as last-seen time.
+    last_pos: PointStamped
+    positions: list[Vector3]
+    sizes: list[float]
+    # ── identity evidence: how the entity is recognized / deduplicated ────────────
+    label_counts: Counter[str]
+    gallery: list[NDArray[np.float32]] = field(default_factory=list)
+    latest_emb: NDArray[np.float32] | None = None
+    viewpoints: list[Viewpoint] = field(default_factory=list)
+    basis: str = BASIS_NEW
+    # ── lifecycle ──────────────────────────────────────────────────────────────────
+    first_ts: float = 0.0
+    n_frames: int = 1
+    established: bool = False
+    state: str = "active"  # "active" | "absent"
+    absent_votes: int = 0
 
-    def __init__(self, obj: Object, ts: float, viewpoint: Viewpoint | None, basis: str) -> None:
-        self.obj = obj
-        self.label_counts: Counter[str] = Counter([obj.name])
-        self.first_ts = ts
-        self.last_seen = ts
-        self.n_frames = 1
-        # Association anchors on the LAST raw observed position (it follows a carried
-        # object frame-to-frame); the REPORTED center is the running median (stable).
-        self.last_pos: NDArray[np.float64] = obj.center.to_numpy()
-        self.positions: list[NDArray[np.float64]] = [obj.center.to_numpy()]
+    @classmethod
+    def from_observation(
+        cls, obj: Object, ts: float, viewpoint: Viewpoint | None, basis: str, frame_id: str
+    ) -> _Track:
         try:
-            self.sizes: list[float] = [float(max(obj.size.x, obj.size.y, obj.size.z))]
+            sizes = [float(max(obj.size.x, obj.size.y, obj.size.z))]
         except Exception:
-            self.sizes = []
-        self.gallery: list[NDArray[np.float32]] = []
-        self.latest_emb: NDArray[np.float32] | None = None
-        self.viewpoints: list[Viewpoint] = [viewpoint] if viewpoint is not None else []
-        self.absent_votes = 0
-        self.state = "active"  # "active" | "absent"
-        self.established = False
-        self.basis = basis
+            sizes = []
+        return cls(
+            obj=obj,
+            last_pos=_stamp(obj.center, ts, frame_id),
+            positions=[obj.center],
+            sizes=sizes,
+            label_counts=Counter([obj.name]),
+            viewpoints=[viewpoint] if viewpoint is not None else [],
+            basis=basis,
+            first_ts=ts,
+        )
+
+    @property
+    def last_seen(self) -> float:
+        return self.last_pos.ts
 
     @property
     def modal_label(self) -> str:
         return self.label_counts.most_common(1)[0][0]
 
     def full_gallery(self) -> list[NDArray[np.float32]]:
-        """Diverse views UNION the latest view — re-acquire cos was measured over this
+        """Diverse views plus the latest — the set the re-acquire gate scores against
         (the latest view catches a fresh face the novelty gate hasn't kept yet)."""
         return list(self.gallery) if self.latest_emb is None else [*self.gallery, self.latest_emb]
 
@@ -185,8 +235,8 @@ class _GalleryStore:
                 tags={
                     "object_id": eid,
                     "name": obj.name,
-                    # the entity's CURRENT running-median center — a raw (possibly depth-
-                    # mode flipped) sample stored here nearly broke a cross-session restore
+                    # the entity's CURRENT running-median center, never a raw sample
+                    # (raw samples can be depth-mode flipped)
                     "pos": " ".join(f"{c:.4f}" for c in position),
                     "n": str(int(n_frames)),  # sighting support (restore arbitration)
                 },
@@ -197,16 +247,14 @@ class _GalleryStore:
 
     def lookup(self, obj: Object) -> dict[str, tuple[float, str, NDArray[np.float64] | None, int]]:
         """``{object_id: (best_cos, label, stored_position | None, support)}`` over the
-        persisted views. The SCORE is the max cosine over an id's views, but the
-        label/position/support come from its NEWEST view (max ``n`` — monotonic per id):
-        taking the max-cos view's tags handed a returning object the stale early-view
-        support/position and inverted the twin support-ratio arbitration (verified)."""
+        persisted views. Score = max cosine per id; metadata from the newest view
+        (max-cos hands back stale early-view tags; ``n`` resets to 1 on restore)."""
         try:
             vec = _appearance_vec(obj)
             if vec is None:
                 return {}
             best_cos: dict[str, float] = {}
-            newest: dict[str, tuple[int, str, NDArray[np.float64] | None]] = {}
+            newest: dict[str, tuple[float, str, NDArray[np.float64] | None, int]] = {}
             for hit in self._stream_for(obj, vec).search(Embedding(vec), k=64).to_list():
                 eid = hit.tags.get("object_id")
                 if eid is None:
@@ -224,10 +272,11 @@ class _GalleryStore:
                     support = int(hit.tags.get("n") or 1)
                 except ValueError:
                     support = 1
-                if eid not in newest or support >= newest[eid][0]:
-                    newest[eid] = (support, hit.tags.get("name") or "", pos)
+                appended = float(hit.ts or 0.0)
+                if eid not in newest or appended >= newest[eid][0]:
+                    newest[eid] = (appended, hit.tags.get("name") or "", pos, support)
             return {
-                eid: (best_cos[eid], newest[eid][1], newest[eid][2], newest[eid][0])
+                eid: (best_cos[eid], newest[eid][1], newest[eid][2], newest[eid][3])
                 for eid in best_cos
             }
         except Exception as e:
@@ -251,34 +300,12 @@ class _GalleryStore:
 
 
 class WorldBelief:
-    """Identity core of the complete adaptive fold. See the module docstring for the four
-    association rules and the measurements behind every threshold."""
+    """Identity core: folds lifted detections into stable identities via four rules —
+    match (:meth:`_match_frame`), envelope (:meth:`_envelope_neighbours`), re-acquire
+    (:meth:`_reacquire_candidate`), mint (:meth:`_insert`) — plus geometric absence."""
 
-    def __init__(
-        self,
-        *,
-        min_frames: int = 3,
-        min_span_s: float = 1.5,
-        absent_threshold: int = 2,
-        min_viewpoints: int = 2,
-        history_path: str | None = None,
-    ) -> None:
-        # Measured constants (module docstring has the rationale for each).
-        self._radius_base = 0.18
-        self._radius_growth = 0.15
-        self._radius_cap = 0.40
-        self._mint_guard = 0.13
-        self._label_override_cos = 0.8
-        self._reacq_cos = 0.5
-        self._reacq_margin = 0.05
-        self._min_frames = min_frames
-        self._min_span = min_span_s
-        self._absent_threshold = absent_threshold
-        self._min_viewpoints = min_viewpoints
-        self._viewpoint_angle_deg = 10.0
-        self._min_baseline_m = 0.05
-        self._gallery_novelty = 0.9
-        self._gallery_max = 8
+    def __init__(self, config: WorldBeliefConfig | None = None) -> None:
+        self._cfg = config or WorldBeliefConfig()
         self._tracks: dict[str, _Track] = {}
         # Fold watermark: strictly-forward time is the whole idempotency story — a frame
         # at or before the newest folded ts is skipped entirely.
@@ -286,11 +313,12 @@ class WorldBelief:
         # Appearance persistence over memory2 vec0 (cross-session by reopening the same
         # path). None → within-session identity only (RAM galleries still work).
         self._gallery = (
-            _GalleryStore(history_path, novelty=0.9) if history_path is not None else None
+            _GalleryStore(self._cfg.history_path, novelty=self._cfg.gallery_novelty)
+            if self._cfg.history_path is not None else None
         )
 
     def _radius(self, dt: float) -> float:
-        return min(self._radius_base + self._radius_growth * max(dt, 0.0), self._radius_cap)
+        return min(self._cfg.radius_base + self._cfg.radius_growth * max(dt, 0.0), self._cfg.radius_cap)
 
     @property
     def last_fold_ts(self) -> float:
@@ -317,16 +345,12 @@ class WorldBelief:
         self._now = ts
         # No camera pose → no geometric evidence: identity/support still folds, but no
         # viewpoint credit and no absence voting through a fictitious extrinsic.
-        posed = camera_transform is not None
-        world_from_camera = (
-            camera_transform.to_matrix() if camera_transform is not None
-            else np.eye(4, dtype=np.float64)
+        viewpoint = (
+            camera_viewpoint(camera_transform.to_pose()) if camera_transform is not None else None
         )
-        viewpoint = camera_viewpoint(world_from_camera) if posed else None
         for obj in objects:
-            # Replace the OBB-midpoint center with the robust point-median BEFORE any
-            # association, so matching, folding, and reporting share one estimate
-            # (midpoint excursions measured at 135 mm on a static can; median < 5 mm).
+            # Point-median center BEFORE association, so matching/folding/reporting share
+            # one estimate (the OBB midpoint swings ~135 mm where the median stays <5 mm).
             obj.center = self._observation_center(obj)
 
         matched, unmatched, seen = self._match_frame(objects, ts)
@@ -336,8 +360,8 @@ class WorldBelief:
             track = self._acquire(obj, ts, viewpoint, seen)
             if track is not None:
                 seen.add(id(track))  # a re-acquired/minted track was observed this frame
-        if posed:
-            self._vote_absence(seen, camera_info, world_from_camera, depth_m)
+        if camera_transform is not None:
+            self._vote_absence(seen, camera_info, camera_transform, depth_m)
         self._prune(ts)
 
     def _match_frame(
@@ -349,14 +373,13 @@ class WorldBelief:
         for track in active:
             radius = self._radius(ts - track.last_seen)
             for obj in objects:
-                dist = float(np.linalg.norm(obj.center.to_numpy() - track.last_pos))
+                dist = _dist(obj.center, track.last_pos)
                 if dist > radius:
                     continue
-                # A det inside a neighbour's envelope is never evidence for a third
-                # party reaching in on its dt-grown radius (a det-starved track would
-                # otherwise camp on a neighbour's label misfires — observed live).
-                if dist > self._radius_base and any(
-                    cos is None or cos >= self._reacq_cos or obj.name == other.modal_label
+                # A det in a neighbour's envelope never feeds a third party's dt-grown
+                # radius (a det-starved track would camp on the neighbour's misfires).
+                if dist > self._cfg.radius_base and any(
+                    cos is None or cos >= self._cfg.reacq_cos or obj.name == other.modal_label
                     for cos, other in self._envelope_neighbours(obj, exclude=track)
                 ):
                     continue
@@ -365,62 +388,52 @@ class WorldBelief:
         used_tracks: set[int] = set()
         used_objs: set[int] = set()
         matched: list[tuple[_Track, Object]] = []
-        for _dist, track, obj in pairs:
+        for _d, track, obj in pairs:
             if id(track) in used_tracks or id(obj) in used_objs:
                 continue
             cos = gallery_cos(_appearance_vec(obj), track.full_gallery())
             if obj.name != track.modal_label:
                 # Label flip: only a strong appearance match overrides (same object across
                 # a 180° rotation scores 0.94 median; cross-object max 0.334).
-                if cos is None or cos < self._label_override_cos:
+                if cos is None or cos < self._cfg.label_override_cos:
                     continue
-            elif cos is not None and cos < self._reacq_cos:
-                # Appearance-contradiction veto: the label agrees but the crop is clearly
-                # foreign (a cup misfiring as 'green can' scores max ~0.35 against the
-                # can's gallery, while a continuously-tracked object stays high because
-                # the gallery ingests every accepted view). Labels can lie — without this
-                # veto a det-starved track parks next to a neighbour and lives off its
-                # misfires, poisoning its own gallery (observed on the benchmark).
+            elif cos is not None and cos < self._cfg.reacq_cos:
+                # Appearance-contradiction veto: label agrees but the crop is clearly
+                # foreign — without it a det-starved track lives off a neighbour's
+                # misfires and poisons its own gallery.
                 continue
             used_tracks.add(id(track))
             used_objs.add(id(obj))
             matched.append((track, obj))
         return matched, [o for o in objects if id(o) not in used_objs], used_tracks
 
-    def _envelope_neighbours(self, obj: Object, exclude: _Track | None = None):
-        """Yield ``(appearance_cos | None, track)`` for every established active track
-        whose noise envelope (0.13 m, the measured max static lift jump) contains this
-        detection.
-
-        THE core arbitration primitive: a detection standing on an established object's
-        spot is ambiguous by physics — it may simply be that object, whatever label or
-        look the detector gave it this frame. The co-located object is therefore the
-        null hypothesis, and every other interpretation of the detection (a far track
-        claiming it, an absent identity re-acquiring it, a new object being minted from
-        it) must beat it. The three call sites are those three interpretations."""
-        center = obj.center.to_numpy()
+    def _envelope_neighbours(
+        self, obj: Object, exclude: _Track | None = None
+    ) -> Iterator[tuple[float | None, _Track]]:
+        """Yield ``(appearance_cos | None, track)`` per established active track whose
+        noise envelope (mint_guard) contains this detection. The core arbitration
+        primitive: the co-located object is the null hypothesis every rival reading
+        (far-track claim, absent re-acquire, new mint) must beat."""
         vec = _appearance_vec(obj)
         for track in self._tracks.values():
             if track is exclude or track.state != "active" or not track.established:
                 continue
-            if float(np.linalg.norm(center - track.last_pos)) > self._mint_guard:
+            if _dist(obj.center, track.last_pos) > self._cfg.mint_guard:
                 continue
             yield gallery_cos(vec, track.full_gallery()), track
 
     def _acquire(
         self, obj: Object, ts: float, viewpoint: Viewpoint | None, seen_tracks: set[int]
     ) -> _Track | None:
-        """An unmatched detection: re-acquire an absent/past-session identity, or mint a
-        new one (unless the mint-guard says it is an established neighbour misfiring).
-        Returns the track the detection landed on (None when suppressed)."""
+        """Re-acquire an absent/past-session identity for an unmatched detection, or mint
+        a new one; returns the landing track (None = suppressed as a neighbour misfire)."""
         eid, basis, win_cos = self._reacquire_candidate(obj)
-        if eid is not None and any(
+        if eid is not None and win_cos is not None and any(  # win_cos clause narrows for mypy only
             cos is not None and cos >= win_cos for cos, _t in self._envelope_neighbours(obj)
         ):
-            # Relative evidence: a det in a neighbour's envelope re-acquires an absent
-            # id only if it resembles that id MORE than the neighbour (blocks a
-            # neighbour's borderline misfire from stealing an orphaned id; a true
-            # return at cos-to-self > the 0.843 cross-object ceiling still passes).
+            # Relative evidence: re-acquire inside a neighbour's envelope only when the
+            # det resembles the absent id MORE than the neighbour — a true return passes,
+            # a borderline misfire can't steal an orphaned id.
             eid = None
         if eid is not None and basis is not None:  # second clause narrows for mypy only
             track = self._tracks.get(eid)
@@ -441,33 +454,28 @@ class WorldBelief:
                 win_cos,
             )
             return self._tracks[eid]
-        # Mint-guard: no new object inside an established neighbour's envelope when the
-        # det plausibly IS that neighbour misfiring (same label, or appearance not
-        # clearly foreign — a truly different-looking replacement may still mint). A
-        # co-detected neighbour is the exception: co-detection is evidence of a second
-        # object (a placed twin must mint) — unless the det is a different-label clone
-        # of it (its own misfire under another prompt).
+        # Mint-guard: don't mint inside an established neighbour's envelope when the det
+        # plausibly IS that neighbour (same label, or look not clearly foreign). A
+        # co-detected neighbour proves a second object (a placed twin mints) — unless the
+        # det is its different-label clone (a misfire under another prompt).
         for cos, track in self._envelope_neighbours(obj):
             if id(track) in seen_tracks:
-                if obj.name != track.modal_label and cos is not None and cos >= self._reacq_cos:
+                if obj.name != track.modal_label and cos is not None and cos >= self._cfg.reacq_cos:
                     logger.debug("belief: misfire suppressed near %s (%s)", track.obj.object_id[:8], obj.name)
                     return None
                 continue
-            if cos is None or cos >= self._reacq_cos or obj.name == track.modal_label:
+            if cos is None or cos >= self._cfg.reacq_cos or obj.name == track.modal_label:
                 logger.debug("belief: mint suppressed near %s (%s)", track.obj.object_id[:8], obj.name)
                 return None
         self._insert(obj, ts, viewpoint, basis=BASIS_NEW)
         return self._tracks[obj.object_id]
 
     def _reacquire_candidate(self, obj: Object) -> tuple[str | None, str | None, float | None]:
-        """``(entity_id, basis, winning_cos)`` for an absent or past-session identity this
-        detection re-acquires, or ``(None, None, None)``.
-
-        Gate: best gallery cos ≥ 0.5 (measured true re-acquires at 0.66-0.78 on
-        mid-placement crops — 0.8 would refuse all of them) with best-minus-second margin
-        ≥ 0.05. A same-label near-tie is the twin case: appearance is undecidable
-        (inter-twin cos up to 0.905), so anchor to the nearer candidate by position and
-        say so via basis ``twin-anchor``. Differently-labeled near-ties are refused."""
+        """``(entity_id, basis, winning_cos)`` for the absent/past-session identity this
+        detection re-acquires, else ``(None, None, None)``. Gate: cos ≥ reacq_cos with
+        margin ≥ reacq_margin (true re-acquires land ~0.66-0.78; 0.8 refuses them all).
+        Same-label near-ties are twins (inter-twin cos up to 0.905) — position decides;
+        different-label near-ties are refused."""
         vec = _appearance_vec(obj)
         if vec is None:
             return None, None, None
@@ -498,25 +506,23 @@ class WorldBelief:
             key=lambda r: -r[0],
         )
         best_cos, best_eid, best_label, best_pos, best_n = ranked[0]
-        if best_cos < self._reacq_cos:
+        if best_cos < self._cfg.reacq_cos:
             return None, None, None
         # Same acceptance rule as the matcher: label agreement OR appearance >= 0.8
-        # (blocks cross-label id theft in the measured 0.56-0.843 same-shape band).
-        if obj.name != best_label and best_cos < self._label_override_cos:
+        # (blocks cross-label id theft between same-shape objects).
+        if obj.name != best_label and best_cos < self._cfg.label_override_cos:
             logger.debug(
                 "belief: re-acquire refused — label %r vs candidate %r at cos %.2f (< %.2f override)",
-                obj.name, best_label, best_cos, self._label_override_cos,
+                obj.name, best_label, best_cos, self._cfg.label_override_cos,
             )
             return None, None, None
-        if len(ranked) == 1 or best_cos - ranked[1][0] >= self._reacq_margin:
+        if len(ranked) == 1 or best_cos - ranked[1][0] >= self._cfg.reacq_margin:
             return best_eid, BASIS_REACQUIRED, best_cos
         second_cos, second_eid, second_label, second_pos, second_n = ranked[1]
-        if second_label == best_label and second_cos >= self._reacq_cos:
-            # Same-label near-tie. REAL twins carry comparable sighting support and are
-            # decided by position; a lopsided support ratio (≥ 3×) means the lightweight
-            # is a parasite alias of the heavyweight (e.g. a hand-split double-detection
-            # shadow minted during placement) — the accumulated identity wins, wherever
-            # the alias's stale stored position happens to sit.
+        if second_label == best_label and second_cos >= self._cfg.reacq_cos:
+            # Same-label near-tie: real twins carry comparable support and position
+            # decides; a ≥3× support skew means the lightweight is a parasite alias
+            # (split-detection shadow) — the accumulated identity wins regardless.
             if best_n >= 3 * second_n or second_n >= 3 * best_n:
                 return (best_eid if best_n >= second_n else second_eid), BASIS_TWIN_ANCHOR, best_cos
             # Twins: position decides. Requires stored positions for both candidates.
@@ -528,7 +534,7 @@ class WorldBelief:
             ]
             if dists:
                 dist, eid = min(dists)
-                if dist <= self._radius_cap:
+                if dist <= self._cfg.radius_cap:
                     return eid, BASIS_TWIN_ANCHOR, best_cos
         logger.debug(
             "belief: re-acquire refused (%s: %.3f vs %s: %.3f)",
@@ -549,86 +555,74 @@ class WorldBelief:
         while force_id is None and eid in self._tracks:  # guard the (rare) id collision
             eid = uuid.uuid4().hex[:8]
         obj.object_id = eid  # the entity IS this Object; later folds accumulate into it
-        track = _Track(obj, ts, viewpoint, basis)
+        track = _Track.from_observation(obj, ts, viewpoint, basis, self._cfg.frame_id)
         track.established = self._is_established(track, ts)  # true only for 1-frame/0-span configs
-        track.ingest_appearance(obj, self._gallery_novelty, self._gallery_max)
+        track.ingest_appearance(obj, self._cfg.gallery_novelty, self._cfg.gallery_max)
         self._tracks[eid] = track
         if self._gallery is not None and track.established:
             self._gallery.remember(eid, obj, obj.center.to_numpy(), track.n_frames)
 
     def _is_established(self, track: _Track, ts: float) -> bool:
-        return track.n_frames >= self._min_frames and (ts - track.first_ts) >= self._min_span
+        return track.n_frames >= self._cfg.min_frames and (ts - track.first_ts) >= self._cfg.min_span_s
 
     def _hit(self, track: _Track, obj: Object, ts: float, viewpoint: Viewpoint | None, basis: str) -> None:
         was_absent = track.state == "absent"
         track.state = "active"
         track.absent_votes = 0
-        track.last_seen = max(track.last_seen, ts)
         track.n_frames += 1
         track.label_counts[obj.name] += 1
         track.basis = basis
         if not track.established:
             track.established = self._is_established(track, ts)
-        track.ingest_appearance(obj, self._gallery_novelty, self._gallery_max)
-        new_pos = obj.center.to_numpy()
-        # The association anchor follows EVERY accepted observation — even a geometry-
-        # suspect one. Freezing it while last_seen resets dt left tracks anchored at a
-        # stale spot with a shrunken radius (verified: a partial-view re-acquire kept
-        # the anchor at the absence-confirmed old spot and the next clean detection
-        # minted a fork of the identity).
-        track.last_pos = new_pos
+        track.ingest_appearance(obj, self._cfg.gallery_novelty, self._cfg.gallery_max)
+        new_pos = obj.center
+        # The anchor follows EVERY accepted observation, even geometry-suspect ones —
+        # a frozen anchor with a reset dt forks the identity on the next clean detection.
+        track.last_pos = _stamp(new_pos, max(track.last_seen, ts), self._cfg.frame_id)
         suspect = self._geometry_suspect(track, obj)
         if suspect and was_absent:
-            # Partial-view re-acquire: the geometry is too poor to FOLD, but an
-            # imprecise observed position strictly beats reporting the old spot that
-            # absence voting already proved empty (same for the accumulated cloud).
+            # Partial-view re-acquire: too poor to fold, but an imprecise position beats
+            # reporting the old spot absence voting already proved empty.
             track.positions = [new_pos]
             track.obj.center = Vector3(new_pos)
             self._reset_cloud(track.obj, obj)
         if not suspect:
             entity = track.obj
             entity.update_object(obj)  # latest size/pose bookkeeping
-            # The entity's cloud is its FRESHEST observed surface — always paired with
-            # the reported detection box. (Accumulating a fused multi-view cloud was
-            # speculation nothing consumes yet; it bought a movement-trail artifact and
-            # unbounded growth. A consumer that wants fusion can fold it from the
-            # recording — everything is stored.)
+            # Cloud = freshest observed surface, not fused multi-view accumulation (fusion
+            # bought only a movement-trail artifact; consumers can re-fold it from the recording).
             self._reset_cloud(entity, obj)
             try:
                 track.sizes.append(float(max(obj.size.x, obj.size.y, obj.size.z)))
-                del track.sizes[:-_POSITION_WINDOW]
+                del track.sizes[:-self._cfg.position_window]
             except Exception:
                 pass
             positions = track.positions
-            if was_absent and float(np.linalg.norm(positions[-1] - new_pos)) > self._radius_base:
+            if was_absent and positions[-1].distance(new_pos) > self._cfg.radius_base:
                 # Re-acquired at a NEW spot: stale pre-departure positions must not
-                # outvote the return (probe-confirmed ghost at the old empty spot).
+                # outvote the return (would report a ghost at the old empty spot).
                 positions.clear()
             positions.append(new_pos)
-            del positions[:-_POSITION_WINDOW]
-            # Re-anchor on a genuine move: when the last 3 observations agree with each
-            # other but ALL disagree with the running median, the object has moved —
-            # reset the window instead of letting old positions outvote the new spot.
+            del positions[:-self._cfg.position_window]
+            # Genuine move: the last 3 observations agree with each other but not the
+            # median — reset the window so old positions can't outvote the new spot.
             if len(positions) >= 3:
                 last3 = positions[-3:]
-                med = np.median(np.asarray(positions), axis=0)
-                coherent = all(
-                    float(np.linalg.norm(p - last3[-1])) < 0.5 * self._radius_base for p in last3
-                )
-                moved = all(float(np.linalg.norm(p - med)) > self._radius_base for p in last3)
+                med = Vector3(np.median(np.asarray([p.to_numpy() for p in positions]), axis=0))
+                coherent = all(p.distance(last3[-1]) < 0.5 * self._cfg.radius_base for p in last3)
+                moved = all(p.distance(med) > self._cfg.radius_base for p in last3)
                 if coherent and moved:
                     track.positions = positions = list(last3)
-            entity.center = Vector3(np.median(np.asarray(positions), axis=0))
-        # identity/support still counts on geometry-suspect frames (partial view, mask
-        # bleed) — we saw the object; we just don't trust this frame's geometry.
+            entity.center = Vector3(np.median(np.asarray([p.to_numpy() for p in positions]), axis=0))
+        # Identity/support still counts on geometry-suspect frames (partial view, mask
+        # bleed): the object was seen; only this frame's geometry is untrusted.
         if viewpoint is not None and is_novel_viewpoint(
             viewpoint, track.viewpoints,
-            min_baseline_m=self._min_baseline_m, angle_deg=self._viewpoint_angle_deg,
+            min_baseline_m=self._cfg.min_baseline_m, angle_deg=self._cfg.viewpoint_angle_deg,
         ):
             track.viewpoints.append(viewpoint)  # genuinely new vantage → trust credit
-        # Only ESTABLISHED identities persist to the store: a junk candidate's views must
-        # never become restorable in a later session. (Its pre-establishment views stay
-        # in the RAM gallery, so within-session re-acquire loses nothing.)
+        # Only ESTABLISHED identities persist: junk candidates must never be restorable
+        # next session (pre-establishment views stay in the RAM gallery).
         if self._gallery is not None and track.established:
             self._gallery.remember(track.obj.object_id, obj, track.obj.center.to_numpy(), track.n_frames)
 
@@ -655,10 +649,9 @@ class WorldBelief:
         return Vector3(np.median(pts, axis=0))
 
     def _geometry_suspect(self, track: _Track, obj: Object) -> bool:
-        """True when this observation's geometry should not be folded (identity/support
-        still counts): bbox touches the image border (partial view) or the measured size
-        is wildly larger than the entity's running median (mask bleed / motion blur —
-        median reference, so an escalating bleed can't ratchet the gate open)."""
+        """True when this observation's geometry must not fold (identity still counts):
+        partial view (border bbox), or size far above the running median (mask bleed —
+        median reference, so escalating bleed can't ratchet the gate open)."""
         if getattr(obj, "observation_partial", False):
             return True
         try:
@@ -674,7 +667,7 @@ class WorldBelief:
         self,
         matched_tracks: set[int],
         camera_info: CameraInfo,
-        world_from_camera: NDArray[np.float64],
+        world_from_camera: Transform,
         depth_m: NDArray[np.float32],
     ) -> None:
         for track in self._tracks.values():
@@ -692,7 +685,7 @@ class WorldBelief:
             )
             if verdict == ABSENT:
                 track.absent_votes += 1
-                if track.absent_votes >= self._absent_threshold:
+                if track.absent_votes >= self._cfg.absent_threshold:
                     track.state = "absent"
                     logger.info(
                         "belief: %s (%s) absent — depth saw through its spot %d time(s)",
@@ -704,26 +697,24 @@ class WorldBelief:
 
     def _prune(self, ts: float) -> None:
         """Junk hygiene (not lifecycle): drop never-established candidates unseen for
-        ``_CANDIDATE_TTL_S``, and cap retained absent corpses at ``_MAX_ABSENT``."""
+        ``candidate_ttl_s``, and cap retained absent corpses at ``max_absent``."""
         stale = [
             eid for eid, t in self._tracks.items()
-            if not t.established and (ts - t.last_seen) > _CANDIDATE_TTL_S
+            if not t.established and (ts - t.last_seen) > self._cfg.candidate_ttl_s
         ]
         for eid in stale:
             del self._tracks[eid]
         absent = [eid for eid, t in self._tracks.items() if t.state == "absent"]
-        if len(absent) > _MAX_ABSENT:
-            for eid in sorted(absent, key=lambda e: self._tracks[e].last_seen)[: len(absent) - _MAX_ABSENT]:
+        if len(absent) > self._cfg.max_absent:
+            for eid in sorted(absent, key=lambda e: self._tracks[e].last_seen)[: len(absent) - self._cfg.max_absent]:
                 del self._tracks[eid]
 
     # ── queries ───────────────────────────────────────────────────────────────────
 
     def present(self, *, min_viewpoints: int | None = None) -> list[Object]:
-        """Believed-present objects: established and not geometrically absent.
-
-        ``min_viewpoints`` filters to viewpoint-verified objects. Returned objects are
-        the live internal entities — treat as read-only. Per-object trust via
-        :meth:`trust_of`, identity basis via :meth:`basis_of`."""
+        """Believed-present objects (established, not geometrically absent); returns the
+        live internal entities — treat as read-only. Trust via :meth:`trust_of`, identity
+        basis via :meth:`basis_of`."""
         return [
             track.obj for track in self._tracks.values()
             if track.state == "active" and track.established
@@ -735,7 +726,7 @@ class WorldBelief:
         track = self._tracks.get(object_id)
         if track is None or track.state != "active" or not track.established:
             return None
-        return CONFIRMED if len(track.viewpoints) >= self._min_viewpoints else TENTATIVE
+        return CONFIRMED if len(track.viewpoints) >= self._cfg.min_viewpoints else TENTATIVE
 
     def basis_of(self, object_id: str) -> str | None:
         """How this identity was last established: ``tracked`` (position), ``reacquired``

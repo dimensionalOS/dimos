@@ -15,30 +15,31 @@
 """xArm6 WorldBelief blueprint — log-first, pulled perception (no live detection).
 
 No continuous perception module: detection+lift+embeddings run only when asked, over
-the memory2 recording. The recorder exposes ``scan`` and ``recall`` as MCP skills
+the memory2 recording. The WorldBeliefModule exposes ``scan`` and ``recall`` as MCP
+skills over the log the recorder writes.
 """
 
 from __future__ import annotations
 
-import math
-
 from functools import partial
+import math
 from typing import Any
 
 import rerun.blueprint as rrb
 
 from dimos.agents.mcp.mcp_server import McpServer
+from dimos.constants import STATE_DIR
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
-from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.perception.worldbelief_module import WorldBeliefModule
+from dimos.perception.worldbelief_recorder import WorldBeliefRecorder
+from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import make_xarm6_model_config, xarm6_hardware
-from dimos.robot.manipulators.xarm.worldbelief_recorder import XArm6WorldBeliefRecorder
 from dimos.visualization.rerun.bridge import RerunBridgeModule
-
 
 XARM6_WORLDBELIEF_CAMERA_TRANSFORM = Transform(
     translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
@@ -62,7 +63,7 @@ def _topic_to_entity(topic: Any) -> str:
         "/camera_info": "world/color_camera",
         "/depth_image": "world/depth_camera/depth_image",
         "/depth_camera_info": "world/depth_camera",
-        "/detections_3d": "world/detections_3d",  # published on demand by recorder.scan()
+        "/detections_3d": "world/detections_3d",  # published on demand by WorldBeliefModule.scan()
         "/pointcloud": "world/pointcloud",  # detected-object clouds (colored per object id)
     }.get(topic_name, f"world/{topic_name.lstrip('/')}")
 
@@ -72,7 +73,6 @@ def _camera_info_to_rerun(msg: Any, image_topic: str) -> list[tuple[str, Any]]:
 
 
 def _rerun_blueprint() -> rrb.Blueprint:
-    # no annotated_image (no live detector) -> show the raw color camera + the 3D world
     return rrb.Blueprint(
         rrb.Horizontal(
             rrb.Spatial2DView(origin="world/color_camera/color_image", name="Camera"),
@@ -133,10 +133,16 @@ xarm6_worldbelief = autoconnect(
             "world/pointcloud": 5.0,
         },
     ),
-    XArm6WorldBeliefRecorder.blueprint(),
+    WorldBeliefRecorder.blueprint(
+        db_path=STATE_DIR / "worldbelief" / "xarm6" / "recordings" / "xarm6_worldbelief.db",
+    ),
+    WorldBeliefModule.blueprint(
+        db_path=STATE_DIR / "worldbelief" / "xarm6" / "recordings" / "xarm6_worldbelief.db",
+        history_path=STATE_DIR / "worldbelief" / "xarm6" / "worldbelief_history.db",
+    ),
     McpServer.blueprint(),
     coordinator(
         hardware=[_hw],
         tasks=[trajectory_task(_hw, name="traj_xarm")],
     ),
-).global_config(n_workers=7)
+).global_config(n_workers=8)
