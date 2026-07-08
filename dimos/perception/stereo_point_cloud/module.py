@@ -50,7 +50,8 @@ class Config(ModuleConfig):
     gradient_threshold: float = 0.30
     vox_size: float           = 0.020
     global_vox_size: float    = 0.020
-    floor_margin: float       = 0.04
+    floor_margin: float       = 0.03
+    global_floor_margin: float = 0.04
     max_global_pts: int       = 500_000
     publish_every: int        = 1
     world_frame: str          = "world"
@@ -181,13 +182,13 @@ class StereoPointCloud(Module):
         valid_d = depth[depth > 0]
         is_mm = len(valid_d) > 0 and np.median(valid_d) > _DEPTH_MM_THRESHOLD
         valid_mask = depth > 0
-        depth_u16 = depth.clip(0, 65535).astype(np.uint16)
-        depth_u16[~valid_mask] = 65535
-        depth_u16 = cv2.medianBlur(depth_u16, 3)
-        depth_u16[~valid_mask] = 0
-        hole_fill = cv2.medianBlur(depth_u16, 5)
-        depth_u16[(depth_u16 == 0) & (hole_fill > 0) & (hole_fill < 60000)] = hole_fill[(depth_u16 == 0) & (hole_fill > 0) & (hole_fill < 60000)]
-        depth = depth_u16.astype(np.float32)
+        kernel = np.ones((3, 3), np.uint8)
+        dilated = cv2.dilate(depth, kernel)
+        depth_tmp = np.where(valid_mask, depth, dilated).astype(np.float32)
+        smoothed = cv2.bilateralFilter(depth_tmp, d=5, sigmaColor=30.0, sigmaSpace=5.0)
+        depth[valid_mask] = smoothed[valid_mask]
+        depth_after = cv2.dilate(depth, kernel)
+        depth[~valid_mask & (depth_after > 0)] = depth_after[~valid_mask & (depth_after > 0)]
         if is_mm:
             depth /= 1000.0
         invalid = (depth <= 0) | (depth < self.config.min_depth) | (depth > self.config.max_depth)
@@ -263,7 +264,7 @@ class StereoPointCloud(Module):
         vk_r       = np.floor(xyz_ronly / self.config.vox_size).astype(np.int32)
         _, first_r = np.unique(_pack(vk_r), return_index=True)
         xyz_vox_r  = xyz_ronly[first_r]
-        xyz_for_map = xyz_vox_r[xyz_vox_r[:, 2] > self._world_floor_z + self.config.floor_margin]
+        xyz_for_map = xyz_vox_r[xyz_vox_r[:, 2] > self._world_floor_z + self.config.global_floor_margin]
 
         pts_snap = None
         with self._lock:
