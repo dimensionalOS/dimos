@@ -175,49 +175,47 @@ def main(
 ) -> None:
     """Dump a recording to .rrd (lidar clouds + camera frames) and open it in rerun."""
     from dimos.mapping.voxels import VoxelMapTransformer
-    from dimos.memory2.cli.summary import stream_payload_types
-    from dimos.memory2.store.sqlite import SqliteStore
+    from dimos.memory2.cli.dataset import open_store, resolve_dataset, stream_payload_types
     from dimos.memory2.transform import throttle
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.nav_msgs.Odometry import Odometry
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
     from dimos.robot.unitree.go2.connection import _camera_info_static
-    from dimos.utils.data import resolve_named_path
 
-    db_path = resolve_named_path(dataset, ".db")
+    src_path = resolve_dataset(dataset)
+    store = open_store(src_path)
     if out is None:
-        out = Path.cwd() / f"{db_path.stem}.rrd"
+        out = Path.cwd() / f"{src_path.stem}.rrd"
     cam_info = _camera_info_static()
 
-    # Resolve which streams to voxelize: all PointCloud2 streams, or the
-    # explicit --map-source subset. Validate up front so typos fail fast.
-    pc_streams = [n for n, t in stream_payload_types(db_path).items() if t is PointCloud2]
-    map_sources = list(map_source) or pc_streams
-    if (map or map_final) and (bad := [s for s in map_sources if s not in pc_streams]):
-        raise typer.BadParameter(f"--map-source: not PointCloud2 stream(s): {', '.join(bad)}")
-
-    rr.init("dimos map_rrd", recording_id=db_path.stem)
-    rr.save(str(out))
-    register_colormap_annotation("turbo")
-
-    # Static pinhole on the camera entity; per-frame Transform3D goes on the
-    # same entity. Image is the child so it projects through the pinhole.
-    pinhole = cam_info.to_rerun()
-    assert not isinstance(pinhole, list)
-    rr.log("world/camera", pinhole, static=True)
-
-    # Static axis triads as children of each moving Transform3D, so the
-    # transforms are actually visible in the 3D view.
-    axes = rr.Arrows3D(
-        vectors=[[0.3, 0, 0], [0, 0.3, 0], [0, 0, 0.3]],
-        colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]],
-    )
-    rr.log("world/fastlio/axes", axes, static=True)
-    rr.log("world/odom/axes", axes, static=True)
-
-    store = SqliteStore(path=str(db_path))
     with store:
+        # Resolve which streams to voxelize: all PointCloud2 streams, or the
+        # explicit --map-source subset. Validate up front so typos fail fast.
+        pc_streams = [n for n, t in stream_payload_types(store).items() if t is PointCloud2]
+        map_sources = list(map_source) or pc_streams
+        if (map or map_final) and (bad := [s for s in map_sources if s not in pc_streams]):
+            raise typer.BadParameter(f"--map-source: not PointCloud2 stream(s): {', '.join(bad)}")
+
+        rr.init("dimos map_rrd", recording_id=src_path.stem)
+        rr.save(str(out))
+        register_colormap_annotation("turbo")
+
+        # Static pinhole on the camera entity; per-frame Transform3D goes on the
+        # same entity. Image is the child so it projects through the pinhole.
+        pinhole = cam_info.to_rerun()
+        assert not isinstance(pinhole, list)
+        rr.log("world/camera", pinhole, static=True)
+
+        # Static axis triads as children of each moving Transform3D, so the
+        # transforms are actually visible in the 3D view.
+        axes = rr.Arrows3D(
+            vectors=[[0.3, 0, 0], [0, 0.3, 0], [0, 0, 0.3]],
+            colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]],
+        )
+        rr.log("world/fastlio/axes", axes, static=True)
+        rr.log("world/odom/axes", axes, static=True)
+
         print(store.summary())
 
         def clipped(name: str, ptype: type[Any]) -> Stream[Any]:
