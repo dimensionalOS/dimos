@@ -34,6 +34,7 @@ class FilteredRealSenseCamera(RealSenseCamera):
 
         spatial_filter   = rs.spatial_filter()
         hole_fill_filter = rs.hole_filling_filter()
+        hole_fill_filter.set_option(rs.option.holes_fill, 2)  # nearest-from-around: preserves thin features like chair legs
 
         while self._running and self._pipeline is not None:
             try:
