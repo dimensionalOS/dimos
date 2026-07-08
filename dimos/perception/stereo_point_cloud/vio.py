@@ -22,9 +22,11 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 
-_MAX_DT_S        = 0.1  # don't integrate more than 100ms at once — big gaps would blow up the filter
-_ACCEL_MIN_NORM  = 0.5  # skip accel correction if reading is basically zero (noise or free-fall)
-_MIN_ICP_INLIERS = 30   # need at least 30 matched point pairs to trust the ICP translation update
+_MAX_DT_S        = 0.1   # don't integrate more than 100ms at once — big gaps would blow up the filter
+_ACCEL_MIN_NORM  = 0.5   # skip accel correction if reading is basically zero (noise or free-fall)
+_MIN_ICP_INLIERS = 30    # need at least 30 matched point pairs to trust the ICP translation update
+_SMOOTH_ALPHA    = 0.7   # EMA weight for ICP output — reduces ±2cm centroid oscillation to ±5mm,
+                          # keeping the same 2cm world-voxel key for a stationary surface.
 
 
 class MadgwickFilter:
@@ -125,9 +127,12 @@ class PointCloudOdometry:
                 delta = dst[idx[mask]].mean(axis=0) - (src[mask] + t_est).mean(axis=0)
                 t_est = (t_est + 0.7 * delta).astype(np.float32)
             t_new = t_est
+        # EMA smoothing: blend raw ICP output with the stored estimate to suppress
+        # the ±2cm centroid oscillation inherent in random-subsampling ICP.
+        with self._lock:
+            t_smooth = (_SMOOTH_ALPHA * t_new + (1.0 - _SMOOTH_ALPHA) * self._t).astype(np.float32)
+            self._t  = t_smooth
         n_st  = min(self.N_STORE, len(pts_ga))
         idx_s = np.random.choice(len(pts_ga), n_st, replace=False)
-        self._prev_world = (pts_ga[idx_s] + t_new).astype(np.float32)
-        with self._lock:
-            self._t = t_new
-        return t_new
+        self._prev_world = (pts_ga[idx_s] + t_smooth).astype(np.float32)
+        return t_smooth

@@ -33,6 +33,10 @@ _R_OPT_TO_LINK = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=np.float32)
 _RAYCAST_MIN_RAY_VOXELS = 2
 _RAYCAST_SURFACE_MARGIN = 1.5
 
+# ±1 voxel along each axis (no diagonals) — absorbs ICP translation noise during free-space clearing.
+# Format: [no-shift, +x, -x, +y, -y, +z, -z] in packed-key space.
+_FAT_SHIFTS = np.array([0, 1 << 36, -(1 << 36), 1 << 18, -(1 << 18), 1, -1], dtype=np.int64)
+
 
 def _pack(vkeys: np.ndarray) -> np.ndarray:
     v = (vkeys.astype(np.int64) + _VOFF) & _VMASK

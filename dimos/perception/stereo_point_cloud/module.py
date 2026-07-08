@@ -29,6 +29,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.stereo_point_cloud.utils import (
+    _FAT_SHIFTS,
     _FloorCalibrator,
     _R_OPT_TO_LINK,
     _gradient_mask,
@@ -59,7 +60,7 @@ class Config(ModuleConfig):
     max_global_pts: int       = 500_000
     publish_every: int        = 1
     world_frame: str          = "world"
-    madgwick_beta: float      = 0.0
+    madgwick_beta: float      = 0.033
 
 
 class StereoPointCloud(Module):
@@ -299,17 +300,33 @@ class StereoPointCloud(Module):
                     self._acc_pts = self._acc_pts[~np.isin(keys_acc, free_keys)]
 
             if len(xyz_for_map):
-                self._acc_pts = (
-                    np.vstack([self._acc_pts, xyz_for_map]) if len(self._acc_pts) else xyz_for_map.copy()
-                )
-                _, ui         = np.unique(
-                    _pack(np.floor(self._acc_pts / self.config.global_vox_size).astype(np.int32)),
-                    return_index=True,
-                )
-                self._acc_pts = self._acc_pts[ui]
-                if len(self._acc_pts) > self.config.max_global_pts:
-                    keep_idx      = np.random.choice(len(self._acc_pts), self.config.max_global_pts, replace=False)
-                    self._acc_pts = self._acc_pts[keep_idx]
+                vox = self.config.global_vox_size
+                new_vk   = np.floor(xyz_for_map / vox).astype(np.int32)
+                new_keys = _pack(new_vk)
+                if len(self._acc_pts) > 0:
+                    # Fat-voxel insertion guard: skip new points within ±1 voxel of an existing
+                    # point. ICP t-noise is ±2cm at 2cm voxels; a near-duplicate that lands in
+                    # the adjacent voxel would pile up each frame — this blocks the accumulation.
+                    keys_acc_s = np.sort(_pack(np.floor(self._acc_pts / vox).astype(np.int32)))
+                    shifted    = (new_keys[:, None] + _FAT_SHIFTS[None, :]).ravel()
+                    i_s        = np.searchsorted(keys_acc_s, shifted)
+                    i_s        = np.clip(i_s, 0, len(keys_acc_s) - 1)
+                    covered    = (keys_acc_s[i_s] == shifted).reshape(len(new_keys), len(_FAT_SHIFTS)).any(axis=1)
+                    xyz_to_add = xyz_for_map[~covered]
+                else:
+                    xyz_to_add = xyz_for_map
+                if len(xyz_to_add):
+                    self._acc_pts = (
+                        np.vstack([self._acc_pts, xyz_to_add]) if len(self._acc_pts) else xyz_to_add.copy()
+                    )
+                    _, ui         = np.unique(
+                        _pack(np.floor(self._acc_pts / vox).astype(np.int32)),
+                        return_index=True,
+                    )
+                    self._acc_pts = self._acc_pts[ui]
+                    if len(self._acc_pts) > self.config.max_global_pts:
+                        keep_idx      = np.random.choice(len(self._acc_pts), self.config.max_global_pts, replace=False)
+                        self._acc_pts = self._acc_pts[keep_idx]
 
             self._frame += 1
             if self._frame % self.config.publish_every == 0 and len(self._acc_pts):
