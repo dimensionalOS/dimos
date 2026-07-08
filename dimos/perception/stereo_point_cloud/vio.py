@@ -101,17 +101,21 @@ class PointCloudOdometry:
         with self._lock:
             return self._t.copy()
 
-    def update(self, xyz_cam: np.ndarray, R: np.ndarray) -> np.ndarray:
+    def update(self, xyz_cam: np.ndarray, R: np.ndarray, map_ref: np.ndarray | None = None) -> np.ndarray:
         pts_ga = (xyz_cam @ R.T).astype(np.float32)
         with self._lock:
             t_est = self._t.copy()
-        if self._prev_world is None or len(pts_ga) < self.MIN_PTS:
+        # Prefer the accumulated map as ICP reference — it covers the full explored area
+        # and gives far better convergence than a single previous frame, especially when
+        # the camera moves to a new region with no overlap to the last frame.
+        ref = map_ref if (map_ref is not None and len(map_ref) >= self.MIN_PTS) else self._prev_world
+        if ref is None or len(pts_ga) < self.MIN_PTS:
             t_new = t_est
         else:
             n_src = min(self.N_SRC, len(pts_ga))
-            n_dst = min(self.N_DST, len(self._prev_world))
+            n_dst = min(self.N_DST, len(ref))
             src   = pts_ga[np.random.choice(len(pts_ga), n_src, replace=False)]
-            dst   = self._prev_world[np.random.choice(len(self._prev_world), n_dst, replace=False)]
+            dst   = ref[np.random.choice(len(ref), n_dst, replace=False)]
             tree  = cKDTree(dst)
             for _ in range(self.ITERS):
                 dists, idx = tree.query(src + t_est, k=1, workers=1)
