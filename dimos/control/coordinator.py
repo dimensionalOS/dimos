@@ -406,12 +406,7 @@ class ControlCoordinator(Module):
 
     @rpc
     def add_task(self, task: ControlTask, task_type: str | None = None) -> bool:
-        """Register a task with the coordinator.
-
-        ``task_type`` binds the input streams declared in that type's card
-        (see ``dimos.control.routing``) to the task; without it the task is
-        registered for tick-loop compute and RPC only.
-        """
+        """Register a task; ``task_type`` binds its card's input streams (if any)."""
         if not isinstance(task, ControlTask):
             raise TypeError("task must implement ControlTask")
 
@@ -440,7 +435,6 @@ class ControlCoordinator(Module):
         return True
 
     def _register_routes(self, task: ControlTask, task_type: str) -> None:
-        """Extend the route table with the type's card-declared streams (under _task_lock)."""
         from dimos.control.tasks.registry import control_task_registry
 
         bindings = control_task_registry.bindings_for(task_type)
@@ -457,11 +451,7 @@ class ControlCoordinator(Module):
             )
 
     def _sync_stream_subscriptions(self) -> None:
-        """Reconcile stream subscriptions with the route table.
-
-        Subscribes any routed stream that is not yet subscribed and drops the
-        subscription for any stream whose last card-bound consumer was removed.
-        """
+        """Subscribe streams that gained routes; drop those whose last consumer left."""
         if not (self._tick_loop and self._tick_loop.is_running):
             return
         with self._task_lock:
@@ -507,12 +497,7 @@ class ControlCoordinator(Module):
             return [name for name, task in self._tasks.items() if task.is_active()]
 
     def _dispatch(self, stream: str, msg: Any) -> None:
-        """Deliver a stream message to its card-routed tasks.
-
-        The routing rule declared on each entry decides delivery: claim
-        overlap on ``msg.name``, task-name match on ``msg.frame_id``, or
-        broadcast. Handlers receive ``(msg, t_now)`` and own digestion.
-        """
+        """Deliver a stream message to its card-routed tasks per each entry's routing rule."""
         t_now = time.perf_counter()
         with self._task_lock:
             entries = self._routes.get(stream)
