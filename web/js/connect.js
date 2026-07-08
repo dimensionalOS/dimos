@@ -10,6 +10,7 @@ import { state } from './state.js';
 import { stopTick } from './views/go2.js';
 import { startKeyboardLoop, stopKeyboardLoop } from './views/keyboard.js';
 import { startVR } from './vr.js';
+import { startArmVR } from './vrarm.js';
 import { setupWebRTC } from './webrtc.js';
 
 // Operator transport follows what the robot connected with (broker surfaces it).
@@ -25,6 +26,31 @@ export async function connectToRobot(sessionId, robotName, transport) {
         navigate('teleop');
         // VR FIRST — gesture activation must be alive when requestSession() runs.
         await startVR();
+
+        try {
+            await setupTransport(sessionId, transport);
+        } catch (rtcError) {
+            if (state.xrSession) { await state.xrSession.end().catch(() => {}); state.xrSession = null; }
+            throw rtcError;
+        }
+        setStatus(`Connected — ${robotName}`);
+    } catch (e) {
+        console.error(e);
+        setStatus(`Connection failed: ${e.message}`);
+        setTimeout(() => navigate('dashboard'), 3000);
+    }
+}
+
+// xArm immersive cockpit. Same VR-first gesture ordering as connectToRobot,
+// but the arm cockpit streams controller poses instead of drive twists.
+export async function connectXArm(sessionId, robotName, transport) {
+    state.activeRobot = { session_id: sessionId, robot_name: robotName, transport: transport || 'cloudflare' };
+    try {
+        if (!navigator.xr) throw new Error('WebXR not supported. Use Quest 3 browser.');
+
+        navigate('teleop');
+        // VR FIRST — gesture activation must be alive when requestSession() runs.
+        await startArmVR();
 
         try {
             await setupTransport(sessionId, transport);

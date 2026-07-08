@@ -1,8 +1,13 @@
 // Dashboard: API key management + available robots list.
 
 import { api, brokerOrigin, logout } from '../api.js';
-import { connectGo2, connectToRobot } from '../connect.js';
+import { connectGo2, connectToRobot, connectXArm } from '../connect.js';
 import { escHtml, state, timeAgo, xrDetection } from '../state.js';
+
+// Manual robot-type toggle (interim — until the broker surfaces robot_type):
+// the operator picks Go2 or Arm before connecting. Persisted across renders.
+function robotKind() { return localStorage.getItem('teleop_robot_kind') || 'go2'; }
+function setRobotKind(k) { localStorage.setItem('teleop_robot_kind', k); }
 
 export async function renderDashboard(c) {
     c.innerHTML = `
@@ -62,9 +67,16 @@ export async function renderDashboard(c) {
                     <h2 class="text-lg font-semibold text-white">Available Robots</h2>
                     <p class="text-gray-400 text-sm">Robots online — click Connect to teleoperate</p>
                 </div>
-                <button id="refreshRobotsBtn" class="px-4 py-2 text-sm text-gray-300 border border-[#2a2a2a] rounded-lg hover:bg-[#1f1f1f] transition-colors">
-                    Refresh
-                </button>
+                <div class="flex items-center gap-3">
+                    <!-- Robot-type toggle: picks which cockpit Connect launches. -->
+                    <div id="robot-kind-toggle" class="inline-flex rounded-lg border border-[#2a2a2a] overflow-hidden text-xs">
+                        <button data-kind="go2" class="kind-btn px-3 py-2 transition-colors">Go2</button>
+                        <button data-kind="xarm" class="kind-btn px-3 py-2 transition-colors">Arm</button>
+                    </div>
+                    <button id="refreshRobotsBtn" class="px-4 py-2 text-sm text-gray-300 border border-[#2a2a2a] rounded-lg hover:bg-[#1f1f1f] transition-colors">
+                        Refresh
+                    </button>
+                </div>
             </div>
             <div id="robots-list" class="space-y-2">
                 <div class="text-gray-500 text-sm py-4 text-center">Loading...</div>
@@ -82,8 +94,27 @@ export async function renderDashboard(c) {
     document.getElementById('generateKeyBtn').onclick = createKey;
     document.getElementById('copyKeyBtn').onclick = copyKey;
     document.getElementById('refreshRobotsBtn').onclick = loadRobots;
+    wireRobotKindToggle();
 
     await Promise.all([loadKeys(), loadRobots()]);
+}
+
+// Robot-type toggle: highlight the active kind, persist the choice on click.
+function wireRobotKindToggle() {
+    const wrap = document.getElementById('robot-kind-toggle');
+    if (!wrap) return;
+    const paint = () => {
+        const kind = robotKind();
+        wrap.querySelectorAll('.kind-btn').forEach(b => {
+            const on = b.dataset.kind === kind;
+            b.className = 'kind-btn px-3 py-2 transition-colors '
+                + (on ? 'bg-dim-500 text-bg-950 font-medium' : 'text-gray-400 hover:text-white');
+        });
+    };
+    wrap.querySelectorAll('.kind-btn').forEach(b => {
+        b.onclick = () => { setRobotKind(b.dataset.kind); paint(); };
+    });
+    paint();
 }
 
 async function createKey() {
@@ -191,10 +222,18 @@ async function loadRobots() {
             </div>
         `;
         }).join('');
-        // Desktop → Go2 cockpit (working teleop + cockpit layout); VR → headset.
-        const handler = state.xrSupported ? connectToRobot : connectGo2;
+        // Pick the cockpit from the robot-type toggle. Arm is VR-only for now;
+        // Go2 keeps its desktop cockpit when no headset (arm desktop 2D is TODO).
         listEl.querySelectorAll('.connect-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
+                const arm = robotKind() === 'xarm';
+                const handler = arm
+                    ? connectXArm
+                    : (state.xrSupported ? connectToRobot : connectGo2);
+                if (arm && !state.xrSupported) {
+                    alert('Arm teleop needs a WebXR headset (Quest). Open this on the headset browser.');
+                    return;
+                }
                 handler(e.target.dataset.id, e.target.dataset.name, e.target.dataset.transport);
             });
         });

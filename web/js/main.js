@@ -37,5 +37,15 @@ window._teleopDev = {
         state.activeRobot = { session_id: 'preview', robot_name: 'go2-preview' };
         navigate('go2');
     },
+    async previewXArm() {
+        // Immersive arm cockpit against fake channels — no broker/robot. Must be
+        // called from a click (WebXR requestSession needs a user gesture).
+        const { startArmVR } = await import('./vrarm.js');
+        state.activeRobot = { session_id: 'preview', robot_name: 'xarm-preview', transport: 'cloudflare' };
+        state.cmdChannel = { readyState: 'open', send: () => {} };
+        state.stateChannel = { readyState: 'open', send: () => {} };
+        navigate('teleop');
+        await startArmVR();
+    },
     navigate,
 };
