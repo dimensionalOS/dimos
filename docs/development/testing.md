@@ -179,6 +179,13 @@ pytest -s dimos/path/to/tool_file.py
 
 (`-s` keeps stdout/stdin open for prints and interactive input; add `--timeout=0` for long-running or interactive ones.)
 
+One useful example is [dimos/robot/tool_blueprint_perf.py](/dimos/robot/tool_blueprint_perf.py), a dev-only full-blueprint smoke/perf harness that exercises the real user CLI path in a subprocess for a bounded duration and writes structured JSON. It is intentionally separate from normal pytest collection.
+
+```bash
+uv run python -m dimos.robot.tool_blueprint_perf
+uv run python -m dimos.robot.tool_blueprint_perf --blueprint unitree-go2 --mode replay --viewer none --output /tmp/unitree-go2.json
+```
+
 ## Markers
 
 We have a few markers in use now.
