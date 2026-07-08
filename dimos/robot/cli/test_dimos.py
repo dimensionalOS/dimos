@@ -15,6 +15,7 @@
 import sys
 from typing import Literal
 
+from pydantic import BaseModel, Field
 import pytest
 from typer.testing import CliRunner
 
@@ -214,3 +215,47 @@ def test_spy_rejects_root_transport(monkeypatch, spy_main_argv):
     assert result.exit_code == 2
     assert "dimos spy --transport" in result.output
     assert spy_main_argv == []  # never reaches the spy
+
+
+def test_blueprint_arg_help_nested_config_paths():
+    class NestedConfig(BaseModel):
+        enabled: bool = True
+        mode: str = "auto"
+
+    class Config(ModuleConfig):
+        nested: NestedConfig = Field(default_factory=NestedConfig)
+
+    class TestModule(Module):
+        config: Config
+
+    blueprint = TestModule.blueprint(nested={"mode": "manual"})
+    output = arg_help(blueprint.config(), blueprint)
+
+    assert "      testmodule.nested:" in output
+    assert "        * testmodule.nested.enabled: bool (default: True)" in output
+    assert "        * testmodule.nested.mode: str (default: manual)" in output
+
+
+def test_blueprint_arg_help_uses_nested_backend_defaults():
+    class DisabledConfig(BaseModel):
+        backend: Literal["disabled"] = "disabled"
+
+    class EnabledConfig(BaseModel):
+        backend: Literal["enabled"] = "enabled"
+        level: int = 1
+
+    class Config(ModuleConfig):
+        nested: DisabledConfig | EnabledConfig = Field(default_factory=DisabledConfig)
+
+    class TestModule(Module):
+        config: Config
+
+    blueprint = TestModule.blueprint(nested={"backend": "enabled", "level": 3})
+    output = arg_help(blueprint.config(), blueprint)
+
+    assert "      testmodule.nested:" in output
+    assert (
+        "        * testmodule.nested.backend: typing.Literal['enabled'] (default: enabled)"
+        in output
+    )
+    assert "        * testmodule.nested.level: int (default: 3)" in output
