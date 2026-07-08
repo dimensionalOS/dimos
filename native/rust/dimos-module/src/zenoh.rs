@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use ::zenoh::pubsub::Publisher;
 use ::zenoh::qos::{CongestionControl, Reliability};
@@ -61,7 +61,7 @@ fn parse_channel_qos(value: &serde_json::Value) -> HashMap<String, ChannelQos> {
 pub struct ZenohTransport {
     session: Session,
     qos: OnceLock<HashMap<String, ChannelQos>>,
-    publishers: Mutex<HashMap<String, Publisher<'static>>>,
+    publishers: Mutex<HashMap<String, Arc<Publisher<'static>>>>,
 }
 
 impl ZenohTransport {
@@ -96,12 +96,18 @@ impl ZenohTransport {
 
 impl Transport for ZenohTransport {
     async fn publish(&self, channel: &str, data: Vec<u8>) -> io::Result<()> {
-        let mut publishers = self.publishers.lock().await;
-        let publisher = match publishers.get(channel) {
-            Some(publisher) => publisher,
-            None => {
-                let publisher = self.declare_publisher(channel).await?;
-                publishers.entry(channel.to_string()).or_insert(publisher)
+        // Resolve the cached publisher and release the lock before `put`, so a
+        // block-QoS channel stalled in `put` never holds the cache and blocks
+        // publishes on other channels.
+        let publisher = {
+            let mut publishers = self.publishers.lock().await;
+            match publishers.get(channel) {
+                Some(publisher) => Arc::clone(publisher),
+                None => {
+                    let publisher = Arc::new(self.declare_publisher(channel).await?);
+                    publishers.insert(channel.to_string(), Arc::clone(&publisher));
+                    publisher
+                }
             }
         };
         publisher.put(data).await.map_err(to_io)

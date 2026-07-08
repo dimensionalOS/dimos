@@ -120,14 +120,14 @@ impl<T> Input<T> {
 pub struct Output<T> {
     pub topic: String,
     encode: fn(&T) -> Vec<u8>,
-    sender: mpsc::Sender<(String, Vec<u8>)>,
+    sender: mpsc::Sender<Vec<u8>>,
 }
 
 impl<T> Output<T> {
     pub async fn publish(&self, msg: &T) -> io::Result<()> {
         let data = (self.encode)(msg);
         self.sender
-            .send((self.topic.clone(), data))
+            .send(data)
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "background task gone"))
     }
@@ -276,18 +276,16 @@ pub trait Module: Sized + Send + 'static {
 pub struct Builder {
     topics: HashMap<String, String>,
     routes: HashMap<String, Vec<Box<dyn Route>>>,
-    publish_tx: mpsc::Sender<(String, Vec<u8>)>,
+    // One publish queue per output channel, drained by its own worker.
+    outputs: Vec<(String, mpsc::Receiver<Vec<u8>>)>,
 }
 
 impl Builder {
-    pub(crate) fn new(
-        topics: HashMap<String, String>,
-        publish_tx: mpsc::Sender<(String, Vec<u8>)>,
-    ) -> Self {
+    pub(crate) fn new(topics: HashMap<String, String>) -> Self {
         Self {
             topics,
             routes: HashMap::new(),
-            publish_tx,
+            outputs: Vec::new(),
         }
     }
 
@@ -321,11 +319,14 @@ impl Builder {
         }
     }
 
-    pub fn output<T>(&self, port: &str, encode: fn(&T) -> Vec<u8>) -> Output<T> {
+    pub fn output<T>(&mut self, port: &str, encode: fn(&T) -> Vec<u8>) -> Output<T> {
+        let topic = self.topic_for(port);
+        let (tx, rx) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
+        self.outputs.push((topic.clone(), rx));
         Output {
-            topic: self.topic_for(port),
+            topic,
             encode,
-            sender: self.publish_tx.clone(),
+            sender: tx,
         }
     }
 }
@@ -354,17 +355,24 @@ pub(crate) async fn subscribe_routes<T: Transport>(
     Ok(())
 }
 
-pub(crate) fn spawn_publish_task<T: Transport>(
+/// Spawn one worker per output channel so a stalled (block-QoS) channel
+/// backpressures only its own producer, not the others.
+pub(crate) fn spawn_publish_tasks<T: Transport>(
     transport: Arc<T>,
-    mut publish_rx: mpsc::Receiver<(String, Vec<u8>)>,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        while let Some((topic, data)) = publish_rx.recv().await {
-            if let Err(e) = transport.publish(&topic, data).await {
-                error!(topic = %topic, error = %e, "publish error");
+    outputs: Vec<(String, mpsc::Receiver<Vec<u8>>)>,
+) -> tokio::task::JoinSet<()> {
+    let mut tasks = tokio::task::JoinSet::new();
+    for (topic, mut rx) in outputs {
+        let transport = Arc::clone(&transport);
+        tasks.spawn(async move {
+            while let Some(data) = rx.recv().await {
+                if let Err(e) = transport.publish(&topic, data).await {
+                    error!(topic = %topic, error = %e, "publish error");
+                }
             }
-        }
-    })
+        });
+    }
+    tasks
 }
 
 fn propagate_task_failure(name: &str, res: Result<(), tokio::task::JoinError>) {
@@ -414,14 +422,13 @@ where
     }
     info!(exe = %exe, config = ?config, "config loaded");
 
-    let (publish_tx, publish_rx) = mpsc::channel::<(String, Vec<u8>)>(PUBLISH_CHANNEL_CAPACITY);
-    let mut builder = Builder::new(topics, publish_tx);
+    let mut builder = Builder::new(topics);
     let mut module = M::build(&mut builder, config);
 
     subscribe_routes(&transport, builder.routes).await?;
     // Kept alive until teardown so the subscriptions stay live.
     let transport = Arc::new(transport);
-    let mut pub_handle = spawn_publish_task(Arc::clone(&transport), publish_rx);
+    let mut pub_tasks = spawn_publish_tasks(Arc::clone(&transport), builder.outputs);
 
     module.setup().await;
 
@@ -429,7 +436,7 @@ where
     let failure = tokio::select! {
         _ = module.handle() => None,
         _ = tokio::signal::ctrl_c() => None,
-        res = &mut pub_handle => Some(("publish", res)),
+        Some(res) = pub_tasks.join_next() => Some(("publish", res)),
     };
 
     module.teardown().await;
@@ -728,8 +735,7 @@ mod tests {
     }
 
     fn builder_with_topics(pairs: &[(&str, &str)]) -> Builder {
-        let (publish_tx, _) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
-        Builder::new(topics(pairs), publish_tx)
+        Builder::new(topics(pairs))
     }
 
     #[test]
@@ -760,7 +766,7 @@ mod tests {
 
     #[test]
     fn output_uses_mapped_topic() {
-        let builder = builder_with_topics(&[("cmd_vel", "/robot/cmd_vel")]);
+        let mut builder = builder_with_topics(&[("cmd_vel", "/robot/cmd_vel")]);
         let output = builder.output("cmd_vel", |b: &Vec<u8>| b.clone());
         assert_eq!(output.topic, "/robot/cmd_vel");
     }
@@ -780,14 +786,13 @@ mod tests {
         // set publishing to take 200ms
         publish_delay_ms.store(200, Ordering::Relaxed);
 
-        let (publish_tx, publish_rx) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
-        let mut builder = Builder::new(topics(&[("data", "/data"), ("out", "/out")]), publish_tx);
+        let mut builder = Builder::new(topics(&[("data", "/data"), ("out", "/out")]));
         let _input = builder.input("data", |b| Ok(b.to_vec()));
         let output = builder.output("out", |b: &Vec<u8>| b.clone());
 
         subscribe_routes(&transport, builder.routes).await.unwrap();
         let transport = Arc::new(transport);
-        spawn_publish_task(Arc::clone(&transport), publish_rx);
+        let _pub_tasks = spawn_publish_tasks(Arc::clone(&transport), builder.outputs);
 
         // start the 200ms publish
         output.publish(&vec![0u8]).await.ok();
@@ -821,8 +826,7 @@ mod tests {
         let inbound_notify = transport.inbound_notify.clone();
         let dispatch_entered = transport.dispatch_entered.clone();
 
-        let (publish_tx, publish_rx) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
-        let mut builder = Builder::new(topics(&[("slow", "/slow"), ("out", "/out")]), publish_tx);
+        let mut builder = Builder::new(topics(&[("slow", "/slow"), ("out", "/out")]));
 
         // block the delivery loop in decode until the test releases it
         static RECV_RELEASE: AtomicBool = AtomicBool::new(false);
@@ -838,7 +842,7 @@ mod tests {
 
         subscribe_routes(&transport, builder.routes).await.unwrap();
         let transport = Arc::new(transport);
-        spawn_publish_task(Arc::clone(&transport), publish_rx);
+        let _pub_tasks = spawn_publish_tasks(Arc::clone(&transport), builder.outputs);
 
         // send a message to the receiver
         inject_inbound(&inbound, &inbound_notify, "/slow", vec![1u8]);
@@ -858,6 +862,51 @@ mod tests {
 
         // release the blocked decode so the runtime can shut down
         RECV_RELEASE.store(true, Ordering::SeqCst);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn blocked_channel_does_not_stall_other_channels() {
+        // A transport whose publish never returns on "/block" (a block-QoS
+        // channel wedged by congestion) but completes instantly elsewhere.
+        struct HeadOfLineMock {
+            delivered: Arc<Mutex<Vec<String>>>,
+        }
+        impl crate::transport::Transport for HeadOfLineMock {
+            async fn publish(&self, channel: &str, _data: Vec<u8>) -> io::Result<()> {
+                if channel == "/block" {
+                    std::future::pending::<()>().await;
+                }
+                self.delivered.lock().unwrap().push(channel.to_string());
+                Ok(())
+            }
+            async fn subscribe(&self, _channel: &str, _on_msg: Dispatch) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let delivered = Arc::new(Mutex::new(Vec::new()));
+        let transport = Arc::new(HeadOfLineMock {
+            delivered: Arc::clone(&delivered),
+        });
+
+        let mut builder = Builder::new(topics(&[("block_out", "/block"), ("fast_out", "/fast")]));
+        let block_out = builder.output("block_out", |b: &Vec<u8>| b.clone());
+        let fast_out = builder.output("fast_out", |b: &Vec<u8>| b.clone());
+        let _pub_tasks = spawn_publish_tasks(Arc::clone(&transport), builder.outputs);
+
+        // Wedge the block channel, then publish on the fast channel.
+        block_out.publish(&vec![1u8]).await.unwrap();
+        fast_out.publish(&vec![2u8]).await.unwrap();
+
+        // The fast channel delivers even though its sibling is stuck in publish.
+        wait_for("fast channel delivery despite a blocked sibling", || {
+            delivered.lock().unwrap().iter().any(|c| c == "/fast")
+        })
+        .await;
+        assert!(
+            !delivered.lock().unwrap().iter().any(|c| c == "/block"),
+            "blocked channel must not have delivered"
+        );
     }
 
     // propagate_task_failure
