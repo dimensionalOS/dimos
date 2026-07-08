@@ -1,7 +1,7 @@
 {
   "theme": "mint",
   "name": "Dimensional",
-  "description": "Official documentation for Dimensional — the modern operating system for generalist robotics: Python-first, agent-native, and hardware-agnostic.",
+  "description": "Official documentation for Dimensional \u2014 the modern operating system for generalist robotics: Python-first, agent-native, and hardware-agnostic.",
   "colors": {
     "primary": "#1682a3",
     "light": "#1682a3",
