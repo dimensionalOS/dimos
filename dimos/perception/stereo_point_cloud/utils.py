@@ -70,7 +70,12 @@ def _raycast_free_keys(surface_pts: np.ndarray, vox_size: float, n_rays: int = 4
 
 
 class _FloorCalibrator:
-    """Histogram-based one-shot floor height estimator in camera_link frame (Z=up)."""
+    """Histogram-based one-shot floor height estimator (Z=up).
+
+    Feed :meth:`update` with GRAVITY-ALIGNED camera-centered points
+    (``xyz_world - t``, i.e. ``xyz_cam @ R.T``) — in that frame the floor is a
+    horizontal plane and its z-histogram is sharp regardless of mount pitch.
+    """
 
     SKIP_FRAMES      = 30
     CALIB_FRAMES     = 30
@@ -79,6 +84,8 @@ class _FloorCalibrator:
     FLOOR_MIN_Z      = -3.0
     FLOOR_MAX_DIST_M = 4.0
     FLOOR_MIN_PTS    = 200
+    # mode-search window above the lowest significant bin (3 bins = 6 cm)
+    CLUSTER_BINS     = 3
 
     def __init__(self) -> None:
         self._frame   = 0
@@ -108,7 +115,15 @@ class _FloorCalibrator:
         significant   = np.where(counts >= self.FLOOR_MIN_PTS)[0]
         if not len(significant):
             return
-        self._samples.append(float(edges[significant[0]] + self.BIN_M / 2))
+        # FIX: take the DOMINANT bin within the lowest significant cluster
+        # instead of the lowest significant bin. The lowest bin sits on the
+        # noise skirt of the floor peak (and is pulled further down by
+        # hole-filling/spatial-filter artifacts below the true floor), which
+        # biased the floor estimate 1-2 cm low — enough to leak floor points
+        # past the global_floor_margin cut.
+        window = significant[significant <= significant[0] + self.CLUSTER_BINS]
+        best   = int(window[np.argmax(counts[window])])
+        self._samples.append(float(edges[best] + self.BIN_M / 2))
         if len(self._samples) >= self.CALIB_FRAMES:
             self.floor_z    = float(np.median(self._samples))
             self.cam_height = -self.floor_z

@@ -50,7 +50,12 @@ class Config(ModuleConfig):
     vox_size: float           = 0.020
     global_vox_size: float    = 0.020
     floor_margin: float       = 0.03
-    global_floor_margin: float = 0.04
+    # Cut for the global-map floor filter, above the CALIBRATED floor plane.
+    # Must stay below the thinnest obstacle we want to keep: a 2 cm mat's top
+    # surface sits ~2 cm above the floor, so 0.015 keeps it while still
+    # removing the floor itself. (Was 0.04 — that deleted the mat once the
+    # floor height was estimated correctly.)
+    global_floor_margin: float = 0.015
     max_global_pts: int       = 500_000
     publish_every: int        = 1
     world_frame: str          = "world"
@@ -215,9 +220,27 @@ class StereoPointCloud(Module):
 
         xyz_cam   = xyz_opt @ _R_OPT_TO_LINK.T
         xyz_world = (xyz_cam @ R.T + t).astype(np.float32)
-        cam_z     = float(t[2])
 
-        self._floor_calib.update(xyz_cam)
+        # FIX: calibrate the floor on GRAVITY-ALIGNED points (xyz_world - t ==
+        # xyz_cam @ R.T), not raw camera_link points. In the raw frame any
+        # mount pitch turns the floor into a slanted plane, the z-histogram
+        # smears, and the estimated height is wrong — which is why the floor
+        # cut used to slice obstacles at the wrong height.
+        self._floor_calib.update(xyz_world - t)
+
+        # FIX (rerun black plane): publish with the floor at z = 0. The rest
+        # of dimos assumes this datum — the rerun viewer's ground grid/floor
+        # mesh sits at z ≈ 0 and the occupancy algos treat z as height above
+        # ground. With the old camera-origin datum the whole scene (floor at
+        # z ≈ -1, chairs/tables/mat in between) rendered UNDER the viewer's
+        # ground plane. Shift is 0 until calibration completes (~4 s), then
+        # the cloud snaps up by cam_height.
+        z_shift = (
+            float(self._floor_calib.cam_height)  # type: ignore[arg-type]
+            if self._floor_calib.ready
+            else 0.0
+        )
+        z_off = np.array([0.0, 0.0, z_shift], dtype=np.float32)
 
         # Per-frame floor filter disabled — calibration cuts obstacles at wrong height.
         # Floor is removed by the global map filter below; frame cloud shows all points.
@@ -237,7 +260,9 @@ class StereoPointCloud(Module):
         xyz_vox  = xyz_world_kept[first]
 
         self.frame_cloud.publish(
-            PointCloud2.from_numpy(xyz_vox, frame_id=self.config.world_frame, timestamp=img.ts)
+            PointCloud2.from_numpy(
+                xyz_vox + z_off, frame_id=self.config.world_frame, timestamp=img.ts
+            )
         )
 
         if len(xyz_cam_kept) >= PointCloudOdometry.MIN_PTS:
@@ -248,9 +273,17 @@ class StereoPointCloud(Module):
             return
 
         if not self._map_ready:
-            self._map_ready     = True
-            self._world_floor_z = cam_z + self._floor_calib.floor_z
-            logger.info(f"StereoPointCloud: global map started — floor at Z ≈ {self._world_floor_z:.3f} m")
+            self._map_ready = True
+            # FIX: the filter below runs on xyz_ronly = xyz_vox - t, which is
+            # CAMERA-CENTERED — so the threshold must be the camera-relative
+            # floor height (floor_z), not cam_z + floor_z. Adding the ICP z
+            # (a different frame) shifted the cut plane by whatever the ICP
+            # translation happened to be at calibration time.
+            self._world_floor_z = float(self._floor_calib.floor_z)  # type: ignore[arg-type]
+            logger.info(
+                f"StereoPointCloud: global map started — floor at "
+                f"Z ≈ {self._world_floor_z:.3f} m below camera (published at Z ≈ 0)"
+            )
 
         # Rotation-only frame: strip ICP translation so ±2 cm t-noise doesn't shift voxel keys
         xyz_ronly  = xyz_vox - t
@@ -286,5 +319,7 @@ class StereoPointCloud(Module):
 
         if pts_snap is not None:
             self.global_map.publish(
-                PointCloud2.from_numpy(pts_snap, frame_id=self.config.world_frame, timestamp=img.ts)
+                PointCloud2.from_numpy(
+                    pts_snap + z_off, frame_id=self.config.world_frame, timestamp=img.ts
+                )
             )
