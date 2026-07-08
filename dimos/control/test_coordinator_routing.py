@@ -432,3 +432,108 @@ class TestSubscriptionLifecycle:
 
         taps["joint_command"].unsub.assert_called_once()
         taps["twist_command"].unsub.assert_called_once()
+
+
+class CardlessStreamTask(RecordingTask):
+    """Stub overriding the servo-side digest to observe (non-)delivery."""
+
+    def __init__(self, name: str, joints: frozenset[str] = frozenset()) -> None:
+        super().__init__(name, joints)
+        self.position_targets: list[dict[str, float]] = []
+
+    def set_target_by_name(self, positions: dict[str, float], t_now: float) -> bool:
+        _ = t_now
+        self.position_targets.append(positions)
+        return True
+
+
+class ProbeTask(RecordingTask):
+    """Stub with a novel handler name, bindable only through a runtime card."""
+
+    def __init__(self, name: str, joints: frozenset[str] = frozenset()) -> None:
+        super().__init__(name, joints)
+        self.probe_commands: list[tuple[Any, float]] = []
+
+    def on_probe_command(self, msg: Any, t_now: float) -> bool:
+        self.probe_commands.append((msg, t_now))
+        return True
+
+
+class TestCardRoutingContract:
+    """Contract introduced by card routing: intentional deltas and new seams."""
+
+    def test_buttons_skip_card_less_tasks(self, make_coordinator):
+        coordinator, taps = make_coordinator(
+            stub_task_types=True,
+            tasks=[TaskConfig(name="teleop1", type="teleop_ik", joint_names=ARM_JOINTS)],
+        )
+        cardless = RecordingTask("cardless")
+        coordinator.add_task(cardless)
+        coordinator.start()
+
+        taps["teleop_buttons"].emit(Buttons())
+
+        assert len(coordinator.get_task("teleop1").buttons_calls) == 1
+        assert cardless.buttons_calls == []
+
+    def test_bare_add_task_gets_no_stream_routing(self, make_coordinator):
+        coordinator, taps = _streaming_coordinator(make_coordinator)
+        bare = CardlessStreamTask("bare", frozenset(ARM_JOINTS))
+        coordinator.add_task(bare)
+
+        taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
+
+        assert coordinator.get_task("servo1")._target == [0.1, 0.2]
+        assert bare.position_targets == []
+
+    def test_remove_task_prunes_its_routes(self, make_coordinator):
+        coordinator, taps = _streaming_coordinator(make_coordinator)
+        servo = coordinator.get_task("servo1")
+        assert coordinator.remove_task("servo1")
+
+        taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
+        taps["joint_command"].emit(JointState(name=ARM_JOINTS, velocity=[0.5, 0.6]))
+
+        assert servo._target is None
+        assert coordinator.get_task("vel1")._velocities == [0.5, 0.6]
+
+    def test_runtime_add_task_with_type_activates_routing(self, make_coordinator):
+        from dimos.control.tasks.servo_task.servo_task import (
+            JointServoTask,
+            JointServoTaskConfig,
+        )
+
+        coordinator, taps = make_coordinator()
+        coordinator.start()
+        assert not taps["joint_command"].subscribed
+
+        task = JointServoTask("servo_rt", JointServoTaskConfig(joint_names=ARM_JOINTS))
+        assert coordinator.add_task(task, task_type="servo")
+
+        assert taps["joint_command"].subscribed
+        taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.3, 0.4]))
+        assert task._target == [0.3, 0.4]
+
+    def test_runtime_registered_card_routes_with_zero_coordinator_edits(self, make_coordinator):
+        from dimos.control.tasks.registry import control_task_registry
+
+        task_type = "routing_probe_task"
+        control_task_registry.register_bindings(
+            task_type,
+            consumes={"joint_command": ("on_probe_command", "claim_overlap")},
+        )
+        try:
+            coordinator, taps = make_coordinator()
+            coordinator.start()
+            probe = ProbeTask("probe1", frozenset(ARM_JOINTS))
+            assert coordinator.add_task(probe, task_type=task_type)
+
+            taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
+
+            assert len(probe.probe_commands) == 1
+            msg, t_now = probe.probe_commands[0]
+            assert list(msg.name) == ARM_JOINTS
+            assert isinstance(t_now, float)
+        finally:
+            control_task_registry._bindings.pop(task_type, None)
+            control_task_registry._binding_sources.pop(task_type, None)

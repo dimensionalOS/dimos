@@ -44,6 +44,7 @@ from dimos.control.hardware_interface import (
     ConnectedTwistBase,
     ConnectedWholeBody,
 )
+from dimos.control.routing import Routing
 from dimos.control.task import ControlTask
 from dimos.control.tick_loop import TickLoop
 from dimos.core.core import rpc
@@ -178,15 +179,20 @@ class ControlCoordinator(Module):
         self._tasks: dict[TaskName, ControlTask] = {}
         self._task_lock = threading.Lock()
 
+        # Card-declared stream routes: stream name -> (task, handler, routing).
+        # Guarded by _task_lock; entries are added/pruned with their task.
+        self._routes: dict[str, list[tuple[ControlTask, str, Routing]]] = {}
+
         # Tick loop (created on start)
         self._tick_loop: TickLoop | None = None
 
-        # Subscription handles for streaming commands
-        self._joint_command_unsub: Callable[[], None] | None = None
-        self._cartesian_command_unsub: Callable[[], None] | None = None
-        self._ee_twist_command_unsub: Callable[[], None] | None = None
+        # Subscription handles for card-routed streams, keyed by stream name
+        self._stream_unsubs: dict[str, Callable[[], None]] = {}
+        self._subscribe_lock = threading.Lock()
+
+        # The twist stream predates cards and keeps its own handle until
+        # its migration PR.
         self._twist_command_unsub: Callable[[], None] | None = None
-        self._buttons_unsub: Callable[[], None] | None = None
 
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
 
@@ -201,7 +207,7 @@ class ControlCoordinator(Module):
 
             for task_cfg in self.config.tasks:
                 task = self._create_task_from_config(task_cfg)
-                self.add_task(task)
+                self.add_task(task, task_type=task_cfg.type)
                 if task_cfg.auto_start:
                     start = getattr(task, "start", None)
                     if callable(start):
@@ -399,8 +405,13 @@ class ControlCoordinator(Module):
             return positions
 
     @rpc
-    def add_task(self, task: ControlTask) -> bool:
-        """Register a task with the coordinator."""
+    def add_task(self, task: ControlTask, task_type: str | None = None) -> bool:
+        """Register a task with the coordinator.
+
+        ``task_type`` binds the input streams declared in that type's card
+        (see ``dimos.control.routing``) to the task; without it the task is
+        registered for tick-loop compute and RPC only.
+        """
         if not isinstance(task, ControlTask):
             raise TypeError("task must implement ControlTask")
 
@@ -409,18 +420,59 @@ class ControlCoordinator(Module):
                 logger.warning(f"Task {task.name} already registered")
                 return False
             self._tasks[task.name] = task
+            if task_type is not None:
+                self._register_routes(task, task_type)
             logger.info(f"Added task {task.name}")
-            return True
+        self._sync_stream_subscriptions()
+        return True
 
     @rpc
     def remove_task(self, task_name: TaskName) -> bool:
         """Remove a task by name."""
         with self._task_lock:
-            if task_name in self._tasks:
-                del self._tasks[task_name]
-                logger.info(f"Removed task {task_name}")
-                return True
-            return False
+            task = self._tasks.pop(task_name, None)
+            if task is None:
+                return False
+            for entries in self._routes.values():
+                entries[:] = [entry for entry in entries if entry[0] is not task]
+            logger.info(f"Removed task {task_name}")
+            return True
+
+    def _register_routes(self, task: ControlTask, task_type: str) -> None:
+        """Extend the route table with the type's card-declared streams (under _task_lock)."""
+        from dimos.control.tasks.registry import control_task_registry
+
+        for binding in control_task_registry.bindings_for(task_type).consumes:
+            self._routes.setdefault(binding.stream, []).append(
+                (task, binding.handler, binding.routing)
+            )
+
+    def _sync_stream_subscriptions(self) -> None:
+        """Subscribe every routed stream that has no subscription yet."""
+        if not (self._tick_loop and self._tick_loop.is_running):
+            return
+        with self._task_lock:
+            streams = [stream for stream, entries in self._routes.items() if entries]
+        with self._subscribe_lock:
+            for stream in streams:
+                if stream in self._stream_unsubs:
+                    continue
+                try:
+                    unsub = getattr(self, stream).subscribe(self._make_stream_cb(stream))
+                except Exception:
+                    logger.warning(
+                        f"Tasks are bound to {stream} but the coordinator could not "
+                        "subscribe to it. Use task_invoke RPC or set transport via blueprint."
+                    )
+                    continue
+                self._stream_unsubs[stream] = unsub
+                logger.info(f"Subscribed to {stream} for card-bound tasks")
+
+    def _make_stream_cb(self, stream: str) -> "Callable[[Any], None]":
+        def _on_message(msg: Any) -> None:
+            self._dispatch(stream, msg)
+
+        return _on_message
 
     @rpc
     def get_task(self, task_name: TaskName) -> ControlTask | None:
@@ -440,77 +492,50 @@ class ControlCoordinator(Module):
         with self._task_lock:
             return [name for name, task in self._tasks.items() if task.is_active()]
 
-    def _on_joint_command(self, msg: JointState) -> None:
-        """Route incoming JointState to streaming tasks by joint name.
+    def _dispatch(self, stream: str, msg: Any) -> None:
+        """Deliver a stream message to its card-routed tasks.
 
-        Routes position data to servo tasks and velocity data to velocity tasks.
-        Each task only receives data for joints it claims.
+        The routing rule declared on each entry decides delivery: claim
+        overlap on ``msg.name``, task-name match on ``msg.frame_id``, or
+        broadcast. Handlers receive ``(msg, t_now)`` and own digestion.
         """
-        if not msg.name:
-            return
-
         t_now = time.perf_counter()
-        incoming_joints = set(msg.name)
-
         with self._task_lock:
-            for task in self._tasks.values():
-                claimed_joints = task.claim().joints
-
-                # Skip if no overlap between incoming and claimed joints
-                if not (claimed_joints & incoming_joints):
-                    continue
-
-                # Route to servo tasks (position control)
-                if msg.position:
-                    positions_by_name = dict(zip(msg.name, msg.position, strict=False))
-                    task.set_target_by_name(positions_by_name, t_now)
-
-                # Route to velocity tasks (velocity control)
-                elif msg.velocity:
-                    velocities_by_name = dict(zip(msg.name, msg.velocity, strict=False))
-                    task.set_velocities_by_name(velocities_by_name, t_now)
-
-    def _on_cartesian_command(self, msg: PoseStamped) -> None:
-        """Route incoming PoseStamped to CartesianIKTask by task name.
-
-        Uses frame_id as the target task name for routing.
-        """
-        task_name = msg.frame_id
-        if not task_name:
-            logger.warning("Received cartesian_command with empty frame_id (task name)")
-            return
-
-        t_now = time.perf_counter()
-
-        with self._task_lock:
-            task = self._tasks.get(task_name)
-            if task is None:
-                logger.warning(f"Cartesian command for unknown task: {task_name}")
+            entries = self._routes.get(stream)
+            if not entries:
                 return
 
-            task.on_cartesian_command(msg, t_now)
+            claimable: set[str] | None = None
+            frame_id = getattr(msg, "frame_id", "")
+            by_name_bound = False
+            by_name_matched = False
 
-    def _on_ee_twist_command(self, msg: TwistStamped) -> None:
-        """Route incoming TwistStamped to EEFTwistTask by task name.
+            for task, handler_name, routing in entries:
+                if routing is Routing.CLAIM_OVERLAP:
+                    if claimable is None:
+                        claimable = set(getattr(msg, "name", ()) or ())
+                    if not claimable or not (task.claim().joints & claimable):
+                        continue
+                elif routing is Routing.BY_TASK_NAME:
+                    by_name_bound = True
+                    if not frame_id or task.name != frame_id:
+                        continue
+                    by_name_matched = True
+                try:
+                    getattr(task, handler_name)(msg, t_now)
+                except Exception:
+                    logger.exception(
+                        f"{handler_name}() raised on task {task.name!r} for stream {stream!r}"
+                    )
 
-        Uses frame_id as the target task name. Unmatched commands are ignored
-        without fallback to planar/base twist semantics.
-        """
-        task_name = msg.frame_id
-        if not task_name:
-            logger.warning("Received coordinator_ee_twist_command with empty frame_id")
-            return
-
-        t_now = time.perf_counter()
-        with self._task_lock:
-            task = self._tasks.get(task_name)
-            if task is None:
-                logger.warning("EEF twist command for unknown task", task_name=task_name)
-                return
-            task.on_ee_twist_command(msg, t_now)
+            if by_name_bound and not by_name_matched:
+                if not frame_id:
+                    logger.warning(f"Received {stream} with empty frame_id (task name)")
+                else:
+                    logger.warning(f"{stream} for unknown task: {frame_id}")
 
     def _on_twist_command(self, msg: Twist) -> None:
-        """Convert Twist → virtual joint velocities and route via _on_joint_command.
+        """Convert Twist → virtual joint velocities and route via joint_command dispatch.
 
         Maps Twist fields to virtual joints using suffix convention:
         base_vx ← linear.x, base_vy ← linear.y, base_wz ← angular.z, etc.
@@ -535,7 +560,7 @@ class ControlCoordinator(Module):
 
         if names:
             joint_state = JointState(name=names, velocity=velocities)
-            self._on_joint_command(joint_state)
+            self._dispatch("joint_command", joint_state)
 
         # Velocity-capable tasks opt in with set_velocity_command().
         t_now = time.perf_counter()
@@ -544,12 +569,6 @@ class ControlCoordinator(Module):
                 set_vel = getattr(task, "set_velocity_command", None)
                 if set_vel is not None:
                     set_vel(msg.linear.x, msg.linear.y, msg.angular.z, t_now)
-
-    def _on_buttons(self, msg: Buttons) -> None:
-        """Forward button state to all tasks."""
-        with self._task_lock:
-            for task in self._tasks.values():
-                task.on_buttons(msg)
 
     @rpc
     def set_activated(self, engaged: bool) -> None:
@@ -680,47 +699,11 @@ class ControlCoordinator(Module):
         )
         self._tick_loop.start()
 
-        # Subscribe to joint commands if any streaming tasks configured
-        streaming_types = ("servo", "velocity")
-        has_streaming = any(t.type in streaming_types for t in self.config.tasks)
-        if has_streaming:
-            try:
-                self._joint_command_unsub = self.joint_command.subscribe(self._on_joint_command)
-                logger.info("Subscribed to joint_command for streaming tasks")
-            except Exception:
-                logger.warning(
-                    "Streaming tasks configured but could not subscribe to joint_command. "
-                    "Use task_invoke RPC or set transport via blueprint."
-                )
-
-        # Subscribe to cartesian commands if any cartesian_ik tasks configured
-        has_cartesian_ik = any(t.type in ("cartesian_ik", "teleop_ik") for t in self.config.tasks)
-        if has_cartesian_ik:
-            try:
-                self._cartesian_command_unsub = self.coordinator_cartesian_command.subscribe(
-                    self._on_cartesian_command
-                )
-                logger.info("Subscribed to cartesian_command for CartesianIK/TeleopIK tasks")
-            except Exception:
-                logger.warning(
-                    "CartesianIK/TeleopIK tasks configured but could not subscribe to cartesian_command. "
-                    "Use task_invoke RPC or set transport via blueprint."
-                )
-
-        has_eef_twist = any(t.type == "eef_twist" for t in self.config.tasks)
-        if has_eef_twist:
-            try:
-                self._ee_twist_command_unsub = self.coordinator_ee_twist_command.subscribe(
-                    self._on_ee_twist_command
-                )
-                logger.info("Subscribed to coordinator_ee_twist_command for EEFTwist tasks")
-            except Exception:
-                logger.warning(
-                    "EEFTwist tasks configured but could not subscribe to "
-                    "coordinator_ee_twist_command. Use task_invoke RPC or set transport via blueprint."
-                )
+        # Subscribe the streams that registered tasks' cards consume.
+        self._sync_stream_subscriptions()
 
         # Twist commands drive either base hardware or velocity-capable tasks.
+        # This stream predates cards and is migrated in a follow-up PR.
         has_twist_base = any(c.hardware_type == HardwareType.BASE for c in self.config.hardware)
         with self._task_lock:
             has_velocity_task = any(
@@ -737,12 +720,6 @@ class ControlCoordinator(Module):
                     "to twist_command. Use task_invoke RPC or set transport via blueprint."
                 )
 
-        # Subscribe to buttons if any teleop_ik tasks configured (engage/disengage)
-        has_teleop_ik = any(t.type == "teleop_ik" for t in self.config.tasks)
-        if has_teleop_ik:
-            self._buttons_unsub = self.teleop_buttons.subscribe(self._on_buttons)
-            logger.info("Subscribed to buttons for engage/disengage")
-
         # Arming + dry-run are RPC-only; no stream subscription here.
 
         logger.info(f"ControlCoordinator started at {self.config.tick_rate}Hz")
@@ -752,22 +729,16 @@ class ControlCoordinator(Module):
         """Stop the coordinator."""
         logger.info("Stopping ControlCoordinator...")
 
-        # Unsubscribe from streaming commands
-        if self._joint_command_unsub:
-            self._joint_command_unsub()
-            self._joint_command_unsub = None
-        if self._cartesian_command_unsub:
-            self._cartesian_command_unsub()
-            self._cartesian_command_unsub = None
-        if self._ee_twist_command_unsub:
-            self._ee_twist_command_unsub()
-            self._ee_twist_command_unsub = None
+        # Unsubscribe from streaming commands and drop the route table
+        with self._subscribe_lock:
+            for unsub in self._stream_unsubs.values():
+                unsub()
+            self._stream_unsubs.clear()
+        with self._task_lock:
+            self._routes.clear()
         if self._twist_command_unsub:
             self._twist_command_unsub()
             self._twist_command_unsub = None
-        if self._buttons_unsub:
-            self._buttons_unsub()
-            self._buttons_unsub = None
 
         if self._tick_loop:
             self._tick_loop.stop()
