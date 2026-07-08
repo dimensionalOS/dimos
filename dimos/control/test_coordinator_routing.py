@@ -602,3 +602,31 @@ class TestCardRoutingContract:
 
         assert coordinator.remove_task("vel1")
         taps["joint_command"].unsub.assert_called_once()  # last consumer gone
+
+    def test_unknown_task_type_warns_and_sets_no_routing(self, make_coordinator, mocker):
+        import dimos.control.coordinator as coord_mod
+
+        warn = mocker.patch.object(coord_mod.logger, "warning")
+        coordinator, taps = make_coordinator()
+        coordinator.start()
+        warn.reset_mock()  # ignore any start()-time warnings
+
+        assert coordinator.add_task(
+            RecordingTask("mystery", frozenset(ARM_JOINTS)), task_type="srvo"
+        )
+
+        assert any("srvo" in str(c.args[0]) for c in warn.call_args_list)
+        assert not taps["joint_command"].subscribed
+
+    def test_cardless_known_type_does_not_warn(self, make_coordinator, mocker):
+        import dimos.control.coordinator as coord_mod
+
+        warn = mocker.patch.object(coord_mod.logger, "warning")
+        coordinator, _ = make_coordinator()
+        coordinator.start()
+        warn.reset_mock()
+
+        # trajectory is a real type with an intentionally empty card.
+        coordinator.add_task(RecordingTask("traj", frozenset(ARM_JOINTS)), task_type="trajectory")
+
+        assert not any("unknown task_type" in str(c.args[0]) for c in warn.call_args_list)

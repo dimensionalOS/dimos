@@ -443,7 +443,15 @@ class ControlCoordinator(Module):
         """Extend the route table with the type's card-declared streams (under _task_lock)."""
         from dimos.control.tasks.registry import control_task_registry
 
-        for binding in control_task_registry.bindings_for(task_type).consumes:
+        bindings = control_task_registry.bindings_for(task_type)
+        if not bindings.consumes and task_type.lower() not in control_task_registry.available():
+            # Distinct from a card-less-but-known type (e.g. trajectory): an
+            # unknown type usually means a typo or a missing manifest.
+            logger.warning(
+                f"Task {task.name!r} added with unknown task_type {task_type!r}; "
+                "no stream routing set up (typo, or missing task manifest?)."
+            )
+        for binding in bindings.consumes:
             self._routes.setdefault(binding.stream, []).append(
                 (task, binding.handler, binding.routing)
             )
