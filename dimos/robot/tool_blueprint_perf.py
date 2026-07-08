@@ -47,6 +47,7 @@ DEFAULT_OUTPUT = Path("blueprint_perf.json")
 class ToolArgs:
     blueprint: str
     mode: Mode
+    simulation_backend: str
     viewer: str
     duration_seconds: float
     warmup_seconds: float
@@ -76,15 +77,22 @@ class LineTail:
         }
 
 
-def build_command(*, blueprint: str, mode: Mode, viewer: str) -> list[str]:
+def build_command(*, blueprint: str, mode: Mode, simulation_backend: str, viewer: str) -> list[str]:
     cmd = [sys.executable, "-m", "dimos.robot.cli.dimos"]
     if mode == "replay":
         cmd.extend(["--replay", f"--viewer={viewer}", "run", blueprint])
     elif mode == "simulation":
-        cmd.extend(["--simulation=true", f"--viewer={viewer}", "run", blueprint])
+        cmd.extend([f"--simulation={simulation_backend}", f"--viewer={viewer}", "run", blueprint])
     else:
         cmd.extend([f"--viewer={viewer}", "run", blueprint])
     return cmd
+
+
+def _nonnegative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise ValueError("must be >= 0")
+    return parsed
 
 
 def parse_args(argv: Sequence[str] | None = None) -> ToolArgs:
@@ -99,6 +107,11 @@ def parse_args(argv: Sequence[str] | None = None) -> ToolArgs:
         choices=("replay", "simulation", "normal"),
         default=DEFAULT_MODE,
         help="How to construct the DimOS command.",
+    )
+    parser.add_argument(
+        "--simulation-backend",
+        default="mujoco",
+        help="Simulation backend name to pass when --mode=simulation.",
     )
     parser.add_argument("--viewer", default=DEFAULT_VIEWER, help="Viewer mode to pass to DimOS.")
     parser.add_argument(
@@ -127,21 +140,25 @@ def parse_args(argv: Sequence[str] | None = None) -> ToolArgs:
     )
     parser.add_argument(
         "--stdout-tail-lines",
-        type=int,
+        type=_nonnegative_int,
         default=DEFAULT_STDOUT_TAIL_LINES,
         help="How many stdout lines to keep in the JSON tail.",
     )
     parser.add_argument(
         "--stderr-tail-lines",
-        type=int,
+        type=_nonnegative_int,
         default=DEFAULT_STDERR_TAIL_LINES,
         help="How many stderr lines to keep in the JSON tail.",
     )
 
-    ns = parser.parse_args(argv)
+    try:
+        ns = parser.parse_args(argv)
+    except ValueError as exc:
+        parser.error(str(exc))
     return ToolArgs(
         blueprint=ns.blueprint,
         mode=ns.mode,
+        simulation_backend=ns.simulation_backend,
         viewer=ns.viewer,
         duration_seconds=ns.duration_seconds,
         warmup_seconds=ns.warmup_seconds,
@@ -180,7 +197,12 @@ def _tail_file(stream: Any, max_lines: int) -> dict[str, Any]:
 
 
 def run_blueprint_perf(args: ToolArgs) -> dict[str, Any]:
-    command = build_command(blueprint=args.blueprint, mode=args.mode, viewer=args.viewer)
+    command = build_command(
+        blueprint=args.blueprint,
+        mode=args.mode,
+        simulation_backend=args.simulation_backend,
+        viewer=args.viewer,
+    )
     started_at = datetime.now(UTC)
     monotonic_start = time.monotonic()
     with (
@@ -196,6 +218,8 @@ def run_blueprint_perf(args: ToolArgs) -> dict[str, Any]:
     ):
         ps_proc = psutil.Process(proc.pid)
         cpu_user_start, cpu_system_start = _safe_cpu_times(ps_proc)
+        last_cpu_user = cpu_user_start
+        last_cpu_system = cpu_system_start
         peak_rss_bytes = 0
         survived_past_warmup = False
         warmup_reached_at: float | None = None
@@ -226,8 +250,18 @@ def run_blueprint_perf(args: ToolArgs) -> dict[str, Any]:
                     peak_rss_bytes = max(peak_rss_bytes, rss)
                 except (psutil.Error, OSError):
                     pass
+                cpu_user_sample, cpu_system_sample = _safe_cpu_times(ps_proc)
+                if cpu_user_sample is not None:
+                    last_cpu_user = cpu_user_sample
+                if cpu_system_sample is not None:
+                    last_cpu_system = cpu_system_sample
 
                 if elapsed >= args.duration_seconds:
+                    cpu_user_sample, cpu_system_sample = _safe_cpu_times(ps_proc)
+                    if cpu_user_sample is not None:
+                        last_cpu_user = cpu_user_sample
+                    if cpu_system_sample is not None:
+                        last_cpu_system = cpu_system_sample
                     exit_reason, escalated_to_kill = _terminate_process(
                         proc, args.command_timeout_seconds
                     )
@@ -237,16 +271,30 @@ def run_blueprint_perf(args: ToolArgs) -> dict[str, Any]:
                 time.sleep(0.05)
         finally:
             if proc.poll() is None:
+                cpu_user_sample, cpu_system_sample = _safe_cpu_times(ps_proc)
+                if cpu_user_sample is not None:
+                    last_cpu_user = cpu_user_sample
+                if cpu_system_sample is not None:
+                    last_cpu_system = cpu_system_sample
                 exit_reason, escalated_to_kill = _terminate_process(
                     proc, args.command_timeout_seconds
                 )
                 terminated = True
             else:
+                cpu_user_sample, cpu_system_sample = _safe_cpu_times(ps_proc)
+                if cpu_user_sample is not None:
+                    last_cpu_user = cpu_user_sample
+                if cpu_system_sample is not None:
+                    last_cpu_system = cpu_system_sample
                 proc.wait()
 
         ended_at = datetime.now(UTC)
         wall_clock_seconds = time.monotonic() - monotonic_start
         cpu_user_end, cpu_system_end = _safe_cpu_times(ps_proc)
+        if cpu_user_end is None:
+            cpu_user_end = last_cpu_user
+        if cpu_system_end is None:
+            cpu_system_end = last_cpu_system
         pid = proc.pid
         returncode = proc.returncode
         stdout_snapshot = _tail_file(stdout_file, args.stdout_tail_lines)
@@ -273,6 +321,7 @@ def run_blueprint_perf(args: ToolArgs) -> dict[str, Any]:
             "command": command,
             "blueprint": args.blueprint,
             "mode": args.mode,
+            "simulation_backend": args.simulation_backend,
             "viewer": args.viewer,
             "pid": pid,
             "started_at": started_at.isoformat(),
@@ -299,6 +348,7 @@ def run_blueprint_perf(args: ToolArgs) -> dict[str, Any]:
             "stderr": stderr_snapshot,
         },
     }
+    args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2) + "\n")
     return result
 

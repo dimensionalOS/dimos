@@ -17,13 +17,17 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
-from dimos.robot.tool_blueprint_perf import ToolArgs, build_command, main, run_blueprint_perf
+import psutil
+import pytest
+
+from dimos.robot.tool_blueprint_perf import ToolArgs, build_command, main, parse_args, run_blueprint_perf
 
 
 def _make_args(tmp_path: Path, **kwargs: object) -> ToolArgs:
     return ToolArgs(
         blueprint=kwargs.get("blueprint", "unitree-go2"),  # type: ignore[arg-type]
         mode=kwargs.get("mode", "replay"),  # type: ignore[arg-type]
+        simulation_backend=kwargs.get("simulation_backend", "mujoco"),  # type: ignore[arg-type]
         viewer=kwargs.get("viewer", "none"),  # type: ignore[arg-type]
         duration_seconds=kwargs.get("duration_seconds", 0.2),  # type: ignore[arg-type]
         warmup_seconds=kwargs.get("warmup_seconds", 0.05),  # type: ignore[arg-type]
@@ -35,7 +39,9 @@ def _make_args(tmp_path: Path, **kwargs: object) -> ToolArgs:
 
 
 def test_build_command_replay() -> None:
-    assert build_command(blueprint="unitree-go2", mode="replay", viewer="none") == [
+    assert build_command(
+        blueprint="unitree-go2", mode="replay", simulation_backend="mujoco", viewer="none"
+    ) == [
         sys.executable,
         "-m",
         "dimos.robot.cli.dimos",
@@ -47,11 +53,16 @@ def test_build_command_replay() -> None:
 
 
 def test_build_command_simulation() -> None:
-    assert build_command(blueprint="unitree-g1-basic-sim", mode="simulation", viewer="rerun") == [
+    assert build_command(
+        blueprint="unitree-g1-basic-sim",
+        mode="simulation",
+        simulation_backend="mujoco",
+        viewer="rerun",
+    ) == [
         sys.executable,
         "-m",
         "dimos.robot.cli.dimos",
-        "--simulation=true",
+        "--simulation=mujoco",
         "--viewer=rerun",
         "run",
         "unitree-g1-basic-sim",
@@ -59,7 +70,9 @@ def test_build_command_simulation() -> None:
 
 
 def test_build_command_normal() -> None:
-    assert build_command(blueprint="unitree-go2", mode="normal", viewer="none") == [
+    assert build_command(
+        blueprint="unitree-go2", mode="normal", simulation_backend="mujoco", viewer="none"
+    ) == [
         sys.executable,
         "-m",
         "dimos.robot.cli.dimos",
@@ -92,6 +105,20 @@ def test_json_schema_shape(tmp_path: Path, mocker) -> None:
     assert "stdout" in result["logs"]
     assert "stderr" in result["logs"]
     assert args.output.exists()
+
+
+def test_json_output_creates_nested_parent_directory(tmp_path: Path, mocker) -> None:
+    code = "import time; print('ok'); time.sleep(0.1)"
+    mocker.patch(
+        "dimos.robot.tool_blueprint_perf.build_command",
+        return_value=[sys.executable, "-c", code],
+    )
+    output = tmp_path / "nested" / "dir" / "result.json"
+
+    result = run_blueprint_perf(_make_args(tmp_path, output=output))
+
+    assert result["run"]["blueprint"] == "unitree-go2"
+    assert output.exists()
 
 
 def test_log_tail_truncation(tmp_path: Path, mocker) -> None:
@@ -133,6 +160,46 @@ def test_startup_success_heuristic_for_bounded_run(tmp_path: Path, mocker) -> No
     assert result["run"]["returncode"] is not None
 
 
+def test_cpu_metrics_preserved_from_last_valid_sample(tmp_path: Path, mocker) -> None:
+    class FakeCpuTimes:
+        def __init__(self, user: float, system: float) -> None:
+            self.user = user
+            self.system = system
+
+    class FakePsProcess:
+        def __init__(self, _pid: int) -> None:
+            self._samples = [
+                FakeCpuTimes(1.0, 2.0),
+                FakeCpuTimes(3.5, 5.0),
+                FakeCpuTimes(4.0, 6.5),
+            ]
+            self._index = 0
+
+        def cpu_times(self):
+            if self._index >= len(self._samples):
+                raise psutil.NoSuchProcess(pid=123)
+            sample = self._samples[self._index]
+            self._index += 1
+            if isinstance(sample, Exception):
+                raise sample
+            return sample
+
+        def memory_info(self):
+            return mocker.Mock(rss=1234)
+
+    code = "import time; time.sleep(0.2)"
+    mocker.patch(
+        "dimos.robot.tool_blueprint_perf.build_command",
+        return_value=[sys.executable, "-c", code],
+    )
+    mocker.patch("dimos.robot.tool_blueprint_perf.psutil.Process", FakePsProcess)
+
+    result = run_blueprint_perf(_make_args(tmp_path, duration_seconds=0.1, warmup_seconds=0.05))
+
+    assert result["performance"]["cpu_user_seconds"] == 3.0
+    assert result["performance"]["cpu_system_seconds"] == 4.5
+
+
 def test_process_failure_before_warmup(tmp_path: Path, mocker) -> None:
     code = "import sys; print('boom', file=sys.stderr); sys.exit(7)"
     mocker.patch(
@@ -148,6 +215,12 @@ def test_process_failure_before_warmup(tmp_path: Path, mocker) -> None:
     assert result["run"]["exit_reason"] == "exited_before_warmup"
     assert result["run"]["returncode"] == 7
     assert "boom" in result["logs"]["stderr"]["tail_lines"]
+
+
+@pytest.mark.parametrize("flag", ["--stdout-tail-lines", "--stderr-tail-lines"])
+def test_negative_tail_count_parse_error(flag: str) -> None:
+    with pytest.raises(SystemExit, match="2"):
+        parse_args([flag, "-1"])
 
 
 def test_main_returns_nonzero_on_startup_failure(tmp_path: Path, mocker) -> None:
