@@ -199,6 +199,7 @@ all_modules = {
     "manipulation-module": "dimos.manipulation.manipulation_module.ManipulationModule",
     "map": "dimos.robot.unitree.type.map.Map",
     "marker-detection-stream-module": "dimos.perception.fiducial.marker_detection_stream_module.MarkerDetectionStreamModule",
+    "marker-localization-module": "dimos.perception.fiducial.marker_localization_module.MarkerLocalizationModule",
     "marker-tf-module": "dimos.perception.fiducial.marker_tf_module.MarkerTfModule",
     "mcp-client": "dimos.agents.mcp.mcp_client.McpClient",
     "mcp-server": "dimos.agents.mcp.mcp_server.McpServer",
