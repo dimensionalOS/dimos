@@ -218,18 +218,6 @@ coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
 ).remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
 
 
-def _stereo_nav_blueprint():
-    """Default bridge blueprint with the grid removed — floor at z=0 is the datum."""
-    import rerun.blueprint as rrb
-    return rrb.Blueprint(
-        rrb.Spatial3DView(
-            origin="world",
-            background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
-        ),
-        auto_views=True,
-    )
-
-
 # FlowBase + RealSense D435i stereo depth + CostMapper + nav stack
 coordinator_flowbase_stereo_nav = (
     autoconnect(
@@ -248,7 +236,7 @@ coordinator_flowbase_stereo_nav = (
                 ),
             ],
         ),
-        RerunBridgeModule.blueprint(rerun_open="web", blueprint=_stereo_nav_blueprint),
+        RerunBridgeModule.blueprint(rerun_open="web"),
         RerunWebSocketServer.blueprint(),
     )
     .remappings(
