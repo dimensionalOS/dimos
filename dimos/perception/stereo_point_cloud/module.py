@@ -46,7 +46,7 @@ _DEPTH_MM_THRESHOLD = 100
 class Config(ModuleConfig):
     min_depth: float          = 0.1
     max_depth: float          = 8.0
-    gradient_threshold: float = 0.30
+    gradient_threshold: float = 0.15
     vox_size: float           = 0.020
     global_vox_size: float    = 0.020
     floor_margin: float       = 0.03
