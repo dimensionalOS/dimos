@@ -54,9 +54,9 @@ def _isolation_filter(pts: np.ndarray, radius: float, min_neighbors: int = 2) ->
     return np.asarray(counts) > min_neighbors
 
 
-def _raycast_free_keys(surface_pts: np.ndarray, vox_size: float, n_rays: int = 400) -> np.ndarray:
-    """Free-space voxel keys on rays from camera origin (rotation-only frame) to surface_pts."""
-    origin = np.zeros(3, dtype=np.float32)
+def _raycast_free_keys(surface_pts: np.ndarray, vox_size: float, n_rays: int = 400, origin: np.ndarray | None = None) -> np.ndarray:
+    """Free-space voxel keys on rays from origin to surface_pts (world frame)."""
+    origin = np.zeros(3, dtype=np.float32) if origin is None else np.asarray(origin, dtype=np.float32)
     n = min(len(surface_pts), n_rays)
     if n == 0:
         return np.empty(0, dtype=np.int64)

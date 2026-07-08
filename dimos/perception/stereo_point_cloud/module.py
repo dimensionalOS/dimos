@@ -274,28 +274,24 @@ class StereoPointCloud(Module):
 
         if not self._map_ready:
             self._map_ready = True
-            # FIX: the filter below runs on xyz_ronly = xyz_vox - t, which is
-            # CAMERA-CENTERED — so the threshold must be the camera-relative
-            # floor height (floor_z), not cam_z + floor_z. Adding the ICP z
-            # (a different frame) shifted the cut plane by whatever the ICP
-            # translation happened to be at calibration time.
-            self._world_floor_z = float(self._floor_calib.floor_z)  # type: ignore[arg-type]
+            # Floor threshold in world frame: floor_z is camera-relative (negative).
+            # ICP vertical drift is small so adding t[2] keeps the cut plane accurate.
+            self._world_floor_z = float(self._floor_calib.floor_z) + float(t[2])  # type: ignore[arg-type]
             logger.info(
                 f"StereoPointCloud: global map started — floor at "
-                f"Z ≈ {self._world_floor_z:.3f} m below camera (published at Z ≈ 0)"
+                f"Z ≈ {self._world_floor_z:.3f} m (world frame, published at Z ≈ 0)"
             )
 
-        # Rotation-only frame: strip ICP translation so ±2 cm t-noise doesn't shift voxel keys
-        xyz_ronly  = xyz_vox - t
-        vk_r       = np.floor(xyz_ronly / self.config.vox_size).astype(np.int32)
-        _, first_r = np.unique(_pack(vk_r), return_index=True)
-        xyz_vox_r  = xyz_ronly[first_r]
-        xyz_for_map = xyz_vox_r[xyz_vox_r[:, 2] > self._world_floor_z + self.config.global_floor_margin]
+        # World-frame accumulation: xyz_vox = xyz_cam @ R.T + t is a fixed frame.
+        # Same physical point always has the same xyz_world key regardless of camera position.
+        # The old xyz_ronly = xyz_vox - t was a MOVING frame — as t changed, the same
+        # physical point mapped to a different key, causing chair-duplicates on every move.
+        xyz_for_map = xyz_vox[xyz_vox[:, 2] > self._world_floor_z + self.config.global_floor_margin]
 
         pts_snap = None
         with self._lock:
             if len(self._acc_pts) > 0 and len(xyz_for_map) > 0:
-                free_keys = _raycast_free_keys(xyz_for_map, self.config.global_vox_size)
+                free_keys = _raycast_free_keys(xyz_for_map, self.config.global_vox_size, origin=t)
                 if len(free_keys):
                     keys_acc      = _pack(np.floor(self._acc_pts / self.config.global_vox_size).astype(np.int32))
                     self._acc_pts = self._acc_pts[~np.isin(keys_acc, free_keys)]
