@@ -26,7 +26,6 @@ from typing import Any
 
 import typer
 
-from dimos.teleop.openarm_mini.config import OPENARM_MINI_DEFAULT_BAUDRATE
 from dimos.teleop.openarm_mini.feetech import _create_sdk_handlers
 
 FEETECH_ID_ADDRESS = 5
@@ -44,7 +43,7 @@ def main(
         "--old-id",
         help="Current motor ID. If omitted, scan for exactly one connected motor.",
     ),
-    baudrate: int = typer.Option(OPENARM_MINI_DEFAULT_BAUDRATE),
+    baudrate: int = typer.Option(..., help="Feetech serial baudrate."),
     yes: bool = typer.Option(False, "--yes", help="Skip the safety confirmation prompt."),
 ) -> None:
     _validate_motor_id(new_id, "new-id")

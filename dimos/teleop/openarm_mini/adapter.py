@@ -44,14 +44,19 @@ class OpenArmMiniTeleopAdapter:
             return
         buses: dict[str, OpenArmMiniLeaderReader] = {}
         try:
+            baudrate = self.config.connection_baudrate()
             for side in self.config.sides():
                 calibration = load_calibration(self.config.calibration_path(side), side)
-                bus = OpenArmMiniLeaderReader(
-                    side, self.config.port(side), calibration, self.config.baudrate
-                )
+                bus = OpenArmMiniLeaderReader(side, self.config.port(side), calibration, baudrate)
                 bus.connect()
                 buses[side] = bus
-        except (OpenArmMiniCalibrationError, OpenArmMiniDependencyError, RuntimeError, OSError):
+        except (
+            OpenArmMiniCalibrationError,
+            OpenArmMiniDependencyError,
+            ValueError,
+            RuntimeError,
+            OSError,
+        ):
             for bus in buses.values():
                 bus.disconnect()
             raise

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -90,6 +91,21 @@ def _write_calibrations(tmp_path: Path) -> tuple[Path, Path]:
     save_calibration(left_path, _calibration("left"))
     save_calibration(right_path, _calibration("right"))
     return left_path, right_path
+
+
+def _configured_config(
+    left_path: Path,
+    right_path: Path,
+    **kwargs: Any,
+) -> OpenArmMiniTeleopConfig:
+    return OpenArmMiniTeleopConfig(
+        port_left="left-port",
+        port_right="right-port",
+        left_calibration_path=left_path,
+        right_calibration_path=right_path,
+        baudrate=123,
+        **kwargs,
+    )
 
 
 def _readings() -> dict[str, float]:
@@ -173,13 +189,7 @@ def test_adapter_left_only_connects_left_bus_and_emits_left_joints(
     monkeypatch.setattr(adapter_module, "OpenArmMiniLeaderReader", bus_factory)
 
     adapter = OpenArmMiniTeleopAdapter(
-        OpenArmMiniTeleopConfig(
-            port_left="left-port",
-            port_right="right-port",
-            left_calibration_path=left_path,
-            right_calibration_path=right_path,
-            enabled_sides=("left",),
-        )
+        _configured_config(left_path, right_path, enabled_sides=("left",))
     )
 
     adapter.connect()
@@ -233,11 +243,7 @@ def test_adapter_returns_none_without_authority(
     monkeypatch.setattr(adapter_module, "OpenArmMiniLeaderReader", bus_factory)
 
     adapter = OpenArmMiniTeleopAdapter(
-        OpenArmMiniTeleopConfig(
-            left_calibration_path=left_path,
-            right_calibration_path=right_path,
-            authority_active=False,
-        )
+        _configured_config(left_path, right_path, authority_active=False)
     )
 
     adapter.connect()
@@ -267,9 +273,9 @@ def test_adapter_emits_configured_global_target_joint_names(
     monkeypatch.setattr(adapter_module, "OpenArmMiniLeaderReader", bus_factory)
 
     adapter = OpenArmMiniTeleopAdapter(
-        OpenArmMiniTeleopConfig(
-            left_calibration_path=left_path,
-            right_calibration_path=right_path,
+        _configured_config(
+            left_path,
+            right_path,
             enabled_sides=("right",),
             target_joint_names_by_side={"right": target_names},
         )
@@ -303,11 +309,7 @@ def test_adapter_rejects_jump_threshold_by_returning_no_command(
     monkeypatch.setattr(adapter_module, "OpenArmMiniLeaderReader", bus_factory)
 
     adapter = OpenArmMiniTeleopAdapter(
-        OpenArmMiniTeleopConfig(
-            left_calibration_path=left_path,
-            right_calibration_path=right_path,
-            max_joint_jump_radians=0.1,
-        )
+        _configured_config(left_path, right_path, max_joint_jump_radians=0.1)
     )
 
     adapter.connect()
@@ -352,12 +354,7 @@ def test_adapter_clamps_over_limit_sender_side(
 
     monkeypatch.setattr(adapter_module, "OpenArmMiniLeaderReader", bus_factory)
 
-    adapter = OpenArmMiniTeleopAdapter(
-        OpenArmMiniTeleopConfig(
-            left_calibration_path=left_path,
-            right_calibration_path=right_path,
-        )
-    )
+    adapter = OpenArmMiniTeleopAdapter(_configured_config(left_path, right_path))
 
     adapter.connect()
     command = adapter.get_current_command()
@@ -396,12 +393,7 @@ def test_adapter_returns_none_when_bus_reports_invalid_reading(
 
     monkeypatch.setattr(adapter_module, "OpenArmMiniLeaderReader", bus_factory)
 
-    adapter = OpenArmMiniTeleopAdapter(
-        OpenArmMiniTeleopConfig(
-            left_calibration_path=left_path,
-            right_calibration_path=right_path,
-        )
-    )
+    adapter = OpenArmMiniTeleopAdapter(_configured_config(left_path, right_path))
 
     adapter.connect()
     command = adapter.get_current_command()

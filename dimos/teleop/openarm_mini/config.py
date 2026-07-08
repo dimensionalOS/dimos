@@ -29,9 +29,8 @@ from dimos.robot.manipulators.openarm.config import openarm_joints
 OPENARM_MINI_TELEOP_EXTRA = "openarm-mini-teleop"
 OPENARM_MINI_STATE_DIR = STATE_DIR / "teleop" / "openarm_mini"
 OPENARM_MINI_SIDES = ("left", "right")
-OPENARM_MINI_DEFAULT_PORT_LEFT = "/dev/ttyUSB1"
-OPENARM_MINI_DEFAULT_PORT_RIGHT = "/dev/ttyUSB0"
-OPENARM_MINI_DEFAULT_BAUDRATE = 1_000_000
+OPENARM_MINI_UNCONFIGURED_PORT = ""
+OPENARM_MINI_UNCONFIGURED_BAUDRATE = 0
 
 
 def default_calibration_path(side: str) -> Path:
@@ -55,11 +54,11 @@ class OpenArmMiniTeleopConfig(BaseConfig):
     """
 
     backend: Literal["openarm_mini"] = "openarm_mini"
-    port_left: str = OPENARM_MINI_DEFAULT_PORT_LEFT
-    port_right: str = OPENARM_MINI_DEFAULT_PORT_RIGHT
+    port_left: str = OPENARM_MINI_UNCONFIGURED_PORT
+    port_right: str = OPENARM_MINI_UNCONFIGURED_PORT
     left_calibration_path: Path | None = None
     right_calibration_path: Path | None = None
-    baudrate: int = OPENARM_MINI_DEFAULT_BAUDRATE
+    baudrate: int = OPENARM_MINI_UNCONFIGURED_BAUDRATE
     max_joint_jump_radians: float = 0.75
     authority_active: bool = True
     enabled_sides: tuple[str, ...] = OPENARM_MINI_SIDES
@@ -95,7 +94,16 @@ class OpenArmMiniTeleopConfig(BaseConfig):
     def port(self, side: str) -> str:
         """Return the configured serial port for a side."""
         validate_side(side)
-        return self.port_left if side == "left" else self.port_right
+        port = self.port_left if side == "left" else self.port_right
+        if not port:
+            raise ValueError(f"port_{side} must be configured for OpenArm Mini teleop")
+        return port
+
+    def connection_baudrate(self) -> int:
+        """Return the configured Feetech serial baudrate."""
+        if self.baudrate <= 0:
+            raise ValueError("baudrate must be configured for OpenArm Mini teleop")
+        return self.baudrate
 
     def sides(self) -> tuple[str, ...]:
         """Return the selected leader sides in runtime order."""

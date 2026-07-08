@@ -36,9 +36,6 @@ from dimos.teleop.openarm_mini.calibration import (
     save_calibration,
 )
 from dimos.teleop.openarm_mini.config import (
-    OPENARM_MINI_DEFAULT_BAUDRATE,
-    OPENARM_MINI_DEFAULT_PORT_LEFT,
-    OPENARM_MINI_DEFAULT_PORT_RIGHT,
     default_calibration_path,
 )
 from dimos.teleop.openarm_mini.feetech import FeetechLeaderReader, _calibrated_motor_radians
@@ -55,9 +52,9 @@ DEFAULT_FLIPS_BY_SIDE: dict[str, frozenset[str]] = {
 
 def main(
     side: Literal["left", "right", "both"] = typer.Option("both"),
-    port_left: str = typer.Option(OPENARM_MINI_DEFAULT_PORT_LEFT),
-    port_right: str = typer.Option(OPENARM_MINI_DEFAULT_PORT_RIGHT),
-    baudrate: int = typer.Option(OPENARM_MINI_DEFAULT_BAUDRATE),
+    port_left: str = typer.Option(..., help="Left leader Feetech serial port."),
+    port_right: str = typer.Option(..., help="Right leader Feetech serial port."),
+    baudrate: int = typer.Option(..., help="Feetech serial baudrate."),
     left_calibration_path: Path = typer.Option(default_calibration_path("left")),
     right_calibration_path: Path = typer.Option(default_calibration_path("right")),
     left_flips: str | None = typer.Option(
