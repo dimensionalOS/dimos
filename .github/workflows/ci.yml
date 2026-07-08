@@ -582,7 +582,7 @@ jobs:
         if: ${{ always() && contains(matrix.markers, 'skipif_no_ros') }}
         run: |
           df -h /nix || true
-          nix-collect-garbage --delete-older-than 3d || true
+          nix-collect-garbage --delete-older-than 3d
           df -h /nix || true
 
   self-hosted-large-tests:
