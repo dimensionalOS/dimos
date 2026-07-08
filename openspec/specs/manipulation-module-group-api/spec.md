@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Define the public manipulation module APIs for explicit planning-group targeting and safe robot-scoped compatibility behavior.
+
+## Requirements
 
 ### Requirement: Manipulation module must expose explicit group planning APIs
 The manipulation module MUST allow callers to target planning groups explicitly for joint and pose planning operations.
