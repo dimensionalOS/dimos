@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip("pinocchio")
 
 from dimos.control.tasks.teleop_task.teleop_task import TeleopIKTask
 
