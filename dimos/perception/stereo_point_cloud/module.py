@@ -21,6 +21,7 @@ from typing import Any
 
 import numpy as np
 from reactivex.disposable import Disposable
+from scipy.ndimage import median_filter
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -41,8 +42,6 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 _DEPTH_MM_THRESHOLD = 100
-_FALLBACK_FLOOR_Z   = -1.4
-_FALLBACK_CEILING_Z =  1.5
 
 
 class Config(ModuleConfig):
@@ -182,6 +181,10 @@ class StereoPointCloud(Module):
         valid_d = depth[depth > 0]
         if len(valid_d) and np.median(valid_d) > _DEPTH_MM_THRESHOLD:
             depth /= 1000.0
+        valid_mask = depth > 0
+        depth[valid_mask] = median_filter(depth, size=3)[valid_mask]
+        fill = median_filter(np.where(valid_mask, depth, 0.0), size=5)
+        depth[~valid_mask & (fill > 0)] = fill[~valid_mask & (fill > 0)]
         invalid = (depth <= 0) | (depth < self.config.min_depth) | (depth > self.config.max_depth)
         depth[invalid] = np.nan
 
@@ -222,7 +225,7 @@ class StereoPointCloud(Module):
         if self._floor_calib.ready:
             keep = xyz_cam[:, 2] > (self._floor_calib.floor_z + self.config.floor_margin)
         else:
-            keep = (xyz_cam[:, 2] >= _FALLBACK_FLOOR_Z) & (xyz_cam[:, 2] <= _FALLBACK_CEILING_Z)
+            keep = np.ones(len(xyz_cam), dtype=bool)
 
         xyz_world_kept = xyz_world[keep]
         xyz_cam_kept   = xyz_cam[keep]
@@ -255,7 +258,7 @@ class StereoPointCloud(Module):
         vk_r       = np.floor(xyz_ronly / self.config.vox_size).astype(np.int32)
         _, first_r = np.unique(_pack(vk_r), return_index=True)
         xyz_vox_r  = xyz_ronly[first_r]
-        xyz_for_map = xyz_vox_r[xyz_vox_r[:, 2] > self._world_floor_z + self.config.floor_margin]
+        xyz_for_map = xyz_vox_r
 
         pts_snap = None
         with self._lock:
