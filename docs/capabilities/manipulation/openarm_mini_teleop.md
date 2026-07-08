@@ -7,8 +7,6 @@ depend on LeRobot at runtime.
 ## Install optional dependencies
 
 ```bash
-uv sync --extra openarm
-# or only the leader teleop SDK
 uv sync --extra openarm-mini-teleop
 ```
 
