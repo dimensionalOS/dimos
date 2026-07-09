@@ -42,6 +42,11 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 _DEPTH_MM_THRESHOLD = 100
+# Extra floor margin added per metre of horizontal range from the camera.
+# Compensates ~0.5° residual camera pitch: tan(0.5°) ≈ 0.009 m/m.
+# Result: near the robot (mat detection) margin stays at global_floor_margin;
+# at 4 m the effective cut rises by ~3.6 cm, rejecting the apparent floor elevation.
+_FLOOR_TILT_COMP = 0.009
 
 
 class Config(ModuleConfig):
@@ -289,7 +294,9 @@ class StereoPointCloud(Module):
         # Same physical point always has the same xyz_world key regardless of camera position.
         # The old xyz_ronly = xyz_vox - t was a MOVING frame — as t changed, the same
         # physical point mapped to a different key, causing chair-duplicates on every move.
-        xyz_for_map = xyz_vox[xyz_vox[:, 2] > self._world_floor_z + self.config.global_floor_margin]
+        xy_dist     = np.linalg.norm(xyz_vox[:, :2] - t[:2], axis=1)
+        floor_thresh = self._world_floor_z + self.config.global_floor_margin + _FLOOR_TILT_COMP * xy_dist
+        xyz_for_map = xyz_vox[xyz_vox[:, 2] > floor_thresh]
 
         pts_snap = None
         with self._lock:
