@@ -236,7 +236,15 @@ coordinator_flowbase_stereo_nav = (
                 ),
             ],
         ),
-        RerunBridgeModule.blueprint(rerun_open="web"),
+        # global_map resends the full accumulated cloud (up to max_global_pts) on every
+        # keyframe; unthrottled, that backs up Rerun's send channel over a wifi-bridged
+        # viewer badly enough to stall ControlCoordinator's 100Hz tick loop (observed as
+        # "JointVelocityTask vel_base timed out" while driving). frame_cloud stays higher
+        # since it's small and needed live.
+        RerunBridgeModule.blueprint(
+            rerun_open="web",
+            max_hz={"world/global_map": 1.0, "world/frame_cloud": 10.0},
+        ),
         RerunWebSocketServer.blueprint(),
     )
     .remappings(
