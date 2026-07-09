@@ -12,6 +12,7 @@ FetchContent_MakeAvailable(doctest)
 add_executable(dimos_native_tests
   test_main.cpp
   test_transport.cpp
+  test_log.cpp
 )
 target_link_libraries(dimos_native_tests PRIVATE dimos_native doctest::doctest)
 target_compile_options(dimos_native_tests PRIVATE -Wall -Wextra -Werror)
