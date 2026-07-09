@@ -22,6 +22,7 @@ for autonomous navigation using the dimos Costmap and Vector types.
 from collections import deque
 from dataclasses import dataclass
 from enum import IntFlag
+
 import threading
 from typing import Any
 
@@ -39,10 +40,12 @@ from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
+from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import get_distance
 
 logger = setup_logger()
+
 
 
 class PointClassification(IntFlag):
@@ -526,54 +529,77 @@ class WavefrontFrontierExplorer(Module):
         # If no obstacles found within search radius, return the safe distance
         # This indicates the frontier is safely away from obstacles
         return min_distance if min_distance != float("inf") else self.config.safe_distance
+    
+  
+    
+    def _compute_path_cost(
+        self, frontier: Vector3, robot_pose: Vector3, costmap: OccupancyGrid
+    ) -> float:
+        """Real travel cost (meters) from the robot to a frontier.
+
+        Uses A* over the costmap so the distance accounts for walls and safe
+        margins, instead of a straight line. Falls back to a penalized
+        straight-line distance if A* cannot find a path.
+        """
+        try:
+            path = min_cost_astar(costmap, goal=frontier, start=robot_pose)
+        except Exception as e:  # never let a planner hiccup kill goal selection
+            logger.warning(f"A* path-cost failed ({e}); using Euclidean fallback")
+            path = None
+
+        if path is None or not path.poses:
+            # Unreachable / planner failed: keep it a candidate, but discouraged.
+            return get_distance(frontier, robot_pose) * 3.0
+
+        # Path length = sum of straight segments between consecutive waypoints.
+        length = 0.0
+        pts = path.poses
+        for a, b in zip(pts, pts[1:]):
+            length += float(np.hypot(b.position.x - a.position.x, b.position.y - a.position.y))
+        return length
+    
 
     def _compute_comprehensive_frontier_score(
         self, frontier: Vector3, frontier_size: int, robot_pose: Vector3, costmap: OccupancyGrid
     ) -> float:
-        """Compute comprehensive score considering multiple criteria."""
+        """Score a frontier by information gained per unit of REAL travel.
 
-        # 1. Distance from robot (preference for moderate distances)
+        v1 (reward far-from-explored)   -> ping-ponged across the map
+        v2 (nearest-first weighted sum) -> stalled at the first wall
+        v3 (info gain / A* path cost)   -> smooth full-map sweep
+        """
+
+        # Straight-line distance — kept only for logging / comparison.
         robot_distance = get_distance(frontier, robot_pose)
 
-        # Distance score: prefer moderate distances (not too close, not too far)
-        # Normalized to 0-1 range
-        distance_score = 1.0 / (1.0 + abs(robot_distance - self.config.lookahead_distance))
+        # Real walking distance via A* over the costmap (routes around walls).
+        path_cost = self._compute_path_cost(frontier, robot_pose, costmap)
 
-        # 2. Information gain (frontier size)
-        # Normalize by a reasonable max frontier size
+        # Information gain = frontier size, normalized to 0..1.
         max_expected_frontier_size = self.config.min_frontier_perimeter / costmap.resolution * 10
         info_gain_score = min(frontier_size / max_expected_frontier_size, 1.0)
 
-        # 3. Distance to explored goals (bonus for being far from explored areas)
-        # Normalize by a reasonable max distance (e.g., 10 meters)
-        explored_goals_distance = self._compute_distance_to_explored_goals(frontier)
-        explored_goals_score = min(explored_goals_distance / self.config.max_explored_distance, 1.0)
-
-        # 4. Distance to obstacles (score based on safety)
-        # 0 = too close to obstacles, 1 = at or beyond safe distance
-        obstacles_distance = self._compute_distance_to_obstacles(frontier, costmap)
-        if obstacles_distance >= self.config.safe_distance:
-            obstacles_score = 1.0  # Fully safe
-        else:
-            obstacles_score = obstacles_distance / self.config.safe_distance  # Linear penalty
-
-        # 5. Direction momentum (already in 0-1 range from dot product)
+        # Heading continuity: 1.0 = straight ahead, 0.0 = sideways / backwards.
         momentum_score = self._compute_direction_momentum_score(frontier, robot_pose)
 
         logger.info(
-            f"Distance score: {distance_score:.2f}, Info gain: {info_gain_score:.2f}, Explored goals: {explored_goals_score:.2f}, Obstacles: {obstacles_score:.2f}, Momentum: {momentum_score:.2f}"
+            f"Euclid: {robot_distance:.1f}m, Path: {path_cost:.1f}m, "
+            f"Info gain: {info_gain_score:.2f}, Momentum: {momentum_score:.2f}"
         )
 
-        # Combine scores with consistent scaling
-        total_score = (
-            0.3 * info_gain_score  # 30% information gain
-            + 0.3 * explored_goals_score  # 30% distance from explored goals
-            + 0.2 * distance_score  # 20% distance optimization
-            + 0.15 * obstacles_score  # 15% distance from obstacles
-            + 0.05 * momentum_score  # 5% direction momentum
-        )
+        # Core objective: information gained per unit of real travel.
+        info_per_cost = info_gain_score / (1.0 + path_cost)
 
-        return total_score
+        # Gentle heading-continuity bonus (up to +50% for going straight ahead).
+        info_per_cost *= 1.0 + 0.5 * momentum_score
+
+        # Anti-revisit: fade out frontiers within safe_distance of a place we've
+        # already explored, so we don't re-select the spot we're standing on.
+        revisit_distance = self._compute_distance_to_explored_goals(frontier)
+        if revisit_distance < self.config.safe_distance:
+            info_per_cost *= revisit_distance / self.config.safe_distance
+
+        return info_per_cost
 
     def _rank_frontiers(
         self,
@@ -783,18 +809,15 @@ class WavefrontFrontierExplorer(Module):
         goals_published = 0
         consecutive_failures = 0
         max_consecutive_failures = 10  # Allow more attempts before giving up
-
         while self.exploration_active and not self.stop_event.is_set():
             # Check if we have required data
             if self.latest_costmap is None or self.latest_odometry is None:
                 threading.Event().wait(0.5)
                 continue
-
             # Get robot pose from odometry
             robot_pose = Vector3(
                 self.latest_odometry.position.x, self.latest_odometry.position.y, 0.0
             )
-
             # Get exploration goal
             costmap = simple_inflate(self.latest_costmap, 0.25)
             goal = self.get_exploration_goal(robot_pose, costmap)
@@ -825,7 +848,7 @@ class WavefrontFrontierExplorer(Module):
                 if goal_reached:
                     logger.info("Goal reached, finding next frontier")
                 else:
-                    logger.warning("Goal timeout after 30 seconds, finding next frontier anyway")
+                    logger.warning(f"Goal timeout after {self.config.goal_timeout}s, finding next frontier anyway")
             else:
                 consecutive_failures += 1
 
