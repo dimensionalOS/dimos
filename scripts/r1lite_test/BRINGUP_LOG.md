@@ -594,3 +594,15 @@ keyboard teleop are hardware-validated end to end — feedback, arms-hold,
 cameras-to-viewer, chassis driving. Remaining for the PR: r1_lite
 description package (URDF+meshes to LFS) + catalog factory, distilled
 docs/README, CI gate, rebase story vs Mustafa's branch/main.
+
+**Untethered driving (question raised, analyzed, parked):** RC manual —
+yes anytime (radio→VCU). dimos over office WiFi — expected NO: DDS
+discovery needs multicast and the office AP kills it (same IGMP-snooping
+behavior that broke Go2 discovery); robot nodes also aren't registered
+with any discovery server, so no unicast rendezvous either. Paths if
+needed later: (1) 2-min empirical test (unplug cable, ros2 topic list
+over WiFi), (2) Galaxea's official WiFi mode = findrobot_server.sh
+discovery-server switch (invasive: rewrites robot bashrc + reboots — a
+deliberate migration), (3) RECOMMENDED: dedicated travel router bridged
+to the robot's ethernet, Go2-style — nothing on the robot changes.
+Cameras over WiFi would strain regardless (--viewer none when wireless).
