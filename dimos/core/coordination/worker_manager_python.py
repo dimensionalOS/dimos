@@ -49,14 +49,7 @@ def _merge_config_value(base_value: Any, override_value: Any) -> Any:
     if not isinstance(base_value, Mapping):
         return dict(override_value)
 
-    if _changes_backend(base_value, override_value):
-        return dict(override_value)
-
     return _merge_config_kwargs(base_value, override_value)
-
-
-def _changes_backend(base: Mapping[str, Any], overrides: Mapping[str, Any]) -> bool:
-    return "backend" in base and "backend" in overrides and base["backend"] != overrides["backend"]
 
 
 class WorkerManagerPython:
