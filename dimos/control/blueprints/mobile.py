@@ -223,27 +223,21 @@ coordinator_flowbase_stereo_nav = (
     autoconnect(
         FilteredRealSenseCamera.blueprint(enable_depth=True, enable_pointcloud=False),
         StereoPointCloud.blueprint(),
-        # CostMapper.blueprint(),
-        # MovementManager.blueprint(),
-        # ControlCoordinator.blueprint(
-        #     hardware=[_flowbase_twist_base()],
-        #     tasks=[
-        #         TaskConfig(
-        #             name="vel_base",
-        #             type="velocity",
-        #             joint_names=_base_joints,
-        #             priority=10,
-        #         ),
-        #     ],
-        # ),
+        ControlCoordinator.blueprint(
+            hardware=[_flowbase_twist_base()],
+            tasks=[
+                TaskConfig(
+                    name="vel_base",
+                    type="velocity",
+                    joint_names=_base_joints,
+                    priority=10,
+                ),
+            ],
+        ),
+        KeyboardTeleop.blueprint(),
         RerunBridgeModule.blueprint(rerun_open="web"),
         RerunWebSocketServer.blueprint(),
     )
-    # .remappings(
-    #     [
-    #         (MovementManager, "way_point", "_mgr_way_point_unused"),
-    #         (ControlCoordinator, "twist_command", "cmd_vel"),
-    #     ]
-    # )
+    .remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
     .global_config(n_workers=8)
 )
