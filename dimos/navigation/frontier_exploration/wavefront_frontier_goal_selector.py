@@ -94,6 +94,7 @@ class WavefrontConfig(ModuleConfig):
     info_gain_threshold: float = 0.03
     num_no_gain_attempts: int = 2
     goal_timeout: float = 15.0
+    unknown_traversal_penalty: float = 0.95
 
 
 class WavefrontFrontierExplorer(Module):
@@ -529,28 +530,39 @@ class WavefrontFrontierExplorer(Module):
         # If no obstacles found within search radius, return the safe distance
         # This indicates the frontier is safely away from obstacles
         return min_distance if min_distance != float("inf") else self.config.safe_distance
-    
-  
+
     
     def _compute_path_cost(
         self, frontier: Vector3, robot_pose: Vector3, costmap: OccupancyGrid
     ) -> float:
-        """Real travel cost (meters) from the robot to a frontier.
+        """Real travel cost (meters) from the robot to a frontier, via A*.
 
-        Uses A* over the costmap so the distance accounts for walls and safe
-        margins, instead of a straight line. Falls back to a penalized
-        straight-line distance if A* cannot find a path.
+        Plans over the costmap so distance accounts for walls. Two alignment
+        choices matter for correctness:
+        - cost_threshold = occupancy_threshold, so the scorer's A* blocks the
+          same cells the frontier detector treats as occupied (not A*'s
+          default of 100).
+        - a high unknown_traversal_penalty, so unknown cells stay just
+          traversable enough to reach a frontier on the known/unknown border,
+          but expensive enough that A* prefers known free-space routes over
+          optimistic shortcuts through unmapped space.
+
+        Returns inf when the frontier is unreachable, so it scores 0
+        (info_gain / (1 + inf)) and is never selected.
         """
         try:
-            path = min_cost_astar(costmap, goal=frontier, start=robot_pose)
+            path = min_cost_astar(
+                costmap,
+                goal=frontier,
+                start=robot_pose,
+                cost_threshold=self.config.occupancy_threshold,
+                unknown_penalty=self.config.unknown_traversal_penalty,
+            )
         except Exception as e:  # never let a planner hiccup kill goal selection
-            logger.warning(f"A* path-cost failed ({e}); using Euclidean fallback")
+            logger.warning(f"A* path-cost failed ({e}); treating frontier as unreachable")
             path = None
-
         if path is None or not path.poses:
-            # Unreachable / planner failed: keep it a candidate, but discouraged.
-            return get_distance(frontier, robot_pose) * 3.0
-
+            return float("inf")
         # Path length = sum of straight segments between consecutive waypoints.
         length = 0.0
         pts = path.poses
@@ -558,7 +570,6 @@ class WavefrontFrontierExplorer(Module):
             length += float(np.hypot(b.position.x - a.position.x, b.position.y - a.position.y))
         return length
     
-
     def _compute_comprehensive_frontier_score(
         self, frontier: Vector3, frontier_size: int, robot_pose: Vector3, costmap: OccupancyGrid
     ) -> float:
