@@ -73,7 +73,7 @@ impl Transform {
         }
     }
 
-    // self (a -> b) followed by other (b -> c) gives a -> c.
+    // self a -> b, then other b -> c, gives a -> c.
     fn compose(&self, other: &Transform) -> Transform {
         Transform {
             parent: self.parent.clone(),
@@ -121,7 +121,7 @@ impl TBuffer {
     }
 
     // Nearest sample in time. On a tie, prefer the later sample. Returns None
-    // when the closest sample is further than `tolerance` from `ts`.
+    // when the closest sample is further than tolerance from ts.
     fn find_closest(&self, ts: f64, tolerance: Option<f64>) -> Option<&Sample> {
         let pos = self.samples.partition_point(|s| s.ts < ts);
         let prev = pos.checked_sub(1).and_then(|i| self.samples.get(i));
@@ -200,7 +200,7 @@ impl MultiTBuffer {
         })
     }
 
-    // A single forward or reverse edge (reverse returns the inverse).
+    // A single forward or reverse edge. Reverse returns the inverse.
     fn edge(
         &self,
         parent: &str,
@@ -487,7 +487,7 @@ mod tests {
         buf.add(1.0, Isometry3::identity());
         buf.add(2.0, Isometry3::identity());
         buf.add(10.0, Isometry3::identity());
-        // The window is [5.0, 10.0]; the 1.0 and 2.0 samples are dropped.
+        // The window is [5.0, 10.0]. The 1.0 and 2.0 samples are dropped.
         assert_eq!(buf.samples.len(), 1);
         assert!((buf.last().unwrap().ts - 10.0).abs() < 1e-9);
     }

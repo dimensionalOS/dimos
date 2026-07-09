@@ -39,6 +39,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_an
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.nav_3d.mls_planner.mls_planner import MLSPlanner
 from dimos.protocol.tf.tf import MultiTBuffer
+from dimos.robot.unitree.go2.constants import ROBOT_LENGTH, ROBOT_WIDTH
 from dimos.utils.data import resolve_named_path
 
 TIMELINE = "ts"
@@ -51,10 +52,6 @@ AXIS_RADIUS_RATIO = 25
 # Mount frames as recorded on the tf stream.
 BASE_FRAME = "base_link"
 SENSOR_FRAME = "mid360_link"
-
-# Robot footprint (m): length is forward (x), width is left (y).
-ROBOT_LENGTH = 0.6858
-ROBOT_WIDTH = 0.3175
 
 # Distinct path colors for overlaid configurations, config 0 first.
 PATH_PALETTE = [

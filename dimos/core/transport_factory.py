@@ -54,6 +54,23 @@ def transport_topic(name: str, g: GlobalConfig = global_config) -> str:
     return name if name.startswith("/") else "/" + name
 
 
+def tf_channel(g: GlobalConfig = global_config) -> str:
+    """Wire channel for the tf stream on the active backend.
+
+    tf can't be a declared port because every Module reserves the name, so
+    native modules are handed this channel directly. Backends format the type
+    suffix differently, so match the active one.
+    """
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+
+    name = transport_topic("/tf", g)
+    if g.transport == "zenoh":
+        return ZenohTopic(name, TFMessage).key_expr
+    from dimos.protocol.pubsub.impl.lcmpubsub import Topic
+
+    return str(Topic(name, TFMessage))
+
+
 # High-rate sensor streams: drop stale frames under congestion, never stall the
 # publisher. Matched by message type since that is what makes them high-rate.
 _LATEST_WINS_TYPES = ("sensor_msgs.Image", "sensor_msgs.PointCloud2")

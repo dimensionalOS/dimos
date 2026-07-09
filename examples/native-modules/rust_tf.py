@@ -92,10 +92,8 @@ class TfListenerModule(NativeModule):
     config: TfListenerConfig
 
 
-def blueprint():
-    return autoconnect(TfProducer.blueprint(), TfListenerModule.blueprint())
-
-
 if __name__ == "__main__":
-    bp = blueprint().global_config(viewer="none")
+    bp = autoconnect(TfProducer.blueprint(), TfListenerModule.blueprint()).global_config(
+        viewer="none"
+    )
     ModuleCoordinator.build(bp).loop()

@@ -60,6 +60,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.transport_factory import tf_channel
 from dimos.utils.logging_config import setup_logger
 
 if sys.platform.startswith("linux"):
@@ -110,27 +111,6 @@ _PYTHON_TO_RUST_LEVELS = {
     "ERROR": "error",
     "CRITICAL": "error",
 }
-
-
-def _tf_channel() -> str:
-    """Wire channel for the tf stream on the active transport.
-
-    tf can't be a declared port (every Module reserves the name), so the
-    coordinator advertises its channel to native modules here instead. Match
-    to the correct transport.
-    """
-    from dimos.core.global_config import global_config
-    from dimos.core.transport_factory import transport_topic
-    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-
-    name = transport_topic("/tf")
-    if global_config.transport == "zenoh":
-        from dimos.protocol.pubsub.impl.zenohpubsub import Topic
-
-        return Topic(name, TFMessage).key_expr
-    from dimos.protocol.pubsub.impl.lcmpubsub import Topic
-
-    return str(Topic(name, TFMessage))
 
 
 class NativeModuleConfig(ModuleConfig):
@@ -276,7 +256,7 @@ class NativeModule(Module):
         assert self._process.stdin is not None
         if self.config.stdin_config:
             config_dict = self.config.to_config_dict()
-            stdin_topics = {**topics, "tf": _tf_channel()}
+            stdin_topics = {**topics, "tf": tf_channel()}
             blob: dict[str, Any] = {"topics": stdin_topics, "config": config_dict or None}
             qos = self._collect_output_qos()
             if qos:

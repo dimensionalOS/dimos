@@ -38,6 +38,7 @@ from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
 from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_WIDTH
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     MID360_PITCH_DOWN,
     Go2Mid360StaticTf,
@@ -45,12 +46,6 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
 from dimos.visualization.vis_module import vis_module
 
 voxel_size = 0.08
-
-# Robot footprint (m): length is forward (x), width is left (y).
-ROBOT_LENGTH = 0.6858
-ROBOT_WIDTH = 0.3175
-# Ground to the tallest point (the lidar). Drives clearance and the ground projection.
-ROBOT_HEIGHT = 0.45
 
 # Body-frame axis-triad length (m).
 _axis_len = 0.5

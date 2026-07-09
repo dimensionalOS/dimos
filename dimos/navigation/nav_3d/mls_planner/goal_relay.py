@@ -22,9 +22,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
-
-# Max staleness (s) for tf lookups against a live odometry stamp.
-TF_LOOKUP_TOLERANCE_S = 0.1
+from dimos.navigation.constants import TF_LOOKUP_TOLERANCE_S
 
 
 class GoalRelayConfig(ModuleConfig):

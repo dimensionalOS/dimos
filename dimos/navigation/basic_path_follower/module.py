@@ -33,13 +33,11 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
+from dimos.navigation.constants import TF_LOOKUP_TOLERANCE_S
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.trigonometry import angle_diff
 
 logger = setup_logger()
-
-# Max staleness (s) for tf lookups against a live odometry stamp.
-TF_LOOKUP_TOLERANCE_S = 0.1
 
 
 class BasicPathFollowerConfig(ModuleConfig):
