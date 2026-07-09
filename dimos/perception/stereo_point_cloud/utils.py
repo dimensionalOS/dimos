@@ -33,14 +33,18 @@ _R_OPT_TO_LINK = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=np.float32)
 _RAYCAST_MIN_RAY_VOXELS = 2
 _RAYCAST_SURFACE_MARGIN = 1.5
 
-# ±1 and ±2 voxels along each axis — covers ICP loop-closure drift up to ~4 cm.
-# Format: [no-shift, ±1x, ±2x, ±1y, ±2y, ±1z, ±2z] in packed-key space.
-_FAT_SHIFTS = np.array([
-    0,
-    1 << 36, -(1 << 36), 2 << 36, -(2 << 36),
-    1 << 18, -(1 << 18), 2 << 18, -(2 << 18),
-    1, -1, 2, -2,
-], dtype=np.int64)
+# Full 7×7×7 neighbourhood (dx,dy,dz ∈ [-3..3], 343 entries).
+# Axis-aligned-only checks miss diagonal drift: a 2° Madgwick lag at 2 m places the
+# same surface ~7 cm off in a combined x+y direction that no single-axis shift catches.
+# ±3 voxels = ±6 cm per axis — catches diagonal drift up to ~10 cm, handles most
+# Madgwick orientation error during typical rotation speeds.
+_FAT_SHIFTS = np.array(
+    [(dx * (1 << 36)) + (dy * (1 << 18)) + dz
+     for dx in range(-3, 4)
+     for dy in range(-3, 4)
+     for dz in range(-3, 4)],
+    dtype=np.int64,
+)
 
 
 def _pack(vkeys: np.ndarray) -> np.ndarray:
