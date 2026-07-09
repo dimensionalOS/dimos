@@ -606,3 +606,30 @@ discovery-server switch (invasive: rewrites robot bashrc + reboots — a
 deliberate migration), (3) RECOMMENDED: dedicated travel router bridged
 to the robot's ethernet, Go2-style — nothing on the robot changes.
 Cameras over WiFi would strain regardless (--viewer none when wireless).
+
+### Day 3 — rerun-web ROOT-CAUSED via py-spy (dimos-core bug, not ours)
+
+Retried `--viewer rerun-web` deliberately (connect-mode workflow untouched).
+Reproduced exactly: grpc :9876 up, :9090 never serves, R1LiteConnection
+start stalls mid-sequence, shutdown wedges. py-spy dump of the live hung
+worker 0 (pid 3920) shows the smoking gun:
+
+- Bridge thread: `bridge.py:329 start` → `rerun/sinks.py:372 serve_grpc`
+  — **active+gil**: spinning inside rr.serve_grpc() WITHOUT releasing the
+  GIL; never reaches serve_web_viewer (so :9090 never opens).
+- Connection thread: `_setup_sensor_streams` → `Thread.start()` →
+  `threading.wait` — waiting for its new thread's started-event, which
+  can never fire because the GIL is hogged. Every Python thread in the
+  worker starves → "R1LiteConnection started" never logs, teardown hangs.
+
+Isolated probe (fresh python, same venv, same calls) returns instantly →
+the deadlock is specific to rerun 0.29.2 serve_grpc() inside dimos'
+multiprocessing **forkserver** worker children (rust/tokio state vs fork,
+classic). Affects ANY robot blueprint using web mode in-container; native
+(rr.spawn) and connect (rr.connect_grpc) paths don't hit it.
+
+**Resolution: rerun-web marked known-broken; rerun-connect stays the
+workflow (run_r1lite.sh). Evidence package ready for a dimos-core issue:**
+repro = any blueprint w/ RerunBridge viewer_mode=web in a worker; py-spy
+dump as above; suggested fix directions = call serve_grpc off the worker
+hot path / spawn-context workers / rerun version bump.
