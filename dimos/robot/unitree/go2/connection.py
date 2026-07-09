@@ -42,7 +42,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.unitree.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree.go2.go2_webrtc import Go2WebRTCConnection, TwistMode
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.spec.perception import Camera, Pointcloud
 from dimos.utils.decorators.decorators import cached_property, simple_mcache
@@ -68,6 +68,10 @@ class ConnectionConfig(ModuleConfig):
     camera: bool = True
     # "mcf" for stair traversal, "normal" for basic, None to leave it as is
     motion_mode: str | None = None
+    # How twists are sent over WebRTC: VELOCITY (true m/s & rad/s, default) or
+    # JOYSTICK (legacy normalized joystick axes). Set per-blueprint, e.g.
+    # GO2Connection.blueprint(twist_mode="joystick"). See TwistMode.
+    twist_mode: TwistMode = TwistMode.VELOCITY
     # Per-device AES-128 key (Go2 fw >=1.1.15); defaults from GlobalConfig.
     aes_128_key: str | None = Field(default_factory=lambda m: m["g"].unitree_aes_128_key)
     # TF parent frame of the internal odometry (odom_frame_id -> base_link).
@@ -122,6 +126,7 @@ def make_connection(
     ip: str | None,
     cfg: GlobalConfig,
     aes_128_key: str | None = None,
+    twist_mode: TwistMode = TwistMode.VELOCITY,
 ) -> Go2ConnectionProtocol:
     connection_type = cfg.unitree_connection_type.lower()
 
@@ -138,12 +143,12 @@ def make_connection(
         return DimSimConnection(cfg)
     elif connection_type == "webrtc":
         assert ip is not None, "IP address must be provided"
-        return UnitreeWebRTCConnection(ip, aes_128_key=aes_128_key)
+        return Go2WebRTCConnection(ip, aes_128_key=aes_128_key, twist_mode=twist_mode)
     else:
         raise ValueError(f"Unknown simulator {cfg.simulation!r}. Choose from: mujoco, dimsim")
 
 
-class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
+class ReplayConnection(Go2WebRTCConnection, CompositeResource):
     def __init__(  # type: ignore[no-untyped-def]
         self,
         dataset: str = "go2_china_office",
@@ -169,6 +174,10 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
 
     def start(self) -> None:
         pass
+
+    def stop(self) -> None:
+        # Replay has no live connection; just dispose the replay store.
+        CompositeResource.stop(self)
 
     def standup(self) -> bool:
         return True
@@ -262,7 +271,10 @@ class GO2Connection(Module, Camera, Pointcloud):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.connection = make_connection(
-            self.config.ip, self.config.g, aes_128_key=self.config.aes_128_key
+            self.config.ip,
+            self.config.g,
+            aes_128_key=self.config.aes_128_key,
+            twist_mode=self.config.twist_mode,
         )
 
         if hasattr(self.connection, "camera_info_static"):
@@ -293,7 +305,7 @@ class GO2Connection(Module, Camera, Pointcloud):
             )
             self._camera_info_thread.start()
 
-        if self.config.motion_mode and isinstance(self.connection, UnitreeWebRTCConnection):
+        if self.config.motion_mode and isinstance(self.connection, Go2WebRTCConnection):
             self.connection.set_motion_mode(self.config.motion_mode)
 
         self.standup()
