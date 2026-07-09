@@ -33,16 +33,19 @@ _R_OPT_TO_LINK = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=np.float32)
 _RAYCAST_MIN_RAY_VOXELS = 2
 _RAYCAST_SURFACE_MARGIN = 1.5
 
-# Full 7×7×7 neighbourhood (dx,dy,dz ∈ [-3..3], 343 entries).
-# Axis-aligned-only checks miss diagonal drift: a 2° Madgwick lag at 2 m places the
-# same surface ~7 cm off in a combined x+y direction that no single-axis shift catches.
-# ±3 voxels = ±6 cm per axis — catches diagonal drift up to ~10 cm, handles most
-# Madgwick orientation error during typical rotation speeds.
+# Full 9×9×9 neighbourhood (dx,dy,dz ∈ [-4..4], 729 entries).
+# ±4 voxels = ±8 cm per axis. Rationale:
+#   - Centroid ICP against a slightly noisy map gives ~7-8 cm depth error per step.
+#   - Madgwick lag during rotation at 2 m range reaches ~7 cm for 2° orientation error.
+#   - EMA steady-state lag at 8 cm keyframe step ≈ 3.4 cm (adds in depth direction).
+#   - A noisy accumulated map makes ICP worse → more layers → even worse ICP (feedback).
+#   - Blocking new observations within 8 cm of existing keeps the map single-layer,
+#     which keeps the ICP reference clean and breaks the degradation feedback loop.
 _FAT_SHIFTS = np.array(
     [(dx * (1 << 36)) + (dy * (1 << 18)) + dz
-     for dx in range(-3, 4)
-     for dy in range(-3, 4)
-     for dz in range(-3, 4)],
+     for dx in range(-4, 5)
+     for dy in range(-4, 5)
+     for dz in range(-4, 5)],
     dtype=np.int64,
 )
 
