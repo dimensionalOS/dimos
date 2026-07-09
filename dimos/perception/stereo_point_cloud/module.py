@@ -317,6 +317,13 @@ class StereoPointCloud(Module):
             if take_kf and len(xyz_for_map):
                 self._last_kf_t = t.copy()
                 self._last_kf_R = R.copy()
+                # Isolation filter runs on the full dense per-frame set (not the sparse
+                # leftover frontier after covered-voxel subtraction below) — flying
+                # pixels are isolated within a dense frame, but legitimate new frontier
+                # points are naturally sparse relative to *each other* and would almost
+                # all get killed if filtered after subtraction.
+                if len(xyz_for_map) > 3:
+                    xyz_for_map = xyz_for_map[_isolation_filter(xyz_for_map, radius=0.06, min_neighbors=2)]
                 vox = self.config.global_vox_size
                 new_vk   = np.floor(xyz_for_map / vox).astype(np.int32)
                 new_keys = _pack(new_vk)
@@ -329,8 +336,6 @@ class StereoPointCloud(Module):
                     xyz_to_add = xyz_for_map[~covered]
                 else:
                     xyz_to_add = xyz_for_map
-                if len(xyz_to_add) > 3:
-                    xyz_to_add = xyz_to_add[_isolation_filter(xyz_to_add, radius=0.06, min_neighbors=2)]
                 if len(xyz_to_add):
                     self._acc_pts = (
                         np.vstack([self._acc_pts, xyz_to_add]) if len(self._acc_pts) else xyz_to_add.copy()
