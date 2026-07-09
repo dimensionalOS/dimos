@@ -32,7 +32,7 @@ class FilteredRealSenseCamera(RealSenseCamera):
     def _capture_loop(self) -> None:
         import pyrealsense2 as rs
 
-        spatial_filter   = rs.spatial_filter()
+        spatial_filter = rs.spatial_filter()
         hole_fill_filter = rs.hole_filling_filter()
 
         while self._running and self._pipeline is not None:
