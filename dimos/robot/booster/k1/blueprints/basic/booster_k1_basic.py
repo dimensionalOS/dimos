@@ -18,15 +18,16 @@ import platform
 from typing import Any
 
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import TransportSpec, autoconnect
 from dimos.core.global_config import global_config
+from dimos.core.stream import Transport
 from dimos.core.transport import pSHMTransport
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.booster.k1.connection import K1Connection
 from dimos.visualization.vis_module import vis_module
 
 # High-bandwidth camera frames go over shared memory (esp. needed on macOS UDP).
-_mac_transports: dict[tuple[str, type], pSHMTransport[Image]] = {
+_mac_transports: dict[tuple[str, type], TransportSpec | Transport[Any]] = {
     ("color_image", Image): pSHMTransport(
         "color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
     ),
