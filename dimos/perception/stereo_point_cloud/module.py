@@ -48,7 +48,7 @@ _DEPTH_MM_THRESHOLD = 100
 _FLOOR_TILT_COMP = 0.0
 
 _KEYFRAME_DIST_M    = 0.08               # add to global map only when camera moves >8 cm
-_KEYFRAME_ANGLE_RAD = np.deg2rad(5.0)   # or rotates >5° — captures more angular coverage of interior obstacles
+_KEYFRAME_ANGLE_RAD = np.deg2rad(8.0)   # or rotates >8°
 
 
 class Config(ModuleConfig):
