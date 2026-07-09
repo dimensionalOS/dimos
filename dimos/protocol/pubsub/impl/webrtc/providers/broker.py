@@ -537,10 +537,6 @@ class BrokerProvider(AsyncProviderBase):
                 return
             self._dropped_publish_warned = False
 
-            # Recheck readyState on the loop thread — the channel can close
-            # between here and the tick; aiortc's send() raises InvalidStateError
-            # on a closed channel. Best-effort: a lost publish to a just-closed
-            # operator channel is expected on disconnect, so warn (not raise).
             channel: RTCDataChannel = ch  # narrowed non-None above; capture for the closure
 
             def _send_safe() -> None:

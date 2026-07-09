@@ -630,6 +630,8 @@ def test_estop_latches_and_damps(monkeypatch: pytest.MonkeyPatch) -> None:
     conn._on_state_json(b'{"type": "estop", "nonce": 1}')
     assert conn._estopped is True
     assert conn.move(_twist(time.time())) is False  # latched before RPC even lands
+    (nav_cancel,) = conn.stop_movement.publish.call_args.args  # also cancels nav
+    assert nav_cancel.data is True
     _wait_ack(acks)
     conn.connection.sport_command.assert_called_with(ALLOWED_SPORT_CMDS["Damp"])
     assert (1, True) in acks
@@ -1005,13 +1007,3 @@ def test_nav_cmd_drives_when_operator_idle() -> None:
     conn._on_nav_cmd(_twist(time.time()))
 
     conn.connection.move.assert_called_once()
-
-
-def test_estop_cancels_nav(monkeypatch: pytest.MonkeyPatch) -> None:
-    conn = _bare_connection()
-    monkeypatch.setattr(conn, "_send_ack", lambda *_: None)
-
-    conn._handle_estop({"nonce": 1}.get("nonce"))
-
-    (msg,) = conn.stop_movement.publish.call_args.args
-    assert msg.data is True

@@ -53,8 +53,6 @@ class HostedConnectionMixin(CameraMuxMixin):
         self._mux_init(cameras)
         self._cmd_stats = LiveStreamStats()
         self._telemetry_thread: threading.Thread | None = None
-        # E-STOP latch: subclasses gate their motion paths on this and clear
-        # it only from an explicit operator estop_clear.
         self._estopped = False
 
     # ─── Inbound state plane (operator → robot) ───────────────────────
@@ -64,7 +62,7 @@ class HostedConnectionMixin(CameraMuxMixin):
         if isinstance(data, str):
             data = data.encode()
         if not data.startswith(b"{"):
-            return  # not JSON
+            return
         try:
             msg = json.loads(data)
         except ValueError:
@@ -81,8 +79,6 @@ class HostedConnectionMixin(CameraMuxMixin):
         elif kind == "camera_select":
             self._set_cam_selection(msg.get("cams", []))
         elif kind == "video_stats":
-            # Browser getStats() payload is untrusted; never let a parse
-            # error escape into the transport callback.
             try:
                 self.video_stats.publish(VideoStats.from_dict(msg))  # type: ignore[attr-defined]
             except (TypeError, ValueError):
@@ -96,19 +92,19 @@ class HostedConnectionMixin(CameraMuxMixin):
         else:
             self._handle_robot_msg(kind, msg)
 
-    def _handle_robot_msg(self, kind: Any, msg: dict[str, Any]) -> None:
-        """Robot-specific state_json types; unknown kinds are ignored."""
-
-    # Robot-specific safety hooks — no defaults on purpose: a hosted robot
-    # without an E-STOP path is a bug, not a robot with a no-op E-STOP.
+    # Required hooks — no default on purpose: a missing E-STOP path is a bug,
+    # not a no-op.
     _handle_estop: Callable[[Any], None]
     _handle_estop_clear: Callable[[Any], None]
     _on_operator_lost: Callable[[], None]
 
+    def _handle_robot_msg(self, kind: Any, msg: dict[str, Any]) -> None:
+        """Optional hook for robot-specific state_json types; unknown kinds are
+        ignored by default."""
+
     def _send_ack(self, nonce: Any, ok: bool) -> None:
-        # Best-effort: the ack rides state_reliable_back, which doesn't exist
-        # while no operator is connected — a dropped ack there is expected, but
-        # a failure once connected means the operator's button spins, so warn.
+        # Best-effort ack on state_reliable_back; warn on failure (a live
+        # operator's button spins without it).
         try:
             self.telemetry_out.publish(  # type: ignore[attr-defined]
                 json.dumps({"type": "cmd_ack", "nonce": nonce, "ok": ok}).encode()
@@ -146,9 +142,6 @@ class HostedConnectionMixin(CameraMuxMixin):
             interval = 1.0 / max(self.config.telemetry_hz, 0.1)  # type: ignore[attr-defined]
             while not self._stop_event.is_set():  # type: ignore[attr-defined]
                 payload = json.dumps(self._telemetry_payload())
-                # debug (not warning): this fires at telemetry_hz with no
-                # operator connected, so a failed publish here is the norm
-                # and would flood the log at a higher level.
                 try:
                     self.telemetry_out.publish(payload.encode())  # type: ignore[attr-defined]
                 except Exception:

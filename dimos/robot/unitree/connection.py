@@ -206,9 +206,7 @@ class UnitreeWebRTCConnection(Resource):
         if self.stop_timer:
             self.stop_timer.cancel()
 
-        # Deadman: auto-stop after cmd_vel_timeout (0.2s) with no new command —
-        # the safety backstop that halts the base if the operator link drops
-        # mid-drive. Keep this in sync with cmd_vel_timeout in __init__.
+        # Auto-stop after 0.5 seconds if no new commands
         self.stop_timer = threading.Timer(self.cmd_vel_timeout, self.stop_movement)
         self.stop_timer.daemon = True
         self.stop_timer.start()
@@ -389,8 +387,6 @@ class UnitreeWebRTCConnection(Resource):
 
         # Settle both directions — FSM transition needs time before SwitchJoystick.
         time.sleep(2.0)
-        # Joystick stays ON in both directions — rage only changes the speed
-        # envelope (passing `enable` here would kill WASD drive when rage is off).
         joystick_ok = self.switch_joystick(True)
         if not joystick_ok:
             logger.warning("SwitchJoystick failed after rage toggle")

@@ -65,13 +65,7 @@ ALLOWED_SPORT_CMDS: dict[str, int] = {
     "FrontJump": 1031,  # acrobatic — leaps
 }
 
-# Commands that latch a posture the UI should reflect (gestures like Hello
-# return to the prior stance, so they don't touch it).
 _POSTURE_SPORT_CMDS = frozenset({"StandDown", "RecoveryStand", "Sit", "Damp"})
-
-# High-risk acrobatic leaps — gated off the default allow-list; enable only
-# with config.allow_acrobatics (a hosted web operator shouldn't trigger these
-# by default).
 _ACROBATIC_SPORT_CMDS = frozenset({"FrontPounce", "FrontJump"})
 
 
@@ -87,7 +81,6 @@ class Go2HostedConnectionConfig(ConnectionConfig):
     odom_hz: float = 15.0
     speaker: bool = True
     nav_yield_sec: float = 1.0
-    # Reject click-to-nav goals beyond this (axis-aligned bound, not radius).
     max_nav_goal_m: float = 100.0
     allow_acrobatics: bool = False  # let the operator trigger FrontJump/Pounce
 
@@ -121,6 +114,8 @@ class Go2HostedConnection(GO2Connection, HostedConnectionMixin):
     _MAX_MAP_BYTES = 16 * 1024  # CF datachannel per-message ceiling
 
     def __init__(self, **kwargs: Any) -> None:
+        """Build the Go2 driver + hosted control-plane state (cams, executor,
+        E-STOP latch, nonce cache); no connections until start()."""
         super().__init__(**kwargs)
         self._hosted_init(["cam1", "cam2"])
         self._stop_event = threading.Event()
@@ -141,6 +136,8 @@ class Go2HostedConnection(GO2Connection, HostedConnectionMixin):
 
     @rpc
     def start(self) -> None:
+        """Start the driver, then wire the hosted plane: command executor,
+        broker stream subscriptions, cameras, map/odom, audio, telemetry."""
         super().start()
         self._stop_event.clear()
         self._cmd_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="Go2Cmd")
@@ -175,6 +172,8 @@ class Go2HostedConnection(GO2Connection, HostedConnectionMixin):
 
     @rpc
     def stop(self) -> None:
+        """Tear down the command executor, telemetry, audio sink, and broker
+        session (graceful disconnect), then stop the driver."""
         self._stop_event.set()
         if self._cmd_executor is not None:
             self._cmd_executor.shutdown(wait=False, cancel_futures=True)
@@ -189,6 +188,7 @@ class Go2HostedConnection(GO2Connection, HostedConnectionMixin):
     # ─── Go2-specific state-plane types (rest handled by the mixin) ──
 
     def _handle_robot_msg(self, kind: Any, msg: dict[str, Any]) -> None:
+        """Dispatch a Go2-specific state_json message to its handler."""
         if kind == "sport_cmd":
             self._handle_sport_cmd(msg)
         elif kind == "set_mode":
@@ -215,8 +215,6 @@ class Go2HostedConnection(GO2Connection, HostedConnectionMixin):
             logger.warning("nav_goal: malformed %r", msg)
             self._send_ack(nonce, False)
             return
-        # Reject NaN/inf and absurd distances — a malformed operator click must
-        # not inject an unreachable goal into the planner.
         limit = self.config.max_nav_goal_m
         if not (math.isfinite(x) and math.isfinite(y)) or abs(x) > limit or abs(y) > limit:
             logger.warning("nav_goal: out-of-range (%r, %r)", x, y)
@@ -245,6 +243,7 @@ class Go2HostedConnection(GO2Connection, HostedConnectionMixin):
         GO2Connection.move(self, twist)  # base move — the wire guards don't apply
 
     def _cancel_nav(self) -> None:
+        """Tell the planner to stop (publish stop_movement)."""
         try:
             msg = Bool()
             msg.data = True
@@ -255,6 +254,7 @@ class Go2HostedConnection(GO2Connection, HostedConnectionMixin):
     # ─── E-STOP latch + operator-loss safety ─────────────────────────
 
     def _handle_estop(self, nonce: Any) -> None:
+        """Latch E-STOP and urgently Damp the robot."""
         # Latch first so move() is gated before the Damp RPC even lands.
         self._estopped = True
         logger.warning("E-STOP latched by operator")
@@ -269,6 +269,7 @@ class Go2HostedConnection(GO2Connection, HostedConnectionMixin):
         self._submit_cmd("estop", nonce, task, urgent=True)
 
     def _handle_estop_clear(self, nonce: Any) -> None:
+        """Un-latch E-STOP and reset nav state; does not move the robot."""
         # Re-arm only; does NOT move — operator must Stand/Drive explicitly.
         self._cancel_nav()
         self._last_nav_ts = 0.0
@@ -278,6 +279,8 @@ class Go2HostedConnection(GO2Connection, HostedConnectionMixin):
         self._send_ack(nonce, True)
 
     def _on_operator_lost(self) -> None:
+        """Operator link dropped: stop motion, clear the nonce cache, and
+        optionally Damp (config.damp_on_operator_lost)."""
         # Zero the base and clear the nonce cache (browser nonces restart at 1
         # per session, so a stale entry would re-ack instead of executing).
         logger.warning("operator link lost — stopping motion")
@@ -313,10 +316,6 @@ class Go2HostedConnection(GO2Connection, HostedConnectionMixin):
             self._send_ack(nonce, False)
             return
 
-        # Nonce dedup: a duplicate of a finished command re-acks its result;
-        # a duplicate of an in-flight one is dropped (the original will ack).
-        # Transient rejections below unwind the reservation so a genuine
-        # retry can still execute. Urgent (E-STOP/Damp) skips dedup entirely.
         if nonce is not None and not urgent:
             now = time.monotonic()
             with self._cmd_lock:
@@ -414,11 +413,11 @@ class Go2HostedConnection(GO2Connection, HostedConnectionMixin):
                 self._posture = name
             return ok
 
-        # Damp is the E-STOP: it must jump the queue, not wait behind slower
-        # queued commands (StandReady holds the worker for ~3.3s).
         self._submit_cmd(f"sport_cmd {name}", nonce, task, urgent=(name == "Damp"))
 
     def _stand_ready_task(self) -> bool:
+        """Stand the robot up and enable WASD driving (step-checked sequence)."""
+
         # Standup → RecoveryStand → BalanceStand → joystick ON. WASD drives via
         # stick emulation, which needs BOTH the BalanceStand FSM and firmware
         # joystick listening on; the sequence + sleeps are load-bearing. Each
@@ -533,12 +532,12 @@ class Go2HostedConnection(GO2Connection, HostedConnectionMixin):
         if steering:
             self._last_drive_ts = now
         elif now - self._last_nav_ts < self.config.nav_yield_sec:
-            # Idle zero-twist while the planner is driving: swallow it, or the
-            # operator's idle stream zeroes the base between nav commands.
             return True
         return super().move(twist, duration)
 
     def _on_cmd_raw(self, data: Any) -> None:
+        """Tap raw cmd_vel for latency stats and re-publish as TwistStamped
+        over LCM for the recorder."""
         # Record the send-stamp for latency stats and re-publish as TwistStamped
         # so the recorder can tap it over LCM (no 2nd CF session).
         if isinstance(data, str):
@@ -719,6 +718,7 @@ class Go2HostedConnection(GO2Connection, HostedConnectionMixin):
             return None
 
     def _telemetry_extra(self) -> dict[str, Any]:
+        """Extra top-level telemetry keys (battery SOC)."""
         return {"soc": self._battery_soc()}
 
     def _telemetry_state(self) -> dict[str, Any]:

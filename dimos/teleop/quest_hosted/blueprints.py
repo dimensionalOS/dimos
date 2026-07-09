@@ -51,22 +51,16 @@ teleop_hosted_go2_transport = (
         Go2HostedConnection.blueprint(),
         VoxelGridMapper.blueprint(emit_every=5),
         CostMapper.blueprint(),
-        # Click-to-navigate: goal_request (operator map click) → planned path →
-        # nav_cmd_vel back into the hosted connection (yields to live WASD).
         ReplanningAStarPlanner.blueprint(),
     )
     .transports(
         {
             ("cmd_vel", Twist): CloudflareTransport.spec("cmd_unreliable", TwistStamped),
-            # mux_image (not color_image): the muxed out-frame carries the
-            # latency stamp and works for 1 cam (mux returns cam1 alone) or more.
             ("mux_image", Image): CloudflareVideoTransport.spec(),
             ("state_json", bytes): CloudflareTransport.spec("state_reliable"),
             ("telemetry_out", bytes): CloudflareTransport.spec("state_reliable_back"),
             ("cmd_raw", bytes): CloudflareTransport.spec("cmd_unreliable"),  # stats tap
             ("cmd_vel_stamped", TwistStamped): LCMTransport.spec("cmd_vel_stamped", TwistStamped),
-            # Map chain over LCM (in-process); the compressed map + odom go to the
-            # operator on their own unreliable channel (room to grow to pointclouds).
             ("lidar", PointCloud2): LCMTransport.spec("lidar", PointCloud2),
             ("global_map", PointCloud2): LCMTransport.spec("global_map", PointCloud2),
             ("global_costmap", OccupancyGrid): LCMTransport.spec("global_costmap", OccupancyGrid),
@@ -80,7 +74,6 @@ teleop_hosted_go2_transport = (
 # LiveKit backend: drive + camera + state/telemetry. No minimap or
 # click-to-nav yet (the CF transport blueprint wires VoxelGridMapper/CostMapper/
 # ReplanningAStarPlanner + map_unreliable; LiveKit doesn't).
-# Run with -o transports.broker.api_key=dtk_live_...
 teleop_hosted_go2_livekit = (
     autoconnect(
         unitree_go2_basic.disabled_modules(GO2Connection),
@@ -89,14 +82,10 @@ teleop_hosted_go2_livekit = (
     .transports(
         {
             ("cmd_vel", Twist): LiveKitTransport.spec("cmd_unreliable", TwistStamped),
-            # mux_image (not color_image): same muxed/stamped output as the CF path.
             ("mux_image", Image): LiveKitVideoTransport.spec(),
             ("state_json", bytes): LiveKitTransport.spec("state_reliable"),
             ("telemetry_out", bytes): LiveKitTransport.spec("state_reliable_back"),
             ("cmd_raw", bytes): LiveKitTransport.spec("cmd_unreliable"),  # stats tap
-            # LCM, not the broker: cmd_vel_stamped is the robot re-publishing the
-            # decoded operator cmd for the local recorder — publishing it back on
-            # cmd_unreliable would echo onto the operator→robot channel.
             ("cmd_vel_stamped", TwistStamped): LCMTransport.spec("cmd_vel_stamped", TwistStamped),
         }
     )
@@ -125,11 +114,7 @@ teleop_hosted_go2_multicam = (
             ("state_json", bytes): CloudflareTransport.spec("state_reliable"),
             ("telemetry_out", bytes): CloudflareTransport.spec("state_reliable_back"),
             ("cmd_raw", bytes): CloudflareTransport.spec("cmd_unreliable"),
-            # LCM, not CF: cmd_vel_stamped is the robot re-publishing the decoded
-            # operator cmd for the local recorder. cmd_unreliable is an
-            # operator→robot channel; publishing there raises in the broker.
             ("cmd_vel_stamped", TwistStamped): LCMTransport.spec("cmd_vel_stamped", TwistStamped),
-            # Map chain over LCM (same as the transport blueprint).
             ("lidar", PointCloud2): LCMTransport.spec("lidar", PointCloud2),
             ("global_map", PointCloud2): LCMTransport.spec("global_map", PointCloud2),
             ("global_costmap", OccupancyGrid): LCMTransport.spec("global_costmap", OccupancyGrid),
