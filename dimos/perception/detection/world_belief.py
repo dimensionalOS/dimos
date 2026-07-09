@@ -213,13 +213,15 @@ class _GalleryStore:
         self._novelty = novelty
 
     def _stream_for(self, obj: Object, vec: NDArray[np.float32]) -> Any:
-        role = "dino" if normalize_embedding(getattr(obj, "visual_embedding", None)) is not None else "clip"
+        role = (
+            "dino"
+            if normalize_embedding(getattr(obj, "visual_embedding", None)) is not None
+            else "clip"
+        )
         # dim in the name → a model swap can't collide (Store.stream caches by name)
         return self._store.stream(f"object_gallery_{role}_{vec.size}", Image)
 
-    def remember(
-        self, eid: str, obj: Object, position: NDArray[np.float64], n_frames: int
-    ) -> None:
+    def remember(self, eid: str, obj: Object, position: NDArray[np.float64], n_frames: int) -> None:
         """Best-effort: a history-db hiccup must never abort a fold (identity continues
         in RAM; only cross-session persistence degrades)."""
         try:
@@ -228,7 +230,11 @@ class _GalleryStore:
                 return
             stream = self._stream_for(obj, vec)
             top = stream.search(Embedding(vec), k=1).to_list()
-            if top and (top[0].similarity or 0.0) >= self._novelty and top[0].tags.get("object_id") == eid:
+            if (
+                top
+                and (top[0].similarity or 0.0) >= self._novelty
+                and top[0].tags.get("object_id") == eid
+            ):
                 return  # already have a near-identical view of THIS object
             stream.append(
                 self._crop(obj),
@@ -314,11 +320,14 @@ class WorldBelief:
         # path). None → within-session identity only (RAM galleries still work).
         self._gallery = (
             _GalleryStore(self._cfg.history_path, novelty=self._cfg.gallery_novelty)
-            if self._cfg.history_path is not None else None
+            if self._cfg.history_path is not None
+            else None
         )
 
     def _radius(self, dt: float) -> float:
-        return min(self._cfg.radius_base + self._cfg.radius_growth * max(dt, 0.0), self._cfg.radius_cap)
+        return min(
+            self._cfg.radius_base + self._cfg.radius_growth * max(dt, 0.0), self._cfg.radius_cap
+        )
 
     @property
     def last_fold_ts(self) -> float:
@@ -428,8 +437,12 @@ class WorldBelief:
         """Re-acquire an absent/past-session identity for an unmatched detection, or mint
         a new one; returns the landing track (None = suppressed as a neighbour misfire)."""
         eid, basis, win_cos = self._reacquire_candidate(obj)
-        if eid is not None and win_cos is not None and any(  # win_cos clause narrows for mypy only
-            cos is not None and cos >= win_cos for cos, _t in self._envelope_neighbours(obj)
+        if (
+            eid is not None
+            and win_cos is not None
+            and any(  # win_cos clause narrows for mypy only
+                cos is not None and cos >= win_cos for cos, _t in self._envelope_neighbours(obj)
+            )
         ):
             # Relative evidence: re-acquire inside a neighbour's envelope only when the
             # det resembles the absent id MORE than the neighbour — a true return passes,
@@ -443,14 +456,21 @@ class WorldBelief:
                 # very next frame, so the log is where these events stay visible).
                 logger.info(
                     "belief: %s (%s) %s at (%.2f, %.2f) cos=%.2f",
-                    eid[:8], track.modal_label, basis, obj.center.x, obj.center.y,
+                    eid[:8],
+                    track.modal_label,
+                    basis,
+                    obj.center.x,
+                    obj.center.y,
                     win_cos,
                 )
                 return track
             self._insert(obj, ts, viewpoint, force_id=eid, basis=BASIS_RESTORED)
             logger.info(
                 "belief: %s (%s) restored from a previous session at (%.2f, %.2f) cos=%.2f",
-                eid[:8], obj.name, obj.center.x, obj.center.y,
+                eid[:8],
+                obj.name,
+                obj.center.x,
+                obj.center.y,
                 win_cos,
             )
             return self._tracks[eid]
@@ -461,11 +481,15 @@ class WorldBelief:
         for cos, track in self._envelope_neighbours(obj):
             if id(track) in seen_tracks:
                 if obj.name != track.modal_label and cos is not None and cos >= self._cfg.reacq_cos:
-                    logger.debug("belief: misfire suppressed near %s (%s)", track.obj.object_id[:8], obj.name)
+                    logger.debug(
+                        "belief: misfire suppressed near %s (%s)", track.obj.object_id[:8], obj.name
+                    )
                     return None
                 continue
             if cos is None or cos >= self._cfg.reacq_cos or obj.name == track.modal_label:
-                logger.debug("belief: mint suppressed near %s (%s)", track.obj.object_id[:8], obj.name)
+                logger.debug(
+                    "belief: mint suppressed near %s (%s)", track.obj.object_id[:8], obj.name
+                )
                 return None
         self._insert(obj, ts, viewpoint, basis=BASIS_NEW)
         return self._tracks[obj.object_id]
@@ -513,7 +537,10 @@ class WorldBelief:
         if obj.name != best_label and best_cos < self._cfg.label_override_cos:
             logger.debug(
                 "belief: re-acquire refused — label %r vs candidate %r at cos %.2f (< %.2f override)",
-                obj.name, best_label, best_cos, self._cfg.label_override_cos,
+                obj.name,
+                best_label,
+                best_cos,
+                self._cfg.label_override_cos,
             )
             return None, None, None
         if len(ranked) == 1 or best_cos - ranked[1][0] >= self._cfg.reacq_margin:
@@ -538,7 +565,10 @@ class WorldBelief:
                     return eid, BASIS_TWIN_ANCHOR, best_cos
         logger.debug(
             "belief: re-acquire refused (%s: %.3f vs %s: %.3f)",
-            best_eid[:8], best_cos, second_eid[:8], second_cos,
+            best_eid[:8],
+            best_cos,
+            second_eid[:8],
+            second_cos,
         )
         return None, None, None
 
@@ -563,9 +593,13 @@ class WorldBelief:
             self._gallery.remember(eid, obj, obj.center.to_numpy(), track.n_frames)
 
     def _is_established(self, track: _Track, ts: float) -> bool:
-        return track.n_frames >= self._cfg.min_frames and (ts - track.first_ts) >= self._cfg.min_span_s
+        return (
+            track.n_frames >= self._cfg.min_frames and (ts - track.first_ts) >= self._cfg.min_span_s
+        )
 
-    def _hit(self, track: _Track, obj: Object, ts: float, viewpoint: Viewpoint | None, basis: str) -> None:
+    def _hit(
+        self, track: _Track, obj: Object, ts: float, viewpoint: Viewpoint | None, basis: str
+    ) -> None:
         was_absent = track.state == "absent"
         track.state = "active"
         track.absent_votes = 0
@@ -594,7 +628,7 @@ class WorldBelief:
             self._reset_cloud(entity, obj)
             try:
                 track.sizes.append(float(max(obj.size.x, obj.size.y, obj.size.z)))
-                del track.sizes[:-self._cfg.position_window]
+                del track.sizes[: -self._cfg.position_window]
             except Exception:
                 pass
             positions = track.positions
@@ -603,7 +637,7 @@ class WorldBelief:
                 # outvote the return (would report a ghost at the old empty spot).
                 positions.clear()
             positions.append(new_pos)
-            del positions[:-self._cfg.position_window]
+            del positions[: -self._cfg.position_window]
             # Genuine move: the last 3 observations agree with each other but not the
             # median — reset the window so old positions can't outvote the new spot.
             if len(positions) >= 3:
@@ -613,18 +647,24 @@ class WorldBelief:
                 moved = all(p.distance(med) > self._cfg.radius_base for p in last3)
                 if coherent and moved:
                     track.positions = positions = list(last3)
-            entity.center = Vector3(np.median(np.asarray([p.to_numpy() for p in positions]), axis=0))
+            entity.center = Vector3(
+                np.median(np.asarray([p.to_numpy() for p in positions]), axis=0)
+            )
         # Identity/support still counts on geometry-suspect frames (partial view, mask
         # bleed): the object was seen; only this frame's geometry is untrusted.
         if viewpoint is not None and is_novel_viewpoint(
-            viewpoint, track.viewpoints,
-            min_baseline_m=self._cfg.min_baseline_m, angle_deg=self._cfg.viewpoint_angle_deg,
+            viewpoint,
+            track.viewpoints,
+            min_baseline_m=self._cfg.min_baseline_m,
+            angle_deg=self._cfg.viewpoint_angle_deg,
         ):
             track.viewpoints.append(viewpoint)  # genuinely new vantage → trust credit
         # Only ESTABLISHED identities persist: junk candidates must never be restorable
         # next session (pre-establishment views stay in the RAM gallery).
         if self._gallery is not None and track.established:
-            self._gallery.remember(track.obj.object_id, obj, track.obj.center.to_numpy(), track.n_frames)
+            self._gallery.remember(
+                track.obj.object_id, obj, track.obj.center.to_numpy(), track.n_frames
+            )
 
     @staticmethod
     def _reset_cloud(entity: Object, obj: Object) -> None:
@@ -677,7 +717,9 @@ class WorldBelief:
             # deep object's near surface must reset votes, not read as an occluder.
             half_extent = 0.0
             try:
-                half_extent = min(0.3, 0.5 * max(track.obj.size.x, track.obj.size.y, track.obj.size.z))
+                half_extent = min(
+                    0.3, 0.5 * max(track.obj.size.x, track.obj.size.y, track.obj.size.z)
+                )
             except Exception:
                 pass
             verdict = classify_visibility(
@@ -689,7 +731,9 @@ class WorldBelief:
                     track.state = "absent"
                     logger.info(
                         "belief: %s (%s) absent — depth saw through its spot %d time(s)",
-                        track.obj.object_id[:8], track.modal_label, track.absent_votes,
+                        track.obj.object_id[:8],
+                        track.modal_label,
+                        track.absent_votes,
                     )
             elif verdict == PRESENT:
                 track.absent_votes = 0  # a surface is there; the detector just missed it
@@ -699,14 +743,17 @@ class WorldBelief:
         """Junk hygiene (not lifecycle): drop never-established candidates unseen for
         ``candidate_ttl_s``, and cap retained absent corpses at ``max_absent``."""
         stale = [
-            eid for eid, t in self._tracks.items()
+            eid
+            for eid, t in self._tracks.items()
             if not t.established and (ts - t.last_seen) > self._cfg.candidate_ttl_s
         ]
         for eid in stale:
             del self._tracks[eid]
         absent = [eid for eid, t in self._tracks.items() if t.state == "absent"]
         if len(absent) > self._cfg.max_absent:
-            for eid in sorted(absent, key=lambda e: self._tracks[e].last_seen)[: len(absent) - self._cfg.max_absent]:
+            for eid in sorted(absent, key=lambda e: self._tracks[e].last_seen)[
+                : len(absent) - self._cfg.max_absent
+            ]:
                 del self._tracks[eid]
 
     # ── queries ───────────────────────────────────────────────────────────────────
@@ -716,8 +763,10 @@ class WorldBelief:
         live internal entities — treat as read-only. Trust via :meth:`trust_of`, identity
         basis via :meth:`basis_of`."""
         return [
-            track.obj for track in self._tracks.values()
-            if track.state == "active" and track.established
+            track.obj
+            for track in self._tracks.values()
+            if track.state == "active"
+            and track.established
             and (min_viewpoints is None or len(track.viewpoints) >= min_viewpoints)
         ]
 
@@ -740,4 +789,3 @@ class WorldBelief:
         opened on the same ``history_path``)."""
         if self._gallery is not None:
             self._gallery.close()
-

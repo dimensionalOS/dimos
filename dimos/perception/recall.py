@@ -89,7 +89,9 @@ def build_frame_clip_index(
             embedding=obs.embedding,
         )
         n += 1
-    logger.info("build_frame_clip_index: indexed %d frame(s) into '%s'", n, index_stream_name(model_id))
+    logger.info(
+        "build_frame_clip_index: indexed %d frame(s) into '%s'", n, index_stream_name(model_id)
+    )
     return n
 
 
@@ -161,11 +163,16 @@ def recall(
                     logger.info(
                         "recall('%s'): argmax frame unconfirmed by detector; returning"
                         " verified moment %d (sim %.3f vs %.3f)",
-                        text, len(scanned), hit.similarity or 0.0, hits[0].similarity or 0.0,
+                        text,
+                        len(scanned),
+                        hit.similarity or 0.0,
+                        hits[0].similarity or 0.0,
                     )
                 return hit, center
         logger.info(
             "recall('%s'): no detector-confirmed moment in top-%d hits (%d scanned)",
-            text, len(hits), len(scanned),
+            text,
+            len(hits),
+            len(scanned),
         )
     return hits[0], None

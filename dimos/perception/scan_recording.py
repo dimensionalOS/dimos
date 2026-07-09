@@ -58,14 +58,20 @@ def _run_recall(store: SqliteStore, args: argparse.Namespace) -> None:
     if store.stream(index_stream_name("openai/clip-vit-base-patch32"), Image).count() == 0:
         print("no CLIP index yet — building it once (this scans every frame)...")
         build_frame_clip_index(store)
-    hit, _ = recall(store, args.recall)  # bare index search — no source recordings to verify against
+    hit, _ = recall(
+        store, args.recall
+    )  # bare index search — no source recordings to verify against
     if hit is None:
         print(f"recall('{args.recall}'): no match")
         return
-    where = "unknown" if hit.pose_stamped is None else (
-        f"({hit.pose_stamped.x:+.2f},{hit.pose_stamped.y:+.2f},{hit.pose_stamped.z:+.2f})"
+    where = (
+        "unknown"
+        if hit.pose_stamped is None
+        else (f"({hit.pose_stamped.x:+.2f},{hit.pose_stamped.y:+.2f},{hit.pose_stamped.z:+.2f})")
     )
-    print(f"recall('{args.recall}'): when_ts={hit.ts:.2f} where={where} similarity={hit.similarity:.3f}")
+    print(
+        f"recall('{args.recall}'): when_ts={hit.ts:.2f} where={where} similarity={hit.similarity:.3f}"
+    )
     if args.snapshot is not None:
         import cv2
 
@@ -79,12 +85,19 @@ def main() -> None:
     p = argparse.ArgumentParser(description="Scan / recall over a WorldBelief recording (.db).")
     p.add_argument("recording", help="path to the recording .db")
     p.add_argument("--prompt", nargs="*", help="open-vocab detection prompts for a scan")
-    p.add_argument("--window", type=float, default=0.0, help="scan only the last N seconds (0 = whole)")
+    p.add_argument(
+        "--window", type=float, default=0.0, help="scan only the last N seconds (0 = whole)"
+    )
     p.add_argument("--recall", help="recall text query instead of a scan")
     p.add_argument("--min-frames", type=int, default=3, dest="min_frames")
     p.add_argument("--conf", type=float, default=0.6, help="detector confidence threshold")
-    p.add_argument("--history", nargs="?", const=worldbelief_history_path(), default=None,
-                   help="history db path (bare flag = shared default)")
+    p.add_argument(
+        "--history",
+        nargs="?",
+        const=worldbelief_history_path(),
+        default=None,
+        help="history db path (bare flag = shared default)",
+    )
     p.add_argument("--snapshot", help="save the recalled frame to this path")
     args = p.parse_args()
 

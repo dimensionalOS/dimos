@@ -71,9 +71,7 @@ class XArmAdapter(ManipulatorAdapter):
             raise ValueError("address (IP) is required for XArmAdapter")
         self._ip = address
         self._dof = dof
-        self._initial_positions = (
-            list(initial_positions) if initial_positions is not None else None
-        )
+        self._initial_positions = list(initial_positions) if initial_positions is not None else None
         self._arm: XArmAPI | None = None
         self._control_mode: ControlMode = ControlMode.POSITION
         self._gripper_enabled: bool = False

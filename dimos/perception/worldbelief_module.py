@@ -151,8 +151,11 @@ class WorldBeliefModule(Module):
             since = getattr(self, "_recall_indexed_ts", None)
             with SqliteStore(path=str(self.config.history_path)) as hist_store:
                 build_frame_clip_index(
-                    read_store, model=self._get_recall_clip(), start=since,
-                    index_store=hist_store, source_tag=rec_path,
+                    read_store,
+                    model=self._get_recall_clip(),
+                    start=since,
+                    index_store=hist_store,
+                    source_tag=rec_path,
                 )
             self._recall_indexed_ts = float(read_store.stream("color_image", Image).last().ts)
         except Exception as e:
@@ -200,7 +203,9 @@ class WorldBeliefModule(Module):
                 # re-ask is worse than a wait. The CLI waits accordingly
                 # (`dimos mcp call --timeout`, default 600 s).
                 present = scanner.scan_recent(
-                    read_store, belief, window=window,
+                    read_store,
+                    belief,
+                    window=window,
                     prompt=prompt or list(self.config.scan_prompts),
                 )
                 # every scan also tops up the cross-session recall memory, so "when did
@@ -223,7 +228,11 @@ class WorldBeliefModule(Module):
                     "id": o.object_id[:8],
                     "trust": belief.trust_of(o.object_id),
                     "basis": belief.basis_of(o.object_id),
-                    "xyz": [round(float(o.center.x), 3), round(float(o.center.y), 3), round(float(o.center.z), 3)],
+                    "xyz": [
+                        round(float(o.center.x), 3),
+                        round(float(o.center.y), 3),
+                        round(float(o.center.z), 3),
+                    ],
                 }
                 for o in present
             ]
@@ -252,19 +261,26 @@ class WorldBeliefModule(Module):
         rec_path = self._recording_path()
         with _SCAN_LOCK:  # serialize concurrent scan/recall (shared CLIP model + index watermark)
             clip = self._get_recall_clip()
-            with SqliteStore(path=rec_path, must_exist=True) as read_store, \
-                    SqliteStore(path=str(self.config.history_path)) as hist_store:
+            with (
+                SqliteStore(path=rec_path, must_exist=True) as read_store,
+                SqliteStore(path=str(self.config.history_path)) as hist_store,
+            ):
                 # top up memory with any frames since the last scan/recall, then search
                 # the SHARED index — one query spans every session ever indexed. Object
                 # localization always uses a fresh throwaway belief per moment — a past
                 # window must never fold into the live one.
                 self._index_recall_frames(read_store, rec_path)
                 hit, obj_center = _recall(
-                    hist_store, text, model=clip, k=k,
+                    hist_store,
+                    text,
+                    model=clip,
+                    k=k,
                     detector=self._scanner()._detector,
                     open_recording=lambda rec: (
-                        nullcontext(read_store) if rec == rec_path
-                        else SqliteStore(path=rec, must_exist=True) if Path(rec).exists()
+                        nullcontext(read_store)
+                        if rec == rec_path
+                        else SqliteStore(path=rec, must_exist=True)
+                        if Path(rec).exists()
                         else None
                     ),
                 )
@@ -275,9 +291,15 @@ class WorldBeliefModule(Module):
         return {
             "text": text,
             "when_ts": round(float(hit.ts), 3),
-            "where_camera": None if pose is None else [round(pose.x, 3), round(pose.y, 3), round(pose.z, 3)],
-            "where_object": None if obj_center is None else [
-                round(float(obj_center.x), 3), round(float(obj_center.y), 3), round(float(obj_center.z), 3)
+            "where_camera": None
+            if pose is None
+            else [round(pose.x, 3), round(pose.y, 3), round(pose.z, 3)],
+            "where_object": None
+            if obj_center is None
+            else [
+                round(float(obj_center.x), 3),
+                round(float(obj_center.y), 3),
+                round(float(obj_center.z), 3),
             ],
             "recording": Path(rec_tag).name if rec_tag else None,
             # whole-frame CLIP text-image cosine — uncalibrated; only the RANKING is meaningful

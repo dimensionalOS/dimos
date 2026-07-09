@@ -52,17 +52,24 @@ def _bbox_area(b: tuple[float, float, float, float]) -> float:
     return max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
 
 
-def _bbox_inter(b1: tuple[float, float, float, float], b2: tuple[float, float, float, float]) -> float:
+def _bbox_inter(
+    b1: tuple[float, float, float, float], b2: tuple[float, float, float, float]
+) -> float:
     return max(0.0, min(b1[2], b2[2]) - max(b1[0], b2[0])) * max(
-        0.0, min(b1[3], b2[3]) - max(b1[1], b2[1]))
+        0.0, min(b1[3], b2[3]) - max(b1[1], b2[1])
+    )
 
 
-def _bbox_iou(b1: tuple[float, float, float, float], b2: tuple[float, float, float, float]) -> float:
+def _bbox_iou(
+    b1: tuple[float, float, float, float], b2: tuple[float, float, float, float]
+) -> float:
     inter = _bbox_inter(b1, b2)
     return inter / (_bbox_area(b1) + _bbox_area(b2) - inter + 1e-9)
 
 
-def _bbox_containment(inner: tuple[float, float, float, float], outer: tuple[float, float, float, float]) -> float:
+def _bbox_containment(
+    inner: tuple[float, float, float, float], outer: tuple[float, float, float, float]
+) -> float:
     """Fraction of ``inner``'s area lying inside ``outer``."""
     return _bbox_inter(inner, outer) / (_bbox_area(inner) + 1e-9)
 
@@ -174,7 +181,9 @@ class SceneScanner:
         if prompts and callable(set_prompts):
             set_prompts(text=list(prompts))
         elif not prompts:
-            logger.warning("scan: no prompt/text_prompts set — an open-vocab detector will detect nothing")
+            logger.warning(
+                "scan: no prompt/text_prompts set — an open-vocab detector will detect nothing"
+            )
 
         color = store.stream("color_image", Image)
         depth = store.stream("depth_image", Image)
@@ -265,9 +274,13 @@ class SceneScanner:
             if dt <= 0:
                 continue
             p0, p1 = prev.pose, cur.pose
-            moving = p0 is not None and p1 is not None and (
-                p0.position.distance(p1.position) / dt > _TRANS_SPEED
-                or p0.orientation.angle_to(p1.orientation) / dt > _ROT_SPEED
+            moving = (
+                p0 is not None
+                and p1 is not None
+                and (
+                    p0.position.distance(p1.position) / dt > _TRANS_SPEED
+                    or p0.orientation.angle_to(p1.orientation) / dt > _ROT_SPEED
+                )
             )
             period = 1.0 / _MOVING_HZ if moving else _STATIC_STRIDE_S
             if cur.ts - last_kept.ts >= period:
@@ -342,8 +355,10 @@ class SceneScanner:
         for o in objects:
             if not any(
                 _bbox_iou(o.bbox, k.bbox) > _NMS_IOU
-                or (_bbox_containment(o.bbox, k.bbox) >= _NMS_CONTAINMENT
-                    and o.center.distance(k.center) <= _SUBREGION_COLOCATED_M)
+                or (
+                    _bbox_containment(o.bbox, k.bbox) >= _NMS_CONTAINMENT
+                    and o.center.distance(k.center) <= _SUBREGION_COLOCATED_M
+                )
                 for k in kept
             ):
                 kept.append(o)
@@ -399,4 +414,3 @@ class SceneScanner:
         elif cv.dtype != "float32":
             cv = cv.astype("float32")
         return Image(data=cv, format=ImageFormat.DEPTH, frame_id=raw.frame_id, ts=raw.ts)
-

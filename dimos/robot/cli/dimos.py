@@ -479,9 +479,11 @@ def mcp_call_tool(
     ),
     json_args: str = typer.Option("", "--json-args", "-j", help="Arguments as JSON string"),
     timeout: int = typer.Option(
-        600, "--timeout", help="Seconds to wait for the tool to finish before assuming the "
+        600,
+        "--timeout",
+        help="Seconds to wait for the tool to finish before assuming the "
         "server died (a liveness check, not a work limit — robot skills like a catch-up "
-        "scan legitimately run for minutes). 0 = wait forever."
+        "scan legitimately run for minutes). 0 = wait forever.",
     ),
 ) -> None:
     """Call an MCP tool by name."""
