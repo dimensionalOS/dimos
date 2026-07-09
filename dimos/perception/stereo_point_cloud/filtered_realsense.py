@@ -33,7 +33,12 @@ class FilteredRealSenseCamera(RealSenseCamera):
         import pyrealsense2 as rs
 
         spatial_filter = rs.spatial_filter()
-        hole_fill_filter = rs.hole_filling_filter()
+        # No hole_filling_filter: it interpolates a plausible-looking depth value
+        # wherever the sensor has no real return — which is exactly what happens in
+        # occlusion shadows behind objects. That fabricated depth was showing up as
+        # a "sea of voxels" behind real geometry that the camera never actually saw.
+        # Leaving those pixels invalid lets the existing NaN/invalid-depth handling
+        # in StereoPointCloud._on_depth correctly drop them instead of mapping them.
 
         while self._running and self._pipeline is not None:
             try:
@@ -51,7 +56,6 @@ class FilteredRealSenseCamera(RealSenseCamera):
 
             if depth_frame:
                 depth_frame = spatial_filter.process(depth_frame)
-                depth_frame = hole_fill_filter.process(depth_frame)
 
             color_img = None
             if color_frame:
