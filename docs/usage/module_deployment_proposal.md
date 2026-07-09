@@ -2,7 +2,7 @@
 
 Status: draft for review.
 
-This proposal reframes PR #2704 as one step toward a shared deployment model for Python modules, packaged Python modules, native modules, and remote execution. The key idea is simple: DimOS should keep a stable module identity while deployment decides where and how the implementation runs.
+This proposal defines a shared deployment model for normal Python modules, packaged Python modules, native modules, and remote execution. The key idea is simple: DimOS should keep a stable module identity while deployment decides where and how the implementation runs.
 
 ## 1. Problem / Why now
 
@@ -14,7 +14,7 @@ DimOS has several deployment pressures that currently look separate:
 - Weak robot computers may need prepared artifacts, cross-compilation, or runtime closures built elsewhere.
 - Native and packaged Python modules need a shared way to describe config, stream topics, transports, and lifecycle handoff.
 
-The common problem is not “Python venvs.” The common problem is **module deployment**.
+The common problem is **module deployment**.
 
 The current local Python path works well for in-environment Python modules. But once a module has its own runtime requirement, DimOS needs an explicit deployment layer that can prepare the requirement, launch the implementation, and keep the Blueprint-facing module identity stable.
 
@@ -66,9 +66,9 @@ When `stdin_config=True`, the wrapper sends a JSON payload to the native process
 
 That JSON is a useful starting point for a future **Module Launch Envelope**.
 
-### PR #2704 proof point
+### Recent packaged Python exploration
 
-PR #2704 proves one backend: a Python module can keep a dependency-light Module Contract while the implementation runs in a prepared Python runtime project.
+Recent work on isolated Python runtime modules, including PR #2704, proves one backend: a Python module can keep a dependency-light Module Contract while the implementation runs in a prepared Python runtime project.
 
 It adds:
 
@@ -88,9 +88,9 @@ Recent native-module branches show the same pressure from the native side:
 - Andrew's stdin-config work makes native config and topics serializable instead of CLI-only.
 - Andrew's Rust transport work adds native transport backends, including Zenoh.
 - Andrew's Rust TF work gives native modules more of the DimOS service surface.
-- Lesh's MLS planner work uses a Python native wrapper beside a Rust package and `cargo build --release`.
+- Ivan's MLS planner work uses a Python native wrapper beside a Rust package and `cargo build --release`.
 
-These are not the same feature as PR #2704. They point at the same architecture: describe what a module is, what it needs, where it runs, and how deployment prepares it.
+These are not the same feature as packaged Python runtime work. They point at the same architecture: describe what a module is, what it needs, where it runs, and how deployment prepares it.
 
 ## 3. Proposed model
 
@@ -101,7 +101,8 @@ flowchart TD
     Package[Self-Contained Module Package]
     RuntimeReq[Runtime Requirement]
     Launch[Launch Recipe]
-    Target[Execution Target Profile]
+    TargetMap[Deployment Target Map\nnamed targets]
+    Target[Execution Target Profile\none machine/substrate]
     Assignment[Deployment Assignment]
     Spec[Deployment Spec]
     Reconciler[Deployment Reconciler]
@@ -111,7 +112,8 @@ flowchart TD
     Package --> RuntimeReq
     Package --> Launch
 
-    Target --> Spec
+    Target --> TargetMap
+    TargetMap --> Spec
     Assignment --> Spec
     Package --> Spec
     Blueprint --> Spec
@@ -176,6 +178,24 @@ A Deployment Spec is deployment-owned. It binds Module Contracts to Execution Ta
 
 It does not define the abstract module graph. It references a Blueprint and assigns some or all modules to targets.
 
+For v1, a Deployment Spec contains a target map and class-keyed assignments:
+
+```python
+deployment(
+    blueprint=go2_stack,
+    targets={
+        "robot": ssh_target("go2"),
+        "gpu": ssh_target("gpu-box"),
+    },
+    assignments={
+        MLSPlannerNative: "robot",
+        HeavyDetector: "gpu",
+    },
+)
+```
+
+Targets are named strings. Assignment keys are Module Contract classes. Assignment values are target names. The local target is implicit, and unassigned modules run locally by default.
+
 ## 4. Package discovery convention
 
 Package discovery should be **assignment-first**:
@@ -193,7 +213,7 @@ deployment(
 
 The Deployment Spec assigns Module Contracts to targets. DimOS discovers each module package from the Module Contract or NativeModule wrapper anchor.
 
-Explicit package references are overrides for ambiguity or multiple implementations, not required ceremony.
+Package settings are module-internal. Deployment Spec should not override package root, executable, implementation path, or build command. If convention discovery is ambiguous, the module should provide package-level configuration in a `deployment.py` sidecar.
 
 ### Existing native precedent
 
@@ -220,6 +240,17 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
 
 Deployment should generalize this convention rather than replace it with a manifest immediately.
 
+For modules that use the new deployment API, add a sidecar file instead of changing the existing wrapper just to prove deployment behavior:
+
+```text
+mls_planner/
+  mls_planner_native.py        # existing NativeModule wrapper
+  deployment.py                # new package/deployment API
+  rust/
+    Cargo.toml
+    src/...
+```
+
 ### Packaged Python mirror
 
 Packaged Python should mirror the native shape:
@@ -227,6 +258,7 @@ Packaged Python should mirror the native shape:
 ```text
 detector/
   detector_module.py           # Module Contract / wrapper
+  deployment.py                # new package/deployment API
   runtime/
     pyproject.toml
     uv.lock
@@ -239,11 +271,63 @@ V1 discovery rule:
 1. Start at the Module Contract or NativeModule wrapper file.
 2. Walk to the nearest package root.
 3. Look for sibling runtime roots such as `runtime/`, `rust/`, `cpp/`, `native/`, `pixi.toml`, or `flake.nix`.
-4. If discovery finds multiple candidates, require an explicit package override.
+4. If discovery finds multiple candidates, require package-level configuration in `deployment.py`.
 
 Open question: exactly which directory names should be supported first?
 
-## 5. Worker / runtime architecture
+### Convention presets
+
+Users should not need to type raw `uv sync`, `pixi install`, `cargo build`, or CMake commands for every module. DimOS should ship **Convention Presets** that recognize common layouts and expand them into default prepare, sync, and launch behavior.
+
+Examples:
+
+```text
+runtime/pyproject.toml + runtime/uv.lock
+  -> uv runtime preset
+
+runtime/pixi.toml + runtime/pixi.lock + runtime/pyproject.toml
+  -> Pixi-backed Python runtime preset
+
+rust/Cargo.toml
+  -> Cargo native preset
+
+cpp/CMakeLists.txt
+  -> CMake native preset
+```
+
+If exactly one preset matches, use it. If no preset or multiple presets match, fail during planning and ask the module to declare package-level configuration in `deployment.py`.
+
+## 5. Universal deployed module shape
+
+The universal shape should be the **Module Launch Envelope**, not a separate top-level `kind` field.
+
+Native and packaged Python modules both need the same handoff shape:
+
+```json
+{
+  "module": "MLSPlannerNative",
+  "runtime": {
+    "executable": "target/release/mls_planner"
+  },
+  "topics": {
+    "global_map": "/global_map#sensor_msgs.PointCloud2",
+    "path": "/path#nav_msgs.Path"
+  },
+  "config": {
+    "world_frame": "map",
+    "voxel_size": 0.1
+  },
+  "control": {
+    "endpoint": "..."
+  }
+}
+```
+
+This follows current `NativeModule.stdin_config`: one unified runtime handoff that contains launch metadata, module config values, resolved stream bindings, transport descriptors, and control details.
+
+DimOS may know internally which fields came from package convention, module config, Blueprint wiring, or Deployment Spec. Runtime Host should receive one envelope.
+
+## 6. Worker / runtime architecture
 
 Worker routing should depend on module kind, not on a top-level deployment mode.
 
@@ -276,6 +360,8 @@ Normal Python Module -> PythonWorker
 ```
 
 They are not remotely deployable in v1. If a module is assigned to a non-local target, it must be packaged Python or native.
+
+This proposal does not replace PythonWorker. In-environment Python modules should keep using PythonWorker because its lightweight object and RPC envelope works well for normal local modules.
 
 ### Packaged Python modules
 
@@ -311,7 +397,7 @@ Execution Target
 
 Deployment Worker is ephemeral per run. A future persistent target agent can implement the same control contract later.
 
-## 6. Control plane vs data plane
+## 7. Control plane vs data plane
 
 Deployment needs two different communication paths.
 
@@ -363,9 +449,9 @@ It should carry:
 - transport descriptors,
 - optional control-plane details.
 
-PR 1 should normalize the current native stdin JSON as envelope v0 rather than introduce a large schema immediately.
+The first implementation slice should normalize the current native stdin JSON as envelope v0 rather than introduce a large schema immediately.
 
-## 7. End-user UX
+## 8. End-user UX
 
 The safe deployment flow should be explicit:
 
@@ -420,7 +506,7 @@ Prepare should be idempotent: run the package manager, build tool, or sync tool 
 
 Open question: should `dimos deploy <deployment>` become shorthand for prepare plus run later?
 
-## 8. Lifecycle semantics
+## 9. Lifecycle semantics
 
 Deployment runs should participate in the existing lifecycle model.
 
@@ -441,75 +527,110 @@ Runtime Host death after startup should mark the deployment unhealthy. V1 should
 
 Deployment Workers need a coordinator lease. If the coordinator disappears, Deployment Workers should stop their Runtime Hosts instead of leaving orphaned robot processes.
 
-## 9. Implementation path / PR slicing
+## 10. Implementation path / PR slicing
 
-This should be built in slices.
+This should be built as a sequence of small PRs. PR #2704 should stay as a draft/reference for the packaged-runtime exploration; it should not merge as the public packaged-Python architecture because packaged Python and native modules should share the same Deployment Worker plus Runtime Host path.
 
-### Slice 1: normalize native launch envelope
+### PR 1: internal shape and skeletons
 
-Treat current `NativeModule.stdin_config` JSON as Module Launch Envelope v0.
+Define the internal deployment layer without adding user-facing CLI commands or public APIs.
 
-Goal: make the external process handoff explicit without changing the whole native stack.
+Include:
 
-### Slice 2: add local Deployment Worker path
+- `dimos/core/deployment/` package,
+- internal `DeploymentSpec` / target / assignment models,
+- `ModuleLaunchEnvelope` model,
+- `DeploymentWorker` and `RuntimeHost` skeletons,
+- Convention Preset interfaces,
+- isolated planner tests with fake modules and fake backends,
+- a short in-tree design doc.
 
-Add a target-local Deployment Worker that can spawn Runtime Hosts locally.
+Exclude:
 
-No remote yet.
+- no `dimos deploy ...` CLI,
+- no `ModuleCoordinator` behavior changes,
+- no packaged Python launch,
+- no native migration,
+- no remote execution.
 
-Goal: prove Deployment Worker plus Runtime Host lifecycle, logs, health, and cleanup on one machine.
+### PR 2: local packaged Python on the unified path
 
-### Slice 3: move NativeModule onto Runtime Host
+Add the first narrow public feature: local packaged Python through a Deployment Spec.
 
-Move native module execution from PythonWorker-hosted wrapper to Deployment Worker plus Native Runtime Host.
+This PR should:
 
-Goal: native local and native remote eventually share one path.
+- require a Deployment Spec even for local packaged Python,
+- prepare the local Python runtime project,
+- launch a local Python Runtime Host through Deployment Worker,
+- preserve Python module semantics where practical,
+- avoid the runtime-specific PythonWorker pool approach explored in PR #2704.
 
-### Slice 4: add explicit prepare phase
+Open question: what is the first runnable entrypoint before the full deployment CLI/registry exists?
 
-Move native builds and runtime preparation out of `module.start()` / run time.
+### PR 3: local native automatic prepare/build
 
-Goal: `dimos deploy prepare` owns build/env/sync work.
+Add native automatic build/prepare through the new deployment API without changing existing NativeModule wrapper files.
 
-### Slice 5: add packaged Python Runtime Host
+This PR should:
 
-Run packaged Python modules through prepared runtime projects and a DimOS Python entrypoint.
+- use Deployment Spec,
+- add `deployment.py` sidecar for a native module package,
+- use Convention Presets for a native package such as `rust/Cargo.toml`,
+- run prepare/build before launch,
+- keep existing NativeModule launch path for now.
 
-Goal: preserve Python module semantics where practical without putting heavy dependencies into Deployment Worker or coordinator.
+Use `MLSPlannerNative` to prove the real wrapper plus `rust/Cargo.toml` convention.
 
-### Slice 6: add remote target support
+### PR 4: NativeModule runtime migration
 
-Use SSH and rsync for v1:
+Move native launch onto Deployment Worker plus Native Runtime Host.
 
-- start ephemeral Deployment Worker on target,
-- sync source/artifacts,
-- tunnel control connection,
-- run Runtime Hosts on target.
+This PR should:
 
-Keep the shape compatible with a future persistent target agent.
+- migrate a tiny native example first,
+- keep legacy NativeModule wrapper path available for unmigrated modules,
+- make the new path recommended for migrated modules,
+- avoid a flag-day migration across all native modules.
 
-### Slice 7: add deployment UX
+After the path is stable, migrate `MLSPlannerNative` and then other native modules.
 
-Add:
+### PR 5: SSH remote packaged Python
 
-- target profiles,
-- deployment assignments,
-- `dimos deploy plan`,
-- `dimos deploy prepare`,
-- `dimos run <deployment>`.
+Add remote execution for packaged Python modules.
 
-## 10. Open questions
+This PR should:
+
+- define SSH target profiles,
+- sync packaged Python source to the target,
+- prepare the Python runtime on the target,
+- start an ephemeral Deployment Worker over SSH,
+- launch remote Python Runtime Hosts,
+- keep the control contract compatible with a future persistent target agent.
+
+### PR 6: SSH remote native modules
+
+Add remote execution for native modules.
+
+This PR should:
+
+- sync native source or prepared artifacts,
+- support remote native build or cross-compile-and-sync strategies,
+- launch remote Native Runtime Hosts,
+- keep packaged-Python remote and native remote separate because their prepare and failure modes differ.
+
+## 11. Open questions
 
 1. Exact package convention: which sibling runtime roots should v1 support?
 2. When should DimOS add optional `dimos.module.toml` or another manifest?
-3. When should deployment definitions get YAML/TOML after Python-first API?
-4. How should shared target profiles and local overlays layer secrets and personal machine details?
-5. Should `dimos deploy <deployment>` ever become shorthand for prepare plus run?
-6. When should strict data-plane compatibility checks become mandatory?
-7. What is the minimal resolved-plan JSON schema for tooling and CI?
+3. What is the PR 2 run entrypoint for local packaged-Python Deployment Specs before the full CLI/registry exists?
+4. When should deployment definitions get YAML/TOML after Python-first API?
+5. How should shared target profiles and local overlays layer secrets and personal machine details?
+6. Should `dimos deploy <deployment>` ever become shorthand for prepare plus run?
+7. When should strict data-plane compatibility checks become mandatory?
+8. What is the minimal resolved-plan JSON schema for tooling and CI?
 
 ## Suggested narrative
 
-Use PR #2704 as the proof point, not the whole story:
+Use recent packaged-Python work as evidence, not as the whole story:
 
-> PR #2704 adds local Python runtime projects. More importantly, it introduces a seam between what DimOS sees and where a module implementation runs. This proposal extends that seam into a shared deployment model for native modules, packaged Python modules, and remote execution.
+> Recent isolated-runtime work, including PR #2704, shows a seam between what DimOS sees and where a module implementation runs. This proposal extends that seam into a shared deployment model for native modules, packaged Python modules, and remote execution.
