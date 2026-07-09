@@ -24,7 +24,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from dimos.core.transport import CompressedImageTransport, LCMTransport, ZenohTransport
+from dimos.core.transport import CompressedCodec, LCMTransport, ZenohTransport
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.protocol.service.zenohservice import ZenohSessionPool
@@ -81,7 +81,7 @@ def session_pool():
 
 
 def test_roundtrip_over_lcm(retry_until, collector) -> None:
-    t = CompressedImageTransport(LCMTransport("dimos/test/codec_lcm", CompressedImage))
+    t = CompressedCodec(LCMTransport("dimos/test/codec_lcm", CompressedImage))
     t.subscribe(collector.callback)
     src = make_image(320, 240)
     retry_until(collector.event, lambda: t.broadcast(None, src))
@@ -94,7 +94,7 @@ def test_roundtrip_over_lcm(retry_until, collector) -> None:
 
 
 def test_roundtrip_over_zenoh(retry_until, collector, session_pool) -> None:
-    t = CompressedImageTransport(
+    t = CompressedCodec(
         ZenohTransport("dimos/test/codec_zenoh", CompressedImage, session_pool=session_pool)
     )
     t.subscribe(collector.callback)
@@ -107,9 +107,7 @@ def test_roundtrip_over_zenoh(retry_until, collector, session_pool) -> None:
 
 
 def test_decode_false_delivers_compressed(retry_until, collector) -> None:
-    t = CompressedImageTransport(
-        LCMTransport("dimos/test/codec_raw", CompressedImage), decode=False
-    )
+    t = CompressedCodec(LCMTransport("dimos/test/codec_raw", CompressedImage), decode=False)
     t.subscribe(collector.callback)
     retry_until(collector.event, lambda: t.broadcast(None, make_image(320, 240)))
     msg = collector.received[0]
@@ -119,9 +117,7 @@ def test_decode_false_delivers_compressed(retry_until, collector) -> None:
 
 
 def test_compressed_passthrough_no_recompression(retry_until, collector) -> None:
-    t = CompressedImageTransport(
-        LCMTransport("dimos/test/codec_pass", CompressedImage), decode=False
-    )
+    t = CompressedCodec(LCMTransport("dimos/test/codec_pass", CompressedImage), decode=False)
     t.subscribe(collector.callback)
     ci = CompressedImage.from_image(make_image(320, 240), quality=30)
     retry_until(collector.event, lambda: t.broadcast(None, ci))
@@ -130,17 +126,17 @@ def test_compressed_passthrough_no_recompression(retry_until, collector) -> None
 
 
 def test_double_wrap_raises() -> None:
-    inner = CompressedImageTransport(LCMTransport("dimos/test/codec_dw", CompressedImage))
+    inner = CompressedCodec(LCMTransport("dimos/test/codec_dw", CompressedImage))
     with pytest.raises(ValueError, match="cannot wrap"):
-        CompressedImageTransport(inner)
+        CompressedCodec(inner)
 
 
 def test_pickle_roundtrip() -> None:
-    t = CompressedImageTransport(
+    t = CompressedCodec(
         LCMTransport("dimos/test/codec_pickle", CompressedImage), quality=50, max_width=640
     )
     t2 = pickle.loads(pickle.dumps(t))
-    assert isinstance(t2, CompressedImageTransport)
+    assert isinstance(t2, CompressedCodec)
     assert t2.quality == 50
     assert t2.max_width == 640
     assert t2.topic.topic == t.topic.topic
@@ -205,7 +201,7 @@ def bench_results():
     yield rows
     if not rows:
         return
-    print("\n\n" + " " * 18 + "720p Image round-trip: raw vs CompressedImageTransport")
+    print("\n\n" + " " * 18 + "720p Image round-trip: raw vs CompressedCodec")
     print(f"\n{'':17}{'wire/frame':>12}{'median':>10}{'max':>10}{'fps':>8}{'drops':>9}")
     for proto, mode, r in rows:
         label = f"{proto:<7}{mode:<10}"
@@ -225,7 +221,7 @@ def bench_results():
 
 @pytest.mark.parametrize("proto", ["lcm", "zenoh"])
 def test_benchmark_image_vs_compressed(proto, session_pool, bench_results) -> None:
-    """Old path (raw Image on the wire) vs CompressedImageTransport(CompressedImage), same transport."""
+    """Old path (raw Image on the wire) vs CompressedCodec(CompressedImage), same transport."""
     frame = make_image()  # 720p, 2.76 MB raw
     n = 15
 
@@ -239,7 +235,7 @@ def test_benchmark_image_vs_compressed(proto, session_pool, bench_results) -> No
 
     raw = _bench(inner(f"dimos/bench/{proto}_raw", Image), frame, n, raw_wire)
     codec = _bench(
-        CompressedImageTransport(inner(f"dimos/bench/{proto}_jpeg", CompressedImage)),
+        CompressedCodec(inner(f"dimos/bench/{proto}_jpeg", CompressedImage)),
         frame,
         n,
         jpeg_wire,

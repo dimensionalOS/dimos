@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""End-to-end replay benchmark: raw Image blueprints vs CompressedImageTransport.
+"""End-to-end replay benchmark: raw Image blueprints vs CompressedCodec.
 
 Runs a real blueprint in replay mode for a fixed duration, with optional
 BenchSink consumer modules (configurable synthetic per-frame work, like a
@@ -155,7 +155,7 @@ def main() -> None:
 
     from dimos.core.coordination.blueprints import autoconnect
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
-    from dimos.core.transport import CompressedImageTransport, LCMTransport
+    from dimos.core.transport import CompressedCodec, LCMTransport
     from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
     from dimos.robot.get_all_blueprints import get_blueprint_by_name
 
@@ -168,7 +168,7 @@ def main() -> None:
     if args.mode == "codec":
         bp = bp.transports(
             {
-                ("color_image", Image): CompressedImageTransport(
+                ("color_image", Image): CompressedCodec(
                     LCMTransport("/color_image", CompressedImage), quality=args.quality
                 )
             }

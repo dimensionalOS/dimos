@@ -285,7 +285,7 @@ class JpegShmTransport(PubSubTransport[T]):
         self._started = False
 
 
-class CompressedImageTransport(PubSubTransport[T]):
+class CompressedCodec(PubSubTransport[T]):
     """Image↔CompressedImage codec over any inner transport.
 
     The wire always carries a typed sensor_msgs.CompressedImage; ts/frame_id
@@ -300,10 +300,8 @@ class CompressedImageTransport(PubSubTransport[T]):
         max_width: int | None = None,
         decode: bool = True,
     ) -> None:
-        if isinstance(inner, CompressedImageTransport):
-            raise ValueError(
-                "CompressedImageTransport cannot wrap another CompressedImageTransport"
-            )
+        if isinstance(inner, CompressedCodec):
+            raise ValueError("CompressedCodec cannot wrap another CompressedCodec")
         super().__init__(inner.topic)
         self.inner = inner
         self.format = format
@@ -313,7 +311,7 @@ class CompressedImageTransport(PubSubTransport[T]):
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
         return (
-            CompressedImageTransport,
+            CompressedCodec,
             (self.inner, self.format, self.quality, self.max_width, self.decode),
         )
 

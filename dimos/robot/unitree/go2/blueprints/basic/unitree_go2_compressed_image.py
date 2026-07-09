@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.core.transport import CompressedImageTransport, LCMTransport
+from dimos.core.transport import CompressedCodec, LCMTransport
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
@@ -23,7 +23,7 @@ from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_g
 # one encode at publish, decode per subscriber, ~20x less bandwidth.
 unitree_go2_compressed_image = unitree_go2_basic.transports(
     {
-        ("color_image", Image): CompressedImageTransport(
+        ("color_image", Image): CompressedCodec(
             LCMTransport("/color_image", CompressedImage), quality=80
         ),
     }
