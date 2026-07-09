@@ -196,3 +196,118 @@ class TestActivationFanOut:
 
         coordinator.set_dry_run(False)
         assert task.dry_run is False
+
+
+class TestValidatedDispatch:
+    """New behavior introduced by TASK_EXPOSES: validated, declared commands."""
+
+    def test_valid_execute_passes_trajectory_by_identity(self, coordinator):
+        task = CommandRecordingTask("traj_arm")
+        coordinator.add_task(task, task_type="trajectory")
+
+        traj = _trajectory()
+        assert coordinator.task_invoke("traj_arm", "execute", {"trajectory": traj}) is True
+        # The trajectory object reaches the task unchanged (kwargs go straight
+        # to the method; nothing copies or re-serializes it).
+        assert task.executed is traj
+
+    def test_typo_kwarg_raises_naming_task_command_and_kwarg(self, coordinator):
+        task = CommandRecordingTask("traj_arm")
+        coordinator.add_task(task, task_type="trajectory")
+
+        with pytest.raises(TypeError) as exc:
+            coordinator.task_invoke("traj_arm", "execute", {"trajectroy": _trajectory()})
+
+        message = str(exc.value)
+        assert "trajectroy" in message  # the offending kwarg is named
+        assert "traj_arm" in message and "execute" in message
+        assert task.executed is None  # binding failed before dispatch
+
+    def test_missing_required_kwarg_raises(self, coordinator):
+        task = CommandRecordingTask("traj_arm")
+        coordinator.add_task(task, task_type="trajectory")
+
+        with pytest.raises(TypeError) as exc:
+            coordinator.task_invoke("traj_arm", "execute", {})
+
+        assert "execute" in str(exc.value)
+        assert task.executed is None
+
+    def test_defaulted_param_can_be_omitted(self, coordinator):
+        task = CommandRecordingTask("g1")
+        coordinator.add_task(task, task_type="g1_groot_wbc")
+
+        # arm(ramp_seconds=None) — the defaulted param may be omitted entirely.
+        assert coordinator.task_invoke("g1", "arm", {}) is True
+        assert task.armed is True
+        assert task.arm_calls == [None]
+
+    def test_undeclared_existing_method_warns_but_dispatches(self, coordinator, mocker):
+        import dimos.control.coordinator as coord_mod
+
+        task = CommandRecordingTask("traj_arm")
+        coordinator.add_task(task, task_type="trajectory")
+        warn = mocker.patch.object(coord_mod.logger, "warning")
+
+        result = coordinator.task_invoke("traj_arm", "record_time", {"t_now": None})
+
+        assert isinstance(result, float)  # legacy dispatch still happened
+        assert task.t_now_seen == result
+        assert any("undeclared task_invoke" in str(c.args[0]) for c in warn.call_args_list)
+
+    def test_typo_method_warns_and_returns_none(self, coordinator, mocker):
+        import dimos.control.coordinator as coord_mod
+
+        task = CommandRecordingTask("traj_arm")
+        coordinator.add_task(task, task_type="trajectory")
+        warn = mocker.patch.object(coord_mod.logger, "warning")
+
+        # "exceute" is a typo of the declared "execute"; no such method exists.
+        assert coordinator.task_invoke("traj_arm", "exceute", {}) is None
+        assert warn.called
+
+    def test_shims_reach_only_declaring_tasks(self, coordinator):
+        declaring = CommandRecordingTask("g1")
+        coordinator.add_task(declaring, task_type="g1_groot_wbc")
+        # Bare add: has arm()/disarm()/set_dry_run() but declares no commands.
+        bare = CommandRecordingTask("bare")
+        coordinator.add_task(bare)
+
+        coordinator.set_activated(True)
+        coordinator.set_dry_run(True)
+
+        assert declaring.armed is True
+        assert declaring.arm_calls == [None]  # arm() called with defaulted ramp_seconds
+        assert declaring.dry_run is True
+        # The bare task is skipped even though it defines the methods.
+        assert bare.armed is None
+        assert bare.dry_run is None
+
+
+class TestDescribeTask:
+    def test_reports_command_signatures(self, coordinator):
+        task = CommandRecordingTask("traj_arm")
+        coordinator.add_task(task, task_type="trajectory")
+
+        desc = coordinator.describe_task("traj_arm")
+
+        assert desc["task"] == "traj_arm"
+        assert set(desc["commands"]) == {"execute", "cancel", "get_state"}
+        execute = desc["commands"]["execute"]
+        assert execute["params"] == ["trajectory"]
+        assert "trajectory" in execute["signature"]
+        assert desc["commands"]["cancel"]["params"] == []
+        assert desc["streams"] == []
+
+    def test_reports_stream_routes(self, coordinator):
+        # servo declares no commands but consumes joint_command.
+        task = CommandRecordingTask("servo1")
+        coordinator.add_task(task, task_type="servo")
+
+        desc = coordinator.describe_task("servo1")
+
+        assert desc["commands"] == {}
+        assert desc["streams"] == [("joint_command", "claim_overlap")]
+
+    def test_unknown_task_returns_none(self, coordinator):
+        assert coordinator.describe_task("nope") is None

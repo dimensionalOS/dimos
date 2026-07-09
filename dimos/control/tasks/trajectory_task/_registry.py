@@ -19,3 +19,7 @@ TASK_FACTORIES = {
 TASK_CONSUMES: dict[str, dict[str, tuple[str, str]]] = {
     "trajectory": {},  # command-driven only; consumes no input streams
 }
+
+TASK_EXPOSES: dict[str, list[str]] = {
+    "trajectory": ["execute", "cancel", "get_state"],
+}

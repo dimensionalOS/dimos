@@ -31,7 +31,6 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 import importlib
 import os
-from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
 from dimos.control.routing import (
@@ -107,16 +106,17 @@ class ControlTaskRegistry:
         task_type: str,
         *,
         consumes: Mapping[str, tuple[str, str]] | None = None,
-        exposes: Mapping[str, str] | None = None,
+        exposes: Sequence[str] | None = None,
         source: str | None = None,
     ) -> None:
         """Register a task type's binding card; conflicting duplicates raise.
 
         ``consumes`` maps a coordinator input stream name to a
-        ``(handler_method, routing)`` pair of strings; ``exposes`` maps a
-        command name to a ``"module:PydanticModel"`` argument-schema path
-        (stored only for now). ``source`` names the manifest for error
-        messages; runtime callers can omit it.
+        ``(handler_method, routing)`` pair of strings. ``exposes`` is a
+        sequence of command names the task accepts via
+        ``ControlCoordinator.task_invoke``; the task method's own signature
+        is the argument schema, so no separate model is declared. ``source``
+        names the manifest for error messages; runtime callers can omit it.
         """
         key = task_type.lower()
         origin = source or "register_bindings()"
@@ -246,24 +246,30 @@ class ControlTaskRegistry:
     def _parse_exposes(
         self,
         task_type: str,
-        exposes: Mapping[str, str] | None,
+        exposes: Sequence[str] | None,
         source: str,
-    ) -> Mapping[str, str]:
+    ) -> frozenset[str]:
         if exposes is None:
-            return MappingProxyType({})
-        if not isinstance(exposes, Mapping):
-            raise TypeError(f"{source}: exposes for task type {task_type!r} must be a mapping")
-        for command, schema_path in exposes.items():
-            if not isinstance(command, str) or not isinstance(schema_path, str):
-                raise TypeError(
-                    f"{source}: exposes for task type {task_type!r} must map strings to strings"
-                )
-            if ":" not in schema_path:
+            return frozenset()
+        if isinstance(exposes, str) or not isinstance(exposes, Sequence):
+            raise TypeError(
+                f"{source}: exposes for task type {task_type!r} must be a sequence of "
+                "command-name strings"
+            )
+        commands: set[str] = set()
+        for command in exposes:
+            where = f"{source}: task type {task_type!r}"
+            if not isinstance(command, str) or not command:
+                raise TypeError(f"{where}: command names must be non-empty strings")
+            if command.startswith("_"):
                 raise ValueError(
-                    f"{source}: task type {task_type!r} command {command!r} has invalid "
-                    f"argument-schema path {schema_path!r} (expected 'module:Model')"
+                    f"{where}: command {command!r} is private; underscore-prefixed "
+                    "methods are not wire-callable"
                 )
-        return MappingProxyType(dict(exposes))
+            if command in commands:
+                raise ValueError(f"{where}: command {command!r} declared more than once")
+            commands.add(command)
+        return frozenset(commands)
 
     def _validate_bound_handlers(self, key: str, task: ControlTask) -> None:
         bindings = self._bindings.get(key)
