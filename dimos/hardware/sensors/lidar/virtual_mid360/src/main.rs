@@ -18,7 +18,7 @@
 // binds lidar_ip and sends UDP, so it works wherever the host_ip/lidar_ip are
 // reachable — IPs aliased on an interface (host ns, incl. macOS lo0) or a netns.
 
-use dimos_module::{native_config, run, LcmTransport, Module};
+use dimos_module::{native_config, run_with_transport, Module};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -549,8 +549,5 @@ fn rewrite_ts(payload: &mut [u8], shift: u64) {
 
 #[tokio::main]
 async fn main() {
-    let transport = LcmTransport::new()
-        .await
-        .expect("Failed to create transport");
-    run::<VirtualMid360, _>(transport).await;
+    run_with_transport::<VirtualMid360>().await;
 }

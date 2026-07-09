@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use dimos_module::{run, Input, LcmTransport, Module, Output};
+use dimos_module::{run_with_transport, Input, Module, Output};
 use lcm_msgs::geometry_msgs::{Twist, Vector3};
 use tokio::time::{interval, Duration};
 
@@ -63,8 +63,5 @@ impl Ping {
 
 #[tokio::main]
 async fn main() {
-    let transport = LcmTransport::new()
-        .await
-        .expect("Failed to create transport");
-    run::<Ping, _>(transport).await;
+    run_with_transport::<Ping>().await;
 }

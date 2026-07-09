@@ -57,6 +57,15 @@ class ZenohQoS:
             kwargs["congestion_control"] = _CONGESTION_CONTROL[self.congestion_control]
         return kwargs
 
+    def to_wire(self) -> dict[str, str]:
+        """Serializable QoS sent to native modules over stdin. Only set fields."""
+        wire: dict[str, str] = {}
+        if self.reliability is not None:
+            wire["reliability"] = self.reliability
+        if self.congestion_control is not None:
+            wire["congestion_control"] = self.congestion_control
+        return wire
+
 
 # The two delivery classes used across DimOS. Everything else keeps zenoh's
 # publisher defaults (reliable, drop under congestion).
@@ -74,20 +83,24 @@ class Topic(LCMTopic):
 
     qos: ZenohQoS | None = None
 
+    @property
+    def key_expr(self) -> str:
+        """The Zenoh key expression for this topic, embedding lcm_type after a '/'.
+
+        Examples:
+            Topic("dimos/cmd_vel", Twist) -> "dimos/cmd_vel/geometry_msgs.Twist"
+            Topic("dimos/data")           -> "dimos/data"
+        """
+        if self.lcm_type is not None:
+            return f"{self.pattern}/{self.lcm_type.msg_name}"
+        return self.pattern
+
 
 def _topic_to_key_expr(topic: LCMTopic) -> str:
-    """Convert a Topic to a Zenoh key expression.
-
-    Embeds the lcm_type in the key using '/' instead of '#' (what LCM does).
-
-    Examples:
-        Topic("dimos/cmd_vel", Twist) -> "dimos/cmd_vel/geometry_msgs.Twist"
-        Topic("dimos/data")           -> "dimos/data"
-    """
-    base = topic.topic if isinstance(topic.topic, str) else topic.pattern
-    if topic.lcm_type is not None:
-        return f"{base}/{topic.lcm_type.msg_name}"
-    return base
+    """Convert any LCM-compatible Topic to a Zenoh key expression."""
+    if isinstance(topic, Topic):
+        return topic.key_expr
+    return Topic(topic=topic.topic, lcm_type=topic.lcm_type).key_expr
 
 
 @lru_cache(maxsize=1024)
