@@ -580,3 +580,17 @@ ROS compressed → connection decode → LCM → rerun bridge → viewer.
 
 Remaining for blueprint validation: run 3 = r1lite-keyboard-teleop
 (chassis via full dimos chain; RC mode 5 + staging).
+
+**RUN 3: PASS — r1lite-keyboard-teleop drove the robot.** All six keys
+functional (W/S fore-aft, A/D rotate, Q/E strafe — swerve crab confirmed),
+release = stop (module dead-man), Ctrl-C = clean elegant shutdown incl.
+courtesy chassis-zero guard. Launched via run_r1lite.sh one-command flow.
+QoS note: drove even with the BEST_EFFORT publishers — the starved
+RELIABLE subscriber on target_speed_chassis is a monitor, not the chassis
+controller; publishers switched to RELIABLE anyway (serves both kinds).
+
+**RUNTIME LAYER COMPLETE (2026-07-09):** R1LiteConnection + coordinator +
+keyboard teleop are hardware-validated end to end — feedback, arms-hold,
+cameras-to-viewer, chassis driving. Remaining for the PR: r1_lite
+description package (URDF+meshes to LFS) + catalog factory, distilled
+docs/README, CI gate, rebase story vs Mustafa's branch/main.
