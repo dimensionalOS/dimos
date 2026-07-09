@@ -1,0 +1,38 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    # https://blog.yossarian.net/2025/11/21/We-should-all-be-using-dependency-cooldowns
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: "uv"
+    directory: "/"
+    # Can't use "all" because it exceeds the 55 min timeout and fails to open any PRs.
+    allow:
+      - dependency-type: "direct"
+    schedule:
+      interval: "daily"
+    # https://blog.yossarian.net/2025/11/21/We-should-all-be-using-dependency-cooldowns
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 10
+    groups:
+      python:
+        patterns: ["*"]
+
+  - package-ecosystem: "docker"
+    directories: ["/docker/*/"]
+    schedule:
+      interval: "monthly"
+    # https://blog.yossarian.net/2025/11/21/We-should-all-be-using-dependency-cooldowns
+    cooldown:
+      default-days: 7
+    groups:
+      docker:
+        patterns: ["*"]

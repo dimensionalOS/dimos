@@ -1,3 +1,17 @@
+// Copyright 2026 Dimensional Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Debug;
 use std::io;
@@ -13,7 +27,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
-use crate::transport::Transport;
+use crate::transport::{Dispatch, Transport};
 
 /// Marker trait for a config checked by `#[native_config]`: every field required,
 /// no Rust-side defaults, no unknown fields. Implemented only by the macro.
@@ -47,12 +61,12 @@ fn init_tracing() {
         .try_init();
 }
 
-const INPUT_CHANNEL_CAPACITY: usize = 1024;
-const PUBLISH_CHANNEL_CAPACITY: usize = 1024;
+const INPUT_CHANNEL_CAPACITY: usize = 128;
+const PUBLISH_CHANNEL_CAPACITY: usize = 32;
 
 // Each input() call produces a TypedRoute that decodes its message type
 // and forwards it to the right Input's mpsc channel.
-pub(crate) trait Route: Send {
+pub(crate) trait Route: Send + Sync {
     fn try_dispatch(&self, data: &[u8]);
 }
 
@@ -106,27 +120,24 @@ impl<T> Input<T> {
 pub struct Output<T> {
     pub topic: String,
     encode: fn(&T) -> Vec<u8>,
-    sender: mpsc::Sender<(String, Vec<u8>)>,
+    sender: mpsc::Sender<Vec<u8>>,
 }
 
 impl<T> Output<T> {
     pub async fn publish(&self, msg: &T) -> io::Result<()> {
         let data = (self.encode)(msg);
         self.sender
-            .send((self.topic.clone(), data))
+            .send(data)
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "background task gone"))
     }
 }
 
-/// Parse a JSON config line as written by the Python NativeModule coordinator.
-/// Returns `(topics, config)`. Extracted so it can be unit-tested without stdin.
-fn parse_config_json<C: DeserializeOwned + Serialize>(
-    line: &str,
+/// Extract `(topics, config)` from an already-parsed config object. `run`
+/// parses the line once and also reads `qos` from it, so this takes the value.
+fn parse_config_value<C: DeserializeOwned + Serialize>(
+    json: &serde_json::Value,
 ) -> io::Result<(HashMap<String, String>, C)> {
-    let json: serde_json::Value = serde_json::from_str(line.trim())
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
     let mut topics = HashMap::new();
     if let Some(t) = json.get("topics").and_then(|v| v.as_object()) {
         for (port, topic) in t {
@@ -265,18 +276,16 @@ pub trait Module: Sized + Send + 'static {
 pub struct Builder {
     topics: HashMap<String, String>,
     routes: HashMap<String, Vec<Box<dyn Route>>>,
-    publish_tx: mpsc::Sender<(String, Vec<u8>)>,
+    // One publish queue per output channel, drained by its own worker.
+    outputs: Vec<(String, mpsc::Receiver<Vec<u8>>)>,
 }
 
 impl Builder {
-    pub(crate) fn new(
-        topics: HashMap<String, String>,
-        publish_tx: mpsc::Sender<(String, Vec<u8>)>,
-    ) -> Self {
+    pub(crate) fn new(topics: HashMap<String, String>) -> Self {
         Self {
             topics,
             routes: HashMap::new(),
-            publish_tx,
+            outputs: Vec::new(),
         }
     }
 
@@ -310,48 +319,59 @@ impl Builder {
         }
     }
 
-    pub fn output<T>(&self, port: &str, encode: fn(&T) -> Vec<u8>) -> Output<T> {
+    pub fn output<T>(&mut self, port: &str, encode: fn(&T) -> Vec<u8>) -> Output<T> {
+        let topic = self.topic_for(port);
+        let (tx, rx) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
+        self.outputs.push((topic.clone(), rx));
         Output {
-            topic: self.topic_for(port),
+            topic,
             encode,
-            sender: self.publish_tx.clone(),
+            sender: tx,
         }
     }
 }
 
-pub(crate) fn spawn_pubsub_tasks<T: Transport>(
-    transport: T,
+/// Subscribe each channel on the transport, dispatching its messages to that
+/// channel's routes.
+pub(crate) async fn subscribe_routes<T: Transport>(
+    transport: &T,
     routes: HashMap<String, Vec<Box<dyn Route>>>,
-    mut publish_rx: mpsc::Receiver<(String, Vec<u8>)>,
-) -> (tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>) {
-    let transport = Arc::new(transport);
-
-    let recv_transport = Arc::clone(&transport);
-    let recv_handle = tokio::spawn(async move {
-        loop {
-            match recv_transport.recv().await {
-                Ok((channel, data)) => {
-                    if let Some(rs) = routes.get(&channel) {
-                        for route in rs {
-                            route.try_dispatch(&data);
-                        }
-                    }
+) -> io::Result<()> {
+    for (channel, routes) in routes {
+        let routes = Arc::new(routes);
+        let dispatch: Dispatch = Arc::new(move |bytes: &[u8]| {
+            for route in routes.iter() {
+                // A panicking handler must not kill the delivery loop.
+                let dispatched = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    route.try_dispatch(bytes)
+                }));
+                if dispatched.is_err() {
+                    error!("dispatch handler panicked; message dropped");
                 }
-                Err(e) => error!(error = %e, "recv error"),
             }
-        }
-    });
+        });
+        transport.subscribe(&channel, dispatch).await?;
+    }
+    Ok(())
+}
 
-    let pub_transport = Arc::clone(&transport);
-    let pub_handle = tokio::spawn(async move {
-        while let Some((topic, data)) = publish_rx.recv().await {
-            if let Err(e) = pub_transport.publish(&topic, &data).await {
-                error!(topic = %topic, error = %e, "publish error");
+/// Spawn one worker per output channel so they don't block each other
+pub(crate) fn spawn_publish_tasks<T: Transport>(
+    transport: Arc<T>,
+    outputs: Vec<(String, mpsc::Receiver<Vec<u8>>)>,
+) -> tokio::task::JoinSet<()> {
+    let mut tasks = tokio::task::JoinSet::new();
+    for (topic, mut rx) in outputs {
+        let transport = Arc::clone(&transport);
+        tasks.spawn(async move {
+            while let Some(data) = rx.recv().await {
+                if let Err(e) = transport.publish(&topic, data).await {
+                    error!(topic = %topic, error = %e, "publish error");
+                }
             }
-        }
-    });
-
-    (recv_handle, pub_handle)
+        });
+    }
+    tasks
 }
 
 fn propagate_task_failure(name: &str, res: Result<(), tokio::task::JoinError>) {
@@ -386,8 +406,11 @@ where
     BufReader::new(tokio::io::stdin())
         .read_line(&mut line)
         .await?;
-    let (topics, config) = parse_config_json::<M::Config>(&line)?;
+    let json: serde_json::Value = serde_json::from_str(line.trim())
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let (topics, config) = parse_config_value::<M::Config>(&json)?;
     validate_config(&config)?;
+    transport.set_publisher_qos(json.get("qos").unwrap_or(&serde_json::Value::Null));
 
     let exe = std::env::current_exe()
         .ok()
@@ -398,11 +421,13 @@ where
     }
     info!(exe = %exe, config = ?config, "config loaded");
 
-    let (publish_tx, publish_rx) = mpsc::channel::<(String, Vec<u8>)>(PUBLISH_CHANNEL_CAPACITY);
-    let mut builder = Builder::new(topics, publish_tx);
+    let mut builder = Builder::new(topics);
     let mut module = M::build(&mut builder, config);
-    let (mut recv_handle, mut pub_handle) =
-        spawn_pubsub_tasks(transport, builder.routes, publish_rx);
+
+    subscribe_routes(&transport, builder.routes).await?;
+    // Kept alive until teardown so the subscriptions stay live.
+    let transport = Arc::new(transport);
+    let mut pub_tasks = spawn_publish_tasks(Arc::clone(&transport), builder.outputs);
 
     module.setup().await;
 
@@ -410,8 +435,7 @@ where
     let failure = tokio::select! {
         _ = module.handle() => None,
         _ = tokio::signal::ctrl_c() => None,
-        res = &mut recv_handle => Some(("recv", res)),
-        res = &mut pub_handle => Some(("publish", res)),
+        Some(res) = pub_tasks.join_next() => Some(("publish", res)),
     };
 
     module.teardown().await;
@@ -434,19 +458,32 @@ mod tests {
     use std::time::{Duration, Instant};
     use tokio::sync::Notify;
 
+    /// Parse a raw config line the way `run` does, for exercising
+    /// `parse_config_value` from the string form the coordinator sends.
+    fn parse_config_json<C: DeserializeOwned + Serialize>(
+        line: &str,
+    ) -> io::Result<(HashMap<String, String>, C)> {
+        let json: serde_json::Value = serde_json::from_str(line.trim())
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        parse_config_value(&json)
+    }
+
     type InboundQueue = Mutex<VecDeque<(String, Vec<u8>)>>;
 
-    /// Mock transport for testing message timing.
+    /// Mock push transport for testing receive/publish concurrency.
     ///
-    /// Lets us test for concurrency and blocking when handling different messages.
+    /// `subscribe` registers callbacks. One delivery loop drains an inbound queue
+    /// into them, independent of the publish path.
     struct ControllableMockTransport {
         inbound: Arc<InboundQueue>,
         inbound_notify: Arc<Notify>,
+        subscriptions: Arc<Mutex<HashMap<String, Vec<Dispatch>>>>,
+        listening: Arc<AtomicBool>,
         publish_delay_ms: Arc<AtomicU64>,
         publish_entered: Arc<Notify>,
-        recv_returned: Arc<Notify>,
-        recv_log: Arc<Mutex<Vec<Instant>>>,
         publish_log: Arc<Mutex<Vec<Instant>>>,
+        dispatch_entered: Arc<Notify>,
+        dispatch_log: Arc<Mutex<Vec<Instant>>>,
     }
 
     impl ControllableMockTransport {
@@ -454,17 +491,44 @@ mod tests {
             Self {
                 inbound: Arc::new(InboundQueue::new(VecDeque::new())),
                 inbound_notify: Arc::new(Notify::new()),
+                subscriptions: Arc::new(Mutex::new(HashMap::new())),
+                listening: Arc::new(AtomicBool::new(false)),
                 publish_delay_ms: Arc::new(AtomicU64::new(0)),
                 publish_entered: Arc::new(Notify::new()),
-                recv_returned: Arc::new(Notify::new()),
-                recv_log: Arc::new(Mutex::new(Vec::new())),
                 publish_log: Arc::new(Mutex::new(Vec::new())),
+                dispatch_entered: Arc::new(Notify::new()),
+                dispatch_log: Arc::new(Mutex::new(Vec::new())),
             }
+        }
+
+        fn spawn_delivery_loop(&self) {
+            let inbound = Arc::clone(&self.inbound);
+            let inbound_notify = Arc::clone(&self.inbound_notify);
+            let subscriptions = Arc::clone(&self.subscriptions);
+            let dispatch_entered = Arc::clone(&self.dispatch_entered);
+            let dispatch_log = Arc::clone(&self.dispatch_log);
+            tokio::spawn(async move {
+                loop {
+                    let popped = inbound.lock().unwrap().pop_front();
+                    if let Some((channel, data)) = popped {
+                        dispatch_entered.notify_one();
+                        let callbacks = subscriptions.lock().unwrap().get(&channel).cloned();
+                        if let Some(callbacks) = callbacks {
+                            for cb in &callbacks {
+                                cb(&data);
+                            }
+                        }
+                        dispatch_log.lock().unwrap().push(Instant::now());
+                    } else {
+                        inbound_notify.notified().await;
+                    }
+                }
+            });
         }
     }
 
     impl crate::transport::Transport for ControllableMockTransport {
-        async fn publish(&self, _channel: &str, _data: &[u8]) -> io::Result<()> {
+        async fn publish(&self, _channel: &str, _data: Vec<u8>) -> io::Result<()> {
             self.publish_entered.notify_one();
             let delay = self.publish_delay_ms.load(Ordering::Relaxed);
             if delay > 0 {
@@ -474,16 +538,17 @@ mod tests {
             Ok(())
         }
 
-        async fn recv(&self) -> io::Result<(String, Vec<u8>)> {
-            loop {
-                let popped = self.inbound.lock().unwrap().pop_front();
-                if let Some(msg) = popped {
-                    self.recv_log.lock().unwrap().push(Instant::now());
-                    self.recv_returned.notify_one();
-                    return Ok(msg);
-                }
-                self.inbound_notify.notified().await;
+        async fn subscribe(&self, channel: &str, on_msg: Dispatch) -> io::Result<()> {
+            self.subscriptions
+                .lock()
+                .unwrap()
+                .entry(channel.to_string())
+                .or_default()
+                .push(on_msg);
+            if !self.listening.swap(true, Ordering::SeqCst) {
+                self.spawn_delivery_loop();
             }
+            Ok(())
         }
     }
 
@@ -669,8 +734,7 @@ mod tests {
     }
 
     fn builder_with_topics(pairs: &[(&str, &str)]) -> Builder {
-        let (publish_tx, _) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
-        Builder::new(topics(pairs), publish_tx)
+        Builder::new(topics(pairs))
     }
 
     #[test]
@@ -701,7 +765,7 @@ mod tests {
 
     #[test]
     fn output_uses_mapped_topic() {
-        let builder = builder_with_topics(&[("cmd_vel", "/robot/cmd_vel")]);
+        let mut builder = builder_with_topics(&[("cmd_vel", "/robot/cmd_vel")]);
         let output = builder.output("cmd_vel", |b: &Vec<u8>| b.clone());
         assert_eq!(output.topic, "/robot/cmd_vel");
     }
@@ -709,9 +773,9 @@ mod tests {
     // recv/publish concurrency
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn slow_publish_does_not_block_recv() {
+    async fn slow_publish_does_not_block_dispatch() {
         let transport = ControllableMockTransport::new();
-        let recv_log = transport.recv_log.clone();
+        let dispatch_log = transport.dispatch_log.clone();
         let publish_log = transport.publish_log.clone();
         let inbound = transport.inbound.clone();
         let inbound_notify = transport.inbound_notify.clone();
@@ -721,48 +785,49 @@ mod tests {
         // set publishing to take 200ms
         publish_delay_ms.store(200, Ordering::Relaxed);
 
-        let (publish_tx, publish_rx) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
-        let mut builder = Builder::new(topics(&[("data", "/data"), ("out", "/out")]), publish_tx);
+        let mut builder = Builder::new(topics(&[("data", "/data"), ("out", "/out")]));
         let _input = builder.input("data", |b| Ok(b.to_vec()));
         let output = builder.output("out", |b: &Vec<u8>| b.clone());
-        spawn_pubsub_tasks(transport, builder.routes, publish_rx);
+
+        subscribe_routes(&transport, builder.routes).await.unwrap();
+        let transport = Arc::new(transport);
+        let _pub_tasks = spawn_publish_tasks(Arc::clone(&transport), builder.outputs);
 
         // start the 200ms publish
         output.publish(&vec![0u8]).await.ok();
 
-        // ensure the publish starts getting handled before the receive
+        // ensure the publish starts getting handled before we deliver
         tokio::time::timeout(Duration::from_secs(1), publish_entered.notified())
             .await
-            .expect("dispatch task should pick up publish_rx within 1s");
+            .expect("publish task should pick up publish_rx within 1s");
 
         inject_inbound(&inbound, &inbound_notify, "/data", vec![42u8]);
 
-        wait_for("recv to fire and publish to complete", || {
-            !recv_log.lock().unwrap().is_empty() && !publish_log.lock().unwrap().is_empty()
+        wait_for("dispatch to fire and publish to complete", || {
+            !dispatch_log.lock().unwrap().is_empty() && !publish_log.lock().unwrap().is_empty()
         })
         .await;
 
-        let recv_time = recv_log.lock().unwrap()[0];
+        let dispatch_time = dispatch_log.lock().unwrap()[0];
         let publish_time = publish_log.lock().unwrap()[0];
         assert!(
-            recv_time < publish_time,
-            "expected recv to fire during the slow publish, not after it. \
-             The recv path should be independent of publish latency."
+            dispatch_time < publish_time,
+            "expected dispatch to fire during the slow publish, not after it. \
+             The receive path should be independent of publish latency."
         );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn slow_recv_dispatch_does_not_block_publish() {
+    async fn slow_dispatch_does_not_block_publish() {
         let transport = ControllableMockTransport::new();
         let publish_log = transport.publish_log.clone();
         let inbound = transport.inbound.clone();
         let inbound_notify = transport.inbound_notify.clone();
-        let recv_returned = transport.recv_returned.clone();
+        let dispatch_entered = transport.dispatch_entered.clone();
 
-        let (publish_tx, publish_rx) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
-        let mut builder = Builder::new(topics(&[("slow", "/slow"), ("out", "/out")]), publish_tx);
+        let mut builder = Builder::new(topics(&[("slow", "/slow"), ("out", "/out")]));
 
-        // block the recv worker until the test releases it
+        // block the delivery loop in decode until the test releases it
         static RECV_RELEASE: AtomicBool = AtomicBool::new(false);
         RECV_RELEASE.store(false, Ordering::SeqCst);
         let _input = builder.input("slow", |b| {
@@ -773,26 +838,73 @@ mod tests {
             Ok(b.to_vec())
         });
         let output = builder.output("out", |b: &Vec<u8>| b.clone());
-        spawn_pubsub_tasks(transport, builder.routes, publish_rx);
 
-        // send a message to the receiving
+        subscribe_routes(&transport, builder.routes).await.unwrap();
+        let transport = Arc::new(transport);
+        let _pub_tasks = spawn_publish_tasks(Arc::clone(&transport), builder.outputs);
+
+        // send a message to the receiver
         inject_inbound(&inbound, &inbound_notify, "/slow", vec![1u8]);
 
-        // make sure the receive gets picked up before we publish
-        tokio::time::timeout(Duration::from_secs(1), recv_returned.notified())
+        // make sure dispatch begins and blocks in decode before we publish
+        tokio::time::timeout(Duration::from_secs(1), dispatch_entered.notified())
             .await
-            .expect("dispatch task should pick up inbound within 1s");
+            .expect("delivery loop should pick up inbound within 1s");
 
         output.publish(&vec![42u8]).await.ok();
 
-        // publish must complete while the recv worker stays blocked
-        wait_for("publish to complete while recv dispatch is blocked", || {
+        // publish must complete while the delivery loop stays blocked in decode
+        wait_for("publish to complete while dispatch is blocked", || {
             !publish_log.lock().unwrap().is_empty()
         })
         .await;
 
         // release the blocked decode so the runtime can shut down
         RECV_RELEASE.store(true, Ordering::SeqCst);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn blocked_channel_does_not_stall_other_channels() {
+        // Publish never returns on the block channel, other channels complete instantly.
+        struct HeadOfLineMock {
+            delivered: Arc<Mutex<Vec<String>>>,
+        }
+        impl crate::transport::Transport for HeadOfLineMock {
+            async fn publish(&self, channel: &str, _data: Vec<u8>) -> io::Result<()> {
+                if channel == "/block" {
+                    std::future::pending::<()>().await;
+                }
+                self.delivered.lock().unwrap().push(channel.to_string());
+                Ok(())
+            }
+            async fn subscribe(&self, _channel: &str, _on_msg: Dispatch) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let delivered = Arc::new(Mutex::new(Vec::new()));
+        let transport = Arc::new(HeadOfLineMock {
+            delivered: Arc::clone(&delivered),
+        });
+
+        let mut builder = Builder::new(topics(&[("block_out", "/block"), ("fast_out", "/fast")]));
+        let block_out = builder.output("block_out", |b: &Vec<u8>| b.clone());
+        let fast_out = builder.output("fast_out", |b: &Vec<u8>| b.clone());
+        let _pub_tasks = spawn_publish_tasks(Arc::clone(&transport), builder.outputs);
+
+        // Wedge the block channel, then publish on the fast channel.
+        block_out.publish(&vec![1u8]).await.unwrap();
+        fast_out.publish(&vec![2u8]).await.unwrap();
+
+        // The fast channel delivers even though its sibling is stuck in publish.
+        wait_for("fast channel delivery despite a blocked sibling", || {
+            delivered.lock().unwrap().iter().any(|c| c == "/fast")
+        })
+        .await;
+        assert!(
+            !delivered.lock().unwrap().iter().any(|c| c == "/block"),
+            "blocked channel must not have delivered"
+        );
     }
 
     // propagate_task_failure
@@ -817,6 +929,47 @@ mod tests {
     #[test]
     fn ok_does_not_panic() {
         propagate_task_failure("recv", Ok(()));
+    }
+
+    // subscribe_routes panic isolation
+
+    struct PanicRoute;
+    impl Route for PanicRoute {
+        fn try_dispatch(&self, _data: &[u8]) {
+            panic!("handler blew up");
+        }
+    }
+
+    struct CountingRoute(Arc<AtomicU64>);
+    impl Route for CountingRoute {
+        fn try_dispatch(&self, _data: &[u8]) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn panicking_route_does_not_starve_siblings_on_same_channel() {
+        let transport = ControllableMockTransport::new();
+        let inbound = transport.inbound.clone();
+        let inbound_notify = transport.inbound_notify.clone();
+
+        let delivered = Arc::new(AtomicU64::new(0));
+        let mut routes: HashMap<String, Vec<Box<dyn Route>>> = HashMap::new();
+        routes.insert(
+            "/data".to_string(),
+            vec![
+                Box::new(PanicRoute),
+                Box::new(CountingRoute(Arc::clone(&delivered))),
+            ],
+        );
+
+        subscribe_routes(&transport, routes).await.unwrap();
+        inject_inbound(&inbound, &inbound_notify, "/data", vec![7u8]);
+
+        wait_for("sibling route to receive despite the panic", || {
+            delivered.load(Ordering::SeqCst) == 1
+        })
+        .await;
     }
 
     #[test]

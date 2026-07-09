@@ -1,10 +1,24 @@
+// Copyright 2026 Dimensional Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // Fake Livox Mid-360 — replays a recorded pcap over a virtual NIC and synthesizes
 // the Livox SDK2 control handshake so an unmodified, live-mode pointlio ingests it
 // through the real Livox SDK as if from a live sensor. Namespace-agnostic: it just
 // binds lidar_ip and sends UDP, so it works wherever the host_ip/lidar_ip are
 // reachable — IPs aliased on an interface (host ns, incl. macOS lo0) or a netns.
 
-use dimos_module::{native_config, run, LcmTransport, Module};
+use dimos_module::{native_config, run_with_transport, Module};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -535,8 +549,5 @@ fn rewrite_ts(payload: &mut [u8], shift: u64) {
 
 #[tokio::main]
 async fn main() {
-    let transport = LcmTransport::new()
-        .await
-        .expect("Failed to create transport");
-    run::<VirtualMid360, _>(transport).await;
+    run_with_transport::<VirtualMid360>().await;
 }
