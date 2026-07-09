@@ -61,8 +61,8 @@ fn init_tracing() {
         .try_init();
 }
 
-const INPUT_CHANNEL_CAPACITY: usize = 1024;
-const PUBLISH_CHANNEL_CAPACITY: usize = 1024;
+const INPUT_CHANNEL_CAPACITY: usize = 128;
+const PUBLISH_CHANNEL_CAPACITY: usize = 32;
 
 // Each input() call produces a TypedRoute that decodes its message type
 // and forwards it to the right Input's mpsc channel.
