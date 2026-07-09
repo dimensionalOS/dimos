@@ -33,6 +33,7 @@ from dimos.perception.stereo_point_cloud.utils import (
     _FloorCalibrator,
     _R_OPT_TO_LINK,
     _gradient_mask,
+    _isolation_filter,
     _pack,
 )
 from dimos.perception.stereo_point_cloud.vio import MadgwickFilter, PointCloudOdometry
@@ -328,6 +329,8 @@ class StereoPointCloud(Module):
                     xyz_to_add = xyz_for_map[~covered]
                 else:
                     xyz_to_add = xyz_for_map
+                if len(xyz_to_add) > 3:
+                    xyz_to_add = xyz_to_add[_isolation_filter(xyz_to_add, radius=0.06, min_neighbors=2)]
                 if len(xyz_to_add):
                     self._acc_pts = (
                         np.vstack([self._acc_pts, xyz_to_add]) if len(self._acc_pts) else xyz_to_add.copy()
