@@ -34,7 +34,6 @@ from dimos.perception.stereo_point_cloud.utils import (
     _R_OPT_TO_LINK,
     _gradient_mask,
     _pack,
-    _raycast_free_keys,
 )
 from dimos.perception.stereo_point_cloud.vio import MadgwickFilter, PointCloudOdometry
 from dimos.utils.logging_config import setup_logger
@@ -305,12 +304,6 @@ class StereoPointCloud(Module):
 
         pts_snap = None
         with self._lock:
-            if len(self._acc_pts) > 0 and len(xyz_for_map) > 0:
-                free_keys = _raycast_free_keys(xyz_for_map, self.config.global_vox_size, origin=t)
-                if len(free_keys):
-                    keys_acc      = _pack(np.floor(self._acc_pts / self.config.global_vox_size).astype(np.int32))
-                    self._acc_pts = self._acc_pts[~np.isin(keys_acc, free_keys)]
-
             # Keyframe gate: only insert when camera has moved/rotated enough.
             # Keeps global-map density equal to one clean frame per area explored.
             take_kf = True
