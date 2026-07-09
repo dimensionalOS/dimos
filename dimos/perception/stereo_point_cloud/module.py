@@ -48,8 +48,8 @@ _DEPTH_MM_THRESHOLD = 100
 # at 4 m the effective cut rises by ~3.6 cm, rejecting the apparent floor elevation.
 _FLOOR_TILT_COMP = 0.0
 
-_KEYFRAME_DIST_M    = 0.05               # add to global map only when camera moves >5 cm
-_KEYFRAME_ANGLE_RAD = np.deg2rad(5.0)   # or rotates >5°
+_KEYFRAME_DIST_M    = 0.08               # add to global map only when camera moves >8 cm
+_KEYFRAME_ANGLE_RAD = np.deg2rad(8.0)   # or rotates >8°
 
 
 class Config(ModuleConfig):
