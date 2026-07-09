@@ -296,7 +296,6 @@ class GO2Connection(Module, Camera, Pointcloud):
         self.register_disposable(self.connection.odom_stream().subscribe(self._publish_tf))
         self.register_disposable(self.connection.lowstate_stream().subscribe(self._on_lowstate))
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
-        self.register_disposable(self.connection.lowstate_stream().subscribe(self._on_lowstate))
 
         if self.config.camera:
             self.register_disposable(self.connection.video_stream().subscribe(onimage))

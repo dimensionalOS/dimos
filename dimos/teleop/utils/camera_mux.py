@@ -100,7 +100,9 @@ class CameraMuxMixin:
         for im in imgs:
             h, w = im.data.shape[:2]
             tiles.append(
-                cv2.resize(im.data, (int(w * target_h / h), target_h)) if h != target_h else im.data
+                cv2.resize(im.data, (max(1, int(w * target_h / h)), target_h))
+                if h != target_h
+                else im.data
             )
         return self._even_dims(
             self._stamp(

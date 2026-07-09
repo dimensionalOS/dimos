@@ -270,6 +270,9 @@ class Go2HostedConnection(GO2Connection, HostedConnectionMixin):
 
     def _handle_estop_clear(self, nonce: Any) -> None:
         # Re-arm only; does NOT move — operator must Stand/Drive explicitly.
+        self._cancel_nav()
+        self._last_nav_ts = 0.0
+        self._last_drive_ts = 0.0
         self._estopped = False
         logger.warning("E-STOP cleared by operator")
         self._send_ack(nonce, True)
@@ -313,8 +316,8 @@ class Go2HostedConnection(GO2Connection, HostedConnectionMixin):
         # Nonce dedup: a duplicate of a finished command re-acks its result;
         # a duplicate of an in-flight one is dropped (the original will ack).
         # Transient rejections below unwind the reservation so a genuine
-        # retry can still execute.
-        if nonce is not None:
+        # retry can still execute. Urgent (E-STOP/Damp) skips dedup entirely.
+        if nonce is not None and not urgent:
             now = time.monotonic()
             with self._cmd_lock:
                 self._nonce_results = {
@@ -353,7 +356,7 @@ class Go2HostedConnection(GO2Connection, HostedConnectionMixin):
                 if not urgent:
                     with self._cmd_lock:
                         self._cmd_pending -= 1
-            if nonce is not None:
+            if nonce is not None and not urgent:
                 with self._cmd_lock:
                     self._nonce_results[nonce] = (ok, time.monotonic())
             self._send_ack(nonce, ok)
@@ -515,6 +518,9 @@ class Go2HostedConnection(GO2Connection, HostedConnectionMixin):
         age = time.time() - ts
         if age > self.config.cmd_stale_after_sec:
             logger.debug("dropping stale cmd_vel: age=%.3fs", age)
+            return False
+        if age < -self.config.cmd_stale_after_sec:  # future-stamped: skew/corrupt ts
+            logger.debug("dropping future-stamped cmd_vel: age=%.3fs", age)
             return False
         if ts <= self._last_cmd_ts:
             logger.debug("dropping out-of-order cmd_vel: ts=%.3f last=%.3f", ts, self._last_cmd_ts)

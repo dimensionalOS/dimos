@@ -221,6 +221,19 @@ def test_move_accepts_fresh_in_order_cmd() -> None:
     conn.connection.move.assert_called_once()
 
 
+def test_move_drops_future_stamped_cmd() -> None:
+    """A twist stamped in the future is dropped and must NOT poison
+    _last_cmd_ts — otherwise every later legitimate command reads as
+    out-of-order and manual driving silently dies."""
+    conn = _bare_connection()
+    future = time.time() + 5.0  # > cmd_stale_after_sec ahead
+    assert conn.move(_twist(future)) is False
+    assert conn._last_cmd_ts == 0.0  # unchanged — future stamp did not stick
+    # A normal, current command still drives afterwards.
+    conn.connection.move.return_value = True
+    assert conn.move(_twist(time.time())) is True
+
+
 # ─── speed-mode / rage toggle ────────────────────────────────────────
 
 
@@ -654,6 +667,45 @@ def test_estop_clear_does_not_move_the_robot(monkeypatch: pytest.MonkeyPatch) ->
     conn.connection.sport_command.assert_not_called()
     conn.connection.standup.assert_not_called()
     conn.connection.move.assert_not_called()
+
+
+def test_estop_clear_cancels_nav_and_resets_yield_timers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Clearing E-STOP cancels the planner and resets the yield timers, so a
+    pre-E-STOP nav stream can't resume driving the instant we un-latch."""
+    conn = _bare_connection()
+    conn._estopped = True
+    conn._last_nav_ts = time.time()  # planner was driving before the E-STOP
+    conn._last_drive_ts = time.time()
+    monkeypatch.setattr(conn, "_send_ack", lambda nonce, ok: None)
+
+    conn._on_state_json(b'{"type": "estop_clear"}')
+
+    conn.stop_movement.publish.assert_called_once()  # nav cancelled
+    assert conn._last_nav_ts == 0.0
+    assert conn._last_drive_ts == 0.0
+
+
+def test_repeated_estop_reissues_damp(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A repeated E-STOP reusing the same nonce must fire Damp again, never be
+    dropped as a duplicate — browsers retransmit on the unreliable channel."""
+    conn = _bare_connection()
+    conn.connection.sport_command.return_value = True
+    acks: list[tuple[Any, bool]] = []
+    monkeypatch.setattr(conn, "_send_ack", lambda nonce, ok: acks.append((nonce, ok)))
+
+    conn._on_state_json(b'{"type": "estop", "nonce": 1}')
+    _wait_for(lambda: conn.connection.sport_command.call_count == 1)
+    # Same nonce again (retransmit / repeated press) → a second Damp, not a drop.
+    conn._on_state_json(b'{"type": "estop", "nonce": 1}')
+    _wait_for(lambda: conn.connection.sport_command.call_count == 2)
+
+    assert conn.connection.sport_command.call_args_list == [
+        (((ALLOWED_SPORT_CMDS["Damp"],)),),
+        (((ALLOWED_SPORT_CMDS["Damp"],)),),
+    ]
+    assert acks.count((1, True)) == 2
 
 
 def test_operator_lost_stops_motion_and_clears_nonces(monkeypatch: pytest.MonkeyPatch) -> None:

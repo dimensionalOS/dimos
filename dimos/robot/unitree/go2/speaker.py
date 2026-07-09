@@ -72,17 +72,31 @@ class PCMAudioTrack(MediaStreamTrack):
 
         if self._loop is None:
             self._loop = asyncio.get_running_loop()
-        pcm, sample_rate, channels = await self._queue.get()
 
-        samples = len(pcm) // (2 * channels)
-        frame = av.AudioFrame(
-            format="s16",
-            layout="stereo" if channels == 2 else "mono",
-            samples=samples,
-        )
-        frame.planes[0].update(pcm)
-        frame.sample_rate = sample_rate
-        frame.pts = self._pts
-        frame.time_base = fractions.Fraction(1, sample_rate)
-        self._pts += samples
-        return frame
+        # Skip malformed frames rather than raise out of recv() — aiortc treats
+        # that as fatal and kills operator audio for the session.
+        while True:
+            pcm, sample_rate, channels = await self._queue.get()
+            channels = max(1, int(channels))
+            stride = 2 * channels
+            samples = len(pcm) // stride
+            if samples <= 0 or sample_rate <= 0:
+                continue
+            usable = samples * stride
+            if usable != len(pcm):
+                pcm = pcm[:usable]
+            try:
+                frame = av.AudioFrame(
+                    format="s16",
+                    layout="stereo" if channels == 2 else "mono",
+                    samples=samples,
+                )
+                frame.planes[0].update(pcm)
+            except Exception:
+                logger.warning("speaker: dropping malformed audio frame", exc_info=True)
+                continue
+            frame.sample_rate = sample_rate
+            frame.pts = self._pts
+            frame.time_base = fractions.Fraction(1, sample_rate)
+            self._pts += samples
+            return frame

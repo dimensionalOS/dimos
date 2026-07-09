@@ -95,6 +95,20 @@ def test_hstack_odd_tile_width_is_evened() -> None:
     assert out is not None and _is_even(out)
 
 
+def test_hstack_degenerate_tile_width_does_not_crash() -> None:
+    # A very short reference tile (sets target_h) beside a tall-narrow one makes
+    # int(w * target_h / h) round to 0; cv2.resize raises on a 0 dimension.
+    # target_h = min(4, 1000) = 4; cam2 tile width = int(100*4/1000) = 0 → must
+    # be clamped to 1, not crash.
+    mux = _Mux(["cam1", "cam2"])
+    with mux._cam_lock:
+        mux._cam_selected = ["cam1", "cam2"]
+    _feed(mux, "cam1", _img(200, 4))  # short → target_h = 4
+    _feed(mux, "cam2", _img(100, 1000))  # tall-narrow → scaled width rounds to 0
+    out = mux._composite()  # must not raise
+    assert out is not None and _is_even(out)
+
+
 def test_switch_between_selections_stays_even() -> None:
     # Reproduces the report: flipping selection changes frame size (encoder
     # reopen). Every produced frame must be even so libx264 never fails.
