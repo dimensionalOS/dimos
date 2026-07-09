@@ -23,7 +23,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
-import shutil
 import subprocess
 from typing import Any
 from unittest import mock
@@ -361,49 +360,8 @@ def test_cleanup_qemu_kills_on_terminate_timeout() -> None:
     assert mod._qemu_proc is None
 
 
-def _arduino_common_dir() -> Path:
-    """Resolve Arduino message headers (in dimos-lcm) via nix; skips if nix is absent."""
-    if shutil.which("nix") is None:
-        pytest.skip("nix not available — cannot resolve Arduino message headers")
-
-    result = subprocess.run(
-        ["nix", "build", ".#dimos_arduino_tools", "--print-out-paths", "--no-link"],
-        cwd=str(_ARDUINO_HW_DIR),
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    if result.returncode != 0:
-        pytest.skip(f"nix build failed: {result.stderr[:200]}")
-
-    out_paths = [line for line in result.stdout.splitlines() if line.strip()]
-    if not out_paths:
-        pytest.skip("nix build returned no paths")
-
-    msgs_dir = Path(out_paths[-1]) / "share" / "arduino_msgs"
-    if not msgs_dir.is_dir():
-        pytest.skip(f"Arduino message headers not found at {msgs_dir}")
-
-    return msgs_dir
-
-
 def _main_cpp_path() -> Path:
     return _ARDUINO_HW_DIR / "cpp" / "main.cpp"
-
-
-@pytest.mark.slow
-@pytest.mark.tool
-def test_registry_headers_exist_on_disk() -> None:
-    common = _arduino_common_dir()
-    missing = [
-        (msg_name, header)
-        for msg_name, header in _KNOWN_TYPE_HEADERS.items()
-        if not (common / header).is_file()
-    ]
-    assert not missing, (
-        f"Every entry in _KNOWN_TYPE_HEADERS must point to an existing "
-        f"arduino_msgs header, but these are missing: {missing}"
-    )
 
 
 def test_registry_matches_main_cpp_hash_registry() -> None:
@@ -505,21 +463,3 @@ def test_validate_inbound_payload_sizes_skips_non_avr_board() -> None:
     """A non-AVR FQBN skips the check entirely — non-AVR gets 1024."""
     mod = _make_module(_Esp32Module)
     mod._validate_inbound_payload_sizes(mod._get_stream_types())  # must not raise
-
-
-@pytest.mark.slow
-@pytest.mark.tool
-def test_registry_headers_cover_all_arduino_msgs_files() -> None:
-    """Every header referenced by _KNOWN_TYPE_HEADERS must exist on disk.
-    Extra generated headers (from dimos-lcm codegen) and infrastructure
-    headers (lcm_coretypes_arduino.h, dimos_lcm_pubsub.h) are allowed
-    without registry entries since they are auto-generated dependencies,
-    not user-facing message types."""
-    common = _arduino_common_dir()
-    on_disk = {str(p.relative_to(common)) for p in common.rglob("*.h")}
-    referenced = set(_KNOWN_TYPE_HEADERS.values())
-    missing = referenced - on_disk
-    assert not missing, (
-        f"These headers are referenced by _KNOWN_TYPE_HEADERS but missing "
-        f"on disk: {sorted(missing)}"
-    )

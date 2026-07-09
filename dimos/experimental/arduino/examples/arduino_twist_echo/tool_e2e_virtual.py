@@ -32,7 +32,7 @@ Requirements:
 
 Run with::
 
-    uv run pytest dimos/experimental/arduino/examples/arduino_twist_echo/test_e2e_virtual.py -v -m "slow and tool"
+    uv run pytest dimos/experimental/arduino/examples/arduino_twist_echo/tool_e2e_virtual.py -v
 """
 
 from __future__ import annotations
@@ -42,10 +42,6 @@ import time
 from types import MappingProxyType
 
 import pytest
-
-# Heavy imports are deferred past the skip check so a machine without the
-# Arduino toolchain can still collect this file cheaply.
-pytestmark = [pytest.mark.slow, pytest.mark.tool]
 
 
 def _missing_binaries() -> list[str]:

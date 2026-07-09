@@ -23,7 +23,7 @@ Requires:
     - nix on PATH
 
 Run:
-    uv run python dimos/experimental/arduino/examples/arduino_multi_echo/test_multi_echo_hardware.py
+    uv run python dimos/experimental/arduino/examples/arduino_multi_echo/tool_multi_echo_hardware.py
 """
 
 from __future__ import annotations
