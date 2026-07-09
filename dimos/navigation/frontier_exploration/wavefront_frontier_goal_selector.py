@@ -585,6 +585,10 @@ class WavefrontFrontierExplorer(Module):
 
         # Real walking distance via A* over the costmap (routes around walls).
         path_cost = self._compute_path_cost(frontier, robot_pose, costmap)
+        # Unreachable frontier (A* found no path) -> sentinel score so it is
+        # excluded from ranking entirely (never published, never times out).
+        if path_cost == float("inf"):
+            return float("-inf")
 
         # Information gain = frontier size, normalized to 0..1.
         max_expected_frontier_size = self.config.min_frontier_perimeter / costmap.resolution * 10
@@ -642,8 +646,11 @@ class WavefrontFrontierExplorer(Module):
             score = self._compute_comprehensive_frontier_score(
                 frontier, frontier_size, robot_pose, costmap
             )
-
-            valid_frontiers.append((frontier, score))
+            # Drop only UNREACHABLE frontiers (A* found no path -> score -inf).
+            # Reachable but low-value frontiers (e.g. already-visited, score ~0)
+            # are kept — they are the natural no-information-gain stop signal.
+            if score != float("-inf"):
+                valid_frontiers.append((frontier, score))
 
         logger.info(f"Valid frontiers: {len(valid_frontiers)}")
 
