@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from contextlib import suppress
 from datetime import datetime, timezone
 import inspect
 import json
@@ -28,6 +27,7 @@ from typing import TYPE_CHECKING, Any, Literal, Union, cast, get_args, get_origi
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
+from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 import requests
 import typer
@@ -161,37 +161,108 @@ def arg_help(
     indent: str = "    ",
     module: str = "",
     _atom: BlueprintAtom | None = None,
+    _defaults: BaseModel | dict[str, Any] | None = None,
 ) -> str:
     output = ""
     for k, info in config.model_fields.items():
         if k == "g":
             continue
-        t = info.annotation
+        t: object = info.annotation
         if isinstance(t, types.GenericAlias):
             # Can't be specified on CLI
             continue
 
-        # TODO(PY314): if isinstance(t, Union):
-        if get_origin(t) in {Union, types.UnionType}:
-            with suppress(StopIteration):
-                t = next(u for u in get_args(t) if issubclass(u, BaseModel))
+        fallback = _field_default(info)
+        field_defaults = _get_default_value(_defaults, k, fallback)
+        t = _unwrap_base_model_annotation(t, field_defaults)
 
         if inspect.isclass(t) and issubclass(t, BaseModel):
             output += f"{indent}{module}{k}:\n"
-            # Find blueprint atom
-            bp = next(bp for bp in blueprint.blueprints if bp.module.name == k)
+            if _atom is None:
+                # Root BlueprintConfig fields are blueprint atoms, except schema
+                # branches such as transports.* that have no backing atom.
+                bp = next((bp for bp in blueprint.blueprints if bp.module.name == k), None)
+                defaults = bp.kwargs if bp is not None else field_defaults
+            else:
+                # Nested BaseModel fields belong to the current atom and must not
+                # be atom-looked-up.
+                bp = _atom
+                defaults = field_defaults
             output += arg_help(
-                t, blueprint, indent=indent + "  ", module=module + k + ".", _atom=bp
+                t,
+                blueprint,
+                indent=indent + "  ",
+                module=module + k + ".",
+                _atom=bp,
+                _defaults=defaults,
             )
         else:
-            assert _atom is not None
             # Use __name__ to avoid "<class 'int'>" style output on basic types.
             display_type = t.__name__ if isinstance(t, type) else t
-            required = "[Required] " if info.is_required() and k not in _atom.kwargs else ""
-            d = _atom.kwargs.get(k, info.default)
+            has_default = _has_default_value(_defaults, k)
+            required = "[Required] " if info.is_required() and not has_default else ""
+            d = field_defaults
             default = f" (default: {d})" if d is not PydanticUndefined else ""
             output += f"{indent}* {required}{module}{k}: {display_type}{default}\n"
     return output
+
+
+def _field_default(info: FieldInfo) -> Any:
+    if info.default is not PydanticUndefined:
+        return info.default
+    if info.default_factory is not None:
+        return info.get_default(call_default_factory=True)
+    return PydanticUndefined
+
+
+def _unwrap_base_model_annotation(annotation: object, defaults: object) -> object:
+    # TODO(PY314): if isinstance(annotation, Union):
+    if get_origin(annotation) not in {Union, types.UnionType}:
+        return annotation
+
+    candidates = tuple(
+        u for u in get_args(annotation) if inspect.isclass(u) and issubclass(u, BaseModel)
+    )
+    if not candidates:
+        return annotation
+    return _select_base_model_candidate(candidates, defaults)
+
+
+def _select_base_model_candidate(
+    candidates: tuple[type[BaseModel], ...], defaults: object
+) -> type[BaseModel]:
+    backend = _backend_default(defaults)
+    if backend is not PydanticUndefined:
+        for candidate in candidates:
+            backend_info = candidate.model_fields.get("backend")
+            if backend_info is not None and _field_default(backend_info) == backend:
+                return candidate
+    return candidates[0]
+
+
+def _backend_default(defaults: object) -> object:
+    if isinstance(defaults, BaseModel):
+        return getattr(defaults, "backend", PydanticUndefined)
+    if isinstance(defaults, dict):
+        return defaults.get("backend", PydanticUndefined)
+    return PydanticUndefined
+
+
+def _has_default_value(defaults: BaseModel | dict[str, Any] | None, key: str) -> bool:
+    if isinstance(defaults, BaseModel):
+        return key in defaults.model_fields_set
+    if isinstance(defaults, dict):
+        return key in defaults
+    return False
+
+
+def _get_default_value(defaults: object, key: str, fallback: Any) -> Any:
+    if isinstance(defaults, BaseModel):
+        if key in defaults.model_fields_set:
+            return getattr(defaults, key)
+    if isinstance(defaults, dict):
+        return defaults.get(key, fallback)
+    return fallback
 
 
 def load_config_args(config: type[BaseModel], args: Iterable[str], path: Path) -> dict[str, Any]:
@@ -284,6 +355,8 @@ def run(
 
     if show_help:
         print("Blueprint arguments:")
+        print("  Override with --option/-o module.field=value.")
+        print("  Nested config paths use dotted names, e.g. module.nested.field=value.")
         print(arg_help(blueprint.config(), blueprint))
         return
 
@@ -620,12 +693,33 @@ def list_blueprints() -> None:
 
 
 @main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
-def lcmspy(ctx: typer.Context) -> None:
-    """LCM spy tool for monitoring LCM messages."""
-    from dimos.utils.cli.lcmspy.run_lcmspy import main as lcmspy_main
+def spy(ctx: typer.Context) -> None:
+    """Universal transport spy: topics, rates, sizes across all pubsub transports."""
+    # A root-level `--transport` (before the subcommand) sets the stack's pubsub
+    # backend — which single transport dimos processes participate on. The spy is an
+    # observer: it watches every transport and takes its own repeatable `--transport`
+    # filter *after* the subcommand. The two look alike but mean different things, so
+    # reject the root placement rather than silently ignoring the requested filter.
+    if (ctx.obj or {}).get("transport") is not None:
+        typer.echo(
+            "Error: `--transport` before `spy` sets the stack backend, which the spy "
+            "ignores. Put the filter after the subcommand: `dimos spy --transport <name>`.",
+            err=True,
+        )
+        raise typer.Exit(2)
+    from dimos.utils.cli.spy.run_spy import main as spy_main
 
-    sys.argv = ["lcmspy", *ctx.args]
-    lcmspy_main()
+    sys.argv = ["spy", *ctx.args]
+    spy_main()
+
+
+@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def lcmspy(ctx: typer.Context) -> None:
+    """Alias for `dimos spy --transport lcm`."""
+    from dimos.utils.cli.spy.run_spy import lcm_only_argv, main as spy_main
+
+    sys.argv = lcm_only_argv(list(ctx.args))
+    spy_main()
 
 
 @main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})

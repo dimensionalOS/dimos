@@ -32,6 +32,7 @@ from datetime import datetime
 import os
 from pathlib import Path
 
+from dimos.constants import RECORDINGS_DIR
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
@@ -43,7 +44,7 @@ from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.go2.go2_mid360_recorder import Go2Mid360Recorder
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import Go2Mid360StaticTf
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
-from dimos.utils.logging_config import set_run_log_dir, setup_logger
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
@@ -60,7 +61,10 @@ def _default_recording_dir() -> Path:
     stamp = (
         now.strftime("%Y-%m-%d") + "_" + now.strftime("%I-%M%p").lower() + "-" + now.strftime("%Z")
     )
-    return Path("recordings") / stamp
+    return RECORDINGS_DIR / stamp
+
+
+_RECORDING_DIR = _default_recording_dir()
 
 
 unitree_go2_mid360_record = autoconnect(
@@ -83,7 +87,7 @@ unitree_go2_mid360_record = autoconnect(
             (PointLio, "odometry", "pointlio_odometry"),
         ]
     ),
-    Go2Mid360Recorder.blueprint(),
+    Go2Mid360Recorder.blueprint(db_path=str(_RECORDING_DIR / "mem2.db")),
     # Continuously republishes the rig's mount frames onto tf (no latched static tf).
     Go2Mid360StaticTf.blueprint(),
     # Pygame keyboard teleop (WASD drive + Q/E strafe). Its cmd_vel feeds
@@ -97,21 +101,15 @@ unitree_go2_mid360_record = autoconnect(
     ),
 ).global_config(n_workers=12, robot_model="unitree_go2")
 
-# Opt-in: also capture a raw .pcap of the Mid-360 UDP stream (RECORD_PCAP=1).
 if _RECORD_PCAP:
     unitree_go2_mid360_record = autoconnect(
         unitree_go2_mid360_record,
-        Mid360PcapRecorder.blueprint(),
+        Mid360PcapRecorder.blueprint(pcap_path=str(_RECORDING_DIR / "mid360.pcap")),
     )
 
 
 if __name__ == "__main__":
-    recording_dir = _default_recording_dir().resolve()
-    recording_dir.mkdir(parents=True, exist_ok=True)
-    set_run_log_dir(recording_dir)
+    _RECORDING_DIR.mkdir(parents=True, exist_ok=True)
     global_config.obstacle_avoidance = False
-    coordinator = ModuleCoordinator.build(
-        unitree_go2_mid360_record,
-        {Go2Mid360Recorder.name: {"db_path": str(recording_dir / "mem2.db")}},
-    )
+    coordinator = ModuleCoordinator.build(unitree_go2_mid360_record)
     coordinator.loop()

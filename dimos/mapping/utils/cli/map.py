@@ -159,6 +159,16 @@ def _accumulate(
     return result.data if result is not None else None
 
 
+def _denoise(cloud: PointCloud2 | None) -> PointCloud2 | None:
+    """Statistical outlier removal via o3d; drops sparse floaters, keeps colors."""
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+    if cloud is None or len(cloud.pointcloud.points) < 20:
+        return cloud
+    clean, _ = cloud.pointcloud_tensor.remove_statistical_outliers(nb_neighbors=20, std_ratio=2.0)
+    return PointCloud2(pointcloud=clean, frame_id=cloud.frame_id, ts=cloud.ts)
+
+
 def _log_reconstruction(
     *,
     voxel: float,
@@ -394,10 +404,16 @@ def main(
         "--bottom-cutoff",
         help="Drop global-map points below this Z (m) when rendering; e.g. 0 strips the floor",
     ),
+    denoise: bool = typer.Option(
+        False,
+        "--denoise",
+        help="Statistical outlier removal on the finished maps (o3d, nb_neighbors=20, "
+        "std_ratio=2.0): drops sparse floaters before rendering/export",
+    ),
 ) -> None:
     """Rebuild a voxel map from a recorded SQLite dataset, write a .rrd, and open it in rerun."""
     from dimos.mapping.loop_closure.pgo import PGO
-    from dimos.memory2.store.sqlite import SqliteStore
+    from dimos.memory2.cli.dataset import open_store, resolve_dataset
     from dimos.memory2.transform import QualityWindow, SpeedLimit
     from dimos.memory2.utils.progress import progress
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -405,16 +421,15 @@ def main(
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.perception.fiducial.marker_transformer import DetectMarkers
     from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL, _camera_info_static
-    from dimos.utils.data import resolve_named_path
     from dimos.visualization.rerun.init import rerun_init
 
-    db_path = resolve_named_path(dataset, ".db")
+    db_path = resolve_dataset(dataset)
+    store = open_store(db_path)
     if out is None:
         out = Path.cwd() / f"{db_path.stem}.rrd"
     if export or full_pgo:
         pgo = True
 
-    store = SqliteStore(path=db_path)
     lidar = store.stream(lidar_stream, PointCloud2).from_time(seek or None).to_time(duration)
 
     print(lidar.summary())
@@ -572,6 +587,12 @@ def main(
             carve_columns=carve,
             progress_cb=bar,
         )
+
+    if denoise:
+        print("denoising maps (statistical outlier removal)...")
+        global_map = _denoise(global_map)
+        pgo_map = _denoise(pgo_map)
+        full_pgo_map = _denoise(full_pgo_map)
 
     marker_dets: list[Observation[Any]] = []
     if markers:

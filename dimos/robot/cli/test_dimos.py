@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
 from typing import Literal
 
+from pydantic import BaseModel, Field
 import pytest
 from typer.testing import CliRunner
 
@@ -21,6 +23,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.robot.cli.dimos import _normalize_simulation_argv, arg_help, main
+import dimos.utils.cli.spy.run_spy as run_spy
 
 
 @pytest.mark.parametrize(
@@ -160,3 +163,99 @@ def test_blueprint_arg_help_required():
         "      * testmodule.spam: str (default: eggs)",
         "",
     ]
+
+
+@pytest.fixture
+def spy_main_argv(monkeypatch):
+    """Stub run_spy.main and capture the sys.argv the lcmspy alias hands it."""
+    captured: list[list[str]] = []
+    monkeypatch.setattr(sys, "argv", ["dimos"])
+    monkeypatch.setattr(run_spy, "main", lambda: captured.append(list(sys.argv)))
+    return captured
+
+
+def test_lcmspy_alias_prepends_lcm_transport(spy_main_argv):
+    result = CliRunner().invoke(main, ["lcmspy"])
+    assert result.exit_code == 0, result.output
+    assert spy_main_argv == [["spy", "--transport", "lcm"]]
+
+
+def test_lcmspy_alias_rejects_transport_override(spy_main_argv):
+    result = CliRunner().invoke(main, ["lcmspy", "--transport", "zenoh"])
+    assert result.exit_code == 1
+    assert "LCM-only" in result.output
+    assert spy_main_argv == []  # never reaches the spy
+
+
+def test_spy_cmd_rejects_stray_positional(monkeypatch):
+    # A stray positional must fail loudly, not silently launch the TUI.
+    monkeypatch.setattr(sys, "argv", ["dimos"])
+    result = CliRunner().invoke(main, ["spy", "foo"])
+    assert result.exit_code == 1
+    assert "unexpected" in result.output.lower()
+
+
+def test_lcmspy_rejects_stray_positional(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["dimos"])
+    result = CliRunner().invoke(main, ["lcmspy", "foo"])
+    assert result.exit_code == 1
+    assert "unexpected" in result.output.lower()
+
+
+def test_spy_rejects_root_transport(monkeypatch, spy_main_argv):
+    # A root-level `--transport` (before the subcommand) sets the stack backend,
+    # which the spy ignores. Rather than silently show all transports, error and
+    # point at the subcommand-level filter.
+    monkeypatch.setattr(sys, "argv", ["dimos"])
+    original = global_config.transport
+    try:
+        result = CliRunner().invoke(main, ["--transport", "zenoh", "spy"])
+    finally:
+        global_config.update(transport=original)
+    assert result.exit_code == 2
+    assert "dimos spy --transport" in result.output
+    assert spy_main_argv == []  # never reaches the spy
+
+
+def test_blueprint_arg_help_nested_config_paths():
+    class NestedConfig(BaseModel):
+        enabled: bool = True
+        mode: str = "auto"
+
+    class Config(ModuleConfig):
+        nested: NestedConfig = Field(default_factory=NestedConfig)
+
+    class TestModule(Module):
+        config: Config
+
+    blueprint = TestModule.blueprint(nested={"mode": "manual"})
+    output = arg_help(blueprint.config(), blueprint)
+
+    assert "      testmodule.nested:" in output
+    assert "        * testmodule.nested.enabled: bool (default: True)" in output
+    assert "        * testmodule.nested.mode: str (default: manual)" in output
+
+
+def test_blueprint_arg_help_uses_nested_backend_defaults():
+    class DisabledConfig(BaseModel):
+        backend: Literal["disabled"] = "disabled"
+
+    class EnabledConfig(BaseModel):
+        backend: Literal["enabled"] = "enabled"
+        level: int = 1
+
+    class Config(ModuleConfig):
+        nested: DisabledConfig | EnabledConfig = Field(default_factory=DisabledConfig)
+
+    class TestModule(Module):
+        config: Config
+
+    blueprint = TestModule.blueprint(nested={"backend": "enabled", "level": 3})
+    output = arg_help(blueprint.config(), blueprint)
+
+    assert "      testmodule.nested:" in output
+    assert (
+        "        * testmodule.nested.backend: typing.Literal['enabled'] (default: enabled)"
+        in output
+    )
+    assert "        * testmodule.nested.level: int (default: 3)" in output

@@ -28,6 +28,8 @@ pub struct DijkstraState {
     pub dist: Vec<f32>,
     pub pred: Vec<CellId>,
     pub source: Vec<u32>,
+    // Window membership for the regional search, left all-false between calls.
+    in_window: Vec<bool>,
     heap: BinaryHeap<Scored>,
 }
 
@@ -40,6 +42,8 @@ impl DijkstraState {
         self.pred.resize(n, NO_CELL);
         self.source.clear();
         self.source.resize(n, 0);
+        self.in_window.clear();
+        self.in_window.resize(n, false);
         self.heap.clear();
     }
 
@@ -50,6 +54,9 @@ impl DijkstraState {
             self.dist.resize(n, f32::INFINITY);
             self.pred.resize(n, NO_CELL);
             self.source.resize(n, 0);
+        }
+        if self.in_window.len() < n {
+            self.in_window.resize(n, false);
         }
     }
 }
@@ -122,18 +129,21 @@ pub fn dijkstra_region(
     state: &mut DijkstraState,
     weight: Weight,
 ) {
-    state.ensure_capacity(cells.slot_capacity());
+    let n_slots = cells.slot_capacity();
+    state.ensure_capacity(n_slots);
     state.heap.clear();
 
+    // Dense membership mask over the window cells.
     for &w in window {
         let i = w as usize;
+        state.in_window[i] = true;
         state.dist[i] = f32::INFINITY;
         state.pred[i] = NO_CELL;
         state.source[i] = 0;
     }
 
     for &s in sources {
-        if !cells.is_live(s) || !window.contains(&s) {
+        if !cells.is_live(s) || !state.in_window[s as usize] {
             continue;
         }
         state.dist[s as usize] = 0.0;
@@ -145,7 +155,7 @@ pub fn dijkstra_region(
     for &w in window {
         for edge in cells.neighbors(w) {
             let n = edge.dest;
-            if !window.contains(&n) && state.dist[n as usize].is_finite() {
+            if !state.in_window[n as usize] && state.dist[n as usize].is_finite() {
                 frontier.insert(n);
             }
         }
@@ -163,7 +173,7 @@ pub fn dijkstra_region(
         let su = state.source[u as usize];
         for edge in cells.neighbors(u) {
             let v = edge.dest;
-            if !window.contains(&v) {
+            if !state.in_window[v as usize] {
                 continue;
             }
             let nd = d + weight.of(edge);
@@ -174,6 +184,10 @@ pub fn dijkstra_region(
                 state.heap.push(Scored(nd, cells.coord(v), v));
             }
         }
+    }
+
+    for &w in window {
+        state.in_window[w as usize] = false;
     }
 }
 

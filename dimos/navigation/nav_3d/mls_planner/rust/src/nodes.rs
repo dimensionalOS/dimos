@@ -21,9 +21,12 @@ use std::cmp::Ordering;
 use ahash::{AHashMap, AHashSet};
 use rayon::prelude::*;
 
-use crate::adjacency::{CellId, Edge, SurfaceCells};
+use crate::adjacency::{CellId, Edge, SurfaceCells, NO_CELL};
 use crate::dijkstra::{dijkstra, dijkstra_region, DijkstraState, Weight};
+use crate::surfaces::{is_standable, ColumnIz};
 use crate::voxel::{surface_point_xyz, VoxelKey};
+
+const NEIGHBORS_4: [(i32, i32, u8); 4] = [(-1, 0, 1), (1, 0, 2), (0, -1, 4), (0, 1, 8)];
 
 #[derive(Clone, Copy, Debug)]
 pub struct NodeData {
@@ -35,6 +38,9 @@ pub struct NodeData {
 #[allow(clippy::too_many_arguments)]
 pub fn place_nodes(
     cells: &mut SurfaceCells,
+    by_col: &ColumnIz,
+    clearance_cells: i32,
+    step_cells: i32,
     voxel_size: f32,
     node_spacing_m: f32,
     wall_clearance_m: f32,
@@ -42,6 +48,7 @@ pub fn place_nodes(
     wall_buffer_weight: f32,
     step_penalty_weight: f32,
     state: &mut DijkstraState,
+    scratch: &mut NodeScratch,
     out_nodes: &mut Vec<NodeData>,
 ) {
     out_nodes.clear();
@@ -50,7 +57,7 @@ pub fn place_nodes(
     }
 
     let mut wall_seeds: Vec<CellId> = Vec::new();
-    collect_wall_adjacent_cells(cells, &mut wall_seeds);
+    collect_wall_adjacent_cells(cells, by_col, clearance_cells, step_cells, &mut wall_seeds);
     dijkstra(cells, &wall_seeds, state, Weight::Base);
 
     // Floor is the hard clearance. NMS already prefers the clearest cells.
@@ -70,7 +77,7 @@ pub fn place_nodes(
     );
 
     let domain: Vec<CellId> = cells.ids().collect();
-    ensure_node_per_component(cells, &state.dist, voxel_size, &domain, out_nodes);
+    ensure_node_per_component(cells, &state.dist, voxel_size, &domain, scratch, out_nodes);
 
     apply_wall_safe_penalty(
         cells,
@@ -114,6 +121,9 @@ fn place_from_candidates(
 #[allow(clippy::too_many_arguments)]
 pub fn place_nodes_region(
     cells: &mut SurfaceCells,
+    by_col: &ColumnIz,
+    clearance_cells: i32,
+    step_cells: i32,
     window: &AHashSet<CellId>,
     voxel_size: f32,
     node_spacing_m: f32,
@@ -122,10 +132,18 @@ pub fn place_nodes_region(
     wall_buffer_weight: f32,
     step_penalty_weight: f32,
     wall_state: &mut DijkstraState,
+    scratch: &mut NodeScratch,
     nodes: &mut Vec<NodeData>,
 ) {
     let mut wall_seeds: Vec<CellId> = Vec::new();
-    collect_wall_adjacent_in_window(cells, window, &mut wall_seeds);
+    collect_wall_adjacent_in_window(
+        cells,
+        by_col,
+        clearance_cells,
+        step_cells,
+        window,
+        &mut wall_seeds,
+    );
     dijkstra_region(cells, &wall_seeds, window, wall_state, Weight::Base);
 
     nodes.retain(|n| cells.is_live(n.cell_id) && !window.contains(&n.cell_id));
@@ -152,7 +170,7 @@ pub fn place_nodes_region(
         .copied()
         .filter(|&id| cells.is_live(id))
         .collect();
-    ensure_node_per_component(cells, &wall_state.dist, voxel_size, &domain, nodes);
+    ensure_node_per_component(cells, &wall_state.dist, voxel_size, &domain, scratch, nodes);
 
     apply_wall_safe_penalty_region(
         cells,
@@ -162,26 +180,41 @@ pub fn place_nodes_region(
         wall_buffer_weight,
         step_penalty_weight,
         window,
+        scratch,
     );
 }
 
 /// Wall-adjacency over a cell subset, matching collect_wall_adjacent_cells.
 fn collect_wall_adjacent_in_window(
     cells: &SurfaceCells,
+    by_col: &ColumnIz,
+    clearance_cells: i32,
+    step_cells: i32,
     window: &AHashSet<CellId>,
     out: &mut Vec<CellId>,
 ) {
-    out.clear();
-    for &id in window {
-        if cells.is_live(id) && is_wall_adjacent(cells, id) {
-            out.push(id);
-        }
-    }
+    let win: Vec<CellId> = window.iter().copied().collect();
+    *out = win
+        .par_iter()
+        .filter(|&&id| {
+            cells.is_live(id) && real_wall_adjacent(cells, by_col, id, clearance_cells, step_cells)
+        })
+        .copied()
+        .collect();
 }
 
-/// A cell is wall-adjacent when it lacks at least one of its 4 xy neighbors.
-fn is_wall_adjacent(cells: &SurfaceCells, id: CellId) -> bool {
-    let (cx, cy, _) = cells.coord(id);
+/// Empty columns a gap may span before it counts as a real edge, not a hole.
+const HOLE_SPAN_CELLS: i32 = 4;
+
+/// True when any missing 4-neighbor opens onto a real edge rather than a hole.
+fn real_wall_adjacent(
+    cells: &SurfaceCells,
+    by_col: &ColumnIz,
+    id: CellId,
+    clearance_cells: i32,
+    step_cells: i32,
+) -> bool {
+    let (cx, cy, cz) = cells.coord(id);
     let mut mask: u8 = 0;
     for e in cells.neighbors(id) {
         let (nx, ny, _) = cells.coord(e.dest);
@@ -193,11 +226,46 @@ fn is_wall_adjacent(cells: &SurfaceCells, id: CellId) -> bool {
             _ => 0,
         };
     }
-    mask != 0b1111
+    for (dx, dy, bit) in NEIGHBORS_4 {
+        if mask & bit != 0 {
+            continue; // a surface neighbor already connects this direction
+        }
+        if edge_in_direction(by_col, cx, cy, cz, dx, dy, clearance_cells, step_cells) {
+            return true; // wall, cliff, or drop in this direction
+        }
+    }
+    false
+}
+
+/// True when the missing neighbor in this direction is a real edge (wall, cliff,
+/// or drop) rather than a small sensor hole that surface bridges within the span.
+#[allow(clippy::too_many_arguments)]
+fn edge_in_direction(
+    by_col: &ColumnIz,
+    cx: i32,
+    cy: i32,
+    cz: i32,
+    dx: i32,
+    dy: i32,
+    clearance_cells: i32,
+    step_cells: i32,
+) -> bool {
+    for k in 1..=HOLE_SPAN_CELLS {
+        let (nx, ny) = (cx + dx * k, cy + dy * k);
+        let Some(zs) = by_col.get(&(nx, ny)) else {
+            continue; // empty column: keep scanning across the hole
+        };
+        let reachable = zs.iter().any(|&oz| {
+            (oz - cz).abs() <= step_cells && is_standable(nx, ny, oz, by_col, clearance_cells)
+        });
+        return !reachable;
+    }
+    true
 }
 
 /// Rescale edge costs for the window and its neighbors, whose wall distance may
 /// have changed. Idempotent via base_cost.
+#[allow(clippy::too_many_arguments)]
 fn apply_wall_safe_penalty_region(
     cells: &mut SurfaceCells,
     dist: &[f32],
@@ -206,15 +274,30 @@ fn apply_wall_safe_penalty_region(
     buffer_weight: f32,
     step_weight: f32,
     window: &AHashSet<CellId>,
+    scratch: &mut NodeScratch,
 ) {
-    let mut affected: AHashSet<CellId> = AHashSet::with_capacity(window.len() * 2);
-    for &w in window {
-        affected.insert(w);
-        for e in cells.neighbors(w) {
-            affected.insert(e.dest);
+    // The window and its boundary, deduped via the dense seen mask.
+    scratch.ensure_capacity(cells.slot_capacity());
+    let mut affected: Vec<CellId> = Vec::with_capacity(window.len() * 2);
+    {
+        let seen = &mut scratch.seen;
+        for &w in window {
+            if !seen[w as usize] {
+                seen[w as usize] = true;
+                affected.push(w);
+            }
+            for e in cells.neighbors(w) {
+                if !seen[e.dest as usize] {
+                    seen[e.dest as usize] = true;
+                    affected.push(e.dest);
+                }
+            }
         }
     }
-    for id in affected {
+    for &id in &affected {
+        scratch.seen[id as usize] = false;
+    }
+    for &id in &affected {
         scale_edges(
             cells.edges_mut(id),
             id,
@@ -229,13 +312,19 @@ fn apply_wall_safe_penalty_region(
 
 /// Wall-adjacent cells over the whole graph. Falls back to a single cell so a
 /// fully-enclosed map still seeds the wall-distance field.
-fn collect_wall_adjacent_cells(cells: &SurfaceCells, out: &mut Vec<CellId>) {
-    out.clear();
-    for id in cells.ids() {
-        if is_wall_adjacent(cells, id) {
-            out.push(id);
-        }
-    }
+fn collect_wall_adjacent_cells(
+    cells: &SurfaceCells,
+    by_col: &ColumnIz,
+    clearance_cells: i32,
+    step_cells: i32,
+    out: &mut Vec<CellId>,
+) {
+    let ids: Vec<CellId> = cells.ids().collect();
+    *out = ids
+        .par_iter()
+        .filter(|&&id| real_wall_adjacent(cells, by_col, id, clearance_cells, step_cells))
+        .copied()
+        .collect();
     if out.is_empty() {
         if let Some(c) = cells.ids().next() {
             out.push(c);
@@ -371,61 +460,78 @@ fn ensure_node_per_component(
     dist: &[f32],
     voxel_size: f32,
     domain: &[CellId],
+    scratch: &mut NodeScratch,
     out_nodes: &mut Vec<NodeData>,
 ) {
     if domain.is_empty() {
         return;
     }
-    let node_cells: AHashSet<CellId> = out_nodes.iter().map(|n| n.cell_id).collect();
-    let in_domain: AHashSet<CellId> = domain.iter().copied().collect();
+    scratch.ensure_capacity(cells.slot_capacity());
 
-    let mut uf = UnionFind::default();
+    // Union the domain into components. make() also marks in-domain membership,
+    // which contains() below tests.
     for &id in domain {
-        uf.make(id);
+        scratch.uf.make(id);
     }
     for &id in domain {
         for e in cells.neighbors(id) {
-            if in_domain.contains(&e.dest) {
-                uf.union(id, e.dest);
+            if scratch.uf.contains(e.dest) {
+                scratch.uf.union(id, e.dest);
             }
         }
     }
 
-    // Served: the component holds or borders a node, including one outside domain.
-    let mut served: AHashSet<CellId> = AHashSet::new();
+    // Flag cells that already hold a node, including nodes outside the domain.
+    for nd in out_nodes.iter() {
+        scratch.node_flag[nd.cell_id as usize] = true;
+    }
+
+    // A component is served when it holds or borders a node. Indexed by root.
     for &id in domain {
-        let touches_node = node_cells.contains(&id)
+        let touches_node = scratch.node_flag[id as usize]
             || cells
                 .neighbors(id)
                 .iter()
-                .any(|e| node_cells.contains(&e.dest));
+                .any(|e| scratch.node_flag[e.dest as usize]);
         if touches_node {
-            served.insert(uf.find(id));
+            let root = scratch.uf.find(id) as usize;
+            scratch.served[root] = true;
         }
     }
 
-    // Clearest cell per still-unserved component.
-    let mut best: AHashMap<CellId, CellId> = AHashMap::new();
+    // Clearest cell per still-unserved component, indexed by root.
     for &id in domain {
-        let root = uf.find(id);
-        if served.contains(&root) {
+        let root = scratch.uf.find(id) as usize;
+        if scratch.served[root] {
             continue;
         }
-        match best.get(&root) {
-            Some(&cur) if !is_clearer(cells, dist, id, cur) => {}
-            _ => {
-                best.insert(root, id);
-            }
+        let cur = scratch.best[root];
+        if cur == NO_CELL || is_clearer(cells, dist, id, cur) {
+            scratch.best[root] = id;
         }
     }
 
-    out_nodes.reserve(best.len());
-    for &id in best.values() {
-        let (ix, iy, iz) = cells.coord(id);
-        out_nodes.push(NodeData {
-            cell_id: id,
-            pos: surface_point_xyz(ix, iy, iz, voxel_size),
-        });
+    // Emit one node per unserved component: the cell that won its root's slot.
+    for &id in domain {
+        let root = scratch.uf.find(id) as usize;
+        if !scratch.served[root] && scratch.best[root] == id {
+            let (ix, iy, iz) = cells.coord(id);
+            out_nodes.push(NodeData {
+                cell_id: id,
+                pos: surface_point_xyz(ix, iy, iz, voxel_size),
+            });
+        }
+    }
+
+    // Leave every buffer all-default for the next call by resetting only the
+    // slots this pass touched.
+    for &id in domain {
+        scratch.uf.clear(id);
+        scratch.served[id as usize] = false;
+        scratch.best[id as usize] = NO_CELL;
+    }
+    for nd in out_nodes.iter() {
+        scratch.node_flag[nd.cell_id as usize] = false;
     }
 }
 
@@ -438,41 +544,86 @@ fn is_clearer(cells: &SurfaceCells, dist: &[f32], a: CellId, b: CellId) -> bool 
     }
 }
 
-/// Union-find keyed by CellId so the incremental path pays for the window only.
+/// Reusable dense scratch for node placement, left all-default between calls.
+#[derive(Default)]
+pub struct NodeScratch {
+    uf: UnionFind,
+    node_flag: Vec<bool>,
+    served: Vec<bool>,
+    best: Vec<CellId>,
+    seen: Vec<bool>,
+}
+
+impl NodeScratch {
+    fn ensure_capacity(&mut self, n: usize) {
+        self.uf.ensure_capacity(n);
+        if self.node_flag.len() < n {
+            self.node_flag.resize(n, false);
+            self.served.resize(n, false);
+            self.best.resize(n, NO_CELL);
+            self.seen.resize(n, false);
+        }
+    }
+}
+
+/// Array-backed union-find indexed by CellId. Unenrolled slots are NO_CELL.
 #[derive(Default)]
 struct UnionFind {
-    parent: AHashMap<CellId, CellId>,
+    parent: Vec<CellId>,
+    rank: Vec<u8>,
 }
 
 impl UnionFind {
+    fn ensure_capacity(&mut self, n: usize) {
+        if self.parent.len() < n {
+            self.parent.resize(n, NO_CELL);
+            self.rank.resize(n, 0);
+        }
+    }
+
+    fn clear(&mut self, x: CellId) {
+        let i = x as usize;
+        self.parent[i] = NO_CELL;
+        self.rank[i] = 0;
+    }
+
     fn make(&mut self, x: CellId) {
-        self.parent.entry(x).or_insert(x);
+        let i = x as usize;
+        if self.parent[i] == NO_CELL {
+            self.parent[i] = x;
+        }
+    }
+
+    fn contains(&self, x: CellId) -> bool {
+        self.parent[x as usize] != NO_CELL
     }
 
     fn find(&mut self, x: CellId) -> CellId {
         let mut root = x;
-        while let Some(&p) = self.parent.get(&root) {
-            if p == root {
-                break;
-            }
-            root = p;
+        while self.parent[root as usize] != root {
+            root = self.parent[root as usize];
         }
         let mut cur = x;
-        while let Some(&p) = self.parent.get(&cur) {
-            if p == root {
-                break;
-            }
-            self.parent.insert(cur, root);
-            cur = p;
+        while cur != root {
+            let next = self.parent[cur as usize];
+            self.parent[cur as usize] = root;
+            cur = next;
         }
         root
     }
 
     fn union(&mut self, a: CellId, b: CellId) {
-        let ra = self.find(a);
-        let rb = self.find(b);
-        if ra != rb {
-            self.parent.insert(ra, rb);
+        let mut ra = self.find(a);
+        let mut rb = self.find(b);
+        if ra == rb {
+            return;
+        }
+        if self.rank[ra as usize] < self.rank[rb as usize] {
+            std::mem::swap(&mut ra, &mut rb);
+        }
+        self.parent[rb as usize] = ra;
+        if self.rank[ra as usize] == self.rank[rb as usize] {
+            self.rank[ra as usize] += 1;
         }
     }
 }
@@ -506,9 +657,22 @@ mod tests {
     fn open_patch_places_at_least_one_node() {
         let mut sc = build_cells(&open_patch(0, 0, 10), 2);
         let mut state = DijkstraState::default();
+        let mut scratch = NodeScratch::default();
         let mut nodes = Vec::new();
         place_nodes(
-            &mut sc, VOXEL, 1.0, 0.0, 0.3, 1.0, 0.0, &mut state, &mut nodes,
+            &mut sc,
+            &ColumnIz::default(),
+            5,
+            2,
+            VOXEL,
+            1.0,
+            0.0,
+            0.3,
+            1.0,
+            0.0,
+            &mut state,
+            &mut scratch,
+            &mut nodes,
         );
         assert!(!nodes.is_empty());
         for n in &nodes {
@@ -526,9 +690,22 @@ mod tests {
         cells_in.extend((0..8).map(|ix| (ix, 20, 0)));
         let mut sc = build_cells(&cells_in, 2);
         let mut state = DijkstraState::default();
+        let mut scratch = NodeScratch::default();
         let mut nodes = Vec::new();
         place_nodes(
-            &mut sc, VOXEL, 1.0, 0.5, 0.3, 1.0, 0.0, &mut state, &mut nodes,
+            &mut sc,
+            &ColumnIz::default(),
+            5,
+            2,
+            VOXEL,
+            1.0,
+            0.5,
+            0.3,
+            1.0,
+            0.0,
+            &mut state,
+            &mut scratch,
+            &mut nodes,
         );
         assert_eq!(
             nodes.len(),
@@ -545,9 +722,22 @@ mod tests {
         cells_in.extend(open_patch(20, 0, 10));
         let mut sc = build_cells(&cells_in, 2);
         let mut state = DijkstraState::default();
+        let mut scratch = NodeScratch::default();
         let mut nodes = Vec::new();
         place_nodes(
-            &mut sc, VOXEL, 1.0, 0.0, 0.3, 1.0, 0.0, &mut state, &mut nodes,
+            &mut sc,
+            &ColumnIz::default(),
+            5,
+            2,
+            VOXEL,
+            1.0,
+            0.0,
+            0.3,
+            1.0,
+            0.0,
+            &mut state,
+            &mut scratch,
+            &mut nodes,
         );
         assert!(nodes.len() >= 2);
         for i in 0..nodes.len() {
@@ -581,9 +771,22 @@ mod tests {
         let cells_in: Vec<VoxelKey> = (0..10).map(|ix| (ix, 0, 0)).collect();
         let mut sc = build_cells(&cells_in, 2);
         let mut state = DijkstraState::default();
+        let mut scratch = NodeScratch::default();
         let mut nodes = Vec::new();
         place_nodes(
-            &mut sc, VOXEL, 1.0, 0.0, 0.3, 1.0, 0.0, &mut state, &mut nodes,
+            &mut sc,
+            &ColumnIz::default(),
+            5,
+            2,
+            VOXEL,
+            1.0,
+            0.0,
+            0.3,
+            1.0,
+            0.0,
+            &mut state,
+            &mut scratch,
+            &mut nodes,
         );
         let id = sc.id((5, 0, 0)).unwrap();
         assert!((sc.neighbors(id)[0].cost - 2.0 * VOXEL).abs() < 1e-5);
@@ -597,9 +800,13 @@ mod tests {
         let cost_with = |step_weight: f32| {
             let mut sc = build_cells(&cells_in, 2);
             let mut state = DijkstraState::default();
+            let mut scratch = NodeScratch::default();
             let mut nodes = Vec::new();
             place_nodes(
                 &mut sc,
+                &ColumnIz::default(),
+                5,
+                2,
                 VOXEL,
                 1.0,
                 0.0,
@@ -607,6 +814,7 @@ mod tests {
                 1.0,
                 step_weight,
                 &mut state,
+                &mut scratch,
                 &mut nodes,
             );
             let id = sc.id((0, 0, 0)).unwrap();
@@ -620,5 +828,72 @@ mod tests {
             (cost_with(10.0) - cost_with(0.0) - 10.0 * 0.2).abs() < 1e-4,
             "step penalty must add weight * rise"
         );
+    }
+
+    /// An isolated cell whose four neighbor columns each hold an occupied,
+    /// standable voxel within a step: sparse real surface, not a wall.
+    #[test]
+    fn sparse_step_neighbors_do_not_seed_a_wall() {
+        let sc = build_cells(&[(0, 0, 0)], 2);
+        let id = sc.id((0, 0, 0)).unwrap();
+        let mut by_col = ColumnIz::default();
+        for col in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+            by_col.insert(col, vec![0]);
+        }
+        assert!(!real_wall_adjacent(&sc, &by_col, id, 5, 2));
+    }
+
+    /// The same cell with one empty neighbor column: a cliff edge that must seed
+    /// the wall-clearance field even though the other three sides are steps.
+    #[test]
+    fn empty_neighbor_column_seeds_as_drop() {
+        let sc = build_cells(&[(0, 0, 0)], 2);
+        let id = sc.id((0, 0, 0)).unwrap();
+        let mut by_col = ColumnIz::default();
+        for col in [(1, 0), (0, -1), (0, 1)] {
+            by_col.insert(col, vec![0]);
+        }
+        assert!(real_wall_adjacent(&sc, &by_col, id, 5, 2));
+    }
+
+    /// An occupied neighbor that rises well beyond the step threshold reads as a
+    /// wall, not a traversable step.
+    #[test]
+    fn step_taller_than_threshold_seeds_as_wall() {
+        let sc = build_cells(&[(0, 0, 0)], 2);
+        let id = sc.id((0, 0, 0)).unwrap();
+        let mut by_col = ColumnIz::default();
+        by_col.insert((1, 0), vec![10]);
+        for col in [(-1, 0), (0, -1), (0, 1)] {
+            by_col.insert(col, vec![0]);
+        }
+        assert!(real_wall_adjacent(&sc, &by_col, id, 5, 2));
+    }
+
+    /// Immediate neighbor empty but surface resumes within the span at the same
+    /// height: a sensor hole to cross, not an edge.
+    #[test]
+    fn small_hole_bridged_by_surface_is_not_an_edge() {
+        let sc = build_cells(&[(0, 0, 0)], 2);
+        let id = sc.id((0, 0, 0)).unwrap();
+        let mut by_col = ColumnIz::default();
+        by_col.insert((2, 0), vec![0]);
+        for col in [(-1, 0), (0, -1), (0, 1)] {
+            by_col.insert(col, vec![0]);
+        }
+        assert!(!real_wall_adjacent(&sc, &by_col, id, 5, 2));
+    }
+
+    /// Empty for more than the span before surface resumes: a real cliff.
+    #[test]
+    fn gap_wider_than_span_still_seeds() {
+        let sc = build_cells(&[(0, 0, 0)], 2);
+        let id = sc.id((0, 0, 0)).unwrap();
+        let mut by_col = ColumnIz::default();
+        by_col.insert((10, 0), vec![0]);
+        for col in [(-1, 0), (0, -1), (0, 1)] {
+            by_col.insert(col, vec![0]);
+        }
+        assert!(real_wall_adjacent(&sc, &by_col, id, 5, 2));
     }
 }

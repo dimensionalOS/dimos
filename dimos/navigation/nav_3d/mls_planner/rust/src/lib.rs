@@ -18,6 +18,7 @@ pub mod edges;
 pub mod mls_planner;
 mod nodes;
 mod planner;
+mod smoother;
 mod surfaces;
 pub mod voxel;
 

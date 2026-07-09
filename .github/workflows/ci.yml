@@ -569,6 +569,21 @@ jobs:
         if: failure()
         run: |
           df -h
+      - name: Garbage-collect the persistent Nix store
+        # /nix is bind-mounted from the runner host's /var/cache/dimos-nix
+        # (see this job's container.volumes) so module closures survive between
+        # jobs. But every run also imports a fresh `…-source` closure of the
+        # tree — including the large data/.lfs recordings — and nothing ever
+        # reclaims them, so the store grows unbounded until jobs fail with
+        # "No space left on device". GC after each run keeps the last few days
+        # (module closures fetched from Cachix stay warm; stale source closures
+        # are freed). Runs on the Linux entry, the only one that mounts /nix and
+        # puts nix on PATH (Install Nix step above).
+        if: ${{ always() && contains(matrix.markers, 'skipif_no_ros') }}
+        run: |
+          df -h /nix || true
+          nix-collect-garbage --delete-older-than 3d
+          df -h /nix || true
 
   self-hosted-large-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.

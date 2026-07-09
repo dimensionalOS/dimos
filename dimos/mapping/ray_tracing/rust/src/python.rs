@@ -18,9 +18,11 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use validator::Validate;
 
+use ahash::AHashSet;
+
 use crate::voxel_ray_tracer::{
-    batch_local_bounds, iter_global_normals, iter_global_points, update_map, Config, LocalBounds,
-    VoxelMap,
+    batch_local_bounds, emit_points, iter_global_normals, update_map, Config, LocalBounds,
+    VoxelKey, VoxelMap,
 };
 
 fn extract_tuples(arr: &Bound<'_, PyAny>, name: &str) -> PyResult<Vec<(f32, f32, f32)>> {
@@ -63,6 +65,8 @@ fn local_bounds(
 pub struct VoxelRayMapper {
     config: Config,
     map: VoxelMap,
+    // Voxels hit in current lidar frame
+    live: AHashSet<VoxelKey>,
 }
 
 #[pymethods]
@@ -73,12 +77,12 @@ impl VoxelRayMapper {
         voxel_size,
         max_range,
         ray_subsample = 1,
-        shadow_depth = 0.2,
+        shadow_depth = 0.1,
         grace_depth = 0.2,
-        min_health = -2,
-        max_health = 1,
+        min_health = -1,
+        max_health = 5,
         graze_cos = 0.7,
-        recency_window = 15,
+        support_min = 4,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -90,7 +94,7 @@ impl VoxelRayMapper {
         min_health: i32,
         max_health: i32,
         graze_cos: f32,
-        recency_window: u32,
+        support_min: i32,
     ) -> PyResult<Self> {
         let config = Config {
             voxel_size,
@@ -101,7 +105,7 @@ impl VoxelRayMapper {
             min_health,
             max_health,
             graze_cos,
-            recency_window,
+            support_min,
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
@@ -112,7 +116,18 @@ impl VoxelRayMapper {
         Ok(Self {
             config,
             map: VoxelMap::default(),
+            live: AHashSet::new(),
         })
+    }
+
+    #[getter]
+    fn voxel_size(&self) -> f32 {
+        self.config.voxel_size
+    }
+
+    #[getter]
+    fn shadow_depth(&self) -> f32 {
+        self.config.shadow_depth
     }
 
     fn add_frame(
@@ -125,18 +140,17 @@ impl VoxelRayMapper {
 
         let cfg = &self.config;
         let map = &mut self.map;
-        py.allow_threads(move || {
-            update_map(map, origin, &pts, cfg);
-        });
+        self.live = py.allow_threads(move || update_map(map, origin, &pts, cfg));
         Ok(())
     }
 
     fn global_map<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
         let voxel_size = self.config.voxel_size;
         let map = &self.map;
+        let live = &self.live;
         let positions: Vec<f32> = py.allow_threads(|| {
             let mut out: Vec<f32> = Vec::with_capacity(map.voxels.len() * 3);
-            for (x, y, z) in iter_global_points(map, voxel_size) {
+            for (x, y, z) in emit_points(map, voxel_size, None, 0, live) {
                 out.push(x);
                 out.push(y);
                 out.push(z);
@@ -194,13 +208,12 @@ impl VoxelRayMapper {
             z_max,
         };
         let voxel_size = self.config.voxel_size;
+        let support_min = self.config.support_min;
         let map = &self.map;
+        let live = &self.live;
         let positions: Vec<f32> = py.allow_threads(|| {
             let mut out: Vec<f32> = Vec::new();
-            for (x, y, z) in iter_global_points(map, voxel_size) {
-                if !bounds.contains(x, y, z) {
-                    continue;
-                }
+            for (x, y, z) in emit_points(map, voxel_size, Some(&bounds), support_min, live) {
                 out.push(x);
                 out.push(y);
                 out.push(z);
@@ -219,6 +232,7 @@ impl VoxelRayMapper {
 
     fn clear(&mut self) {
         self.map.voxels.clear();
+        self.live.clear();
     }
 
     fn __len__(&self) -> usize {
