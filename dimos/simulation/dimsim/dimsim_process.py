@@ -14,7 +14,9 @@
 
 import os
 from pathlib import Path
+import platform
 import subprocess
+import sys
 import threading
 import time
 from typing import IO
@@ -31,6 +33,13 @@ _LIDAR_RATE = 1000
 _DIMSIM_REPO_URL = "https://github.com/paul-nechifor/DimSim.git"
 _DIMSIM_REPO_BRANCH = "run-from-repo"
 
+# dimsim's deno LCM bridge fragments large sensor messages (lidar/pointcloud)
+# into UDP datagrams of up to ~65 KB. macOS caps a single UDP datagram at
+# ``net.inet.udp.maxdgram`` (default 9216 bytes), so every lidar publish is
+# dropped with EMSGSIZE ("Message too long"). Raise the cap past the largest
+# fragment. Linux's default is already 65535, so this only matters on macOS.
+_LCM_MAX_DATAGRAM = 65535
+
 
 class DimSimProcess:
     def __init__(self, global_config: GlobalConfig) -> None:
@@ -38,6 +47,7 @@ class DimSimProcess:
         self.process: subprocess.Popen[bytes] | None = None
 
     def start(self) -> None:
+        ensure_macos_udp_datagram_size()
         deno_path = ensure_deno()
         repo_dir = _ensure_repo()
         base_cmd = _deno_cmd(deno_path, repo_dir)
@@ -105,6 +115,61 @@ class DimSimProcess:
         ]:
             t = threading.Thread(target=_reader, args=(stream, label), daemon=True)
             t.start()
+
+
+def ensure_macos_udp_datagram_size() -> None:
+    """Raise ``net.inet.udp.maxdgram`` on macOS so dimsim LCM lidar isn't dropped.
+
+    macOS defaults the coordination transport to zenoh, so the usual LCM
+    autoconfig (``BufferConfiguratorMacOS``) never runs -- but the dimsim bridge
+    always publishes sensors over LCM. Configure it here, at the dimsim entry
+    point.
+
+    No-op off macOS and when the limit is already large enough. Raising it needs
+    root: uses passwordless/cached sudo when available, prompts once on an
+    interactive terminal, and otherwise logs the manual command rather than
+    blocking (e.g. the detached ``dimos run`` subprocess spawned under pytest).
+    """
+    if platform.system() != "Darwin":
+        return
+    if (_read_maxdgram() or 0) >= _LCM_MAX_DATAGRAM:
+        return
+
+    arg = f"net.inet.udp.maxdgram={_LCM_MAX_DATAGRAM}"
+    if _run_ok(["sudo", "-n", "sysctl", "-w", arg]):  # passwordless / cached creds
+        return
+    if sys.stdin.isatty() and _run_ok(["sudo", "sysctl", "-w", arg]):  # prompt once
+        return
+    logger.warning(
+        "dimsim lidar exceeds macOS's UDP datagram limit and frames will be dropped; "
+        "raise it with: sudo sysctl -w %s",
+        arg,
+    )
+
+
+def _read_maxdgram() -> int | None:
+    try:
+        result = subprocess.run(
+            ["sysctl", "-n", "net.inet.udp.maxdgram"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        return int(result.stdout.strip())
+    except ValueError:
+        return None
+
+
+def _run_ok(cmd: list[str]) -> bool:
+    try:
+        return subprocess.run(cmd, capture_output=True, timeout=30).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def _kill_port_holder(port: int) -> None:

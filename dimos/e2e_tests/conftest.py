@@ -27,6 +27,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.std_msgs.Bool import Bool
+from dimos.simulation.dimsim.dimsim_process import ensure_macos_udp_datagram_size
 from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
 from dimos.simulation.mujoco.person_on_track import PersonTrackPublisher
 
@@ -78,6 +79,11 @@ def start_blueprint(mcp_port: int) -> Iterator[Callable[..., DimosCliCall]]:
         dimos_robot_call.demo_args = list(demo_args)
         if simulator is not None:
             dimos_robot_call.simulator = simulator
+        if dimos_robot_call.simulator == "dimsim":
+            # The `dimos run` subprocess is detached (start_new_session), so it
+            # can't prompt for sudo; raise the macOS UDP datagram limit here in
+            # the interactive pytest process before dimsim's LCM lidar starts.
+            ensure_macos_udp_datagram_size()
         dimos_robot_call.start()
         return dimos_robot_call
 

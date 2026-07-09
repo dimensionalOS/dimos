@@ -576,7 +576,12 @@ jobs:
           echo "=== gcroot candidates: -source paths GC would delete (largest first) ==="
           nix-store --gc --print-dead 2>/dev/null | grep -- '-source$' |
           while read -r p; do printf '%s\t%s\n' "$(du -sh "$p" 2>/dev/null | cut -f1)" "$p"; done |
-          sort -rh || true
+          sort -rh |
+          while IFS=$'\t' read -r sz p; do
+            printf '%s  %s\n' "$sz" "$p"
+            printf '    used by: %s\n' "$(nix-store -q --referrers "$p" 2>/dev/null | sed 's#^/nix/store/[a-z0-9]*-##' | grep '\.drv$' | sort -u | head -4 | tr '\n' ' ')"
+            printf '    top:     %s\n' "$(ls "$p" 2>/dev/null | head -8 | tr '\n' ' ')"
+          done || true
           nix-collect-garbage
           df -h /nix || true
 
