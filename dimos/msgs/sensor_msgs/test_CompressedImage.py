@@ -31,15 +31,12 @@ def _turbojpeg_available() -> bool:
     return True
 
 
-# A missing libturbojpeg must not silently skip this suite in CI (same
-# treatment as the webrtc aiortc guard) — ci.yml installs it. Local
-# no-system-lib installs still skip.
-if os.environ.get("CI"):
-    assert _turbojpeg_available(), (
-        "native libturbojpeg missing in CI — install it in ci.yml's apt step"
-    )
+# Skip locally when the native lib is missing; in CI run anyway so a missing
+# dep fails loudly instead of silently skipping (aiortc guard pattern). An
+# import-time assert would break jobs that collect-but-deselect these tests.
 pytestmark = pytest.mark.skipif(
-    not _turbojpeg_available(), reason="native libturbojpeg unavailable"
+    not _turbojpeg_available() and not os.environ.get("CI"),
+    reason="native libturbojpeg unavailable",
 )
 
 
