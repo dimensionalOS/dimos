@@ -1014,6 +1014,21 @@ wheels = [
 ]
 
 [[package]]
+name = "coacd"
+version = "1.0.11"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1d/3b/434beab9e1754ca0ae3a619b383243dd85aa65d03a4dc7333c8296c97a92/coacd-1.0.11-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:adbc58259a721cc5ede24cc8c2671a95e75a8a52dc1ee4d953d80d236b192da9", size = 3299264, upload-time = "2026-05-04T19:23:36.183Z" },
+    { url = "https://files.pythonhosted.org/packages/cb/a7/06f63baa29198f681ba60848e3271cc625eddd61cd4e59071f56ffce9362/coacd-1.0.11-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:e376fadb22790444c7253f0cee9104a1af01ec965488c1318e84e3b2dbf1e2a3", size = 2573832, upload-time = "2026-05-04T19:23:38.008Z" },
+    { url = "https://files.pythonhosted.org/packages/0e/b4/057c78f7b16b87871cfcecc6febe70522e77a2a33f8788960377152c224d/coacd-1.0.11-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a60f700a52e5b40462e508c14bb756cd63ce7e6a95ff72ae0b1592be1dbb0106", size = 2640170, upload-time = "2026-05-04T19:23:39.322Z" },
+    { url = "https://files.pythonhosted.org/packages/00/83/c50472ce98175fddd86d4aba861fea89f30350a5487880b3a81d34915a85/coacd-1.0.11-cp39-abi3-win_amd64.whl", hash = "sha256:4de22f70d1a3fa8c44698c8006a223fe5fb0ee84b76adecf3726cf2003e9145f", size = 1465079, upload-time = "2026-05-04T19:23:41.604Z" },
+]
+
+[[package]]
 name = "coal"
 version = "3.0.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1563,6 +1578,7 @@ all = [
     { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "aiortc" },
     { name = "chromadb" },
+    { name = "coacd" },
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64'" },
     { name = "dimos-viewer" },
     { name = "drake", version = "1.45.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform == 'darwin'" },
@@ -1619,6 +1635,7 @@ all = [
     { name = "trimesh" },
     { name = "ultralytics" },
     { name = "unitree-webrtc-connect" },
+    { name = "usd-core" },
     { name = "uvicorn" },
     { name = "viser", extra = ["urdf"] },
     { name = "xacro" },
@@ -1719,6 +1736,11 @@ perception = [
     { name = "pillow" },
     { name = "transformers", extra = ["torch"] },
     { name = "ultralytics" },
+]
+scene = [
+    { name = "coacd" },
+    { name = "trimesh" },
+    { name = "usd-core" },
 ]
 sim = [
     { name = "mujoco" },
@@ -1875,6 +1897,7 @@ project-deps = [
 ]
 tests = [
     { name = "chromadb" },
+    { name = "coacd" },
     { name = "coverage" },
     { name = "dimos", extra = ["apriltag", "cpu", "drone", "learning", "mapping", "visualization", "web", "webrtc"] },
     { name = "einops" },
@@ -1911,6 +1934,7 @@ tests = [
     { name = "torch" },
     { name = "torchreid" },
     { name = "transformers", extra = ["torch"] },
+    { name = "trimesh" },
     { name = "ultralytics" },
     { name = "unitree-webrtc-connect" },
     { name = "viser", extra = ["urdf"], marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
@@ -1919,6 +1943,7 @@ tests = [
 ]
 tests-self-hosted = [
     { name = "chromadb" },
+    { name = "coacd" },
     { name = "coverage" },
     { name = "dimos", extra = ["agents", "apriltag", "cpu", "drone", "learning", "manipulation", "mapping", "misc", "perception", "sim", "unitree", "visualization", "web", "webrtc"] },
     { name = "einops" },
@@ -1957,6 +1982,7 @@ tests-self-hosted = [
     { name = "torch" },
     { name = "torchreid" },
     { name = "transformers", extra = ["torch"] },
+    { name = "trimesh" },
     { name = "ultralytics" },
     { name = "unitree-webrtc-connect" },
     { name = "viser", extra = ["urdf"], marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
@@ -1970,11 +1996,12 @@ requires-dist = [
     { name = "aiortc", marker = "extra == 'webrtc'", specifier = ">=1.14.0" },
     { name = "bleak", specifier = ">=3.0.2" },
     { name = "chromadb", marker = "extra == 'perception'", specifier = ">=1.0.0" },
+    { name = "coacd", marker = "extra == 'scene'", specifier = ">=1.0.0" },
     { name = "cryptography", specifier = ">=46.0.5" },
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = "==13.6.0" },
     { name = "cyclonedds", marker = "extra == 'dds'", specifier = ">=0.10.5" },
     { name = "cyclonedds", marker = "extra == 'unitree-dds'", specifier = ">=0.10.5" },
-    { name = "dimos", extras = ["agents", "apriltag", "base", "cpu", "cuda", "drone", "manipulation", "misc", "perception", "sim", "unitree", "visualization", "web", "webrtc"], marker = "extra == 'all'" },
+    { name = "dimos", extras = ["agents", "apriltag", "base", "cpu", "cuda", "drone", "manipulation", "misc", "perception", "scene", "sim", "unitree", "visualization", "web", "webrtc"], marker = "extra == 'all'" },
     { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'base'" },
     { name = "dimos", extras = ["base", "mapping"], marker = "extra == 'unitree'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
@@ -2064,11 +2091,13 @@ requires-dist = [
     { name = "torchreid", marker = "extra == 'misc'", specifier = "==0.2.5" },
     { name = "transformers", extras = ["torch"], marker = "extra == 'perception'", specifier = ">=4.53.0,<4.54" },
     { name = "trimesh", marker = "extra == 'manipulation'" },
+    { name = "trimesh", marker = "extra == 'scene'", specifier = ">=4.0.0" },
     { name = "typer", specifier = ">=0.19.2,<1" },
     { name = "typing-extensions", marker = "python_full_version < '3.13'", specifier = ">=4.7" },
     { name = "ultralytics", marker = "extra == 'perception'", specifier = ">=8.3.70" },
     { name = "unitree-sdk2py-dimos", marker = "extra == 'unitree-dds'", specifier = ">=1.0.2" },
     { name = "unitree-webrtc-connect", marker = "extra == 'unitree'", specifier = ">=2.1.2" },
+    { name = "usd-core", marker = "extra == 'scene'", specifier = ">=23.11" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.34.0" },
     { name = "viser", extras = ["urdf"], marker = "extra == 'manipulation'", specifier = ">=1.0.29" },
     { name = "websocket-client", specifier = ">=1.8" },
@@ -2077,7 +2106,7 @@ requires-dist = [
     { name = "xarm-python-sdk", marker = "extra == 'misc'", specifier = ">=1.17.0" },
     { name = "yourdfpy", marker = "(platform_machine != 'aarch64' and extra == 'visualization') or (sys_platform != 'linux' and extra == 'visualization')", specifier = ">=0.0.60" },
 ]
-provides-extras = ["misc", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "sim", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "all"]
+provides-extras = ["misc", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "sim", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "scene", "all"]
 
 [package.metadata.requires-dev]
 autofix = [{ name = "ruff", specifier = "==0.14.3" }]
@@ -2143,6 +2172,7 @@ project-deps = [
 ]
 tests = [
     { name = "chromadb", specifier = ">=1.0.0" },
+    { name = "coacd", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
@@ -2180,6 +2210,7 @@ tests = [
     { name = "torch" },
     { name = "torchreid", specifier = "==0.2.5" },
     { name = "transformers", extras = ["torch"], specifier = "==4.53.3" },
+    { name = "trimesh", specifier = ">=4.0.0" },
     { name = "ultralytics", specifier = ">=8.3.70" },
     { name = "unitree-webrtc-connect", specifier = ">=2.1.2" },
     { name = "viser", extras = ["urdf"], marker = "platform_machine != 'aarch64' or sys_platform != 'linux'", specifier = ">=1.0.29" },
@@ -2188,6 +2219,7 @@ tests = [
 ]
 tests-self-hosted = [
     { name = "chromadb", specifier = ">=1.0.0" },
+    { name = "coacd", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },
     { name = "dimos", extras = ["agents", "perception", "manipulation", "sim", "unitree", "misc"] },
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
@@ -2228,6 +2260,7 @@ tests-self-hosted = [
     { name = "torch" },
     { name = "torchreid", specifier = "==0.2.5" },
     { name = "transformers", extras = ["torch"], specifier = "==4.53.3" },
+    { name = "trimesh", specifier = ">=4.0.0" },
     { name = "ultralytics", specifier = ">=8.3.70" },
     { name = "unitree-webrtc-connect", specifier = ">=2.1.2" },
     { name = "viser", extras = ["urdf"], marker = "platform_machine != 'aarch64' or sys_platform != 'linux'", specifier = ">=1.0.29" },
@@ -9002,6 +9035,22 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/c7/24/5f1b3bdffd70275f6661c76461e25f024d5a38a46f04aaca912426a2b1d3/urllib3-2.6.3.tar.gz", hash = "sha256:1b62b6884944a57dbe321509ab94fd4d3b307075e0c2eae991ac71ee15ad38ed", size = 435556, upload-time = "2026-01-07T16:24:43.925Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/39/08/aaaad47bc4e9dc8c725e68f9d04865dbcb2052843ff09c97b08904852d84/urllib3-2.6.3-py3-none-any.whl", hash = "sha256:bf272323e553dfb2e87d9bfd225ca7b0f467b919d7bbd355436d3fd37cb0acd4", size = 131584, upload-time = "2026-01-07T16:24:42.685Z" },
+]
+
+[[package]]
+name = "usd-core"
+version = "26.5"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9b/a0/639e148c16a0ec201cc4848aa3da4aba8805e17a2d9e2398eec399fd3051/usd_core-26.5-cp310-none-macosx_10_15_universal2.whl", hash = "sha256:d6a3a567e313841b7390ea7a930bf5aef08bdb912974c725becd725d83edb0f9", size = 39723088, upload-time = "2026-04-24T20:17:23.663Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/26/6cb620a64f3fafa38b84008d916eee47c70e5313c5d88c9087edf4d57522/usd_core-26.5-cp310-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:85a1484024cdcefd77aac32a3b98e698f655e01951d62cc4d3fb3826e232400c", size = 28820064, upload-time = "2026-04-24T20:17:27.161Z" },
+    { url = "https://files.pythonhosted.org/packages/00/d7/7814c95ca0b13a26313e5256472f90cfa2ab7f7cf3103b0d3611d41156e6/usd_core-26.5-cp310-none-win_amd64.whl", hash = "sha256:dff985cbfe24870a5dfe1c578acd918a358cd1680a17777d83b55d50f5560c18", size = 13450099, upload-time = "2026-04-24T20:17:29.994Z" },
+    { url = "https://files.pythonhosted.org/packages/39/3a/adf7a4043e70974b84d3a572f928ffdd1176a070595cd17f028062622ade/usd_core-26.5-cp311-none-macosx_10_15_universal2.whl", hash = "sha256:b5416a108080311632b975da71b4ea480757ac6e7ea19b30bcd0eed6a3b6081f", size = 39723550, upload-time = "2026-04-24T20:17:32.975Z" },
+    { url = "https://files.pythonhosted.org/packages/e2/7f/575b0ddc2a3effa1dc1f50ed67ae0def8f9ed961c69bfbb89a0a1c9ceaf8/usd_core-26.5-cp311-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:60076c97f0de2611dc39d2d25826e3b22a2b0e391c73806b4a072d69929f329e", size = 28825210, upload-time = "2026-04-24T20:17:37.136Z" },
+    { url = "https://files.pythonhosted.org/packages/9f/51/9fb7c817f1ee7aff02adde8ec4805ff4add06482e036fe0914ab8e9cdbc5/usd_core-26.5-cp311-none-win_amd64.whl", hash = "sha256:1ff2031095ecdc2f9ff4e245114e6ab7001f7dec8fe75436b5beb72e1a280f57", size = 13450734, upload-time = "2026-04-24T20:17:39.641Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/cc/04870cc3ae8e1b3a4e168efea47e389cfab6ab4f619005da2443a10390d4/usd_core-26.5-cp312-none-macosx_10_15_universal2.whl", hash = "sha256:a9df2864e84b83ffc9cc0f2777a49170180f84f2b679bcd014d72036a51d057c", size = 39775789, upload-time = "2026-04-24T20:17:43.025Z" },
+    { url = "https://files.pythonhosted.org/packages/77/62/963d3aba966539917d01e4a2169a1c07f7b3df087fc16ee39fc764214969/usd_core-26.5-cp312-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:caa2447252aeada8c158faacd4d448f29cf1617aeccef5bb954734b93c8f3f62", size = 28743527, upload-time = "2026-04-24T20:17:46.631Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/b0/645ae6e27a9768e570c1044efd6d2369c10c5c2412669314b3d6cd914803/usd_core-26.5-cp312-none-win_amd64.whl", hash = "sha256:6d887b010c756508d2e1f770626201f1f4ba5227c052c1135ba9c19932c4da8e", size = 13494028, upload-time = "2026-04-24T20:17:49.599Z" },
 ]
 
 [[package]]

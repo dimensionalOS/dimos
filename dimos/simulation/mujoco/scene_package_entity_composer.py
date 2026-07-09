@@ -12,28 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compose scene-package entities into a MuJoCo model via ``MjSpec``.
+"""Compose ``ScenePackage.entities`` metadata into MuJoCo bodies.
 
 The cook step removes entity prims (chairs, props) from the static
 scene bake and writes their per-entity GLBs and metadata to the
 package's ``entities/`` directory. At runtime, ``MujocoSimModule``
-attaches the robot first, then calls :func:`add_entities_to_spec` so
-the robot keeps the first freejoint/qpos block and cooked entities
-become first-class bodies after it in the composed model.
+attaches the robot first, then calls
+:func:`add_scene_package_entities_to_spec` so the robot keeps the first
+freejoint/qpos block and cooked entities become first-class bodies after it
+in the composed model.
 
 Entities with ``kind == "dynamic"`` and positive mass receive a
 freejoint (robot can push/grasp them); anything else is welded static.
 Collision: primitive shapes (box/sphere/cylinder) use the descriptor
 extents; mesh entities load the CoACD hulls cooked into the package
 (``collision_paths`` in ``scene.meta.json``, written by
-``dimos.experimental.pimsim.scene.entity_collision``). There is no
+``dimos.experimental.scene_cooking.entities.collision``). There is no
 runtime decomposition — a mesh entity without cooked hulls falls back
 to its AABB box with a warning to re-cook the package.
 
 A spawn-contact audit can be run on the compiled model to weld
 entities that start in deep penetration with the static scene; see
-:func:`spawn_penetrators`. The runtime caller (``MujocoSimModule``)
-chooses when to invoke it.
+:func:`find_scene_package_entity_spawn_penetrators`. The runtime caller
+(``MujocoSimModule``) chooses when to invoke it.
 
 Body naming: ``entity:<entity_id>`` — consumers map MuJoCo bodies back
 to entity ids through this prefix.
@@ -69,7 +70,7 @@ _ENTITY_GEOM_GROUP = 3
 _SPAWN_PENETRATION_LIMIT_M = 0.02
 
 
-def entity_body_name(entity_id: str) -> str:
+def scene_package_entity_body_name(entity_id: str) -> str:
     return f"{ENTITY_BODY_PREFIX}{entity_id}"
 
 
@@ -173,7 +174,7 @@ def _entity_rgba(descriptor: dict[str, Any]) -> tuple[float, float, float, float
     return _DEFAULT_RGBA
 
 
-def add_entities_to_spec(
+def add_scene_package_entities_to_spec(
     spec: mujoco.MjSpec,
     entities: list[dict[str, Any]],
     *,
@@ -206,7 +207,7 @@ def add_entities_to_spec(
         dynamic = kind == "dynamic" and mass > 0.0 and entity_id not in force_static
 
         body = spec.worldbody.add_body(
-            name=entity_body_name(entity_id),
+            name=scene_package_entity_body_name(entity_id),
             pos=[
                 float(pose.get("x", 0.0)),
                 float(pose.get("y", 0.0)),
@@ -220,12 +221,12 @@ def add_entities_to_spec(
             ],
         )
         if dynamic:
-            body.add_freejoint(name=f"{entity_body_name(entity_id)}:free")
+            body.add_freejoint(name=f"{scene_package_entity_body_name(entity_id)}:free")
 
         rgba = _entity_rgba(descriptor)
         friction = _entity_friction(entity)
         geom_kwargs: dict[str, Any] = dict(
-            name=f"{entity_body_name(entity_id)}:geom",
+            name=f"{scene_package_entity_body_name(entity_id)}:geom",
             rgba=list(rgba),
             friction=list(friction),
             group=_ENTITY_GEOM_GROUP,
@@ -243,11 +244,11 @@ def add_entities_to_spec(
         if shape == "mesh" and not hull_paths and "collision_paths" not in entity:
             logger.warning(
                 "entity %s: mesh entity has no cooked collision hulls; using AABB box "
-                "(re-cook the scene package with dimos.experimental.pimsim.scene.cook)",
+                "(re-cook the scene package with dimos.experimental.scene_cooking.cook)",
                 entity_id,
             )
         if hull_paths:
-            base_name = entity_body_name(entity_id)
+            base_name = scene_package_entity_body_name(entity_id)
             if dynamic:
                 # MuJoCo derives per-geom mass from a body-level mass split
                 # across geoms by volume. Setting mass on each geom would
@@ -291,12 +292,13 @@ def add_entities_to_spec(
         body.add_geom(type=geom_type, size=size, **geom_kwargs)
 
 
-def spawn_penetrators(model: mujoco.MjModel) -> frozenset[str]:
+def find_scene_package_entity_spawn_penetrators(model: mujoco.MjModel) -> frozenset[str]:
     """Entity ids whose geoms start in deep contact at the spawn pose.
 
     Run after ``spec.compile()`` and before stepping; pass the returned
-    set as ``force_static`` to a second ``add_entities_to_spec`` call on
-    a fresh spec if you want to weld penetrating entities and recompile.
+    set as ``force_static`` to a second
+    ``add_scene_package_entities_to_spec`` call on a fresh spec if you
+    want to weld penetrating entities and recompile.
     """
     import mujoco
 

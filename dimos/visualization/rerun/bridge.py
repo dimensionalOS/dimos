@@ -136,12 +136,6 @@ def _hex_to_rgba(hex_color: str) -> int:
     return int(h[:8], 16)
 
 
-def _set_rerun_message_time(msg: Any) -> None:
-    ts = getattr(msg, "ts", None)
-    if isinstance(ts, (int, float)) and ts > 0:
-        rr.set_time("dimos_time", timestamp=float(ts))
-
-
 def _with_graph_tab(bp: Blueprint) -> Blueprint:
     """Add a Graph tab alongside the existing viewer layout without changing it."""
 
@@ -344,8 +338,6 @@ class RerunBridgeModule(Module):
 
         if not rerun_data:
             return
-
-        _set_rerun_message_time(msg)
 
         # TFMessage for example returns list of (entity_path, archetype) tuples
         if is_rerun_multi(rerun_data):
