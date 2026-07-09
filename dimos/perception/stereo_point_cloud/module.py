@@ -46,7 +46,7 @@ _DEPTH_MM_THRESHOLD = 100
 # Compensates ~0.5° residual camera pitch: tan(0.5°) ≈ 0.009 m/m.
 # Result: near the robot (mat detection) margin stays at global_floor_margin;
 # at 4 m the effective cut rises by ~3.6 cm, rejecting the apparent floor elevation.
-_FLOOR_TILT_COMP = 0.009
+_FLOOR_TILT_COMP = 0.015
 
 
 class Config(ModuleConfig):
