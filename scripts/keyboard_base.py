@@ -16,10 +16,15 @@ import tty
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 
-SPEED = 0.3
-TURN = 0.5
+SPEED = 0.1
+TURN = 0.2
+
+# Must match the type-suffixed channel dimos's own transport publishes/subscribes on
+# (visible in `dimos run` logs as "topic=/cmd_vel#geometry_msgs.Twist") — a bare
+# "/cmd_vel" string is a different LCM channel and ControlCoordinator never sees it.
+CMD_VEL_TOPIC = Topic(topic="/cmd_vel", lcm_type=Twist)
 
 KEY_MAP = {
     "w": (SPEED,  0.0,   0.0),
@@ -59,10 +64,10 @@ def main() -> None:
             linear=Vector3(x=vx, y=vy, z=0.0),
             angular=Vector3(x=0.0, y=0.0, z=wz),
         )
-        lcm.publish("/cmd_vel", twist)
+        lcm.publish(CMD_VEL_TOPIC, twist)
         print(f"vx={vx:.1f}  vy={vy:.1f}  wz={wz:.1f}")
 
-    lcm.publish("/cmd_vel", Twist(linear=Vector3(), angular=Vector3()))
+    lcm.publish(CMD_VEL_TOPIC, Twist(linear=Vector3(), angular=Vector3()))
 
 
 if __name__ == "__main__":
