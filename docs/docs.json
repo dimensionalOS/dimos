@@ -1,5 +1,5 @@
 {
-  "theme": "mint",
+  "theme": "aspen",
   "name": "Dimensional",
   "description": "Official documentation for Dimensional (DimOS) \u2014 the modern operating system for generalist robotics: Python-first, agent-native, and hardware-agnostic.",
   "colors": {
@@ -74,24 +74,6 @@
             "pages": [
               "usage/transports/index",
               "usage/transports/dds"
-            ]
-          }
-        ]
-      },
-      {
-        "group": "Coding agents",
-        "pages": [
-          "coding-agents/index",
-          "coding-agents/style",
-          "coding-agents/code-quality-rules",
-          "coding-agents/testing",
-          "coding-agents/worktrees",
-          {
-            "group": "Authoring agent docs",
-            "pages": [
-              "coding-agents/docs/index",
-              "coding-agents/docs/codeblocks",
-              "coding-agents/docs/doclinks"
             ]
           }
         ]
