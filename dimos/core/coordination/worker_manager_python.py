@@ -17,6 +17,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel
+
 from dimos.core.coordination.python_worker import PythonWorker
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase, ModuleSpec
@@ -28,6 +30,33 @@ if TYPE_CHECKING:
     from dimos.core.resource_monitor.monitor import StatsMonitor
 
 logger = setup_logger()
+
+
+def _merge_config_kwargs(base: Mapping[str, Any], overrides: Mapping[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, override_value in overrides.items():
+        merged[key] = _merge_config_value(merged.get(key), override_value)
+    return merged
+
+
+def _merge_config_value(base_value: Any, override_value: Any) -> Any:
+    if not isinstance(override_value, Mapping):
+        return override_value
+
+    if isinstance(base_value, BaseModel):
+        base_value = base_value.model_dump(mode="python")
+
+    if not isinstance(base_value, Mapping):
+        return dict(override_value)
+
+    if _changes_backend(base_value, override_value):
+        return dict(override_value)
+
+    return _merge_config_kwargs(base_value, override_value)
+
+
+def _changes_backend(base: Mapping[str, Any], overrides: Mapping[str, Any]) -> bool:
+    return "backend" in base and "backend" in overrides and base["backend"] != overrides["backend"]
 
 
 class WorkerManagerPython:
@@ -161,7 +190,11 @@ class WorkerManagerPython:
             module_class, _, kwargs = specs[i]
             worker = self._select_worker(dedicated=module_class.dedicated_worker)
             worker.reserve_slot()
-            kwargs.update(blueprint_args.get(module_class.name, {}))
+            specs[i] = (
+                specs[i][0],
+                specs[i][1],
+                _merge_config_kwargs(kwargs, blueprint_args.get(module_class.name, {})),
+            )
             workers_by_index[i] = worker
 
         assignments = [(workers_by_index[i], specs[i]) for i in range(len(specs))]
