@@ -116,17 +116,7 @@ text "pub/sub API" at P.s + (0, -0.2in)
 
 </details>
 
-![output](assets/abstraction_layers.svg)
-
-![output](assets/abstraction_layers.svg)
-
-![output](assets/abstraction_layers.svg)
-
-![output](assets/abstraction_layers.svg)
-
-![output](assets/abstraction_layers.svg)
-
-![output](assets/abstraction_layers.svg)
+![output](../assets/abstraction_layers.svg)
 
 We’ll go through these layers top-down.
 
