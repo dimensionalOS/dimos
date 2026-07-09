@@ -1,0 +1,8 @@
+# macOS needs -undefined dynamic_lookup so the pyo3 cdylib links against
+# Python symbols resolved at load time. maturin/setuptools-rust inject this
+# automatically, but plain `cargo build` (used by NativeModule) does not.
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"]
