@@ -4,8 +4,8 @@ Run alongside coordinator-flowbase-stereo-nav in a separate terminal.
 
 Controls:
     W/S: forward/backward
-    A/D: strafe left/right
-    Q/E: rotate left/right
+    Q/E: strafe left/right
+    A/D: turn left/right
     Space: stop
     Ctrl+C: quit
 """
@@ -29,10 +29,10 @@ CMD_VEL_TOPIC = Topic(topic="/cmd_vel", lcm_type=Twist)
 KEY_MAP = {
     "w": (SPEED,  0.0,   0.0),
     "s": (-SPEED, 0.0,   0.0),
-    "a": (0.0,    SPEED, 0.0),
-    "d": (0.0,   -SPEED, 0.0),
-    "q": (0.0,    0.0,   TURN),
-    "e": (0.0,    0.0,  -TURN),
+    "q": (0.0,    SPEED, 0.0),
+    "e": (0.0,   -SPEED, 0.0),
+    "a": (0.0,    0.0,   TURN),
+    "d": (0.0,    0.0,  -TURN),
     " ": (0.0,    0.0,   0.0),
 }
 
@@ -49,7 +49,7 @@ def _getch() -> str:
 
 def main() -> None:
     lcm = LCM()
-    print("WASD to move, Q/E to rotate, Space to stop, Ctrl+C to quit")
+    print("WASD to move (A/D turn), Q/E to strafe, Space to stop, Ctrl+C to quit")
 
     while True:
         key = _getch()
