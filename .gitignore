@@ -70,6 +70,7 @@ yolo11n.pt
 .omo/
 
 /logs
+/recordings
 
 *.so
 

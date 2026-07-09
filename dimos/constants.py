@@ -32,9 +32,11 @@ DIMOS_PROJECT_ROOT = Path(__file__).parent.parent
 if (DIMOS_PROJECT_ROOT / ".git").exists():
     # Running from Git repository
     LOG_DIR = DIMOS_PROJECT_ROOT / "logs"
+    RECORDINGS_DIR = DIMOS_PROJECT_ROOT / "recordings"
 else:
     # Running from an installed package - use XDG_STATE_HOME
     LOG_DIR = STATE_DIR / "logs"
+    RECORDINGS_DIR = STATE_DIR / "recordings"
 
 """
 Constants for shared memory
