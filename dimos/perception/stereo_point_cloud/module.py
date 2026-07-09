@@ -48,6 +48,9 @@ _DEPTH_MM_THRESHOLD = 100
 # at 4 m the effective cut rises by ~3.6 cm, rejecting the apparent floor elevation.
 _FLOOR_TILT_COMP = 0.0
 
+_KEYFRAME_DIST_M    = 0.05               # add to global map only when camera moves >5 cm
+_KEYFRAME_ANGLE_RAD = np.deg2rad(5.0)   # or rotates >5°
+
 
 class Config(ModuleConfig):
     min_depth: float          = 0.1
@@ -95,6 +98,8 @@ class StereoPointCloud(Module):
         self._world_floor_z: float       = 0.0
         self._frame                      = 0
         self._warned_no_intrinsics       = False
+        self._last_kf_t: np.ndarray | None = None
+        self._last_kf_R: np.ndarray | None = None
 
     @rpc
     def start(self) -> None:
@@ -306,14 +311,22 @@ class StereoPointCloud(Module):
                     keys_acc      = _pack(np.floor(self._acc_pts / self.config.global_vox_size).astype(np.int32))
                     self._acc_pts = self._acc_pts[~np.isin(keys_acc, free_keys)]
 
-            if len(xyz_for_map):
+            # Keyframe gate: only insert when camera has moved/rotated enough.
+            # Keeps global-map density equal to one clean frame per area explored.
+            take_kf = True
+            if self._last_kf_t is not None:
+                t_moved = float(np.linalg.norm(t - self._last_kf_t))
+                cos_a   = float((np.trace(R @ self._last_kf_R.T) - 1.0) / 2.0)
+                r_moved = float(np.arccos(np.clip(cos_a, -1.0, 1.0)))
+                take_kf = (t_moved > _KEYFRAME_DIST_M) or (r_moved > _KEYFRAME_ANGLE_RAD)
+
+            if take_kf and len(xyz_for_map):
+                self._last_kf_t = t.copy()
+                self._last_kf_R = R.copy()
                 vox = self.config.global_vox_size
                 new_vk   = np.floor(xyz_for_map / vox).astype(np.int32)
                 new_keys = _pack(new_vk)
                 if len(self._acc_pts) > 0:
-                    # Fat-voxel insertion guard: skip new points within ±1 voxel of an existing
-                    # point. ICP t-noise is ±2cm at 2cm voxels; a near-duplicate that lands in
-                    # the adjacent voxel would pile up each frame — this blocks the accumulation.
                     keys_acc_s = np.sort(_pack(np.floor(self._acc_pts / vox).astype(np.int32)))
                     shifted    = (new_keys[:, None] + _FAT_SHIFTS[None, :]).ravel()
                     i_s        = np.searchsorted(keys_acc_s, shifted)
