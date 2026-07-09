@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock, current_thread
 from typing import TYPE_CHECKING, Any
+import xml.etree.ElementTree as ET
 
 import numpy as np
 
@@ -273,7 +274,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                 xacro_args=config.xacro_args,
                 convert_meshes=config.auto_convert_meshes,
             )
-            prepared_path_obj = Path(prepared_path)
+            prepared_path_obj = self._strip_world_base_joint(Path(prepared_path), config)
 
             # Register package paths (not applicable to MJCF)
             if config.package_paths:
@@ -288,8 +289,47 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
         model_instances = self._parser.AddModels(prepared_path_obj)
         if not model_instances:
-            raise ValueError(f"Failed to parse model: {prepared_path}")
+            raise ValueError(f"Failed to parse model: {prepared_path_obj}")
         return model_instances[0]
+
+    @staticmethod
+    def _strip_world_base_joint(model_path: Path, config: RobotModelConfig) -> Path:
+        if model_path.suffix != ".urdf":
+            return model_path
+
+        tree = ET.parse(model_path)
+        root = tree.getroot()
+        joints = root.findall("joint")
+        joints_to_remove = [
+            joint
+            for joint in joints
+            if joint.get("type") == "fixed"
+            and (parent := joint.find("parent")) is not None
+            and (child := joint.find("child")) is not None
+            and parent.get("link") == "world"
+            and child.get("link") == config.base_link
+        ]
+
+        if not joints_to_remove:
+            return model_path
+
+        for joint in joints_to_remove:
+            root.remove(joint)
+
+        if not any(
+            element is not None and element.get("link") == "world"
+            for joint in root.findall("joint")
+            for element in (joint.find("parent"), joint.find("child"))
+        ):
+            for link in list(root.findall("link")):
+                if link.get("name") == "world":
+                    root.remove(link)
+
+        stripped_path = model_path.with_name(
+            f"{model_path.stem}_config_base_pose{model_path.suffix}"
+        )
+        tree.write(stripped_path, encoding="utf-8", xml_declaration=True)
+        return stripped_path
 
     def _weld_base_if_needed(self, config: RobotModelConfig, model_instance: Any) -> None:
         """Weld robot base to world if not already welded in URDF."""

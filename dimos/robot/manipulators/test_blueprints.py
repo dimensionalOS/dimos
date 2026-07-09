@@ -14,12 +14,17 @@
 
 from typing import Any
 
+from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
-from dimos.manipulation.visualization.config import NoManipulationVisualizationConfig
+from dimos.manipulation.visualization.config import (
+    MeshcatVisualizationConfig,
+    NoManipulationVisualizationConfig,
+)
 from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.xarm.blueprints.basic import (
     dual_xarm6_planner,
+    dual_xarm6_planner_coordinator_mock_meshcat,
     xarm6_planner_only,
     xarm7_planner_coordinator,
 )
@@ -58,3 +63,23 @@ def test_xarm_planner_blueprints_default_to_no_visualization() -> None:
         config = _manipulation_config(blueprint)
 
         assert isinstance(config.visualization, NoManipulationVisualizationConfig)
+
+
+def test_dual_xarm6_mock_meshcat_blueprint_wires_planner_and_coordinator() -> None:
+    config = _manipulation_config(dual_xarm6_planner_coordinator_mock_meshcat)
+    coordinator_kwargs = next(
+        atom.kwargs
+        for atom in dual_xarm6_planner_coordinator_mock_meshcat.blueprints
+        if atom.module is ControlCoordinator
+    )
+
+    assert isinstance(config.visualization, MeshcatVisualizationConfig)
+    assert [robot.name for robot in config.robots] == ["left_arm", "right_arm"]
+    assert [hardware.hardware_id for hardware in coordinator_kwargs["hardware"]] == [
+        "left_arm",
+        "right_arm",
+    ]
+    assert [task.name for task in coordinator_kwargs["tasks"]] == [
+        "traj_left_arm",
+        "traj_right_arm",
+    ]

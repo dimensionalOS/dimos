@@ -53,6 +53,33 @@ def _write_urdf(path: Path) -> None:
     )
 
 
+def _write_urdf_with_world_base_joint(path: Path) -> None:
+    path.write_text(
+        """
+<robot name="chain_with_world">
+  <link name="world"/>
+  <link name="base_link"/>
+  <link name="link1"/>
+  <link name="tool0"/>
+  <joint name="world_joint" type="fixed">
+    <parent link="world"/><child link="base_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+  <joint name="joint1" type="revolute">
+    <parent link="base_link"/><child link="link1"/>
+    <origin xyz="1 0 0" rpy="0 0 0"/><axis xyz="0 0 1"/>
+    <limit lower="-3.14" upper="3.14" effort="1" velocity="1"/>
+  </joint>
+  <joint name="joint2" type="revolute">
+    <parent link="link1"/><child link="tool0"/>
+    <origin xyz="1 0 0" rpy="0 0 0"/><axis xyz="0 0 1"/>
+    <limit lower="-3.14" upper="3.14" effort="1" velocity="1"/>
+  </joint>
+</robot>
+"""
+    )
+
+
 def _config(
     path: Path, groups: list[PlanningGroupDefinition], joints: list[str] | None = None
 ) -> RobotModelConfig:
@@ -128,6 +155,44 @@ def test_drake_group_fk_uses_tip_link_and_legacy_unique_pose_group(tmp_path: Pat
     assert group_pose.position.x == pytest.approx(2.0)
     assert legacy_pose.position.x == pytest.approx(group_pose.position.x)
     assert world.get_jacobian(ctx, robot_id).shape == (6, 2)
+
+
+@requires_drake
+def test_drake_applies_config_base_pose_when_urdf_has_world_base_joint(
+    tmp_path: Path,
+) -> None:
+    urdf = tmp_path / "robot_with_world.urdf"
+    _write_urdf_with_world_base_joint(urdf)
+    world = DrakeWorld(enable_viz=False)
+    left_id = world.add_robot(
+        RobotModelConfig(
+            name="left_arm",
+            model_path=urdf,
+            base_pose=PoseStamped(position=[0, 0.5, 0], orientation=[0, 0, 0, 1]),
+            joint_names=["joint1", "joint2"],
+            base_link="base_link",
+            planning_groups=[_arm_group("joint1", "joint2")],
+        )
+    )
+    right_id = world.add_robot(
+        RobotModelConfig(
+            name="right_arm",
+            model_path=urdf,
+            base_pose=PoseStamped(position=[0, -0.5, 0], orientation=[0, 0, 0, 1]),
+            joint_names=["joint1", "joint2"],
+            base_link="base_link",
+            planning_groups=[_arm_group("joint1", "joint2")],
+        )
+    )
+    world.finalize()
+    ctx = world.get_live_context()
+
+    left_base_pose = world.get_link_pose(ctx, left_id, "base_link")
+    right_base_pose = world.get_link_pose(ctx, right_id, "base_link")
+
+    assert left_base_pose[1, 3] == pytest.approx(0.5)
+    assert right_base_pose[1, 3] == pytest.approx(-0.5)
+    assert left_base_pose[1, 3] != pytest.approx(right_base_pose[1, 3])
 
 
 @requires_drake

@@ -23,12 +23,15 @@ from dimos.manipulation.planning.groups.identifiers import (
     assert_global_joint_names,
     assert_local_joint_names,
     is_global_joint_name,
+    make_global_joint_names,
 )
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.spec.models import (
     GlobalJointName,
+    JointPath,
     LocalModelJointName,
     PlanningGroupID,
+    RobotName,
 )
 from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -137,6 +140,59 @@ def joint_target_to_global_names(
     if extra:
         raise ValueError(f"Target for '{group.id}' has extra joints: {sorted(extra)}")
     return JointState(name=list(group.joint_names), position=global_positions)
+
+
+def project_global_joint_path_to_robot(
+    path: Sequence[JointState],
+    *,
+    robot_name: RobotName,
+    local_joint_names: Sequence[LocalModelJointName],
+    current_joint_state: JointState | None,
+) -> JointPath:
+    """Project a selected-global-joint path into one robot's local joint path."""
+    if not path:
+        return []
+
+    selected_joint_names = tuple(path[0].name)
+    assert_global_joint_names(selected_joint_names)
+    if any(
+        len(waypoint.name) != len(waypoint.position) or tuple(waypoint.name) != selected_joint_names
+        for waypoint in path
+    ):
+        raise ValueError("inconsistent waypoint joint names")
+
+    selected_joint_indices = dict(
+        zip(selected_joint_names, range(len(selected_joint_names)), strict=True)
+    )
+    selected_joint_set = set(selected_joint_names)
+    waypoint_positions = [[float(position) for position in waypoint.position] for waypoint in path]
+    current_by_name = (
+        dict(zip(current_joint_state.name, current_joint_state.position, strict=False))
+        if current_joint_state is not None
+        else {}
+    )
+    global_joint_names = make_global_joint_names(robot_name, tuple(local_joint_names))
+    joint_pairs = list(zip(local_joint_names, global_joint_names, strict=True))
+    try:
+        base_positions = [
+            0.0 if global_name in selected_joint_set else float(current_by_name[local_name])
+            for local_name, global_name in joint_pairs
+        ]
+    except KeyError as exc:
+        raise ValueError(f"missing joint '{exc.args[0]}'") from exc
+
+    overlay_indices = [
+        (local_index, selected_joint_indices[global_name])
+        for local_index, (_, global_name) in enumerate(joint_pairs)
+        if global_name in selected_joint_indices
+    ]
+    local_path: JointPath = []
+    for waypoint_positions_by_joint in waypoint_positions:
+        projected_positions = base_positions.copy()
+        for local_index, selected_index in overlay_indices:
+            projected_positions[local_index] = waypoint_positions_by_joint[selected_index]
+        local_path.append(JointState(name=list(local_joint_names), position=projected_positions))
+    return local_path
 
 
 def joint_state_to_ordered_positions(
