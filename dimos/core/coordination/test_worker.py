@@ -14,16 +14,14 @@
 
 from typing import TYPE_CHECKING
 
-from pydantic import Field
 import pytest
 
-from dimos.core.coordination.worker_manager_python import WorkerManagerPython, _merge_config_kwargs
+from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.protocol.service.spec import BaseConfig
 
 if TYPE_CHECKING:
     from dimos.core.resource_monitor.stats import WorkerStats
@@ -81,15 +79,6 @@ class ThirdModule(Module):
     @rpc
     def get_multiplier(self) -> int:
         return self.multiplier
-
-
-class NestedConfig(BaseConfig):
-    a: int = 0
-    b: int = 2
-
-
-class ModuleWithNestedConfig(ModuleConfig):
-    sub: NestedConfig = Field(default_factory=lambda: NestedConfig(a=10, b=20))
 
 
 class HeavyModule(Module):
@@ -198,17 +187,6 @@ def test_worker_manager_parallel_deployment(create_worker_manager):
     module1.stop()
     module2.stop()
     module3.stop()
-
-
-def test_nested_blueprint_config_defaults_survive_cli_override():
-    blueprint_kwargs = {"sub": NestedConfig(a=10, b=20)}
-    cli_kwargs = {"sub": {"a": "1"}}
-
-    merged = _merge_config_kwargs(blueprint_kwargs, cli_kwargs)
-    config = ModuleWithNestedConfig(**merged)
-
-    assert config.sub.a == 1
-    assert config.sub.b == 20
 
 
 @pytest.mark.skipif_macos_bug

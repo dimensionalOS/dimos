@@ -183,11 +183,7 @@ class WorkerManagerPython:
             module_class, _, kwargs = specs[i]
             worker = self._select_worker(dedicated=module_class.dedicated_worker)
             worker.reserve_slot()
-            specs[i] = (
-                specs[i][0],
-                specs[i][1],
-                _merge_config_kwargs(kwargs, blueprint_args.get(module_class.name, {})),
-            )
+            kwargs.update(_merge_config_kwargs(kwargs, blueprint_args.get(module_class.name, {})))
             workers_by_index[i] = worker
 
         assignments = [(workers_by_index[i], specs[i]) for i in range(len(specs))]
