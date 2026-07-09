@@ -73,7 +73,14 @@ class Config(ModuleConfig):
     # floor height was estimated correctly.)
     global_floor_margin: float = 0.04
     max_global_pts: int       = 500_000
-    publish_every: int        = 1
+    # self._frame increments every valid frame (~15/s), not just keyframes. At
+    # the old default of 1, global_map was copied+published on EVERY frame
+    # regardless of whether anything changed — with a slow/throttled Rerun
+    # consumer downstream, that queued up thousands of full-map snapshots in
+    # LCM's receive buffer (capacity 10k/subscription) and caused an OOM despite
+    # the map itself being small. 15 ≈ once/sec at 15fps, matching the
+    # RerunBridgeModule max_hz=1.0 throttle already applied to this topic.
+    publish_every: int        = 15
     world_frame: str          = "world"
     madgwick_beta: float      = 0.033
 
@@ -368,8 +375,15 @@ class StereoPointCloud(Module):
                 # pixels are isolated within a dense frame, but legitimate new frontier
                 # points are naturally sparse relative to *each other* and would almost
                 # all get killed if filtered after subtraction.
+                # min_neighbors=2 (scipy's neighbor count includes the point itself) let a
+                # tight cluster of exactly 3 noise points through — each counts itself + the
+                # other 2 = 3, which is > 2. Raised to 8: a real surface patch at 2cm voxel
+                # resolution has dozens of points within a 6cm radius, but a small floating
+                # noise cluster won't, so this cuts noise clusters without touching real
+                # sparse structure (thin edges, etc. are handled by the gradient mask, not
+                # this filter).
                 if len(xyz_for_map) > 3:
-                    xyz_for_map = xyz_for_map[_isolation_filter(xyz_for_map, radius=0.06, min_neighbors=2)]
+                    xyz_for_map = xyz_for_map[_isolation_filter(xyz_for_map, radius=0.06, min_neighbors=8)]
 
                 vox = self.config.global_vox_size
                 new_vk   = np.floor(xyz_for_map / vox).astype(np.int32)
