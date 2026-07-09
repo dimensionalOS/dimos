@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from dimos.manipulation.manipulation_module import ManipulationModule
     from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
     from dimos.manipulation.planning.spec.config import RobotModelConfig
-    from dimos.manipulation.planning.spec.models import JointPath, RobotName, WorldRobotID
+    from dimos.manipulation.planning.spec.models import RobotName, WorldRobotID
     from dimos.msgs.geometry_msgs.Pose import Pose
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
@@ -136,16 +136,6 @@ class InProcessViserAdapter:
             joint_state if isinstance(joint_state, JointState) else None
         )
         return result
-
-    def get_planned_path(self, robot_name: RobotName) -> JointPath | None:
-        path = self._module.get_planned_path(robot_name)
-        if path is None:
-            return None
-        copied = [copy_joint_state(point) for point in path]
-        return [point for point in copied if point is not None]
-
-    def get_planned_trajectory_duration(self, robot_name: RobotName) -> float | None:
-        return self._module.get_planned_trajectory_duration(robot_name)
 
     def get_module_state(self) -> str:
         return str(self._module.get_state())

@@ -96,7 +96,6 @@ class PanelPlanState:
     target_pose: Pose | None = None
     target_joints: list[float] | None = None
     start_joints_snapshot: list[float] | None = None
-    planned_path: list[JointState] | None = None
 
 
 @dataclass

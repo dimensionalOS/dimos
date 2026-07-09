@@ -1205,29 +1205,6 @@ class ManipulationModule(Module):
             "collision_free": collision_free,
         }
 
-    def get_planned_path(self, robot_name: RobotName) -> JointPath | None:
-        """Return a copy of the stored planned path for visualization."""
-        plan = self._last_plan
-        if plan is None or not plan.path:
-            return None
-        projected = self._project_plan_to_robot_paths(plan)
-        if projected is None or (path := projected.get(robot_name)) is None:
-            return None
-        return [JointState(point) for point in path]
-
-    def get_planned_trajectory_duration(self, robot_name: RobotName) -> float | None:
-        """Return the stored planned trajectory duration for visualization."""
-        plan = self._last_plan
-        if plan is None or not plan.path:
-            return None
-        projected = self._project_plan_to_robot_paths(plan)
-        if projected is None or (path := projected.get(robot_name)) is None:
-            return None
-        trajectory = self._trajectory_from_robot_path(robot_name, path)
-        if trajectory is None:
-            return None
-        return float(trajectory.duration)
-
     @rpc
     def set_init_joints(self, joint_state: JointState, robot_name: RobotName | None = None) -> bool:
         """Set the init joint state.

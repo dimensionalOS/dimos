@@ -518,10 +518,10 @@ class TestPlanningGroupApis:
         assert module._last_plan is not None
         assert module._last_plan.group_ids == ("test_arm/manipulator",)
         assert module._last_plan.path == result_path
-        planned_path = module.get_planned_path("test_arm")
-        assert planned_path is not None
-        assert planned_path[1].position == [0.1, 0.2, 0.3]
-        assert module.get_planned_trajectory_duration("test_arm") is not None
+        projected = module._project_plan_to_robot_paths(module._last_plan)
+        assert projected is not None
+        assert projected["test_arm"][1].position == [0.1, 0.2, 0.3]
+        assert module._trajectory_from_robot_path("test_arm", projected["test_arm"]) is not None
         module._planner.plan_selected_joint_path.assert_called_once()
         _, kwargs = module._planner.plan_selected_joint_path.call_args
         assert kwargs["selection"].group_ids == ("test_arm/manipulator",)

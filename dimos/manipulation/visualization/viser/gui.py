@@ -579,13 +579,11 @@ class ViserPanelGui:
             if not self._operation_is_current(operation_id):
                 return
             if ok:
-                path = self.adapter.get_planned_path(robot_name)
                 self.state.plan_state.status = PlanStatus.FRESH
                 self.state.plan_state.robot = robot_name
                 self.state.plan_state.target_joints = list(target.position)
                 self.state.plan_state.target_pose = self.state.cartesian_target
                 self.state.plan_state.start_joints_snapshot = list(self.state.current_joints or [])
-                self.state.plan_state.planned_path = path
             else:
                 self.state.plan_state.status = PlanStatus.FAILED
             self._finish_operation(f"plan_to_joints={ok}", operation_id=operation_id)

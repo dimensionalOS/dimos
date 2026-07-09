@@ -169,16 +169,16 @@ class TestManipulationModuleIntegration:
         assert module._state == ManipulationState.COMPLETED
         assert module.has_planned_path() is True
 
-        path = module.get_planned_path("test_arm")
-        assert path is not None and len(path) > 1
-        duration = module.get_planned_trajectory_duration("test_arm")
-        assert duration is not None and duration > 0
+        assert module._last_plan is not None
+        projected = module._project_plan_to_robot_paths(module._last_plan)
+        assert projected is not None
+        path = projected["test_arm"]
+        assert len(path) > 1
 
         traj = module._trajectory_from_robot_path("test_arm", path)
         assert traj is not None
         assert len(traj.points) > 1
-
-        assert module._last_plan is not None
+        assert traj.duration > 0
         assert module._last_plan.group_ids == ("test_arm/manipulator",)
 
     def test_plan_to_explicit_joint_target(self, module, joint_state_zeros):
@@ -194,7 +194,7 @@ class TestManipulationModuleIntegration:
         assert module._last_plan is not None
         assert module._last_plan.group_ids == ("test_arm/manipulator",)
         assert module.has_planned_path() is True
-        assert module.get_planned_path("test_arm") is not None
+        assert module._project_plan_to_robot_paths(module._last_plan) is not None
 
     def test_add_and_remove_obstacle(self, module, joint_state_zeros):
         """Test adding and removing obstacles."""
@@ -247,8 +247,10 @@ class TestManipulationModuleIntegration:
         success = module.plan_to_joints(JointState(position=[0.05] * 7))
         assert success is True
 
-        path = module.get_planned_path("test_arm")
-        assert path is not None
+        assert module._last_plan is not None
+        projected = module._project_plan_to_robot_paths(module._last_plan)
+        assert projected is not None
+        path = projected["test_arm"]
         traj = module._trajectory_from_robot_path("test_arm", path)
         assert traj is not None
         robot_config = module._robots["test_arm"][1]
