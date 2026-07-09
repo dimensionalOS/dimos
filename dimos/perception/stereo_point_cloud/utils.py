@@ -31,7 +31,12 @@ _VMASK = np.int64(0x3FFFF)
 _R_OPT_TO_LINK = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=np.float32)
 
 _RAYCAST_MIN_RAY_VOXELS = 2
-_RAYCAST_SURFACE_MARGIN = 1.5
+# Voxels of margin held back from each ray's surface hit before it's allowed to
+# clear existing map voxels as "free space". Was 1.5 (~3cm at 2cm voxels) when
+# raycasting was first tried and removed for carving away thin real obstacles —
+# too thin a margin lets a ray aimed at a wall behind a chair leg clear the leg
+# itself. 4.0 (~8cm) matches the fat-voxel insertion guard's own tolerance.
+_RAYCAST_SURFACE_MARGIN = 4.0
 
 # Full 9×9×9 neighbourhood (dx,dy,dz ∈ [-4..4], 729 entries).
 # ±4 voxels = ±8 cm per axis. Rationale:

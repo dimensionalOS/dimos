@@ -35,6 +35,7 @@ from dimos.perception.stereo_point_cloud.utils import (
     _gradient_mask,
     _isolation_filter,
     _pack,
+    _raycast_free_keys,
 )
 from dimos.perception.stereo_point_cloud.vio import MadgwickFilter, PointCloudOdometry
 from dimos.utils.logging_config import setup_logger
@@ -324,6 +325,23 @@ class StereoPointCloud(Module):
                 # all get killed if filtered after subtraction.
                 if len(xyz_for_map) > 3:
                     xyz_for_map = xyz_for_map[_isolation_filter(xyz_for_map, radius=0.06, min_neighbors=2)]
+
+                # Free-space raycast clearing: only at keyframes (not every frame, unlike
+                # the earlier attempt that ran per-frame and got reverted for carving away
+                # thin obstacles) and using this keyframe's already isolation-filtered
+                # points as ray targets, with a wide surface margin (_RAYCAST_SURFACE_MARGIN,
+                # matches the fat-voxel insertion guard tolerance). Actively removes
+                # ghost/duplicate walls left by pose drift (e.g. after a loop) when a later
+                # observation shows that space is actually empty, instead of only ever
+                # blocking new duplicates from being added.
+                if len(self._acc_pts) > 0 and len(xyz_for_map) > 0:
+                    free_keys = _raycast_free_keys(
+                        xyz_for_map, self.config.global_vox_size, n_rays=len(xyz_for_map), origin=t
+                    )
+                    if len(free_keys):
+                        keys_acc      = _pack(np.floor(self._acc_pts / self.config.global_vox_size).astype(np.int32))
+                        self._acc_pts = self._acc_pts[~np.isin(keys_acc, free_keys)]
+
                 vox = self.config.global_vox_size
                 new_vk   = np.floor(xyz_for_map / vox).astype(np.int32)
                 new_keys = _pack(new_vk)
