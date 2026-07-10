@@ -138,6 +138,12 @@ class TestConfigureSystem:
         configure_system([mock_check])
         assert not mock_check.fix_called
 
+    def test_skips_when_explicitly_disabled(self, mocker) -> None:
+        mocker.patch.dict(os.environ, {"DIMOS_SKIP_SYSTEM_CONFIG": "1"})
+        mock_check = MockConfigurator(passes=False, is_critical=True)
+        configure_system([mock_check])
+        assert not mock_check.fix_called
+
     def test_does_nothing_when_all_checks_pass(self) -> None:
         mock_check = MockConfigurator(passes=True)
         configure_system([mock_check])

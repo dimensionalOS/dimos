@@ -168,9 +168,28 @@ class WorkerManagerPython:
 
         def _deploy(item: tuple[PythonWorker, ModuleSpec]) -> ModuleProxyProtocol:
             worker, (module_class, global_config, kwargs) = item
-            return RPCClient(
-                worker.deploy_module(module_class, global_config, kwargs), module_class
-            )
+            module_name = module_class.__name__
+            worker_id = worker.worker_id
+            try:
+                logger.info("Deploying module.", module=module_name, worker_id=worker_id)
+                return RPCClient(
+                    worker.deploy_module(module_class, global_config, kwargs), module_class
+                )
+            except Exception as exc:
+                error_type = type(exc).__name__
+                error_repr = repr(exc)
+                logger.error(
+                    "Failed to deploy module.",
+                    module=module_name,
+                    worker_id=worker_id,
+                    error_type=error_type,
+                    error_repr=error_repr,
+                    exc_info=True,
+                )
+                raise RuntimeError(
+                    f"Failed to deploy {module_name} on worker {worker_id}: "
+                    f"{error_type}: {error_repr}"
+                ) from exc
 
         try:
             return safe_thread_map(assignments, _deploy)

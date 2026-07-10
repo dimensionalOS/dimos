@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+# Copyright 2025-2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from __future__ import annotations
+
+from typing import Any
+
+__all__ = [
+    "_go2_agentic_skill_interface",
+    "_go2_skill_interface",
+    "_go2_spatial_skill_interface",
+]
+
+_LAYER_BLUEPRINTS: dict[str, Any] = {}
+
+
+def __getattr__(name: str) -> Any:
+    if name not in __all__:
+        raise AttributeError(name)
+    _build_layer_blueprints()
+    return _LAYER_BLUEPRINTS[name]
+
+
+def _build_layer_blueprints() -> None:
+    if _LAYER_BLUEPRINTS:
+        return
+
+    from dimos.agents.skills.navigation import NavigationSkillContainer
+    from dimos.agents.skills.person_follow import PersonFollowSkillContainer
+    from dimos.agents.skills.speak_skill import SpeakSkill
+    from dimos.agents.web_human_input import WebInput
+    from dimos.core.coordination.blueprints import autoconnect
+    from dimos.experimental.security_demo.security_module import SecurityModule
+    from dimos.perception.perceive_loop_skill import PerceiveLoopSkill
+    from dimos.robot.unitree.go2.blueprints.layers.layer_5_skill_interface.skill_interface_registry import (
+        _Go2SkillInterfaceRegistry,
+    )
+    from dimos.robot.unitree.go2.connection import GO2Connection
+    from dimos.robot.unitree.unitree_skill_container import UnitreeSkillContainer
+
+    spatial_skill_interface = autoconnect(
+        PerceiveLoopSkill.blueprint(),
+        SecurityModule.blueprint(camera_info=GO2Connection.camera_info_static),
+    )
+
+    agentic_skill_interface = autoconnect(
+        NavigationSkillContainer.blueprint(),
+        PersonFollowSkillContainer.blueprint(camera_info=GO2Connection.camera_info_static),
+        UnitreeSkillContainer.blueprint(),
+        WebInput.blueprint(),
+        SpeakSkill.blueprint(),
+    )
+
+    skill_interface = autoconnect(
+        spatial_skill_interface,
+        agentic_skill_interface,
+        _Go2SkillInterfaceRegistry.blueprint(),
+    )
+
+    _LAYER_BLUEPRINTS.update(
+        {
+            "_go2_spatial_skill_interface": spatial_skill_interface,
+            "_go2_agentic_skill_interface": agentic_skill_interface,
+            "_go2_skill_interface": skill_interface,
+        }
+    )
+    globals().update(_LAYER_BLUEPRINTS)

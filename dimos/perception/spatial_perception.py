@@ -18,6 +18,7 @@ Spatial Memory module for creating a semantic map of the environment.
 
 from datetime import datetime
 import os
+from pathlib import Path
 import time
 from typing import TYPE_CHECKING, Any
 import uuid
@@ -27,7 +28,7 @@ import numpy as np
 from reactivex import Observable, interval, operators as ops
 from reactivex.disposable import Disposable
 
-from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.constants import STATE_DIR
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
@@ -41,9 +42,17 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
-_OUTPUT_DIR = DIMOS_PROJECT_ROOT / "assets" / "output"
-_MEMORY_DIR = _OUTPUT_DIR / "memory"
-_SPATIAL_MEMORY_DIR = _MEMORY_DIR / "spatial_memory"
+_SPATIAL_MEMORY_DIR_ENV = "DIMOS_SPATIAL_MEMORY_DIR"
+
+
+def _default_spatial_memory_dir() -> Path:
+    configured = os.environ.get(_SPATIAL_MEMORY_DIR_ENV)
+    if configured:
+        return Path(configured).expanduser()
+    return STATE_DIR / "spatial_memory"
+
+
+_SPATIAL_MEMORY_DIR = _default_spatial_memory_dir()
 _DB_PATH = _SPATIAL_MEMORY_DIR / "chromadb_data"
 _VISUAL_MEMORY_PATH = _SPATIAL_MEMORY_DIR / "visual_memory.pkl"
 

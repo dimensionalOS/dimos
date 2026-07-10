@@ -63,6 +63,35 @@ ODOM_FREQUENCY = 50
 logger = setup_logger()
 
 T = TypeVar("T")
+_MUJOCO_HEADLESS_ENV = "DIMOS_MUJOCO_HEADLESS"
+
+
+def _mujoco_headless_enabled() -> bool:
+    return os.environ.get(_MUJOCO_HEADLESS_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _mujoco_subprocess_executable(headless: bool, platform: str = sys.platform) -> str:
+    if platform == "darwin" and not headless:
+        return "mjpython"
+    return sys.executable
+
+
+def _read_process_stderr(process: subprocess.Popen[bytes] | Any) -> str:
+    stderr = getattr(process, "stderr", None)
+    if stderr is None:
+        return ""
+    try:
+        data = stderr.read()
+    except Exception:
+        return ""
+    if isinstance(data, bytes):
+        return data.decode(errors="replace").strip()
+    return str(data).strip()
 
 
 class MujocoConnection:
@@ -115,9 +144,10 @@ class MujocoConnection:
             # It needs libpython on the dylib search path; uv-installed Pythons
             # use @rpath which doesn't always resolve inside venvs, so we
             # point DYLD_LIBRARY_PATH at the real libpython directory.
-            executable = sys.executable if sys.platform != "darwin" else "mjpython"
+            headless = _mujoco_headless_enabled()
+            executable = _mujoco_subprocess_executable(headless=headless)
             env = os.environ.copy()
-            if sys.platform == "darwin":
+            if sys.platform == "darwin" and not headless:
                 # on some systems mujoco looks in the wrong place for shared libraries. So we force it look in the right place
                 libdir = Path(sysconfig.get_config_var("LIBDIR") or "")
                 if libdir.is_dir():
@@ -141,8 +171,12 @@ class MujocoConnection:
         while time.time() - start_time < ready_timeout:
             if self.process.poll() is not None:
                 exit_code = self.process.returncode
+                stderr = _read_process_stderr(self.process)
                 self.stop()
-                raise RuntimeError(f"MuJoCo process failed to start (exit code {exit_code})")
+                detail = f"MuJoCo process failed to start (exit code {exit_code})"
+                if stderr:
+                    detail = f"{detail}: {stderr[-4000:]}"
+                raise RuntimeError(detail)
             if self.shm_data.is_ready():
                 logger.info("MuJoCo process started successfully")
                 # Register atexit handler to ensure subprocess is cleaned up

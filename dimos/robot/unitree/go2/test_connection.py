@@ -12,29 +12,46 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Test that go2.connection.make_connection forwards aes_128_key.
-
-The leaf (UnitreeWebRTCConnection.__init__) is covered in
-dimos/robot/unitree/test_connection.py; this pins the go2-local routing.
-"""
-
+from io import BytesIO
 from types import SimpleNamespace
+import sys
 from unittest.mock import MagicMock
 
 import pytest
 
 from dimos.core.global_config import GlobalConfig
 from dimos.robot.unitree.go2 import connection as go2_conn
-from dimos.robot.unitree.go2.connection import ConnectionConfig
+from dimos.robot.unitree.go2.connection import ConnectionConfig, ReplayConnection
+from dimos.robot.unitree.mujoco_connection import (
+    _mujoco_subprocess_executable,
+    _read_process_stderr,
+)
 
 
 @pytest.fixture
 def stub_webrtc(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Replace UnitreeWebRTCConnection in go2.connection so the webrtc branch
-    runs without dialing out."""
+    """Replace UnitreeWebRTCConnection so the webrtc branch runs without dialing out."""
     stub = MagicMock(name="UnitreeWebRTCConnection")
     monkeypatch.setattr(go2_conn, "UnitreeWebRTCConnection", stub)
     return stub
+
+
+def test_replay_connection_stop_is_noop() -> None:
+    connection = ReplayConnection()
+
+    connection.stop()
+
+
+def test_read_process_stderr_decodes_available_output() -> None:
+    class Process:
+        stderr = BytesIO(b"first line\nsecond line\n")
+
+    assert _read_process_stderr(Process()) == "first line\nsecond line"
+
+
+def test_headless_mujoco_uses_current_python_on_macos() -> None:
+    assert _mujoco_subprocess_executable(headless=True, platform="darwin") == sys.executable
+    assert _mujoco_subprocess_executable(headless=False, platform="darwin") == "mjpython"
 
 
 def test_make_connection_webrtc_forwards_aes_128_key(stub_webrtc: MagicMock) -> None:

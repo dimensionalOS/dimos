@@ -18,9 +18,34 @@ import threading
 
 import pytest
 
+from dimos.experimental.security_demo.security_module import SecurityModule
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+
+
+def test_security_module_initialization_defers_heavy_models(mocker):
+    yolo_detector = mocker.patch(
+        "dimos.experimental.security_demo.security_module.YoloPersonDetector"
+    )
+    depth_estimator = mocker.patch(
+        "dimos.experimental.security_demo.security_module.DepthEstimator"
+    )
+    mocker.patch("dimos.experimental.security_demo.security_module._create_router")
+    mocker.patch("dimos.experimental.security_demo.security_module._create_visual_servo")
+
+    module = SecurityModule(camera_info=CameraInfo())
+    module._planner_spec = mocker.MagicMock()
+    module._speak_skill = mocker.MagicMock()
+
+    try:
+        yolo_detector.assert_not_called()
+        depth_estimator.assert_not_called()
+        assert module._detector is None
+        assert module._depth_estimator is None
+    finally:
+        module.stop()
 
 
 @pytest.mark.self_hosted

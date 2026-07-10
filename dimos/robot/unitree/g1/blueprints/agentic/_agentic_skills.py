@@ -25,7 +25,7 @@ from dimos.robot.unitree.g1.system_prompt import G1_SYSTEM_PROMPT
 
 _agentic_skills = autoconnect(
     McpServer.blueprint(),
-    McpClient.blueprint(system_prompt=G1_SYSTEM_PROMPT),
+    McpClient.blueprint(system_prompt=G1_SYSTEM_PROMPT,model="ollama:qwen3.6:latest"),
     NavigationSkillContainer.blueprint(),
     SpeakSkill.blueprint(),
     UnitreeG1SkillContainer.blueprint(),

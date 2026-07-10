@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Protocol
+from typing import Any, Protocol
 
 from dimos.mapping.models import LatLon
 from dimos.spec.utils import Spec
@@ -20,3 +20,5 @@ from dimos.spec.utils import Spec
 
 class WebsocketVisSpec(Spec, Protocol):
     def set_gps_travel_goal_points(self, points: list[LatLon]) -> None: ...
+
+    def set_world_model_state(self, state: dict[str, Any]) -> dict[str, Any]: ...

@@ -6,13 +6,30 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         html, body { width: 100%; height: 100%; overflow: hidden; }
         body { background: #0a0a0f; font-family: -apple-system, system-ui, sans-serif; }
-        :root { --command-center-width: max(30vw, 35rem); }
+        :root {
+            --command-center-width: max(32vw, 36rem);
+            --world-model-height: 20rem;
+        }
         .container { display: flex; width: 100%; height: 100%; }
-        .command-center {
+        .command-column {
             width: var(--command-center-width);
             min-width: 16rem;
+            display: flex;
+            flex-direction: column;
             border: none;
             border-right: 1px solid #333;
+        }
+        .command-center {
+            flex: 1 1 auto;
+            min-height: 0;
+            border: none;
+        }
+        .world-model {
+            height: var(--world-model-height);
+            min-height: 12rem;
+            border: none;
+            border-top: 1px solid #333;
+            background: #0b0d10;
         }
         .rerun { flex: 1 1 auto; border: none; min-width: 0; }
         .divider {
@@ -29,15 +46,29 @@
 </head>
 <body>
     <div class="container">
-        <iframe class="command-center" src="http://localhost:7779/command-center"></iframe>
+        <div class="command-column">
+            <iframe class="command-center" src="/command-center"></iframe>
+            <iframe class="world-model" src="/world-model"></iframe>
+        </div>
         <div class="divider" role="separator" aria-label="Resize panels"></div>
-        <iframe class="rerun" src="http://localhost:9090/?url=rerun%2Bhttp%3A%2F%2Flocalhost%3A9876%2Fproxy"></iframe>
+        <iframe class="rerun" id="rerun-frame" src="about:blank"></iframe>
     </div>
     <script>
         (function () {
+            // Build the Rerun iframe URL from the same host the browser used to
+            // load this dashboard.  Using a server-resolved IP (listen_host or
+            // rerun_host) would fail when the browser is on a different machine.
+            var host = window.location.hostname;
+            var webPort = 9878;
+            var grpcPort = 9877;
+            var proxyUrl = 'rerun+http://' + host + ':' + grpcPort + '/proxy';
+            document.getElementById('rerun-frame').src =
+                'http://' + host + ':' + webPort + '/?url=' + encodeURIComponent(proxyUrl);
+        })();
+        (function () {
             const container = document.querySelector('.container');
             const divider = document.querySelector('.divider');
-            const commandCenter = document.querySelector('.command-center');
+            const commandColumn = document.querySelector('.command-column');
             const body = document.body;
             const minWidth = 0; // 16rem baseline for small screens
 
@@ -50,7 +81,7 @@
                 const dividerWidth = divider.getBoundingClientRect().width;
                 const available = event.clientX - rect.left - dividerWidth / 2;
                 const nextWidth = Math.max(minWidth, Math.min(available, rect.width));
-                commandCenter.style.width = `${nextWidth}px`;
+                commandColumn.style.width = `${nextWidth}px`;
                 document.documentElement.style.setProperty('--command-center-width', `${nextWidth}px`);
             }
 

@@ -15,11 +15,11 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator, Callable
-import concurrent.futures
 import json
 import os
+import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 import uuid
 
 from fastapi import FastAPI
@@ -33,13 +33,10 @@ from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CapabilityRegistry
 from dimos.agents.mcp import tool_stream
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, SkillInfo
 from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.core.transport_factory import make_transport
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.core.module import SkillInfo
 
 logger = setup_logger()
 
@@ -109,6 +106,27 @@ def _handle_tools_list(req_id: Any, skills: list[SkillInfo]) -> dict[str, Any]:
         tools.append(tool)
 
     return _jsonrpc_result(req_id, {"tools": tools})
+
+
+def _skill_infos_from_class(module_class: type[Any]) -> list[SkillInfo]:
+    """Collect declared skills without making an RPC call to a worker."""
+    from langchain_core.tools import tool
+
+    skills: list[SkillInfo] = []
+    dummy_self = object()
+    for name in dir(module_class):
+        attr = getattr(module_class, name, None)
+        if callable(attr) and hasattr(attr, "__skill__"):
+            bound_attr = attr.__get__(dummy_self, module_class)
+            schema = json.dumps(tool(bound_attr).args_schema.model_json_schema())
+            skills.append(
+                SkillInfo(
+                    class_name=module_class.__name__,
+                    func_name=name,
+                    args_schema=schema,
+                )
+            )
+    return skills
 
 
 async def _handle_tools_call(
@@ -346,7 +364,7 @@ async def mcp_sse_endpoint() -> StreamingResponse:
 
 class McpServer(Module):
     _uvicorn_server: uvicorn.Server | None = None
-    _serve_future: concurrent.futures.Future[None] | None = None
+    _uvicorn_server_thread: threading.Thread | None = None
     _tool_stream_cleanup: Callable[[], None] | None = None
 
     @rpc
@@ -370,27 +388,49 @@ class McpServer(Module):
 
         if self._uvicorn_server:
             self._uvicorn_server.should_exit = True
-            loop = self._loop
-            if loop is not None and self._serve_future is not None:
-                self._serve_future.result(timeout=5.0)
+            if self._uvicorn_server_thread is not None:
+                self._uvicorn_server_thread.join(timeout=5.0)
             self._uvicorn_server = None
-            self._serve_future = None
+            self._uvicorn_server_thread = None
         super().stop()
 
     @rpc
     def on_system_modules(self, modules: list[RPCClient]) -> None:
         # TODO: this is a bit hacky, also not thread-safe
         assert self.rpc is not None
-        app.state.skills = [
-            skill_info for module in modules for skill_info in (module.get_skills() or [])
-        ]
+        skills: list[SkillInfo] = []
+        func_to_remote: dict[str, str] = {}
+        for module in modules:
+            remote_name = getattr(module, "remote_name", None)
+            if remote_name == self.__class__.__name__:
+                own_skills = self.get_skills()
+                skills.extend(own_skills)
+                for s in own_skills:
+                    func_to_remote[s.func_name] = remote_name
+            elif actor_class := getattr(module, "actor_class", None):
+                module_skills = _skill_infos_from_class(actor_class)
+                skills.extend(module_skills)
+                for s in module_skills:
+                    func_to_remote[s.func_name] = remote_name
+            else:
+                module_skills = module.get_skills() or []
+                skills.extend(module_skills)
+                for s in module_skills:
+                    func_to_remote[s.func_name] = remote_name
+
+        app.state.skills = skills
         app.state.skills_by_name = {s.func_name: s for s in app.state.skills}
         app.state.rpc_calls = {
             skill_info.func_name: RpcCall(
-                None, self.rpc, skill_info.func_name, skill_info.class_name, []
+                None, self.rpc, skill_info.func_name, func_to_remote[skill_info.func_name], []
             )
             for skill_info in app.state.skills
         }
+        logger.info(
+            "Registered MCP tools.",
+            n_tools=len(app.state.skills),
+            tools=[skill.func_name for skill in app.state.skills],
+        )
 
     @skill
     def server_status(self) -> str:
@@ -440,6 +480,5 @@ class McpServer(Module):
         config = uvicorn.Config(app, host=_host, port=_port, log_level="warning", access_log=False)
         server = uvicorn.Server(config)
         self._uvicorn_server = server
-        loop = self._loop
-        assert loop is not None
-        self._serve_future = asyncio.run_coroutine_threadsafe(server.serve(), loop)
+        self._uvicorn_server_thread = threading.Thread(target=server.run, daemon=True)
+        self._uvicorn_server_thread.start()
