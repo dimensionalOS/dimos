@@ -16,8 +16,11 @@
 # Run `pytest dimos/robot/test_all_blueprints_generation.py` to regenerate.
 
 all_blueprints = {
+    "a1x-planner-coordinator": "dimos.robot.manipulators.a1xy.blueprints.basic:a1x_planner_coordinator",
+    "a1x-planner-only": "dimos.robot.manipulators.a1xy.blueprints.basic:a1x_planner_only",
     "alfred-nav": "dimos.robot.diy.alfred.blueprints.alfred_nav:alfred_nav",
     "arduino-msg-example": "dimos.experimental.arduino.examples.arduino_twist_echo.blueprint:arduino_msg_example",
+    "coordinator-a1x": "dimos.robot.manipulators.a1xy.blueprints.basic:coordinator_a1x",
     "coordinator-basic": "dimos.control.blueprints.basic:coordinator_basic",
     "coordinator-cartesian-ik-mock": "dimos.robot.manipulators.piper.blueprints.teleop:coordinator_cartesian_ik_mock",
     "coordinator-cartesian-ik-piper": "dimos.robot.manipulators.piper.blueprints.teleop:coordinator_cartesian_ik_piper",
@@ -61,6 +64,7 @@ all_blueprints = {
     "drone-agentic": "dimos.robot.drone.blueprints.agentic.drone_agentic:drone_agentic",
     "drone-basic": "dimos.robot.drone.blueprints.basic.drone_basic:drone_basic",
     "dual-xarm6-planner": "dimos.robot.manipulators.xarm.blueprints.basic:dual_xarm6_planner",
+    "keyboard-teleop-a1x": "dimos.robot.manipulators.a1xy.blueprints.teleop:keyboard_teleop_a1x",
     "keyboard-teleop-a750": "dimos.robot.manipulators.a750.blueprints.teleop:keyboard_teleop_a750",
     "keyboard-teleop-openarm": "dimos.robot.manipulators.openarm.blueprints.teleop:keyboard_teleop_openarm",
     "keyboard-teleop-openarm-mock": "dimos.robot.manipulators.openarm.blueprints.teleop:keyboard_teleop_openarm_mock",
