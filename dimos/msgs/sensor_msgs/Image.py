@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass, field
 from enum import Enum
+import threading
 import time
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 import warnings
@@ -37,6 +38,25 @@ if TYPE_CHECKING:
     import os
 
     from reactivex.observable import Observable
+
+
+# One TurboJPEG codec per thread, created lazily and reused. TurboJPEG() does
+# a dlopen + handle init on every construction — at 30 Hz per camera stream
+# that was a measurable per-frame cost on the encode AND decode hot paths
+# (previously both lcm_jpeg_encode and lcm_jpeg_decode constructed a fresh
+# instance per message). Handles are not thread-safe, so thread-local rather
+# than a module singleton: the connection encodes from per-sensor worker
+# threads concurrently.
+_TURBOJPEG_LOCAL = threading.local()
+
+
+def _turbojpeg() -> Any:
+    tj = getattr(_TURBOJPEG_LOCAL, "tj", None)
+    if tj is None:
+        from turbojpeg import TurboJPEG
+
+        tj = _TURBOJPEG_LOCAL.tj = TurboJPEG()
+    return tj
 
 
 class ImageFormat(Enum):
@@ -539,9 +559,9 @@ class Image(Timestamped):
         Returns:
             LCM-encoded bytes with JPEG-compressed image data
         """
-        from turbojpeg import TJPF_RGB, TurboJPEG
+        from turbojpeg import TJPF_RGB
 
-        jpeg = TurboJPEG()
+        jpeg = _turbojpeg()
         msg = LCMImage()
 
         # Header
@@ -584,9 +604,9 @@ class Image(Timestamped):
         Returns:
             Image instance
         """
-        from turbojpeg import TJPF_RGB, TurboJPEG
+        from turbojpeg import TJPF_RGB
 
-        jpeg = TurboJPEG()
+        jpeg = _turbojpeg()
         msg = LCMImage.lcm_decode(data)
 
         if msg.encoding != "jpeg":

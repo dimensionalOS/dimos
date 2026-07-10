@@ -99,14 +99,60 @@ def _r1pro_rerun_blueprint() -> Any:
 # visualization-only; capping them keeps the bridge off the hot path without
 # affecting what the ControlCoordinator sees. Keys are rerun entity paths
 # (entity_prefix "world" + the LCM topic).
+#
+# Sized for an ON-ROBOT deployment viewed over WiFi (2026-07-10): the Orin
+# shares 8 cores with the vendor HDAS stack, and rerun's gRPC stream is a
+# reliable ordered log — anything logged faster than the link carries shows
+# up as unbounded viewer lag, not dropped frames. Raise these after the
+# Tier-2 JPEG passthrough (NEWGEN_DROP_ELIMINATION.md) lands.
 _RERUN_MAX_HZ = {
-    "world/r1pro/head_left_color": 10.0,
-    "world/r1pro/head_right_color": 10.0,
-    "world/r1pro/wrist_left_color": 10.0,
-    "world/r1pro/wrist_right_color": 10.0,
-    "world/r1pro/head_depth": 3.0,
-    "world/r1pro/wrist_left_depth": 3.0,
-    "world/r1pro/wrist_right_depth": 3.0,
+    "world/r1pro/head_left_color": 5.0,
+    "world/r1pro/head_right_color": 5.0,
+    "world/r1pro/wrist_left_color": 5.0,
+    "world/r1pro/wrist_right_color": 5.0,
+    # Raw float32 Points3D; uncapped it out-bytes every camera stream.
+    "world/r1pro/lidar": 5.0,
+}
+
+
+def _compress_color_for_viewer(msg: Any) -> Any:
+    """Re-encode a color frame to JPEG before it enters the rerun stream.
+
+    The default path logs raw RGB (``rr.Image``) — ~2.7 MB/frame, which a
+    WiFi-connected viewer can never keep up with (the robot was measured
+    pushing >100 MB/s of raw pixels at a ~5 MB/s link; the viewer fell
+    minutes behind). JPEG q75 is ~30-60x smaller. Costs one extra encode on
+    the bridge worker — a clear net win over shipping raw. Remove once the
+    Tier-2 JPEG passthrough carries original camera bytes end-to-end.
+    """
+    import rerun as rr
+
+    try:
+        data = getattr(msg, "data", None)
+        if data is None:
+            return msg  # not an Image — let the bridge's default conversion run
+        image = rr.Image(data)
+        compress = getattr(image, "compress", None)
+        return compress(jpeg_quality=75) if compress is not None else image
+    except Exception:
+        # Never let a compression failure cost a frame — fall back to the
+        # bridge's default (raw) conversion path.
+        return msg
+
+
+# Per-topic overrides for the rerun bridge (None = suppress entirely).
+_RERUN_VISUAL_OVERRIDE = {
+    "world/r1pro/head_left_color": _compress_color_for_viewer,
+    "world/r1pro/head_right_color": _compress_color_for_viewer,
+    "world/r1pro/wrist_left_color": _compress_color_for_viewer,
+    "world/r1pro/wrist_right_color": _compress_color_for_viewer,
+    # Raw 32FC1 depth frames are the largest per-message payloads on the
+    # viewer link and depth is visualization-only here — suppressed until
+    # Tier-2 lands. Head depth additionally has no producer on the new-gen
+    # robot (no ZED).
+    "world/r1pro/wrist_left_depth": None,
+    "world/r1pro/wrist_right_depth": None,
+    "world/r1pro/head_depth": None,
 }
 
 
@@ -117,6 +163,7 @@ _rerun_config = {
     # store. A live viewer needs only a small rolling buffer; cap it low.
     "memory_limit": "1GB",
     "max_hz": _RERUN_MAX_HZ,
+    "visual_override": _RERUN_VISUAL_OVERRIDE,
 }
 
 

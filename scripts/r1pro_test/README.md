@@ -20,6 +20,17 @@ blueprint researched but **not yet implemented** (§12.E). Stream-drop
 elimination on the new gen in progress —
 [NEWGEN_DROP_ELIMINATION.md](NEWGEN_DROP_ELIMINATION.md).
 
+**2026-07-10 (§15): on-robot docker image verified end-to-end once**
+(coordinator + all transports + rerun bridge on the robot), then a
+stream-rate collapse was diagnosed (3 causes, see §15) and fixes were
+committed — **but the post-reboot re-deploy is NOT currently working**:
+as of end-of-session the coordinator process starts but spawns no workers
+and publishes nothing on LCM port 7300, while something (likely a DDS
+participant again) holds 7667. Pickup point: confirm the running container
+was built from the current Dockerfile (`docker exec dimos-r1pro env | grep
+LCM_DEFAULT_URL` must show port 7300; empty = old image → rebuild), then
+re-run and check the coordinator's own terminal output for where it stalls.
+
 ---
 
 ## Network Setup
@@ -1091,6 +1102,54 @@ laptop-side change is `export ROS_DOMAIN_ID=1`.
 **Still open** (mirrored in Next Steps): clean-boot test of
 `~/galaxea-dimos`; arms/torso/grippers not re-verified on the standalone
 nodes; lidar auto-start (`start_livox_lidar.sh`, one line in `hdas.yaml`).
+
+### 15. On-robot docker deployment + stream-rate collapse diagnosis (2026-07-10)
+
+The one-stop on-robot docker image ([docker/](docker/)) was brought up
+end-to-end on the new gen: build → run → `R1ProConnection started` → all
+transports wired → rerun bridge serving gRPC on 9877. Every trap hit on the
+way (build DNS, `ROS_DOMAIN_ID`, **LCM port 7667 colliding with FastDDS
+domain-1 participant ports**, exec-shells not sourcing ROS, matplotlib
+missing, host rmem sysctls unreachable from the container) is documented in
+[docker/README.md](docker/README.md) "Known traps".
+
+**Then: camera streams at 0.2–0.4 Hz in the viewer.** Diagnosis found THREE
+stacked causes — measured, not guessed (raw-socket LCM channel-rate parser +
+rclpy topic-rate probe):
+
+1. **Wrist D405s failing at the hardware level.** ROS-level rates 0.0–0.3 Hz
+   at the source; realsense logs flooding `Frames didn't arrived within 5
+   seconds — Frames Timeout` on both wrists (USB3 enumeration fine at 5000M).
+   The known USB fault class — reseat cables, rerun
+   `start_realsense_camera_r1pro.sh`. No software fix applies.
+2. **Triple JPEG codec on-robot (CPU).** Per color frame: connection
+   `cv2.imdecode` → `JpegLcmTransport` turbojpeg re-encode → bridge turbojpeg
+   decode → rerun logs RAW pixels. Head cams publish **30 Hz** on the new gen
+   (~7 MB/s jpeg each); the connection sustained ~7 Hz, `maxsize=1` queues
+   silently dropping the rest, load average 22 on 8 cores. Fixed the free
+   part: `TurboJPEG()` was constructed **per message** on both encode and
+   decode — now a thread-local cached instance
+   ([Image.py](../../dimos/msgs/sensor_msgs/Image.py)). The structural fix is
+   the Tier-2 JPEG passthrough (original camera bytes end-to-end,
+   [NEWGEN_DROP_ELIMINATION.md](NEWGEN_DROP_ELIMINATION.md)) — NOT yet
+   implemented; until it lands, head streams top out well below 30 Hz.
+3. **rerun's gRPC stream is a reliable ordered log — it never drops frames.**
+   The bridge logged raw `rr.Image` (~2.7 MB/frame ≈ >100 MB/s demand) into a
+   ~5 MB/s WiFi viewer link, so the viewer lagged further and further behind
+   (wlan0 TX counter: 246 GB). Fixed in
+   [r1pro_coordinator.py](../../dimos/robot/galaxea/r1pro/blueprints/basic/r1pro_coordinator.py):
+   `visual_override` JPEG-compresses color frames (q75, ~30–60× smaller)
+   before logging, suppresses depth streams (largest raw payloads,
+   viz-only), caps lidar at 5 Hz (was uncapped raw Points3D), color capped
+   at 5 Hz until Tier-2.
+
+**Also: hard reboot corrupted the git object DB.** 18 recently-written loose
+objects truncated to 0 bytes (classic ext4 power-cut damage); one broke
+`refs/remotes/origin/jeff/feat/dan_loc`. Recovery (worked cleanly): back up
+uncommitted work (`git diff > backup.patch`), `find .git/objects -type f
+-empty -delete`, `git update-ref -d <broken remote-tracking ref>`, `git
+fetch origin` to restore. Local branches and the working tree were never
+damaged. Can recur on any hard power-off with recent git activity.
 
 ---
 
