@@ -79,23 +79,16 @@ class Config(ModuleConfig):
     # floor height was estimated correctly.)
     global_floor_margin: float = 0.04
     # Hard cap on the accumulated map — once exceeded, points are discarded
-    # UNIFORMLY AT RANDOM across the whole map (not just newest/least-relevant),
-    # which silently erases perfectly good, already-mapped areas anywhere,
-    # unrelated to any specific movement. Was 500_000, sized as a memory safety
-    # net — but the real memory blowup traced back to publish_every republishing
-    # the full map every frame + an unthrottled Rerun consumer (both fixed
-    # separately), not the map itself being too large. Raised substantially so
-    # normal single-room/building exploration never hits it; still a genuine
-    # ceiling against pathological unbounded growth.
-    max_global_pts: int       = 3_000_000
-    # self._frame increments every valid frame (~15/s), not just keyframes. At
-    # the old default of 1, global_map was copied+published on EVERY frame
-    # regardless of whether anything changed — with a slow/throttled Rerun
-    # consumer downstream, that queued up thousands of full-map snapshots in
-    # LCM's receive buffer (capacity 10k/subscription) and caused an OOM despite
-    # the map itself being small. 15 ≈ once/sec at 15fps, matching the
-    # RerunBridgeModule max_hz=1.0 throttle already applied to this topic.
-    publish_every: int        = 15
+    # UNIFORMLY AT RANDOM across the whole map. On this branch, speed/responsiveness
+    # is prioritized over completeness (odometry + current-frame focus, global map
+    # is secondary context) — a smaller cap keeps every publish small enough to
+    # stream fast even at high frequency; losing some far/old points is acceptable.
+    max_global_pts: int       = 150_000
+    # self._frame increments every valid frame (~15/s), not just keyframes. Was 15
+    # (~once/sec) to avoid overwhelming a wifi-bridged Rerun consumer with a huge
+    # (3M-point) payload every frame — with max_global_pts shrunk to keep each
+    # publish small, we can afford to publish much more often for responsiveness.
+    publish_every: int        = 2
     world_frame: str          = "world"
     madgwick_beta: float      = 0.033
 
