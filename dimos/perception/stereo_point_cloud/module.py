@@ -53,6 +53,9 @@ _DEPTH_MM_THRESHOLD = 100
 _KEYFRAME_DIST_M    = 0.08
 _KEYFRAME_ANGLE_RAD = np.deg2rad(8.0)
 
+# Cap on the internal ICP reference buffer (not published/visualized).
+_ICP_REF_MAX_PTS = 50_000
+
 
 class Config(ModuleConfig):
     min_depth: float          = 0.1
@@ -91,6 +94,12 @@ class StereoPointCloud(Module):
         # Trajectory: the robot's actual path — a lightweight list of past
         # poses (not point-cloud data), cheap to keep in full over a long run.
         self._trajectory_poses: list[PoseStamped] = []
+        # ICP reference buffer — NOT published/visualized, purely so odometry has
+        # more than just the single previous frame to match against. Without this,
+        # one low-overlap or fast-motion frame permanently freezes the pose
+        # estimate (nothing to re-localize against), which silently stops the
+        # trajectory from extending even though the robot keeps moving.
+        self._icp_ref_pts: np.ndarray = np.empty((0, 3), dtype=np.float32)
 
     @rpc
     def start(self) -> None:
@@ -252,9 +261,24 @@ class StereoPointCloud(Module):
             )
         )
 
-        # Frame-to-frame ICP (no map_ref — no accumulated map to reference anymore).
+        # ICP against a rolling reference buffer (not the single previous frame) so
+        # one low-overlap/fast-motion frame can't permanently freeze odometry.
+        # Simple by design: just append + random-cap, no filtering — this buffer
+        # is never published/visualized, purely a stability aid for pose tracking.
         if len(xyz_cam) >= PointCloudOdometry.MIN_PTS:
-            self._odom.update(xyz_cam, R)
+            with self._lock:
+                ref_pts = self._icp_ref_pts.copy() if len(self._icp_ref_pts) > 0 else None
+            self._odom.update(xyz_cam, R, map_ref=ref_pts)
+
+            with self._lock:
+                self._icp_ref_pts = (
+                    np.vstack([self._icp_ref_pts, xyz_vox])
+                    if len(self._icp_ref_pts)
+                    else xyz_vox.copy()
+                )
+                if len(self._icp_ref_pts) > _ICP_REF_MAX_PTS:
+                    keep_idx = np.random.choice(len(self._icp_ref_pts), _ICP_REF_MAX_PTS, replace=False)
+                    self._icp_ref_pts = self._icp_ref_pts[keep_idx]
 
         # Trajectory: lightweight pose history, same keyframe cadence as before.
         with self._lock:
