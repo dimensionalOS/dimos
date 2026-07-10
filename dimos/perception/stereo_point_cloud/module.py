@@ -211,7 +211,7 @@ class StereoPointCloud(Module):
         ]).astype(np.float32)
 
         with self._imu_lock:
-            R = self._madgwick.R.copy() if self._madgwick is not None else np.eye(3, dtype=np.float32)
+            R = self._madgwick.R_at(img.ts) if self._madgwick is not None else np.eye(3, dtype=np.float32)
 
         xyz_cam = xyz_opt @ _R_OPT_TO_LINK.T
         t = (

@@ -16,10 +16,14 @@
 
 from __future__ import annotations
 
+import bisect
 import threading
+import time
+from collections import deque
 
 import numpy as np
 from scipy.spatial import cKDTree
+from scipy.spatial.transform import Rotation, Slerp
 
 from dimos.perception.stereo_point_cloud.utils import _pack
 
@@ -31,17 +35,30 @@ _SMOOTH_ALPHA    = 0.7   # EMA weight for ICP output — reduces ±2cm centroid 
                           # keeping the same 2cm world-voxel key for a stationary surface.
 
 
+def _wxyz_to_xyzw(q: np.ndarray) -> list[float]:
+    return [q[1], q[2], q[3], q[0]]
+
+
 class MadgwickFilter:
-    """Gyro + accel → orientation R (camera_link → world, Z-up). beta=0.033."""
+    """Gyro + accel → orientation R (camera_link → world, Z-up). beta=0.033.
+
+    dt integration uses the IMU's own hardware timestamps (self-consistent).
+    History for R_at() is indexed separately by wall-clock time, since callers
+    (e.g. a depth frame's img.ts) are timestamped on that clock, not the IMU's.
+    """
+
+    HISTORY_LEN = 100  # ~250ms at 400Hz gyro — enough to bracket any depth-frame latency
 
     def __init__(self, beta: float = 0.033) -> None:
         self._q      = np.array([1., 0., 0., 0.], dtype=np.float64)
         self._beta   = beta
         self._t_prev: float | None = None
+        self._history: deque[tuple[float, np.ndarray]] = deque(maxlen=self.HISTORY_LEN)
 
     def update(self, gyro: np.ndarray, accel: np.ndarray, t: float) -> None:
         if self._t_prev is None:
             self._t_prev = t
+            self._history.append((time.time(), self._q.copy()))
             return
         dt = min(t - self._t_prev, _MAX_DT_S)
         self._t_prev = t
@@ -74,10 +91,32 @@ class MadgwickFilter:
         ]) - self._beta * grad
         self._q = self._q + q_dot * dt
         self._q /= np.linalg.norm(self._q) + 1e-12
+        self._history.append((time.time(), self._q.copy()))
 
     @property
     def R(self) -> np.ndarray:
-        q0, q1, q2, q3 = self._q
+        return self._to_matrix(self._q)
+
+    def R_at(self, ts: float) -> np.ndarray:
+        """Orientation SLERP-interpolated to a past wall-clock timestamp."""
+        if len(self._history) < 2:
+            return self.R
+        times = [s[0] for s in self._history]
+        if ts <= times[0]:
+            return self._to_matrix(self._history[0][1])
+        if ts >= times[-1]:
+            return self._to_matrix(self._history[-1][1])
+        i = bisect.bisect_left(times, ts)
+        t0, q0 = self._history[i - 1]
+        t1, q1 = self._history[i]
+        if t1 <= t0:
+            return self._to_matrix(q1)
+        rots = Rotation.from_quat([_wxyz_to_xyzw(q0), _wxyz_to_xyzw(q1)])
+        return Slerp([t0, t1], rots)([ts]).as_matrix()[0].astype(np.float32)
+
+    @staticmethod
+    def _to_matrix(q: np.ndarray) -> np.ndarray:
+        q0, q1, q2, q3 = q
         return np.array([
             [1-2*(q2**2+q3**2), 2*(q1*q2-q0*q3),   2*(q1*q3+q0*q2)  ],
             [2*(q1*q2+q0*q3),   1-2*(q1**2+q3**2), 2*(q2*q3-q0*q1)  ],
