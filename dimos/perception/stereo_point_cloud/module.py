@@ -210,9 +210,13 @@ class StereoPointCloud(Module):
 
         with self._imu_lock:
             R = self._madgwick.R.copy() if self._madgwick is not None else np.eye(3, dtype=np.float32)
-        t = self._odom.t
 
-        xyz_cam   = xyz_opt @ _R_OPT_TO_LINK.T
+        xyz_cam = xyz_opt @ _R_OPT_TO_LINK.T
+        t = (
+            self._odom.update(xyz_cam, R)
+            if len(xyz_cam) >= PointCloudOdometry.MIN_PTS
+            else self._odom.t
+        )
         xyz_world = (xyz_cam @ R.T + t).astype(np.float32)
 
         self._floor_calib.update(xyz_cam)
@@ -237,9 +241,6 @@ class StereoPointCloud(Module):
                 xyz_vox + z_off, frame_id=self.config.world_frame, timestamp=img.ts
             )
         )
-
-        if len(xyz_cam) >= PointCloudOdometry.MIN_PTS:
-            self._odom.update(xyz_cam, R)
 
         quat = Rotation.from_matrix(R).as_quat()
         with self._lock:
