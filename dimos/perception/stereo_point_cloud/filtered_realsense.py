@@ -58,7 +58,7 @@ class FilteredRealSenseCamera(RealSenseCamera):
                 depth_frame = spatial_filter.process(depth_frame)
 
             color_img = None
-            if color_frame:
+            if color_frame and (self.config.publish_color or self.config.enable_pointcloud):
                 color_data = np.asanyarray(color_frame.get_data())
                 color_data = cv2.cvtColor(color_data, cv2.COLOR_BGR2RGB)
                 color_img = Image(
@@ -67,7 +67,8 @@ class FilteredRealSenseCamera(RealSenseCamera):
                     frame_id=self._color_optical_frame,
                     ts=ts,
                 )
-                self.color_image.publish(color_img)
+                if self.config.publish_color:
+                    self.color_image.publish(color_img)
 
             depth_img = None
             if depth_frame:

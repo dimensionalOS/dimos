@@ -221,7 +221,7 @@ coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
 # FlowBase + RealSense D435i stereo depth + CostMapper + nav stack
 coordinator_flowbase_stereo_nav = (
     autoconnect(
-        FilteredRealSenseCamera.blueprint(enable_depth=True, enable_pointcloud=False),
+        FilteredRealSenseCamera.blueprint(enable_depth=True, enable_pointcloud=False, publish_color=False),
         StereoPointCloud.blueprint(),
         # CostMapper.blueprint(),
         # MovementManager.blueprint(),

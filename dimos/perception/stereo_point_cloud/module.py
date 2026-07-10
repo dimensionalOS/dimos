@@ -56,7 +56,7 @@ class Config(ModuleConfig):
     min_depth: float          = 0.1
     max_depth: float          = 8.0
     gradient_threshold: float = 0.15
-    vox_size: float           = 0.020
+    vox_size: float           = 0.05
     world_frame: str          = "world"
     madgwick_beta: float      = 0.033
 

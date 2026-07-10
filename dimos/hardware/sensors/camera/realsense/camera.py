@@ -67,6 +67,7 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     align_depth_to_color: bool = True
     enable_depth: bool = True
     enable_pointcloud: bool = False
+    publish_color: bool = True
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
     serial_number: str | None = None
@@ -286,7 +287,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
 
             # Process color
             color_img = None
-            if color_frame:
+            if color_frame and (self.config.publish_color or self.config.enable_pointcloud):
                 color_data = np.asanyarray(color_frame.get_data())
                 color_data = cv2.cvtColor(color_data, cv2.COLOR_BGR2RGB)
                 color_img = Image(
@@ -295,7 +296,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                     frame_id=self._color_optical_frame,
                     ts=ts,
                 )
-                self.color_image.publish(color_img)
+                if self.config.publish_color:
+                    self.color_image.publish(color_img)
 
             # Process depth
             depth_img = None
