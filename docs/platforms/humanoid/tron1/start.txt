@@ -38,7 +38,15 @@ dimos stop
 dimos --rerun-open web run tron1-mid360-map-vis
 ```
 
-4. 仅机器人 + RealSense 视频
+4. 使用外部 SLAM 地图点云
+直接订阅 ROS 话题 `/laser_cloud_map`，将其作为 `global_map` 输入并生成 `global_costmap`。
+
+```bash
+dimos stop
+dimos --rerun-open web run tron1-slam-map-vis
+```
+
+5. 仅机器人 + RealSense 视频
 只查看机器人连接、IMU、odom 和 RealSense 视频流，不启用 Mid360。
 
 ```bash
