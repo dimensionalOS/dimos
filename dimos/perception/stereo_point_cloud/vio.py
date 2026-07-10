@@ -84,33 +84,39 @@ class MadgwickFilter:
 
 
 class PointCloudOdometry:
-    """Rotation-decoupled ICP for translation t. Takes R from Madgwick, converges in 3-4 iters."""
+    """Rotation-decoupled ICP for translation t. Takes R from Madgwick, converges in 3-4 iters.
 
-    ITERS    = 4
-    MAX_DIST = 0.40
-    MIN_PTS  = 50     # minimum points needed to run ICP at all
-    N_SRC    = 1_500
-    N_DST    = 8_000
-    N_STORE  = 10_000
+    Owns its own ICP reference set — a bounded, self-growing point buffer (not
+    just the last frame), so one low-overlap or fast-motion frame can't
+    permanently lose tracking. Callers just call update(xyz_cam, R); nothing
+    about reference-buffer management leaks outside this class.
+    """
+
+    ITERS       = 4
+    MAX_DIST    = 0.40
+    MIN_PTS     = 50       # minimum points needed to run ICP at all
+    N_SRC       = 1_500
+    N_DST       = 8_000
+    REF_MAX_PTS = 50_000   # cap on the reference buffer
+    REF_STEP_M  = 0.08     # only grow the reference buffer once the camera has moved this far
 
     def __init__(self) -> None:
         self._t          = np.zeros(3, dtype=np.float32)
         self._lock       = threading.Lock()
-        self._prev_world: np.ndarray | None = None
+        self._ref_pts: np.ndarray | None = None
+        self._last_ref_t: np.ndarray | None = None
 
     @property
     def t(self) -> np.ndarray:
         with self._lock:
             return self._t.copy()
 
-    def update(self, xyz_cam: np.ndarray, R: np.ndarray, map_ref: np.ndarray | None = None) -> np.ndarray:
+    def update(self, xyz_cam: np.ndarray, R: np.ndarray) -> np.ndarray:
         pts_ga = (xyz_cam @ R.T).astype(np.float32)
         with self._lock:
             t_est = self._t.copy()
-        # Prefer the accumulated map as ICP reference — it covers the full explored area
-        # and gives far better convergence than a single previous frame, especially when
-        # the camera moves to a new region with no overlap to the last frame.
-        ref = map_ref if (map_ref is not None and len(map_ref) >= self.MIN_PTS) else self._prev_world
+            ref   = self._ref_pts
+
         if ref is None or len(pts_ga) < self.MIN_PTS:
             t_new = t_est
         else:
@@ -127,12 +133,25 @@ class PointCloudOdometry:
                 delta = dst[idx[mask]].mean(axis=0) - (src[mask] + t_est).mean(axis=0)
                 t_est = (t_est + 0.7 * delta).astype(np.float32)
             t_new = t_est
+
         # EMA smoothing: blend raw ICP output with the stored estimate to suppress
         # the ±2cm centroid oscillation inherent in random-subsampling ICP.
         with self._lock:
             t_smooth = (_SMOOTH_ALPHA * t_new + (1.0 - _SMOOTH_ALPHA) * self._t).astype(np.float32)
             self._t  = t_smooth
-        n_st  = min(self.N_STORE, len(pts_ga))
-        idx_s = np.random.choice(len(pts_ga), n_st, replace=False)
-        self._prev_world = (pts_ga[idx_s] + t_smooth).astype(np.float32)
+
+        # Grow the reference buffer only once the camera has actually moved —
+        # keeps this cheap (not every frame) while still giving ICP a broad,
+        # stable target instead of just the last frame.
+        if self._last_ref_t is None or float(np.linalg.norm(t_smooth - self._last_ref_t)) > self.REF_STEP_M:
+            world_pts = (pts_ga + t_smooth).astype(np.float32)
+            with self._lock:
+                self._last_ref_t = t_smooth.copy()
+                self._ref_pts = (
+                    np.vstack([self._ref_pts, world_pts]) if self._ref_pts is not None else world_pts.copy()
+                )
+                if len(self._ref_pts) > self.REF_MAX_PTS:
+                    keep = np.random.choice(len(self._ref_pts), self.REF_MAX_PTS, replace=False)
+                    self._ref_pts = self._ref_pts[keep]
+
         return t_smooth
