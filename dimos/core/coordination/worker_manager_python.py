@@ -17,8 +17,6 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel
-
 from dimos.core.coordination.python_worker import PythonWorker
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase, ModuleSpec
@@ -42,9 +40,6 @@ def _merge_config_kwargs(base: Mapping[str, Any], overrides: Mapping[str, Any]) 
 def _merge_config_value(base_value: Any, override_value: Any) -> Any:
     if not isinstance(override_value, Mapping):
         return override_value
-
-    if isinstance(base_value, BaseModel):
-        base_value = base_value.model_dump(mode="python")
 
     if not isinstance(base_value, Mapping):
         return dict(override_value)
