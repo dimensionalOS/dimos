@@ -326,6 +326,16 @@ class StereoPointCloud(Module):
                 f"Z ≈ {self._world_floor_z:.3f} m (world frame, published at Z ≈ 0)"
             )
 
+        # Keyframe gate: only insert/clean when camera has moved/rotated enough.
+        # Keeps global-map density equal to one clean frame per area explored.
+        with self._lock:
+            take_kf = True
+            if self._last_kf_t is not None:
+                t_moved = float(np.linalg.norm(t - self._last_kf_t))
+                cos_a   = float((np.trace(R @ self._last_kf_R.T) - 1.0) / 2.0)
+                r_moved = float(np.arccos(np.clip(cos_a, -1.0, 1.0)))
+                take_kf = (t_moved > _KEYFRAME_DIST_M) or (r_moved > _KEYFRAME_ANGLE_RAD)
+
         # Depth-reprojection consistency check: project existing map points into
         # THIS frame's camera view and compare against the real depth the camera
         # reports there right now. Disagreement (either direction, past the
@@ -333,33 +343,35 @@ class StereoPointCloud(Module):
         # a ghost from pose drift, or an obstacle that's genuinely moved — so it
         # gets dropped. No evidence (point falls outside the frame, behind the
         # camera, or lands on an invalid/occluded pixel) leaves it untouched.
-        # Runs every frame (not just keyframes) since it's cheap — one
-        # projection + one depth lookup per point, no ray marching — so a ghost
-        # gets challenged as soon as the very next frame looks at it.
-        with self._lock:
-            acc_pts = self._acc_pts
-            if len(acc_pts) > 0:
-                acc_cam  = (acc_pts - t) @ R
-                acc_opt  = acc_cam @ _R_OPT_TO_LINK
-                d_pred   = acc_opt[:, 2]
-                in_front = d_pred > 0.05
-                safe_d   = np.where(in_front, d_pred, 1.0)
-                u = fx * acc_opt[:, 0] / safe_d + cx
-                v = fy * acc_opt[:, 1] / safe_d + cy
-                in_bounds = in_front & (u >= 0) & (u < W) & (v >= 0) & (v < H)
-                idx = np.where(in_bounds)[0]
-                if len(idx):
-                    ui = u[idx].astype(np.int32)
-                    vi = v[idx].astype(np.int32)
-                    d_obs   = depth_checked[vi, ui]
-                    d_exp   = d_pred[idx]
-                    valid_obs    = np.isfinite(d_obs)
-                    contradicted = valid_obs & (np.abs(d_obs - d_exp) > _REPROJ_MARGIN_M)
-                    stale_idx = idx[contradicted]
-                    if len(stale_idx):
-                        keep = np.ones(len(acc_pts), dtype=bool)
-                        keep[stale_idx] = False
-                        self._acc_pts = acc_pts[keep]
+        # Gated to keyframes (not every frame) — this branch prioritizes fast
+        # current-frame throughput; projecting the whole accumulated map every
+        # single frame was competing with frame_cloud for CPU and slowing down
+        # how often frame_cloud itself could actually be published.
+        if take_kf:
+            with self._lock:
+                acc_pts = self._acc_pts
+                if len(acc_pts) > 0:
+                    acc_cam  = (acc_pts - t) @ R
+                    acc_opt  = acc_cam @ _R_OPT_TO_LINK
+                    d_pred   = acc_opt[:, 2]
+                    in_front = d_pred > 0.05
+                    safe_d   = np.where(in_front, d_pred, 1.0)
+                    u = fx * acc_opt[:, 0] / safe_d + cx
+                    v = fy * acc_opt[:, 1] / safe_d + cy
+                    in_bounds = in_front & (u >= 0) & (u < W) & (v >= 0) & (v < H)
+                    idx = np.where(in_bounds)[0]
+                    if len(idx):
+                        ui = u[idx].astype(np.int32)
+                        vi = v[idx].astype(np.int32)
+                        d_obs   = depth_checked[vi, ui]
+                        d_exp   = d_pred[idx]
+                        valid_obs    = np.isfinite(d_obs)
+                        contradicted = valid_obs & (np.abs(d_obs - d_exp) > _REPROJ_MARGIN_M)
+                        stale_idx = idx[contradicted]
+                        if len(stale_idx):
+                            keep = np.ones(len(acc_pts), dtype=bool)
+                            keep[stale_idx] = False
+                            self._acc_pts = acc_pts[keep]
 
         # World-frame accumulation: xyz_vox = xyz_cam @ R.T + t is a fixed frame.
         # Same physical point always has the same xyz_world key regardless of camera position.
@@ -372,15 +384,6 @@ class StereoPointCloud(Module):
         pts_snap = None
         traj_snap = None
         with self._lock:
-            # Keyframe gate: only insert when camera has moved/rotated enough.
-            # Keeps global-map density equal to one clean frame per area explored.
-            take_kf = True
-            if self._last_kf_t is not None:
-                t_moved = float(np.linalg.norm(t - self._last_kf_t))
-                cos_a   = float((np.trace(R @ self._last_kf_R.T) - 1.0) / 2.0)
-                r_moved = float(np.arccos(np.clip(cos_a, -1.0, 1.0)))
-                take_kf = (t_moved > _KEYFRAME_DIST_M) or (r_moved > _KEYFRAME_ANGLE_RAD)
-
             if take_kf and len(xyz_for_map):
                 self._last_kf_t = t.copy()
                 self._last_kf_R = R.copy()
