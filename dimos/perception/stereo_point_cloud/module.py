@@ -54,6 +54,8 @@ _MILLIMETERS_PER_METER = 1000.0
 _TRAJECTORY_MAX_POSES = 20_000
 _TRAJECTORY_PUBLISH_EVERY = 5
 _PERF_LOG_INTERVAL_FRAMES = 30
+_FRAME_CLOUD_PUBLISH_INTERVAL_S = 1.0 / 10.0
+_MAX_ACCEPTABLE_LAG_S = 0.5
 
 
 class Config(ModuleConfig):
@@ -86,6 +88,8 @@ class StereoPointCloud(Module):
         self._warned_no_intrinsics       = False
         self._trajectory_poses: deque[PoseStamped] = deque(maxlen=_TRAJECTORY_MAX_POSES)
         self._frame_count = 0
+        self._last_frame_cloud_publish = 0.0
+        self._last_point_count = 0
 
     @rpc
     def start(self) -> None:
@@ -106,6 +110,11 @@ class StereoPointCloud(Module):
 
     def _on_depth(self, img: Image) -> None:
         t_start = time.perf_counter()
+        lag = time.time() - img.ts
+        if lag > _MAX_ACCEPTABLE_LAG_S:
+            logger.warning(f"StereoPointCloud: dropping stale depth frame, lag={lag:.1f}s")
+            return
+
         with self._lock:
             camera_info = self._latest_camera_info
 
@@ -175,15 +184,18 @@ class StereoPointCloud(Module):
         if not len(xyz_world):
             return
 
-        voxel_indices = np.floor(xyz_world / self.config.vox_size).astype(np.int32)
-        _, first_index_per_voxel = np.unique(_pack(voxel_indices), return_index=True)
-        xyz_voxelized = xyz_world[first_index_per_voxel]
-
-        self.frame_cloud.publish(
-            PointCloud2.from_numpy(
-                xyz_voxelized + z_offset, frame_id=self.config.world_frame, timestamp=img.ts
+        now_monotonic = time.monotonic()
+        if now_monotonic - self._last_frame_cloud_publish >= _FRAME_CLOUD_PUBLISH_INTERVAL_S:
+            self._last_frame_cloud_publish = now_monotonic
+            voxel_indices = np.floor(xyz_world / self.config.vox_size).astype(np.int32)
+            _, first_index_per_voxel = np.unique(_pack(voxel_indices), return_index=True)
+            xyz_voxelized = xyz_world[first_index_per_voxel]
+            self._last_point_count = len(xyz_voxelized)
+            self.frame_cloud.publish(
+                PointCloud2.from_numpy(
+                    xyz_voxelized + z_offset, frame_id=self.config.world_frame, timestamp=img.ts
+                )
             )
-        )
         t_publish = time.perf_counter()
 
         quat = Rotation.from_matrix(R).as_quat()
@@ -215,5 +227,6 @@ class StereoPointCloud(Module):
                 f"unproject={(t_unproject - t_gradient) * 1000:.0f}ms "
                 f"odom={(t_odom_end - t_odom_start) * 1000:.0f}ms "
                 f"publish={(t_publish - t_odom_end) * 1000:.0f}ms "
-                f"traj={(t_end - t_publish) * 1000:.0f}ms"
+                f"traj={(t_end - t_publish) * 1000:.0f}ms "
+                f"points={self._last_point_count}"
             )
