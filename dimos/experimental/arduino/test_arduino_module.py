@@ -389,10 +389,13 @@ def test_registry_matches_main_cpp_hash_registry() -> None:
 
 
 class _FakeTransport:
-    """Transport stand-in: carries a topic; ``stop()`` is a no-op."""
+    """Transport stand-in: carries a channel; ``stop()`` is a no-op.
 
-    def __init__(self, topic: str) -> None:
-        self.topic = topic
+    ``NativeModule._collect_topics`` reads ``transport.channel``.
+    """
+
+    def __init__(self, channel: str) -> None:
+        self.channel = channel
 
     def stop(self) -> None:
         pass
@@ -400,8 +403,8 @@ class _FakeTransport:
 
 def _with_topics(mod, topics):
     """Attach fake transports to the module's real streams via ``set_transport``."""
-    for name, topic in topics.items():
-        mod.set_transport(name, _FakeTransport(topic))
+    for name, channel in topics.items():
+        mod.set_transport(name, _FakeTransport(channel))
     return mod
 
 
