@@ -100,7 +100,6 @@ class PanelPlanState:
     group_ids: tuple[PlanningGroupID, ...] = ()
     target_sequence_id: int = 0
     robot_snapshots: dict[str, JointState] = field(default_factory=dict)
-    plan_receipt: str | None = None
 
 
 @dataclass
@@ -191,7 +190,6 @@ class PanelState:
             and plan.group_ids == self.selected_group_ids
             and plan.target_sequence_id == self.latest_sequence_id
             and bool(plan.robot_snapshots)
-            and plan.plan_receipt is not None
         ):
             return False
         return True

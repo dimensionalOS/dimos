@@ -190,7 +190,6 @@ class Module:
         }
         self.plans: list[tuple[tuple[str, ...], dict[str, JointState]]] = []
         self.executions = 0
-        self.execution_receipts: list[str] = []
         self.cancelled = 0
         self.cleared = 0
 
@@ -238,16 +237,15 @@ class Module:
     def reset(self) -> SimpleNamespace:
         return SimpleNamespace(is_success=lambda: True)
 
-    def plan_to_joint_targets_with_receipt(self, targets: dict[str, JointState]) -> str:
+    def plan_to_joint_targets(self, targets: dict[str, JointState]) -> bool:
         self.plans.append((tuple(targets), targets))
-        return f"receipt-{len(self.plans)}"
+        return True
 
     def preview_plan(self) -> bool:
         return True
 
-    def execute_plan_receipt(self, receipt: str) -> bool:
+    def execute(self) -> bool:
         self.executions += 1
-        self.execution_receipts.append(receipt)
         return True
 
     def cancel(self) -> bool:
@@ -407,7 +405,6 @@ def test_plan_target_sequence_invalidation_and_unfiltered_all_robot_execute(
     gui._submit_plan()
     assert module.plans[-1][0] == (left.id, right.id)
     assert set(gui.state.plan_state.robot_snapshots) == {"left", "right"}
-    assert gui.state.plan_state.plan_receipt == "receipt-1"
     gui.state.next_sequence_id()
     assert gui.state.plan_state.status == PlanStatus.STALE
     gui.state.plan_state = PanelPlanState(
@@ -415,32 +412,10 @@ def test_plan_target_sequence_invalidation_and_unfiltered_all_robot_execute(
         group_ids=(left.id, right.id),
         target_sequence_id=gui.state.latest_sequence_id,
         robot_snapshots={"left": module.states["left"], "right": module.states["right"]},
-        plan_receipt="receipt-1",
     )
     gui.state.target_status = TargetStatus.FEASIBLE
     gui._submit_execute()
     assert module.executions == 1
-    assert module.execution_receipts == ["receipt-1"]
-
-
-def test_plan_execute_uses_exact_plan_receipt(
-    panel: Callable[..., tuple[ViserPanelGui, Module, Server]], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    selected = group("arm", "manipulator", ("j1",), pose=True)
-    gui, module, _server = panel([selected], states("arm"))
-    gui.state.target_status = TargetStatus.FEASIBLE
-    monkeypatch.setattr(
-        gui,
-        "_operation_worker",
-        SimpleNamespace(submit=lambda operation, **_: operation(), stop=lambda **_: None),
-    )
-
-    gui._submit_plan()
-    receipt = gui.state.plan_state.plan_receipt
-    gui._submit_execute()
-
-    assert receipt == "receipt-1"
-    assert module.execution_receipts == [receipt]
 
 
 def test_initialization_waits_for_complete_fresh_telemetry(
@@ -1056,7 +1031,6 @@ def test_all_robot_execute_rejects_secondary_robot_preconditions(
             "left": JointState(module.states["left"]),
             "right": JointState(module.states["right"]),
         },
-        plan_receipt="receipt-1",
     )
     monkeypatch.setattr(
         gui,

@@ -29,7 +29,6 @@ from enum import Enum
 import threading
 import time
 from typing import TYPE_CHECKING, Any, TypeAlias
-from uuid import uuid4
 
 from pydantic import Field
 
@@ -169,7 +168,6 @@ class ManipulationModule(Module):
         # Canonical generated plan for plan/preview/execute workflow.
         # Robot-local paths and trajectories are derived from this plan on demand.
         self._last_plan: GeneratedPlan | None = None
-        self._last_plan_receipt: str | None = None
         self._last_plan_consumed = False
 
         # Coordinator integration (lazy initialized)
@@ -344,7 +342,7 @@ class ManipulationModule(Module):
                 # Route to specific monitor
                 self._world_monitor.on_joint_state(sub_msg, robot_id=robot_id)
 
-                # Capture per-robot init joints on first receipt
+                # Capture per-robot init joints on first update
                 if robot_name not in self._init_joints:
                     self._init_joints[robot_name] = sub_msg
                     logger.info(
@@ -416,7 +414,6 @@ class ManipulationModule(Module):
                 self._state = ManipulationState.IDLE
             else:
                 return False
-            self._last_plan_receipt = None
             self._last_plan_consumed = self._last_plan is not None
             plan = self._last_plan
         if plan is not None:
@@ -505,7 +502,6 @@ class ManipulationModule(Module):
                 return None
             self._planning_epoch += 1
             self._last_plan = None
-            self._last_plan_receipt = None
             self._last_plan_consumed = False
             self._state = ManipulationState.PLANNING
         return robot[0], robot[1]
@@ -521,7 +517,6 @@ class ManipulationModule(Module):
                 return None
             self._planning_epoch += 1
             self._last_plan = None
-            self._last_plan_receipt = None
             self._last_plan_consumed = False
             self._state = ManipulationState.PLANNING
             return self._planning_epoch
@@ -612,8 +607,8 @@ class ManipulationModule(Module):
         start: JointState,
         goal: JointState,
         planning_epoch: int,
-    ) -> str | None:
-        """Plan over explicit planning groups and return its stored-plan receipt."""
+    ) -> bool:
+        """Plan over explicit planning groups and store the resulting plan."""
         assert self._world_monitor and self._planner
         result = self._planner.plan_selected_joint_path(
             world=self._world_monitor.world,
@@ -624,7 +619,7 @@ class ManipulationModule(Module):
         )
         if not result.is_success():
             _ = self._fail_planning_epoch(planning_epoch, f"Planning failed: {result.status.name}")
-            return None
+            return False
 
         logger.info("Path: %d waypoints, groups=%s", len(result.path), group_ids)
         plan = GeneratedPlan(
@@ -639,17 +634,15 @@ class ManipulationModule(Module):
         projected = self._project_plan_to_robot_paths(plan)
         if projected is None or any(len(path) < 2 for path in projected.values()):
             _ = self._fail_planning_epoch(planning_epoch, "Failed to project generated plan")
-            return None
-        receipt = str(uuid4())
+            return False
         with self._lock:
             if self._state != ManipulationState.PLANNING or planning_epoch != self._planning_epoch:
                 logger.info("Discarding cancelled planning result")
-                return None
+                return False
             self._last_plan = plan
-            self._last_plan_receipt = receipt
             self._last_plan_consumed = False
             self._state = ManipulationState.COMPLETED
-        return receipt
+        return True
 
     def _fail(self, msg: str) -> bool:
         """Set FAULT state with error message."""
@@ -667,7 +660,6 @@ class ManipulationModule(Module):
                 return False
             logger.warning(msg)
             self._last_plan = None
-            self._last_plan_receipt = None
             self._last_plan_consumed = False
             self._state = ManipulationState.FAULT
             self._error_message = msg
@@ -869,9 +861,7 @@ class ManipulationModule(Module):
         if not ik.is_success() or ik.joint_state is None:
             return self._fail_planning_epoch(planning_epoch, f"IK failed: {ik.status.name}")
         logger.info(f"IK solved, error: {ik.position_error:.4f}m")
-        return (
-            self._plan_selected_path(group_ids, start, ik.joint_state, planning_epoch) is not None
-        )
+        return self._plan_selected_path(group_ids, start, ik.joint_state, planning_epoch)
 
     @rpc
     def plan_to_joints(self, joints: JointState, robot_name: RobotName | None = None) -> bool:
@@ -906,31 +896,24 @@ class ManipulationModule(Module):
         self, joint_targets: Mapping[PlanningGroupID | PlanningGroup, JointState]
     ) -> bool:
         """Plan to joint targets keyed by planning group."""
-        return self._plan_to_joint_targets(joint_targets) is not None
-
-    @rpc
-    def plan_to_joint_targets_with_receipt(
-        self, joint_targets: Mapping[PlanningGroupID | PlanningGroup, JointState]
-    ) -> str | None:
-        """Plan to joint targets and atomically return the resulting plan receipt."""
         return self._plan_to_joint_targets(joint_targets)
 
     def _plan_to_joint_targets(
         self, joint_targets: Mapping[PlanningGroupID | PlanningGroup, JointState]
-    ) -> str | None:
-        """Plan to joint targets keyed by planning group and return its receipt."""
+    ) -> bool:
+        """Plan to joint targets keyed by planning group."""
         if self._world_monitor is None or self._planner is None:
-            return None
+            return False
         if not joint_targets:
             _ = self._fail("At least one joint target is required")
-            return None
+            return False
 
         group_ids = tuple(
             dict.fromkeys(planning_group_id_from_selector(group) for group in joint_targets)
         )
         planning_epoch = self._begin_group_planning()
         if planning_epoch is None:
-            return None
+            return False
 
         try:
             selection = self._world_monitor.planning_groups.select(group_ids)
@@ -940,7 +923,7 @@ class ManipulationModule(Module):
             _ = self._fail_planning_epoch(
                 planning_epoch, f"Failed to resolve planning groups: {exc}"
             )
-            return None
+            return False
 
         goal_names: list[str] = []
         goal_positions: list[float] = []
@@ -954,7 +937,7 @@ class ManipulationModule(Module):
                 _ = self._fail_planning_epoch(
                     planning_epoch, f"Invalid joint target for '{group_id}'"
                 )
-                return None
+                return False
             goal_names.extend(target_global.name)
             goal_positions.extend(target_global.position)
 
@@ -1036,7 +1019,6 @@ class ManipulationModule(Module):
         with self._lock:
             plan = self._last_plan
             self._last_plan = None
-            self._last_plan_receipt = None
             self._last_plan_consumed = False
             if self._state == ManipulationState.PLANNING:
                 self._planning_epoch += 1
@@ -1353,16 +1335,8 @@ class ManipulationModule(Module):
             return False
         return self._execute_plan(reserved_plan, robot_name=robot_name, execution_reserved=True)
 
-    @rpc
-    def execute_plan_receipt(self, receipt: str) -> bool:
-        """Execute the exact unconsumed plan identified by a module-issued receipt."""
-        plan = self._reserve_stored_plan(receipt)
-        if plan is None:
-            return False
-        return self._execute_plan(plan, execution_reserved=True)
-
-    def _reserve_stored_plan(self, receipt: str | None = None) -> GeneratedPlan | None:
-        """Atomically reserve the stored plan, optionally validating its receipt."""
+    def _reserve_stored_plan(self) -> GeneratedPlan | None:
+        """Atomically reserve the stored plan for one-shot execution."""
         with self._lock:
             plan = self._last_plan
             if (
@@ -1370,11 +1344,9 @@ class ManipulationModule(Module):
                 or not plan.path
                 or self._last_plan_consumed
                 or self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED)
-                or (receipt is not None and receipt != self._last_plan_receipt)
             ):
                 logger.warning("Stored plan is invalid, consumed, or not executable")
                 return None
-            self._last_plan_receipt = None
             self._last_plan_consumed = True
             self._state = ManipulationState.EXECUTING
             return plan

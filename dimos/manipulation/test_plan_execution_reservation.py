@@ -1,0 +1,146 @@
+# Copyright 2025-2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Tests for planned-path execution reservation and result propagation."""
+
+from collections.abc import Callable
+from pathlib import Path
+import threading
+from unittest.mock import MagicMock
+
+from dimos.manipulation._test_manipulation_helpers import make_module
+from dimos.manipulation.manipulation_module import ManipulationState
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
+from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.enums import IKStatus, PlanningStatus
+from dimos.manipulation.planning.spec.models import GeneratedPlan, IKResult, PlanningResult
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointState import JointState
+
+
+def test_plan_to_pose_targets_propagates_failed_plan_as_false():
+    module = make_module()
+    robot_config = RobotModelConfig(
+        name="test_arm",
+        model_path=Path("/path/to/robot.urdf"),
+        base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        joint_names=["joint1", "joint2", "joint3"],
+        base_link="link_base",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="manipulator",
+                joint_names=("joint1", "joint2", "joint3"),
+                base_link="link_base",
+                tip_link="link_tcp",
+            )
+        ],
+        max_velocity=1.0,
+        max_acceleration=2.0,
+        coordinator_task_name="traj_arm",
+    )
+    registry = PlanningGroupRegistry([robot_config])
+    module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
+    module._world_monitor = MagicMock()
+    module._world_monitor.world = MagicMock()
+    module._world_monitor.planning_groups = registry
+    module._world_monitor.current_global_joint_state.return_value = JointState(
+        name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
+        position=[0.0, 0.0, 0.0],
+    )
+    module._world_monitor.get_current_joint_state.return_value = JointState(
+        name=robot_config.joint_names,
+        position=[0.0, 0.0, 0.0],
+    )
+    module._kinematics = MagicMock()
+    module._kinematics.solve_pose_targets.return_value = IKResult(
+        status=IKStatus.SUCCESS,
+        joint_state=JointState(
+            name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
+            position=[0.1, 0.2, 0.3],
+        ),
+    )
+    module._planner = MagicMock()
+    module._planner.plan_selected_joint_path.return_value = PlanningResult(
+        status=PlanningStatus.NO_SOLUTION
+    )
+    pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
+
+    assert module.plan_to_pose_targets({"test_arm/manipulator": pose}) is False
+    assert module._state == ManipulationState.FAULT
+
+
+def test_execute_plan_reserves_stored_plan_once():
+    module = make_module()
+    plan = GeneratedPlan(group_ids=("arm/manipulator",), path=[JointState(), JointState()])
+    module._last_plan = plan
+    module._state = ManipulationState.COMPLETED
+    module._execute_plan = MagicMock(return_value=True)
+
+    assert module.execute_plan() is True
+    assert module.execute_plan() is False
+    module._execute_plan.assert_called_once_with(plan, robot_name=None, execution_reserved=True)
+
+
+def test_execute_and_execute_plan_race_to_reserve_stored_plan_once():
+    module = make_module()
+    plan = GeneratedPlan(group_ids=("arm/manipulator",), path=[JointState(), JointState()])
+    module._last_plan = plan
+    module._state = ManipulationState.COMPLETED
+    callers_ready = threading.Barrier(3)
+    dispatch_started = threading.Event()
+    allow_dispatch_return = threading.Event()
+    results: list[bool] = []
+
+    def dispatch(*_args, **_kwargs):
+        dispatch_started.set()
+        assert allow_dispatch_return.wait(timeout=1.0)
+        return True
+
+    def call_execute(execute: Callable[[], bool]) -> None:
+        callers_ready.wait(timeout=1.0)
+        results.append(execute())
+
+    module._execute_plan = MagicMock(side_effect=dispatch)
+    legacy = threading.Thread(target=call_execute, args=(module.execute,))
+    current = threading.Thread(target=call_execute, args=(module.execute_plan,))
+    legacy.start()
+    current.start()
+    callers_ready.wait(timeout=1.0)
+    assert dispatch_started.wait(timeout=1.0)
+
+    allow_dispatch_return.set()
+    legacy.join(timeout=1.0)
+    current.join(timeout=1.0)
+
+    assert not legacy.is_alive()
+    assert not current.is_alive()
+    assert sorted(results) == [False, True]
+    module._execute_plan.assert_called_once_with(plan, robot_name=None, execution_reserved=True)
+
+
+def test_execute_plan_accepts_a_direct_plan_without_reserving_stored_plan():
+    module = make_module()
+    direct_plan = GeneratedPlan(group_ids=("arm/manipulator",), path=[JointState(), JointState()])
+    module._last_plan = GeneratedPlan(
+        group_ids=("other/manipulator",), path=[JointState(), JointState()]
+    )
+    module._last_plan_consumed = True
+    module._execute_plan = MagicMock(return_value=True)
+
+    assert module.execute_plan(plan=direct_plan) is True
+    module._execute_plan.assert_called_once_with(direct_plan, robot_name=None)

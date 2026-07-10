@@ -33,7 +33,6 @@ class ManipulationModuleHarness(ManipulationModule):
         self._planning_epoch = 0
         self._robots = {}
         self._last_plan = None
-        self._last_plan_receipt = None
         self._last_plan_consumed = False
         self._world_monitor = None
         self._planner = None

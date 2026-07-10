@@ -522,7 +522,7 @@ class TestPlanningGroupApis:
             "test_arm/joint3",
         ]
 
-        receipt = module.plan_to_joint_targets_with_receipt(
+        success = module.plan_to_joint_targets(
             {
                 "test_arm/manipulator": JointState(
                     name=robot_config.joint_names,
@@ -531,8 +531,7 @@ class TestPlanningGroupApis:
             }
         )
 
-        assert receipt is not None
-        assert receipt == module._last_plan_receipt
+        assert success is True
         assert module._planner.plan_selected_joint_path.call_count == 2
 
     def test_plan_to_pose_targets_uses_group_ik_and_selected_path(self, robot_config):
@@ -1145,16 +1144,6 @@ class TestManipulationPreview:
         module._world_monitor.hide_preview.assert_called_once_with(("arm/manipulator",))
         module._world_monitor.publish_visualization.assert_called_once_with()
         assert module._last_plan is None
-
-    def test_clear_planned_path_invalidates_receipt(self):
-        module = _make_module()
-        module._last_plan = GeneratedPlan(
-            group_ids=("arm/manipulator",), path=[JointState(), JointState()]
-        )
-        module._last_plan_receipt = "receipt"
-
-        assert module.clear_planned_path() is True
-        assert module._last_plan_receipt is None
 
     def test_clear_planned_path_clears_without_a_world_monitor(self):
         module = _make_module()

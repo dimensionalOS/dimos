@@ -65,7 +65,7 @@ The panel MUST associate asynchronous results with a selection epoch and MUST sn
 
 #### Scenario: Another caller replaces the stored module plan
 - **WHEN** replacement occurs between the panel freshness check and execution
-- **THEN** execution rejects the stale receipt instead of dispatching the replacement plan
+- **THEN** the external-plan replacement race is unavoidable
 
 ### Requirement: Joint-target feasibility must use existing PR 4 world APIs
 The visualization backend MUST compose full per-robot target states and call `WorldMonitor.is_state_valid`; it MUST NOT add or copy manipulation-module FK or collision APIs.

@@ -982,24 +982,23 @@ class ViserPanelGui:
                     selection_epoch=selection_epoch,
                 )
                 return
-            receipt = self.adapter.plan_to_selected_joints(group_ids, targets)
+            ok = self.adapter.plan_to_selected_joints(group_ids, targets)
             if not self._operation_is_current(operation_id, selection_epoch, target_sequence_id):
                 self._finish_operation(
                     "plan=False", operation_id=operation_id, selection_epoch=selection_epoch
                 )
                 return
-            if receipt is not None:
+            if ok:
                 self.state.plan_state.status = PlanStatus.FRESH
                 self.state.plan_state.group_ids = group_ids
                 self.state.plan_state.target_sequence_id = target_sequence_id
                 self.state.plan_state.robot_snapshots = snapshots
                 self.state.plan_state.target_joints = planned_target_joints
                 self.state.plan_state.target_pose = target_pose
-                self.state.plan_state.plan_receipt = receipt
             else:
                 self.state.plan_state.status = PlanStatus.FAILED
             self._finish_operation(
-                f"plan_to_joints={receipt is not None}",
+                f"plan_to_joints={ok}",
                 operation_id=operation_id,
                 selection_epoch=selection_epoch,
             )
@@ -1046,12 +1045,7 @@ class ViserPanelGui:
         group_ids = self.state.selected_group_ids
         target_sequence_id = self.state.latest_sequence_id
         snapshots = self.state.plan_state.robot_snapshots
-        receipt = self.state.plan_state.plan_receipt
         expected_robot_names = tuple(self._selected_robot_names())
-        if receipt is None:
-            self.state.plan_state.status = PlanStatus.STALE
-            self._set_recoverable_error("Cannot execute: fresh plan receipt is missing")
-            return
         operation_id = self._next_operation_id()
 
         def operation() -> None:
@@ -1060,7 +1054,6 @@ class ViserPanelGui:
             if (
                 self.state.plan_state.group_ids != group_ids
                 or self.state.plan_state.target_sequence_id != target_sequence_id
-                or self.state.plan_state.plan_receipt != receipt
                 or not snapshots
                 or set(snapshots) != set(expected_robot_names)
             ):
@@ -1132,7 +1125,7 @@ class ViserPanelGui:
                 return
             self.state.action_status = ActionStatus.EXECUTING
             self.state.plan_state.status = PlanStatus.EXECUTING
-            ok = self.adapter.execute(receipt)
+            ok = self.adapter.execute()
             if not self._operation_is_current(operation_id, selection_epoch, target_sequence_id):
                 self._finish_operation(
                     "execute=False", operation_id=operation_id, selection_epoch=selection_epoch
