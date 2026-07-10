@@ -90,19 +90,21 @@ class PointCloudOdometry:
     a single low-overlap frame can't permanently lose tracking.
     """
 
-    ITERS       = 4
-    MAX_DIST    = 0.40
-    MIN_PTS     = 50       # minimum points needed to run ICP at all
-    N_SRC       = 1_500
-    N_DST       = 8_000
-    REF_MAX_PTS = 50_000   # cap on the reference buffer
-    REF_STEP_M  = 0.08     # only grow the reference buffer once the camera has moved this far
+    ITERS        = 4
+    MAX_DIST     = 0.40
+    MIN_PTS      = 50       # minimum points needed to run ICP at all
+    N_SRC        = 1_500
+    N_DST        = 8_000
+    REF_MAX_PTS  = 50_000        # cap on the reference buffer
+    REF_STEP_M   = 0.08          # grow the reference buffer once moved this far...
+    REF_STEP_RAD = np.deg2rad(8) # ...or rotated this much (pure rotation still needs a refresh)
 
     def __init__(self) -> None:
         self._t          = np.zeros(3, dtype=np.float32)
         self._lock       = threading.Lock()
         self._ref_pts: np.ndarray | None = None
         self._last_ref_t: np.ndarray | None = None
+        self._last_ref_R: np.ndarray | None = None
 
     @property
     def t(self) -> np.ndarray:
@@ -136,10 +138,16 @@ class PointCloudOdometry:
             t_smooth = (_SMOOTH_ALPHA * t_new + (1.0 - _SMOOTH_ALPHA) * self._t).astype(np.float32)
             self._t  = t_smooth
 
-        if self._last_ref_t is None or float(np.linalg.norm(t_smooth - self._last_ref_t)) > self.REF_STEP_M:
+        moved = self._last_ref_t is None or float(np.linalg.norm(t_smooth - self._last_ref_t)) > self.REF_STEP_M
+        if not moved and self._last_ref_R is not None:
+            cos_a = float((np.trace(R @ self._last_ref_R.T) - 1.0) / 2.0)
+            moved = float(np.arccos(np.clip(cos_a, -1.0, 1.0))) > self.REF_STEP_RAD
+
+        if moved:
             world_pts = (pts_ga + t_smooth).astype(np.float32)
             with self._lock:
                 self._last_ref_t = t_smooth.copy()
+                self._last_ref_R = R.copy()
                 self._ref_pts = (
                     np.vstack([self._ref_pts, world_pts]) if self._ref_pts is not None else world_pts.copy()
                 )

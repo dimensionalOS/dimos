@@ -48,6 +48,7 @@ logger = setup_logger()
 
 _DEPTH_MM_THRESHOLD = 100
 _TRAJECTORY_MAX_POSES = 20_000
+_TRAJECTORY_PUBLISH_EVERY = 5  # record every frame, publish at a fraction of that rate
 
 
 class Config(ModuleConfig):
@@ -83,6 +84,7 @@ class StereoPointCloud(Module):
         self._motion_sensor              = None
         self._warned_no_intrinsics       = False
         self._trajectory_poses: deque[PoseStamped] = deque(maxlen=_TRAJECTORY_MAX_POSES)
+        self._frame_count = 0
 
     @rpc
     def start(self) -> None:
@@ -252,6 +254,8 @@ class StereoPointCloud(Module):
                     orientation=[float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3])],
                 )
             )
-            traj_snap = list(self._trajectory_poses)
+            self._frame_count += 1
+            traj_snap = list(self._trajectory_poses) if self._frame_count % _TRAJECTORY_PUBLISH_EVERY == 0 else None
 
-        self.trajectory.publish(Path(ts=img.ts, frame_id=self.config.world_frame, poses=traj_snap))
+        if traj_snap is not None:
+            self.trajectory.publish(Path(ts=img.ts, frame_id=self.config.world_frame, poses=traj_snap))
