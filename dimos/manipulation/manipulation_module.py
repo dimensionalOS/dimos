@@ -29,6 +29,7 @@ from enum import Enum
 import threading
 import time
 from typing import TYPE_CHECKING, Any, TypeAlias
+from uuid import uuid4
 
 from pydantic import Field
 
@@ -168,6 +169,8 @@ class ManipulationModule(Module):
         # Canonical generated plan for plan/preview/execute workflow.
         # Robot-local paths and trajectories are derived from this plan on demand.
         self._last_plan: GeneratedPlan | None = None
+        self._last_plan_receipt: str | None = None
+        self._last_plan_consumed = False
 
         # Coordinator integration (lazy initialized)
         self._coordinator_client: RPCClient | None = None
@@ -405,18 +408,19 @@ class ManipulationModule(Module):
     @rpc
     def cancel(self) -> bool:
         """Cancel current motion or invalidate an in-progress plan."""
-        if self._state == ManipulationState.PLANNING:
-            self._planning_epoch += 1
-            self._state = ManipulationState.IDLE
-            if self._last_plan is not None:
-                self._dismiss_preview(self._last_plan.group_ids)
-            logger.info("Planning cancelled")
-            return True
-        if self._state != ManipulationState.EXECUTING:
-            return False
-        self._state = ManipulationState.IDLE
-        if self._last_plan is not None:
-            self._dismiss_preview(self._last_plan.group_ids)
+        with self._lock:
+            if self._state == ManipulationState.PLANNING:
+                self._planning_epoch += 1
+                self._state = ManipulationState.IDLE
+            elif self._state == ManipulationState.EXECUTING:
+                self._state = ManipulationState.IDLE
+            else:
+                return False
+            self._last_plan_receipt = None
+            self._last_plan_consumed = self._last_plan is not None
+            plan = self._last_plan
+        if plan is not None:
+            self._dismiss_preview(plan.group_ids)
         logger.info("Motion cancelled")
         return True
 
@@ -428,15 +432,16 @@ class ManipulationModule(Module):
         Use this after an error or fault to allow new commands.
         Cannot reset while a motion is executing — cancel first.
         """
-        if self._state == ManipulationState.EXECUTING:
-            return SkillResult.fail(
-                "INVALID_STATE",
-                "Cannot reset while executing — cancel the motion first",
-            )
-        if self._state == ManipulationState.PLANNING:
-            self._planning_epoch += 1
-        self._state = ManipulationState.IDLE
-        self._error_message = ""
+        with self._lock:
+            if self._state == ManipulationState.EXECUTING:
+                return SkillResult.fail(
+                    "INVALID_STATE",
+                    "Cannot reset while executing — cancel the motion first",
+                )
+            if self._state == ManipulationState.PLANNING:
+                self._planning_epoch += 1
+            self._state = ManipulationState.IDLE
+            self._error_message = ""
         return SkillResult.ok("Reset to IDLE — ready for new commands")
 
     @rpc
@@ -499,6 +504,9 @@ class ManipulationModule(Module):
                 logger.warning(f"Cannot plan: state is {self._state.name}")
                 return None
             self._planning_epoch += 1
+            self._last_plan = None
+            self._last_plan_receipt = None
+            self._last_plan_consumed = False
             self._state = ManipulationState.PLANNING
         return robot[0], robot[1]
 
@@ -513,6 +521,8 @@ class ManipulationModule(Module):
                 return None
             self._planning_epoch += 1
             self._last_plan = None
+            self._last_plan_receipt = None
+            self._last_plan_consumed = False
             self._state = ManipulationState.PLANNING
             return self._planning_epoch
 
@@ -602,8 +612,8 @@ class ManipulationModule(Module):
         start: JointState,
         goal: JointState,
         planning_epoch: int,
-    ) -> bool:
-        """Plan over an explicit planning group selection and store the result."""
+    ) -> str | None:
+        """Plan over explicit planning groups and return its stored-plan receipt."""
         assert self._world_monitor and self._planner
         result = self._planner.plan_selected_joint_path(
             world=self._world_monitor.world,
@@ -612,11 +622,9 @@ class ManipulationModule(Module):
             goal=goal,
             timeout=self.config.planning_timeout,
         )
-        if self._state != ManipulationState.PLANNING or planning_epoch != self._planning_epoch:
-            logger.info("Discarding cancelled planning result")
-            return False
         if not result.is_success():
-            return self._fail(f"Planning failed: {result.status.name}")
+            _ = self._fail_planning_epoch(planning_epoch, f"Planning failed: {result.status.name}")
+            return None
 
         logger.info("Path: %d waypoints, groups=%s", len(result.path), group_ids)
         plan = GeneratedPlan(
@@ -630,18 +638,40 @@ class ManipulationModule(Module):
         )
         projected = self._project_plan_to_robot_paths(plan)
         if projected is None or any(len(path) < 2 for path in projected.values()):
-            self._last_plan = None
-            return self._fail("Failed to project generated plan")
-        self._last_plan = plan
-        self._state = ManipulationState.COMPLETED
-        return True
+            _ = self._fail_planning_epoch(planning_epoch, "Failed to project generated plan")
+            return None
+        receipt = str(uuid4())
+        with self._lock:
+            if self._state != ManipulationState.PLANNING or planning_epoch != self._planning_epoch:
+                logger.info("Discarding cancelled planning result")
+                return None
+            self._last_plan = plan
+            self._last_plan_receipt = receipt
+            self._last_plan_consumed = False
+            self._state = ManipulationState.COMPLETED
+        return receipt
 
     def _fail(self, msg: str) -> bool:
         """Set FAULT state with error message."""
         logger.warning(msg)
-        self._state = ManipulationState.FAULT
-        self._error_message = msg
+        with self._lock:
+            self._state = ManipulationState.FAULT
+            self._error_message = msg
         return False
+
+    def _fail_planning_epoch(self, planning_epoch: int, msg: str) -> bool:
+        """Fault only the still-current planning operation."""
+        with self._lock:
+            if self._state != ManipulationState.PLANNING or planning_epoch != self._planning_epoch:
+                logger.info("Discarding cancelled planning result")
+                return False
+            logger.warning(msg)
+            self._last_plan = None
+            self._last_plan_receipt = None
+            self._last_plan_consumed = False
+            self._state = ManipulationState.FAULT
+            self._error_message = msg
+            return False
 
     def _dismiss_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
         """Hide the preview ghost if the world supports it."""
@@ -827,7 +857,9 @@ class ManipulationModule(Module):
             current = self._world_monitor.current_global_joint_state()
             start = filter_joint_state_to_selected_joints(current, selection.joint_names)
         except Exception as exc:
-            return self._fail(f"Failed to resolve planning groups: {exc}")
+            return self._fail_planning_epoch(
+                planning_epoch, f"Failed to resolve planning groups: {exc}"
+            )
 
         ik = self.inverse_kinematics(
             pose_targets=stamped_targets,
@@ -835,9 +867,11 @@ class ManipulationModule(Module):
             seed=start,
         )
         if not ik.is_success() or ik.joint_state is None:
-            return self._fail(f"IK failed: {ik.status.name}")
+            return self._fail_planning_epoch(planning_epoch, f"IK failed: {ik.status.name}")
         logger.info(f"IK solved, error: {ik.position_error:.4f}m")
-        return self._plan_selected_path(group_ids, start, ik.joint_state, planning_epoch)
+        return (
+            self._plan_selected_path(group_ids, start, ik.joint_state, planning_epoch) is not None
+        )
 
     @rpc
     def plan_to_joints(self, joints: JointState, robot_name: RobotName | None = None) -> bool:
@@ -872,24 +906,41 @@ class ManipulationModule(Module):
         self, joint_targets: Mapping[PlanningGroupID | PlanningGroup, JointState]
     ) -> bool:
         """Plan to joint targets keyed by planning group."""
+        return self._plan_to_joint_targets(joint_targets) is not None
+
+    @rpc
+    def plan_to_joint_targets_with_receipt(
+        self, joint_targets: Mapping[PlanningGroupID | PlanningGroup, JointState]
+    ) -> str | None:
+        """Plan to joint targets and atomically return the resulting plan receipt."""
+        return self._plan_to_joint_targets(joint_targets)
+
+    def _plan_to_joint_targets(
+        self, joint_targets: Mapping[PlanningGroupID | PlanningGroup, JointState]
+    ) -> str | None:
+        """Plan to joint targets keyed by planning group and return its receipt."""
         if self._world_monitor is None or self._planner is None:
-            return False
+            return None
         if not joint_targets:
-            return self._fail("At least one joint target is required")
+            _ = self._fail("At least one joint target is required")
+            return None
 
         group_ids = tuple(
             dict.fromkeys(planning_group_id_from_selector(group) for group in joint_targets)
         )
         planning_epoch = self._begin_group_planning()
         if planning_epoch is None:
-            return False
+            return None
 
         try:
             selection = self._world_monitor.planning_groups.select(group_ids)
             current = self._world_monitor.current_global_joint_state()
             start = filter_joint_state_to_selected_joints(current, selection.joint_names)
         except Exception as exc:
-            return self._fail(f"Failed to resolve planning groups: {exc}")
+            _ = self._fail_planning_epoch(
+                planning_epoch, f"Failed to resolve planning groups: {exc}"
+            )
+            return None
 
         goal_names: list[str] = []
         goal_positions: list[float] = []
@@ -900,7 +951,10 @@ class ManipulationModule(Module):
                 target_global = joint_target_to_global_names(target_group, target)
             except (KeyError, ValueError) as exc:
                 logger.error(str(exc))
-                return self._fail(f"Invalid joint target for '{group_id}'")
+                _ = self._fail_planning_epoch(
+                    planning_epoch, f"Invalid joint target for '{group_id}'"
+                )
+                return None
             goal_names.extend(target_global.name)
             goal_positions.extend(target_global.position)
 
@@ -979,12 +1033,18 @@ class ManipulationModule(Module):
         Returns:
             True if cleared
         """
-        plan = self._last_plan
+        with self._lock:
+            plan = self._last_plan
+            self._last_plan = None
+            self._last_plan_receipt = None
+            self._last_plan_consumed = False
+            if self._state == ManipulationState.PLANNING:
+                self._planning_epoch += 1
+                self._state = ManipulationState.IDLE
         if plan is not None:
             # Preserve the group selection until the public visualization
             # transaction has invalidated and hidden its preview.
             self._dismiss_preview(plan.group_ids)
-        self._last_plan = None
         return True
 
     @rpc
@@ -1286,42 +1346,97 @@ class ManipulationModule(Module):
         self, plan: GeneratedPlan | None = None, robot_name: RobotName | None = None
     ) -> bool:
         """Execute a generated planning-group plan through affected trajectory tasks."""
+        if plan is not None:
+            return self._execute_plan(plan, robot_name=robot_name)
+        reserved_plan = self._reserve_stored_plan()
+        if reserved_plan is None:
+            return False
+        return self._execute_plan(reserved_plan, robot_name=robot_name, execution_reserved=True)
+
+    @rpc
+    def execute_plan_receipt(self, receipt: str) -> bool:
+        """Execute the exact unconsumed plan identified by a module-issued receipt."""
+        plan = self._reserve_stored_plan(receipt)
+        if plan is None:
+            return False
+        return self._execute_plan(plan, execution_reserved=True)
+
+    def _reserve_stored_plan(self, receipt: str | None = None) -> GeneratedPlan | None:
+        """Atomically reserve the stored plan, optionally validating its receipt."""
+        with self._lock:
+            plan = self._last_plan
+            if (
+                plan is None
+                or not plan.path
+                or self._last_plan_consumed
+                or self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED)
+                or (receipt is not None and receipt != self._last_plan_receipt)
+            ):
+                logger.warning("Stored plan is invalid, consumed, or not executable")
+                return None
+            self._last_plan_receipt = None
+            self._last_plan_consumed = True
+            self._state = ManipulationState.EXECUTING
+            return plan
+
+    def _execute_plan(
+        self,
+        plan: GeneratedPlan | None,
+        robot_name: RobotName | None = None,
+        execution_reserved: bool = False,
+    ) -> bool:
+        """Execute a captured generated plan through affected trajectory tasks."""
         if self._world_monitor is None:
             logger.error("Planning not initialized")
+            if execution_reserved:
+                self._release_reserved_execution()
             return False
-        plan = plan or self._last_plan
         if plan is None or not plan.path:
             logger.warning("No generated plan")
+            if execution_reserved:
+                self._release_reserved_execution()
             return False
         if (client := self._get_coordinator_client()) is None:
             logger.error("No coordinator client")
+            if execution_reserved:
+                self._release_reserved_execution()
             return False
         try:
             affected = list(self._world_monitor.planning_groups.select(plan.group_ids).robot_names)
         except Exception as exc:
-            return self._fail(f"Failed to resolve generated plan: {exc}")
+            return self._fail_execution(
+                f"Failed to resolve generated plan: {exc}", execution_reserved
+            )
         if robot_name is not None:
             if robot_name not in affected:
                 logger.warning("No planned path for '%s'", robot_name)
+                if execution_reserved:
+                    self._release_reserved_execution()
                 return False
             affected = [robot_name]
         trajectories = self._trajectories_for_plan(plan)
         if trajectories is None:
-            return self._fail("Failed to project generated plan")
+            return self._fail_execution("Failed to project generated plan", execution_reserved)
 
-        self._state = ManipulationState.EXECUTING
+        if not execution_reserved:
+            with self._lock:
+                self._state = ManipulationState.EXECUTING
         for robot_name in affected:
             robot = self._get_robot(robot_name)
             if robot is None:
-                return self._fail(f"Robot '{robot_name}' not found")
+                return self._fail_execution(f"Robot '{robot_name}' not found", execution_reserved)
             _, _, config, _ = robot
             if not config.coordinator_task_name:
                 logger.error(f"No coordinator_task_name for '{robot_name}'")
-                return self._fail(f"No coordinator_task_name for '{robot_name}'")
+                return self._fail_execution(
+                    f"No coordinator_task_name for '{robot_name}'", execution_reserved
+                )
             traj = trajectories.get(robot_name)
             if traj is None:
                 logger.warning("No planned trajectory for '%s'", robot_name)
-                return self._fail(f"No planned trajectory for '{robot_name}'")
+                return self._fail_execution(
+                    f"No planned trajectory for '{robot_name}'", execution_reserved
+                )
             translated = self._translate_trajectory_to_coordinator(traj, config)
             logger.info(
                 "Executing: task='%s', %d pts, %.2fs",
@@ -1333,11 +1448,30 @@ class ManipulationModule(Module):
                 config.coordinator_task_name, "execute", {"trajectory": translated}
             )
             if not result:
-                return self._fail("Coordinator rejected trajectory")
+                return self._fail_execution("Coordinator rejected trajectory", execution_reserved)
 
         logger.info("Trajectory accepted")
-        self._state = ManipulationState.COMPLETED
+        with self._lock:
+            if execution_reserved and self._state != ManipulationState.EXECUTING:
+                return False
+            self._state = ManipulationState.COMPLETED
         return True
+
+    def _release_reserved_execution(self) -> None:
+        """Return a still-active reservation to IDLE after local validation fails."""
+        with self._lock:
+            if self._state == ManipulationState.EXECUTING:
+                self._state = ManipulationState.IDLE
+
+    def _fail_execution(self, msg: str, execution_reserved: bool) -> bool:
+        """Fault an execution unless its reservation has already been cancelled."""
+        logger.warning(msg)
+        with self._lock:
+            if execution_reserved and self._state != ManipulationState.EXECUTING:
+                return False
+            self._state = ManipulationState.FAULT
+            self._error_message = msg
+            return False
 
     @rpc
     def get_trajectory_status(self, robot_name: RobotName | None = None) -> dict[str, Any] | None:

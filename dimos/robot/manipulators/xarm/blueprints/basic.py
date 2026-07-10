@@ -64,6 +64,23 @@ dual_xarm6_planner_coordinator = autoconnect(
     ),
 )
 
+dual_xarm6_planner_coordinator_mock_meshcat = autoconnect(
+    planner(
+        robots=[
+            make_xarm6_model_config(name="left_arm", y_offset=0.5),
+            make_xarm6_model_config(name="right_arm", y_offset=-0.5),
+        ],
+        visualization={"backend": "meshcat"},
+    ),
+    coordinator(
+        hardware=[_mock_left_xarm6_hw, _mock_right_xarm6_hw],
+        tasks=[
+            trajectory_task(_mock_left_xarm6_hw),
+            trajectory_task(_mock_right_xarm6_hw),
+        ],
+    ),
+)
+
 _xarm7_hw = xarm7_hardware("arm", gripper=True, mock_without_address=True)
 
 xarm7_planner_coordinator = autoconnect(

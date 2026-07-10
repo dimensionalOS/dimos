@@ -190,6 +190,7 @@ class Module:
         }
         self.plans: list[tuple[tuple[str, ...], dict[str, JointState]]] = []
         self.executions = 0
+        self.execution_receipts: list[str] = []
         self.cancelled = 0
         self.cleared = 0
 
@@ -237,15 +238,16 @@ class Module:
     def reset(self) -> SimpleNamespace:
         return SimpleNamespace(is_success=lambda: True)
 
-    def plan_to_joint_targets(self, targets: dict[str, JointState]) -> bool:
+    def plan_to_joint_targets_with_receipt(self, targets: dict[str, JointState]) -> str:
         self.plans.append((tuple(targets), targets))
-        return True
+        return f"receipt-{len(self.plans)}"
 
     def preview_plan(self) -> bool:
         return True
 
-    def execute(self) -> bool:
+    def execute_plan_receipt(self, receipt: str) -> bool:
         self.executions += 1
+        self.execution_receipts.append(receipt)
         return True
 
     def cancel(self) -> bool:
@@ -405,6 +407,7 @@ def test_plan_target_sequence_invalidation_and_unfiltered_all_robot_execute(
     gui._submit_plan()
     assert module.plans[-1][0] == (left.id, right.id)
     assert set(gui.state.plan_state.robot_snapshots) == {"left", "right"}
+    assert gui.state.plan_state.plan_receipt == "receipt-1"
     gui.state.next_sequence_id()
     assert gui.state.plan_state.status == PlanStatus.STALE
     gui.state.plan_state = PanelPlanState(
@@ -412,10 +415,110 @@ def test_plan_target_sequence_invalidation_and_unfiltered_all_robot_execute(
         group_ids=(left.id, right.id),
         target_sequence_id=gui.state.latest_sequence_id,
         robot_snapshots={"left": module.states["left"], "right": module.states["right"]},
+        plan_receipt="receipt-1",
     )
     gui.state.target_status = TargetStatus.FEASIBLE
     gui._submit_execute()
     assert module.executions == 1
+    assert module.execution_receipts == ["receipt-1"]
+
+
+def test_plan_execute_uses_exact_plan_receipt(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    selected = group("arm", "manipulator", ("j1",), pose=True)
+    gui, module, _server = panel([selected], states("arm"))
+    gui.state.target_status = TargetStatus.FEASIBLE
+    monkeypatch.setattr(
+        gui,
+        "_operation_worker",
+        SimpleNamespace(submit=lambda operation, **_: operation(), stop=lambda **_: None),
+    )
+
+    gui._submit_plan()
+    receipt = gui.state.plan_state.plan_receipt
+    gui._submit_execute()
+
+    assert receipt == "receipt-1"
+    assert module.execution_receipts == [receipt]
+
+
+def test_initialization_waits_for_complete_fresh_telemetry(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+) -> None:
+    selected = group("arm", "manipulator", ("j1", "j2"), pose=True)
+    gui, module, _server = panel(
+        [selected], {"arm": JointState({"name": ["j1"], "position": [0.4]})}
+    )
+
+    assert selected.id not in gui.state.group_joint_targets
+    gui._world_monitor.stale.add("id-arm")
+    module.states["arm"] = JointState({"name": ["j1", "j2"], "position": [0.4, 0.5]})
+    gui.refresh()
+    assert selected.id not in gui.state.group_joint_targets
+
+    gui._world_monitor.stale.clear()
+    gui.refresh()
+    assert gui.state.group_joint_targets[selected.id].position == [0.4, 0.5]
+
+
+def test_incomplete_preset_preserves_existing_group_targets(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+) -> None:
+    selected = group("arm", "manipulator", ("j1", "j2"), pose=True)
+    gui, module, _server = panel([selected], states("arm"))
+    before = JointState(gui.state.group_joint_targets[selected.id])
+    module.get_init_joints = lambda _name: JointState({"name": ["j1"], "position": [-0.5]})
+
+    gui._apply_preset("Init")
+
+    assert gui.state.group_joint_targets[selected.id] == before
+    assert "missing joints" in gui.state.error
+
+
+def test_valid_init_preset_builds_sliders_after_incomplete_initial_telemetry(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+) -> None:
+    selected = group("arm", "manipulator", ("j1", "j2"), pose=True)
+    gui, _module, server = panel(
+        [selected], {"arm": JointState({"name": ["j1"], "position": [0.4]})}
+    )
+
+    assert gui.state.group_joint_targets == {}
+    assert server.gui.sliders == []
+
+    gui._apply_preset("Init")
+
+    assert gui.state.group_joint_targets[selected.id].position == [-0.5, -1.0]
+    assert [slider.label for slider in server.gui.sliders if not slider.removed] == [
+        "arm/manipulator/j1",
+        "arm/manipulator/j2",
+    ]
+
+
+def test_incomplete_multi_group_preset_does_not_change_any_targets(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+) -> None:
+    left, right = (
+        group("left", "manipulator", ("j1",), pose=True),
+        group("right", "manipulator", ("j1",), pose=True),
+    )
+    gui, module, _server = panel([left, right], states("left", "right"))
+    gui._toggle_group_selected(right.id)
+    before = {
+        group_id: JointState(target) for group_id, target in gui.state.group_joint_targets.items()
+    }
+    module.get_init_joints = lambda robot_name: JointState(
+        {
+            "name": ["j1"] if robot_name == "left" else [],
+            "position": [-0.5] if robot_name == "left" else [],
+        }
+    )
+
+    gui._apply_preset("Init")
+
+    assert gui.state.group_joint_targets == before
+    assert "right/manipulator" in gui.state.error
 
 
 def test_cancel_clear_and_close_invalidate_operations_and_preview_generation(
@@ -953,6 +1056,7 @@ def test_all_robot_execute_rejects_secondary_robot_preconditions(
             "left": JointState(module.states["left"]),
             "right": JointState(module.states["right"]),
         },
+        plan_receipt="receipt-1",
     )
     monkeypatch.setattr(
         gui,

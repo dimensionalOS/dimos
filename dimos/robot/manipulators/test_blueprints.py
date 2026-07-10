@@ -18,13 +18,16 @@ from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
 from dimos.manipulation.visualization.config import (
+    MeshcatVisualizationConfig,
     NoManipulationVisualizationConfig,
 )
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
+from dimos.robot.get_all_blueprints import get_blueprint_by_name
 from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.xarm.blueprints.basic import (
     dual_xarm6_planner,
     dual_xarm6_planner_coordinator,
+    dual_xarm6_planner_coordinator_mock_meshcat,
     xarm6_planner_only,
     xarm7_planner_coordinator,
 )
@@ -65,8 +68,15 @@ def test_xarm_planner_blueprints_default_to_no_visualization() -> None:
         assert isinstance(config.visualization, NoManipulationVisualizationConfig)
 
 
-def test_dual_xarm6_planner_coordinator_wires_planner_and_coordinator() -> None:
+def test_dual_xarm6_planner_coordinator_blueprints_preserve_visualization_backends() -> None:
+    assert get_blueprint_by_name("dual-xarm6-planner-coordinator") is dual_xarm6_planner_coordinator
+    assert (
+        get_blueprint_by_name("dual-xarm6-planner-coordinator-mock-meshcat")
+        is dual_xarm6_planner_coordinator_mock_meshcat
+    )
+
     config = _manipulation_config(dual_xarm6_planner_coordinator)
+    legacy_config = _manipulation_config(dual_xarm6_planner_coordinator_mock_meshcat)
     coordinator_kwargs = next(
         atom.kwargs
         for atom in dual_xarm6_planner_coordinator.blueprints
@@ -74,6 +84,7 @@ def test_dual_xarm6_planner_coordinator_wires_planner_and_coordinator() -> None:
     )
 
     assert isinstance(config.visualization, ViserVisualizationConfig)
+    assert isinstance(legacy_config.visualization, MeshcatVisualizationConfig)
     assert [robot.name for robot in config.robots] == ["left_arm", "right_arm"]
     assert [hardware.hardware_id for hardware in coordinator_kwargs["hardware"]] == [
         "left_arm",

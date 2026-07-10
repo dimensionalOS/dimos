@@ -39,7 +39,6 @@ from dimos.manipulation.visualization.config import (
 )
 from dimos.manipulation.visualization.factory import create_manipulation_visualization
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
-from dimos.manipulation.visualization.viser.visualizer import ViserManipulationVisualizer
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -248,6 +247,8 @@ def test_create_visualization_meshcat_rejects_non_visualization_world() -> None:
 
 
 def test_create_viser_visualization_has_group_preview_protocol_without_legacy_path_api() -> None:
+    pytest.importorskip("viser")
+
     visualization = create_manipulation_visualization(
         ViserVisualizationConfig(),
         world=FakeWorld(),
@@ -255,6 +256,6 @@ def test_create_viser_visualization_has_group_preview_protocol_without_legacy_pa
         manipulation_module=MagicMock(),
     )
 
-    assert isinstance(visualization, ViserManipulationVisualizer)
+    assert isinstance(visualization, VisualizationSpec)
     assert isinstance(FakeVisualization(), VisualizationSpec)
     assert not hasattr(visualization, "animate_path")

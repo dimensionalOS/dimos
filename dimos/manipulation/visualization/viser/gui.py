@@ -154,7 +154,9 @@ class ViserPanelGui:
             self.state.selected_robot = str(first.robot_name)
             self.state.target_status = TargetStatus.EMPTY
             self._default_group_initialized = True
-            self._initialize_selected_group_targets()
+        initialized_groups = set(self.state.group_joint_targets)
+        self._initialize_selected_group_targets()
+        if set(self.state.group_joint_targets) != initialized_groups:
             self._build_joint_sliders()
         self._sync_group_selector(groups)
         self._refresh_selected_robot_state()
@@ -432,15 +434,17 @@ class ViserPanelGui:
             group = self._groups_by_id().get(group_id)
             if group is None:
                 continue
+            if self.adapter.is_state_stale(group.robot_name):
+                continue
             values = self._state_values_by_local_name(
                 self.adapter.get_current_joint_state(group.robot_name)
             )
+            if any(str(name) not in values for name in group.local_joint_names):
+                continue
             self.state.group_joint_targets[group_id] = JointState(
                 {
                     "name": list(group.joint_names),
-                    "position": [
-                        float(values.get(str(name), 0.0)) for name in group.local_joint_names
-                    ],
+                    "position": [float(values[str(name)]) for name in group.local_joint_names],
                 }
             )
             if group.has_pose_target and group_id not in self.state.pose_targets:
@@ -569,16 +573,37 @@ class ViserPanelGui:
             return
         if preset not in {"Current", "Init", "Home"}:
             return
+        targets: dict[PlanningGroupID, JointState] = {}
+        slider_values: list[tuple[PlanningGroupID, tuple[str, ...], list[float]]] = []
         for group_id in self.state.selected_group_ids:
             group = self._groups_by_id().get(group_id)
             if group is None:
-                continue
+                self._set_recoverable_error(f"Unknown planning group: {group_id}")
+                return
+            if preset == "Current" and self.adapter.is_state_stale(group.robot_name):
+                self._set_recoverable_error(
+                    f"Cannot apply Current preset without fresh telemetry for: {group.robot_name}"
+                )
+                return
             values = self._preset_values_by_local_name(preset, str(group.robot_name))
-            positions = [float(values.get(str(name), 0.0)) for name in group.local_joint_names]
-            self.state.group_joint_targets[group_id] = JointState(
-                {"name": list(group.joint_names), "position": positions}
-            )
-            self._set_group_slider_values(group_id, group.local_joint_names, positions)
+            missing = [str(name) for name in group.local_joint_names if str(name) not in values]
+            if missing:
+                self._set_recoverable_error(
+                    f"Cannot apply {preset} preset: missing joints for {group_id}: {', '.join(missing)}"
+                )
+                return
+            positions = [float(values[str(name)]) for name in group.local_joint_names]
+            targets[group_id] = JointState({"name": list(group.joint_names), "position": positions})
+            slider_values.append((group_id, group.local_joint_names, positions))
+        self.state.group_joint_targets.update(targets)
+        if any(
+            (group_id, str(local_name)) not in self._joint_sliders
+            for group_id, local_names, _positions in slider_values
+            for local_name in local_names
+        ):
+            self._build_joint_sliders()
+        for group_id, local_names, positions in slider_values:
+            self._set_group_slider_values(group_id, local_names, positions)
         self._refresh_target_joints_from_groups()
         self._submit_joint_target_evaluation()
         self.refresh()
@@ -957,23 +982,26 @@ class ViserPanelGui:
                     selection_epoch=selection_epoch,
                 )
                 return
-            ok = self.adapter.plan_to_selected_joints(group_ids, targets)
+            receipt = self.adapter.plan_to_selected_joints(group_ids, targets)
             if not self._operation_is_current(operation_id, selection_epoch, target_sequence_id):
                 self._finish_operation(
                     "plan=False", operation_id=operation_id, selection_epoch=selection_epoch
                 )
                 return
-            if ok:
+            if receipt is not None:
                 self.state.plan_state.status = PlanStatus.FRESH
                 self.state.plan_state.group_ids = group_ids
                 self.state.plan_state.target_sequence_id = target_sequence_id
                 self.state.plan_state.robot_snapshots = snapshots
                 self.state.plan_state.target_joints = planned_target_joints
                 self.state.plan_state.target_pose = target_pose
+                self.state.plan_state.plan_receipt = receipt
             else:
                 self.state.plan_state.status = PlanStatus.FAILED
             self._finish_operation(
-                f"plan_to_joints={ok}", operation_id=operation_id, selection_epoch=selection_epoch
+                f"plan_to_joints={receipt is not None}",
+                operation_id=operation_id,
+                selection_epoch=selection_epoch,
             )
 
         self._operation_worker.submit(
@@ -1018,7 +1046,12 @@ class ViserPanelGui:
         group_ids = self.state.selected_group_ids
         target_sequence_id = self.state.latest_sequence_id
         snapshots = self.state.plan_state.robot_snapshots
+        receipt = self.state.plan_state.plan_receipt
         expected_robot_names = tuple(self._selected_robot_names())
+        if receipt is None:
+            self.state.plan_state.status = PlanStatus.STALE
+            self._set_recoverable_error("Cannot execute: fresh plan receipt is missing")
+            return
         operation_id = self._next_operation_id()
 
         def operation() -> None:
@@ -1027,6 +1060,7 @@ class ViserPanelGui:
             if (
                 self.state.plan_state.group_ids != group_ids
                 or self.state.plan_state.target_sequence_id != target_sequence_id
+                or self.state.plan_state.plan_receipt != receipt
                 or not snapshots
                 or set(snapshots) != set(expected_robot_names)
             ):
@@ -1098,7 +1132,7 @@ class ViserPanelGui:
                 return
             self.state.action_status = ActionStatus.EXECUTING
             self.state.plan_state.status = PlanStatus.EXECUTING
-            ok = self.adapter.execute()
+            ok = self.adapter.execute(receipt)
             if not self._operation_is_current(operation_id, selection_epoch, target_sequence_id):
                 self._finish_operation(
                     "execute=False", operation_id=operation_id, selection_epoch=selection_epoch

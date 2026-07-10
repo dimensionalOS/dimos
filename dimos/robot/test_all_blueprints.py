@@ -51,6 +51,7 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "coordinator-xarm7",
         "dual-xarm6-planner",
         "dual-xarm6-planner-coordinator",
+        "dual-xarm6-planner-coordinator-mock-meshcat",
         "learning-collect-quest-piper",
         "learning-collect-quest-xarm7",
         "teleop-hosted-go2",

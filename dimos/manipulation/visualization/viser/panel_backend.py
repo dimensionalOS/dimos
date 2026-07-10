@@ -339,20 +339,23 @@ class GroupPanelBackend:
 
     def plan_to_selected_joints(
         self, group_ids: Sequence[PlanningGroupID], targets: Mapping[PlanningGroupID, JointState]
-    ) -> bool:
+    ) -> str | None:
         """Plan the captured target for every selected group."""
         if complete_states_for_targets(self.world_monitor, self.module, group_ids, targets) is None:
-            return False
-        return bool(targets) and self.module.plan_to_joint_targets(
-            cast("Mapping[PlanningGroupID | PlanningGroup, JointState]", targets)
+            return None
+        return (
+            None
+            if not targets
+            else self.module.plan_to_joint_targets_with_receipt(
+                cast("Mapping[PlanningGroupID | PlanningGroup, JointState]", targets)
+            )
         )
 
     def preview_path(self) -> bool:
         return self.module.preview_plan()
 
-    def execute(self, robot_name: RobotName | None = None) -> bool:
-        _ = robot_name
-        return self.module.execute()
+    def execute(self, receipt: str) -> bool:
+        return self.module.execute_plan_receipt(receipt)
 
     def snapshot_selected_robots(
         self, group_ids: Sequence[PlanningGroupID]

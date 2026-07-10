@@ -17,12 +17,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-import threading
 from unittest.mock import MagicMock
 
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.manipulation._test_manipulation_helpers import make_module as _make_module
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationModuleConfig,
@@ -113,26 +113,6 @@ def simple_trajectory():
             ),
         ],
     )
-
-
-class _ManipulationModuleHarness(ManipulationModule):
-    def __init__(self) -> None:
-        self._state = ManipulationState.IDLE
-        self._lock = threading.Lock()
-        self._error_message = ""
-        self._planning_epoch = 0
-        self._robots = {}
-        self._last_plan = None
-        self._world_monitor = None
-        self._planner = None
-        self._kinematics = None
-        self._coordinator_client = None
-        self.config = MagicMock(planning_timeout=10.0)
-
-
-def _make_module() -> ManipulationModule:
-    """Create a lightweight ManipulationModule harness for behavior tests."""
-    return _ManipulationModuleHarness()
 
 
 def _one_joint_config(name: str = "arm") -> RobotModelConfig:
@@ -541,6 +521,19 @@ class TestPlanningGroupApis:
             "test_arm/joint2",
             "test_arm/joint3",
         ]
+
+        receipt = module.plan_to_joint_targets_with_receipt(
+            {
+                "test_arm/manipulator": JointState(
+                    name=robot_config.joint_names,
+                    position=[0.1, 0.2, 0.3],
+                )
+            }
+        )
+
+        assert receipt is not None
+        assert receipt == module._last_plan_receipt
+        assert module._planner.plan_selected_joint_path.call_count == 2
 
     def test_plan_to_pose_targets_uses_group_ik_and_selected_path(self, robot_config):
         module = _make_module()
@@ -1136,7 +1129,7 @@ class TestWorldMonitorVisualization:
 
 
 class TestManipulationPreview:
-    def test_clear_planned_path_dismisses_preview_before_forgetting_plan(self):
+    def test_clear_planned_path_invalidates_before_dismissing_preview(self):
         module = _make_module()
         plan = GeneratedPlan(group_ids=("arm/manipulator",), path=[])
         module._last_plan = plan
@@ -1148,10 +1141,20 @@ class TestManipulationPreview:
 
         assert module.clear_planned_path() is True
 
-        assert plan_during_dismissal == [plan]
+        assert plan_during_dismissal == [None]
         module._world_monitor.hide_preview.assert_called_once_with(("arm/manipulator",))
         module._world_monitor.publish_visualization.assert_called_once_with()
         assert module._last_plan is None
+
+    def test_clear_planned_path_invalidates_receipt(self):
+        module = _make_module()
+        module._last_plan = GeneratedPlan(
+            group_ids=("arm/manipulator",), path=[JointState(), JointState()]
+        )
+        module._last_plan_receipt = "receipt"
+
+        assert module.clear_planned_path() is True
+        assert module._last_plan_receipt is None
 
     def test_clear_planned_path_clears_without_a_world_monitor(self):
         module = _make_module()
