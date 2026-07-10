@@ -21,6 +21,8 @@ import threading
 import numpy as np
 from scipy.spatial import cKDTree
 
+from dimos.perception.stereo_point_cloud.utils import _pack
+
 
 _MAX_DT_S        = 0.1   # don't integrate more than 100ms at once — big gaps would blow up the filter
 _ACCEL_MIN_NORM  = 0.5   # skip accel correction if reading is basically zero (noise or free-fall)
@@ -95,14 +97,17 @@ class PointCloudOdometry:
     MIN_PTS      = 50       # minimum points needed to run ICP at all
     N_SRC        = 1_500
     N_DST        = 8_000
-    REF_MAX_PTS  = 50_000        # cap on the reference buffer
+    REF_MAX_PTS  = 50_000        # ring buffer capacity
     REF_STEP_M   = 0.08          # grow the reference buffer once moved this far...
     REF_STEP_RAD = np.deg2rad(8) # ...or rotated this much (pure rotation still needs a refresh)
+    REF_VOX_SIZE = 0.05          # dedup growth batches to this voxel size — matching doesn't need mm precision
 
     def __init__(self) -> None:
         self._t          = np.zeros(3, dtype=np.float32)
         self._lock       = threading.Lock()
-        self._ref_pts: np.ndarray | None = None
+        self._ref_buf        = np.zeros((self.REF_MAX_PTS, 3), dtype=np.float32)
+        self._ref_write_idx  = 0
+        self._ref_filled     = 0
         self._last_ref_t: np.ndarray | None = None
         self._last_ref_R: np.ndarray | None = None
 
@@ -115,7 +120,7 @@ class PointCloudOdometry:
         pts_ga = (xyz_cam @ R.T).astype(np.float32)
         with self._lock:
             t_est = self._t.copy()
-            ref   = self._ref_pts
+            ref   = self._ref_buf[: self._ref_filled].copy() if self._ref_filled else None
 
         if ref is None or len(pts_ga) < self.MIN_PTS:
             t_new = t_est
@@ -145,14 +150,31 @@ class PointCloudOdometry:
 
         if moved:
             world_pts = (pts_ga + t_smooth).astype(np.float32)
+            vk        = np.floor(world_pts / self.REF_VOX_SIZE).astype(np.int32)
+            _, first  = np.unique(_pack(vk), return_index=True)
+            batch     = world_pts[first]
             with self._lock:
                 self._last_ref_t = t_smooth.copy()
                 self._last_ref_R = R.copy()
-                self._ref_pts = (
-                    np.vstack([self._ref_pts, world_pts]) if self._ref_pts is not None else world_pts.copy()
-                )
-                if len(self._ref_pts) > self.REF_MAX_PTS:
-                    keep = np.random.choice(len(self._ref_pts), self.REF_MAX_PTS, replace=False)
-                    self._ref_pts = self._ref_pts[keep]
+                self._write_ring(batch)
 
         return t_smooth
+
+    def _write_ring(self, batch: np.ndarray) -> None:
+        n = len(batch)
+        if n == 0:
+            return
+        if n >= self.REF_MAX_PTS:
+            self._ref_buf[:] = batch[-self.REF_MAX_PTS:]
+            self._ref_write_idx = 0
+            self._ref_filled = self.REF_MAX_PTS
+            return
+        end = self._ref_write_idx + n
+        if end <= self.REF_MAX_PTS:
+            self._ref_buf[self._ref_write_idx : end] = batch
+        else:
+            split = self.REF_MAX_PTS - self._ref_write_idx
+            self._ref_buf[self._ref_write_idx :] = batch[:split]
+            self._ref_buf[: end - self.REF_MAX_PTS] = batch[split:]
+        self._ref_write_idx = end % self.REF_MAX_PTS
+        self._ref_filled = min(self._ref_filled + n, self.REF_MAX_PTS)
