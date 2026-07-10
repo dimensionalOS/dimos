@@ -65,7 +65,7 @@ The panel MUST associate asynchronous results with a selection epoch and MUST sn
 
 #### Scenario: Another caller replaces the stored module plan
 - **WHEN** replacement occurs between the panel freshness check and execution
-- **THEN** this change does not guarantee atomic prevention; a future opaque plan token is required
+- **THEN** execution rejects the stale receipt instead of dispatching the replacement plan
 
 ### Requirement: Joint-target feasibility must use existing PR 4 world APIs
 The visualization backend MUST compose full per-robot target states and call `WorldMonitor.is_state_valid`; it MUST NOT add or copy manipulation-module FK or collision APIs.
@@ -90,4 +90,4 @@ The Viser panel MUST prevent execution when no fresh plan matches the current se
 
 #### Scenario: Current state no longer matches preview
 - **WHEN** the robot state changes after planning
-- **THEN** the panel rejects execute until all selected-group snapshots match again, subject to the documented non-atomic external plan-replacement limitation
+- **THEN** the panel rejects execute until all selected-group snapshots match again
