@@ -24,6 +24,9 @@ import numpy as np
 
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 class FilteredRealSenseCamera(RealSenseCamera):
@@ -43,7 +46,8 @@ class FilteredRealSenseCamera(RealSenseCamera):
         while self._running and self._pipeline is not None:
             try:
                 frames = self._pipeline.wait_for_frames(timeout_ms=1000)
-            except (RuntimeError, AttributeError):
+            except (RuntimeError, AttributeError) as e:
+                logger.error(f"FilteredRealSenseCamera: capture loop exiting, wait_for_frames failed: {e}")
                 break
 
             ts = time.time()
