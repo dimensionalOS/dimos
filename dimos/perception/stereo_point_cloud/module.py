@@ -255,32 +255,17 @@ class StereoPointCloud(Module):
         _, first = np.unique(_pack(vk), return_index=True)
         xyz_vox  = xyz_world[first]
 
+        # Fastest possible path to the viewer: publish immediately, before any of
+        # the odometry/trajectory bookkeeping below runs.
         self.frame_cloud.publish(
             PointCloud2.from_numpy(
                 xyz_vox + z_off, frame_id=self.config.world_frame, timestamp=img.ts
             )
         )
 
-        # ICP against a rolling reference buffer (not the single previous frame) so
-        # one low-overlap/fast-motion frame can't permanently freeze odometry.
-        # Simple by design: just append + random-cap, no filtering — this buffer
-        # is never published/visualized, purely a stability aid for pose tracking.
-        if len(xyz_cam) >= PointCloudOdometry.MIN_PTS:
-            with self._lock:
-                ref_pts = self._icp_ref_pts.copy() if len(self._icp_ref_pts) > 0 else None
-            self._odom.update(xyz_cam, R, map_ref=ref_pts)
-
-            with self._lock:
-                self._icp_ref_pts = (
-                    np.vstack([self._icp_ref_pts, xyz_vox])
-                    if len(self._icp_ref_pts)
-                    else xyz_vox.copy()
-                )
-                if len(self._icp_ref_pts) > _ICP_REF_MAX_PTS:
-                    keep_idx = np.random.choice(len(self._icp_ref_pts), _ICP_REF_MAX_PTS, replace=False)
-                    self._icp_ref_pts = self._icp_ref_pts[keep_idx]
-
-        # Trajectory: lightweight pose history, same keyframe cadence as before.
+        # Keyframe gate computed once, up front — reused to keep BOTH the ICP
+        # reference buffer and the trajectory recording rare (not every frame),
+        # so neither competes with frame_cloud's publish rate.
         with self._lock:
             take_kf = True
             if self._last_kf_t is not None:
@@ -289,8 +274,32 @@ class StereoPointCloud(Module):
                 r_moved = float(np.arccos(np.clip(cos_a, -1.0, 1.0)))
                 take_kf = (t_moved > _KEYFRAME_DIST_M) or (r_moved > _KEYFRAME_ANGLE_RAD)
 
-            traj_snap = None
+        # ICP MATCH runs every frame (cheap — bounded by PointCloudOdometry's own
+        # N_SRC/N_DST sampling caps regardless of reference buffer size, needed
+        # for smooth continuous tracking). Reference buffer MAINTENANCE (the
+        # vstack + random-cap over up to _ICP_REF_MAX_PTS) only runs at keyframe
+        # cadence — that part scales with buffer size and was adding real
+        # per-frame cost that doesn't need to happen every single frame.
+        if len(xyz_cam) >= PointCloudOdometry.MIN_PTS:
+            with self._lock:
+                ref_pts = self._icp_ref_pts.copy() if len(self._icp_ref_pts) > 0 else None
+            self._odom.update(xyz_cam, R, map_ref=ref_pts)
+
             if take_kf:
+                with self._lock:
+                    self._icp_ref_pts = (
+                        np.vstack([self._icp_ref_pts, xyz_vox])
+                        if len(self._icp_ref_pts)
+                        else xyz_vox.copy()
+                    )
+                    if len(self._icp_ref_pts) > _ICP_REF_MAX_PTS:
+                        keep_idx = np.random.choice(len(self._icp_ref_pts), _ICP_REF_MAX_PTS, replace=False)
+                        self._icp_ref_pts = self._icp_ref_pts[keep_idx]
+
+        # Trajectory: lightweight pose history, same keyframe cadence.
+        traj_snap = None
+        if take_kf:
+            with self._lock:
                 self._last_kf_t = t.copy()
                 self._last_kf_R = R.copy()
                 quat = Rotation.from_matrix(R).as_quat()
