@@ -47,9 +47,6 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 _DEPTH_MM_THRESHOLD = 100
-
-# Trajectory length cap — every frame's pose is recorded (no gating), oldest
-# dropped automatically once the deque is full.
 _TRAJECTORY_MAX_POSES = 20_000
 
 
@@ -85,9 +82,6 @@ class StereoPointCloud(Module):
         self._R_imu_to_link: np.ndarray  = np.eye(3, dtype=np.float32)
         self._motion_sensor              = None
         self._warned_no_intrinsics       = False
-        # Trajectory: the robot's actual path — every frame's pose, cheap to
-        # keep since it's a small list, not point-cloud data. Bounded so a long
-        # run can't grow it forever.
         self._trajectory_poses: deque[PoseStamped] = deque(maxlen=_TRAJECTORY_MAX_POSES)
 
     @rpc
@@ -221,15 +215,9 @@ class StereoPointCloud(Module):
         xyz_cam   = xyz_opt @ _R_OPT_TO_LINK.T
         xyz_world = (xyz_cam @ R.T + t).astype(np.float32)
 
-        # Calibrate on xyz_cam (camera_link, Z=up). For a level mount the floor
-        # is always at z_cam == -cam_height regardless of horizontal distance,
-        # so floor_z is always negative and cam_height always positive.
         self._floor_calib.update(xyz_cam)
 
-        # FIX (rerun black plane): publish with the floor at z = 0. The rest of
-        # dimos assumes this datum — the rerun viewer's ground grid/floor mesh
-        # sits at z ≈ 0. Shift is 0 until calibration completes (~4s), then the
-        # cloud snaps up by cam_height.
+        # Shift floor to z=0 to match the rerun ground grid; 0 until calibrated (~4s).
         z_shift = (
             float(self._floor_calib.cam_height)  # type: ignore[arg-type]
             if self._floor_calib.ready
@@ -244,21 +232,15 @@ class StereoPointCloud(Module):
         _, first = np.unique(_pack(vk), return_index=True)
         xyz_vox  = xyz_world[first]
 
-        # Fastest possible path to the viewer: publish immediately, before any of
-        # the odometry/trajectory bookkeeping below runs.
         self.frame_cloud.publish(
             PointCloud2.from_numpy(
                 xyz_vox + z_off, frame_id=self.config.world_frame, timestamp=img.ts
             )
         )
 
-        # Odometry: PointCloudOdometry owns its own ICP reference buffer internally
-        # (see vio.py) — nothing to manage here.
         if len(xyz_cam) >= PointCloudOdometry.MIN_PTS:
             self._odom.update(xyz_cam, R)
 
-        # Trajectory: every frame's pose recorded, no gating — the deque is
-        # small (a few floats each) so this costs nothing meaningful.
         quat = Rotation.from_matrix(R).as_quat()
         with self._lock:
             self._trajectory_poses.append(

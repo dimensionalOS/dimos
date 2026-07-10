@@ -236,9 +236,6 @@ coordinator_flowbase_stereo_nav = (
                 ),
             ],
         ),
-        # No persistent global map on this branch — StereoPointCloud only publishes
-        # frame_cloud (current view) + trajectory (odometry path). Keep frame_cloud
-        # at the camera's own ~15fps.
         RerunBridgeModule.blueprint(
             rerun_open="web",
             max_hz={"world/frame_cloud": 15.0},
@@ -248,9 +245,6 @@ coordinator_flowbase_stereo_nav = (
     .remappings(
         [
             (ControlCoordinator, "twist_command", "cmd_vel"),
-            # No MovementManager (no nav stack to arbitrate against — CostMapper is
-            # also disabled) — just point the web dashboard's teleop widget straight
-            # at cmd_vel, same one-source-in shape as coordinator-flowbase-keyboard-teleop.
             (RerunWebSocketServer, "tele_cmd_vel", "cmd_vel"),
         ]
     )

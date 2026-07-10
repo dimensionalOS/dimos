@@ -86,10 +86,8 @@ class MadgwickFilter:
 class PointCloudOdometry:
     """Rotation-decoupled ICP for translation t. Takes R from Madgwick, converges in 3-4 iters.
 
-    Owns its own ICP reference set — a bounded, self-growing point buffer (not
-    just the last frame), so one low-overlap or fast-motion frame can't
-    permanently lose tracking. Callers just call update(xyz_cam, R); nothing
-    about reference-buffer management leaks outside this class.
+    Owns a bounded, self-growing reference buffer (not just the last frame) so
+    a single low-overlap frame can't permanently lose tracking.
     """
 
     ITERS       = 4
@@ -134,15 +132,10 @@ class PointCloudOdometry:
                 t_est = (t_est + 0.7 * delta).astype(np.float32)
             t_new = t_est
 
-        # EMA smoothing: blend raw ICP output with the stored estimate to suppress
-        # the ±2cm centroid oscillation inherent in random-subsampling ICP.
         with self._lock:
             t_smooth = (_SMOOTH_ALPHA * t_new + (1.0 - _SMOOTH_ALPHA) * self._t).astype(np.float32)
             self._t  = t_smooth
 
-        # Grow the reference buffer only once the camera has actually moved —
-        # keeps this cheap (not every frame) while still giving ICP a broad,
-        # stable target instead of just the last frame.
         if self._last_ref_t is None or float(np.linalg.norm(t_smooth - self._last_ref_t)) > self.REF_STEP_M:
             world_pts = (pts_ga + t_smooth).astype(np.float32)
             with self._lock:
