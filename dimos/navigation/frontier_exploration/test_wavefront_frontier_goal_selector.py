@@ -386,3 +386,41 @@ def test_exploration_loop_releases_movement_on_exit(explorer, mocker) -> None:
     with pytest.raises(RuntimeError):
         explorer._exploration_loop()
     stop_spy.assert_called_once_with("begin_exploration")
+
+    
+def test_unreachable_frontier_excluded_from_ranking(explorer, quick_costmap, mocker) -> None:
+    """A frontier the planner cannot reach (A* returns no path) is treated as
+    infinite cost, scored -inf, and filtered out of ranking entirely."""
+    costmap, first_lidar = quick_costmap
+    robot_pose = first_lidar.origin
+    frontier = Vector3(0.5, 0.5, 0.0)
+
+    # Force A* to report "no path" -> frontier is unreachable.
+    mocker.patch(
+        "dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector.min_cost_astar",
+        return_value=None,
+    )
+
+    # Unreachable -> infinite path cost.
+    assert explorer._compute_path_cost(frontier, robot_pose, costmap) == float("inf")
+
+    # Infinite path cost -> -inf sentinel score.
+    score = explorer._compute_comprehensive_frontier_score(frontier, 5, robot_pose, costmap)
+    assert score == float("-inf")
+
+    # Unreachable frontiers are dropped from the ranked list.
+    assert explorer._rank_frontiers([frontier], [5], robot_pose, costmap) == []
+
+
+def test_path_cost_falls_back_when_astar_raises(explorer, quick_costmap, mocker) -> None:
+    """A planner exception is caught and the frontier is treated as unreachable
+    (infinite cost) instead of crashing goal selection."""
+    costmap, first_lidar = quick_costmap
+    robot_pose = first_lidar.origin
+    frontier = Vector3(0.5, 0.5, 0.0)
+
+    mocker.patch(
+        "dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector.min_cost_astar",
+        side_effect=RuntimeError("planner boom"),
+    )
+    assert explorer._compute_path_cost(frontier, robot_pose, costmap) == float("inf")
