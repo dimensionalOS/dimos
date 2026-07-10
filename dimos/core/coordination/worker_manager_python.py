@@ -33,18 +33,12 @@ logger = setup_logger()
 def _merge_config_kwargs(base: Mapping[str, Any], overrides: Mapping[str, Any]) -> dict[str, Any]:
     merged = dict(base)
     for key, override_value in overrides.items():
-        merged[key] = _merge_config_value(merged.get(key), override_value)
+        base_value = merged.get(key)
+        if isinstance(base_value, Mapping) and isinstance(override_value, Mapping):
+            merged[key] = _merge_config_kwargs(base_value, override_value)
+        else:
+            merged[key] = override_value
     return merged
-
-
-def _merge_config_value(base_value: Any, override_value: Any) -> Any:
-    if not isinstance(override_value, Mapping):
-        return override_value
-
-    if not isinstance(base_value, Mapping):
-        return dict(override_value)
-
-    return _merge_config_kwargs(base_value, override_value)
 
 
 class WorkerManagerPython:
