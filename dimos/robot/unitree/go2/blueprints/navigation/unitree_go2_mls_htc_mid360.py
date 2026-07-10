@@ -97,12 +97,23 @@ def _render_global_map(msg: Any) -> Any:
     return msg.to_rerun()
 
 
+# Local path drawn purple; Path.to_rerun defaults to green.
+_PATH_COLOR = (170, 0, 255)
+
+
 def _render_path(msg: Any) -> Any:
     # The planner emits an empty path when it finds no route to the goal.
     # Logging those would blank the line, so drop them and keep the last path.
     if len(msg.poses) == 0:
         return None
-    return msg
+    return msg.to_rerun(color=_PATH_COLOR)
+
+
+def _render_costmap(msg: Any) -> Any:
+    # RepulsiveFieldNative publishes its internal costmap's lethal cells (the
+    # cells the solver actually repels from) as a flat point slice below the
+    # robot. Draw them as red voxel boxes so the obstacle field is legible.
+    return msg.to_rerun(colors=[255, 0, 0], mode="boxes", voxel_size=0.1)
 
 
 def _static_robot_body(rr: Any) -> list[Any]:
@@ -147,6 +158,8 @@ _nav_rerun_config = {
         # Rate-limited at the source by global_emit_every, roughly every 5s.
         "world/global_map": 0,
         "world/local_map": 0.5,
+        # Costmap cloud is published at costmap_cloud_hz (5); cap the viewer too.
+        "world/costmap_cloud": 5,
     },
     # Ring buffer replayed to a connecting viewer. Small so connect catches up fast.
     "memory_limit": "64MB",
@@ -163,6 +176,7 @@ _nav_rerun_config = {
         **rerun_config["visual_override"],
         "world/global_map": _render_global_map,
         "world/path": _render_path,
+        "world/costmap_cloud": _render_costmap,
         "world/camera_info": None,
         "world/color_image": None,
         "world/lidar": None,
@@ -213,25 +227,23 @@ unitree_go2_mls_htc_mid360 = autoconnect(
         ]
     ),
     GoalRelay.blueprint(),
-    # RepulsiveFieldNative (rust) replaces DanLocalPlanner as the local planner: it
-    # owns its costmap internally from the raytraced `local_map` pointcloud and
-    # re-solves the MLS route (`planner_path`) fresh every tick, emitting a
-    # collision-shaped `local_path`. Remap it into the same odom-frame stream the
-    # rest of the stack plans in:
-    #   - terrain_map  <- RayTracingVoxelMap.local_map (internal costmap source)
-    #   - global_path  <- MLSPlannerNative.path (already remapped to planner_path)
-    #   - odometry     <- PointLio.odometry (auto-wired by port name)
-    #   - local_path   -> DanHolonomicTC.path (the followed route)
-    # output_base_frame=False keeps the output in world_frame so DanHolonomicTC,
-    # which tracks against GoalRelay's odom-frame start_pose, sees a matching frame.
     RepulsiveFieldNative.blueprint(
         world_frame="odom",
         output_base_frame=False,
-        resolution=voxel_size,
+        # Keep the internal costmap at the module's validated 0.1 m, NOT the
+        # 0.08 m map voxel. A costmap finer than the input gets hole-filled and
+        # edge-smoothed (costmap.rs), which ramps sharp obstacle edges into
+        # gentle slopes and drops their height-gradient cost below the lethal
+        # threshold — low obstacles then stop repelling. Coarser-than-input is
+        # the safe direction.
+        resolution=0.1,
     ).remappings(
         [
             (RepulsiveFieldNative, "terrain_map", "local_map"),
             (RepulsiveFieldNative, "global_path", "planner_path"),
+            # route_tail is fed the same stream as global_path (treat them alike),
+            # so it lands on the same resolved topic, planner_path.
+            (RepulsiveFieldNative, "route_tail", "planner_path"),
             (RepulsiveFieldNative, "local_path", "path"),
         ]
     ),
