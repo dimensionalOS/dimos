@@ -20,6 +20,7 @@ No persistent global map — current-frame view and odometry only, for speed.
 from __future__ import annotations
 
 import threading
+import time
 from collections import deque
 from typing import Any
 
@@ -170,6 +171,7 @@ class StereoPointCloud(Module):
             self._latest_info = info
 
     def _on_depth(self, img: Image) -> None:
+        t_start = time.perf_counter()
         with self._lock:
             info = self._latest_info
 
@@ -201,6 +203,7 @@ class StereoPointCloud(Module):
         valid  = np.isfinite(depth) & stable
         if not valid.any():
             return
+        t_gradient = time.perf_counter()
 
         uu, vv  = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32))
         dd      = depth[valid]
@@ -210,15 +213,19 @@ class StereoPointCloud(Module):
             dd,
         ]).astype(np.float32)
 
+        t_unproject = time.perf_counter()
+
         with self._imu_lock:
             R = self._madgwick.R_at(img.ts) if self._madgwick is not None else np.eye(3, dtype=np.float32)
 
         xyz_cam = xyz_opt @ _R_OPT_TO_LINK.T
+        t_odom_start = time.perf_counter()
         t = (
             self._odom.update(xyz_cam, R)
             if len(xyz_cam) >= PointCloudOdometry.MIN_PTS
             else self._odom.t
         )
+        t_odom_end = time.perf_counter()
         xyz_world = (xyz_cam @ R.T + t).astype(np.float32)
 
         self._floor_calib.update(xyz_cam)
@@ -243,6 +250,7 @@ class StereoPointCloud(Module):
                 xyz_vox + z_off, frame_id=self.config.world_frame, timestamp=img.ts
             )
         )
+        t_publish = time.perf_counter()
 
         quat = Rotation.from_matrix(R).as_quat()
         with self._lock:
@@ -259,3 +267,15 @@ class StereoPointCloud(Module):
 
         if traj_snap is not None:
             self.trajectory.publish(Path(ts=img.ts, frame_id=self.config.world_frame, poses=traj_snap))
+
+        if self._frame_count % 30 == 0:
+            t_end = time.perf_counter()
+            logger.info(
+                f"StereoPointCloud perf: lag={time.time() - img.ts:.1f}s "
+                f"total={(t_end - t_start) * 1000:.0f}ms "
+                f"gradient={(t_gradient - t_start) * 1000:.0f}ms "
+                f"unproject={(t_unproject - t_gradient) * 1000:.0f}ms "
+                f"odom={(t_odom_end - t_odom_start) * 1000:.0f}ms "
+                f"publish={(t_publish - t_odom_end) * 1000:.0f}ms "
+                f"traj={(t_end - t_publish) * 1000:.0f}ms"
+            )

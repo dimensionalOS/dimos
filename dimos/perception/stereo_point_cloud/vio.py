@@ -159,7 +159,12 @@ class PointCloudOdometry:
         pts_ga = (xyz_cam @ R.T).astype(np.float32)
         with self._lock:
             t_est = self._t.copy()
-            ref   = self._ref_buf[: self._ref_filled].copy() if self._ref_filled else None
+            # View, not copy: update() is only ever called serially (one caller,
+            # depth_image's subscriber callback), and the only writer to _ref_buf
+            # is this same call's own growth step below, which runs after this
+            # read completes. Copying up to REF_MAX_PTS points every single frame
+            # was real, unconditional cost that scaled with how full the buffer was.
+            ref = self._ref_buf[: self._ref_filled] if self._ref_filled else None
 
         if ref is None or len(pts_ga) < self.MIN_PTS:
             t_new = t_est
