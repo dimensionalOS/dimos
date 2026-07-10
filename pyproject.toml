@@ -651,5 +651,6 @@ max_size_kb = 75
 ignore = [
     "uv.lock",
     "*/package-lock.json",
+    "*/Cargo.lock",
     "dimos/web/dimos_interface/themes.json",
 ]

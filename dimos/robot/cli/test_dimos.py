@@ -20,9 +20,10 @@ import pytest
 from typer.testing import CliRunner
 
 from dimos.core.coordination.blueprints import autoconnect
+import dimos.core.coordination.worker_manager_python as worker_manager_python
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
-from dimos.robot.cli.dimos import _normalize_simulation_argv, arg_help, main
+from dimos.robot.cli.dimos import _normalize_simulation_argv, arg_help, load_config_args, main
 import dimos.utils.cli.spy.run_spy as run_spy
 
 
@@ -259,3 +260,46 @@ def test_blueprint_arg_help_uses_nested_backend_defaults():
         in output
     )
     assert "        * testmodule.nested.level: int (default: 3)" in output
+
+
+def test_nested_blueprint_config_defaults_survive_cli_override(tmp_path, monkeypatch):
+    class NestedConfig(BaseModel):
+        enabled: bool = True
+        mode: str = "auto"
+
+    class Config(ModuleConfig):
+        nested: NestedConfig = Field(default_factory=NestedConfig)
+
+    class TestModule(Module):
+        config: Config
+
+    class FakeWorker:
+        dedicated = False
+        module_count = 0
+
+        def reserve_slot(self):
+            self.module_count += 1
+
+        def deploy_module(self, _module_class, _global_config, kwargs):
+            return kwargs
+
+    monkeypatch.setattr(worker_manager_python, "RPCClient", lambda actor, _module_class: actor)
+
+    blueprint = TestModule.blueprint(nested={"mode": "manual"})
+    blueprint_args = load_config_args(
+        blueprint.config(),
+        ["testmodule.nested.enabled=false"],
+        tmp_path / "config.json",
+    )
+    worker_manager = worker_manager_python.WorkerManagerPython(global_config)
+    worker_manager._started = True
+    worker_manager._workers = [FakeWorker()]
+
+    deployed_configs = worker_manager.deploy_parallel(
+        [(TestModule, global_config, blueprint.blueprints[0].kwargs.copy())],
+        blueprint_args,
+    )
+    config = Config(**deployed_configs[0])
+
+    assert config.nested.enabled is False
+    assert config.nested.mode == "manual"

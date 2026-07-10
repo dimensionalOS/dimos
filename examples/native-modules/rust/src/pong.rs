@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use dimos_module::{native_config, run, Input, LcmTransport, Module, Output};
+use dimos_module::{native_config, run_with_transport, Input, Module, Output};
 use lcm_msgs::geometry_msgs::{Twist, Vector3};
 
 #[native_config]
@@ -49,8 +49,5 @@ impl Pong {
 
 #[tokio::main]
 async fn main() {
-    let transport = LcmTransport::new()
-        .await
-        .expect("Failed to create transport");
-    run::<Pong, _>(transport).await;
+    run_with_transport::<Pong>().await;
 }

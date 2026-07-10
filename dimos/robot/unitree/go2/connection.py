@@ -66,6 +66,7 @@ class ConnectionConfig(ModuleConfig):
     mode: Go2Mode = Go2Mode.DEFAULT
     lidar: bool = True
     camera: bool = True
+    velocity_api: bool = False
     # "mcf" for stair traversal, "normal" for basic, None to leave it as is
     motion_mode: str | None = None
     # Per-device AES-128 key (Go2 fw >=1.1.15); defaults from GlobalConfig.
@@ -122,6 +123,7 @@ def make_connection(
     ip: str | None,
     cfg: GlobalConfig,
     aes_128_key: str | None = None,
+    velocity_api: bool = False,
 ) -> Go2ConnectionProtocol:
     connection_type = cfg.unitree_connection_type.lower()
 
@@ -138,7 +140,11 @@ def make_connection(
         return DimSimConnection(cfg)
     elif connection_type == "webrtc":
         assert ip is not None, "IP address must be provided"
-        return UnitreeWebRTCConnection(ip, aes_128_key=aes_128_key)
+        return UnitreeWebRTCConnection(
+            ip,
+            aes_128_key=aes_128_key,
+            velocity_api=velocity_api,
+        )
     else:
         raise ValueError(f"Unknown simulator {cfg.simulation!r}. Choose from: mujoco, dimsim")
 
@@ -262,7 +268,10 @@ class GO2Connection(Module, Camera, Pointcloud):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.connection = make_connection(
-            self.config.ip, self.config.g, aes_128_key=self.config.aes_128_key
+            self.config.ip,
+            self.config.g,
+            aes_128_key=self.config.aes_128_key,
+            velocity_api=self.config.velocity_api,
         )
 
         if hasattr(self.connection, "camera_info_static"):
