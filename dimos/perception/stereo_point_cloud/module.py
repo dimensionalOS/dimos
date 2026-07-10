@@ -21,10 +21,13 @@ from typing import Any
 
 import numpy as np
 from reactivex.disposable import Disposable
+from scipy.spatial.transform import Rotation
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -107,6 +110,7 @@ class StereoPointCloud(Module):
 
     frame_cloud: Out[PointCloud2]
     global_map:  Out[PointCloud2]
+    trajectory:  Out[Path]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -126,6 +130,10 @@ class StereoPointCloud(Module):
         self._warned_no_intrinsics       = False
         self._last_kf_t: np.ndarray | None = None
         self._last_kf_R: np.ndarray | None = None
+        # Trajectory: the robot's actual path, distinct from the obstacle/wall
+        # map — a lightweight list of past poses (not point-cloud data), cheap
+        # to keep in full even over a long run.
+        self._trajectory_poses: list[PoseStamped] = []
 
     @rpc
     def start(self) -> None:
@@ -369,6 +377,7 @@ class StereoPointCloud(Module):
         xyz_for_map = xyz_vox[xyz_vox[:, 2] > floor_thresh]
 
         pts_snap = None
+        traj_snap = None
         with self._lock:
             # Keyframe gate: only insert when camera has moved/rotated enough.
             # Keeps global-map density equal to one clean frame per area explored.
@@ -382,6 +391,18 @@ class StereoPointCloud(Module):
             if take_kf and len(xyz_for_map):
                 self._last_kf_t = t.copy()
                 self._last_kf_R = R.copy()
+                # Same keyframe cadence as the map (~8cm/8°) — plenty of resolution
+                # for a path trail, no need for a separate gate.
+                quat = Rotation.from_matrix(R).as_quat()
+                self._trajectory_poses.append(
+                    PoseStamped(
+                        ts=img.ts,
+                        frame_id=self.config.world_frame,
+                        position=[float(t[0]), float(t[1]), float(t[2])],
+                        orientation=[float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3])],
+                    )
+                )
+                traj_snap = list(self._trajectory_poses)
                 # Isolation filter runs on the full dense per-frame set (not the sparse
                 # leftover frontier after covered-voxel subtraction below) — flying
                 # pixels are isolated within a dense frame, but legitimate new frontier
@@ -429,3 +450,6 @@ class StereoPointCloud(Module):
                     pts_snap + z_off, frame_id=self.config.world_frame, timestamp=img.ts
                 )
             )
+
+        if traj_snap is not None:
+            self.trajectory.publish(Path(ts=img.ts, frame_id=self.config.world_frame, poses=traj_snap))
