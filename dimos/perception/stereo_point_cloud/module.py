@@ -20,6 +20,7 @@ No persistent global map — current-frame view and odometry only, for speed.
 from __future__ import annotations
 
 import threading
+from collections import deque
 from typing import Any
 
 import numpy as np
@@ -47,11 +48,9 @@ logger = setup_logger()
 
 _DEPTH_MM_THRESHOLD = 100
 
-# Trajectory keyframe cadence — record a pose only when the camera has moved
-# this far/rotated this much since the last one. Plenty of resolution for a
-# path trail without recording every single frame.
-_KEYFRAME_DIST_M    = 0.08
-_KEYFRAME_ANGLE_RAD = np.deg2rad(8.0)
+# Trajectory length cap — every frame's pose is recorded (no gating), oldest
+# dropped automatically once the deque is full.
+_TRAJECTORY_MAX_POSES = 20_000
 
 
 class Config(ModuleConfig):
@@ -86,11 +85,10 @@ class StereoPointCloud(Module):
         self._R_imu_to_link: np.ndarray  = np.eye(3, dtype=np.float32)
         self._motion_sensor              = None
         self._warned_no_intrinsics       = False
-        self._last_kf_t: np.ndarray | None = None
-        self._last_kf_R: np.ndarray | None = None
-        # Trajectory: the robot's actual path — a lightweight list of past
-        # poses (not point-cloud data), cheap to keep in full over a long run.
-        self._trajectory_poses: list[PoseStamped] = []
+        # Trajectory: the robot's actual path — every frame's pose, cheap to
+        # keep since it's a small list, not point-cloud data. Bounded so a long
+        # run can't grow it forever.
+        self._trajectory_poses: deque[PoseStamped] = deque(maxlen=_TRAJECTORY_MAX_POSES)
 
     @rpc
     def start(self) -> None:
@@ -259,32 +257,18 @@ class StereoPointCloud(Module):
         if len(xyz_cam) >= PointCloudOdometry.MIN_PTS:
             self._odom.update(xyz_cam, R)
 
-        # Trajectory: lightweight pose history, recorded once per keyframe
-        # (camera moved > 8cm or turned > 8°) — plenty of resolution for a path
-        # trail without recording every single frame.
-        traj_snap = None
+        # Trajectory: every frame's pose recorded, no gating — the deque is
+        # small (a few floats each) so this costs nothing meaningful.
+        quat = Rotation.from_matrix(R).as_quat()
         with self._lock:
-            take_kf = self._last_kf_t is None or self._moved_enough(t, R)
-            if take_kf:
-                self._last_kf_t = t.copy()
-                self._last_kf_R = R.copy()
-                quat = Rotation.from_matrix(R).as_quat()
-                self._trajectory_poses.append(
-                    PoseStamped(
-                        ts=img.ts,
-                        frame_id=self.config.world_frame,
-                        position=[float(t[0]), float(t[1]), float(t[2])],
-                        orientation=[float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3])],
-                    )
+            self._trajectory_poses.append(
+                PoseStamped(
+                    ts=img.ts,
+                    frame_id=self.config.world_frame,
+                    position=[float(t[0]), float(t[1]), float(t[2])],
+                    orientation=[float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3])],
                 )
-                traj_snap = list(self._trajectory_poses)
+            )
+            traj_snap = list(self._trajectory_poses)
 
-        if traj_snap is not None:
-            self.trajectory.publish(Path(ts=img.ts, frame_id=self.config.world_frame, poses=traj_snap))
-
-    def _moved_enough(self, t: np.ndarray, R: np.ndarray) -> bool:
-        """True once the camera has moved far/rotated enough since the last keyframe."""
-        t_moved = float(np.linalg.norm(t - self._last_kf_t))
-        cos_a   = float((np.trace(R @ self._last_kf_R.T) - 1.0) / 2.0)
-        r_moved = float(np.arccos(np.clip(cos_a, -1.0, 1.0)))
-        return t_moved > _KEYFRAME_DIST_M or r_moved > _KEYFRAME_ANGLE_RAD
+        self.trajectory.publish(Path(ts=img.ts, frame_id=self.config.world_frame, poses=traj_snap))
