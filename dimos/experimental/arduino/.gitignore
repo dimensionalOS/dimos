@@ -1,0 +1,16 @@
+# Nix build output symlinks
+result
+result-*
+
+# Build lock used by ArduinoModule._build_bridge()
+.bridge_build.lock
+
+# Arduino sketch build artifacts
+examples/*/sketch/build/
+
+# ArduinoModule auto-generates this header next to each sketch.ino at
+# build time (see arduino_module.py::_generate_header).  It lives in the
+# sketch dir because arduino-cli's sketch preprocessor doesn't honor -I
+# flags from compiler.cpp.extra_flags, so headers outside the sketch
+# dir aren't visible during the preprocessing pass.
+examples/*/sketch/dimos_arduino.h

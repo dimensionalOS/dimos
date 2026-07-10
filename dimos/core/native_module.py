@@ -219,8 +219,7 @@ class NativeModule(Module):
         topics = self._collect_topics()
 
         cmd = [self.config.executable]
-        for name, topic_str in topics.items():
-            cmd.extend([f"--{name}", topic_str])
+        cmd.extend(self._build_topic_args())
         cmd.extend(self.config.to_cli_args())
         cmd.extend(self.config.extra_args)
 
@@ -457,6 +456,16 @@ class NativeModule(Module):
             executable=str(exe),
             duration_sec=round(build_elapsed, 3),
         )
+
+    def _build_topic_args(self) -> list[str]:
+        """Build the generic ``--<stream_name> <topic>`` CLI args for the native
+        binary from the module's collected topics.  Subclasses whose binary uses
+        a different CLI schema can override this (e.g. return ``[]`` to suppress
+        these args)."""
+        args: list[str] = []
+        for name, topic_str in self._collect_topics().items():
+            args.extend([f"--{name}", topic_str])
+        return args
 
     def _collect_topics(self) -> dict[str, str]:
         topics: dict[str, str] = {}

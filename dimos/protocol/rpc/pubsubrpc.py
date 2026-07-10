@@ -111,8 +111,9 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
         return state
 
     def __setstate__(self, state: dict[str, Any]) -> None:
-        if hasattr(super(), "__setstate__"):
-            super().__setstate__(state)  # type: ignore[misc]
+        parent_setstate = getattr(super(), "__setstate__", None)
+        if parent_setstate is not None:
+            parent_setstate(state)
         else:
             self.__dict__.update(state)
 
