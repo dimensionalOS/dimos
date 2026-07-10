@@ -236,14 +236,12 @@ coordinator_flowbase_stereo_nav = (
                 ),
             ],
         ),
-        # global_map cut back down hard (0.5Hz) — RerunBridgeModule logs every topic
-        # through ONE serial queue, so a big/frequent global_map message blocks
-        # frame_cloud messages queued behind it even though frame_cloud itself is
-        # cheap. frame_cloud stays at the camera's own ~15fps since that's the
-        # priority on this branch (fast current-frame feedback, map is secondary).
+        # No persistent global map on this branch — StereoPointCloud only publishes
+        # frame_cloud (current view) + trajectory (odometry path). Keep frame_cloud
+        # at the camera's own ~15fps.
         RerunBridgeModule.blueprint(
             rerun_open="web",
-            max_hz={"world/global_map": 0.5, "world/frame_cloud": 15.0},
+            max_hz={"world/frame_cloud": 15.0},
         ),
         RerunWebSocketServer.blueprint(),
     )
