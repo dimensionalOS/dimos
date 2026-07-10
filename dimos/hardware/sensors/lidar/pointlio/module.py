@@ -74,7 +74,16 @@ IvoxNearbyType = Literal["center", "nearby6", "nearby18", "nearby26"]
 class PointLioConfig(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/pointlio_native"
-    build_command: str | None = "nix build .#pointlio_native"
+    build_command: str | None = "nix build .#pointlio_native --no-write-lock-file"
+    # PointLio is built by Nix and should rely on its own store paths at runtime.
+    # Inheriting the host shell's library search path can force incompatible
+    # system/conda libs ahead of the Nix closure, causing GLIBC/GLIBCXX errors.
+    extra_env: dict[str, str] = Field(
+        default_factory=lambda: {
+            "LD_LIBRARY_PATH": "",
+            "LIBRARY_PATH": "",
+        }
+    )
     # lidar_ip required; host_ip optional (auto-derived from lidar_ip's subnet).
     # Both fall back to DIMOS_POINTLIO_LIDAR_IP / DIMOS_POINTLIO_HOST_IP.
     host_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_POINTLIO_HOST_IP"))

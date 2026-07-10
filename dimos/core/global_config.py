@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import re
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from dimos.constants import DEFAULT_BUILD_NATIVE
@@ -72,6 +74,22 @@ class GlobalConfig(BaseSettings):
     listen_host: str = "127.0.0.1"
     dimsim_scene: str = "apt"
     dimsim_port: int = 8090
+    tron1_ws_url: str | None = Field(
+        default_factory=lambda: os.environ.get("DIMOS_TRON1_WS_URL")
+        or os.environ.get("TRON1_WS_URL")
+    )
+    tron1_robot_type: str | None = None
+    tron1_accid: str | None = Field(
+        default_factory=lambda: os.environ.get("DIMOS_TRON1_ACCID")
+        or os.environ.get("TRON1_ACCID")
+    )
+    tron1_max_vx: float = 1.0
+    tron1_max_vy: float = 1.0
+    tron1_max_yaw: float = 1.0
+    tron1_enable_odom: bool = True
+    tron1_enable_imu: bool = True
+    tron1_auto_stand: bool = True
+    tron1_auto_walk_mode: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env",

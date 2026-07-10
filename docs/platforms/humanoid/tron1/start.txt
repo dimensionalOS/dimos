@@ -1,0 +1,60 @@
+TRON1 启动说明
+
+注意：
+- 同一台主机上一次只运行一个 `Coordinator`
+- 切换蓝图前先执行 `dimos stop`
+- 所有命令默认在仓库根目录 `/mnt/SSD/dimos` 下执行
+
+通用环境变量：
+```bash
+source ./.venv/bin/activate
+export ROBOT_IP=10.192.1.2
+export DIMOS_TRON1_WS_URL=ws://10.192.1.2:5000
+export DIMOS_TRON1_ACCID=WF_TRON1A_235
+export DIMOS_POINTLIO_LIDAR_IP=192.168.1.155
+```
+
+1. 推荐：全量可视化
+显示视频流、点云、IMU、odom。
+
+```bash
+dimos stop
+dimos --rerun-open web run tron1-full-vis
+```
+
+2. 轻量模式：点云 + 里程计
+只接入 Mid360 + PointLio + Rerun，可用于快速确认点云和激光里程计链路。
+
+```bash
+dimos stop
+dimos --rerun-open web run tron1-mid360-pointlio-vis
+```
+
+3. 完整建图模式
+在点云和里程计基础上继续启用地图构建链路。
+
+```bash
+dimos stop
+dimos --rerun-open web run tron1-mid360-map-vis
+```
+
+4. 仅机器人 + RealSense 视频
+只查看机器人连接、IMU、odom 和 RealSense 视频流，不启用 Mid360。
+
+```bash
+dimos stop
+dimos run tron1-basic-realsense
+```
+
+
+.. 
+统计带宽占用情况
+
+导航栈点云地图话题
+/laser_cloud_map
+
+全局地图，记录机器人位置，使用导航栈生成的点云数据
+
+电机状态显示数字数据
+
+视频流分辨率调低

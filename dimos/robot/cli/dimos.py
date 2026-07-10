@@ -31,6 +31,7 @@ from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 import requests
 import typer
+import typer.main as typer_main
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
 from dimos.constants import CONFIG_DIR, LOG_DIR
@@ -51,6 +52,18 @@ if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
 
 logger = setup_logger()
+
+_orig_lenient_issubclass = typer_main.lenient_issubclass
+
+
+def _safe_lenient_issubclass(cls: Any, class_or_tuple: Any) -> bool:
+    try:
+        return _orig_lenient_issubclass(cls, class_or_tuple)
+    except TypeError:
+        return False
+
+
+typer_main.lenient_issubclass = _safe_lenient_issubclass  # type: ignore[assignment]
 
 main = typer.Typer(
     help="Dimensional CLI",
@@ -92,17 +105,16 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
     for field_name, field_info in fields.items():
         field_type = field_info.annotation
 
-        # Handle Optional types
-        # Check for Optional/Union with None
-        if get_origin(field_type) is type(str | None):
+        actual_type = field_type
+
+        if get_origin(field_type) in {Union, types.UnionType}:
             inner_types = get_args(field_type)
             if len(inner_types) == 2 and type(None) in inner_types:
-                # It's Optional[T], get the actual type T
-                actual_type = next(t for t in inner_types if t != type(None))
-            else:
-                actual_type = field_type
-        else:
-            actual_type = field_type
+                actual_type = next(t for t in inner_types if t is not type(None))
+
+        origin = get_origin(actual_type)
+        if origin is Literal:
+            actual_type = str
 
         # Convert field name from snake_case to kebab-case for CLI
         cli_option_name = field_name.replace("_", "-")
@@ -118,7 +130,7 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
                     f"--{cli_option_name}/--no-{cli_option_name}",
                     help=f"Override {field_name} in GlobalConfig",
                 ),
-                annotation=bool | None,
+                annotation=bool,
             )
         else:
             # For non-boolean fields, use regular option
@@ -130,7 +142,7 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
                     f"--{cli_option_name}",
                     help=f"Override {field_name} in GlobalConfig",
                 ),
-                annotation=actual_type | None,
+                annotation=actual_type,
             )
         params.append(param)
 

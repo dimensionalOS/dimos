@@ -2,18 +2,24 @@
   description = "Voxel ray tracing native module for DimOS";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
     flake-utils.url = "github:numtide/flake-utils";
-    # Relative git+file: will be deprecated (nix#12281) but there's no
-    # viable alternative for reaching local path deps outside the flake dir currently
-    # presumably an alternative will be added before this is removed.
-    dimos-repo = { url = "git+file:../../../..?ref=main"; flake = false; };
+    rust-overlay.url = "github:oxalica/rust-overlay";
+    dimos-repo = { url = "path:../../../.."; flake = false; };
   };
 
-  outputs = { self, nixpkgs, flake-utils, dimos-repo }:
+  outputs = { self, nixpkgs, flake-utils, rust-overlay, dimos-repo }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ rust-overlay.overlays.default ];
+        };
+        rustToolchain = pkgs.rust-bin.stable.latest.default;
+        rustPlatform = pkgs.makeRustPlatform {
+          cargo = rustToolchain;
+          rustc = rustToolchain;
+        };
 
         src = pkgs.runCommand "voxel-ray-tracing-src" {} ''
           mkdir -p $out/dimos/mapping/ray_tracing/rust
@@ -26,7 +32,7 @@
           cp -r ${dimos-repo}/native/rust/dimos-module-macros $out/native/rust/dimos-module-macros
         '';
       in {
-        packages.default = pkgs.rustPlatform.buildRustPackage {
+        packages.default = rustPlatform.buildRustPackage {
           pname = "voxel-ray-tracing";
           version = "0.1.0";
 
@@ -34,7 +40,13 @@
           cargoRoot = "dimos/mapping/ray_tracing/rust";
           buildAndTestSubdir = "dimos/mapping/ray_tracing/rust";
 
-          cargoHash = "sha256-0d0dlNDvDplA7oWTyUWOCOlS74Zie8uMQ+ps6lXntOI=";
+          cargoLock = {
+            lockFile = ./Cargo.lock;
+            outputHashes = {
+              "dimos-lcm-0.1.0" = "sha256-4DWFTf7Xqnx6pd2jXA/MVpRmZiFr6HqTSp9Qo9ZjToA=";
+              "lcm-msgs-0.1.0" = pkgs.lib.fakeHash;
+            };
+          };
 
           meta.mainProgram = "voxel_ray_tracing";
         };
