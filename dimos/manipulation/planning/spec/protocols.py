@@ -32,8 +32,8 @@ if TYPE_CHECKING:
     from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.manipulation.planning.spec.models import (
+        GeneratedPlan,
         IKResult,
-        JointPath,
         Obstacle,
         PlanningGroupID,
         PlanningResult,
@@ -205,16 +205,20 @@ class VisualizationSpec(Protocol):
         """Publish current state to visualization."""
         ...
 
-    def show_preview(self, robot_id: WorldRobotID) -> None:
-        """Show the preview representation for a robot."""
+    def show_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
+        """Show preview representations for the robots affected by planning groups."""
         ...
 
-    def hide_preview(self, robot_id: WorldRobotID) -> None:
-        """Hide the preview representation for a robot."""
+    def hide_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
+        """Hide preview representations for the robots affected by planning groups."""
         ...
 
-    def animate_path(self, robot_id: WorldRobotID, path: JointPath, duration: float = 3.0) -> None:
-        """Animate a path in visualization."""
+    def animate_plan(self, plan: GeneratedPlan, duration: float = 3.0) -> None:
+        """Animate a generated plan in visualization."""
+        ...
+
+    def cancel_preview_animation(self) -> None:
+        """Cancel an active preview animation without waiting for its renderer to finish."""
         ...
 
     def close(self) -> None:

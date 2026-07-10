@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from contextlib import contextmanager
 import threading
 from typing import TYPE_CHECKING, Any
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.manipulation.planning.spec.models import (
         CollisionObjectMessage,
+        GeneratedPlan,
         JointPath,
         Obstacle,
         PlanningGroupID,
@@ -67,6 +69,9 @@ class WorldMonitor:
         self._world = world
         self._visualization = visualization
         self._lock = threading.RLock()
+        # Keep renderer mutations and periodic publishes ordered.  Cancellation is
+        # deliberately issued outside this lock so it can interrupt an animation.
+        self._visualization_lock = threading.RLock()
         self._robot_joints: dict[WorldRobotID, list[str]] = {}
         self._robot_configs: dict[WorldRobotID, RobotModelConfig] = {}
         self._robot_ids_by_name: dict[RobotName, WorldRobotID] = {}
@@ -214,7 +219,10 @@ class WorldMonitor:
             logger.info("All monitors stopped")
 
         if self._visualization is not None:
-            self._visualization.close()
+            self._visualization.cancel_preview_animation()
+            # Wait for cancelled animation cleanup before releasing renderer resources.
+            with self._visualization_lock:
+                self._visualization.close()
 
     # Message Handlers
 
@@ -525,27 +533,30 @@ class WorldMonitor:
     def publish_visualization(self) -> None:
         """Force publish current state to visualization."""
         if self._visualization is not None:
-            self._visualization.publish_visualization()
+            with self._visualization_lock:
+                self._visualization.publish_visualization()
 
-    def show_preview(self, robot_id: WorldRobotID) -> None:
-        """Show the preview representation for a robot if visualization is available."""
+    def show_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
+        """Show previews for the robots affected by planning groups if available."""
         if self._visualization is not None:
-            self._visualization.show_preview(robot_id)
+            with self._visualization_lock:
+                self._visualization.show_preview(group_ids)
 
-    def hide_preview(self, robot_id: WorldRobotID) -> None:
-        """Hide the preview representation for a robot if visualization is available."""
+    def hide_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
+        """Hide previews for the robots affected by planning groups if available."""
         if self._visualization is not None:
-            self._visualization.hide_preview(robot_id)
+            self._visualization.cancel_preview_animation()
+            with self._visualization_lock:
+                self._visualization.hide_preview(group_ids)
 
-    def animate_path(
-        self,
-        robot_id: WorldRobotID,
-        path: JointPath,
-        duration: float = 3.0,
-    ) -> None:
-        """Animate a path if visualization is available."""
+    def animate_plan(self, plan: GeneratedPlan, duration: float = 3.0) -> None:
+        """Animate a generated plan if visualization is available."""
         if self._visualization is not None:
-            self._visualization.animate_path(robot_id, path, duration)
+            # Replacing a preview invalidates any sleeping renderer before this
+            # call waits for the prior mutation to drain.
+            self._visualization.cancel_preview_animation()
+            with self._visualization_lock:
+                self._visualization.animate_plan(plan, duration)
 
     def start_visualization_thread(self, rate_hz: float = 10.0) -> None:
         """Start background thread for visualization updates at given rate."""

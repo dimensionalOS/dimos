@@ -30,7 +30,6 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any, TypeAlias
 
-import numpy as np
 from pydantic import Field
 
 from dimos.agents.annotation import skill
@@ -409,11 +408,15 @@ class ManipulationModule(Module):
         if self._state == ManipulationState.PLANNING:
             self._planning_epoch += 1
             self._state = ManipulationState.IDLE
+            if self._last_plan is not None:
+                self._dismiss_preview(self._last_plan.group_ids)
             logger.info("Planning cancelled")
             return True
         if self._state != ManipulationState.EXECUTING:
             return False
         self._state = ManipulationState.IDLE
+        if self._last_plan is not None:
+            self._dismiss_preview(self._last_plan.group_ids)
         logger.info("Motion cancelled")
         return True
 
@@ -640,11 +643,11 @@ class ManipulationModule(Module):
         self._error_message = msg
         return False
 
-    def _dismiss_preview(self, robot_id: WorldRobotID) -> None:
+    def _dismiss_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
         """Hide the preview ghost if the world supports it."""
         if self._world_monitor is None:
             return
-        self._world_monitor.hide_preview(robot_id)
+        self._world_monitor.hide_preview(group_ids)
         self._world_monitor.publish_visualization()
 
     def _solve_ik_for_pose(
@@ -904,42 +907,6 @@ class ManipulationModule(Module):
         goal = JointState(name=goal_names, position=goal_positions)
         return self._plan_selected_path(group_ids, start, goal, planning_epoch)
 
-    def _preview_projected_path(
-        self,
-        robot_id: WorldRobotID,
-        planned_path: JointPath,
-        trajectory: JointTrajectory,
-        duration: float | None,
-        target_fps: float,
-    ) -> bool:
-        """Animate a projected local path with optional trajectory interpolation."""
-        if self._world_monitor is None or len(planned_path) == 0:
-            return False
-
-        animation_duration = duration if duration is not None else trajectory.duration
-        interpolated = list(planned_path)
-        if target_fps > 0 and animation_duration > 0:
-            times = np.array(
-                [point.time_from_start for point in trajectory.points], dtype=np.float64
-            )
-            positions = np.array([point.positions for point in trajectory.points], dtype=np.float64)
-            if len(times) > 1 and positions.ndim == 2 and times[-1] > times[0]:
-                frame_count = int(np.ceil(animation_duration * target_fps)) + 1
-                sample_times = np.linspace(times[0], times[-1], frame_count)
-                joint_names = trajectory.joint_names or planned_path[0].name
-                sampled_positions = np.column_stack(
-                    [
-                        np.interp(sample_times, times, positions[:, joint])
-                        for joint in range(positions.shape[1])
-                    ]
-                )
-                interpolated = [
-                    JointState(name=joint_names, position=position.tolist())
-                    for position in sampled_positions
-                ]
-        self._world_monitor.animate_path(robot_id, interpolated, animation_duration)
-        return True
-
     @rpc
     def preview_path(
         self,
@@ -950,9 +917,9 @@ class ManipulationModule(Module):
         """Compatibility wrapper for preview_plan().
 
         Args:
-            duration: Total animation duration in seconds. Uses trajectory duration if None.
-            robot_name: Robot to preview (required if multiple robots configured)
-            target_fps: Nominal preview update rate. Set <= 0 to use planned waypoints directly.
+            duration: Total animation duration in seconds. Defaults to one second.
+            robot_name: Compatibility affected-robot validation; does not filter the preview.
+            target_fps: Deprecated compatibility argument; shared-clock previews use plan waypoints.
         """
         return self.preview_plan(None, duration, robot_name, target_fps)
 
@@ -964,14 +931,14 @@ class ManipulationModule(Module):
         robot_name: RobotName | None = None,
         target_fps: float = 30.0,
     ) -> bool:
-        """Preview a generated plan in the visualizer."""
+        """Preview a complete generated plan in the visualizer."""
         plan = plan or self._last_plan
         if plan is None or not plan.path:
             logger.warning("No generated plan to preview")
             return False
         try:
             assert self._world_monitor is not None
-            affected = list(self._world_monitor.planning_groups.select(plan.group_ids).robot_names)
+            affected = self._world_monitor.planning_groups.select(plan.group_ids).robot_names
         except Exception as exc:
             logger.error("Generated plan cannot be resolved: %s", exc)
             return False
@@ -979,20 +946,10 @@ class ManipulationModule(Module):
             if robot_name not in affected:
                 logger.error("Generated plan does not affect robot '%s'", robot_name)
                 return False
-            affected = [robot_name]
-        projected = self._project_plan_to_robot_paths(plan)
-        if projected is None:
+        if self._world_monitor is None:
             return False
-        for name in affected:
-            robot = self._get_robot(name)
-            if robot is None or (planned_path := projected.get(name)) is None:
-                return False
-            _, robot_id, _, _ = robot
-            trajectory = self._trajectory_from_robot_path(name, planned_path)
-            if trajectory is None or not self._preview_projected_path(
-                robot_id, planned_path, trajectory, duration, target_fps
-            ):
-                return False
+        _ = target_fps
+        self._world_monitor.animate_plan(plan, duration if duration is not None else 1.0)
         return True
 
     @rpc
@@ -1022,8 +979,11 @@ class ManipulationModule(Module):
         Returns:
             True if cleared
         """
-        if self._world_monitor is None:
-            return False
+        plan = self._last_plan
+        if plan is not None:
+            # Preserve the group selection until the public visualization
+            # transaction has invalidated and hidden its preview.
+            self._dismiss_preview(plan.group_ids)
         self._last_plan = None
         return True
 

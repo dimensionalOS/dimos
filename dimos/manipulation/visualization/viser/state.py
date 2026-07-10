@@ -21,7 +21,8 @@ import queue
 import threading
 from typing import Literal
 
-from dimos.manipulation.visualization.types import RobotInfo, TargetEvaluation
+from dimos.manipulation.planning.spec.models import PlanningGroupID
+from dimos.manipulation.visualization.types import RobotInfo, TargetEvaluation, TargetSetEvaluation
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
@@ -96,11 +97,22 @@ class PanelPlanState:
     target_pose: Pose | None = None
     target_joints: list[float] | None = None
     start_joints_snapshot: list[float] | None = None
+    group_ids: tuple[PlanningGroupID, ...] = ()
+    target_sequence_id: int = 0
+    robot_snapshots: dict[str, JointState] = field(default_factory=dict)
 
 
 @dataclass
 class PanelState:
     selected_robot: str | None = None
+    selected_group_ids: tuple[PlanningGroupID, ...] = ()
+    selection_epoch: int = 0
+    pose_targets: dict[PlanningGroupID, Pose] = field(default_factory=dict)
+    group_joint_targets: dict[PlanningGroupID, JointState] = field(default_factory=dict)
+    target_joints: JointState | None = None
+    last_valid_target_joints: JointState | None = None
+    group_poses: dict[PlanningGroupID, Pose] = field(default_factory=dict)
+    group_diagnostics: dict[PlanningGroupID, str] = field(default_factory=dict)
     runtime: PanelRuntime = PanelRuntime.STOPPED
     backend_status: BackendConnectionStatus = BackendConnectionStatus.DISCONNECTED
     target_status: TargetStatus = TargetStatus.EMPTY
@@ -124,15 +136,22 @@ class PanelState:
         self.mark_plan_stale()
         return self.latest_sequence_id
 
+    def advance_selection_epoch(self) -> int:
+        """Invalidate callbacks and plans that belong to an older group selection."""
+        self.selection_epoch += 1
+        self.next_sequence_id()
+        self.plan_state = PanelPlanState()
+        return self.selection_epoch
+
     def mark_plan_stale(self) -> None:
-        if self.plan_state.status == PlanStatus.FRESH:
+        if self.plan_state.status in {PlanStatus.FRESH, PlanStatus.PLANNING}:
             self.plan_state.status = PlanStatus.STALE
 
     def can_plan(self) -> bool:
         return (
             self.runtime == PanelRuntime.RUNNING
             and self.backend_status == BackendConnectionStatus.READY
-            and self.selected_robot is not None
+            and bool(self.selected_group_ids)
             and self.action_status == ActionStatus.IDLE
             and self.target_status == TargetStatus.FEASIBLE
             and self.manipulation_state in {"IDLE", "COMPLETED", "FAULT"}
@@ -168,19 +187,12 @@ class PanelState:
             and self.target_status == TargetStatus.FEASIBLE
             and self.manipulation_state in {"IDLE", "COMPLETED"}
             and plan.status == PlanStatus.FRESH
-            and plan.robot == self.selected_robot
-            and plan.start_joints_snapshot is not None
-            and self.current_joints is not None
+            and plan.group_ids == self.selected_group_ids
+            and plan.target_sequence_id == self.latest_sequence_id
+            and bool(plan.robot_snapshots)
         ):
             return False
-        if len(plan.start_joints_snapshot) != len(self.current_joints):
-            return False
-        return all(
-            abs(expected - current) <= current_tolerance
-            for expected, current in zip(
-                plan.start_joints_snapshot, self.current_joints, strict=False
-            )
-        )
+        return True
 
     @property
     def connected(self) -> bool:
@@ -202,9 +214,14 @@ class PanelState:
 class TargetEvaluationRequest:
     sequence_id: int
     source: PreviewSource
-    robot_name: str
+    robot_name: str | None = None
+    selection_epoch: int = 0
+    group_ids: tuple[PlanningGroupID, ...] = ()
     pose: Pose | None = None
     joints: JointState | None = None
+    auxiliary_group_ids: tuple[PlanningGroupID, ...] = ()
+    pose_targets: dict[PlanningGroupID, Pose] = field(default_factory=dict)
+    joint_targets: dict[PlanningGroupID, JointState] = field(default_factory=dict)
 
 
 class TargetEvaluationWorker:
@@ -217,8 +234,10 @@ class TargetEvaluationWorker:
 
     def __init__(
         self,
-        handler: Callable[[TargetEvaluationRequest], TargetEvaluation],
-        apply_result: Callable[[TargetEvaluationRequest, TargetEvaluation], None],
+        handler: Callable[[TargetEvaluationRequest], TargetEvaluation | TargetSetEvaluation],
+        apply_result: Callable[
+            [TargetEvaluationRequest, TargetEvaluation | TargetSetEvaluation], None
+        ],
     ) -> None:
         self._handler = handler
         self._apply_result = apply_result

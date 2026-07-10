@@ -19,7 +19,6 @@ import pytest
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
 from dimos.manipulation.visualization.types import TargetEvaluation
-from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
 from dimos.manipulation.visualization.viser.state import FeasibilityStatus
@@ -29,9 +28,12 @@ class StatusOnlyServer:
     pass
 
 
-class StatusOnlyAdapter(InProcessViserAdapter):
-    def __init__(self) -> None:
-        pass
+class StatusOnlyWorldMonitor:
+    pass
+
+
+class StatusOnlyManipulationModule:
+    pass
 
 
 @pytest.mark.parametrize(
@@ -56,8 +58,34 @@ def test_gui_feasibility_status_uses_exact_status_mapping(
 ) -> None:
     gui = ViserPanelGui(
         StatusOnlyServer(),
-        StatusOnlyAdapter(),
+        StatusOnlyWorldMonitor(),
+        StatusOnlyManipulationModule(),
         ViserVisualizationConfig(),
     )
 
     assert gui._feasibility_status(result, success, collision_free) == expected
+
+
+def test_group_status_composes_shared_panel_state_without_robot_dropdown() -> None:
+    gui = ViserPanelGui(
+        StatusOnlyServer(),
+        StatusOnlyWorldMonitor(),
+        StatusOnlyManipulationModule(),
+        ViserVisualizationConfig(),
+    )
+    values: dict[str, str] = {}
+    gui.state.selected_group_ids = ("left/manipulator", "right/gripper")
+    gui.state.error = "planner unavailable"
+    gui.state.target_status = gui.state.target_status.FEASIBLE
+    gui.state.plan_state.status = gui.state.plan_state.status.FRESH
+    gui._stale_robot_names = lambda _group_ids: ("right",)  # type: ignore[method-assign]
+    gui._set_handle_value = values.__setitem__  # type: ignore[method-assign]
+
+    gui._update_status_text()
+
+    assert "robot" not in gui._handles
+    assert values == {
+        "status": "### Status\n\n**State:** planner unavailable\n\n"
+        "Target: `feasible` · Plan: `fresh`\n\nState stale: `True (right)`",
+        "target_summary": "Feasibility: `unknown`",
+    }

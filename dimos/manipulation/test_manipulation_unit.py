@@ -197,6 +197,17 @@ class TestStateMachine:
         assert module.cancel() is True
         assert module._state == ManipulationState.IDLE
 
+    def test_cancel_hides_active_plan_preview(self):
+        module = _make_module()
+        module._state = ManipulationState.EXECUTING
+        module._last_plan = GeneratedPlan(group_ids=("arm/manipulator",), path=[])
+        module._world_monitor = MagicMock()
+
+        assert module.cancel() is True
+
+        module._world_monitor.hide_preview.assert_called_once_with(("arm/manipulator",))
+        module._world_monitor.publish_visualization.assert_called_once_with()
+
     def test_reset_not_during_execution(self):
         """Reset works in any state except EXECUTING."""
         module = _make_module()
@@ -935,6 +946,7 @@ class FakeVisualization:
         self.preview_shown: list[str] = []
         self.preview_hidden: list[str] = []
         self.animations: list[tuple[str, list[JointState], float]] = []
+        self.preview_animation_cancellations = 0
 
     def initialize_scene(self, scene: PlanningSceneInfo) -> None:
         pass
@@ -945,14 +957,17 @@ class FakeVisualization:
     def publish_visualization(self, ctx: object | None = None) -> None:
         self.published = True
 
-    def show_preview(self, robot_id: str) -> None:
-        self.preview_shown.append(robot_id)
+    def show_preview(self, group_ids: list[str]) -> None:
+        self.preview_shown.extend(group_ids)
 
-    def hide_preview(self, robot_id: str) -> None:
-        self.preview_hidden.append(robot_id)
+    def hide_preview(self, group_ids: list[str]) -> None:
+        self.preview_hidden.extend(group_ids)
 
-    def animate_path(self, robot_id: str, path: list[JointState], duration: float = 3.0) -> None:
-        self.animations.append((robot_id, path, duration))
+    def animate_plan(self, plan: GeneratedPlan, duration: float = 3.0) -> None:
+        self.animations.append((plan.group_ids[0], plan.path, duration))
+
+    def cancel_preview_animation(self) -> None:
+        self.preview_animation_cancellations += 1
 
     def close(self) -> None:
         self.close_count += 1
@@ -1091,15 +1106,16 @@ class TestWorldMonitorVisualization:
 
         assert monitor.get_visualization_url() == "123"
         monitor.publish_visualization()
-        monitor.show_preview("robot")
-        monitor.hide_preview("robot")
+        monitor.show_preview(["robot/group"])
+        monitor.hide_preview(["robot/group"])
         path = _make_path([1.0], [2.0], [3.0])
-        monitor.animate_path("robot", path, 4.5)
+        plan = GeneratedPlan(group_ids=("robot/group",), status=PlanningStatus.SUCCESS, path=path)
+        monitor.animate_plan(plan, 4.5)
         assert monitor.visualization is viz
         assert viz.published is True
-        assert viz.preview_shown == ["robot"]
-        assert viz.preview_hidden == ["robot"]
-        assert viz.animations == [("robot", path, 4.5)]
+        assert viz.preview_shown == ["robot/group"]
+        assert viz.preview_hidden == ["robot/group"]
+        assert viz.animations == [("robot/group", path, 4.5)]
 
         monitor.stop_all_monitors()
 
@@ -1112,97 +1128,91 @@ class TestWorldMonitorVisualization:
 
         assert monitor.get_visualization_url() is None
         monitor.publish_visualization()
-        monitor.show_preview("robot")
-        monitor.hide_preview("robot")
-        monitor.animate_path("robot", [1], 1.0)
+        monitor.show_preview(["robot/group"])
+        monitor.hide_preview(["robot/group"])
+        monitor.animate_plan(GeneratedPlan(group_ids=("robot/group",), path=[]), 1.0)
         monitor.start_visualization_thread()
         assert monitor._viz_thread is None
 
 
 class TestManipulationPreview:
+    def test_clear_planned_path_dismisses_preview_before_forgetting_plan(self):
+        module = _make_module()
+        plan = GeneratedPlan(group_ids=("arm/manipulator",), path=[])
+        module._last_plan = plan
+        module._world_monitor = MagicMock()
+        plan_during_dismissal: list[GeneratedPlan | None] = []
+        module._world_monitor.hide_preview.side_effect = (
+            lambda _group_ids: plan_during_dismissal.append(module._last_plan)
+        )
+
+        assert module.clear_planned_path() is True
+
+        assert plan_during_dismissal == [plan]
+        module._world_monitor.hide_preview.assert_called_once_with(("arm/manipulator",))
+        module._world_monitor.publish_visualization.assert_called_once_with()
+        assert module._last_plan is None
+
+    def test_clear_planned_path_clears_without_a_world_monitor(self):
+        module = _make_module()
+        module._last_plan = GeneratedPlan(group_ids=("arm/manipulator",), path=[])
+
+        assert module.clear_planned_path() is True
+        assert module._last_plan is None
+
     def test_dismiss_preview_noop_without_monitor(self):
         module = _make_module()
 
-        module._dismiss_preview("robot_id")
+        module._dismiss_preview(["arm/manipulator"])
 
     def test_dismiss_preview_routes_to_monitor(self):
         module = _make_module()
         module._world_monitor = MagicMock()
 
-        module._dismiss_preview("robot_id")
+        module._dismiss_preview(["arm/manipulator"])
 
-        module._world_monitor.hide_preview.assert_called_once_with("robot_id")
+        module._world_monitor.hide_preview.assert_called_once_with(["arm/manipulator"])
         module._world_monitor.publish_visualization.assert_called_once_with()
 
-    def test_preview_path_uses_trajectory_duration_and_interpolates(self):
+    def test_preview_routes_one_complete_plan_with_default_duration(self):
         module = _make_module()
         config = _one_joint_config()
         traj_gen = MagicMock()
-        traj_gen.generate.return_value = _make_trajectory((0.0, [0.0]), (2.0, [2.0]))
         _install_generated_plan(module, config, traj_gen, [0.0], [2.0])
 
-        assert module.preview_path(robot_name="arm", target_fps=2.0) is True
+        assert module.preview_plan() is True
 
-        module._world_monitor.animate_path.assert_called_once()
-        robot_id, preview_path, duration = module._world_monitor.animate_path.call_args.args
-        assert robot_id == "robot_id"
-        assert duration == 2.0
-        assert [state.position for state in preview_path] == [[0.0], [0.5], [1.0], [1.5], [2.0]]
+        module._world_monitor.animate_plan.assert_called_once_with(module._last_plan, 1.0)
 
-    def test_preview_path_explicit_duration_overrides_and_fps_densifies(self):
+    def test_preview_robot_name_validates_affectedness_without_trimming(self):
         module = _make_module()
-        config = _one_joint_config()
+        left = _one_joint_config("left")
+        right = _one_joint_config("right")
         traj_gen = MagicMock()
-        traj_gen.generate.return_value = _make_trajectory((0.0, [0.0]), (9.0, [9.0]))
-        _install_generated_plan(module, config, traj_gen, [0.0], [9.0])
-
-        assert module.preview_path(duration=1.5, robot_name="arm", target_fps=2.0) is True
-
-        module._world_monitor.animate_path.assert_called_once()
-        robot_id, preview_path, duration = module._world_monitor.animate_path.call_args.args
-        assert robot_id == "robot_id"
-        assert duration == 1.5
-        assert [state.position for state in preview_path] == [[0.0], [3.0], [6.0], [9.0]]
-
-    def test_preview_path_returns_false_when_trajectory_cannot_be_derived(self):
-        module = _make_module()
-        config = _one_joint_config()
-        traj_gen = MagicMock()
-        _install_generated_plan(module, config, traj_gen, [0.0])
-
-        assert module.preview_path(robot_name="arm", target_fps=10.0) is False
-        module._world_monitor.animate_path.assert_not_called()
-
-    def test_preview_path_skips_interpolation_for_nonpositive_fps_or_duration(self):
-        module = _make_module()
-        config = _one_joint_config()
-        traj_gen = MagicMock()
-        traj_gen.generate.return_value = _make_trajectory((0.0, [0.0]), (2.0, [1.0]))
-        _install_generated_plan(module, config, traj_gen, [0.0], [1.0])
-
-        assert module.preview_path(robot_name="arm", target_fps=0.0) is True
-        assert module.preview_path(duration=0.0, robot_name="arm", target_fps=20.0) is True
-
-        assert [
-            state.position for state in module._world_monitor.animate_path.call_args_list[0].args[1]
-        ] == [[0.0], [1.0]]
-        assert [
-            state.position for state in module._world_monitor.animate_path.call_args_list[1].args[1]
-        ] == [[0.0], [1.0]]
-
-    def test_preview_path_returns_false_for_missing_inputs(self):
-        module = _make_module()
-        config = _one_joint_config()
-        traj_gen = MagicMock()
-        traj_gen.generate.return_value = _make_trajectory((0.0, [0.0]), (1.0, [1.0]))
-        _install_generated_plan(module, config, traj_gen, [0.0], [1.0])
-        module._world_monitor = None
-
-        assert module.preview_path(robot_name="arm") is False
-
+        module._robots = {
+            "left": ("left_id", left, traj_gen),
+            "right": ("right_id", right, traj_gen),
+        }
         module._world_monitor = MagicMock()
-        module._robots = {}
-        assert module.preview_path(robot_name="arm") is False
+        module._world_monitor.planning_groups = PlanningGroupRegistry([left, right])
+        module._last_plan = GeneratedPlan(
+            group_ids=("left/manipulator", "right/manipulator"),
+            status=PlanningStatus.SUCCESS,
+            path=[
+                JointState(name=["left/j0", "right/j0"], position=[0.0, 0.0]),
+                JointState(name=["left/j0", "right/j0"], position=[1.0, 1.0]),
+            ],
+        )
 
-        _install_generated_plan(module, config, traj_gen)
-        assert module.preview_path(robot_name="arm") is False
+        assert module.preview_plan(duration=2.5, robot_name="left") is True
+
+        module._world_monitor.animate_plan.assert_called_once_with(module._last_plan, 2.5)
+
+    def test_preview_rejects_unaffected_compatibility_robot(self):
+        module = _make_module()
+        config = _one_joint_config()
+        traj_gen = MagicMock()
+        _install_generated_plan(module, config, traj_gen, [0.0], [1.0])
+
+        assert module.preview_plan(robot_name="other") is False
+        module._world_monitor.animate_plan.assert_not_called()

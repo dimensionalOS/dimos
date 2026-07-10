@@ -47,13 +47,13 @@ dual_xarm6_planner = ManipulationModule.blueprint(
 _mock_left_xarm6_hw = make_xarm_hardware("left_arm", 6)
 _mock_right_xarm6_hw = make_xarm_hardware("right_arm", 6)
 
-dual_xarm6_planner_coordinator_mock_meshcat = autoconnect(
+dual_xarm6_planner_coordinator = autoconnect(
     planner(
         robots=[
             make_xarm6_model_config(name="left_arm", y_offset=0.5),
             make_xarm6_model_config(name="right_arm", y_offset=-0.5),
         ],
-        visualization={"backend": "meshcat"},
+        visualization={"backend": "viser"},
     ),
     coordinator(
         hardware=[_mock_left_xarm6_hw, _mock_right_xarm6_hw],

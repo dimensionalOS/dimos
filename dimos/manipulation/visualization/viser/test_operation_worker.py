@@ -22,8 +22,6 @@ import pytest
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
-from dimos.manipulation.visualization.types import RobotInfo
-from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
 from dimos.manipulation.visualization.viser.state import (
@@ -33,12 +31,14 @@ from dimos.manipulation.visualization.viser.state import (
     PanelRuntime,
     PlanStatus,
     TargetEvaluationWorker,
-    TargetStatus,
 )
-from dimos.msgs.sensor_msgs.JointState import JointState
 
 
 class EmptyServer:
+    pass
+
+
+class EmptyWorldMonitor:
     pass
 
 
@@ -106,40 +106,40 @@ class FakeRestartableOperationWorker(FakeOperationSubmitWorker):
         self.stop_calls.append(timeout)
 
 
-class FakeOperationAdapter(InProcessViserAdapter):
+class FakeManipulationModule:
     def __init__(self) -> None:
         self.cancel_calls = 0
-
-    def list_robots(self) -> list[str]:
-        return []
-
-    def get_module_state(self) -> str:
-        return "IDLE"
-
-    def get_robot_info(self, robot_name: str) -> RobotInfo | None:
-        return None
-
-    def get_current_joint_state(self, robot_name: str) -> None:
-        return None
-
-    def get_ee_pose(self, robot_name: str, joint_state: JointState | None = None) -> None:
-        return None
-
-    def get_error(self) -> str:
-        return ""
-
-    def get_robot_config(self, robot_name: str) -> None:
-        return None
-
-    def is_state_stale(self, robot_name: str, max_age: float = 1.0) -> bool:
-        return False
 
     def cancel(self) -> bool:
         self.cancel_calls += 1
         return True
 
-    def plan_to_joints(self, joints: JointState, robot_name: str | None = None) -> bool:
-        return True
+    def list_robots(self) -> list[str]:
+        return []
+
+    def list_planning_groups(self) -> list[object]:
+        return []
+
+    def get_state(self) -> str:
+        return "IDLE"
+
+    def get_error(self) -> str:
+        return ""
+
+    def get_robot_info(self, robot_name: str) -> None:
+        return None
+
+    def robot_id_for_name(self, robot_name: str) -> None:
+        return None
+
+
+def make_gui(module: FakeManipulationModule | None = None) -> ViserPanelGui:
+    return ViserPanelGui(
+        EmptyServer(),
+        EmptyWorldMonitor(),
+        module or FakeManipulationModule(),
+        ViserVisualizationConfig(),
+    )
 
 
 def test_operation_worker_uses_per_operation_timeout() -> None:
@@ -179,11 +179,7 @@ def test_operation_worker_uses_operation_error_callback_on_timeout() -> None:
 
 def test_gui_close_uses_bounded_operation_worker_stop(monkeypatch: pytest.MonkeyPatch) -> None:
     stop_timeouts: list[float | None] = []
-    gui = ViserPanelGui(
-        EmptyServer(),
-        FakeOperationAdapter(),
-        ViserVisualizationConfig(),
-    )
+    gui = make_gui()
     gui._operation_worker.stop()
     gui._worker.stop()
     monkeypatch.setattr(gui, "_operation_worker", FakeStopOperationWorker(stop_timeouts))
@@ -196,36 +192,23 @@ def test_gui_close_uses_bounded_operation_worker_stop(monkeypatch: pytest.Monkey
 
 def test_gui_only_preview_submits_timeout_override(monkeypatch: pytest.MonkeyPatch) -> None:
     submissions: list[dict[str, float]] = []
-    gui = ViserPanelGui(
-        EmptyServer(),
-        FakeOperationAdapter(),
-        ViserVisualizationConfig(preview_request_timeout=0.25),
-    )
+    gui = make_gui()
+    gui.config = ViserVisualizationConfig(preview_request_timeout=0.25)
     gui._operation_worker.stop()
     monkeypatch.setattr(gui, "_operation_worker", FakeTimeoutSubmitWorker(submissions))
     gui.state.runtime = PanelRuntime.RUNNING
     gui.state.backend_status = BackendConnectionStatus.READY
-    gui.state.selected_robot = "arm"
-    gui.state.target_status = TargetStatus.FEASIBLE
-    gui.state.manipulation_state = "IDLE"
-
-    gui._submit_plan()
     gui.state.plan_state.status = PlanStatus.FRESH
     gui._submit_preview()
 
-    assert "timeout_seconds" not in submissions[0]
-    assert submissions[1]["timeout_seconds"] == 0.25
+    assert submissions == [{"timeout_seconds": 0.25}]
 
 
 def test_gui_cancel_bypasses_operation_worker(monkeypatch: pytest.MonkeyPatch) -> None:
     submissions: list[Callable[[], None]] = []
     stop_calls: list[float | None] = []
-    adapter = FakeOperationAdapter()
-    gui = ViserPanelGui(
-        EmptyServer(),
-        adapter,
-        ViserVisualizationConfig(),
-    )
+    module = FakeManipulationModule()
+    gui = make_gui(module)
     gui._operation_worker.stop()
     monkeypatch.setattr(
         gui, "_operation_worker", FakeRestartableOperationWorker(submissions, stop_calls)
@@ -237,7 +220,7 @@ def test_gui_cancel_bypasses_operation_worker(monkeypatch: pytest.MonkeyPatch) -
 
     assert submissions == []
     assert stop_calls == [0.0]
-    assert adapter.cancel_calls == 1
+    assert module.cancel_calls == 1
     assert gui.state.action_status == ActionStatus.IDLE
     assert gui.state.last_result == "cancel=True"
 
@@ -245,12 +228,8 @@ def test_gui_cancel_bypasses_operation_worker(monkeypatch: pytest.MonkeyPatch) -
 def test_gui_cancelled_planning_clears_active_plan_state(monkeypatch: pytest.MonkeyPatch) -> None:
     submissions: list[Callable[[], None]] = []
     stop_calls: list[float | None] = []
-    adapter = FakeOperationAdapter()
-    gui = ViserPanelGui(
-        EmptyServer(),
-        adapter,
-        ViserVisualizationConfig(),
-    )
+    module = FakeManipulationModule()
+    gui = make_gui(module)
     gui._operation_worker.stop()
     monkeypatch.setattr(
         gui, "_operation_worker", FakeRestartableOperationWorker(submissions, stop_calls)
@@ -265,7 +244,7 @@ def test_gui_cancelled_planning_clears_active_plan_state(monkeypatch: pytest.Mon
     gui.close()
 
     assert submissions == []
-    assert adapter.cancel_calls == 1
+    assert module.cancel_calls == 1
     assert stop_calls == [0.0]
     assert gui.state.action_status == ActionStatus.IDLE
     assert gui.state.plan_state.status == PlanStatus.FAILED
@@ -287,11 +266,7 @@ def test_gui_guard_errors_keep_action_idle(
     submit: str, expected_error: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     submissions: list[Callable[[], None]] = []
-    gui = ViserPanelGui(
-        EmptyServer(),
-        FakeOperationAdapter(),
-        ViserVisualizationConfig(),
-    )
+    gui = make_gui()
     gui._operation_worker.stop()
     monkeypatch.setattr(gui, "_operation_worker", FakeOperationSubmitWorker(submissions))
     gui.state.runtime = PanelRuntime.RUNNING
@@ -307,11 +282,7 @@ def test_gui_guard_errors_keep_action_idle(
 
 
 def test_gui_ignores_stale_timed_out_operation_finish() -> None:
-    gui = ViserPanelGui(
-        EmptyServer(),
-        FakeOperationAdapter(),
-        ViserVisualizationConfig(),
-    )
+    gui = make_gui()
     old_operation_id = gui._next_operation_id()
     gui._set_operation_error("Operation timed out after 5.0s", old_operation_id)
     gui.state.action_status = ActionStatus.FAILED

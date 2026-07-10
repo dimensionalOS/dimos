@@ -1,4 +1,4 @@
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,557 +12,1155 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Hermetic contract tests for the group-aware Viser manipulation panel."""
+
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
-import sys
 import threading
-from types import ModuleType, SimpleNamespace, TracebackType
+from types import SimpleNamespace
 
-import numpy as np
 import pytest
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
-from dimos.manipulation.visualization.types import RobotInfo, TargetEvaluation
-from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
+from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.visualization.viser.animation import (
-    PreviewAnimator,
+    GroupPreviewAnimation,
+    PreviewTrack,
     interpolate_joint_path,
     sampled_joint_path_frames,
 )
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
-from dimos.manipulation.visualization.viser.gui import ViserPanelGui
-from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
+from dimos.manipulation.visualization.viser.gui import (
+    ACTIVE_GROUP_COLOR,
+    INACTIVE_GROUP_COLOR,
+    ViserPanelGui,
+)
+from dimos.manipulation.visualization.viser.panel_backend import (
+    complete_states_for_targets,
+    evaluate_joint_target_set,
+    evaluate_pose_target_set,
+    group_display_name,
+)
+from dimos.manipulation.visualization.viser.scene import (
+    GOAL_ROBOT_FEASIBLE_COLOR,
+    GOAL_ROBOT_INFEASIBLE_COLOR,
+    TARGET_CONTROL_FEASIBLE_COLOR,
+    TARGET_CONTROL_INFEASIBLE_COLOR,
+    ViserManipulationScene,
+)
 from dimos.manipulation.visualization.viser.state import (
-    ActionStatus,
-    FeasibilityStatus,
-    OperationWorker,
     PanelPlanState,
     PlanStatus,
     TargetEvaluationRequest,
-    TargetEvaluationWorker,
     TargetStatus,
 )
-from dimos.manipulation.visualization.viser.theme import _dimos_logo_data_url, apply_dimos_theme
+from dimos.manipulation.visualization.viser.theme import apply_dimos_theme
+from dimos.manipulation.visualization.viser.visualizer import ViserManipulationVisualizer
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.JointState import JointState
 
-GuiCallback = Callable[[SimpleNamespace], None]
-ThemeValue = str | bool | tuple[int, int, int] | dict[str, str | dict[str, str]] | None
-RobotConfigOverride = str | list[str] | list[float] | None
+
+@dataclass
+class Handle:
+    label: str = ""
+    value: object = None
+    options: list[str] | None = None
+    disabled: bool = False
+    color: tuple[int, int, int] | None = None
+    min: float = 0.0
+    max: float = 0.0
+    step: float = 0.0
+    visible: bool = True
+    callback: Callable[[object], None] | None = None
+    removed: bool = False
+
+    def on_update(self, callback: Callable[[object], None]) -> None:
+        self.callback = callback
+
+    def on_click(self, callback: Callable[[object], None]) -> None:
+        self.callback = callback
+
+    def remove(self) -> None:
+        self.removed = True
+
+
+class Folder(Handle):
+    def __init__(self, label: str, **kwargs: bool) -> None:
+        super().__init__(label=label)
+        self.kwargs = kwargs
+
+    def __enter__(self) -> Folder:
+        return self
+
+    def __exit__(self, *_: object) -> bool:
+        return False
+
+
+class Gui:
+    def __init__(self) -> None:
+        self.folders: list[Folder] = []
+        self.buttons: list[Handle] = []
+        self.dropdowns: list[Handle] = []
+        self.sliders: list[Handle] = []
+        self.markdown: list[Handle] = []
+        self.theme_kwargs: dict[str, object] | None = None
+
+    def add_folder(self, label: str, **kwargs: bool) -> Folder:
+        folder = Folder(label, **kwargs)
+        self.folders.append(folder)
+        return folder
+
+    def add_markdown(self, value: str) -> Handle:
+        handle = Handle(value=value)
+        self.markdown.append(handle)
+        return handle
+
+    def add_button(self, label: str, **kwargs: object) -> Handle:
+        color = kwargs.get("color")
+        handle = Handle(
+            label=label,
+            disabled=bool(kwargs.get("disabled", False)),
+            color=color if isinstance(color, tuple) else None,
+        )
+        self.buttons.append(handle)
+        return handle
+
+    def add_dropdown(self, label: str, *, options: Sequence[str], initial_value: str) -> Handle:
+        handle = Handle(label=label, options=list(options), value=initial_value)
+        self.dropdowns.append(handle)
+        return handle
+
+    def add_checkbox(self, label: str, *, initial_value: bool) -> Handle:
+        return Handle(label=label, value=initial_value)
+
+    def add_slider(self, label: str, **kwargs: float) -> Handle:
+        handle = Handle(label=label, value=kwargs["initial_value"])
+        handle.min, handle.max, handle.step = kwargs["min"], kwargs["max"], kwargs["step"]
+        self.sliders.append(handle)
+        return handle
+
+    def configure_theme(self, **kwargs: object) -> None:
+        self.theme_kwargs = kwargs
+
+
+class Server:
+    def __init__(self) -> None:
+        self.gui = Gui()
+        self.scene = SimpleNamespace()
 
 
 @dataclass
-class RobotConfigStub:
-    name: str = "arm"
-    joint_names: list[str] | None = None
-    end_effector_link: str = "ee_link"
-    base_link: str = "base_link"
-    home_joints: list[float] | None = None
-    joint_limits_lower: list[float] | None = None
-    joint_limits_upper: list[float] | None = None
-
-    def __post_init__(self) -> None:
-        if self.joint_names is None:
-            self.joint_names = ["j1", "j2"]
-
-
-@dataclass
-class SceneRobotConfigStub:
-    name: str = "arm"
-    model_path: str = "/tmp/arm.urdf"
+class Config:
+    name: str
+    joint_names: list[str]
+    joint_limits_lower: list[float]
+    joint_limits_upper: list[float]
+    home_joints: list[float] | None
+    base_link: str = "base"
+    end_effector_link: str = "tool"
+    model_path: str = "robot.urdf"
     package_paths: dict[str, str] | None = None
     xacro_args: dict[str, str] | None = None
     auto_convert_meshes: bool = False
-    joint_names: list[str] | None = None
-
-    def __post_init__(self) -> None:
-        if self.package_paths is None:
-            self.package_paths = {}
-        if self.xacro_args is None:
-            self.xacro_args = {}
-        if self.joint_names is None:
-            self.joint_names = ["joint1"]
 
 
-@dataclass
-class NamedState:
-    name: str
+def group(robot: str, name: str, joints: tuple[str, ...], *, pose: bool = False) -> PlanningGroup:
+    return PlanningGroup(
+        f"{robot}/{name}",
+        robot,
+        name,
+        tuple(f"{robot}/{joint}" for joint in joints),
+        joints,
+        "base",
+        "tool" if pose else None,
+    )
 
 
-@dataclass
-class GuiMarkdownHandle:
-    value: str
-    removed: bool = False
+class Module:
+    def __init__(self, groups: list[PlanningGroup], states: dict[str, JointState]) -> None:
+        self.groups = groups
+        self.states = states
+        robots = {item.robot_name for item in groups}
+        self.configs = {
+            robot_name: Config(robot_name, ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
+            for robot_name in robots
+        }
+        self.plans: list[tuple[tuple[str, ...], dict[str, JointState]]] = []
+        self.executions = 0
+        self.cancelled = 0
+        self.cleared = 0
 
-    def remove(self) -> None:
-        self.removed = True
+    def list_robots(self) -> list[str]:
+        return list(self.configs)
+
+    def list_planning_groups(self) -> list[PlanningGroup]:
+        return self.groups
+
+    def robot_items(self) -> list[tuple[str, str, Config]]:
+        return [(name, f"id-{name}", config) for name, config in self.configs.items()]
+
+    def robot_id_for_name(self, name: str) -> str:
+        return f"id-{name}"
+
+    def get_robot_config(self, name: str) -> Config:
+        return self.configs[name]
+
+    def get_robot_info(self, name: str) -> dict[str, object]:
+        config = self.configs[name]
+        return {
+            "name": name,
+            "world_robot_id": self.robot_id_for_name(name),
+            "joint_names": config.joint_names,
+            "end_effector_link": "tool",
+            "base_link": "base",
+            "max_velocity": 1.0,
+            "max_acceleration": 1.0,
+            "has_joint_name_mapping": False,
+            "coordinator_task_name": None,
+            "home_joints": config.home_joints,
+            "pre_grasp_offset": 0.0,
+            "init_joints": [0.0, 0.0],
+        }
+
+    def get_init_joints(self, name: str) -> JointState:
+        return JointState({"name": self.configs[name].joint_names, "position": [-0.5, -1.0]})
+
+    def get_state(self) -> str:
+        return "IDLE"
+
+    def get_error(self) -> str:
+        return ""
+
+    def reset(self) -> SimpleNamespace:
+        return SimpleNamespace(is_success=lambda: True)
+
+    def plan_to_joint_targets(self, targets: dict[str, JointState]) -> bool:
+        self.plans.append((tuple(targets), targets))
+        return True
+
+    def preview_plan(self) -> bool:
+        return True
+
+    def execute(self) -> bool:
+        self.executions += 1
+        return True
+
+    def cancel(self) -> bool:
+        self.cancelled += 1
+        return True
+
+    def clear_planned_path(self) -> bool:
+        self.cleared += 1
+        return True
 
 
-@dataclass
-class GuiDropdownHandle:
-    label: str
-    options: list[str]
-    value: str
-    update_callback: GuiCallback | None = None
-    removed: bool = False
+class Monitor:
+    def __init__(self, module: Module) -> None:
+        self.module = module
+        self.invalid: set[str] = set()
+        self.stale: set[str] = set()
 
-    def on_update(self, callback: GuiCallback) -> None:
-        self.update_callback = callback
+    def get_current_joint_state(self, robot_id: str) -> JointState:
+        return JointState(self.module.states[robot_id.removeprefix("id-")])
 
-    def remove(self) -> None:
-        self.removed = True
+    def is_state_stale(self, robot_id: str, max_age: float = 1.0) -> bool:
+        return robot_id in self.stale
 
+    def is_state_valid(self, robot_id: str, _state: JointState) -> bool:
+        return robot_id not in self.invalid
 
-@dataclass
-class GuiButtonHandle:
-    label: str
-    disabled: bool = False
-    click_callback: GuiCallback | None = None
-    removed: bool = False
-
-    def on_click(self, callback: GuiCallback) -> None:
-        self.click_callback = callback
-
-    def remove(self) -> None:
-        self.removed = True
+    def get_group_ee_pose(self, group_id: str, _state: JointState | None = None) -> Pose:
+        return Pose({"position": [0.1, 0.2, 0.3], "orientation": [0.0, 0.0, 0.0, 1.0]})
 
 
-@dataclass
-class GuiCheckboxHandle:
-    label: str
-    value: bool
-    update_callback: GuiCallback | None = None
-    removed: bool = False
+@pytest.fixture
+def panel() -> Iterator[
+    Callable[[list[PlanningGroup], dict[str, JointState]], tuple[ViserPanelGui, Module, Server]]
+]:
+    panels: list[ViserPanelGui] = []
 
-    def on_update(self, callback: GuiCallback) -> None:
-        self.update_callback = callback
+    def make(
+        groups: list[PlanningGroup], states: dict[str, JointState]
+    ) -> tuple[ViserPanelGui, Module, Server]:
+        module = Module(groups, states)
+        server = Server()
+        gui = ViserPanelGui(
+            server, Monitor(module), module, ViserVisualizationConfig(panel_enabled=True)
+        )
+        gui.start()
+        panels.append(gui)
+        return gui, module, server
 
-    def remove(self) -> None:
-        self.removed = True
-
-
-@dataclass
-class GuiSliderHandle:
-    label: str
-    min: float
-    max: float
-    step: float
-    value: float
-    removed: bool = False
-    update_callback: GuiCallback | None = None
-
-    def on_update(self, callback: GuiCallback) -> None:
-        self.update_callback = callback
-
-    def remove(self) -> None:
-        self.removed = True
+    yield make
+    for gui in panels:
+        gui.close()
 
 
-class FakeHandle:
+def states(*robots: str) -> dict[str, JointState]:
+    return {robot: JointState({"name": ["j1", "j2"], "position": [0.1, 0.2]}) for robot in robots}
+
+
+def test_panel_contract_group_order_defaults_and_controls(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+) -> None:
+    pose = group("arm", "manipulator", ("j1",), pose=True)
+    auxiliary = group("arm", "gripper", ("j2",))
+    gui, _module, server = panel([auxiliary, pose], states("arm"))
+
+    assert [(folder.label, folder.kwargs) for folder in server.gui.folders] == [
+        ("Manipulation Panel", {"expand_by_default": True}),
+        ("Joint Control", {"expand_by_default": False}),
+    ]
+    assert [button.label for button in server.gui.buttons] == [
+        "arm",
+        "arm gripper",
+        "Plan",
+        "Preview",
+        "Execute",
+        "Cancel",
+        "Clear plan",
+    ]
+    assert "robot" not in gui._handles
+    assert (
+        server.gui.markdown[1].value
+        == "### Planning Groups\nActive MoveIt group for pose goal, planning, and joint edits."
+    )
+    assert [button.color for button in server.gui.buttons[:2]] == [
+        ACTIVE_GROUP_COLOR,
+        INACTIVE_GROUP_COLOR,
+    ]
+    assert gui.state.selected_group_ids == ("arm/manipulator",)
+    assert server.gui.dropdowns[0].options == ["Select preset...", "Init", "Current", "Home"]
+    assert [
+        (slider.label, slider.min, slider.max, slider.value) for slider in server.gui.sliders
+    ] == [("arm/manipulator/j1", -1.0, 1.0, 0.1)]
+    server.gui.buttons[1].callback(SimpleNamespace())
+    assert gui.state.selected_group_ids == ("arm/manipulator", "arm/gripper")
+    assert [slider.label for slider in server.gui.sliders if not slider.removed] == [
+        "arm/manipulator/j1",
+        "arm/gripper/j2",
+    ]
+
+
+def test_backend_composes_complete_states_with_duplicate_local_names() -> None:
+    left, right = group("left", "manipulator", ("j1",)), group("right", "manipulator", ("j1",))
+    module = Module([left, right], states("left", "right"))
+    monitor = Monitor(module)
+    targets = {
+        left.id: JointState({"name": ["left/j1"], "position": [0.7]}),
+        right.id: JointState({"name": ["right/j1"], "position": [0.8]}),
+    }
+    complete = complete_states_for_targets(monitor, module, (left.id, right.id), targets)
+    assert complete is not None
+    assert complete["left"].position == [0.7, 0.2]
+    assert complete["right"].position == [0.8, 0.2]
+    assert (
+        evaluate_joint_target_set(monitor, module, (left.id, right.id), targets)["status"]
+        == "FEASIBLE"
+    )
+
+
+def test_target_callbacks_require_current_sequence_and_selection_epoch(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+) -> None:
+    first, second = (
+        group("arm", "manipulator", ("j1",), pose=True),
+        group("arm", "gripper", ("j2",)),
+    )
+    gui, _module, _server = panel([first, second], states("arm"))
+    request = TargetEvaluationRequest(
+        1, "joints", selection_epoch=gui.state.selection_epoch, group_ids=(first.id,)
+    )
+    gui.state.latest_sequence_id = 2
+    gui._apply_target_evaluation_result(
+        request, {"success": True, "collision_free": True, "status": "FEASIBLE"}
+    )
+    assert gui.state.target_status == TargetStatus.EMPTY
+    gui.state.latest_sequence_id = 1
+    gui.state.advance_selection_epoch()
+    gui._apply_target_evaluation_result(
+        request, {"success": True, "collision_free": True, "status": "FEASIBLE"}
+    )
+    assert gui.state.target_status == TargetStatus.CHECKING
+
+
+def test_plan_target_sequence_invalidation_and_unfiltered_all_robot_execute(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    left, right = (
+        group("left", "manipulator", ("j1",), pose=True),
+        group("right", "manipulator", ("j1",), pose=True),
+    )
+    gui, module, _server = panel([left, right], states("left", "right"))
+    gui._toggle_group_selected(right.id)
+    gui.state.target_status = TargetStatus.FEASIBLE
+    monkeypatch.setattr(
+        gui,
+        "_operation_worker",
+        SimpleNamespace(submit=lambda operation, **_: operation(), stop=lambda **_: None),
+    )
+    gui._submit_plan()
+    assert module.plans[-1][0] == (left.id, right.id)
+    assert set(gui.state.plan_state.robot_snapshots) == {"left", "right"}
+    gui.state.next_sequence_id()
+    assert gui.state.plan_state.status == PlanStatus.STALE
+    gui.state.plan_state = PanelPlanState(
+        status=PlanStatus.FRESH,
+        group_ids=(left.id, right.id),
+        target_sequence_id=gui.state.latest_sequence_id,
+        robot_snapshots={"left": module.states["left"], "right": module.states["right"]},
+    )
+    gui.state.target_status = TargetStatus.FEASIBLE
+    gui._submit_execute()
+    assert module.executions == 1
+
+
+def test_cancel_clear_and_close_invalidate_operations_and_preview_generation(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    selected = group("arm", "manipulator", ("j1",), pose=True)
+    gui, module, _server = panel([selected], states("arm"))
+    submitted: list[Callable[[], None]] = []
+    gui._operation_worker.stop()
+    monkeypatch.setattr(
+        gui,
+        "_operation_worker",
+        SimpleNamespace(
+            submit=lambda operation, **_: submitted.append(operation),
+            stop=lambda **_: None,
+            start=lambda: None,
+        ),
+    )
+    gui.state.target_status = TargetStatus.FEASIBLE
+    gui._submit_plan()
+    gui._submit_clear()
+    submitted[0]()
+    assert module.plans == []
+    submitted[1]()
+    assert module.cleared == 1 and gui.state.plan_state.status == PlanStatus.NONE
+    gui.close()
+    status_before_callback = gui.state.target_status
+    gui._apply_target_evaluation_result(
+        TargetEvaluationRequest(0, "joints"), {"success": True, "collision_free": True}
+    )
+    assert gui.state.target_status is status_before_callback
+
+
+class Mesh:
     def __init__(self) -> None:
-        self.visible: object | None = None
-        self.removed = False
-        self.name = ""
-        self.kwargs: dict[str, float | bool] = {}
-
-    def remove(self) -> None:
-        self.removed = True
+        self.visible = False
+        self.color: tuple[int, int, int] | None = None
+        self.opacity: float | None = None
 
 
-class FakeUrdf:
-    def __init__(self, names: tuple[str, ...]) -> None:
-        self._urdf = SimpleNamespace(actuated_joint_names=names)
-        self._meshes = []
-        self.cfg = None
-        self.removed = False
+class Urdf:
+    def __init__(self, *_: object, **__: object) -> None:
+        self._urdf = SimpleNamespace(actuated_joint_names=("j1", "j2"))
+        self._meshes = [Mesh()]
+        self.cfg: list[float] | None = None
 
     def update_cfg(self, cfg: Sequence[float]) -> None:
         self.cfg = list(cfg)
 
     def remove(self) -> None:
-        self.removed = True
+        pass
 
 
-class FakeJointState(JointState):
-    def __init__(
-        self,
-        name: Sequence[str],
-        position: Sequence[float] | None = None,
-        velocity: Sequence[float] | None = None,
-        effort: Sequence[float] | None = None,
-    ) -> None:
-        self.ts = 0.0
-        self.frame_id = ""
-        self.name = list(name)
-        self.position = list(position or [])
-        self.velocity = list(velocity or [])
-        self.effort = list(effort or [])
-
-
-class FakeServer:
-    def __init__(self) -> None:
-        self.scene = SimpleNamespace()
-        self.scene.add_transform_controls = self.add_transform_controls
-
-    def add_transform_controls(self, path: str, *, scale: float) -> FakeTransformHandle:
-        handle = FakeTransformHandle()
-        handle.path = path
-        handle.scale = scale
-        return handle
-
-
-class FakeGridServer(FakeServer):
-    def __init__(self) -> None:
-        super().__init__()
-        self.grids = []
-        self.scene.add_grid = self.add_grid
-
-    def add_grid(self, name: str, **kwargs: float | bool) -> FakeHandle:
-        handle = FakeHandle()
-        handle.name = name
-        handle.kwargs = kwargs
-        handle.visible = kwargs.get("visible")
-        self.grids.append(handle)
-        return handle
-
-
-class FakeTransformHandle(FakeHandle):
-    def __init__(self) -> None:
-        super().__init__()
-        self.position = (0.0, 0.0, 0.0)
-        self.wxyz = (1.0, 0.0, 0.0, 0.0)
-        self.color = None
-        self.material_color = None
-        self.update_callback = None
-        self.path = ""
-        self.scale = 0.0
-
-    def on_update(self, callback: GuiCallback) -> None:
-        self.update_callback = callback
-
-
-class FakeTransformServer(FakeServer):
-    def __init__(self) -> None:
-        super().__init__()
-        self.transform_controls = []
-        self.scene.add_transform_controls = self.add_transform_controls
-
-    def add_transform_controls(self, path: str, *, scale: float) -> FakeTransformHandle:
-        handle = FakeTransformHandle()
-        handle.path = path
-        handle.scale = scale
-        self.transform_controls.append(handle)
-        return handle
-
-
-class FakeFolder:
-    def __init__(self, label: str, kwargs: dict[str, bool]) -> None:
-        self.label = label
-        self.kwargs = kwargs
-        self.entered = False
-        self.exited = False
-        self.removed = False
-
-    def __enter__(self) -> FakeFolder:
-        self.entered = True
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> bool:
-        self.exited = True
-        return False
-
-    def remove(self) -> None:
-        self.removed = True
-
-
-class FakeGuiServer:
-    def __init__(self) -> None:
-        self.theme_kwargs: dict[str, ThemeValue] | None = None
-        self.folders = []
-        self.gui = SimpleNamespace(
-            add_markdown=lambda value: GuiMarkdownHandle(value=value),
-            add_dropdown=self.add_dropdown,
-            add_button=self.add_button,
-            add_checkbox=self.add_checkbox,
-            add_slider=self.add_slider,
-            add_folder=self.add_folder,
-            configure_theme=self.configure_theme,
+def test_scene_active_only_ghosts_group_gizmos_feasibility_and_shared_ticks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    updates: list[tuple[str, list[float]]] = []
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    server.scene.add_transform_controls = lambda *_args, **_kwargs: Handle()
+    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
+    config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
+    scene.register_robot("id-arm", config)
+    scene.set_target_active("id-arm", False)
+    assert scene._urdfs["id-arm:target"]._meshes[0].visible is False
+    scene.set_target_joints("id-arm", ["j1", "j2"], [0.8, 0.2])
+    assert scene._urdfs["id-arm:target"].cfg == [0.8, 0.2]
+    scene.set_target_visual_state("id-arm", False)
+    assert scene._urdfs["id-arm:target"]._meshes[0].color == (255, 30, 30)
+    monkeypatch.setattr(
+        "dimos.manipulation.visualization.viser.scene.time.sleep", lambda _delay: None
+    )
+    original = scene._set_preview_ghost_joints
+    scene._set_preview_ghost_joints = lambda robot, names, values: (
+        updates.append((robot, list(values))),
+        original(robot, names, values),
+    )  # type: ignore[method-assign]
+    preview = GroupPreviewAnimation(
+        (
+            PreviewTrack(
+                "id-arm",
+                ("j1", "j2"),
+                (
+                    JointState({"name": ["j1", "j2"], "position": [0.0, 0.2]}),
+                    JointState({"name": ["j1", "j2"], "position": [1.0, 0.2]}),
+                ),
+            ),
         )
-        self.buttons: dict[str, GuiButtonHandle] = {}
-        self.checkboxes: dict[str, GuiCheckboxHandle] = {}
-        self.sliders: list[GuiSliderHandle] = []
-
-    def configure_theme(self, **kwargs: ThemeValue) -> None:
-        self.theme_kwargs = kwargs
-
-    def add_folder(self, label: str, **kwargs: bool) -> FakeFolder:
-        handle = FakeFolder(label, kwargs)
-        self.folders.append(handle)
-        return handle
-
-    def add_dropdown(
-        self, label: str, *, options: Sequence[str], initial_value: str
-    ) -> GuiDropdownHandle:
-        handle = GuiDropdownHandle(label=label, options=list(options), value=initial_value)
-        return handle
-
-    def add_button(self, label: str, *, disabled: bool = False) -> GuiButtonHandle:
-        handle = GuiButtonHandle(label=label, disabled=disabled)
-        self.buttons[label] = handle
-        return handle
-
-    def add_checkbox(self, label: str, *, initial_value: bool) -> GuiCheckboxHandle:
-        handle = GuiCheckboxHandle(label=label, value=initial_value)
-        self.checkboxes[label] = handle
-        return handle
-
-    def add_slider(
-        self,
-        label: str,
-        *,
-        min: float,
-        max: float,
-        step: float,
-        initial_value: float,
-    ) -> GuiSliderHandle:
-        handle = GuiSliderHandle(label=label, min=min, max=max, step=step, value=initial_value)
-        self.sliders.append(handle)
-        return handle
-
-
-def make_robot_config(**overrides: RobotConfigOverride) -> RobotConfigStub:
-    """Build a faithful RobotModelConfig stand-in with the fields the panel reads."""
-    config = RobotConfigStub()
-    for name, value in overrides.items():
-        setattr(config, name, value)
-    return config
-
-
-class FakeManipulationModule(SimpleNamespace):
-    """Public ManipulationModule surface used by the in-process Viser adapter tests."""
-
-    def list_robots(self) -> list[str]:
-        return list(getattr(self, "_robots", {}).keys())
-
-    def robot_items(self) -> list[tuple[str, str, RobotConfigStub | SimpleNamespace]]:
-        return [
-            (name, robot_id, config)
-            for name, (robot_id, config, _) in getattr(self, "_robots", {}).items()
-        ]
-
-    def robot_id_for_name(self, robot_name: str) -> str | None:
-        entry = getattr(self, "_robots", {}).get(robot_name)
-        return entry[0] if entry is not None else None
-
-    def robot_name_for_id(self, robot_id: str) -> str | None:
-        for robot_name, (candidate_id, _, _) in getattr(self, "_robots", {}).items():
-            if candidate_id == robot_id:
-                return robot_name
-        return None
-
-    def get_robot_config(self, robot_name: str) -> RobotConfigStub | SimpleNamespace | None:
-        entry = getattr(self, "_robots", {}).get(robot_name)
-        return entry[1] if entry is not None else None
-
-    def get_robot_info(self, robot_name: str) -> RobotInfo | None:
-        config = self.get_robot_config(robot_name)
-        if config is None:
-            return None
-        init = self.get_init_joints(robot_name)
-        home_joints = config.home_joints if hasattr(config, "home_joints") else None
-        return {
-            "name": config.name,
-            "world_robot_id": self.robot_id_for_name(robot_name) or robot_name,
-            "joint_names": list(config.joint_names),
-            "end_effector_link": config.end_effector_link,
-            "base_link": config.base_link,
-            "max_velocity": 1.0,
-            "max_acceleration": 1.0,
-            "has_joint_name_mapping": False,
-            "coordinator_task_name": None,
-            "home_joints": list(home_joints) if home_joints is not None else None,
-            "pre_grasp_offset": 0.0,
-            "init_joints": list(init.position) if init is not None else None,
-        }
-
-    def get_init_joints(self, robot_name: str) -> JointState | None:
-        return getattr(self, "_init_joints", {}).get(robot_name)
-
-    def get_state(self) -> str:
-        state = getattr(self, "_state", "IDLE")
-        return str(getattr(state, "name", state))
-
-    def get_error(self) -> str:
-        return str(getattr(self, "_error_message", ""))
-
-    def evaluate_joint_target(self, joints: JointState | None, robot_name: str) -> TargetEvaluation:
-        robot_id = self.robot_id_for_name(robot_name)
-        if robot_id is None or joints is None:
-            return {"success": False, "status": "NO_ROBOT", "joint_state": None}
-        world_monitor = getattr(self, "_world_monitor", None)
-        if world_monitor is None:
-            return {"success": False, "status": "UNAVAILABLE", "joint_state": None}
-        collision_free = world_monitor.is_state_valid(robot_id, joints)
-        return {
-            "success": True,
-            "status": "FEASIBLE" if collision_free else "COLLISION",
-            "message": "Target is collision-free" if collision_free else "Target is in collision",
-            "collision_free": collision_free,
-            "ee_pose": world_monitor.get_ee_pose(robot_id, joints),
-            "joint_state": joints,
-        }
-
-    def evaluate_pose_target(self, _pose: Pose, _robot_name: str) -> TargetEvaluation:
-        return {
-            "success": False,
-            "joint_state": None,
-            "status": "UNAVAILABLE",
-            "message": "No fake pose IK",
-            "collision_free": False,
-        }
-
-
-def make_adapter_with_robot() -> InProcessViserAdapter:
-    current = FakeJointState(["j1", "j2"], position=[0.3, 0.4])
-    config = make_robot_config(
-        name="arm",
-        joint_names=["j1", "j2"],
-        joint_limits_lower=[-1.0, -2.0],
-        joint_limits_upper=[1.0, 2.0],
-        home_joints=[0.0, 0.0],
     )
-    world_monitor = SimpleNamespace(
-        get_current_joint_state=lambda _robot_id: current,
-        is_state_stale=lambda _robot_id, max_age=1.0: False,
-        is_state_valid=lambda _robot_id, _joint_state: True,
-        get_ee_pose=lambda _robot_id, joint_state=None: None,
-    )
-    module = FakeManipulationModule(
-        _robots={"arm": ("robot-1", config, None)},
-        _init_joints={"arm": FakeJointState(["j1", "j2"], position=[0.1, 0.2])},
-        _state=NamedState(name="IDLE"),
-        _error_message="",
-        _world_monitor=world_monitor,
-    )
-    return InProcessViserAdapter(
-        world_monitor=world_monitor,
-        manipulation_module=module,
-    )
+    assert scene.animate_preview(preview, 1.0) is True
+    assert updates[-1] == ("id-arm", [1.0, 0.2])
 
 
-@pytest.fixture
-def make_panel() -> Iterator[Callable[..., ViserPanelGui]]:
-    """Build and start a ViserPanelGui, closing it (and its worker threads) on teardown."""
-    panels: list[ViserPanelGui] = []
-
-    def _make(
-        server: FakeGuiServer | FakeServer,
-        adapter: InProcessViserAdapter,
-        config: ViserVisualizationConfig | None = None,
-        scene: ViserManipulationScene | None = None,
-    ) -> ViserPanelGui:
-        gui = ViserPanelGui(
-            server, adapter, config or ViserVisualizationConfig(panel_enabled=True), scene
-        )
-        gui.start()
-        panels.append(gui)
-        return gui
-
-    yield _make
-    for gui in panels:
-        gui.close()
-
-
-def test_viser_config_enables_panel_by_default() -> None:
+def test_theme_and_reference_scene_contract() -> None:
+    server = Server()
+    assert apply_dimos_theme(server) is True
+    assert server.gui.theme_kwargs is not None
+    assert server.gui.theme_kwargs["brand_color"] == (0, 153, 255)
+    assert server.gui.theme_kwargs["dark_mode"] is True
+    assert server.gui.theme_kwargs["control_layout"] == "fixed"
     assert ViserVisualizationConfig().panel_enabled is True
 
 
-def test_gui_builds_controls_in_manipulation_panel_folder(
-    make_panel: Callable[..., ViserPanelGui],
+def test_preview_selection_rejects_malformed_before_visibility() -> None:
+    selection = PlanningGroupSelection.from_groups((group("arm", "manipulator", ("j1",)),))
+    assert selection.group_ids == ("arm/manipulator",)
+    # The scene transaction itself rejects missing tracks before revealing ghosts.
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    scene = ViserManipulationScene(server, Urdf, preview_fps=10.0)
+    assert scene.animate_preview(GroupPreviewAnimation(()), 1.0) is False
+
+
+def test_group_controls_use_source_labels_and_active_colors(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
 ) -> None:
-    server = FakeGuiServer()
-    adapter = make_adapter_with_robot()
-    gui = make_panel(server, adapter, ViserVisualizationConfig())
-    assert server.folders
-    assert server.folders[0].label == "Manipulation Panel"
-    assert server.folders[0].kwargs == {"expand_by_default": True}
-    assert "status" in gui._handles
-    assert "robot" in gui._handles
-    assert "plan" in gui._handles
-    assert gui._operation_worker._timeout_seconds is None
+    pose = group("arm", "manipulator", ("j1",), pose=True)
+    auxiliary = group("arm", "gripper", ("j2",))
+    gui, _module, server = panel([auxiliary, pose], states("arm"))
+
+    assert group_display_name(pose) == "arm"
+    assert group_display_name(auxiliary) == "arm gripper"
+    assert [button.label for button in server.gui.buttons[:2]] == ["arm", "arm gripper"]
+    assert [button.color for button in server.gui.buttons[:2]] == [
+        ACTIVE_GROUP_COLOR,
+        INACTIVE_GROUP_COLOR,
+    ]
+    assert server.gui.buttons[1].callback is not None
+    server.gui.buttons[1].callback(SimpleNamespace())
+    assert gui._handles[f"group:{auxiliary.id}"].color == ACTIVE_GROUP_COLOR
 
 
-def test_gui_scene_grid_checkbox_toggles_reference_grid(
-    make_panel: Callable[..., ViserPanelGui],
+def test_panel_preset_defaults_and_joint_slider_limits(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
 ) -> None:
-    grid_server = FakeGridServer()
-    scene = ViserManipulationScene(
-        grid_server, lambda *args, **kwargs: FakeUrdf(("joint1",)), preview_fps=10.0
-    )
-    server = FakeGuiServer()
-    adapter = make_adapter_with_robot()
-    make_panel(server, adapter, ViserVisualizationConfig(), scene)
-    assert grid_server.grids
-    assert server.checkboxes["Scene grid"].value is True
-    server.checkboxes["Scene grid"].update_callback(
-        SimpleNamespace(target=SimpleNamespace(value=False))
-    )
-    assert grid_server.grids[0].visible is False
-    server.checkboxes["Scene grid"].update_callback(
-        SimpleNamespace(target=SimpleNamespace(value=True))
-    )
-    assert grid_server.grids[0].visible is True
+    selected = group("arm", "manipulator", ("j1", "j2"), pose=True)
+    _gui, _module, server = panel([selected], states("arm"))
+
+    assert server.gui.dropdowns[0].options == ["Select preset...", "Init", "Current", "Home"]
+    assert [
+        (slider.label, slider.min, slider.max, slider.step, slider.value)
+        for slider in server.gui.sliders
+    ] == [
+        ("arm/manipulator/j1", -1.0, 1.0, 0.001, 0.1),
+        ("arm/manipulator/j2", -2.0, 2.0, 0.001, 0.2),
+    ]
 
 
-def test_gui_close_removes_handles_and_late_callbacks_are_noops(
-    make_panel: Callable[..., ViserPanelGui],
+def test_panel_action_controls_are_present_in_source_order(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
 ) -> None:
-    server = FakeGuiServer()
-    grid_server = FakeGridServer()
-    scene = ViserManipulationScene(
-        grid_server, lambda *args, **kwargs: FakeUrdf(("joint1",)), preview_fps=10.0
-    )
-    adapter = make_adapter_with_robot()
-    gui = make_panel(server, adapter, ViserVisualizationConfig(), scene)
-    robot_dropdown = gui._handles["robot"]
-    plan_button = server.buttons["Plan"]
-    grid = grid_server.grids[0]
-    handles = list(gui._handles.values())
+    selected = group("arm", "manipulator", ("j1",), pose=True)
+    _gui, _module, server = panel([selected], states("arm"))
 
-    gui.close()
-    if isinstance(robot_dropdown, GuiDropdownHandle) and robot_dropdown.update_callback is not None:
-        robot_dropdown.update_callback(SimpleNamespace(target=SimpleNamespace(value="arm")))
-    if plan_button.click_callback is not None:
-        plan_button.click_callback(SimpleNamespace())
-    gui._set_scene_grid_visible(False)
-
-    assert all(getattr(handle, "removed", False) for handle in handles)
-    assert gui._handles == {}
-    assert grid.visible is True
+    assert [button.label for button in server.gui.buttons[1:]] == [
+        "Plan",
+        "Preview",
+        "Execute",
+        "Cancel",
+        "Clear plan",
+    ]
+    assert [folder.label for folder in server.gui.folders] == [
+        "Manipulation Panel",
+        "Joint Control",
+    ]
 
 
-def test_gui_ignores_target_evaluation_after_close(
-    make_panel: Callable[..., ViserPanelGui],
+def test_target_callbacks_require_current_target_identity(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
 ) -> None:
-    adapter = make_adapter_with_robot()
-    gui = make_panel(FakeGuiServer(), adapter)
-    gui.state.selected_robot = "arm"
-    sequence_id = gui.state.next_sequence_id()
+    first, second = (
+        group("arm", "manipulator", ("j1",), pose=True),
+        group("arm", "gripper", ("j2",)),
+    )
+    gui, _module, _server = panel([first, second], states("arm"))
     request = TargetEvaluationRequest(
-        sequence_id=sequence_id,
-        source="joints",
-        robot_name="arm",
-        joints=FakeJointState(["j1", "j2"], position=[0.1, 0.2]),
+        gui.state.next_sequence_id(),
+        "joints",
+        selection_epoch=gui.state.selection_epoch,
+        group_ids=(second.id,),
     )
+
+    gui._apply_target_evaluation_result(
+        request, {"success": True, "collision_free": True, "status": "FEASIBLE"}
+    )
+
+    assert gui.state.target_status == TargetStatus.CHECKING
+
+
+def test_backend_rejects_unknown_or_malformed_group_targets() -> None:
+    selected = group("arm", "manipulator", ("j1",))
+    module = Module([selected], states("arm"))
+    monitor = Monitor(module)
+    malformed = {selected.id: JointState({"name": ["j1"], "position": [0.7]})}
+
+    assert complete_states_for_targets(monitor, module, ("missing",), {}) is None
+    assert complete_states_for_targets(monitor, module, (selected.id,), malformed) is None
+    assert (
+        evaluate_joint_target_set(monitor, module, (selected.id,), malformed).get("status")
+        == "INVALID"
+    )
+
+
+def test_backend_marks_complete_target_infeasible_when_any_robot_is_invalid() -> None:
+    left, right = group("left", "manipulator", ("j1",)), group("right", "manipulator", ("j1",))
+    module = Module([left, right], states("left", "right"))
+    monitor = Monitor(module)
+    monitor.invalid.add("id-right")
+    targets = {
+        left.id: JointState({"name": ["left/j1"], "position": [0.7]}),
+        right.id: JointState({"name": ["right/j1"], "position": [0.8]}),
+    }
+
+    result = evaluate_joint_target_set(monitor, module, (left.id, right.id), targets)
+
+    assert result.get("status") == "COLLISION"
+    assert result.get("collision_free") is False
+    assert set(result.get("group_diagnostics", {})) == {left.id, right.id}
+
+
+def test_backend_joint_evaluation_returns_forward_kinematics_for_each_group() -> None:
+    selected = group("arm", "manipulator", ("j1",), pose=True)
+    module = Module([selected], states("arm"))
+    result = evaluate_joint_target_set(
+        Monitor(module),
+        module,
+        (selected.id,),
+        {selected.id: JointState({"name": ["arm/j1"], "position": [0.7]})},
+    )
+
+    pose = result.get("group_poses", {}).get(selected.id)
+    assert pose is not None
+    assert list(pose.position) == [0.1, 0.2, 0.3]
+
+
+def test_backend_cartesian_evaluation_uses_group_ik_and_complete_state_validation() -> None:
+    selected = group("arm", "manipulator", ("j1",), pose=True)
+    module = Module([selected], states("arm"))
+    calls: list[dict[str, object]] = []
+
+    def inverse_kinematics(
+        *,
+        pose_targets: object,
+        auxiliary_group_ids: Sequence[str] = (),
+        seed: JointState | None = None,
+        check_collision: bool = True,
+    ) -> SimpleNamespace:
+        calls.append(
+            {
+                "pose_targets": pose_targets,
+                "auxiliary_group_ids": auxiliary_group_ids,
+                "seed": seed,
+                "check_collision": check_collision,
+            }
+        )
+        return SimpleNamespace(
+            is_success=lambda: True,
+            joint_state=JointState({"name": ["arm/j1"], "position": [0.7]}),
+        )
+
+    module.inverse_kinematics = inverse_kinematics
+    result = evaluate_pose_target_set(
+        Monitor(module),
+        module,
+        {selected.id: Pose({"position": [0.1, 0.2, 0.3], "orientation": [0.0, 0.0, 0.0, 1.0]})},
+    )
+
+    assert calls[0]["check_collision"] is True
+    assert result.get("status") == "FEASIBLE"
+
+
+def test_scene_target_ghost_tracks_current_only_until_explicit_target() -> None:
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
+    config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
+    scene.register_robot("id-arm", config)
+
+    scene.update_current_robot("id-arm", JointState({"name": ["j1", "j2"], "position": [0.1, 0.2]}))
+    assert scene._urdfs["id-arm:target"].cfg == [0.1, 0.2]
+    scene.set_target_joints("id-arm", ["j1", "j2"], [0.8, 0.9])
+    scene.update_current_robot("id-arm", JointState({"name": ["j1", "j2"], "position": [0.2, 0.3]}))
+
+    assert scene._urdfs["id-arm:target"].cfg == [0.8, 0.9]
+
+
+def test_scene_target_feasibility_colors_ghost_and_gizmo() -> None:
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    server.scene.add_transform_controls = lambda *_args, **_kwargs: Handle()
+    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
+    config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
+    scene.register_robot("id-arm", config)
+    scene.ensure_target_controls("id-arm", lambda _target: None)
+
+    scene.set_target_visual_state("id-arm", False)
+
+    assert scene._urdfs["id-arm:target"]._meshes[0].color == (255, 30, 30)
+    assert scene._handles["id-arm:ee_control"].color == (255, 40, 40)
+
+
+def test_panel_feasibility_colors_group_controls_and_deduplicated_robot_ghosts() -> None:
+    arm_primary, arm_secondary, other = (
+        group("arm", "primary", ("j1",), pose=True),
+        group("arm", "secondary", ("j2",), pose=True),
+        group("other", "manipulator", ("j1",), pose=True),
+    )
+    module = Module([arm_primary, arm_secondary, other], states("arm", "other"))
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    server.scene.add_transform_controls = lambda *_args, **_kwargs: Handle()
+    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
+    scene.register_robot("id-arm", module.configs["arm"])
+    scene.register_robot("id-other", module.configs["other"])
+    gui = ViserPanelGui(server, Monitor(module), module, ViserVisualizationConfig(), scene)
+    gui.start()
+    gui._worker.stop()
+    gui._operation_worker.stop()
+    gui._toggle_group_selected(arm_secondary.id)
+    gui._toggle_group_selected(other.id)
+
+    control_calls: list[str] = []
+    robot_calls: list[str] = []
+    original_control = scene.set_target_control_visual_state
+    original_robot = scene.set_target_robot_visual_state
+    scene.set_target_control_visual_state = lambda group_id, feasible: (
+        control_calls.append(group_id),
+        original_control(group_id, feasible),
+    )  # type: ignore[method-assign]
+    scene.set_target_robot_visual_state = lambda robot_id, feasible: (
+        robot_calls.append(robot_id),
+        original_robot(robot_id, feasible),
+    )  # type: ignore[method-assign]
+    request = TargetEvaluationRequest(
+        gui.state.next_sequence_id(),
+        "joints",
+        selection_epoch=gui.state.selection_epoch,
+        group_ids=gui.state.selected_group_ids,
+    )
+
+    gui._apply_target_evaluation_result(
+        request, {"success": True, "collision_free": True, "status": "FEASIBLE"}
+    )
+
+    assert control_calls == [arm_primary.id, arm_secondary.id, other.id] * 2
+    assert robot_calls == ["id-arm", "id-other"] * 2
+    assert all(
+        scene._handles[f"{item.id}:ee_control"].color == TARGET_CONTROL_FEASIBLE_COLOR
+        for item in (arm_primary, arm_secondary, other)
+    )
+    assert scene._urdfs["id-arm:target"]._meshes[0].color == GOAL_ROBOT_FEASIBLE_COLOR
+    assert scene._urdfs["id-other:target"]._meshes[0].color == GOAL_ROBOT_FEASIBLE_COLOR
+
+    control_calls.clear()
+    robot_calls.clear()
+    request = TargetEvaluationRequest(
+        gui.state.next_sequence_id(),
+        "joints",
+        selection_epoch=gui.state.selection_epoch,
+        group_ids=gui.state.selected_group_ids,
+    )
+    gui._apply_target_evaluation_result(
+        request, {"success": True, "collision_free": False, "status": "COLLISION"}
+    )
+
+    assert control_calls == [arm_primary.id, arm_secondary.id, other.id] * 2
+    assert robot_calls == ["id-arm", "id-other"] * 2
+    assert all(
+        scene._handles[f"{item.id}:ee_control"].color == TARGET_CONTROL_INFEASIBLE_COLOR
+        for item in (arm_primary, arm_secondary, other)
+    )
+    assert scene._urdfs["id-arm:target"]._meshes[0].color == GOAL_ROBOT_INFEASIBLE_COLOR
+    assert scene._urdfs["id-other:target"]._meshes[0].color == GOAL_ROBOT_INFEASIBLE_COLOR
     gui.close()
+
+
+def test_scene_shared_clock_resamples_unequal_robot_frames(monkeypatch: pytest.MonkeyPatch) -> None:
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
+    config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
+    scene.register_robot("left", config)
+    scene.register_robot("right", config)
+    updates: list[tuple[str, list[float]]] = []
+    monkeypatch.setattr(
+        scene,
+        "_set_preview_ghost_joints",
+        lambda robot, _names, values: updates.append((robot, list(values))),
+    )
+    monkeypatch.setattr(
+        "dimos.manipulation.visualization.viser.scene.time.sleep", lambda _delay: None
+    )
+
+    assert scene.animate_preview(
+        GroupPreviewAnimation(
+            (
+                PreviewTrack("left", ("j1",), (JointState({"name": ["j1"], "position": [0.0]}),)),
+                PreviewTrack(
+                    "right",
+                    ("j1",),
+                    (
+                        JointState({"name": ["j1"], "position": [10.0]}),
+                        JointState({"name": ["j1"], "position": [11.0]}),
+                    ),
+                ),
+            )
+        ),
+        1.0,
+    )
+    assert updates == [
+        ("left", [0.0]),
+        ("right", [10.0]),
+        ("left", [0.0]),
+        ("right", [10.5]),
+        ("left", [0.0]),
+        ("right", [11.0]),
+    ]
+
+
+def test_animation_frame_helpers_preserve_dense_paths_and_interpolate_sparse_paths() -> None:
+    dense = [JointState({"name": ["j1"], "position": [float(index)]}) for index in range(4)]
+    sparse = [
+        JointState({"name": ["j1"], "position": [0.0]}),
+        JointState({"name": ["j1"], "position": [1.0]}),
+    ]
+
+    assert sampled_joint_path_frames(dense, 1.0, 2.0) == [[0.0], [1.0], [2.0], [3.0]]
+    assert interpolate_joint_path(sparse, 1.0, 2.0) == [[0.0], [0.5], [1.0]]
+
+
+def test_panel_disables_plan_preview_and_execute_until_a_feasible_target(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+) -> None:
+    selected = group("arm", "manipulator", ("j1",), pose=True)
+    _gui, _module, server = panel([selected], states("arm"))
+
+    assert [button.disabled for button in server.gui.buttons[1:4]] == [True, True, True]
+
+
+def test_panel_status_reports_target_and_plan_defaults(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+) -> None:
+    selected = group("arm", "manipulator", ("j1",), pose=True)
+    gui, _module, server = panel([selected], states("arm"))
+
+    assert server.gui.markdown[0].value == "### Status\n**State:** Ready"
+    assert gui.state.error == ""
+
+
+def test_scene_reference_grid_has_expected_defaults_and_toggle() -> None:
+    server = Server()
+    grids: list[Handle] = []
+    server.scene.add_grid = lambda *_args, **_kwargs: grids.append(Handle()) or grids[-1]
+    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+
+    assert scene.has_reference_grid() is True
+    scene.set_reference_grid_visible(False)
+    assert grids[0].visible is False
+    scene.set_reference_grid_visible(True)
+    assert grids[0].visible is True
+
+
+def test_scene_returns_false_for_missing_robot_target_updates() -> None:
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+
+    assert scene.set_target_joints("missing", ["j1"], [0.1]) is False
+    assert scene.animate_path("missing", [], duration=0.0) is False
+
+
+def test_scene_cancel_generation_hides_preview_and_rejects_old_animation() -> None:
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
+    config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
+    scene.register_robot("id-arm", config)
+    scene.show_preview("id-arm")
+
+    scene.cancel_preview_animation()
+
+    assert scene._preview_visible == {"id-arm": False}
+    assert scene._animation_generation == 1
+
+
+def test_scene_base_pose_requires_urdf_root_to_match(monkeypatch: pytest.MonkeyPatch) -> None:
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    monkeypatch.setattr(
+        "dimos.manipulation.visualization.viser.scene.parse_model",
+        lambda _path: SimpleNamespace(root_link="world"),
+    )
+
+    with pytest.raises(ValueError, match="base_link 'base'.*URDF root 'world'"):
+        scene._assert_base_link_is_urdf_root(SimpleNamespace(base_link="base"), "robot.urdf")
+
+
+def test_scene_detects_non_identity_base_pose() -> None:
+    identity = SimpleNamespace(
+        base_pose=Pose({"position": [0.0, 0.0, 0.0], "orientation": [0.0, 0.0, 0.0, 1.0]})
+    )
+    translated = SimpleNamespace(
+        base_pose=Pose({"position": [1.0, 0.0, 0.0], "orientation": [0.0, 0.0, 0.0, 1.0]})
+    )
+
+    assert ViserManipulationScene._has_non_identity_base_pose(identity) is False
+    assert ViserManipulationScene._has_non_identity_base_pose(translated) is True
+
+
+@pytest.mark.parametrize("rejection", ["changed", "stale", "missing_snapshot"])
+def test_all_robot_execute_rejects_secondary_robot_preconditions(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+    monkeypatch: pytest.MonkeyPatch,
+    rejection: str,
+) -> None:
+    left, right = (
+        group("left", "manipulator", ("j1",), pose=True),
+        group("right", "manipulator", ("j1",), pose=True),
+    )
+    gui, module, _server = panel([left, right], states("left", "right"))
+    gui._toggle_group_selected(right.id)
+    gui.state.target_status = TargetStatus.FEASIBLE
+    gui.state.plan_state = PanelPlanState(
+        status=PlanStatus.FRESH,
+        group_ids=(left.id, right.id),
+        target_sequence_id=gui.state.latest_sequence_id,
+        robot_snapshots={
+            "left": JointState(module.states["left"]),
+            "right": JointState(module.states["right"]),
+        },
+    )
+    monkeypatch.setattr(
+        gui,
+        "_operation_worker",
+        SimpleNamespace(submit=lambda operation, **_: operation(), stop=lambda **_: None),
+    )
+    # Enter the operation so each rejection is asserted at its authoritative
+    # all-robot preflight, rather than only through a disabled GUI button.
+    monkeypatch.setattr(gui, "_can_execute", lambda: True)
+    if rejection == "changed":
+        module.states["right"] = JointState({"name": ["j1", "j2"], "position": [0.9, 0.2]})
+    elif rejection == "stale":
+        gui._world_monitor.stale.add("id-right")
+    else:
+        gui.state.plan_state.robot_snapshots.pop("right")
+
+    gui._submit_execute()
+
+    assert module.executions == 0
+    assert gui.state.plan_state.status is PlanStatus.STALE
+    if rejection == "stale":
+        assert "right" in gui.state.error
+
+
+def test_visualizer_rejects_invalid_group_preview_before_scene_animation() -> None:
+    selected = group("arm", "manipulator", ("j1",))
+    module = Module([selected], states("arm"))
+    monitor = Monitor(module)
+    monitor.planning_groups = SimpleNamespace(
+        select=lambda ids: (
+            (_ for _ in ()).throw(KeyError("unknown"))
+            if tuple(ids) == ("missing",)
+            else PlanningGroupSelection.from_groups((selected,))
+        )
+    )
+    visualizer = ViserManipulationVisualizer(
+        world_monitor=monitor,
+        manipulation_module=module,
+        config=ViserVisualizationConfig(panel_enabled=False),
+    )
+    calls: list[object] = []
+    visualizer._ensure_started = lambda: None  # type: ignore[method-assign]
+    visualizer._scene = SimpleNamespace(animate_preview=lambda *args: calls.append(args))
+    plans = (
+        (
+            SimpleNamespace(
+                group_ids=("missing",), path=(JointState({"name": ["arm/j1"], "position": [0.1]}),)
+            ),
+            None,
+        ),
+        (
+            SimpleNamespace(
+                group_ids=(selected.id,), path=(JointState({"name": ["arm/j1"], "position": []}),)
+            ),
+            None,
+        ),
+        (
+            SimpleNamespace(
+                group_ids=(selected.id,),
+                path=(JointState({"name": ["arm/j2"], "position": [0.1]}),),
+            ),
+            None,
+        ),
+        (
+            SimpleNamespace(
+                group_ids=(selected.id,),
+                path=(JointState({"name": ["arm/j1"], "position": [0.1]}),),
+            ),
+            None,
+        ),
+        (
+            SimpleNamespace(
+                group_ids=(selected.id,),
+                path=(JointState({"name": ["arm/j1"], "position": [0.1]}),),
+            ),
+            JointState({"name": ["j1"], "position": [0.1]}),
+        ),
+    )
+    for plan, current in plans:
+        monitor.get_current_joint_state = lambda _robot_id, state=current: state  # type: ignore[method-assign]
+        visualizer.animate_plan(plan)
+
+    assert calls == []
+
+
+@pytest.mark.parametrize("interruption", ["cancel", "replacement", "close"])
+def test_scene_inflight_preview_never_updates_after_generation_replacement(
+    monkeypatch: pytest.MonkeyPatch, interruption: str
+) -> None:
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
+    config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
+    scene.register_robot("id-arm", config)
+    first_tick, release = threading.Event(), threading.Event()
+    updates: list[float] = []
+    original = scene._set_preview_ghost_joints
+
+    def record(robot_id: str, names: Sequence[str], values: Sequence[float]) -> None:
+        updates.append(float(values[0]))
+        original(robot_id, names, values)
+
+    scene._set_preview_ghost_joints = record  # type: ignore[method-assign]
+    sleep_calls = 0
+
+    def block_after_first_tick(_delay: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 1:
+            first_tick.set()
+            assert release.wait(timeout=2.0)
+
+    monkeypatch.setattr(
+        "dimos.manipulation.visualization.viser.scene.time.sleep", block_after_first_tick
+    )
+    old = GroupPreviewAnimation(
+        (
+            PreviewTrack(
+                "id-arm",
+                ("j1",),
+                (
+                    JointState({"name": ["j1"], "position": [0.0]}),
+                    JointState({"name": ["j1"], "position": [1.0]}),
+                ),
+            ),
+        )
+    )
+    worker = threading.Thread(target=lambda: scene.animate_preview(old, 1.0))
+    worker.start()
+    assert first_tick.wait(timeout=2.0)
+    if interruption == "cancel":
+        visualizer = ViserManipulationVisualizer(
+            world_monitor=SimpleNamespace(),
+            manipulation_module=SimpleNamespace(),
+            config=ViserVisualizationConfig(panel_enabled=False),
+        )
+        visualizer._scene = scene
+        visualizer.cancel_preview_animation()
+        stable_updates = list(updates)
+    elif interruption == "replacement":
+        updates.clear()
+        assert scene.animate_preview(
+            GroupPreviewAnimation(
+                (
+                    PreviewTrack(
+                        "id-arm", ("j1",), (JointState({"name": ["j1"], "position": [10.0]}),)
+                    ),
+                )
+            ),
+            0.0,
+        )
+        stable_updates = list(updates)
+    else:
+        scene.close()
+        stable_updates = list(updates)
+    release.set()
+    worker.join(timeout=2.0)
+
+    assert not worker.is_alive()
+    assert updates == stable_updates
+
+
+def test_transform_control_callback_preserves_pose_through_gui_and_backend(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+) -> None:
+    selected = group("arm", "manipulator", ("j1",), pose=True)
+    module = Module([selected], states("arm"))
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    server.scene.add_transform_controls = lambda *_args, **_kwargs: Handle()
+    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    gui = ViserPanelGui(server, Monitor(module), module, ViserVisualizationConfig(), scene)
+    submitted: list[TargetEvaluationRequest] = []
+    gui._worker.submit = submitted.append  # type: ignore[method-assign]
+    gui.start()
+    control = scene._handles[f"{selected.id}:ee_control"]
+    control.position = (1.0, 2.0, 3.0)
+    control.wxyz = (0.4, 0.1, 0.2, 0.3)
+    assert control.callback is not None
+    control.callback(SimpleNamespace(target=control))
+
+    request = submitted[-1]
+    assert list(gui.state.pose_targets[selected.id].position) == [1.0, 2.0, 3.0]
+    assert list(gui.state.pose_targets[selected.id].orientation) == [0.1, 0.2, 0.3, 0.4]
+    assert control.position == (1.0, 2.0, 3.0)
+    assert control.wxyz == (0.4, 0.1, 0.2, 0.3)
+    assert request.pose_targets[selected.id] == gui.state.pose_targets[selected.id]
+    gui.close()
+
+
+def test_joint_evaluation_updates_active_gizmo_from_computed_group_pose() -> None:
+    selected = group("arm", "manipulator", ("j1",), pose=True)
+    module = Module([selected], states("arm"))
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    server.scene.add_transform_controls = lambda *_args, **_kwargs: Handle()
+    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    gui = ViserPanelGui(server, Monitor(module), module, ViserVisualizationConfig(), scene)
+    gui.start()
+    control = scene._handles[f"{selected.id}:ee_control"]
+    request = TargetEvaluationRequest(
+        gui.state.next_sequence_id(),
+        "joints",
+        selection_epoch=gui.state.selection_epoch,
+        group_ids=gui.state.selected_group_ids,
+    )
+    computed_pose = Pose({"position": [0.7, 0.8, 0.9], "orientation": [0.1, 0.2, 0.3, 0.4]})
 
     gui._apply_target_evaluation_result(
         request,
@@ -570,983 +1168,119 @@ def test_gui_ignores_target_evaluation_after_close(
             "success": True,
             "collision_free": True,
             "status": "FEASIBLE",
-            "joint_state": FakeJointState(["j1", "j2"], position=[0.8, 0.9]),
+            "group_poses": {selected.id: computed_pose},
         },
     )
 
-    assert gui.state.target_status == TargetStatus.CHECKING
-    assert gui.state.joint_target is None
+    assert control.position == (0.7, 0.8, 0.9)
+    assert control.wxyz == (0.4, 0.1, 0.2, 0.3)
+    gui.close()
 
 
-def test_dimos_theme_configures_supported_viser_chrome() -> None:
-    server = FakeGuiServer()
+def test_delayed_cartesian_evaluation_updates_joints_without_rewriting_dragged_gizmo() -> None:
+    selected = group("arm", "manipulator", ("j1",), pose=True)
+    module = Module([selected], states("arm"))
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    server.scene.add_transform_controls = lambda *_args, **_kwargs: Handle()
+    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
+    scene.register_robot("id-arm", module.configs["arm"])
+    gui = ViserPanelGui(server, Monitor(module), module, ViserVisualizationConfig(), scene)
+    gui.start()
+    try:
+        requests: list[TargetEvaluationRequest] = []
+        gui._worker.submit = requests.append  # type: ignore[method-assign]
+        control = scene._handles[f"{selected.id}:ee_control"]
+        control.position = (1.0, 2.0, 3.0)
+        control.wxyz = (0.4, 0.1, 0.2, 0.3)
+        assert control.callback is not None
+        control.callback(SimpleNamespace(target=control))
+        request = requests[-1]
 
-    assert apply_dimos_theme(server) is True
-    assert server.theme_kwargs is not None
-    assert server.theme_kwargs["brand_color"] == (22, 130, 163)
-    assert server.theme_kwargs["dark_mode"] is True
-    assert server.theme_kwargs["show_logo"] is False
-    assert server.theme_kwargs["show_share_button"] is False
-    assert server.theme_kwargs["control_layout"] == "collapsible"
-    assert server.theme_kwargs["control_width"] == "medium"
-
-
-def test_dimos_theme_configures_titlebar_when_supported(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_viser = ModuleType("viser")
-    fake_theme = ModuleType("viser.theme")
-    fake_theme.TitlebarImage = lambda **kwargs: kwargs
-    fake_theme.TitlebarButton = lambda **kwargs: kwargs
-    fake_theme.TitlebarConfig = lambda **kwargs: kwargs
-    monkeypatch.setitem(sys.modules, "viser", fake_viser)
-    monkeypatch.setitem(sys.modules, "viser.theme", fake_theme)
-    server = FakeGuiServer()
-
-    assert apply_dimos_theme(server) is True
-    assert server.theme_kwargs is not None
-    titlebar_content = server.theme_kwargs["titlebar_content"]
-    assert isinstance(titlebar_content, dict)
-    image = titlebar_content["image"]
-    assert isinstance(image, dict)
-    assert image["image_alt"] == "Dimensional"
-    assert image["image_url_light"].startswith("data:image/svg+xml;base64,")
-
-
-def test_dimos_logo_asset_loads_as_data_url() -> None:
-    logo_url = _dimos_logo_data_url()
-
-    assert logo_url is not None
-    assert logo_url.startswith("data:image/svg+xml;base64,")
-
-
-def test_dimos_theme_is_non_blocking_when_theme_api_fails() -> None:
-    class BrokenGui:
-        @staticmethod
-        def configure_theme(**_kwargs: ThemeValue) -> None:
-            raise TypeError("theme API changed")
-
-    server = SimpleNamespace(gui=BrokenGui())
-
-    assert apply_dimos_theme(server) is False
-
-
-def test_dimos_theme_retries_without_titlebar_when_titlebar_content_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fake_viser = ModuleType("viser")
-    fake_theme = ModuleType("viser.theme")
-    fake_theme.TitlebarImage = lambda **kwargs: kwargs
-    fake_theme.TitlebarButton = lambda **kwargs: kwargs
-    fake_theme.TitlebarConfig = lambda **kwargs: kwargs
-    monkeypatch.setitem(sys.modules, "viser", fake_viser)
-    monkeypatch.setitem(sys.modules, "viser.theme", fake_theme)
-    titlebar_values: list[ThemeValue] = []
-
-    class FallbackGui:
-        @staticmethod
-        def configure_theme(**kwargs: ThemeValue) -> None:
-            titlebar_values.append(kwargs["titlebar_content"])
-            if kwargs["titlebar_content"] is not None:
-                raise TypeError("titlebar unsupported")
-
-    server = SimpleNamespace(gui=FallbackGui())
-
-    assert apply_dimos_theme(server) is True
-    assert titlebar_values[0] is not None
-    assert titlebar_values[1] is None
-
-
-class FakeMesh:
-    def __init__(self) -> None:
-        self.visible = None
-        self.color = None
-        self.material_color = None
-        self.opacity = None
-
-
-class FakeViserUrdfWithMeshes:
-    def __init__(self, names: tuple[str, ...] = ("joint1", "joint2", "joint3")) -> None:
-        self._urdf = SimpleNamespace(actuated_joint_names=names)
-        self._meshes = [FakeMesh(), FakeMesh()]
-        self.cfg = None
-
-    def update_cfg(self, cfg: Sequence[float]) -> None:
-        self.cfg = list(cfg)
-
-
-def test_viser_joint_configuration_maps_names_to_urdf_order() -> None:
-    server = FakeServer()
-    urdf = FakeUrdf(("shoulder", "elbow", "wrist"))
-    scene = ViserManipulationScene(server, lambda *args, **kwargs: urdf, preview_fps=10.0)
-    scene.prepared_urdf_path = lambda config: "dummy.urdf"
-
-    cfg = SimpleNamespace(
-        name="arm",
-        model_path="/tmp/arm.urdf",
-        package_paths={},
-        xacro_args={},
-        auto_convert_meshes=False,
-        joint_names=["arm/shoulder", "elbow"],
-    )
-    scene.register_robot("robot1", cfg)
-    scene.set_urdf_joints(urdf, cfg.joint_names, [1.5, 2.5])
-    assert urdf.cfg == [1.5, 2.5, 0.0]
-
-
-def test_scene_adds_reference_grid_when_supported() -> None:
-    server = FakeGridServer()
-    scene = ViserManipulationScene(
-        server, lambda *args, **kwargs: FakeUrdf(("j1",)), preview_fps=10.0
-    )
-
-    assert scene.has_reference_grid() is True
-    assert len(server.grids) == 1
-    grid = server.grids[0]
-    assert grid.name == "/reference_grid"
-    assert grid.kwargs["plane"] == "xy"
-    assert grid.kwargs["infinite_grid"] is True
-    assert grid.kwargs["visible"] is True
-
-    scene.set_reference_grid_visible(False)
-    assert grid.visible is False
-    scene.set_reference_grid_visible(True)
-    assert grid.visible is True
-
-
-def test_preview_visibility_only_affects_preview_ghost_and_close_removes_handles() -> None:
-    server = FakeServer()
-    urdfs = [FakeViserUrdfWithMeshes(("joint1",)) for _ in range(3)]
-    scene = ViserManipulationScene(server, lambda *args, **kwargs: urdfs.pop(0), preview_fps=10.0)
-    scene.prepared_urdf_path = lambda config: "dummy.urdf"
-    config = SimpleNamespace(
-        name="arm",
-        model_path="/tmp/arm.urdf",
-        package_paths={},
-        xacro_args={},
-        auto_convert_meshes=False,
-        joint_names=["joint1"],
-    )
-    scene.register_robot("robot1", config)
-    target = scene._urdfs["robot1:target"]
-    preview = scene._urdfs["robot1:preview"]
-    assert all(mesh.visible is True for mesh in target._meshes)
-    assert all(mesh.visible is False for mesh in preview._meshes)
-    scene.show_preview("robot1")
-    assert all(mesh.visible is True for mesh in preview._meshes)
-    assert all(mesh.visible is True for mesh in target._meshes)
-    scene.hide_preview("robot1")
-    assert all(mesh.visible is False for mesh in preview._meshes)
-    assert all(mesh.visible is True for mesh in target._meshes)
-    scene.close()
-    assert scene._handles == {}
-    assert all(mesh.visible is False for mesh in preview._meshes)
-
-
-def test_target_ghost_is_visible_and_tracks_current_until_target_moves_it() -> None:
-    server = FakeServer()
-    urdfs = [FakeViserUrdfWithMeshes(("joint1",)) for _ in range(3)]
-    scene = ViserManipulationScene(server, lambda *args, **kwargs: urdfs.pop(0), preview_fps=10.0)
-    scene.prepared_urdf_path = lambda config: "dummy.urdf"
-    config = SimpleNamespace(
-        name="arm",
-        model_path="/tmp/arm.urdf",
-        package_paths={},
-        xacro_args={},
-        auto_convert_meshes=False,
-        joint_names=["joint1"],
-    )
-    scene.register_robot("robot1", config)
-    current = scene._urdfs["robot1:current"]
-    target = scene._urdfs["robot1:target"]
-    preview = scene._urdfs["robot1:preview"]
-
-    assert all(mesh.visible is True for mesh in target._meshes)
-    assert all(mesh.visible is False for mesh in preview._meshes)
-    scene.update_current_robot("robot1", FakeJointState(["joint1"], position=[0.25]))
-    assert current.cfg == [0.25]
-    assert target.cfg == [0.25]
-    assert preview.cfg is None
-
-    scene.set_target_joints("robot1", ["joint1"], [0.8])
-    scene.update_current_robot("robot1", FakeJointState(["joint1"], position=[0.1]))
-    assert current.cfg == [0.1]
-    assert target.cfg == [0.8]
-    assert preview.cfg is None
-
-
-def test_preview_animation_uses_separate_colored_ghost_and_hides_after_playback() -> None:
-    server = FakeServer()
-    urdfs = [FakeViserUrdfWithMeshes(("joint1",)) for _ in range(3)]
-    scene = ViserManipulationScene(server, lambda *args, **kwargs: urdfs.pop(0), preview_fps=10.0)
-    scene.prepared_urdf_path = lambda config: "dummy.urdf"
-    config = SimpleNamespace(
-        name="arm",
-        model_path="/tmp/arm.urdf",
-        package_paths={},
-        xacro_args={},
-        auto_convert_meshes=False,
-        joint_names=["joint1"],
-    )
-    scene.register_robot("robot1", config)
-    target = scene._urdfs["robot1:target"]
-    preview = scene._urdfs["robot1:preview"]
-
-    assert all(mesh.color == (255, 122, 0) for mesh in target._meshes)
-    assert all(mesh.color == (80, 180, 255) for mesh in preview._meshes)
-    assert all(mesh.opacity == 0.55 for mesh in preview._meshes)
-
-    ok = scene.animate_path(
-        "robot1",
-        [
-            FakeJointState(["joint1"], position=[0.0]),
-            FakeJointState(["joint1"], position=[1.0]),
-        ],
-        duration=0.0,
-    )
-
-    assert ok is True
-    assert preview.cfg == [1.0]
-    assert all(mesh.visible is False for mesh in preview._meshes)
-    assert all(mesh.visible is True for mesh in target._meshes)
-
-
-def test_scene_target_helpers_handle_missing_robot_and_pose() -> None:
-    server = FakeTransformServer()
-    scene = ViserManipulationScene(
-        server, lambda *args, **kwargs: FakeUrdf(("joint1",)), preview_fps=10.0
-    )
-
-    assert scene.animate_path("missing", [], duration=0.0) is False
-    assert scene.set_target_joints("missing", ["joint1"], [1.0]) is False
-    scene.set_target_pose("missing", Pose())
-    handle = scene.ensure_target_controls("robot1", lambda _target: None)
-    scene.set_target_pose("robot1", None)
-
-    assert handle is not None
-    assert handle.position == (0.0, 0.0, 0.0)
-
-
-def test_scene_close_removes_grid_transform_and_urdf_handles() -> None:
-    server = FakeGridServer()
-    current = FakeUrdf(("joint1",))
-    target = FakeUrdf(("joint1",))
-    scene = ViserManipulationScene(
-        server, lambda *args, **kwargs: FakeUrdf(("joint1",)), preview_fps=10.0
-    )
-    handle = scene.ensure_target_controls("robot1", lambda _target: None)
-    scene._urdfs["robot1:current"] = current
-    scene._urdfs["robot1:target"] = target
-
-    scene.close()
-
-    assert handle is not None and handle.removed is True
-    assert current.removed is True
-    assert target.removed is True
-    assert server.grids[0].removed is True
-    assert scene.has_reference_grid() is False
-
-
-def test_sampled_joint_path_frames_preserves_dense_trajectory_samples() -> None:
-    dense_path = [FakeJointState(["j1"], position=[float(index)]) for index in range(32)]
-
-    frames = sampled_joint_path_frames(dense_path, duration=1.0, fps=30.0)
-
-    assert frames == [[float(index)] for index in range(32)]
-
-
-def test_sampled_joint_path_frames_interpolates_sparse_paths() -> None:
-    sparse_path = [
-        FakeJointState(["j1"], position=[0.0]),
-        FakeJointState(["j1"], position=[1.0]),
-    ]
-
-    frames = sampled_joint_path_frames(sparse_path, duration=1.0, fps=4.0)
-
-    assert frames == [[0.0], [0.25], [0.5], [0.75], [1.0]]
-
-
-def test_joint_path_frame_edge_cases_and_empty_animation() -> None:
-    empty_position = FakeJointState(["j1"], position=[])
-    single = FakeJointState(["j1"], position=[0.7])
-    start = FakeJointState(["j1"], position=[0.0])
-    middle = FakeJointState(["j1"], position=[1.0])
-    mismatched_final = FakeJointState(["j1", "j2"], position=[2.0, 3.0])
-    set_calls: list[list[float]] = []
-    sleep_calls: list[float] = []
-
-    assert interpolate_joint_path([empty_position], duration=1.0, fps=10.0) == []
-    assert interpolate_joint_path([single], duration=1.0, fps=10.0) == [[0.7]]
-    assert interpolate_joint_path([start, middle, mismatched_final], duration=1.0, fps=2.0) == [
-        [0.0],
-        [2.0, 3.0],
-    ]
-    assert sampled_joint_path_frames([empty_position], duration=1.0, fps=10.0) == []
-    assert (
-        PreviewAnimator(set_calls.append, sleep=sleep_calls.append).animate(
-            [empty_position], duration=1.0, fps=10.0
+        gui._apply_target_evaluation_result(
+            request,
+            {
+                "success": True,
+                "collision_free": True,
+                "status": "FEASIBLE",
+                "target_joints": JointState({"name": ["arm/j1"], "position": [0.7]}),
+            },
         )
-        is False
+
+        assert server.gui.sliders[0].value == 0.7
+        assert scene._urdfs["id-arm:target"].cfg == [0.7, 0.2]
+        assert control.position == (1.0, 2.0, 3.0)
+        assert control.wxyz == (0.4, 0.1, 0.2, 0.3)
+    finally:
+        gui.close()
+
+
+def test_cartesian_evaluation_forwards_auxiliary_groups_and_rejects_composed_invalid_state() -> (
+    None
+):
+    pose_group, auxiliary = (
+        group("arm", "manipulator", ("j1",), pose=True),
+        group("arm", "gripper", ("j2",)),
     )
-    assert set_calls == []
-    assert sleep_calls == []
+    module = Module([pose_group, auxiliary], states("arm"))
+    monitor = Monitor(module)
+    calls: list[Sequence[str]] = []
+    validated_states: list[dict[str, float]] = []
 
+    def is_state_valid(robot_id: str, state: JointState) -> bool:
+        values = dict(zip(state.name, state.position, strict=True))
+        validated_states.append(values)
+        assert robot_id == "id-arm"
+        assert values == {"j1": 0.7, "j2": 0.8}
+        return values != {"j1": 0.7, "j2": 0.8}
 
-def test_adapter_copies_joint_state_and_delegates_to_module() -> None:
-    copied = FakeJointState(["j1"], position=[1.0], velocity=[2.0], effort=[3.0])
-    module = FakeManipulationModule(
-        _robots={"arm": ("robot-1", SimpleNamespace(), None)},
-        plan_to_pose=lambda pose, robot_name=None: (pose, robot_name),
-        plan_to_joints=lambda joints, robot_name=None: (joints, robot_name),
-        preview_path=lambda robot_name=None: robot_name,
-        execute=lambda robot_name=None: robot_name,
-        cancel=lambda: True,
-        clear_planned_path=lambda: True,
-    )
-    world_monitor = SimpleNamespace(
-        get_current_joint_state=lambda robot_id: copied,
-        is_state_stale=lambda robot_id, max_age=1.0: False,
-        is_state_valid=lambda robot_id, joint_state: True,
-        get_ee_pose=lambda robot_id, joint_state=None: (robot_id, joint_state),
-    )
-    module._world_monitor = world_monitor
-    adapter = InProcessViserAdapter(world_monitor=world_monitor, manipulation_module=module)
+    monitor.is_state_valid = is_state_valid  # type: ignore[method-assign]
 
-    current = adapter.get_current_joint_state("arm")
-    assert current is not copied
-    assert current.name is not copied.name
-
-    assert adapter.plan_to_pose("pose", "arm") == ("pose", "arm")
-    assert adapter.preview_path("arm") == "arm"
-    assert adapter.evaluate_joint_target(copied, "arm")["status"] == "FEASIBLE"
-
-
-def test_adapter_evaluate_joint_target_uses_world_monitor_and_copies_input() -> None:
-    original = FakeJointState(["arm/j1", "j2"], position=[1.0, 2.0])
-    seen = {}
-
-    def is_state_valid(robot_id, joint_state) -> bool:
-        seen["robot_id"] = robot_id
-        seen["joint_state"] = joint_state
-        return True
-
-    world_monitor = SimpleNamespace(
-        get_current_joint_state=lambda robot_id: None,
-        is_state_stale=lambda robot_id, max_age=1.0: False,
-        is_state_valid=is_state_valid,
-        get_ee_pose=lambda robot_id, joint_state=None: (robot_id, joint_state),
-    )
-    module = FakeManipulationModule(
-        _robots={"arm": ("robot-1", SimpleNamespace(), None)},
-        _world_monitor=world_monitor,
-    )
-    adapter = InProcessViserAdapter(world_monitor=world_monitor, manipulation_module=module)
-
-    result = adapter.evaluate_joint_target(original, "arm")
-
-    assert result["success"] is True
-    assert result["status"] == "FEASIBLE"
-    assert seen["robot_id"] == "robot-1"
-    assert seen["joint_state"] is not original
-    assert seen["joint_state"].name == ["arm/j1", "j2"]
-    assert seen["joint_state"].position == [1.0, 2.0]
-
-
-def test_obstacle_collision_marks_joint_target_infeasible() -> None:
-    obstacle = SimpleNamespace(name="blocking_box", blocked_joint_min=0.5)
-
-    def is_state_valid(robot_id, joint_state) -> bool:
-        return bool(joint_state.position[0] < obstacle.blocked_joint_min)
-
-    world_monitor = SimpleNamespace(
-        get_current_joint_state=lambda robot_id: FakeJointState(["j1"], position=[0.0]),
-        is_state_stale=lambda robot_id, max_age=1.0: False,
-        is_state_valid=is_state_valid,
-        get_ee_pose=lambda robot_id, joint_state=None: SimpleNamespace(
-            position=SimpleNamespace(x=0.0, y=0.0, z=0.0)
-        ),
-    )
-    module = FakeManipulationModule(
-        _robots={"arm": ("robot-1", SimpleNamespace(joint_names=["j1"]), None)},
-        _world_monitor=world_monitor,
-    )
-    adapter = InProcessViserAdapter(world_monitor=world_monitor, manipulation_module=module)
-
-    free = adapter.evaluate_joint_target(FakeJointState(["j1"], position=[0.25]), "arm")
-    colliding = adapter.evaluate_joint_target(FakeJointState(["j1"], position=[0.75]), "arm")
-
-    assert free["success"] is True
-    assert free["status"] == "FEASIBLE"
-    assert free["collision_free"] is True
-    assert colliding["success"] is True
-    assert colliding["status"] == "COLLISION"
-    assert colliding["collision_free"] is False
-
-
-def test_scene_registers_goal_robot_coloring_and_updates_visibility() -> None:
-    server = FakeServer()
-    scene = ViserManipulationScene(
-        server,
-        lambda *args, **kwargs: FakeViserUrdfWithMeshes(("joint1", "joint2")),
-        preview_fps=10.0,
-    )
-    scene.prepared_urdf_path = lambda config: "dummy.urdf"
-    config = SimpleNamespace(
-        name="arm",
-        model_path="/tmp/arm.urdf",
-        package_paths={},
-        xacro_args={},
-        auto_convert_meshes=False,
-        joint_names=["joint1", "joint2"],
-    )
-
-    scene.register_robot("robot1", config)
-    target = scene._urdfs["robot1:target"]
-    preview = scene._urdfs["robot1:preview"]
-
-    assert all(mesh.color == (255, 122, 0) for mesh in target._meshes)
-    assert all(mesh.opacity == 0.7 for mesh in target._meshes)
-    assert all(mesh.color == (80, 180, 255) for mesh in preview._meshes)
-    assert all(mesh.opacity == 0.55 for mesh in preview._meshes)
-
-    scene.show_preview("robot1")
-    assert all(mesh.visible is True for mesh in preview._meshes)
-    scene.hide_preview("robot1")
-    assert all(mesh.visible is False for mesh in preview._meshes)
-    assert all(mesh.visible is True for mesh in target._meshes)
-
-
-def test_scene_transform_controls_update_pose_callback_and_visual_state() -> None:
-    server = FakeTransformServer()
-    scene = ViserManipulationScene(
-        server,
-        lambda *args, **kwargs: FakeViserUrdfWithMeshes(("joint1", "joint2")),
-        preview_fps=10.0,
-    )
-    scene.prepared_urdf_path = lambda config: "dummy.urdf"
-    config = SimpleNamespace(
-        name="arm",
-        model_path="/tmp/arm.urdf",
-        package_paths={},
-        xacro_args={},
-        auto_convert_meshes=False,
-        joint_names=["joint1", "joint2"],
-    )
-    scene.register_robot("robot1", config)
-    updates = []
-
-    control = scene.ensure_target_controls("robot1", updates.append)
-    assert control is not None
-    assert server.transform_controls[0].path == "/targets/robot1/ee_control"
-    assert control.update_callback is not None
-    moved = SimpleNamespace(position=(1.0, 2.0, 3.0), wxyz=(1.0, 0.0, 0.0, 0.0))
-    control.update_callback(SimpleNamespace(target=moved))
-    assert updates == [moved]
-
-    pose = Pose({"position": [0.1, 0.2, 0.3], "orientation": [0.0, 0.0, 0.0, 1.0]})
-    scene.set_target_pose("robot1", pose)
-    assert control.position == (0.1, 0.2, 0.3)
-    assert control.wxyz == (1.0, 0.0, 0.0, 0.0)
-
-    scene.set_target_visual_state("robot1", feasible=False)
-    target = scene._urdfs["robot1:target"]
-    preview = scene._urdfs["robot1:preview"]
-    assert control.color == (255, 40, 40)
-    assert all(mesh.color == (255, 30, 30) for mesh in target._meshes)
-    assert all(mesh.opacity == 0.75 for mesh in target._meshes)
-    assert all(mesh.color == (80, 180, 255) for mesh in preview._meshes)
-
-
-def test_scene_target_controls_update_target_ghost_pose_and_feasibility() -> None:
-    server = FakeTransformServer()
-    scene = ViserManipulationScene(
-        server,
-        lambda *args, **kwargs: FakeViserUrdfWithMeshes(("joint1", "joint2")),
-        preview_fps=10.0,
-    )
-    scene.prepared_urdf_path = lambda config: "dummy.urdf"
-    config = SimpleNamespace(
-        name="arm",
-        model_path="/tmp/arm.urdf",
-        package_paths={},
-        xacro_args={},
-        auto_convert_meshes=False,
-        joint_names=["joint1", "joint2"],
-    )
-    scene.register_robot("robot1", config)
-    scene.ensure_target_controls("robot1", lambda target: None)
-
-    pose = Pose({"position": [0.1, 0.2, 0.3], "orientation": [0.0, 0.0, 0.0, 1.0]})
-    assert scene.set_target_joints("robot1", ["joint1", "joint2"], [0.7, 0.9]) is True
-    assert scene.set_target_pose("robot1", pose) is None
-    assert scene.set_target_visual_state("robot1", feasible=False) is None
-
-    target = scene._urdfs["robot1:target"]
-    handle = scene._handles["robot1:ee_control"]
-    assert target.cfg == [0.7, 0.9]
-    assert handle.position == (0.1, 0.2, 0.3)
-    assert handle.color == (255, 40, 40)
-
-
-def test_gui_initializes_pose_selector_to_current_ee_pose(
-    make_panel: Callable[..., ViserPanelGui],
-) -> None:
-    current = FakeJointState(["j1"], position=[0.25])
-    current_pose = SimpleNamespace(
-        position=SimpleNamespace(x=0.1, y=0.2, z=0.3),
-        orientation=SimpleNamespace(w=0.9, x=0.1, y=0.2, z=0.3),
-    )
-    config = make_robot_config(joint_names=["j1"], home_joints=[0.0])
-    module = FakeManipulationModule(_robots={"arm": ("robot-1", config, None)})
-    world_monitor = SimpleNamespace(
-        get_current_joint_state=lambda robot_id: current,
-        is_state_stale=lambda robot_id, max_age=1.0: False,
-        get_ee_pose=lambda robot_id, joint_state=None: current_pose,
-    )
-    adapter = InProcessViserAdapter(world_monitor=world_monitor, manipulation_module=module)
-    scene = ViserManipulationScene(
-        FakeTransformServer(), lambda *args, **kwargs: FakeViserUrdfWithMeshes(), preview_fps=10.0
-    )
-    gui = make_panel(FakeGuiServer(), adapter, ViserVisualizationConfig(panel_enabled=True), scene)
-    control = scene._handles["robot-1:ee_control"]
-    assert control.position == (0.1, 0.2, 0.3)
-    assert control.wxyz == (0.9, 0.1, 0.2, 0.3)
-    assert gui.state.cartesian_target is current_pose
-
-
-def test_gui_preset_dropdown_and_controls_include_init_home_current_and_callbacks(
-    make_panel: Callable[..., ViserPanelGui],
-) -> None:
-    current = FakeJointState(["arm/j1", "arm/j2"], position=[0.25, 0.5])
-    config = make_robot_config(joint_names=["j1", "j2"], home_joints=[1.0, 2.0])
-    module = FakeManipulationModule(
-        _robots={"arm": ("robot-1", config, None)},
-        _init_joints={"arm": FakeJointState(["j1", "j2"], position=[-1.0, -2.0])},
-    )
-    world_monitor = SimpleNamespace(
-        get_current_joint_state=lambda robot_id: current,
-        is_state_stale=lambda robot_id, max_age=1.0: False,
-        is_state_valid=lambda robot_id, joint_state: True,
-        get_ee_pose=lambda robot_id, joint_state=None: None,
-    )
-    adapter = InProcessViserAdapter(world_monitor=world_monitor, manipulation_module=module)
-    gui = make_panel(FakeGuiServer(), adapter)
-    assert gui._handles["preset"].options == ["Select preset...", "Init", "Current", "Home"]
-    assert list(gui._joint_sliders) == ["j1", "j2"]
-    gui._apply_preset("Home")
-    assert [gui._joint_sliders[name].value for name in ("j1", "j2")] == [1.0, 2.0]
-    gui._apply_preset("Current")
-    assert [gui._joint_sliders[name].value for name in ("j1", "j2")] == [0.25, 0.5]
-    gui._submit_execute()
-    assert "Cannot execute" in gui.state.error
-
-
-def test_gui_rebuilding_joint_sliders_removes_stale_viser_handles(
-    make_panel: Callable[..., ViserPanelGui],
-) -> None:
-    current = FakeJointState(["j1", "j2"], position=[0.0, 0.0])
-    config = make_robot_config(joint_names=["j1", "j2"], home_joints=[1.0, 2.0])
-    module = FakeManipulationModule(_robots={"arm": ("robot-1", config, None)})
-    world_monitor = SimpleNamespace(
-        get_current_joint_state=lambda robot_id: current,
-        is_state_stale=lambda robot_id, max_age=1.0: False,
-        is_state_valid=lambda robot_id, joint_state: True,
-        get_ee_pose=lambda robot_id, joint_state=None: None,
-    )
-    adapter = InProcessViserAdapter(world_monitor=world_monitor, manipulation_module=module)
-    server = FakeGuiServer()
-    gui = make_panel(server, adapter)
-    stale_sliders = list(server.sliders)
-    assert [slider.value for slider in stale_sliders] == [0.0, 0.0]
-
-    current.position = [-0.738, -0.2826151825863572]
-    gui._build_joint_sliders()
-
-    assert all(slider.removed is True for slider in stale_sliders)
-    assert [gui._joint_sliders[name].value for name in ("j1", "j2")] == [
-        -0.738,
-        -0.2826151825863572,
-    ]
-
-
-def test_gui_parses_numpy_transform_control_arrays() -> None:
-    gui = ViserPanelGui(FakeGuiServer(), make_adapter_with_robot(), ViserVisualizationConfig())
-
-    pose = gui._pose_from_transform_target(
-        SimpleNamespace(
-            position=np.array([1.0, 2.0, 3.0]),
-            wxyz=np.array([0.5, 0.1, 0.2, 0.3]),
+    def inverse_kinematics(**kwargs: object) -> SimpleNamespace:
+        calls.append(kwargs["auxiliary_group_ids"])  # type: ignore[arg-type]
+        return SimpleNamespace(
+            is_success=lambda: True,
+            joint_state=JointState({"name": ["arm/j1", "arm/j2"], "position": [0.7, 0.8]}),
         )
+
+    module.inverse_kinematics = inverse_kinematics
+    result = evaluate_pose_target_set(
+        monitor,
+        module,
+        {pose_group.id: Pose({"position": [0.1, 0.2, 0.3], "orientation": [0.0, 0.0, 0.0, 1.0]})},
+        (auxiliary.id,),
     )
 
-    assert pose is not None
-    assert list(pose.position) == [1.0, 2.0, 3.0]
-    assert list(pose.orientation) == [0.1, 0.2, 0.3, 0.5]
-
-
-def test_panel_execution_requires_fresh_plan_and_refresh_updates_robot_controls(
-    make_panel: Callable[..., ViserPanelGui],
-) -> None:
-    current = FakeJointState(["j1"], position=[1.2])
-    config = make_robot_config(joint_names=["j1"], home_joints=[0.5])
-    module = FakeManipulationModule(
-        _robots={"arm": ("robot-1", config, None)},
-        execute=lambda robot_name=None: False,
-    )
-    world_monitor = SimpleNamespace(
-        get_current_joint_state=lambda robot_id: current,
-        is_state_stale=lambda robot_id, max_age=1.0: False,
-        is_state_valid=lambda robot_id, joint_state: True,
-        get_ee_pose=lambda robot_id, joint_state=None: None,
-    )
-    adapter = InProcessViserAdapter(
-        world_monitor=world_monitor,
-        manipulation_module=module,
-    )
-    gui = make_panel(FakeGuiServer(), adapter)
-    gui.refresh()
-    assert gui.state.selected_robot == "arm"
-    assert list(gui._joint_sliders) == ["j1"]
-    gui._apply_preset("Home")
-    assert gui._joint_sliders["j1"].value == 0.5
-
-    gui._submit_execute()
-    assert "Cannot execute" in gui.state.error
-
-
-def test_gui_moves_joint_target_immediately_and_stores_evaluated_joint_solution(
-    make_panel: Callable[..., ViserPanelGui],
-) -> None:
-    current = FakeJointState(["j1", "j2"], position=[0.0, 0.0])
-    target_pose = SimpleNamespace(position=SimpleNamespace(x=0.2, y=0.3, z=0.4))
-    config = make_robot_config(joint_names=["j1", "j2"], home_joints=[0.5, 0.6])
-    module = FakeManipulationModule(_robots={"arm": ("robot-1", config, None)})
-    world_monitor = SimpleNamespace(
-        get_current_joint_state=lambda robot_id: current,
-        is_state_stale=lambda robot_id, max_age=1.0: False,
-        is_state_valid=lambda robot_id, joint_state: True,
-        get_ee_pose=lambda robot_id, joint_state=None: target_pose,
-    )
-    adapter = InProcessViserAdapter(world_monitor=world_monitor, manipulation_module=module)
-    target_updates = []
-    target_pose_updates = []
-    scene = SimpleNamespace(
-        has_reference_grid=lambda: False,
-        ensure_target_controls=lambda *args: None,
-        set_target_joints=lambda *args: target_updates.append(args) or True,
-        set_target_pose=lambda *args: target_pose_updates.append(args),
-        set_target_visual_state=lambda *args: None,
-    )
-    gui = make_panel(FakeGuiServer(), adapter, ViserVisualizationConfig(panel_enabled=True), scene)
-    requests = []
-    gui._worker.stop()
-    gui._worker = SimpleNamespace(
-        submit=lambda request: requests.append(request), stop=lambda: None
-    )
-    gui._joint_sliders["j1"].value = 0.25
-    gui._joint_sliders["j2"].value = 0.75
-    gui._submit_joint_target_evaluation()
-    assert target_updates[-1] == ("robot-1", ["j1", "j2"], [0.25, 0.75])
-    assert target_pose_updates[-1] == ("robot-1", target_pose)
-    assert requests[-1].source == "joints"
-
-    stale_request = TargetEvaluationRequest(sequence_id=1, source="joints", robot_name="arm")
-    fresh_request = TargetEvaluationRequest(sequence_id=2, source="joints", robot_name="arm")
-    gui.state.latest_sequence_id = 2
-    gui._apply_target_evaluation_result(
-        stale_request,
-        {
-            "success": True,
-            "collision_free": True,
-            "joint_state": adapter.joints_from_values(["j1", "j2"], [9.0, 9.0]),
-        },
-    )
-    assert gui.state.joint_target == [0.25, 0.75]
-
-    gui._apply_target_evaluation_result(
-        fresh_request,
-        {
-            "success": True,
-            "collision_free": True,
-            "joint_state": adapter.joints_from_values(["j1", "j2"], [1.0, 2.0]),
-        },
-    )
-    assert gui.state.target_status == TargetStatus.FEASIBLE
-    assert gui.state.feasibility.status == FeasibilityStatus.FEASIBLE
-    assert gui.state.joint_target == [1.0, 2.0]
-    assert [gui._joint_sliders[name].value for name in ("j1", "j2")] == [0.25, 0.75]
-    assert target_updates[-1] == ("robot-1", ["j1", "j2"], [0.25, 0.75])
-
-
-def test_gui_cartesian_ik_result_does_not_rewrite_active_gizmo(
-    make_panel: Callable[..., ViserPanelGui],
-) -> None:
-    current = FakeJointState(["j1", "j2"], position=[0.0, 0.0])
-    config = make_robot_config(joint_names=["j1", "j2"], home_joints=[0.5, 0.6])
-    module = FakeManipulationModule(_robots={"arm": ("robot-1", config, None)})
-    world_monitor = SimpleNamespace(
-        get_current_joint_state=lambda robot_id: current,
-        is_state_stale=lambda robot_id, max_age=1.0: False,
-        is_state_valid=lambda robot_id, joint_state: True,
-        get_ee_pose=lambda robot_id, joint_state=None: None,
-    )
-    adapter = InProcessViserAdapter(world_monitor=world_monitor, manipulation_module=module)
-    target_joint_updates = []
-    target_pose_updates = []
-    scene = SimpleNamespace(
-        has_reference_grid=lambda: False,
-        ensure_target_controls=lambda *args: None,
-        set_target_joints=lambda *args: target_joint_updates.append(args) or True,
-        set_target_pose=lambda *args: target_pose_updates.append(args),
-        set_target_visual_state=lambda *args: None,
-    )
-    gui = make_panel(FakeGuiServer(), adapter, ViserVisualizationConfig(panel_enabled=True), scene)
-    gui.state.cartesian_target = Pose(
-        {"position": [0.1, 0.2, 0.3], "orientation": [0.0, 0.0, 0.0, 1.0]}
-    )
-    request = TargetEvaluationRequest(sequence_id=1, source="cartesian", robot_name="arm")
-    gui.state.latest_sequence_id = 1
-
-    gui._apply_target_evaluation_result(
-        request,
-        {
-            "success": True,
-            "collision_free": True,
-            "joint_state": adapter.joints_from_values(["j1", "j2"], [1.0, 2.0]),
-        },
-    )
-
-    assert gui.state.target_status == TargetStatus.FEASIBLE
-    assert [gui._joint_sliders[name].value for name in ("j1", "j2")] == [1.0, 2.0]
-    assert target_joint_updates[-1] == ("robot-1", ["j1", "j2"], [1.0, 2.0])
-    assert target_pose_updates == []
-
-
-def test_gui_collision_evaluation_marks_target_infeasible_and_colors_scene(
-    make_panel: Callable[..., ViserPanelGui],
-) -> None:
-    current = FakeJointState(["j1"], position=[0.0])
-    config = make_robot_config(joint_names=["j1"], home_joints=[0.0])
-    module = FakeManipulationModule(_robots={"arm": ("robot-1", config, None)})
-    world_monitor = SimpleNamespace(
-        get_current_joint_state=lambda robot_id: current,
-        is_state_stale=lambda robot_id, max_age=1.0: False,
-        is_state_valid=lambda robot_id, joint_state: False,
-        get_ee_pose=lambda robot_id, joint_state=None: SimpleNamespace(
-            position=SimpleNamespace(x=0.0, y=0.0, z=0.0)
-        ),
-    )
-    module._world_monitor = world_monitor
-    adapter = InProcessViserAdapter(world_monitor=world_monitor, manipulation_module=module)
-    visual_states = []
-    scene = SimpleNamespace(
-        has_reference_grid=lambda: False,
-        ensure_target_controls=lambda *args: None,
-        set_target_joints=lambda *args: True,
-        set_target_pose=lambda *args: None,
-        set_target_visual_state=lambda *args: visual_states.append(args),
-    )
-    gui = make_panel(FakeGuiServer(), adapter, ViserVisualizationConfig(panel_enabled=True), scene)
-    request = TargetEvaluationRequest(sequence_id=1, source="joints", robot_name="arm")
-    gui.state.latest_sequence_id = 1
-    result = adapter.evaluate_joint_target(FakeJointState(["j1"], position=[1.0]), "arm")
-
-    gui._apply_target_evaluation_result(request, result)
-
+    assert calls == [(auxiliary.id,)]
+    assert validated_states == [{"j1": 0.7, "j2": 0.8}] * 2
     assert result["status"] == "COLLISION"
-    assert gui.state.target_status == TargetStatus.INFEASIBLE
-    assert gui.state.feasibility.status == FeasibilityStatus.COLLISION
-    assert gui.state.error == "Target is in collision"
-    assert visual_states[-1] == ("robot-1", False)
+    assert result["collision_free"] is False
+    assert result["group_ids"] == (pose_group.id, auxiliary.id)
+    assert result["group_diagnostics"] == {
+        pose_group.id: "Target is in collision or violates limits",
+        auxiliary.id: "Target is in collision or violates limits",
+    }
 
 
-def test_gui_safe_execute_requires_fresh_matching_plan_and_clear_resets_path(
-    make_panel: Callable[..., ViserPanelGui], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    current = FakeJointState(["j1"], position=[1.0])
-    executed = []
-    cleared = []
-    module = FakeManipulationModule(
-        _robots={
-            "arm": ("robot-1", make_robot_config(joint_names=["j1"], home_joints=[1.0]), None)
-        },
-        _state=NamedState(name="IDLE"),
-        execute=lambda robot_name=None: executed.append(robot_name) or True,
-        clear_planned_path=lambda: cleared.append(True) or True,
+def test_urdf_projection_reorders_global_selected_joints_with_current_baseline() -> None:
+    config = Config("arm", ["j2", "j1", "j3"], [-2.0, -1.0, -3.0], [2.0, 1.0, 3.0], None)
+    plan = SimpleNamespace(
+        path=(JointState({"name": ["arm/j1"], "position": [0.7]}),),
     )
-    world_monitor = SimpleNamespace(
-        get_current_joint_state=lambda robot_id: current,
-        is_state_stale=lambda robot_id, max_age=1.0: False,
-        is_state_valid=lambda robot_id, joint_state: True,
-        get_ee_pose=lambda robot_id, joint_state=None: SimpleNamespace(
-            position=SimpleNamespace(x=0.0, y=0.0, z=0.0)
-        ),
+    projected = ViserManipulationVisualizer._project_plan_path(
+        "arm",
+        config,
+        JointState({"name": ["j1", "j2", "j3"], "position": [0.1, 0.2, 0.3]}),
+        plan,
     )
-    adapter = InProcessViserAdapter(world_monitor=world_monitor, manipulation_module=module)
-    gui = make_panel(
-        FakeGuiServer(),
-        adapter,
-        ViserVisualizationConfig(panel_enabled=True, current_match_tolerance=0.05),
-    )
-    gui._operation_worker.stop()
-    monkeypatch.setattr(
-        gui,
-        "_operation_worker",
-        SimpleNamespace(
-            submit=lambda operation, **_kwargs: operation(), stop=lambda timeout=2.0: None
-        ),
-    )
-    gui.state.target_status = TargetStatus.FEASIBLE
-    gui.state.plan_state = PanelPlanState(
-        status=PlanStatus.FRESH,
-        robot="arm",
-        start_joints_snapshot=[1.2],
-    )
-    gui._submit_execute()
-    assert executed == []
-    assert "Cannot execute" in gui.state.error
+    assert projected is not None
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    urdf = Urdf()
+    urdf._urdf.actuated_joint_names = ("j3", "j1", "j2")
+    scene.set_urdf_joints(urdf, projected[0].name, projected[0].position)
 
-    gui.state.action_status = ActionStatus.IDLE
-    gui.state.error = ""
-    gui.state.plan_state.start_joints_snapshot = [1.0]
-    gui._submit_execute()
-    assert executed == ["arm"]
-
-    gui._submit_clear()
-    assert cleared == [True]
-    assert gui.state.plan_state.status == PlanStatus.NONE
-
-
-def test_gui_plan_target_failure_recovers_action_state(
-    make_panel: Callable[..., ViserPanelGui],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    adapter = make_adapter_with_robot()
-    gui = make_panel(FakeGuiServer(), adapter)
-    gui._operation_worker.stop()
-    monkeypatch.setattr(
-        gui,
-        "_operation_worker",
-        SimpleNamespace(
-            submit=lambda operation, **_kwargs: operation(), stop=lambda timeout=2.0: None
-        ),
-    )
-    gui.state.selected_robot = "missing"
-    gui.state.target_status = TargetStatus.FEASIBLE
-    gui.state.manipulation_state = "IDLE"
-
-    gui._submit_plan()
-
-    assert gui.state.action_status == ActionStatus.IDLE
-    assert gui.state.plan_state.status == PlanStatus.FAILED
-    assert gui.state.error == "No robot config"
-    assert gui.state.last_result == "plan_to_joints=False"
-
-
-def test_gui_resets_fault_before_replanning(
-    make_panel: Callable[..., ViserPanelGui],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls = []
-    adapter = make_adapter_with_robot()
-    gui = make_panel(FakeGuiServer(), adapter)
-    gui._operation_worker.stop()
-    monkeypatch.setattr(
-        gui,
-        "_operation_worker",
-        SimpleNamespace(
-            submit=lambda operation, **_kwargs: operation(), stop=lambda timeout=2.0: None
-        ),
-    )
-
-    def reset() -> bool:
-        calls.append("reset")
-        return True
-
-    def plan_to_joints(_joints: JointState, _robot_name: str | None = None) -> bool:
-        calls.append("plan")
-        return True
-
-    monkeypatch.setattr(adapter, "reset", reset)
-    monkeypatch.setattr(adapter, "plan_to_joints", plan_to_joints)
-    gui.state.target_status = TargetStatus.FEASIBLE
-    gui.state.manipulation_state = "FAULT"
-
-    gui._submit_plan()
-
-    assert calls == ["reset", "plan"]
-    assert gui.state.plan_state.status == PlanStatus.FRESH
-    assert gui.state.last_result == "plan_to_joints=True"
-
-
-def test_operation_worker_coalesces_pending_requests() -> None:
-    errors = []
-    calls = []
-    worker = OperationWorker(errors.append)
-    worker.submit(lambda: calls.append("old"))
-    worker.submit(lambda: calls.append("new"))
-
-    operation = worker._requests.get_nowait()
-    operation.operation()
-
-    assert calls == ["new"]
-    assert errors == []
-
-
-def test_operation_worker_stop_can_wait_for_in_flight_operation() -> None:
-    errors = []
-    worker = OperationWorker(errors.append)
-    started = threading.Event()
-    release = threading.Event()
-    finished = threading.Event()
-    stopped = threading.Event()
-
-    def operation() -> None:
-        started.set()
-        release.wait(timeout=1.0)
-        finished.set()
-
-    worker.start()
-    worker.submit(operation)
-    assert started.wait(timeout=1.0)
-
-    stopper = threading.Thread(
-        target=lambda: (worker.stop(timeout=None), stopped.set()),
-        name="StopViserOperationTest",
-    )
-    stopper.start()
-    assert not stopped.wait(timeout=0.05)
-    release.set()
-    assert stopped.wait(timeout=1.0)
-    stopper.join(timeout=1.0)
-
-    assert finished.is_set()
-    assert worker._thread is None
-    assert errors == []
-
-
-def test_target_evaluation_worker_coalesces_pending_requests() -> None:
-    worker = TargetEvaluationWorker(lambda request: {}, lambda request, result: None)
-    old_request = TargetEvaluationRequest(sequence_id=1, source="joints", robot_name="arm")
-    new_request = TargetEvaluationRequest(sequence_id=2, source="joints", robot_name="arm")
-
-    worker.submit(old_request)
-    worker.submit(new_request)
-
-    assert worker._requests.get_nowait() is new_request
-
-
-def test_operation_worker_reports_timeout() -> None:
-    errors = []
-    release = threading.Event()
-    finished = threading.Event()
-    worker = OperationWorker(errors.append, timeout_seconds=0.01)
-
-    def operation() -> None:
-        release.wait(timeout=1.0)
-        finished.set()
-
-    worker.submit(operation, timeout_seconds=0.01)
-    worker._run_operation(worker._requests.get_nowait())
-    release.set()
-
-    assert errors == ["Operation timed out after 0.0s"]
-    assert finished.wait(timeout=1.0)
+    assert projected[0].position == [0.2, 0.7, 0.3]
+    assert urdf.cfg == [0.3, 0.7, 0.2]

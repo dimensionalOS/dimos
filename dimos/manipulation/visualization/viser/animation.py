@@ -15,9 +15,26 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 import time
 
 from dimos.msgs.sensor_msgs.JointState import JointState
+
+
+@dataclass(frozen=True)
+class PreviewTrack:
+    """One fixed-baseline local robot track in a group-native preview."""
+
+    robot_id: str
+    joint_names: tuple[str, ...]
+    path: tuple[JointState, ...]
+
+
+@dataclass(frozen=True)
+class GroupPreviewAnimation:
+    """Validated collection of robot tracks sharing one preview transaction."""
+
+    tracks: tuple[PreviewTrack, ...]
 
 
 def interpolate_joint_path(

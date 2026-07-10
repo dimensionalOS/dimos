@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import TypedDict
 
-from dimos.manipulation.planning.spec.models import RobotName, WorldRobotID
+from dimos.manipulation.planning.spec.models import PlanningGroupID, RobotName, WorldRobotID
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -31,6 +31,15 @@ class TargetEvaluation(TypedDict, total=False):
     ee_pose: PoseStamped | Pose | None
     position_error: float
     orientation_error: float
+
+
+class TargetSetEvaluation(TargetEvaluation, total=False):
+    """Visualization-local result for one explicit planning-group target set."""
+
+    group_ids: tuple[PlanningGroupID, ...]
+    target_joints: JointState | None
+    group_diagnostics: dict[PlanningGroupID, str]
+    group_poses: dict[PlanningGroupID, PoseStamped | Pose | None]
 
 
 class RobotInfo(TypedDict):

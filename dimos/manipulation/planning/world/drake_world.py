@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -31,11 +32,15 @@ from dimos.manipulation.planning.groups.identifiers import (
     make_planning_group_id,
 )
 from dimos.manipulation.planning.groups.models import PlanningGroup
-from dimos.manipulation.planning.groups.utils import joint_state_to_ordered_positions
+from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
+from dimos.manipulation.planning.groups.utils import (
+    joint_state_to_ordered_positions,
+    project_global_joint_path_to_robot,
+)
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import (
-    JointPath,
+    GeneratedPlan,
     Obstacle,
     PlanningGroupID,
     PlanningSceneInfo,
@@ -202,6 +207,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         self._plant_context: Context | None = None
         self._scene_graph_context: Context | None = None
         self._finalized = False
+        self._preview_animation_generation = 0
 
         # Obstacle source for dynamic obstacles
         self._obstacle_source_id: Any = None
@@ -788,8 +794,19 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             if self._meshcat_visualizer is not None:
                 self.publish_visualization()
                 # Hide all preview robots initially
-                for robot_id in self._robots:
-                    self.hide_preview(robot_id)
+                self.hide_preview(
+                    tuple(
+                        group.id
+                        for robot_data in self._robots.values()
+                        for group in (
+                            self._planning_group_from_config(
+                                robot_data.config,
+                                make_planning_group_id(robot_data.config.name, definition.name),
+                            )
+                            for definition in robot_data.config.planning_groups
+                        )
+                    )
+                )
 
     @property
     def is_finalized(self) -> bool:
@@ -1184,57 +1201,109 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             full_positions[idx] = positions[i]
         self._plant.SetPositions(plant_ctx, full_positions)
 
-    def show_preview(self, robot_id: WorldRobotID) -> None:
-        """Show the preview (yellow ghost) robot in Meshcat."""
+    def _robot_ids_for_groups(self, group_ids: Sequence[PlanningGroupID]) -> list[WorldRobotID]:
+        """Resolve planning groups to distinct robots while preserving group order."""
+        return list(dict.fromkeys(self._robot_id_for_group(group_id) for group_id in group_ids))
+
+    def _set_preview_visibility(self, robot_id: WorldRobotID, visible: bool) -> None:
+        """Set one preview robot's Meshcat visibility."""
         if self._meshcat is None:
             return
         robot_data = self._robots.get(robot_id)
         if robot_data is None or robot_data.preview_model_instance is None:
             return
         model_name = self._plant.GetModelInstanceName(robot_data.preview_model_instance)
-        self._meshcat.SetProperty(f"visualizer/{model_name}", "visible", True)
+        self._meshcat.SetProperty(f"visualizer/{model_name}", "visible", visible)
 
-    def hide_preview(self, robot_id: WorldRobotID) -> None:
-        """Hide the preview (yellow ghost) robot in Meshcat."""
-        if self._meshcat is None:
-            return
-        robot_data = self._robots.get(robot_id)
-        if robot_data is None or robot_data.preview_model_instance is None:
-            return
-        model_name = self._plant.GetModelInstanceName(robot_data.preview_model_instance)
-        self._meshcat.SetProperty(f"visualizer/{model_name}", "visible", False)
+    def show_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
+        """Show preview robots affected by planning groups."""
+        for robot_id in self._robot_ids_for_groups(group_ids):
+            self._set_preview_visibility(robot_id, True)
 
-    def animate_path(
-        self,
-        robot_id: WorldRobotID,
-        path: JointPath,
-        duration: float = 3.0,
-    ) -> None:
-        """Animate a path using the preview (yellow ghost) robot.
+    def hide_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
+        """Hide preview robots affected by planning groups."""
+        self.cancel_preview_animation()
+        with self._lock:
+            for robot_id in self._robot_ids_for_groups(group_ids):
+                self._set_preview_visibility(robot_id, False)
 
-        The preview stays visible after animation completes.
+    def cancel_preview_animation(self) -> None:
+        """Invalidate active preview frames without blocking on renderer sleeps."""
+        with self._lock:
+            self._preview_animation_generation += 1
+
+    def animate_plan(self, plan: GeneratedPlan, duration: float = 3.0) -> None:
+        """Render canonical plan waypoints on a display-duration shared clock.
+
+        Execution timing remains the manipulation module's responsibility.
         """
-        if self._meshcat is None or len(path) < 2:
-            return
-
-        robot_data = self._robots.get(robot_id)
-        if robot_data is None or robot_data.preview_model_instance is None:
+        group_ids = tuple(plan.group_ids)
+        selection = PlanningGroupRegistry(
+            robot_data.config for robot_data in self._robots.values()
+        ).select(group_ids)
+        if not group_ids or len(set(group_ids)) != len(group_ids):
+            raise ValueError("generated plan has empty or duplicate planning groups")
+        if self._meshcat is None or len(plan.path) < 2:
             return
 
         import time
 
-        self.show_preview(robot_id)
-        dt = duration / (len(path) - 1)
-        for joint_state in path:
-            positions = np.array(joint_state.position, dtype=np.float64)
-            with self._lock:
-                assert self._plant_context is not None
-                self._set_preview_positions(self._plant_context, robot_id, positions)
-            self.publish_visualization()
-            time.sleep(dt)
+        expected_joint_names = selection.joint_names
+        for waypoint in plan.path:
+            if tuple(waypoint.name) != expected_joint_names or len(waypoint.position) != len(
+                expected_joint_names
+            ):
+                raise ValueError("generated plan joint names do not match its planning groups")
+
+        robot_ids = self._robot_ids_for_groups(group_ids)
+        projected_paths: dict[WorldRobotID, list[JointState]] = {}
+        with self._lock:
+            assert self._plant_context is not None
+            assert self._live_context is not None
+            self._preview_animation_generation += 1
+            animation_generation = self._preview_animation_generation
+            for robot_id in robot_ids:
+                robot_data = self._robots[robot_id]
+                baseline = self.get_joint_state(self._live_context, robot_id)
+                projected_paths[robot_id] = project_global_joint_path_to_robot(
+                    plan.path,
+                    robot_name=robot_data.config.name,
+                    local_joint_names=robot_data.config.joint_names,
+                    current_joint_state=baseline,
+                )
+
+        completed = False
+        try:
+            self.show_preview(group_ids)
+            dt = duration / (len(plan.path) - 1)
+            for frame_index in range(len(plan.path)):
+                with self._lock:
+                    if animation_generation != self._preview_animation_generation:
+                        return
+                    assert self._plant_context is not None
+                    for robot_id, path in projected_paths.items():
+                        self._set_preview_positions(
+                            self._plant_context,
+                            robot_id,
+                            np.array(path[frame_index].position, dtype=np.float64),
+                        )
+                with self._lock:
+                    if animation_generation != self._preview_animation_generation:
+                        return
+                    self.publish_visualization()
+                if frame_index < len(plan.path) - 1:
+                    time.sleep(dt)
+            completed = True
+        finally:
+            if not completed:
+                # Cancellation and renderer errors both leave no ghost behind.
+                # WorldMonitor serializes replacements, so this cannot hide a
+                # newer preview while cleanup is in progress.
+                self.hide_preview(group_ids)
 
     def close(self) -> None:
         """Shut down the viz thread."""
+        self.cancel_preview_animation()
         if self._meshcat is not None:
             self._meshcat.close()
 

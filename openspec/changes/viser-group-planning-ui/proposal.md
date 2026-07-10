@@ -20,6 +20,9 @@ The Viser changes are large and have different review criteria from planning alg
 ## Impact
 
 - Base branch: PR 4 `manipulation-module-group-api`.
-- Reference implementation: `cc/spec/movegroup`.
+- Normative UI reference: `cc/spec/movegroup@0edb8d3dd`. User-visible deviations require explicit approval.
+- API base: PR 4 at `cc/planning_group/main@05c25787a`; its explicit planning-group API scope remains unchanged.
+- The upstream extraction commit `origin/cc/planning_group/viser@737fb3381` is not an implementation source.
 - Primary files: `dimos/manipulation/visualization/viser/*`, `dimos/manipulation/visualization/types.py`, `dimos/manipulation/visualization/test_factory.py`.
-- Out of scope: planning model/backend/algorithm changes except as already supplied by earlier PRs.
+- Supporting preview seam: group-native visualization protocol, world-monitor forwarding, manipulation-module preview routing, and the existing Meshcat implementation.
+- Out of scope: all other manipulation-module, planning model/backend/algorithm, and control changes except as already supplied by earlier PRs.

@@ -24,7 +24,8 @@ from dimos.manipulation.planning import factory as planning_factory
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.monitor import world_monitor as world_monitor_module
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.models import PlanningSceneInfo
+from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningSceneInfo
+from dimos.manipulation.planning.spec.protocols import VisualizationSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -157,13 +158,16 @@ class FakeWorld:
     def publish_visualization(self, ctx=None) -> None:
         return None
 
-    def show_preview(self, robot_id) -> None:
+    def show_preview(self, group_ids) -> None:
         return None
 
-    def hide_preview(self, robot_id) -> None:
+    def hide_preview(self, group_ids) -> None:
         return None
 
-    def animate_path(self, robot_id, path, duration: float = 3.0) -> None:
+    def animate_plan(self, plan, duration: float = 3.0) -> None:
+        return None
+
+    def cancel_preview_animation(self) -> None:
         return None
 
     def close(self) -> None:
@@ -183,14 +187,17 @@ class FakeViz:
     def publish_visualization(self, ctx=None) -> None:
         return None
 
-    def show_preview(self, robot_id) -> None:
-        self.calls.append(("show_preview", robot_id))
+    def show_preview(self, group_ids) -> None:
+        self.calls.append(("show_preview", group_ids))
 
-    def hide_preview(self, robot_id) -> None:
-        self.calls.append(("hide_preview", robot_id))
+    def hide_preview(self, group_ids) -> None:
+        self.calls.append(("hide_preview", group_ids))
 
-    def animate_path(self, robot_id, path, duration: float = 3.0) -> None:
-        return None
+    def animate_plan(self, plan, duration: float = 3.0) -> None:
+        self.calls.append(("animate_plan", plan, duration))
+
+    def cancel_preview_animation(self) -> None:
+        self.calls.append(("cancel_preview_animation",))
 
     def close(self) -> None:
         self.calls.append(("close", None))
@@ -255,6 +262,25 @@ def test_world_monitor_syncs_planning_scene_to_visualization() -> None:
     scene = fake_viz.calls[0][1]
     assert isinstance(scene, PlanningSceneInfo)
     assert scene.robots["robot-1"].name == "arm"
+
+
+def test_world_monitor_forwards_group_native_preview_protocol() -> None:
+    fake_viz = FakeViz()
+    monitor = world_monitor_module.WorldMonitor(world=FakeWorld(), visualization=fake_viz)  # type: ignore[arg-type]
+    plan = GeneratedPlan(group_ids=("arm/manipulator",), path=[])
+
+    assert isinstance(fake_viz, VisualizationSpec)
+    monitor.show_preview(["arm/manipulator"])
+    monitor.hide_preview(["arm/manipulator"])
+    monitor.animate_plan(plan, 2.0)
+
+    assert fake_viz.calls == [
+        ("show_preview", ["arm/manipulator"]),
+        ("cancel_preview_animation",),
+        ("hide_preview", ["arm/manipulator"]),
+        ("cancel_preview_animation",),
+        ("animate_plan", plan, 2.0),
+    ]
 
 
 def test_create_planning_specs_wraps_existing_world(monkeypatch) -> None:
