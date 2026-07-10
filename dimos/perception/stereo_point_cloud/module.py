@@ -51,8 +51,9 @@ logger = setup_logger()
 _DEPTH_MM_THRESHOLD = 100
 _MILLIMETERS_PER_METER = 1000.0
 
-_TRAJECTORY_MAX_POSES = 20_000
-_TRAJECTORY_PUBLISH_EVERY = 5
+_TRAJECTORY_MAX_POSES = 50_000
+_TRAJECTORY_VIZ_MAX_POSES = 1_000
+_TRAJECTORY_PUBLISH_EVERY = 15
 _PERF_LOG_INTERVAL_FRAMES = 30
 
 
@@ -197,11 +198,13 @@ class StereoPointCloud(Module):
                 )
             )
             self._frame_count += 1
-            traj_snapshot = (
-                list(self._trajectory_poses)
-                if self._frame_count % _TRAJECTORY_PUBLISH_EVERY == 0
-                else None
-            )
+            traj_snapshot = None
+            if self._frame_count % _TRAJECTORY_PUBLISH_EVERY == 0:
+                poses = list(self._trajectory_poses)
+                stride = max(1, len(poses) // _TRAJECTORY_VIZ_MAX_POSES)
+                traj_snapshot = poses[::stride]
+                if traj_snapshot[-1] is not poses[-1]:
+                    traj_snapshot.append(poses[-1])
 
         if traj_snapshot is not None:
             self.trajectory.publish(Path(ts=img.ts, frame_id=self.config.world_frame, poses=traj_snapshot))
