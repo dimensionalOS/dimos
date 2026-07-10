@@ -55,9 +55,12 @@ class FrameReader {
   }
 }
 
+// data message framing: u32 headerLen | u32 payloadLen | header JSON | payload
+// (explicit payloadLen because Deno's writer.close() doesn't send FIN promptly;
+// receivers count bytes instead of waiting for EOF)
 function peekHeader(msg: Uint8Array): { ch: string; seq: number; ts: number } {
   const hlen = new DataView(msg.buffer, msg.byteOffset).getUint32(0, true);
-  return JSON.parse(dec.decode(msg.subarray(4, 4 + hlen)));
+  return JSON.parse(dec.decode(msg.subarray(8, 8 + hlen)));
 }
 
 async function readAll(rs: ReadableStream<Uint8Array>): Promise<Uint8Array> {
@@ -96,11 +99,14 @@ interface Viewer {
   dg: WritableStreamDefaultWriter<Uint8Array>;
   busy: Map<string, boolean>;
   dropped: number;
+  writeMs: number; // EWMA of create-stream+write+close duration
+  slowWrites: number; // writes that took > 150 ms (credit stalls)
 }
 
 const viewers = new Set<Viewer>();
 let robot: { wt: WebTransport; dg: WritableStreamDefaultWriter<Uint8Array> } | null = null;
 let nextViewerId = 1;
+let sendSeq = 1;
 
 const chStats = new Map<string, { msgs: number; bytes: number }>();
 let dgViewerToRobot = 0;
@@ -118,6 +124,7 @@ const reports = new Map<string, unknown>();
 
 // ---------- forwarding ----------
 
+let lastFanout = 0;
 function fanout(msg: Uint8Array) {
   let ch = "?";
   try {
@@ -125,6 +132,11 @@ function fanout(msg: Uint8Array) {
   } catch {
     // not our framing; forward as channel "?" anyway
   }
+  const now = performance.now();
+  if (lastFanout && now - lastFanout > 300) {
+    console.log(`[relay] robot->relay arrival gap ${(now - lastFanout) | 0}ms (before ${ch})`);
+  }
+  lastFanout = now;
   bumpCh(ch, msg.byteLength);
   for (const v of viewers) {
     if (v.busy.get(ch)) {
@@ -132,14 +144,25 @@ function fanout(msg: Uint8Array) {
       continue;
     }
     v.busy.set(ch, true);
+    const t0 = performance.now();
     (async () => {
       // waitUntilAvailable: a slow page exhausts its stream credit; without
       // this the create call throws and we'd wrongly drop a live viewer.
       // While waiting, the busy flag sheds this channel's newer frames.
-      const s = await v.wt.createUnidirectionalStream({ waitUntilAvailable: true });
+      // sendOrder decreasing = FIFO on the wire: without it quinn round-robins
+      // all in-flight streams, so message completions arrive in ~0.7 s waves
+      // (Chrome netlog showed smooth frames but clumped stream FINs) and the
+      // page sees ~1 fps video.
+      const s = await v.wt.createUnidirectionalStream({
+        waitUntilAvailable: true,
+        sendOrder: -(sendSeq++),
+      });
       const w = s.getWriter();
       await w.write(msg);
       await w.close();
+      const ms = performance.now() - t0;
+      v.writeMs = v.writeMs ? 0.8 * v.writeMs + 0.2 * ms : ms;
+      if (ms > 150) v.slowWrites++;
     })()
       .catch(() => dropViewer(v))
       .finally(() => v.busy.set(ch, false));
@@ -236,6 +259,8 @@ function handleViewer(wt: WebTransport) {
     dg: wt.datagrams.writable.getWriter(),
     busy: new Map(),
     dropped: 0,
+    writeMs: 0,
+    slowWrites: 0,
   };
   viewers.add(v);
   console.log(`[relay] viewer ${v.id} connected (${viewers.size} total)`);
@@ -337,7 +362,9 @@ setInterval(() => {
     parts.push(`${ch}=${(s.msgs / 2).toFixed(1)}Hz/${(s.bytes / 2048).toFixed(0)}KBs`);
   }
   chStats.clear();
-  const drops = [...viewers].map((v) => `v${v.id}:${v.dropped}`).join(" ");
+  const drops = [...viewers]
+    .map((v) => `v${v.id}:${v.dropped}d/${v.slowWrites}slow/${v.writeMs.toFixed(0)}ms`)
+    .join(" ");
   console.log(
     `[stats] robot=${robot ? "yes" : "no"} viewers=${viewers.size} ` +
       `${parts.join(" ") || "(no data)"} dg(v->r)=${dgViewerToRobot} dg(r->v)=${dgRobotToViewers} drops[${drops}]`,

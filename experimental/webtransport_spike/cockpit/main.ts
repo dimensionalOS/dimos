@@ -46,6 +46,8 @@ interface ChStat {
   minSeq: number;
   maxSeq: number;
   ooo: number; // arrived after a higher seq (expected: streams are unordered)
+  lastArr: number;
+  arrGapMax: number; // largest inter-arrival gap in the current window (ms)
 }
 const stats = new Map<string, ChStat>();
 let rttMs = -1;
@@ -54,13 +56,19 @@ let state = "init";
 function bump(ch: string, bytes: number, seq: number) {
   let s = stats.get(ch);
   if (!s) {
-    s = { frames: 0, bytes: 0, windowFrames: 0, windowBytes: 0, hz: 0, kbPerFrame: 0, minSeq: seq, maxSeq: -1, ooo: 0 };
+    s = {
+      frames: 0, bytes: 0, windowFrames: 0, windowBytes: 0, hz: 0, kbPerFrame: 0,
+      minSeq: seq, maxSeq: -1, ooo: 0, lastArr: 0, arrGapMax: 0,
+    };
     stats.set(ch, s);
   }
   s.frames++;
   s.bytes += bytes;
   s.windowFrames++;
   s.windowBytes += bytes;
+  const now = performance.now();
+  if (s.lastArr) s.arrGapMax = Math.max(s.arrGapMax, now - s.lastArr);
+  s.lastArr = now;
   if (seq < s.maxSeq) s.ooo++;
   else s.maxSeq = seq;
 }
@@ -84,13 +92,23 @@ setInterval(() => {
     tbody.appendChild(tr);
   }
   $("rtt").textContent = rttMs < 0 ? "rtt: –" : `rtt: ${rttMs.toFixed(1)} ms`;
+  $("perf").textContent = `ms (ewma): jpeg-decode ${perf.decode.toFixed(1)}, decode-cycle ${perf.cycle.toFixed(1)}, ` +
+    `lidar ${perf.lidar.toFixed(1)}, odom ${perf.odom.toFixed(1)}`;
 }, 1000);
 
 function report(st?: string) {
   if (st) state = st;
   const channels: Record<string, unknown> = {};
   for (const [ch, s] of stats) {
-    channels[ch] = { hz: +s.hz.toFixed(1), kbPerFrame: +s.kbPerFrame.toFixed(1), frames: s.frames, lost: lost(s), ooo: s.ooo };
+    channels[ch] = {
+      hz: +s.hz.toFixed(1),
+      kbPerFrame: +s.kbPerFrame.toFixed(1),
+      frames: s.frames,
+      lost: lost(s),
+      ooo: s.ooo,
+      arrGapMax: +s.arrGapMax.toFixed(0), // reset by the stats tick below
+    };
+    s.arrGapMax = 0;
   }
   fetch("/api/report", {
     method: "POST",
@@ -102,6 +120,12 @@ function report(st?: string) {
       rtt: +rttMs.toFixed(1),
       channels,
       decoded: { odom: lastOdom, lidarPoints, videoSize, jpegFrames, jpegErrors },
+      perfMs: {
+        decode: +perf.decode.toFixed(1),
+        cycle: +perf.cycle.toFixed(1),
+        lidar: +perf.lidar.toFixed(1),
+        odom: +perf.odom.toFixed(1),
+      },
       ts: Date.now(),
     }),
   }).catch(() => {});
@@ -117,11 +141,35 @@ let videoSize = "";
 let jpegFrames = 0;
 let jpegErrors = 0;
 
+// perf instrumentation (EWMA ms), reported + shown on the page
+// cycle = time between consecutive decode completions: ~70 ms means
+// arrival-limited (good); much higher means the decode chain is being starved
+const perf = { decode: 0, lidar: 0, odom: 0, cycle: 0 };
+let lastDecodeDone = 0;
+function ewma(prev: number, ms: number): number {
+  return prev ? 0.8 * prev + 0.2 * ms : ms;
+}
+
 const videoCtx = ($("video") as HTMLCanvasElement).getContext("2d")!;
+// Latest-wins decode queue: decode back-to-back at whatever rate the decoder
+// manages, always on the freshest frame. (The old skip-if-busy variant only
+// ATTEMPTED a decode when a frame happened to arrive while idle, so displayed
+// fps collapsed to ~1/cycle-time when the main thread was busy.)
+let pendingJpeg: Uint8Array | null = null;
 let jpegBusy = false;
 function drawJpeg(payload: Uint8Array) {
-  if (jpegBusy) return; // latest-wins on decode
+  pendingJpeg = payload;
+  if (!jpegBusy) decodeNextJpeg();
+}
+function decodeNextJpeg() {
+  const payload = pendingJpeg;
+  pendingJpeg = null;
+  if (!payload) {
+    jpegBusy = false;
+    return;
+  }
   jpegBusy = true;
+  const t0 = performance.now();
   createImageBitmap(new Blob([payload], { type: "image/jpeg" }))
     .then((bmp) => {
       const c = videoCtx.canvas;
@@ -130,12 +178,15 @@ function drawJpeg(payload: Uint8Array) {
         c.height = bmp.height;
       }
       videoCtx.drawImage(bmp, 0, 0);
+      perf.decode = ewma(perf.decode, performance.now() - t0);
+      if (lastDecodeDone) perf.cycle = ewma(perf.cycle, performance.now() - lastDecodeDone);
+      lastDecodeDone = performance.now();
       videoSize = `${bmp.width}x${bmp.height}`;
       jpegFrames++;
       bmp.close();
     })
     .catch(() => jpegErrors++) // synthetic payloads aren't valid JPEG
-    .finally(() => (jpegBusy = false));
+    .finally(() => decodeNextJpeg());
 }
 
 const odomCtx = ($("odom") as HTMLCanvasElement).getContext("2d")!;
@@ -146,8 +197,12 @@ type Odom = { x: number; y: number; z: number; yaw: number; ts: number };
 // stream credit): dispatch stashes the latest value, a rAF loop draws it.
 let pendingOdom: Odom | null = null;
 let pendingLidar: Float32Array | null = null;
+let lastOdomDraw = 0;
 function renderLoop() {
-  if (pendingOdom) {
+  // odom gated to 10 Hz: the trace polyline redraw is the second-biggest
+  // main-thread cost and 19 Hz adds nothing visually
+  if (pendingOdom && performance.now() - lastOdomDraw > 100) {
+    lastOdomDraw = performance.now();
     drawOdom(pendingOdom);
     pendingOdom = null;
   }
@@ -160,6 +215,7 @@ function renderLoop() {
 requestAnimationFrame(renderLoop);
 
 function drawOdom(p: Odom) {
+  const t0 = performance.now();
   lastOdom = p;
   const c = odomCtx.canvas;
   odomCtx.clearRect(0, 0, c.width, c.height);
@@ -176,7 +232,11 @@ function drawOdom(p: Odom) {
   const py = (y: number) => c.height - 15 - (y - minY) * scale;
   odomCtx.strokeStyle = "#4c9be8";
   odomCtx.beginPath();
-  trace.forEach(([x, y], i) => (i ? odomCtx.lineTo(px(x), py(y)) : odomCtx.moveTo(px(x), py(y))));
+  const step = Math.max(1, Math.ceil(trace.length / 1000)); // cap polyline cost
+  for (let i = 0; i < trace.length; i += step) {
+    const [x, y] = trace[i];
+    i ? odomCtx.lineTo(px(x), py(y)) : odomCtx.moveTo(px(x), py(y));
+  }
   odomCtx.stroke();
   // heading arrow
   odomCtx.strokeStyle = "#e8734c";
@@ -184,28 +244,42 @@ function drawOdom(p: Odom) {
   odomCtx.moveTo(px(p.x), py(p.y));
   odomCtx.lineTo(px(p.x + 0.15 * span * Math.cos(p.yaw)), py(p.y + 0.15 * span * Math.sin(p.yaw)));
   odomCtx.stroke();
+  perf.odom = ewma(perf.odom, performance.now() - t0);
   $("odomText").textContent = `x=${p.x.toFixed(2)} y=${p.y.toFixed(2)} z=${p.z.toFixed(2)} yaw=${p.yaw.toFixed(2)}`;
 }
 
 const lidarCtx = ($("lidar") as HTMLCanvasElement).getContext("2d")!;
+// Pixel-buffer blit, not 25k fillRect+fillStyle ops: the per-point canvas API
+// version cost ~100 ms per cloud and starved the whole main thread (this is
+// what made video appear to run at ~1 fps).
+let lidarImage: ImageData | null = null;
+let lidarPix: Uint32Array | null = null;
 function drawLidar(pts: Float32Array) {
+  const t0 = performance.now();
   const c = lidarCtx.canvas;
-  lidarCtx.clearRect(0, 0, c.width, c.height);
+  const W = c.width, H = c.height;
+  if (!lidarImage) {
+    lidarImage = lidarCtx.createImageData(W, H);
+    lidarPix = new Uint32Array(lidarImage.data.buffer);
+  }
+  const pix = lidarPix!;
+  pix.fill(0xff0e0c0b); // ABGR: canvas background
   const n = pts.length / 3;
   lidarPoints = n;
-  const stride = Math.max(1, Math.ceil(n / 30000));
   const half = 15; // meters shown from center to edge
-  const s = c.width / (2 * half);
-  for (let i = 0; i < n; i += stride) {
-    const x = pts[i * 3], y = pts[i * 3 + 1], z = pts[i * 3 + 2];
-    const cx = c.width / 2 + x * s;
-    const cy = c.height / 2 - y * s;
-    if (cx < 0 || cy < 0 || cx >= c.width || cy >= c.height) continue;
-    const g = Math.max(60, Math.min(255, 140 + z * 60));
-    lidarCtx.fillStyle = `rgb(${g},${g},${g})`;
-    lidarCtx.fillRect(cx, cy, 2, 2);
+  const s = W / (2 * half);
+  for (let i = 0; i < n; i++) {
+    const cx = (W / 2 + pts[i * 3] * s) | 0;
+    const cy = (H / 2 - pts[i * 3 + 1] * s) | 0;
+    if (cx < 0 || cy < 0 || cx >= W || cy >= H) continue;
+    const z = pts[i * 3 + 2];
+    let g = (140 + z * 60) | 0;
+    g = g < 60 ? 60 : g > 255 ? 255 : g;
+    pix[cy * W + cx] = 0xff000000 | (g << 16) | (g << 8) | g;
   }
-  $("lidarText").textContent = `${n} pts (stride ${stride}, ±${half} m)`;
+  lidarCtx.putImageData(lidarImage, 0, 0);
+  perf.lidar = ewma(perf.lidar, performance.now() - t0);
+  $("lidarText").textContent = `${n} pts (±${half} m)`;
 }
 
 // ---------- connect ----------
@@ -290,11 +364,12 @@ async function main() {
 
   // data plane: one message per incoming uni stream
   for await (const rs of wt.incomingUnidirectionalStreams) {
-    readAll(rs)
+    readMessage(rs)
       .then((msg) => {
-        const hlen = new DataView(msg.buffer, msg.byteOffset).getUint32(0, true);
-        const hdr = JSON.parse(dec.decode(msg.subarray(4, 4 + hlen)));
-        const payload = msg.subarray(4 + hlen);
+        const dv = new DataView(msg.buffer, msg.byteOffset);
+        const hlen = dv.getUint32(0, true);
+        const hdr = JSON.parse(dec.decode(msg.subarray(8, 8 + hlen)));
+        const payload = msg.subarray(8 + hlen);
         bump(hdr.ch, payload.byteLength, hdr.seq);
         if (hdr.ch === "video") drawJpeg(payload); // has its own busy-skip
         else if (hdr.ch === "odom") {
@@ -310,19 +385,46 @@ async function main() {
   }
 }
 
-async function readAll(rs: ReadableStream<Uint8Array>): Promise<Uint8Array> {
+// Read one length-prefixed message (u32 hlen | u32 plen | header | payload)
+// WITHOUT waiting for EOF: Deno's writer.close() doesn't send FIN promptly
+// (it only goes out when the resource is GC'd, ~1 s later), so an EOF-based
+// reader sees all messages arrive in ~1 s clumps.
+async function readMessage(rs: ReadableStream<Uint8Array>): Promise<Uint8Array> {
+  const reader = rs.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
-  for await (const c of rs) {
-    chunks.push(c);
-    total += c.length;
+  let expect = -1;
+  try {
+    while (expect < 0 || total < expect) {
+      const { value, done } = await reader.read();
+      if (value) {
+        chunks.push(value);
+        total += value.byteLength;
+      }
+      if (expect < 0 && total >= 8) {
+        const head = new Uint8Array(8);
+        let off = 0;
+        for (const c of chunks) {
+          const n = Math.min(8 - off, c.byteLength);
+          head.set(c.subarray(0, n), off);
+          off += n;
+          if (off === 8) break;
+        }
+        const dv = new DataView(head.buffer);
+        expect = 8 + dv.getUint32(0, true) + dv.getUint32(4, true);
+      }
+      if (done) break;
+    }
+  } finally {
+    reader.releaseLock(); // don't cancel; the late FIN closes the stream
   }
   const out = new Uint8Array(total);
   let off = 0;
   for (const c of chunks) {
     out.set(c, off);
-    off += c.length;
+    off += c.byteLength;
   }
+  if (expect > 0 && total > expect) return out.subarray(0, expect);
   return out;
 }
 

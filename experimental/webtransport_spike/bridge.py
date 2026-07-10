@@ -111,10 +111,15 @@ class Bridge(QuicConnectionProtocol):
         # incoming WT uni-stream payloads (server-side bug). The relay never
         # writes back on these (aioquic would mis-parse the bytes as H3 frames)
         # and RESETs its send side, which aioquic's h3 layer ignores.
+        # Framing carries an explicit payload length because Deno's
+        # writer.close() does not send FIN promptly (empty Resource::close),
+        # so receivers must not depend on EOF for message boundaries.
         header = json.dumps({"ch": ch, "seq": seq, "ts": time.time()}).encode()
         stream_id = self.h3.create_webtransport_stream(self.session_id, is_unidirectional=False)
         self._quic.send_stream_data(
-            stream_id, struct.pack("<I", len(header)) + header + payload, end_stream=True
+            stream_id,
+            struct.pack("<II", len(header), len(payload)) + header + payload,
+            end_stream=True,
         )
         self.transmit()
 
@@ -143,7 +148,7 @@ def make_push(loop: asyncio.AbstractEventLoop, queues: dict[str, asyncio.Queue])
     return push
 
 
-async def synthetic_sources(push) -> None:
+async def synthetic_sources(push, channels: set[str]) -> None:
     """Fake data roughly matching the real recording's rates and sizes."""
 
     async def odom() -> None:
@@ -181,7 +186,8 @@ async def synthetic_sources(push) -> None:
             push("lidar", pts.tobytes())
             await asyncio.sleep(1 / 8)
 
-    await asyncio.gather(odom(), video(), lidar())
+    pumps = {"odom": odom, "video": video, "lidar": lidar}
+    await asyncio.gather(*(pumps[ch]() for ch in channels))
 
 
 def real_sources(dataset: str, push):
@@ -205,7 +211,17 @@ def real_sources(dataset: str, push):
             ).encode(),
         )
     )
-    conn.lidar_stream().subscribe(lambda pc: push("lidar", pc.points_f32().tobytes()))
+
+    def lidar_payload(pc) -> bytes:
+        # decimate: keeps each message under the browser's per-stream QUIC
+        # flow-control window (a full 25k-point cloud is ~300 KB and stalls
+        # mid-stream waiting for a window update)
+        pts = pc.points_f32()
+        if len(pts) > 10_000:
+            pts = pts[:: math.ceil(len(pts) / 10_000)]
+        return pts.tobytes()
+
+    conn.lidar_stream().subscribe(lambda pc: push("lidar", lidar_payload(pc)))
     return conn  # caller keeps it alive
 
 
@@ -217,6 +233,9 @@ async def amain() -> None:
     parser.add_argument("--dataset", default="go2_short")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=4433)
+    parser.add_argument(
+        "--channels", default="odom,video,lidar", help="synthetic mode: which pumps to run"
+    )
     args = parser.parse_args()
 
     config = QuicConfiguration(
@@ -269,8 +288,8 @@ async def amain() -> None:
 
         tasks = [pump(ch, q) for ch, q in queues.items()] + [stats()]
         if args.synthetic:
-            tasks.append(synthetic_sources(push))
-            print("[bridge] sending SYNTHETIC data")
+            tasks.append(synthetic_sources(push, set(args.channels.split(","))))
+            print(f"[bridge] sending SYNTHETIC data ({args.channels})")
         else:
             conn = real_sources(args.dataset, push)  # noqa: F841  (keeps replay alive)
             print(f"[bridge] replaying dataset {args.dataset!r} (looped)")

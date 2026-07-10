@@ -44,10 +44,8 @@ shows per-channel Hz / KB/frame / lost / out-of-order, datagram RTT
 | Datagram RTT browser->bridge->browser | 0.5-1 ms loopback |
 | Multi-viewer isolation | works: slow viewer (headless sw-render Chrome) shed 18/~4900 frames via the latest-wins policy; Firefox next to it lost 0 |
 | Sustained run | 140 s, 2 viewers, ~3.2 MB/s: no session drops, no relay errors |
+| In-browser render rate | video decoded+drawn at full 14.3/s (decode 3 ms, cycle 70 ms); arrival-gap max 82 ms after the FIN fix below |
 | Safari | untested (no macOS box); MDN BCD says Safari 26.4+ |
-
-(Headless-with---disable-gpu Chrome decodes jpegs at only ~1.3/s - software
-decode artifact; arrival rate was full 14.5 Hz. Desktop Chrome renders fine.)
 
 ## Findings (the actual deliverable)
 
@@ -65,7 +63,19 @@ Numbered by severity for the real T1-T3 implementation:
    (Relay->browser uni streams are fine: the send side is unaffected, and
    Chrome/Firefox receive correctly.)
 
-2. **aioquic limitation: it mis-parses server bytes on client-initiated bidi
+2. **Deno 2.6.10 bug: `writer.close()` on a QUIC/WT send stream never sends
+   FIN promptly.** `SendStreamResource::close` in `ext/net/quic.rs` is an
+   empty function - `quinn::SendStream::finish()` is never called; the FIN
+   only escapes when the resource is dropped/GC'd, ~1 s later (Chrome netlog:
+   stream data arrives instantly, its FIN 0.5-1.2 s later, in ~1.15 s waves).
+   Any EOF-delimited message framing therefore completes in ~1 s clumps -
+   this is what made video render at ~1 fps in BOTH Chrome and Firefox while
+   arrival stats looked full-rate. **Workaround: length-prefix every message
+   (`u32 headerLen | u32 payloadLen | header | payload`) and have receivers
+   count bytes; never use stream EOF as a message boundary.** (The late FIN
+   still closes the stream eventually, so streams don't leak.)
+
+3. **aioquic limitation: it mis-parses server bytes on client-initiated bidi
    WT streams as HTTP/3 frames.** `create_webtransport_stream()` never
    registers the receive direction, so any relay reply (even a bare FIN risks
    the same path) hits `FrameUnexpected("DATA frame is not allowed in this
@@ -76,29 +86,30 @@ Numbered by severity for the real T1-T3 implementation:
      `close()` is not) - this also releases QUIC stream credit;
    - no hello/welcome exchange on a stream; the robot hello is a datagram.
 
-3. **aioquic config must set `max_datagram_frame_size=65536`** or the session
+4. **aioquic config must set `max_datagram_frame_size=65536`** or the session
    dies at SETTINGS time (`H3_DATAGRAM requires max_datagram_frame_size`).
 
-4. **deno#28406 is real**: without a global `unhandledrejection` guard the
+5. **deno#28406 is real**: without a global `unhandledrejection` guard the
    relay process dies ~30 s after any browser tab closes (idle-timeout
    rejection on an internal promise nobody holds).
 
-5. **Use `https://127.0.0.1:...` not `localhost` in the WT URL**: Chrome
+6. **Use `https://127.0.0.1:...` not `localhost` in the WT URL**: Chrome
    resolves localhost to `::1` first, the Deno QUIC endpoint binds IPv4.
    With `serverCertificateHashes`, hostname verification is skipped anyway.
 
-6. **Slow viewers are the relay's problem to survive**: a busy page stops
+7. **Slow viewers are the relay's problem to survive**: a busy page stops
    granting stream credit; `createUnidirectionalStream()` then throws unless
    called with `{waitUntilAvailable: true}`. Combined with per-(viewer,
    channel) skip-if-busy, a slow viewer sheds its own frames and never stalls
-   others. Symmetrically, the page must never render per-arrival (rAF-draw
-   -latest here; the real cockpit's store/two-path rule covers this).
+   others. Symmetrically, the page must never render per-arrival: draw latest
+   in a rAF loop, keep canvas work cheap (lidar is a putImageData pixel-buffer
+   blit, not 25k fillRect calls), decode video in a latest-wins queue.
 
-7. **One-stream-per-message delivers out of order** (by design - no
+8. **One-stream-per-message delivers out of order** (by design - no
    head-of-line blocking). Consumers need latest-wins by `seq`; loss metrics
    must be span-based, not gap-based.
 
-8. Interop handshake detail: Deno (web-transport-proto 0.2.7) accepts
+9. Interop handshake detail: Deno (web-transport-proto 0.2.7) accepts
    aioquic's draft-02 `ENABLE_WEBTRANSPORT` settings; response carries
    `sec-webtransport-http3-draft: draft02`. No settings fight.
 
@@ -106,8 +117,11 @@ Numbered by severity for the real T1-T3 implementation:
 
 - The T1 plan's "one unidirectional stream per message" data plane must become
   **one bidi stream per message on the Python leg** (or aioquic/Deno get fixed
-  upstream first; both bugs are upstream-reportable with the probes here).
+  upstream first; the bugs are upstream-reportable with the probes here).
   Browser leg keeps uni streams.
+- **Frame headers must carry an explicit payload length** (finding 2): message
+  boundaries by byte count, never by stream EOF, as long as the relay runs on
+  Deno 2.6.x.
 - The control-plane bidi stream robot<->relay as specced (hello/welcome both
   ways) does not work with aioquic today; keep robot control on datagrams or
   make it strictly one-directional.

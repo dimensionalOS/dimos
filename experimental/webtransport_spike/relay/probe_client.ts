@@ -16,10 +16,12 @@ console.log("[probe] connected");
 const enc = new TextEncoder();
 function dataMsg(ch: string, seq: number, payload: Uint8Array): Uint8Array {
   const hdr = enc.encode(JSON.stringify({ ch, seq, ts: Date.now() / 1000 }));
-  const out = new Uint8Array(4 + hdr.length + payload.length);
-  new DataView(out.buffer).setUint32(0, hdr.length, true);
-  out.set(hdr, 4);
-  out.set(payload, 4 + hdr.length);
+  const out = new Uint8Array(8 + hdr.length + payload.length);
+  const dv = new DataView(out.buffer);
+  dv.setUint32(0, hdr.length, true);
+  dv.setUint32(4, payload.length, true);
+  out.set(hdr, 8);
+  out.set(payload, 8 + hdr.length);
   return out;
 }
 
