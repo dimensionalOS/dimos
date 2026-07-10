@@ -48,8 +48,13 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 _DEPTH_MM_THRESHOLD = 100
+_MILLIMETERS_PER_METER = 1000.0
+_MILLISECONDS_PER_SECOND = 1000.0
+_GRAVITY_MS2 = 9.81
+
 _TRAJECTORY_MAX_POSES = 20_000
-_TRAJECTORY_PUBLISH_EVERY = 5  # record every frame, publish at a fraction of that rate
+_TRAJECTORY_PUBLISH_EVERY = 5
+_PERF_LOG_INTERVAL_FRAMES = 30
 
 
 class Config(ModuleConfig):
@@ -75,13 +80,13 @@ class StereoPointCloud(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._lock                       = threading.Lock()
-        self._latest_info: CameraInfo | None = None
+        self._latest_camera_info: CameraInfo | None = None
         self._floor_calib                = _FloorCalibrator()
         self._madgwick: MadgwickFilter | None = None
         self._odom                       = PointCloudOdometry()
         self._imu_lock                   = threading.Lock()
-        self._last_accel                 = np.array([0.0, 0.0, -9.81], dtype=np.float32)
-        self._R_imu_to_link: np.ndarray  = np.eye(3, dtype=np.float32)
+        self._last_accel                 = np.array([0.0, 0.0, -_GRAVITY_MS2], dtype=np.float32)
+        self._imu_to_camera_link: np.ndarray = np.eye(3, dtype=np.float32)
         self._motion_sensor              = None
         self._warned_no_intrinsics       = False
         self._trajectory_poses: deque[PoseStamped] = deque(maxlen=_TRAJECTORY_MAX_POSES)
@@ -93,7 +98,7 @@ class StereoPointCloud(Module):
         self._madgwick = MadgwickFilter(beta=self.config.madgwick_beta)
         if not self._init_imu():
             logger.warning("StereoPointCloud: no IMU — R=identity, translation from ICP only")
-        self.register_disposable(Disposable(self.depth_camera_info.subscribe(self._on_info)))
+        self.register_disposable(Disposable(self.depth_camera_info.subscribe(self._on_camera_info)))
         self.register_disposable(Disposable(self.depth_image.subscribe(self._on_depth)))
 
     @rpc
@@ -112,8 +117,8 @@ class StereoPointCloud(Module):
             import pyrealsense2 as rs
         except ImportError:
             return False
-        ctx     = rs.context()
-        devices = ctx.query_devices()
+        context = rs.context()
+        devices = context.query_devices()
         if not devices:
             return False
         device = devices[0]
@@ -121,9 +126,9 @@ class StereoPointCloud(Module):
         for sensor in device.query_sensors():
             if sensor.is_motion_sensor():
                 continue
-            for p in sensor.get_stream_profiles():
-                if p.stream_type() == rs.stream.depth:
-                    depth_profile = p
+            for profile in sensor.get_stream_profiles():
+                if profile.stream_type() == rs.stream.depth:
+                    depth_profile = profile
                     break
             if depth_profile is not None:
                 break
@@ -135,45 +140,49 @@ class StereoPointCloud(Module):
             accel_profiles = [p for p in all_profiles if p.stream_type() == rs.stream.accel]
             if not gyro_profiles or not accel_profiles:
                 break
-            gyro_p  = max(gyro_profiles,  key=lambda p: p.fps())
-            accel_p = max(accel_profiles, key=lambda p: p.fps())
+            gyro_profile  = max(gyro_profiles,  key=lambda p: p.fps())
+            accel_profile = max(accel_profiles, key=lambda p: p.fps())
             if depth_profile is not None:
-                ext                 = accel_p.get_extrinsics_to(depth_profile)
-                R_imu_to_depth      = np.array(ext.rotation, dtype=np.float32).reshape(3, 3)
-                self._R_imu_to_link = _R_OPT_TO_LINK @ R_imu_to_depth
-            sensor.open([gyro_p, accel_p])
+                extrinsics             = accel_profile.get_extrinsics_to(depth_profile)
+                imu_to_depth            = np.array(extrinsics.rotation, dtype=np.float32).reshape(3, 3)
+                self._imu_to_camera_link = _R_OPT_TO_LINK @ imu_to_depth
+            sensor.open([gyro_profile, accel_profile])
             sensor.start(self._on_motion)
             self._motion_sensor = sensor
-            logger.info(f"StereoPointCloud: IMU — gyro@{gyro_p.fps()}Hz accel@{accel_p.fps()}Hz")
+            logger.info(f"StereoPointCloud: IMU — gyro@{gyro_profile.fps()}Hz accel@{accel_profile.fps()}Hz")
             return True
         return False
 
     def _on_motion(self, frame: Any) -> None:
         try:
             import pyrealsense2 as rs
-            st = frame.get_profile().stream_type()
-            if st == rs.stream.gyro:
-                g        = frame.as_motion_frame().get_motion_data()
-                gyro_lnk = self._R_imu_to_link @ np.array([g.x, g.y, g.z], dtype=np.float32)
-                ts_s     = frame.get_timestamp() / 1000.0
+            stream_type = frame.get_profile().stream_type()
+            if stream_type == rs.stream.gyro:
+                gyro_sample = frame.as_motion_frame().get_motion_data()
+                gyro_camera_link = self._imu_to_camera_link @ np.array(
+                    [gyro_sample.x, gyro_sample.y, gyro_sample.z], dtype=np.float32
+                )
+                timestamp_s = frame.get_timestamp() / _MILLISECONDS_PER_SECOND
                 with self._imu_lock:
                     if self._madgwick is not None:
-                        self._madgwick.update(gyro_lnk, self._last_accel, ts_s)
-            elif st == rs.stream.accel:
-                a = frame.as_motion_frame().get_motion_data()
+                        self._madgwick.update(gyro_camera_link, self._last_accel, timestamp_s)
+            elif stream_type == rs.stream.accel:
+                accel_sample = frame.as_motion_frame().get_motion_data()
                 with self._imu_lock:
-                    self._last_accel = self._R_imu_to_link @ np.array([a.x, a.y, a.z], dtype=np.float32)
+                    self._last_accel = self._imu_to_camera_link @ np.array(
+                        [accel_sample.x, accel_sample.y, accel_sample.z], dtype=np.float32
+                    )
         except Exception:
             pass
 
-    def _on_info(self, info: CameraInfo) -> None:
+    def _on_camera_info(self, info: CameraInfo) -> None:
         with self._lock:
-            self._latest_info = info
+            self._latest_camera_info = info
 
     def _on_depth(self, img: Image) -> None:
         t_start = time.perf_counter()
         with self._lock:
-            info = self._latest_info
+            camera_info = self._latest_camera_info
 
         depth = img.data
         if hasattr(depth, "get"):
@@ -181,23 +190,24 @@ class StereoPointCloud(Module):
         if depth.ndim == 3:
             depth = depth[:, :, 0]
         depth = depth.astype(np.float32)
-        valid_d = depth[depth > 0]
-        is_mm = len(valid_d) > 0 and np.median(valid_d) > _DEPTH_MM_THRESHOLD
-        if is_mm:
-            depth /= 1000.0
-        invalid = (depth <= 0) | (depth < self.config.min_depth) | (depth > self.config.max_depth)
-        depth[invalid] = np.nan
+        valid_depth = depth[depth > 0]
+        is_millimeters = len(valid_depth) > 0 and np.median(valid_depth) > _DEPTH_MM_THRESHOLD
+        if is_millimeters:
+            depth /= _MILLIMETERS_PER_METER
+        out_of_range = (depth <= 0) | (depth < self.config.min_depth) | (depth > self.config.max_depth)
+        depth[out_of_range] = np.nan
 
-        H, W = depth.shape
-        if info is not None:
-            K = info.get_K_matrix()
-            fx, fy, cx, cy = float(K[0, 0]), float(K[1, 1]), float(K[0, 2]), float(K[1, 2])
+        height, width = depth.shape
+        if camera_info is not None:
+            k_matrix = camera_info.get_K_matrix()
+            focal_x, focal_y = float(k_matrix[0, 0]), float(k_matrix[1, 1])
+            principal_x, principal_y = float(k_matrix[0, 2]), float(k_matrix[1, 2])
         else:
             if not self._warned_no_intrinsics:
                 logger.warning("StereoPointCloud: no camera intrinsics — falling back to rough guess, check depth_camera_info is connected")
                 self._warned_no_intrinsics = True
-            fx = fy = float(max(H, W)) / 2.0
-            cx, cy  = W / 2.0, H / 2.0
+            focal_x = focal_y = float(max(height, width)) / 2.0
+            principal_x, principal_y = width / 2.0, height / 2.0
 
         stable = _gradient_mask(depth, self.config.gradient_threshold)
         valid  = np.isfinite(depth) & stable
@@ -205,12 +215,12 @@ class StereoPointCloud(Module):
             return
         t_gradient = time.perf_counter()
 
-        uu, vv  = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32))
-        dd      = depth[valid]
-        xyz_opt = np.column_stack([
-            (uu[valid] - cx) * dd / fx,
-            (vv[valid] - cy) * dd / fy,
-            dd,
+        u_grid, v_grid = np.meshgrid(np.arange(width, dtype=np.float32), np.arange(height, dtype=np.float32))
+        depth_values = depth[valid]
+        xyz_optical = np.column_stack([
+            (u_grid[valid] - principal_x) * depth_values / focal_x,
+            (v_grid[valid] - principal_y) * depth_values / focal_y,
+            depth_values,
         ]).astype(np.float32)
 
         t_unproject = time.perf_counter()
@@ -218,7 +228,7 @@ class StereoPointCloud(Module):
         with self._imu_lock:
             R = self._madgwick.R_at(img.ts) if self._madgwick is not None else np.eye(3, dtype=np.float32)
 
-        xyz_cam = xyz_opt @ _R_OPT_TO_LINK.T
+        xyz_cam = xyz_optical @ _R_OPT_TO_LINK.T
         t_odom_start = time.perf_counter()
         t = (
             self._odom.update(xyz_cam, R)
@@ -230,24 +240,24 @@ class StereoPointCloud(Module):
 
         self._floor_calib.update(xyz_cam)
 
-        # Shift floor to z=0 to match the rerun ground grid; 0 until calibrated (~4s).
+        # Floor sits at z=0 to match the rerun ground grid; 0 until calibrated (~4s).
         z_shift = (
             float(self._floor_calib.cam_height)  # type: ignore[arg-type]
             if self._floor_calib.ready
             else 0.0
         )
-        z_off = np.array([0.0, 0.0, z_shift], dtype=np.float32)
+        z_offset = np.array([0.0, 0.0, z_shift], dtype=np.float32)
 
         if not len(xyz_world):
             return
 
-        vk       = np.floor(xyz_world / self.config.vox_size).astype(np.int32)
-        _, first = np.unique(_pack(vk), return_index=True)
-        xyz_vox  = xyz_world[first]
+        voxel_indices = np.floor(xyz_world / self.config.vox_size).astype(np.int32)
+        _, first_index_per_voxel = np.unique(_pack(voxel_indices), return_index=True)
+        xyz_voxelized = xyz_world[first_index_per_voxel]
 
         self.frame_cloud.publish(
             PointCloud2.from_numpy(
-                xyz_vox + z_off, frame_id=self.config.world_frame, timestamp=img.ts
+                xyz_voxelized + z_offset, frame_id=self.config.world_frame, timestamp=img.ts
             )
         )
         t_publish = time.perf_counter()
@@ -263,12 +273,16 @@ class StereoPointCloud(Module):
                 )
             )
             self._frame_count += 1
-            traj_snap = list(self._trajectory_poses) if self._frame_count % _TRAJECTORY_PUBLISH_EVERY == 0 else None
+            traj_snapshot = (
+                list(self._trajectory_poses)
+                if self._frame_count % _TRAJECTORY_PUBLISH_EVERY == 0
+                else None
+            )
 
-        if traj_snap is not None:
-            self.trajectory.publish(Path(ts=img.ts, frame_id=self.config.world_frame, poses=traj_snap))
+        if traj_snapshot is not None:
+            self.trajectory.publish(Path(ts=img.ts, frame_id=self.config.world_frame, poses=traj_snapshot))
 
-        if self._frame_count % 30 == 0:
+        if self._frame_count % _PERF_LOG_INTERVAL_FRAMES == 0:
             t_end = time.perf_counter()
             logger.info(
                 f"StereoPointCloud perf: lag={time.time() - img.ts:.1f}s "

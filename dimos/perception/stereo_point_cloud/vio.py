@@ -31,11 +31,11 @@ from dimos.perception.stereo_point_cloud.utils import _pack
 _MAX_DT_S        = 0.1   # don't integrate more than 100ms at once — big gaps would blow up the filter
 _ACCEL_MIN_NORM  = 0.5   # skip accel correction if reading is basically zero (noise or free-fall)
 _MIN_ICP_INLIERS = 30    # need at least 30 matched point pairs to trust the ICP translation update
-_SMOOTH_ALPHA    = 0.7   # EMA weight for ICP output — reduces ±2cm centroid oscillation to ±5mm,
-                          # keeping the same 2cm world-voxel key for a stationary surface.
+_SMOOTH_ALPHA    = 0.7   # EMA weight for ICP output — reduces ±2cm centroid oscillation to ±5mm
+_ICP_STEP_GAIN   = 0.7   # fraction of each iteration's centroid offset applied per step
 
 
-def _wxyz_to_xyzw(q: np.ndarray) -> list[float]:
+def _quat_wxyz_to_xyzw(q: np.ndarray) -> list[float]:
     return [q[1], q[2], q[3], q[0]]
 
 
@@ -50,77 +50,79 @@ class MadgwickFilter:
     HISTORY_LEN = 100  # ~250ms at 400Hz gyro — enough to bracket any depth-frame latency
 
     def __init__(self, beta: float = 0.033) -> None:
-        self._q      = np.array([1., 0., 0., 0.], dtype=np.float64)
-        self._beta   = beta
-        self._t_prev: float | None = None
+        self._quat        = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64)
+        self._beta         = beta
+        self._prev_time_s: float | None = None
         self._history: deque[tuple[float, np.ndarray]] = deque(maxlen=self.HISTORY_LEN)
 
-    def update(self, gyro: np.ndarray, accel: np.ndarray, t: float) -> None:
-        if self._t_prev is None:
-            self._t_prev = t
-            self._history.append((time.time(), self._q.copy()))
+    def update(self, gyro: np.ndarray, accel: np.ndarray, time_s: float) -> None:
+        if self._prev_time_s is None:
+            self._prev_time_s = time_s
+            self._history.append((time.time(), self._quat.copy()))
             return
-        dt = min(t - self._t_prev, _MAX_DT_S)
-        self._t_prev = t
+        dt = min(time_s - self._prev_time_s, _MAX_DT_S)
+        self._prev_time_s = time_s
         if dt <= 0:
             return
-        q0, q1, q2, q3 = self._q
-        gx, gy, gz = gyro.astype(np.float64)
-        a_n = np.linalg.norm(accel)
-        if a_n > _ACCEL_MIN_NORM:
-            ax, ay, az = accel.astype(np.float64) / a_n
-            f1 = 2*(q1*q3 - q0*q2) - ax
-            f2 = 2*(q0*q1 + q2*q3) - ay
-            f3 = 2*(0.5 - q1**2 - q2**2) - az
-            J  = np.array([
-                [-2*q2,  2*q3, -2*q0, 2*q1],
-                [ 2*q1,  2*q0,  2*q3, 2*q2],
-                [    0, -4*q1, -4*q2,    0],
+
+        q0, q1, q2, q3 = self._quat
+        gyro_x, gyro_y, gyro_z = gyro.astype(np.float64)
+        accel_norm = np.linalg.norm(accel)
+        if accel_norm > _ACCEL_MIN_NORM:
+            accel_x, accel_y, accel_z = accel.astype(np.float64) / accel_norm
+            f1 = 2 * (q1 * q3 - q0 * q2) - accel_x
+            f2 = 2 * (q0 * q1 + q2 * q3) - accel_y
+            f3 = 2 * (0.5 - q1**2 - q2**2) - accel_z
+            jacobian = np.array([
+                [-2 * q2,  2 * q3, -2 * q0, 2 * q1],
+                [ 2 * q1,  2 * q0,  2 * q3, 2 * q2],
+                [      0, -4 * q1, -4 * q2,      0],
             ])
-            grad = J.T @ np.array([f1, f2, f3])
-            gn   = np.linalg.norm(grad)
-            if gn > 1e-9:
-                grad /= gn
+            gradient = jacobian.T @ np.array([f1, f2, f3])
+            gradient_norm = np.linalg.norm(gradient)
+            if gradient_norm > 1e-9:
+                gradient /= gradient_norm
         else:
-            grad = np.zeros(4)
-        q_dot = 0.5 * np.array([
-            -q1*gx - q2*gy - q3*gz,
-             q0*gx + q2*gz - q3*gy,
-             q0*gy - q1*gz + q3*gx,
-             q0*gz + q1*gy - q2*gx,
-        ]) - self._beta * grad
-        self._q = self._q + q_dot * dt
-        self._q /= np.linalg.norm(self._q) + 1e-12
-        self._history.append((time.time(), self._q.copy()))
+            gradient = np.zeros(4)
+
+        quat_dot = 0.5 * np.array([
+            -q1 * gyro_x - q2 * gyro_y - q3 * gyro_z,
+             q0 * gyro_x + q2 * gyro_z - q3 * gyro_y,
+             q0 * gyro_y - q1 * gyro_z + q3 * gyro_x,
+             q0 * gyro_z + q1 * gyro_y - q2 * gyro_x,
+        ]) - self._beta * gradient
+        self._quat = self._quat + quat_dot * dt
+        self._quat /= np.linalg.norm(self._quat) + 1e-12
+        self._history.append((time.time(), self._quat.copy()))
 
     @property
     def R(self) -> np.ndarray:
-        return self._to_matrix(self._q)
+        return self._to_matrix(self._quat)
 
-    def R_at(self, ts: float) -> np.ndarray:
+    def R_at(self, wall_clock_ts: float) -> np.ndarray:
         """Orientation SLERP-interpolated to a past wall-clock timestamp."""
         if len(self._history) < 2:
             return self.R
-        times = [s[0] for s in self._history]
-        if ts <= times[0]:
+        timestamps = [sample[0] for sample in self._history]
+        if wall_clock_ts <= timestamps[0]:
             return self._to_matrix(self._history[0][1])
-        if ts >= times[-1]:
+        if wall_clock_ts >= timestamps[-1]:
             return self._to_matrix(self._history[-1][1])
-        i = bisect.bisect_left(times, ts)
+        i = bisect.bisect_left(timestamps, wall_clock_ts)
         t0, q0 = self._history[i - 1]
         t1, q1 = self._history[i]
         if t1 <= t0:
             return self._to_matrix(q1)
-        rots = Rotation.from_quat([_wxyz_to_xyzw(q0), _wxyz_to_xyzw(q1)])
-        return Slerp([t0, t1], rots)([ts]).as_matrix()[0].astype(np.float32)
+        rotations = Rotation.from_quat([_quat_wxyz_to_xyzw(q0), _quat_wxyz_to_xyzw(q1)])
+        return Slerp([t0, t1], rotations)([wall_clock_ts]).as_matrix()[0].astype(np.float32)
 
     @staticmethod
     def _to_matrix(q: np.ndarray) -> np.ndarray:
         q0, q1, q2, q3 = q
         return np.array([
-            [1-2*(q2**2+q3**2), 2*(q1*q2-q0*q3),   2*(q1*q3+q0*q2)  ],
-            [2*(q1*q2+q0*q3),   1-2*(q1**2+q3**2), 2*(q2*q3-q0*q1)  ],
-            [2*(q1*q3-q0*q2),   2*(q2*q3+q0*q1),   1-2*(q1**2+q2**2)],
+            [1 - 2 * (q2**2 + q3**2), 2 * (q1 * q2 - q0 * q3),     2 * (q1 * q3 + q0 * q2)  ],
+            [2 * (q1 * q2 + q0 * q3), 1 - 2 * (q1**2 + q3**2),     2 * (q2 * q3 - q0 * q1)  ],
+            [2 * (q1 * q3 - q0 * q2), 2 * (q2 * q3 + q0 * q1),     1 - 2 * (q1**2 + q2**2)  ],
         ], dtype=np.float32)
 
 
@@ -142,11 +144,11 @@ class PointCloudOdometry:
     REF_VOX_SIZE = 0.05          # dedup growth batches to this voxel size — matching doesn't need mm precision
 
     def __init__(self) -> None:
-        self._t          = np.zeros(3, dtype=np.float32)
-        self._lock       = threading.Lock()
-        self._ref_buf        = np.zeros((self.REF_MAX_PTS, 3), dtype=np.float32)
-        self._ref_write_idx  = 0
-        self._ref_filled     = 0
+        self._t              = np.zeros(3, dtype=np.float32)
+        self._lock            = threading.Lock()
+        self._ref_buffer      = np.zeros((self.REF_MAX_PTS, 3), dtype=np.float32)
+        self._ref_write_index = 0
+        self._ref_filled      = 0
         self._last_ref_t: np.ndarray | None = None
         self._last_ref_R: np.ndarray | None = None
 
@@ -156,32 +158,37 @@ class PointCloudOdometry:
             return self._t.copy()
 
     def update(self, xyz_cam: np.ndarray, R: np.ndarray) -> np.ndarray:
-        pts_ga = (xyz_cam @ R.T).astype(np.float32)
+        points_gravity_aligned = (xyz_cam @ R.T).astype(np.float32)
         with self._lock:
-            t_est = self._t.copy()
-            # View, not copy: update() is only ever called serially (one caller,
-            # depth_image's subscriber callback), and the only writer to _ref_buf
-            # is this same call's own growth step below, which runs after this
-            # read completes. Copying up to REF_MAX_PTS points every single frame
-            # was real, unconditional cost that scaled with how full the buffer was.
-            ref = self._ref_buf[: self._ref_filled] if self._ref_filled else None
+            t_estimate = self._t.copy()
+            # View, not copy: update() is only ever called serially, and the only
+            # writer to _ref_buffer is this same call's growth step below, which
+            # runs after this read completes.
+            reference_points = self._ref_buffer[: self._ref_filled] if self._ref_filled else None
 
-        if ref is None or len(pts_ga) < self.MIN_PTS:
-            t_new = t_est
+        if reference_points is None or len(points_gravity_aligned) < self.MIN_PTS:
+            t_new = t_estimate
         else:
-            n_src = min(self.N_SRC, len(pts_ga))
-            n_dst = min(self.N_DST, len(ref))
-            src   = pts_ga[np.random.choice(len(pts_ga), n_src, replace=False)]
-            dst   = ref[np.random.choice(len(ref), n_dst, replace=False)]
-            tree  = cKDTree(dst)
+            source_count = min(self.N_SRC, len(points_gravity_aligned))
+            dest_count   = min(self.N_DST, len(reference_points))
+            source_points = points_gravity_aligned[
+                np.random.choice(len(points_gravity_aligned), source_count, replace=False)
+            ]
+            dest_points = reference_points[
+                np.random.choice(len(reference_points), dest_count, replace=False)
+            ]
+            tree = cKDTree(dest_points)
             for _ in range(self.ITERS):
-                dists, idx = tree.query(src + t_est, k=1, workers=1)
-                mask = dists < self.MAX_DIST
-                if mask.sum() < _MIN_ICP_INLIERS:
+                distances, nearest_index = tree.query(source_points + t_estimate, k=1, workers=1)
+                inliers = distances < self.MAX_DIST
+                if inliers.sum() < _MIN_ICP_INLIERS:
                     break
-                delta = dst[idx[mask]].mean(axis=0) - (src[mask] + t_est).mean(axis=0)
-                t_est = (t_est + 0.7 * delta).astype(np.float32)
-            t_new = t_est
+                centroid_offset = (
+                    dest_points[nearest_index[inliers]].mean(axis=0)
+                    - (source_points[inliers] + t_estimate).mean(axis=0)
+                )
+                t_estimate = (t_estimate + _ICP_STEP_GAIN * centroid_offset).astype(np.float32)
+            t_new = t_estimate
 
         with self._lock:
             t_smooth = (_SMOOTH_ALPHA * t_new + (1.0 - _SMOOTH_ALPHA) * self._t).astype(np.float32)
@@ -189,36 +196,36 @@ class PointCloudOdometry:
 
         moved = self._last_ref_t is None or float(np.linalg.norm(t_smooth - self._last_ref_t)) > self.REF_STEP_M
         if not moved and self._last_ref_R is not None:
-            cos_a = float((np.trace(R @ self._last_ref_R.T) - 1.0) / 2.0)
-            moved = float(np.arccos(np.clip(cos_a, -1.0, 1.0))) > self.REF_STEP_RAD
+            cos_angle = float((np.trace(R @ self._last_ref_R.T) - 1.0) / 2.0)
+            moved = float(np.arccos(np.clip(cos_angle, -1.0, 1.0))) > self.REF_STEP_RAD
 
         if moved:
-            world_pts = (pts_ga + t_smooth).astype(np.float32)
-            vk        = np.floor(world_pts / self.REF_VOX_SIZE).astype(np.int32)
-            _, first  = np.unique(_pack(vk), return_index=True)
-            batch     = world_pts[first]
+            world_points = (points_gravity_aligned + t_smooth).astype(np.float32)
+            voxel_indices = np.floor(world_points / self.REF_VOX_SIZE).astype(np.int32)
+            _, first_index_per_voxel = np.unique(_pack(voxel_indices), return_index=True)
+            growth_batch = world_points[first_index_per_voxel]
             with self._lock:
                 self._last_ref_t = t_smooth.copy()
                 self._last_ref_R = R.copy()
-                self._write_ring(batch)
+                self._write_ring_buffer(growth_batch)
 
         return t_smooth
 
-    def _write_ring(self, batch: np.ndarray) -> None:
-        n = len(batch)
-        if n == 0:
+    def _write_ring_buffer(self, batch: np.ndarray) -> None:
+        batch_size = len(batch)
+        if batch_size == 0:
             return
-        if n >= self.REF_MAX_PTS:
-            self._ref_buf[:] = batch[-self.REF_MAX_PTS:]
-            self._ref_write_idx = 0
+        if batch_size >= self.REF_MAX_PTS:
+            self._ref_buffer[:] = batch[-self.REF_MAX_PTS:]
+            self._ref_write_index = 0
             self._ref_filled = self.REF_MAX_PTS
             return
-        end = self._ref_write_idx + n
-        if end <= self.REF_MAX_PTS:
-            self._ref_buf[self._ref_write_idx : end] = batch
+        end_index = self._ref_write_index + batch_size
+        if end_index <= self.REF_MAX_PTS:
+            self._ref_buffer[self._ref_write_index : end_index] = batch
         else:
-            split = self.REF_MAX_PTS - self._ref_write_idx
-            self._ref_buf[self._ref_write_idx :] = batch[:split]
-            self._ref_buf[: end - self.REF_MAX_PTS] = batch[split:]
-        self._ref_write_idx = end % self.REF_MAX_PTS
-        self._ref_filled = min(self._ref_filled + n, self.REF_MAX_PTS)
+            first_segment_size = self.REF_MAX_PTS - self._ref_write_index
+            self._ref_buffer[self._ref_write_index :] = batch[:first_segment_size]
+            self._ref_buffer[: end_index - self.REF_MAX_PTS] = batch[first_segment_size:]
+        self._ref_write_index = end_index % self.REF_MAX_PTS
+        self._ref_filled = min(self._ref_filled + batch_size, self.REF_MAX_PTS)
