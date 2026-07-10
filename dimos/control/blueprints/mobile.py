@@ -250,6 +250,10 @@ coordinator_flowbase_stereo_nav = (
     .remappings(
         [
             (ControlCoordinator, "twist_command", "cmd_vel"),
+            # No MovementManager (no nav stack to arbitrate against — CostMapper is
+            # also disabled) — just point the web dashboard's teleop widget straight
+            # at cmd_vel, same one-source-in shape as coordinator-flowbase-keyboard-teleop.
+            (RerunWebSocketServer, "tele_cmd_vel", "cmd_vel"),
         ]
     )
     .global_config(n_workers=8)
