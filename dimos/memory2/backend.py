@@ -76,6 +76,10 @@ class Backend(CompositeResource, Generic[T]):
     def name(self) -> str:
         return self.metadata_store.name
 
+    def size_bytes(self) -> int | None:
+        """Total stored payload bytes for this stream, or None if not cheaply knowable."""
+        return self.blob_store.size_bytes(self.name) if self.blob_store is not None else None
+
     def _make_loader(self, row_id: int) -> Any:
         bs = self.blob_store
         if bs is None:

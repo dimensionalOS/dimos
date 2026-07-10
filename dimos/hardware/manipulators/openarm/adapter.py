@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
 
@@ -34,9 +34,6 @@ from dimos.hardware.manipulators.spec import (
     ManipulatorInfo,
 )
 from dimos.utils.data import LfsPath
-
-if TYPE_CHECKING:
-    from dimos.hardware.manipulators.registry import AdapterRegistry
 
 
 def _socketcan_iface_up(name: str) -> bool:
@@ -431,8 +428,3 @@ class OpenArmAdapter:
 
     def read_force_torque(self) -> list[float] | None:
         return None
-
-
-# ── Registry hook (required for auto-discovery) ───────────────────
-def register(registry: AdapterRegistry) -> None:
-    registry.register("openarm", OpenArmAdapter)

@@ -17,6 +17,7 @@
 
 all_blueprints = {
     "alfred-nav": "dimos.robot.diy.alfred.blueprints.alfred_nav:alfred_nav",
+    "arduino-msg-example": "dimos.experimental.arduino.examples.arduino_twist_echo.blueprint:arduino_msg_example",
     "coordinator-basic": "dimos.control.blueprints.basic:coordinator_basic",
     "coordinator-cartesian-ik-mock": "dimos.robot.manipulators.piper.blueprints.teleop:coordinator_cartesian_ik_mock",
     "coordinator-cartesian-ik-piper": "dimos.robot.manipulators.piper.blueprints.teleop:coordinator_cartesian_ik_piper",
@@ -81,6 +82,7 @@ all_blueprints = {
     "openarm-planner-coordinator": "dimos.robot.manipulators.openarm.blueprints.planner:openarm_planner_coordinator",
     "path-planner-eval": "dimos.navigation.nav_3d.evaluator.blueprints:path_planner_eval",
     "teleop-hosted-go2": "dimos.teleop.quest_hosted.blueprints:teleop_hosted_go2",
+    "teleop-hosted-go2-transport": "dimos.teleop.quest_hosted.blueprints:teleop_hosted_go2_transport",
     "teleop-hosted-xarm7": "dimos.teleop.quest_hosted.blueprints:teleop_hosted_xarm7",
     "teleop-phone": "dimos.teleop.phone.blueprints:teleop_phone",
     "teleop-phone-go2": "dimos.teleop.phone.blueprints:teleop_phone_go2",
@@ -142,6 +144,9 @@ all_blueprints = {
 
 all_modules = {
     "alfred-high-level": "dimos.robot.diy.alfred.effector_high_level.AlfredHighLevel",
+    "arduino-module": "dimos.experimental.arduino.arduino_module.ArduinoModule",
+    "arduino-multi-echo": "dimos.experimental.arduino.examples.arduino_multi_echo.module.ArduinoMultiEcho",
+    "arduino-twist-echo": "dimos.experimental.arduino.examples.arduino_twist_echo.module.ArduinoTwistEcho",
     "arm-teleop-module": "dimos.teleop.quest.quest_extensions.ArmTeleopModule",
     "b-box-navigation-module": "dimos.navigation.bbox_navigation.BBoxNavigationModule",
     "b1-connection-module": "dimos.robot.unitree.b1.connection.B1ConnectionModule",
@@ -218,6 +223,7 @@ all_modules = {
     "object-tracker2-d": "dimos.perception.object_tracker_2d.ObjectTracker2D",
     "object-tracker3-d": "dimos.perception.object_tracker_3d.ObjectTracker3D",
     "object-tracking": "dimos.perception.object_tracker.ObjectTracking",
+    "odom-body-frame": "dimos.navigation.nav_3d.mls_planner.odom_body_frame.OdomBodyFrame",
     "osm-skill": "dimos.agents.skills.osm.OsmSkill",
     "path-follower": "dimos.navigation.cmu_nav.modules.path_follower.path_follower.PathFollower",
     "patrolling-module": "dimos.navigation.patrolling.module.PatrollingModule",

@@ -31,7 +31,7 @@ from typing import Any
 
 import typer
 
-from dimos.memory2.codecs.base import _resolve_payload_type
+from dimos.memory2.codecs.base import resolve_payload_type
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.memory2.stream import Stream
 from dimos.memory2.type.observation import Observation
@@ -77,7 +77,7 @@ def _stream_payload_types(db_path: Path) -> dict[str, type]:
         rows = conn.execute("SELECT name, config FROM _streams").fetchall()
     finally:
         conn.close()
-    return {name: _resolve_payload_type(json.loads(cfg)["payload_module"]) for name, cfg in rows}
+    return {name: resolve_payload_type(json.loads(cfg)["payload_module"]) for name, cfg in rows}
 
 
 def _parse_renames(pairs: list[str]) -> dict[str, str]:

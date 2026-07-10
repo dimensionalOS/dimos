@@ -67,3 +67,13 @@ class FileBlobStore(BlobStore):
             p.unlink()
         except FileNotFoundError:
             raise KeyError(f"No blob for stream={stream_name!r}, key={key}") from None
+
+    def size_bytes(self, stream_name: str) -> int | None:
+        validate_identifier(stream_name)
+        stream_dir = self._root / stream_name
+        if not stream_dir.is_dir():
+            return 0
+        # Only integer-keyed files — the layout put() writes.
+        return sum(
+            p.stat().st_size for p in stream_dir.glob("*.bin") if p.is_file() and p.stem.isdigit()
+        )

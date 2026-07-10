@@ -38,18 +38,18 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     # Higher subsample means less tracing
     ray_subsample: int = 1
     # Extend rays past the end point to clear shadows
-    shadow_depth: float = 0.2
+    shadow_depth: float = 0.1
     # Ignore voxels within this range of points for ray tracing clearing
     grace_depth: float = 0.2
     # Bounds for the health of voxels. Positive health means voxel is occupied.
-    min_health: int = -2
-    max_health: int = 1
+    min_health: int = -1
+    max_health: int = 5
     # Don't clear a miss when abs of ray dot normal is below this, clear it when above.
     # Higher clears only on direct hits, lower clears on slight grazes too.
     graze_cos: float = 0.7
-    # Only spare a voxel whose neighborhood was hit within this many frames.
-    # A stale voxel can be cleared, even if it's a grazing hit. Large disables it.
-    recency_window: int = 15
+    # Occupied neighbors a surface voxel needs to appear in the local map. Zero
+    # emits all. Higher drops isolated returns. The global map is unfiltered.
+    support_min: int = 4
     # Publish the accumulated local map and region bounds every Nth frame. Zero disables them.
     emit_every: int = 1
     # Publish the global map every Nth frame. Zero disables it.

@@ -21,12 +21,8 @@ DimOS Units: angles=radians, distance=meters, velocity=rad/s
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
 
 from xarm.wrapper import XArmAPI
-
-if TYPE_CHECKING:
-    from dimos.hardware.manipulators.registry import AdapterRegistry
 
 from dimos.hardware.manipulators.spec import (
     ControlMode,
@@ -399,8 +395,3 @@ class XArmAdapter(ManipulatorAdapter):
         if code == 0 and ft:
             return list(ft)
         return None
-
-
-def register(registry: AdapterRegistry) -> None:
-    """Register this adapter with the registry."""
-    registry.register("xarm", XArmAdapter)

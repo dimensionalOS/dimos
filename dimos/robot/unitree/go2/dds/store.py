@@ -37,10 +37,14 @@ from dimos.utils.data import resolve_named_path
 # memory2 stream name -> Go2 DDS topic.
 STREAMS: dict[str, str] = {
     "lidar": "rt/utlidar/cloud",
+    "lidar_deskewed": "rt/utlidar/cloud_deskewed",
+    "height_map": "rt/utlidar/height_map_array",
     "imu": "rt/utlidar/imu",
     "odom": "rt/utlidar/robot_odom",
     "color_image": "rt/frontvideo",
+    "color_image_h264": "rt/frontvideo/h264",
     "lowstate": "rt/lowstate",
+    "lowcmd": "rt/lowcmd",
     "sportmodestate": "rt/sportmodestate",
 }
 

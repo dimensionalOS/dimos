@@ -67,7 +67,10 @@ def test_nonfinite_points_are_dropped() -> None:
 
 
 def test_local_map_filters_by_cylinder() -> None:
-    mapper = make_mapper()
+    # support_min=0 so the cylinder bound is the only filter under test.
+    mapper = VoxelRayMapper(
+        voxel_size=1.0, max_range=100.0, min_health=0, max_health=1, support_min=0
+    )
     points = np.array([[2.5, 0.5, 0.5], [50.5, 0.5, 0.5]], dtype=np.float32)
     mapper.add_frame(points, ORIGIN)
 

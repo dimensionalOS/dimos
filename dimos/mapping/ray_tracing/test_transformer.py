@@ -21,8 +21,14 @@ import pytest
 pytest.importorskip("dimos_voxel_ray_tracing")
 
 from dimos.mapping.ray_tracing.transformer import RayTraceMap
+from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 from dimos.memory2.type.observation import Observation
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+
+def _default_margin() -> float:
+    mapper = VoxelRayMapper(voxel_size=0.1, max_range=30.0)
+    return mapper.shadow_depth + mapper.voxel_size
 
 
 def _obs(
@@ -71,11 +77,12 @@ def _ring(
 
 
 def test_tags_region_bounds_around_registered_origin() -> None:
-    margin = 0.2 + 0.1
+    rtm = RayTraceMap()
+    margin = _default_margin()
     # Sensor-frame ring centered on the sensor. The pose registers it to (2, 3, 0.5).
     obs = _obs(_ring((0.0, 0.0), radius=1.0, z=0.0), ts=1.0, pose=(2.0, 3.0, 0.5))
 
-    [emitted] = list(RayTraceMap()(iter([obs])))
+    [emitted] = list(rtm(iter([obs])))
 
     cx, cy, radius, z_min, z_max = emitted.tags["region_bounds"]
     assert (cx, cy) == pytest.approx((2.0, 3.0))
@@ -94,7 +101,8 @@ def test_empty_frame_yields_zero_radius_region_at_robot() -> None:
 
 
 def test_registers_sensor_frame_cloud_by_pose() -> None:
-    margin = 0.2 + 0.1
+    rtm = RayTraceMap()
+    margin = _default_margin()
     s = 2.0**-0.5
     # 90-degree pitch maps sensor +x to world -z, then translate by (5, 0, 2),
     # landing the point at world (5, 0, 1).
@@ -106,7 +114,7 @@ def test_registers_sensor_frame_cloud_by_pose() -> None:
         _data=PointCloud2.from_numpy(point),
     )
 
-    [emitted] = list(RayTraceMap()(iter([obs])))
+    [emitted] = list(rtm(iter([obs])))
 
     cx, cy, radius, z_min, z_max = emitted.tags["region_bounds"]
     assert (cx, cy) == pytest.approx((5.0, 0.0))

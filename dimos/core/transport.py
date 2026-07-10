@@ -37,14 +37,22 @@ except ImportError:
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, PickleLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic
 from dimos.protocol.pubsub.impl.shmpubsub import BytesSharedMemory, PickleSharedMemory
+from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
+from dimos.protocol.pubsub.impl.webrtc.providers.spec import ProviderConfig
+from dimos.protocol.pubsub.impl.webrtc.webrtcpubsub import WebRTCPubSub
 from dimos.protocol.pubsub.impl.zenohpubsub import (
     PickleZenoh,
     Topic as ZenohTopic,
     Zenoh,
 )
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from dimos.core.coordination.blueprints import TransportSpec
 
 T = TypeVar("T")
 
@@ -81,6 +89,18 @@ class PubSubTransport(Transport[T]):
             + colors.blue(self.topic)
             + colors.green(")")
         )
+
+    @property
+    def channel(self) -> str:
+        """The channel string this transport publishes and subscribes on."""
+        return str(self.topic)
+
+    @classmethod
+    def spec(cls, *args: Any, **kwargs: Any) -> TransportSpec:
+        """Defer construction: capture ctor args for the coordinator to build later."""
+        from dimos.core.coordination.blueprints import TransportSpec
+
+        return TransportSpec(cls, args, kwargs)
 
 
 class pLCMTransport(PubSubTransport[T]):
@@ -340,6 +360,177 @@ if DDS_AVAILABLE:
             return self.dds.subscribe(self.topic, lambda msg, topic: callback(msg))
 
 
+M = TypeVar("M", bound=DimosMsg)
+
+
+def _rebuild_webrtc_transport(
+    cls: type[WebRTCTransport[M]], topic: str, msg_type: type[M] | None, config: ProviderConfig
+) -> WebRTCTransport[M]:
+    return cls(topic, msg_type, config=config)
+
+
+class WebRTCTransport(PubSubTransport[M]):
+    """Transport over WebRTC DataChannels.
+
+    Subclasses bind a backend by setting ``_config_cls``; the base class can
+    also be used directly with an explicit ``config``. Two modes:
+
+    * **Raw bytes** (``msg_type=None``): messages pass through as ``bytes``.
+    * **Typed LCM** (``msg_type=SomeMsg``): LCM-encoded on ``broadcast()``,
+      LCM-decoded on ``subscribe()`` (foreign types on the shared channel are skipped) — so multiple
+      transports sharing one multiplexed DataChannel each receive only
+      their own message type.
+
+    The transport itself holds no connection: the picklable ``config``
+    resolves to a per-process singleton provider on first use, so transports
+    survive being pickled into module worker processes and all transports in
+    a process share one session. ``stop()`` intentionally leaves the shared
+    provider running (it is process-scoped).
+    """
+
+    _config_cls: type[ProviderConfig]
+    _config: ProviderConfig
+    _started: bool = False
+
+    def __init__(
+        self,
+        topic: str,
+        msg_type: type[M] | None = None,
+        *,
+        config: ProviderConfig | None = None,
+        **config_kwargs: Any,
+    ) -> None:
+        super().__init__(topic)
+        self._msg_type = msg_type
+        self._config = config or self._config_cls(**config_kwargs)
+        self._pubsub: WebRTCPubSub | None = None
+        # Guards first-use init: concurrent subscribe()/broadcast() must not
+        # construct two WebRTCPubSub wrappers (one would silently orphan any
+        # subscribe_all state). Never pickled — __reduce__ rebuilds via the
+        # constructor.
+        self._init_lock = threading.Lock()
+
+    def __reduce__(self):  # type: ignore[no-untyped-def]
+        return (_rebuild_webrtc_transport, (type(self), self.topic, self._msg_type, self._config))
+
+    def broadcast(self, _: Out[M] | None, msg: M) -> None:
+        if not self._started:
+            self.start()
+        assert self._pubsub is not None
+        data = msg.lcm_encode() if self._msg_type is not None else msg
+        self._pubsub.publish(self.topic, data)  # type: ignore[arg-type]
+
+    def subscribe(
+        self, callback: Callable[[M], None], selfstream: Stream[M] | None = None
+    ) -> Callable[[], None]:
+        if not self._started:
+            self.start()
+        assert self._pubsub is not None
+
+        if self._msg_type is not None:
+            msg_type = self._msg_type
+
+            def _typed_cb(data: bytes, _topic: str) -> None:
+                # The channel is multiplexed (e.g. the browser sends Twists and
+                # Poses on cmd_unreliable); lcm_decode verifies the wire
+                # fingerprint and raises on other types — skip those.
+                try:
+                    msg = msg_type.lcm_decode(data)
+                except ValueError:
+                    return
+                callback(msg)  # type: ignore[arg-type]
+
+            return self._pubsub.subscribe(self.topic, _typed_cb)
+        return self._pubsub.subscribe(self.topic, lambda msg, _topic: callback(msg))  # type: ignore[arg-type]
+
+    def start(self) -> None:
+        with self._init_lock:
+            if self._pubsub is None:
+                self._pubsub = WebRTCPubSub(provider=self._config.provider())
+            self._pubsub.start()
+            self._started = True
+
+    def stop(self) -> None:
+        self._started = False
+
+
+class CloudflareTransport(WebRTCTransport[M]):
+    """WebRTC via the hosted teleop broker + Cloudflare Realtime SFU.
+
+    Config kwargs flow into :class:`BrokerConfig`; unset fields fall back to
+    the blueprint config flow (``-o transports.broker.<field>=...`` or the
+    ``TRANSPORTS__BROKER__<FIELD>=...`` env form).
+
+    Blueprint usage::
+
+        unitree_go2_hosted = unitree_go2_basic.transports({
+            ("cmd_vel", Twist): CloudflareTransport.spec("cmd_unreliable", TwistStamped),
+            ("color_image", Image): CloudflareVideoTransport.spec(),
+        })
+    """
+
+    _config_cls = BrokerConfig
+
+
+class WebRTCVideoTransport(Transport[Any]):
+    """Robot camera → remote viewer as a WebRTC video track (provider-agnostic).
+
+    ``broadcast()`` feeds each Image into the shared provider's sendonly media
+    track — the same provider/PeerConnection the DataChannel transports use
+    (identical config resolves to the same per-process singleton). Session
+    negotiation of the track is the provider's job; any provider exposing
+    ``set_video_frame()`` works. The remote side consumes RTP (e.g. the teleop
+    web client pulling the track), so there is nothing to ``subscribe()`` to
+    locally and subscribers get a no-op.
+
+    Subclasses bind a backend by setting ``_config_cls``; the base class can
+    also be used directly with an explicit ``config``.
+    """
+
+    _config_cls: type[ProviderConfig]
+    _config: ProviderConfig
+
+    def __init__(self, *, config: ProviderConfig | None = None, **config_kwargs: Any) -> None:
+        self._config = config or self._config_cls(**config_kwargs)
+
+    @classmethod
+    def spec(cls, *args: Any, **kwargs: Any) -> TransportSpec:
+        """Defer construction: capture ctor args for the coordinator to build later."""
+        from dimos.core.coordination.blueprints import TransportSpec
+
+        return TransportSpec(cls, args, kwargs)
+
+    def start(self) -> None:
+        pass  # provider starts lazily on first broadcast
+
+    def stop(self) -> None:
+        pass  # shared provider is process-scoped (see WebRTCTransport.stop)
+
+    def broadcast(self, _: Out[Any] | None, msg: Any) -> None:
+        provider = self._config.provider()
+        set_frame = getattr(provider, "set_video_frame", None)
+        if set_frame is None:
+            raise NotImplementedError(f"{type(provider).__name__} does not support media tracks")
+        if not provider.is_connected:
+            provider.start()
+        set_frame(msg)
+
+    def subscribe(
+        self, callback: Callable[[Any], None], selfstream: Stream[Any] | None = None
+    ) -> Callable[[], None]:
+        logger.warning(
+            "%s is publish-only on the robot; local subscriber gets no frames",
+            type(self).__name__,
+        )
+        return lambda: None
+
+
+class CloudflareVideoTransport(WebRTCVideoTransport):
+    """Camera → teleop web client via the hosted broker (see WebRTCVideoTransport)."""
+
+    _config_cls = BrokerConfig
+
+
 class ZenohTransport(PubSubTransport[T]):
     """Zenoh transport with LCM encoding for typed DimosMsg.
 
@@ -356,6 +547,15 @@ class ZenohTransport(PubSubTransport[T]):
         super().__init__(topic)
         self.zenoh = Zenoh(**kwargs)
         self._start_lock = threading.RLock()
+
+    @property
+    def channel(self) -> str:
+        return cast("str", self.topic.key_expr)
+
+    @property
+    def publish_qos(self) -> dict[str, str] | None:
+        qos = self.topic.qos
+        return qos.to_wire() if qos is not None else None
 
     def __reduce__(self) -> tuple[Any, ...]:
         return (ZenohTransport, (self.topic,))
@@ -399,6 +599,15 @@ class pZenohTransport(PubSubTransport[T]):
         super().__init__(self._zenoh_topic.pattern)
         self.zenoh = PickleZenoh(**kwargs)
         self._start_lock = threading.RLock()
+
+    @property
+    def channel(self) -> str:
+        return self._zenoh_topic.key_expr
+
+    @property
+    def publish_qos(self) -> dict[str, str] | None:
+        qos = self._zenoh_topic.qos
+        return qos.to_wire() if qos is not None else None
 
     def __reduce__(self) -> tuple[Any, ...]:
         return (pZenohTransport, (self._zenoh_topic,))

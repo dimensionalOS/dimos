@@ -252,6 +252,20 @@ class TestPublisherQoS:
         assert pub.congestion_control == zenoh.CongestionControl.BLOCK
 
 
+class TestZenohQoSToWire:
+    """QoS serialization sent to native modules over stdin."""
+
+    def test_full_qos(self) -> None:
+        qos = ZenohQoS(reliability="best_effort", congestion_control="drop")
+        assert qos.to_wire() == {"reliability": "best_effort", "congestion_control": "drop"}
+
+    def test_partial_qos_omits_unset(self) -> None:
+        assert ZenohQoS(congestion_control="block").to_wire() == {"congestion_control": "block"}
+
+    def test_empty_qos(self) -> None:
+        assert ZenohQoS().to_wire() == {}
+
+
 class TestTopicKeyExprConversion:
     """Tests for _topic_to_key_expr and _key_expr_to_topic round-trip."""
 

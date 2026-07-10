@@ -65,10 +65,16 @@ with suppress(ImportError, ValueError, OSError):
 
 from dotenv import load_dotenv
 import pytest
+import tqdm
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.coordination.process_lifecycle import spawn_watchdog
 from dimos.utils.testing.waiting import retry_until as _retry_until, wait_until as _wait_until
+
+# The first tqdm bar constructed in the process spawns a TMonitor daemon thread that lives until
+# interpreter exit. If that first bar happens inside a test, monitor_threads flags it as a leak. The
+# monitor only re-tunes miniters for smooth interactive rendering, so disable it for tests.
+tqdm.tqdm.monitor_interval = 0
 
 load_dotenv()
 

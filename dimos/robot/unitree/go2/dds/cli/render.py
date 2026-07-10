@@ -167,15 +167,16 @@ def leg_odom(store: Go2McapStore, seconds: float | None) -> None:
         rr.log("world/leg_odom_path", obs.data.to_rerun())
 
     src = store.streams.sportmodestate.to_time(seconds)
-    (
-        src.tap(progress(src.count(), "leg_odom"))
-        .map_data(sportmode_pose)
-        .tap(log_pose)
-        .transform(throttle(0.1))  # reduce_rate: thin the path to ~10 Hz
-        .transform(accumulate_path)  # yield the growing path each step
-        .tap(log_path)
-        .drain()
-    )
+    with progress(src.count(), "leg_odom") as bar:
+        (
+            src.tap(bar)
+            .map_data(sportmode_pose)
+            .tap(log_pose)
+            .transform(throttle(0.1))  # reduce_rate: thin the path to ~10 Hz
+            .transform(accumulate_path)  # yield the growing path each step
+            .tap(log_path)
+            .drain()
+        )
 
 
 def imu_odom(store: Go2McapStore, seconds: float | None) -> None:
@@ -187,15 +188,16 @@ def imu_odom(store: Go2McapStore, seconds: float | None) -> None:
 
     gravity = gravity_bias(store)  # calibrate gravity+bias on the stationary start
     src = store.streams.imu.to_time(seconds)
-    (
-        src.tap(progress(src.count(), "imu_odom"))
-        .scan_data((np.zeros(3), None), integrate_velocity(gravity))  # -> velocity (TwistStamped)
-        .scan_data((np.zeros(3), None), integrate_position)  # -> position (PoseStamped)
-        .transform(throttle(0.1))  # thin the path after integrating at full IMU rate
-        .transform(accumulate_path)
-        .tap(log_path)
-        .drain()
-    )
+    with progress(src.count(), "imu_odom") as bar:
+        (
+            src.tap(bar)
+            .scan_data((np.zeros(3), None), integrate_velocity(gravity))  # -> velocity
+            .scan_data((np.zeros(3), None), integrate_position)  # -> position (PoseStamped)
+            .transform(throttle(0.1))  # thin the path after integrating at full IMU rate
+            .transform(accumulate_path)
+            .tap(log_path)
+            .drain()
+        )
 
 
 def lidar(store: Go2McapStore, seconds: float | None) -> None:
@@ -207,7 +209,8 @@ def lidar(store: Go2McapStore, seconds: float | None) -> None:
 
     src = store.streams.lidar.to_time(seconds)
     rr.log("world/leg_odom/lidar", LIDAR_TO_BASE.to_rerun(frameless=True), static=True)
-    (src.tap(progress(src.count(), "lidar")).tap(log_lidar).drain())
+    with progress(src.count(), "lidar") as bar:
+        src.tap(bar).tap(log_lidar).drain()
 
 
 def _interp_pose(
@@ -252,13 +255,14 @@ def world_lidar(store: Go2McapStore, seconds: float | None) -> None:
         rr.log("world/world_lidar", obs.data.to_rerun())
 
     src = store.streams.lidar.to_time(seconds)
-    (
-        src.tap(progress(src.count(), "world_lidar"))
-        .map_data(to_world)  # lidar cloud -> world-frame cloud
-        .transform(VoxelMapTransformer(emit_every=10, voxel_size=0.1))  # global voxel map
-        .tap(log_voxels)
-        .drain()
-    )
+    with progress(src.count(), "world_lidar") as bar:
+        (
+            src.tap(bar)
+            .map_data(to_world)  # lidar cloud -> world-frame cloud
+            .transform(VoxelMapTransformer(emit_every=10, voxel_size=0.1))  # global voxel map
+            .tap(log_voxels)
+            .drain()
+        )
 
 
 def camera(store: Go2McapStore, seconds: float | None, hz: float) -> None:
@@ -275,7 +279,8 @@ def camera(store: Go2McapStore, seconds: float | None, hz: float) -> None:
         rr.log("world/camera", obs.data.to_rerun())
 
     src = store.streams.color_image.to_time(seconds)
-    (src.tap(progress(src.count(), "camera")).transform(throttle(1.0 / hz)).tap(log_image).drain())
+    with progress(src.count(), "camera") as bar:
+        src.tap(bar).transform(throttle(1.0 / hz)).tap(log_image).drain()
 
 
 # Add a source: write a (store, seconds) -> None function and append it.

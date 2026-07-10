@@ -1,25 +1,77 @@
 #!/usr/bin/env bash
 # Scan a contributor's branch for code-quality issues and open a PR of fixes back into that branch.
 #
-# Usage: misc/auto-fixes/auto-fix.sh <branch>
+# Usage: misc/auto-fixes/auto-fix.sh [--agent claude|opencode] <branch>
 #
 set -euo pipefail
 
-# Print the script's own messages in green so they stand out from git/uv/claude output.
+# Print the script's own messages in green so they stand out from git/uv/agent output.
 GREEN=$'\033[0;32m'
 RESET=$'\033[0m'
 log() { echo "${GREEN}$*${RESET}"; }      # stdout (progress)
 err() { echo "${GREEN}$*${RESET}" >&2; }  # stderr (errors)
 
 usage() {
-  err "usage: $0 <branch>"
+  err "usage: $0 [--agent claude|opencode] <branch>"
+  err "       AUTO_FIX_AGENT=opencode $0 <branch>"
   exit 2
 }
 
-[[ $# -eq 1 ]] || usage
-BRANCH="$1"
+AGENT="${AUTO_FIX_AGENT:-claude}"
+BRANCH=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --agent|-a)
+      [[ $# -ge 2 ]] || usage
+      AGENT="$2"
+      shift 2
+      ;;
+    --agent=*)
+      AGENT="${1#*=}"
+      shift
+      ;;
+    -h|--help)
+      usage
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      err "unknown option: $1"
+      usage
+      ;;
+    *)
+      [[ -z "$BRANCH" ]] || usage
+      BRANCH="$1"
+      shift
+      ;;
+  esac
+done
+
+if [[ $# -gt 0 ]]; then
+  [[ -z "$BRANCH" && $# -eq 1 ]] || usage
+  BRANCH="$1"
+fi
+
+[[ -n "$BRANCH" ]] || usage
+
+case "$AGENT" in
+  claude|opencode)
+    ;;
+  *)
+    err "unsupported agent: $AGENT (expected claude or opencode)"
+    exit 2
+    ;;
+esac
+
+command -v "$AGENT" >/dev/null 2>&1 || { err "missing $AGENT on PATH"; exit 1; }
+
 # shellcheck disable=SC2016
 PLACEHOLDER='$$BRANCH$$'
+# shellcheck disable=SC2016
+AUTOFIX_PLACEHOLDER='$$AUTOFIX_BRANCH$$'
 # shellcheck disable=SC2016
 RULES_PLACEHOLDER='$$RULES$$'
 
@@ -46,6 +98,32 @@ SUFFIX="$(openssl rand -hex 4)"
 WORKTREE="$(cd "$REPO_ROOT/.." && pwd)/dimos-worktree-${SUFFIX}"
 AUTOFIX_BRANCH=""  # set once we know there are issues; cleanup uses it
 
+run_scan_agent() {
+  local prompt="$1"
+  case "$AGENT" in
+    claude)
+      ( cd "$WORKTREE" && claude -p "$prompt" --dangerously-skip-permissions )
+      ;;
+    opencode)
+      opencode run --auto --dir "$WORKTREE" "$prompt"
+      ;;
+  esac
+}
+
+run_fix_agent() {
+  local prompt="$1"
+  case "$AGENT" in
+    claude)
+      ( cd "$WORKTREE" && claude -p "$prompt" \
+        --dangerously-skip-permissions \
+        --settings '{"includeCoAuthoredBy": false}' )
+      ;;
+    opencode)
+      opencode run --auto --dir "$WORKTREE" "$prompt"
+      ;;
+  esac
+}
+
 # Leave no state in the user's repo: remove the worktree, then (it shares the common git dir) the
 # local autofix branch and any filter-branch backup ref. On success the branch lives on origin; on
 # failure this is a throwaway attempt, so deleting the local ref is intended.
@@ -70,15 +148,15 @@ log ">> creating worktree $WORKTREE (detached on origin/$BRANCH)"
 git -C "$REPO_ROOT" worktree add --detach "$WORKTREE" "origin/$BRANCH"
 
 log ">> installing dependencies"
-( cd "$WORKTREE" && CYCLONEDDS_HOME=/opt/cyclonedds uv sync --all-extras --all-groups )
+( cd "$WORKTREE" && uv sync --extra all --all-groups )
 
-log ">> running scan agent"
+log ">> running scan agent ($AGENT)"
 # In the detached worktree the bare local <branch> ref may not exist, so the template's
-# `git diff main...$$BRANCH$$` is pointed at origin/<branch>.
+# `git diff origin/main...$$BRANCH$$` is pointed at origin/<branch>.
 scan_prompt="$(cat "$SCAN_TEMPLATE")"
 scan_prompt="${scan_prompt//"$RULES_PLACEHOLDER"/$(cat "$RULES_FILE")}"
 scan_prompt="${scan_prompt//"$PLACEHOLDER"/origin/$BRANCH}"
-if ! ( cd "$WORKTREE" && claude -p "$scan_prompt" --dangerously-skip-permissions ); then
+if ! run_scan_agent "$scan_prompt"; then
   err "scan agent failed"
   exit 1
 fi
@@ -108,12 +186,11 @@ log ">> autofix branch: $AUTOFIX_BRANCH"
 BASE_SHA="$(git -C "$WORKTREE" rev-parse HEAD)"
 git -C "$WORKTREE" checkout -b "$AUTOFIX_BRANCH"
 
-log ">> running fix agent"
+log ">> running fix agent ($AGENT)"
 fix_prompt="$(cat "$FIX_TEMPLATE")"
 fix_prompt="${fix_prompt//"$PLACEHOLDER"/$BRANCH}"
-if ! ( cd "$WORKTREE" && claude -p "$fix_prompt" \
-         --dangerously-skip-permissions \
-         --settings '{"includeCoAuthoredBy": false}' ); then
+fix_prompt="${fix_prompt//"$AUTOFIX_PLACEHOLDER"/$AUTOFIX_BRANCH}"
+if ! run_fix_agent "$fix_prompt"; then
   err "fix agent failed"
   exit 1
 fi

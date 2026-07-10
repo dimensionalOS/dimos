@@ -248,11 +248,19 @@ Received: (480, 640, 3)
 
 See [Modules](/docs/usage/modules.md) for more on module architecture.
 
-## Inspecting LCM traffic (CLI)
+## Inspecting traffic (CLI)
 
-`lcmspy` shows topic frequency/bandwidth stats:
+`dimos spy` is the universal transport spy: one live view of every topic moving on every
+DimOS pubsub transport — names, message rates, bandwidth, sizes, and liveness — whether the
+system runs on LCM, Zenoh, or both.
 
-![lcmspy](../assets/lcmspy.png)
+```bash
+dimos spy                     # everything, all transports
+dimos spy --transport zenoh   # filter to one transport (repeatable flag)
+dimos lcmspy                  # deprecated alias for: dimos spy --transport lcm
+```
+
+![dimos spy](../assets/lcmspy.png)
 
 `dimos topic echo /topic` listens on typed channels like `/topic#pkg.Msg` and decodes automatically:
 

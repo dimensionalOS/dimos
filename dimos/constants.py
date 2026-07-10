@@ -21,18 +21,22 @@ try:
 except ImportError:
     CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "dimos"
+    CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "dimos"
 else:
     CONFIG_DIR = Path(GLib.get_user_config_dir())
     STATE_DIR = Path(GLib.get_user_state_dir()) / "dimos"
+    CACHE_DIR = Path(GLib.get_user_cache_dir()) / "dimos"
 
 DIMOS_PROJECT_ROOT = Path(__file__).parent.parent
 
 if (DIMOS_PROJECT_ROOT / ".git").exists():
     # Running from Git repository
     LOG_DIR = DIMOS_PROJECT_ROOT / "logs"
+    RECORDINGS_DIR = DIMOS_PROJECT_ROOT / "recordings"
 else:
     # Running from an installed package - use XDG_STATE_HOME
     LOG_DIR = STATE_DIR / "logs"
+    RECORDINGS_DIR = STATE_DIR / "recordings"
 
 """
 Constants for shared memory

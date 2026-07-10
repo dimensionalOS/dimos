@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from dimos.hardware.whole_body.spec import (
     POS_STOP,
@@ -40,9 +40,6 @@ from dimos.simulation.engines.mujoco_shm import (
     shm_key_from_path,
 )
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.hardware.whole_body.registry import WholeBodyAdapterRegistry
 
 logger = setup_logger()
 
@@ -187,8 +184,3 @@ class SimMujocoG1WholeBodyAdapter:
         tau = [cmd.tau for cmd in commands]
         self._shm.write_pd_tau_command(q, kp, kd, tau)
         return True
-
-
-def register(registry: WholeBodyAdapterRegistry) -> None:
-    """Register with the whole-body adapter registry."""
-    registry.register("sim_mujoco_g1", SimMujocoG1WholeBodyAdapter)

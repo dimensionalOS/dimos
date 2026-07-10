@@ -24,10 +24,6 @@ Usage:
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from dimos.hardware.manipulators.registry import AdapterRegistry
 
 from dimos.hardware.manipulators.spec import (
     ControlMode,
@@ -222,8 +218,3 @@ class MockAdapter:
     def set_efforts(self, efforts: list[float]) -> None:
         """Set efforts directly for testing."""
         self._efforts = list(efforts)
-
-
-def register(registry: AdapterRegistry) -> None:
-    """Register this adapter with the registry."""
-    registry.register("mock", MockAdapter)
