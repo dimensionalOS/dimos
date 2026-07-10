@@ -1,5 +1,5 @@
 {
-  "theme": "mint",
+  "theme": "aspen",
   "name": "Dimensional",
   "description": "Official documentation for Dimensional (DimOS) \u2014 the modern operating system for generalist robotics: Python-first, agent-native, and hardware-agnostic.",
   "colors": {
@@ -74,24 +74,6 @@
             "pages": [
               "usage/transports/index",
               "usage/transports/dds"
-            ]
-          }
-        ]
-      },
-      {
-        "group": "Coding agents",
-        "pages": [
-          "coding-agents/index",
-          "coding-agents/style",
-          "coding-agents/code-quality-rules",
-          "coding-agents/testing",
-          "coding-agents/worktrees",
-          {
-            "group": "Authoring agent docs",
-            "pages": [
-              "coding-agents/docs/index",
-              "coding-agents/docs/codeblocks",
-              "coding-agents/docs/doclinks"
             ]
           }
         ]
@@ -216,5 +198,351 @@
     "socials": {
       "github": "https://github.com/dimensionalOS/dimos"
     }
-  }
+  },
+  "redirects": [
+    {
+      "source": "/docs/introduction.md",
+      "destination": "/introduction"
+    },
+    {
+      "source": "/docs/quickstart.md",
+      "destination": "/quickstart"
+    },
+    {
+      "source": "/docs/requirements.md",
+      "destination": "/requirements"
+    },
+    {
+      "source": "/docs/installation/ubuntu.md",
+      "destination": "/installation/ubuntu"
+    },
+    {
+      "source": "/docs/installation/osx.md",
+      "destination": "/installation/osx"
+    },
+    {
+      "source": "/docs/installation/nix.md",
+      "destination": "/installation/nix"
+    },
+    {
+      "source": "/docs/usage/index.md",
+      "destination": "/usage/index"
+    },
+    {
+      "source": "/docs/usage",
+      "destination": "/usage/index"
+    },
+    {
+      "source": "/docs/usage/modules.md",
+      "destination": "/usage/modules"
+    },
+    {
+      "source": "/docs/usage/blueprints.md",
+      "destination": "/usage/blueprints"
+    },
+    {
+      "source": "/docs/usage/configuration.md",
+      "destination": "/usage/configuration"
+    },
+    {
+      "source": "/docs/usage/lcm.md",
+      "destination": "/usage/lcm"
+    },
+    {
+      "source": "/docs/usage/transforms.md",
+      "destination": "/usage/transforms"
+    },
+    {
+      "source": "/docs/usage/visualization.md",
+      "destination": "/usage/visualization"
+    },
+    {
+      "source": "/docs/usage/cli.md",
+      "destination": "/usage/cli"
+    },
+    {
+      "source": "/docs/usage/python-api.md",
+      "destination": "/usage/python-api"
+    },
+    {
+      "source": "/docs/usage/camera_calibration.md",
+      "destination": "/usage/camera_calibration"
+    },
+    {
+      "source": "/docs/usage/native_modules.md",
+      "destination": "/usage/native_modules"
+    },
+    {
+      "source": "/docs/usage/tool_streams.md",
+      "destination": "/usage/tool_streams"
+    },
+    {
+      "source": "/docs/usage/data_streams/index.md",
+      "destination": "/usage/data_streams/index"
+    },
+    {
+      "source": "/docs/usage/data_streams",
+      "destination": "/usage/data_streams/index"
+    },
+    {
+      "source": "/docs/usage/data_streams/advanced_streams.md",
+      "destination": "/usage/data_streams/advanced_streams"
+    },
+    {
+      "source": "/docs/usage/data_streams/quality_filter.md",
+      "destination": "/usage/data_streams/quality_filter"
+    },
+    {
+      "source": "/docs/usage/data_streams/reactivex.md",
+      "destination": "/usage/data_streams/reactivex"
+    },
+    {
+      "source": "/docs/usage/data_streams/storage_replay.md",
+      "destination": "/usage/data_streams/storage_replay"
+    },
+    {
+      "source": "/docs/usage/data_streams/temporal_alignment.md",
+      "destination": "/usage/data_streams/temporal_alignment"
+    },
+    {
+      "source": "/docs/usage/sensor_streams/index.md",
+      "destination": "/usage/sensor_streams/index"
+    },
+    {
+      "source": "/docs/usage/sensor_streams",
+      "destination": "/usage/sensor_streams/index"
+    },
+    {
+      "source": "/docs/usage/sensor_streams/advanced_streams.md",
+      "destination": "/usage/sensor_streams/advanced_streams"
+    },
+    {
+      "source": "/docs/usage/sensor_streams/quality_filter.md",
+      "destination": "/usage/sensor_streams/quality_filter"
+    },
+    {
+      "source": "/docs/usage/sensor_streams/reactivex.md",
+      "destination": "/usage/sensor_streams/reactivex"
+    },
+    {
+      "source": "/docs/usage/sensor_streams/storage_replay.md",
+      "destination": "/usage/sensor_streams/storage_replay"
+    },
+    {
+      "source": "/docs/usage/sensor_streams/temporal_alignment.md",
+      "destination": "/usage/sensor_streams/temporal_alignment"
+    },
+    {
+      "source": "/docs/usage/transports/index.md",
+      "destination": "/usage/transports/index"
+    },
+    {
+      "source": "/docs/usage/transports",
+      "destination": "/usage/transports/index"
+    },
+    {
+      "source": "/docs/usage/transports/dds.md",
+      "destination": "/usage/transports/dds"
+    },
+    {
+      "source": "/docs/coding-agents/index.md",
+      "destination": "/coding-agents/index"
+    },
+    {
+      "source": "/docs/coding-agents",
+      "destination": "/coding-agents/index"
+    },
+    {
+      "source": "/docs/coding-agents/style.md",
+      "destination": "/coding-agents/style"
+    },
+    {
+      "source": "/docs/coding-agents/code-quality-rules.md",
+      "destination": "/coding-agents/code-quality-rules"
+    },
+    {
+      "source": "/docs/coding-agents/testing.md",
+      "destination": "/coding-agents/testing"
+    },
+    {
+      "source": "/docs/coding-agents/worktrees.md",
+      "destination": "/coding-agents/worktrees"
+    },
+    {
+      "source": "/docs/coding-agents/docs/index.md",
+      "destination": "/coding-agents/docs/index"
+    },
+    {
+      "source": "/docs/coding-agents/docs",
+      "destination": "/coding-agents/docs/index"
+    },
+    {
+      "source": "/docs/coding-agents/docs/codeblocks.md",
+      "destination": "/coding-agents/docs/codeblocks"
+    },
+    {
+      "source": "/docs/coding-agents/docs/doclinks.md",
+      "destination": "/coding-agents/docs/doclinks"
+    },
+    {
+      "source": "/docs/capabilities/agents/index.md",
+      "destination": "/capabilities/agents/index"
+    },
+    {
+      "source": "/docs/capabilities/agents",
+      "destination": "/capabilities/agents/index"
+    },
+    {
+      "source": "/docs/capabilities/manipulation/index.md",
+      "destination": "/capabilities/manipulation/index"
+    },
+    {
+      "source": "/docs/capabilities/manipulation",
+      "destination": "/capabilities/manipulation/index"
+    },
+    {
+      "source": "/docs/capabilities/manipulation/adding_a_custom_arm.md",
+      "destination": "/capabilities/manipulation/adding_a_custom_arm"
+    },
+    {
+      "source": "/docs/capabilities/manipulation/openarm_integration.md",
+      "destination": "/capabilities/manipulation/openarm_integration"
+    },
+    {
+      "source": "/docs/capabilities/manipulation/a750.md",
+      "destination": "/capabilities/manipulation/a750"
+    },
+    {
+      "source": "/docs/capabilities/memory/index.md",
+      "destination": "/capabilities/memory/index"
+    },
+    {
+      "source": "/docs/capabilities/memory",
+      "destination": "/capabilities/memory/index"
+    },
+    {
+      "source": "/docs/capabilities/memory/algo_comparison.md",
+      "destination": "/capabilities/memory/algo_comparison"
+    },
+    {
+      "source": "/docs/capabilities/memory/plot.md",
+      "destination": "/capabilities/memory/plot"
+    },
+    {
+      "source": "/docs/capabilities/navigation/index.md",
+      "destination": "/capabilities/navigation/index"
+    },
+    {
+      "source": "/docs/capabilities/navigation",
+      "destination": "/capabilities/navigation/index"
+    },
+    {
+      "source": "/docs/capabilities/navigation/deep_dive.md",
+      "destination": "/capabilities/navigation/deep_dive"
+    },
+    {
+      "source": "/docs/capabilities/navigation/relocalization.md",
+      "destination": "/capabilities/navigation/relocalization"
+    },
+    {
+      "source": "/docs/capabilities/perception/index.md",
+      "destination": "/capabilities/perception/index"
+    },
+    {
+      "source": "/docs/capabilities/perception",
+      "destination": "/capabilities/perception/index"
+    },
+    {
+      "source": "/docs/capabilities/teleoperation/hosted.md",
+      "destination": "/capabilities/teleoperation/hosted"
+    },
+    {
+      "source": "/docs/platforms/quadruped/go2/index.md",
+      "destination": "/platforms/quadruped/go2/index"
+    },
+    {
+      "source": "/docs/platforms/quadruped/go2",
+      "destination": "/platforms/quadruped/go2/index"
+    },
+    {
+      "source": "/docs/platforms/quadruped/go2/setup.md",
+      "destination": "/platforms/quadruped/go2/setup"
+    },
+    {
+      "source": "/docs/platforms/quadruped/go2/simulation.md",
+      "destination": "/platforms/quadruped/go2/simulation"
+    },
+    {
+      "source": "/docs/platforms/humanoid/g1/index.md",
+      "destination": "/platforms/humanoid/g1/index"
+    },
+    {
+      "source": "/docs/platforms/humanoid/g1",
+      "destination": "/platforms/humanoid/g1/index"
+    },
+    {
+      "source": "/docs/development/conventions.md",
+      "destination": "/development/conventions"
+    },
+    {
+      "source": "/docs/development/testing.md",
+      "destination": "/development/testing"
+    },
+    {
+      "source": "/docs/development/docker.md",
+      "destination": "/development/docker"
+    },
+    {
+      "source": "/docs/development/grid_testing.md",
+      "destination": "/development/grid_testing"
+    },
+    {
+      "source": "/docs/development/large_file_management.md",
+      "destination": "/development/large_file_management"
+    },
+    {
+      "source": "/docs/development/profiling_dimos.md",
+      "destination": "/development/profiling_dimos"
+    },
+    {
+      "source": "/docs/development/releasing.md",
+      "destination": "/development/releasing"
+    },
+    {
+      "source": "/docs/development/writing_docs.md",
+      "destination": "/development/writing_docs"
+    },
+    {
+      "source": "/AGENTS.md",
+      "destination": "https://github.com/dimensionalOS/dimos/blob/main/AGENTS.md"
+    },
+    {
+      "source": "/dimos/:slug*",
+      "destination": "https://github.com/dimensionalOS/dimos/blob/main/dimos/:slug*"
+    },
+    {
+      "source": "/examples/:slug*",
+      "destination": "https://github.com/dimensionalOS/dimos/blob/main/examples/:slug*"
+    },
+    {
+      "source": "/.github/:slug*",
+      "destination": "https://github.com/dimensionalOS/dimos/blob/main/.github/:slug*"
+    },
+    {
+      "source": "/docker/:slug*",
+      "destination": "https://github.com/dimensionalOS/dimos/blob/main/docker/:slug*"
+    },
+    {
+      "source": "/misc/:slug*",
+      "destination": "https://github.com/dimensionalOS/dimos/blob/main/misc/:slug*"
+    },
+    {
+      "source": "/bin/:slug*",
+      "destination": "https://github.com/dimensionalOS/dimos/blob/main/bin/:slug*"
+    },
+    {
+      "source": "/docs/:slug*",
+      "destination": "/:slug*"
+    }
+  ]
 }
