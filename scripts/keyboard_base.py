@@ -18,8 +18,8 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 
-SPEED = 0.1
-TURN = 0.2
+SPEED = 0.2
+TURN = 0.35
 
 # Must match the type-suffixed channel dimos's own transport publishes/subscribes on
 # (visible in `dimos run` logs as "topic=/cmd_vel#geometry_msgs.Twist") — a bare
