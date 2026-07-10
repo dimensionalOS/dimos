@@ -17,6 +17,7 @@
 
 all_blueprints = {
     "alfred-nav": "dimos.robot.diy.alfred.blueprints.alfred_nav:alfred_nav",
+    "arduino-msg-example": "dimos.experimental.arduino.examples.arduino_twist_echo.blueprint:arduino_msg_example",
     "coordinator-basic": "dimos.control.blueprints.basic:coordinator_basic",
     "coordinator-cartesian-ik-mock": "dimos.robot.manipulators.piper.blueprints.teleop:coordinator_cartesian_ik_mock",
     "coordinator-cartesian-ik-piper": "dimos.robot.manipulators.piper.blueprints.teleop:coordinator_cartesian_ik_piper",
@@ -143,6 +144,9 @@ all_blueprints = {
 
 all_modules = {
     "alfred-high-level": "dimos.robot.diy.alfred.effector_high_level.AlfredHighLevel",
+    "arduino-module": "dimos.experimental.arduino.arduino_module.ArduinoModule",
+    "arduino-multi-echo": "dimos.experimental.arduino.examples.arduino_multi_echo.module.ArduinoMultiEcho",
+    "arduino-twist-echo": "dimos.experimental.arduino.examples.arduino_twist_echo.module.ArduinoTwistEcho",
     "arm-teleop-module": "dimos.teleop.quest.quest_extensions.ArmTeleopModule",
     "b-box-navigation-module": "dimos.navigation.bbox_navigation.BBoxNavigationModule",
     "b1-connection-module": "dimos.robot.unitree.b1.connection.B1ConnectionModule",
