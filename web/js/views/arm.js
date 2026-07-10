@@ -120,9 +120,16 @@ export function renderArm(c) {
             </div>
             <!-- setStatus() targets #teleop-status -->
             <div id="teleop-status" class="text-sm text-gray-300 px-3 py-2 bg-bg-950 border border-[#2a2a2a] rounded-lg mb-3">Negotiating…</div>
-            <video id="robot-cam" autoplay muted playsinline
-                class="w-full rounded-lg border border-[#2a2a2a] bg-black flex-1"
-                style="min-height:320px; object-fit:contain;"></video>
+            <!-- Stage: relative + flex-1 + min-h-0 so the video actually gets
+                 height in the flex column (mirrors the go2 view's #stage). The
+                 <video> fills it absolutely; object-contain letterboxes. -->
+            <div class="relative flex-1 min-h-0 bg-black rounded-lg border border-[#2a2a2a] overflow-hidden" style="min-height:320px;">
+                <!-- Starts display:none; webrtc.js flips it to block when the track
+                     arrives (that relayout is what forces the first paint — the
+                     go2/keyboard views rely on the same toggle). -->
+                <video id="robot-cam" autoplay muted playsinline
+                    class="absolute inset-0 w-full h-full object-contain" style="display:none;"></video>
+            </div>
         </div>
         <!-- Right control panel -->
         <div class="w-full md:w-72 flex flex-col gap-3">
