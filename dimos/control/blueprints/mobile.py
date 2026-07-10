@@ -237,7 +237,7 @@ coordinator_flowbase_stereo_nav = (
             ],
         ),
         RerunBridgeModule.blueprint(
-            rerun_open="web",
+            rerun_open="native",
             max_hz={"world/frame_cloud": 10.0},
         ),
         RerunWebSocketServer.blueprint(),
