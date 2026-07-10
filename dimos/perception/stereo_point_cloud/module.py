@@ -79,16 +79,18 @@ class Config(ModuleConfig):
     # floor height was estimated correctly.)
     global_floor_margin: float = 0.04
     # Hard cap on the accumulated map — once exceeded, points are discarded
-    # UNIFORMLY AT RANDOM across the whole map. On this branch, speed/responsiveness
-    # is prioritized over completeness (odometry + current-frame focus, global map
-    # is secondary context) — a smaller cap keeps every publish small enough to
-    # stream fast even at high frequency; losing some far/old points is acceptable.
-    max_global_pts: int       = 150_000
-    # self._frame increments every valid frame (~15/s), not just keyframes. Was 15
-    # (~once/sec) to avoid overwhelming a wifi-bridged Rerun consumer with a huge
-    # (3M-point) payload every frame — with max_global_pts shrunk to keep each
-    # publish small, we can afford to publish much more often for responsiveness.
-    publish_every: int        = 2
+    # UNIFORMLY AT RANDOM across the whole map. Cut hard: RerunBridgeModule
+    # processes every topic through ONE serial message queue (subscribe_all ->
+    # single callback), so a big/frequent global_map payload doesn't just cost
+    # memory — it blocks frame_cloud messages queued behind it too, even though
+    # frame_cloud itself is cheap. Priority on this branch is fast current-frame
+    # feedback + not OOMing; global_map is now explicitly secondary/low-res.
+    max_global_pts: int       = 30_000
+    # self._frame increments every valid frame (~15/s), not just keyframes.
+    # Raised back up — global_map publishing needs to be rare enough that it
+    # doesn't compete with frame_cloud in the bridge's single serial queue.
+    # ~30 ≈ once every 2s at 15fps.
+    publish_every: int        = 30
     world_frame: str          = "world"
     madgwick_beta: float      = 0.033
 

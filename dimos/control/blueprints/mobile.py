@@ -236,14 +236,14 @@ coordinator_flowbase_stereo_nav = (
                 ),
             ],
         ),
-        # Raised from {global_map: 1.0, frame_cloud: 10.0} — this branch prioritizes
-        # responsiveness (odometry + current-frame focus) over completeness, and
-        # max_global_pts was shrunk in StereoPointCloud.Config to keep each publish
-        # small, so both can stream close to the camera's own ~15fps without
-        # repeating the earlier control-loop-stalling backpressure.
+        # global_map cut back down hard (0.5Hz) — RerunBridgeModule logs every topic
+        # through ONE serial queue, so a big/frequent global_map message blocks
+        # frame_cloud messages queued behind it even though frame_cloud itself is
+        # cheap. frame_cloud stays at the camera's own ~15fps since that's the
+        # priority on this branch (fast current-frame feedback, map is secondary).
         RerunBridgeModule.blueprint(
             rerun_open="web",
-            max_hz={"world/global_map": 8.0, "world/frame_cloud": 15.0},
+            max_hz={"world/global_map": 0.5, "world/frame_cloud": 15.0},
         ),
         RerunWebSocketServer.blueprint(),
     )
