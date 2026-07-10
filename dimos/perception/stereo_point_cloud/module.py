@@ -78,14 +78,20 @@ class Config(ModuleConfig):
     # removing the floor itself. (Was 0.04 — that deleted the mat once the
     # floor height was estimated correctly.)
     global_floor_margin: float = 0.04
-    # Hard cap on the accumulated map — once exceeded, points are discarded
-    # UNIFORMLY AT RANDOM across the whole map. Cut hard: RerunBridgeModule
-    # processes every topic through ONE serial message queue (subscribe_all ->
-    # single callback), so a big/frequent global_map payload doesn't just cost
-    # memory — it blocks frame_cloud messages queued behind it too, even though
-    # frame_cloud itself is cheap. Priority on this branch is fast current-frame
-    # feedback + not OOMing; global_map is now explicitly secondary/low-res.
-    max_global_pts: int       = 30_000
+    # Hard cap on the ACCUMULATED (in-memory) map — a genuine safety net against
+    # unbounded growth, not the main lever for publish size anymore (see
+    # local_radius_m / far_decimation below, which shrink what's actually
+    # transmitted without discarding what's stored).
+    max_global_pts: int       = 300_000
+    # Distance-based decimation for PUBLISHING only (self._acc_pts itself keeps
+    # full density always). Points within local_radius_m of the robot's current
+    # position publish at full resolution; points beyond it are randomly
+    # thinned to far_decimation fraction. Keeps the published payload small
+    # (fast, doesn't block frame_cloud in the bridge's serial queue, low
+    # memory) while still covering a whole room as you loop through it, instead
+    # of a flat cap that can silently lose entire regions once exceeded.
+    local_radius_m: float     = 3.0
+    far_decimation: float     = 0.5
     # self._frame increments every valid frame (~15/s), not just keyframes.
     # Raised back up — global_map publishing needs to be rare enough that it
     # doesn't compete with frame_cloud in the bridge's single serial queue.
@@ -443,9 +449,23 @@ class StereoPointCloud(Module):
                 pts_snap = self._acc_pts.copy()
 
         if pts_snap is not None:
+            # Publish-time distance decimation: full density near the robot's current
+            # position, thinned further out. Shrinks the actual published payload
+            # (what stresses the bridge/network/memory) without touching what's
+            # stored in self._acc_pts, so resolution recovers automatically if the
+            # robot revisits a far/thinned area later.
+            dist_to_cam = np.linalg.norm(pts_snap[:, :2] - t[:2], axis=1)
+            near = dist_to_cam <= self.config.local_radius_m
+            far_idx = np.where(~near)[0]
+            if len(far_idx) and self.config.far_decimation < 1.0:
+                n_keep = int(len(far_idx) * self.config.far_decimation)
+                far_idx = np.random.choice(far_idx, n_keep, replace=False) if n_keep else np.empty(0, dtype=np.int64)
+            pub_idx = np.concatenate([np.where(near)[0], far_idx])
+            pts_pub = pts_snap[pub_idx]
+
             self.global_map.publish(
                 PointCloud2.from_numpy(
-                    pts_snap + z_off, frame_id=self.config.world_frame, timestamp=img.ts
+                    pts_pub + z_off, frame_id=self.config.world_frame, timestamp=img.ts
                 )
             )
 
