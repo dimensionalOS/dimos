@@ -35,7 +35,10 @@ const _held = new Set();
 let _estopped = false;
 let _gripperClosed = false;
 let _estopNonce = 0;
-let _cams = ['cam1', 'cam2'];  // default: both (robot muxes them side-by-side)
+// Default to a single camera: selecting both makes the robot hstack them into a
+// 1696×480 side-by-side frame that letterboxes into an unreadable strip. Cam1/
+// Cam2/Both buttons still switch on demand.
+let _cams = ['cam1'];
 let _camsRequested = false;
 let _wasSending = false;  // true while actively jogging (for one-shot stop on release)
 
@@ -240,7 +243,7 @@ export function startArmLoop() {
     _held.clear();
     _estopped = false;
     _gripperClosed = false;
-    _cams = ['cam1', 'cam2'];
+    _cams = ['cam1'];  // single cam by default (see _cams declaration)
     _camsRequested = false;
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
@@ -251,8 +254,8 @@ export function startArmLoop() {
     state.videoStall = { stalled: false, blocked: false, armed: false };
 
     state.kbInterval = setInterval(() => {
-        // Once the reliable channel opens, ask the robot for both cameras (the
-        // mux defaults to cam1 only). One-shot.
+        // Once the reliable channel opens, sync the robot to our default cam
+        // selection (_cams). One-shot.
         if (!_camsRequested && state.stateChannel && state.stateChannel.readyState === 'open') {
             sendCameraSelect(state.stateChannel, _cams);
             _camsRequested = true;
