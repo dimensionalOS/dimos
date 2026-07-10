@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import threading
 import time
-from collections import deque
 from typing import Any
 
 import numpy as np
@@ -51,8 +50,7 @@ logger = setup_logger()
 _DEPTH_MM_THRESHOLD = 100
 _MILLIMETERS_PER_METER = 1000.0
 
-_TRAJECTORY_MAX_POSES = 50_000
-_TRAJECTORY_VIZ_MAX_POSES = 1_000
+_TRAJECTORY_MAX_POSES = 4_000
 _TRAJECTORY_PUBLISH_EVERY = 15
 _PERF_LOG_INTERVAL_FRAMES = 30
 
@@ -85,7 +83,7 @@ class StereoPointCloud(Module):
         self._imu                        = RealSenseImuFeed(beta=self.config.madgwick_beta)
         self._odom                       = PointCloudOdometry()
         self._warned_no_intrinsics       = False
-        self._trajectory_poses: deque[PoseStamped] = deque(maxlen=_TRAJECTORY_MAX_POSES)
+        self._trajectory_poses: list[PoseStamped] = []
         self._frame_count = 0
 
     @rpc
@@ -197,14 +195,14 @@ class StereoPointCloud(Module):
                     orientation=[float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3])],
                 )
             )
+            if len(self._trajectory_poses) >= _TRAJECTORY_MAX_POSES:
+                self._trajectory_poses = self._trajectory_poses[::2]
             self._frame_count += 1
-            traj_snapshot = None
-            if self._frame_count % _TRAJECTORY_PUBLISH_EVERY == 0:
-                poses = list(self._trajectory_poses)
-                stride = max(1, len(poses) // _TRAJECTORY_VIZ_MAX_POSES)
-                traj_snapshot = poses[::stride]
-                if traj_snapshot[-1] is not poses[-1]:
-                    traj_snapshot.append(poses[-1])
+            traj_snapshot = (
+                list(self._trajectory_poses)
+                if self._frame_count % _TRAJECTORY_PUBLISH_EVERY == 0
+                else None
+            )
 
         if traj_snapshot is not None:
             self.trajectory.publish(Path(ts=img.ts, frame_id=self.config.world_frame, poses=traj_snapshot))
