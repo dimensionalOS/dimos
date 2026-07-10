@@ -51,13 +51,6 @@ _FLOOR_TILT_COMP = 0.0
 _KEYFRAME_DIST_M    = 0.08               # add to global map only when camera moves >8 cm
 _KEYFRAME_ANGLE_RAD = np.deg2rad(8.0)   # or rotates >8°
 
-# Depth-reprojection consistency check: an existing map point is dropped if the
-# camera's real depth at that pixel disagrees with the point's own reprojected
-# depth by more than this margin (in either direction — nearer means something
-# now occludes it and it's stale, farther means we see clean past it to a real
-# surface). Roughly matches the fat-voxel insertion guard's own tolerance.
-_REPROJ_MARGIN_M = 0.06
-
 
 class Config(ModuleConfig):
     min_depth: float          = 0.1
@@ -230,10 +223,6 @@ class StereoPointCloud(Module):
         valid  = np.isfinite(depth) & stable
         if not valid.any():
             return
-        # Same quality bar used to build new points, reused below so edge/gradient
-        # noise can't masquerade as evidence when checking old map points against
-        # this frame's depth.
-        depth_checked = np.where(stable, depth, np.nan)
 
         uu, vv  = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32))
         dd      = depth[valid]
@@ -312,41 +301,6 @@ class StereoPointCloud(Module):
                 f"StereoPointCloud: global map started — floor at "
                 f"Z ≈ {self._world_floor_z:.3f} m (world frame, published at Z ≈ 0)"
             )
-
-        # Depth-reprojection consistency check: project existing map points into
-        # THIS frame's camera view and compare against the real depth the camera
-        # reports there right now. Disagreement (either direction, past the
-        # margin) means the old point is contradicted by fresh evidence — either
-        # a ghost from pose drift, or an obstacle that's genuinely moved — so it
-        # gets dropped. No evidence (point falls outside the frame, behind the
-        # camera, or lands on an invalid/occluded pixel) leaves it untouched.
-        # Runs every frame (not just keyframes) since it's cheap — one
-        # projection + one depth lookup per point, no ray marching — so a ghost
-        # gets challenged as soon as the very next frame looks at it.
-        with self._lock:
-            acc_pts = self._acc_pts
-            if len(acc_pts) > 0:
-                acc_cam  = (acc_pts - t) @ R
-                acc_opt  = acc_cam @ _R_OPT_TO_LINK
-                d_pred   = acc_opt[:, 2]
-                in_front = d_pred > 0.05
-                safe_d   = np.where(in_front, d_pred, 1.0)
-                u = fx * acc_opt[:, 0] / safe_d + cx
-                v = fy * acc_opt[:, 1] / safe_d + cy
-                in_bounds = in_front & (u >= 0) & (u < W) & (v >= 0) & (v < H)
-                idx = np.where(in_bounds)[0]
-                if len(idx):
-                    ui = u[idx].astype(np.int32)
-                    vi = v[idx].astype(np.int32)
-                    d_obs   = depth_checked[vi, ui]
-                    d_exp   = d_pred[idx]
-                    valid_obs    = np.isfinite(d_obs)
-                    contradicted = valid_obs & (np.abs(d_obs - d_exp) > _REPROJ_MARGIN_M)
-                    stale_idx = idx[contradicted]
-                    if len(stale_idx):
-                        keep = np.ones(len(acc_pts), dtype=bool)
-                        keep[stale_idx] = False
-                        self._acc_pts = acc_pts[keep]
 
         # World-frame accumulation: xyz_vox = xyz_cam @ R.T + t is a fixed frame.
         # Same physical point always has the same xyz_world key regardless of camera position.
