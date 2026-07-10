@@ -37,6 +37,7 @@ all_blueprints = {
     "coordinator-piper": "dimos.robot.manipulators.piper.blueprints.basic:coordinator_piper",
     "coordinator-piper-xarm": "dimos.robot.manipulators.common.mixed:coordinator_piper_xarm",
     "coordinator-servo-xarm6": "dimos.robot.manipulators.xarm.blueprints.teleop:coordinator_servo_xarm6",
+    "coordinator-stereo-nav-perception-only": "dimos.control.blueprints.mobile:coordinator_stereo_nav_perception_only",
     "coordinator-teleop-dual": "dimos.robot.manipulators.common.mixed:coordinator_teleop_dual",
     "coordinator-teleop-piper": "dimos.robot.manipulators.piper.blueprints.teleop:coordinator_teleop_piper",
     "coordinator-teleop-xarm6": "dimos.robot.manipulators.xarm.blueprints.teleop:coordinator_teleop_xarm6",
