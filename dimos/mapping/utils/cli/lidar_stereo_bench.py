@@ -59,10 +59,10 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# Rough verbal estimate (not measured): D435i sits a bit higher than the Mid-360 and
-# a bit further back, in the lidar's own body frame (X=forward, Y=left, Z=up).
-# Magnitudes are guesses — refine with a tape measure if ICP still struggles.
-_ROUGH_CAM_OFFSET_IN_LIDAR_FRAME = np.array([-0.10, 0.0, 0.10])
+# Rough verbal estimate (not measured): D435i sits higher than the Mid-360 and at
+# most 3cm further back, in the lidar's own body frame (X=forward, Y=left, Z=up).
+# Height magnitude is still a guess — refine with a tape measure if ICP still struggles.
+_ROUGH_CAM_OFFSET_IN_LIDAR_FRAME = np.array([-0.03, 0.0, 0.10])
 
 
 # ── Metrics ─────────────────────────────────────────────────────────────────
