@@ -23,11 +23,19 @@ range-binned density falloff.
 There is no calibrated D435i<->Mid-360 extrinsic for FlowBase anywhere in this repo
 (checked: dimos/robot/assembly/mid360_realsense_30.py is a different, unrelated rig —
 its mount is tilted ~36 degrees, contradicting the FlowBase README's "level
-orientation"). So both candidate clouds are ICP-aligned to the lidar reference from
-a plain identity initial guess, rather than trusting any fixed offset. Once you have
-a measured extrinsic, thread it in as `init` in `_evaluate` for faster/more robust
-convergence — identity only works because the sensors are assumed roughly co-located
-and forward-facing on a small base.
+orientation"). So both candidate clouds are ICP-aligned to the lidar reference
+instead of trusting any fixed offset.
+
+Point-to-point ICP only converges from within roughly 30-45 degrees of the true
+rotation, so a single identity-start guess isn't enough here: RealSense's raw cloud
+is in *optical* convention (Z=depth, Y=down), a fixed ~90 degree rotation from the
+lidar's body frame (Z=up) — that fixed rotation is known and applied. StereoPointCloud
+is already reoriented to body-frame convention internally, but its Madgwick-derived
+yaw has no absolute heading reference, so the remaining yaw is unknown — handled with
+a multi-start sweep over heading hypotheses, keeping whichever gives the best ICP fit.
+
+Once you have a measured extrinsic, thread it in as `base_rotation`/reduce
+`yaw_steps` in `_evaluate` for faster, more robust convergence.
 """
 
 from __future__ import annotations
@@ -46,6 +54,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.perception.stereo_point_cloud.utils import _R_OPT_TO_LINK
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -95,17 +104,47 @@ def range_binned_density(points: np.ndarray, origin: np.ndarray, bins: list[floa
     return counts.tolist()
 
 
-def icp_refine(source: np.ndarray, target: np.ndarray, init: np.ndarray, max_corr_dist: float) -> np.ndarray:
-    """Snap ``source`` onto ``target`` starting from ``init`` (4x4). Returns the refined 4x4."""
+def icp_refine(
+    source: np.ndarray, target: np.ndarray, init: np.ndarray, max_corr_dist: float
+) -> o3d.pipelines.registration.RegistrationResult:
+    """Snap ``source`` onto ``target`` starting from ``init`` (4x4)."""
     src = o3d.geometry.PointCloud()
     src.points = o3d.utility.Vector3dVector(source)
     tgt = o3d.geometry.PointCloud()
     tgt.points = o3d.utility.Vector3dVector(target)
-    result = o3d.pipelines.registration.registration_icp(
+    return o3d.pipelines.registration.registration_icp(
         src, tgt, max_corr_dist, init,
         o3d.pipelines.registration.TransformationEstimationPointToPoint(),
     )
-    return result.transformation
+
+
+def _yaw_matrix(yaw: float) -> np.ndarray:
+    c, s = np.cos(yaw), np.sin(yaw)
+    return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+
+
+def best_yaw_icp(
+    source: np.ndarray,
+    target: np.ndarray,
+    max_corr_dist: float,
+    base_rotation: np.ndarray,
+    yaw_steps: int,
+) -> np.ndarray:
+    """Multi-start ICP over ``yaw_steps`` heading hypotheses around Z; keeps the best-fitness result.
+
+    ``base_rotation`` is applied before the yaw sweep — use it for a *known* fixed
+    rotation (e.g. optical -> body frame); leave as identity when only heading is
+    unknown.
+    """
+    best: o3d.pipelines.registration.RegistrationResult | None = None
+    for i in range(yaw_steps):
+        init = np.eye(4)
+        init[:3, :3] = _yaw_matrix(2 * np.pi * i / yaw_steps) @ base_rotation
+        result = icp_refine(source, target, init, max_corr_dist)
+        if best is None or result.fitness > best.fitness:
+            best = result
+    assert best is not None
+    return best.transformation
 
 
 def apply_matrix(points: np.ndarray, matrix: np.ndarray) -> np.ndarray:
@@ -123,7 +162,8 @@ class BenchConfig(ModuleConfig):
     fscore_threshold_m: float = 0.05
     fscore_threshold_loose_m: float = 0.20
     voxel_size_m: float = 0.05
-    icp_max_corr_dist_m: float = 0.5  # generous: starting from identity, not a measured offset
+    icp_max_corr_dist_m: float = 0.5  # generous: no measured translation offset to seed from
+    yaw_steps: int = 12  # heading hypotheses swept per ICP call (30 degree steps)
     range_bins_m: list[float] = Field(default_factory=lambda: [0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 100.0])
 
 
@@ -141,10 +181,6 @@ class LidarStereoBenchmark(Module):
         self._lock = threading.Lock()
         self._latest: dict[str, PointCloud2] = {}
         self._running = False
-        # No calibrated D435i<->Mid-360 extrinsic exists for FlowBase (see module
-        # docstring) — start both candidates from identity and let ICP find the
-        # real offset. Swap in a measured 4x4 here once you have one.
-        self._icp_init = np.eye(4)
 
     @rpc
     def start(self) -> None:
@@ -208,7 +244,12 @@ class LidarStereoBenchmark(Module):
 
         lines = [f"lidar (ref): n={len(lidar_xyz)}"]
 
-        rs_icp_T = icp_refine(rs_raw_xyz, lidar_xyz, self._icp_init, cfg.icp_max_corr_dist_m)
+        # RealSense raw cloud is in optical convention (Z=depth, Y=down) — a known,
+        # fixed rotation away from the lidar's body frame (Z=up) — plus an unknown heading.
+        rs_icp_T = best_yaw_icp(
+            rs_raw_xyz, lidar_xyz, cfg.icp_max_corr_dist_m,
+            base_rotation=_R_OPT_TO_LINK.astype(np.float64), yaw_steps=cfg.yaw_steps,
+        )
         rs_xyz = apply_matrix(rs_raw_xyz, rs_icp_T)
         rs_score = self._score(lidar_xyz, rs_xyz)
         lines.append(self._fmt("realsense (raw, ICP-aligned)", rs_score))
@@ -216,8 +257,10 @@ class LidarStereoBenchmark(Module):
         if stereo_msg is not None:
             stereo_raw_xyz = stereo_msg.points_f32()
             if len(stereo_raw_xyz) >= cfg.min_points:
-                stereo_icp_T = icp_refine(
-                    stereo_raw_xyz, lidar_xyz, self._icp_init, cfg.icp_max_corr_dist_m
+                # Already body-frame-oriented (Z=up) internally — only heading is unknown.
+                stereo_icp_T = best_yaw_icp(
+                    stereo_raw_xyz, lidar_xyz, cfg.icp_max_corr_dist_m,
+                    base_rotation=np.eye(3), yaw_steps=cfg.yaw_steps,
                 )
                 stereo_xyz = apply_matrix(stereo_raw_xyz, stereo_icp_T)
                 stereo_score = self._score(lidar_xyz, stereo_xyz)
