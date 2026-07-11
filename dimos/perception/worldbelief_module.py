@@ -12,19 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Query plane of the WorldBelief stack: on-demand ``scan``/``recall`` MCP skills over
-the recording written by :class:`WorldBeliefRecorder`. Owns the warm belief fold and the
-scan/CLIP models; the recorder stays a dumb writer."""
+"""On-demand WorldBelief scan and recall over recorded perception."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+import re
 import threading
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import Field
 
 from dimos.agents.annotation import skill
+from dimos.agents.skill_result import SkillResult
 from dimos.constants import STATE_DIR
 from dimos.core.core import rpc
 from dimos.core.module import Module
@@ -34,8 +36,13 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection3d.object import Object
-from dimos.perception.detection.world_belief import WorldBelief, WorldBeliefConfig
-from dimos.perception.worldbelief_recorder import WorldBeliefRecorder
+from dimos.perception.detection.world_belief import (
+    DEFAULT_DINO_MODEL,
+    WorldBelief,
+    WorldBeliefConfig,
+)
+from dimos.perception.recall import DEFAULT_CLIP_MODEL
+from dimos.perception.worldbelief_recorder import WorldBeliefRecorderSpec
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -44,33 +51,25 @@ if TYPE_CHECKING:
 _STATE_DIR = STATE_DIR / "worldbelief"
 _HISTORY_PATH = _STATE_DIR / "worldbelief_history.db"
 
-# Default prompts so a bare `dimos mcp call scan` detects common tabletop objects instead
-# of returning [] — an open-vocab detector needs a prompt.
-DEFAULT_SCAN_PROMPTS = ["mug", "coke can", "box"]
-
-_SCAN_LOCK = threading.RLock()
-
 logger = setup_logger()
 
 
-def worldbelief_history_path() -> str:
-    return str(_HISTORY_PATH)
-
-
 class WorldBeliefModuleConfig(MemoryModuleConfig):
-    # Recording db to READ — a config fallback; the live path comes from the recorder over
-    # RPC when one is wired in (see WorldBeliefModule._recording_path).
+    # Replay reads this path directly. Live mode gets the active path from Recorder RPC
+    # and uses this value only as the base naming convention for sibling-session recall.
     db_path: str | Path = _STATE_DIR / "recordings" / "worldbelief.db"
     history_path: str | Path = _HISTORY_PATH
-    scan_prompts: list[str] = Field(default_factory=lambda: list(DEFAULT_SCAN_PROMPTS))
-    # Identity-core tuning of the owned WorldBelief; a blueprint can override its constants.
+    scan_prompts: list[str] = Field(default_factory=list)
+    depth_tolerance_s: float = Field(default=0.1, gt=0.0)
+    stationary_hz: float = Field(default=1.0, gt=0.0)
+    yoloe_model_name: str = Field(default="yoloe-11s-seg.pt", min_length=1)
+    dino_model_name: str = Field(default=DEFAULT_DINO_MODEL, min_length=1)
+    clip_model_name: str = Field(default=DEFAULT_CLIP_MODEL, min_length=1)
     belief: WorldBeliefConfig = Field(default_factory=WorldBeliefConfig)
 
 
 class WorldBeliefModule(Module):
-    """Query plane of the WorldBelief stack: ``scan``/``recall`` on demand over the
-    recording db. Owns the warm belief + scan/CLIP models; the recorder is a dumb writer.
-    """
+    """Own the shared scan/recall models and mutable WorldBelief fold."""
 
     config: WorldBeliefModuleConfig
     dedicated_worker: ClassVar[bool] = True
@@ -79,109 +78,154 @@ class WorldBeliefModule(Module):
     pointcloud: Out[PointCloud2]
     objects: Out[list[Object]]
 
-    # Recorder writing the live recording; the coordinator injects an RPC proxy when a
-    # WorldBeliefRecorder is in the blueprint. None → read config.db_path.
-    _recorder: WorldBeliefRecorder | None = None
+    recorder: WorldBeliefRecorderSpec | None = None
     _belief: WorldBelief | None = None
+    _engine_lock: threading.Lock
 
     @rpc
     def start(self) -> None:
+        # Locks are process-local runtime state and must be created after deployment.
+        self._engine_lock = threading.Lock()
+        if not self.config.g.replay:
+            self._recording_path()
         super().start()
-        # Pre-load YOLOe/CLIP/DINO off the main path so the first scan/recall is fast.
-        threading.Thread(target=self._warmup, name="worldbelief-scan-warmup", daemon=True).start()
+        with self._engine() as (scanner, _belief):
+            scanner.warmup()
+        logger.info("WorldBelief scan models warmed up")
 
     @rpc
     def stop(self) -> None:
-        belief = getattr(self, "_belief", None)
-        if belief is not None:
-            try:
-                belief.close()  # hand this session's galleries to a later model on the same path
-            except Exception as e:
-                logger.warning("belief close failed: %s", e)
+        lock = getattr(self, "_engine_lock", None)
+        if lock is not None:
+            with lock:
+                belief = getattr(self, "_belief", None)
+                if belief is not None:
+                    try:
+                        belief.close()
+                    except Exception as e:
+                        logger.warning("belief close failed: %s", e)
+                    self._belief = None
         super().stop()
 
     def _recording_path(self) -> str:
-        if self._recorder is not None:
-            try:
-                return str(self._recorder.recording_path())
-            except Exception as e:
-                logger.warning("recorder path RPC failed (using configured db_path): %s", e)
-        return str(self.config.db_path)
+        if self.config.g.replay:
+            return str(self.config.db_path)
+        if self.recorder is None:
+            raise RuntimeError("live WorldBeliefModule requires WorldBeliefRecorder")
+        path = self.recorder.recording_path()
+        if not path:
+            raise RuntimeError("WorldBeliefRecorder returned an empty recording path")
+        return str(path)
+
+    def _recording_paths(self, current: str) -> list[str]:
+        """Immutable sessions available to recall under the configured recording base."""
+        if self.config.g.replay:
+            return [current]
+        base = Path(self.config.db_path)
+        timestamped = re.compile(
+            rf"{re.escape(base.stem)}_\d{{8}}_\d{{6}}_\d{{6}}(?:_\d+)?"
+            rf"{re.escape(base.suffix)}"
+        )
+        siblings = (
+            path
+            for path in base.parent.glob(f"{base.stem}_*{base.suffix}")
+            if timestamped.fullmatch(path.name)
+        )
+        candidates = [base, *sorted(siblings)]
+        by_path = {path.resolve(): str(path) for path in candidates if path.is_file()}
+        by_path[Path(current).resolve()] = current
+        return [by_path[path] for path in sorted(by_path, key=str)]
 
     def _scanner(self) -> SceneScanner:
-        """The one warm scan engine plus the WorldBelief it folds into — belief state
-        persists across calls; galleries persist cross-session via history_path.
-
-        Callers hold ``_SCAN_LOCK`` (warmup / scan / recall all wrap this), so lazy
-        init needs no internal locking of its own."""
+        """Return the lazy scanner paired with the persistent belief and gallery.
+        Callers hold ``_engine_lock`` while initializing or using it."""
         scanner: SceneScanner | None = getattr(self, "_live_scanner", None)
         if scanner is None:
+            from dimos.models.embedding.dino import DINOModel
+            from dimos.perception.detection.detectors.yoloe import (
+                Yoloe2DDetector,
+                YoloePromptMode,
+            )
             from dimos.perception.scene_scan import SceneScanner as _SceneScanner
 
-            bcfg = self.config.belief
-            if bcfg.history_path is None:
-                bcfg = bcfg.model_copy(update={"history_path": str(self.config.history_path)})
+            bcfg = self._belief_config()
             self._belief = WorldBelief(bcfg)
             scanner = _SceneScanner(
-                target_frame="world",
+                detector=Yoloe2DDetector(
+                    model_name=self.config.yoloe_model_name,
+                    prompt_mode=YoloePromptMode.PROMPT,
+                ),
+                target_frame=bcfg.frame_id,
                 text_prompts=list(self.config.scan_prompts),
+                visual_embedder=DINOModel(model_name=self.config.dino_model_name),
+                depth_tolerance_s=self.config.depth_tolerance_s,
+                stationary_hz=self.config.stationary_hz,
             )
             self._live_scanner = scanner
         return scanner
 
+    def _belief_config(self) -> WorldBeliefConfig:
+        updates: dict[str, Any] = {
+            "appearance_model_id": self.config.dino_model_name,
+            "history_path": str(self.config.history_path),
+        }
+        return self.config.belief.model_copy(update=updates)
+
+    @contextmanager
+    def _engine(self) -> Iterator[tuple[SceneScanner, WorldBelief]]:
+        """Serialize access to the shared models and mutable belief fold."""
+        lock = getattr(self, "_engine_lock", None)
+        if lock is None:
+            raise RuntimeError("WorldBeliefModule has not started")
+        with lock:
+            scanner = self._scanner()
+            belief = self._belief
+            if belief is None:  # _scanner() initializes both; narrows for type checkers
+                raise RuntimeError("WorldBelief was not initialized")
+            yield scanner, belief
+
     def _get_recall_clip(self) -> Any:
-        """The one lazily-built CLIP model shared by memory indexing and recall search."""
         clip = getattr(self, "_recall_clip", None)
         if clip is None:
             from dimos.models.embedding.clip import CLIPModel
 
-            clip = CLIPModel()
+            clip = CLIPModel(model_name=self.config.clip_model_name)
             clip.start()
             self._recall_clip = clip
         return clip
 
-    def _index_recall_frames(self, read_store: Any, rec_path: str) -> None:
-        """Top up the shared cross-session recall index: whole-frame CLIP vectors +
-        thumbnails tagged with this recording. Incremental (watermark) and best-effort —
-        memory indexing must never fail a scan."""
-        from dimos.memory2.store.sqlite import SqliteStore
-        from dimos.perception.recall import build_frame_clip_index
+    def _index_recall_frames(self, read_store: Any, hist_store: Any, rec_path: str) -> None:
+        """Incrementally index one recording for recall; failures are non-fatal."""
+        from dimos.perception.recall import build_frame_clip_index, index_cursor_stream_name
 
         try:
-            since = getattr(self, "_recall_indexed_ts", None)
-            with SqliteStore(path=str(self.config.history_path)) as hist_store:
-                build_frame_clip_index(
-                    read_store,
-                    model=self._get_recall_clip(),
-                    start=since,
-                    index_store=hist_store,
-                    source_tag=rec_path,
-                )
-            self._recall_indexed_ts = float(read_store.stream("color_image", Image).last().ts)
+            source_end = float(read_store.stream("color_image", Image).last().ts)
+            model_id = self.config.clip_model_name
+            cursor = hist_store.stream(index_cursor_stream_name(model_id), float)
+            try:
+                since = float(cursor.tags(rec=rec_path).last().data)
+            except LookupError:
+                since = None
+            if since is not None and source_end <= since:
+                return
+            build_frame_clip_index(
+                read_store,
+                model=self._get_recall_clip(),
+                model_id=model_id,
+                start=since,
+                end=source_end,
+                index_store=hist_store,
+                source_tag=rec_path,
+            )
+            cursor.append(source_end, ts=source_end, tags={"rec": rec_path})
         except Exception as e:
             logger.warning("recall-index top-up skipped: %s", e)
 
-    def _warmup(self) -> None:
-        try:
-            with _SCAN_LOCK:  # hold through the model load so a first scan waits, then runs warm
-                self._scanner().warmup()
-            logger.info("WorldBelief scan models warmed up")
-        except Exception as e:
-            logger.warning("scan warmup failed (first scan will be slower): %s", e)
-
     @skill
-    def scan(self, prompt: list[str] | None = None, window: float = 60.0) -> list[dict[str, Any]]:
-        """Advance the world fold to now and report the believed-present objects.
+    def scan(self, prompt: list[str] | None = None, window: float = 60.0) -> SkillResult:
+        """Fold recorded frames and publish present objects.
 
-        Callable live::
-
-            dimos mcp call scan -a prompt='["cup","bottle","box"]'
-
-        Folds everything recorded since the previous scan; ``window`` bounds only the
-        FIRST scan's lookback (0 = recording start). Publishes ``detections_3d``/
-        ``pointcloud``/``objects``; the summary carries per-object trust (``confirmed`` =
-        multi-viewpoint) and identity basis (``tracked``/``reacquired``/``twin-anchor``/
-        ``restored``).
+        ``prompt`` overrides configured prompts; ``window`` limits the initial scan.
         """
         import copy as _copy
 
@@ -190,92 +234,137 @@ class WorldBeliefModule(Module):
             aggregate_pointclouds,
             to_detection3d_array,
         )
+        from dimos.perception.scene_scan import ScanIncompleteError
 
-        rec_path = self._recording_path()
-        with _SCAN_LOCK:  # serialize concurrent scan/recall (shared warm belief)
-            scanner = self._scanner()
-            belief = self._belief
-            if belief is None:  # unreachable — _scanner() builds it; narrows for mypy
-                raise RuntimeError("belief not initialized")
+        requested = self.config.scan_prompts if prompt is None else prompt
+        if not isinstance(requested, list) or any(
+            not isinstance(value, str) or not value.strip() for value in requested
+        ):
+            return SkillResult.fail("INVALID_INPUT", "prompt must contain only non-empty strings")
+        prompts = sorted({value.strip() for value in requested})
+        if not prompts:
+            return SkillResult.fail(
+                "INVALID_INPUT", "scan requires a prompt or configured scan_prompts"
+            )
+
+        try:
+            rec_path = self._recording_path()
+        except (TimeoutError, OSError, RuntimeError) as exc:
+            return SkillResult.fail("INVALID_STATE", f"Recorder unavailable: {exc}")
+
+        try:
             with SqliteStore(path=rec_path, must_exist=True) as read_store:
-                # One call answers with the FULLY-CURRENT world, however long the backlog:
-                # the caller asked "what is the world now?" — a partial answer needing a
-                # re-ask is worse than a wait. The CLI waits accordingly
-                # (`dimos mcp call --timeout`, default 600 s).
-                present = scanner.scan_recent(
-                    read_store,
-                    belief,
-                    window=window,
-                    prompt=prompt or list(self.config.scan_prompts),
-                )
-                # every scan also tops up the cross-session recall memory, so "when did
-                # I see X" is answerable for any session that ever scanned
-                self._index_recall_frames(read_store, rec_path)
-            # Publish COPIES: present() returns the live internal entities, which later
-            # scans mutate in place — an in-process consumer holding the payload would see
-            # geometry change under it (torn reads).
-            present = [_copy.copy(o) for o in present]
-            ts = present[0].ts if present else None
-            self.detections_3d.publish(to_detection3d_array(present, frame_id="world", ts=ts))
-            # detected-object clouds, colored per object id (downsampled to bound the payload)
-            self.pointcloud.publish(aggregate_pointclouds(present).voxel_downsample(0.005))
-            # → PickAndPlace obstacle monitor (autoconnect-bound). Publishes tentative+confirmed:
-            # conservative-safe for collision; a grasp consumer must gate on trust (present_for_grasp).
-            self.objects.publish(present)
-            return [
+                with self._engine() as (scanner, belief):
+                    vocabulary = tuple(prompts)
+                    active = getattr(self, "_active_scan_prompts", None)
+                    prompt_changed = active is not None and active != vocabulary
+                    result = scanner.scan_recent(
+                        read_store,
+                        belief,
+                        window=window,
+                        prompt=prompts,
+                    )
+                    if prompt_changed and result.folded_frames == 0:
+                        raise ScanIncompleteError(
+                            "no new frame was available for the changed prompt vocabulary"
+                        )
+                    self._active_scan_prompts = vocabulary
+                    # Out.publish may invoke in-process consumers with the same object.
+                    # Deep snapshots keep those consumers out of mutable belief state.
+                    present = _copy.deepcopy(result.objects)
+            summaries = [
                 {
-                    "name": o.name,
-                    "id": o.object_id[:8],
-                    "trust": belief.trust_of(o.object_id),
-                    "basis": belief.basis_of(o.object_id),
+                    "name": obj.name,
+                    "id": obj.object_id,
+                    "trust": obj.identity_status,
+                    "basis": obj.identity_basis,
+                    "frame_id": self.config.belief.frame_id,
+                    "last_seen_ts": float(obj.last_seen_ts or obj.ts),
+                    "geometry_ts": float(obj.ts),
+                    "geometry_frozen": bool(
+                        obj.observation_partial
+                        or (obj.last_seen_ts is not None and obj.last_seen_ts > obj.ts)
+                    ),
+                    "observation_partial": bool(obj.observation_partial),
                     "xyz": [
-                        round(float(o.center.x), 3),
-                        round(float(o.center.y), 3),
-                        round(float(o.center.z), 3),
+                        float(obj.center.x),
+                        float(obj.center.y),
+                        float(obj.center.z),
                     ],
                 }
-                for o in present
+                for obj in present
             ]
+        except FileNotFoundError as exc:
+            return SkillResult.fail("INVALID_STATE", str(exc))
+        except ScanIncompleteError as exc:
+            return SkillResult.fail("EXECUTION_FAILED", f"Scan incomplete: {exc}")
+
+        frame_id = self.config.belief.frame_id
+        self.detections_3d.publish(
+            to_detection3d_array(present, frame_id=frame_id, ts=result.as_of_ts)
+        )
+        cloud = aggregate_pointclouds(present).voxel_downsample(0.005)
+        cloud.frame_id = frame_id
+        cloud.ts = result.as_of_ts
+        self.pointcloud.publish(cloud)
+        self.objects.publish(present)
+        return SkillResult.ok(
+            f"Scan complete: {len(present)} object(s) present",
+            objects=summaries,
+            frame_id=frame_id,
+            source_end_ts=result.source_end_ts,
+            as_of_ts=result.as_of_ts,
+            selected_frames=result.selected_frames,
+            folded_frames=result.folded_frames,
+            skipped_frames=result.skipped_frames,
+            prompts=list(vocabulary),
+            prompt_changed=prompt_changed,
+        )
 
     @skill
     def recall(self, text: str, k: int = 20) -> dict[str, Any] | None:
-        """Recall "when/where did I last see <text>" over every session ever recorded.
+        """Search all recorded sessions for ``text``.
 
-        Callable live::
-
-            dimos mcp call recall -a text="coffee cup"
-
-        The CLIP index lives in the shared history store, so one search spans all
-        sessions; this session's new frames are indexed incrementally first. CLIP only
-        proposes moments (whole-frame similarity is nearly flat) — the detector confirms
-        them best-first against each moment's source recording. Returns ``{when_ts,
-        where_camera, where_object, recording, clip_similarity}`` for the confirmed
-        moment; ``where_object`` is None when nothing confirms (fields then describe the
-        best unverified hit) or the footage is gone. ``None`` when nothing matches.
+        Detector-confirmed hits include ``where_object``.
         """
         from contextlib import nullcontext
 
         from dimos.memory2.store.sqlite import SqliteStore
         from dimos.perception.recall import recall as _recall
 
+        text = text.strip()
+        if not text:
+            raise ValueError("recall text must be non-empty")
+        if k <= 0:
+            raise ValueError("recall k must be positive")
+
         rec_path = self._recording_path()
-        with _SCAN_LOCK:  # serialize concurrent scan/recall (shared CLIP model + index watermark)
-            clip = self._get_recall_clip()
-            with (
-                SqliteStore(path=rec_path, must_exist=True) as read_store,
-                SqliteStore(path=str(self.config.history_path)) as hist_store,
-            ):
-                # top up memory with any frames since the last scan/recall, then search
-                # the SHARED index — one query spans every session ever indexed. Object
-                # localization always uses a fresh throwaway belief per moment — a past
-                # window must never fold into the live one.
-                self._index_recall_frames(read_store, rec_path)
+        with (
+            SqliteStore(path=rec_path, must_exist=True) as read_store,
+            SqliteStore(path=str(self.config.history_path)) as hist_store,
+        ):
+            with self._engine() as (scanner, _belief):
+                clip = self._get_recall_clip()
+                # Index each immutable session incrementally. Historical localization uses
+                # a throwaway belief so it cannot mutate the live fold.
+                current_path = Path(rec_path).resolve()
+                for recording in self._recording_paths(rec_path):
+                    if Path(recording).resolve() == current_path:
+                        self._index_recall_frames(read_store, hist_store, rec_path)
+                        continue
+                    try:
+                        with SqliteStore(path=recording, must_exist=True) as old_store:
+                            self._index_recall_frames(old_store, hist_store, recording)
+                    except (FileNotFoundError, OSError) as exc:
+                        logger.warning("recall skipped recording %s: %s", recording, exc)
                 hit, obj_center = _recall(
                     hist_store,
                     text,
                     model=clip,
+                    model_id=self.config.clip_model_name,
                     k=k,
-                    detector=self._scanner()._detector,
+                    detector=scanner.detector,
+                    visual_embedder=scanner.visual_embedder,
                     open_recording=lambda rec: (
                         nullcontext(read_store)
                         if rec == rec_path
@@ -302,6 +391,6 @@ class WorldBeliefModule(Module):
                 round(float(obj_center.z), 3),
             ],
             "recording": Path(rec_tag).name if rec_tag else None,
-            # whole-frame CLIP text-image cosine — uncalibrated; only the RANKING is meaningful
+            # Uncalibrated CLIP cosine; use for ranking, not as an absolute score.
             "clip_similarity": round(float(hit.similarity or 0.0), 3),
         }

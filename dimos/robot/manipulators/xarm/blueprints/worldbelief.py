@@ -12,17 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""xArm6 WorldBelief blueprint — log-first, pulled perception (no live detection).
-
-No continuous perception module: detection+lift+embeddings run only when asked, over
-the memory2 recording. The WorldBeliefModule exposes ``scan`` and ``recall`` as MCP
-skills over the log the recorder writes.
-"""
+"""xArm6 WorldBelief perception stack."""
 
 from __future__ import annotations
 
 from functools import partial
-import math
 from typing import Any
 
 import rerun.blueprint as rrb
@@ -31,7 +25,7 @@ from dimos.agents.mcp.mcp_server import McpServer
 from dimos.constants import STATE_DIR
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -46,15 +40,6 @@ XARM6_WORLDBELIEF_CAMERA_TRANSFORM = Transform(
     rotation=Quaternion(0.70513398, 0.00535696, 0.70897578, -0.01052180),
 )
 
-XARM6_WORLDBELIEF_HOME_JOINTS = (
-    0.0,
-    math.radians(-22.3),
-    math.radians(-22.3),
-    0.0,
-    math.radians(-22.3),
-    0.0,
-)
-
 
 def _topic_to_entity(topic: Any) -> str:
     topic_name = str(getattr(topic, "name", topic)).split("#", 1)[0]
@@ -63,8 +48,8 @@ def _topic_to_entity(topic: Any) -> str:
         "/camera_info": "world/color_camera",
         "/depth_image": "world/depth_camera/depth_image",
         "/depth_camera_info": "world/depth_camera",
-        "/detections_3d": "world/detections_3d",  # published on demand by WorldBeliefModule.scan()
-        "/pointcloud": "world/pointcloud",  # detected-object clouds (colored per object id)
+        "/detections_3d": "world/detections_3d",
+        "/pointcloud": "world/pointcloud",
     }.get(topic_name, f"world/{topic_name.lstrip('/')}")
 
 
@@ -81,32 +66,20 @@ def _rerun_blueprint() -> rrb.Blueprint:
     )
 
 
-_hw = xarm6_hardware("arm", gripper=True, home_joints=list(XARM6_WORLDBELIEF_HOME_JOINTS))
+_hw = xarm6_hardware("arm")
+_hw.auto_enable = True
 
 xarm6_worldbelief = autoconnect(
-    PickAndPlaceModule.blueprint(
+    # Provides wrist-camera FK/TF.
+    ManipulationModule.blueprint(
         robots=[
             make_xarm6_model_config(
                 name="arm",
-                add_gripper=True,
-                # full arm chain to tf (matches the original) so the whole arm is visible
-                # in `dimos mem rerun` and the recorder captures world->link6->camera.
-                tf_extra_links=[
-                    "link_base",
-                    "link1",
-                    "link2",
-                    "link3",
-                    "link4",
-                    "link5",
-                    "link6",
-                    "link_eef",
-                ],
-                home_joints=list(XARM6_WORLDBELIEF_HOME_JOINTS),
+                add_gripper=False,
+                # Enables TF publication.
+                tf_extra_links=["link_base"],
             ),
         ],
-        planning_timeout=10.0,
-        visualization={"backend": "meshcat"},
-        floor_z=-0.02,
     ),
     RealSenseCamera.blueprint(
         width=640,
@@ -139,10 +112,16 @@ xarm6_worldbelief = autoconnect(
     WorldBeliefModule.blueprint(
         db_path=STATE_DIR / "worldbelief" / "xarm6" / "recordings" / "xarm6_worldbelief.db",
         history_path=STATE_DIR / "worldbelief" / "xarm6" / "worldbelief_history.db",
+        scan_prompts=[],
+        depth_tolerance_s=0.1,
+        stationary_hz=4.0,
+        yoloe_model_name="yoloe-11l-seg.pt",
+        dino_model_name="facebook/dinov2-base",
+        clip_model_name="openai/clip-vit-base-patch32",
     ),
     McpServer.blueprint(),
     coordinator(
         hardware=[_hw],
-        tasks=[trajectory_task(_hw, name="traj_xarm")],
+        tasks=[trajectory_task(_hw)],
     ),
 ).global_config(n_workers=8)

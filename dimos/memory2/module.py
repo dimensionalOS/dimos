@@ -359,9 +359,7 @@ class Recorder(MemoryModule):
 
         for name, port in self.inputs.items():
             stream_name = self.config.stream_remapping.get(name, name)
-            stream: Stream[Any] = self.store.stream(
-                stream_name, port.type, **self._stream_kwargs(name)
-            )
+            stream: Stream[Any] = self.store.stream(stream_name, port.type)
             self._port_to_stream(name, port, stream)
             logger.info("Recording %s -> %s (%s)", name, stream_name, port.type.__name__)
 
@@ -391,17 +389,9 @@ class Recorder(MemoryModule):
                     ts,
                     getattr(msg, "ts", None),
                 )
-            try:
-                stream.append(msg, ts=ts, pose=pose)
-            except sqlite3.ProgrammingError as exc:
-                if "closed database" in str(exc).lower():
-                    return
-                raise
+            stream.append(msg, ts=ts, pose=pose)
 
         self.process_observable(input_topic.pure_observable(), on_msg)
-
-    def _stream_kwargs(self, name: str) -> dict[str, Any]:
-        return {}
 
     def _prepare_streams(self) -> None:
         """On APPEND, drop the streams this recorder is about to (re)write — the

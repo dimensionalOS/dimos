@@ -60,18 +60,11 @@ class XArmAdapter(ManipulatorAdapter):
     No inheritance required - just matching method signatures.
     """
 
-    def __init__(
-        self,
-        address: str,
-        dof: int = 6,
-        initial_positions: list[float] | None = None,
-        **_: object,
-    ) -> None:
+    def __init__(self, address: str, dof: int = 6, **_: object) -> None:
         if not address:
             raise ValueError("address (IP) is required for XArmAdapter")
         self._ip = address
         self._dof = dof
-        self._initial_positions = list(initial_positions) if initial_positions is not None else None
         self._arm: XArmAPI | None = None
         self._control_mode: ControlMode = ControlMode.POSITION
         self._gripper_enabled: bool = False
@@ -274,8 +267,6 @@ class XArmAdapter(ManipulatorAdapter):
         return code == 0
 
     def _initial_joints_degrees(self) -> list[float] | None:
-        if self._initial_positions is not None:
-            return [math.degrees(position) for position in self._initial_positions]
         if self._dof == 6:
             return _XARM6_INITIAL_JOINTS_DEG
         if self._dof == 7:

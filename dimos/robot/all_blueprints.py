@@ -264,7 +264,7 @@ all_modules = {
     "wavefront-frontier-explorer": "dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector.WavefrontFrontierExplorer",
     "web-input": "dimos.agents.web_human_input.WebInput",
     "websocket-vis-module": "dimos.web.websocket_vis.websocket_vis_module.WebsocketVisModule",
-    "worldbelief-module": "dimos.perception.worldbelief_module.WorldBeliefModule",
-    "worldbelief-recorder": "dimos.perception.worldbelief_recorder.WorldBeliefRecorder",
+    "world-belief-module": "dimos.perception.worldbelief_module.WorldBeliefModule",
+    "world-belief-recorder": "dimos.perception.worldbelief_recorder.WorldBeliefRecorder",
     "zed-camera": "dimos.hardware.sensors.camera.zed.camera.ZEDCamera",
 }

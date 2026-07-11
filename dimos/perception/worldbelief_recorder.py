@@ -12,14 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Record plane of the WorldBelief stack: raw perception log only; the query plane
-(on-demand scan/recall) lives in :mod:`dimos.perception.worldbelief_module`."""
-
 from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from dimos.constants import STATE_DIR
 from dimos.core.core import rpc
@@ -29,12 +26,20 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
 
 _STATE_DIR = STATE_DIR / "worldbelief"
 _RECORDING_BASE_PATH = _STATE_DIR / "recordings" / "worldbelief.db"
 
 logger = setup_logger()
+
+
+class WorldBeliefRecorderSpec(Spec, Protocol):
+    """RPC boundary exposed to the WorldBelief query module."""
+
+    @rpc
+    def recording_path(self) -> str: ...
 
 
 def _timestamped_recording_path(base: str | Path) -> Path:
@@ -54,9 +59,7 @@ class WorldBeliefRecorderConfig(RecorderConfig):
 
 
 class WorldBeliefRecorder(Recorder):
-    """Record the raw perception log (camera + tf + joint state) — detections,
-    embeddings, and pointclouds are derived on demand, never stored. Inspect with
-    ``dimos mem rerun``."""
+    """Record camera, TF, and joint-state evidence."""
 
     color_image: In[Image]
     depth_image: In[Image]
@@ -76,16 +79,15 @@ class WorldBeliefRecorder(Recorder):
 
     @rpc
     def recording_path(self) -> str:
-        """The live (timestamped) db path — the query module reads the same file."""
+        """Return the active recording path."""
         return str(self.config.db_path)
 
-    @staticmethod
-    def _stream_kwargs(name: str) -> dict[str, Any]:
-        return {"codec": "lcm"} if name == "depth_image" else {}
+    def _prepare_streams(self) -> None:
+        super()._prepare_streams()
+        depth = self.config.stream_remapping.get("depth_image", "depth_image")
+        self.store.stream(depth, Image, codec="lz4+lcm")
 
     @pose_setter_for("coordinator_joint_state")
     async def _proprio_pose(self, msg: Any) -> Any:
-        """Anchor joint state to identity: it's proprioception, not a spatially-anchored
-        reading, and its ``coordinator`` frame isn't in the tf tree — a real tf lookup
-        would fail and spam "No pose" warnings every tick."""
+        """Use an identity pose for proprioceptive joint-state records."""
         return Transform.identity().to_pose()

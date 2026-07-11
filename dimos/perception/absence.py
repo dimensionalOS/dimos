@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Geometric evidence-of-absence: classify a believed point against a depth frame as
-OUT_OF_VIEW (no evidence), ABSENT (seen through), OCCLUDED (blocked), or PRESENT."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -35,7 +32,7 @@ OCCLUDED = "occluded"
 
 _NEAR_M = 0.05  # Sensor unreliable within 5cm of camera; too close to measure
 _FREE_MARGIN_M = 0.03  # Tolerance for sensor noise and aiming error
-_PATCH_PX = 2  # Median over 5×5 patch to smooth sensor speckle and improve robustness
+_PATCH_PX = 2  # 5x5 median depth patch
 
 
 def classify_visibility(
@@ -46,9 +43,8 @@ def classify_visibility(
     *,
     near_extent_m: float = 0.0,
 ) -> str:
-    """Project belief point to camera image, read median depth in a local patch, and
-    classify as PRESENT, ABSENT (see-through), OCCLUDED (blocked), or OUT_OF_VIEW.
-    ``near_extent_m``: tolerance for object's own depth extent (half-depth)."""
+    """Classify a world point as PRESENT, ABSENT, OCCLUDED, or OUT_OF_VIEW.
+    ``near_extent_m`` widens the expected PRESENT depth band."""
     cam_from_world = world_from_camera.inverse()
     p = cam_from_world.rotation.rotate_vector(center_world) + cam_from_world.translation
     x, y, z = p.x, p.y, p.z
@@ -71,7 +67,7 @@ def classify_visibility(
     valid = patch[np.isfinite(patch) & (patch > 0.0)]
     if valid.size == 0:
         return OCCLUDED  # No depth data; assume blocked (safer than guessing see-through)
-    # ABSENT only if ALL depths are way beyond expected (by >3cm tolerance)
+    # Absence requires every valid sample to exceed the expected depth.
     if float(valid.min()) > z + _FREE_MARGIN_M:
         return ABSENT
     d = float(np.median(valid))

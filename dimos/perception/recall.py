@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Frame-CLIP memory index + recall over recordings — "when/where did I last see X"."""
+"""CLIP-based recall over recorded frames."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
+import hashlib
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -35,38 +36,41 @@ DEFAULT_CLIP_MODEL = "openai/clip-vit-base-patch32"
 
 
 def index_stream_name(model_id: str) -> str:
-    return "color_image_clip_" + re.sub(r"[^0-9A-Za-z]+", "_", model_id).strip("_")
+    slug = re.sub(r"[^0-9A-Za-z]+", "_", model_id).strip("_")
+    suffix = (
+        ""
+        if model_id == DEFAULT_CLIP_MODEL
+        else f"_{hashlib.sha256(model_id.encode()).hexdigest()[:16]}"
+    )
+    return f"color_image_clip_{slug}{suffix}"
 
 
-def _build_clip(model_id: str) -> Any:
-    from dimos.models.embedding.clip import CLIPModel
-
-    model = CLIPModel(model_name=model_id)
-    model.start()
-    return model
+def index_cursor_stream_name(model_id: str) -> str:
+    return index_stream_name(model_id) + "_source_cursor"
 
 
 def build_frame_clip_index(
     store: Store,
     *,
+    model: Any,
     src: str = "color_image",
-    model: Any = None,
     model_id: str = DEFAULT_CLIP_MODEL,
     hz: float = 2.0,
     start: float | None = None,
+    end: float | None = None,
     index_store: Store | None = None,
     source_tag: str | None = None,
     thumbnail_px: int = 192,
 ) -> int:
-    """Backfill a CLIP index over ``store``'s color frames. Returns the number indexed."""
-    if model is None:
-        model = _build_clip(model_id)
+    """Backfill a CLIP index within ``start < ts <= end`` when bounds are supplied."""
     index = (index_store if index_store is not None else store).stream(
         index_stream_name(model_id), Image
     )
     src_stream = store.stream(src, Image)
     if start is not None:
-        src_stream = src_stream.time_range(start, float("inf"))
+        src_stream = src_stream.after(start)
+    if end is not None:
+        src_stream = src_stream.time_range(float("-inf"), end)
     pipeline = (
         # Skip pose-less frames — they can't answer "where" (world-frame frames need no pose).
         src_stream.filter(
@@ -101,21 +105,28 @@ def confirm_object_position(
     when_ts: float,
     *,
     detector: Any = None,
+    visual_embedder: Any = None,
     window_s: float = 2.0,
 ) -> Any | None:
-    """The OBJECT's world position around a recalled moment, or None."""
+    """The object's position: two-frame DINO confirmation, or one-frame without DINO."""
     from dimos.perception.detection.world_belief import WorldBelief, WorldBeliefConfig
-    from dimos.perception.scene_scan import SceneScanner
+    from dimos.perception.scene_scan import ScanIncompleteError, SceneScanner
 
     scanner = SceneScanner(
         detector=detector,
-        embed=False,  # position only — no identity galleries needed
+        embed=visual_embedder is not None,
+        visual_embedder=visual_embedder,
     )
-    belief = WorldBelief(WorldBeliefConfig(min_frames=2, min_span_s=0.0))
-    present = scanner.scan(
-        store, belief, prompt=[text], start=when_ts - window_s, end=when_ts + window_s
+    belief = WorldBelief(
+        WorldBeliefConfig(min_frames=2 if visual_embedder is not None else 1, min_span_s=0.0)
     )
-    matches = [o for o in present if o.name == text]
+    try:
+        result = scanner.scan(
+            store, belief, prompt=[text], start=when_ts - window_s, end=when_ts + window_s
+        )
+    except ScanIncompleteError:
+        return None
+    matches = [o for o in result.objects if o.name == text]
     if not matches:
         return None
     return max(matches, key=lambda o: float(o.confidence)).center
@@ -125,17 +136,16 @@ def recall(
     store: Store,
     text: str,
     *,
-    model: Any = None,
+    model: Any,
     model_id: str = DEFAULT_CLIP_MODEL,
     k: int = 20,
     detector: Any = None,
+    visual_embedder: Any = None,
     open_recording: Callable[[str], Any] | None = None,
     window_s: float = 2.0,
     max_moments: int = 5,
 ) -> tuple[EmbeddedObservation[Image] | None, Any | None]:
-    """Recall "when/where did I see ``text``" → ``(hit, object_center)``"""
-    if model is None:
-        model = _build_clip(model_id)
+    """Return the best matching frame and detector-confirmed object center."""
     index = store.stream(index_stream_name(model_id), Image)
     hits = index.search(model.embed_text(text), k=k).to_list()
     hits.sort(key=lambda o: o.similarity or 0.0, reverse=True)
@@ -156,7 +166,12 @@ def recall(
             scanned.append((rec, float(hit.ts)))
             with source as rec_store:
                 center = confirm_object_position(
-                    rec_store, text, float(hit.ts), detector=detector, window_s=window_s
+                    rec_store,
+                    text,
+                    float(hit.ts),
+                    detector=detector,
+                    visual_embedder=visual_embedder,
+                    window_s=window_s,
                 )
             if center is not None:
                 if len(scanned) > 1:
