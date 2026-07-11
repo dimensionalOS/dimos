@@ -16,7 +16,7 @@ from types import MappingProxyType
 
 import pytest
 
-from dimos.core.coordination.blueprints import autoconnect, namespace
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -88,12 +88,10 @@ def _fleet_blueprint():
         Aggregator.blueprint(),
         FleetCommander.blueprint(),
         *[
-            namespace(
-                f"robot{i}",
+            autoconnect(
                 Sensor.blueprint(),
                 LocalMapper.blueprint(),
-                expose={"pointcloud"},
-            )
+            ).namespace(f"robot{i}", expose={"pointcloud"})
             for i in range(2)
         ],
     ).remappings([(FleetCommander, "cmd", "robot0/cmd")])
@@ -178,13 +176,13 @@ def test_fleet_blueprint_config_keys():
 def test_load_blueprint_resolves_existing_provider_in_same_namespace():
     coordinator = ModuleCoordinator.build(
         autoconnect(
-            namespace("robot0", Sensor.blueprint()),
-            namespace("robot1", Sensor.blueprint()),
+            Sensor.blueprint().namespace("robot0"),
+            Sensor.blueprint().namespace("robot1"),
         ),
         dict(_BUILD_WITHOUT_RERUN),
     )
     try:
-        coordinator.load_blueprint(namespace("robot0", LocalMapper.blueprint()))
+        coordinator.load_blueprint(LocalMapper.blueprint().namespace("robot0"))
 
         mapper0 = coordinator.get_instance("robot0/localmapper")
         assert mapper0.sensor_name() == "robot0/sensor"

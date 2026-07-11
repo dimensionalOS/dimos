@@ -26,7 +26,7 @@ Usage:
     ROBOT_IPS=10.0.0.102,10.0.0.209 dimos --simulation run unitree-go2-multi-teleop
 """
 
-from dimos.core.coordination.blueprints import autoconnect, namespace
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
@@ -35,11 +35,10 @@ _ips = global_config.processed_robot_ips
 
 unitree_go2_multi_teleop = autoconnect(
     *[
-        namespace(
-            f"robot{i}",
+        autoconnect(
             GO2Connection.blueprint(ip=ip),
             KeyboardTeleop.blueprint(),
-        )
+        ).namespace(f"robot{i}")
         for i, ip in enumerate(_ips)
     ],
 ).global_config(n_workers=max(2, 2 * len(_ips)), robot_model="unitree_go2")

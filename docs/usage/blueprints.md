@@ -257,12 +257,12 @@ blueprint.remappings([
 
 You can use namespaces to control several robot instances.
 
-Use `namespace(prefix, *blueprints, expose=...)` to isolate a set of modules
+Use `.namespace(prefix, expose=...)` on a blueprint to isolate its modules
 under a name prefix so several copies can coexist. Because blueprints are plain
 Python values, a variable-size (and mixed-type) fleet is just a loop:
 
 ```python session=blueprint-ns
-from dimos.core.coordination.blueprints import autoconnect, namespace
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 
@@ -281,7 +281,7 @@ robot_ips = ["10.0.0.1", "10.0.0.2"]
 fleet = autoconnect(
     AggregateMapper.blueprint(),   # shared: one instance for the whole fleet
     *[
-        namespace(f"robot{i}", Sensor.blueprint(ip=ip), expose={"pointcloud"})
+        Sensor.blueprint(ip=ip).namespace(f"robot{i}", expose={"pointcloud"})
         for i, ip in enumerate(robot_ips)
     ],
 )

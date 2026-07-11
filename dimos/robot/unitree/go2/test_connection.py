@@ -67,7 +67,7 @@ def test_odom_to_tf_unprefixed_by_default() -> None:
 
 
 def test_odom_to_tf_prefixed() -> None:
-    """namespace() sets frame_id_prefix: robot-local frames get prefixed, the
+    """.namespace() sets frame_id_prefix: robot-local frames get prefixed, the
     odom parent frame stays global so all robots hang off one tree root."""
     odom = PoseStamped(ts=1.0, frame_id="world")
     base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom, prefix="robot0")

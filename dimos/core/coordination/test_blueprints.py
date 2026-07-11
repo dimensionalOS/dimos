@@ -32,7 +32,6 @@ from dimos.core.coordination.blueprints import (
     ModuleRef,
     StreamRef,
     autoconnect,
-    namespace,
 )
 from dimos.core.core import rpc
 from dimos.core.module import Module
@@ -255,7 +254,7 @@ def test_active_blueprints_filters_disabled() -> None:
 
 
 def test_namespace_prefixes_names_streams_and_frames() -> None:
-    blueprint = namespace("robot0", ModuleA.blueprint(), ModuleB.blueprint())
+    blueprint = autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).namespace("robot0")
 
     atom_a = next(a for a in blueprint.blueprints if a.module is ModuleA)
     assert atom_a.name == "robot0/modulea"
@@ -267,7 +266,7 @@ def test_namespace_prefixes_names_streams_and_frames() -> None:
 
 
 def test_namespace_expose_keeps_names_global() -> None:
-    blueprint = namespace("robot0", ModuleA.blueprint(), expose={"data1"})
+    blueprint = ModuleA.blueprint().namespace("robot0", expose={"data1"})
 
     assert ("robot0/modulea", "data1") not in blueprint.remapping_map
     assert blueprint.remapping_map[("robot0/modulea", "data2")] == "robot0/data2"
@@ -275,16 +274,16 @@ def test_namespace_expose_keeps_names_global() -> None:
 
 def test_namespace_expose_typo_raises() -> None:
     with pytest.raises(ValueError, match="data_typo"):
-        namespace("robot0", ModuleA.blueprint(), expose={"data_typo"})
+        ModuleA.blueprint().namespace("robot0", expose={"data_typo"})
 
 
 def test_namespace_invalid_prefix_raises() -> None:
     with pytest.raises(ValueError, match="Invalid namespace prefix"):
-        namespace("a/b", ModuleA.blueprint())
+        ModuleA.blueprint().namespace("a/b")
 
 
 def test_namespace_nesting_composes() -> None:
-    blueprint = namespace("fleet", namespace("robot0", ModuleA.blueprint()))
+    blueprint = ModuleA.blueprint().namespace("robot0").namespace("fleet")
 
     atom = blueprint.blueprints[0]
     assert atom.name == "fleet/robot0/modulea"
@@ -293,29 +292,29 @@ def test_namespace_nesting_composes() -> None:
 
 
 def test_namespace_keeps_user_frame_id_prefix() -> None:
-    blueprint = namespace("robot0", ModuleA.blueprint(frame_id_prefix="custom"))
+    blueprint = ModuleA.blueprint(frame_id_prefix="custom").namespace("robot0")
 
     assert blueprint.blueprints[0].kwargs["frame_id_prefix"] == "custom"
 
 
 def test_namespace_allows_duplicate_module_classes() -> None:
     blueprint = autoconnect(
-        namespace("robot0", ModuleA.blueprint(key1="a")),
-        namespace("robot1", ModuleA.blueprint(key1="b")),
+        ModuleA.blueprint(key1="a").namespace("robot0"),
+        ModuleA.blueprint(key1="b").namespace("robot1"),
     )
 
     atoms = [a for a in blueprint.blueprints if a.module is ModuleA]
     assert {a.name for a in atoms} == {"robot0/modulea", "robot1/modulea"}
     # Later-wins dedup still applies per instance name.
-    merged = autoconnect(blueprint, namespace("robot1", ModuleA.blueprint(key1="c")))
+    merged = autoconnect(blueprint, ModuleA.blueprint(key1="c").namespace("robot1"))
     robot1 = next(a for a in merged.blueprints if a.name == "robot1/modulea")
     assert robot1.kwargs["key1"] == "c"
 
 
 def test_namespace_config_keys_escaped() -> None:
     blueprint = autoconnect(
-        namespace("robot0", ModuleA.blueprint()),
-        namespace("robot1", ModuleA.blueprint()),
+        ModuleA.blueprint().namespace("robot0"),
+        ModuleA.blueprint().namespace("robot1"),
     )
     config = blueprint.config()
     assert {"robot0_modulea", "robot1_modulea", "g"} <= set(config.model_fields.keys())
@@ -331,11 +330,10 @@ def test_explicit_instance_name_sets_blueprint_identity() -> None:
 
 
 def test_namespace_prefixes_pinned_transports() -> None:
-    blueprint = namespace(
-        "robot0",
-        autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).transports(
-            {("data1", Data1): LCMTransport("/custom_topic", Data1)}
-        ),
+    blueprint = (
+        autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
+        .transports({("data1", Data1): LCMTransport("/custom_topic", Data1)})
+        .namespace("robot0")
     )
 
     transport = blueprint.transport_map[("robot0/data1", Data1)]
@@ -346,14 +344,14 @@ def test_namespace_prefixes_pinned_transports() -> None:
 def test_namespace_remappings_by_instance_name() -> None:
     # A remapping added after namespacing can target an instance by name.
     blueprint = autoconnect(
-        namespace("robot0", ModuleA.blueprint()),
-        namespace("robot1", ModuleA.blueprint()),
+        ModuleA.blueprint().namespace("robot0"),
+        ModuleA.blueprint().namespace("robot1"),
     ).remappings([("robot0/modulea", "data1", "special_data")])
 
     assert blueprint.remapping_map[("robot0/modulea", "data1")] == "special_data"
     # Targeting the class is ambiguous with two instances.
     with pytest.raises(ValueError, match="multiple instances"):
         autoconnect(
-            namespace("robot0", ModuleA.blueprint()),
-            namespace("robot1", ModuleA.blueprint()),
+            ModuleA.blueprint().namespace("robot0"),
+            ModuleA.blueprint().namespace("robot1"),
         ).remappings([(ModuleA, "data1", "other")])

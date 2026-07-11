@@ -184,9 +184,7 @@ def arg_help(
             if _atom is None:
                 # Root BlueprintConfig fields are blueprint atoms, except schema
                 # branches such as transports.* that have no backing atom.
-                bp = next(
-                    (bp for bp in blueprint.blueprints if config_key(bp.name) == k), None
-                )
+                bp = next((bp for bp in blueprint.blueprints if config_key(bp.name) == k), None)
                 defaults = bp.kwargs if bp is not None else field_defaults
             else:
                 # Nested BaseModel fields belong to the current atom and must not
