@@ -37,6 +37,7 @@ from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.mapping.costmapper import CostMapper
+from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.cmu_nav.main import cmu_nav_rerun_config, create_cmu_nav
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.perception.stereo_point_cloud.filtered_realsense import FilteredRealSenseCamera
@@ -223,7 +224,11 @@ coordinator_flowbase_stereo_nav = (
     autoconnect(
         FilteredRealSenseCamera.blueprint(enable_depth=True, enable_pointcloud=False, publish_color=False),
         StereoPointCloud.blueprint(),
-        # CostMapper.blueprint(),
+        # Rust voxel map with raycast clearing. frame_cloud/odometry come from
+        # StereoPointCloud; global_emit_every/emit_every throttle at the source
+        # rather than relying solely on the Rerun bridge's max_hz downstream.
+        RayTracingVoxelMap.blueprint(emit_every=2, global_emit_every=5),
+        CostMapper.blueprint(),
         # MovementManager.blueprint(),
         ControlCoordinator.blueprint(
             hardware=[_flowbase_twist_base()],
@@ -238,7 +243,7 @@ coordinator_flowbase_stereo_nav = (
         ),
         RerunBridgeModule.blueprint(
             rerun_open="native",
-            max_hz={"world/frame_cloud": 10.0},
+            max_hz={"world/frame_cloud": 10.0, "world/global_map": 2.0, "world/local_map": 5.0},
         ),
         RerunWebSocketServer.blueprint(),
     )
@@ -246,6 +251,7 @@ coordinator_flowbase_stereo_nav = (
         [
             (ControlCoordinator, "twist_command", "cmd_vel"),
             (RerunWebSocketServer, "tele_cmd_vel", "cmd_vel"),
+            (RayTracingVoxelMap, "lidar", "frame_cloud"),
         ]
     )
     .global_config(n_workers=8)
