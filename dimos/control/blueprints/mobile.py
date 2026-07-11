@@ -21,7 +21,6 @@ Usage:
     dimos run coordinator-flowbase-keyboard-teleop       # FlowBase + WASD pygame teleop
     dimos run coordinator-flowbase-nav                   # FlowBase + FastLio2 + nav stack (click-to-drive)
     dimos run coordinator-flowbase-stereo-nav            # FlowBase + RealSense D435i stereo depth + nav stack
-    dimos run coordinator-stereo-nav-perception-only     # Same perception stack, no ControlCoordinator/FlowBase
 """
 
 from __future__ import annotations
@@ -251,14 +250,3 @@ coordinator_flowbase_stereo_nav = (
     )
     .global_config(n_workers=8)
 )
-
-# Same perception stack as coordinator_flowbase_stereo_nav, minus ControlCoordinator/FlowBase.
-# For running the camera + StereoPointCloud + viewer standalone (e.g. on a laptop, no base nearby).
-coordinator_stereo_nav_perception_only = autoconnect(
-    FilteredRealSenseCamera.blueprint(enable_depth=True, enable_pointcloud=False, publish_color=False),
-    StereoPointCloud.blueprint(),
-    RerunBridgeModule.blueprint(
-        rerun_open="native",
-        max_hz={"world/frame_cloud": 10.0},
-    ),
-).global_config(n_workers=4)
