@@ -326,3 +326,7 @@ class BaseControlTask(ControlTask):
     def set_velocities_by_name(self, velocities: dict[str, float], t_now: float) -> bool:
         """No-op default."""
         return False
+
+    def on_robot_policy_action_chunk(self, chunk: object, t_now: float) -> bool:
+        """No-op default."""
+        return False

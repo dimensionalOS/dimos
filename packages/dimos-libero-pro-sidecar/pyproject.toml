@@ -11,6 +11,7 @@ dependencies = [
     "dimos",
     "dimos-runtime-protocol",
     "libero",
+    "mujoco<3.3",
 ]
 
 [tool.uv.sources]

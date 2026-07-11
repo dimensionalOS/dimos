@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 
 from dimos_runtime_protocol.models import (
@@ -41,7 +42,11 @@ from dimos.simulation.runtime_module import (
     module_runtime_description,
     publish_output,
 )
-from dimos_libero_pro_sidecar.server import LiberoProRuntimeConfig, LiberoProRuntimeState
+from dimos_libero_pro_sidecar.server import (
+    ActionMode,
+    LiberoProRuntimeConfig,
+    LiberoProRuntimeState,
+)
 
 
 class LiberoProRuntimeModuleConfig(ModuleConfig):
@@ -52,8 +57,11 @@ class LiberoProRuntimeModuleConfig(ModuleConfig):
     task_order_index: int = 0
     task_index: int = 0
     init_state_index: int = 0
+    action_mode: ActionMode = "motor"
     controller: str = "JOINT_POSITION"
     camera_names: tuple[str, ...] = ("agentview",)
+    camera_height: int = 128
+    camera_width: int = 128
     control_freq: int = 20
     horizon: int = 1000
     seed: int | None = None
@@ -80,8 +88,11 @@ class LiberoProRuntimeModule(Module):
         task_order_index: int = 0,
         task_index: int = 0,
         init_state_index: int = 0,
+        action_mode: ActionMode = "motor",
         controller: str = "JOINT_POSITION",
         camera_names: tuple[str, ...] = ("agentview",),
+        camera_height: int = 128,
+        camera_width: int = 128,
         control_freq: int = 20,
         horizon: int = 1000,
         seed: int | None = None,
@@ -97,8 +108,11 @@ class LiberoProRuntimeModule(Module):
             task_order_index=task_order_index,
             task_index=task_index,
             init_state_index=init_state_index,
+            action_mode=action_mode,
             controller=controller,
             camera_names=camera_names,
+            camera_height=camera_height,
+            camera_width=camera_width,
             control_freq=control_freq,
             horizon=horizon,
             seed=seed,
@@ -123,8 +137,11 @@ class LiberoProRuntimeModule(Module):
             task_order_index=task_order_index,
             task_index=task_index,
             init_state_index=init_state_index,
+            action_mode=action_mode,
             controller=controller,
             camera_names=tuple(camera_names),
+            camera_height=camera_height,
+            camera_width=camera_width,
             control_freq=control_freq,
             horizon=horizon,
             seed=seed,
@@ -133,6 +150,8 @@ class LiberoProRuntimeModule(Module):
         )
         self._state: LiberoProRuntimeState | None = None
         self._runtime_stopped = False
+        self._latest_snapshot_observations: list[ObservationFrame] = []
+        self._latest_snapshot_values: dict[str, np.ndarray] = {}
 
     @rpc
     def stop(self) -> None:
@@ -190,6 +209,17 @@ class LiberoProRuntimeModule(Module):
 
         return self._owner.call(lambda: self._state_or_create().score())
 
+    @rpc
+    def observation_snapshot(self) -> tuple[list[ObservationFrame], dict[str, np.ndarray]]:
+        """Return latest observation metadata and arrays published by this module."""
+
+        return self._owner.call(
+            lambda: (
+                list(self._latest_snapshot_observations),
+                dict(self._latest_snapshot_values),
+            )
+        )
+
     def _state_or_create(self) -> LiberoProRuntimeState:
         if self._state is None:
             self._state = LiberoProRuntimeState(self._runtime_config)
@@ -198,18 +228,24 @@ class LiberoProRuntimeModule(Module):
     def _publish_observation_outputs(
         self, observations: list[ObservationFrame], event: str
     ) -> None:
+        snapshot_observations: list[ObservationFrame] = []
+        snapshot_values: dict[str, np.ndarray] = {}
+        state = self._state_or_create()
         for observation in observations:
             if observation.kind == ObservationKind.STATE:
                 publish_output(self.runtime_event, observation)
-        state = self._state_or_create()
-        for camera_name in state.config.camera_names:
-            image = state._last_obs.get(f"{camera_name}_image")
-            if image is None:
+                snapshot_observations.append(observation)
                 continue
-            array = np.asarray(image)
+            if observation.kind != ObservationKind.IMAGE:
+                continue
+            array = self._snapshot_image_value(state, observation)
+            if array is None:
+                continue
+            snapshot_values[observation.stream] = array
+            snapshot_observations.append(observation)
             publish_output(
                 self.color_image,
-                Image(data=array, format=ImageFormat.RGB, frame_id=camera_name),
+                Image(data=array, format=ImageFormat.RGB, frame_id=observation.stream),
             )
             height, width = array.shape[:2]
             publish_output(
@@ -218,15 +254,27 @@ class LiberoProRuntimeModule(Module):
                     fov_deg=45.0,
                     width=width,
                     height=height,
-                    frame_id=camera_name,
+                    frame_id=observation.stream,
                 ),
             )
-        publish_output(
-            self.runtime_event,
-            ObservationFrame(
-                stream="runtime_event",
-                kind=ObservationKind.TEXT,
-                inline_text=event,
-                metadata={"sequence": state._sequence},
-            ),
+        event_observation = ObservationFrame(
+            stream="runtime_event",
+            kind=ObservationKind.TEXT,
+            inline_text=event,
+            metadata={"sequence": state._sequence},
         )
+        snapshot_observations.append(event_observation)
+        self._latest_snapshot_observations = snapshot_observations
+        self._latest_snapshot_values = snapshot_values
+        publish_output(self.runtime_event, event_observation)
+
+    def _snapshot_image_value(
+        self, state: LiberoProRuntimeState, observation: ObservationFrame
+    ) -> np.ndarray | None:
+        if observation.data_ref is not None:
+            payload_id = observation.data_ref.removeprefix("/payloads/")
+            return np.asarray(np.load(BytesIO(state.payload_bytes(payload_id)), allow_pickle=False))
+        image = state._last_obs.get(f"{observation.stream}_image")
+        if image is None:
+            return None
+        return np.asarray(image)

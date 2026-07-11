@@ -65,20 +65,37 @@ class JsonShmBlock:
                 f"payload too large for SHM block {self.name}: {len(data)}>{max_payload}"
             )
         buf = cast("memoryview", self._shm.buf)
-        buf[: _HEADER.size] = _HEADER.pack(sequence, len(data))
+        buf[: _HEADER.size] = _HEADER.pack(sequence, 0)
         buf[_HEADER.size : _HEADER.size + len(data)] = data
+        buf[: _HEADER.size] = _HEADER.pack(sequence, len(data))
 
     def read(self) -> JsonPayload:
         buf = cast("memoryview", self._shm.buf)
-        sequence, length = _HEADER.unpack(bytes(buf[: _HEADER.size]))
-        if length == 0:
-            return {"sequence": sequence}
-        data = bytes(buf[_HEADER.size : _HEADER.size + length])
-        value = json.loads(data.decode("utf-8"))
-        if not isinstance(value, dict):
-            raise ValueError(f"SHM block {self.name} did not contain a JSON object")
-        value["sequence"] = sequence
-        return value
+        last_error: json.JSONDecodeError | UnicodeDecodeError | None = None
+        for _ in range(10):
+            sequence, length = _HEADER.unpack(bytes(buf[: _HEADER.size]))
+            if length == 0:
+                time.sleep(0.0001)
+                continue
+            data = bytes(buf[_HEADER.size : _HEADER.size + length])
+            confirm_sequence, confirm_length = _HEADER.unpack(bytes(buf[: _HEADER.size]))
+            if (confirm_sequence, confirm_length) != (sequence, length):
+                time.sleep(0.0001)
+                continue
+            try:
+                value = json.loads(data.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                last_error = exc
+                time.sleep(0.0001)
+                continue
+            if not isinstance(value, dict):
+                raise ValueError(f"SHM block {self.name} did not contain a JSON object")
+            value["sequence"] = sequence
+            return value
+        if last_error is not None:
+            raise last_error
+        sequence, _ = _HEADER.unpack(bytes(buf[: _HEADER.size]))
+        return {"sequence": sequence}
 
     def close(self) -> None:
         self._shm.close()

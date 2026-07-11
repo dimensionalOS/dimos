@@ -28,7 +28,16 @@ class StrEnum(str, Enum):
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, NonNegativeFloat, NonNegativeInt, PositiveInt
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    FiniteFloat,
+    NonNegativeFloat,
+    NonNegativeInt,
+    PositiveInt,
+    model_validator,
+)
 
 from dimos_runtime_protocol.types import JsonObject, JsonValue
 from dimos_runtime_protocol.version import PROTOCOL_VERSION
@@ -143,6 +152,22 @@ class MotorActionFrame(StrictModel):
     sequence: NonNegativeInt = 0
 
 
+class RuntimeActionFrame(StrictModel):
+    """Semantic runtime action frame for non-motor action surfaces."""
+
+    frame_type: Literal["runtime_action"]
+    space_id: str
+    values: list[FiniteFloat]
+    sequence: NonNegativeInt | None = None
+    tick_id: NonNegativeInt | None = None
+
+    @model_validator(mode="after")
+    def _has_sequence_or_tick(self) -> RuntimeActionFrame:
+        if self.sequence is None and self.tick_id is None:
+            raise ValueError("RuntimeActionFrame requires sequence or tick_id")
+        return self
+
+
 class MotorStateFrame(StrictModel):
     """Ordered motor state frame returned by a sidecar."""
 
@@ -173,7 +198,7 @@ class StepRequest(StrictModel):
 
     episode_id: str
     tick_id: NonNegativeInt
-    action: MotorActionFrame
+    action: MotorActionFrame | RuntimeActionFrame
 
 
 class StepResponse(StrictModel):

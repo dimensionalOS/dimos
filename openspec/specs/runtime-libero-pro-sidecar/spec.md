@@ -1,9 +1,7 @@
 ## Purpose
 
 Define the LIBERO-PRO runtime package, registered-suite task selection, asset preparation boundary, motor-control contract, observation export, scoring, and verification split for LIBERO-PRO benchmark demos through a Simulator Runtime Module.
-
 ## Requirements
-
 ### Requirement: LIBERO-PRO sidecar package
 The system SHALL evolve the first-class LIBERO-PRO runtime package into an import-safe package that provides a Simulator Runtime Module for LIBERO-PRO execution and removes the existing HTTP server boundary as part of migration success.
 
@@ -23,7 +21,7 @@ The system SHALL evolve the first-class LIBERO-PRO runtime package into an impor
 The LIBERO-PRO runtime package SHALL support registered LIBERO-PRO benchmark suites in v1 using backend options for benchmark name, task order index, task index, init-state index, controller, cameras, horizon, and asset roots.
 
 #### Scenario: Registered task is described
-- **WHEN** the sidecar is configured with a registered LIBERO-PRO benchmark name, task order index, task index, and init-state index
+- **WHEN** the runtime module is configured with a registered LIBERO-PRO benchmark name, task order index, task index, and init-state index
 - **THEN** the runtime description includes task metadata such as benchmark name, task name, language, BDDL path, init-state index, controller, horizon, and camera configuration
 
 #### Scenario: Dynamic perturbation request is rejected
@@ -49,11 +47,11 @@ The system SHALL support explicit opt-in LIBERO-PRO runtime asset bootstrap whil
 The LIBERO-PRO runtime package SHALL expose the full-control v1 path only when the selected task and controller provide a Panda joint-position plus gripper whole-body motor surface compatible with DimOS motor action frames.
 
 #### Scenario: Compatible motor surface is described
-- **WHEN** the selected LIBERO-PRO environment exposes the expected Panda joint-position plus gripper action surface
+- **WHEN** the selected LIBERO-PRO environment exposes the expected Panda joint-position plus gripper action surface for motor-frame mode
 - **THEN** the runtime description reports a stable ordered motor surface with supported position command mode and the expected motor count
 
-#### Scenario: Incompatible controller fails fast
-- **WHEN** the selected LIBERO-PRO environment exposes only OSC pose control or an action dimension that cannot be mapped to Panda joint-position plus gripper commands
+#### Scenario: Incompatible motor mode fails fast
+- **WHEN** motor-frame mode is selected but the LIBERO environment exposes only a native end-effector action surface or an action dimension that cannot be mapped to Panda joint-position plus gripper commands
 - **THEN** the runtime module rejects the episode setup with a clear protocol error before accepting step requests
 
 ### Requirement: LIBERO-PRO step ownership and observation export
@@ -88,3 +86,33 @@ The system SHALL verify LIBERO-PRO module-runtime behavior with always-on contra
 #### Scenario: Manual integration exercises real LIBERO-PRO
 - **WHEN** a developer runs the optional real LIBERO-PRO integration with prepared dependencies and assets
 - **THEN** it launches the placed Simulator Runtime Module, runs reset and synchronous step RPCs for one registered task, observes camera stream publication, and writes score and artifacts
+
+### Requirement: Native LIBERO action mode
+The LIBERO runtime module SHALL support a native LIBERO action mode that follows the official LeRobot LIBERO action setup for relative end-effector delta plus gripper actions.
+
+#### Scenario: Native action mode validates environment action spec
+- **WHEN** the runtime module starts in native LIBERO action mode
+- **THEN** it inspects the LIBERO environment action spec and requires action dimension `(7,)` with bounds compatible with `[-1, 1]`
+
+#### Scenario: Native action mode is described
+- **WHEN** the runtime module description is requested in native LIBERO action mode
+- **THEN** it reports the native action surface identifier, action shape, action bounds, action mode metadata, task metadata, language, horizon, and camera configuration
+
+#### Scenario: Native action mode accepts runtime action frame
+- **WHEN** DimOS sends a runtime action frame with `space_id` `libero.ee_delta_6d_gripper.normalized.v1` and valid `float32[7]` values
+- **THEN** the runtime module maps the values directly to the LIBERO environment step action and returns observations, reward, done, and success metadata
+
+#### Scenario: Native action mode rejects motor frame
+- **WHEN** the runtime module is running in native LIBERO action mode and receives a motor action frame
+- **THEN** it rejects the step request with a clear protocol error
+
+### Requirement: Native LIBERO observation export for policy rollout
+The LIBERO runtime module SHALL export the observations needed by the VLA-JEPA LIBERO policy contract when running native LIBERO action mode through DimOS streams and runtime metadata.
+
+#### Scenario: Policy observations are available after reset
+- **WHEN** the runtime module resets a registered task in native LIBERO action mode
+- **THEN** DimOS streams and runtime metadata include agent-view camera observation metadata, wrist or eye-in-hand camera observation metadata when available, robot state observation metadata, and task language metadata for contract conversion
+
+#### Scenario: Policy observations are available after step
+- **WHEN** the runtime module completes a native runtime action step
+- **THEN** DimOS streams and runtime metadata include updated camera and robot state observations needed for the next policy inference tick

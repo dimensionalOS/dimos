@@ -57,6 +57,11 @@ from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot_learning.policy_rollout.models import RobotPolicyActionChunk
+from dimos.robot_learning.policy_rollout.robot_policy_module import (
+    PolicyChunkInferenceStatus,
+    RobotPolicyChunkInferenceSpec,
+)
 from dimos.teleop.quest.quest_types import (
     Buttons,
 )
@@ -140,6 +145,7 @@ class ControlCoordinator(Module):
     """
 
     config: ControlCoordinatorConfig
+    _robot_policy: RobotPolicyChunkInferenceSpec | None
 
     # Output: Aggregated joint state for external consumers
     coordinator_joint_state: Out[JointState]
@@ -157,10 +163,14 @@ class ControlCoordinator(Module):
     # Input: Teleop buttons for engage/disengage signaling
     teleop_buttons: In[Buttons]
 
+    # Input: Live robot-learning policy action chunks
+    robot_policy_action_chunk: In[RobotPolicyActionChunk]
+
     # Arming and dry-run are one-shot RPCs, not streams.
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        self._robot_policy = None
 
         # Connected hardware (keyed by hardware_id)
         self._hardware: dict[HardwareId, ConnectedHardware | ConnectedWholeBody] = {}
@@ -181,6 +191,7 @@ class ControlCoordinator(Module):
         self._cartesian_command_unsub: Callable[[], None] | None = None
         self._twist_command_unsub: Callable[[], None] | None = None
         self._buttons_unsub: Callable[[], None] | None = None
+        self._policy_chunk_unsub: Callable[[], None] | None = None
 
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
 
@@ -278,7 +289,28 @@ class ControlCoordinator(Module):
         """Create a control task from config via the task registry."""
         from dimos.control.tasks.registry import control_task_registry
 
-        return control_task_registry.create(cfg.type, cfg, hardware=self._hardware)
+        task = control_task_registry.create(cfg.type, cfg, hardware=self._hardware)
+        trigger_method = cfg.params.get("policy_trigger_method") or cfg.params.get(
+            "policy_trigger_config_name"
+        )
+        if isinstance(trigger_method, str):
+            setter = getattr(task, "set_policy_trigger", None)
+            trigger = getattr(self, trigger_method, None)
+            if callable(setter) and callable(trigger):
+                setter(trigger)
+        return task
+
+    @rpc
+    def trigger_policy_action_chunk_inference(self) -> PolicyChunkInferenceStatus:
+        """Request a live policy action chunk through the injected policy module ref."""
+
+        if self._robot_policy is None:
+            return PolicyChunkInferenceStatus(
+                accepted=False,
+                status="not_ready",
+                message="no robot policy module ref is connected",
+            )
+        return self._robot_policy.trigger_action_chunk_inference()
 
     @rpc
     def add_hardware(
@@ -526,6 +558,15 @@ class ControlCoordinator(Module):
             for task in self._tasks.values():
                 task.on_buttons(msg)
 
+    def _on_robot_policy_action_chunk(self, chunk: RobotPolicyActionChunk) -> None:
+        """Forward robot policy action chunks to tasks that opt in."""
+        t_now = time.perf_counter()
+        with self._task_lock:
+            for task in self._tasks.values():
+                handler = getattr(task, "on_robot_policy_action_chunk", None)
+                if callable(handler):
+                    handler(chunk, t_now)
+
     @rpc
     def set_activated(self, engaged: bool) -> None:
         """Arm/disarm every task exposing ``arm()`` / ``disarm()``."""
@@ -687,6 +728,13 @@ class ControlCoordinator(Module):
             self._buttons_unsub = self.teleop_buttons.subscribe(self._on_buttons)
             logger.info("Subscribed to buttons for engage/disengage")
 
+        has_policy_chunk = any(t.type == "policy_chunk" for t in self.config.tasks)
+        if has_policy_chunk:
+            self._policy_chunk_unsub = self.robot_policy_action_chunk.subscribe(
+                self._on_robot_policy_action_chunk
+            )
+            logger.info("Subscribed to robot_policy_action_chunk for policy tasks")
+
         # Arming + dry-run are RPC-only; no stream subscription here.
 
         logger.info(f"ControlCoordinator started at {self.config.tick_rate}Hz")
@@ -709,6 +757,9 @@ class ControlCoordinator(Module):
         if self._buttons_unsub:
             self._buttons_unsub()
             self._buttons_unsub = None
+        if self._policy_chunk_unsub:
+            self._policy_chunk_unsub()
+            self._policy_chunk_unsub = None
 
         if self._tick_loop:
             self._tick_loop.stop()
