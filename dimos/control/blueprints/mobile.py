@@ -34,6 +34,7 @@ from dimos.control.components import (
     make_twist_base_joints,
 )
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.twist_base_odometry import TwistBaseOdometry
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.mapping.costmapper import CostMapper
@@ -242,6 +243,9 @@ coordinator_flowbase_stereo_nav = (
                 ),
             ],
         ),
+        # Experiment: FlowBase wheel odometry as an alternative to the camera's
+        # Madgwick+ICP odometry for RayTracingVoxelMap — see remappings below.
+        TwistBaseOdometry.blueprint(),
         RerunBridgeModule.blueprint(
             rerun_open="native",
             max_hz={"world/frame_cloud": 10.0, "world/global_map": 2.0, "world/local_map": 5.0},
@@ -253,6 +257,10 @@ coordinator_flowbase_stereo_nav = (
             (ControlCoordinator, "twist_command", "cmd_vel"),
             (RerunWebSocketServer, "tele_cmd_vel", "cmd_vel"),
             (RayTracingVoxelMap, "lidar", "frame_cloud"),
+            (TwistBaseOdometry, "joint_state", "coordinator_joint_state"),
+            (StereoPointCloud, "odometry", "camera_odometry"),
+            (TwistBaseOdometry, "odometry", "flowbase_odometry"),
+            (RayTracingVoxelMap, "odometry", "flowbase_odometry"),  # <- flip to "camera_odometry" to go back
         ]
     )
     .global_config(n_workers=8)
