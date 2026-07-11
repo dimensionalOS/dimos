@@ -404,7 +404,7 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build cmu_nav native modules
         env:
-          BUILD_WORKERS: "2"
+          BUILD_WORKERS: "1"
         run: uv run bin/build-cmu-nav-natives
       - name: Write marker file
         run: install -D /dev/null /tmp/cmu-nav-natives-marker/ok
