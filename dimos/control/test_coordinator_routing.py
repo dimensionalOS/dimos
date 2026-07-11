@@ -29,18 +29,13 @@ from typing import Any
 
 import pytest
 
+from dimos.control._control_test_helpers import RecordingTask
 from dimos.control.components import (
     HardwareComponent,
     HardwareType,
     make_twist_base_joints,
 )
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
-from dimos.control.task import (
-    BaseControlTask,
-    CoordinatorState,
-    JointCommandOutput,
-    ResourceClaim,
-)
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
@@ -56,51 +51,6 @@ STREAMS = (
     "twist_command",
     "teleop_buttons",
 )
-
-
-class RecordingTask(BaseControlTask):
-    """Stub task that records every stream handler invocation."""
-
-    def __init__(self, name: str, joints: frozenset[str] = frozenset()) -> None:
-        self._name = name
-        self._joints = frozenset(joints)
-        self.cartesian_calls: list[tuple[Any, float]] = []
-        self.ee_twist_calls: list[tuple[Any, float]] = []
-        self.buttons_calls: list[Any] = []
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-    def claim(self) -> ResourceClaim:
-        return ResourceClaim(joints=self._joints)
-
-    def is_active(self) -> bool:
-        return False
-
-    def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
-        _ = state
-        return None
-
-    def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
-        _ = by_task, joints
-
-    def on_cartesian_command(self, pose: Any, t_now: float) -> bool:
-        self.cartesian_calls.append((pose, t_now))
-        return True
-
-    def on_ee_twist_command(self, twist: Any, t_now: float) -> bool:
-        self.ee_twist_calls.append((twist, t_now))
-        return True
-
-    def on_buttons(self, msg: Any) -> bool:
-        self.buttons_calls.append(msg)
-        return True
-
-    def on_teleop_buttons(self, msg: Any, t_now: float) -> bool:
-        # Mirrors TeleopIKTask: the uniform handler delegates to on_buttons.
-        _ = t_now
-        return self.on_buttons(msg)
 
 
 class VelocityCapableTask(RecordingTask):
