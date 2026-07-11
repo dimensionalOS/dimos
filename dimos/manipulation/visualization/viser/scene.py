@@ -94,12 +94,9 @@ class _ColorHandle(Protocol):
 class ViserManipulationScene:
     """Viser scene graph helpers for current robot, ghost robot, and path rendering."""
 
-    def __init__(
-        self, server: ViserServer, viser_urdf: type[ViserUrdf], *, preview_fps: float
-    ) -> None:
+    def __init__(self, server: ViserServer, viser_urdf: type[ViserUrdf]) -> None:
         self.server = server
         self.viser_urdf = viser_urdf
-        self.preview_fps = preview_fps
         self._configs_by_id: dict[str, RobotModelConfig] = {}
         self._urdfs: dict[str, ViserUrdf] = {}
         self._handles: dict[str, TransformControlsHandle] = {}

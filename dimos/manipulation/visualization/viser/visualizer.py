@@ -87,11 +87,7 @@ class ViserManipulationVisualizer:
         try:
             server = runtime.start()
             apply_dimos_theme(server)
-            scene = ViserManipulationScene(
-                server,
-                ViserUrdf,
-                preview_fps=self.config.preview_fps,
-            )
+            scene = ViserManipulationScene(server, ViserUrdf)
             gui = (
                 ViserPanelGui(
                     server,

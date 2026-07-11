@@ -219,23 +219,6 @@ class Module:
     def get_robot_config(self, name: str) -> Config:
         return self.configs[name]
 
-    def get_robot_info(self, name: str) -> dict[str, object]:
-        config = self.configs[name]
-        return {
-            "name": name,
-            "world_robot_id": self.robot_id_for_name(name),
-            "joint_names": config.joint_names,
-            "end_effector_link": "tool",
-            "base_link": "base",
-            "max_velocity": 1.0,
-            "max_acceleration": 1.0,
-            "has_joint_name_mapping": False,
-            "coordinator_task_name": None,
-            "home_joints": config.home_joints,
-            "pre_grasp_offset": 0.0,
-            "init_joints": [0.0, 0.0],
-        }
-
     def get_init_joints(self, name: str) -> JointState:
         return JointState({"name": self.configs[name].joint_names, "position": [-0.5, -1.0]})
 
@@ -680,7 +663,7 @@ def test_scene_active_only_ghosts_group_gizmos_feasibility_and_shared_ticks(
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     server.scene.add_transform_controls = lambda *_args, **_kwargs: Handle()
-    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    scene = ViserManipulationScene(server, Urdf)
     scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
     scene.register_robot("id-arm", config)
@@ -730,7 +713,7 @@ def test_preview_selection_rejects_malformed_before_visibility() -> None:
     # The scene transaction itself rejects missing tracks before revealing ghosts.
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
-    scene = ViserManipulationScene(server, Urdf, preview_fps=10.0)
+    scene = ViserManipulationScene(server, Urdf)
     assert scene.animate_preview(GroupPreviewAnimation(()), 1.0) is False
 
 
@@ -860,7 +843,7 @@ def test_target_callbacks_require_current_target_identity(
 def test_scene_target_ghost_tracks_current_only_until_explicit_target() -> None:
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
-    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    scene = ViserManipulationScene(server, Urdf)
     scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
     scene.register_robot("id-arm", config)
@@ -877,7 +860,7 @@ def test_scene_target_feasibility_colors_ghost_and_gizmo() -> None:
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     server.scene.add_transform_controls = lambda *_args, **_kwargs: Handle()
-    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    scene = ViserManipulationScene(server, Urdf)
     scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
     scene.register_robot("id-arm", config)
@@ -899,7 +882,7 @@ def test_panel_feasibility_colors_group_controls_and_deduplicated_robot_ghosts()
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     server.scene.add_transform_controls = lambda *_args, **_kwargs: Handle()
-    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    scene = ViserManipulationScene(server, Urdf)
     scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     scene.register_robot("id-arm", module.configs["arm"])
     scene.register_robot("id-other", module.configs["other"])
@@ -970,7 +953,7 @@ def test_scene_shared_clock_uses_stored_unequal_robot_frames(
 ) -> None:
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
-    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    scene = ViserManipulationScene(server, Urdf)
     scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
     scene.register_robot("left", config)
@@ -1042,7 +1025,7 @@ def test_scene_reference_grid_has_expected_defaults_and_toggle() -> None:
     server = Server()
     grids: list[Handle] = []
     server.scene.add_grid = lambda *_args, **_kwargs: grids.append(Handle()) or grids[-1]
-    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    scene = ViserManipulationScene(server, Urdf)
 
     assert scene.has_reference_grid() is True
     scene.set_reference_grid_visible(False)
@@ -1054,7 +1037,7 @@ def test_scene_reference_grid_has_expected_defaults_and_toggle() -> None:
 def test_scene_returns_false_for_missing_robot_target_updates() -> None:
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
-    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    scene = ViserManipulationScene(server, Urdf)
 
     assert scene.set_target_joints("missing", ["j1"], [0.1]) is False
     assert (
@@ -1071,7 +1054,7 @@ def test_scene_returns_false_for_missing_robot_target_updates() -> None:
 def test_scene_cancel_generation_hides_preview_and_rejects_old_animation() -> None:
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
-    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    scene = ViserManipulationScene(server, Urdf)
     scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
     scene.register_robot("id-arm", config)
@@ -1087,7 +1070,7 @@ def test_scene_cancel_generation_hides_preview_and_rejects_old_animation() -> No
 def test_scene_base_pose_requires_urdf_root_to_match(monkeypatch: pytest.MonkeyPatch) -> None:
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
-    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    scene = ViserManipulationScene(server, Urdf)
     monkeypatch.setattr(
         "dimos.manipulation.visualization.viser.scene.parse_model",
         lambda _path: SimpleNamespace(root_link="world"),
@@ -1115,7 +1098,7 @@ def test_scene_inflight_preview_never_updates_after_generation_replacement(
 ) -> None:
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
-    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    scene = ViserManipulationScene(server, Urdf)
     scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
     scene.register_robot("id-arm", config)
@@ -1189,7 +1172,7 @@ def test_transform_control_callback_preserves_pose_through_gui_and_backend(
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     server.scene.add_transform_controls = lambda *_args, **_kwargs: Handle()
-    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    scene = ViserManipulationScene(server, Urdf)
     gui = scene_gui(module, server, scene)
     submitted: list[TargetEvaluationRequest] = []
     gui._worker.submit = submitted.append  # type: ignore[method-assign]
@@ -1215,7 +1198,7 @@ def test_joint_evaluation_updates_active_gizmo_from_computed_group_pose() -> Non
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     server.scene.add_transform_controls = lambda *_args, **_kwargs: Handle()
-    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
+    scene = ViserManipulationScene(server, Urdf)
     gui = scene_gui(module, server, scene)
     gui.start()
     control = scene._handles[f"{selected.id}:ee_control"]

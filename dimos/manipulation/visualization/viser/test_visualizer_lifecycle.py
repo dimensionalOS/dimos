@@ -114,8 +114,6 @@ def test_visualizer_initializes_all_scene_robots_from_planning_scene(
             self,
             server: FakeServer,
             viser_urdf: type[FakeViserUrdf],
-            *,
-            preview_fps: float,
         ) -> None:
             calls.append(("create", "scene"))
 
@@ -195,8 +193,6 @@ def test_visualizer_closes_partial_startup_when_gui_start_fails(
             self,
             server: FakeServer,
             viser_urdf: type[FakeViserUrdf],
-            *,
-            preview_fps: float,
         ) -> None:
             pass
 
@@ -260,8 +256,6 @@ def test_visualizer_closes_runtime_when_scene_creation_fails(
             self,
             server: FakeServer,
             viser_urdf: type[FakeViserUrdf],
-            *,
-            preview_fps: float,
         ) -> None:
             raise RuntimeError("scene failed")
 
@@ -303,8 +297,6 @@ def test_visualizer_close_is_best_effort_when_gui_raises(
             self,
             server: FakeServer,
             viser_urdf: type[FakeViserUrdf],
-            *,
-            preview_fps: float,
         ) -> None:
             pass
 
@@ -404,8 +396,6 @@ def test_visualizer_publish_preview_and_close_paths(
             self,
             server: FakeServer,
             viser_urdf: type[FakeViserUrdf],
-            *,
-            preview_fps: float,
         ) -> None:
             calls.append(("scene", "create"))
 
@@ -517,7 +507,7 @@ def test_scene_prepares_urdf_applies_base_pose_and_rejects_wrong_root(
     monkeypatch.setattr(
         "dimos.manipulation.visualization.viser.scene.parse_model", parse_prepared_model
     )
-    scene = ViserManipulationScene(Server(), Urdf, preview_fps=30.0)
+    scene = ViserManipulationScene(Server(), Urdf)
 
     scene.register_robot("robot-1", config)
 

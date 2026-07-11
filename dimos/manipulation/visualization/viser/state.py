@@ -22,7 +22,7 @@ import threading
 from typing import Literal
 
 from dimos.manipulation.planning.spec.models import PlanningGroupID
-from dimos.manipulation.visualization.types import RobotInfo, TargetEvaluation, TargetSetEvaluation
+from dimos.manipulation.visualization.types import TargetEvaluation, TargetSetEvaluation
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
@@ -94,8 +94,6 @@ class FeasibilityState:
 class PanelPlanState:
     status: PlanStatus = PlanStatus.NONE
     robot: str | None = None
-    target_pose: Pose | None = None
-    target_joints: list[float] | None = None
     group_ids: tuple[PlanningGroupID, ...] = ()
     target_sequence_id: int = 0
 
@@ -108,19 +106,14 @@ class PanelState:
     pose_targets: dict[PlanningGroupID, Pose] = field(default_factory=dict)
     group_joint_targets: dict[PlanningGroupID, JointState] = field(default_factory=dict)
     target_joints: JointState | None = None
-    last_valid_target_joints: JointState | None = None
     group_poses: dict[PlanningGroupID, Pose] = field(default_factory=dict)
-    group_diagnostics: dict[PlanningGroupID, str] = field(default_factory=dict)
     runtime: PanelRuntime = PanelRuntime.STOPPED
     backend_status: BackendConnectionStatus = BackendConnectionStatus.DISCONNECTED
     target_status: TargetStatus = TargetStatus.EMPTY
     action_status: ActionStatus = ActionStatus.IDLE
     manipulation_state: str = "DISCONNECTED"
-    robot_info: RobotInfo | None = None
     current_joints: list[float] | None = None
-    current_ee_pose: Pose | None = None
     cartesian_target: Pose | None = None
-    joint_target: list[float] | None = None
     feasibility: FeasibilityState = field(default_factory=FeasibilityState)
     latest_sequence_id: int = 0
     plan_state: PanelPlanState = field(default_factory=PanelPlanState)
@@ -171,11 +164,7 @@ class PanelState:
             ActionStatus.EXECUTING,
         } or (self.manipulation_state == "EXECUTING")
 
-    def can_execute(
-        self,
-        current_tolerance: float,
-        action_status: ActionStatus | None = None,
-    ) -> bool:
+    def can_execute(self, action_status: ActionStatus | None = None) -> bool:
         plan = self.plan_state
         effective_action_status = action_status or self.action_status
         if not (

@@ -28,7 +28,7 @@ from dimos.manipulation.manipulation_operator import (
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import PlanningGroupID, PlanningSceneInfo, RobotName
-from dimos.manipulation.visualization.types import RobotInfo, TargetSetEvaluation
+from dimos.manipulation.visualization.types import TargetSetEvaluation
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -86,32 +86,6 @@ class ViserPanelBackend:
         item = self._robots_by_name.get(robot_name)
         return None if item is None else item[1]
 
-    def get_robot_info(self, robot_name: RobotName) -> RobotInfo | None:
-        item = self._robots_by_name.get(robot_name)
-        if item is None:
-            return None
-        robot_id, config = item
-        groups = [group for group in self._scene.planning_groups if group.robot_name == robot_name]
-        init = self.get_init_joints(robot_name)
-        return cast(
-            "RobotInfo",
-            {
-                "name": config.name,
-                "world_robot_id": str(robot_id),
-                "joint_names": config.joint_names,
-                "planning_groups": groups,
-                "end_effector_link": config.end_effector_link if groups else None,
-                "base_link": config.base_link,
-                "max_velocity": config.max_velocity,
-                "max_acceleration": config.max_acceleration,
-                "has_joint_name_mapping": bool(config.joint_name_mapping),
-                "coordinator_task_name": config.coordinator_task_name,
-                "home_joints": config.home_joints,
-                "pre_grasp_offset": config.pre_grasp_offset,
-                "init_joints": None if init is None else list(init.position),
-            },
-        )
-
     def get_init_joints(self, robot_name: RobotName) -> JointState | None:
         init = self.operator.get_init_joints(robot_name)
         if init is None:
@@ -132,22 +106,6 @@ class ViserPanelBackend:
     def get_current_joint_state(self, robot_name: RobotName) -> JointState | None:
         robot_id = self.robot_id_for_name(robot_name)
         return None if robot_id is None else copy_joint_state(self._current_states.get(robot_id))
-
-    def get_ee_pose(
-        self, robot_name: RobotName, state: JointState | None = None
-    ) -> PoseStamped | None:
-        _ = state
-        group = next(
-            (
-                item
-                for item in self.list_planning_groups()
-                if item.robot_name == robot_name and item.has_pose_target
-            ),
-            None,
-        )
-        if group is None:
-            return None
-        return self.get_group_ee_pose(group.id)
 
     def get_group_ee_pose(self, group_id: PlanningGroupID) -> PoseStamped | None:
         group = self._groups_by_id.get(group_id)
@@ -207,9 +165,6 @@ class ViserPanelBackend:
 
     def reset(self) -> bool:
         return self.operator.reset().success
-
-    def joints_from_values(self, names: Sequence[str], values: Sequence[float]) -> JointState:
-        return JointState({"name": list(names), "position": [float(value) for value in values]})
 
     def evaluate_joint_target_set(
         self, group_ids: Sequence[PlanningGroupID], targets: Mapping[PlanningGroupID, JointState]

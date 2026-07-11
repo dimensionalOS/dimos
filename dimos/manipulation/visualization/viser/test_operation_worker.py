@@ -124,9 +124,6 @@ class FakeOperatorBackend:
     def get_error(self) -> str:
         return ""
 
-    def get_robot_info(self, robot_name: str) -> None:
-        return None
-
     def robot_id_for_name(self, robot_name: str) -> None:
         return None
 
