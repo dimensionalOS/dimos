@@ -440,7 +440,7 @@ class WorldBelief:
             eid = uuid.uuid4().hex
         obj.object_id = eid
         track = _Track.from_observation(obj, ts, viewpoint, basis)
-        track.established = self._is_established(track, ts)
+        track.established = basis == BASIS_RESTORED or self._is_established(track, ts)
         track.ingest_appearance(obj, self._cfg.gallery_novelty, self._cfg.gallery_max)
         self._tracks[eid] = track
         self._update_identity_facts(track)
