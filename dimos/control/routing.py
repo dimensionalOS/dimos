@@ -16,8 +16,8 @@
 
 Task manifests (``_registry.py``) stay import-free: they declare bindings as
 plain strings, and ``ControlTaskRegistry`` converts them to the typed forms
-here at load time. The coordinator does not consume these yet; a follow-up PR
-routes its input streams through them.
+here at load time. ``ControlCoordinator`` builds its stream route table from
+them when tasks are registered.
 """
 
 from __future__ import annotations
@@ -36,7 +36,14 @@ class Routing(str, Enum):
     BROADCAST = "broadcast"  # deliver to every task consuming this stream
 
 
-CONSUMABLE_STREAMS = frozenset({"joint_command", "coordinator_cartesian_command", "teleop_buttons"})
+CONSUMABLE_STREAMS = frozenset(
+    {
+        "joint_command",
+        "coordinator_cartesian_command",
+        "coordinator_ee_twist_command",
+        "teleop_buttons",
+    }
+)
 """Coordinator input ports that cards may bind."""
 
 DEFERRED_STREAMS = frozenset({"twist_command"})
