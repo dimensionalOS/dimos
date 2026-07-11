@@ -225,7 +225,7 @@ coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
 coordinator_flowbase_stereo_nav = (
     autoconnect(
         FilteredRealSenseCamera.blueprint(enable_depth=True, enable_pointcloud=True, publish_color=False),
-        StereoPointCloud.blueprint(),
+        # StereoPointCloud.blueprint(),
         RayTracingVoxelMap.blueprint(voxel_size=0.05, emit_every=2, global_emit_every=5),
         CostMapper.blueprint(config=HeightCostConfig(resolution=0.05)),
         # MovementManager.blueprint(),
@@ -243,7 +243,7 @@ coordinator_flowbase_stereo_nav = (
         TwistBaseOdometry.blueprint(),
         RerunBridgeModule.blueprint(
             rerun_open="native",
-            max_hz={"world/frame_cloud": 10.0, "world/global_map": 2.0, "world/local_map": 5.0},
+            max_hz={"world/global_map": 2.0, "world/local_map": 5.0},
         ),
         RerunWebSocketServer.blueprint(),
     )
@@ -253,7 +253,6 @@ coordinator_flowbase_stereo_nav = (
             (RerunWebSocketServer, "tele_cmd_vel", "cmd_vel"),
             (RayTracingVoxelMap, "lidar", "pointcloud"),
             (TwistBaseOdometry, "joint_state", "coordinator_joint_state"),
-            (StereoPointCloud, "odometry", "camera_odometry"),
             (TwistBaseOdometry, "odometry", "flowbase_odometry"),
             (RayTracingVoxelMap, "odometry", "flowbase_odometry"),
         ]
