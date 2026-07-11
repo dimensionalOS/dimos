@@ -225,11 +225,9 @@ coordinator_flowbase_stereo_nav = (
     autoconnect(
         FilteredRealSenseCamera.blueprint(enable_depth=True, enable_pointcloud=False, publish_color=False),
         StereoPointCloud.blueprint(),
-        # Rust voxel map with raycast clearing. frame_cloud/odometry come from
-        # StereoPointCloud; global_emit_every/emit_every throttle at the source
-        # rather than relying solely on the Rerun bridge's max_hz downstream.
-        RayTracingVoxelMap.blueprint(voxel_size=0.05, emit_every=2, global_emit_every=5),
-        CostMapper.blueprint(config=HeightCostConfig(resolution=0.05)),
+        # Ray tracing / costmapper disabled for now — just frame_cloud + odometry.
+        # RayTracingVoxelMap.blueprint(voxel_size=0.05, emit_every=2, global_emit_every=5),
+        # CostMapper.blueprint(config=HeightCostConfig(resolution=0.05)),
         # MovementManager.blueprint(),
         ControlCoordinator.blueprint(
             hardware=[_flowbase_twist_base()],
@@ -252,7 +250,7 @@ coordinator_flowbase_stereo_nav = (
         [
             (ControlCoordinator, "twist_command", "cmd_vel"),
             (RerunWebSocketServer, "tele_cmd_vel", "cmd_vel"),
-            (RayTracingVoxelMap, "lidar", "frame_cloud"),
+            # (RayTracingVoxelMap, "lidar", "frame_cloud"),
         ]
     )
     .global_config(n_workers=8)
