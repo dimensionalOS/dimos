@@ -15,13 +15,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, TypeAlias, cast
+from typing import TypeAlias, cast
 
+from dimos.manipulation.manipulation_operator import ManipulationOperator
 from dimos.manipulation.planning.groups.models import PlanningGroup
-from dimos.manipulation.planning.spec.models import PlanningGroupID
+from dimos.manipulation.planning.spec.models import PlanningGroupID, PlanningSceneInfo
 from dimos.manipulation.visualization.types import TargetEvaluation, TargetSetEvaluation
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
-from dimos.manipulation.visualization.viser.panel_backend import GroupPanelBackend
+from dimos.manipulation.visualization.viser.panel_backend import ViserPanelBackend
 from dimos.manipulation.visualization.viser.runtime import VISER_INSTALL_HINT
 from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
 from dimos.manipulation.visualization.viser.state import (
@@ -40,10 +41,6 @@ from dimos.manipulation.visualization.viser.state import (
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.manipulation.manipulation_module import ManipulationModule
-    from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 
 logger = setup_logger()
 
@@ -86,15 +83,14 @@ class ViserPanelGui:
     def __init__(
         self,
         server: ViserServer,
-        world_monitor: WorldMonitor,
-        manipulation_module: ManipulationModule,
+        scene_info: PlanningSceneInfo,
+        operator: ManipulationOperator | object,
+        current_states: Mapping[str, JointState],
         config: ViserVisualizationConfig,
         scene: ViserManipulationScene | None = None,
     ) -> None:
         self.server = server
-        self.adapter = GroupPanelBackend(world_monitor, manipulation_module)
-        self._world_monitor = world_monitor
-        self._manipulation_module = manipulation_module
+        self.adapter = ViserPanelBackend(scene_info, operator, current_states)
         self.config = config
         self.scene = scene
         self.state = PanelState(runtime=PanelRuntime.STARTING)
@@ -423,9 +419,24 @@ class ViserPanelGui:
         if state is None or len(state.name) != len(state.position):
             return {}
         return {
-            str(name).rsplit("/", 1)[-1]: float(value)
-            for name, value in zip(state.name, state.position, strict=True)
+            str(name): float(value) for name, value in zip(state.name, state.position, strict=True)
         }
+
+    def _local_values_for_robot(
+        self, robot_name: str, state: JointState | None
+    ) -> dict[str, float]:
+        config = self.adapter.get_robot_config(robot_name)
+        if config is None or state is None or len(state.name) != len(state.position):
+            return {}
+        raw = self._state_values_by_local_name(state)
+        values: dict[str, float] = {}
+        for local_name in config.joint_names:
+            global_name = f"{robot_name}/{local_name}"
+            if local_name in raw:
+                values[local_name] = raw[local_name]
+            elif global_name in raw:
+                values[local_name] = raw[global_name]
+        return values
 
     def _initialize_selected_group_targets(self) -> None:
         for group_id in self.state.selected_group_ids:
@@ -436,8 +447,8 @@ class ViserPanelGui:
                 continue
             if self.adapter.is_state_stale(group.robot_name):
                 continue
-            values = self._state_values_by_local_name(
-                self.adapter.get_current_joint_state(group.robot_name)
+            values = self._local_values_for_robot(
+                str(group.robot_name), self.adapter.get_current_joint_state(group.robot_name)
             )
             if any(str(name) not in values for name in group.local_joint_names):
                 continue
@@ -448,10 +459,7 @@ class ViserPanelGui:
                 }
             )
             if group.has_pose_target and group_id not in self.state.pose_targets:
-                try:
-                    pose = self._world_monitor.get_group_ee_pose(group.id)
-                except ValueError:
-                    pose = None
+                pose = self.adapter.get_group_ee_pose(group_id)
                 if pose is not None:
                     self.state.pose_targets[group_id] = pose
                     self.state.group_poses[group_id] = pose
@@ -504,7 +512,7 @@ class ViserPanelGui:
                 str(name): float(value)
                 for name, value in zip(config.joint_names, config.home_joints or [], strict=False)
             }
-        return self._state_values_by_local_name(state)
+        return self._local_values_for_robot(robot_name, state)
 
     def _remove_panel_handles(self) -> None:
         for key, handle in list(self._handles.items()):
@@ -701,14 +709,47 @@ class ViserPanelGui:
         """Optimistically move target visuals before collision/feasibility returns."""
         if self.scene is None:
             return
-        complete = self.adapter.complete_states_for_targets(self.state.selected_group_ids, targets)
-        if complete is None:
-            return
-        for robot_name, state in complete.items():
+        for robot_name, state in self._target_ghost_states(targets).items():
             config = self.adapter.get_robot_config(robot_name)
             robot_id = self.adapter.robot_id_for_name(robot_name)
             if config is not None and robot_id is not None:
                 self.scene.set_target_joints(str(robot_id), config.joint_names, state.position)
+
+    def _target_ghost_states(
+        self, targets: Mapping[PlanningGroupID, JointState]
+    ) -> dict[str, JointState]:
+        groups = self._groups_by_id()
+        merged: dict[str, dict[str, float]] = {}
+        configs: dict[str, tuple[str, ...]] = {}
+        for group_id in self.state.selected_group_ids:
+            group = groups.get(group_id)
+            target = targets.get(group_id)
+            if group is None or target is None:
+                continue
+            robot_name = str(group.robot_name)
+            config = self.adapter.get_robot_config(robot_name)
+            current = self.adapter.get_current_joint_state(robot_name)
+            if config is None or current is None:
+                continue
+            values = self._local_values_for_robot(robot_name, current)
+            target_raw = self._state_values_by_local_name(target)
+            for local_name, global_name in zip(
+                group.local_joint_names, group.joint_names, strict=True
+            ):
+                if str(global_name) in target_raw:
+                    values[str(local_name)] = target_raw[str(global_name)]
+                elif str(local_name) in target_raw:
+                    values[str(local_name)] = target_raw[str(local_name)]
+            if all(name in values for name in config.joint_names):
+                merged[robot_name] = values
+                configs[robot_name] = tuple(config.joint_names)
+        return {
+            robot_name: JointState(
+                {"name": list(joint_names), "position": [values[name] for name in joint_names]}
+            )
+            for robot_name, values in merged.items()
+            for joint_names in (configs[robot_name],)
+        }
 
     def _sync_target_ghost_visibility(self) -> None:
         if self.scene is None:
@@ -883,25 +924,7 @@ class ViserPanelGui:
             self.scene.set_target_robot_visual_state(robot_id, feasible)
 
     def _can_execute(self) -> bool:
-        return (
-            self.state.can_execute(self.config.current_match_tolerance)
-            and not self._stale_robot_names(self.state.selected_group_ids)
-            and self._snapshots_cover_selected_robots(
-                self.state.plan_state.robot_snapshots, self.state.selected_group_ids
-            )
-            and self.adapter.snapshots_match(
-                self.state.plan_state.robot_snapshots, self.config.current_match_tolerance
-            )
-        )
-
-    def _snapshots_cover_selected_robots(
-        self, snapshots: Mapping[str, JointState], group_ids: tuple[PlanningGroupID, ...]
-    ) -> bool:
-        groups = self._groups_by_id()
-        expected = {
-            str(groups[group_id].robot_name) for group_id in group_ids if group_id in groups
-        }
-        return bool(expected) and expected == set(snapshots)
+        return self.state.can_execute(self.config.current_match_tolerance)
 
     def _submit_plan(self) -> None:
         if self._closed:
@@ -966,20 +989,9 @@ class ViserPanelGui:
                     selection_epoch=selection_epoch,
                 )
                 return
-            snapshots = self.adapter.snapshot_selected_robots(group_ids)
             if not self._operation_is_current(operation_id, selection_epoch, target_sequence_id):
                 self._finish_operation(
                     "plan=False", operation_id=operation_id, selection_epoch=selection_epoch
-                )
-                return
-            if snapshots is None:
-                self.state.plan_state.status = PlanStatus.FAILED
-                self.state.error = "Cannot plan without current states for all selected robots"
-                self._finish_operation(
-                    "plan=False",
-                    clear_error=False,
-                    operation_id=operation_id,
-                    selection_epoch=selection_epoch,
                 )
                 return
             ok = self.adapter.plan_to_selected_joints(group_ids, targets)
@@ -992,7 +1004,6 @@ class ViserPanelGui:
                 self.state.plan_state.status = PlanStatus.FRESH
                 self.state.plan_state.group_ids = group_ids
                 self.state.plan_state.target_sequence_id = target_sequence_id
-                self.state.plan_state.robot_snapshots = snapshots
                 self.state.plan_state.target_joints = planned_target_joints
                 self.state.plan_state.target_pose = target_pose
             else:
@@ -1037,15 +1048,11 @@ class ViserPanelGui:
         if self._closed:
             return
         if not self._can_execute():
-            self._set_recoverable_error(
-                "Cannot execute: require feasible fresh plan and matching current joints"
-            )
+            self._set_recoverable_error("Cannot execute: require feasible fresh plan")
             return
         selection_epoch = self.state.selection_epoch
         group_ids = self.state.selected_group_ids
         target_sequence_id = self.state.latest_sequence_id
-        snapshots = self.state.plan_state.robot_snapshots
-        expected_robot_names = tuple(self._selected_robot_names())
         operation_id = self._next_operation_id()
 
         def operation() -> None:
@@ -1054,8 +1061,6 @@ class ViserPanelGui:
             if (
                 self.state.plan_state.group_ids != group_ids
                 or self.state.plan_state.target_sequence_id != target_sequence_id
-                or not snapshots
-                or set(snapshots) != set(expected_robot_names)
             ):
                 self.state.plan_state.status = PlanStatus.STALE
                 self._finish_operation(
@@ -1065,62 +1070,9 @@ class ViserPanelGui:
                     selection_epoch=selection_epoch,
                 )
                 return
-            stale_robots = self._stale_robot_names(group_ids)
-            if stale_robots:
-                if not self._operation_is_current(
-                    operation_id, selection_epoch, target_sequence_id
-                ):
-                    self._finish_operation(
-                        "execute=False",
-                        operation_id=operation_id,
-                        selection_epoch=selection_epoch,
-                    )
-                    return
-                self.state.plan_state.status = PlanStatus.STALE
-                self.state.error = "Cannot execute without fresh telemetry for: " + ", ".join(
-                    stale_robots
-                )
-                self._finish_operation(
-                    "execute=False",
-                    clear_error=False,
-                    operation_id=operation_id,
-                    selection_epoch=selection_epoch,
-                )
-                return
-            if not self.adapter.snapshots_match(snapshots, self.config.current_match_tolerance):
-                if not self._operation_is_current(
-                    operation_id, selection_epoch, target_sequence_id
-                ):
-                    self._finish_operation(
-                        "execute=False",
-                        operation_id=operation_id,
-                        selection_epoch=selection_epoch,
-                    )
-                    return
-                self.state.plan_state.status = PlanStatus.STALE
-                self._finish_operation(
-                    "execute=False",
-                    clear_error=False,
-                    operation_id=operation_id,
-                    selection_epoch=selection_epoch,
-                )
-                return
-            stale_robots = self._stale_robot_names(group_ids)
             if not self._operation_is_current(operation_id, selection_epoch, target_sequence_id):
                 self._finish_operation(
                     "execute=False", operation_id=operation_id, selection_epoch=selection_epoch
-                )
-                return
-            if stale_robots:
-                self.state.plan_state.status = PlanStatus.STALE
-                self.state.error = "Cannot execute without fresh telemetry for: " + ", ".join(
-                    stale_robots
-                )
-                self._finish_operation(
-                    "execute=False",
-                    clear_error=False,
-                    operation_id=operation_id,
-                    selection_epoch=selection_epoch,
                 )
                 return
             self.state.action_status = ActionStatus.EXECUTING

@@ -13,7 +13,7 @@ torso, without confusing that group with the robot's hardware identity.
 | Planning group ID | Stable API ID in the form `{robot_name}/{group_name}`. |
 | Local joint name | Joint name inside a robot model, such as `joint1`. |
 | Global joint name | Boundary-level joint name in the form `{robot_name}/{local_joint_name}`. |
-| Generated plan | Planning artifact containing selected group IDs and one synchronized global-joint path. |
+| Generated plan | Planning artifact containing selected group IDs, geometric waypoints, and one synchronized global-joint trajectory. |
 | Auxiliary group | A selected group that contributes free DOFs to a pose plan without receiving its own pose target. |
 
 Local URDF/SRDF joint names stay inside robot-scoped configuration, model
@@ -129,15 +129,20 @@ partial joint sets.
 A `GeneratedPlan` stores:
 
 - selected planning group IDs;
-- a single synchronized path of `JointState` waypoints keyed by global joint
-  names;
+- a geometric path of `JointState` waypoints keyed by global joint names;
+- one materialized synchronized `JointTrajectory` over the same selected global
+  joint names;
 - status, timing, path length, iteration count, and message metadata.
 
-Preview and execution project this path lazily. Preview sends projected joint
-paths to the world monitor. Execution splits the path by affected trajectory
-task, orders each trajectory by the robot's configured local joint order, writes
-global joint names at the coordinator boundary, and invokes each trajectory
-controller. Controllers remain planning-group agnostic.
+Preview and execution consume the stored trajectory; they do not lazily
+parameterize the geometric path. Preview forwards the raw globally named
+trajectory through the visualization boundary, where renderers project it to
+their robot-local visuals while preserving stored timestamps. Execution splits
+the stored trajectory by affected trajectory task, translates selected joint
+names at the coordinator boundary, and invokes each trajectory controller
+without filling or commanding omitted joints. Controllers remain planning-group
+agnostic, and trajectory tasks still claim their full configured joint set while
+executing only the active planned subset.
 
 Multi-task dispatch is not atomic: if one trajectory task accepts and a later
 task rejects, DimOS reports the rejection but does not roll back the accepted

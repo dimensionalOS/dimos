@@ -170,13 +170,7 @@ class TestManipulationModuleIntegration:
         assert module.has_planned_path() is True
 
         assert module._last_plan is not None
-        projected = module._project_plan_to_robot_paths(module._last_plan)
-        assert projected is not None
-        path = projected["test_arm"]
-        assert len(path) > 1
-
-        traj = module._trajectory_from_robot_path("test_arm", path)
-        assert traj is not None
+        traj = module._split_plan_trajectory_by_robot(module._last_plan)["test_arm"]
         assert len(traj.points) > 1
         assert traj.duration > 0
         assert module._last_plan.group_ids == ("test_arm/manipulator",)
@@ -194,7 +188,7 @@ class TestManipulationModuleIntegration:
         assert module._last_plan is not None
         assert module._last_plan.group_ids == ("test_arm/manipulator",)
         assert module.has_planned_path() is True
-        assert module._project_plan_to_robot_paths(module._last_plan) is not None
+        assert module._split_plan_trajectory_by_robot(module._last_plan) is not None
 
     def test_add_and_remove_obstacle(self, module, joint_state_zeros):
         """Test adding and removing obstacles."""
@@ -248,11 +242,7 @@ class TestManipulationModuleIntegration:
         assert success is True
 
         assert module._last_plan is not None
-        projected = module._project_plan_to_robot_paths(module._last_plan)
-        assert projected is not None
-        path = projected["test_arm"]
-        traj = module._trajectory_from_robot_path("test_arm", path)
-        assert traj is not None
+        traj = module._split_plan_trajectory_by_robot(module._last_plan)["test_arm"]
         robot_config = module._robots["test_arm"][1]
 
         translated = module._translate_trajectory_to_coordinator(traj, robot_config)

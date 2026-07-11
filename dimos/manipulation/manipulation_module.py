@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from enum import Enum
+import math
 import threading
 import time
 from typing import TYPE_CHECKING, Any, TypeAlias
@@ -38,6 +39,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
+from dimos.manipulation.manipulation_operator import ManipulationOperator
 from dimos.manipulation.planning.factory import (
     KinematicsName,
     PlannerName,
@@ -50,7 +52,6 @@ from dimos.manipulation.planning.groups.utils import (
     filter_joint_state_to_selected_joints,
     joint_target_to_global_names,
     planning_group_id_from_selector,
-    project_global_joint_path_to_robot,
 )
 from dimos.manipulation.planning.kinematics.config import (
     ManipulationKinematicsConfig,
@@ -62,7 +63,6 @@ from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType
 from dimos.manipulation.planning.spec.models import (
     GeneratedPlan,
     IKResult,
-    JointPath,
     Obstacle,
     PlanningGroupID,
     RobotName,
@@ -85,6 +85,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -256,7 +257,8 @@ class ManipulationModule(Module):
             self._world_monitor.start_state_monitor(robot_id)
 
         self._world_monitor.set_visualization(visualization)
-        self._world_monitor.sync_visualization_scene()
+        operator = ManipulationOperator(self, self._world_monitor)
+        self._world_monitor.initialize_visualization(operator=operator)
 
         if self._world_monitor.visualization is not None:
             self._world_monitor.start_visualization_thread(rate_hz=10.0)
@@ -533,73 +535,162 @@ class ManipulationModule(Module):
             )
         return group_id
 
-    def _project_plan_to_robot_paths(
+    def _split_plan_trajectory_by_robot(
         self, plan: GeneratedPlan
-    ) -> dict[RobotName, JointPath] | None:
-        """Project a selected-global-joint plan into full local paths per affected robot.
-
-        TODO: need proper trajectory parametrization
-        """
-        if self._world_monitor is None:
-            return None
-        paths: dict[RobotName, JointPath] = {}
-        try:
-            affected = self._world_monitor.planning_groups.select(plan.group_ids).robot_names
-        except Exception as exc:
-            logger.error("Failed to resolve generated plan: %s", exc)
-            return None
-
-        for robot_name in affected:
+    ) -> dict[RobotName, JointTrajectory] | None:
+        """Split a stored global selected-joint trajectory into robot-local subsets."""
+        trajectories: dict[RobotName, JointTrajectory] = {}
+        robot_indices: dict[RobotName, list[tuple[int, str]]] = {}
+        for index, global_name in enumerate(plan.trajectory.joint_names):
+            if "/" not in global_name:
+                logger.error("Stored trajectory joint '%s' is not globally named", global_name)
+                return None
+            robot_name, local_name = global_name.split("/", 1)
             robot = self._get_robot(robot_name)
             if robot is None:
                 return None
-            resolved_name, robot_id, config, _ = robot
-            current = self._world_monitor.get_current_joint_state(robot_id)
-            try:
-                paths[resolved_name] = project_global_joint_path_to_robot(
-                    plan.path,
-                    robot_name=resolved_name,
-                    local_joint_names=config.joint_names,
-                    current_joint_state=current,
+            _, _, config, _ = robot
+            if local_name not in config.joint_names:
+                logger.error("Stored trajectory joint '%s' is not configured", global_name)
+                return None
+            robot_indices.setdefault(robot_name, []).append((index, local_name))
+
+        for robot_name, indexed_names in robot_indices.items():
+            indices = [index for index, _ in indexed_names]
+            local_names = [name for _, name in indexed_names]
+            points = [
+                TrajectoryPoint(
+                    time_from_start=point.time_from_start,
+                    positions=[point.positions[index] for index in indices],
+                    velocities=[point.velocities[index] for index in indices],
                 )
-            except ValueError as exc:
-                logger.error("Cannot project plan for '%s': %s", resolved_name, exc)
-                return None
-        return paths
-
-    def _trajectory_from_robot_path(
-        self, robot_name: RobotName, path: JointPath
-    ) -> JointTrajectory | None:
-        """Generate a local trajectory for one projected robot path."""
-        if len(path) < 2:
-            logger.error("Plan projection for '%s' has fewer than two waypoints", robot_name)
-            return None
-        robot = self._get_robot(robot_name)
-        if robot is None:
-            return None
-        _, _, config, traj_gen = robot
-        local_trajectory = traj_gen.generate([list(state.position) for state in path])
-        return JointTrajectory(
-            joint_names=list(config.joint_names),
-            points=local_trajectory.points,
-            timestamp=local_trajectory.timestamp,
-        )
-
-    def _trajectories_for_plan(
-        self, plan: GeneratedPlan
-    ) -> dict[RobotName, JointTrajectory] | None:
-        """Derive robot-local trajectories from a generated plan."""
-        projected = self._project_plan_to_robot_paths(plan)
-        if projected is None:
-            return None
-        trajectories: dict[RobotName, JointTrajectory] = {}
-        for robot_name, path in projected.items():
-            trajectory = self._trajectory_from_robot_path(robot_name, path)
-            if trajectory is None:
-                return None
-            trajectories[robot_name] = trajectory
-            logger.info("Trajectory for %s: %.3fs", robot_name, trajectory.duration)
+                for point in plan.trajectory.points
+            ]
+            trajectories[robot_name] = JointTrajectory(
+                joint_names=local_names,
+                points=points,
+                timestamp=plan.trajectory.timestamp,
+            )
+            logger.info(
+                "Stored trajectory for %s: %d selected joints, %.3fs",
+                robot_name,
+                len(local_names),
+                trajectories[robot_name].duration,
+            )
         return trajectories
+
+    @staticmethod
+    def _assert_finite_sequence(values: Sequence[float], label: str) -> None:
+        for value in values:
+            if not math.isfinite(value):
+                raise ValueError(f"{label} contains non-finite value")
+
+    def _limits_for_global_joints(
+        self, joint_names: Sequence[str]
+    ) -> tuple[list[float], list[float]]:
+        velocities: list[float] = []
+        accelerations: list[float] = []
+        for global_name in joint_names:
+            if "/" not in global_name:
+                raise ValueError(f"Joint '{global_name}' is not globally named")
+            robot_name, local_name = global_name.split("/", 1)
+            robot = self._get_robot(robot_name)
+            if robot is None:
+                raise ValueError(f"Unknown robot for joint '{global_name}'")
+            _, _, config, _ = robot
+            if local_name not in config.joint_names:
+                raise ValueError(f"Unknown local joint '{global_name}'")
+            velocity = float(config.max_velocity)
+            acceleration = float(config.max_acceleration)
+            if not math.isfinite(velocity) or velocity <= 0.0:
+                raise ValueError(f"Invalid velocity limit for '{global_name}'")
+            if not math.isfinite(acceleration) or acceleration <= 0.0:
+                raise ValueError(f"Invalid acceleration limit for '{global_name}'")
+            velocities.append(velocity)
+            accelerations.append(acceleration)
+        return velocities, accelerations
+
+    def _validate_selected_path(
+        self, path: Sequence[JointState], expected_names: Sequence[str]
+    ) -> list[list[float]]:
+        if len(path) < 2:
+            raise ValueError("Planner returned fewer than two waypoints")
+        expected = list(expected_names)
+        waypoints: list[list[float]] = []
+        for waypoint_index, state in enumerate(path):
+            if list(state.name) != expected:
+                raise ValueError(
+                    f"Waypoint {waypoint_index} joint names do not match selected order"
+                )
+            positions = list(state.position)
+            if len(positions) != len(expected):
+                raise ValueError(f"Waypoint {waypoint_index} position dimension mismatch")
+            self._assert_finite_sequence(positions, f"Waypoint {waypoint_index} positions")
+            waypoints.append(positions)
+        return waypoints
+
+    def _validate_generated_trajectory(
+        self,
+        trajectory: JointTrajectory,
+        expected_names: Sequence[str],
+        waypoints: Sequence[Sequence[float]],
+    ) -> None:
+        expected = list(expected_names)
+        if list(trajectory.joint_names) != expected:
+            raise ValueError("Generated trajectory joint names do not match selected order")
+        if not trajectory.points:
+            raise ValueError("Generated trajectory has no points")
+        previous_time: float | None = None
+        for point_index, point in enumerate(trajectory.points):
+            if len(point.positions) != len(expected) or len(point.velocities) != len(expected):
+                raise ValueError(f"Generated point {point_index} dimension mismatch")
+            self._assert_finite_sequence(
+                point.positions, f"Generated point {point_index} positions"
+            )
+            self._assert_finite_sequence(
+                point.velocities, f"Generated point {point_index} velocities"
+            )
+            if not math.isfinite(point.time_from_start):
+                raise ValueError(f"Generated point {point_index} time is non-finite")
+            if point_index == 0 and point.time_from_start != 0.0:
+                raise ValueError("Generated trajectory must start at time 0")
+            if previous_time is not None and point.time_from_start <= previous_time:
+                raise ValueError("Generated trajectory times must be strictly increasing")
+            previous_time = point.time_from_start
+        non_noop = any(list(waypoint) != list(waypoints[0]) for waypoint in waypoints[1:])
+        if non_noop and trajectory.duration <= 0.0:
+            raise ValueError("Generated trajectory duration must be positive")
+        waypoint_index = 0
+        for point in trajectory.points:
+            if list(point.positions) == list(waypoints[waypoint_index]):
+                waypoint_index += 1
+                if waypoint_index == len(waypoints):
+                    break
+        if waypoint_index != len(waypoints):
+            raise ValueError("Generated trajectory does not contain ordered waypoint boundaries")
+
+    def _materialize_generated_plan(
+        self, group_ids: tuple[PlanningGroupID, ...], result_path: Sequence[JointState]
+    ) -> tuple[list[JointState], JointTrajectory]:
+        assert self._world_monitor is not None
+        selection = self._world_monitor.planning_groups.select(group_ids)
+        expected_names = list(selection.joint_names)
+        path = [JointState(state) for state in result_path]
+        waypoints = self._validate_selected_path(path, expected_names)
+        velocities, accelerations = self._limits_for_global_joints(expected_names)
+        generator = JointTrajectoryGenerator(
+            num_joints=len(expected_names),
+            max_velocity=velocities,
+            max_acceleration=accelerations,
+        )
+        generated = generator.generate(waypoints)
+        trajectory = JointTrajectory(
+            joint_names=expected_names,
+            points=generated.points,
+            timestamp=generated.timestamp,
+        )
+        self._validate_generated_trajectory(trajectory, expected_names, waypoints)
+        return path, trajectory
 
     def _plan_selected_path(
         self,
@@ -622,19 +713,21 @@ class ManipulationModule(Module):
             return False
 
         logger.info("Path: %d waypoints, groups=%s", len(result.path), group_ids)
+        try:
+            path, trajectory = self._materialize_generated_plan(group_ids, result.path)
+        except Exception as exc:
+            _ = self._fail_planning_epoch(planning_epoch, f"Failed to materialize plan: {exc}")
+            return False
         plan = GeneratedPlan(
             group_ids=group_ids,
-            path=result.path,
+            trajectory=trajectory,
+            path=path,
             status=result.status,
             planning_time=result.planning_time,
             path_length=result.path_length,
             iterations=result.iterations,
             message=result.message,
         )
-        projected = self._project_plan_to_robot_paths(plan)
-        if projected is None or any(len(path) < 2 for path in projected.values()):
-            _ = self._fail_planning_epoch(planning_epoch, "Failed to project generated plan")
-            return False
         with self._lock:
             if self._state != ManipulationState.PLANNING or planning_epoch != self._planning_epoch:
                 logger.info("Discarding cancelled planning result")
@@ -669,8 +762,8 @@ class ManipulationModule(Module):
         """Hide the preview ghost if the world supports it."""
         if self._world_monitor is None:
             return
-        self._world_monitor.hide_preview(group_ids)
-        self._world_monitor.publish_visualization()
+        _ = group_ids
+        self._world_monitor.cancel_preview_animation()
 
     def _solve_ik_for_pose(
         self,
@@ -986,7 +1079,7 @@ class ManipulationModule(Module):
         if self._world_monitor is None:
             return False
         _ = target_fps
-        self._world_monitor.animate_plan(plan, duration if duration is not None else 1.0)
+        self._world_monitor.animate_trajectory(plan.trajectory, duration)
         return True
 
     @rpc
@@ -997,6 +1090,13 @@ class ManipulationModule(Module):
             True if a path is planned and ready
         """
         return self._last_plan is not None and bool(self._last_plan.path)
+
+    def current_plan_summary(self) -> tuple[tuple[PlanningGroupID, ...], int, float] | None:
+        """Return a compact summary of the stored plan, if one exists."""
+        plan = self._last_plan
+        if plan is None or not plan.path or not plan.trajectory.points:
+            return None
+        return plan.group_ids, len(plan.path), float(plan.trajectory.duration)
 
     @rpc
     def get_visualization_url(self) -> str | None:
@@ -1329,6 +1429,11 @@ class ManipulationModule(Module):
     ) -> bool:
         """Execute a generated planning-group plan through affected trajectory tasks."""
         if plan is not None:
+            freshness_error = self._stored_plan_freshness_error(plan)
+            if freshness_error is not None:
+                logger.warning(freshness_error)
+                self._error_message = freshness_error
+                return False
             return self._execute_plan(plan, robot_name=robot_name)
         reserved_plan = self._reserve_stored_plan()
         if reserved_plan is None:
@@ -1342,14 +1447,135 @@ class ManipulationModule(Module):
             if (
                 plan is None
                 or not plan.path
+                or not plan.trajectory.points
                 or self._last_plan_consumed
                 or self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED)
             ):
                 logger.warning("Stored plan is invalid, consumed, or not executable")
                 return None
+            freshness_error = self._stored_plan_freshness_error(plan)
+            if freshness_error is not None:
+                logger.warning(freshness_error)
+                self._error_message = freshness_error
+                return None
             self._last_plan_consumed = True
             self._state = ManipulationState.EXECUTING
             return plan
+
+    def _stored_plan_freshness_error(
+        self, plan: GeneratedPlan, tolerance: float = 1e-6
+    ) -> str | None:
+        """Return why current selected joints no longer match the plan start."""
+        if self._world_monitor is None and "_execute_plan" in self.__dict__:
+            return None
+        if self._world_monitor is None:
+            return "Planning not initialized"
+        if not plan.trajectory.points:
+            return "Stored trajectory has no points"
+        first = plan.trajectory.points[0]
+        names = list(plan.trajectory.joint_names)
+        if len(names) != len(first.positions):
+            return "Stored trajectory start has malformed joint positions"
+        current_values = self._current_planned_global_joint_values(names)
+        if current_values is None or len(current_values) != len(names):
+            return "Current planned joints are malformed"
+        for (actual_name, actual), name, expected in zip(
+            current_values, names, first.positions, strict=True
+        ):
+            if actual_name != name:
+                return "Current planned joints are not in stored plan order"
+            if not math.isfinite(actual) or not math.isfinite(float(expected)):
+                return f"Current planned joint '{name}' is malformed"
+            if abs(actual - float(expected)) > tolerance:
+                return f"Current planned joint '{name}' no longer matches the stored plan start"
+        return None
+
+    def _current_planned_global_joint_values(
+        self, planned_global_names: Sequence[str]
+    ) -> list[tuple[str, float]] | None:
+        """Read current planned joints in stored-plan order from real or fake monitors."""
+        if self._world_monitor is None:
+            return None
+        try:
+            current = self._world_monitor.current_global_joint_state()
+        except (AttributeError, TypeError, ValueError):
+            current = None
+        values = self._joint_values_if_real(current)
+        if isinstance(current, JointState) and values is None:
+            return None
+        if values is not None:
+            if self._any_planned_robot_stale(planned_global_names):
+                return None
+            subset = [(name, values[name]) for name in values if name in planned_global_names]
+            if [name for name, _ in subset] != list(planned_global_names):
+                return None
+            return subset
+
+        derived: dict[str, float] = {}
+        robot_states: dict[RobotName, dict[str, float]] = {}
+        for global_name in planned_global_names:
+            if "/" not in global_name:
+                return None
+            robot_name, local_name = global_name.split("/", 1)
+            robot_id = self.robot_id_for_name(robot_name)
+            if robot_id is None:
+                return None
+            if self._robot_state_is_authoritatively_stale(robot_id):
+                return None
+            if robot_name not in robot_states:
+                state = self._world_monitor.get_current_joint_state(robot_id)
+                local_values = self._joint_values_if_real(state)
+                if local_values is None:
+                    return None
+                robot_states[robot_name] = local_values
+            robot_values = robot_states[robot_name]
+            value = robot_values.get(global_name)
+            if value is None:
+                value = robot_values.get(local_name)
+            if value is None:
+                return None
+            derived[global_name] = value
+        return [(name, derived[name]) for name in planned_global_names]
+
+    def _any_planned_robot_stale(self, planned_global_names: Sequence[str]) -> bool:
+        """Return True only when the monitor gives an authoritative bool stale signal."""
+        robot_names = {name.split("/", 1)[0] for name in planned_global_names if "/" in name}
+        for robot_name in robot_names:
+            robot_id = self.robot_id_for_name(robot_name)
+            if robot_id is not None and self._robot_state_is_authoritatively_stale(robot_id):
+                return True
+        return False
+
+    def _robot_state_is_authoritatively_stale(self, robot_id: WorldRobotID) -> bool:
+        checker = getattr(self._world_monitor, "is_state_stale", None)
+        if not callable(checker):
+            return False
+        try:
+            stale = checker(robot_id)
+        except (TypeError, ValueError):
+            return False
+        return stale if isinstance(stale, bool) else False
+
+    @staticmethod
+    def _joint_values_if_real(state: object) -> dict[str, float] | None:
+        """Return name->position for concrete JointState-like objects, not loose mocks."""
+        if not isinstance(state, JointState):
+            return None
+        if len(state.name) != len(state.position):
+            return None
+        values: dict[str, float] = {}
+        for name, position in zip(state.name, state.position, strict=True):
+            name_string = str(name)
+            if name_string in values:
+                return None
+            try:
+                value = float(position)
+            except (TypeError, ValueError):
+                return None
+            if not math.isfinite(value):
+                return None
+            values[name_string] = value
+        return values
 
     def _execute_plan(
         self,
@@ -1386,9 +1612,9 @@ class ManipulationModule(Module):
                     self._release_reserved_execution()
                 return False
             affected = [robot_name]
-        trajectories = self._trajectories_for_plan(plan)
+        trajectories = self._split_plan_trajectory_by_robot(plan)
         if trajectories is None:
-            return self._fail_execution("Failed to project generated plan", execution_reserved)
+            return self._fail_execution("Failed to split stored trajectory", execution_reserved)
 
         if not execution_reserved:
             with self._lock:
@@ -1634,13 +1860,9 @@ class ManipulationModule(Module):
         robot = self._get_robot(robot_name)
         if robot is None:
             return True
-        rname, _, config, _ = robot
+        _, _, config, _ = robot
         client = self._get_coordinator_client()
-        trajectory: JointTrajectory | None = None
-        if last_plan is not None and last_plan.path:
-            projected = self._project_plan_to_robot_paths(last_plan)
-            if projected is not None and (path := projected.get(rname)) is not None:
-                trajectory = self._trajectory_from_robot_path(rname, path)
+        trajectory = last_plan.trajectory if last_plan is not None else None
 
         if client is None or not config.coordinator_task_name:
             # No coordinator — wait for trajectory duration as fallback

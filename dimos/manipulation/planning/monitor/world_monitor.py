@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from contextlib import contextmanager
 import threading
 from typing import TYPE_CHECKING, Any
@@ -30,10 +29,15 @@ from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.groups.utils import filter_joint_state_to_selected_joints
 from dimos.manipulation.planning.monitor.robot_state_monitor import RobotStateMonitor
 from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
-from dimos.manipulation.planning.spec.models import PlanningSceneInfo
+from dimos.manipulation.planning.spec.models import (
+    PlanningSceneInfo,
+    VisualizationSession,
+    VisualizationStateFrame,
+)
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec, WorldSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -45,7 +49,6 @@ if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.manipulation.planning.spec.models import (
         CollisionObjectMessage,
-        GeneratedPlan,
         JointPath,
         Obstacle,
         PlanningGroupID,
@@ -106,14 +109,23 @@ class WorldMonitor:
     def planning_scene_info(self) -> PlanningSceneInfo:
         """Return a stable metadata snapshot of the initialized planning scene."""
         with self._lock:
-            return PlanningSceneInfo(robots=dict(self._robot_configs))
+            return PlanningSceneInfo(
+                robots=dict(self._robot_configs),
+                planning_groups=tuple(self._planning_groups.list()),
+            )
 
-    def sync_visualization_scene(self) -> None:
-        """Synchronize startup scene metadata to the attached visualization."""
+    def initialize_visualization(self, operator: object | None = None) -> None:
+        """Initialize attached visualization with immutable startup metadata."""
         visualization = self._visualization
         if visualization is None:
             return
-        visualization.initialize_scene(self.planning_scene_info())
+        visualization.initialize(
+            VisualizationSession(scene=self.planning_scene_info(), operator=operator)
+        )
+
+    def sync_visualization_scene(self) -> None:
+        """Compatibility wrapper for initializing visualization metadata."""
+        self.initialize_visualization()
 
     def get_robot_ids(self) -> list[WorldRobotID]:
         """Get all robot IDs."""
@@ -530,33 +542,36 @@ class WorldMonitor:
             return str(url) if url else None
         return None
 
-    def publish_visualization(self) -> None:
-        """Force publish current state to visualization."""
+    def visualization_state_frame(self) -> VisualizationStateFrame:
+        """Build a pushed visualization state frame without freshness policy."""
+        joint_states: dict[str, JointState] = {}
+        with self._lock:
+            robot_ids = list(self._robot_configs.keys())
+        for robot_id in robot_ids:
+            state = self.get_current_joint_state(robot_id)
+            if state is not None:
+                joint_states[robot_id] = state
+        return VisualizationStateFrame(joint_states=joint_states)
+
+    def update_visualization_state(self) -> None:
+        """Push current state to visualization."""
         if self._visualization is not None:
             with self._visualization_lock:
-                self._visualization.publish_visualization()
+                self._visualization.update_state(self.visualization_state_frame())
 
-    def show_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
-        """Show previews for the robots affected by planning groups if available."""
+    def cancel_preview_animation(self) -> None:
+        """Cancel active visualization preview animation."""
         if self._visualization is not None:
-            with self._visualization_lock:
-                self._visualization.show_preview(group_ids)
+            self._visualization.cancel_preview_animation()
 
-    def hide_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
-        """Hide previews for the robots affected by planning groups if available."""
+    def animate_trajectory(
+        self, trajectory: JointTrajectory, duration: float | None = None
+    ) -> None:
+        """Animate a raw generated-plan trajectory if visualization is available."""
         if self._visualization is not None:
             self._visualization.cancel_preview_animation()
             with self._visualization_lock:
-                self._visualization.hide_preview(group_ids)
-
-    def animate_plan(self, plan: GeneratedPlan, duration: float = 3.0) -> None:
-        """Animate a generated plan if visualization is available."""
-        if self._visualization is not None:
-            # Replacing a preview invalidates any sleeping renderer before this
-            # call waits for the prior mutation to drain.
-            self._visualization.cancel_preview_animation()
-            with self._visualization_lock:
-                self._visualization.animate_plan(plan, duration)
+                self._visualization.animate_trajectory(trajectory, duration)
 
     def start_visualization_thread(self, rate_hz: float = 10.0) -> None:
         """Start background thread for visualization updates at given rate."""
@@ -597,7 +612,7 @@ class WorldMonitor:
         period = 1.0 / self._viz_rate_hz
         while not self._viz_stop_event.is_set():
             try:
-                self.publish_visualization()
+                self.update_visualization_state()
             except Exception as e:
                 logger.debug(f"Visualization publish failed: {e}")
             time.sleep(period)

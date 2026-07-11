@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 import threading
 from types import SimpleNamespace
 
@@ -25,12 +26,18 @@ import pytest
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
+from dimos.manipulation.manipulation_operator import (
+    ActionResult,
+    PlanSummary,
+    TargetEvaluationResult,
+)
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
+from dimos.manipulation.planning.spec.models import PlanningSceneInfo
 from dimos.manipulation.visualization.viser.animation import (
     GroupPreviewAnimation,
+    PreviewFrame,
     PreviewTrack,
-    interpolate_joint_path,
-    sampled_joint_path_frames,
+    scaled_frame_delays,
 )
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import (
@@ -38,12 +45,7 @@ from dimos.manipulation.visualization.viser.gui import (
     INACTIVE_GROUP_COLOR,
     ViserPanelGui,
 )
-from dimos.manipulation.visualization.viser.panel_backend import (
-    complete_states_for_targets,
-    evaluate_joint_target_set,
-    evaluate_pose_target_set,
-    group_display_name,
-)
+from dimos.manipulation.visualization.viser.panel_backend import group_display_name
 from dimos.manipulation.visualization.viser.scene import (
     GOAL_ROBOT_FEASIBLE_COLOR,
     GOAL_ROBOT_INFEASIBLE_COLOR,
@@ -161,10 +163,19 @@ class Config:
     home_joints: list[float] | None
     base_link: str = "base"
     end_effector_link: str = "tool"
-    model_path: str = "robot.urdf"
+    model_path: Path | str = "robot.urdf"
     package_paths: dict[str, str] | None = None
     xacro_args: dict[str, str] | None = None
     auto_convert_meshes: bool = False
+    max_velocity: float = 1.0
+    max_acceleration: float = 1.0
+    joint_name_mapping: dict[str, str] | None = None
+    coordinator_task_name: str | None = None
+    pre_grasp_offset: float = 0.0
+
+    def __post_init__(self) -> None:
+        if isinstance(self.model_path, str):
+            self.model_path = Path(self.model_path)
 
 
 def group(robot: str, name: str, joints: tuple[str, ...], *, pose: bool = False) -> PlanningGroup:
@@ -262,6 +273,7 @@ class Monitor:
         self.module = module
         self.invalid: set[str] = set()
         self.stale: set[str] = set()
+        self.poses: dict[str, Pose] = {}
 
     def get_current_joint_state(self, robot_id: str) -> JointState:
         return JointState(self.module.states[robot_id.removeprefix("id-")])
@@ -273,7 +285,124 @@ class Monitor:
         return robot_id not in self.invalid
 
     def get_group_ee_pose(self, group_id: str, _state: JointState | None = None) -> Pose:
-        return Pose({"position": [0.1, 0.2, 0.3], "orientation": [0.0, 0.0, 0.0, 1.0]})
+        return self.poses.get(
+            group_id,
+            Pose({"position": [0.1, 0.2, 0.3], "orientation": [0.0, 0.0, 0.0, 1.0]}),
+        )
+
+
+class Operator:
+    def __init__(self, module: Module, monitor: Monitor) -> None:
+        self.module = module
+        self.monitor = monitor
+
+    def status(self) -> SimpleNamespace:
+        return SimpleNamespace(
+            state=self.module.get_state(),
+            error=self.module.get_error(),
+            has_plan=True,
+            plan=PlanSummary(("arm/manipulator",), 2, 1.0),
+        )
+
+    def get_init_joints(self, robot_name: str) -> JointState | None:
+        return self.module.get_init_joints(robot_name)
+
+    def evaluate_joint_target(self, request: object) -> TargetEvaluationResult:
+        target = request.target  # type: ignore[attr-defined]
+        group_ids = request.group_ids  # type: ignore[attr-defined]
+        diagnostics = {
+            group_id: "Target is collision-free for this robot" for group_id in group_ids
+        }
+        poses = {group_id: self.monitor.get_group_ee_pose(group_id) for group_id in group_ids}
+        return TargetEvaluationResult(
+            True,
+            "FEASIBLE",
+            "Target is collision-free for each robot",
+            True,
+            tuple(group_ids),
+            target,
+            diagnostics,
+            poses,
+        )
+
+    def evaluate_pose_target(self, request: object) -> TargetEvaluationResult:
+        group_ids = tuple(
+            dict.fromkeys((*request.pose_targets.keys(), *request.auxiliary_group_ids))
+        )  # type: ignore[attr-defined]
+        js = JointState(
+            {
+                "name": [
+                    name
+                    for group in self.module.groups
+                    for name in group.joint_names
+                    if group.id in group_ids
+                ],
+                "position": [
+                    0.7
+                    for group in self.module.groups
+                    for _ in group.joint_names
+                    if group.id in group_ids
+                ],
+            }
+        )
+        return TargetEvaluationResult(
+            True,
+            "FEASIBLE",
+            "ok",
+            True,
+            group_ids,
+            js,
+            {},
+            {group_id: self.monitor.get_group_ee_pose(group_id) for group_id in group_ids},
+        )
+
+    def plan_to_joints(self, request: object) -> ActionResult:
+        self.module.plan_to_joint_targets(
+            {group_id: JointState({"name": [], "position": []}) for group_id in request.group_ids}
+        )  # type: ignore[attr-defined]
+        return ActionResult(
+            True, "Planned", PlanSummary(tuple(request.group_ids), 2, 1.0), tuple(request.group_ids)
+        )  # type: ignore[attr-defined]
+
+    def plan_to_pose(self, request: object) -> ActionResult:
+        return ActionResult(
+            True,
+            "Planned",
+            PlanSummary(tuple(request.pose_targets), 2, 1.0),
+            tuple(request.pose_targets),
+        )  # type: ignore[attr-defined]
+
+    def preview(self) -> ActionResult:
+        return ActionResult(self.module.preview_plan(), "Preview")
+
+    def execute(self) -> ActionResult:
+        return ActionResult(self.module.execute(), "Execute")
+
+    def cancel(self) -> ActionResult:
+        return ActionResult(self.module.cancel(), "Cancel")
+
+    def clear_plan(self) -> ActionResult:
+        return ActionResult(self.module.clear_planned_path(), "Clear")
+
+    def reset(self) -> ActionResult:
+        result = self.module.reset()
+        return ActionResult(result.is_success(), "Reset")
+
+
+def session_inputs(module: Module) -> tuple[PlanningSceneInfo, Operator, dict[str, JointState]]:
+    monitor = Monitor(module)
+    robots = {f"id-{name}": config for name, config in module.configs.items()}
+    current = {f"id-{name}": JointState(state) for name, state in module.states.items()}
+    return (
+        PlanningSceneInfo(robots=robots, planning_groups=tuple(module.groups)),
+        Operator(module, monitor),
+        current,
+    )
+
+
+def scene_gui(module: Module, server: Server, scene: ViserManipulationScene) -> ViserPanelGui:
+    scene_info, operator, current = session_inputs(module)
+    return ViserPanelGui(server, scene_info, operator, current, ViserVisualizationConfig(), scene)
 
 
 @pytest.fixture
@@ -287,8 +416,9 @@ def panel() -> Iterator[
     ) -> tuple[ViserPanelGui, Module, Server]:
         module = Module(groups, states)
         server = Server()
+        scene_info, operator, current = session_inputs(module)
         gui = ViserPanelGui(
-            server, Monitor(module), module, ViserVisualizationConfig(panel_enabled=True)
+            server, scene_info, operator, current, ViserVisualizationConfig(panel_enabled=True)
         )
         gui.start()
         panels.append(gui)
@@ -345,21 +475,21 @@ def test_panel_contract_group_order_defaults_and_controls(
     ]
 
 
-def test_backend_composes_complete_states_with_duplicate_local_names() -> None:
+def test_gui_target_ghost_states_use_exact_group_names() -> None:
     left, right = group("left", "manipulator", ("j1",)), group("right", "manipulator", ("j1",))
     module = Module([left, right], states("left", "right"))
-    monitor = Monitor(module)
+    scene_info, operator, current = session_inputs(module)
+    gui = ViserPanelGui(Server(), scene_info, operator, current, ViserVisualizationConfig())
+    gui.state.selected_group_ids = (left.id, right.id)
     targets = {
         left.id: JointState({"name": ["left/j1"], "position": [0.7]}),
         right.id: JointState({"name": ["right/j1"], "position": [0.8]}),
     }
-    complete = complete_states_for_targets(monitor, module, (left.id, right.id), targets)
-    assert complete is not None
-    assert complete["left"].position == [0.7, 0.2]
-    assert complete["right"].position == [0.8, 0.2]
+    ghost_states = gui._target_ghost_states(targets)
+    assert ghost_states["left"].position == [0.7, 0.2]
+    assert ghost_states["right"].position == [0.8, 0.2]
     assert (
-        evaluate_joint_target_set(monitor, module, (left.id, right.id), targets)["status"]
-        == "FEASIBLE"
+        gui.adapter.evaluate_joint_target_set((left.id, right.id), targets)["status"] == "FEASIBLE"
     )
 
 
@@ -404,14 +534,13 @@ def test_plan_target_sequence_invalidation_and_unfiltered_all_robot_execute(
     )
     gui._submit_plan()
     assert module.plans[-1][0] == (left.id, right.id)
-    assert set(gui.state.plan_state.robot_snapshots) == {"left", "right"}
+    assert gui.state.plan_state.group_ids == (left.id, right.id)
     gui.state.next_sequence_id()
     assert gui.state.plan_state.status == PlanStatus.STALE
     gui.state.plan_state = PanelPlanState(
         status=PlanStatus.FRESH,
         group_ids=(left.id, right.id),
         target_sequence_id=gui.state.latest_sequence_id,
-        robot_snapshots={"left": module.states["left"], "right": module.states["right"]},
     )
     gui.state.target_status = TargetStatus.FEASIBLE
     gui._submit_execute()
@@ -427,12 +556,11 @@ def test_initialization_waits_for_complete_fresh_telemetry(
     )
 
     assert selected.id not in gui.state.group_joint_targets
-    gui._world_monitor.stale.add("id-arm")
     module.states["arm"] = JointState({"name": ["j1", "j2"], "position": [0.4, 0.5]})
     gui.refresh()
     assert selected.id not in gui.state.group_joint_targets
 
-    gui._world_monitor.stale.clear()
+    gui.adapter._current_states["id-arm"] = module.states["arm"]
     gui.refresh()
     assert gui.state.group_joint_targets[selected.id].position == [0.4, 0.5]
 
@@ -443,7 +571,7 @@ def test_incomplete_preset_preserves_existing_group_targets(
     selected = group("arm", "manipulator", ("j1", "j2"), pose=True)
     gui, module, _server = panel([selected], states("arm"))
     before = JointState(gui.state.group_joint_targets[selected.id])
-    module.get_init_joints = lambda _name: JointState({"name": ["j1"], "position": [-0.5]})
+    module.get_init_joints = lambda name: JointState({"name": ["j1"], "position": [-0.5]})
 
     gui._apply_preset("Init")
 
@@ -455,13 +583,14 @@ def test_valid_init_preset_builds_sliders_after_incomplete_initial_telemetry(
     panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
 ) -> None:
     selected = group("arm", "manipulator", ("j1", "j2"), pose=True)
-    gui, _module, server = panel(
+    gui, module, server = panel(
         [selected], {"arm": JointState({"name": ["j1"], "position": [0.4]})}
     )
 
     assert gui.state.group_joint_targets == {}
     assert server.gui.sliders == []
 
+    module.configs["arm"].home_joints = [-0.5, -1.0]
     gui._apply_preset("Init")
 
     assert gui.state.group_joint_targets[selected.id].position == [-0.5, -1.0]
@@ -483,17 +612,14 @@ def test_incomplete_multi_group_preset_does_not_change_any_targets(
     before = {
         group_id: JointState(target) for group_id, target in gui.state.group_joint_targets.items()
     }
-    module.get_init_joints = lambda robot_name: JointState(
-        {
-            "name": ["j1"] if robot_name == "left" else [],
-            "position": [-0.5] if robot_name == "left" else [],
-        }
+    module.get_init_joints = lambda name: JointState(
+        {"name": ["j1"] if name == "left" else [], "position": [-0.5] if name == "left" else []}
     )
 
     gui._apply_preset("Init")
 
     assert gui.state.group_joint_targets == before
-    assert "right/manipulator" in gui.state.error
+    assert "missing joints" in gui.state.error
 
 
 def test_cancel_clear_and_close_invalidate_operations_and_preview_generation(
@@ -578,8 +704,8 @@ def test_scene_active_only_ghosts_group_gizmos_feasibility_and_shared_ticks(
                 "id-arm",
                 ("j1", "j2"),
                 (
-                    JointState({"name": ["j1", "j2"], "position": [0.0, 0.2]}),
-                    JointState({"name": ["j1", "j2"], "position": [1.0, 0.2]}),
+                    PreviewFrame(0.0, (0.0, 0.2)),
+                    PreviewFrame(1.0, (1.0, 0.2)),
                 ),
             ),
         )
@@ -643,6 +769,53 @@ def test_panel_preset_defaults_and_joint_slider_limits(
     ]
 
 
+def test_init_and_home_presets_use_operator_init_and_config_home(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+) -> None:
+    selected = group("arm", "manipulator", ("j1", "j2"), pose=True)
+    gui, module, _server = panel([selected], states("arm"))
+    module.configs["arm"].home_joints = [0.9, 0.8]
+
+    gui._apply_preset("Init")
+    assert gui.state.group_joint_targets[selected.id].position == [-0.5, -1.0]
+
+    gui._apply_preset("Home")
+    assert gui.state.group_joint_targets[selected.id].position == [0.9, 0.8]
+
+
+def test_initial_pose_targets_are_group_id_keyed_for_same_robot_groups() -> None:
+    first = group("arm", "wrist", ("j1",), pose=True)
+    second = group("arm", "tool", ("j2",), pose=True)
+    module = Module([first, second], states("arm"))
+    monitor = Monitor(module)
+    monitor.poses[first.id] = Pose(
+        {"position": [1.0, 0.0, 0.0], "orientation": [0.0, 0.0, 0.0, 1.0]}
+    )
+    monitor.poses[second.id] = Pose(
+        {"position": [2.0, 0.0, 0.0], "orientation": [0.0, 0.0, 0.0, 1.0]}
+    )
+    server = Server()
+    scene_info = PlanningSceneInfo(
+        robots={"id-arm": module.configs["arm"]}, planning_groups=tuple(module.groups)
+    )
+    current = {"id-arm": JointState(module.states["arm"])}
+    gui = ViserPanelGui(
+        server,
+        scene_info,
+        Operator(module, monitor),
+        current,
+        ViserVisualizationConfig(panel_enabled=True),
+    )
+    try:
+        gui.start()
+        gui._toggle_group_selected(second.id)
+
+        assert list(gui.state.pose_targets[first.id].position) == [1.0, 0.0, 0.0]
+        assert list(gui.state.pose_targets[second.id].position) == [2.0, 0.0, 0.0]
+    finally:
+        gui.close()
+
+
 def test_panel_action_controls_are_present_in_source_order(
     panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
 ) -> None:
@@ -682,88 +855,6 @@ def test_target_callbacks_require_current_target_identity(
     )
 
     assert gui.state.target_status == TargetStatus.CHECKING
-
-
-def test_backend_rejects_unknown_or_malformed_group_targets() -> None:
-    selected = group("arm", "manipulator", ("j1",))
-    module = Module([selected], states("arm"))
-    monitor = Monitor(module)
-    malformed = {selected.id: JointState({"name": ["j1"], "position": [0.7]})}
-
-    assert complete_states_for_targets(monitor, module, ("missing",), {}) is None
-    assert complete_states_for_targets(monitor, module, (selected.id,), malformed) is None
-    assert (
-        evaluate_joint_target_set(monitor, module, (selected.id,), malformed).get("status")
-        == "INVALID"
-    )
-
-
-def test_backend_marks_complete_target_infeasible_when_any_robot_is_invalid() -> None:
-    left, right = group("left", "manipulator", ("j1",)), group("right", "manipulator", ("j1",))
-    module = Module([left, right], states("left", "right"))
-    monitor = Monitor(module)
-    monitor.invalid.add("id-right")
-    targets = {
-        left.id: JointState({"name": ["left/j1"], "position": [0.7]}),
-        right.id: JointState({"name": ["right/j1"], "position": [0.8]}),
-    }
-
-    result = evaluate_joint_target_set(monitor, module, (left.id, right.id), targets)
-
-    assert result.get("status") == "COLLISION"
-    assert result.get("collision_free") is False
-    assert set(result.get("group_diagnostics", {})) == {left.id, right.id}
-
-
-def test_backend_joint_evaluation_returns_forward_kinematics_for_each_group() -> None:
-    selected = group("arm", "manipulator", ("j1",), pose=True)
-    module = Module([selected], states("arm"))
-    result = evaluate_joint_target_set(
-        Monitor(module),
-        module,
-        (selected.id,),
-        {selected.id: JointState({"name": ["arm/j1"], "position": [0.7]})},
-    )
-
-    pose = result.get("group_poses", {}).get(selected.id)
-    assert pose is not None
-    assert list(pose.position) == [0.1, 0.2, 0.3]
-
-
-def test_backend_cartesian_evaluation_uses_group_ik_and_complete_state_validation() -> None:
-    selected = group("arm", "manipulator", ("j1",), pose=True)
-    module = Module([selected], states("arm"))
-    calls: list[dict[str, object]] = []
-
-    def inverse_kinematics(
-        *,
-        pose_targets: object,
-        auxiliary_group_ids: Sequence[str] = (),
-        seed: JointState | None = None,
-        check_collision: bool = True,
-    ) -> SimpleNamespace:
-        calls.append(
-            {
-                "pose_targets": pose_targets,
-                "auxiliary_group_ids": auxiliary_group_ids,
-                "seed": seed,
-                "check_collision": check_collision,
-            }
-        )
-        return SimpleNamespace(
-            is_success=lambda: True,
-            joint_state=JointState({"name": ["arm/j1"], "position": [0.7]}),
-        )
-
-    module.inverse_kinematics = inverse_kinematics
-    result = evaluate_pose_target_set(
-        Monitor(module),
-        module,
-        {selected.id: Pose({"position": [0.1, 0.2, 0.3], "orientation": [0.0, 0.0, 0.0, 1.0]})},
-    )
-
-    assert calls[0]["check_collision"] is True
-    assert result.get("status") == "FEASIBLE"
 
 
 def test_scene_target_ghost_tracks_current_only_until_explicit_target() -> None:
@@ -812,7 +903,7 @@ def test_panel_feasibility_colors_group_controls_and_deduplicated_robot_ghosts()
     scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     scene.register_robot("id-arm", module.configs["arm"])
     scene.register_robot("id-other", module.configs["other"])
-    gui = ViserPanelGui(server, Monitor(module), module, ViserVisualizationConfig(), scene)
+    gui = scene_gui(module, server, scene)
     gui.start()
     gui._worker.stop()
     gui._operation_worker.stop()
@@ -874,7 +965,9 @@ def test_panel_feasibility_colors_group_controls_and_deduplicated_robot_ghosts()
     gui.close()
 
 
-def test_scene_shared_clock_resamples_unequal_robot_frames(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_scene_shared_clock_uses_stored_unequal_robot_frames(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
@@ -895,13 +988,13 @@ def test_scene_shared_clock_resamples_unequal_robot_frames(monkeypatch: pytest.M
     assert scene.animate_preview(
         GroupPreviewAnimation(
             (
-                PreviewTrack("left", ("j1",), (JointState({"name": ["j1"], "position": [0.0]}),)),
+                PreviewTrack("left", ("j1",), (PreviewFrame(0.0, (0.0,)),)),
                 PreviewTrack(
                     "right",
                     ("j1",),
                     (
-                        JointState({"name": ["j1"], "position": [10.0]}),
-                        JointState({"name": ["j1"], "position": [11.0]}),
+                        PreviewFrame(0.0, (10.0,)),
+                        PreviewFrame(1.0, (11.0,)),
                     ),
                 ),
             )
@@ -912,21 +1005,18 @@ def test_scene_shared_clock_resamples_unequal_robot_frames(monkeypatch: pytest.M
         ("left", [0.0]),
         ("right", [10.0]),
         ("left", [0.0]),
-        ("right", [10.5]),
-        ("left", [0.0]),
         ("right", [11.0]),
     ]
 
 
-def test_animation_frame_helpers_preserve_dense_paths_and_interpolate_sparse_paths() -> None:
-    dense = [JointState({"name": ["j1"], "position": [float(index)]}) for index in range(4)]
-    sparse = [
-        JointState({"name": ["j1"], "position": [0.0]}),
-        JointState({"name": ["j1"], "position": [1.0]}),
-    ]
+def test_animation_frame_helpers_scale_stored_timestamps() -> None:
+    frames = (
+        PreviewFrame(0.0, (0.0,)),
+        PreviewFrame(0.25, (1.0,)),
+        PreviewFrame(1.0, (2.0,)),
+    )
 
-    assert sampled_joint_path_frames(dense, 1.0, 2.0) == [[0.0], [1.0], [2.0], [3.0]]
-    assert interpolate_joint_path(sparse, 1.0, 2.0) == [[0.0], [0.5], [1.0]]
+    assert scaled_frame_delays(frames, 2.0) == (0.5, 1.5)
 
 
 def test_panel_disables_plan_preview_and_execute_until_a_feasible_target(
@@ -967,7 +1057,15 @@ def test_scene_returns_false_for_missing_robot_target_updates() -> None:
     scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
 
     assert scene.set_target_joints("missing", ["j1"], [0.1]) is False
-    assert scene.animate_path("missing", [], duration=0.0) is False
+    assert (
+        scene.animate_preview(
+            GroupPreviewAnimation(
+                (PreviewTrack("missing", ("j1",), (PreviewFrame(0.0, (0.0,)),)),)
+            ),
+            duration=0.0,
+        )
+        is False
+    )
 
 
 def test_scene_cancel_generation_hides_preview_and_rejects_old_animation() -> None:
@@ -977,7 +1075,8 @@ def test_scene_cancel_generation_hides_preview_and_rejects_old_animation() -> No
     scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
     scene.register_robot("id-arm", config)
-    scene.show_preview("id-arm")
+    scene._preview_visible["id-arm"] = True
+    scene._set_preview_visibility("id-arm", True)
 
     scene.cancel_preview_animation()
 
@@ -1008,112 +1107,6 @@ def test_scene_detects_non_identity_base_pose() -> None:
 
     assert ViserManipulationScene._has_non_identity_base_pose(identity) is False
     assert ViserManipulationScene._has_non_identity_base_pose(translated) is True
-
-
-@pytest.mark.parametrize("rejection", ["changed", "stale", "missing_snapshot"])
-def test_all_robot_execute_rejects_secondary_robot_preconditions(
-    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
-    monkeypatch: pytest.MonkeyPatch,
-    rejection: str,
-) -> None:
-    left, right = (
-        group("left", "manipulator", ("j1",), pose=True),
-        group("right", "manipulator", ("j1",), pose=True),
-    )
-    gui, module, _server = panel([left, right], states("left", "right"))
-    gui._toggle_group_selected(right.id)
-    gui.state.target_status = TargetStatus.FEASIBLE
-    gui.state.plan_state = PanelPlanState(
-        status=PlanStatus.FRESH,
-        group_ids=(left.id, right.id),
-        target_sequence_id=gui.state.latest_sequence_id,
-        robot_snapshots={
-            "left": JointState(module.states["left"]),
-            "right": JointState(module.states["right"]),
-        },
-    )
-    monkeypatch.setattr(
-        gui,
-        "_operation_worker",
-        SimpleNamespace(submit=lambda operation, **_: operation(), stop=lambda **_: None),
-    )
-    # Enter the operation so each rejection is asserted at its authoritative
-    # all-robot preflight, rather than only through a disabled GUI button.
-    monkeypatch.setattr(gui, "_can_execute", lambda: True)
-    if rejection == "changed":
-        module.states["right"] = JointState({"name": ["j1", "j2"], "position": [0.9, 0.2]})
-    elif rejection == "stale":
-        gui._world_monitor.stale.add("id-right")
-    else:
-        gui.state.plan_state.robot_snapshots.pop("right")
-
-    gui._submit_execute()
-
-    assert module.executions == 0
-    assert gui.state.plan_state.status is PlanStatus.STALE
-    if rejection == "stale":
-        assert "right" in gui.state.error
-
-
-def test_visualizer_rejects_invalid_group_preview_before_scene_animation() -> None:
-    selected = group("arm", "manipulator", ("j1",))
-    module = Module([selected], states("arm"))
-    monitor = Monitor(module)
-    monitor.planning_groups = SimpleNamespace(
-        select=lambda ids: (
-            (_ for _ in ()).throw(KeyError("unknown"))
-            if tuple(ids) == ("missing",)
-            else PlanningGroupSelection.from_groups((selected,))
-        )
-    )
-    visualizer = ViserManipulationVisualizer(
-        world_monitor=monitor,
-        manipulation_module=module,
-        config=ViserVisualizationConfig(panel_enabled=False),
-    )
-    calls: list[object] = []
-    visualizer._ensure_started = lambda: None  # type: ignore[method-assign]
-    visualizer._scene = SimpleNamespace(animate_preview=lambda *args: calls.append(args))
-    plans = (
-        (
-            SimpleNamespace(
-                group_ids=("missing",), path=(JointState({"name": ["arm/j1"], "position": [0.1]}),)
-            ),
-            None,
-        ),
-        (
-            SimpleNamespace(
-                group_ids=(selected.id,), path=(JointState({"name": ["arm/j1"], "position": []}),)
-            ),
-            None,
-        ),
-        (
-            SimpleNamespace(
-                group_ids=(selected.id,),
-                path=(JointState({"name": ["arm/j2"], "position": [0.1]}),),
-            ),
-            None,
-        ),
-        (
-            SimpleNamespace(
-                group_ids=(selected.id,),
-                path=(JointState({"name": ["arm/j1"], "position": [0.1]}),),
-            ),
-            None,
-        ),
-        (
-            SimpleNamespace(
-                group_ids=(selected.id,),
-                path=(JointState({"name": ["arm/j1"], "position": [0.1]}),),
-            ),
-            JointState({"name": ["j1"], "position": [0.1]}),
-        ),
-    )
-    for plan, current in plans:
-        monitor.get_current_joint_state = lambda _robot_id, state=current: state  # type: ignore[method-assign]
-        visualizer.animate_plan(plan)
-
-    assert calls == []
 
 
 @pytest.mark.parametrize("interruption", ["cancel", "replacement", "close"])
@@ -1153,8 +1146,8 @@ def test_scene_inflight_preview_never_updates_after_generation_replacement(
                 "id-arm",
                 ("j1",),
                 (
-                    JointState({"name": ["j1"], "position": [0.0]}),
-                    JointState({"name": ["j1"], "position": [1.0]}),
+                    PreviewFrame(0.0, (0.0,)),
+                    PreviewFrame(1.0, (1.0,)),
                 ),
             ),
         )
@@ -1164,8 +1157,6 @@ def test_scene_inflight_preview_never_updates_after_generation_replacement(
     assert first_tick.wait(timeout=2.0)
     if interruption == "cancel":
         visualizer = ViserManipulationVisualizer(
-            world_monitor=SimpleNamespace(),
-            manipulation_module=SimpleNamespace(),
             config=ViserVisualizationConfig(panel_enabled=False),
         )
         visualizer._scene = scene
@@ -1175,11 +1166,7 @@ def test_scene_inflight_preview_never_updates_after_generation_replacement(
         updates.clear()
         assert scene.animate_preview(
             GroupPreviewAnimation(
-                (
-                    PreviewTrack(
-                        "id-arm", ("j1",), (JointState({"name": ["j1"], "position": [10.0]}),)
-                    ),
-                )
+                (PreviewTrack("id-arm", ("j1",), (PreviewFrame(0.0, (10.0,)),)),)
             ),
             0.0,
         )
@@ -1203,7 +1190,7 @@ def test_transform_control_callback_preserves_pose_through_gui_and_backend(
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     server.scene.add_transform_controls = lambda *_args, **_kwargs: Handle()
     scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
-    gui = ViserPanelGui(server, Monitor(module), module, ViserVisualizationConfig(), scene)
+    gui = scene_gui(module, server, scene)
     submitted: list[TargetEvaluationRequest] = []
     gui._worker.submit = submitted.append  # type: ignore[method-assign]
     gui.start()
@@ -1229,7 +1216,7 @@ def test_joint_evaluation_updates_active_gizmo_from_computed_group_pose() -> Non
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     server.scene.add_transform_controls = lambda *_args, **_kwargs: Handle()
     scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
-    gui = ViserPanelGui(server, Monitor(module), module, ViserVisualizationConfig(), scene)
+    gui = scene_gui(module, server, scene)
     gui.start()
     control = scene._handles[f"{selected.id}:ee_control"]
     request = TargetEvaluationRequest(
@@ -1253,112 +1240,3 @@ def test_joint_evaluation_updates_active_gizmo_from_computed_group_pose() -> Non
     assert control.position == (0.7, 0.8, 0.9)
     assert control.wxyz == (0.4, 0.1, 0.2, 0.3)
     gui.close()
-
-
-def test_delayed_cartesian_evaluation_updates_joints_without_rewriting_dragged_gizmo() -> None:
-    selected = group("arm", "manipulator", ("j1",), pose=True)
-    module = Module([selected], states("arm"))
-    server = Server()
-    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
-    server.scene.add_transform_controls = lambda *_args, **_kwargs: Handle()
-    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
-    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
-    scene.register_robot("id-arm", module.configs["arm"])
-    gui = ViserPanelGui(server, Monitor(module), module, ViserVisualizationConfig(), scene)
-    gui.start()
-    try:
-        requests: list[TargetEvaluationRequest] = []
-        gui._worker.submit = requests.append  # type: ignore[method-assign]
-        control = scene._handles[f"{selected.id}:ee_control"]
-        control.position = (1.0, 2.0, 3.0)
-        control.wxyz = (0.4, 0.1, 0.2, 0.3)
-        assert control.callback is not None
-        control.callback(SimpleNamespace(target=control))
-        request = requests[-1]
-
-        gui._apply_target_evaluation_result(
-            request,
-            {
-                "success": True,
-                "collision_free": True,
-                "status": "FEASIBLE",
-                "target_joints": JointState({"name": ["arm/j1"], "position": [0.7]}),
-            },
-        )
-
-        assert server.gui.sliders[0].value == 0.7
-        assert scene._urdfs["id-arm:target"].cfg == [0.7, 0.2]
-        assert control.position == (1.0, 2.0, 3.0)
-        assert control.wxyz == (0.4, 0.1, 0.2, 0.3)
-    finally:
-        gui.close()
-
-
-def test_cartesian_evaluation_forwards_auxiliary_groups_and_rejects_composed_invalid_state() -> (
-    None
-):
-    pose_group, auxiliary = (
-        group("arm", "manipulator", ("j1",), pose=True),
-        group("arm", "gripper", ("j2",)),
-    )
-    module = Module([pose_group, auxiliary], states("arm"))
-    monitor = Monitor(module)
-    calls: list[Sequence[str]] = []
-    validated_states: list[dict[str, float]] = []
-
-    def is_state_valid(robot_id: str, state: JointState) -> bool:
-        values = dict(zip(state.name, state.position, strict=True))
-        validated_states.append(values)
-        assert robot_id == "id-arm"
-        assert values == {"j1": 0.7, "j2": 0.8}
-        return values != {"j1": 0.7, "j2": 0.8}
-
-    monitor.is_state_valid = is_state_valid  # type: ignore[method-assign]
-
-    def inverse_kinematics(**kwargs: object) -> SimpleNamespace:
-        calls.append(kwargs["auxiliary_group_ids"])  # type: ignore[arg-type]
-        return SimpleNamespace(
-            is_success=lambda: True,
-            joint_state=JointState({"name": ["arm/j1", "arm/j2"], "position": [0.7, 0.8]}),
-        )
-
-    module.inverse_kinematics = inverse_kinematics
-    result = evaluate_pose_target_set(
-        monitor,
-        module,
-        {pose_group.id: Pose({"position": [0.1, 0.2, 0.3], "orientation": [0.0, 0.0, 0.0, 1.0]})},
-        (auxiliary.id,),
-    )
-
-    assert calls == [(auxiliary.id,)]
-    assert validated_states == [{"j1": 0.7, "j2": 0.8}] * 2
-    assert result["status"] == "COLLISION"
-    assert result["collision_free"] is False
-    assert result["group_ids"] == (pose_group.id, auxiliary.id)
-    assert result["group_diagnostics"] == {
-        pose_group.id: "Target is in collision or violates limits",
-        auxiliary.id: "Target is in collision or violates limits",
-    }
-
-
-def test_urdf_projection_reorders_global_selected_joints_with_current_baseline() -> None:
-    config = Config("arm", ["j2", "j1", "j3"], [-2.0, -1.0, -3.0], [2.0, 1.0, 3.0], None)
-    plan = SimpleNamespace(
-        path=(JointState({"name": ["arm/j1"], "position": [0.7]}),),
-    )
-    projected = ViserManipulationVisualizer._project_plan_path(
-        "arm",
-        config,
-        JointState({"name": ["j1", "j2", "j3"], "position": [0.1, 0.2, 0.3]}),
-        plan,
-    )
-    assert projected is not None
-    server = Server()
-    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
-    scene = ViserManipulationScene(server, Urdf, preview_fps=2.0)
-    urdf = Urdf()
-    urdf._urdf.actuated_joint_names = ("j3", "j1", "j2")
-    scene.set_urdf_joints(urdf, projected[0].name, projected[0].position)
-
-    assert projected[0].position == [0.2, 0.7, 0.3]
-    assert urdf.cfg == [0.3, 0.7, 0.2]

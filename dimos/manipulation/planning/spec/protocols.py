@@ -32,16 +32,17 @@ if TYPE_CHECKING:
     from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.manipulation.planning.spec.models import (
-        GeneratedPlan,
         IKResult,
         Obstacle,
         PlanningGroupID,
         PlanningResult,
-        PlanningSceneInfo,
+        VisualizationSession,
+        VisualizationStateFrame,
         WorldRobotID,
     )
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.sensor_msgs.JointState import JointState
+    from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
 
 @runtime_checkable
@@ -193,28 +194,22 @@ class VisualizationSpec(Protocol):
     visualization affordances.
     """
 
-    def initialize_scene(self, scene: PlanningSceneInfo) -> None:
-        """Receive stable planning-scene metadata after world startup."""
+    def initialize(self, session: VisualizationSession) -> None:
+        """Receive one-shot visualization session metadata after world startup."""
         ...
 
     def get_visualization_url(self) -> str | None:
         """Get visualization URL if enabled."""
         ...
 
-    def publish_visualization(self, ctx: Any | None = None) -> None:
-        """Publish current state to visualization."""
+    def update_state(self, frame: VisualizationStateFrame) -> None:
+        """Receive current joint states keyed by initialized world robot ID."""
         ...
 
-    def show_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
-        """Show preview representations for the robots affected by planning groups."""
-        ...
-
-    def hide_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
-        """Hide preview representations for the robots affected by planning groups."""
-        ...
-
-    def animate_plan(self, plan: GeneratedPlan, duration: float = 3.0) -> None:
-        """Animate a generated plan in visualization."""
+    def animate_trajectory(
+        self, trajectory: JointTrajectory, duration: float | None = None
+    ) -> None:
+        """Animate a raw globally named trajectory."""
         ...
 
     def cancel_preview_animation(self) -> None:

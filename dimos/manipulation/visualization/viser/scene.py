@@ -28,7 +28,9 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.manipulation.visualization.viser.animation import (
     GroupPreviewAnimation,
-    sampled_joint_path_frames,
+    PreviewFrame,
+    preview_tick_times,
+    scaled_frame_delays,
 )
 from dimos.manipulation.visualization.viser.runtime import (
     VISER_INSTALL_HINT,
@@ -195,47 +197,6 @@ class ViserManipulationScene:
                 self._set_target_joints(robot_id, config.joint_names, joint_state.position)
                 self._set_target_visibility(robot_id, self._target_active.get(robot_id, False))
 
-    def show_preview(self, robot_id: str) -> None:
-        """Show the transient preview-animation ghost.
-
-        Target editing uses the separate target ghost and must not call this path.
-        """
-        self._preview_visible[robot_id] = True
-        self._set_preview_visibility(robot_id, True)
-
-    def hide_preview(self, robot_id: str) -> None:
-        """Hide the transient preview-animation ghost."""
-        self._preview_visible[robot_id] = False
-        self._set_preview_visibility(robot_id, False)
-
-    def animate_path(self, robot_id: str, path: Sequence[JointState], duration: float) -> bool:
-        config = self._configs_by_id.get(robot_id)
-        if config is None:
-            return False
-        frames = sampled_joint_path_frames(path, duration, self.preview_fps)
-        if not frames:
-            return False
-        with self._scene_lock:
-            self._animation_generation += 1
-            generation = self._animation_generation
-            self._preview_visible[robot_id] = True
-            self._set_preview_visibility(robot_id, True)
-        try:
-            delay = duration / max(len(frames) - 1, 1) if duration > 0.0 else 0.0
-            for index, joints in enumerate(frames):
-                with self._scene_lock:
-                    if generation != self._animation_generation:
-                        return False
-                    self._set_preview_ghost_joints(robot_id, config.joint_names, joints)
-                if index < len(frames) - 1:
-                    time.sleep(delay)
-            return True
-        finally:
-            with self._scene_lock:
-                if generation == self._animation_generation:
-                    self._preview_visible[robot_id] = False
-                    self._set_preview_visibility(robot_id, False)
-
     def cancel_preview_animation(self) -> None:
         """Prevent an old blocking animation from touching replacement handles."""
         with self._scene_lock:
@@ -250,10 +211,7 @@ class ViserManipulationScene:
         Inputs are fully validated before ghosts become visible; a generation
         replacement, clear, or close stops mutation before the next tick.
         """
-        frames = {
-            track.robot_id: sampled_joint_path_frames(track.path, duration, self.preview_fps)
-            for track in preview.tracks
-        }
+        frames = {track.robot_id: track.frames for track in preview.tracks}
         names = {track.robot_id: track.joint_names for track in preview.tracks}
         if (
             not frames
@@ -264,7 +222,9 @@ class ViserManipulationScene:
             )
         ):
             return False
-        total_frames = max(len(values) for values in frames.values())
+        tick_times = preview_tick_times(preview)
+        if not tick_times:
+            return False
         with self._scene_lock:
             self._animation_generation += 1
             generation = self._animation_generation
@@ -272,18 +232,31 @@ class ViserManipulationScene:
                 self._preview_visible[robot_id] = True
                 self._set_preview_visibility(robot_id, True)
         try:
-            delay = duration / max(total_frames - 1, 1) if duration > 0.0 else 0.0
-            for tick in range(total_frames):
+            delays = scaled_frame_delays(
+                tuple(
+                    PreviewFrame(time_from_start=tick_time, positions=())
+                    for tick_time in tick_times
+                ),
+                duration,
+            )
+            frame_indices = {robot_id: 0 for robot_id in frames}
+            for tick, tick_time in enumerate(tick_times):
                 with self._scene_lock:
                     if generation != self._animation_generation:
                         return False
                     for robot_id, robot_frames in frames.items():
-                        source = round(tick * (len(robot_frames) - 1) / max(total_frames - 1, 1))
+                        while (
+                            frame_indices[robot_id] + 1 < len(robot_frames)
+                            and robot_frames[frame_indices[robot_id] + 1].time_from_start
+                            <= tick_time
+                        ):
+                            frame_indices[robot_id] += 1
+                        source = frame_indices[robot_id]
                         self._set_preview_ghost_joints(
-                            robot_id, names[robot_id], robot_frames[source]
+                            robot_id, names[robot_id], robot_frames[source].positions
                         )
-                if tick < total_frames - 1:
-                    time.sleep(delay)
+                if tick < len(delays):
+                    time.sleep(delays[tick])
             return True
         finally:
             with self._scene_lock:
@@ -572,8 +545,7 @@ class ViserManipulationScene:
             return []
         values_by_name: dict[str, float] = {}
         for name, value in zip(joint_names, joints, strict=False):
-            values_by_name[name] = float(value)
-            values_by_name[name.rsplit("/", 1)[-1]] = float(value)
+            values_by_name[str(name)] = float(value)
         return [values_by_name.get(name, 0.0) for name in allowed_names]
 
     def viser_actuated_joint_names(self, urdf: ViserUrdf) -> tuple[str, ...]:

@@ -22,6 +22,8 @@ import pytest
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
+from dimos.manipulation.manipulation_operator import ActionResult, OperatorStatus
+from dimos.manipulation.planning.spec.models import PlanningSceneInfo
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
 from dimos.manipulation.visualization.viser.state import (
@@ -35,10 +37,6 @@ from dimos.manipulation.visualization.viser.state import (
 
 
 class EmptyServer:
-    pass
-
-
-class EmptyWorldMonitor:
     pass
 
 
@@ -106,7 +104,7 @@ class FakeRestartableOperationWorker(FakeOperationSubmitWorker):
         self.stop_calls.append(timeout)
 
 
-class FakeManipulationModule:
+class FakeOperatorBackend:
     def __init__(self) -> None:
         self.cancel_calls = 0
 
@@ -133,11 +131,31 @@ class FakeManipulationModule:
         return None
 
 
-def make_gui(module: FakeManipulationModule | None = None) -> ViserPanelGui:
+class FakeOperator:
+    def __init__(self, module: FakeOperatorBackend | None = None) -> None:
+        self.module = module or FakeOperatorBackend()
+
+    def status(self) -> OperatorStatus:
+        return OperatorStatus(state="IDLE", error="", has_plan=False)
+
+    def get_init_joints(self, robot_name: str) -> None:
+        _ = robot_name
+        return None
+
+    def cancel(self) -> ActionResult:
+        return ActionResult(self.module.cancel(), "cancel=True")
+
+    def preview(self) -> ActionResult:
+        return ActionResult(True, "preview=True")
+
+
+def make_gui(module: FakeOperatorBackend | None = None) -> ViserPanelGui:
+    module = module or FakeOperatorBackend()
     return ViserPanelGui(
         EmptyServer(),
-        EmptyWorldMonitor(),
-        module or FakeManipulationModule(),
+        PlanningSceneInfo(robots={}),
+        FakeOperator(module),
+        {},
         ViserVisualizationConfig(),
     )
 
@@ -207,7 +225,7 @@ def test_gui_only_preview_submits_timeout_override(monkeypatch: pytest.MonkeyPat
 def test_gui_cancel_bypasses_operation_worker(monkeypatch: pytest.MonkeyPatch) -> None:
     submissions: list[Callable[[], None]] = []
     stop_calls: list[float | None] = []
-    module = FakeManipulationModule()
+    module = FakeOperatorBackend()
     gui = make_gui(module)
     gui._operation_worker.stop()
     monkeypatch.setattr(
@@ -228,7 +246,7 @@ def test_gui_cancel_bypasses_operation_worker(monkeypatch: pytest.MonkeyPatch) -
 def test_gui_cancelled_planning_clears_active_plan_state(monkeypatch: pytest.MonkeyPatch) -> None:
     submissions: list[Callable[[], None]] = []
     stop_calls: list[float | None] = []
-    module = FakeManipulationModule()
+    module = FakeOperatorBackend()
     gui = make_gui(module)
     gui._operation_worker.stop()
     monkeypatch.setattr(
@@ -258,7 +276,7 @@ def test_gui_cancelled_planning_clears_active_plan_state(monkeypatch: pytest.Mon
         ("_submit_preview", "No fresh plan to preview"),
         (
             "_submit_execute",
-            "Cannot execute: require feasible fresh plan and matching current joints",
+            "Cannot execute: require feasible fresh plan",
         ),
     ],
 )

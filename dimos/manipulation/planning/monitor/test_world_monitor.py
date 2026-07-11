@@ -24,12 +24,17 @@ from dimos.manipulation.planning import factory as planning_factory
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.monitor import world_monitor as world_monitor_module
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningSceneInfo
+from dimos.manipulation.planning.spec.models import (
+    PlanningSceneInfo,
+    VisualizationSession,
+    VisualizationStateFrame,
+)
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
 
 class _VectorLike(list[float]):
@@ -152,19 +157,13 @@ class FakeWorld:
     def get_visualization_url(self):
         return None
 
-    def initialize_scene(self, scene: PlanningSceneInfo) -> None:
+    def initialize(self, session: VisualizationSession) -> None:
         return None
 
-    def publish_visualization(self, ctx=None) -> None:
+    def update_state(self, frame: VisualizationStateFrame) -> None:
         return None
 
-    def show_preview(self, group_ids) -> None:
-        return None
-
-    def hide_preview(self, group_ids) -> None:
-        return None
-
-    def animate_plan(self, plan, duration: float = 3.0) -> None:
+    def animate_trajectory(self, trajectory, duration: float | None = None) -> None:
         return None
 
     def cancel_preview_animation(self) -> None:
@@ -181,20 +180,14 @@ class FakeViz:
     def get_visualization_url(self):
         return None
 
-    def initialize_scene(self, scene: PlanningSceneInfo) -> None:
-        self.calls.append(("initialize_scene", scene))
+    def initialize(self, session: VisualizationSession) -> None:
+        self.calls.append(("initialize", session))
 
-    def publish_visualization(self, ctx=None) -> None:
-        return None
+    def update_state(self, frame: VisualizationStateFrame) -> None:
+        self.calls.append(("update_state", frame))
 
-    def show_preview(self, group_ids) -> None:
-        self.calls.append(("show_preview", group_ids))
-
-    def hide_preview(self, group_ids) -> None:
-        self.calls.append(("hide_preview", group_ids))
-
-    def animate_plan(self, plan, duration: float = 3.0) -> None:
-        self.calls.append(("animate_plan", plan, duration))
+    def animate_trajectory(self, trajectory, duration: float | None = None) -> None:
+        self.calls.append(("animate_trajectory", trajectory, duration))
 
     def cancel_preview_animation(self) -> None:
         self.calls.append(("cancel_preview_animation",))
@@ -258,28 +251,27 @@ def test_world_monitor_syncs_planning_scene_to_visualization() -> None:
     monitor.add_robot(_robot_config())
     monitor.sync_visualization_scene()
 
-    assert fake_viz.calls[0][0] == "initialize_scene"
-    scene = fake_viz.calls[0][1]
+    assert fake_viz.calls[0][0] == "initialize"
+    session = fake_viz.calls[0][1]
+    scene = session.scene
     assert isinstance(scene, PlanningSceneInfo)
     assert scene.robots["robot-1"].name == "arm"
+    assert scene.planning_groups[0].id == "arm/manipulator"
 
 
-def test_world_monitor_forwards_group_native_preview_protocol() -> None:
+def test_world_monitor_forwards_raw_trajectory_preview_protocol() -> None:
     fake_viz = FakeViz()
     monitor = world_monitor_module.WorldMonitor(world=FakeWorld(), visualization=fake_viz)  # type: ignore[arg-type]
-    plan = GeneratedPlan(group_ids=("arm/manipulator",), path=[])
+    trajectory = JointTrajectory(joint_names=["arm/j1"], points=[])
 
     assert isinstance(fake_viz, VisualizationSpec)
-    monitor.show_preview(["arm/manipulator"])
-    monitor.hide_preview(["arm/manipulator"])
-    monitor.animate_plan(plan, 2.0)
+    monitor.cancel_preview_animation()
+    monitor.animate_trajectory(trajectory, 2.0)
 
     assert fake_viz.calls == [
-        ("show_preview", ["arm/manipulator"]),
         ("cancel_preview_animation",),
-        ("hide_preview", ["arm/manipulator"]),
         ("cancel_preview_animation",),
-        ("animate_plan", plan, 2.0),
+        ("animate_trajectory", trajectory, 2.0),
     ]
 
 

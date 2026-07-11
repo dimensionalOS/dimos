@@ -18,6 +18,8 @@ import pytest
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
+from dimos.manipulation.manipulation_operator import ActionResult, OperatorStatus
+from dimos.manipulation.planning.spec.models import PlanningSceneInfo
 from dimos.manipulation.visualization.types import TargetEvaluation
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
@@ -28,12 +30,34 @@ class StatusOnlyServer:
     pass
 
 
-class StatusOnlyWorldMonitor:
+class StatusOnlyTelemetry:
     pass
 
 
-class StatusOnlyManipulationModule:
+class StatusOnlyBackend:
     pass
+
+
+class StatusOnlyOperator:
+    def status(self) -> OperatorStatus:
+        return OperatorStatus(state="IDLE", error="", has_plan=False)
+
+    def get_init_joints(self, robot_name: str) -> None:
+        _ = robot_name
+        return None
+
+    def cancel(self) -> ActionResult:
+        return ActionResult(True, "cancel=True")
+
+
+def make_gui() -> ViserPanelGui:
+    return ViserPanelGui(
+        StatusOnlyServer(),
+        PlanningSceneInfo(robots={}),
+        StatusOnlyOperator(),
+        {},
+        ViserVisualizationConfig(),
+    )
 
 
 @pytest.mark.parametrize(
@@ -56,23 +80,13 @@ def test_gui_feasibility_status_uses_exact_status_mapping(
     collision_free: bool,
     expected: FeasibilityStatus,
 ) -> None:
-    gui = ViserPanelGui(
-        StatusOnlyServer(),
-        StatusOnlyWorldMonitor(),
-        StatusOnlyManipulationModule(),
-        ViserVisualizationConfig(),
-    )
+    gui = make_gui()
 
     assert gui._feasibility_status(result, success, collision_free) == expected
 
 
 def test_group_status_composes_shared_panel_state_without_robot_dropdown() -> None:
-    gui = ViserPanelGui(
-        StatusOnlyServer(),
-        StatusOnlyWorldMonitor(),
-        StatusOnlyManipulationModule(),
-        ViserVisualizationConfig(),
-    )
+    gui = make_gui()
     values: dict[str, str] = {}
     gui.state.selected_group_ids = ("left/manipulator", "right/gripper")
     gui.state.error = "planner unavailable"

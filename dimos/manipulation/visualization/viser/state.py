@@ -96,10 +96,8 @@ class PanelPlanState:
     robot: str | None = None
     target_pose: Pose | None = None
     target_joints: list[float] | None = None
-    start_joints_snapshot: list[float] | None = None
     group_ids: tuple[PlanningGroupID, ...] = ()
     target_sequence_id: int = 0
-    robot_snapshots: dict[str, JointState] = field(default_factory=dict)
 
 
 @dataclass
@@ -189,7 +187,6 @@ class PanelState:
             and plan.status == PlanStatus.FRESH
             and plan.group_ids == self.selected_group_ids
             and plan.target_sequence_id == self.latest_sequence_id
-            and bool(plan.robot_snapshots)
         ):
             return False
         return True

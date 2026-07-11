@@ -21,15 +21,26 @@ import pytest
 
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.manipulation.planning.world.drake_world import DRAKE_AVAILABLE, DrakeWorld
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
 requires_drake = pytest.mark.skipif(
     not DRAKE_AVAILABLE,
     reason="Drake planning-group tests require the manipulation extra",
 )
+
+
+def _trajectory(names: list[str], first: list[float], second: list[float]) -> JointTrajectory:
+    return JointTrajectory(
+        joint_names=names,
+        points=[
+            TrajectoryPoint(time_from_start=0.0, positions=first, velocities=[0.0] * len(names)),
+            TrajectoryPoint(time_from_start=2.0, positions=second, velocities=[0.0] * len(names)),
+        ],
+    )
 
 
 def _write_urdf(path: Path) -> None:
@@ -262,7 +273,7 @@ def test_drake_group_jacobian_rejects_non_controllable_group_joints(tmp_path: Pa
 
 
 @requires_drake
-def test_drake_animate_plan_projects_all_robots_on_shared_ticks(
+def test_drake_animate_trajectory_projects_all_robots_on_shared_ticks(
     tmp_path: Path, monkeypatch
 ) -> None:
     urdf = tmp_path / "robot.urdf"
@@ -286,23 +297,20 @@ def test_drake_animate_plan_projects_all_robots_on_shared_ticks(
         "_set_preview_positions",
         lambda _ctx, robot_id, positions: updates.append((robot_id, positions.tolist())),
     )
-    monkeypatch.setattr(world, "show_preview", lambda groups: shown.append(tuple(groups)))
-    monkeypatch.setattr(world, "hide_preview", lambda groups: hidden.append(tuple(groups)))
-    monkeypatch.setattr(world, "publish_visualization", lambda: None)
-    monkeypatch.setattr("time.sleep", sleeps.append)
-    plan = GeneratedPlan(
-        group_ids=("left/arm", "right/arm"),
-        path=[
-            JointState(name=["left/joint1", "right/joint2"], position=[1.0, 2.0]),
-            JointState(name=["left/joint1", "right/joint2"], position=[3.0, 4.0]),
-        ],
+    monkeypatch.setattr(
+        world,
+        "_set_preview_visibility",
+        lambda robot_id, visible: (shown if visible else hidden).append((robot_id,)),
     )
+    monkeypatch.setattr(world, "_publish_visualization", lambda: None)
+    monkeypatch.setattr("time.sleep", sleeps.append)
+    plan = type("Plan", (), {})()
+    plan.trajectory = _trajectory(["left/joint1", "right/joint2"], [1.0, 2.0], [3.0, 4.0])
 
-    world.animate_plan(plan, duration=2.0)
+    world.animate_trajectory(plan.trajectory, duration=2.0)
 
-    assert shown == [("left/arm", "right/arm")]
-    assert hidden == []
-    assert world._robot_ids_for_groups(("left/arm", "left/arm")) == [left_id]
+    assert shown == [(left_id,), (right_id,)]
+    assert hidden == [(left_id,), (right_id,)]
     assert updates == [
         (left_id, [1.0, 0.2]),
         (right_id, [0.3, 2.0]),
@@ -313,7 +321,7 @@ def test_drake_animate_plan_projects_all_robots_on_shared_ticks(
 
 
 @requires_drake
-def test_drake_animate_plan_validates_before_visibility_and_cleans_up(
+def test_drake_animate_trajectory_validates_before_visibility_and_cleans_up(
     tmp_path: Path, monkeypatch
 ) -> None:
     urdf = tmp_path / "robot.urdf"
@@ -329,100 +337,84 @@ def test_drake_animate_plan_validates_before_visibility_and_cleans_up(
     )
     shown: list[tuple[str, ...]] = []
     hidden: list[tuple[str, ...]] = []
-    monkeypatch.setattr(world, "show_preview", lambda groups: shown.append(tuple(groups)))
-    monkeypatch.setattr(world, "hide_preview", lambda groups: hidden.append(tuple(groups)))
-    monkeypatch.setattr(world, "publish_visualization", lambda: None)
-    malformed = GeneratedPlan(
-        group_ids=("arm/arm",),
-        path=[
-            JointState(name=["arm/joint2"], position=[0.0]),
-            JointState(name=["arm/joint2"], position=[1.0]),
-        ],
+    monkeypatch.setattr(
+        world,
+        "_set_preview_visibility",
+        lambda robot_id, visible: (shown if visible else hidden).append((robot_id,)),
     )
-    with pytest.raises(ValueError, match="joint names"):
-        world.animate_plan(malformed)
+    monkeypatch.setattr(world, "_publish_visualization", lambda: None)
+    malformed = _trajectory(["unknown/joint1"], [0.0], [1.0])
+    with pytest.raises(ValueError, match="unknown robot"):
+        world.animate_trajectory(malformed)
     assert shown == []
 
-    missing_selected_joint = GeneratedPlan(
-        group_ids=("arm/arm",),
-        path=[
-            JointState(name=["arm/joint1"], position=[0.0]),
-            JointState(name=[], position=[]),
-        ],
-    )
-    with pytest.raises(ValueError, match="joint names"):
-        world.animate_plan(missing_selected_joint)
-    assert shown == []
-
-    with pytest.raises(KeyError, match="Unknown planning group"):
-        world.animate_plan(
-            GeneratedPlan(
-                group_ids=("arm/missing",),
-                path=[JointState(name=[], position=[]), JointState(name=[], position=[])],
-            )
-        )
-    assert shown == []
-
-    valid = GeneratedPlan(
-        group_ids=("arm/arm",),
-        path=[
-            JointState(name=["arm/joint1"], position=[0.0]),
-            JointState(name=["arm/joint1"], position=[1.0]),
-        ],
-    )
+    valid = _trajectory(["arm/joint1"], [0.0], [1.0])
 
     def fail_preview_update(*_args: object) -> None:
         raise RuntimeError("boom")
 
     monkeypatch.setattr(world, "_set_preview_positions", fail_preview_update)
     with pytest.raises(RuntimeError, match="boom"):
-        world.animate_plan(valid)
-    assert shown == [("arm/arm",)]
-    assert hidden == [("arm/arm",)]
+        world.animate_trajectory(valid)
+    assert shown == [(robot_id,)]
+    assert hidden == [(robot_id,)]
 
 
 @requires_drake
-@pytest.mark.parametrize(
-    ("groups", "group_ids", "error"),
-    [
-        ([_arm_group("joint1")], ("arm/arm", "arm/arm"), "overlap"),
-        (
-            [_arm_group("joint1", name="first"), _arm_group("joint1", name="second")],
-            ("arm/first", "arm/second"),
-            "overlap",
-        ),
-        ([_arm_group("joint1")], ("arm/missing",), "Unknown planning group"),
-    ],
-)
-def test_drake_animate_plan_rejects_invalid_group_selection_before_visibility(
-    tmp_path: Path,
-    monkeypatch,
-    groups: list[PlanningGroupDefinition],
-    group_ids: tuple[str, ...],
-    error: str,
+def test_drake_cancel_preview_hides_ghosts_before_animation_resumes(
+    tmp_path: Path, monkeypatch
 ) -> None:
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     world = DrakeWorld()
-    world.add_robot(_config(urdf, groups))
+    robot_id = world.add_robot(_config(urdf, [_arm_group("joint1")]))
+    world.finalize()
+    world._meshcat = object()  # type: ignore[assignment]
+    world.set_joint_state(
+        world.get_live_context(),
+        robot_id,
+        JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+    )
+    hidden: list[tuple[str, ...]] = []
+    hidden_snapshots_during_sleep: list[list[tuple[str, ...]]] = []
+    monkeypatch.setattr(
+        world,
+        "_set_preview_visibility",
+        lambda robot_id, visible: None if visible else hidden.append((robot_id,)),
+    )
+    monkeypatch.setattr(world, "_publish_visualization", lambda: None)
+
+    def cancel_during_sleep(_duration: float) -> None:
+        world.cancel_preview_animation()
+        hidden_snapshots_during_sleep.append(list(hidden))
+
+    monkeypatch.setattr("time.sleep", cancel_during_sleep)
+
+    world.animate_trajectory(_trajectory(["arm/joint1"], [0.0], [1.0]))
+
+    assert hidden_snapshots_during_sleep == [[(robot_id,)]]
+    assert hidden[0] == (robot_id,)
+
+
+@requires_drake
+def test_drake_animate_trajectory_rejects_unknown_robot_before_visibility(
+    tmp_path: Path, monkeypatch
+) -> None:
+    urdf = tmp_path / "robot.urdf"
+    _write_urdf(urdf)
+    world = DrakeWorld()
+    world.add_robot(_config(urdf, [_arm_group("joint1")]))
     world.finalize()
     world._meshcat = object()  # type: ignore[assignment]
     shown: list[tuple[str, ...]] = []
-    monkeypatch.setattr(world, "show_preview", lambda selected: shown.append(tuple(selected)))
-
-    with pytest.raises((KeyError, ValueError), match=error):
-        world.animate_plan(
-            GeneratedPlan(
-                group_ids=group_ids,
-                path=[JointState(name=[], position=[]), JointState(name=[], position=[])],
-            )
-        )
+    with pytest.raises(ValueError, match="unknown robot"):
+        world.animate_trajectory(_trajectory(["missing/joint1"], [0.0], [1.0]))
 
     assert shown == []
 
 
 @requires_drake
-def test_drake_animate_plan_cancellation_stops_stale_frames_and_hides_preview(
+def test_drake_animate_trajectory_cancellation_stops_stale_frames_and_hides_preview(
     tmp_path: Path, monkeypatch
 ) -> None:
     urdf = tmp_path / "robot.urdf"
@@ -443,20 +435,15 @@ def test_drake_animate_plan_cancellation_stops_stale_frames_and_hides_preview(
         "_set_preview_positions",
         lambda _ctx, _robot_id, positions: updates.append(positions.tolist()),
     )
-    monkeypatch.setattr(world, "show_preview", lambda _groups: None)
-    monkeypatch.setattr(world, "hide_preview", lambda groups: hidden.append(tuple(groups)))
-    monkeypatch.setattr(world, "publish_visualization", lambda: None)
+    monkeypatch.setattr(
+        world,
+        "_set_preview_visibility",
+        lambda robot_id, visible: hidden.append((robot_id,)) if not visible else None,
+    )
+    monkeypatch.setattr(world, "_publish_visualization", lambda: None)
     monkeypatch.setattr("time.sleep", lambda _duration: world.cancel_preview_animation())
 
-    world.animate_plan(
-        GeneratedPlan(
-            group_ids=("arm/arm",),
-            path=[
-                JointState(name=["arm/joint1"], position=[1.0]),
-                JointState(name=["arm/joint1"], position=[2.0]),
-            ],
-        )
-    )
+    world.animate_trajectory(_trajectory(["arm/joint1"], [1.0], [2.0]))
 
     assert updates == [[1.0, 0.0]]
-    assert hidden == [("arm/arm",)]
+    assert hidden[0] == (robot_id,)

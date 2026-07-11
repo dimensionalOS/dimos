@@ -23,7 +23,11 @@ pytest.importorskip("viser", reason="Viser optional dependency is not installed"
 
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningSceneInfo
+from dimos.manipulation.planning.spec.models import (
+    PlanningSceneInfo,
+    VisualizationSession,
+    VisualizationStateFrame,
+)
 from dimos.manipulation.visualization.viser import (
     runtime as runtime_module,
     visualizer as visualizer_module,
@@ -34,6 +38,7 @@ from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
 from dimos.manipulation.visualization.viser.visualizer import ViserManipulationVisualizer
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
 
 class FakeDependency:
@@ -79,8 +84,6 @@ def test_visualizer_construction_is_lazy(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(visualizer_module, "ViserRuntime", fail_runtime)
 
     visualizer = ViserManipulationVisualizer(
-        world_monitor=FakeDependency(),
-        manipulation_module=FakeDependency(),
         config=ViserVisualizationConfig(panel_enabled=False),
     )
 
@@ -126,8 +129,9 @@ def test_visualizer_initializes_all_scene_robots_from_planning_scene(
         def __init__(
             self,
             server: FakeServer,
-            world_monitor: FakeDependency,
-            manipulation_module: FakeDependency,
+            scene_info: PlanningSceneInfo,
+            operator: object,
+            current_states: dict[str, JointState],
             config: ViserVisualizationConfig,
             scene: FakeScene,
         ) -> None:
@@ -147,8 +151,6 @@ def test_visualizer_initializes_all_scene_robots_from_planning_scene(
     monkeypatch.setattr(visualizer_module, "ViserManipulationScene", FakeScene)
     monkeypatch.setattr(visualizer_module, "ViserPanelGui", FakeGui)
     visualizer = ViserManipulationVisualizer(
-        world_monitor=FakeDependency(),
-        manipulation_module=FakeDependency(),
         config=ViserVisualizationConfig(panel_enabled=True),
     )
     scene = PlanningSceneInfo(
@@ -158,7 +160,7 @@ def test_visualizer_initializes_all_scene_robots_from_planning_scene(
         }
     )
 
-    visualizer.initialize_scene(scene)
+    visualizer.initialize(VisualizationSession(scene, operator=FakeDependency()))
 
     assert calls == [
         ("start", "runtime"),
@@ -205,8 +207,9 @@ def test_visualizer_closes_partial_startup_when_gui_start_fails(
         def __init__(
             self,
             server: FakeServer,
-            world_monitor: FakeDependency,
-            manipulation_module: FakeDependency,
+            scene_info: PlanningSceneInfo,
+            operator: object,
+            current_states: dict[str, JointState],
             config: ViserVisualizationConfig,
             scene: FakeScene,
         ) -> None:
@@ -223,13 +226,13 @@ def test_visualizer_closes_partial_startup_when_gui_start_fails(
     monkeypatch.setattr(visualizer_module, "ViserManipulationScene", FakeScene)
     monkeypatch.setattr(visualizer_module, "ViserPanelGui", FakeGui)
     visualizer = ViserManipulationVisualizer(
-        world_monitor=FakeDependency(),
-        manipulation_module=FakeDependency(),
         config=ViserVisualizationConfig(panel_enabled=True),
     )
 
     with pytest.raises(RuntimeError, match="gui failed"):
-        visualizer.initialize_scene(PlanningSceneInfo(robots={}))
+        visualizer.initialize(
+            VisualizationSession(PlanningSceneInfo(robots={}), operator=FakeDependency())
+        )
 
     assert closed == ["gui", "scene", "runtime"]
     assert visualizer.get_visualization_url() is None
@@ -266,13 +269,13 @@ def test_visualizer_closes_runtime_when_scene_creation_fails(
     monkeypatch.setattr(visualizer_module, "ViserUrdf", FakeViserUrdf)
     monkeypatch.setattr(visualizer_module, "ViserManipulationScene", FailingScene)
     visualizer = ViserManipulationVisualizer(
-        world_monitor=FakeDependency(),
-        manipulation_module=FakeDependency(),
         config=ViserVisualizationConfig(panel_enabled=False),
     )
 
     with pytest.raises(RuntimeError, match="scene failed"):
-        visualizer.initialize_scene(PlanningSceneInfo(robots={}))
+        visualizer.initialize(
+            VisualizationSession(PlanningSceneInfo(robots={}), operator=FakeDependency())
+        )
 
     assert closed == ["runtime"]
     assert visualizer.get_visualization_url() is None
@@ -312,8 +315,9 @@ def test_visualizer_close_is_best_effort_when_gui_raises(
         def __init__(
             self,
             server: FakeServer,
-            world_monitor: FakeDependency,
-            manipulation_module: FakeDependency,
+            scene_info: PlanningSceneInfo,
+            operator: object,
+            current_states: dict[str, JointState],
             config: ViserVisualizationConfig,
             scene: FakeScene,
         ) -> None:
@@ -334,11 +338,11 @@ def test_visualizer_close_is_best_effort_when_gui_raises(
     monkeypatch.setattr(visualizer_module, "ViserManipulationScene", FakeScene)
     monkeypatch.setattr(visualizer_module, "ViserPanelGui", FailingGui)
     visualizer = ViserManipulationVisualizer(
-        world_monitor=FakeDependency(),
-        manipulation_module=FakeDependency(),
         config=ViserVisualizationConfig(panel_enabled=True),
     )
-    visualizer.initialize_scene(PlanningSceneInfo(robots={}))
+    visualizer.initialize(
+        VisualizationSession(PlanningSceneInfo(robots={}), operator=FakeDependency())
+    )
 
     with pytest.raises(RuntimeError, match="gui close failed"):
         visualizer.close()
@@ -409,11 +413,8 @@ def test_visualizer_publish_preview_and_close_paths(
             assert joint_state == current
             calls.append(("update", robot_id))
 
-        def show_preview(self, robot_id: str) -> None:
-            calls.append(("show", robot_id))
-
-        def hide_preview(self, robot_id: str) -> None:
-            calls.append(("hide", robot_id))
+        def register_robot(self, robot_id: str, config: RobotModelConfig) -> None:
+            calls.append(("register", robot_id))
 
         def cancel_preview_animation(self) -> None:
             calls.append(("cancel", "preview"))
@@ -425,53 +426,32 @@ def test_visualizer_publish_preview_and_close_paths(
         def close(self) -> None:
             calls.append(("scene", "close"))
 
-    world_monitor = SimpleNamespace(
-        get_current_joint_state=lambda _robot_id: current,
-        planning_groups=SimpleNamespace(
-            select=lambda _group_ids: SimpleNamespace(
-                robot_names=("arm",), joint_names=("arm/joint1",)
-            )
-        ),
-    )
-    manipulation_module = SimpleNamespace(
-        robot_items=lambda: [("arm", "robot-1", fake_robot_config("arm"))],
-        robot_id_for_name=lambda robot_name: "robot-1" if robot_name == "arm" else None,
-        get_robot_config=lambda robot_name: fake_robot_config("arm")
-        if robot_name == "arm"
-        else None,
-    )
     monkeypatch.setattr(visualizer_module, "ViserRuntime", FakeRuntime)
     monkeypatch.setattr(visualizer_module, "ViserUrdf", FakeViserUrdf)
     monkeypatch.setattr(visualizer_module, "ViserManipulationScene", FakeScene)
     visualizer = ViserManipulationVisualizer(
-        world_monitor=world_monitor,
-        manipulation_module=manipulation_module,
         config=ViserVisualizationConfig(panel_enabled=False),
     )
 
     assert hasattr(ViserManipulationVisualizer, "cancel_preview_animation")
-    visualizer.cancel_preview_animation()
-    visualizer.publish_visualization()
-    visualizer.cancel_preview_animation()
-    visualizer.animate_plan(
-        GeneratedPlan(
-            group_ids=("arm/manipulator",),
-            path=[JointState({"name": ["arm/joint1"], "position": [0.5]})],
-        ),
-        duration=1.5,
+    visualizer.initialize(
+        VisualizationSession(PlanningSceneInfo({"robot-1": fake_robot_config("arm")}))
     )
-    visualizer.hide_preview(("arm/manipulator",))
+    visualizer.cancel_preview_animation()
+    visualizer.update_state(VisualizationStateFrame({"robot-1": current}))
+    visualizer.cancel_preview_animation()
+    visualizer.animate_trajectory(JointTrajectory(joint_names=["arm/joint1"]), duration=1.5)
     visualizer.close()
-    visualizer.publish_visualization()
+    visualizer.update_state(VisualizationStateFrame({"robot-1": current}))
 
     assert calls == [
         ("runtime", "start"),
         ("scene", "create"),
+        ("register", "robot-1"),
+        ("cancel", "preview"),
         ("update", "robot-1"),
         ("cancel", "preview"),
         ("animate", "groups"),
-        ("cancel", "preview"),
-        ("hide", "robot-1"),
         ("scene", "close"),
         ("runtime", "close"),
     ]
