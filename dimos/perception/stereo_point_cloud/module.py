@@ -30,6 +30,8 @@ from scipy.spatial.transform import Rotation
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
@@ -47,6 +49,7 @@ from dimos.perception.stereo_point_cloud.utils import (
     _voxel_dedup,
 )
 from dimos.perception.stereo_point_cloud.vio import PointCloudOdometry
+from dimos.spec import perception
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -64,11 +67,12 @@ class Config(ModuleConfig):
     gradient_threshold: float = 0.15
     vox_size: float           = 0.05
     world_frame: str          = "world"
+    camera_frame: str         = "camera_link"
     madgwick_beta: float      = 0.033
 
 
-class StereoPointCloud(Module):
-    """D435i depth -> frame_cloud + trajectory. Pose from Madgwick IMU + frame-to-frame ICP."""
+class StereoPointCloud(Module, perception.Odometry):
+    """D435i depth -> frame_cloud + trajectory + odometry. Pose from Madgwick IMU + frame-to-frame ICP."""
 
     config: Config
 
@@ -77,6 +81,7 @@ class StereoPointCloud(Module):
 
     frame_cloud: Out[PointCloud2]
     trajectory:  Out[Path]
+    odometry:    Out[Odometry]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -170,6 +175,17 @@ class StereoPointCloud(Module):
 
         self._frame_count += 1
         quat = Rotation.from_matrix(R).as_quat()
+        self.odometry.publish(
+            Odometry(
+                ts=img.ts,
+                frame_id=self.config.world_frame,
+                child_frame_id=self.config.camera_frame,
+                pose=Pose(
+                    position=[float(t[0]), float(t[1]), float(t[2])],
+                    orientation=[float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3])],
+                ),
+            )
+        )
         traj_snapshot = self._trajectory.record(img.ts, t, quat, self._frame_count)
         if traj_snapshot is not None:
             self.trajectory.publish(Path(ts=img.ts, frame_id=self.config.world_frame, poses=traj_snapshot))
