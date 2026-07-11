@@ -25,7 +25,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation, Slerp
 
-from dimos.perception.stereo_point_cloud.utils import _pack
+from dimos.perception.stereo_point_cloud.utils import _voxel_dedup
 
 
 _MAX_DT_S        = 0.1   # don't integrate more than 100ms at once — big gaps would blow up the filter
@@ -201,9 +201,7 @@ class PointCloudOdometry:
 
         if moved:
             world_points = (points_gravity_aligned + t_smooth).astype(np.float32)
-            voxel_indices = np.floor(world_points / self.REF_VOX_SIZE).astype(np.int32)
-            _, first_index_per_voxel = np.unique(_pack(voxel_indices), return_index=True)
-            growth_batch = world_points[first_index_per_voxel]
+            growth_batch = _voxel_dedup(world_points, self.REF_VOX_SIZE)
             with self._lock:
                 self._last_ref_t = t_smooth.copy()
                 self._last_ref_R = R.copy()

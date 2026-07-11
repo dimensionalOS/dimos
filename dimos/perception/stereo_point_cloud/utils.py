@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import time
+
 import numpy as np
 from scipy.ndimage import sobel
 from scipy.spatial import cKDTree
@@ -23,6 +25,9 @@ from scipy.spatial import cKDTree
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+_DEPTH_MM_THRESHOLD = 100
+_MILLIMETERS_PER_METER = 1000.0
 
 _VOFF  = np.int64(100_000)
 _VMASK = np.int64(0x3FFFF)
@@ -60,11 +65,93 @@ def _pack(vkeys: np.ndarray) -> np.ndarray:
     return (v[:, 0] << np.int64(36)) | (v[:, 1] << np.int64(18)) | v[:, 2]
 
 
+def _voxel_dedup(points: np.ndarray, vox_size: float) -> np.ndarray:
+    """Keep one point per occupied voxel (first occurrence)."""
+    voxel_indices = np.floor(points / vox_size).astype(np.int32)
+    _, first_index_per_voxel = np.unique(_pack(voxel_indices), return_index=True)
+    return points[first_index_per_voxel]
+
+
 def _gradient_mask(depth: np.ndarray, threshold: float) -> np.ndarray:
     valid   = np.isfinite(depth)
     depth_f = np.where(valid, depth, 0.0).astype(np.float64)
     grad    = np.hypot(sobel(depth_f, axis=1), sobel(depth_f, axis=0))
     return valid & (grad < threshold)
+
+
+def _preprocess_depth(raw_depth: np.ndarray, min_depth: float, max_depth: float) -> np.ndarray:
+    """Normalize to meters (mm heuristic) and NaN-out invalid/out-of-range pixels."""
+    depth = raw_depth
+    if hasattr(depth, "get"):
+        depth = depth.get()
+    if depth.ndim == 3:
+        depth = depth[:, :, 0]
+    depth = depth.astype(np.float32)
+    valid_depth = depth[depth > 0]
+    is_millimeters = len(valid_depth) > 0 and np.median(valid_depth) > _DEPTH_MM_THRESHOLD
+    if is_millimeters:
+        depth /= _MILLIMETERS_PER_METER
+    out_of_range = (depth <= 0) | (depth < min_depth) | (depth > max_depth)
+    depth[out_of_range] = np.nan
+    return depth
+
+
+def _intrinsics_from_camera_info(
+    camera_info: object | None, height: int, width: int
+) -> tuple[float, float, float, float]:
+    """Returns (focal_x, focal_y, principal_x, principal_y); a rough guess if camera_info is None."""
+    if camera_info is not None:
+        k_matrix = camera_info.get_K_matrix()  # type: ignore[attr-defined]
+        return (
+            float(k_matrix[0, 0]),
+            float(k_matrix[1, 1]),
+            float(k_matrix[0, 2]),
+            float(k_matrix[1, 2]),
+        )
+    focal = float(max(height, width)) / 2.0
+    return focal, focal, width / 2.0, height / 2.0
+
+
+def _unproject(
+    depth: np.ndarray,
+    valid: np.ndarray,
+    principal_x: float,
+    principal_y: float,
+    focal_x: float,
+    focal_y: float,
+) -> np.ndarray:
+    """Valid depth pixels -> optical-frame XYZ (X=right, Y=down, Z=depth)."""
+    height, width = depth.shape
+    u_grid, v_grid = np.meshgrid(np.arange(width, dtype=np.float32), np.arange(height, dtype=np.float32))
+    depth_values = depth[valid]
+    return np.column_stack([
+        (u_grid[valid] - principal_x) * depth_values / focal_x,
+        (v_grid[valid] - principal_y) * depth_values / focal_y,
+        depth_values,
+    ]).astype(np.float32)
+
+
+def _format_perf_log(
+    img_ts: float,
+    t_start: float,
+    t_gradient: float,
+    t_unproject: float,
+    t_odom_start: float,
+    t_odom_end: float,
+    t_publish: float,
+    t_end: float,
+    point_count: int,
+) -> str:
+    return (
+        f"StereoPointCloud perf: lag={time.time() - img_ts:.1f}s "
+        f"total={(t_end - t_start) * 1000:.0f}ms "
+        f"gradient={(t_gradient - t_start) * 1000:.0f}ms "
+        f"unproject={(t_unproject - t_gradient) * 1000:.0f}ms "
+        f"odom={(t_odom_end - t_odom_start) * 1000:.0f}ms "
+        f"publish={(t_publish - t_odom_end) * 1000:.0f}ms "
+        f"traj={(t_end - t_publish) * 1000:.0f}ms "
+        f"points={point_count}"
+    )
 
 
 def _isolation_filter(pts: np.ndarray, radius: float, min_neighbors: int = 2) -> np.ndarray:
