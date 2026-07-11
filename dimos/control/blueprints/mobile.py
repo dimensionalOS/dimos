@@ -37,6 +37,7 @@ from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.mapping.costmapper import CostMapper
+from dimos.mapping.pointclouds.occupancy import HeightCostConfig
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.cmu_nav.main import cmu_nav_rerun_config, create_cmu_nav
 from dimos.navigation.movement_manager.movement_manager import MovementManager
@@ -227,8 +228,8 @@ coordinator_flowbase_stereo_nav = (
         # Rust voxel map with raycast clearing. frame_cloud/odometry come from
         # StereoPointCloud; global_emit_every/emit_every throttle at the source
         # rather than relying solely on the Rerun bridge's max_hz downstream.
-        RayTracingVoxelMap.blueprint(emit_every=2, global_emit_every=5),
-        CostMapper.blueprint(),
+        RayTracingVoxelMap.blueprint(voxel_size=0.05, emit_every=2, global_emit_every=5),
+        CostMapper.blueprint(config=HeightCostConfig(resolution=0.05)),
         # MovementManager.blueprint(),
         ControlCoordinator.blueprint(
             hardware=[_flowbase_twist_base()],
