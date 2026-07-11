@@ -18,9 +18,12 @@ import pytest
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
-from dimos.manipulation.manipulation_operator import ActionResult, OperatorStatus
+from dimos.manipulation.manipulation_operator import (
+    ActionResult,
+    OperatorStatus,
+    TargetEvaluationResult,
+)
 from dimos.manipulation.planning.spec.models import PlanningSceneInfo
-from dimos.manipulation.visualization.types import TargetEvaluation
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
 from dimos.manipulation.visualization.viser.state import FeasibilityStatus
@@ -63,19 +66,54 @@ def make_gui() -> ViserPanelGui:
 @pytest.mark.parametrize(
     ("result", "success", "collision_free", "expected"),
     [
-        ({"status": "FEASIBLE"}, True, True, FeasibilityStatus.FEASIBLE),
-        ({"status": "COLLISION"}, False, False, FeasibilityStatus.COLLISION),
-        ({"status": "COLLISION_AT_START"}, False, False, FeasibilityStatus.COLLISION),
-        ({"status": "COLLISION_AT_GOAL"}, False, False, FeasibilityStatus.COLLISION),
-        ({"status": "NO_SOLUTION"}, False, False, FeasibilityStatus.IK_FAILED),
-        ({"status": "SINGULARITY"}, False, False, FeasibilityStatus.IK_FAILED),
-        ({"status": "JOINT_LIMITS"}, False, False, FeasibilityStatus.IK_FAILED),
-        ({"status": "TIMEOUT"}, False, False, FeasibilityStatus.IK_FAILED),
-        ({"status": "IK_SUCCEEDED"}, False, False, FeasibilityStatus.INVALID),
+        (
+            TargetEvaluationResult(True, "FEASIBLE", "", True),
+            True,
+            True,
+            FeasibilityStatus.FEASIBLE,
+        ),
+        (TargetEvaluationResult(False, "COLLISION", ""), False, False, FeasibilityStatus.COLLISION),
+        (
+            TargetEvaluationResult(False, "COLLISION_AT_START", ""),
+            False,
+            False,
+            FeasibilityStatus.COLLISION,
+        ),
+        (
+            TargetEvaluationResult(False, "COLLISION_AT_GOAL", ""),
+            False,
+            False,
+            FeasibilityStatus.COLLISION,
+        ),
+        (
+            TargetEvaluationResult(False, "NO_SOLUTION", ""),
+            False,
+            False,
+            FeasibilityStatus.IK_FAILED,
+        ),
+        (
+            TargetEvaluationResult(False, "SINGULARITY", ""),
+            False,
+            False,
+            FeasibilityStatus.IK_FAILED,
+        ),
+        (
+            TargetEvaluationResult(False, "JOINT_LIMITS", ""),
+            False,
+            False,
+            FeasibilityStatus.IK_FAILED,
+        ),
+        (TargetEvaluationResult(False, "TIMEOUT", ""), False, False, FeasibilityStatus.IK_FAILED),
+        (
+            TargetEvaluationResult(False, "IK_SUCCEEDED", ""),
+            False,
+            False,
+            FeasibilityStatus.INVALID,
+        ),
     ],
 )
 def test_gui_feasibility_status_uses_exact_status_mapping(
-    result: TargetEvaluation,
+    result: TargetEvaluationResult,
     success: bool,
     collision_free: bool,
     expected: FeasibilityStatus,

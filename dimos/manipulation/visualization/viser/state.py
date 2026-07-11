@@ -21,8 +21,8 @@ import queue
 import threading
 from typing import Literal
 
+from dimos.manipulation.manipulation_operator import TargetEvaluationResult
 from dimos.manipulation.planning.spec.models import PlanningGroupID
-from dimos.manipulation.visualization.types import TargetEvaluation, TargetSetEvaluation
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
@@ -220,10 +220,8 @@ class TargetEvaluationWorker:
 
     def __init__(
         self,
-        handler: Callable[[TargetEvaluationRequest], TargetEvaluation | TargetSetEvaluation],
-        apply_result: Callable[
-            [TargetEvaluationRequest, TargetEvaluation | TargetSetEvaluation], None
-        ],
+        handler: Callable[[TargetEvaluationRequest], TargetEvaluationResult],
+        apply_result: Callable[[TargetEvaluationRequest, TargetEvaluationResult], None],
     ) -> None:
         self._handler = handler
         self._apply_result = apply_result

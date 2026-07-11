@@ -44,8 +44,8 @@ from dimos.manipulation.visualization.viser.gui import (
     ACTIVE_GROUP_COLOR,
     INACTIVE_GROUP_COLOR,
     ViserPanelGui,
+    group_display_name,
 )
-from dimos.manipulation.visualization.viser.panel_backend import group_display_name
 from dimos.manipulation.visualization.viser.scene import (
     GOAL_ROBOT_FEASIBLE_COLOR,
     GOAL_ROBOT_INFEASIBLE_COLOR,
@@ -471,9 +471,7 @@ def test_gui_target_ghost_states_use_exact_group_names() -> None:
     ghost_states = gui._target_ghost_states(targets)
     assert ghost_states["left"].position == [0.7, 0.2]
     assert ghost_states["right"].position == [0.8, 0.2]
-    assert (
-        gui.adapter.evaluate_joint_target_set((left.id, right.id), targets)["status"] == "FEASIBLE"
-    )
+    assert gui.evaluate_joint_target_set((left.id, right.id), targets).status == "FEASIBLE"
 
 
 def test_target_callbacks_require_current_sequence_and_selection_epoch(
@@ -488,15 +486,11 @@ def test_target_callbacks_require_current_sequence_and_selection_epoch(
         1, "joints", selection_epoch=gui.state.selection_epoch, group_ids=(first.id,)
     )
     gui.state.latest_sequence_id = 2
-    gui._apply_target_evaluation_result(
-        request, {"success": True, "collision_free": True, "status": "FEASIBLE"}
-    )
+    gui._apply_target_evaluation_result(request, TargetEvaluationResult(True, "FEASIBLE", "", True))
     assert gui.state.target_status == TargetStatus.EMPTY
     gui.state.latest_sequence_id = 1
     gui.state.advance_selection_epoch()
-    gui._apply_target_evaluation_result(
-        request, {"success": True, "collision_free": True, "status": "FEASIBLE"}
-    )
+    gui._apply_target_evaluation_result(request, TargetEvaluationResult(True, "FEASIBLE", "", True))
     assert gui.state.target_status == TargetStatus.CHECKING
 
 
@@ -543,7 +537,7 @@ def test_initialization_waits_for_complete_fresh_telemetry(
     gui.refresh()
     assert selected.id not in gui.state.group_joint_targets
 
-    gui.adapter._current_states["id-arm"] = module.states["arm"]
+    gui.current_states["id-arm"] = module.states["arm"]
     gui.refresh()
     assert gui.state.group_joint_targets[selected.id].position == [0.4, 0.5]
 
@@ -631,7 +625,7 @@ def test_cancel_clear_and_close_invalidate_operations_and_preview_generation(
     gui.close()
     status_before_callback = gui.state.target_status
     gui._apply_target_evaluation_result(
-        TargetEvaluationRequest(0, "joints"), {"success": True, "collision_free": True}
+        TargetEvaluationRequest(0, "joints"), TargetEvaluationResult(True, "FEASIBLE", "", True)
     )
     assert gui.state.target_status is status_before_callback
 
@@ -833,9 +827,7 @@ def test_target_callbacks_require_current_target_identity(
         group_ids=(second.id,),
     )
 
-    gui._apply_target_evaluation_result(
-        request, {"success": True, "collision_free": True, "status": "FEASIBLE"}
-    )
+    gui._apply_target_evaluation_result(request, TargetEvaluationResult(True, "FEASIBLE", "", True))
 
     assert gui.state.target_status == TargetStatus.CHECKING
 
@@ -912,9 +904,7 @@ def test_panel_feasibility_colors_group_controls_and_deduplicated_robot_ghosts()
         group_ids=gui.state.selected_group_ids,
     )
 
-    gui._apply_target_evaluation_result(
-        request, {"success": True, "collision_free": True, "status": "FEASIBLE"}
-    )
+    gui._apply_target_evaluation_result(request, TargetEvaluationResult(True, "FEASIBLE", "", True))
 
     assert control_calls == [arm_primary.id, arm_secondary.id, other.id] * 2
     assert robot_calls == ["id-arm", "id-other"] * 2
@@ -934,7 +924,7 @@ def test_panel_feasibility_colors_group_controls_and_deduplicated_robot_ghosts()
         group_ids=gui.state.selected_group_ids,
     )
     gui._apply_target_evaluation_result(
-        request, {"success": True, "collision_free": False, "status": "COLLISION"}
+        request, TargetEvaluationResult(True, "COLLISION", "", False)
     )
 
     assert control_calls == [arm_primary.id, arm_secondary.id, other.id] * 2
@@ -1212,12 +1202,9 @@ def test_joint_evaluation_updates_active_gizmo_from_computed_group_pose() -> Non
 
     gui._apply_target_evaluation_result(
         request,
-        {
-            "success": True,
-            "collision_free": True,
-            "status": "FEASIBLE",
-            "group_poses": {selected.id: computed_pose},
-        },
+        TargetEvaluationResult(
+            True, "FEASIBLE", "", True, group_poses={selected.id: computed_pose}
+        ),
     )
 
     assert control.position == (0.7, 0.8, 0.9)
