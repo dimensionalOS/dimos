@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import threading
 import time
-from collections import deque
 from typing import Any
 
 import numpy as np
@@ -51,7 +50,7 @@ logger = setup_logger()
 _DEPTH_MM_THRESHOLD = 100
 _MILLIMETERS_PER_METER = 1000.0
 
-_TRAJECTORY_MAX_POSES = 20_000
+_TRAJECTORY_MAX_POSES = 4_000
 _TRAJECTORY_PUBLISH_EVERY = 5
 _PERF_LOG_INTERVAL_FRAMES = 30
 _FRAME_CLOUD_PUBLISH_INTERVAL_S = 1.0 / 10.0
@@ -86,7 +85,7 @@ class StereoPointCloud(Module):
         self._imu                        = RealSenseImuFeed(beta=self.config.madgwick_beta)
         self._odom                       = PointCloudOdometry()
         self._warned_no_intrinsics       = False
-        self._trajectory_poses: deque[PoseStamped] = deque(maxlen=_TRAJECTORY_MAX_POSES)
+        self._trajectory_poses: list[PoseStamped] = []
         self._frame_count = 0
         self._last_frame_cloud_publish = 0.0
         self._last_point_count = 0
@@ -208,6 +207,8 @@ class StereoPointCloud(Module):
                     orientation=[float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3])],
                 )
             )
+            if len(self._trajectory_poses) >= _TRAJECTORY_MAX_POSES:
+                self._trajectory_poses = self._trajectory_poses[::2]
             self._frame_count += 1
             traj_snapshot = (
                 list(self._trajectory_poses)
