@@ -117,6 +117,8 @@ class StereoPointCloud(Module, perception.Odometry):
 
     def _on_depth(self, img: Image) -> None:
         t_start = time.perf_counter()
+
+        # Drop stale frames instead of building a backlog.
         lag = time.time() - img.ts
         if lag > MAX_ACCEPTABLE_LAG_S:
             logger.warning(f"StereoPointCloud: dropping stale depth frame, lag={lag:.1f}s")
@@ -132,16 +134,20 @@ class StereoPointCloud(Module, perception.Odometry):
             self._warned_no_intrinsics = True
         focal_x, focal_y, principal_x, principal_y = _intrinsics_from_camera_info(camera_info, height, width)
 
+        # Reject noisy edge pixels.
         valid = np.isfinite(depth) & _gradient_mask(depth, self.config.gradient_threshold)
         if not valid.any():
             return
         t_gradient = time.perf_counter()
 
+        # Pixel + depth -> 3D point (optical frame).
         xyz_optical = _unproject(depth, valid, principal_x, principal_y, focal_x, focal_y)
         t_unproject = time.perf_counter()
 
+        # IMU orientation, interpolated to this frame's timestamp.
         R = self._imu.R_at(img.ts)
 
+        # Rotate to camera-link frame, then ICP for translation.
         xyz_cam = xyz_optical @ R_OPT_TO_LINK.T
         t_odom_start = time.perf_counter()
         t = (
@@ -161,6 +167,7 @@ class StereoPointCloud(Module, perception.Odometry):
         if not len(xyz_world):
             return
 
+        # Throttled at the source, not just downstream.
         now_monotonic = time.monotonic()
         if now_monotonic - self._last_frame_cloud_publish >= FRAME_CLOUD_PUBLISH_INTERVAL_S:
             self._last_frame_cloud_publish = now_monotonic
@@ -175,6 +182,8 @@ class StereoPointCloud(Module, perception.Odometry):
 
         self._frame_count += 1
         quat = Rotation.from_matrix(R).as_quat()
+
+        # Standard Odometry format, for any downstream consumer.
         self.odometry.publish(
             Odometry(
                 ts=img.ts,
@@ -186,6 +195,7 @@ class StereoPointCloud(Module, perception.Odometry):
                 ),
             )
         )
+
         traj_snapshot = self._trajectory.record(img.ts, t, quat, self._frame_count)
         if traj_snapshot is not None:
             self.trajectory.publish(Path(ts=img.ts, frame_id=self.config.world_frame, poses=traj_snapshot))
