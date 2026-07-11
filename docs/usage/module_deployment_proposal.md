@@ -87,7 +87,7 @@ Recent native work serializes config and topics, adds native transports, and pla
 
 ## 3. Proposed model
 
-The proposal extends the existing manager/worker split instead of introducing a separate deployment stack. An `ExternalModule` is the lightweight contract imported by the coordinator. A `DeploymentSpec` combines a Blueprint with per-module deployment policy. A `TargetSession` provides local or SSH access during preparation. After preparation, one target-side `ExternalWorker` supervises a `RuntimeHost` for each external implementation.
+The proposal extends the existing manager/worker split instead of introducing a separate deployment stack. An `ExternalModule` is the lightweight contract imported by the coordinator. A `DeploymentSpec` combines a Blueprint with per-module deployment policy. A `TargetSession` provides local or SSH access during preparation. After preparation, one target-side `ExternalWorker` supervises each external implementation: native modules run as direct subprocesses, while packaged Python modules run through a thin Python entrypoint.
 
 ```mermaid
 flowchart TD
@@ -105,10 +105,10 @@ flowchart TD
     ExternalManager --> RobotWorker[ExternalWorker: robot machine]
     ExternalManager --> GpuWorker[ExternalWorker: GPU machine]
 
-    LocalWorker --> LocalHost[RuntimeHost\none per ExternalModule]
-    RobotWorker --> RobotHostA[RuntimeHost]
-    RobotWorker --> RobotHostB[RuntimeHost]
-    GpuWorker --> GpuHost[RuntimeHost]
+    LocalWorker --> LocalProcess[native subprocess]
+    RobotWorker --> RobotProcess[native subprocess]
+    RobotWorker --> RobotEntrypoint[Python entrypoint]
+    GpuWorker --> GpuEntrypoint[Python entrypoint]
 ```
 
 Section 5 defines each manager and worker in operational terms. This diagram establishes only the ownership split: normal modules remain in the Python worker pool, while external implementations run under one machine-level `ExternalWorker` per deployment run.
@@ -139,7 +139,7 @@ class HeavyDetectorImpl(HeavyDetector):
         ...
 ```
 
-`RuntimeHost` imports the class and requires:
+The thin Python entrypoint imports the class and requires:
 
 ```python
 issubclass(HeavyDetectorImpl, HeavyDetector)
@@ -279,7 +279,7 @@ prepare source and artifacts through target sessions
 transfer content-addressed snapshots and outputs
 bootstrap one ExternalWorker per execution machine
 materialize runtime environments inside ExternalWorker
-launch one RuntimeHost per ExternalModule
+start one runtime handle per ExternalModule
 wait for ready acknowledgements
 ```
 
@@ -291,7 +291,7 @@ The coordinator copies each source snapshot to a content-addressed directory ben
 
 `ExternalWorker` uses a separate, versioned control environment beneath `deployment_root/control/`. `TargetSession` transfers a pinned environment tool and provisions Python plus the control dependencies there. Remote deployment therefore does not depend on target-global Python or uv installations.
 
-`WorkerManagerExternal` coordinates this lifecycle and rolls back completed work if another module fails. Section 5 describes its interaction with `TargetSession`, `ExternalWorkerClient`, `ExternalWorker`, and `RuntimeHost` without repeating those responsibilities here.
+`WorkerManagerExternal` coordinates this lifecycle and rolls back completed work if another module fails. Section 5 describes its interaction with `TargetSession`, `ExternalWorkerClient`, and `ExternalWorker` without repeating those responsibilities here.
 
 `DeploymentPlan` is immutable data consumed by the manager/worker path; it is not a separate behavioral reconciler layer.
 
@@ -304,15 +304,15 @@ The plan shows which modules require staging, where each preparation runs, and w
 ```text
 Module         Build   Execute  Preparation  Environment  Worker route
 Agent          local   local    —            —            WorkerManagerPython -> PythonWorker
-MLSPlanner     local   robot    Cargo cross  Native       WorkerManagerExternal -> ExternalWorker -> RuntimeHost
-HeavyDetector  gpu     gpu      source sync  uv           WorkerManagerExternal -> ExternalWorker -> RuntimeHost
+MLSPlanner     local   robot    Cargo cross  Native       WorkerManagerExternal -> ExternalWorker -> native process
+HeavyDetector  gpu     gpu      source sync  uv           WorkerManagerExternal -> ExternalWorker -> Python entrypoint
 ```
 
 All deployment commands use this plan schema. Section 7 defines when the plan is previewed, persisted, and validated.
 
 ### 3.6 Module Launch Envelope
 
-After preparation and connection resolution, `RuntimeHost` receives one unified envelope:
+After preparation and connection resolution, the per-module runtime handle receives one unified envelope. For packaged Python, the thin entrypoint reads the envelope before importing the implementation. For native execution, `ExternalWorker` converts the envelope into argv, environment, stdin JSON, and control metadata for the subprocess.
 
 ```python
 @dataclass(frozen=True)
@@ -347,11 +347,66 @@ class ModuleLaunchEnvelope:
 }
 ```
 
-This extends the current `NativeModule.stdin_config` payload. DimOS may track field provenance internally, but `RuntimeHost` receives one handoff containing launch metadata, module config, stream bindings, transport descriptors, and control details.
+This extends the current `NativeModule.stdin_config` payload. DimOS may track field provenance internally, but each implementation receives one handoff containing launch metadata, module config, stream bindings, transport descriptors, and control details.
 
 ### 3.7 Process topology
 
-The plan routes normal modules to `WorkerManagerPython` and external modules to `WorkerManagerExternal`. Section 5 follows the external path from target access through runtime launch; section 6 separates its control traffic from module stream traffic.
+The plan routes normal modules to `WorkerManagerPython` and external modules to `WorkerManagerExternal`. The two managers share the coordinator-facing deployment contract, but the worker implementations stay separate because they cross different process and machine boundaries.
+
+```mermaid
+flowchart LR
+    subgraph CoordinatorMachine[Coordinator machine]
+        subgraph CoordinatorProcess[coordinator process]
+            Coordinator[ModuleCoordinator]
+            Backend[WorkerManagerBackend contract]
+            PythonManager[WorkerManagerPython]
+            ExternalManager[WorkerManagerExternal]
+            Session[TargetSession\nlocal or SSH access]
+            Client[ExternalWorkerClient]
+            Envelope[ModuleLaunchEnvelope]
+
+            Coordinator --> Backend
+            Backend --> PythonManager
+            Backend --> ExternalManager
+            ExternalManager --> Session
+            ExternalManager --> Client
+            ExternalManager --> Envelope
+        end
+
+        subgraph PythonWorkerProcess[PythonWorker process]
+            PythonWorker[PythonWorker]
+            NormalModule[normal Python Module object]
+            PythonWorker --> NormalModule
+        end
+
+        PythonManager --> PythonWorker
+    end
+
+    subgraph TargetMachine[Execution target machine\nmay be same as coordinator]
+        subgraph ExternalWorkerProcess[ExternalWorker process\none per machine per run]
+            ExternalWorker[ExternalWorker]
+            PythonEnv[Python RuntimeEnvironment]
+            NativeEnv[Native RuntimeEnvironment]
+            ExternalWorker --> PythonEnv
+            ExternalWorker --> NativeEnv
+        end
+
+        subgraph ImplProcesses[implementation processes]
+            PythonEntrypoint[thin Python entrypoint]
+            NativeProcess[native subprocess]
+        end
+
+        PythonEnv --> PythonEntrypoint
+        NativeEnv --> NativeProcess
+    end
+
+    Session -. prepare / transfer / bootstrap .-> TargetMachine
+    Client <-- control RPC / optional SSH tunnel --> ExternalWorker
+    Envelope --> PythonEntrypoint
+    Envelope --> ExternalWorker
+```
+
+Local external deployment uses the same graph with `TargetMachine` equal to `CoordinatorMachine` and a local `TargetSession`. Remote deployment inserts SSH only in the target session and optional worker-control tunnel; module stream data still uses DimOS transports.
 
 ## 4. Package discovery convention
 
@@ -487,28 +542,41 @@ Preset matching uses the most specific convention within one implementation fold
 
 ## 5. Worker / runtime architecture
 
-DimOS keeps one manager per deployment backend:
+DimOS should unify the manager boundary, not the worker implementation. `ModuleCoordinator` should see a common backend shape for deploy, undeploy, rollback, status, and module handles. Behind that boundary, `WorkerManagerPython` remains a local Python object host and `WorkerManagerExternal` remains a target-machine deployment backend.
 
 ```mermaid
-flowchart TD
-    Coordinator[ModuleCoordinator]
-    Coordinator --> PythonManager[WorkerManagerPython]
-    Coordinator --> ExternalManager[WorkerManagerExternal]
+flowchart LR
+    subgraph Shared[shared coordinator-facing boundary]
+        Coordinator[ModuleCoordinator]
+        Backend[WorkerManagerBackend]
+        Handle[ModuleHandle / ModuleProxy]
+        Coordinator --> Backend
+        Backend --> Handle
+    end
 
-    PythonManager --> PythonWorker[PythonWorker pool]
-    PythonWorker --> Normal[normal Python Modules]
+    subgraph PythonBackend[Python backend]
+        PythonManager[WorkerManagerPython]
+        PythonWorker[PythonWorker pool]
+        Actor[Actor-hosted Python Module object]
+        PythonManager --> PythonWorker
+        PythonWorker --> Actor
+    end
 
-    ExternalManager --> LocalWorker[ExternalWorker: local]
-    ExternalManager --> RobotWorker[ExternalWorker: robot]
-    ExternalManager --> GpuWorker[ExternalWorker: GPU]
+    subgraph ExternalBackend[External backend]
+        ExternalManager[WorkerManagerExternal]
+        Session[TargetSession]
+        Client[ExternalWorkerClient]
+        ExternalWorker[ExternalWorker\none per target machine/run]
+        ExternalManager --> Session
+        ExternalManager --> Client
+        Client --> ExternalWorker
+    end
 
-    LocalWorker --> HostA[RuntimeHost]
-    RobotWorker --> HostB[RuntimeHost]
-    RobotWorker --> HostC[RuntimeHost]
-    GpuWorker --> HostD[RuntimeHost]
+    Backend --> PythonManager
+    Backend --> ExternalManager
 ```
 
-There is one `WorkerManagerPython` and one `WorkerManagerExternal` per coordinator. `WorkerManagerExternal` owns one `ExternalWorkerClient` per execution machine. Each client communicates with one target-side ExternalWorker, which owns one `RuntimeHost` per deployed `ExternalModule`.
+The shared boundary is intentionally narrow. It covers lifecycle sequencing, rollback semantics, status, logs, and the module-handle surface returned to the coordinator. It does not require the workers to share a process protocol. `PythonWorker` receives live Python classes and hosts Python objects; `ExternalWorker` receives serialized launch envelopes and supervises already-prepared target programs.
 
 ### Normal Python stays on the existing path
 
@@ -524,20 +592,20 @@ This proposal does not replace `PythonWorker`. Its object and RPC envelope alrea
 
 ### Packaged Python always uses external deployment
 
-Packaged Python implementations are declared through `ExternalModule` and always use `WorkerManagerExternal`, `ExternalWorker`, and `RuntimeHost`, even on the local machine. Keeping local and remote packaged Python on the same path prevents local execution from hiding dependency, import, or lifecycle assumptions that fail after remote placement.
+Packaged Python implementations are declared through `ExternalModule` and always use `WorkerManagerExternal`, `ExternalWorker`, and a thin Python entrypoint, even on the local machine. Keeping local and remote packaged Python on the same path prevents local execution from hiding dependency, import, or lifecycle assumptions that fail after remote placement.
 
 ```text
-ExternalModule -> WorkerManagerExternal -> ExternalWorker -> Python RuntimeHost
+ExternalModule -> WorkerManagerExternal -> ExternalWorker -> thin Python entrypoint
 ```
 
-`ExternalWorker` spawns and supervises `RuntimeHost` without importing user implementation code. `RuntimeHost` imports the implementation inside the prepared Python environment, verifies that it subclasses the declared `ExternalModule`, initializes it, and sends an explicit ready acknowledgement.
+`ExternalWorker` spawns and supervises the entrypoint without importing user implementation code. The entrypoint runs inside the prepared Python environment, imports the implementation, verifies that it subclasses the declared `ExternalModule`, initializes it, and sends an explicit ready acknowledgement.
 
 ### Native modules reuse the external path
 
 Native implementations use the same `ExternalModule` contract and worker hierarchy for both local and remote targets.
 
 ```text
-ExternalModule -> WorkerManagerExternal -> ExternalWorker -> Native RuntimeHost
+ExternalModule -> WorkerManagerExternal -> ExternalWorker -> native subprocess
 ```
 
 The existing `NativeModule` remains unchanged during initial development. New native support uses `ExternalModule`; later PRs migrate existing native modules and eventually remove `NativeModule` and `NativeModuleConfig`.
@@ -556,23 +624,23 @@ The existing `NativeModule` remains unchanged during initial development. New na
 one control connection
 worker ID and machine identity
 deployed module IDs
-RuntimeHost handles on that machine
+runtime handles on that machine
 lease and shutdown state
 ```
 
-`ExternalWorker` materializes runtime environments, starts runtime hosts, forwards control requests by module ID, and stops hosts during rollback or shutdown. It does not build source or transfer artifacts. Those pre-worker operations belong to `Preparation` through target sessions.
+`ExternalWorker` materializes runtime environments, starts implementation processes or handles, forwards control requests by module ID, and stops those handles during rollback or shutdown. It does not build source or transfer artifacts. Those pre-worker operations belong to `Preparation` through target sessions.
 
 V1 uses one ExternalWorker per machine per deployment run. A future persistent target agent can implement the same worker contract later.
 
-Within one deployment run, modules share a runtime environment only when their source digest, execution-machine identity, and resolved `RuntimeEnvironmentSpec` fingerprint match. The run ID scopes the path so another deployment cannot mutate or tear it down. `ExternalWorker` serializes setup with a target-side lock and may rerun idempotent commands instead of merging plans or maintaining a freshness database. Teardown begins only after every dependent `RuntimeHost` in that run stops. Cross-run reuse is limited to immutable source, artifact, and package-manager caches.
+Within one deployment run, modules share a runtime environment only when their source digest, execution-machine identity, and resolved `RuntimeEnvironmentSpec` fingerprint match. The run ID scopes the path so another deployment cannot mutate or tear it down. `ExternalWorker` serializes setup with a target-side lock and may rerun idempotent commands instead of merging plans or maintaining a freshness database. Teardown begins only after every dependent runtime handle in that run stops. Cross-run reuse is limited to immutable source, artifact, and package-manager caches.
 
-### RuntimeHost owns one implementation
+### Runtime handles own one implementation
 
-`RuntimeHost` is the external equivalent of a module instance inside `PythonWorker`. It hosts exactly one `ExternalModule` implementation, receives one Module Launch Envelope, initializes stream and control bindings, and sends an explicit ready or failure response.
+The external path still needs a per-module runtime handle, but that handle is not necessarily a separate process. It owns exactly one `ExternalModule` implementation, receives one Module Launch Envelope, initializes stream and control bindings, and sends an explicit ready or failure response.
 
-For packaged Python, `RuntimeHost` is the prepared Python process: it imports and instantiates the implementation class in-process.
+For packaged Python, the runtime handle includes the thin prepared-Python entrypoint process. That process imports and instantiates the implementation class in-process.
 
-For native execution, `RuntimeHost` is the DimOS process around the executable. It passes the launch envelope to the child, forwards logs and control requests, supervises exit, and waits for the native SDK's ready acknowledgement. This extracts the process-management responsibilities currently implemented by `NativeModule`.
+For native execution, the runtime handle can be only `ExternalWorker` state around a native subprocess. `ExternalWorker` converts the launch envelope into argv, environment, stdin JSON, and control metadata, forwards logs and control requests, supervises exit, and waits for the native SDK's ready acknowledgement. This extracts the process-management responsibilities currently implemented by `NativeModule` without adding another native wrapper process.
 
 ## 6. Control plane vs data plane
 
@@ -585,10 +653,10 @@ The control plane carries spawn, stop, lifecycle, health, log, status, and suppo
 For `ExternalModule` implementations, control flows through:
 
 ```text
-ModuleCoordinator <-> WorkerManagerExternal <-> ExternalWorker <-> RuntimeHost
+ModuleCoordinator <-> WorkerManagerExternal <-> ExternalWorker <-> runtime handle
 ```
 
-An SSH tunnel can disappear while the remote worker and its module processes continue running. V1 handles that failure with a bounded coordinator lease, configured through `GlobalConfig` and proposed to default to 30 seconds. `WorkerManagerExternal` may reconnect before expiry with the run's authenticated resume token. A successful resume replaces the old control session and rejects traffic from its previous connection epoch, preventing two coordinators from controlling the same worker. If the lease expires, `ExternalWorker` invalidates the token and stops its runtime hosts. A persistent target agent remains later work.
+An SSH tunnel can disappear while the remote worker and its implementation processes continue running. V1 handles that failure with a bounded coordinator lease, configured through `GlobalConfig` and proposed to default to 30 seconds. `WorkerManagerExternal` may reconnect before expiry with the run's authenticated resume token. A successful resume replaces the old control session and rejects traffic from its previous connection epoch, preventing two coordinators from controlling the same worker. If the lease expires, `ExternalWorker` invalidates the token and stops its runtime handles. A persistent target agent remains later work.
 
 ### Deployment Data Plane
 
@@ -596,7 +664,7 @@ The data plane carries module streams such as images, point clouds, poses, paths
 
 Those streams continue to use transports such as Zenoh, DDS, ROS, LCM, or SHM where applicable. SSH never carries module stream data, and SHM remains machine-local.
 
-V1 should report cross-target transport assumptions in `dimos deploy plan`, but it should not attempt complete data-plane validation. Section 3.6 defines the Module Launch Envelope that carries resolved control and stream bindings into each `RuntimeHost`.
+V1 should report cross-target transport assumptions in `dimos deploy plan`, but it should not attempt complete data-plane validation. Section 3.6 defines the Module Launch Envelope that carries resolved control and stream bindings into each runtime handle.
 
 ## 7. End-user UX
 
@@ -617,8 +685,8 @@ It should show the resolved plan:
 ```text
 Module           Contract        Target   Worker path
 Agent            Module          local    WorkerManagerPython -> PythonWorker
-MLSPlanner       ExternalModule  robot    WorkerManagerExternal -> ExternalWorker -> RuntimeHost
-HeavyDetector    ExternalModule  gpu      WorkerManagerExternal -> ExternalWorker -> RuntimeHost
+MLSPlanner       ExternalModule  robot    WorkerManagerExternal -> ExternalWorker -> native process
+HeavyDetector    ExternalModule  gpu      WorkerManagerExternal -> ExternalWorker -> Python entrypoint
 ```
 
 The output should include build and execution targets, selected preparation and runtime-environment behavior, source and artifact paths, transport assumptions, and validation errors. A developer should be able to see both where commands will run and which runtime path will launch each implementation.
@@ -637,27 +705,27 @@ After successful preparation, the command writes a content-addressed plan manife
 
 A plain Blueprint bypasses Deployment Spec planning and uses the existing coordinator and `WorkerManagerPython` path. It cannot contain `ExternalModule` declarations because those require a Deployment Spec.
 
-`dimos run <deployment>` verifies and loads the persisted prepared-plan manifest, bootstraps external workers, ensures module runtime environments, launches runtime hosts, and registers the deployment with the same DimOS run lifecycle commands. If declarations or source no longer match the manifest, it fails before launch and asks the user to run `dimos deploy prepare` again.
+`dimos run <deployment>` verifies and loads the persisted prepared-plan manifest, bootstraps external workers, ensures module runtime environments, launches native processes or thin Python entrypoints, and registers the deployment with the same DimOS run lifecycle commands. If declarations or source no longer match the manifest, it fails before launch and asks the user to run `dimos deploy prepare` again.
 
 Open question: should `dimos deploy <deployment>` become shorthand for prepare plus run later?
 
 ## 8. Lifecycle semantics
 
-Deployment runs participate in the existing lifecycle model. `dimos status` shows the coordinator, managers, external workers, and runtime hosts. `dimos stop` stops the complete deployment rather than only the local coordinator. `dimos restart` reruns the original command and does not prepare unless that command included preparation. `dimos log` aggregates coordinator, worker, packaged-Python, and native-process logs.
+Deployment runs participate in the existing lifecycle model. `dimos status` shows the coordinator, managers, external workers, and runtime handles. `dimos stop` stops the complete deployment rather than only the local coordinator. `dimos restart` reruns the original command and does not prepare unless that command included preparation. `dimos log` aggregates coordinator, worker, packaged-Python, and native-process logs.
 
-A shared runtime environment is torn down only after all dependent runtime hosts stop. Immutable source snapshots and artifacts may remain cached beneath the deployment root because removing them is not part of process lifecycle cleanup.
+A shared runtime environment is torn down only after all dependent runtime handles stop. Immutable source snapshots and artifacts may remain cached beneath the deployment root because removing them is not part of process lifecycle cleanup.
 
 Startup should be fail-fast:
 
 ```text
 if any module fails before deployment is ready:
-  stop already-started workers and runtime hosts
+  stop already-started workers and runtime handles
   mark deployment failed
 ```
 
-`RuntimeHost` death after startup should mark the deployment unhealthy. V1 should not restart it automatically because repeating a physical action may be unsafe; restart policy remains an explicit later feature.
+Runtime-handle death after startup should mark the deployment unhealthy. V1 should not restart it automatically because repeating a physical action may be unsafe; restart policy remains an explicit later feature.
 
-Each `ExternalWorker` needs a coordinator lease. If the coordinator disappears, the worker stops its runtime hosts instead of leaving orphaned robot processes. This lease cannot reverse arbitrary system changes, so safety-related provisioning must be bounded or self-expiring.
+Each `ExternalWorker` needs a coordinator lease. If the coordinator disappears, the worker stops its runtime handles instead of leaving orphaned robot processes. This lease cannot reverse arbitrary system changes, so safety-related provisioning must be bounded or self-expiring.
 
 ## 9. Implementation path / PR slicing
 
@@ -671,29 +739,29 @@ The PR does not add deployment CLI commands, alter `ModuleCoordinator`, launch p
 
 ### PR 2: local packaged Python on the unified path
 
-This PR validates the external path with local packaged Python before introducing native executables or SSH. It requires a `DeploymentSpec`, stages the Python project, connects `WorkerManagerExternal` to `ModuleCoordinator`, materializes the uv environment inside the local `ExternalWorker`, and launches a Python `RuntimeHost`. The imported implementation must subclass its `ExternalModule` contract. The work should preserve existing Python module semantics without extending the runtime-specific `PythonWorker` pools explored in PR #2704.
+This PR validates the external path with local packaged Python before introducing native executables or SSH. It requires a `DeploymentSpec`, stages the Python project, connects `WorkerManagerExternal` to `ModuleCoordinator`, materializes the uv environment inside the local `ExternalWorker`, and launches a thin Python entrypoint. The imported implementation must subclass its `ExternalModule` contract. The work should preserve existing Python module semantics without extending the runtime-specific `PythonWorker` pools explored in PR #2704.
 
 Open question: what is the first runnable entrypoint before the full deployment CLI/registry exists?
 
 ### PR 3: local native automatic prepare/build
 
-This PR validates that the same external path can build and launch native code without changing existing `NativeModule` wrappers. It adds an `ExternalModule` declaration beside a native package such as `rust/Cargo.toml`, runs preparation through `WorkerManagerExternal` and a local `TargetSession`, validates the result through the native runtime environment, and launches the executable through a native `RuntimeHost`.
+This PR validates that the same external path can build and launch native code without changing existing `NativeModule` wrappers. It adds an `ExternalModule` declaration beside a native package such as `rust/Cargo.toml`, runs preparation through `WorkerManagerExternal` and a local `TargetSession`, validates the result through the native runtime environment, and launches the executable as a direct child of `ExternalWorker`.
 
 Use the MLS planner package to exercise the sibling `rust/Cargo.toml` convention while keeping `MLSPlannerNative` available as the compatibility path.
 
 ### PR 4: NativeModule runtime migration
 
-This PR begins migration only after the native path works beside the compatibility path. It moves one small example to `ExternalModule`, `ExternalWorker`, and native `RuntimeHost` while keeping `NativeModule` available for unmigrated packages. This avoids a repository-wide cutover before the new lifecycle has production evidence.
+This PR begins migration only after the native path works beside the compatibility path. It moves one small example to `ExternalModule`, `ExternalWorker`, and direct native-process supervision while keeping `NativeModule` available for unmigrated packages. This avoids a repository-wide cutover before the new lifecycle has production evidence.
 
 After the path is stable, migrate `MLSPlannerNative` and then other native modules. Remove `NativeModule` and `NativeModuleConfig` only after all callers migrate.
 
 ### PR 5: SSH remote packaged Python
 
-This PR adds SSH only after local packaged Python validates the worker protocol. It defines SSH targets, synchronizes source into the deployment root, provisions the versioned control environment, starts one remote `ExternalWorker`, tunnels its RPC, and launches Python runtime hosts from a target-local environment. The control contract should remain usable by a future persistent target agent.
+This PR adds SSH only after local packaged Python validates the worker protocol. It defines SSH targets, synchronizes source into the deployment root, provisions the versioned control environment, starts one remote `ExternalWorker`, tunnels its RPC, and launches thin Python entrypoints from a target-local environment. The control contract should remain usable by a future persistent target agent.
 
 ### PR 6: SSH remote native modules
 
-This PR adds native artifact movement after SSH control and packaged-Python staging are stable. It synchronizes content-addressed source or prepared artifacts, supports remote builds and cross-compile transfers through target sessions, materializes the native runtime environment inside the machine's existing `ExternalWorker`, and launches native runtime hosts. Packaged-Python and native remote support remain separate because their preparation outputs and failure recovery differ.
+This PR adds native artifact movement after SSH control and packaged-Python staging are stable. It synchronizes content-addressed source or prepared artifacts, supports remote builds and cross-compile transfers through target sessions, materializes the native runtime environment inside the machine's existing `ExternalWorker`, and launches native subprocesses directly. Packaged-Python and native remote support remain separate because their preparation outputs and failure recovery differ.
 
 ## 10. Open questions
 

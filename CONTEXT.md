@@ -17,7 +17,7 @@ A declarative `Module` subclass whose implementation runs outside `PythonWorker`
 _Avoid_: NativeModule compatibility wrapper, process supervisor
 
 **External Implementation Reference**:
-The `ExternalModule` declaration that identifies what Runtime Host runs. It may be written as a string or `pathlib.Path`; the convention-discovered implementation layout, not the Python value type, determines whether it denotes a Python class or native executable.
+The `ExternalModule` declaration that identifies what a runtime handle launches. It may be written as a string or `pathlib.Path`; the convention-discovered implementation layout, not the Python value type, determines whether it denotes a Python class or native executable.
 _Avoid_: Deployment-level implementation override, value-type runtime discriminator
 
 **NativeModule Compatibility Path**:
@@ -73,7 +73,7 @@ A single deployment workflow that may coordinate build and execution targets and
 _Avoid_: One preparation per machine, ExternalWorker lifecycle
 
 **Runtime Environment**:
-The execution-target environment materialized by ExternalWorker from staged deployment inputs before a Runtime Host starts. It may install dependencies or artifacts and provision deployment-owned target resources.
+The execution-target environment materialized by ExternalWorker from staged deployment inputs before a runtime handle starts. It may install dependencies or artifacts and provision deployment-owned target resources.
 _Avoid_: Build workflow, Runtime Host, ExternalWorker bootstrap environment
 
 **Runtime Environment Spec**:
@@ -81,7 +81,7 @@ The serializable top-level import reference and JSON-compatible configuration fr
 _Avoid_: Live coordinator object, pickled class instance
 
 **Shared Runtime Environment**:
-A Runtime Environment reused within one deployment run when modules have the same source digest, execution-machine identity, and resolved Runtime Environment Spec. Setup is serialized and may rerun idempotently; teardown occurs only after all dependent Runtime Hosts in that run stop.
+A Runtime Environment reused within one deployment run when modules have the same source digest, execution-machine identity, and resolved Runtime Environment Spec. Setup is serialized and may rerun idempotently; teardown occurs only after all dependent runtime handles in that run stop.
 _Avoid_: Planner-level workflow merging, per-module environment copies
 
 **Deployment Source Snapshot**:
@@ -95,6 +95,14 @@ _Avoid_: DimOS freshness cache, manual stale-state tracking
 **Worker Manager**:
 A coordinator-side backend scheduler that owns worker collections, placement, parallel deployment, rollback, health aggregation, and shutdown. DimOS uses one manager instance per deployment backend per coordinator.
 _Avoid_: Worker process, per-machine manager
+
+**Worker Manager Backend Boundary**:
+The shared coordinator-facing contract implemented by WorkerManagerPython and WorkerManagerExternal. It gives ModuleCoordinator one deploy, undeploy, rollback, status, and Module Handle surface without requiring both backends to share a worker protocol.
+_Avoid_: Shared worker implementation, PythonWorker subclass for external deployment
+
+**Module Handle**:
+The coordinator-visible proxy for one deployed module instance. A Python handle may wrap an Actor in PythonWorker; an external handle may route through ExternalWorkerClient to a runtime handle on a target machine.
+_Avoid_: Python object instance, machine-specific worker process
 
 **WorkerManagerPython**:
 The manager for in-environment Python modules. It owns and schedules the local `PythonWorker` pool.
@@ -113,7 +121,7 @@ The coordinator-side access path to an Execution Target. A local session execute
 _Avoid_: Module stream transport, Runtime Host control protocol
 
 **ExternalWorker**:
-The target-side process that owns Runtime Host handles for all ExternalModules assigned to one execution machine for one run. It starts only after the Deployment Prepare Phase succeeds.
+The target-side process that owns runtime handles for all ExternalModules assigned to one execution machine for one run. It starts only after the Deployment Prepare Phase succeeds.
 _Avoid_: Coordinator-side handle, one worker per module, preparation executor, persistent target agent
 
 **ExternalWorker Client**:
@@ -121,19 +129,23 @@ The coordinator-side RPC handle to an ExternalWorker. For an SSH target, its ord
 _Avoid_: SSH command executor, Runtime Host, stream transport
 
 **Runtime Host**:
-The external equivalent of a module instance inside `PythonWorker`. It hosts exactly one ExternalModule implementation, receives a Module Launch Envelope, initializes control and stream bindings, and reports ready or failure.
-_Avoid_: Worker manager, multi-module worker
+The per-module runtime handle owned by an ExternalWorker. It receives a Module Launch Envelope, initializes control and stream bindings, supervises one ExternalModule implementation, and reports ready or failure. For native modules this may be only ExternalWorker state around a native subprocess; for packaged Python it may include a thin entrypoint process that imports the implementation inside the prepared Python environment.
+_Avoid_: Worker manager, multi-module worker, required extra native wrapper process
+
+**Python Runtime Entrypoint**:
+The thin process entrypoint used by a packaged Python ExternalModule to enter its prepared Python environment, import the implementation class, and attach it to the Module Launch Envelope. It is not a second worker and should contain only bootstrap logic.
+_Avoid_: PythonWorker replacement, module implementation, heavyweight runtime supervisor
 
 **Ready Acknowledgement**:
-The explicit Runtime Host signal sent after the launch envelope is parsed, the implementation is initialized, control is active, and stream bindings are ready.
+The explicit runtime-handle signal sent after the launch envelope is parsed, the implementation is initialized, control is active, and stream bindings are ready.
 _Avoid_: Treating process creation as successful module startup
 
 **Module Launch Envelope**:
-The unified serialized handoff to Runtime Host containing module identity, implementation launch metadata, module config, stream topics, transport descriptors, and control details. It extends the current `NativeModule.stdin_config` shape.
+The unified serialized handoff to a runtime handle containing module identity, implementation launch metadata, module config, stream topics, transport descriptors, and control details. It extends the current `NativeModule.stdin_config` shape.
 _Avoid_: Separate user-facing config and connection payloads
 
 **Deployment Control Plane**:
-The command and lifecycle path between ModuleCoordinator, WorkerManagerExternal, Target Sessions, ExternalWorker Clients, ExternalWorkers, and Runtime Hosts. Target Sessions handle pre-worker bootstrap and preparation; ExternalWorker RPC handles deployed lifecycle, status, logs, health, and method calls. SSH may carry that RPC through a tunnel but never carries module stream data.
+The command and lifecycle path between ModuleCoordinator, WorkerManagerExternal, Target Sessions, ExternalWorker Clients, ExternalWorkers, and runtime handles. Target Sessions handle pre-worker bootstrap and preparation; ExternalWorker RPC handles deployed lifecycle, status, logs, health, and method calls. SSH may carry that RPC through a tunnel but never carries module stream data.
 _Avoid_: Stream data transport
 
 **Deployment Data Plane**:
@@ -141,9 +153,9 @@ The transport path used by module streams, such as Zenoh, DDS, ROS, LCM, or SHM 
 _Avoid_: Worker control protocol, lifecycle channel
 
 **Fail-Fast Startup Rollback**:
-The rule that startup stops already-started workers and Runtime Hosts if any module fails before the deployment reaches ready state.
+The rule that startup stops already-started workers and runtime handles if any module fails before the deployment reaches ready state.
 _Avoid_: Partial startup, orphaned Runtime Host
 
 **ExternalWorker Lease**:
-A coordinator heartbeat or lease that causes an ExternalWorker to stop its Runtime Hosts if the coordinator disappears.
+A coordinator heartbeat or lease that causes an ExternalWorker to stop its runtime handles if the coordinator disappears.
 _Avoid_: Orphaned target processes, required persistent agent
