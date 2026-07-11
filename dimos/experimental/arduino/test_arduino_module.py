@@ -397,6 +397,10 @@ class _FakeTransport:
     def __init__(self, channel: str) -> None:
         self.channel = channel
 
+    @property
+    def channel(self) -> str:
+        return str(self.topic)
+
     def stop(self) -> None:
         pass
 
