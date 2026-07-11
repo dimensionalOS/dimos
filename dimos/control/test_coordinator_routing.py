@@ -392,7 +392,6 @@ class CardlessStreamTask(RecordingTask):
         self.position_targets: list[dict[str, float]] = []
 
     def set_target_by_name(self, positions: dict[str, float], t_now: float) -> bool:
-        _ = t_now
         self.position_targets.append(positions)
         return True
 
@@ -413,7 +412,6 @@ class RaisingProbeTask(ProbeTask):
     """Probe whose handler raises, to test per-task dispatch isolation."""
 
     def on_probe_command(self, msg: Any, t_now: float) -> bool:
-        _ = msg, t_now
         raise RuntimeError("handler boom")
 
 

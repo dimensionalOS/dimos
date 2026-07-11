@@ -52,11 +52,10 @@ class RecordingTask(BaseControlTask):
         return False
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
-        _ = state
         return None
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
-        _ = by_task, joints
+        pass
 
     def on_cartesian_command(self, pose: Any, t_now: float) -> bool:
         self.cartesian_calls.append((pose, t_now))
@@ -72,5 +71,4 @@ class RecordingTask(BaseControlTask):
 
     def on_teleop_buttons(self, msg: Any, t_now: float) -> bool:
         # Mirrors TeleopIKTask: the uniform handler delegates to on_buttons.
-        _ = t_now
         return self.on_buttons(msg)
