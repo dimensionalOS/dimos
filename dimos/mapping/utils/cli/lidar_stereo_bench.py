@@ -59,6 +59,11 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+# Rough verbal estimate (not measured): D435i sits a bit higher than the Mid-360 and
+# a bit further back, in the lidar's own body frame (X=forward, Y=left, Z=up).
+# Magnitudes are guesses — refine with a tape measure if ICP still struggles.
+_ROUGH_CAM_OFFSET_IN_LIDAR_FRAME = np.array([-0.10, 0.0, 0.10])
+
 
 # ── Metrics ─────────────────────────────────────────────────────────────────
 
@@ -129,17 +134,21 @@ def best_yaw_icp(
     max_corr_dist: float,
     base_rotation: np.ndarray,
     yaw_steps: int,
+    base_translation: np.ndarray = np.zeros(3),
 ) -> np.ndarray:
     """Multi-start ICP over ``yaw_steps`` heading hypotheses around Z; keeps the best-fitness result.
 
     ``base_rotation`` is applied before the yaw sweep — use it for a *known* fixed
     rotation (e.g. optical -> body frame); leave as identity when only heading is
-    unknown.
+    unknown. ``base_translation`` is the source origin's position in the target
+    frame (a rough prior is far better than none — blind full-6DOF search between a
+    360-degree lidar and a narrow-FOV camera is underdetermined on translation).
     """
     best: o3d.pipelines.registration.RegistrationResult | None = None
     for i in range(yaw_steps):
         init = np.eye(4)
         init[:3, :3] = _yaw_matrix(2 * np.pi * i / yaw_steps) @ base_rotation
+        init[:3, 3] = base_translation
         result = icp_refine(source, target, init, max_corr_dist)
         if best is None or result.fitness > best.fitness:
             best = result
@@ -162,7 +171,7 @@ class BenchConfig(ModuleConfig):
     fscore_threshold_m: float = 0.05
     fscore_threshold_loose_m: float = 0.20
     voxel_size_m: float = 0.05
-    icp_max_corr_dist_m: float = 0.5  # generous: no measured translation offset to seed from
+    icp_max_corr_dist_m: float = 0.25  # tighter now that a rough translation prior seeds the search
     yaw_steps: int = 12  # heading hypotheses swept per ICP call (30 degree steps)
     range_bins_m: list[float] = Field(default_factory=lambda: [0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 100.0])
 
@@ -249,6 +258,7 @@ class LidarStereoBenchmark(Module):
         rs_icp_T = best_yaw_icp(
             rs_raw_xyz, lidar_xyz, cfg.icp_max_corr_dist_m,
             base_rotation=_R_OPT_TO_LINK.astype(np.float64), yaw_steps=cfg.yaw_steps,
+            base_translation=_ROUGH_CAM_OFFSET_IN_LIDAR_FRAME,
         )
         rs_xyz = apply_matrix(rs_raw_xyz, rs_icp_T)
         rs_score = self._score(lidar_xyz, rs_xyz)
@@ -261,6 +271,7 @@ class LidarStereoBenchmark(Module):
                 stereo_icp_T = best_yaw_icp(
                     stereo_raw_xyz, lidar_xyz, cfg.icp_max_corr_dist_m,
                     base_rotation=np.eye(3), yaw_steps=cfg.yaw_steps,
+                    base_translation=_ROUGH_CAM_OFFSET_IN_LIDAR_FRAME,
                 )
                 stereo_xyz = apply_matrix(stereo_raw_xyz, stereo_icp_T)
                 stereo_score = self._score(lidar_xyz, stereo_xyz)
