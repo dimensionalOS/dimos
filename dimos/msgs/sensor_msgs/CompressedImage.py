@@ -32,8 +32,6 @@ if TYPE_CHECKING:
 
 CompressionFormat = Literal["jpeg", "png"]
 
-_MEDIA_TYPES = {"jpeg": "image/jpeg", "png": "image/png"}
-
 
 @dataclass
 class CompressedImage(Timestamped):
@@ -134,5 +132,5 @@ class CompressedImage(Timestamped):
     def to_rerun(self) -> rr.EncodedImage:
         import rerun as rr
 
-        media_type = next((m for f, m in _MEDIA_TYPES.items() if self.format.startswith(f)), None)
+        media_type = "image/jpeg" if self.format.startswith("jpeg") else "image/png"
         return rr.EncodedImage(contents=self.data, media_type=media_type)

@@ -12,32 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-
 import numpy as np
 import pytest
 
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
-
-def _turbojpeg_available() -> bool:
-    try:
-        from turbojpeg import TurboJPEG
-
-        TurboJPEG()
-    except Exception:
-        return False
-    return True
-
-
-# Skip locally when the native lib is missing; in CI run anyway so a missing
-# dep fails loudly instead of silently skipping (aiortc guard pattern). An
-# import-time assert would break jobs that collect-but-deselect these tests.
-pytestmark = pytest.mark.skipif(
-    not _turbojpeg_available() and not os.environ.get("CI"),
-    reason="native libturbojpeg unavailable",
-)
+pytestmark = pytest.mark.skipif_no_turbojpeg
 
 
 @pytest.fixture()

@@ -50,36 +50,21 @@ T = TypeVar("T")
 
 
 class CompressedCodec(PubSubTransport[T]):
-    """Image↔CompressedImage codec over any inner transport.
+    """Image→CompressedImage jpeg codec over any inner transport.
 
     Bench-only utility: rejected as public API in #2831 (transports shouldn't
     peek into messages), kept here so raw-vs-codec cells stay comparable.
     The wire carries a typed sensor_msgs.CompressedImage; ts/frame_id survive.
-    With decode=False subscribers receive the CompressedImage as-is.
+    Subscribers always receive a decoded Image.
     """
 
-    def __init__(
-        self,
-        inner: PubSubTransport[Any],
-        format: str = "jpeg",
-        quality: int = 75,
-        max_width: int | None = None,
-        decode: bool = True,
-    ) -> None:
-        if isinstance(inner, CompressedCodec):
-            raise ValueError("CompressedCodec cannot wrap another CompressedCodec")
+    def __init__(self, inner: PubSubTransport[Any], quality: int = 75) -> None:
         super().__init__(inner.topic)
         self.inner = inner
-        self.format = format
         self.quality = quality
-        self.max_width = max_width
-        self.decode = decode
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (
-            CompressedCodec,
-            (self.inner, self.format, self.quality, self.max_width, self.decode),
-        )
+        return (CompressedCodec, (self.inner, self.quality))
 
     def broadcast(self, stream: Out[T] | None, msg: T) -> None:
         from dimos.msgs.sensor_msgs.CompressedImage import (
@@ -87,19 +72,15 @@ class CompressedCodec(PubSubTransport[T]):
         )  # deferred to avoid pulling in cv2/rerun
 
         if not isinstance(msg, CompressedImage):
-            msg = CompressedImage.from_image(  # type: ignore[assignment]
-                msg,  # type: ignore[arg-type]
-                format=self.format,  # type: ignore[arg-type]
-                quality=self.quality,
-                max_width=self.max_width,
-            )
+            msg = CompressedImage.from_image(msg, quality=self.quality)  # type: ignore[assignment, arg-type]
         self.inner.broadcast(stream, msg)
 
     def subscribe(
         self, callback: Callable[[T], Any], selfstream: Stream[T] | None = None
     ) -> Callable[[], None]:
-        cb = (lambda m: callback(m.decode())) if self.decode else callback
-        return self.inner.subscribe(cb, selfstream)  # type: ignore[no-any-return]
+        return self.inner.subscribe(  # type: ignore[no-any-return]
+            lambda m: callback(m.decode()), selfstream
+        )
 
     def start(self) -> None:
         self.inner.start()

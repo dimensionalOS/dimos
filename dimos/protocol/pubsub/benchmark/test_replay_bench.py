@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import os
 import pickle
 import statistics
 import threading
@@ -30,24 +29,7 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.protocol.pubsub.benchmark.tool_replay_bench import CompressedCodec
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 
-
-def _turbojpeg_available() -> bool:
-    try:
-        from turbojpeg import TurboJPEG
-
-        TurboJPEG()
-    except Exception:
-        return False
-    return True
-
-
-# Skip locally when the native lib is missing; in CI run anyway so a missing
-# dep fails loudly instead of silently skipping (aiortc guard pattern). An
-# import-time assert would break jobs that collect-but-deselect these tests.
-pytestmark = pytest.mark.skipif(
-    not _turbojpeg_available() and not os.environ.get("CI"),
-    reason="native libturbojpeg unavailable",
-)
+pytestmark = pytest.mark.skipif_no_turbojpeg
 
 
 def make_image(width: int = 1280, height: int = 720) -> Image:
@@ -104,39 +86,12 @@ def test_roundtrip_over_zenoh(retry_until, collector, session_pool) -> None:
     t.stop()
 
 
-def test_decode_false_delivers_compressed(retry_until, collector) -> None:
-    t = CompressedCodec(LCMTransport("dimos/test/codec_raw", CompressedImage), decode=False)
-    t.subscribe(collector.callback)
-    retry_until(collector.event, lambda: t.broadcast(None, make_image(320, 240)))
-    msg = collector.received[0]
-    assert isinstance(msg, CompressedImage)
-    assert msg.format == "jpeg"
-    t.stop()
-
-
-def test_compressed_passthrough_no_recompression(retry_until, collector) -> None:
-    t = CompressedCodec(LCMTransport("dimos/test/codec_pass", CompressedImage), decode=False)
-    t.subscribe(collector.callback)
-    ci = CompressedImage.from_image(make_image(320, 240), quality=30)
-    retry_until(collector.event, lambda: t.broadcast(None, ci))
-    assert collector.received[0].data == ci.data
-    t.stop()
-
-
-def test_double_wrap_raises() -> None:
-    inner = CompressedCodec(LCMTransport("dimos/test/codec_dw", CompressedImage))
-    with pytest.raises(ValueError, match="cannot wrap"):
-        CompressedCodec(inner)
-
-
 def test_pickle_roundtrip() -> None:
-    t = CompressedCodec(
-        LCMTransport("dimos/test/codec_pickle", CompressedImage), quality=50, max_width=640
-    )
+    """The bench pins the codec into blueprints — it must pickle into forkserver workers."""
+    t = CompressedCodec(LCMTransport("dimos/test/codec_pickle", CompressedImage), quality=50)
     t2 = pickle.loads(pickle.dumps(t))
     assert isinstance(t2, CompressedCodec)
     assert t2.quality == 50
-    assert t2.max_width == 640
     assert t2.topic.topic == t.topic.topic
 
 

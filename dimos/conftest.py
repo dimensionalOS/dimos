@@ -86,6 +86,16 @@ def _is_macos() -> bool:
     return platform.system() == "Darwin"
 
 
+def _has_turbojpeg() -> bool:
+    try:
+        from turbojpeg import TurboJPEG
+
+        TurboJPEG()
+        return True
+    except Exception:
+        return False
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
@@ -99,6 +109,11 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "skipif_no_openai: skip when OPENAI_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_alibaba: skip when ALIBABA_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_ros: skip when ROS dependencies are not present")
+    config.addinivalue_line(
+        "markers",
+        "skipif_no_turbojpeg: skip when native libturbojpeg is missing — "
+        "except in CI, where it runs anyway so a missing dep fails loudly",
+    )
     config.addinivalue_line("markers", "skipif_macos_bug: skip known-buggy tests on macOS")
     config.addinivalue_line("markers", "skipif_macos: skip tests not intended to run on macOS")
     config.addinivalue_line(
@@ -153,6 +168,10 @@ def pytest_collection_modifyitems(config, items):
         "skipif_no_openai": (not os.getenv("OPENAI_API_KEY"), "OPENAI_API_KEY not set"),
         "skipif_no_alibaba": (not os.getenv("ALIBABA_API_KEY"), "ALIBABA_API_KEY not set"),
         "skipif_no_ros": (not _has_ros(), "ROS dependencies are not present"),
+        "skipif_no_turbojpeg": (
+            not _has_turbojpeg() and not os.getenv("CI"),
+            "native libturbojpeg unavailable",
+        ),
         "skipif_macos_bug": (_is_macos(), "Some tests are buggy on Mac OS"),
         "skipif_macos": (_is_macos(), "Not intended to run on macOS"),
         "skipif_aarch64": (
