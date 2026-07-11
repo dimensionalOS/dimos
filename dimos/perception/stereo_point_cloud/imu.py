@@ -34,8 +34,9 @@ GRAVITY_MS2 = 9.81
 class RealSenseImuFeed:
     """Finds the D435i's onboard gyro/accel and fuses them into an orientation estimate."""
 
-    def __init__(self, beta: float = 0.033) -> None:
+    def __init__(self, beta: float = 0.033, serial_number: str | None = None) -> None:
         self._madgwick = MadgwickFilter(beta=beta)
+        self._serial_number = serial_number
         self._lock = threading.Lock()
         self._last_accel = np.array([0.0, 0.0, -GRAVITY_MS2], dtype=np.float32)
         self._imu_to_camera_link: np.ndarray = np.eye(3, dtype=np.float32)
@@ -52,6 +53,12 @@ class RealSenseImuFeed:
         if not devices:
             return False
         device = devices[0]
+        if self._serial_number is not None:
+            matching = [d for d in devices if d.get_info(rs.camera_info.serial_number) == self._serial_number]
+            if not matching:
+                logger.warning(f"RealSenseImuFeed: no device with serial {self._serial_number}")
+                return False
+            device = matching[0]
         depth_profile = None
         for sensor in device.query_sensors():
             if sensor.is_motion_sensor():

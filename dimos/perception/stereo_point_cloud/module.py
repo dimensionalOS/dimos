@@ -69,6 +69,7 @@ class Config(ModuleConfig):
     world_frame: str          = "world"
     camera_frame: str         = "camera_link"
     madgwick_beta: float      = 0.033
+    serial_number: str | None = None
 
 
 class StereoPointCloud(Module, perception.Odometry):
@@ -88,7 +89,9 @@ class StereoPointCloud(Module, perception.Odometry):
         self._lock                       = threading.Lock()
         self._latest_camera_info: CameraInfo | None = None
         self._floor_calib                = _FloorCalibrator()
-        self._imu                        = RealSenseImuFeed(beta=self.config.madgwick_beta)
+        self._imu                        = RealSenseImuFeed(
+            beta=self.config.madgwick_beta, serial_number=self.config.serial_number
+        )
         self._odom                       = PointCloudOdometry()
         self._trajectory                 = TrajectoryRecorder(
             self.config.world_frame, TRAJECTORY_MAX_POSES, TRAJECTORY_PUBLISH_EVERY
@@ -158,7 +161,7 @@ class StereoPointCloud(Module, perception.Odometry):
         t_odom_end = time.perf_counter()
         xyz_world = (xyz_cam @ R.T + t).astype(np.float32)
 
-        self._floor_calib.update(xyz_cam)
+        self._floor_calib.update(xyz_cam @ R.T)
 
         # Floor sits at z=0 to match the rerun ground grid; 0 until calibrated (~4s).
         z_shift = float(self._floor_calib.cam_height) if self._floor_calib.ready else 0.0  # type: ignore[arg-type]
@@ -183,6 +186,9 @@ class StereoPointCloud(Module, perception.Odometry):
         self._frame_count += 1
         quat = Rotation.from_matrix(R).as_quat()
 
+        # Same floor-alignment shift as frame_cloud, so pose and cloud agree on Z.
+        t_published = t + z_offset
+
         # Standard Odometry format, for any downstream consumer.
         self.odometry.publish(
             Odometry(
@@ -190,13 +196,13 @@ class StereoPointCloud(Module, perception.Odometry):
                 frame_id=self.config.world_frame,
                 child_frame_id=self.config.camera_frame,
                 pose=Pose(
-                    position=[float(t[0]), float(t[1]), float(t[2])],
+                    position=[float(t_published[0]), float(t_published[1]), float(t_published[2])],
                     orientation=[float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3])],
                 ),
             )
         )
 
-        traj_snapshot = self._trajectory.record(img.ts, t, quat, self._frame_count)
+        traj_snapshot = self._trajectory.record(img.ts, t_published, quat, self._frame_count)
         if traj_snapshot is not None:
             self.trajectory.publish(Path(ts=img.ts, frame_id=self.config.world_frame, poses=traj_snapshot))
 
