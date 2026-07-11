@@ -149,7 +149,7 @@ class BoosterRPCConnection:
             logger.warning("Booster move failed: %s: %s", type(e).__name__, e)
 
     def standup(self) -> bool:
-        """Arm the robot for walking (DAMPING -> PREPARE -> WALKING); no-op if already WALKING.
+        """Arm the robot for walking; no-op if already WALKING.
 
         Refuses modes outside {WALKING, DAMPING, PREPARE} rather than forcing an unsafe transition.
         """
@@ -160,6 +160,10 @@ class BoosterRPCConnection:
         if mode not in (RobotMode.DAMPING, RobotMode.PREPARE):
             logger.warning("Booster standup: unexpected mode %s; not forcing WALKING", mode)
             return False
+        return self._arm(mode)
+
+    def _arm(self, mode: RobotMode) -> bool:
+        """Step the mode transitions to WALKING (DAMPING -> PREPARE -> WALKING)."""
         if mode == RobotMode.DAMPING:
             with self._lock:
                 self._conn.change_mode(RobotMode.PREPARE)
