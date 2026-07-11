@@ -17,7 +17,8 @@
 from __future__ import annotations
 
 import threading
-from typing import Sequence
+
+import numpy as np
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
@@ -39,8 +40,8 @@ class TrajectoryRecorder:
     def record(
         self,
         ts: float,
-        position: Sequence[float],
-        orientation: Sequence[float],
+        position: np.ndarray,
+        orientation: np.ndarray,
         frame_count: int,
     ) -> list[PoseStamped] | None:
         with self._lock:

@@ -17,9 +17,9 @@
 from __future__ import annotations
 
 import bisect
+from collections import deque
 import threading
 import time
-from collections import deque
 
 import numpy as np
 from scipy.spatial import cKDTree
@@ -27,12 +27,11 @@ from scipy.spatial.transform import Rotation, Slerp
 
 from dimos.perception.stereo_point_cloud.utils import _voxel_dedup
 
-
-_MAX_DT_S        = 0.1   # don't integrate more than 100ms at once — big gaps would blow up the filter
-_ACCEL_MIN_NORM  = 0.5   # skip accel correction if reading is basically zero (noise or free-fall)
-_MIN_ICP_INLIERS = 30    # need at least 30 matched point pairs to trust the ICP translation update
-_SMOOTH_ALPHA    = 0.7   # EMA weight for ICP output — reduces ±2cm centroid oscillation to ±5mm
-_ICP_STEP_GAIN   = 0.7   # fraction of each iteration's centroid offset applied per step
+MAX_DT_S        = 0.1   # don't integrate more than 100ms at once — big gaps would blow up the filter
+ACCEL_MIN_NORM  = 0.5   # skip accel correction if reading is basically zero (noise or free-fall)
+MIN_ICP_INLIERS = 30    # need at least 30 matched point pairs to trust the ICP translation update
+SMOOTH_ALPHA    = 0.7   # EMA weight for ICP output — reduces ±2cm centroid oscillation to ±5mm
+ICP_STEP_GAIN   = 0.7   # fraction of each iteration's centroid offset applied per step
 
 
 def _quat_wxyz_to_xyzw(q: np.ndarray) -> list[float]:
@@ -60,7 +59,7 @@ class MadgwickFilter:
             self._prev_time_s = time_s
             self._history.append((time.time(), self._quat.copy()))
             return
-        dt = min(time_s - self._prev_time_s, _MAX_DT_S)
+        dt = min(time_s - self._prev_time_s, MAX_DT_S)
         self._prev_time_s = time_s
         if dt <= 0:
             return
@@ -68,7 +67,7 @@ class MadgwickFilter:
         q0, q1, q2, q3 = self._quat
         gyro_x, gyro_y, gyro_z = gyro.astype(np.float64)
         accel_norm = np.linalg.norm(accel)
-        if accel_norm > _ACCEL_MIN_NORM:
+        if accel_norm > ACCEL_MIN_NORM:
             accel_x, accel_y, accel_z = accel.astype(np.float64) / accel_norm
             f1 = 2 * (q1 * q3 - q0 * q2) - accel_x
             f2 = 2 * (q0 * q1 + q2 * q3) - accel_y
@@ -114,7 +113,7 @@ class MadgwickFilter:
         if t1 <= t0:
             return self._to_matrix(q1)
         rotations = Rotation.from_quat([_quat_wxyz_to_xyzw(q0), _quat_wxyz_to_xyzw(q1)])
-        return Slerp([t0, t1], rotations)([wall_clock_ts]).as_matrix()[0].astype(np.float32)
+        return Slerp([t0, t1], rotations)([wall_clock_ts]).as_matrix()[0].astype(np.float32)  # type: ignore[no-any-return]
 
     @staticmethod
     def _to_matrix(q: np.ndarray) -> np.ndarray:
@@ -181,17 +180,17 @@ class PointCloudOdometry:
             for _ in range(self.ITERS):
                 distances, nearest_index = tree.query(source_points + t_estimate, k=1, workers=1)
                 inliers = distances < self.MAX_DIST
-                if inliers.sum() < _MIN_ICP_INLIERS:
+                if inliers.sum() < MIN_ICP_INLIERS:
                     break
                 centroid_offset = (
                     dest_points[nearest_index[inliers]].mean(axis=0)
                     - (source_points[inliers] + t_estimate).mean(axis=0)
                 )
-                t_estimate = (t_estimate + _ICP_STEP_GAIN * centroid_offset).astype(np.float32)
+                t_estimate = (t_estimate + ICP_STEP_GAIN * centroid_offset).astype(np.float32)
             t_new = t_estimate
 
         with self._lock:
-            t_smooth = (_SMOOTH_ALPHA * t_new + (1.0 - _SMOOTH_ALPHA) * self._t).astype(np.float32)
+            t_smooth = (SMOOTH_ALPHA * t_new + (1.0 - SMOOTH_ALPHA) * self._t).astype(np.float32)
             self._t  = t_smooth
 
         moved = self._last_ref_t is None or float(np.linalg.norm(t_smooth - self._last_ref_t)) > self.REF_STEP_M

@@ -26,22 +26,22 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-_DEPTH_MM_THRESHOLD = 100
-_MILLIMETERS_PER_METER = 1000.0
+DEPTH_MM_THRESHOLD = 100
+MILLIMETERS_PER_METER = 1000.0
 
-_VOFF  = np.int64(100_000)
-_VMASK = np.int64(0x3FFFF)
+VOFF  = np.int64(100_000)
+VMASK = np.int64(0x3FFFF)
 
 # Optical frame (X=right, Y=down, Z=depth) → camera_link (X=fwd, Y=left, Z=up)
-_R_OPT_TO_LINK = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=np.float32)
+R_OPT_TO_LINK = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=np.float32)
 
-_RAYCAST_MIN_RAY_VOXELS = 2
+RAYCAST_MIN_RAY_VOXELS = 2
 # Voxels of margin held back from each ray's surface hit before it's allowed to
 # clear existing map voxels as "free space". Was 1.5 (~3cm at 2cm voxels) when
 # raycasting was first tried and removed for carving away thin real obstacles —
 # too thin a margin lets a ray aimed at a wall behind a chair leg clear the leg
 # itself. 4.0 (~8cm) matches the fat-voxel insertion guard's own tolerance.
-_RAYCAST_SURFACE_MARGIN = 4.0
+RAYCAST_SURFACE_MARGIN = 4.0
 
 # Full 9×9×9 neighbourhood (dx,dy,dz ∈ [-4..4], 729 entries).
 # ±4 voxels = ±8 cm per axis. Rationale:
@@ -51,7 +51,7 @@ _RAYCAST_SURFACE_MARGIN = 4.0
 #   - A noisy accumulated map makes ICP worse → more layers → even worse ICP (feedback).
 #   - Blocking new observations within 8 cm of existing keeps the map single-layer,
 #     which keeps the ICP reference clean and breaks the degradation feedback loop.
-_FAT_SHIFTS = np.array(
+FAT_SHIFTS = np.array(
     [(dx * (1 << 36)) + (dy * (1 << 18)) + dz
      for dx in range(-4, 5)
      for dy in range(-4, 5)
@@ -61,7 +61,7 @@ _FAT_SHIFTS = np.array(
 
 
 def _pack(vkeys: np.ndarray) -> np.ndarray:
-    v = (vkeys.astype(np.int64) + _VOFF) & _VMASK
+    v = (vkeys.astype(np.int64) + VOFF) & VMASK
     return (v[:, 0] << np.int64(36)) | (v[:, 1] << np.int64(18)) | v[:, 2]
 
 
@@ -76,7 +76,7 @@ def _gradient_mask(depth: np.ndarray, threshold: float) -> np.ndarray:
     valid   = np.isfinite(depth)
     depth_f = np.where(valid, depth, 0.0).astype(np.float64)
     grad    = np.hypot(sobel(depth_f, axis=1), sobel(depth_f, axis=0))
-    return valid & (grad < threshold)
+    return valid & (grad < threshold)  # type: ignore[no-any-return]
 
 
 def _preprocess_depth(raw_depth: np.ndarray, min_depth: float, max_depth: float) -> np.ndarray:
@@ -88,9 +88,9 @@ def _preprocess_depth(raw_depth: np.ndarray, min_depth: float, max_depth: float)
         depth = depth[:, :, 0]
     depth = depth.astype(np.float32)
     valid_depth = depth[depth > 0]
-    is_millimeters = len(valid_depth) > 0 and np.median(valid_depth) > _DEPTH_MM_THRESHOLD
+    is_millimeters = len(valid_depth) > 0 and np.median(valid_depth) > DEPTH_MM_THRESHOLD
     if is_millimeters:
-        depth /= _MILLIMETERS_PER_METER
+        depth /= MILLIMETERS_PER_METER
     out_of_range = (depth <= 0) | (depth < min_depth) | (depth > max_depth)
     depth[out_of_range] = np.nan
     return depth
@@ -172,14 +172,14 @@ def _raycast_free_keys(surface_pts: np.ndarray, vox_size: float, n_rays: int = 4
     pts   = surface_pts[idx]
     vecs  = pts - origin
     dists = np.linalg.norm(vecs, axis=1)
-    ok    = dists > vox_size * _RAYCAST_MIN_RAY_VOXELS
+    ok    = dists > vox_size * RAYCAST_MIN_RAY_VOXELS
     vecs, dists = vecs[ok], dists[ok]
     if not len(vecs):
         return np.empty(0, dtype=np.int64)
     dirs      = vecs / dists[:, None]
     max_steps = int(np.ceil(dists.max() / vox_size))
     t_vals    = np.arange(max_steps, dtype=np.float32) * vox_size
-    t_end     = (dists - vox_size * _RAYCAST_SURFACE_MARGIN)[:, None]
+    t_end     = (dists - vox_size * RAYCAST_SURFACE_MARGIN)[:, None]
     valid_m   = (t_vals[None, :] >= 0) & (t_vals[None, :] < t_end)
     ray_pts   = origin + dirs[:, None, :] * t_vals[None, :, None]
     vk_flat   = np.floor(ray_pts.reshape(-1, 3) / vox_size).astype(np.int32)

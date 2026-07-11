@@ -45,16 +45,17 @@ import threading
 from typing import Any
 
 import numpy as np
-import open3d as o3d
+import open3d as o3d  # type: ignore[import-untyped]
 from pydantic import Field
 from reactivex.disposable import Disposable
+import rerun as rr
 from scipy.spatial import cKDTree
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.perception.stereo_point_cloud.utils import _R_OPT_TO_LINK
+from dimos.perception.stereo_point_cloud.utils import R_OPT_TO_LINK
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -62,7 +63,7 @@ logger = setup_logger()
 # Rough verbal estimate (not measured): D435i sits higher than the Mid-360 and at
 # most 3cm further back, in the lidar's own body frame (X=forward, Y=left, Z=up).
 # Height magnitude is still a guess — refine with a tape measure if ICP still struggles.
-_ROUGH_CAM_OFFSET_IN_LIDAR_FRAME = np.array([-0.03, 0.0, 0.10])
+ROUGH_CAM_OFFSET_IN_LIDAR_FRAME = np.array([-0.03, 0.0, 0.10])
 
 
 # ── Metrics ─────────────────────────────────────────────────────────────────
@@ -106,7 +107,7 @@ def range_binned_density(points: np.ndarray, origin: np.ndarray, bins: list[floa
         return [0] * (len(bins) - 1)
     d = np.linalg.norm(points - origin, axis=1)
     counts, _ = np.histogram(d, bins=bins)
-    return counts.tolist()
+    return counts.tolist()  # type: ignore[no-any-return]
 
 
 def icp_refine(
@@ -153,13 +154,13 @@ def best_yaw_icp(
         if best is None or result.fitness > best.fitness:
             best = result
     assert best is not None
-    return best.transformation
+    return best.transformation  # type: ignore[no-any-return]
 
 
 def apply_matrix(points: np.ndarray, matrix: np.ndarray) -> np.ndarray:
     ones = np.ones((len(points), 1))
     homogeneous = np.hstack([points, ones])
-    return (matrix @ homogeneous.T).T[:, :3].astype(np.float32)
+    return (matrix @ homogeneous.T).T[:, :3].astype(np.float32)  # type: ignore[no-any-return]
 
 
 def drop_near_field(points: np.ndarray, min_range: float) -> np.ndarray:
@@ -170,7 +171,7 @@ def drop_near_field(points: np.ndarray, min_range: float) -> np.ndarray:
     """
     if len(points) == 0:
         return points
-    return points[np.linalg.norm(points, axis=1) >= min_range]
+    return points[np.linalg.norm(points, axis=1) >= min_range]  # type: ignore[no-any-return]
 
 
 # ── Module ──────────────────────────────────────────────────────────────────
@@ -206,6 +207,12 @@ class LidarStereoBenchmark(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        try:
+            rr.init("lidar_stereo_bench", spawn=False)
+            rr.serve_web_viewer(open_browser=False)
+            logger.info("LidarStereoBenchmark: rerun web viewer serving — see console above for the URL/port")
+        except Exception:
+            logger.exception("LidarStereoBenchmark: rerun web viewer failed to start — continuing without it")
         self.register_disposable(Disposable(self.lidar.subscribe(lambda m: self._store("lidar", m))))
         self.register_disposable(
             Disposable(self.realsense_raw.subscribe(lambda m: self._store("realsense_raw", m)))
@@ -264,17 +271,19 @@ class LidarStereoBenchmark(Module):
             return
 
         lines = [f"lidar (ref): n={len(lidar_xyz)}"]
+        self._log_points("lidar", lidar_xyz, [255, 255, 255])
 
         # RealSense raw cloud is in optical convention (Z=depth, Y=down) — a known,
         # fixed rotation away from the lidar's body frame (Z=up) — plus an unknown heading.
         rs_icp_T = best_yaw_icp(
             rs_raw_xyz, lidar_xyz, cfg.icp_max_corr_dist_m,
-            base_rotation=_R_OPT_TO_LINK.astype(np.float64), yaw_steps=cfg.yaw_steps,
-            base_translation=_ROUGH_CAM_OFFSET_IN_LIDAR_FRAME,
+            base_rotation=R_OPT_TO_LINK.astype(np.float64), yaw_steps=cfg.yaw_steps,
+            base_translation=ROUGH_CAM_OFFSET_IN_LIDAR_FRAME,
         )
         rs_xyz = apply_matrix(rs_raw_xyz, rs_icp_T)
         rs_score = self._score(lidar_xyz, rs_xyz)
         lines.append(self._fmt("realsense (raw, ICP-aligned)", rs_score))
+        self._log_points("realsense_aligned", rs_xyz, [80, 160, 255])
 
         if stereo_msg is not None:
             stereo_raw_xyz = stereo_msg.points_f32()
@@ -283,17 +292,28 @@ class LidarStereoBenchmark(Module):
                 stereo_icp_T = best_yaw_icp(
                     stereo_raw_xyz, lidar_xyz, cfg.icp_max_corr_dist_m,
                     base_rotation=np.eye(3), yaw_steps=cfg.yaw_steps,
-                    base_translation=_ROUGH_CAM_OFFSET_IN_LIDAR_FRAME,
+                    base_translation=ROUGH_CAM_OFFSET_IN_LIDAR_FRAME,
                 )
                 stereo_xyz = apply_matrix(stereo_raw_xyz, stereo_icp_T)
                 stereo_score = self._score(lidar_xyz, stereo_xyz)
                 lines.append(self._fmt("stereo (ours, ICP-aligned)", stereo_score))
+                self._log_points("stereo_aligned", stereo_xyz, [255, 140, 60])
 
         origin = np.zeros(3, dtype=np.float32)
         lines.append(f"range-binned density {cfg.range_bins_m}: lidar={range_binned_density(lidar_xyz, origin, cfg.range_bins_m)} "
                      f"realsense={range_binned_density(rs_xyz, origin, cfg.range_bins_m)}")
 
         logger.info("LidarStereoBenchmark:\n  " + "\n  ".join(lines))
+
+    def _log_points(self, path: str, xyz: np.ndarray, color: list[int], cap: int = 40_000) -> None:
+        if len(xyz) == 0:
+            return
+        if len(xyz) > cap:
+            xyz = xyz[np.random.choice(len(xyz), cap, replace=False)]
+        try:
+            rr.log(path, rr.Points3D(xyz, colors=[color], radii=0.02))
+        except Exception:
+            pass  # rerun viewer not available — metrics still work without it
 
     def _fmt(self, name: str, s: dict[str, float]) -> str:
         cfg = self.config

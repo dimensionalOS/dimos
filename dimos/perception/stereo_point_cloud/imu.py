@@ -21,14 +21,14 @@ from typing import Any
 
 import numpy as np
 
-from dimos.perception.stereo_point_cloud.utils import _R_OPT_TO_LINK
+from dimos.perception.stereo_point_cloud.utils import R_OPT_TO_LINK
 from dimos.perception.stereo_point_cloud.vio import MadgwickFilter
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-_MILLISECONDS_PER_SECOND = 1000.0
-_GRAVITY_MS2 = 9.81
+MILLISECONDS_PER_SECOND = 1000.0
+GRAVITY_MS2 = 9.81
 
 
 class RealSenseImuFeed:
@@ -37,7 +37,7 @@ class RealSenseImuFeed:
     def __init__(self, beta: float = 0.033) -> None:
         self._madgwick = MadgwickFilter(beta=beta)
         self._lock = threading.Lock()
-        self._last_accel = np.array([0.0, 0.0, -_GRAVITY_MS2], dtype=np.float32)
+        self._last_accel = np.array([0.0, 0.0, -GRAVITY_MS2], dtype=np.float32)
         self._imu_to_camera_link: np.ndarray = np.eye(3, dtype=np.float32)
         self._motion_sensor = None
 
@@ -75,7 +75,7 @@ class RealSenseImuFeed:
             if depth_profile is not None:
                 extrinsics                = accel_profile.get_extrinsics_to(depth_profile)
                 imu_to_depth               = np.array(extrinsics.rotation, dtype=np.float32).reshape(3, 3)
-                self._imu_to_camera_link   = _R_OPT_TO_LINK @ imu_to_depth
+                self._imu_to_camera_link   = R_OPT_TO_LINK @ imu_to_depth
             sensor.open([gyro_profile, accel_profile])
             sensor.start(self._on_motion)
             self._motion_sensor = sensor
@@ -111,7 +111,7 @@ class RealSenseImuFeed:
                 gyro_camera_link = self._imu_to_camera_link @ np.array(
                     [gyro_sample.x, gyro_sample.y, gyro_sample.z], dtype=np.float32
                 )
-                timestamp_s = frame.get_timestamp() / _MILLISECONDS_PER_SECOND
+                timestamp_s = frame.get_timestamp() / MILLISECONDS_PER_SECOND
                 with self._lock:
                     self._madgwick.update(gyro_camera_link, self._last_accel, timestamp_s)
             elif stream_type == rs.stream.accel:

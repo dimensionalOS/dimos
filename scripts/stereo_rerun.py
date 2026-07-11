@@ -12,7 +12,7 @@ from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
 stereo_rerun = autoconnect(
-    FilteredRealSenseCamera.blueprint(enable_depth=True, enable_pointcloud=False),
+    FilteredRealSenseCamera.blueprint(enable_depth=True, enable_pointcloud=False, publish_color=False),
     StereoPointCloud.blueprint(),
     RerunBridgeModule.blueprint(rerun_open="web"),
     RerunWebSocketServer.blueprint(),

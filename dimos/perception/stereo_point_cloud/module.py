@@ -39,8 +39,8 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.stereo_point_cloud.imu import RealSenseImuFeed
 from dimos.perception.stereo_point_cloud.trajectory import TrajectoryRecorder
 from dimos.perception.stereo_point_cloud.utils import (
+    R_OPT_TO_LINK,
     _FloorCalibrator,
-    _R_OPT_TO_LINK,
     _format_perf_log,
     _gradient_mask,
     _intrinsics_from_camera_info,
@@ -54,11 +54,11 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-_TRAJECTORY_MAX_POSES = 4_000
-_TRAJECTORY_PUBLISH_EVERY = 5
-_PERF_LOG_INTERVAL_FRAMES = 30
-_FRAME_CLOUD_PUBLISH_INTERVAL_S = 1.0 / 10.0
-_MAX_ACCEPTABLE_LAG_S = 0.5
+TRAJECTORY_MAX_POSES = 4_000
+TRAJECTORY_PUBLISH_EVERY = 5
+PERF_LOG_INTERVAL_FRAMES = 30
+FRAME_CLOUD_PUBLISH_INTERVAL_S = 1.0 / 10.0
+MAX_ACCEPTABLE_LAG_S = 0.5
 
 
 class Config(ModuleConfig):
@@ -91,7 +91,7 @@ class StereoPointCloud(Module, perception.Odometry):
         self._imu                        = RealSenseImuFeed(beta=self.config.madgwick_beta)
         self._odom                       = PointCloudOdometry()
         self._trajectory                 = TrajectoryRecorder(
-            self.config.world_frame, _TRAJECTORY_MAX_POSES, _TRAJECTORY_PUBLISH_EVERY
+            self.config.world_frame, TRAJECTORY_MAX_POSES, TRAJECTORY_PUBLISH_EVERY
         )
         self._warned_no_intrinsics       = False
         self._frame_count = 0
@@ -118,7 +118,7 @@ class StereoPointCloud(Module, perception.Odometry):
     def _on_depth(self, img: Image) -> None:
         t_start = time.perf_counter()
         lag = time.time() - img.ts
-        if lag > _MAX_ACCEPTABLE_LAG_S:
+        if lag > MAX_ACCEPTABLE_LAG_S:
             logger.warning(f"StereoPointCloud: dropping stale depth frame, lag={lag:.1f}s")
             return
 
@@ -142,7 +142,7 @@ class StereoPointCloud(Module, perception.Odometry):
 
         R = self._imu.R_at(img.ts)
 
-        xyz_cam = xyz_optical @ _R_OPT_TO_LINK.T
+        xyz_cam = xyz_optical @ R_OPT_TO_LINK.T
         t_odom_start = time.perf_counter()
         t = (
             self._odom.update(xyz_cam, R)
@@ -162,7 +162,7 @@ class StereoPointCloud(Module, perception.Odometry):
             return
 
         now_monotonic = time.monotonic()
-        if now_monotonic - self._last_frame_cloud_publish >= _FRAME_CLOUD_PUBLISH_INTERVAL_S:
+        if now_monotonic - self._last_frame_cloud_publish >= FRAME_CLOUD_PUBLISH_INTERVAL_S:
             self._last_frame_cloud_publish = now_monotonic
             xyz_voxelized = _voxel_dedup(xyz_world, self.config.vox_size)
             self._last_point_count = len(xyz_voxelized)
@@ -190,7 +190,7 @@ class StereoPointCloud(Module, perception.Odometry):
         if traj_snapshot is not None:
             self.trajectory.publish(Path(ts=img.ts, frame_id=self.config.world_frame, poses=traj_snapshot))
 
-        if self._frame_count % _PERF_LOG_INTERVAL_FRAMES == 0:
+        if self._frame_count % PERF_LOG_INTERVAL_FRAMES == 0:
             t_end = time.perf_counter()
             logger.info(
                 _format_perf_log(
