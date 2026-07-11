@@ -224,11 +224,8 @@ coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
 # FlowBase + RealSense D435i stereo depth + CostMapper + nav stack
 coordinator_flowbase_stereo_nav = (
     autoconnect(
-        FilteredRealSenseCamera.blueprint(enable_depth=True, enable_pointcloud=False, publish_color=False),
+        FilteredRealSenseCamera.blueprint(enable_depth=True, enable_pointcloud=True, publish_color=False),
         StereoPointCloud.blueprint(),
-        # Rust voxel map with raycast clearing. frame_cloud/odometry come from
-        # StereoPointCloud; global_emit_every/emit_every throttle at the source
-        # rather than relying solely on the Rerun bridge's max_hz downstream.
         RayTracingVoxelMap.blueprint(voxel_size=0.05, emit_every=2, global_emit_every=5),
         CostMapper.blueprint(config=HeightCostConfig(resolution=0.05)),
         # MovementManager.blueprint(),
@@ -243,8 +240,6 @@ coordinator_flowbase_stereo_nav = (
                 ),
             ],
         ),
-        # Experiment: FlowBase wheel odometry as an alternative to the camera's
-        # Madgwick+ICP odometry for RayTracingVoxelMap — see remappings below.
         TwistBaseOdometry.blueprint(),
         RerunBridgeModule.blueprint(
             rerun_open="native",
@@ -256,11 +251,11 @@ coordinator_flowbase_stereo_nav = (
         [
             (ControlCoordinator, "twist_command", "cmd_vel"),
             (RerunWebSocketServer, "tele_cmd_vel", "cmd_vel"),
-            (RayTracingVoxelMap, "lidar", "frame_cloud"),
+            (RayTracingVoxelMap, "lidar", "pointcloud"),
             (TwistBaseOdometry, "joint_state", "coordinator_joint_state"),
             (StereoPointCloud, "odometry", "camera_odometry"),
             (TwistBaseOdometry, "odometry", "flowbase_odometry"),
-            (RayTracingVoxelMap, "odometry", "flowbase_odometry"),  # <- flip to "camera_odometry" to go back
+            (RayTracingVoxelMap, "odometry", "flowbase_odometry"),
         ]
     )
     .global_config(n_workers=8)
