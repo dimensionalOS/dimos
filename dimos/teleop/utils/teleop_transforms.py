@@ -74,6 +74,3 @@ def webxr_to_robot(
         ts=pose_stamped.ts,
         frame_id=pose_stamped.frame_id,
     )
-
-
-__all__ = ["VR_TO_ROBOT_FRAME", "webxr_to_robot"]

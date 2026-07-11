@@ -32,7 +32,17 @@ IGNORED_FILES: set[str] = {
     "dimos/core/blueprints.py",
     "dimos/core/test_blueprints.py",
 }
-BLUEPRINT_METHODS = {"transports", "global_config", "remappings", "requirements", "configurators"}
+# Terminal builder methods that mark a top-level blueprint expression. "blueprint"
+# is included so a bare single-module `X.blueprint(...)` (no transports/remappings
+# override needed) is still discovered as a runnable blueprint.
+BLUEPRINT_METHODS = {
+    "blueprint",
+    "transports",
+    "global_config",
+    "remappings",
+    "requirements",
+    "configurators",
+}
 _EXCLUDED_MODULE_NAMES = {"Module", "ModuleBase", "StreamModule"}
 
 
@@ -139,6 +149,7 @@ def _is_production_module_file(file_path: Path, root: Path) -> bool:
         stem.startswith("test_")
         or "_test_" in stem
         or stem.endswith("_test")
+        or stem.startswith("tool_")
         or stem.startswith("fake_")
         or stem.startswith("mock_")
         or "deprecated" in rel

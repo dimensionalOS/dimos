@@ -56,6 +56,7 @@ from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.teleop.quest.quest_types import (
     Buttons,
@@ -142,20 +143,24 @@ class ControlCoordinator(Module):
     config: ControlCoordinatorConfig
 
     # Output: Aggregated joint state for external consumers
-    joint_state: Out[JointState]
+    coordinator_joint_state: Out[JointState]
 
     # Input: Streaming joint commands for real-time control
     joint_command: In[JointState]
 
     # Input: Streaming cartesian commands for CartesianIKTask
     # Uses frame_id as task name for routing
-    cartesian_command: In[PoseStamped]
+    coordinator_cartesian_command: In[PoseStamped]
+
+    # Input: Routed spatial EEF twist commands for EEFTwistTask.
+    # Uses frame_id as task name for routing.
+    coordinator_ee_twist_command: In[TwistStamped]
 
     # Input: Streaming twist commands for velocity-commanded platforms
     twist_command: In[Twist]
 
     # Input: Teleop buttons for engage/disengage signaling
-    buttons: In[Buttons]
+    teleop_buttons: In[Buttons]
 
     # Arming and dry-run are one-shot RPCs, not streams.
 
@@ -179,6 +184,7 @@ class ControlCoordinator(Module):
         # Subscription handles for streaming commands
         self._joint_command_unsub: Callable[[], None] | None = None
         self._cartesian_command_unsub: Callable[[], None] | None = None
+        self._ee_twist_command_unsub: Callable[[], None] | None = None
         self._twist_command_unsub: Callable[[], None] | None = None
         self._buttons_unsub: Callable[[], None] | None = None
 
@@ -484,6 +490,25 @@ class ControlCoordinator(Module):
 
             task.on_cartesian_command(msg, t_now)
 
+    def _on_ee_twist_command(self, msg: TwistStamped) -> None:
+        """Route incoming TwistStamped to EEFTwistTask by task name.
+
+        Uses frame_id as the target task name. Unmatched commands are ignored
+        without fallback to planar/base twist semantics.
+        """
+        task_name = msg.frame_id
+        if not task_name:
+            logger.warning("Received coordinator_ee_twist_command with empty frame_id")
+            return
+
+        t_now = time.perf_counter()
+        with self._task_lock:
+            task = self._tasks.get(task_name)
+            if task is None:
+                logger.warning("EEF twist command for unknown task", task_name=task_name)
+                return
+            task.on_ee_twist_command(msg, t_now)
+
     def _on_twist_command(self, msg: Twist) -> None:
         """Convert Twist → virtual joint velocities and route via _on_joint_command.
 
@@ -550,6 +575,24 @@ class ControlCoordinator(Module):
                         handler(enabled)
                     except Exception:
                         logger.exception(f"set_dry_run() raised on task {task.name!r}")
+
+    @rpc
+    def reset_runtime_state(self, reactivate: bool | None = None) -> dict[str, bool]:
+        """Reset transient state on tasks that expose ``reset_runtime_state``.
+
+        This is meant for simulation/runtime discontinuities such as MuJoCo
+        respawn, where task histories and latched commands must be cleared
+        without tearing down the coordinator.
+        """
+        results: dict[str, bool] = {}
+        with self._task_lock:
+            for task in self._tasks.values():
+                try:
+                    results[task.name] = bool(task.reset_runtime_state(reactivate=reactivate))
+                except Exception:
+                    logger.exception(f"reset_runtime_state() raised on task {task.name!r}")
+                    results[task.name] = False
+        return results
 
     @rpc
     def task_invoke(
@@ -621,7 +664,9 @@ class ControlCoordinator(Module):
             self._setup_from_config()
 
         # Create and start tick loop
-        publish_cb = self.joint_state.publish if self.config.publish_joint_state else None
+        publish_cb = (
+            self.coordinator_joint_state.publish if self.config.publish_joint_state else None
+        )
         self._tick_loop = TickLoop(
             tick_rate=self.config.tick_rate,
             hardware=self._hardware,
@@ -652,7 +697,7 @@ class ControlCoordinator(Module):
         has_cartesian_ik = any(t.type in ("cartesian_ik", "teleop_ik") for t in self.config.tasks)
         if has_cartesian_ik:
             try:
-                self._cartesian_command_unsub = self.cartesian_command.subscribe(
+                self._cartesian_command_unsub = self.coordinator_cartesian_command.subscribe(
                     self._on_cartesian_command
                 )
                 logger.info("Subscribed to cartesian_command for CartesianIK/TeleopIK tasks")
@@ -660,6 +705,19 @@ class ControlCoordinator(Module):
                 logger.warning(
                     "CartesianIK/TeleopIK tasks configured but could not subscribe to cartesian_command. "
                     "Use task_invoke RPC or set transport via blueprint."
+                )
+
+        has_eef_twist = any(t.type == "eef_twist" for t in self.config.tasks)
+        if has_eef_twist:
+            try:
+                self._ee_twist_command_unsub = self.coordinator_ee_twist_command.subscribe(
+                    self._on_ee_twist_command
+                )
+                logger.info("Subscribed to coordinator_ee_twist_command for EEFTwist tasks")
+            except Exception:
+                logger.warning(
+                    "EEFTwist tasks configured but could not subscribe to "
+                    "coordinator_ee_twist_command. Use task_invoke RPC or set transport via blueprint."
                 )
 
         # Twist commands drive either base hardware or velocity-capable tasks.
@@ -682,7 +740,7 @@ class ControlCoordinator(Module):
         # Subscribe to buttons if any teleop_ik tasks configured (engage/disengage)
         has_teleop_ik = any(t.type == "teleop_ik" for t in self.config.tasks)
         if has_teleop_ik:
-            self._buttons_unsub = self.buttons.subscribe(self._on_buttons)
+            self._buttons_unsub = self.teleop_buttons.subscribe(self._on_buttons)
             logger.info("Subscribed to buttons for engage/disengage")
 
         # Arming + dry-run are RPC-only; no stream subscription here.
@@ -701,6 +759,9 @@ class ControlCoordinator(Module):
         if self._cartesian_command_unsub:
             self._cartesian_command_unsub()
             self._cartesian_command_unsub = None
+        if self._ee_twist_command_unsub:
+            self._ee_twist_command_unsub()
+            self._ee_twist_command_unsub = None
         if self._twist_command_unsub:
             self._twist_command_unsub()
             self._twist_command_unsub = None

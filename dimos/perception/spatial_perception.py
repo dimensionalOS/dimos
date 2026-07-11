@@ -28,7 +28,6 @@ from reactivex import Observable, interval, operators as ops
 from reactivex.disposable import Disposable
 
 from dimos.constants import DIMOS_PROJECT_ROOT
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
@@ -36,7 +35,6 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.image_embedding import ImageEmbeddingProvider
 from dimos.perception.spatial_vector_db import SpatialVectorDB
 from dimos.perception.visual_memory import VisualMemory
-from dimos.spec.perception import Camera
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 
@@ -573,13 +571,3 @@ class SpatialMemory(Module):
         if semantic_distance < 0.3:
             return location
         return None
-
-
-def deploy(  # type: ignore[no-untyped-def]
-    dimos: ModuleCoordinator,
-    camera: Camera,
-):
-    spatial_memory = dimos.deploy(SpatialMemory, db_path="/tmp/spatial_memory_db")
-    spatial_memory.color_image.connect(camera.color_image)
-    spatial_memory.start()
-    return spatial_memory

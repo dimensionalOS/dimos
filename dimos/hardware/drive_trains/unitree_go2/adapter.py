@@ -28,7 +28,7 @@ from dataclasses import dataclass
 import json
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import (
     MotionSwitcherClient,
@@ -46,9 +46,6 @@ from unitree_sdk2py.idl.unitree_go.msg.dds_ import (
 )
 
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.hardware.drive_trains.registry import TwistBaseAdapterRegistry
 
 logger = setup_logger()
 
@@ -682,10 +679,3 @@ class UnitreeGo2TwistAdapter:
             logger.warning(f"[Go2] Move() returned code {ret}")
             return False
         return True
-
-
-def register(registry: TwistBaseAdapterRegistry) -> None:
-    registry.register("unitree_go2", UnitreeGo2TwistAdapter)
-
-
-__all__ = ["UnitreeGo2TwistAdapter"]

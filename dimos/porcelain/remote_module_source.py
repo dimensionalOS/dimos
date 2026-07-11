@@ -26,7 +26,7 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import Blueprint
-    from dimos.protocol.rpc.pubsubrpc import LCMRPC
+    from dimos.protocol.rpc.spec import RPCSpec
 
 logger = setup_logger()
 
@@ -38,7 +38,7 @@ class _RemoteProxy:
     attribute access raises `AttributeError`.
     """
 
-    def __init__(self, rpc: LCMRPC, remote_name: str, rpc_names: set[str]) -> None:
+    def __init__(self, rpc: RPCSpec, remote_name: str, rpc_names: set[str]) -> None:
         self._rpc = rpc
         self._remote_name = remote_name
         self._rpc_names = rpc_names

@@ -1,16 +1,12 @@
 Dataset Validation
 
 ```sh
-dimos map summary recording_go2_mid360_2026-05-29_4-45pm-PST.db
-
-Stream("color_image"): 11141 items, 2026-05-29 23:32:57 — 2026-05-29 23:45:57 (780.1s)
-Stream("fastlio_lidar"): 7240 items, 2026-05-29 23:32:56 — 2026-05-29 23:45:57 (781.7s)
-Stream("fastlio_odometry"): 18737 items, 2026-05-29 23:32:56 — 2026-05-29 23:45:57 (781.8s)
-Stream("lidar"): 6025 items, 2026-05-29 23:32:55 — 2026-05-29 23:45:57 (782.3s)
-Stream("odom"): 14630 items, 2026-05-29 23:32:55 — 2026-05-29 23:45:57 (782.3s)
+dimos mem summary recording_go2_mid360_2026-05-29_4-45pm-PST.db
 ```
 
-Shows which streams are in the database. You can replay messages in rerun:
+Prints a table of the streams in the database: per-stream item count, average
+Hz, start time (UTC), duration, and stored size, plus a total row. You can
+replay messages in rerun:
 
 ```sh
 dimos map replay recording_go2_mid360_2026-05-29_4-45pm-PST.db --duration 60

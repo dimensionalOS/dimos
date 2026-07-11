@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from contextlib import suppress
 from datetime import datetime, timezone
 import inspect
 import json
@@ -24,11 +23,11 @@ from pathlib import Path
 import sys
 import time
 import types
-from typing import TYPE_CHECKING, Any, Union, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Literal, Union, cast, get_args, get_origin
 
-import click
 from dotenv import load_dotenv
 from pydantic import BaseModel
+from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 import requests
 import typer
@@ -43,7 +42,6 @@ from dimos.mapping.utils.cli.pose_fill import main as _map_pose_fill_main
 from dimos.mapping.utils.cli.rename import main as _map_rename_main
 from dimos.mapping.utils.cli.replay import main as _map_replay_main
 from dimos.mapping.utils.cli.replay_marker import main as _map_replay_marker_main
-from dimos.mapping.utils.cli.summary import main as _map_summary_main
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import RerunOpenOption
@@ -93,6 +91,11 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
     for field_name, field_info in fields.items():
         field_type = field_info.annotation
 
+        # Container generics (e.g. `tuple[...]` fields) have no single-flag CLI
+        # representation; they're configured via env/JSON. Skip like arg_help does.
+        if isinstance(field_type, types.GenericAlias):
+            continue
+
         # Handle Optional types
         # Check for Optional/Union with None
         if get_origin(field_type) is type(str | None):
@@ -137,7 +140,11 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 
     def callback(**kwargs) -> None:  # type: ignore[no-untyped-def]
         ctx = kwargs.pop("ctx")
-        ctx.obj = {k: v for k, v in kwargs.items() if v is not None}
+        overrides = {k: v for k, v in kwargs.items() if v is not None}
+        ctx.obj = overrides
+        # Apply overrides (e.g. --transport, --viewer) to the process-global config
+        # up front so every subcommand honors flags given before the subcommand name.
+        global_config.update(**overrides)
 
     callback.__signature__ = inspect.Signature(params)  # type: ignore[attr-defined]
 
@@ -154,37 +161,108 @@ def arg_help(
     indent: str = "    ",
     module: str = "",
     _atom: BlueprintAtom | None = None,
+    _defaults: BaseModel | dict[str, Any] | None = None,
 ) -> str:
     output = ""
     for k, info in config.model_fields.items():
         if k == "g":
             continue
-        t = info.annotation
+        t: object = info.annotation
         if isinstance(t, types.GenericAlias):
             # Can't be specified on CLI
             continue
 
-        # TODO(PY314): if isinstance(t, Union):
-        if get_origin(t) in {Union, types.UnionType}:
-            with suppress(StopIteration):
-                t = next(u for u in get_args(t) if issubclass(u, BaseModel))
+        fallback = _field_default(info)
+        field_defaults = _get_default_value(_defaults, k, fallback)
+        t = _unwrap_base_model_annotation(t, field_defaults)
 
         if inspect.isclass(t) and issubclass(t, BaseModel):
             output += f"{indent}{module}{k}:\n"
-            # Find blueprint atom
-            bp = next(bp for bp in blueprint.blueprints if bp.module.name == k)
+            if _atom is None:
+                # Root BlueprintConfig fields are blueprint atoms, except schema
+                # branches such as transports.* that have no backing atom.
+                bp = next((bp for bp in blueprint.blueprints if bp.module.name == k), None)
+                defaults = bp.kwargs if bp is not None else field_defaults
+            else:
+                # Nested BaseModel fields belong to the current atom and must not
+                # be atom-looked-up.
+                bp = _atom
+                defaults = field_defaults
             output += arg_help(
-                t, blueprint, indent=indent + "  ", module=module + k + ".", _atom=bp
+                t,
+                blueprint,
+                indent=indent + "  ",
+                module=module + k + ".",
+                _atom=bp,
+                _defaults=defaults,
             )
         else:
-            assert _atom is not None
             # Use __name__ to avoid "<class 'int'>" style output on basic types.
             display_type = t.__name__ if isinstance(t, type) else t
-            required = "[Required] " if info.is_required() and k not in _atom.kwargs else ""
-            d = _atom.kwargs.get(k, info.default)
+            has_default = _has_default_value(_defaults, k)
+            required = "[Required] " if info.is_required() and not has_default else ""
+            d = field_defaults
             default = f" (default: {d})" if d is not PydanticUndefined else ""
             output += f"{indent}* {required}{module}{k}: {display_type}{default}\n"
     return output
+
+
+def _field_default(info: FieldInfo) -> Any:
+    if info.default is not PydanticUndefined:
+        return info.default
+    if info.default_factory is not None:
+        return info.get_default(call_default_factory=True)
+    return PydanticUndefined
+
+
+def _unwrap_base_model_annotation(annotation: object, defaults: object) -> object:
+    # TODO(PY314): if isinstance(annotation, Union):
+    if get_origin(annotation) not in {Union, types.UnionType}:
+        return annotation
+
+    candidates = tuple(
+        u for u in get_args(annotation) if inspect.isclass(u) and issubclass(u, BaseModel)
+    )
+    if not candidates:
+        return annotation
+    return _select_base_model_candidate(candidates, defaults)
+
+
+def _select_base_model_candidate(
+    candidates: tuple[type[BaseModel], ...], defaults: object
+) -> type[BaseModel]:
+    backend = _backend_default(defaults)
+    if backend is not PydanticUndefined:
+        for candidate in candidates:
+            backend_info = candidate.model_fields.get("backend")
+            if backend_info is not None and _field_default(backend_info) == backend:
+                return candidate
+    return candidates[0]
+
+
+def _backend_default(defaults: object) -> object:
+    if isinstance(defaults, BaseModel):
+        return getattr(defaults, "backend", PydanticUndefined)
+    if isinstance(defaults, dict):
+        return defaults.get("backend", PydanticUndefined)
+    return PydanticUndefined
+
+
+def _has_default_value(defaults: BaseModel | dict[str, Any] | None, key: str) -> bool:
+    if isinstance(defaults, BaseModel):
+        return key in defaults.model_fields_set
+    if isinstance(defaults, dict):
+        return key in defaults
+    return False
+
+
+def _get_default_value(defaults: object, key: str, fallback: Any) -> Any:
+    if isinstance(defaults, BaseModel):
+        if key in defaults.model_fields_set:
+            return getattr(defaults, key)
+    if isinstance(defaults, dict):
+        return defaults.get(key, fallback)
+    return fallback
 
 
 def load_config_args(config: type[BaseModel], args: Iterable[str], path: Path) -> dict[str, Any]:
@@ -250,10 +328,6 @@ def run(
 
     cli_config_overrides: dict[str, Any] = ctx.obj
 
-    # this is a workaround until we have a proper way to have delayed-module-choice in blueprints
-    # ex: vis_module(viewer=global_config.viewer) is wrong (viewer will always be default value) without this patch
-    global_config.update(**cli_config_overrides)
-
     # Clean stale registry entries
     stale = cleanup_stale()
     if stale:
@@ -281,6 +355,8 @@ def run(
 
     if show_help:
         print("Blueprint arguments:")
+        print("  Override with --option/-o module.field=value.")
+        print("  Nested config paths use dotted names, e.g. module.nested.field=value.")
         print(arg_help(blueprint.config(), blueprint))
         return
 
@@ -453,28 +529,30 @@ def mcp_list_tools() -> None:
     typer.echo(json.dumps(tools, indent=2))
 
 
-class _KeyValueType(click.ParamType):
-    """Parse KEY=VALUE arguments, auto-converting JSON values."""
+def _parse_key_value_arg(value: str) -> tuple[str, Any]:
+    """Parse a KEY=VALUE argument, auto-converting JSON values."""
+    if "=" not in value:
+        raise ValueError(f"expected KEY=VALUE, got: {value}")
+    key, val = value.split("=", 1)
+    try:
+        return (key, json.loads(val))
+    except (json.JSONDecodeError, ValueError):
+        return (key, val)
 
-    name = "KEY=VALUE"
 
-    def convert(
-        self, value: str, param: click.Parameter | None, ctx: click.Context | None
-    ) -> tuple[str, Any]:
+def _validate_key_value_args(values: list[str]) -> list[str]:
+    """Validate KEY=VALUE arguments during CLI parsing."""
+    for value in values:
         if "=" not in value:
-            self.fail(f"expected KEY=VALUE, got: {value}", param, ctx)
-        key, val = value.split("=", 1)
-        try:
-            return (key, json.loads(val))
-        except (json.JSONDecodeError, ValueError):
-            return (key, val)
+            raise typer.BadParameter(f"expected KEY=VALUE, got: {value}")
+    return values
 
 
 @mcp_app.command("call")
 def mcp_call_tool(
     tool_name: str = typer.Argument(..., help="Tool name to call"),
     args: list[str] = typer.Option(
-        [], "--arg", "-a", click_type=_KeyValueType(), help="Arguments as key=value"
+        [], "--arg", "-a", callback=_validate_key_value_args, help="Arguments as key=value"
     ),
     json_args: str = typer.Option("", "--json-args", "-j", help="Arguments as JSON string"),
 ) -> None:
@@ -487,8 +565,11 @@ def mcp_call_tool(
             typer.echo(f"Error: invalid JSON in --json-args: {e}", err=True)
             raise typer.Exit(1)
     else:
-        # _KeyValueType.convert() returns (key, val) tuples at runtime
-        arguments = dict(args)  # type: ignore[arg-type]
+        try:
+            arguments = dict(_parse_key_value_arg(arg) for arg in args)
+        except ValueError as e:
+            typer.echo(f"Error: invalid --arg: {e}", err=True)
+            raise typer.Exit(1)
 
     try:
         result = _get_adapter().call_tool(tool_name, arguments)
@@ -595,12 +676,8 @@ def restart(
 
 
 @main.command()
-def show_config(ctx: typer.Context) -> None:
+def show_config() -> None:
     """Show current config settings and their values."""
-
-    cli_config_overrides: dict[str, Any] = ctx.obj
-    global_config.update(**cli_config_overrides)
-
     for field_name, value in global_config.model_dump().items():
         typer.echo(f"{field_name}: {value}")
 
@@ -633,12 +710,33 @@ def list_blueprints() -> None:
 
 
 @main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
-def lcmspy(ctx: typer.Context) -> None:
-    """LCM spy tool for monitoring LCM messages."""
-    from dimos.utils.cli.lcmspy.run_lcmspy import main as lcmspy_main
+def spy(ctx: typer.Context) -> None:
+    """Universal transport spy: topics, rates, sizes across all pubsub transports."""
+    # A root-level `--transport` (before the subcommand) sets the stack's pubsub
+    # backend — which single transport dimos processes participate on. The spy is an
+    # observer: it watches every transport and takes its own repeatable `--transport`
+    # filter *after* the subcommand. The two look alike but mean different things, so
+    # reject the root placement rather than silently ignoring the requested filter.
+    if (ctx.obj or {}).get("transport") is not None:
+        typer.echo(
+            "Error: `--transport` before `spy` sets the stack backend, which the spy "
+            "ignores. Put the filter after the subcommand: `dimos spy --transport <name>`.",
+            err=True,
+        )
+        raise typer.Exit(2)
+    from dimos.utils.cli.spy.run_spy import main as spy_main
 
-    sys.argv = ["lcmspy", *ctx.args]
-    lcmspy_main()
+    sys.argv = ["spy", *ctx.args]
+    spy_main()
+
+
+@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def lcmspy(ctx: typer.Context) -> None:
+    """Alias for `dimos spy --transport lcm`."""
+    from dimos.utils.cli.spy.run_spy import lcm_only_argv, main as spy_main
+
+    sys.argv = lcm_only_argv(list(ctx.args))
+    spy_main()
 
 
 @main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -698,7 +796,42 @@ def send(
 map_app = typer.Typer(help="Voxel-map tools over recorded sqlite datasets")
 main.add_typer(map_app, name="map")
 map_app.command("global")(_map_main)
-map_app.command("summary")(_map_summary_main)
+
+
+dataprep_app = typer.Typer(help="Build and inspect learning datasets from recordings")
+main.add_typer(dataprep_app, name="dataprep")
+
+
+@dataprep_app.command("build")
+def dataprep_build(
+    source: Path | None = typer.Option(None, "--source", "-s", help="Recording .db to read"),
+    output: Path | None = typer.Option(None, "--output", help="Dataset output directory"),
+    output_format: str = typer.Option(None, "--format", "-f", help="Output format: lerobot | hdf5"),
+    config_path: Path | None = typer.Option(
+        None, "--config", "-c", help="JSON DataPrepConfig (needed for obs/action stream maps)"
+    ),
+) -> None:
+    """Build a dataset from a recording (lerobot/hdf5 + dimos_meta.json)."""
+    from dimos.learning.dataprep.cli import build
+
+    build(config_path, source, output, cast("Literal['lerobot', 'hdf5'] | None", output_format))
+
+
+@dataprep_app.command("inspect")
+def dataprep_inspect(
+    dataset: Path | None = typer.Argument(
+        None, help="Built dataset: a .hdf5 file or a lerobot directory"
+    ),
+    output_format: str = typer.Option(
+        None, "--format", "-f", help="lerobot | hdf5 (auto-detected from the path if omitted)"
+    ),
+) -> None:
+    """Summarize a built dataset: features, shapes, episode/frame counts, uniformity."""
+    from dimos.learning.dataprep.cli import inspect
+
+    inspect(dataset, cast("Literal['lerobot', 'hdf5'] | None", output_format))
+
+
 map_app.command("rename")(_map_rename_main)
 map_app.command("pose-fill")(_map_pose_fill_main)
 map_app.command("replay")(_map_replay_main)

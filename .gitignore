@@ -70,6 +70,7 @@ yolo11n.pt
 .omo/
 
 /logs
+/recordings
 
 *.so
 
@@ -102,3 +103,9 @@ recording*.db
 
 # openspec
 /openspec/changes/archive/
+
+# Deepwork local progress state
+.slim/deepwork/
+
+# codegraph
+.codegraph/

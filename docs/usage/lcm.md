@@ -1,4 +1,6 @@
-# LCM Messages
+---
+title: "LCM Messages"
+---
 
 DimOS uses [LCM (Lightweight Communications and Marshalling)](https://github.com/lcm-proj/lcm) for inter-process communication on a local machine (similar to how ROS uses DDS). LCM is a simple [UDP multicast](https://lcm-proj.github.io/lcm/content/udp-multicast-protocol.html#lcm-udp-multicast-protocol-description) pubsub protocol with a straightforward [message definition language](https://lcm-proj.github.io/lcm/content/lcm-type-ref.html#lcm-type-specification-language).
 
@@ -19,7 +21,7 @@ Apart from python, we have examples of LCM integrations for:
 In our [/examples/language-interop/](/examples/language-interop/) dir
 
 Types generated (but no examples yet) for:
-[**C#**](https://github.com/dimensionalOS/dimos-lcm/tree/main/generated/csharp) and [**Java**](https://github.com/dimensionalOS/dimos-lcm/tree/main/generated/java)
+[**C#**](https://github.com/dimensionalOS/dimos-lcm/tree/main/generated/cs_lcm_msgs) and [**Java**](https://github.com/dimensionalOS/dimos-lcm/tree/main/generated/java_lcm_msgs)
 
 ### Native Modules
 

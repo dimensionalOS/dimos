@@ -54,6 +54,10 @@ class SqliteStore(Store):
             raise FileNotFoundError(
                 f"SQLite database not found: {os.path.abspath(self.config.path)}"
             )
+        if not self.config.must_exist:
+            parent = os.path.dirname(self.config.path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
         self._registry_conn = self._open_connection()
         self._registry = RegistryStore(conn=self._registry_conn)
 
@@ -65,11 +69,11 @@ class SqliteStore(Store):
 
     def _assemble_backend(self, name: str, stored: dict[str, Any]) -> Backend[Any]:
         """Reconstruct a Backend from a stored config dict."""
-        from dimos.memory2.codecs.base import _resolve_payload_type, codec_from_id
+        from dimos.memory2.codecs.base import codec_from_id, resolve_payload_type
 
         payload_module = stored["payload_module"]
         codec = codec_from_id(stored["codec_id"], payload_module)
-        data_type = _resolve_payload_type(payload_module)
+        data_type = resolve_payload_type(payload_module)
         eager_blobs = stored.get("eager_blobs", False)
         page_size = stored.get("page_size", self.config.page_size)
 
