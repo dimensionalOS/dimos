@@ -239,6 +239,9 @@ function drawLidar(pts) {
 }
 async function main() {
   if (!("WebTransport" in globalThis)) {
+    if (!isSecureContext) {
+      die(`This page is not a secure context in this browser (Safari doesn't treat http://localhost as secure). Run the relay with --cert/--key (mkcert) and open https://localhost:8443/ instead. (${navigator.userAgent})`);
+    }
     die(`No WebTransport API in this browser. Chrome >= 97, Firefox >= 114, or Safari >= 26.4 required. (${navigator.userAgent})`);
   }
   setStatus("", "fetching /api/info\u2026");

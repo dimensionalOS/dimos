@@ -21,6 +21,7 @@ globalThis.addEventListener("unhandledrejection", (e) => {
 });
 
 const HTTP_PORT = 8000;
+const HTTPS_PORT = 8443; // only served in --cert/--key mode (Safari needs it)
 const QUIC_PORT = 4433;
 
 const enc = new TextEncoder();
@@ -345,7 +346,7 @@ const MIME: Record<string, string> = {
 };
 const staticDir = new URL("./static/", import.meta.url);
 
-Deno.serve({ hostname: "127.0.0.1", port: HTTP_PORT }, async (req) => {
+async function handleHttp(req: Request): Promise<Response> {
   const url = new URL(req.url);
   if (url.pathname === "/api/info") {
     return Response.json({
@@ -373,7 +374,18 @@ Deno.serve({ hostname: "127.0.0.1", port: HTTP_PORT }, async (req) => {
   } catch {
     return new Response("not found", { status: 404 });
   }
-});
+}
+
+Deno.serve({ hostname: "127.0.0.1", port: HTTP_PORT }, handleHttp);
+if (certFile && keyFile) {
+  // Safari hides WebTransport on http://localhost (WebKit doesn't treat it as
+  // a secure context, unlike Chrome/Firefox), so in trusted-cert mode also
+  // serve the cockpit over HTTPS: open https://localhost:8443/ in Safari.
+  Deno.serve(
+    { hostname: "127.0.0.1", port: HTTPS_PORT, cert: cert.certPem, key: cert.keyPem },
+    handleHttp,
+  );
+}
 
 // ---------- stats ----------
 

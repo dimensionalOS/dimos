@@ -49,10 +49,16 @@ shows per-channel Hz / KB/frame / lost / out-of-order, datagram RTT
 
 ### Safari (macOS)
 
-WebTransport shipped in Safari 26.4 (26.0-26.3: API absent, or behind
-Develop -> Feature Flags). WebKit stated they don't intend to implement
-`serverCertificateHashes`, so the ephemeral-cert flow can never work there.
-Instead give the relay a locally-trusted cert:
+Three Safari-only hurdles, all handled by the trusted-cert flow below:
+
+1. WebTransport shipped in Safari 26.4 (26.0-26.3: API absent).
+2. WebKit does not treat `http://localhost` as a secure context (unlike
+   Chrome/Firefox), so WebTransport is hidden even on 26.4+ - the page must
+   be served over HTTPS. With `--cert/--key` the relay also serves
+   `https://localhost:8443/`.
+3. WebKit stated they don't intend to implement `serverCertificateHashes`,
+   so the ephemeral-cert flow can never work there - the cert must be in the
+   OS trust store.
 
 ```bash
 brew install mkcert
@@ -63,9 +69,10 @@ deno run -A --unstable-net relay/main.ts --cert localhost+2.pem --key localhost+
 uv run --no-project --with aioquic,numpy python bridge.py --synthetic
 ```
 
-With `--cert/--key` the relay advertises no cert hash and every browser
-(Safari included) verifies via the OS trust store. Chrome/Firefox keep working
-in this mode too (mkcert -install also covers their stores).
+Then open **https://localhost:8443/** in Safari. With `--cert/--key` the relay
+advertises no cert hash and every browser verifies via the OS trust store;
+Chrome/Firefox keep working in this mode too (on http://localhost:8000 or the
+https URL - mkcert -install covers their stores).
 
 ## Findings (the actual deliverable)
 
@@ -133,11 +140,13 @@ Numbered by severity for the real T1-T3 implementation:
    aioquic's draft-02 `ENABLE_WEBTRANSPORT` settings; response carries
    `sec-webtransport-http3-draft: draft02`. No settings fight.
 
-10. **Safari**: WebTransport exists only from Safari 26.4, and WebKit does not
-    implement `serverCertificateHashes` (stated no intent to). Local dev in
-    Safari therefore requires a trusted cert (relay `--cert/--key` + mkcert);
-    the cloud relay (T12, real TLS) is unaffected. The cockpit auto-falls back
-    to a plain connect when the browser lacks cert-hash support.
+10. **Safari**: WebTransport exists only from Safari 26.4; WebKit doesn't
+    treat http://localhost as a secure context (API hidden on the plain-HTTP
+    page); and WebKit does not implement `serverCertificateHashes` (stated no
+    intent to). Local Safari dev therefore needs the relay's `--cert/--key`
+    mode (mkcert) + the HTTPS page at :8443; the cloud relay (T12, real TLS)
+    is unaffected. The cockpit auto-falls back to a plain connect when the
+    browser lacks cert-hash support.
 
 ## Implications for the real T1
 
