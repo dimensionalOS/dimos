@@ -19,15 +19,9 @@ from __future__ import annotations
 from dimos.control.tasks.teleop_task.teleop_task import TeleopIKTask
 
 
-def test_on_teleop_buttons_delegates_to_on_buttons() -> None:
-    task = TeleopIKTask.__new__(TeleopIKTask)
-    seen: list[object] = []
-
-    def fake_on_buttons(msg: object) -> bool:
-        seen.append(msg)
-        return True
-
-    task.on_buttons = fake_on_buttons
+def test_on_teleop_buttons_delegates_to_on_buttons(mocker) -> None:
+    mock_self = mocker.Mock()
+    mock_self.on_buttons.return_value = True
     sentinel = object()
-    assert task.on_teleop_buttons(sentinel, 0.0) is True
-    assert seen == [sentinel]
+    assert TeleopIKTask.on_teleop_buttons(mock_self, sentinel, 0.0) is True
+    mock_self.on_buttons.assert_called_once_with(sentinel)
