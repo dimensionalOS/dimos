@@ -24,6 +24,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from dimos.control._control_test_helpers import RecordingTask
 from dimos.control.components import (
     HardwareComponent,
     HardwareType,
@@ -45,7 +46,6 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     JointTrajectoryTask,
     JointTrajectoryTaskConfig,
 )
-from dimos.control.test_coordinator_routing import RecordingTask
 from dimos.control.tick_loop import TickLoop
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.msgs.geometry_msgs.Twist import Twist

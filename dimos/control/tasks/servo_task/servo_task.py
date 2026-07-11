@@ -230,7 +230,7 @@ class JointServoTask(BaseControlTask):
         """Uniform stream handler: digest the position half of a joint_command."""
         if not msg.position:
             return False
-        return self.set_target_by_name(dict(zip(msg.name, msg.position, strict=False)), t_now)
+        return self.set_target_by_name(dict(zip(msg.name, msg.position, strict=True)), t_now)
 
     def start(self) -> None:
         """Activate the task (start accepting and outputting commands)."""
