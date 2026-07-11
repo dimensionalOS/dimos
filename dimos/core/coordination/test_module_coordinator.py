@@ -40,6 +40,7 @@ from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.transport_factory import transport_topic
 from dimos.msgs.sensor_msgs.Image import Image
+import dimos.robot.get_all_blueprints as resolver
 from dimos.spec.utils import Spec
 
 # Disable Rerun for tests (prevents viewer spawn and gRPC flush errors)
@@ -93,6 +94,10 @@ class SourceModule(Module):
 
 class TargetModule(Module):
     remapped_data: In[Data1]
+
+
+class ExternalNameLoadModule(Module):
+    pass
 
 
 # ModuleRef / RPC tests
@@ -791,3 +796,21 @@ def test_list_module_names(dynamic_coordinator) -> None:
     dynamic_coordinator.load_module(ModuleA)
     dynamic_coordinator.load_module(ModuleC)
     assert set(dynamic_coordinator.list_module_names()) == {"ModuleA", "ModuleC"}
+
+
+def test_load_blueprint_by_name_uses_shared_resolver(
+    monkeypatch: pytest.MonkeyPatch, mocker
+) -> None:
+    expected_blueprint = ExternalNameLoadModule.blueprint()
+
+    def fake_get_by_name(name: str):
+        assert name == "my-test-stack.demo"
+        return expected_blueprint
+
+    coordinator = ModuleCoordinator()
+    load_blueprint = mocker.patch.object(ModuleCoordinator, "load_blueprint")
+    monkeypatch.setattr(resolver, "get_by_name", fake_get_by_name)
+
+    coordinator.load_blueprint_by_name("my-test-stack.demo")
+
+    load_blueprint.assert_called_once_with(expected_blueprint)

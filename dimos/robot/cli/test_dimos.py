@@ -23,6 +23,7 @@ from dimos.core.coordination.blueprints import autoconnect
 import dimos.core.coordination.worker_manager_python as worker_manager_python
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
+from dimos.robot import external_blueprints as external
 from dimos.robot.cli.dimos import _normalize_simulation_argv, arg_help, load_config_args, main
 import dimos.utils.cli.spy.run_spy as run_spy
 
@@ -164,6 +165,75 @@ def test_blueprint_arg_help_required():
         "      * testmodule.spam: str (default: eggs)",
         "",
     ]
+
+
+def test_list_blueprints_groups_builtin_and_external(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        external,
+        "list_external_blueprint_names",
+        lambda: ["my-test-stack.demo", "my-test-stack.keyboard-teleop"],
+    )
+
+    result = CliRunner().invoke(main, ["list"])
+
+    assert result.exit_code == 0
+    assert "Built-in blueprints:" in result.output
+    assert "  unitree-go2" in result.output
+    assert "demo-agent" not in result.output
+    assert "External blueprints:" in result.output
+    assert "  my-test-stack.demo" in result.output
+    assert "  my-test-stack.keyboard-teleop" in result.output
+
+
+def test_list_blueprints_without_external_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(external, "list_external_blueprint_names", lambda: [])
+
+    result = CliRunner().invoke(main, ["list"])
+
+    assert result.exit_code == 0
+    assert "Built-in blueprints:" in result.output
+    assert "External blueprints:" not in result.output
+
+
+def test_list_blueprints_reports_external_discovery_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_error() -> list[str]:
+        raise external.ExternalBlueprintError("external metadata is invalid")
+
+    monkeypatch.setattr(external, "list_external_blueprint_names", raise_error)
+
+    result = CliRunner().invoke(main, ["list"])
+
+    assert result.exit_code == 1
+    assert "external metadata is invalid" in result.output
+
+
+def test_run_reports_external_resolution_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_error(name: str):
+        raise external.ExternalBlueprintError(
+            "Failed to load external blueprint "
+            f"{name!r} from entry point 'my_test_stack.missing:demo_blueprint': "
+            "ModuleNotFoundError: No module named 'my_test_stack.missing'"
+        )
+
+    monkeypatch.setattr(
+        "dimos.robot.get_all_blueprints.resolve_external_blueprint_by_name",
+        raise_error,
+    )
+
+    result = CliRunner().invoke(main, ["run", "my-test-stack.demo"])
+
+    assert result.exit_code == 1
+    assert "Failed to load external blueprint 'my-test-stack.demo'" in result.output
+    assert "my_test_stack.missing:demo_blueprint" in result.output
+
+
+def test_run_reports_unknown_bare_blueprint() -> None:
+    result = CliRunner().invoke(main, ["run", "missing-bare-blueprint"])
+
+    assert result.exit_code == 1
+    assert "Unknown blueprint or module: missing-bare-blueprint" in result.output
 
 
 @pytest.fixture

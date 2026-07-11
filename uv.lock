@@ -257,6 +257,15 @@ wheels = [
 ]
 
 [[package]]
+name = "annotation-protocol"
+version = "1.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ea/fd/612c96531b1c1d1c06e5d79547faea3f805785d67481b350f3f6a9cf6dc5/annotation_protocol-1.4.0.tar.gz", hash = "sha256:15d846a4984339bab6cbf80a44623219b8cb06b4f4fee0f22c31a255d16900f8", size = 8470, upload-time = "2026-01-19T08:48:27.051Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/25/8b/71a5e1392dd3aca7ffeef0c3b10ea9b0e62959b5f39889702a06e11eda96/annotation_protocol-1.4.0-py3-none-any.whl", hash = "sha256:6fc66f1506f015db16fdd50fad18520cbb126a7902b27257c9fa521eb5efec60", size = 7834, upload-time = "2026-01-19T08:48:25.848Z" },
+]
+
+[[package]]
 name = "antlr4-python3-runtime"
 version = "4.9.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1524,11 +1533,13 @@ name = "dimos"
 version = "0.0.13.post1"
 source = { editable = "." }
 dependencies = [
+    { name = "annotation-protocol" },
     { name = "bleak" },
     { name = "cryptography" },
     { name = "dimos-lcm" },
     { name = "dimos-viewer" },
     { name = "eclipse-zenoh" },
+    { name = "lazy-loader" },
     { name = "llvmlite" },
     { name = "lz4" },
     { name = "numba" },
@@ -1537,6 +1548,7 @@ dependencies = [
     { name = "open3d", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
     { name = "open3d-unofficial-arm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "opencv-contrib-python" },
+    { name = "packaging" },
     { name = "pin" },
     { name = "plotext" },
     { name = "plum-dispatch" },
@@ -1994,6 +2006,7 @@ tests-self-hosted = [
 requires-dist = [
     { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'manipulation'" },
     { name = "aiortc", marker = "extra == 'webrtc'", specifier = ">=1.14.0" },
+    { name = "annotation-protocol", specifier = ">=1.4.0" },
     { name = "bleak", specifier = ">=3.0.2" },
     { name = "chromadb", marker = "extra == 'perception'", specifier = ">=1.0.0" },
     { name = "coacd", marker = "extra == 'scene'", specifier = ">=1.0.0" },
@@ -2030,6 +2043,7 @@ requires-dist = [
     { name = "langchain-ollama", marker = "extra == 'agents'", specifier = ">=1,<2" },
     { name = "langchain-openai", marker = "extra == 'agents'", specifier = ">=1,<2" },
     { name = "lap", marker = "extra == 'perception'", specifier = ">=0.5.12" },
+    { name = "lazy-loader" },
     { name = "llvmlite", specifier = ">=0.42.0" },
     { name = "lz4", specifier = ">=4.4.5" },
     { name = "matplotlib", marker = "extra == 'manipulation'", specifier = ">=3.7.1" },
@@ -2047,6 +2061,7 @@ requires-dist = [
     { name = "open3d-unofficial-arm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = ">=0.19.0.post9" },
     { name = "openai", marker = "extra == 'agents'" },
     { name = "opencv-contrib-python", specifier = ">=4.8,<5" },
+    { name = "packaging", specifier = ">=24.0" },
     { name = "pandas", marker = "extra == 'learning'" },
     { name = "pillow", marker = "extra == 'perception'" },
     { name = "pin", specifier = ">=3.3.0" },
@@ -4077,6 +4092,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ef/4a/e2d0925e5ead474709eb89c6bbb9cd188396c9e3384a1f5d2491a38aeab6/lap-0.5.12-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:1c34c3d8aefbf7d0cb709801ccf78c6ac31f4b1dc26c169ed1496ed3cb6f4556", size = 1728876, upload-time = "2024-11-30T01:26:25.744Z" },
     { url = "https://files.pythonhosted.org/packages/46/89/73bad73b005e7f681f8cfa2c8748e9d766b91da781d07f300f86a9eb4f03/lap-0.5.12-cp312-cp312-win_amd64.whl", hash = "sha256:753ef9bd12805adbf0d09d916e6f0d271aebe3d2284a1f639bd3401329e436e5", size = 1476975, upload-time = "2024-11-30T01:26:40.341Z" },
     { url = "https://files.pythonhosted.org/packages/d9/8d/00df0c44b728119fe770e0526f850b0a9201f23bf4276568aef5b372982e/lap-0.5.12-cp312-cp312-win_arm64.whl", hash = "sha256:83e507f6def40244da3e03c71f1b1f54ceab3978cde72a84b84caadd8728977e", size = 1466243, upload-time = "2024-11-30T01:26:43.202Z" },
+]
+
+[[package]]
+name = "lazy-loader"
+version = "0.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/49/ac/21a1f8aa3777f5658576777ea76bfb124b702c520bbe90edf4ae9915eafa/lazy_loader-0.5.tar.gz", hash = "sha256:717f9179a0dbed357012ddad50a5ad3d5e4d9a0b8712680d4e687f5e6e6ed9b3", size = 15294, upload-time = "2026-03-06T15:45:09.054Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8a/a1/8d812e53a5da1687abb10445275d41a8b13adb781bbf7196ddbcf8d88505/lazy_loader-0.5-py3-none-any.whl", hash = "sha256:ab0ea149e9c554d4ffeeb21105ac60bed7f3b4fd69b1d2360a4add51b170b005", size = 8044, upload-time = "2026-03-06T15:45:07.668Z" },
 ]
 
 [[package]]
