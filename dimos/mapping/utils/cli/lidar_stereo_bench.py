@@ -162,6 +162,17 @@ def apply_matrix(points: np.ndarray, matrix: np.ndarray) -> np.ndarray:
     return (matrix @ homogeneous.T).T[:, :3].astype(np.float32)
 
 
+def drop_near_field(points: np.ndarray, min_range: float) -> np.ndarray:
+    """Drop points within ``min_range`` of the sensor origin — self-return/housing noise.
+
+    The raw Mid360 driver applies zero filtering (checked dimos/hardware/sensors/lidar/livox/cpp/main.cpp);
+    FAST-LIO2 already gates this by default (`blind: float = 0.5` in fastlio2/module.py) — same idea here.
+    """
+    if len(points) == 0:
+        return points
+    return points[np.linalg.norm(points, axis=1) >= min_range]
+
+
 # ── Module ──────────────────────────────────────────────────────────────────
 
 
@@ -172,6 +183,7 @@ class BenchConfig(ModuleConfig):
     fscore_threshold_loose_m: float = 0.20
     voxel_size_m: float = 0.05
     icp_max_corr_dist_m: float = 0.25  # tighter now that a rough translation prior seeds the search
+    min_lidar_range_m: float = 0.5  # drop near-field self-return noise (matches FAST-LIO2's `blind`)
     yaw_steps: int = 12  # heading hypotheses swept per ICP call (30 degree steps)
     range_bins_m: list[float] = Field(default_factory=lambda: [0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 100.0])
 
@@ -244,7 +256,7 @@ class LidarStereoBenchmark(Module):
 
         # Lidar is the reference frame — nothing to transform. Everything else is
         # ICP-aligned onto it (see module docstring: no calibrated extrinsic exists).
-        lidar_xyz = lidar_msg.points_f32()
+        lidar_xyz = drop_near_field(lidar_msg.points_f32(), cfg.min_lidar_range_m)
         rs_raw_xyz = rs_msg.points_f32()
         if len(lidar_xyz) < cfg.min_points or len(rs_raw_xyz) < cfg.min_points:
             logger.info("LidarStereoBenchmark: not enough points yet (lidar=%d realsense=%d)",
