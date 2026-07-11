@@ -249,7 +249,7 @@ class JointVelocityTask(BaseControlTask):
         # routes position XOR velocity; positions win when both are present).
         if msg.position or not msg.velocity:
             return False
-        return self.set_velocities_by_name(dict(zip(msg.name, msg.velocity, strict=False)), t_now)
+        return self.set_velocities_by_name(dict(zip(msg.name, msg.velocity, strict=True)), t_now)
 
     def start(self) -> None:
         """Activate the task (start accepting and outputting commands)."""
