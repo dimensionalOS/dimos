@@ -70,6 +70,8 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     publish_color: bool = True
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
+    # If another module reads this device's onboard IMU separately (not via this
+    # class), its own serial_number must match this one on multi-camera hosts.
     serial_number: str | None = None
 
 

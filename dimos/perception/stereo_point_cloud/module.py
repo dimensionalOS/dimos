@@ -69,6 +69,8 @@ class Config(ModuleConfig):
     world_frame: str          = "world"
     camera_frame: str         = "camera_link"
     madgwick_beta: float      = 0.033
+    # Must match FilteredRealSenseCamera's serial_number on multi-camera hosts,
+    # so depth and IMU come from the same physical device.
     serial_number: str | None = None
 
 
@@ -105,7 +107,10 @@ class StereoPointCloud(Module, perception.Odometry):
     def start(self) -> None:
         super().start()
         if not self._imu.start():
-            logger.warning("StereoPointCloud: no IMU — R=identity, translation from ICP only")
+            logger.warning(
+                "StereoPointCloud: no IMU — R=identity, translation from ICP only, "
+                "floor calibration assumes level mounting (no gravity reference)"
+            )
         self.register_disposable(Disposable(self.depth_camera_info.subscribe(self._on_camera_info)))
         self.register_disposable(Disposable(self.depth_image.subscribe(self._on_depth)))
 
