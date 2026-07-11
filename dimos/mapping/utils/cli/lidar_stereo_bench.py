@@ -155,7 +155,7 @@ class LidarStereoBenchmark(Module):
         )
         self.register_disposable(Disposable(self.stereo.subscribe(lambda m: self._store("stereo", m))))
         self._running = True
-        self.spawn(self._loop())
+        self.spawn(self._benchmark_loop())
 
     @rpc
     def stop(self) -> None:
@@ -166,7 +166,7 @@ class LidarStereoBenchmark(Module):
         with self._lock:
             self._latest[name] = msg
 
-    async def _loop(self) -> None:
+    async def _benchmark_loop(self) -> None:
         while self._running:
             await asyncio.sleep(self.config.period_s)
             try:
