@@ -144,6 +144,10 @@ def _install_generated_plan(
         name=config.joint_names,
         position=[0.0 for _ in config.joint_names],
     )
+    module._world_monitor.current_global_joint_state.return_value = JointState(
+        name=global_joint_names,
+        position=[0.0 for _ in config.joint_names],
+    )
     module._last_plan = GeneratedPlan(
         trajectory=JointTrajectory(
             joint_names=global_joint_names,
@@ -512,6 +516,14 @@ class TestPlanningGroupApis:
             name=robot_config.joint_names,
             position=[0.0, 0.0, 0.0],
         )
+        module._world_monitor.current_global_joint_state.return_value = JointState(
+            name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
+            position=[0.0, 0.0, 0.0],
+        )
+        module._world_monitor.current_global_joint_state.return_value = JointState(
+            name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
+            position=[0.0, 0.0, 0.0],
+        )
         result_path = [
             JointState(
                 name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
@@ -586,6 +598,10 @@ class TestPlanningGroupApis:
         )
         module._world_monitor.get_current_joint_state.return_value = JointState(
             name=robot_config.joint_names,
+            position=[0.0, 0.0, 0.0],
+        )
+        module._world_monitor.current_global_joint_state.return_value = JointState(
+            name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
             position=[0.0, 0.0, 0.0],
         )
         ik_goal = JointState(
@@ -692,6 +708,10 @@ class TestPlanningGroupApis:
             name=robot_config.joint_names,
             position=[0.0, 0.0, 0.0],
         )
+        module._world_monitor.current_global_joint_state.return_value = JointState(
+            name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
+            position=[0.0, 0.0, 0.0],
+        )
         module._last_plan = GeneratedPlan(
             trajectory=_generated_plan_trajectory(
                 ["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
@@ -746,7 +766,6 @@ class TestPlanningGroupApis:
         assert module.execute_plan() is False
 
         assert module._last_plan is not None
-        assert module._last_plan_consumed is False
         assert module._state == ManipulationState.COMPLETED
         mock_client.task_invoke.assert_not_called()
 
@@ -765,7 +784,6 @@ class TestPlanningGroupApis:
         assert module.execute_plan() is False
 
         assert module._last_plan is not None
-        assert module._last_plan_consumed is False
         assert module._state == ManipulationState.COMPLETED
         mock_client.task_invoke.assert_not_called()
 
@@ -799,7 +817,6 @@ class TestPlanningGroupApis:
         assert module.execute_plan() is False
 
         assert module._last_plan is not None
-        assert module._last_plan_consumed is False
         assert module._state == ManipulationState.COMPLETED
         mock_client.task_invoke.assert_not_called()
 
@@ -866,6 +883,9 @@ class TestPlanningGroupApis:
             "left_id": JointState(name=["j0", "j1"], position=[9.0, 0.0]),
             "right_id": JointState(name=["k0", "k1"], position=[1.0, 9.0]),
         }[robot_id]
+        module._world_monitor.current_global_joint_state.return_value = JointState(
+            name=["left/j1", "right/k0"], position=[0.0, 1.0]
+        )
 
         assert module.execute_plan() is True
 
@@ -1026,6 +1046,10 @@ class TestExecute:
             name=robot_config.joint_names,
             position=[0.0, 0.0, 0.0],
         )
+        module._world_monitor.current_global_joint_state.return_value = JointState(
+            name=["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"],
+            position=[0.0, 0.0, 0.0],
+        )
         module._coordinator_client = MagicMock()
         module._last_plan = GeneratedPlan(
             trajectory=_generated_plan_trajectory(
@@ -1048,7 +1072,7 @@ class TestExecute:
         )
 
         assert module.execute_plan() is False
-        assert module._state == ManipulationState.FAULT
+        assert module._state == ManipulationState.IDLE
 
     def test_execute_success(self, robot_config, simple_trajectory):
         """Successful execute calls coordinator via task_invoke."""

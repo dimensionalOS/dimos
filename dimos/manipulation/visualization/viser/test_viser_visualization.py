@@ -26,13 +26,10 @@ import pytest
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
-from dimos.manipulation.manipulation_operator import (
-    ActionResult,
-    PlanSummary,
-    TargetEvaluationResult,
-)
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
-from dimos.manipulation.planning.spec.models import PlanningSceneInfo
+from dimos.manipulation.planning.spec.enums import PlanningStatus
+from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningSceneInfo
+from dimos.manipulation.visualization.operator import TargetEvaluationResult
 from dimos.manipulation.visualization.viser.animation import (
     GroupPreviewAnimation,
     PreviewFrame,
@@ -63,6 +60,8 @@ from dimos.manipulation.visualization.viser.theme import apply_dimos_theme
 from dimos.manipulation.visualization.viser.visualizer import ViserManipulationVisualizer
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
 
 @dataclass
@@ -203,6 +202,28 @@ class Module:
         self.executions = 0
         self.cancelled = 0
         self.cleared = 0
+        self.last_plan: GeneratedPlan | None = None
+
+    def make_plan(self, group_ids: tuple[str, ...]) -> GeneratedPlan:
+        names = [
+            name for group in self.groups for name in group.joint_names if group.id in group_ids
+        ]
+        if not names:
+            names = ["robot/j1", "robot/j2"]
+        plan = GeneratedPlan(
+            group_ids=group_ids,
+            trajectory=JointTrajectory(
+                joint_names=names,
+                points=[
+                    TrajectoryPoint(0.0, [0.0] * len(names)),
+                    TrajectoryPoint(1.0, [1.0] * len(names)),
+                ],
+            ),
+            path=[JointState({"name": names, "position": [0.0] * len(names)})],
+            status=PlanningStatus.SUCCESS,
+        )
+        self.last_plan = plan
+        return plan
 
     def list_robots(self) -> list[str]:
         return list(self.configs)
@@ -284,7 +305,6 @@ class Operator:
             state=self.module.get_state(),
             error=self.module.get_error(),
             has_plan=True,
-            plan=PlanSummary(("arm/manipulator",), 2, 1.0),
         )
 
     def get_init_joints(self, robot_name: str) -> JointState | None:
@@ -339,37 +359,32 @@ class Operator:
             {group_id: self.monitor.get_group_ee_pose(group_id) for group_id in group_ids},
         )
 
-    def plan_to_joints(self, request: object) -> ActionResult:
+    def plan_to_joints(self, request: object) -> GeneratedPlan:
         self.module.plan_to_joint_targets(
             {group_id: JointState({"name": [], "position": []}) for group_id in request.group_ids}
         )  # type: ignore[attr-defined]
-        return ActionResult(
-            True, "Planned", PlanSummary(tuple(request.group_ids), 2, 1.0), tuple(request.group_ids)
-        )  # type: ignore[attr-defined]
+        return self.module.make_plan(tuple(request.group_ids))  # type: ignore[attr-defined]
 
-    def plan_to_pose(self, request: object) -> ActionResult:
-        return ActionResult(
-            True,
-            "Planned",
-            PlanSummary(tuple(request.pose_targets), 2, 1.0),
-            tuple(request.pose_targets),
-        )  # type: ignore[attr-defined]
+    def plan_to_pose(self, request: object) -> GeneratedPlan:
+        return self.module.make_plan(tuple(request.pose_targets))  # type: ignore[attr-defined]
 
-    def preview(self) -> ActionResult:
-        return ActionResult(self.module.preview_plan(), "Preview")
+    def preview(self, plan: GeneratedPlan, duration: float | None = None) -> bool:
+        _ = plan, duration
+        return self.module.preview_plan()
 
-    def execute(self) -> ActionResult:
-        return ActionResult(self.module.execute(), "Execute")
+    def execute(self, plan: GeneratedPlan) -> bool:
+        _ = plan
+        return self.module.execute()
 
-    def cancel(self) -> ActionResult:
-        return ActionResult(self.module.cancel(), "Cancel")
+    def cancel(self) -> bool:
+        return self.module.cancel()
 
-    def clear_plan(self) -> ActionResult:
-        return ActionResult(self.module.clear_planned_path(), "Clear")
+    def clear_plan(self) -> bool:
+        return self.module.clear_planned_path()
 
-    def reset(self) -> ActionResult:
+    def reset(self) -> bool:
         result = self.module.reset()
-        return ActionResult(result.is_success(), "Reset")
+        return result.is_success()
 
 
 def session_inputs(module: Module) -> tuple[PlanningSceneInfo, Operator, dict[str, JointState]]:
@@ -518,6 +533,7 @@ def test_plan_target_sequence_invalidation_and_unfiltered_all_robot_execute(
         status=PlanStatus.FRESH,
         group_ids=(left.id, right.id),
         target_sequence_id=gui.state.latest_sequence_id,
+        plan=module.last_plan,
     )
     gui.state.target_status = TargetStatus.FEASIBLE
     gui._submit_execute()

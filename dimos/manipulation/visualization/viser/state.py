@@ -21,8 +21,8 @@ import queue
 import threading
 from typing import Literal
 
-from dimos.manipulation.manipulation_operator import TargetEvaluationResult
-from dimos.manipulation.planning.spec.models import PlanningGroupID
+from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID
+from dimos.manipulation.visualization.operator import TargetEvaluationResult
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
@@ -96,6 +96,7 @@ class PanelPlanState:
     robot: str | None = None
     group_ids: tuple[PlanningGroupID, ...] = ()
     target_sequence_id: int = 0
+    plan: GeneratedPlan | None = None
 
 
 @dataclass
@@ -145,7 +146,7 @@ class PanelState:
             and bool(self.selected_group_ids)
             and self.action_status == ActionStatus.IDLE
             and self.target_status == TargetStatus.FEASIBLE
-            and self.manipulation_state in {"IDLE", "COMPLETED", "FAULT"}
+            and self.manipulation_state in {"IDLE", "COMPLETED"}
             and self.plan_state.status != PlanStatus.PLANNING
         )
 
@@ -174,6 +175,7 @@ class PanelState:
             and self.target_status == TargetStatus.FEASIBLE
             and self.manipulation_state in {"IDLE", "COMPLETED"}
             and plan.status == PlanStatus.FRESH
+            and plan.plan is not None
             and plan.group_ids == self.selected_group_ids
             and plan.target_sequence_id == self.latest_sequence_id
         ):

@@ -17,6 +17,7 @@
 from collections.abc import Callable
 from pathlib import Path
 import threading
+import time
 from unittest.mock import MagicMock
 
 from dimos.manipulation._test_manipulation_helpers import make_module
@@ -74,10 +75,33 @@ def _module_with_current(current: JointState) -> ManipulationModule:
     )
     module._robots = {"arm": ("robot_id", robot_config, MagicMock())}
     module._world_monitor = MagicMock()
+    module._world_monitor.planning_groups = PlanningGroupRegistry([robot_config])
     module._world_monitor.current_global_joint_state.return_value = current
     module._world_monitor.is_state_stale.return_value = False
-    module._execute_plan = MagicMock(return_value=True)
+    module._coordinator_client = MagicMock()
+    module._coordinator_client.task_invoke.return_value = True
     return module
+
+
+def _install_current_global_state(module: ManipulationModule, current: JointState) -> None:
+    robot_config = RobotModelConfig(
+        name="arm",
+        model_path=Path("/path/to/robot.urdf"),
+        base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        joint_names=["j0"],
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="manipulator", joint_names=("j0",), base_link="base", tip_link="tool"
+            )
+        ],
+        coordinator_task_name="traj_arm",
+    )
+    module._robots = {"arm": ("robot_id", robot_config, MagicMock())}
+    module._world_monitor = MagicMock()
+    module._world_monitor.planning_groups = PlanningGroupRegistry([robot_config])
+    module._world_monitor.current_global_joint_state.return_value = current
+    module._coordinator_client = MagicMock()
+    module._coordinator_client.task_invoke.return_value = True
 
 
 def test_plan_to_pose_targets_propagates_failed_plan_as_false():
@@ -131,23 +155,24 @@ def test_plan_to_pose_targets_propagates_failed_plan_as_false():
     assert module._state == ManipulationState.FAULT
 
 
-def test_execute_plan_reserves_stored_plan_once():
+def test_execute_plan_selects_stored_plan_under_gate_and_reuses_it():
     module = make_module()
     plan = _plan()
     module._last_plan = plan
     module._state = ManipulationState.COMPLETED
-    module._execute_plan = MagicMock(return_value=True)
+    _install_current_global_state(module, JointState(name=["arm/j0"], position=[0.0]))
 
     assert module.execute_plan() is True
-    assert module.execute_plan() is False
-    module._execute_plan.assert_called_once_with(plan, robot_name=None, execution_reserved=True)
+    assert module.execute_plan() is True
+    assert module._coordinator_client.task_invoke.call_count == 2
 
 
-def test_execute_and_execute_plan_race_to_reserve_stored_plan_once():
+def test_execute_and_execute_plan_race_without_consuming_latest_plan():
     module = make_module()
     plan = _plan()
     module._last_plan = plan
     module._state = ManipulationState.COMPLETED
+    _install_current_global_state(module, JointState(name=["arm/j0"], position=[0.0]))
     callers_ready = threading.Barrier(3)
     dispatch_started = threading.Event()
     allow_dispatch_return = threading.Event()
@@ -162,13 +187,14 @@ def test_execute_and_execute_plan_race_to_reserve_stored_plan_once():
         callers_ready.wait(timeout=1.0)
         results.append(execute())
 
-    module._execute_plan = MagicMock(side_effect=dispatch)
+    module._coordinator_client.task_invoke.side_effect = dispatch
     legacy = threading.Thread(target=call_execute, args=(module.execute,))
     current = threading.Thread(target=call_execute, args=(module.execute_plan,))
     legacy.start()
     current.start()
     callers_ready.wait(timeout=1.0)
     assert dispatch_started.wait(timeout=1.0)
+    time.sleep(0.05)
 
     allow_dispatch_return.set()
     legacy.join(timeout=1.0)
@@ -177,43 +203,36 @@ def test_execute_and_execute_plan_race_to_reserve_stored_plan_once():
     assert not legacy.is_alive()
     assert not current.is_alive()
     assert sorted(results) == [False, True]
-    module._execute_plan.assert_called_once_with(plan, robot_name=None, execution_reserved=True)
+    assert module._coordinator_client.task_invoke.call_count == 1
 
 
 def test_execute_plan_accepts_a_direct_plan_without_reserving_stored_plan():
     module = make_module()
     direct_plan = _plan()
     module._last_plan = _plan("other/manipulator")
-    module._last_plan_consumed = True
-    module._execute_plan = MagicMock(return_value=True)
+    _install_current_global_state(module, JointState(name=["arm/j0"], position=[0.0]))
 
     assert module.execute_plan(plan=direct_plan) is True
-    module._execute_plan.assert_called_once_with(direct_plan, robot_name=None)
+    module._coordinator_client.task_invoke.assert_called_once()
 
 
-def test_execute_plan_rejects_stale_direct_plan_before_dispatch_without_reserving_cached_plan():
+def test_execute_plan_uses_current_global_state_without_consuming_cached_plan():
     module = _module_with_current(JointState(name=["arm/j0"], position=[0.0]))
     cached_plan = _plan("cached/manipulator")
     module._last_plan = cached_plan
-    module._last_plan_consumed = False
-    module._world_monitor.is_state_stale.return_value = True
-
-    assert module.execute_plan(plan=_plan()) is False
-    module._execute_plan.assert_not_called()
+    assert module.execute_plan(plan=_plan()) is True
+    module._coordinator_client.task_invoke.assert_called_once()
     assert module._last_plan is cached_plan
-    assert module._last_plan_consumed is False
 
 
 def test_execute_plan_rejects_missing_direct_plan_start_before_dispatch_without_reserving_cached_plan():
     module = _module_with_current(JointState(name=[], position=[]))
     cached_plan = _plan("cached/manipulator")
     module._last_plan = cached_plan
-    module._last_plan_consumed = False
 
     assert module.execute_plan(plan=_plan()) is False
-    module._execute_plan.assert_not_called()
+    module._coordinator_client.task_invoke.assert_not_called()
     assert module._last_plan is cached_plan
-    assert module._last_plan_consumed is False
 
 
 def test_execute_plan_rejects_malformed_direct_plan_before_dispatch_without_reserving_cached_plan():
@@ -222,9 +241,31 @@ def test_execute_plan_rejects_malformed_direct_plan_before_dispatch_without_rese
     direct_plan = _plan()
     direct_plan.trajectory.points[0].positions = []
     module._last_plan = cached_plan
-    module._last_plan_consumed = False
 
     assert module.execute_plan(plan=direct_plan) is False
-    module._execute_plan.assert_not_called()
+    module._coordinator_client.task_invoke.assert_not_called()
     assert module._last_plan is cached_plan
-    assert module._last_plan_consumed is False
+
+
+def test_execute_plan_pre_dispatch_exception_restores_previous_state_without_faulting():
+    module = _module_with_current(JointState(name=["arm/j0"], position=[0.0]))
+    module._last_plan = _plan()
+    module._state = ManipulationState.COMPLETED
+    module._prepare_execution = MagicMock(side_effect=RuntimeError("split exploded"))
+
+    assert module.execute_plan() is False
+
+    assert module._state == ManipulationState.COMPLETED
+    assert module._error_message == "Failed to prepare execution: split exploded"
+    module._coordinator_client.task_invoke.assert_not_called()
+
+
+def test_execute_plan_dispatch_exception_faults_without_sticking_executing():
+    module = _module_with_current(JointState(name=["arm/j0"], position=[0.0]))
+    module._last_plan = _plan()
+    module._coordinator_client.task_invoke.side_effect = RuntimeError("rpc exploded")
+
+    assert module.execute_plan() is False
+
+    assert module._state == ManipulationState.FAULT
+    assert module._error_message == "Failed to dispatch trajectory: rpc exploded"

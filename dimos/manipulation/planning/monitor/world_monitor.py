@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from contextlib import contextmanager
 import threading
 from typing import TYPE_CHECKING, Any
@@ -559,19 +560,40 @@ class WorldMonitor:
             with self._visualization_lock:
                 self._visualization.update_state(self.visualization_state_frame())
 
-    def cancel_preview_animation(self) -> None:
+    def cancel_preview_animation(self, robot_ids: Sequence[WorldRobotID] | None = None) -> None:
         """Cancel active visualization preview animation."""
         if self._visualization is not None:
-            self._visualization.cancel_preview_animation()
+            if robot_ids is None:
+                self._visualization.cancel_preview_animation()
+            else:
+                self._visualization.cancel_preview_animation(robot_ids)
 
     def animate_trajectory(
         self, trajectory: JointTrajectory, duration: float | None = None
     ) -> None:
         """Animate a raw generated-plan trajectory if visualization is available."""
         if self._visualization is not None:
-            self._visualization.cancel_preview_animation()
+            robot_ids = self.robot_ids_for_global_joints(trajectory.joint_names)
+            if robot_ids:
+                self._visualization.cancel_preview_animation(robot_ids)
+            else:
+                self._visualization.cancel_preview_animation()
             with self._visualization_lock:
                 self._visualization.animate_trajectory(trajectory, duration)
+
+    def robot_ids_for_global_joints(self, joint_names: Sequence[str]) -> tuple[WorldRobotID, ...]:
+        """Return visualization robot IDs affected by globally named trajectory joints."""
+        robot_ids: list[WorldRobotID] = []
+        with self._lock:
+            by_name = {config.name: robot_id for robot_id, config in self._robot_configs.items()}
+        for joint_name in joint_names:
+            if "/" not in joint_name:
+                continue
+            robot_name, _ = joint_name.split("/", 1)
+            robot_id = by_name.get(robot_name)
+            if robot_id is not None and robot_id not in robot_ids:
+                robot_ids.append(robot_id)
+        return tuple(robot_ids)
 
     def start_visualization_thread(self, rate_hz: float = 10.0) -> None:
         """Start background thread for visualization updates at given rate."""

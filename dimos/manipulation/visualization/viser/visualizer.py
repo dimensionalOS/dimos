@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
@@ -186,7 +187,7 @@ class ViserManipulationVisualizer:
                 preview, duration if duration is not None else max(float(trajectory.duration), 0.0)
             )
 
-    def cancel_preview_animation(self) -> None:
+    def cancel_preview_animation(self, robot_ids: Sequence[str] | None = None) -> None:
         """Cancel preview playback without starting a renderer or waiting for it.
 
         The world monitor deliberately invokes this outside its visualization
@@ -198,7 +199,10 @@ class ViserManipulationVisualizer:
         """
         scene = self._scene
         if scene is not None:
-            scene.cancel_preview_animation()
+            if robot_ids is None:
+                scene.cancel_preview_animation()
+            else:
+                scene.cancel_preview_animation(robot_ids)
 
     def _raw_preview_animation(self, trajectory: JointTrajectory) -> GroupPreviewAnimation | None:
         robot_indices: dict[str, list[tuple[int, str]]] = {}

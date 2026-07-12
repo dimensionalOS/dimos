@@ -22,7 +22,7 @@ import math
 from typing import TYPE_CHECKING, cast
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
-from dimos.manipulation.planning.spec.models import PlanningGroupID, RobotName
+from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID, RobotName
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -38,7 +38,6 @@ class OperatorStatus:
     state: str
     error: str
     has_plan: bool
-    plan: PlanSummary | None = None
 
 
 @dataclass(frozen=True)
@@ -72,25 +71,6 @@ class TargetEvaluationResult:
     group_poses: Mapping[PlanningGroupID, PoseStamped | None] = field(default_factory=dict)
 
 
-@dataclass(frozen=True)
-class PlanSummary:
-    """Public summary of the cached generated plan."""
-
-    group_ids: tuple[PlanningGroupID, ...]
-    waypoint_count: int
-    duration: float
-
-
-@dataclass(frozen=True)
-class ActionResult:
-    """Typed result for operator actions."""
-
-    success: bool
-    message: str
-    plan: PlanSummary | None = None
-    group_ids: tuple[PlanningGroupID, ...] = ()
-
-
 class ManipulationOperator:
     """Concrete synchronous facade over ManipulationModule and WorldMonitor."""
 
@@ -104,7 +84,6 @@ class ManipulationOperator:
             state=self._module.get_state(),
             error=self._module.get_error(),
             has_plan=self._module.has_planned_path(),
-            plan=self._plan_summary(),
         )
 
     def get_init_joints(self, robot_name: RobotName) -> JointState | None:
@@ -147,10 +126,10 @@ class ManipulationOperator:
             return self._invalid(group_ids, "Unknown planning group")
         return self._evaluate_global_target(groups, ik.joint_state)
 
-    def plan_to_joints(self, request: JointTargetRequest) -> ActionResult:
+    def plan_to_joints(self, request: JointTargetRequest) -> GeneratedPlan | None:
         groups, validation = self._validate_joint_request(request)
         if validation is not None:
-            return ActionResult(False, validation.message, group_ids=request.group_ids)
+            return None
         assert groups is not None
         targets = {
             group.id: JointState(
@@ -163,62 +142,38 @@ class ManipulationOperator:
             )
             for group, offset in self._group_offsets(groups)
         }
-        ok = self._module.plan_to_joint_targets(
+        return self._module.generate_plan_to_joint_targets(
             cast("Mapping[PlanningGroupID | PlanningGroup, JointState]", targets)
         )
-        return self._action_from_bool(ok, request.group_ids, "Planned joint target")
 
-    def plan_to_pose(self, request: PoseTargetRequest) -> ActionResult:
+    def plan_to_pose(self, request: PoseTargetRequest) -> GeneratedPlan | None:
         group_ids, validation = self._validate_pose_request(request)
         if validation is not None:
-            return ActionResult(False, validation.message, group_ids=group_ids)
+            return None
         poses = {group_id: stamped for group_id, stamped in request.pose_targets.items()}
-        ok = self._module.plan_to_pose_targets(
+        return self._module.generate_plan_to_pose_targets(
             cast("Mapping[PlanningGroupID | PlanningGroup, PoseStamped]", poses),
             request.auxiliary_group_ids,
         )
-        return self._action_from_bool(ok, group_ids, "Planned pose target")
 
-    def preview(self, duration: float | None = None) -> ActionResult:
-        ok = self._module.preview_plan(duration=duration)
-        return self._action_from_bool(ok, (), "Preview started")
+    def preview(self, plan: GeneratedPlan, duration: float | None = None) -> bool:
+        return self._module.preview_plan(plan=plan, duration=duration)
 
-    def execute(self) -> ActionResult:
-        ok = self._module.execute_plan()
-        return self._action_from_bool(ok, (), "Execution dispatched")
+    def execute(self, plan: GeneratedPlan) -> bool:
+        return self._module.execute_plan(plan=plan)
 
-    def cancel(self) -> ActionResult:
+    def cancel(self) -> bool:
         ok = self._module.cancel()
         if not ok:
             self._world_monitor.cancel_preview_animation()
-        return ActionResult(ok, "Cancelled" if ok else "Nothing to cancel")
+        return ok
 
-    def clear_plan(self) -> ActionResult:
-        ok = self._module.clear_planned_path()
-        return ActionResult(ok, "Plan cleared" if ok else "Failed to clear plan")
+    def clear_plan(self) -> bool:
+        return self._module.clear_planned_path()
 
-    def reset(self) -> ActionResult:
+    def reset(self) -> bool:
         result = self._module.reset()
-        return ActionResult(result.is_success(), result.message)
-
-    def _plan_summary(self) -> PlanSummary | None:
-        plan = self._module.current_plan_summary()
-        if plan is None:
-            return None
-        return PlanSummary(*plan)
-
-    def _action_from_bool(
-        self, success: bool, group_ids: Sequence[PlanningGroupID], success_message: str
-    ) -> ActionResult:
-        summary = self._plan_summary()
-        return ActionResult(
-            success=success,
-            message=success_message if success else self._module.get_error() or "Action failed",
-            plan=summary if success else None,
-            group_ids=tuple(group_ids)
-            if group_ids
-            else (summary.group_ids if success and summary else ()),
-        )
+        return result.is_success()
 
     def _validate_joint_request(
         self, request: JointTargetRequest
@@ -389,14 +344,3 @@ class ManipulationOperator:
     def _pose_is_finite(pose: PoseStamped) -> bool:
         values = [*pose.position, *pose.orientation]
         return len(values) == 7 and all(math.isfinite(float(value)) for value in values)
-
-
-__all__ = [
-    "ActionResult",
-    "JointTargetRequest",
-    "ManipulationOperator",
-    "OperatorStatus",
-    "PlanSummary",
-    "PoseTargetRequest",
-    "TargetEvaluationResult",
-]

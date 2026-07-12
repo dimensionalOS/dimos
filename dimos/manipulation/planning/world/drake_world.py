@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -204,6 +205,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         self._scene_graph_context: Context | None = None
         self._finalized = False
         self._preview_animation_generation = 0
+        self._preview_animation_generations: dict[WorldRobotID, int] = {}
 
         # Obstacle source for dynamic obstacles
         self._obstacle_source_id: Any = None
@@ -1202,11 +1204,17 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         model_name = self._plant.GetModelInstanceName(robot_data.preview_model_instance)
         self._meshcat.SetProperty(f"visualizer/{model_name}", "visible", visible)
 
-    def cancel_preview_animation(self) -> None:
+    def cancel_preview_animation(self, robot_ids: Sequence[WorldRobotID] | None = None) -> None:
         """Invalidate active preview frames and hide preview ghosts immediately."""
         with self._lock:
             self._preview_animation_generation += 1
-            for robot_id in self._robots:
+            affected = set(robot_ids) if robot_ids is not None else set(self._robots)
+            for robot_id in affected:
+                self._preview_animation_generations[robot_id] = (
+                    self._preview_animation_generations.get(robot_id, 0) + 1
+                )
+                if robot_id not in self._robots:
+                    continue
                 self._set_preview_visibility(robot_id, False)
 
     def _robot_trajectory_indices(
@@ -1250,8 +1258,12 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             assert self._plant_context is not None
             assert self._live_context is not None
             self._preview_animation_generation += 1
-            animation_generation = self._preview_animation_generation
+            animation_generations: dict[WorldRobotID, int] = {}
             for robot_id in robot_ids:
+                self._preview_animation_generations[robot_id] = (
+                    self._preview_animation_generations.get(robot_id, 0) + 1
+                )
+                animation_generations[robot_id] = self._preview_animation_generations[robot_id]
                 robot_data = self._robots[robot_id]
                 self._set_preview_visibility(robot_id, True)
                 baselines[robot_id] = np.array(
@@ -1270,10 +1282,17 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             previous_time = trajectory.points[0].time_from_start
             for frame_index, point in enumerate(trajectory.points):
                 with self._lock:
-                    if animation_generation != self._preview_animation_generation:
+                    active_robot_ids = [
+                        robot_id
+                        for robot_id in robot_ids
+                        if self._preview_animation_generations.get(robot_id)
+                        == animation_generations[robot_id]
+                    ]
+                    if not active_robot_ids:
                         return
                     assert self._plant_context is not None
-                    for robot_id, indexed_names in robot_indices.items():
+                    for robot_id in active_robot_ids:
+                        indexed_names = robot_indices[robot_id]
                         positions = baselines[robot_id].copy()
                         local_index = joint_positions_by_name[robot_id]
                         for trajectory_index, local_name in indexed_names:
@@ -1287,7 +1306,11 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         finally:
             with self._lock:
                 for robot_id in robot_ids:
-                    self._set_preview_visibility(robot_id, False)
+                    if (
+                        self._preview_animation_generations.get(robot_id)
+                        == animation_generations[robot_id]
+                    ):
+                        self._set_preview_visibility(robot_id, False)
 
     def close(self) -> None:
         """Shut down the viz thread."""

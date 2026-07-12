@@ -212,7 +212,7 @@ class VisualizationSpec(Protocol):
         """Animate a raw globally named trajectory."""
         ...
 
-    def cancel_preview_animation(self) -> None:
+    def cancel_preview_animation(self, robot_ids: Sequence[WorldRobotID] | None = None) -> None:
         """Cancel an active preview animation without waiting for its renderer to finish."""
         ...
 

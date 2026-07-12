@@ -108,6 +108,7 @@ class ViserManipulationScene:
         self._target_tracks_current: dict[str, bool] = {}
         self._scene_lock = RLock()
         self._animation_generation = 0
+        self._animation_generations: dict[str, int] = {}
         self._ensure_reference_grid()
 
     def has_reference_grid(self) -> bool:
@@ -122,6 +123,7 @@ class ViserManipulationScene:
     def register_robot(self, robot_id: str, config: RobotModelConfig) -> None:
         self._configs_by_id[robot_id] = config
         self._preview_visible.setdefault(robot_id, False)
+        self._animation_generations.setdefault(robot_id, 0)
         self._target_active.setdefault(robot_id, False)
         self._target_tracks_current.setdefault(robot_id, True)
         self._ensure_robot_urdfs(robot_id, config)
@@ -194,11 +196,17 @@ class ViserManipulationScene:
                 self._set_target_joints(robot_id, config.joint_names, joint_state.position)
                 self._set_target_visibility(robot_id, self._target_active.get(robot_id, False))
 
-    def cancel_preview_animation(self) -> None:
+    def cancel_preview_animation(self, robot_ids: Sequence[str] | None = None) -> None:
         """Prevent an old blocking animation from touching replacement handles."""
         with self._scene_lock:
             self._animation_generation += 1
-            for robot_id in self._preview_visible:
+            affected = set(robot_ids) if robot_ids is not None else set(self._preview_visible)
+            for robot_id in affected:
+                self._animation_generations[robot_id] = (
+                    self._animation_generations.get(robot_id, 0) + 1
+                )
+                if robot_id not in self._preview_visible:
+                    continue
                 self._preview_visible[robot_id] = False
                 self._set_preview_visibility(robot_id, False)
 
@@ -224,8 +232,12 @@ class ViserManipulationScene:
             return False
         with self._scene_lock:
             self._animation_generation += 1
-            generation = self._animation_generation
+            generations: dict[str, int] = {}
             for robot_id in frames:
+                self._animation_generations[robot_id] = (
+                    self._animation_generations.get(robot_id, 0) + 1
+                )
+                generations[robot_id] = self._animation_generations[robot_id]
                 self._preview_visible[robot_id] = True
                 self._set_preview_visibility(robot_id, True)
         try:
@@ -239,9 +251,15 @@ class ViserManipulationScene:
             frame_indices = {robot_id: 0 for robot_id in frames}
             for tick, tick_time in enumerate(tick_times):
                 with self._scene_lock:
-                    if generation != self._animation_generation:
+                    active_robot_ids = [
+                        robot_id
+                        for robot_id in frames
+                        if self._animation_generations.get(robot_id) == generations[robot_id]
+                    ]
+                    if not active_robot_ids:
                         return False
-                    for robot_id, robot_frames in frames.items():
+                    for robot_id in active_robot_ids:
+                        robot_frames = frames[robot_id]
                         while (
                             frame_indices[robot_id] + 1 < len(robot_frames)
                             and robot_frames[frame_indices[robot_id] + 1].time_from_start
@@ -257,8 +275,8 @@ class ViserManipulationScene:
             return True
         finally:
             with self._scene_lock:
-                if generation == self._animation_generation:
-                    for robot_id in frames:
+                for robot_id in frames:
+                    if self._animation_generations.get(robot_id) == generations[robot_id]:
                         self._preview_visible[robot_id] = False
                         self._set_preview_visibility(robot_id, False)
 

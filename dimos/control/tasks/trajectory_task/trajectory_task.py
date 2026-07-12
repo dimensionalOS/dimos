@@ -95,7 +95,6 @@ class JointTrajectoryTask(BaseControlTask):
         # State machine
         self._state = TrajectoryState.IDLE
         self._trajectory: JointTrajectory | None = None
-        self._active_joint_names: list[str] = []
         self._start_time: float = 0.0
         self._pending_start: bool = False  # Defer start time to first compute()
 
@@ -129,7 +128,7 @@ class JointTrajectoryTask(BaseControlTask):
         Returns:
             JointCommandOutput with positions, or None if not executing
         """
-        if self._trajectory is None or not self._active_joint_names:
+        if self._trajectory is None or not self._trajectory.joint_names:
             return None
 
         # Set start time on first compute() for consistent timing
@@ -145,7 +144,7 @@ class JointTrajectoryTask(BaseControlTask):
             logger.info(f"Trajectory {self._name} completed after {t_elapsed:.3f}s")
             # Return final position to hold at goal
             q_ref, _ = self._trajectory.sample(self._trajectory.duration)
-            active_names = list(self._active_joint_names)
+            active_names = list(self._trajectory.joint_names)
             self._clear_active_trajectory()
             return JointCommandOutput(
                 joint_names=active_names,
@@ -157,7 +156,7 @@ class JointTrajectoryTask(BaseControlTask):
         q_ref, _ = self._trajectory.sample(t_elapsed)
 
         return JointCommandOutput(
-            joint_names=list(self._active_joint_names),
+            joint_names=list(self._trajectory.joint_names),
             positions=list(q_ref),
             mode=ControlMode.SERVO_POSITION,
         )
@@ -178,7 +177,6 @@ class JointTrajectoryTask(BaseControlTask):
     def _clear_active_trajectory(self) -> None:
         """Clear stored trajectory-specific execution state."""
         self._trajectory = None
-        self._active_joint_names = []
         self._pending_start = False
         self._start_time = 0.0
 
@@ -246,8 +244,7 @@ class JointTrajectoryTask(BaseControlTask):
             logger.warning(f"Invalid trajectory for {self._name}")
             return False
 
-        active_names = self._validate_trajectory(trajectory)
-        if active_names is None:
+        if self._validate_trajectory(trajectory) is None:
             return False
 
         # Preempt any active trajectory
@@ -256,7 +253,6 @@ class JointTrajectoryTask(BaseControlTask):
             self._clear_active_trajectory()
 
         self._trajectory = trajectory
-        self._active_joint_names = active_names
         self._pending_start = True  # Start time set on first compute()
         self._state = TrajectoryState.EXECUTING
 

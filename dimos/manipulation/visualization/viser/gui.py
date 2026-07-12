@@ -17,15 +17,15 @@ from __future__ import annotations
 from collections.abc import Mapping, MutableMapping, Sequence
 from typing import TypeAlias, cast
 
-from dimos.manipulation.manipulation_operator import (
+from dimos.manipulation.planning.groups.models import PlanningGroup
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.models import PlanningGroupID, PlanningSceneInfo, RobotName
+from dimos.manipulation.visualization.operator import (
     JointTargetRequest,
     ManipulationOperator,
     PoseTargetRequest,
     TargetEvaluationResult,
 )
-from dimos.manipulation.planning.groups.models import PlanningGroup
-from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.models import PlanningGroupID, PlanningSceneInfo, RobotName
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.runtime import VISER_INSTALL_HINT
 from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
@@ -236,7 +236,7 @@ class ViserPanelGui:
         return self.operator.status().error
 
     def reset(self) -> bool:
-        return self.operator.reset().success
+        return self.operator.reset()
 
     def evaluate_joint_target_set(
         self, group_ids: Sequence[PlanningGroupID], targets: Mapping[PlanningGroupID, JointState]
@@ -272,10 +272,10 @@ class ViserPanelGui:
         )
 
     def cancel(self) -> bool:
-        return self.operator.cancel().success
+        return self.operator.cancel()
 
     def clear_planned_path(self) -> bool:
-        return self.operator.clear_plan().success
+        return self.operator.clear_plan()
 
     def plan_to_selected_joints(
         self, group_ids: Sequence[PlanningGroupID], targets: Mapping[PlanningGroupID, JointState]
@@ -288,15 +288,19 @@ class ViserPanelGui:
                 return False
             names.extend(str(name) for name in target.name)
             positions.extend(float(value) for value in target.position)
-        return self.operator.plan_to_joints(
+        plan = self.operator.plan_to_joints(
             JointTargetRequest(tuple(group_ids), JointState({"name": names, "position": positions}))
-        ).success
+        )
+        self.state.plan_state.plan = plan
+        return plan is not None
 
     def preview_path(self) -> bool:
-        return self.operator.preview().success
+        plan = self.state.plan_state.plan
+        return plan is not None and self.operator.preview(plan)
 
     def execute(self) -> bool:
-        return self.operator.execute().success
+        plan = self.state.plan_state.plan
+        return plan is not None and self.operator.execute(plan)
 
     def refresh(self) -> None:
         if self._closed:
@@ -413,8 +417,7 @@ class ViserPanelGui:
             current.append(group_id)
         self.state.selected_group_ids = tuple(current)
         self.state.advance_selection_epoch()
-        if self.scene is not None:
-            self.scene.cancel_preview_animation()
+        self._clear_invalidated_preview()
         first = groups.get(current[0]) if current else None
         self.state.selected_robot = None if first is None else str(first.robot_name)
         self._prune_inactive_group_state()
@@ -1059,24 +1062,6 @@ class ViserPanelGui:
                 return
             self.state.action_status = ActionStatus.RUNNING
             self.state.plan_state.status = PlanStatus.PLANNING
-            if self.state.manipulation_state == "FAULT":
-                reset = self.reset()
-                if not self._operation_is_current(
-                    operation_id, selection_epoch, target_sequence_id
-                ):
-                    self._finish_operation(
-                        "plan=False", operation_id=operation_id, selection_epoch=selection_epoch
-                    )
-                    return
-                if not reset:
-                    self.state.plan_state.status = PlanStatus.FAILED
-                    self._finish_operation(
-                        "reset=False",
-                        clear_error=False,
-                        operation_id=operation_id,
-                        selection_epoch=selection_epoch,
-                    )
-                    return
             stale_robots = self._stale_robot_names(group_ids)
             if stale_robots:
                 if not self._operation_is_current(
@@ -1114,6 +1099,7 @@ class ViserPanelGui:
                 self.state.plan_state.target_sequence_id = target_sequence_id
             else:
                 self.state.plan_state.status = PlanStatus.FAILED
+                self.state.plan_state.plan = None
             self._finish_operation(
                 f"plan_to_joints={ok}",
                 operation_id=operation_id,
@@ -1132,13 +1118,12 @@ class ViserPanelGui:
             return
         selection_epoch = self.state.selection_epoch
         operation_id = self._next_operation_id()
-        if self.scene is not None:
-            self.scene.cancel_preview_animation()
+        self.state.action_status = ActionStatus.PREVIEWING
+        self.refresh()
 
         def operation() -> None:
             if not self._operation_is_current(operation_id, selection_epoch):
                 return
-            self.state.action_status = ActionStatus.PREVIEWING
             ok = self.preview_path()
             self._finish_operation(
                 f"preview={ok}", operation_id=operation_id, selection_epoch=selection_epoch
@@ -1149,6 +1134,12 @@ class ViserPanelGui:
             timeout_seconds=self.config.preview_request_timeout,
             on_error=lambda message: self._set_operation_error(message, operation_id),
         )
+
+    def _clear_invalidated_preview(self) -> None:
+        if self.state.action_status == ActionStatus.PREVIEWING:
+            self._operation_sequence_id += 1
+            self.state.action_status = ActionStatus.IDLE
+            self.state.last_result = "preview=False"
 
     def _submit_execute(self) -> None:
         if self._closed:
@@ -1208,8 +1199,6 @@ class ViserPanelGui:
             return
         self.state.action_status = ActionStatus.CANCELLING
         self._mark_cancelled_plan_state(cancelled_action)
-        if self.scene is not None:
-            self.scene.cancel_preview_animation()
         self._restart_operation_worker()
         try:
             ok = self.cancel()
@@ -1236,8 +1225,6 @@ class ViserPanelGui:
         if self._closed:
             return
         operation_id = self._next_operation_id()
-        if self.scene is not None:
-            self.scene.cancel_preview_animation()
 
         def operation() -> None:
             if not self._operation_is_current(operation_id):

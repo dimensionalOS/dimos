@@ -37,7 +37,7 @@ The assignment of timing and motion derivatives to a geometric waypoint path, pr
 _Avoid_: Preview sampling, path projection
 
 **Manipulation Operator**:
-The interactive control boundary through which a human-facing client inspects manipulation state and requests target evaluation, planning, preview, execution, cancellation, or reset.
+The human-facing control boundary attached to a manipulation visualization session, through which a client inspects manipulation state and requests target evaluation, planning, preview, execution, cancellation, or reset. It is shared by visualization clients rather than belonging to a particular renderer.
 _Avoid_: Visualization backend, renderer
 
 **Target Draft**:

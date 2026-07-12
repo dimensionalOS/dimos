@@ -12,27 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Focused tests for the UI-neutral manipulation operator facade."""
+"""Focused tests for the manipulation visualization operator facade."""
 
 from pathlib import Path
 
 from dimos.agents.skill_result import SkillResult
-from dimos.manipulation.manipulation_operator import (
-    ActionResult,
-    JointTargetRequest,
-    ManipulationOperator,
-    PlanSummary,
-    PoseTargetRequest,
-)
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.enums import IKStatus
-from dimos.manipulation.planning.spec.models import IKResult, PlanningGroupID, RobotName
+from dimos.manipulation.planning.spec.enums import IKStatus, PlanningStatus
+from dimos.manipulation.planning.spec.models import (
+    GeneratedPlan,
+    IKResult,
+    PlanningGroupID,
+    RobotName,
+)
+from dimos.manipulation.visualization.operator import (
+    JointTargetRequest,
+    ManipulationOperator,
+    PoseTargetRequest,
+)
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
 
 def _robot_config(
@@ -78,6 +83,15 @@ class FakeModule:
             ("arm/manipulator",),
             3,
             1.25,
+        )
+        self.plan = GeneratedPlan(
+            group_ids=("arm/manipulator",),
+            trajectory=JointTrajectory(
+                joint_names=["arm/j0", "arm/j1"],
+                points=[TrajectoryPoint(0.0, [0.0, 0.0]), TrajectoryPoint(1.25, [0.4, 0.5])],
+            ),
+            path=[JointState({"name": ["arm/j0", "arm/j1"], "position": [0.0, 0.0]})],
+            status=PlanningStatus.SUCCESS,
         )
         self.robot_configs: dict[RobotName, RobotModelConfig] = {"arm": _robot_config()}
         self.robot_ids: dict[RobotName, str] = {"arm": "arm_id"}
@@ -141,6 +155,12 @@ class FakeModule:
         self.plan_joint_targets.append(targets)
         return self.plan_success
 
+    def generate_plan_to_joint_targets(
+        self, targets: dict[PlanningGroupID, JointState]
+    ) -> GeneratedPlan | None:
+        self.plan_joint_targets.append(targets)
+        return self.plan if self.plan_success else None
+
     def plan_to_pose_targets(
         self,
         targets: dict[PlanningGroupID, PoseStamped],
@@ -149,11 +169,23 @@ class FakeModule:
         self.plan_pose_targets.append((targets, auxiliary_groups))
         return self.plan_success
 
-    def preview_plan(self, duration: float | None = None) -> bool:
+    def generate_plan_to_pose_targets(
+        self,
+        targets: dict[PlanningGroupID, PoseStamped],
+        auxiliary_groups: tuple[PlanningGroupID, ...] = (),
+    ) -> GeneratedPlan | None:
+        self.plan_pose_targets.append((targets, auxiliary_groups))
+        return self.plan if self.plan_success else None
+
+    def preview_plan(
+        self, plan: GeneratedPlan | None = None, duration: float | None = None
+    ) -> bool:
+        _ = plan
         _ = duration
         return self.preview_success
 
-    def execute_plan(self) -> bool:
+    def execute_plan(self, plan: GeneratedPlan | None = None) -> bool:
+        _ = plan
         return self.execute_success
 
     def cancel(self) -> bool:
@@ -235,7 +267,6 @@ def test_status_is_compact_and_does_not_read_topology_or_telemetry() -> None:
     assert status.state == "COMPLETED"
     assert status.error == ""
     assert status.has_plan is True
-    assert status.plan == PlanSummary(("arm/manipulator",), 3, 1.25)
     assert module.topology_calls == 0
     assert module.telemetry_calls == 0
     assert monitor.telemetry_calls == 0
@@ -335,7 +366,7 @@ def test_pose_validation_rejects_frame_capability_and_seed_errors() -> None:
         assert result.status == "INVALID"
 
 
-def test_planning_methods_return_action_summary_without_generated_plan() -> None:
+def test_planning_methods_return_exact_generated_plan() -> None:
     operator, module, _ = _operator()
     joint_request = _joint_request()
     pose = _pose()
@@ -344,27 +375,24 @@ def test_planning_methods_return_action_summary_without_generated_plan() -> None
     joint_result = operator.plan_to_joints(joint_request)
     pose_result = operator.plan_to_pose(pose_request)
 
-    assert isinstance(joint_result, ActionResult)
-    assert joint_result.success is True
-    assert joint_result.plan == PlanSummary(("arm/manipulator",), 3, 1.25)
-    assert not hasattr(joint_result, "generated_plan")
+    assert joint_result is module.plan
     assert list(module.plan_joint_targets[0]["arm/manipulator"].name) == ["arm/j0", "arm/j1"]
     assert module.plan_pose_targets == [({"arm/manipulator": pose}, ())]
-    assert pose_result.plan == PlanSummary(("arm/manipulator",), 3, 1.25)
+    assert pose_result is module.plan
 
 
 def test_actions_return_typed_results_and_cancel_fallback_ownership() -> None:
     operator, module, monitor = _operator()
 
-    assert operator.preview(0.5).success is True
-    assert operator.execute().success is True
-    assert operator.clear_plan().message == "Plan cleared"
-    assert operator.reset().message == "reset"
+    assert operator.preview(module.plan, 0.5) is True
+    assert operator.execute(module.plan) is True
+    assert operator.clear_plan() is True
+    assert operator.reset() is True
     cancel_result = operator.cancel()
-    assert cancel_result == ActionResult(True, "Cancelled")
+    assert cancel_result is True
     assert monitor.cancel_preview_calls == 0
 
     module.cancel_success = False
     fallback = operator.cancel()
-    assert fallback == ActionResult(False, "Nothing to cancel")
+    assert fallback is False
     assert monitor.cancel_preview_calls == 1
