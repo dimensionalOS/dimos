@@ -21,7 +21,12 @@ All modules run in ONE process (``n_workers=1``) so the broker transports share
 a single LiveKit session.
 
 See ``cloudflare.py`` for the full architecture notes (RPC vs transport split,
-drive arbitration, operator→speaker audio via ``-o go2connection.audio_in=true``).
+drive arbitration).
+
+NOTE: operator→speaker audio is NOT available on LiveKit — the LiveKit provider
+has no inbound-audio track handling (no ``set_audio_frame_callback``), so
+``go2connection.audio_in`` is a no-op here. Use the Cloudflare blueprint if you
+need operator audio on the dog's speaker.
 """
 
 from __future__ import annotations

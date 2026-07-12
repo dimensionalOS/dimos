@@ -29,8 +29,11 @@ Drive routing (kept off RPC): broker cmd_unreliable → Go2CommandModule
 nav) → GO2Connection ``cmd_vel``. ``state_reliable`` is fanned to BOTH
 HostedStatsModule and Go2CommandModule.
 
-Operator→speaker audio is owned by GO2Connection (the driver holds the live PC);
-enable it with ``-o go2connection.audio_in=true``.
+Operator→speaker audio needs BOTH flags: ``-o transports.broker.audio_in=true``
+(makes the broker session negotiate a recvonly audio track from the operator)
+AND ``-o go2connection.audio_in=true`` (feeds that track's frames into the dog's
+speaker). Enabling only the latter wires the sink but the session never asks the
+operator for audio, so nothing plays.
 
 For the LiveKit-broker variant of these same blueprints, see ``livekit.py``.
 """
