@@ -1104,13 +1104,6 @@ class ManipulationModule(Module):
         """
         return self._last_plan is not None and bool(self._last_plan.path)
 
-    def current_plan_summary(self) -> tuple[tuple[PlanningGroupID, ...], int, float] | None:
-        """Return a compact summary of the stored plan, if one exists."""
-        plan = self._last_plan
-        if plan is None or not plan.path or not plan.trajectory.points:
-            return None
-        return plan.group_ids, len(plan.path), float(plan.trajectory.duration)
-
     @rpc
     def get_visualization_url(self) -> str | None:
         """Get the visualization URL.

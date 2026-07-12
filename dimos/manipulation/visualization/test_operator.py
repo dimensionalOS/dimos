@@ -79,11 +79,6 @@ class FakeModule:
         self.state = "COMPLETED"
         self.error = ""
         self.has_plan = True
-        self.summary: tuple[tuple[PlanningGroupID, ...], int, float] | None = (
-            ("arm/manipulator",),
-            3,
-            1.25,
-        )
         self.plan = GeneratedPlan(
             group_ids=("arm/manipulator",),
             trajectory=JointTrajectory(
@@ -121,9 +116,6 @@ class FakeModule:
 
     def has_planned_path(self) -> bool:
         return self.has_plan
-
-    def current_plan_summary(self) -> tuple[tuple[PlanningGroupID, ...], int, float] | None:
-        return self.summary
 
     def get_robot_config(self, robot_name: RobotName) -> RobotModelConfig | None:
         self.topology_calls += 1
