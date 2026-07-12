@@ -30,6 +30,17 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
+def _merge_config_kwargs(base: Mapping[str, Any], overrides: Mapping[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, override_value in overrides.items():
+        base_value = merged.get(key)
+        if isinstance(base_value, Mapping) and isinstance(override_value, Mapping):
+            merged[key] = _merge_config_kwargs(base_value, override_value)
+        else:
+            merged[key] = override_value
+    return merged
+
+
 class WorkerManagerPython:
     deployment_identifier: str = "python"
 
@@ -161,7 +172,7 @@ class WorkerManagerPython:
             module_class, _, kwargs = specs[i]
             worker = self._select_worker(dedicated=module_class.dedicated_worker)
             worker.reserve_slot()
-            kwargs.update(blueprint_args.get(module_class.name, {}))
+            kwargs.update(_merge_config_kwargs(kwargs, blueprint_args.get(module_class.name, {})))
             workers_by_index[i] = worker
 
         assignments = [(workers_by_index[i], specs[i]) for i in range(len(specs))]

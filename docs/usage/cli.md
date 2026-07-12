@@ -6,7 +6,7 @@ The `dimos` CLI manages the full lifecycle of a DimOS robot stack — start, sto
 
 ## Global Options
 
-Every [`GlobalConfig`](/usage/configuration) field is available as a CLI flag. Flags override environment variables, `.env`, and blueprint defaults.
+Every [`GlobalConfig`](/docs/usage/configuration.md) field is available as a CLI flag. Flags override environment variables, `.env`, and blueprint defaults.
 
 ```bash
 dimos [GLOBAL OPTIONS] COMMAND [ARGS]
@@ -62,7 +62,9 @@ Environment variables and `.env` values must be prefixed with `DIMOS_`.
 
 ### `dimos run`
 
-Start a robot blueprint.
+Start one or more robot blueprints. Built-in DimOS blueprints use bare names such as
+`unitree-go2`; external blueprints installed from Python packages use namespaced names
+such as `my-robot-stack.go2`.
 
 ```bash
 dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...]
@@ -95,9 +97,21 @@ dimos run unitree-go2-agentic --robot-ip 192.168.123.161
 # Compose modules dynamically
 dimos run unitree-go2 keyboard-teleop
 
+# Run an externally packaged blueprint
+dimos run my-robot-stack.go2
+
+# Compose built-in and external blueprints
+dimos run unitree-go2 my-robot-stack.keyboard-teleop
+
 # Disable specific modules
 dimos run unitree-go2-agentic --disable OsmSkill WebInput
 ```
+
+External blueprint names are always fully qualified as
+`<canonical-distribution-namespace>.<external-local-blueprint-name>`. The namespace is
+derived from the installed Python distribution name by lowercasing it and collapsing
+runs of `-`, `_`, and `.` into `-`. The local blueprint name is the entry point name
+and must be lowercase kebab-case, for example `keyboard-teleop`.
 
 On macOS, heavy replay workloads can be unreliable over LCM UDP, so the default transport resolves to `zenoh`; you can still force either path explicitly with `--transport=lcm` or `--transport=zenoh`.
 
@@ -109,13 +123,17 @@ When `--daemon` is used, the process:
 
 #### Adding a New Blueprint
 
-Define a module-level `Blueprint` variable and register it in `all_blueprints.py`:
+For an in-repository DimOS blueprint, define a module-level `Blueprint` variable and
+regenerate the built-in registry:
 
 ```bash
 pytest dimos/robot/test_all_blueprints_generation.py
 ```
 
-This auto-generates the registry. See [blueprints](/docs/usage/blueprints.md) for composition details.
+This auto-generates `dimos/robot/all_blueprints.py` for built-in blueprints. External
+packages do not edit that file; they expose blueprints through Python package entry
+points. See [blueprints](/docs/usage/blueprints.md) for composition and external
+publishing details.
 
 ### `dimos status`
 
@@ -187,10 +205,24 @@ dimos log --json | jq 'select(.logger | contains("RerunBridge"))'
 
 ### `dimos list`
 
-List all available blueprints.
+List all available blueprints. Built-in and external blueprints are grouped separately;
+external names are read from installed package metadata without importing their target
+modules.
 
 ```bash
 dimos list
+```
+
+Example output:
+
+```text
+Built-in blueprints:
+  unitree-go2
+  unitree-go2-agentic
+
+External blueprints:
+  my-robot-stack.go2
+  my-robot-stack.keyboard-teleop
 ```
 
 ### `dimos show-config`

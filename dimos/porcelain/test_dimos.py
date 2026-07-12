@@ -61,6 +61,18 @@ def test_resolve_string_name():
     assert bp is not None
 
 
+def test_resolve_external_string_name_uses_shared_resolver(monkeypatch):
+    expected = StressTestModule.blueprint()
+
+    def fake_get_by_name(name: str):
+        assert name == "my-test-stack.demo"
+        return expected
+
+    monkeypatch.setattr("dimos.porcelain.dimos.get_by_name", fake_get_by_name)
+
+    assert _resolve_target("my-test-stack.demo") is expected
+
+
 def test_resolve_unknown_string():
     with pytest.raises(ValueError, match="Unknown"):
         _resolve_target("nonexistent-blueprint-xyz")

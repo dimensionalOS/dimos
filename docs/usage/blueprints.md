@@ -84,6 +84,50 @@ expanded_blueprint = autoconnect(
 
 Blueprints are frozen data classes, and `autoconnect()` always constructs an expanded blueprint so you never have to worry about changes in one affecting the other.
 
+## Publishing external blueprints
+
+DimOS can discover runnable blueprints from installed Python packages. External
+packages declare entry points in the `dimos.blueprints` group:
+
+```toml
+[project]
+name = "my-robot-stack"
+
+[project.entry-points."dimos.blueprints"]
+go2 = "my_robot_stack.go2:go2_blueprint"
+keyboard-teleop = "my_robot_stack.teleop:KeyboardTeleop"
+```
+
+After the package is installed in the same Python environment as DimOS, users can run
+those blueprints by fully qualified name:
+
+```bash
+dimos run my-robot-stack.go2
+dimos run unitree-go2 my-robot-stack.keyboard-teleop
+```
+
+External names are always `<canonical-distribution-namespace>.<external-local-blueprint-name>`:
+
+- The namespace comes from the installed distribution name. DimOS lowercases it and
+  collapses runs of `-`, `_`, and `.` into `-`, so `My_Robot.Stack` becomes
+  `my-robot-stack`.
+- The local blueprint name is the entry point name. It must be lowercase kebab-case
+  matching `^[a-z0-9]+(-[a-z0-9]+)*$`, such as `go2` or `keyboard-teleop`.
+
+Entry point targets may be either:
+
+- a `Blueprint` object, such as a module-level `go2_blueprint`; or
+- a DimOS `Module` class, such as `KeyboardTeleop`, which DimOS converts with
+  `.blueprint()`.
+
+`dimos list` includes external names from package metadata without importing the target
+modules. `dimos run my-robot-stack.go2` imports only the requested entry point target.
+
+Remote coordinator resolution happens in the coordinator environment. If a client asks
+a coordinator to load `my-robot-stack.go2`, the `my-robot-stack` package must be
+installed where the coordinator performs name resolution; installing it only in the
+client environment is not enough.
+
 ### Duplicate module handling
 
 If the same module appears multiple times in `autoconnect`, the **later blueprint wins** and overrides earlier ones:
