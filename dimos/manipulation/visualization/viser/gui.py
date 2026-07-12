@@ -95,7 +95,7 @@ def _copy_joint_state(state: JointState | None) -> JointState | None:
 
 
 class ViserPanelGui:
-    """Optional operator panel with parity for the original cc/viser-vis panel."""
+    """Viser operator panel for manipulation target editing and plan control."""
 
     def __init__(
         self,
@@ -339,7 +339,7 @@ class ViserPanelGui:
         self._handles["status"] = gui.add_markdown("### Status\n**State:** Ready")
         self._build_scene_controls(gui)
         self._handles["planning_groups_heading"] = gui.add_markdown(
-            "### Planning Groups\nActive MoveIt group for pose goal, planning, and joint edits."
+            "### Planning Groups\nActive planning groups for pose goals, planning, and joint edits."
         )
         self._sync_group_selector(self.list_planning_groups())
         self._handles["target_heading"] = gui.add_markdown("### Target")

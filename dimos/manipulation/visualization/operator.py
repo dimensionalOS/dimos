@@ -163,10 +163,7 @@ class ManipulationOperator:
         return self._module.execute_plan(plan=plan)
 
     def cancel(self) -> bool:
-        ok = self._module.cancel()
-        if not ok:
-            self._world_monitor.cancel_preview_animation()
-        return ok
+        return self._module.cancel()
 
     def clear_plan(self) -> bool:
         return self._module.clear_planned_path()

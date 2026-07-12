@@ -387,4 +387,4 @@ def test_actions_return_typed_results_and_cancel_fallback_ownership() -> None:
     module.cancel_success = False
     fallback = operator.cancel()
     assert fallback is False
-    assert monitor.cancel_preview_calls == 1
+    assert monitor.cancel_preview_calls == 0

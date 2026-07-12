@@ -144,10 +144,10 @@ class JointTrajectoryTask(BaseControlTask):
             logger.info(f"Trajectory {self._name} completed after {t_elapsed:.3f}s")
             # Return final position to hold at goal
             q_ref, _ = self._trajectory.sample(self._trajectory.duration)
-            active_names = list(self._trajectory.joint_names)
+            final_names = list(self._trajectory.joint_names)
             self._clear_active_trajectory()
             return JointCommandOutput(
-                joint_names=active_names,
+                joint_names=final_names,
                 positions=list(q_ref),
                 mode=ControlMode.SERVO_POSITION,
             )
@@ -180,52 +180,52 @@ class JointTrajectoryTask(BaseControlTask):
         self._pending_start = False
         self._start_time = 0.0
 
-    def _validate_trajectory(self, trajectory: JointTrajectory) -> list[str] | None:
-        """Validate a trajectory and return its active joint names if accepted."""
-        active_names = list(trajectory.joint_names)
-        if not active_names:
+    def _validate_trajectory(self, trajectory: JointTrajectory) -> bool:
+        """Validate a trajectory before execution."""
+        joint_names = list(trajectory.joint_names)
+        if not joint_names:
             logger.warning("Trajectory for %s has empty joint names", self._name)
-            return None
-        if len(set(active_names)) != len(active_names):
+            return False
+        if len(set(joint_names)) != len(joint_names):
             logger.warning("Trajectory for %s has duplicate joint names", self._name)
-            return None
-        unknown = [name for name in active_names if name not in self._joint_names]
+            return False
+        unknown = [name for name in joint_names if name not in self._joint_names]
         if unknown:
             logger.warning("Trajectory for %s has unknown joints: %s", self._name, unknown)
-            return None
+            return False
         if not trajectory.points:
             logger.warning("Empty trajectory for %s", self._name)
-            return None
-        width = len(active_names)
+            return False
+        width = len(joint_names)
         previous_time: float | None = None
         for index, point in enumerate(trajectory.points):
             if len(point.positions) != width or len(point.velocities) != width:
                 logger.warning("Trajectory point %d for %s has invalid width", index, self._name)
-                return None
+                return False
             if not all(math.isfinite(value) for value in point.positions):
                 logger.warning(
                     "Trajectory point %d for %s has non-finite positions", index, self._name
                 )
-                return None
+                return False
             if not all(math.isfinite(value) for value in point.velocities):
                 logger.warning(
                     "Trajectory point %d for %s has non-finite velocities", index, self._name
                 )
-                return None
+                return False
             if not math.isfinite(point.time_from_start):
                 logger.warning("Trajectory point %d for %s has non-finite time", index, self._name)
-                return None
+                return False
             if index == 0 and point.time_from_start != 0.0:
                 logger.warning("Trajectory for %s must start at t=0", self._name)
-                return None
+                return False
             if previous_time is not None and point.time_from_start <= previous_time:
                 logger.warning("Trajectory for %s has non-increasing timestamps", self._name)
-                return None
+                return False
             previous_time = point.time_from_start
         if trajectory.duration <= 0.0:
             logger.warning("Trajectory for %s has nonpositive duration", self._name)
-            return None
-        return active_names
+            return False
+        return True
 
     def execute(self, trajectory: JointTrajectory) -> bool:
         """Start executing a trajectory.
@@ -244,7 +244,7 @@ class JointTrajectoryTask(BaseControlTask):
             logger.warning(f"Invalid trajectory for {self._name}")
             return False
 
-        if self._validate_trajectory(trajectory) is None:
+        if not self._validate_trajectory(trajectory):
             return False
 
         # Preempt any active trajectory

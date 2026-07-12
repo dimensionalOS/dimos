@@ -454,7 +454,7 @@ def test_panel_contract_group_order_defaults_and_controls(
     assert "robot" not in gui._handles
     assert (
         server.gui.markdown[1].value
-        == "### Planning Groups\nActive MoveIt group for pose goal, planning, and joint edits."
+        == "### Planning Groups\nActive planning groups for pose goals, planning, and joint edits."
     )
     assert [button.color for button in server.gui.buttons[:2]] == [
         ACTIVE_GROUP_COLOR,
