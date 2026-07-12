@@ -15,7 +15,7 @@
 
 from dimos.core.transport import ROSTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 
@@ -24,6 +24,6 @@ unitree_go2_ros = unitree_go2.transports(
         ("lidar", PointCloud2): ROSTransport("lidar", PointCloud2),
         ("global_map", PointCloud2): ROSTransport("global_map", PointCloud2),
         ("odom", PoseStamped): ROSTransport("odom", PoseStamped),
-        ("color_image", Image): ROSTransport("color_image", Image),
+        ("color_image", CompressedImage): ROSTransport("color_image", CompressedImage),
     }
 )

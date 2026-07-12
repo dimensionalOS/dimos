@@ -21,6 +21,7 @@ from threading import RLock
 from typing import TYPE_CHECKING, Any
 
 import cv2
+from reactivex import operators as ops
 
 from dimos.agents.agent_spec import AgentSpec
 from dimos.agents.annotation import skill
@@ -28,6 +29,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.models.vl.create import create
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
@@ -43,7 +45,7 @@ logger = setup_logger()
 
 
 class PerceiveLoopSkill(Module):
-    color_image: In[Image]
+    color_image: In[CompressedImage]
 
     _agent_spec: AgentSpec
     _period: float = 0.1  # seconds - how often to run the perceive loop
@@ -111,7 +113,10 @@ class PerceiveLoopSkill(Module):
                 )
 
             sharpest = backpressure(
-                sharpness_window(1.0 / self._period, self.color_image.pure_observable())
+                sharpness_window(
+                    1.0 / self._period,
+                    self.color_image.pure_observable().pipe(ops.map(CompressedImage.decode)),
+                )
             )
             self._vl_model.start()
             self._model_started = True

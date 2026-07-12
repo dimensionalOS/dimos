@@ -56,7 +56,11 @@ def transport_topic(name: str, g: GlobalConfig = global_config) -> str:
 
 # High-rate sensor streams: drop stale frames under congestion, never stall the
 # publisher. Matched by message type since that is what makes them high-rate.
-_LATEST_WINS_TYPES = ("sensor_msgs.Image", "sensor_msgs.PointCloud2")
+_LATEST_WINS_TYPES = (
+    "sensor_msgs.Image",
+    "sensor_msgs.CompressedImage",
+    "sensor_msgs.PointCloud2",
+)
 # Agent/human conversation channels: low-rate, and a dropped message loses a
 # whole turn of conversation.
 _NEVER_DROP_CHANNELS = ("human_input", "agent", "agent_idle")

@@ -24,6 +24,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport, pSHMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.manipulators.common.mixed import coordinator_teleop_dual
 from dimos.robot.manipulators.piper.blueprints.teleop import coordinator_teleop_piper
@@ -110,7 +111,7 @@ teleop_quest_go2 = (
     .transports(
         {
             ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
-            ("color_image", Image): pSHMTransport(
+            ("color_image", CompressedImage): pSHMTransport(
                 "color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
             ),
         }

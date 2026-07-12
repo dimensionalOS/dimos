@@ -35,6 +35,7 @@ from dimos.memory2.store.null import NullStore
 from dimos.memory2.stream import Stream
 from dimos.memory2.transform import QualityWindow, SpeedLimit
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
@@ -168,7 +169,9 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
             self._maybe_warn_distortion(self.config.camera_info)
 
         unsub_image = self.color_image.subscribe(
-            lambda image: self._append_image_with_pose(stream, image)
+            lambda image: self._append_image_with_pose(
+                stream, image.decode() if isinstance(image, CompressedImage) else image
+            )
         )
         self.register_disposable(Disposable(unsub_image) if callable(unsub_image) else unsub_image)
         self.register_disposable(
@@ -178,3 +181,9 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
     @rpc
     def stop(self) -> None:
         super().stop()
+
+
+class CompressedMarkerDetectionStreamModule(MarkerDetectionStreamModule):
+    """MarkerDetectionStreamModule for CompressedImage camera graphs (#2831)."""
+
+    color_image: In[CompressedImage]  # type: ignore[assignment]  # deliberate retype: go2 graphs wire compressed frames (#2831)

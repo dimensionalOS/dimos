@@ -23,7 +23,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -32,7 +32,7 @@ logger = setup_logger()
 class VlmStreamTester(Module):
     """Smoke-test VLMAgent with replayed images and stream queries."""
 
-    color_image: In[Image]
+    color_image: In[CompressedImage]
     query_stream: Out[HumanMessage]
     answer_stream: In[AIMessage]
 
@@ -52,7 +52,7 @@ class VlmStreamTester(Module):
         self._query_interval_s = query_interval_s
         self._max_image_age_s = max_image_age_s
         self._max_image_gap_s = max_image_gap_s
-        self._latest_image: Image | None = None
+        self._latest_image: CompressedImage | None = None
         self._latest_image_wall_ts: float | None = None
         self._last_image_wall_ts: float | None = None
         self._max_gap_seen_s = 0.0
@@ -75,7 +75,7 @@ class VlmStreamTester(Module):
             self._worker.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         super().stop()
 
-    def _on_image(self, image: Image) -> None:
+    def _on_image(self, image: CompressedImage) -> None:
         now = time.time()
         if self._last_image_wall_ts is not None:
             gap = now - self._last_image_wall_ts

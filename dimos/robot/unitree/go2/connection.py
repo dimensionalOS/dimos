@@ -40,11 +40,12 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.type.lowstate import LowStateMsg
-from dimos.spec.perception import Camera, Pointcloud
+from dimos.spec.perception import CompressedCamera, Pointcloud
 from dimos.utils.decorators.decorators import cached_property, simple_mcache
 from dimos.utils.logging_config import setup_logger
 
@@ -74,6 +75,8 @@ class ConnectionConfig(ModuleConfig):
     # TF parent frame of the internal odometry (odom_frame_id -> base_link).
     # Rename (e.g. "go2_odom") when another odom source owns the tree root
     odom_frame_id: str = "world"
+    # jpeg quality for the published color_image (producer picks the encoding, #2831)
+    image_quality: int = 75
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -238,7 +241,7 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
 _Config = TypeVar("_Config", bound=ConnectionConfig, default=ConnectionConfig)
 
 
-class GO2Connection(Module, Camera, Pointcloud):
+class GO2Connection(Module, CompressedCamera, Pointcloud):
     dedicated_worker = True
 
     config: ConnectionConfig
@@ -246,13 +249,13 @@ class GO2Connection(Module, Camera, Pointcloud):
     pointcloud: Out[PointCloud2]
     odom: Out[PoseStamped]
     lidar: Out[PointCloud2]
-    color_image: Out[Image]
+    color_image: Out[CompressedImage]
     camera_info: Out[CameraInfo]
 
     connection: Go2ConnectionProtocol
     camera_info_static: CameraInfo = _camera_info_static()
     _camera_info_thread: Thread | None = None
-    _latest_video_frame: Image | None = None
+    _latest_video_frame: CompressedImage | None = None
     _latest_lowstate: LowStateMsg | None = None
 
     @classmethod
@@ -284,7 +287,11 @@ class GO2Connection(Module, Camera, Pointcloud):
             return
         self.connection.start()
 
-        def onimage(image: Image) -> None:
+        def onimage(image: Image | CompressedImage) -> None:
+            # encode at the publish edge: live/replay raw frames get jpeg'd
+            # once here; datasets that already store CompressedImage pass through
+            if not isinstance(image, CompressedImage):
+                image = CompressedImage.from_image(image, quality=self.config.image_quality)
             self.color_image.publish(image)
             self._latest_video_frame = image
 
@@ -426,4 +433,5 @@ class GO2Connection(Module, Camera, Pointcloud):
         This skill provides the current camera view for perception tasks.
         Returns None if no frame has been captured yet.
         """
-        return self._latest_video_frame
+        frame = self._latest_video_frame
+        return frame.decode() if frame is not None else None

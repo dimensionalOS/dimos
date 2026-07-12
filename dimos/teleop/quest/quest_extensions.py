@@ -33,6 +33,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.teleop.quest.quest_teleop_module import Hand, QuestTeleopConfig, QuestTeleopModule
 from dimos.teleop.quest.quest_types import Buttons, QuestControllerState
@@ -50,7 +51,7 @@ async def _ws_send_jpeg(ws: WebSocket, data: bytes) -> None:
         pass
 
 
-def _push_jpeg(module: QuestTeleopModule, msg: Image, quality: int) -> None:
+def _push_jpeg(module: QuestTeleopModule, msg: Image | CompressedImage, quality: int) -> None:
     """JPEG-encode an Image and push it to all of module's connected /ws clients.
 
     Runs on the RX thread; sends are scheduled on the asyncio loop captured by
@@ -67,7 +68,15 @@ def _push_jpeg(module: QuestTeleopModule, msg: Image, quality: int) -> None:
         return
 
     try:
-        jpeg = msg.to_jpeg_bytes(quality=quality)
+        if isinstance(msg, CompressedImage):
+            # jpeg wire bytes go straight to the headset (quality knob unused)
+            jpeg = (
+                msg.data
+                if msg.format.startswith("jpeg")
+                else msg.decode().to_jpeg_bytes(quality=quality)
+            )
+        else:
+            jpeg = msg.to_jpeg_bytes(quality=quality)
     except Exception:
         logger.exception("Failed to encode camera frame")
         return
@@ -251,7 +260,7 @@ class Go2TeleopModule(QuestTeleopModule):
 
     config: Go2TeleopConfig
 
-    color_image: In[Image]
+    color_image: In[CompressedImage]
     cmd_vel: Out[Twist]
 
     def _deadzone(self, v: float) -> float:
@@ -272,7 +281,7 @@ class Go2TeleopModule(QuestTeleopModule):
             twist.angular.z = -self._deadzone(right.thumbstick.x) * self.config.angular_speed
         self.cmd_vel.publish(twist)
 
-    async def handle_color_image(self, msg: Image) -> None:
+    async def handle_color_image(self, msg: CompressedImage) -> None:
         _push_jpeg(self, msg, self.config.video_jpeg_quality)
 
     @rpc

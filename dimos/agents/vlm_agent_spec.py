@@ -14,11 +14,15 @@
 
 from typing import Any, Protocol
 
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.spec.utils import Spec
 
 
 class VLMAgentSpec(Spec, Protocol):
     def query_image(
-        self, image: Image, query: str, response_format: dict[str, Any] | None = None
+        self,
+        image: Image | CompressedImage,
+        query: str,
+        response_format: dict[str, Any] | None = None,
     ) -> str: ...

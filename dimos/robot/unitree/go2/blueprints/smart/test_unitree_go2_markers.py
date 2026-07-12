@@ -13,7 +13,9 @@
 # limitations under the License.
 
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
+from dimos.perception.fiducial.marker_detection_stream_module import (
+    CompressedMarkerDetectionStreamModule,
+)
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2_markers
 
@@ -22,15 +24,19 @@ def test_unitree_go2_markers_uses_detector_backed_tf_stack() -> None:
     assert isinstance(unitree_go2_markers, Blueprint)
 
     modules = [bp.module for bp in unitree_go2_markers.blueprints]
-    assert MarkerDetectionStreamModule in modules
+    assert CompressedMarkerDetectionStreamModule in modules
     assert MarkerTfModule in modules
 
     detector = next(
-        bp for bp in unitree_go2_markers.blueprints if bp.module is MarkerDetectionStreamModule
+        bp
+        for bp in unitree_go2_markers.blueprints
+        if bp.module is CompressedMarkerDetectionStreamModule
     )
     assert detector.kwargs["marker_length_m"] == 0.1
     assert detector.kwargs["camera_info"].frame_id == "camera_optical"
     assert (
-        unitree_go2_markers.transport_map[("detections", MarkerDetectionStreamModule)].topic.topic
+        unitree_go2_markers.transport_map[
+            ("detections", CompressedMarkerDetectionStreamModule)
+        ].topic.topic
         == "/marker_detection/detections"
     )

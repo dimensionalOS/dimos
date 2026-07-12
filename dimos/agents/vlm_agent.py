@@ -22,6 +22,7 @@ from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
 
@@ -41,7 +42,7 @@ class VLMAgent(Module):
 
     config: VLMAgentConfig
 
-    color_image: In[Image]
+    color_image: In[CompressedImage]
     query_stream: In[HumanMessage]
     answer_stream: Out[AIMessage]
 
@@ -54,7 +55,7 @@ class VLMAgent(Module):
             ensure_ollama_model(self.config.model.removeprefix("ollama:"))
 
         self._llm: BaseChatModel = init_chat_model(self.config.model)
-        self._latest_image: Image | None = None
+        self._latest_image: CompressedImage | None = None
         self._history: list[AIMessage | HumanMessage] = []
         self._system_message = SystemMessage(self.config.system_prompt or SYSTEM_PROMPT)
 
@@ -68,7 +69,7 @@ class VLMAgent(Module):
     def stop(self) -> None:
         super().stop()
 
-    def _on_image(self, image: Image) -> None:
+    def _on_image(self, image: CompressedImage) -> None:
         self._latest_image = image
 
     def _on_query(self, msg: HumanMessage) -> None:
@@ -97,7 +98,10 @@ class VLMAgent(Module):
         return response
 
     def _invoke_image(
-        self, image: Image, query: str, response_format: dict[str, Any] | None = None
+        self,
+        image: Image | CompressedImage,
+        query: str,
+        response_format: dict[str, Any] | None = None,
     ) -> AIMessage:
         content = [{"type": "text", "text": query}, *image.agent_encode()]
         kwargs: dict[str, Any] = {}
@@ -117,7 +121,10 @@ class VLMAgent(Module):
 
     @rpc
     def query_image(
-        self, image: Image, query: str, response_format: dict[str, Any] | None = None
+        self,
+        image: Image | CompressedImage,
+        query: str,
+        response_format: dict[str, Any] | None = None,
     ) -> str:
         response = self._invoke_image(image, query, response_format=response_format)
         content = response.content

@@ -23,7 +23,8 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
+from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.perception.detection.module2D import Detection2DModule
@@ -31,6 +32,7 @@ from dimos.perception.detection.type.detection2d.imageDetections2D import ImageD
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.types.timestamped import align_timestamped
+from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.reactive import backpressure
 
 
@@ -108,7 +110,7 @@ class Detection3DModule(Detection2DModule):
         from dimos.models.vl.qwen import QwenVlModel
 
         model = QwenVlModel()
-        image = self.color_image.get_next()
+        image = _ensure_image(self.color_image.get_next())
         return model.query(image, question)
 
     # @skill
@@ -125,7 +127,7 @@ class Detection3DModule(Detection2DModule):
         from dimos.models.vl.qwen import QwenVlModel
 
         model = QwenVlModel()
-        image = self.color_image.get_next()
+        image = _ensure_image(self.color_image.get_next())
         result = model.query_detections(image, question)
 
         print("VLM result:", result, "for", image, "and question", question)
@@ -186,3 +188,22 @@ class Detection3DModule(Detection2DModule):
         for index, detection in enumerate(detections[:3]):
             pointcloud_topic = getattr(self, "detected_pointcloud_" + str(index))
             pointcloud_topic.publish(detection.pointcloud)
+
+
+def _ensure_image(msg: Image | CompressedImage) -> Image:
+    return msg.decode() if isinstance(msg, CompressedImage) else msg
+
+
+class CompressedDetection3DModule(Detection3DModule):
+    """Detection3DModule for CompressedImage camera graphs (#2831)."""
+
+    color_image: In[CompressedImage]  # type: ignore[assignment]  # deliberate retype: go2 graphs wire compressed frames (#2831)
+
+    @simple_mcache
+    def sharp_image_stream(self) -> Observable[Image]:
+        return backpressure(
+            self.color_image.pure_observable().pipe(
+                ops.map(CompressedImage.decode),
+                sharpness_barrier(self.config.max_freq),
+            )
+        )

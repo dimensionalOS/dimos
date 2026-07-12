@@ -17,6 +17,7 @@ from typing import Protocol
 from dimos.core.stream import Out
 from dimos.msgs.nav_msgs.Odometry import Odometry as OdometryMsg
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage as CompressedImageMsg
 from dimos.msgs.sensor_msgs.Image import Image as ImageMsg
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -27,6 +28,13 @@ class Image(Protocol):
 
 
 class Camera(Image):
+    camera_info: Out[CameraInfo]
+
+
+class CompressedCamera(Protocol):
+    """Camera that publishes encoded (jpeg/png) frames — see #2831 option 5."""
+
+    color_image: Out[CompressedImageMsg]
     camera_info: Out[CameraInfo]
 
 

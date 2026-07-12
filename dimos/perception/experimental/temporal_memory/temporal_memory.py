@@ -39,6 +39,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.models.vl.base import VlModel
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
 from dimos.msgs.visualization_msgs.EntityMarkers import EntityMarkers, Marker
 from dimos.utils.logging_config import get_run_log_dir, setup_logger
@@ -114,7 +115,7 @@ class TemporalMemory(Module):
 
     config: TemporalMemoryConfig
 
-    color_image: In[Image]
+    color_image: In[CompressedImage]
     odom: In[PoseStamped]
     entity_markers: Out[EntityMarkers]
 
@@ -297,7 +298,7 @@ class TemporalMemory(Module):
         self.register_disposable(
             frame_subject.pipe(sharpness_barrier(self.config.fps)).subscribe(_on_frame)
         )
-        unsub_image = self.color_image.subscribe(frame_subject.on_next)
+        unsub_image = self.color_image.subscribe(lambda m: frame_subject.on_next(m.decode()))
         self.register_disposable(Disposable(unsub_image))
 
         # Odometry tracking for entity world positioning (optional —

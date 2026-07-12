@@ -19,11 +19,12 @@ from typing import Any
 
 from pydantic import Field
 
-from dimos.core.stream import Out
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.teleop.quest.quest_types import Buttons, QuestControllerState
 from dimos.teleop.quest_hosted.hosted_teleop_module import (
     Hand,
@@ -86,6 +87,8 @@ class HostedTwistTeleopModule(HostedTeleopModule):
 
     config: HostedTwistTeleopConfig
 
+    # go2 publishes CompressedImage (#2831); the video track decodes at recv
+    color_image: In[CompressedImage]  # type: ignore[assignment]
     cmd_vel: Out[Twist]
 
     def _publish_twist(self, lx: float, ly: float, az: float, ts: float, frame_id: str) -> None:

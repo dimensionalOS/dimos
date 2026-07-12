@@ -38,6 +38,7 @@ from dimos.memory2.transform import QualityWindow
 from dimos.memory2.type.observation import EmbeddedObservation, Observation
 from dimos.models.embedding.base import EmbeddingModel
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.data import backup_file
@@ -160,6 +161,11 @@ class StreamModule(Module, Generic[TIn, TOut]):
         super().stop()
 
 
+def _ensure_image(msg: Image | CompressedImage) -> Image:
+    """Recordings store CompressedImage (new) or Image (old) — normalize."""
+    return msg.decode() if isinstance(msg, CompressedImage) else msg
+
+
 class MemoryModuleConfig(ModuleConfig):
     db_path: str | Path = "recording.db"
 
@@ -221,6 +227,7 @@ class SemanticSearch(MemoryModule):
         # fmt: off
         self.store.streams.color_image \
            .live() \
+           .map_data(lambda obs: _ensure_image(obs.data)) \
            .filter(lambda obs: obs.data.brightness > 0.1) \
            .transform(QualityWindow(lambda img: img.sharpness, window=0.5)) \
            .transform(EmbedImages(self.model, batch_size=2)) \

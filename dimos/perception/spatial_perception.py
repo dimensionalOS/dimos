@@ -31,6 +31,7 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.image_embedding import ImageEmbeddingProvider
 from dimos.perception.spatial_vector_db import SpatialVectorDB
@@ -185,7 +186,9 @@ class SpatialMemory(Module):
         super().start()
 
         # Subscribe to LCM streams
-        def set_video(image_msg: Image) -> None:
+        def set_video(image_msg: Image | CompressedImage) -> None:
+            if isinstance(image_msg, CompressedImage):
+                image_msg = image_msg.decode()
             # Convert Image message to numpy array
             if hasattr(image_msg, "data"):
                 frame = image_msg.data
@@ -571,3 +574,9 @@ class SpatialMemory(Module):
         if semantic_distance < 0.3:
             return location
         return None
+
+
+class CompressedSpatialMemory(SpatialMemory):
+    """SpatialMemory for graphs whose camera publishes CompressedImage (#2831)."""
+
+    color_image: In[CompressedImage]  # type: ignore[assignment]  # deliberate retype: go2 graphs wire compressed frames (#2831)

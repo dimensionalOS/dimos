@@ -21,7 +21,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import CloudflareTransport, CloudflareVideoTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.robot.manipulators.xarm.blueprints.teleop import coordinator_teleop_xarm7
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 from dimos.teleop.quest_hosted.hosted_extensions import (
@@ -67,7 +67,7 @@ teleop_hosted_go2 = autoconnect(
 teleop_hosted_go2_transport = unitree_go2_basic.transports(
     {
         ("cmd_vel", Twist): CloudflareTransport.spec("cmd_unreliable", TwistStamped),
-        ("color_image", Image): CloudflareVideoTransport.spec(),
+        ("color_image", CompressedImage): CloudflareVideoTransport.spec(),
     }
 ).global_config(viewer="none")
 

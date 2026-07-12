@@ -24,7 +24,7 @@ from dimos.mapping.voxels import VoxelGridMapper
 from dimos.memory2.module import Recorder, RecorderConfig, pose_setter_for
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
@@ -33,7 +33,9 @@ from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector impo
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.patrolling.module import PatrollingModule
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
-from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
+from dimos.perception.fiducial.marker_detection_stream_module import (
+    CompressedMarkerDetectionStreamModule,
+)
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 from dimos.robot.unitree.go2.connection import GO2Connection
@@ -54,7 +56,7 @@ class Go2MemoryConfig(RecorderConfig):
 
 
 class Go2Memory(Recorder):
-    color_image: In[Image]
+    color_image: In[CompressedImage]
     lidar: In[PointCloud2]
     odom: In[PoseStamped]
     config: Go2MemoryConfig
@@ -77,7 +79,7 @@ class Go2Memory(Recorder):
 unitree_go2_markers = (
     autoconnect(
         unitree_go2,
-        MarkerDetectionStreamModule.blueprint(
+        CompressedMarkerDetectionStreamModule.blueprint(
             marker_length_m=0.1,
             camera_info=GO2Connection.camera_info_static,
         ),
@@ -85,7 +87,7 @@ unitree_go2_markers = (
     )
     .transports(
         {
-            ("detections", MarkerDetectionStreamModule): LCMTransport(
+            ("detections", CompressedMarkerDetectionStreamModule): LCMTransport(
                 "/marker_detection/detections",
                 Detection3DArray,
             ),

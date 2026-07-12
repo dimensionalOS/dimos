@@ -26,6 +26,7 @@ from dimos.models.qwen.bbox import BBox
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, make_vector3
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.base import NavigationState
 from dimos.navigation.navigation_spec import NavigationInterfaceSpec
@@ -39,7 +40,7 @@ logger = setup_logger()
 
 
 class NavigationSkillContainer(Module):
-    _latest_image: Image | None = None
+    _latest_image: Image | CompressedImage | None = None
     _latest_odom: PoseStamped | None = None
     _skill_started: bool = False
     _similarity_threshold: float = 0.23
@@ -71,7 +72,7 @@ class NavigationSkillContainer(Module):
     def stop(self) -> None:
         super().stop()
 
-    def _on_color_image(self, image: Image) -> None:
+    def _on_color_image(self, image: Image | CompressedImage) -> None:
         self._latest_image = image
 
     def _on_odom(self, odom: PoseStamped) -> None:
@@ -231,7 +232,10 @@ class NavigationSkillContainer(Module):
         if self._latest_image is None:
             return None
 
-        return get_object_bbox_from_image(self._vl_model, self._latest_image, query)
+        latest = self._latest_image
+        if isinstance(latest, CompressedImage):
+            latest = latest.decode()
+        return get_object_bbox_from_image(self._vl_model, latest, query)
 
     def _navigate_using_semantic_map(self, query: str) -> str:
         results = self._spatial_memory.query_by_text(query)
@@ -285,3 +289,9 @@ class NavigationSkillContainer(Module):
             orientation=Quaternion.from_euler(make_vector3(0, 0, theta)),
             frame_id="map",
         )
+
+
+class CompressedNavigationSkillContainer(NavigationSkillContainer):
+    """NavigationSkillContainer for CompressedImage camera graphs (#2831)."""
+
+    color_image: In[CompressedImage]  # type: ignore[assignment]  # deliberate retype: go2 graphs wire compressed frames (#2831)

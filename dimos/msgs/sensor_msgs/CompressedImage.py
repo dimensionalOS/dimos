@@ -84,7 +84,23 @@ class CompressedImage(Timestamped):
         return cls(data=data, format=format, frame_id=image.frame_id, ts=image.ts)
 
     def decode(self) -> Image:
-        """Decompress to a raw Image; ts/frame_id preserved."""
+        """Decompress to a raw Image; ts/frame_id preserved.
+
+        Memoized: consumers that keep the latest frame and decode it several
+        times (or never) pay for at most one decode per message.
+        """
+        cached: Image | None = getattr(self, "_decoded", None)
+        if cached is not None:
+            return cached
+        img = self._decode()
+        self._decoded = img
+        return img
+
+    def __getstate__(self) -> dict[str, Any]:
+        # never pickle the decode cache — it would put raw pixels on the wire
+        return {k: v for k, v in self.__dict__.items() if k != "_decoded"}
+
+    def _decode(self) -> Image:
         from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
         if self.format.startswith("jpeg"):
@@ -128,6 +144,14 @@ class CompressedImage(Timestamped):
             frame_id=msg.header.frame_id,
             ts=msg.header.stamp.sec + msg.header.stamp.nsec / 1e9,
         )
+
+    def agent_encode(self) -> list[dict[str, Any]]:
+        """VLM message content — the wire bytes go straight to the model, no re-encode."""
+        import base64
+
+        media = "image/jpeg" if self.format.startswith("jpeg") else "image/png"
+        b64 = base64.b64encode(self.data).decode()
+        return [{"type": "image_url", "image_url": {"url": f"data:{media};base64,{b64}"}}]
 
     def to_rerun(self) -> rr.EncodedImage:
         import rerun as rr

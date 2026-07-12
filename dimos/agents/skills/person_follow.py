@@ -33,6 +33,7 @@ from dimos.models.vl.base import VlModel
 from dimos.models.vl.create import create
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.visual.query import get_object_bbox_from_image
@@ -60,7 +61,7 @@ class PersonFollowSkillContainer(Module):
 
     config: Config
 
-    color_image: In[Image]
+    color_image: In[CompressedImage]
     global_map: In[PointCloud2]
     cmd_vel: Out[Twist]
 
@@ -69,7 +70,7 @@ class PersonFollowSkillContainer(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._latest_image: Image | None = None
+        self._latest_image: CompressedImage | None = None
         self._latest_pointcloud: PointCloud2 | None = None
         self._vl_model: VlModel = create("qwen")
         self._tracker: EdgeTAMProcessor | None = None
@@ -160,10 +161,11 @@ class PersonFollowSkillContainer(Module):
         background_launched = False
         try:
             with self._lock:
-                latest_image = self._latest_image
+                latest_frame = self._latest_image
 
-            if latest_image is None:
+            if latest_frame is None:
                 return "No image available to detect person."
+            latest_image = latest_frame.decode()
 
             detection_image: Image | None = None
             if initial_bbox is not None:
@@ -209,7 +211,7 @@ class PersonFollowSkillContainer(Module):
 
         return "Stopped following."
 
-    def _on_color_image(self, image: Image) -> None:
+    def _on_color_image(self, image: CompressedImage) -> None:
         with self._lock:
             self._latest_image = image
 
@@ -230,9 +232,10 @@ class PersonFollowSkillContainer(Module):
 
                 self._tracker = EdgeTAMProcessor()
             tracker = self._tracker
-            latest_image = self._latest_image
-            if latest_image is None:
+            latest_frame = self._latest_image
+            if latest_frame is None:
                 return "No image available to start tracking."
+            latest_image = latest_frame.decode()
 
         # Use the detection frame for tracker init when available, so the bbox
         # matches the image it was computed on.
@@ -270,8 +273,9 @@ class PersonFollowSkillContainer(Module):
             next_time += period
 
             with self._lock:
-                latest_image = self._latest_image
-                assert latest_image is not None
+                latest_frame = self._latest_image
+                assert latest_frame is not None
+            latest_image = latest_frame.decode()
 
             detections = tracker.process_image(latest_image)
 

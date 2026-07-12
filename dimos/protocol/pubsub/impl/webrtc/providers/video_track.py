@@ -26,6 +26,7 @@ import time
 from aiortc.mediastreams import VIDEO_CLOCK_RATE, VIDEO_TIME_BASE, VideoStreamTrack
 import av
 
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
 _AV_FORMAT_MAP = {
@@ -51,7 +52,7 @@ class CameraVideoTrack(VideoStreamTrack):
         # All state below is only mutated on the event loop (set_latest marshals
         # onto it via call_soon_threadsafe), so no lock is needed.
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._latest: Image | None = None
+        self._latest: Image | CompressedImage | None = None
         self._frame_seq = 0
         self._consumed_seq = 0
         self._armed = False
@@ -67,7 +68,7 @@ class CameraVideoTrack(VideoStreamTrack):
         self._consumed_seq = self._frame_seq
         self._armed = True
 
-    def set_latest(self, img: Image) -> None:
+    def set_latest(self, img: Image | CompressedImage) -> None:
         """Publish the latest frame. Called from the producer (stream) thread.
 
         aiortc / asyncio.Event aren't thread-safe, so marshal the swap +
@@ -96,6 +97,8 @@ class CameraVideoTrack(VideoStreamTrack):
                 img = self._latest
                 self._consumed_seq = self._frame_seq
                 break
+        if isinstance(img, CompressedImage):
+            img = img.decode()
 
         # Monotonic (not wall) clock so PTS never goes backward on an NTP/clock
         # step — aiortc requires non-decreasing PTS.

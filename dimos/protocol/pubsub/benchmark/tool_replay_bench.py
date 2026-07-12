@@ -12,18 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""End-to-end replay benchmark: raw Image blueprints vs CompressedCodec.
+"""End-to-end replay benchmark for native CompressedImage blueprints (#2831).
 
 Runs a real blueprint in replay mode for a fixed duration, with optional
-BenchSink consumer modules (configurable synthetic per-frame work, like a
-busy detector), and records per-frame freshness plus host CPU/RSS/loopback
-traffic. One process per run:
+BenchSink consumer modules, and records per-frame freshness plus host
+CPU/RSS/loopback traffic. Sinks consume the CompressedImage stream either
+decoding every frame (--sink decode, a busy detector) or storing bytes
+without ever decoding (--sink bytes, the save-latest / VLM / relay pattern).
+One process per run:
 
     python -m dimos.protocol.pubsub.benchmark.tool_replay_bench \
-        --blueprint unitree-go2 --mode codec --sinks 4 --work-ms 20 \
-        --duration 60 --out /tmp/bench/go2_codec_0
+        --blueprint unitree-go2 --sink decode --sinks 4 --work-ms 20 \
+        --duration 60 --out /tmp/bench/go2_decode_0
 
-Wrap with `taskset -c 0-3` / `tc netem` for constrained profiles.
+Wrap with `taskset -c 0-3` / `tc netem` for constrained profiles. Raw/codec
+baseline cells predate the option-5 migration — run them from a worktree at
+3f2fc05ad, where this tool still has --mode raw|codec.
 """
 
 from __future__ import annotations
@@ -41,7 +45,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out, Stream
 from dimos.core.transport import PubSubTransport
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -90,14 +94,25 @@ class CompressedCodec(PubSubTransport[T]):
 
 
 class BenchSink(Module):
-    """Records (recv_time, msg.ts, age) per frame; burns work_ms of real cpu."""
+    """Records (recv_time, msg.ts, age, wire bytes) per frame.
 
-    color_image: In[Image]
+    sink_mode "decode" decodes every frame (and burns work_ms of real cv2 cpu
+    on the pixels, like a busy detector); "bytes" never decodes.
+    """
 
-    def __init__(self, out_path: str = "", work_ms: float = 0.0, **kwargs: Any) -> None:
+    color_image: In[CompressedImage]
+
+    def __init__(
+        self,
+        out_path: str = "",
+        work_ms: float = 0.0,
+        sink_mode: str = "decode",
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self._out_path = out_path
         self._work_ms = work_ms
+        self._sink_mode = sink_mode
         self._buf: list[str] = []
         self._count = 0
         self._lock = threading.Lock()
@@ -112,16 +127,24 @@ class BenchSink(Module):
         self._flush()
         super().stop()
 
-    def _on_image(self, msg: Image) -> None:
+    def _on_image(self, msg: CompressedImage) -> None:
         now = time.time()
         self._count += 1
-        rec = {"t": now, "ts": msg.ts, "age": now - msg.ts, "i": self._count}
-        if self._work_ms > 0:
-            import cv2
+        rec = {
+            "t": now,
+            "ts": msg.ts,
+            "age": now - msg.ts,
+            "i": self._count,
+            "bytes": len(msg.data),
+        }
+        if self._sink_mode == "decode":
+            img = msg.decode()
+            if self._work_ms > 0:
+                import cv2
 
-            deadline = time.perf_counter() + self._work_ms / 1000
-            while time.perf_counter() < deadline:
-                cv2.GaussianBlur(msg.data, (31, 31), 5)
+                deadline = time.perf_counter() + self._work_ms / 1000
+                while time.perf_counter() < deadline:
+                    cv2.GaussianBlur(img.data, (31, 31), 5)
         rec["done_t"] = time.time()
         with self._lock:
             self._buf.append(json.dumps(rec))
@@ -154,8 +177,9 @@ def _sample_host(out_path: str, stop: threading.Event) -> None:
 
     me = psutil.Process()
     procs: dict[int, psutil.Process] = {}
-    lo0 = psutil.net_io_counters(pernic=True).get("lo")
-    last_lo = (lo0.bytes_sent if lo0 else 0, time.time())
+    # multicast may ride any interface (lo lacks MULTICAST on some boxes)
+    nic0 = psutil.net_io_counters(pernic=True)
+    last = ({k: v.bytes_sent for k, v in nic0.items()}, time.time())
     with open(out_path, "a") as f:
         while not stop.wait(1.0):
             tree = [me, *me.children(recursive=True)]
@@ -170,13 +194,20 @@ def _sample_host(out_path: str, stop: threading.Event) -> None:
                     rss += p.memory_info().rss
                 except psutil.NoSuchProcess:
                     procs.pop(p.pid, None)
-            lo = psutil.net_io_counters(pernic=True).get("lo")
+            nics = psutil.net_io_counters(pernic=True)
             now = time.time()
-            lo_rate = (lo.bytes_sent - last_lo[0]) / (now - last_lo[1]) if lo else 0
-            last_lo = (lo.bytes_sent if lo else 0, now)
+            dt = now - last[1]
+            rates = {k: (v.bytes_sent - last[0].get(k, 0)) / dt * 8 / 1e6 for k, v in nics.items()}
+            last = ({k: v.bytes_sent for k, v in nics.items()}, now)
             f.write(
                 json.dumps(
-                    {"t": now, "cpu_pct": cpu, "rss_mb": rss / 1e6, "lo_mbps": lo_rate * 8 / 1e6}
+                    {
+                        "t": now,
+                        "cpu_pct": cpu,
+                        "rss_mb": rss / 1e6,
+                        "lo_mbps": rates.get("lo", 0),
+                        "net_mbps": {k: round(r, 3) for k, r in rates.items() if r > 0.1},
+                    }
                 )
                 + "\n"
             )
@@ -186,8 +217,7 @@ def _sample_host(out_path: str, stop: threading.Event) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--blueprint", default="unitree-go2")
-    ap.add_argument("--mode", choices=["raw", "codec"], default="raw")
-    ap.add_argument("--quality", type=int, default=75)
+    ap.add_argument("--sink", choices=["decode", "bytes"], default="decode")
     ap.add_argument("--sinks", type=int, default=1)
     ap.add_argument("--work-ms", type=float, default=0.0)
     ap.add_argument("--duration", type=float, default=60.0)
@@ -200,27 +230,22 @@ def main() -> None:
 
     from dimos.core.coordination.blueprints import autoconnect
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
-    from dimos.core.transport import LCMTransport
-    from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
     from dimos.robot.get_all_blueprints import get_blueprint_by_name
+    from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-    bp = get_blueprint_by_name(args.blueprint)
+    # no viewer bridge: it serves the shared viewer gRPC port and hijacks any
+    # open viewer on this box; also run benchmarks with a dedicated LCM_DEFAULT_URL
+    bp = get_blueprint_by_name(args.blueprint).disabled_modules(RerunBridgeModule)
     sinks = [
-        cls.blueprint(out_path=str(out / f"sink{i}.jsonl"), work_ms=args.work_ms)
+        cls.blueprint(
+            out_path=str(out / f"sink{i}.jsonl"), work_ms=args.work_ms, sink_mode=args.sink
+        )
         for i, cls in enumerate(SINK_CLASSES[: args.sinks])
     ]
     bp = autoconnect(bp, *sinks)
-    if args.mode == "codec":
-        bp = bp.transports(
-            {
-                ("color_image", Image): CompressedCodec(
-                    LCMTransport("/color_image", CompressedImage), quality=args.quality
-                )
-            }
-        )
 
     coordinator = ModuleCoordinator.build(bp, {"g": {"replay": True, "viewer": "none"}})
-    logger.info("benchmark run started", mode=args.mode, blueprint=args.blueprint)
+    logger.info("benchmark run started", sink=args.sink, blueprint=args.blueprint)
 
     stop = threading.Event()
     sampler = threading.Thread(target=_sample_host, args=(str(out / "host.jsonl"), stop))
