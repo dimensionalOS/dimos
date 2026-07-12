@@ -14,9 +14,9 @@
 
 # Untyped analysis script: gtsam/open3d/cv2 lack type stubs.
 # mypy: ignore-errors
-"""Combined comparison rrd: raw lidar cloud + EVERY gt_*_lidar version present in the db, each as
-its own colored entity, plus AprilTag landmarks + trajectories. Re-run after adding a new GT method
-and it picks the new stream up automatically.
+"""Combined comparison rrd: raw lidar cloud + EVERY *_corrected*_lidar version present in the db,
+each as its own colored entity, plus AprilTag landmarks + trajectories. Re-run after adding a new
+corrected method and it picks the new stream up automatically.
 
 Importable: `build(...)` writes the rrd and returns its path (used by post_process.py).
 Standalone: python dimos/navigation/jnav/components/loop_closure/gsc_pgo/scripts/make_rrd.py --rec=PATH [--lidar=...] [--odom=...] [--tags=...] [--out=...]
@@ -51,7 +51,7 @@ def build(
     lidar_stream="pointlio_lidar",
     odom_stream="pointlio_odometry",
     tag_stream="raw_april_tags",
-    out_name="gt_compare.rrd",
+    out_name="corrected_compare.rrd",
 ):
     recording_dir = Path(rec).expanduser()
     db_path = recording_dir / "mem2.db"
@@ -159,14 +159,14 @@ def build(
         return np.array(mean_positions), labels
 
     streams = store.list_streams()
-    gt_lidars = sorted(
+    corrected_lidars = sorted(
         stream_name
         for stream_name in streams
-        if stream_name.startswith("gt_") and "_lidar" in stream_name
+        if "_corrected" in stream_name and "_lidar" in stream_name
     )
-    print("raw + GT lidar streams:", gt_lidars)
+    print("raw + corrected lidar streams:", corrected_lidars)
 
-    rr.init("gt_compare")
+    rr.init("corrected_compare")
     rr.save(str(out_path))
     rr.log(
         "raw/cloud",
@@ -176,7 +176,7 @@ def build(
     rr.log(
         "raw/trajectory", rr.LineStrips3D([traj(odom_stream)], colors=[255, 120, 120]), static=True
     )
-    for lidar_index, lidar_name in enumerate(gt_lidars):
+    for lidar_index, lidar_name in enumerate(corrected_lidars):
         color = PALETTE[lidar_index % len(PALETTE)]
         cloud = accumulate(lidar_name)
         rr.log(f"{lidar_name}/cloud", rr.Points3D(cloud, colors=color, radii=0.02), static=True)
@@ -188,14 +188,14 @@ def build(
                 rr.LineStrips3D([traj(odom_name)], colors=color),
                 static=True,
             )
-    # landmarks placed against the first available gt odometry
-    gt_odoms = sorted(
+    # landmarks placed against the first available corrected odometry
+    corrected_odoms = sorted(
         stream_name
         for stream_name in streams
-        if stream_name.startswith("gt_") and "_odometry" in stream_name
+        if "_corrected" in stream_name and "_odometry" in stream_name
     )
-    if gt_odoms:
-        landmark_positions, labels = landmarks(gt_odoms[0])
+    if corrected_odoms:
+        landmark_positions, labels = landmarks(corrected_odoms[0])
         if len(landmark_positions):
             rr.log(
                 "landmarks",
@@ -223,5 +223,5 @@ if __name__ == "__main__":
         lidar_stream=_arg("--lidar", "pointlio_lidar"),
         odom_stream=_arg("--odom", "pointlio_odometry"),
         tag_stream=_arg("--tags", "raw_april_tags"),
-        out_name=_arg("--out", "gt_compare.rrd"),
+        out_name=_arg("--out", "corrected_compare.rrd"),
     )

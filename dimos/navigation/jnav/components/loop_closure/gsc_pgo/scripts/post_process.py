@@ -24,12 +24,14 @@ denser, balanced loop closure than one-medoid-per-visit.
 Two-stage solve: (1) GTSAM tag PGO -- anisotropic odometry between-factors (stiff roll/pitch + z
 anchor gravity, loose yaw) + quality-weighted AprilTag landmark factors fix macro drift;
 (2) ICP loop closures between spatially-close / temporally-distant lidar submaps anchor local
-geometry. Writes <out>_odometry / <out>_lidar back into the recording db, optionally a .pc2.lcm
-log of the corrected cloud, and opens a comparison rrd.
+geometry. Writes <lidar>_corrected / <odom>_corrected back into the recording db, plus raycast-
+accumulated maps (<lidar>_accumulated original + <lidar>_corrected_accumulated), optionally a
+.pc2.lcm log of the corrected cloud, and opens a comparison rrd.
 
 Usage: python dimos/navigation/jnav/components/loop_closure/gsc_pgo/scripts/post_process.py [odom|lidar|both] --rec=PATH
        [--lidar=pointlio_lidar] [--odom=pointlio_odometry] [--tags=raw_april_tags]
-       [--out=gt_pointlio] [--suffix=...] [--ignore-tags=17] [--no-icp] [--no-lcm] [--no-rrd]
+       [--corrected-suffix=_corrected] [--suffix=...] [--ignore-tags=17]
+       [--no-icp] [--no-lcm] [--no-rrd] [--no-accum]
 """
 
 import json
@@ -58,6 +60,9 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.navigation.jnav.components.loop_closure.gsc_pgo.scripts.accumulate import (
+    accumulate_stream,
+)
 from dimos.navigation.jnav.msgs.DeformationNode import DeformationNode, tf_id_for
 from dimos.navigation.jnav.msgs.Graph3D import Graph3D
 from dimos.navigation.jnav.utils import recording_db as rdb
@@ -102,8 +107,8 @@ DICTIONARY = arg("--dict", "DICT_APRILTAG_36h11")  # AprilTag dictionary, for au
 IGNORE_TAGS = {
     int(marker_id) for marker_id in arg("--ignore-tags").replace(",", " ").split()
 }  # dynamic/moving tags
-OUT_PREFIX = arg("--out", "gt_pointlio")  # output prefix -> <out>_odometry / <out>_lidar
-WRITE_LCM = "--no-lcm" not in sys.argv  # also emit <out>_lidar.pc2.lcm of the corrected cloud
+CORRECTED_SUFFIX = arg("--corrected-suffix", "_corrected")  # corrected streams: <input><suffix>
+WRITE_LCM = "--no-lcm" not in sys.argv  # also emit <lidar>_corrected.pc2.lcm of the corrected cloud
 OPEN_RRD = "--no-rrd" not in sys.argv  # build + open a comparison rrd at the end
 LCM_VOXEL = float(arg("--lcm-voxel", "0.05"))  # voxel size for the aggregated .pc2.lcm cloud
 LCM_OUTLIER_NN = 20  # statistical outlier removal: neighbor count
@@ -111,6 +116,9 @@ LCM_OUTLIER_STD = 2.0  # ...and std-ratio threshold (lower = more aggressive)
 LIDAR_FRAME = arg("--lidar-frame", "mid360_link")  # frame the raw lidar scans live in
 WORLD_FRAME = arg("--world-frame", "world")  # frame to register scans into
 USE_TF = "--no-tf" not in sys.argv  # world-register via recording tf (fallback: obs.pose)
+WRITE_ACCUM = "--no-accum" not in sys.argv  # raycast-accumulated maps: original + corrected
+ACCUM_VOXEL = float(arg("--accum-voxel", "0.05"))  # accumulation resolution / final voxel size (m)
+ACCUM_MAX_RANGE = float(arg("--accum-max-range", "20"))  # ignore returns/clearing beyond this (m)
 
 # Per-glimpse gates (speed == -1 means "unknown" and always passes).
 GATE = dict(
@@ -126,8 +134,8 @@ GATE = dict(
 if not REC_ARG:
     sys.exit(
         "usage: python dimos/navigation/jnav/components/loop_closure/gsc_pgo/scripts/post_process.py [odom|lidar|both] --rec=PATH "
-        "[--lidar=...] [--odom=...] [--tags=...] [--out=...] [--suffix=...] "
-        "[--no-icp] [--no-lcm] [--no-rrd]   (--rec is required: path to the recording dir)"
+        "[--lidar=...] [--odom=...] [--tags=...] [--corrected-suffix=...] [--suffix=...] "
+        "[--no-icp] [--no-lcm] [--no-rrd] [--no-accum]   (--rec is required: recording dir)"
     )
 REC = Path(REC_ARG).expanduser()
 DB = REC / "mem2.db"
@@ -217,7 +225,8 @@ if _TF_AVAILABLE:
         flush=True,
     )
 print(
-    f"streams: tags={RAW_STREAM} odom={ODOM_STREAM} lidar={LIDAR_STREAM} -> out={OUT_PREFIX}{SUFFIX}",
+    f"streams: tags={RAW_STREAM} odom={ODOM_STREAM} lidar={LIDAR_STREAM} "
+    f"-> corrected suffix {CORRECTED_SUFFIX}{SUFFIX}",
     flush=True,
 )
 
@@ -595,12 +604,12 @@ def pose_tuple(pose):
 
 
 # Persist the PGO's internal artifacts as REAL streams (true payload types):
-#   gt_tf_deformation_nodes (DeformationNode) -- per keyframe, the raw pose (original)
+#   tf_deformation_nodes_corrected (DeformationNode) -- per keyframe, the raw pose (original)
 #     then the optimized pose (current); a deformation-aware tf.get can replay the
 #     loop-closure correction from these exactly like the online gsc_pgo stream.
 #   pose_graph (Graph3D) -- the optimized keyframe nodes + sequential odom edges.
 _tf_edge_id = tf_id_for("map", "odom")
-_deform_name = f"gt_tf_deformation_nodes{SUFFIX}"
+_deform_name = f"tf_deformation_nodes{CORRECTED_SUFFIX}{SUFFIX}"
 if _deform_name in store.list_streams():
     store.delete_stream(_deform_name)
 _deform_stream = store.stream(_deform_name, DeformationNode)
@@ -650,7 +659,7 @@ store.stream(_graph_name, Graph3D).append(
 print(f"wrote {_graph_name}: {num_keyframes} nodes, {len(_graph_edges)} edges", flush=True)
 
 if WHAT in ("odom", "both"):
-    out_name = f"{OUT_PREFIX}_odometry{SUFFIX}"
+    out_name = f"{ODOM_STREAM}{CORRECTED_SUFFIX}{SUFFIX}"
     if out_name in store.list_streams():
         store.delete_stream(out_name)
     out_stream = store.stream(out_name, Odometry)
@@ -685,7 +694,7 @@ if WHAT in ("odom", "both"):
     )
 
 if WHAT in ("lidar", "both"):
-    out_name = f"{OUT_PREFIX}_lidar{SUFFIX}"
+    out_name = f"{LIDAR_STREAM}{CORRECTED_SUFFIX}{SUFFIX}"
     odom_times = odom_rows[:, 0]
 
     def base_pose(ts):
@@ -805,6 +814,28 @@ if WHAT in ("lidar", "both"):
             f"wrote {lcm_path}: 1 aggregated cloud, {len(merged_xyz):,} pts "
             f"(voxel {LCM_VOXEL} m, outlier nn={LCM_OUTLIER_NN}/std={LCM_OUTLIER_STD})",
             flush=True,
+        )
+
+    if WRITE_ACCUM:
+        # Raycast-accumulated global maps. Original: the input lidar (sensor-frame,
+        # tf-registered). Corrected: the gt stream just written (already world in "odom").
+        accumulate_stream(
+            store,
+            LIDAR_STREAM,
+            f"{LIDAR_STREAM}_accumulated",
+            world_frame=WORLD_FRAME,
+            lidar_frame=LIDAR_FRAME,
+            use_tf=USE_TF,
+            voxel_size=ACCUM_VOXEL,
+            max_range=ACCUM_MAX_RANGE,
+        )
+        accumulate_stream(
+            store,
+            out_name,
+            f"{out_name}_accumulated",
+            world_frame="odom",
+            voxel_size=ACCUM_VOXEL,
+            max_range=ACCUM_MAX_RANGE,
         )
 
 # build + open the comparison rrd
