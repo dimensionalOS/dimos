@@ -371,12 +371,24 @@ class GO2Connection(Module, Camera, Pointcloud):
             self._speaker_track = None
             logger.exception("speaker attach failed — operator audio won't play on the dog")
 
+    def _detach_speaker(self) -> None:
+        """Stop and drop the speaker track so a stop()/start() cycle doesn't leak
+        it. Mirrors the sink deregistration; best-effort (the PC may be gone)."""
+        track = self._speaker_track
+        self._speaker_track = None
+        if track is not None:
+            try:
+                track.stop()
+            except Exception:
+                logger.debug("speaker track stop failed", exc_info=True)
+
     @rpc
     def stop(self) -> None:
         if self.config.audio_in:
             from dimos.protocol.pubsub.impl.webrtc.providers.spec import set_audio_sink
 
             set_audio_sink(None)  # drop the provider's ref to this module's sink
+            self._detach_speaker()  # stop + clear the speaker track (symmetry)
 
         # Best-effort steps: teardown must always reach the WebRTC disconnect.
         try:
