@@ -1,0 +1,76 @@
+use lcm_msgs::sensor_msgs::PointCloud2;
+use pyo3::exceptions::PyValueError;
+use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyDict};
+use validator::Validate;
+
+use crate::costmapper::{apply_initial_safe_radius, calculate_costmap, Config};
+
+#[pyclass]
+pub struct CostMapper {
+    config: Config,
+}
+
+fn config_value(config: &Bound<'_, PyDict>) -> PyResult<serde_json::Value> {
+    let json = config.py().import("json")?;
+    let encoded: String = json.call_method1("dumps", (config,))?.extract()?;
+    serde_json::from_str(&encoded)
+        .map_err(|error| PyValueError::new_err(format!("config must contain JSON values: {error}")))
+}
+
+#[pymethods]
+impl CostMapper {
+    #[new]
+    #[pyo3(signature = (*, algo, config, initial_safe_radius_meters = 0.0))]
+    fn new(
+        algo: String,
+        config: &Bound<'_, PyDict>,
+        initial_safe_radius_meters: f64,
+    ) -> PyResult<Self> {
+        let config = Config {
+            algo,
+            config: config_value(config)?,
+            initial_safe_radius_meters,
+        };
+        config
+            .validate()
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        Ok(Self { config })
+    }
+
+    /// Convert an LCM-encoded PointCloud2 into an LCM-encoded OccupancyGrid.
+    fn calculate_costmap<'py>(
+        &self,
+        py: Python<'py>,
+        cloud: &[u8],
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let cloud = PointCloud2::decode(cloud)
+            .map_err(|error| PyValueError::new_err(format!("invalid PointCloud2: {error}")))?;
+        let mut grid = calculate_costmap(&cloud, &self.config);
+        apply_initial_safe_radius(&mut grid, self.config.initial_safe_radius_meters);
+        Ok(PyBytes::new(py, &grid.encode()))
+    }
+
+    #[getter]
+    fn algo(&self) -> &str {
+        &self.config.algo
+    }
+
+    #[getter]
+    fn initial_safe_radius_meters(&self) -> f64 {
+        self.config.initial_safe_radius_meters
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "CostMapper(algo={:?}, initial_safe_radius_meters={})",
+            self.config.algo, self.config.initial_safe_radius_meters,
+        )
+    }
+}
+
+#[pymodule]
+fn dimos_native_costmapper(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<CostMapper>()?;
+    Ok(())
+}
