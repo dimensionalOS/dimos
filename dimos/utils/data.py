@@ -24,6 +24,7 @@ import sys
 import tarfile
 import tempfile
 import time
+from uuid import uuid4
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.utils.logging_config import setup_logger
@@ -291,47 +292,112 @@ def get_data(name: str | Path) -> Path:
     """
 
     data_dir = get_data_dir()
-
-    # extract archive root (first path component) and nested path
     file_path = data_dir / name
 
-    # extract archive root (first path component) and nested path
+    # Extract the archive root from the first path component and preserve any
+    # remaining components as the nested path.
     path_parts = Path(name).parts
     archive_name = path_parts[0]
     nested_path = Path(*path_parts[1:]) if len(path_parts) > 1 else None
 
-    # Get the first-level extracted directory
+    # Path to the first-level extracted file or directory.
     extracted_path = data_dir / archive_name
+
+    # Path to the corresponding Git LFS archive.
     archive_file = _get_lfs_dir() / f"{archive_name}.tar.gz"
 
-    # Already pulled and decompressed. Determine whether to delete the stale
-    # extracted directory/file by comparing the modification times of the
-    # archive and the extracted directory.
+    # If the requested path already exists, compare the archive and extracted
+    # root modification times to determine whether the extraction is stale.
     if file_path.exists():
-        archive_is_newer = (
-            archive_file.stat().st_mtime_ns
-            > extracted_path.stat().st_mtime_ns
-        )
+        archive_is_newer = False
+
+        # If the archive is missing, preserve and return the existing usable
+        # extracted data instead of raising FileNotFoundError from stat().
+        if archive_file.exists():
+            archive_is_newer = archive_file.stat().st_mtime_ns > extracted_path.stat().st_mtime_ns
 
         if archive_is_newer:
-            # Delete the stale extracted file or directory.
-            if extracted_path.is_dir() and not extracted_path.is_symlink():
-                shutil.rmtree(extracted_path)
-            else:
-                extracted_path.unlink()
-        else:
-            # return full path including nested components
-            return file_path
+            # Pull the updated archive before modifying the existing extracted
+            # data.
+            pull_path = _pull_lfs_archive(archive_name)
 
-    # download and decompress the archive root
+            # Extract the updated archive into a temporary staging directory so
+            # the existing extraction remains usable if extraction fails.
+            staging_dir = Path(
+                tempfile.mkdtemp(
+                    dir=data_dir,
+                    prefix=f"{archive_name}._staging_",
+                )
+            )
+
+            # Use a unique backup path to avoid conflicts with stale backup
+            # directories from previous interrupted refresh operations.
+            backup_path = data_dir / f"{archive_name}._backup_{uuid4().hex}"
+
+            try:
+                with tarfile.open(pull_path, "r:gz") as tar:
+                    tar.extractall(staging_dir)
+
+                # Archives are expected to contain a top-level directory whose
+                # name matches archive_name.
+                new_extracted = staging_dir / archive_name
+
+                if not new_extracted.exists():
+                    raise FileNotFoundError(
+                        f"Archive does not contain expected root: {archive_name}"
+                    )
+
+                # Preserve the current extraction as a backup before replacing
+                # it with the newly extracted data.
+                extracted_path.rename(backup_path)
+
+                try:
+                    # Move the new extraction into the final location.
+                    new_extracted.rename(extracted_path)
+                except Exception:
+                    # Restore the previous extraction if replacement fails.
+                    backup_path.rename(extracted_path)
+                    raise
+
+                # The replacement succeeded, so the old extraction is no
+                # longer needed.
+                if backup_path.is_dir() and not backup_path.is_symlink():
+                    shutil.rmtree(backup_path)
+                elif backup_path.exists():
+                    backup_path.unlink()
+
+                # Mark the extracted root with the archive modification time so
+                # the same archive is not repeatedly treated as newer.
+                archive_stat = pull_path.stat()
+                os.utime(
+                    extracted_path,
+                    ns=(
+                        extracted_path.stat().st_atime_ns,
+                        archive_stat.st_mtime_ns,
+                    ),
+                )
+
+                # Return the requested nested path or the extracted root.
+                result_path = extracted_path / nested_path if nested_path else extracted_path
+
+                return result_path
+
+            finally:
+                # Remove any remaining staging data after success or failure.
+                shutil.rmtree(staging_dir, ignore_errors=True)
+
+        # The archive is unchanged or unavailable, so return the existing
+        # extracted data.
+        return file_path
+
+    # The requested data has not been extracted yet. Pull and decompress the
+    # archive using the normal extraction flow.
     pull_path = _pull_lfs_archive(archive_name)
     archive_path = _decompress_archive(pull_path)
 
-    # Mark the extraction with the archive mtime so the next call does not
-    # repeatedly treat the same archive as newer.
+    # Mark the extracted root with the archive modification time so the next
+    # call does not repeatedly treat the same archive as newer.
     archive_stat = pull_path.stat()
-
-    # Set the extracted path mtime to the archive file mtime.
     os.utime(
         extracted_path,
         ns=(
@@ -340,9 +406,10 @@ def get_data(name: str | Path) -> Path:
         ),
     )
 
-    # return full path including nested components
+    # Return the requested nested path or the extracted archive root.
     if nested_path:
         return archive_path / nested_path
+
     return archive_path
 
 

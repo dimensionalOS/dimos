@@ -419,6 +419,8 @@ def test_lfs_path_multiple_instances() -> None:
 
 
 ARCHIVE_NAME = "a750_description"
+
+
 def test_get_data_without_extracted_path() -> None:
     """Test get_data when the extracted path does not exist."""
 
@@ -433,6 +435,7 @@ def test_get_data_without_extracted_path() -> None:
 
     assert isinstance(result, Path)
     assert result.exists()
+
 
 def test_get_data_with_existing_extracted_path() -> None:
     """Test get_data when the extracted path already exists."""
@@ -460,6 +463,7 @@ def test_get_data_with_existing_extracted_path() -> None:
     assert result.exists()
     assert before_mtime == after_mtime
 
+
 def test_get_data_with_updated_archive() -> None:
     """Test get_data when the archive is newer."""
 
@@ -481,19 +485,13 @@ def test_get_data_with_updated_archive() -> None:
                 newer_mtime,
             ),
         )
-        assert (
-            archive_file.stat().st_mtime_ns
-            > extracted_path.stat().st_mtime_ns
-        )
+        assert archive_file.stat().st_mtime_ns > extracted_path.stat().st_mtime_ns
 
         result = get_data(ARCHIVE_NAME)
 
-        assert (
-            archive_file.stat().st_mtime_ns
-            == extracted_path.stat().st_mtime_ns
-        )        
-
         assert result.exists()
+
+        assert archive_file.stat().st_mtime_ns == extracted_path.stat().st_mtime_ns
 
     finally:
         os.utime(
@@ -503,3 +501,51 @@ def test_get_data_with_updated_archive() -> None:
                 old_archive_stat.st_mtime_ns,
             ),
         )
+
+
+def test_get_data_with_missing_archive() -> None:
+    """Return existing extracted data when the archive is missing."""
+
+    archive_file = data._get_lfs_dir() / f"{ARCHIVE_NAME}.tar.gz"
+    extracted_path = data.get_data_dir() / ARCHIVE_NAME
+
+    result = get_data(ARCHIVE_NAME)
+    assert result.exists()
+
+    backup_file = archive_file.with_name(f"{archive_file.name}.bak")
+    archive_file.rename(backup_file)
+
+    try:
+        result = get_data(ARCHIVE_NAME)
+
+        assert result == extracted_path
+        assert result.exists()
+    finally:
+        backup_file.rename(archive_file)
+
+
+def test_get_data_with_nested_path() -> None:
+    """Test get_data with a nested path inside the extracted archive."""
+
+    nested_name = "a750_description/urdf/a750_rev1_no_gripper.urdf"
+
+    result = get_data(nested_name)
+
+    assert isinstance(result, Path)
+    assert result.exists()
+    assert result.is_file()
+    assert result.name == "a750_rev1_no_gripper.urdf"
+
+
+def test_get_data_with_nested_path() -> None:
+    """Test get_data with a nested path inside the extracted archive."""
+
+    nested_name = "a750_description/urdf/a750_rev1_no_gripper.urdf"
+    expected_path = data.get_data_dir() / nested_name
+
+    result = get_data(nested_name)
+
+    assert isinstance(result, Path)
+    assert result == expected_path
+    assert result.exists()
+    assert result.is_file()
