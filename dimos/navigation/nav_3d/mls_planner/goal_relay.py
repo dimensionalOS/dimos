@@ -12,11 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright 2026 Dimensional Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License").
-# limitations under the License.
-
 from __future__ import annotations
 
 from reactivex.disposable import Disposable
@@ -27,9 +22,6 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger()
 
 
 class GoalRelayConfig(ModuleConfig):
@@ -37,16 +29,7 @@ class GoalRelayConfig(ModuleConfig):
 
 
 class GoalRelay(Module):
-    """Adapt MovementManager's click goals + odometry to the planner's PoseStamped
-    inputs.
-
-    Pure pass-through: odometry -> ``start_pose`` and the goal point -> ``goal_pose``,
-    forwarding *everything* -- including MovementManager's NaN cancel sentinel, which
-    the mls planner reads as "clear the active goal". Stopping is enforced downstream
-    by the follower's ``stop_movement`` latch (which blocks the local planner from
-    restarting a follow off its stale committed route); this module deliberately keeps
-    no goal/hold state so a fresh click resumes cleanly with no ordering races.
-    """
+    """Adapt odometry and goal points to the planner's PoseStamped inputs."""
 
     config: GoalRelayConfig
 
@@ -66,7 +49,4 @@ class GoalRelay(Module):
         self.start_pose.publish(msg.to_pose_stamped())
 
     def _on_goal(self, point: PointStamped) -> None:
-        logger.warning(
-            "[CANCELDBG] GoalRelay forward goal -> mls xyz=(%s,%s,%s)", point.x, point.y, point.z
-        )
         self.goal_pose.publish(point.to_pose_stamped())
