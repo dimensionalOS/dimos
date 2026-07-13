@@ -12,18 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Two Rust NativeModules for a simple ping-pong example.
-
-PingModule and PongModule both declare a `data` port (Twist) and a `confirm` port (Twist).
-Ping publishes to data (received by pong), and Pong publishes to confirm (received by ping).
-Topics and module configs are sent through stdin to modules.
+"""A single ping-pong example that runs over either transport.
 
 Run with:
-    python examples/native-modules/rust_ping_pong.py
+    python examples/native-modules/rust_ping_pong.py --transport lcm
+    python examples/native-modules/rust_ping_pong.py --transport zenoh
 """
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 from dimos.core.coordination.blueprints import autoconnect
@@ -34,18 +32,19 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 
 _RUST_DIR = Path(__file__).parent / "rust"
 _EXAMPLES = _RUST_DIR / "target" / "release"
+_BUILD = "cargo build --release"
 
 
 class PingConfig(NativeModuleConfig):
-    executable: str = str(_EXAMPLES / "native_ping")
-    build_command: str = "cargo build --release"
+    executable: str = str(_EXAMPLES / "ping")
+    build_command: str = _BUILD
     cwd: str = str(_RUST_DIR)
     stdin_config: bool = True
 
 
 class PongConfig(NativeModuleConfig):
-    executable: str = str(_EXAMPLES / "native_pong")
-    build_command: str = "cargo build --release"
+    executable: str = str(_EXAMPLES / "pong")
+    build_command: str = _BUILD
     cwd: str = str(_RUST_DIR)
     stdin_config: bool = True
     sample_config: int = 42
@@ -67,10 +66,14 @@ class PongModule(NativeModule):
     confirm: Out[Twist]
 
 
+def blueprint():
+    return autoconnect(PingModule.blueprint(), PongModule.blueprint())
+
+
 if __name__ == "__main__":
-    ModuleCoordinator.build(
-        autoconnect(
-            PingModule.blueprint(),
-            PongModule.blueprint(),
-        ).global_config(viewer="none")
-    ).loop()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--transport", choices=["lcm", "zenoh"], default="lcm")
+    args = parser.parse_args()
+
+    bp = blueprint().global_config(viewer="none", transport=args.transport)
+    ModuleCoordinator.build(bp).loop()

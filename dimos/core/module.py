@@ -25,6 +25,7 @@ from typing import (
     ClassVar,
     Literal,
     Protocol,
+    TypeGuard,
     get_args,
     get_origin,
     get_type_hints,
@@ -40,10 +41,10 @@ from dimos.core.introspection.module.render import render_module_io
 from dimos.core.resource import CompositeResource
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteOut, Transport
-from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.core.transport_factory import rpc_backend, tf_backend
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
 from dimos.protocol.service.spec import BaseConfig, Configurable
-from dimos.protocol.tf.tf import LCMTF, TFSpec
+from dimos.protocol.tf.tf import TFSpec
 from dimos.utils import colors
 from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
@@ -103,10 +104,10 @@ Deployment = Literal["python", "docker"]
 
 
 class ModuleConfig(BaseConfig):
-    rpc_transport: type[RPCSpec] = LCMRPC
+    rpc_transport: type[RPCSpec] = Field(default_factory=rpc_backend)
     default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT
     rpc_timeouts: dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_RPC_TIMEOUTS))
-    tf_transport: type[TFSpec] = LCMTF  # type: ignore[type-arg]
+    tf_transport: type[TFSpec] = Field(default_factory=tf_backend)  # type: ignore[type-arg]
     frame_id_prefix: str | None = None
     frame_id: str | None = None
     g: GlobalConfig = global_config
@@ -154,8 +155,10 @@ class ModuleBase(Configurable, CompositeResource):
                 rpc_timeouts=self.config.rpc_timeouts,
                 default_rpc_timeout=self.config.default_rpc_timeout,
             )
-            self.rpc.serve_module_rpc(self)
+            # start() before serve_module_rpc(): Zenoh's subscribe needs an open
+            # session (acquired in start()), whereas LCM tolerates either order.
             self.rpc.start()  # type: ignore[attr-defined]
+            self.rpc.serve_module_rpc(self)
         except ValueError:
             ...
 
@@ -269,8 +272,7 @@ class ModuleBase(Configurable, CompositeResource):
     @property
     def tf(self):  # type: ignore[no-untyped-def]
         if self._tf is None:
-            # self._tf = self.config.tf_transport()
-            self._tf = LCMTF()
+            self._tf = self.config.tf_transport()
         return self._tf
 
     @tf.setter
@@ -813,7 +815,7 @@ class Module(ModuleBase):
 ModuleSpec = tuple[type[ModuleBase], GlobalConfig, dict[str, Any]]
 
 
-def is_module_type(value: Any) -> bool:
+def is_module_type(value: object) -> TypeGuard[type[Module]]:
     try:
         return inspect.isclass(value) and issubclass(value, Module)
     except Exception:

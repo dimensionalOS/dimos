@@ -1,4 +1,6 @@
-# Configuration
+---
+title: "Configuration"
+---
 
 Dimos provides a `Configurable` base class. See [`service/spec.py`](/dimos/protocol/service/spec.py#L22).
 
@@ -104,11 +106,11 @@ Config(
         mujoco_global_map_from_pointcloud=None,
         mujoco_start_pos='-1.0, 1.0',
         mujoco_steps_per_frame=7,
+        scene_package=None,
         robot_model=None,
         robot_width=0.3,
         robot_rotation_diameter=0.6,
         nerf_speed=1.0,
-        planner_robot_speed=None,
         mcp_port=9990,
         build_native=False,
         dtop=False,

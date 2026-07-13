@@ -17,7 +17,7 @@ from importlib import resources
 import sys
 from threading import Thread
 import time
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 
 from pydantic import Field
 from reactivex import empty
@@ -27,19 +27,12 @@ import rerun.blueprint as rrb
 
 from dimos.agents.annotation import skill
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
-from dimos.core.transport import LCMTransport, pSHMTransport
-from dimos.spec.perception import Camera, Pointcloud
-from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.core.rpc_client import ModuleProxy
-from dimos.memory2.replay import Replay, resolve_db_path
+from dimos.memory2.replay import Replay, ReplayStream, resolve_db_path
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -51,7 +44,9 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.type.lowstate import LowStateMsg
+from dimos.spec.perception import Camera, Pointcloud
 from dimos.utils.decorators.decorators import cached_property, simple_mcache
+from dimos.utils.logging_config import setup_logger
 
 if sys.version_info < (3, 13):
     from typing_extensions import TypeVar
@@ -71,10 +66,14 @@ class ConnectionConfig(ModuleConfig):
     mode: Go2Mode = Go2Mode.DEFAULT
     lidar: bool = True
     camera: bool = True
+    velocity_api: bool = False
     # "mcf" for stair traversal, "normal" for basic, None to leave it as is
     motion_mode: str | None = None
     # Per-device AES-128 key (Go2 fw >=1.1.15); defaults from GlobalConfig.
     aes_128_key: str | None = Field(default_factory=lambda m: m["g"].unitree_aes_128_key)
+    # TF parent frame of the internal odometry (odom_frame_id -> base_link).
+    # Rename (e.g. "go2_odom") when another odom source owns the tree root
+    odom_frame_id: str = "world"
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -124,6 +123,7 @@ def make_connection(
     ip: str | None,
     cfg: GlobalConfig,
     aes_128_key: str | None = None,
+    velocity_api: bool = False,
 ) -> Go2ConnectionProtocol:
     connection_type = cfg.unitree_connection_type.lower()
 
@@ -140,7 +140,11 @@ def make_connection(
         return DimSimConnection(cfg)
     elif connection_type == "webrtc":
         assert ip is not None, "IP address must be provided"
-        return UnitreeWebRTCConnection(ip, aes_128_key=aes_128_key)
+        return UnitreeWebRTCConnection(
+            ip,
+            aes_128_key=aes_128_key,
+            velocity_api=velocity_api,
+        )
     else:
         raise ValueError(f"Unknown simulator {cfg.simulation!r}. Choose from: mujoco, dimsim")
 
@@ -190,13 +194,29 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
     def set_rage_mode(self, enable: bool) -> bool:
         return True
 
+    def _stream_name(self, *names: str) -> str:
+        """Return the first of ``names`` present in the dataset (stream naming
+        changed over time: mid360 recordings use go2_lidar/go2_odom, older ones
+        lidar/odom)."""
+        available = self.replay.list_streams()
+        for name in names:
+            if name in available:
+                return name
+        raise KeyError(f"None of {names!r} in dataset {self.dataset!r}; available: {available}")
+
     @simple_mcache
     def lidar_stream(self) -> Observable[PointCloud2]:
-        return self.replay.streams.lidar.observable()
+        stream: ReplayStream[PointCloud2] = self.replay.stream(
+            self._stream_name("go2_lidar", "lidar")
+        )
+        return stream.observable()
 
     @simple_mcache
     def odom_stream(self) -> Observable[PoseStamped]:
-        return self.replay.streams.odom.observable()
+        stream: ReplayStream[PoseStamped] = self.replay.stream(
+            self._stream_name("go2_odom", "odom")
+        )
+        return stream.observable()
 
     @simple_mcache
     def video_stream(self) -> Observable[Image]:
@@ -248,7 +268,10 @@ class GO2Connection(Module, Camera, Pointcloud):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.connection = make_connection(
-            self.config.ip, self.config.g, aes_128_key=self.config.aes_128_key
+            self.config.ip,
+            self.config.g,
+            aes_128_key=self.config.aes_128_key,
+            velocity_api=self.config.velocity_api,
         )
 
         if hasattr(self.connection, "camera_info_static"):
@@ -328,6 +351,7 @@ class GO2Connection(Module, Camera, Pointcloud):
         ]
 
     def _publish_tf(self, msg: PoseStamped) -> None:
+        msg.frame_id = self.config.odom_frame_id
         transforms = self._odom_to_tf(msg)
         self.tf.publish(*transforms)
         if self.odom.transport:
@@ -403,23 +427,3 @@ class GO2Connection(Module, Camera, Pointcloud):
         Returns None if no frame has been captured yet.
         """
         return self._latest_video_frame
-
-
-def deploy(dimos: ModuleCoordinator, ip: str, prefix: str = "") -> "ModuleProxy":
-    from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
-
-    connection = dimos.deploy(GO2Connection, ip=ip)
-
-    connection.pointcloud.transport = pSHMTransport(
-        f"{prefix}/lidar", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-    )
-    connection.color_image.transport = pSHMTransport(
-        f"{prefix}/image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-    )
-
-    connection.cmd_vel.transport = LCMTransport(f"{prefix}/cmd_vel", Twist)
-
-    connection.camera_info.transport = LCMTransport(f"{prefix}/camera_info", CameraInfo)
-    connection.start()
-
-    return connection

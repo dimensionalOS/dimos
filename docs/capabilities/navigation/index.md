@@ -1,5 +1,6 @@
-
-# GO2 Navigation
+---
+title: "Navigation"
+---
 
 ![output](assets/noros_nav.gif)
 

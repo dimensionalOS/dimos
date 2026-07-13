@@ -21,28 +21,22 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.a750.config import (
     A750_FK_MODEL,
-    A750_HOME_JOINTS,
     a750_hardware,
     make_a750_model_config,
 )
-from dimos.robot.manipulators.common.blueprints import cartesian_ik_task
+from dimos.robot.manipulators.common.blueprints import eef_twist_task
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 _a750_hw = a750_hardware("arm", mock_without_address=True)
 
 keyboard_teleop_a750 = autoconnect(
-    KeyboardTeleopModule.blueprint(
-        model_path=A750_FK_MODEL,
-        ee_joint_id=6,
-        home_joints=A750_HOME_JOINTS,
-        joint_names=_a750_hw.joints,
-    ),
+    KeyboardTeleopModule.blueprint(),
     ControlCoordinator.blueprint(
         tick_rate=100.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
         hardware=[_a750_hw],
-        tasks=[cartesian_ik_task(_a750_hw, model_path=A750_FK_MODEL, ee_joint_id=6)],
+        tasks=[eef_twist_task(_a750_hw, model_path=A750_FK_MODEL, ee_joint_id=6)],
     ),
     ManipulationModule.blueprint(
         robots=[make_a750_model_config()],

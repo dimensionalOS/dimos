@@ -26,6 +26,7 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.subject import Subject
 from unitree_webrtc_connect.constants import (
+    DATA_CHANNEL_TYPE,
     RTC_TOPIC,
     SPORT_CMD,
     VUI_COLOR,
@@ -52,6 +53,7 @@ from dimos.types.timestamped import Timestamped
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure, callback_to_observable
+from dimos.utils.sequential_ids import SequentialIds
 
 VideoMessage: TypeAlias = NDArray[np.uint8]  # Shape: (height, width, 3)
 
@@ -97,11 +99,19 @@ class SerializableVideoFrame:
 class UnitreeWebRTCConnection(Resource):
     _SPORT_API_ID_RAGEMODE: int = 2059
 
-    def __init__(self, ip: str, mode: str = "ai", aes_128_key: str | None = None) -> None:
+    def __init__(
+        self,
+        ip: str,
+        mode: str = "ai",
+        aes_128_key: str | None = None,
+        velocity_api: bool = False,
+    ) -> None:
         self.ip = ip
         self.mode = mode
         self.stop_timer: threading.Timer | None = None
         self.cmd_vel_timeout = 0.2
+        self._velocity_api = velocity_api
+        self._move_ids = SequentialIds()
         # Per-device AES-128 key for new Unitree firmware (data2=3 handshake); omitted when unset.
         self.conn = LegionConnection(
             WebRTCConnectionMethod.LocalSTA, ip=self.ip, aes_128_key=aes_128_key
@@ -147,11 +157,7 @@ class UnitreeWebRTCConnection(Resource):
 
         async def async_disconnect() -> None:
             try:
-                # Send stop command directly since we're already in the event loop.
-                self.conn.datachannel.pub_sub.publish_without_callback(
-                    RTC_TOPIC["WIRELESS_CONTROLLER"],
-                    data={"lx": 0, "ly": 0, "rx": 0, "ry": 0},
-                )
+                self._publish_movement(0, 0, 0)
                 await self.conn.disconnect()
             except Exception:
                 pass
@@ -164,11 +170,33 @@ class UnitreeWebRTCConnection(Resource):
         if self.thread.is_alive():
             self.thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
+    def _publish_movement(self, x: float, y: float, yaw: float) -> None:
+        if self._velocity_api:
+            self.conn.datachannel.pub_sub.publish_without_callback(
+                RTC_TOPIC["SPORT_MOD"],
+                data={
+                    "header": {
+                        "identity": {
+                            "id": self._move_ids.next() + 1,
+                            "api_id": SPORT_CMD["Move"],
+                        }
+                    },
+                    "parameter": json.dumps({"x": x, "y": y, "z": yaw}),
+                },
+                msg_type=DATA_CHANNEL_TYPE["REQUEST"],
+            )
+            return
+
+        self.conn.datachannel.pub_sub.publish_without_callback(
+            RTC_TOPIC["WIRELESS_CONTROLLER"],
+            data={"lx": -y, "ly": x, "rx": -yaw, "ry": 0},
+        )
+
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
-        """Send movement command to the robot using Twist commands.
+        """Send a body-frame movement command using the configured wire API.
 
         Args:
-            twist: Twist message with linear and angular velocities
+            twist: Linear x/y and angular z command
             duration: How long to move (seconds). If 0, command is continuous
 
         Returns:
@@ -176,15 +204,8 @@ class UnitreeWebRTCConnection(Resource):
         """
         x, y, yaw = twist.linear.x, twist.linear.y, twist.angular.z
 
-        # WebRTC coordinate mapping:
-        # x - Positive right, negative left
-        # y - positive forward, negative backwards
-        # yaw - Positive rotate right, negative rotate left
         async def async_move() -> None:
-            self.conn.datachannel.pub_sub.publish_without_callback(
-                RTC_TOPIC["WIRELESS_CONTROLLER"],
-                data={"lx": -y, "ly": x, "rx": -yaw, "ry": 0},
-            )
+            self._publish_movement(x, y, yaw)
 
         async def async_move_duration() -> None:
             """Send movement commands continuously for the specified duration."""

@@ -1,5 +1,6 @@
-# How to Integrate a New Manipulator Arm
-
+---
+title: "How to Integrate a New Manipulator Arm"
+---
 This guide walks through integrating a new robot arm with DimOS, from writing the hardware adapter to creating blueprints for planning and control.
 
 ## Architecture Overview
@@ -51,6 +52,7 @@ dimos/hardware/manipulators/
 ├── piper/
 └── yourarm/             # ← New directory
     ├── __init__.py
+    ├── _registry.py  # Declares your adapter (name → import path)
     └── adapter.py
 ```
 
@@ -76,13 +78,9 @@ DimOS Units: angles=radians, distance=meters, velocity=rad/s
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
 
 # Import your vendor SDK
 from yourarm_sdk import YourArmSDK
-
-if TYPE_CHECKING:
-    from dimos.hardware.manipulators.registry import AdapterRegistry
 
 from dimos.hardware.manipulators.spec import (
     ControlMode,
@@ -342,12 +340,15 @@ class YourArmAdapter:
     def read_force_torque(self) -> list[float] | None:
         """Read F/T sensor data [fx, fy, fz, tx, ty, tz]. None if no sensor."""
         return None
+```
 
+Then declare the adapter in a `_registry.py` manifest next to it:
 
-# ── Registry hook (required for auto-discovery) ───────────────────
-def register(registry: AdapterRegistry) -> None:
-    """Register this adapter with the registry."""
-    registry.register("yourarm", YourArmAdapter)
+```py
+# dimos/hardware/manipulators/yourarm/_registry.py
+ADAPTER_FACTORIES = {
+    "yourarm": "dimos.hardware.manipulators.yourarm.adapter:YourArmAdapter",
+}
 ```
 
 ### Key implementation notes
@@ -369,15 +370,15 @@ def register(registry: AdapterRegistry) -> None:
 
 ## Step 2: Create Package Files
 
-### How auto-discovery works
+### How discovery works
 
-The `AdapterRegistry` in `dimos/hardware/manipulators/registry.py` automatically discovers your adapter at import time:
+The `AdapterRegistry` in `dimos/hardware/manipulators/registry.py` discovers adapters from `_registry.py` manifests at import time:
 
 1. It iterates over all subpackages under `dimos/hardware/manipulators/`
-2. For each subpackage, it tries to import `<subpackage>.adapter`
-3. If that module has a `register()` function, it calls it
+2. For each subpackage, it loads `<subpackage>._registry` and records each `ADAPTER_FACTORIES` entry (name → `"module:attr"` import path)
+3. Your adapter module is imported only when `create("yourarm")` is first called
 
-This means **no manual registration is needed** — just having the `register()` function in your `adapter.py` is sufficient.
+The manifest must import nothing beyond stdlib — it is loaded even when your vendor SDK is missing, so the name always shows up in `available()` and a missing SDK fails loudly at `create()` instead of silently dropping the adapter. A CI test (`dimos/hardware/test_adapter_registries.py`) fails if an adapter directory has no manifest or a manifest path doesn't resolve.
 
 You can verify discovery works:
 
@@ -671,7 +672,8 @@ adapter.disconnect()
 Files to create:
 
 - [ ] `dimos/hardware/manipulators/yourarm/__init__.py`
-- [ ] `dimos/hardware/manipulators/yourarm/adapter.py` (implements Protocol + `register()`)
+- [ ] `dimos/hardware/manipulators/yourarm/adapter.py` (implements Protocol)
+- [ ] `dimos/hardware/manipulators/yourarm/_registry.py` (declares `ADAPTER_FACTORIES`)
 - [ ] `dimos/robot/yourarm/__init__.py`
 - [ ] `dimos/robot/yourarm/blueprints.py` (coordinator + planning blueprints)
 

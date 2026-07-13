@@ -14,14 +14,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import importlib
+import pkgutil
 import re
 import time
 
 import typer
 
-from dimos.core.transport import LCMTransport, pLCMTransport
-from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase
+from dimos.core.global_config import global_config
+from dimos.core.transport import PubSubTransport
+from dimos.core.transport_factory import make_transport, transport_topic
+from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
+from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
 
 _modules_to_try = [
     "dimos.msgs.geometry_msgs",
@@ -55,33 +60,41 @@ def _decode_typed_lcm_message(channel: str, data: bytes) -> object:
     return cls.lcm_decode(data)
 
 
+def _listen_forever(listening_msg: str, on_stop: Callable[[], None] = lambda: None) -> None:
+    """Print the banner and block until Ctrl+C, then run on_stop."""
+    typer.echo(listening_msg)
+    try:
+        while True:
+            time.sleep(0.1)
+    except KeyboardInterrupt:
+        on_stop()
+        typer.echo("\nStopped.")
+
+
 def topic_echo(topic: str, type_name: str | None) -> None:
-    # Explicit mode (legacy): unchanged.
+    # Explicit mode (legacy): backend chosen by make_transport from global_config.
     if type_name is not None:
         msg_type = _resolve_type(type_name)
-        use_pickled = getattr(msg_type, "lcm_encode", None) is None
-        transport: pLCMTransport[object] | LCMTransport[object] = (
-            pLCMTransport(topic) if use_pickled else LCMTransport(topic, msg_type)
-        )
-
-        def _on_message(msg: object) -> None:
-            print(msg)
-
-        transport.subscribe(_on_message)
-        typer.echo(f"Listening on {topic} for {type_name} messages... (Ctrl+C to stop)")
-        try:
-            while True:
-                time.sleep(0.1)
-        except KeyboardInterrupt:
-            typer.echo("\nStopped.")
+        transport: PubSubTransport[object] = make_transport(topic, msg_type)
+        transport.subscribe(lambda msg: print(msg))
+        _listen_forever(f"Listening on {topic} for {type_name} messages... (Ctrl+C to stop)")
         return
 
+    # Inferred typed mode: decode each message from the type embedded in its
+    # channel/key. The wire format is backend-specific, so dispatch on it.
+    if global_config.transport == "zenoh":
+        _topic_echo_inferred_zenoh(topic)
+    else:
+        _topic_echo_inferred_lcm(topic)
+
+
+def _topic_echo_inferred_lcm(topic: str) -> None:
     # Warn about missing system config for standalone CLI usage.
     from dimos.protocol.service.lcmservice import autoconf
 
     autoconf(check_only=True)
 
-    # Inferred typed mode: listen on /topic#pkg.Msg and decode from the msg_name suffix.
+    # Listen on /topic#pkg.Msg and decode from the msg_name suffix.
     bus = LCMPubSubBase()
     bus.start()  # starts threaded handle loop
 
@@ -93,52 +106,60 @@ def topic_echo(topic: str, type_name: str | None) -> None:
     assert bus.l is not None
     bus.l.subscribe(typed_pattern, on_msg)
 
-    typer.echo(
+    _listen_forever(
         f"Listening on {topic} (inferring from typed LCM channels like '{topic}#pkg.Msg')... "
-        "(Ctrl+C to stop)"
+        "(Ctrl+C to stop)",
+        bus.stop,
     )
 
-    try:
-        while True:
-            time.sleep(0.1)
-    except KeyboardInterrupt:
-        bus.stop()
-        typer.echo("\nStopped.")
+
+def _topic_echo_inferred_zenoh(topic: str) -> None:
+    key = transport_topic(topic)
+    bus = Zenoh()
+    bus.start()
+
+    # Typed Zenoh keys embed the type as a trailing segment ("dimos/topic/pkg.Msg");
+    # a wildcard subscription decodes each message from that suffix. Untyped keys
+    # don't resolve to a type and are skipped by the encoder. The ignore reflects the
+    # pattern Topic vs the encoder's concrete-topic protocol (see lcmpubsub.py).
+    bus.subscribe(Topic(f"{key}/**"), lambda msg, _topic: print(msg))  # type: ignore[arg-type]
+
+    _listen_forever(
+        f"Listening on {topic} (inferring from typed Zenoh keys like '{key}/pkg.Msg')... "
+        "(Ctrl+C to stop)",
+        bus.stop,
+    )
+
+
+def _build_eval_context() -> dict[str, object]:
+    # The msgs packages are namespace packages (no __init__.py), so walk their
+    # submodules; each message file defines a class of the same name.
+    eval_context: dict[str, object] = {}
+    for package_name in _modules_to_try:
+        package = importlib.import_module(package_name)
+        for module_info in pkgutil.iter_modules(package.__path__):
+            name = module_info.name
+            if name.startswith("test_"):
+                continue
+            try:
+                submodule = importlib.import_module(f"{package_name}.{name}")
+            except ImportError:
+                continue
+            obj = getattr(submodule, name, None)
+            if obj is not None:
+                eval_context[name] = obj
+    return eval_context
 
 
 def topic_send(topic: str, message_expr: str) -> None:
-    eval_context: dict[str, object] = {}
-    modules_to_import = [
-        "dimos.msgs.geometry_msgs",
-        "dimos.msgs.nav_msgs",
-        "dimos.msgs.sensor_msgs",
-        "dimos.msgs.std_msgs",
-        "dimos.msgs.vision_msgs",
-        "dimos.msgs.tf2_msgs",
-    ]
-
-    for module_name in modules_to_import:
-        try:
-            module = importlib.import_module(module_name)
-            for name in dir(module):
-                if not name.startswith("_"):
-                    obj = getattr(module, name, None)
-                    if obj is not None:
-                        eval_context[name] = obj
-        except ImportError:
-            continue
-
     try:
-        message = eval(message_expr, eval_context)
+        message = eval(message_expr, _build_eval_context())
     except Exception as e:
         typer.echo(f"Error parsing message: {e}", err=True)
         raise typer.Exit(1)
 
     msg_type = type(message)
-    use_pickled = getattr(msg_type, "lcm_encode", None) is None
-    transport: pLCMTransport[object] | LCMTransport[object] = (
-        pLCMTransport(topic) if use_pickled else LCMTransport(topic, msg_type)
-    )
+    transport: PubSubTransport[object] = make_transport(topic, msg_type)
 
     transport.broadcast(None, message)
     typer.echo(f"Sent to {topic}: {message}")

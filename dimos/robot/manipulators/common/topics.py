@@ -23,6 +23,7 @@ TaskName: TypeAlias = str
 
 COORDINATOR_FRAME_ID: FrameId = "coordinator"
 CARTESIAN_IK_TASK_NAME: TaskName = "cartesian_ik_arm"
+EEF_TWIST_TASK_NAME: TaskName = "eef_twist_arm"
 DEFAULT_TRAJECTORY_TASK_NAME: TaskName = "traj_arm"
 
 

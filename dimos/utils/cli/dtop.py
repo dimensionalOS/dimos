@@ -15,7 +15,7 @@
 """dtop — Live TUI for per-worker resource stats over LCM.
 
 Usage:
-    uv run python -m dimos.utils.cli.dtop [--topic /dimos/resource_stats]
+    uv run python -m dimos.utils.cli.dtop [--topic /resource_stats]
 """
 
 from __future__ import annotations
@@ -34,7 +34,8 @@ from textual.color import Color
 from textual.containers import VerticalScroll
 from textual.widgets import Static
 
-from dimos.protocol.pubsub.impl.lcmpubsub import PickleLCM, Topic
+from dimos.core.global_config import global_config
+from dimos.core.transport_factory import make_transport
 from dimos.utils.cli import theme
 
 if TYPE_CHECKING:
@@ -203,9 +204,7 @@ class ResourceSpyApp(App[None]):
 
     BINDINGS = [("q", "quit"), ("ctrl+c", "quit")]
 
-    def __init__(
-        self, topic_name: str = "/dimos/resource_stats", db_path: str | None = None
-    ) -> None:
+    def __init__(self, topic_name: str = "/resource_stats", db_path: str | None = None) -> None:
         super().__init__()
         self._topic_name = topic_name
         # Warn about missing system config before entering TUI raw mode.
@@ -222,8 +221,8 @@ class ResourceSpyApp(App[None]):
             self._store = None
         self._mem_streams: dict[str, Any] = {}
 
-        self._lcm = PickleLCM()
-        self._lcm.subscribe(Topic(self._topic_name), self._on_msg)
+        self._lcm = make_transport(self._topic_name)
+        self._lcm.subscribe(self._on_msg)
         self._lcm.start()
         self._lock = threading.Lock()
         self._latest: dict[str, Any] | None = None
@@ -243,7 +242,7 @@ class ResourceSpyApp(App[None]):
         if self._store is not None:
             self._store.stop()
 
-    def _on_msg(self, msg: dict[str, Any], _topic: str) -> None:
+    def _on_msg(self, msg: dict[str, Any]) -> None:
         with self._lock:
             self._latest = msg
             self._last_msg_time = time.monotonic()
@@ -557,8 +556,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         prog="dtop", description="Live TUI for per-worker resource stats."
     )
+    parser.add_argument("--topic", default="/resource_stats", help="Topic to subscribe to.")
     parser.add_argument(
-        "--topic", default="/dimos/resource_stats", help="LCM topic to subscribe to."
+        "--transport",
+        choices=["lcm", "zenoh"],
+        help="Transport backend (defaults to DIMOS_TRANSPORT / .env).",
     )
     parser.add_argument(
         "--log",
@@ -566,6 +568,9 @@ def main() -> None:
         help="Log stats to a memory2 SQLite database (dtop_{timestamp}.ignore.db).",
     )
     args = parser.parse_args()
+
+    if args.transport is not None:
+        global_config.update(transport=args.transport)
 
     db_path = f"dtop_{time.strftime('%Y%m%d_%H%M%S')}.ignore.db" if args.log else None
     if db_path:

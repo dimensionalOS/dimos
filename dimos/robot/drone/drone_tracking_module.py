@@ -171,11 +171,8 @@ class DroneTrackingModule(Module):
 
             logger.info(f"Object detected at bbox: {bbox}")
 
-            # Initialize CSRT tracker (use legacy for OpenCV 4)
-            try:
-                tracker = cv2.legacy.TrackerCSRT_create()  # type: ignore[attr-defined]
-            except AttributeError:
-                tracker = cv2.TrackerCSRT_create()  # type: ignore[attr-defined]
+            # Initialize CSRT tracker
+            tracker = cv2.legacy.TrackerCSRT_create()  # type: ignore[attr-defined]
 
             # Convert bbox format from [x1, y1, x2, y2] to [x, y, w, h]
             x1, y1, x2, y2 = bbox

@@ -1,4 +1,6 @@
-# Unitree G1
+---
+title: "Unitree G1"
+---
 
 ## Requirements
 

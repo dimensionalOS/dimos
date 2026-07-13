@@ -1,5 +1,6 @@
-# Go2 Non-ROS Navigation
-
+---
+title: "Go2 Non-ROS Navigation"
+---
 ![output](assets/noros_nav.gif)
 
 The Go2 navigation stack runs entirely without ROS. It uses a **column-carving voxel map** strategy: each new LiDAR frame replaces the corresponding region of the global map entirely, ensuring the map always reflects the latest observations.

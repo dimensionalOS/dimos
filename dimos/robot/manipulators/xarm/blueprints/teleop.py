@@ -21,7 +21,10 @@ from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.robot.manipulators.common.blueprints import cartesian_ik_task, teleop_ik_task
+from dimos.robot.manipulators.common.blueprints import (
+    eef_twist_task,
+    teleop_ik_task,
+)
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.xarm.config import (
     XARM6_FK_MODEL,
@@ -50,17 +53,13 @@ _xarm7_hw = make_xarm_hardware(
 )
 
 keyboard_teleop_xarm6 = autoconnect(
-    KeyboardTeleopModule.blueprint(
-        model_path=XARM6_FK_MODEL,
-        ee_joint_id=6,
-        joint_names=_xarm6_hw.joints,
-    ),
+    KeyboardTeleopModule.blueprint(),
     ControlCoordinator.blueprint(
         tick_rate=100.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
         hardware=[_xarm6_hw],
-        tasks=[cartesian_ik_task(_xarm6_hw, model_path=XARM6_FK_MODEL, ee_joint_id=6)],
+        tasks=[eef_twist_task(_xarm6_hw, model_path=XARM6_FK_MODEL, ee_joint_id=6)],
     ),
     ManipulationModule.blueprint(
         robots=[make_xarm6_model_config(add_gripper=False)],
@@ -69,17 +68,13 @@ keyboard_teleop_xarm6 = autoconnect(
 )
 
 keyboard_teleop_xarm7 = autoconnect(
-    KeyboardTeleopModule.blueprint(
-        model_path=XARM7_FK_MODEL,
-        ee_joint_id=7,
-        joint_names=_xarm7_hw.joints,
-    ),
+    KeyboardTeleopModule.blueprint(),
     ControlCoordinator.blueprint(
         tick_rate=100.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
         hardware=[_xarm7_hw],
-        tasks=[cartesian_ik_task(_xarm7_hw, model_path=XARM7_FK_MODEL, ee_joint_id=7)],
+        tasks=[eef_twist_task(_xarm7_hw, model_path=XARM7_FK_MODEL, ee_joint_id=7)],
     ),
     ManipulationModule.blueprint(
         robots=[make_xarm7_model_config(add_gripper=False)],

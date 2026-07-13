@@ -50,6 +50,12 @@ FRAMES: list[FrameSpec] = [
 ]
 
 
+def base_link_from_mid360() -> Transform:
+    """Composed base_link -> mid360_link transform from the static mount tree."""
+    edges = {t.child_frame_id: t for t in frames_to_edge_transforms(FRAMES)}
+    return edges["front_camera"] + edges["mid360_link"]
+
+
 class Go2Mid360StaticTf(StaticTfPublisher):
     """Publishes the Go2/Mid-360 mount tree onto tf on a fixed interval."""
 

@@ -19,19 +19,19 @@ except ImportError:
 
 try:
     from geometry_msgs.msg import (
-        Point,
-        Pose,
-        Quaternion,
-        Twist,
+        Point as Point,
+        Pose as Pose,
+        Quaternion as Quaternion,
+        Twist as Twist,
     )
-    from nav_msgs.msg import OccupancyGrid, Odometry
-    from std_msgs.msg import Header
+    from nav_msgs.msg import OccupancyGrid as OccupancyGrid, Odometry as Odometry
+    from std_msgs.msg import Header as Header
 except ImportError:
     from dimos_lcm.geometry_msgs import (
-        Point,
-        Pose,
-        Quaternion,
-        Twist,
+        Point as Point,
+        Pose as Pose,
+        Quaternion as Quaternion,
+        Twist as Twist,
     )
-    from dimos_lcm.nav_msgs import OccupancyGrid, Odometry
-    from dimos_lcm.std_msgs import Header
+    from dimos_lcm.nav_msgs import OccupancyGrid as OccupancyGrid, Odometry as Odometry
+    from dimos_lcm.std_msgs import Header as Header
