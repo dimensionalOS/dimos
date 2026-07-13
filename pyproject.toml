@@ -111,6 +111,9 @@ dependencies = [
     "sortedcontainers==2.4.0",
     "pydantic",
     "python-dotenv",
+    "packaging>=24.0",
+    "annotation-protocol>=1.4.0",
+    "lazy_loader",
     "typing_extensions>=4.7; python_version < '3.13'",
     "plum-dispatch==2.5.7",
     # Logging

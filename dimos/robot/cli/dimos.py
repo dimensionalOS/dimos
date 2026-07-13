@@ -686,10 +686,27 @@ def show_config() -> None:
 def list_blueprints() -> None:
     """List all available blueprints."""
     from dimos.robot.all_blueprints import all_blueprints
+    from dimos.robot.external_blueprints import (
+        ExternalBlueprintError,
+        list_external_blueprint_names,
+    )
 
     blueprints = [name for name in all_blueprints.keys() if not name.startswith("demo-")]
+    typer.echo("Built-in blueprints:")
     for blueprint_name in sorted(blueprints):
-        typer.echo(blueprint_name)
+        typer.echo(f"  {blueprint_name}")
+
+    try:
+        external_blueprints = list_external_blueprint_names()
+    except ExternalBlueprintError as exc:
+        typer.echo(typer.style(str(exc), fg=typer.colors.RED), err=True)
+        raise typer.Exit(1) from exc
+
+    if external_blueprints:
+        typer.echo("")
+        typer.echo("External blueprints:")
+        for blueprint_name in external_blueprints:
+            typer.echo(f"  {blueprint_name}")
 
 
 @main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
