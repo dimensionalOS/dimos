@@ -15,20 +15,19 @@ crate-type = ["cdylib", "rlib"]
 name = "native_costmapper"
 path = "src/main.rs"
 
+[features]
+python = ["dep:pyo3"]
+
 [dependencies]
 dimos-module = { path = "../../../../native/rust/dimos-module" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-ahash = "0.8"
-arrayvec = "0.7"
-rayon = "1"
 tracing = "0.1"
-pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"] }
-numpy = "0.25"
+pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"], optional = true }
+rayon = "1"
 validator = { version = "0.20", features = ["derive"] }
-nalgebra = "0.35.0"
 
 [profile.release]
 lto = "thin"

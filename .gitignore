@@ -72,6 +72,9 @@ yolo11n.pt
 /logs
 /recordings
 
+# Local benchmark and profiling output
+/benchmark_results/
+
 *.so
 
 /.mypy_cache*

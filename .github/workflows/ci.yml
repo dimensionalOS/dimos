@@ -125,10 +125,12 @@ jobs:
         run: |
           uv sync --group tests --frozen
           source .venv/bin/activate
+          maturin develop --features python -m dimos/mapping/native_costmapper/rust/Cargo.toml
           maturin develop -m dimos/mapping/ray_tracing/rust/Cargo.toml
           maturin develop -m dimos/navigation/nav_3d/mls_planner/rust/Cargo.toml
-          python -c "import dimos_voxel_ray_tracing, dimos_mls_planner"
+          python -c "import dimos_native_costmapper, dimos_voxel_ray_tracing, dimos_mls_planner"
           python -m pytest -c /dev/null --rootdir . --noconftest --import-mode=importlib -p no:cacheprovider -v \
+            dimos/mapping/native_costmapper/test_native_costmapper.py \
             dimos/mapping/ray_tracing/test_voxel_map.py \
             dimos/mapping/ray_tracing/test_transformer.py \
             dimos/navigation/nav_3d/mls_planner/test_mls_planner.py \
