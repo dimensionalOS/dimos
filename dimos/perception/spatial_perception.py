@@ -571,3 +571,13 @@ class SpatialMemory(Module):
         if semantic_distance < 0.3:
             return location
         return None
+
+    @rpc
+    def get_tagged_locations(self) -> list[RobotLocation]:
+        """Return all semantically-tagged named locations in spatial memory.
+
+        Enumerates every place tagged via ``tag_location`` (the named-location
+        collection), letting other modules fold the robot's known places into a
+        combined scene catalog. Returns an empty list when nothing is tagged.
+        """
+        return self.vector_db.get_tagged_locations()

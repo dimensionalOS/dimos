@@ -308,6 +308,27 @@ class SpatialVectorDB:
             ids=[location_id], documents=[location.name], metadatas=[metadata]
         )
 
+    def get_tagged_locations(self) -> list[RobotLocation]:
+        """Return every semantically-tagged location in the DB.
+
+        Unlike ``query_tagged_location`` (which returns the single best text
+        match), this enumerates the whole ``location_collection`` so callers can
+        list all named places the robot has been told about. Returns an empty
+        list if nothing has been tagged.
+        """
+        results = self.location_collection.get(include=["metadatas"])
+        metadatas = results.get("metadatas") if results else None
+        if not metadatas:
+            return []
+
+        locations = []
+        for metadata in metadatas:
+            if isinstance(metadata, list) and metadata and isinstance(metadata[0], dict):
+                metadata = metadata[0]  # handle nested metadata
+            if isinstance(metadata, dict):
+                locations.append(RobotLocation.from_vector_metadata(metadata))
+        return locations
+
     def query_tagged_location(self, query: str) -> tuple[RobotLocation | None, float]:
         """
         Query for a tagged location using semantic text search.

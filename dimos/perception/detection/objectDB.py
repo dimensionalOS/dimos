@@ -61,6 +61,7 @@ class ObjectDB:
         # track_id -> object_id mapping for fast lookup
         self._track_id_map: dict[int, str] = {}
         self._last_add_stats: dict[str, int] = {}
+        self._last_now = 0.0
 
         self._lock = threading.RLock()
 
@@ -87,7 +88,11 @@ class ObjectDB:
         }
 
         results: list[Object] = []
-        now = time.time()
+        # Clock in *stream time*: TTL bookkeeping compares against the
+        # observations' own timestamps, so replayed/recorded data (whose ts is
+        # far from wall clock) behaves exactly like live data. Falls back to
+        # wall clock only when the batch carries no timestamps.
+        now = max((obj.ts for obj in objects if obj.ts), default=time.time())
         with self._lock:
             self._prune_stale_pending(now)
             for obj in objects:
@@ -110,6 +115,7 @@ class ObjectDB:
         stats["pending"] = len(self._pending_objects)
         stats["permanent"] = len(self._objects)
         self._last_add_stats = stats
+        self._last_now = now
         if stats["created"] > 0 or stats["promoted"] > 0:
             logger.info(f"ObjectDB: {stats}")
         return results
@@ -117,6 +123,16 @@ class ObjectDB:
     def get_last_add_stats(self) -> dict[str, int]:
         with self._lock:
             return dict(self._last_add_stats)
+
+    @property
+    def now(self) -> float:
+        """The database's current stream time (last ingested batch's timestamp).
+
+        Use this instead of ``time.time()`` when computing "how long ago" an
+        object was seen, so replayed recordings report sensible ages.
+        """
+        with self._lock:
+            return self._last_now or time.time()
 
     def get_objects(self) -> list[Object]:
         """Get all permanent objects (detection_count >= threshold)."""
@@ -137,9 +153,9 @@ class ObjectDB:
             return object_id in self._objects
 
     def find_by_name(self, name: str) -> list[Object]:
-        """Find all permanent objects with matching name."""
+        """Find all permanent objects whose detector or refined name matches."""
         with self._lock:
-            return [obj for obj in self._objects.values() if obj.name == name]
+            return [obj for obj in self._objects.values() if name in (obj.name, obj.refined_name)]
 
     def find_by_object_id(self, object_id: str) -> Object | None:
         """Find an object by its object_id (searches pending and permanent)."""

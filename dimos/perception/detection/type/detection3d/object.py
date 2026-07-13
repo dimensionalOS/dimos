@@ -35,6 +35,8 @@ from dimos.msgs.vision_msgs.Detection3D import Detection3D as ROSDetection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 from dimos.perception.detection.type.detection3d.base import Detection3D
+from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
+from dimos.perception.detection.type.detection3d.pointcloud_filters import PointCloudFilter
 
 if TYPE_CHECKING:
     from dimos_lcm.sensor_msgs import CameraInfo
@@ -58,6 +60,15 @@ class Object(Detection3D):
     camera_transform: Transform | None = None
     mask: np.ndarray[Any, np.dtype[np.uint8]] | None = None
     detections_count: int = 1
+    # Contextual-labeling refinement (see dimos/perception/contextual_labeling.py).
+    # `name` stays the raw detector label; these hold the VLM's educated guess.
+    refined_name: str | None = None
+    refined_description: str | None = None
+
+    @property
+    def display_name(self) -> str:
+        """Best available name: the VLM-refined label when present, else the detector's."""
+        return self.refined_name or self.name
 
     def update_object(self, other: Object) -> None:
         """Update this object with data from another detection.
@@ -101,34 +112,77 @@ class Object(Detection3D):
     def scene_entity_label(self) -> str:
         """Get label for scene visualization."""
         if self.detections_count > 1:
-            return f"{self.name} ({self.detections_count})"
-        return f"{self.track_id}/{self.name} ({self.confidence:.0%})"
+            return f"{self.display_name} ({self.detections_count})"
+        return f"{self.track_id}/{self.display_name} ({self.confidence:.0%})"
 
     def to_detection3d_msg(self) -> ROSDetection3D:
         """Convert to ROS Detection3D message."""
-        obb = self.get_oriented_bounding_box()
-        orientation = Quaternion.from_rotation_matrix(obb.R)
+        # OBB (Qhull) fails on flat/degenerate clusters — e.g. a lidar cluster
+        # entirely on the floor plane — so fall back to an axis-aligned box.
+        try:
+            obb = self.get_oriented_bounding_box()
+            center = Vector3(obb.center[0], obb.center[1], obb.center[2])
+            size = Vector3(obb.extent[0], obb.extent[1], obb.extent[2])
+            orientation = Quaternion.from_rotation_matrix(obb.R)
+        except RuntimeError:
+            aabb = self.pointcloud.axis_aligned_bounding_box
+            aabb_center = (aabb.min_bound + aabb.max_bound) / 2.0
+            aabb_extent = aabb.max_bound - aabb.min_bound
+            center = Vector3(aabb_center[0], aabb_center[1], aabb_center[2])
+            size = Vector3(aabb_extent[0], aabb_extent[1], aabb_extent[2])
+            orientation = Quaternion(0.0, 0.0, 0.0, 1.0)
 
         msg = ROSDetection3D()
         msg.header = Header(self.ts, self.frame_id)
         msg.id = str(self.track_id)
-        msg.bbox.center = Pose(
-            position=Vector3(obb.center[0], obb.center[1], obb.center[2]),
-            orientation=orientation,
-        )
-        msg.bbox.size = Vector3(obb.extent[0], obb.extent[1], obb.extent[2])
+        msg.bbox.center = Pose(position=center, orientation=orientation)
+        msg.bbox.size = size
 
         return msg
 
-    def agent_encode(self) -> dict[str, Any]:
-        """Encode for agent consumption."""
-        return {
+    def agent_encode(self, now: float | None = None) -> dict[str, Any]:
+        """Encode for agent consumption.
+
+        Args:
+            now: Reference time for the "last seen" age. Defaults to wall
+                clock; pass the ObjectDB's stream time (``ObjectDB.now``) so
+                replayed recordings report sensible ages.
+        """
+        encoded = {
             "object_id": self.object_id,
             "track_id": self.track_id,
-            "name": self.name,
+            "name": self.display_name,
             "detections": self.detections_count,
-            "last_seen": f"{round(time.time() - self.ts)}s ago",
+            "last_seen": f"{round((now if now is not None else time.time()) - self.ts)}s ago",
         }
+        if self.refined_name:
+            encoded["detector_name"] = self.name
+        return encoded
+
+    def locate_encode(self, now: float | None = None) -> dict[str, Any]:
+        """Encode for agent consumption including world position and confidence.
+
+        Unlike agent_encode(), this exposes the object's world-frame location
+        (center), size, and detection confidence so an agent can reason about
+        *where* each observed item is, not just what it is.
+
+        Args:
+            now: Reference time for the "last seen" age (see agent_encode).
+        """
+        encoded = {
+            "object_id": self.object_id,
+            "name": self.display_name,
+            "position": {"x": self.center.x, "y": self.center.y, "z": self.center.z},
+            "frame": self.frame_id,
+            "confidence": round(float(self.confidence), 2),
+            "size": {"x": self.size.x, "y": self.size.y, "z": self.size.z},
+            "detections": self.detections_count,
+            "last_seen": f"{round((now if now is not None else time.time()) - self.ts)}s ago",
+        }
+        if self.refined_name:
+            encoded["detector_name"] = self.name
+            encoded["description"] = self.refined_description
+        return encoded
 
     def to_dict(self) -> dict[str, Any]:
         """Convert object to dictionary with all relevant data."""
@@ -309,6 +363,123 @@ class Object(Detection3D):
                     size=size,
                     pose=pose,
                     camera_transform=camera_transform,
+                    mask=store_mask,
+                )
+            )
+
+        return objects
+
+    @classmethod
+    def from_2d_to_list_lidar(
+        cls,
+        detections_2d: ImageDetections2D[Any],
+        world_pointcloud: PointCloud2,
+        camera_info: CameraInfo,
+        world_to_optical_transform: Transform,
+        filters: list[PointCloudFilter] | None = None,
+        use_aabb: bool = False,
+        max_distance: float = 0.0,
+        max_obstacle_width: float = 0.0,
+    ) -> list[Object]:
+        """Create 3D Objects from 2D detections by projecting a world-frame lidar cloud.
+
+        Sensor-alternative to :meth:`from_2d_to_list` for robots that have lidar
+        but no depth camera (e.g. the Go2 quadruped). For each 2D detection this
+        reuses :meth:`Detection3DPC.from_2d` to select the world-frame points that
+        project inside the detection, then computes the object's center/size the
+        same way :meth:`from_2d_to_list` does, so a single ``Object`` type flows
+        into the ``ObjectDB``.
+
+        Args:
+            detections_2d: 2D detections (bbox is used to select points; masks,
+                when present, are stored for downstream use).
+            world_pointcloud: Lidar/global-map pointcloud already in world frame.
+            camera_info: Camera intrinsics used to project points into the image.
+            world_to_optical_transform: Transform from world to the camera optical
+                frame (as returned by ``tf.get(camera_optical_frame, world)``).
+            filters: Pointcloud noise filters applied per detection. When None,
+                ``Detection3DPC.from_2d`` applies its own defaults; callers with
+                sparse clouds may pass a lighter set.
+            use_aabb: Use an axis-aligned bounding box (upright, identity
+                orientation) instead of an oriented one.
+            max_distance: Discard objects whose center is farther than this from
+                the origin (meters). 0 disables the filter.
+            max_obstacle_width: Clamp X/Y size to this value (meters). 0 disables.
+
+        Returns:
+            List of Object instances with world-frame pointclouds.
+        """
+        objects: list[Object] = []
+        frame_id = world_pointcloud.frame_id
+
+        for det in detections_2d.detections:
+            det3d = Detection3DPC.from_2d(
+                det=det,
+                world_pointcloud=world_pointcloud,
+                camera_info=camera_info,
+                world_to_optical_transform=world_to_optical_transform,
+                filters=filters,
+            )
+            if det3d is None:
+                continue
+
+            pc = det3d.pointcloud
+            if len(pc.pointcloud.points) < 3:
+                continue
+
+            # Compute bounding box. OBB can fail on near-coplanar/degenerate
+            # sparse lidar clusters, so fall back to AABB when it does.
+            center: Vector3
+            orientation: Quaternion
+            try:
+                if use_aabb:
+                    raise ValueError("aabb requested")
+                obb = pc.pointcloud.get_oriented_bounding_box()
+                center = Vector3(obb.center[0], obb.center[1], obb.center[2])
+                sx, sy, sz = float(obb.extent[0]), float(obb.extent[1]), float(obb.extent[2])
+                orientation = Quaternion.from_rotation_matrix(obb.R)
+            except (RuntimeError, ValueError):
+                aabb = pc.pointcloud.get_axis_aligned_bounding_box()
+                aabb_center = (aabb.min_bound + aabb.max_bound) / 2.0
+                aabb_extent = aabb.max_bound - aabb.min_bound
+                center = Vector3(aabb_center[0], aabb_center[1], aabb_center[2])
+                sx, sy, sz = float(aabb_extent[0]), float(aabb_extent[1]), float(aabb_extent[2])
+                orientation = Quaternion(0.0, 0.0, 0.0, 1.0)
+
+            if max_obstacle_width > 0:
+                sx = min(sx, max_obstacle_width)
+                sy = min(sy, max_obstacle_width)
+            size = Vector3(sx, sy, sz)
+
+            if max_distance > 0:
+                dist = (center.x**2 + center.y**2 + center.z**2) ** 0.5
+                if dist > max_distance:
+                    continue
+
+            pose = PoseStamped(
+                ts=det.ts,
+                frame_id=frame_id,
+                position=center,
+                orientation=orientation,
+            )
+
+            store_mask = det.mask if isinstance(det, Detection2DSeg) else None
+
+            objects.append(
+                cls(
+                    bbox=det.bbox,
+                    track_id=det.track_id,
+                    class_id=det.class_id,
+                    confidence=det.confidence,
+                    name=det.name,
+                    ts=det.ts,
+                    image=det.image,
+                    frame_id=frame_id,
+                    pointcloud=pc,
+                    center=center,
+                    size=size,
+                    pose=pose,
+                    camera_transform=world_to_optical_transform,
                     mask=store_mask,
                 )
             )

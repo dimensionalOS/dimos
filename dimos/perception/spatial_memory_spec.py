@@ -22,3 +22,18 @@ class SpatialMemorySpec(Spec, Protocol):
     def tag_location(self, robot_location: RobotLocation) -> bool: ...
     def query_tagged_location(self, query: str) -> RobotLocation | None: ...
     def query_by_text(self, text: str, limit: int = 5) -> list[dict]: ...  # type: ignore[type-arg]
+
+
+class SceneMemorySpec(Spec, Protocol):
+    """Read-only slice of spatial memory used to enrich the scene catalog and
+    resolve location queries.
+
+    Kept separate from ``SpatialMemorySpec`` so a consumer (e.g. the object
+    scene catalog) can depend on just the reads it needs without coupling to
+    the full navigation-facing contract. ``SpatialMemory`` structurally
+    satisfies both.
+    """
+
+    def get_tagged_locations(self) -> list[RobotLocation]: ...
+    def query_tagged_location(self, query: str) -> RobotLocation | None: ...
+    def query_by_text(self, text: str, limit: int = 5) -> list[dict]: ...  # type: ignore[type-arg]
