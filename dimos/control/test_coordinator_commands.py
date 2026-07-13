@@ -197,6 +197,18 @@ class TestActivationFanOut:
         coordinator.set_dry_run(False)
         assert task.dry_run is False
 
+    def test_restart_keeps_declared_commands_reachable(self, coordinator):
+        # add_task() skips known names, so a table cleared on stop() never rebuilds.
+        task = CommandRecordingTask("g1")
+        coordinator.add_task(task, task_type="g1_groot_wbc")
+
+        coordinator.start()
+        coordinator.stop()
+        coordinator.start()
+
+        coordinator.set_activated(True)
+        assert task.armed is True  # still declared after a stop/start cycle
+
 
 class TestValidatedDispatch:
     """New behavior introduced by TASK_EXPOSES: validated, declared commands."""

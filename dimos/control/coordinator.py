@@ -812,14 +812,12 @@ class ControlCoordinator(Module):
         """Stop the coordinator."""
         logger.info("Stopping ControlCoordinator...")
 
-        # Unsubscribe from streaming commands and drop the route table
+        # Route/command tables are kept: they track _tasks, which survives stop(),
+        # and add_task() skips known names so a restart would never rebuild them.
         with self._subscribe_lock:
             for unsub in self._stream_unsubs.values():
                 unsub()
             self._stream_unsubs.clear()
-        with self._task_lock:
-            self._routes.clear()
-            self._task_commands.clear()
         if self._twist_command_unsub:
             self._twist_command_unsub()
             self._twist_command_unsub = None
