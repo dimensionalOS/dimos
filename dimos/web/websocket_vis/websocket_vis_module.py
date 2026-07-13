@@ -330,6 +330,11 @@ class WebsocketVisModule(Module):
 
         @self.sio.event  # type: ignore[untyped-decorator]
         async def move_command(sid: str, data: dict[str, Any]) -> None:
+            logger.warning(
+                "[CANCELDBG] WebsocketVisModule move_command RX (tele_cmd_vel.transport=%s) data=%s",
+                bool(self.tele_cmd_vel and self.tele_cmd_vel.transport),
+                data,
+            )
             # Publish Twist if transport is configured
             if self.tele_cmd_vel and self.tele_cmd_vel.transport:
                 twist = Twist(

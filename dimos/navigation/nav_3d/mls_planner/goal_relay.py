@@ -30,6 +30,9 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 class GoalRelayConfig(ModuleConfig):
@@ -66,6 +69,8 @@ class GoalRelay(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        self._odom_count = 0
+        logger.warning("[CANCELDBG] GoalRelay STARTED (holding=%s)", self._holding)
         self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
         self.register_disposable(Disposable(self.goal.subscribe(self._on_goal)))
         self.register_disposable(Disposable(self.stop_movement.subscribe(self._on_stop_movement)))
@@ -78,9 +83,20 @@ class GoalRelay(Module):
         if not self._holding and self._active_goal is not None:
             if self._dist(pose, self._active_goal) < self.config.arrival_tolerance:
                 self._holding = True
+                logger.warning("[CANCELDBG] GoalRelay ARRIVED at goal -> holding")
         # Hold mode: keep the goal pinned to the current pose (tracks physical moves).
         if self._holding:
             self.goal_pose.publish(pose)
+        # Heartbeat every ~2s so it's obvious in the log whether we're holding.
+        self._odom_count += 1
+        if self._odom_count % 60 == 0:
+            logger.warning(
+                "[CANCELDBG] GoalRelay tick holding=%s active_goal=%s pose=(%.2f,%.2f)",
+                self._holding,
+                None if self._active_goal is None else "set",
+                pose.position.x,
+                pose.position.y,
+            )
 
     def _on_goal(self, point: PointStamped) -> None:
         # MovementManager cancels navigation by publishing a NaN goal (see its
@@ -88,9 +104,18 @@ class GoalRelay(Module):
         # otherwise it immediately un-does the stop_movement hold and shoves NaN
         # at the planner, which then falls back to its last real goal and the
         # robot walks back to it. Only a finite goal resumes pursuit.
-        if not all(math.isfinite(v) for v in (point.x, point.y, point.z)):
+        finite = all(math.isfinite(v) for v in (point.x, point.y, point.z))
+        logger.warning(
+            "[CANCELDBG] GoalRelay GOT GOAL finite=%s xyz=(%s,%s,%s)",
+            finite,
+            point.x,
+            point.y,
+            point.z,
+        )
+        if not finite:
             self._active_goal = None
             self._holding = True
+            logger.warning("[CANCELDBG] GoalRelay NaN goal -> CANCEL/hold")
             return
         goal = point.to_pose_stamped()
         self._active_goal = goal
@@ -98,6 +123,7 @@ class GoalRelay(Module):
         self.goal_pose.publish(goal)
 
     def _on_stop_movement(self, msg: Bool) -> None:
+        logger.warning("[CANCELDBG] GoalRelay GOT STOP_MOVEMENT data=%s -> hold", msg.data)
         self._active_goal = None
         self._holding = True
 
