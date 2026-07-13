@@ -24,6 +24,7 @@ import time
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 from pydantic import Field, field_validator
+from reactivex import operators as ops
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
@@ -381,8 +382,8 @@ class Recorder(MemoryModule):
         and registers the subscription for cleanup on stop().
         """
 
-        async def on_msg(msg: Any) -> None:
-            recv_ts = time.time()  # wall-clock at ingress
+        async def on_msg(stamped: tuple[float, Any]) -> None:
+            recv_ts, msg = stamped
             ts = self._resolve_ts(name, msg)
             pose = await self._resolve_pose(name, msg, ts)
             if not pose and name not in self.config.poseless_streams:
@@ -394,7 +395,9 @@ class Recorder(MemoryModule):
                 )
             stream.append(msg, ts=ts, pose=pose, tags={"reception_ts": recv_ts})
 
-        self.process_observable(input_topic.pure_observable(), on_msg)
+        # Stamp arrival time before the coalescing dispatch queue.
+        stamped = input_topic.pure_observable().pipe(ops.map(lambda msg: (time.time(), msg)))
+        self.process_observable(stamped, on_msg)
 
     def _prepare_streams(self) -> None:
         """On APPEND, drop the streams this recorder is about to (re)write — the
