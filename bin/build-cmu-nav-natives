@@ -105,9 +105,23 @@ def build_one(cfg_cls: type[NativeModuleConfig]) -> str:
     cwd = Path(cfg.cwd) if cfg.cwd is not None else base_dir
     if not cwd.is_absolute():
         cwd = base_dir / cwd
-    exe = Path(cfg.executable)
-    if not exe.is_absolute():
-        exe = cwd / exe
+    rel = Path(cfg.executable)
+    exe = rel if rel.is_absolute() else cwd / rel
+    out_link = rel if rel.is_absolute() else cwd / rel.parts[0]  # the `result` symlink
+
+    # Fast path: a previous run on this runner already built and pinned this exact
+    # command. `git clean` wipes the `result` symlink, but the pin under /nix
+    # survives — restore `result` from it so the exe.exists() check below skips
+    # `nix build` entirely. Without this, every run re-evaluates the flake and
+    # re-fetches its multi-GB `-source` closure just for the GC to delete it
+    # again. The `.cmd` sidecar guards correctness: a version bump changes
+    # build_command, misses the pin, and rebuilds.
+    cmd_file = GCROOTS_DIR / f"{name}.cmd"
+    pin = GCROOTS_DIR / name
+    if pin.exists() and cmd_file.is_file() and cmd_file.read_text() == cfg.build_command:
+        out_link.unlink(missing_ok=True)
+        out_link.symlink_to(pin.resolve())
+
     if exe.exists():
         status = f"OK:    {name} already built at {exe}"
     else:
@@ -124,13 +138,15 @@ def build_one(cfg_cls: type[NativeModuleConfig]) -> str:
         if proc.returncode != 0:
             raise RuntimeError(f"{name} exited {proc.returncode}\n{body}")
         status = f"DONE:  {name}\n{body}".rstrip()
-    # Anchor the realized store path with a permanent GC-root (see _pin) so a
-    # later `git clean` + nix-collect-garbage can't reap it and force a costly
-    # re-fetch/rebuild next run. Runs on every invocation — including the
-    # already-built path — so warm runners keep their pin fresh.
-    rel = Path(cfg.executable)
-    out_link = rel if rel.is_absolute() else cwd / rel.parts[0]
-    return status + _pin(name, out_link)
+    # Anchor the realized store path with a permanent GC-root (see _pin) and
+    # record its build_command so next run's fast path can validate the pin.
+    out = status + _pin(name, out_link)
+    if pin.exists():
+        try:
+            cmd_file.write_text(cfg.build_command)
+        except OSError:
+            pass
+    return out
 
 
 def main() -> None:
