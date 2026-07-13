@@ -656,9 +656,6 @@ class DanHolonomicTC(Module):
 
     def _on_stop(self, msg: Bool) -> None:
         self._cancelled = bool(msg.data)
-        logger.warning(
-            "[CANCELDBG] DanHolonomicTC stop_movement=%s -> cancelled=%s", msg.data, self._cancelled
-        )
         if msg.data:
             self._core.stop_planning()
 

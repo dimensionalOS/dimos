@@ -94,20 +94,10 @@ class MovementManager(Module):
             return
 
         logger.debug("Goal", x=round(msg.x, 1), y=round(msg.y, 1), z=round(msg.z, 1))
-        # A fresh goal resumes navigation: release any latched teleop cancel so the
-        # follower will accept the new route (it ignores paths while cancelled).
-        logger.warning("[CANCELDBG] MovementManager CLICK -> stop_movement=False (resume) + goal")
-        self.stop_movement.publish(Bool(data=False))
         self.way_point.publish(msg)
         self.goal.publish(msg)
 
     def _cancel_goal(self) -> None:
-        logger.warning(
-            "[CANCELDBG] MovementManager _cancel_goal: publishing stop_movement=True + NaN goal "
-            "(stop_movement.transport=%s goal.transport=%s)",
-            bool(getattr(self.stop_movement, "transport", None)),
-            bool(getattr(self.goal, "transport", None)),
-        )
         self.stop_movement.publish(Bool(data=True))
         # NOTE: this NaN goal is more of a safety fallback.
         # It can be REALLY bad if a robot is supposed to stop moving but wont
@@ -117,7 +107,7 @@ class MovementManager(Module):
         )
         self.way_point.publish(cancel)
         self.goal.publish(cancel)
-        logger.warning("[CANCELDBG] MovementManager _cancel_goal DONE")
+        logger.debug("Navigation cancelled — waiting for new goal")
 
     def _on_nav(self, msg: Twist) -> None:
         with self._lock:
@@ -130,15 +120,6 @@ class MovementManager(Module):
             self.cmd_vel.publish(msg)
 
     def _on_teleop(self, msg: Twist) -> None:
-        logger.warning(
-            "[CANCELDBG] MovementManager GOT TELEOP lin=(%.2f,%.2f,%.2f) ang=(%.2f,%.2f,%.2f)",
-            msg.linear.x,
-            msg.linear.y,
-            msg.linear.z,
-            msg.angular.x,
-            msg.angular.y,
-            msg.angular.z,
-        )
         with self._lock:
             self._teleop_active = True
             self._last_teleop_time = time.monotonic()
