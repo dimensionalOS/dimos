@@ -589,15 +589,14 @@ class G1GrootWBCTask(BaseControlTask):
             self._cmd[:] = [vx, vy, yaw_rate]
             self._last_cmd_time = t_now
 
-    def on_twist(self, msg: Twist, t_now: float) -> bool:
-        """Accept a Twist message, e.g. from an LCM cmd_vel transport."""
+    def on_twist_command(self, msg: Twist, t_now: float) -> None:
+        """Card-routed twist_command handler."""
         self.set_velocity_command(
             float(msg.linear.x),
             float(msg.linear.y),
             float(msg.angular.z),
             t_now,
         )
-        return True
 
     # Lifecycle
 

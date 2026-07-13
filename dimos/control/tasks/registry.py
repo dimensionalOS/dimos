@@ -35,7 +35,6 @@ from typing import TYPE_CHECKING, cast
 
 from dimos.control.routing import (
     CONSUMABLE_STREAMS,
-    DEFERRED_STREAMS,
     Routing,
     StreamBinding,
     TaskBindings,
@@ -218,11 +217,6 @@ class ControlTaskRegistry:
             where = f"{source}: task type {task_type!r}, stream {stream!r}"
             if not isinstance(stream, str):
                 raise TypeError(f"{where}: stream name must be a string")
-            if stream in DEFERRED_STREAMS:
-                raise ValueError(
-                    f"{where}: not card-routable yet; the twist path is deliberately "
-                    "deferred to a later PR, so this restriction is temporary"
-                )
             if stream not in CONSUMABLE_STREAMS:
                 raise ValueError(f"{where}: unknown stream; allowed: {sorted(CONSUMABLE_STREAMS)}")
             if (

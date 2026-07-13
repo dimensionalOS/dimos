@@ -195,9 +195,12 @@ class ControlCoordinator(Module):
         self._stream_unsubs: dict[str, Callable[[], None]] = {}
         self._subscribe_lock = threading.Lock()
 
-        # The twist stream predates cards and keeps its own handle until
-        # its migration PR.
-        self._twist_command_unsub: Callable[[], None] | None = None
+        # Hardware-side hooks run on the raw stream callback before card
+        # dispatch. They must stay out of _dispatch: the twist mapper itself
+        # dispatches joint_command, and _task_lock is not reentrant.
+        self._stream_pre_hooks: dict[str, Callable[[Any], None]] = {
+            "twist_command": self._map_twist_to_base_joints,
+        }
 
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
 
@@ -350,7 +353,8 @@ class ControlCoordinator(Module):
             logger.info(
                 f"Added hardware {component.hardware_id} with joints: {connected.joint_names}"
             )
-            return True
+        self._sync_stream_subscriptions()
+        return True
 
     @rpc
     def remove_hardware(self, hardware_id: str) -> bool:
@@ -384,7 +388,8 @@ class ControlCoordinator(Module):
             interface.disconnect()
             del self._hardware[hardware_id]
             logger.info(f"Removed hardware {hardware_id}")
-            return True
+        self._sync_stream_subscriptions()
+        return True
 
     @rpc
     def list_hardware(self) -> list[str]:
@@ -466,11 +471,21 @@ class ControlCoordinator(Module):
         return control_task_registry.bindings_for(task_type).exposes
 
     def _sync_stream_subscriptions(self) -> None:
-        """Subscribe streams that gained routes; drop those whose last consumer left."""
+        """Subscribe streams that gained consumers; drop those whose last consumer left.
+
+        A consumer is a card-declared task route, or BASE hardware for
+        ``twist_command``. Locks are taken sequentially, never nested.
+        """
         if not (self._tick_loop and self._tick_loop.is_running):
             return
         with self._task_lock:
             active = {stream for stream, entries in self._routes.items() if entries}
+        with self._hardware_lock:
+            has_base = any(
+                hw.component.hardware_type == HardwareType.BASE for hw in self._hardware.values()
+            )
+        if has_base:
+            active.add("twist_command")
         with self._subscribe_lock:
             for stream in active - self._stream_unsubs.keys():
                 try:
@@ -488,7 +503,11 @@ class ControlCoordinator(Module):
                 logger.info(f"Unsubscribed from {stream}; last card-bound consumer removed")
 
     def _make_stream_cb(self, stream: str) -> "Callable[[Any], None]":
+        pre_hook = self._stream_pre_hooks.get(stream)
+
         def _on_message(msg: Any) -> None:
+            if pre_hook is not None:
+                pre_hook(msg)
             self._dispatch(stream, msg)
 
         return _on_message
@@ -548,12 +567,8 @@ class ControlCoordinator(Module):
                 else:
                     logger.warning(f"{stream} for unknown task: {frame_id}")
 
-    def _on_twist_command(self, msg: Twist) -> None:
-        """Convert Twist → virtual joint velocities and route via joint_command dispatch.
-
-        Maps Twist fields to virtual joints using suffix convention:
-        base_vx ← linear.x, base_vy ← linear.y, base_wz ← angular.z, etc.
-        """
+    def _map_twist_to_base_joints(self, msg: Twist) -> None:
+        """Map Twist onto BASE virtual joints (base/vx ← linear.x, ...) via joint_command."""
         names: list[str] = []
         velocities: list[float] = []
 
@@ -575,14 +590,6 @@ class ControlCoordinator(Module):
         if names:
             joint_state = JointState(name=names, velocity=velocities)
             self._dispatch("joint_command", joint_state)
-
-        # Velocity-capable tasks opt in with set_velocity_command().
-        t_now = time.perf_counter()
-        with self._task_lock:
-            for task in self._tasks.values():
-                set_vel = getattr(task, "set_velocity_command", None)
-                if set_vel is not None:
-                    set_vel(msg.linear.x, msg.linear.y, msg.angular.z, t_now)
 
     @rpc
     def set_activated(self, engaged: bool) -> None:
@@ -611,20 +618,27 @@ class ControlCoordinator(Module):
 
     @rpc
     def reset_runtime_state(self, reactivate: bool | None = None) -> dict[str, bool]:
-        """Reset transient state on tasks that expose ``reset_runtime_state``.
+        """Reset transient state on tasks whose card declares ``reset_runtime_state``.
 
         This is meant for simulation/runtime discontinuities such as MuJoCo
         respawn, where task histories and latched commands must be cleared
-        without tearing down the coordinator.
+        without tearing down the coordinator. The result covers declaring
+        tasks only.
         """
         results: dict[str, bool] = {}
         with self._task_lock:
-            for task in self._tasks.values():
+            for name, task in self._tasks.items():
+                if "reset_runtime_state" not in self._task_commands.get(name, frozenset()):
+                    continue
                 try:
-                    results[task.name] = bool(task.reset_runtime_state(reactivate=reactivate))
+                    results[name] = bool(
+                        self._invoke_declared(
+                            task, name, "reset_runtime_state", {"reactivate": reactivate}
+                        )
+                    )
                 except Exception:
-                    logger.exception(f"reset_runtime_state() raised on task {task.name!r}")
-                    results[task.name] = False
+                    logger.exception(f"reset_runtime_state() raised on task {name!r}")
+                    results[name] = False
         return results
 
     @rpc
@@ -784,26 +798,9 @@ class ControlCoordinator(Module):
         )
         self._tick_loop.start()
 
-        # Subscribe the streams that registered tasks' cards consume.
+        # Subscribe the streams that registered tasks' cards consume, plus
+        # twist_command when BASE hardware demands the twist mapping.
         self._sync_stream_subscriptions()
-
-        # Twist commands drive either base hardware or velocity-capable tasks.
-        # This stream predates cards and is migrated in a follow-up PR.
-        has_twist_base = any(c.hardware_type == HardwareType.BASE for c in self.config.hardware)
-        with self._task_lock:
-            has_velocity_task = any(
-                callable(getattr(task, "set_velocity_command", None))
-                for task in self._tasks.values()
-            )
-        if has_twist_base or has_velocity_task:
-            try:
-                self._twist_command_unsub = self.twist_command.subscribe(self._on_twist_command)
-                logger.info("Subscribed to twist_command for twist base / velocity-capable tasks")
-            except Exception:
-                logger.warning(
-                    "Twist base or velocity-capable task configured but could not subscribe "
-                    "to twist_command. Use task_invoke RPC or set transport via blueprint."
-                )
 
         # Arming + dry-run are RPC-only; no stream subscription here.
 
@@ -820,9 +817,6 @@ class ControlCoordinator(Module):
             for unsub in self._stream_unsubs.values():
                 unsub()
             self._stream_unsubs.clear()
-        if self._twist_command_unsub:
-            self._twist_command_unsub()
-            self._twist_command_unsub = None
 
         if self._tick_loop:
             self._tick_loop.stop()

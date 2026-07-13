@@ -291,6 +291,17 @@ class TestValidatedDispatch:
             coordinator.task_invoke("traj_arm", "exceute", {})
         assert "execute" in str(excinfo.value)  # the error points at the right name
 
+    def test_reset_runtime_state_covers_declaring_tasks_only(self, coordinator):
+        declaring = CommandRecordingTask("g1")
+        coordinator.add_task(declaring, task_type="g1_groot_wbc")
+        # Bare add: has reset_runtime_state() but declares no commands.
+        bare = CommandRecordingTask("bare")
+        coordinator.add_task(bare)
+
+        assert coordinator.reset_runtime_state(reactivate=False) == {"g1": True}
+        assert declaring.reset_calls == [False]
+        assert bare.reset_calls == []
+
     def test_shims_reach_only_declaring_tasks(self, coordinator):
         declaring = CommandRecordingTask("g1")
         coordinator.add_task(declaring, task_type="g1_groot_wbc")
@@ -336,3 +347,13 @@ class TestDescribeTask:
 
     def test_unknown_task_returns_none(self, coordinator):
         assert coordinator.describe_task("nope") is None
+
+    def test_g1_reports_twist_stream_and_reset_command(self, coordinator):
+        task = CommandRecordingTask("g1")
+        coordinator.add_task(task, task_type="g1_groot_wbc")
+
+        desc = coordinator.describe_task("g1")
+
+        assert ("twist_command", "broadcast") in desc["streams"]
+        assert "reset_runtime_state" in desc["commands"]
+        assert desc["commands"]["reset_runtime_state"]["params"] == ["reactivate"]

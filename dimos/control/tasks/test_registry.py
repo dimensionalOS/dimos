@@ -144,8 +144,8 @@ def test_seeded_cards_load_into_registry() -> None:
     assert trajectory.consumes == ()  # command-driven only
     assert trajectory.exposes == frozenset({"execute", "cancel", "get_state"})
     g1 = control_task_registry.bindings_for("g1_groot_wbc")
-    assert g1.consumes == ()  # its twist input is a later PR
-    assert g1.exposes == frozenset({"arm", "disarm", "set_dry_run"})
+    assert g1.consumes == (StreamBinding("twist_command", "on_twist_command", Routing.BROADCAST),)
+    assert g1.exposes == frozenset({"arm", "disarm", "set_dry_run", "reset_runtime_state"})
 
 
 def _scannable_task_classes(task_type: str) -> list[type] | None:
@@ -251,12 +251,21 @@ def test_register_bindings_runtime_and_conflict() -> None:
 
 def test_register_bindings_rejects_bad_streams_and_routing() -> None:
     reg = ControlTaskRegistry()
-    with pytest.raises(ValueError, match="later PR"):
-        reg.register_bindings("fake_twist", consumes={"twist_command": ("on_twist", "broadcast")})
     with pytest.raises(ValueError, match="allowed"):
         reg.register_bindings("fake_stream", consumes={"no_such_port": ("on_x", "broadcast")})
     with pytest.raises(ValueError, match="routing"):
         reg.register_bindings("fake_routing", consumes={"joint_command": ("on_x", "round_robin")})
+
+
+def test_register_bindings_accepts_twist_card() -> None:
+    # twist_command left DEFERRED_STREAMS in B3; a twist card now loads.
+    reg = ControlTaskRegistry()
+    reg.register_bindings(
+        "fake_twist", consumes={"twist_command": ("on_twist_command", "broadcast")}
+    )
+    assert reg.bindings_for("fake_twist").consumes == (
+        StreamBinding("twist_command", "on_twist_command", Routing.BROADCAST),
+    )
 
 
 def test_register_bindings_rejects_bad_exposes() -> None:

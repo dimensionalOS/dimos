@@ -39,13 +39,11 @@ CONSUMABLE_STREAMS = frozenset(
         "joint_command",
         "coordinator_cartesian_command",
         "coordinator_ee_twist_command",
+        "twist_command",
         "teleop_buttons",
     }
 )
 """Coordinator input ports that cards may bind."""
-
-DEFERRED_STREAMS = frozenset({"twist_command"})
-"""Coordinator input ports that exist but are not card-routable yet."""
 
 
 @dataclass(frozen=True)

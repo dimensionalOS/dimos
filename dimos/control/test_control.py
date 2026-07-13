@@ -279,7 +279,7 @@ class TestControlCoordinatorLifecycle:
         unsubscribe.assert_called_once_with()
         assert coordinator._stream_unsubs == {}
 
-    def test_on_twist_command_still_routes_planar_twist_to_base_and_velocity_tasks(
+    def test_map_twist_to_base_joints_routes_planar_twist_via_joint_command(
         self, make_coordinator, mocker
     ):
         coordinator = make_coordinator()
@@ -289,13 +289,12 @@ class TestControlCoordinatorLifecycle:
             joints=make_twist_base_joints("base"),
         )
         coordinator._hardware = {"base": ConnectedTwistBase(MagicMock(), component)}
-        velocity_task = MagicMock()
-        velocity_task.claim.return_value = ResourceClaim(frozenset())
-        coordinator._tasks = {"velocity": velocity_task}
         dispatch = mocker.patch.object(coordinator, "_dispatch")
 
         try:
-            coordinator._on_twist_command(Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0]))
+            coordinator._map_twist_to_base_joints(
+                Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0])
+            )
         finally:
             coordinator.stop()
 
@@ -304,10 +303,6 @@ class TestControlCoordinatorLifecycle:
         assert isinstance(joint_state, JointState)
         assert joint_state.name == ["base/vx", "base/vy", "base/wz"]
         assert joint_state.velocity == [1.0, 2.0, 3.0]
-        velocity_task.set_velocity_command.assert_called_once()
-        vx, vy, wz, t_now = velocity_task.set_velocity_command.call_args.args
-        assert (vx, vy, wz) == (1.0, 2.0, 3.0)
-        assert isinstance(t_now, float)
 
     def test_reset_runtime_state_calls_task_hooks(self):
         class ResettableTask(BaseControlTask):
@@ -338,7 +333,8 @@ class TestControlCoordinatorLifecycle:
         task = ResettableTask()
 
         try:
-            assert coordinator.add_task(task)
+            # reset_runtime_state is card-gated; g1_groot_wbc declares it.
+            assert coordinator.add_task(task, task_type="g1_groot_wbc")
 
             assert coordinator.reset_runtime_state(reactivate=True) == {"resettable": True}
             assert task.reset_reactivate_args == [True]

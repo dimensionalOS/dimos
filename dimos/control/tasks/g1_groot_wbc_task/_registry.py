@@ -17,9 +17,9 @@ TASK_FACTORIES = {
 }
 
 TASK_CONSUMES: dict[str, dict[str, tuple[str, str]]] = {
-    "g1_groot_wbc": {},  # its twist input is wired to cards in a later PR
+    "g1_groot_wbc": {"twist_command": ("on_twist_command", "broadcast")},
 }
 
 TASK_EXPOSES: dict[str, list[str]] = {
-    "g1_groot_wbc": ["arm", "disarm", "set_dry_run"],
+    "g1_groot_wbc": ["arm", "disarm", "set_dry_run", "reset_runtime_state"],
 }
