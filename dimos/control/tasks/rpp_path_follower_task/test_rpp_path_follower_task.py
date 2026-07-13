@@ -17,6 +17,7 @@ feedforward/profile calibration, replan reset, and an end-to-end drive."""
 
 from __future__ import annotations
 
+import math
 from types import SimpleNamespace
 
 import pytest
@@ -39,11 +40,13 @@ from dimos.control.benchmarking.tuning import (
 from dimos.control.task import CoordinatorState, JointStateSnapshot
 from dimos.control.tasks.rpp_path_follower_task.rpp_path_follower_task import (
     RPPPathFollowerTask,
+    _with_tangent_headings,
     create_task,
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Path import Path
 
 _JOINTS = ["go2/vx", "go2/vy", "go2/wz"]
 
@@ -227,13 +230,6 @@ def test_drives_to_arrival_forward_only(artifact_path):
 
 
 # tangent-heading synthesis (for position-only planners e.g. MLS)
-
-import math
-
-from dimos.control.tasks.rpp_path_follower_task.rpp_path_follower_task import (
-    _with_tangent_headings,
-)
-from dimos.msgs.nav_msgs.Path import Path
 
 
 def _ident_path(points):
