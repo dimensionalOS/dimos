@@ -27,7 +27,7 @@ use dimos_module::{error_throttled, native_config, run, Input, LcmTransport, Mod
 use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::{Odometry, Path};
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
-use lcm_msgs::std_msgs::{Header, Time};
+use lcm_msgs::std_msgs::{Bool, Header, Time};
 use tracing::{debug, warn};
 
 #[native_config]
@@ -185,6 +185,13 @@ struct RepulsiveField {
     #[input(decode = Odometry::decode, handler = on_odometry)]
     odometry: Input<Odometry>,
 
+    // Teleop override: MovementManager publishes here whenever keyboard/teleop
+    // controls are used. Any message clears the committed route so the planner
+    // stops producing local_path (the tick loop gates on route.len() < 2) until
+    // a fresh global_path arrives — manual driving overrides autonomous nav.
+    #[input(decode = Bool::decode, handler = on_cancel_goal)]
+    cancel_goal: Input<Bool>,
+
     #[output(encode = Path::encode)]
     local_path: Output<Path>,
 
@@ -299,6 +306,20 @@ impl RepulsiveField {
             }
         }
         state.robot = Some((next, now));
+    }
+
+    /// Teleop override (MovementManager publishes on every keyboard/teleop
+    /// command). Clear the committed route and any pending alternative so the
+    /// tick loop's `route.len() < 2` gate stops publishing local_path — the
+    /// planner immediately stops steering toward the goal until a fresh
+    /// global_path re-seeds the route. A message arriving at all is the cancel;
+    /// `data == false` is not expected but is treated the same (stop is the
+    /// safe action).
+    async fn on_cancel_goal(&mut self, _msg: Bool) {
+        let mut state = self.state.lock().expect("state");
+        state.route.clear();
+        state.pending_route = None;
+        debug!("cancel_goal received: cleared route, holding until next global_path");
     }
 }
 

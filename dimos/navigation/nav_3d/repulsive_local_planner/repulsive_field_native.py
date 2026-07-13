@@ -25,6 +25,8 @@ rationale for each value lives in the reference implementation's comments.
 
 from __future__ import annotations
 
+from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
+
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -145,6 +147,10 @@ class RepulsiveFieldNative(NativeModule):
     terrain_map: In[PointCloud2]
     global_path: In[Path]
     odometry: In[Odometry]
+    # Teleop override: MovementManager publishes here whenever keyboard/teleop
+    # controls are used. Any message clears the committed route so the planner
+    # stops steering toward the goal until a new global_path arrives.
+    cancel_goal: In[Bool]
 
     local_path: Out[Path]
     costmap_cloud: Out[PointCloud2]
