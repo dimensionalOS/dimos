@@ -17,7 +17,6 @@
 
 all_blueprints = {
     "alfred-nav": "dimos.robot.diy.alfred.blueprints.alfred_nav:alfred_nav",
-    "arduino-msg-example": "dimos.experimental.arduino.examples.arduino_twist_echo.blueprint:arduino_msg_example",
     "coordinator-basic": "dimos.control.blueprints.basic:coordinator_basic",
     "coordinator-cartesian-ik-mock": "dimos.robot.manipulators.piper.blueprints.teleop:coordinator_cartesian_ik_mock",
     "coordinator-cartesian-ik-piper": "dimos.robot.manipulators.piper.blueprints.teleop:coordinator_cartesian_ik_piper",
@@ -122,6 +121,7 @@ all_blueprints = {
     "unitree-go2-markers": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2:unitree_go2_markers",
     "unitree-go2-memory": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2:unitree_go2_memory",
     "unitree-go2-mid360-record": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_mid360_record:unitree_go2_mid360_record",
+    "unitree-go2-mls-htc": "dimos.robot.unitree.go2.blueprints.navigation.unitree_go2_mls_htc:unitree_go2_mls_htc",
     "unitree-go2-nav-3d": "dimos.robot.unitree.go2.blueprints.navigation.unitree_go2_nav_3d:unitree_go2_nav_3d",
     "unitree-go2-relocalization": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2:unitree_go2_relocalization",
     "unitree-go2-ros": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2_ros:unitree_go2_ros",
@@ -144,9 +144,6 @@ all_blueprints = {
 
 all_modules = {
     "alfred-high-level": "dimos.robot.diy.alfred.effector_high_level.AlfredHighLevel",
-    "arduino-module": "dimos.experimental.arduino.arduino_module.ArduinoModule",
-    "arduino-multi-echo": "dimos.experimental.arduino.examples.arduino_multi_echo.module.ArduinoMultiEcho",
-    "arduino-twist-echo": "dimos.experimental.arduino.examples.arduino_twist_echo.module.ArduinoTwistEcho",
     "arm-teleop-module": "dimos.teleop.quest.quest_extensions.ArmTeleopModule",
     "b-box-navigation-module": "dimos.navigation.bbox_navigation.BBoxNavigationModule",
     "b1-connection-module": "dimos.robot.unitree.b1.connection.B1ConnectionModule",
@@ -157,6 +154,8 @@ all_modules = {
     "collection-recorder": "dimos.learning.collection.recorder.CollectionRecorder",
     "control-coordinator": "dimos.control.coordinator.ControlCoordinator",
     "cost-mapper": "dimos.mapping.costmapper.CostMapper",
+    "dan-holonomic-tc": "dimos.navigation.dannav.holonomic_tc.module.DanHolonomicTC",
+    "dan-local-planner": "dimos.navigation.dannav.local_planner.module.DanLocalPlanner",
     "demo-calculator-skill": "dimos.agents.skills.demo_calculator_skill.DemoCalculatorSkill",
     "demo-monitoring": "dimos.agents.demos.demo_capabilities.DemoMonitoring",
     "demo-robot": "dimos.agents.skills.demo_robot.DemoRobot",
