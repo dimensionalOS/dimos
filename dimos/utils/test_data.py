@@ -15,12 +15,13 @@
 import hashlib
 import os
 from pathlib import Path
+import shutil
 import subprocess
 
 import pytest
 
 from dimos.utils import data
-from dimos.utils.data import LfsPath, backup_file
+from dimos.utils.data import LfsPath, backup_file, get_data
 
 
 def _make_backups(dir_path: Path, stem: str, suffix: str, timestamps: list[str]) -> None:
@@ -415,3 +416,90 @@ def test_lfs_path_multiple_instances() -> None:
 
     # Both caches should point to the same file
     assert cache_1 == cache_2
+
+
+ARCHIVE_NAME = "a750_description"
+def test_get_data_without_extracted_path() -> None:
+    """Test get_data when the extracted path does not exist."""
+
+    extracted_path = data.get_data_dir() / ARCHIVE_NAME
+
+    if extracted_path.is_dir():
+        shutil.rmtree(extracted_path)
+    elif extracted_path.exists():
+        extracted_path.unlink()
+
+    result = get_data(ARCHIVE_NAME)
+
+    assert isinstance(result, Path)
+    assert result.exists()
+
+def test_get_data_with_existing_extracted_path() -> None:
+    """Test get_data when the extracted path already exists."""
+
+    archive_file = data._get_lfs_dir() / f"{ARCHIVE_NAME}.tar.gz"
+    extracted_path = data.get_data_dir() / ARCHIVE_NAME
+
+    result = get_data(ARCHIVE_NAME)
+    assert result.exists()
+
+    os.utime(
+        extracted_path,
+        ns=(
+            extracted_path.stat().st_atime_ns,
+            archive_file.stat().st_mtime_ns,
+        ),
+    )
+
+    before_mtime = extracted_path.stat().st_mtime_ns
+
+    result = get_data(ARCHIVE_NAME)
+
+    after_mtime = extracted_path.stat().st_mtime_ns
+
+    assert result.exists()
+    assert before_mtime == after_mtime
+
+def test_get_data_with_updated_archive() -> None:
+    """Test get_data when the archive is newer."""
+
+    archive_file = data._get_lfs_dir() / f"{ARCHIVE_NAME}.tar.gz"
+    extracted_path = data.get_data_dir() / ARCHIVE_NAME
+
+    result = get_data(ARCHIVE_NAME)
+    assert result.exists()
+
+    old_archive_stat = archive_file.stat()
+
+    try:
+        newer_mtime = extracted_path.stat().st_mtime_ns + 1_000_000_000
+
+        os.utime(
+            archive_file,
+            ns=(
+                old_archive_stat.st_atime_ns,
+                newer_mtime,
+            ),
+        )
+        assert (
+            archive_file.stat().st_mtime_ns
+            > extracted_path.stat().st_mtime_ns
+        )
+
+        result = get_data(ARCHIVE_NAME)
+
+        assert (
+            archive_file.stat().st_mtime_ns
+            == extracted_path.stat().st_mtime_ns
+        )        
+
+        assert result.exists()
+
+    finally:
+        os.utime(
+            archive_file,
+            ns=(
+                old_archive_stat.st_atime_ns,
+                old_archive_stat.st_mtime_ns,
+            ),
+        )

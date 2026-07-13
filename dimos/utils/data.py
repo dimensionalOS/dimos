@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -288,20 +289,56 @@ def get_data(name: str | Path) -> Path:
         # Nested path - downloads "dataset" archive, returns path to nested file
         frame = get_data("dataset/frames/001.png")
     """
-    data_dir = get_data_dir()
-    file_path = data_dir / name
 
-    # already pulled and decompressed, return it directly
-    if file_path.exists():
-        return file_path
+    data_dir = get_data_dir()
+
+    # extract archive root (first path component) and nested path
+    file_path = data_dir / name
 
     # extract archive root (first path component) and nested path
     path_parts = Path(name).parts
     archive_name = path_parts[0]
     nested_path = Path(*path_parts[1:]) if len(path_parts) > 1 else None
 
+    # Get the first-level extracted directory
+    extracted_path = data_dir / archive_name
+    archive_file = _get_lfs_dir() / f"{archive_name}.tar.gz"
+
+    # Already pulled and decompressed. Determine whether to delete the stale
+    # extracted directory/file by comparing the modification times of the
+    # archive and the extracted directory.
+    if file_path.exists():
+        archive_is_newer = (
+            archive_file.stat().st_mtime_ns
+            > extracted_path.stat().st_mtime_ns
+        )
+
+        if archive_is_newer:
+            # Delete the stale extracted file or directory.
+            if extracted_path.is_dir() and not extracted_path.is_symlink():
+                shutil.rmtree(extracted_path)
+            else:
+                extracted_path.unlink()
+        else:
+            # return full path including nested components
+            return file_path
+
     # download and decompress the archive root
-    archive_path = _decompress_archive(_pull_lfs_archive(archive_name))
+    pull_path = _pull_lfs_archive(archive_name)
+    archive_path = _decompress_archive(pull_path)
+
+    # Mark the extraction with the archive mtime so the next call does not
+    # repeatedly treat the same archive as newer.
+    archive_stat = pull_path.stat()
+
+    # Set the extracted path mtime to the archive file mtime.
+    os.utime(
+        extracted_path,
+        ns=(
+            extracted_path.stat().st_atime_ns,
+            archive_stat.st_mtime_ns,
+        ),
+    )
 
     # return full path including nested components
     if nested_path:
