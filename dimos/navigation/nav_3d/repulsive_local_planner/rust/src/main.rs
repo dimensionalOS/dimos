@@ -1,4 +1,18 @@
 // Copyright 2026 Dimensional Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 //! Native repulsive-field local planner: GENUINE high-rate solves.
@@ -21,9 +35,9 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use dimos_module::{error_throttled, native_config, run, Input, LcmTransport, Module, Output};
 use dimos_repulsive_field::costmap::{self, CostmapConfig, LevelTracker};
 use dimos_repulsive_field::solver::{self, SolverConfig};
-use dimos_module::{error_throttled, native_config, run, Input, LcmTransport, Module, Output};
 use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::{Odometry, Path};
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
@@ -85,6 +99,13 @@ pub struct Config {
     // Solver knobs (see solver.rs; names mirror the Python config).
     pub vehicle_width: f32,
     pub safety_margin: f32,
+    /// Robot bounding-box footprint (m), oriented to travel. `robot_width` (lateral)
+    /// drives the narrow-dimension traversal keep-out; `robot_length` (fore/aft) is
+    /// enforced by the oriented-box path validation; `footprint_offset` shifts the
+    /// box fore(+)/aft(-) along the heading. See solver.rs.
+    pub robot_length: f32,
+    pub robot_width: f32,
+    pub footprint_offset: f32,
     pub influence_radius: f32,
     pub clearance_weight: f32,
     pub path_weight: f32,
@@ -131,6 +152,9 @@ impl Config {
         SolverConfig {
             vehicle_width: self.vehicle_width,
             safety_margin: self.safety_margin,
+            robot_length: self.robot_length,
+            robot_width: self.robot_width,
+            footprint_offset: self.footprint_offset,
             influence_radius: self.influence_radius,
             clearance_weight: self.clearance_weight,
             path_weight: self.path_weight,
@@ -254,11 +278,8 @@ impl RepulsiveField {
         if !goal_moved && deviation > self.config.route_reroute_threshold_m {
             let now = Instant::now();
             match &state.pending_route {
-                Some((pending, since))
-                    if route_deviation(pending, &new_route) < 1.0 =>
-                {
-                    if now.duration_since(*since).as_secs_f32()
-                        < self.config.route_change_persist_s
+                Some((pending, since)) if route_deviation(pending, &new_route) < 1.0 => {
+                    if now.duration_since(*since).as_secs_f32() < self.config.route_change_persist_s
                     {
                         return; // not stable long enough — keep the committed route
                     }
@@ -302,6 +323,27 @@ impl RepulsiveField {
     }
 }
 
+/// Drop terrain points inside the robot's oriented footprint at `pose` (x, y, yaw).
+/// We are standing there, so those returns are the robot/ground, not obstacles;
+/// removing them stops a phantom self-return from blocking the planner's start.
+fn drop_footprint_points(
+    points: &mut Vec<[f32; 3]>,
+    pose: (f32, f32, f32),
+    half_len: f32,
+    half_w: f32,
+    offset: f32,
+) {
+    let (c, s) = (pose.2.cos(), pose.2.sin());
+    let cx = pose.0 + offset * c;
+    let cy = pose.1 + offset * s;
+    points.retain(|p| {
+        let (lx, ly) = (p[0] - cx, p[1] - cy);
+        let along = lx * c + ly * s;
+        let lat = -lx * s + ly * c;
+        !(along.abs() <= half_len && lat.abs() <= half_w)
+    });
+}
+
 struct Worker {
     state: Shared<SharedState>,
     config: Config,
@@ -334,11 +376,7 @@ impl Worker {
             // Snapshot inputs (cheap; heavy work happens outside the lock).
             let (robot_opt, terrain, route) = {
                 let mut state = self.state.lock().expect("state");
-                (
-                    state.robot,
-                    state.terrain.take(),
-                    state.route.clone(),
-                )
+                (state.robot, state.terrain.take(), state.route.clone())
             };
             let Some((robot, robot_at)) = robot_opt else {
                 dimos_module::warn_throttled!(Duration::from_secs(5), "no odometry yet");
@@ -374,7 +412,18 @@ impl Worker {
             // 20 s earlier, the robot walked off its 8 m edge, and the carrot
             // collapsed to a 0.22 m stub 1.84 m short of wp3, for 13 minutes,
             // silently. A build is a few ms at ~1.2 Hz; a solve is sub-ms.
-            if let Some(points) = terrain {
+            if let Some(mut points) = terrain {
+                // Footprint self-clear: we are physically standing here, so any
+                // return inside the robot's own oriented footprint is the robot or
+                // the ground under it, never an obstacle. Drop those points before
+                // the build so a phantom self-return can't wall off the start cell.
+                drop_footprint_points(
+                    &mut points,
+                    pose,
+                    self.config.robot_length * 0.5,
+                    self.config.robot_width * 0.5,
+                    self.config.footprint_offset,
+                );
                 let reference = level.update(robot.z, costmap_cfg.level_hysteresis);
                 map = Some(costmap::build(
                     &points,
@@ -385,13 +434,18 @@ impl Worker {
                 terrain_at = Some(Instant::now());
             }
             let Some(map_ref) = map.as_ref() else {
-                dimos_module::warn_throttled!(Duration::from_secs(5), "no costmap yet (no terrain received)");
+                dimos_module::warn_throttled!(
+                    Duration::from_secs(5),
+                    "no costmap yet (no terrain received)"
+                );
                 continue;
             };
             // Terrain-input death must be LOUD and must PARK the robot (via
             // the follower's cmd watchdog), never silently steer on a frozen
             // world (the hl62 failure above).
-            let map_age = terrain_at.map(|at| at.elapsed().as_secs_f32()).unwrap_or(0.0);
+            let map_age = terrain_at
+                .map(|at| at.elapsed().as_secs_f32())
+                .unwrap_or(0.0);
             if map_age > self.config.max_costmap_age_s {
                 dimos_module::error_throttled!(
                     Duration::from_secs(5),
@@ -455,8 +509,7 @@ impl Worker {
                     .unwrap_or(0.0)
             };
             if goal_dist > 1.0 && plan_reach(&plan) < 0.3 {
-                let retry =
-                    solver::plan(map_ref, &route, pose, speed, None, &solver_cfg);
+                let retry = solver::plan(map_ref, &route, pose, speed, None, &solver_cfg);
                 if plan_reach(&retry) >= 0.3 {
                     dimos_module::warn_throttled!(
                         Duration::from_secs(5),
@@ -485,12 +538,10 @@ impl Worker {
             // moves or a path opens up — this only silences the stream of
             // near-zero-length paths that otherwise churns the trajectory
             // follower once the robot is at rest on its goal.
-            let arrived =
-                goal_dist <= self.config.arrival_stop_radius_m && plan_reach(&plan) < 0.1;
+            let arrived = goal_dist <= self.config.arrival_stop_radius_m && plan_reach(&plan) < 0.1;
 
             // Small epsilon so 60 Hz ticks don't alias a 30 Hz target to 20 Hz.
-            let due = last_publish
-                .is_none_or(|at| at.elapsed() >= publish_period.mul_f32(0.95));
+            let due = last_publish.is_none_or(|at| at.elapsed() >= publish_period.mul_f32(0.95));
             if due && !arrived {
                 last_publish = Some(Instant::now());
                 let msg = self.build_path_msg(&plan.poses, pose);

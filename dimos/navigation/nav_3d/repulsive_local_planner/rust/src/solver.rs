@@ -1,4 +1,18 @@
 // Copyright 2026 Dimensional Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 //! Navigation-function local planner — a faithful port of the measured Python
@@ -19,6 +33,15 @@ use crate::costmap::{Costmap, LETHAL_THRESHOLD};
 pub struct SolverConfig {
     pub vehicle_width: f32,
     pub safety_margin: f32,
+    /// Robot bounding-box footprint (m), oriented to the travel heading. `length`
+    /// is fore/aft, `width` is lateral. The narrow (`width`) dimension is what the
+    /// Dijkstra traversal uses so the robot can thread any gap at least as wide as
+    /// itself; the full oriented box then validates the produced path (so the long
+    /// axis can't clip an obstacle it swept over). `offset` shifts the box fore(+)/
+    /// aft(-) along the heading (e.g. the geometric center vs the odom origin).
+    pub robot_length: f32,
+    pub robot_width: f32,
+    pub footprint_offset: f32,
     pub influence_radius: f32,
     pub clearance_weight: f32,
     pub path_weight: f32,
@@ -39,6 +62,9 @@ impl Default for SolverConfig {
         Self {
             vehicle_width: 0.5,
             safety_margin: 0.1,
+            robot_length: 0.7,
+            robot_width: 0.33,
+            footprint_offset: 0.0,
             influence_radius: 0.8,
             clearance_weight: 4.0,
             path_weight: 0.35,
@@ -89,7 +115,10 @@ impl Eq for HeapEntry {}
 impl Ord for HeapEntry {
     fn cmp(&self, other: &Self) -> Ordering {
         // Min-heap on cost.
-        other.cost.partial_cmp(&self.cost).unwrap_or(Ordering::Equal)
+        other
+            .cost
+            .partial_cmp(&self.cost)
+            .unwrap_or(Ordering::Equal)
     }
 }
 impl PartialOrd for HeapEntry {
@@ -181,15 +210,33 @@ pub fn plan(
     let width = map.width;
     let height = map.height;
     let n = width * height;
-    let inflate = cfg.vehicle_width * 0.5 + cfg.safety_margin;
+    // Traversal keep-out uses the robot's NARROW (width) half-extent, not an
+    // isotropic circle: in a corridor the robot orients ALONG the gap, so lateral
+    // width is the binding constraint. The long (length) axis is enforced after
+    // the search by the oriented-box path validation. This lets the robot thread
+    // any gap at least as wide as itself, where the old circle (which used the
+    // width in every direction PLUS margin) walled the robot out of its own cell.
+    let inflate = cfg.robot_width * 0.5 + cfg.safety_margin;
 
-    let free: Vec<bool> = (0..n)
+    let free_strict: Vec<bool> = (0..n)
         .map(|i| map.cost[i] < LETHAL_THRESHOLD && map.distance[i] >= inflate)
         .collect();
 
-    // Robot cell (nearest free within a small ring if the exact cell is not).
-    let Some(robot_cell) = nearest_free_cell(map, &free, robot.0, robot.1) else {
-        return Plan { poses: Vec::new() };
+    // Robot cell. NEVER GIVE UP: prefer a keep-out-clear start, but if the robot
+    // is pinned in a sub-width spot (no reachable cell is a full keep-out clear),
+    // fall back to traversing any non-lethal cell so it can still crawl toward
+    // open space instead of returning a dead stub. The clearance term in `entry`
+    // biases that crawl toward the widest opening, and the oriented-box validation
+    // keeps it from physically clipping a wall on the way.
+    let (robot_cell, free) = match nearest_free_cell(map, &free_strict, robot.0, robot.1) {
+        Some(c) => (c, free_strict),
+        None => {
+            let free_relaxed: Vec<bool> = (0..n).map(|i| map.cost[i] < LETHAL_THRESHOLD).collect();
+            match nearest_free_cell(map, &free_relaxed, robot.0, robot.1) {
+                Some(c) => (c, free_relaxed),
+                None => return Plan { poses: Vec::new() },
+            }
+        }
     };
 
     // Entry cost: travel + clearance ramp within influence_radius past the
@@ -227,7 +274,10 @@ pub fn plan(
     dist[start] = 0.0;
     parent[start] = start;
     let mut heap = BinaryHeap::new();
-    heap.push(HeapEntry { cost: 0.0, index: start });
+    heap.push(HeapEntry {
+        cost: 0.0,
+        index: start,
+    });
     while let Some(HeapEntry { cost, index }) = heap.pop() {
         if cost > dist[index] {
             continue;
@@ -239,7 +289,9 @@ pub fn plan(
             if r < 0 || c < 0 || r as usize >= height || c as usize >= width {
                 continue;
             }
-            if (r - robot_cell.0 as isize).abs() > max_cells || (c - robot_cell.1 as isize).abs() > max_cells {
+            if (r - robot_cell.0 as isize).abs() > max_cells
+                || (c - robot_cell.1 as isize).abs() > max_cells
+            {
                 continue;
             }
             let j = r as usize * width + c as usize;
@@ -250,7 +302,10 @@ pub fn plan(
             if next < dist[j] {
                 dist[j] = next;
                 parent[j] = index;
-                heap.push(HeapEntry { cost: next, index: j });
+                heap.push(HeapEntry {
+                    cost: next,
+                    index: j,
+                });
             }
         }
     }
@@ -413,7 +468,70 @@ pub fn plan(
         );
         poses.push((pts[i].0, pts[i].1, sy.atan2(cy)));
     }
+    // Oriented-box validation: the search used only the narrow (width) keep-out,
+    // so the long axis could still sweep a pose's footprint over an obstacle. Walk
+    // the poses and cut the plan at the first one whose oriented box overlaps a
+    // lethal cell — commit only as far as the WHOLE robot actually fits.
+    let half_len = cfg.robot_length * 0.5;
+    let half_w = cfg.robot_width * 0.5;
+    let mut safe = poses.len();
+    for (k, &(px, py, pyaw)) in poses.iter().enumerate() {
+        if box_hits_lethal(map, px, py, pyaw, half_len, half_w, cfg.footprint_offset) {
+            safe = k.max(1); // always keep the robot's own (footprint-cleared) pose
+            break;
+        }
+    }
+    poses.truncate(safe);
     Plan { poses }
+}
+
+/// True if the robot's oriented footprint box overlaps any lethal costmap cell.
+/// The box is centered at the pose shifted by `offset` fore/aft along `yaw`, with
+/// half-extents `half_len` along the heading and `half_w` lateral. Rasterises the
+/// box's axis-aligned bound and tests each lethal cell center against the rotated
+/// rectangle. Used to keep a plan from committing the robot's long axis into a
+/// wall the narrow-keep-out search stepped over.
+fn box_hits_lethal(
+    map: &Costmap,
+    x: f32,
+    y: f32,
+    yaw: f32,
+    half_len: f32,
+    half_w: f32,
+    offset: f32,
+) -> bool {
+    let (cyaw, syaw) = (yaw.cos(), yaw.sin());
+    let cx = x + offset * cyaw;
+    let cy = y + offset * syaw;
+    // Axis-aligned bound of the rotated box, in cells.
+    let ext_x = half_len * cyaw.abs() + half_w * syaw.abs();
+    let ext_y = half_len * syaw.abs() + half_w * cyaw.abs();
+    let Some((r0, c0)) = map.cell(cx, cy) else {
+        return false;
+    };
+    let r_cells = (ext_y / map.resolution).ceil() as isize;
+    let c_cells = (ext_x / map.resolution).ceil() as isize;
+    for dr in -r_cells..=r_cells {
+        for dc in -c_cells..=c_cells {
+            let r = r0 as isize + dr;
+            let c = c0 as isize + dc;
+            if r < 0 || c < 0 || r as usize >= map.height || c as usize >= map.width {
+                continue;
+            }
+            let idx = r as usize * map.width + c as usize;
+            if map.cost[idx] < LETHAL_THRESHOLD {
+                continue;
+            }
+            let (wx, wy) = map.cell_center(r as usize, c as usize);
+            let (lx, ly) = (wx - cx, wy - cy);
+            let along = lx * cyaw + ly * syaw;
+            let lat = -lx * syaw + ly * cyaw;
+            if along.abs() <= half_len && lat.abs() <= half_w {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn nearest_free_cell(map: &Costmap, free: &[bool], x: f32, y: f32) -> Option<(usize, usize)> {
@@ -441,4 +559,107 @@ fn nearest_free_cell(map: &Costmap, free: &[bool], x: f32, y: f32) -> Option<(us
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::costmap::{chamfer_distance, Costmap, LETHAL};
+
+    /// Horizontal corridor spanning the full x-width: cells within `free_half_rows`
+    /// of the center row are free, the rest are lethal walls. res 0.1 m, 70x40. The
+    /// clearance at the center row is `(free_half_rows + 1) * res` and the physical
+    /// wall edge is `(free_half_rows + 0.5) * res` from center.
+    fn corridor(free_half_rows: usize) -> Costmap {
+        let (res, width, height) = (0.1f32, 70usize, 40usize);
+        let origin = (0.0f32, -2.0f32);
+        let mid = height / 2;
+        let mut cost = vec![0i8; width * height];
+        for r in 0..height {
+            if (r as isize - mid as isize).unsigned_abs() > free_half_rows {
+                for c in 0..width {
+                    cost[r * width + c] = LETHAL;
+                }
+            }
+        }
+        let distance = chamfer_distance(&cost, width, height, res);
+        Costmap {
+            width,
+            height,
+            resolution: res,
+            origin,
+            cost,
+            distance,
+        }
+    }
+
+    fn cfg(robot_width: f32, safety_margin: f32) -> SolverConfig {
+        SolverConfig {
+            robot_width,
+            robot_length: 0.7,
+            safety_margin,
+            ..SolverConfig::default()
+        }
+    }
+
+    fn strict_free(map: &Costmap, inflate: f32) -> Vec<bool> {
+        (0..map.width * map.height)
+            .map(|i| map.cost[i] < LETHAL_THRESHOLD && map.distance[i] >= inflate)
+            .collect()
+    }
+
+    // Criterion B (free-check level): the skinny box opens a start the fat circle walls out.
+    #[test]
+    fn box_width_frees_a_gap_the_circle_walls_out() {
+        let map = corridor(3); // center clearance 0.4 m
+                               // 0.3-wide box -> keep-out 0.25 m -> the gap HAS a clear start.
+        assert!(nearest_free_cell(&map, &strict_free(&map, 0.3 * 0.5 + 0.1), 3.5, 0.0).is_some());
+        // 0.7-wide "circle" -> keep-out 0.45 m -> NO clear start in the same gap.
+        assert!(nearest_free_cell(&map, &strict_free(&map, 0.7 * 0.5 + 0.1), 3.5, 0.0).is_none());
+    }
+
+    // Criterion B (plan level): the oriented box threads a gap it fits, refuses one it doesn't.
+    #[test]
+    fn box_plan_threads_a_gap_it_fits_and_refuses_one_it_doesnt() {
+        let map = corridor(3); // gap edge ~0.35 m from center
+        let path = &[(0.5, 0.0), (6.5, 0.0)];
+        let robot = (0.5, 0.0, 0.0);
+        let fits = plan(&map, path, robot, 0.0, None, &cfg(0.3, 0.1));
+        let too_wide = plan(&map, path, robot, 0.0, None, &cfg(0.9, 0.1));
+        assert!(
+            fits.poses.len() >= 2,
+            "0.3-wide box must thread the gap, got {}",
+            fits.poses.len()
+        );
+        assert!(
+            too_wide.poses.len() < 2,
+            "0.9-wide box cannot fit, got {}",
+            too_wide.poses.len()
+        );
+    }
+
+    // Criterion C: pinned (no keep-out-clear start) but physically passable -> escape path, not a stub.
+    #[test]
+    fn never_give_up_escapes_a_pinned_but_passable_gap() {
+        let map = corridor(3); // clearance 0.4 m, edge 0.35 m
+        let c = cfg(0.5, 0.2); // keep-out 0.45 m > 0.4 -> pinned; box half 0.25 < 0.35 -> fits
+        let inflate = c.robot_width * 0.5 + c.safety_margin;
+        assert!(
+            nearest_free_cell(&map, &strict_free(&map, inflate), 3.5, 0.0).is_none(),
+            "precondition: pinned (no keep-out-clear start)"
+        );
+        let out = plan(
+            &map,
+            &[(0.5, 0.0), (6.5, 0.0)],
+            (0.5, 0.0, 0.0),
+            0.0,
+            None,
+            &c,
+        );
+        assert!(
+            out.poses.len() >= 2,
+            "never-give-up must escape when pinned but passable, got {}",
+            out.poses.len()
+        );
+    }
 }

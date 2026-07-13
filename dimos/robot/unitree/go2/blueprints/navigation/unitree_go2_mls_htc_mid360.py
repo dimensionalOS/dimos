@@ -60,6 +60,13 @@ from dimos.visualization.vis_module import vis_module
 
 voxel_size = 0.08
 
+# Robot footprint (m): Go2 body ~0.7 long x ~0.33 wide. One source of truth for
+# the whole stack — the local planner's oriented-box collision uses both, and mls's
+# global wall clearance is driven off the half-width, so routing (what mls threads)
+# and execution (what the local planner fits) agree on the robot's real size.
+ROBOT_LENGTH = 0.7
+ROBOT_WIDTH = 0.33
+
 # Body-frame axis-triad length (m).
 _axis_len = 0.5
 # Arrow radius as a fraction of the triad length.
@@ -106,7 +113,37 @@ def _render_path(msg: Any) -> Any:
     # Logging those would blank the line, so drop them and keep the last path.
     if len(msg.poses) == 0:
         return None
-    return msg.to_rerun(color=_PURPLE)
+    import math
+
+    import rerun as rr
+
+    line = msg.to_rerun(color=_PURPLE)
+
+    # Ghost boxes: the robot's oriented footprint swept along the local path, so
+    # the exact box the local planner is committing to (and threading gaps with)
+    # is visible travelling the route. Sampled ~a dozen along the path, heading =
+    # local travel direction, translucent green so obstacles show through.
+    pts = [(p.pose.position.x, p.pose.position.y, p.pose.position.z) for p in msg.poses]
+    step = max(1, len(pts) // 12)
+    centers: list[list[float]] = []
+    half_sizes: list[list[float]] = []
+    quaternions: list[Any] = []
+    for i in range(0, len(pts), step):
+        x, y, z = pts[i]
+        j = i + 1 if i + 1 < len(pts) else i - 1
+        yaw = math.atan2(pts[j][1] - y, pts[j][0] - x) if 0 <= j < len(pts) and j != i else 0.0
+        if j < i:
+            yaw = math.atan2(y - pts[j][1], x - pts[j][0])
+        centers.append([x, y, z])
+        half_sizes.append([ROBOT_LENGTH / 2.0, ROBOT_WIDTH / 2.0, ROBOT_WIDTH / 2.0])
+        quaternions.append(rr.Quaternion(xyzw=[0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0)]))
+    ghosts = rr.Boxes3D(
+        centers=centers,
+        half_sizes=half_sizes,
+        quaternions=quaternions,
+        colors=[(0, 255, 127, 45)],
+    )
+    return [("world/path", line), ("world/ghost_boxes", ghosts)]
 
 
 def _render_costmap(msg: Any) -> Any:
@@ -228,7 +265,10 @@ unitree_go2_mls_htc_mid360 = autoconnect(
         voxel_size=voxel_size,
         robot_height=0.3,
         surface_closing_radius=0.3,
-        wall_clearance_m=0.1,
+        # Global hard clearance = robot half-width, so mls won't route a path
+        # through a gap the robot physically can't fit (the local planner then
+        # threads it with the oriented box). Was a hard-coded 0.1 m < half-width.
+        wall_clearance_m=ROBOT_WIDTH / 2,
         wall_buffer_m=0.75,
         wall_buffer_weight=100.0,
         step_threshold_m=0.16,
@@ -258,7 +298,11 @@ unitree_go2_mls_htc_mid360 = autoconnect(
     RepulsiveFieldNative.blueprint(
         world_frame="odom",
         output_base_frame=False,
-        vehicle_width=0.4,  # meters
+        # Oriented bounding-box footprint (replaces the isotropic vehicle_width
+        # circle): robot_width is the narrow dimension it threads gaps by,
+        # robot_length is enforced by the oriented-box path validation.
+        robot_length=ROBOT_LENGTH,
+        robot_width=ROBOT_WIDTH,
         resolution=0.1,  # voxel size
     ).remappings(
         [

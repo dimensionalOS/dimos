@@ -95,6 +95,14 @@ class RepulsiveFieldNativeConfig(NativeModuleConfig):
     # Solver (course-tuned values; stories in the Python reference).
     vehicle_width: float = 0.5
     safety_margin: float = 0.1
+    # Robot bounding-box footprint (m), oriented to the travel heading. robot_width
+    # (lateral) is the narrow dimension the planner threads gaps by; robot_length
+    # (fore/aft) is enforced by the oriented-box path validation; footprint_offset
+    # shifts the box fore(+)/aft(-) along the heading. The oriented box replaces the
+    # isotropic vehicle_width circle as the collision primitive.
+    robot_length: float = 0.7
+    robot_width: float = 0.33
+    footprint_offset: float = 0.0
     influence_radius: float = 0.8
     clearance_weight: float = 4.0
     path_weight: float = 0.35
