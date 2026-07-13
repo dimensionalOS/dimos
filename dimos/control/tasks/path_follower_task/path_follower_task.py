@@ -94,7 +94,7 @@ class PathFollowerTaskConfig:
     # Used as the FIXED lookahead when lookahead_speed_scale == 0 and as the
     # initial value before the first adaptive update.
     lookahead_dist: float = 0.5
-    # --- Regulated-pure-pursuit adaptive lookahead (RPP's own knob) ---
+    # Regulated-pure-pursuit adaptive lookahead (RPP's own knob)
     # When lookahead_speed_scale > 0 the lookahead distance adapts to the
     # robot's current pursuit speed each tick:
     #     L = clip(lookahead_speed_scale * v, lookahead_min, lookahead_max)
@@ -192,9 +192,7 @@ class PathFollowerTask(BaseControlTask):
         self._velocity_profile: np.ndarray | None = None
         self._velocity_profile_pts: np.ndarray | None = None
 
-    # ------------------------------------------------------------------
     # ControlTask protocol
-    # ------------------------------------------------------------------
 
     @property
     def name(self) -> str:
@@ -313,9 +311,7 @@ class PathFollowerTask(BaseControlTask):
             logger.warning(f"PathFollowerTask '{self._name}' preempted by {by_task}")
             self._state = "aborted"
 
-    # ------------------------------------------------------------------
     # State-machine bodies (mirrors LocalPlanner._compute_*)
-    # ------------------------------------------------------------------
 
     def _step_initial_rotation(self) -> tuple[float, float, float]:
         assert self._path is not None and self._current_odom is not None
@@ -401,9 +397,7 @@ class PathFollowerTask(BaseControlTask):
         twist = self._controller.rotate(yaw_err)
         return float(twist.linear.x), float(twist.linear.y), float(twist.angular.z)
 
-    # ------------------------------------------------------------------
     # Public API (called by runner — typically over RPC from a tool)
-    # ------------------------------------------------------------------
 
     def configure(
         self,
@@ -606,12 +600,6 @@ class PathFollowerTask(BaseControlTask):
 
     def get_state(self) -> PathFollowerState:
         return self._state
-
-
-__all__ = [
-    "PathFollowerTask",
-    "PathFollowerTaskConfig",
-]
 
 
 class PathFollowerTaskParams(BaseConfig):

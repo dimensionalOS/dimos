@@ -131,9 +131,7 @@ def score_recordings(
     return OperatingPointMap(speeds=speeds, points=points, tolerance_inversion=inversion), runs
 
 
-# ---------------------------------------------------------------------------
 # Diagnostic plots (optional; reused from the prior inline benchmark)
-# ---------------------------------------------------------------------------
 
 
 def _plot_cte_vs_speed(points: list[OperatingPoint], out: Path, robot: str) -> None:

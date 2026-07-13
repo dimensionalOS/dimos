@@ -78,5 +78,3 @@ unitree_go2_rpp_benchmark = (
     .transports(_BENCHMARK_TRANSPORTS)
     .global_config(obstacle_avoidance=False, n_workers=6)
 )
-
-__all__ = ["unitree_go2_rpp_benchmark"]

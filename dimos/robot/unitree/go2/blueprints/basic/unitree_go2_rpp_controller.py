@@ -143,5 +143,3 @@ unitree_go2_rpp_controller = (
     )
     .global_config(obstacle_avoidance=False)
 )
-
-__all__ = ["unitree_go2_rpp_controller"]

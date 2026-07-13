@@ -130,12 +130,3 @@ class PathSpeedCap:
             return vx, vy, wz
         k = vlim / s
         return vx * k, vy * k, wz * k
-
-
-__all__ = [
-    "GO2_VX_MAX",
-    "GO2_WZ_MAX",
-    "PathSpeedCap",
-    "PathSpeedCapProtocol",
-    "VelocityProfileConfig",
-]

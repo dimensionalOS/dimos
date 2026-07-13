@@ -514,12 +514,3 @@ def create_task(cfg: Any, hardware: Any) -> HolonomicPoseFollowerTask:
             stale_pose_timeout=params.stale_pose_timeout,
         ),
     )
-
-
-__all__ = [
-    "DEFAULT_ARTIFACT_PATH",
-    "HolonomicPoseFollowerTask",
-    "HolonomicPoseFollowerTaskConfig",
-    "HolonomicPoseFollowerTaskParams",
-    "create_task",
-]

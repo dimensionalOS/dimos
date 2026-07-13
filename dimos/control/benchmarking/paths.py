@@ -75,9 +75,7 @@ def _path_from_xy(xs: list[float], ys: list[float]) -> Path:
     return Path(poses=poses)
 
 
-# ---------------------------------------------------------------------------
 # Path generators
-# ---------------------------------------------------------------------------
 
 
 def straight_line(length: float = 5.0, step: float = 0.05) -> Path:
@@ -241,9 +239,7 @@ def fullpose_path_set() -> dict[str, Path]:
     }
 
 
-# ---------------------------------------------------------------------------
 # Battery registry
-# ---------------------------------------------------------------------------
 
 
 def smooth_corner(
@@ -395,9 +391,7 @@ def default_battery() -> dict[str, Path]:
     }
 
 
-# ---------------------------------------------------------------------------
 # SVG rendering (for visual fixtures)
-# ---------------------------------------------------------------------------
 
 
 # Cohort palette for multi_trajectory_to_svg overlays. 10 distinct colors so
@@ -518,23 +512,3 @@ def multi_trajectory_to_svg(
         sp.add(Text(position=(x_min + 0.5, ly, 0.0), text=name, font_size=12.0, color=color))
 
     return sp.to_svg()
-
-
-__all__ = [
-    "circle",
-    "circle_offset_heading",
-    "default_battery",
-    "figure_eight",
-    "fullpose_path_set",
-    "multi_trajectory_to_svg",
-    "path_to_svg",
-    "rounded_square",
-    "single_corner",
-    "slalom",
-    "smooth_corner",
-    "square",
-    "strafe_line",
-    "straight_line",
-    "straight_rotate",
-    "trajectory_to_svg",
-]

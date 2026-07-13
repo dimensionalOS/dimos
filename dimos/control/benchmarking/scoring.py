@@ -71,9 +71,7 @@ class ScoreResult:
     n_ticks: int = 0
 
 
-# ---------------------------------------------------------------------------
 # Geometry helpers
-# ---------------------------------------------------------------------------
 
 
 def _path_xy(path: Path) -> NDArray[np.float64]:
@@ -120,9 +118,7 @@ def _reference_yaw(yaws_unwrapped: NDArray[np.float64], seg_idx: int, t_along_se
     return float(y0 + t_along_seg * (y1 - y0))
 
 
-# ---------------------------------------------------------------------------
 # Scoring
-# ---------------------------------------------------------------------------
 
 
 def _twist_linear_speed(t: Twist) -> float:

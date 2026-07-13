@@ -88,6 +88,3 @@ class FeedforwardGainCompensator:
     def reset(self) -> None:
         # Stateless. Method exists so it's drop-in for VelocityTrackingPID.
         pass
-
-
-__all__ = ["FeedforwardGainCompensator", "FeedforwardGainConfig"]

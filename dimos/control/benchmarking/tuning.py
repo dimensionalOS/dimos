@@ -57,7 +57,7 @@ SCHEMA_VERSION = 1
 #   v2 — dense sweep + floor/ceiling probes.
 METHODOLOGY_VERSION = 2
 
-# --- DERIVE tunable constants (documented; single source of truth) -------
+# DERIVE tunable constants (documented; single source of truth)
 
 # Cross-track headroom margin on the measured angular-rate ceiling. The
 # baseline P-controller adds a cross-track correction term on top of the
@@ -90,7 +90,7 @@ RECOMMENDED_CONTROLLER_EVIDENCE = (
 )
 
 
-# --- Artifact schema -----------------------------------------------------
+# Artifact schema
 
 
 @dataclass
@@ -209,7 +209,7 @@ class OperatingPointMap:
     tolerance_inversion: list[ToleranceRow]
 
 
-# --- methodology v2: floor/ceiling envelope + per-amplitude tables -------
+# methodology v2: floor/ceiling envelope + per-amplitude tables
 
 
 @dataclass
@@ -291,7 +291,7 @@ class TuningConfig:
     valid_for_tuning: bool = True
     schema_version: int = SCHEMA_VERSION
 
-    # --- serialization ---
+    # serialization
 
     def to_json(self, path: str | Path) -> Path:
         path = Path(path)
@@ -375,7 +375,7 @@ class TuningConfig:
         )
 
 
-# --- helpers -------------------------------------------------------------
+# helpers
 
 
 def git_sha() -> str:
@@ -540,7 +540,7 @@ def _channel_ceiling(per_amplitude: dict | None, channel: str, fallback: float) 
     return max(vals)
 
 
-# --- DERIVE: pure model -> config ---------------------------------------
+# DERIVE: pure model -> config
 
 
 def derive_config(
@@ -729,7 +729,7 @@ def FopdtChannelParamsLike(dc: FopdtChannelDC):
     return FopdtChannelParams(K=dc.K, tau=dc.tau, L=dc.L)
 
 
-# --- tolerance -> max-safe-speed inversion (pure) ------------------------
+# tolerance -> max-safe-speed inversion (pure)
 
 
 def invert_tolerance(
@@ -771,28 +771,3 @@ def invert_tolerance(
         else:
             rows.append(ToleranceRow(tol_cm=tol, max_speed=None, binding_path=None))
     return rows
-
-
-__all__ = [
-    "METHODOLOGY_VERSION",
-    "SCHEMA_VERSION",
-    "AmplitudeFitDC",
-    "ChannelEnvelopeDC",
-    "DynamicsByAmplitude",
-    "FeedforwardDC",
-    "FloorProbeResultDC",
-    "FloorProbeResults",
-    "FopdtChannelDC",
-    "OperatingPoint",
-    "OperatingPointMap",
-    "PlantModelDC",
-    "Provenance",
-    "RecommendedControllerDC",
-    "ToleranceRow",
-    "TuningConfig",
-    "VelocityEnvelopeDC",
-    "VelocityProfileDC",
-    "derive_config",
-    "git_sha",
-    "invert_tolerance",
-]

@@ -186,6 +186,3 @@ class ProgressPathReference:
             float(self._y[-1]),
             float((self._yaw_unwrapped[-1] + math.pi) % (2.0 * math.pi) - math.pi),
         )
-
-
-__all__ = ["PoseSample", "ProgressPathReference"]

@@ -76,9 +76,7 @@ class VelocityProfiler:
         idx = min(max(0, index), len(self._cached_profile) - 1)
         return float(self._cached_profile[idx])
 
-    # ------------------------------------------------------------------
     # Internal helpers
-    # ------------------------------------------------------------------
 
     def _compute_curvatures(self, pts: NDArray[np.float64]) -> NDArray[np.float64]:
         n = len(pts)
@@ -153,6 +151,3 @@ class VelocityProfiler:
             if ds > 1e-6:
                 v[i] = min(v[i], float(np.sqrt(v[j] ** 2 + 2 * a * ds)))
         return v
-
-
-__all__ = ["VelocityProfiler"]
