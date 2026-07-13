@@ -62,6 +62,7 @@ class CommandRecordingTask(BaseControlTask):
         self.armed: bool | None = None
         self.arm_calls: list[float | None] = []
         self.dry_run: bool | None = None
+        self.reset_calls: list[bool | None] = []
         self.t_now_seen: float | None = None
         self._state = "IDLE"
 
@@ -107,6 +108,10 @@ class CommandRecordingTask(BaseControlTask):
 
     def set_dry_run(self, enabled: bool) -> None:
         self.dry_run = bool(enabled)
+
+    def reset_runtime_state(self, reactivate: bool | None = None) -> bool:
+        self.reset_calls.append(reactivate)
+        return True
 
     # Undeclared helper (never in any TASK_EXPOSES card)
     def record_time(self, t_now: float | None = None) -> float | None:
@@ -192,6 +197,20 @@ class TestActivationFanOut:
 
         coordinator.set_dry_run(False)
         assert task.dry_run is False
+
+    def test_reset_runtime_state_reaches_declaring_task(self, coordinator):
+        task = CommandRecordingTask("g1")
+        coordinator.add_task(task, task_type="g1_groot_wbc")
+
+        assert coordinator.reset_runtime_state(reactivate=True) == {"g1": True}
+        assert task.reset_calls == [True]
+
+    def test_reset_runtime_state_defaults_reactivate_to_none(self, coordinator):
+        task = CommandRecordingTask("g1")
+        coordinator.add_task(task, task_type="g1_groot_wbc")
+
+        assert coordinator.reset_runtime_state() == {"g1": True}
+        assert task.reset_calls == [None]
 
     def test_restart_keeps_declared_commands_reachable(self, coordinator):
         # add_task() skips known names, so a table cleared on stop() never rebuilds.

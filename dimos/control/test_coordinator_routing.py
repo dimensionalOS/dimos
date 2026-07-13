@@ -64,6 +64,20 @@ class VelocityCapableTask(RecordingTask):
         self.velocity_commands.append((vx, vy, wz, t_now))
 
 
+class G1ShapedVelocityTask(VelocityCapableTask):
+    """Stub carrying g1_groot_wbc's twist surface, registered under its type."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self.twist_msgs: list[Any] = []
+
+    def on_twist_command(self, msg: Any, t_now: float) -> None:
+        # Mirrors G1GrootWBCTask: the uniform handler delegates to
+        # set_velocity_command.
+        self.twist_msgs.append(msg)
+        self.set_velocity_command(msg.linear.x, msg.linear.y, msg.angular.z, t_now)
+
+
 class PortTap:
     """Captures subscribe() on one coordinator port and replays messages."""
 
@@ -343,6 +357,87 @@ class TestTwistRouting:
         coordinator.start()
 
         assert not taps["twist_command"].subscribed
+
+    def test_base_suffix_subset_maps_only_declared_joints(self, make_coordinator):
+        carlike_joints = make_twist_base_joints("base", ["vx", "wz"])
+        coordinator, taps = make_coordinator(
+            hardware=[
+                HardwareComponent(
+                    hardware_id="base",
+                    hardware_type=HardwareType.BASE,
+                    joints=carlike_joints,
+                    adapter_type="mock_twist_base",
+                )
+            ],
+            tasks=[TaskConfig(name="basevel", type="velocity", joint_names=carlike_joints)],
+        )
+        coordinator.start()
+
+        taps["twist_command"].emit(Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0]))
+
+        assert coordinator.get_task("basevel")._velocities == [1.0, 3.0]
+
+    def test_base_full_6d_twist_maps_all_axes(self, make_coordinator):
+        # Drones and such: a base may declare all six twist axes.
+        drone_joints = make_twist_base_joints("base", ["vx", "vy", "vz", "wx", "wy", "wz"])
+        coordinator, taps = make_coordinator(
+            hardware=[
+                HardwareComponent(
+                    hardware_id="base",
+                    hardware_type=HardwareType.BASE,
+                    joints=drone_joints,
+                    adapter_type="mock_twist_base",
+                )
+            ],
+            tasks=[TaskConfig(name="basevel", type="velocity", joint_names=drone_joints)],
+        )
+        coordinator.start()
+
+        taps["twist_command"].emit(Twist(linear=[1.0, 2.0, 3.0], angular=[4.0, 5.0, 6.0]))
+
+        assert coordinator.get_task("basevel")._velocities == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+
+    def test_twist_mapping_ignores_non_base_hardware(self, make_coordinator):
+        # A manipulator joint named like a twist axis must not be mapped.
+        coordinator, taps = make_coordinator(
+            hardware=[
+                _base_component(),
+                HardwareComponent(
+                    hardware_id="arm",
+                    hardware_type=HardwareType.MANIPULATOR,
+                    joints=["arm/vx"],
+                    adapter_type="mock",
+                ),
+            ],
+            tasks=[
+                TaskConfig(
+                    name="basevel",
+                    type="velocity",
+                    joint_names=make_twist_base_joints("base"),
+                ),
+                TaskConfig(name="armvel", type="velocity", joint_names=["arm/vx"]),
+            ],
+        )
+        coordinator.start()
+
+        taps["twist_command"].emit(Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0]))
+
+        assert coordinator.get_task("basevel")._velocities == [1.0, 2.0, 3.0]
+        assert coordinator.get_task("armvel")._velocities is None
+
+    def test_twist_reaches_declaring_velocity_task_without_base(self, make_coordinator):
+        coordinator, taps = make_coordinator()
+        task = G1ShapedVelocityTask("g1")
+        coordinator.add_task(task, task_type="g1_groot_wbc")
+        coordinator.start()
+
+        assert taps["twist_command"].subscribed
+        taps["twist_command"].emit(Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0]))
+
+        assert len(task.velocity_commands) == 1
+        vx, vy, wz, t_now = task.velocity_commands[0]
+        assert (vx, vy, wz) == (1.0, 2.0, 3.0)
+        assert isinstance(t_now, float)
 
 
 class TestSubscriptionLifecycle:
