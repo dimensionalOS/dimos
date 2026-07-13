@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>dimos · e2e tests explained</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0e1521; --surface: #152134; --surface-2: #1a2940;
+    --ink: #e8eef7; --ink-2: #b4c2d6; --muted: #7d8ca3;
+    --line: #24344e; --line-strong: #33476a;
+    --accent: #82abe8; --accent-soft: #1c3050;
+    --good: #35b535; --good-soft: #14301a;
+    --amber: #e3a53a; --amber-soft: #33290f;
+    --bad: #e66767; --bad-soft: #3a1717;
+    --violet: #b18cf0; --violet-soft: #241a3a;
+    --code-bg: #0b111c; --code-ink: #cfdcee; --code-accent: #8fb8dd;
+    --grid: #21314a;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f4f6f9; --surface: #ffffff; --surface-2: #eef1f6;
+    --ink: #131a24; --ink-2: #49566a; --muted: #7d879a;
+    --line: #dde3ec; --line-strong: #c6cfdd;
+    --accent: #2a5fb8; --accent-soft: #e3ecf9;
+    --good: #067a06; --good-soft: #e2f3e2;
+    --amber: #8a5c00; --amber-soft: #f7edd6;
+    --bad: #b23434; --bad-soft: #f8e4e4;
+    --violet: #6b3fd0; --violet-soft: #ece4fb;
+    --code-bg: #101826; --code-ink: #d5e2f4; --code-accent: #8fb8dd;
+    --grid: #e2e8f1;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 32px 24px 96px; }
+
+  .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+  .eyebrow { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); margin: 0 0 6px; }
+  h1 { font-size: 27px; line-height: 1.2; margin: 0 0 8px; }
+  .sub { color: var(--ink-2); margin: 0 0 24px; max-width: 74ch; }
+  code, .mono { font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace; }
+  a { color: var(--accent); }
+  #theme-toggle { appearance: none; cursor: pointer; flex: none; background: var(--surface);
+    color: var(--ink-2); border: 1px solid var(--line-strong); border-radius: 6px;
+    font: 600 12px/1 ui-monospace, Menlo, monospace; padding: 8px 12px; letter-spacing: 0.06em; }
+  #theme-toggle:hover { color: var(--ink); border-color: var(--accent); }
+
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px; margin: 24px 0 8px; }
+  .kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .kpi .n { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; }
+  .kpi .l { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 22px 24px; margin: 22px 0; }
+  .panel h2 { font-size: 15px; margin: 0 0 4px; letter-spacing: 0.02em; }
+  .panel p { color: var(--ink-2); margin: 8px 0; }
+  .panel .mono-note { color: var(--muted); font-size: 13px; }
+
+  .sec-head { display: flex; align-items: baseline; gap: 12px; margin: 40px 0 4px; }
+  .sec-head h2 { font-size: 20px; margin: 0; }
+  .sec-head .count { color: var(--muted); font-size: 13px; }
+  .sec-desc { color: var(--ink-2); margin: 4px 0 18px; max-width: 78ch; }
+
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    margin: 16px 0; overflow: hidden; }
+  .card-grid { display: grid; grid-template-columns: 1fr 500px; }
+  @media (max-width: 900px) { .card-grid { grid-template-columns: 1fr; } }
+  .card-body { padding: 20px 22px; min-width: 0; }
+  .card-viz { background: var(--surface-2); border-left: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: center; padding: 14px; }
+  @media (max-width: 900px) { .card-viz { border-left: none; border-top: 1px solid var(--line); } }
+  .card-viz svg { width: 100%; height: auto; max-width: 470px; }
+
+  .card h3 { margin: 0 0 2px; font-size: 17px; }
+  .card .file { font-size: 12px; color: var(--muted); margin: 0 0 12px; }
+  .card .desc { color: var(--ink-2); margin: 0 0 14px; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+  .chip { font: 600 10.5px/1 ui-monospace, Menlo, monospace; padding: 4px 8px; border-radius: 20px;
+    letter-spacing: 0.04em; border: 1px solid var(--line-strong); color: var(--ink-2); background: var(--surface-2); }
+  .chip.ci { color: var(--muted); }
+  .chip.gpu { color: var(--violet); border-color: var(--violet); background: var(--violet-soft); }
+  .chip.openai { color: var(--good); border-color: var(--good); background: var(--good-soft); }
+  .chip.sim { color: var(--amber); border-color: var(--amber); background: var(--amber-soft); }
+
+  .meta { border-top: 1px dashed var(--line-strong); margin-top: 14px; padding-top: 12px; }
+  .meta-row { display: grid; grid-template-columns: 74px 1fr; gap: 10px; font-size: 13px; margin: 7px 0; }
+  .meta-row .k { color: var(--muted); text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.08em; padding-top: 2px; }
+  .meta-row .v { color: var(--ink-2); min-width: 0; }
+  .cmd { background: var(--code-bg); color: var(--code-ink); border-radius: 7px; padding: 8px 10px;
+    font: 12.5px/1.5 ui-monospace, Menlo, monospace; overflow-x: auto; white-space: pre; }
+  .pass { color: var(--good); font-weight: 600; }
+  .pill { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 5px;
+    padding: 1px 6px; font: 600 12px/1.5 ui-monospace, Menlo, monospace; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; }
+  .legend .item { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-2); }
+  .legend svg { flex: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <p class="eyebrow">dimos · dimos/e2e_tests</p>
+      <h1>End-to-end tests, explained visually</h1>
+    </div>
+    <button id="theme-toggle" onclick="toggleTheme()">◐ theme</button>
+  </div>
+  <p class="sub">
+    These are the <em>integration</em> tests: each one boots a real <code>dimos</code> robot process and
+    talks to it over the live LCM message bus — no mocks of the stack itself. This page explains what every
+    test proves and draws the scenario it runs. Source: <a href="/dimos/e2e_tests/">dimos/e2e_tests/</a>.
+  </p>
+
+  <div class="kpis">
+    <div class="kpi"><div class="n">10</div><div class="l">test files</div></div>
+    <div class="kpi"><div class="n">14</div><div class="l">test cases</div></div>
+    <div class="kpi"><div class="n">4</div><div class="l">categories</div></div>
+    <div class="kpi"><div class="n">3</div><div class="l">backends</div></div>
+  </div>
+
+  <div class="panel">
+    <h2>How every e2e test works</h2>
+    <p>
+      There is one shared harness (<a href="/dimos/e2e_tests/conftest.py">conftest.py</a>). A pytest fixture
+      launches the actual CLI — <code>dimos --simulation &lt;backend&gt; run &lt;blueprint&gt;</code> — as a
+      subprocess, exactly as a user would. The test then observes and drives the running robot entirely through
+      its real interfaces:
+    </p>
+    <div style="margin: 12px 0 6px;" id="harness"></div>
+    <p class="mono-note">
+      <b>lcm_spy</b> subscribes to LCM topics and records traffic; assertions are things like
+      <code>wait_until_odom_position(x, y)</code> or <code>wait_for_message_result(topic, …)</code>.
+      <b>human_input</b> publishes plain-English commands to <code>/human_input</code>, which the in-graph LLM
+      agent turns into tool calls. Every test first waits on
+      <code>/rpc/McpClient/on_system_modules/res</code> — the signal that the agent has discovered its skills
+      and the robot is ready.
+    </p>
+  </div>
+
+  <div class="panel">
+    <h2>Map legend</h2>
+    <div class="legend" id="legend"></div>
+  </div>
+
+  <div id="sections"></div>
+
+  <p style="color: var(--muted); font-size: 12.5px; margin-top: 48px; text-align: center;">
+    Maps are drawn from the exact coordinates in each test file · serve with
+    <code>./misc/e2e_tests_dashboard/serve.sh</code>
+  </p>
+</div>
+
+<script>
+function toggleTheme() {
+  const r = document.documentElement;
+  const next = r.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+  r.setAttribute('data-theme', next);
+  try { localStorage.setItem('e2e-theme', next); } catch (e) {}
+}
+(function () {
+  try { const t = localStorage.getItem('e2e-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+})();
+
+/* ---------- generic top-down map renderer (world metres -> svg) ---------- */
+const W = 470, H = 340, PAD = 30;
+
+function bounds(spec) {
+  if (spec.bounds) return spec.bounds;
+  let xs = [], ys = [];
+  const add = (x, y) => { xs.push(x); ys.push(y); };
+  (spec.walls || []).forEach(w => { add(w[0], w[1]); add(w[2], w[3]); });
+  (spec.paths || []).forEach(p => p.pts.forEach(pt => add(pt[0], pt[1])));
+  (spec.markers || []).forEach(m => add(m.x, m.y));
+  return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
+}
+
+function renderMap(spec) {
+  let b = bounds(spec);
+  const m = spec.margin ?? 1.0;
+  b = { minX: b.minX - m, maxX: b.maxX + m, minY: b.minY - m, maxY: b.maxY + m };
+  const s = Math.min((W - 2 * PAD) / (b.maxX - b.minX), (H - 2 * PAD) / (b.maxY - b.minY));
+  const offX = (W - s * (b.maxX - b.minX)) / 2;
+  const offY = (H - s * (b.maxY - b.minY)) / 2;
+  const tx = x => offX + (x - b.minX) * s;
+  const ty = y => H - offY - (y - b.minY) * s;   // flip: world +y is up
+
+  let g = '';
+  // grid at 1 m
+  for (let gx = Math.ceil(b.minX); gx <= b.maxX; gx++)
+    g += `<line x1="${tx(gx)}" y1="${ty(b.minY)}" x2="${tx(gx)}" y2="${ty(b.maxY)}" stroke="var(--grid)" stroke-width="1"/>`;
+  for (let gy = Math.ceil(b.minY); gy <= b.maxY; gy++)
+    g += `<line x1="${tx(b.minX)}" y1="${ty(gy)}" x2="${tx(b.maxX)}" y2="${ty(gy)}" stroke="var(--grid)" stroke-width="1"/>`;
+
+  // paths (robot routes, exploration, person tracks)
+  let paths = '';
+  (spec.paths || []).forEach((p, i) => {
+    const d = p.pts.map((pt, j) => `${j ? 'L' : 'M'}${tx(pt[0]).toFixed(1)},${ty(pt[1]).toFixed(1)}`).join(' ');
+    const col = p.color || 'var(--accent)';
+    const mid = `url(#arrow-${p.color === 'var(--bad)' ? 'bad' : p.color === 'var(--amber)' ? 'amber' : 'accent'})`;
+    paths += `<path d="${d}" fill="none" stroke="${col}" stroke-width="${p.w || 2}"
+      stroke-linejoin="round" stroke-linecap="round" ${p.dashed ? 'stroke-dasharray="5 5"' : ''}
+      marker-mid="${mid}" marker-end="${mid}" opacity="${p.op || 1}"/>`;
+    (p.pts || []).forEach(pt => { if (p.dots) paths += `<circle cx="${tx(pt[0])}" cy="${ty(pt[1])}" r="2.4" fill="${col}"/>`; });
+  });
+
+  // door gaps
+  let doors = '';
+  (spec.doors || []).forEach(dr => {
+    doors += `<line x1="${tx(dr[0])}" y1="${ty(dr[1])}" x2="${tx(dr[2])}" y2="${ty(dr[3])}"
+      stroke="var(--good)" stroke-width="3" stroke-dasharray="2 3" opacity="0.9"/>`;
+  });
+
+  // walls
+  let walls = '';
+  (spec.walls || []).forEach(w => {
+    walls += `<line x1="${tx(w[0])}" y1="${ty(w[1])}" x2="${tx(w[2])}" y2="${ty(w[3])}"
+      stroke="var(--ink-2)" stroke-width="4" stroke-linecap="round"/>`;
+  });
+
+  // markers
+  let mk = '';
+  (spec.markers || []).forEach(m => { mk += marker(m, tx, ty); });
+
+  return `<svg viewBox="0 0 ${W} ${H}" role="img">
+    <defs>
+      ${arrowDef('accent', 'var(--accent)')}
+      ${arrowDef('bad', 'var(--bad)')}
+      ${arrowDef('amber', 'var(--amber)')}
+    </defs>
+    <rect x="0" y="0" width="${W}" height="${H}" fill="transparent"/>
+    ${g}${paths}${doors}${walls}${mk}
+  </svg>`;
+}
+
+function arrowDef(id, col) {
+  return `<marker id="arrow-${id}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 z" fill="${col}"/></marker>`;
+}
+
+function marker(m, tx, ty) {
+  const x = tx(m.x), y = ty(m.y);
+  const label = m.label ? `<text x="${x}" y="${y - (m.lo || 12)}" text-anchor="middle"
+    font-size="11" font-weight="600" font-family="ui-monospace,Menlo,monospace" fill="var(--ink)">${m.label}</text>` : '';
+  if (m.type === 'robot') {
+    return `<g><circle cx="${x}" cy="${y}" r="8" fill="var(--accent)" stroke="var(--bg)" stroke-width="2"/>
+      <circle cx="${x}" cy="${y}" r="3" fill="var(--bg)"/>${label}</g>`;
+  }
+  if (m.type === 'goal') {
+    return `<g><circle cx="${x}" cy="${y}" r="9" fill="none" stroke="var(--good)" stroke-width="2.5"/>
+      <circle cx="${x}" cy="${y}" r="3.5" fill="var(--good)"/>${label}</g>`;
+  }
+  if (m.type === 'target') {
+    return `<g><rect x="${x - 7}" y="${y - 7}" width="14" height="14" rx="2" transform="rotate(45 ${x} ${y})"
+      fill="var(--amber-soft)" stroke="var(--amber)" stroke-width="2.5"/>${label}</g>`;
+  }
+  if (m.type === 'person') {
+    return `<g><circle cx="${x}" cy="${y}" r="6.5" fill="var(--bad)" stroke="var(--bg)" stroke-width="2"/>${label}</g>`;
+  }
+  return label;
+}
+
+/* ---------- legend ---------- */
+document.getElementById('legend').innerHTML = [
+  ['robot', 'robot start'], ['goal', 'nav goal reached'], ['target', 'remembered object'],
+  ['person', 'tracked person'],
+].map(([t, l]) => `<span class="item">
+  <svg width="22" height="22" viewBox="0 0 22 22">${marker({ x: 0, y: 0, type: t }, () => 11, () => 11)}</svg>${l}</span>`).join('')
+  + `<span class="item"><svg width="34" height="12"><line x1="2" y1="6" x2="32" y2="6" stroke="var(--ink-2)" stroke-width="4" stroke-linecap="round"/></svg>wall</span>`
+  + `<span class="item"><svg width="34" height="12"><line x1="2" y1="6" x2="32" y2="6" stroke="var(--good)" stroke-width="3" stroke-dasharray="2 3"/></svg>doorway</span>`
+  + `<span class="item"><svg width="34" height="12"><line x1="2" y1="6" x2="26" y2="6" stroke="var(--accent)" stroke-width="2" marker-end="url(#lg)"/><defs><marker id="lg" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="var(--accent)"/></marker></defs></svg>route</span>`;
+
+/* ---------- harness diagram ---------- */
+document.getElementById('harness').innerHTML = `
+<svg viewBox="0 0 900 190" role="img" style="width:100%;max-width:900px;height:auto;">
+  <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="var(--muted)"/></marker></defs>
+  <!-- pytest side -->
+  <rect x="10" y="20" width="200" height="150" rx="10" fill="var(--surface-2)" stroke="var(--line-strong)"/>
+  <text x="110" y="42" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink)">pytest fixtures</text>
+  <rect x="26" y="56" width="168" height="30" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="110" y="75" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo" fill="var(--ink)">start_blueprint()</text>
+  <rect x="26" y="92" width="168" height="30" rx="6" fill="var(--surface)" stroke="var(--line-strong)"/>
+  <text x="110" y="111" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo" fill="var(--ink-2)">human_input()</text>
+  <rect x="26" y="128" width="168" height="30" rx="6" fill="var(--surface)" stroke="var(--line-strong)"/>
+  <text x="110" y="147" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo" fill="var(--ink-2)">lcm_spy (asserts)</text>
+  <!-- LCM bus -->
+  <rect x="400" y="78" width="110" height="34" rx="17" fill="var(--good-soft)" stroke="var(--good)"/>
+  <text x="455" y="100" text-anchor="middle" font-size="13" font-weight="700" fill="var(--good)">LCM bus</text>
+  <!-- robot process -->
+  <rect x="690" y="20" width="200" height="150" rx="10" fill="var(--surface-2)" stroke="var(--line-strong)"/>
+  <text x="790" y="42" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink)">dimos process</text>
+  <text x="790" y="58" text-anchor="middle" font-size="10.5" fill="var(--muted)">(subprocess · real blueprint)</text>
+  <rect x="706" y="70" width="168" height="26" rx="6" fill="var(--violet-soft)" stroke="var(--violet)"/>
+  <text x="790" y="87" text-anchor="middle" font-size="11.5" font-family="ui-monospace,Menlo" fill="var(--ink)">McpClient (LLM agent)</text>
+  <rect x="706" y="102" width="168" height="26" rx="6" fill="var(--surface)" stroke="var(--line-strong)"/>
+  <text x="790" y="119" text-anchor="middle" font-size="11.5" font-family="ui-monospace,Menlo" fill="var(--ink-2)">nav · skills · perception</text>
+  <rect x="706" y="134" width="168" height="26" rx="6" fill="var(--surface)" stroke="var(--line-strong)"/>
+  <text x="790" y="151" text-anchor="middle" font-size="11.5" font-family="ui-monospace,Menlo" fill="var(--ink-2)">sim / hardware</text>
+  <!-- arrows -->
+  <line x1="210" y1="95" x2="398" y2="95" stroke="var(--muted)" stroke-width="2" marker-end="url(#ah)"/>
+  <line x1="688" y1="95" x2="512" y2="95" stroke="var(--muted)" stroke-width="2" marker-end="url(#ah)"/>
+  <text x="600" y="88" text-anchor="middle" font-size="10.5" fill="var(--muted)">/human_input · /goal_request</text>
+  <text x="600" y="130" text-anchor="middle" font-size="10.5" fill="var(--muted)">/odom · /agent · /rpc/*</text>
+</svg>`;
+
+/* ================= TEST DATA ================= */
+const CATS = [
+  {
+    name: 'Control coordinator', tag: 'manipulation',
+    desc: 'Mock robot arms driven through the real ControlCoordinator over LCM/RPC. No LLM, no simulator — pure control-plane integration. Verifies startup, trajectory execution, cancellation, publish rate, and dual-arm independence.',
+    tests: [
+      { name: 'coordinator starts & responds to RPC', fn: 'test_coordinator_starts_and_responds_to_rpc',
+        file: 'test_control_coordinator.py', chips: [['ci', 'skipif_in_ci']],
+        desc: 'Boots the mock coordinator, waits for joint-state to prove the tick loop runs, then queries it over RPC: <code>list_joints</code> (expects a 7-DOF arm), <code>list_tasks</code>, and <code>list_hardware</code>.',
+        cmd: 'coordinator-mock', pass: 'RPCs return the 7 joints, the <code>traj_arm</code> task, and the <code>arm</code> hardware',
+        viz: { kind: 'arm', dof: 7, title: 'mock arm · 7 DOF' } },
+      { name: 'executes a trajectory', fn: 'test_coordinator_executes_trajectory',
+        file: 'test_control_coordinator.py', chips: [['ci', 'skipif_in_ci']],
+        desc: 'Sends a 2-point <code>JointTrajectory</code> (all joints 0.0 → 0.1 over 0.5 s) via <code>task_invoke("traj_arm","execute")</code>, then polls <code>get_state</code> until it reports <span class="pill">COMPLETED</span>.',
+        cmd: 'coordinator-mock', pass: 'trajectory reaches <span class="pill">COMPLETED</span> within 5 s',
+        viz: { kind: 'traj', abort: false } },
+      { name: 'joint state published at rate', fn: 'test_coordinator_joint_state_published',
+        file: 'test_control_coordinator.py', chips: [['ci', 'skipif_in_ci']],
+        desc: 'Collects <code>/coordinator_joint_state</code> for 1 second and counts messages — the coordinator ticks at 100 Hz. Then decodes one message and checks it carries 7 named joints + positions.',
+        cmd: 'coordinator-mock', pass: '≥ 50 messages in 1 s; decoded message has 7 joints',
+        viz: { kind: 'rate', hz: 100, floor: 50 } },
+      { name: 'cancels a running trajectory', fn: 'test_coordinator_cancel_trajectory',
+        file: 'test_control_coordinator.py', chips: [['ci', 'skipif_in_ci']],
+        desc: 'Starts a long 5-second trajectory, waits 0.5 s, then calls <code>cancel</code>. Confirms the state machine lands in <span class="pill">ABORTED</span> rather than running to completion.',
+        cmd: 'coordinator-mock', pass: 'state becomes <span class="pill">ABORTED</span> after cancel',
+        viz: { kind: 'traj', abort: true } },
+      { name: 'dual-arm independence', fn: 'test_dual_arm_coordinator',
+        file: 'test_control_coordinator.py', chips: [['ci', 'skipif_in_ci']],
+        desc: 'Uses the dual-arm mock: a 7-DOF left arm and a 6-DOF right arm. Fires an independent trajectory at each simultaneously and checks both reach <span class="pill">COMPLETED</span>.',
+        cmd: 'coordinator-dual-mock', pass: 'both <code>traj_left</code> and <code>traj_right</code> complete',
+        viz: { kind: 'arm2' } },
+    ],
+  },
+  {
+    name: 'Agent skills', tag: 'LLM tool-calling',
+    desc: 'A natural-language request goes to the in-graph LLM agent, which must pick and call the right registered skill and return the answer — the full MCP tool-calling loop over LCM.',
+    tests: [
+      { name: 'agent calls a calculator skill', fn: 'test_dimos_skills',
+        file: 'test_dimos_cli_e2e.py', chips: [['ci', 'skipif_in_ci'], ['gpu', 'self_hosted'], ['openai', 'skipif_no_openai']],
+        desc: 'Runs the <code>demo-skill</code> blueprint and sends "what is 52983 + 587237". The agent must invoke <code>DemoCalculatorSkill.sum_numbers</code> and answer <b>640220</b> on the <code>/agent</code> stream. The test also asserts it saw the skill\'s RPC request <em>and</em> response — proving the tool actually ran, not that the LLM did mental math.',
+        cmd: 'demo-skill', pass: '<code>/agent</code> emits <b>640220</b> and the <code>sum_numbers</code> req+res are on the bus',
+        viz: { kind: 'seq' } },
+    ],
+  },
+  {
+    name: 'Navigation in DimSim', tag: 'self-hosted · heavy sim',
+    desc: 'Full autonomy stack in the DimSim simulator: LLM agent → planner → controller → simulated Go2. Walls can be added at runtime to force replanning. These are heavy (<code>self_hosted_large</code>) and allow up to 20 min just to boot.',
+    tests: [
+      { name: 'walk forward 3 metres', fn: 'test_walk_forward',
+        file: 'test_dimsim_walk_forward.py', chips: [['gpu', 'self_hosted_large'], ['sim', 'dimsim']],
+        desc: 'The simplest closed loop: spawn the robot at (1, 2), say "move forward 3 meter", and confirm odometry arrives at (4, 2). Spatial-memory and security modules are disabled to isolate raw locomotion + language grounding.',
+        cmd: '--disable spatial-memory --disable security-module unitree-go2-agentic', pass: 'odom reaches (4, 2) within 0.4 m',
+        viz: { kind: 'map', spec: {
+          margin: 1.2,
+          markers: [{ x: 1, y: 2, type: 'robot', label: 'start (1,2)' }, { x: 4, y: 2, type: 'goal', label: 'goal (4,2)' }],
+          paths: [{ pts: [[1, 2], [4, 2]], color: 'var(--accent)', w: 2.5 }],
+        } } },
+      { name: 'path replanning around a blocked door', fn: 'test_path_replanning',
+        file: 'test_dimsim_path_replaning.py', chips: [['gpu', 'self_hosted_large'], ['sim', 'dimsim']],
+        desc: 'A room split by a wall with two doorways. As the robot approaches the <b>left</b> door, the test drops a wall into that opening in real time. The planner must detect the block and reroute through the <b>right</b> door to reach the goal.',
+        cmd: '--dimsim-scene=empty unitree-go2-agentic', pass: 'odom reaches the goal (10.9, 0.6) despite the left door closing',
+        viz: { kind: 'map', spec: {
+          margin: 0.8,
+          walls: [
+            [2, -2.5, 12, -2.5], [2, 3.5, 12, 3.5], [2, -2.5, 2, 3.5], [12, -2.5, 12, 3.5],
+            [7, -2.5, 7, -1.5], [7, -0.5, 7, 1.5], [7, 2.5, 7, 3.5],
+          ],
+          doors: [[7, -1.5, 7, -0.5], [7, 1.5, 7, 2.5]],
+          paths: [{ pts: [[3, 2], [6.3, 2]], color: 'var(--accent)', w: 2.5 },
+                   { pts: [[6.3, 2], [6.6, -1], [8.5, -1], [10.9, 0.6]], color: 'var(--amber)', w: 2.5, dashed: true }],
+          markers: [
+            { x: 3, y: 2, type: 'robot', label: 'start (3,2)' },
+            { x: 7, y: 2, type: 'person', label: '✕ blocked', lo: 14 },
+            { x: 10.913, y: 0.588, type: 'goal', label: 'goal' },
+          ],
+        } } },
+      { name: 'spatial memory · "go to the bed"', fn: 'test_go_to_the_bed',
+        file: 'test_dimsim_spatial_memory.py', chips: [['gpu', 'self_hosted_large'], ['sim', 'dimsim']],
+        desc: 'First the robot explores a whole house (a 22-waypoint tour) so its perception builds a spatial memory of what it saw and where. Then a bare command — "go to the bed" — must resolve to the remembered bed location and navigate there.',
+        cmd: 'unitree-go2-agentic', pass: 'odom reaches the bed (−3.6, −1.3) within 2 m',
+        viz: { kind: 'map', spec: {
+          margin: 1.0,
+          paths: [{ pts: [[3.881,4.803],[4.160,1.615],[1.596,1.505],[1.649,0.137],[-3.644,-0.064],[-3.759,-2.661],[-4.186,-4.830],[-3.759,-2.661],[-1.070,-3.285],[-2.504,-2.452],[-2.647,5.243],[-3.663,3.591],[-1.178,1.974],[-2.416,2.629],[-2.581,0.164],[1.834,0.072],[3.010,-3.883],[1.756,-3.742],[6.336,-4.077],[8.264,-5.119],[6.258,-0.964],[6.453,5.327]], color: 'var(--accent)', w: 1.6, op: 0.55, dots: true }],
+          markers: [
+            { x: 3.881, y: 4.803, type: 'robot', label: 'explore' },
+            { x: -3.567, y: -1.332, type: 'target', label: 'bed' },
+          ],
+        } } },
+    ],
+  },
+  {
+    name: 'Perception & navigation in MuJoCo', tag: 'mujoco · openai',
+    desc: 'MuJoCo-simulated Go2 with camera perception and an LLM agent. A moving person is published along a scripted track; the robot must see, identify, and act. Require <code>mujoco</code> and an OpenAI key.',
+    tests: [
+      { name: 'follow the person in beige pants', fn: 'test_person_follow',
+        file: 'test_person_follow.py', chips: [['ci', 'skipif_in_ci'], ['openai', 'skipif_no_openai'], ['sim', 'mujoco']],
+        desc: 'A person walks a fixed 5-point loop. The robot, told "follow the person in beige pants", must lock on and pursue — ending near the person\'s side of the room.',
+        cmd: '--disable spatial-memory unitree-go2-agentic', pass: 'robot odom reaches (4.2, −3) within 1.5 m',
+        viz: { kind: 'map', spec: {
+          margin: 1.2,
+          paths: [{ pts: [[-2.60,1.28],[4.80,0.21],[4.14,-6.0],[0.59,-3.79],[-3.35,-0.51],[-2.60,1.28]], color: 'var(--bad)', w: 2, dots: true }],
+          markers: [
+            { x: -6.18, y: 0.96, type: 'robot', label: 'robot' },
+            { x: -2.60, y: 1.28, type: 'person', label: 'person track', lo: 13 },
+            { x: 4.2, y: -3, type: 'goal', label: 'end here' },
+          ],
+        } } },
+      { name: 'scan for anyone, then follow', fn: 'test_scan_and_person_follow',
+        file: 'test_scan_and_follow_person.py', chips: [['ci', 'skipif_in_ci'], ['openai', 'skipif_no_openai'], ['sim', 'mujoco']],
+        desc: 'Looser instruction — "lookout for a person (any person) and when you see him, follow him". The robot must first <em>detect</em> a person at all (no description to match against), then commit to following. Same target region as person-follow.',
+        cmd: '--disable spatial-memory unitree-go2-agentic', pass: 'robot odom reaches (4.2, −3) within 1.5 m',
+        viz: { kind: 'map', spec: {
+          margin: 1.2,
+          paths: [{ pts: [[-3.35,-0.51],[-2.60,1.28],[4.80,0.21],[4.14,-6.0],[0.59,-3.79],[-3.35,-0.51]], color: 'var(--bad)', w: 2, dots: true }],
+          markers: [
+            { x: -6.18, y: 0.96, type: 'robot', label: 'robot' },
+            { x: -3.35, y: -0.51, type: 'person', label: 'person track', lo: 13 },
+            { x: 4.2, y: -3, type: 'goal', label: 'end here' },
+          ],
+        } } },
+      { name: 'patrol until you find him, then follow', fn: 'test_patrol_and_follow',
+        file: 'test_patrol_and_follow.py', chips: [['ci', 'skipif_in_ci'], ['openai', 'skipif_no_openai'], ['sim', 'mujoco']],
+        desc: 'Combines exploration + perception + pursuit. The robot patrols a 14-waypoint office loop while watching for "a man wearing beige pants", and switches to following once found. Runs for 120 s of live behaviour.',
+        cmd: '--nerf-speed 0.5 unitree-go2-agentic', pass: 'behaviour observed over a 120 s window (patrol → detect → follow)',
+        viz: { kind: 'map', spec: {
+          margin: 1.0,
+          paths: [
+            { pts: [[0,-7.07],[-4.16,-7.07],[-4.45,1.10],[-6.72,2.87],[-1.78,3.01],[-1.54,5.74],[3.88,6.16],[2.16,9.36],[4.70,3.87],[4.67,-7.15],[4.57,-4.19],[-0.84,-2.78],[-4.71,1.17],[4.30,0.87]], color: 'var(--accent)', w: 1.6, op: 0.6, dots: true },
+            { pts: [[-10.75,-6.78],[0,-7.07]], color: 'var(--bad)', w: 2, dots: true },
+          ],
+          markers: [
+            { x: -10.75, y: -6.78, type: 'robot', label: 'start' },
+            { x: 0, y: -7.07, type: 'person', label: 'person', lo: 13 },
+          ],
+        } } },
+      { name: 'security patrol → detect → follow', fn: 'test_security_module',
+        file: 'test_security_module.py', chips: [['ci', 'skipif_in_ci'], ['openai', 'skipif_no_openai'], ['sim', 'mujoco']],
+        desc: 'Runs the dedicated <code>unitree-go2-security</code> blueprint. "Start the security patrol" kicks off an autonomous state machine; the test watches the <code>/security_state</code> topic and waits for the transition to <span class="pill">FOLLOWING</span> once an intruder is seen.',
+        cmd: 'unitree-go2-security', pass: '<code>/security_state</code> becomes <span class="pill">FOLLOWING</span> within 360 s',
+        viz: { kind: 'fsm' } },
+      { name: 'spatial memory · "go to the bookcase"', fn: 'test_spatial_memory_navigation',
+        file: 'test_spatial_memory.py', chips: [['ci', 'skipif_in_ci'], ['openai', 'skipif_no_openai'], ['sim', 'mujoco']],
+        desc: 'The robot is first driven past a bookcase (a scripted 6-waypoint route) so it records where the bookcase is, then driven away until it is out of view. The command "go to the bookcase" must recall the location and return to it.',
+        cmd: 'unitree-go2-agentic', pass: 'odom returns to the bookcase (4.2, −5) within 2 m',
+        viz: { kind: 'map', spec: {
+          margin: 1.2,
+          paths: [{ pts: [[1,1],[4,1],[4.2,-1.1],[4.2,-3],[4.2,-5],[1,1]], color: 'var(--accent)', w: 1.8, op: 0.6, dots: true }],
+          markers: [
+            { x: 1, y: 1, type: 'robot', label: 'start / away' },
+            { x: 4.2, y: -5, type: 'target', label: 'bookcase' },
+            { x: 4.2, y: -5, type: 'goal', lo: 22 },
+          ],
+        } } },
+    ],
+  },
+];
+
+/* ---------- non-map visuals ---------- */
+function renderViz(v) {
+  if (v.kind === 'map') return renderMap(v.spec);
+  if (v.kind === 'arm') return armSvg(v.dof, false);
+  if (v.kind === 'arm2') return armSvg(0, true);
+  if (v.kind === 'traj') return trajSvg(v.abort);
+  if (v.kind === 'rate') return rateSvg();
+  if (v.kind === 'seq') return seqSvg();
+  if (v.kind === 'fsm') return fsmSvg();
+  return '';
+}
+
+function armSvg(dof, dual) {
+  if (dual) {
+    return `<svg viewBox="0 0 470 300"><text x="235" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink)">independent dual-arm trajectories</text>
+      ${armChain(120, 160, 7, 'var(--accent)', 'traj_left · 7 DOF')}
+      ${armChain(350, 160, 6, 'var(--good)', 'traj_right · 6 DOF')}
+      <line x1="235" y1="60" x2="235" y2="285" stroke="var(--line)" stroke-dasharray="4 4"/></svg>`;
+  }
+  return `<svg viewBox="0 0 470 300"><text x="235" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink)">mock arm · ${dof} joints, RPC-queryable</text>
+    ${armChain(235, 165, dof, 'var(--accent)', 'traj_arm')}</svg>`;
+}
+function armChain(cx, cy, n, col, label) {
+  const links = [[0, -78], [26, -55], [22, -30], [24, -6], [18, 18], [-16, 20], [-20, 16]];
+  let x = cx, y = cy + 60, out = `<circle cx="${x}" cy="${y}" r="10" fill="var(--surface)" stroke="${col}" stroke-width="3"/>`;
+  for (let i = 0; i < n; i++) {
+    const [dx, dy] = links[i % links.length];
+    const nx = x + dx, ny = y + dy;
+    out += `<line x1="${x}" y1="${y}" x2="${nx}" y2="${ny}" stroke="${col}" stroke-width="5" stroke-linecap="round"/>`;
+    out += `<circle cx="${nx}" cy="${ny}" r="6" fill="var(--bg)" stroke="${col}" stroke-width="2.5"/>`;
+    x = nx; y = ny;
+  }
+  out += `<text x="${cx}" y="${cy + 90}" text-anchor="middle" font-size="12" font-weight="600" font-family="ui-monospace,Menlo" fill="${col}">${label}</text>`;
+  return out;
+}
+
+function trajSvg(abort) {
+  const col = abort ? 'var(--bad)' : 'var(--good)';
+  const stop = abort ? 0.55 : 1;
+  const endLabel = abort ? 'ABORTED' : 'COMPLETED';
+  const px = 60 + stop * 350;
+  return `<svg viewBox="0 0 470 260">
+    <text x="235" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink)">${abort ? '5 s trajectory, cancelled at 0.5 s' : 'trajectory runs to completion'}</text>
+    <line x1="60" y1="200" x2="410" y2="200" stroke="var(--line-strong)" stroke-width="1.5"/>
+    <line x1="60" y1="60" x2="60" y2="200" stroke="var(--line-strong)" stroke-width="1.5"/>
+    <text x="40" y="66" text-anchor="end" font-size="10" fill="var(--muted)">pos</text>
+    <text x="410" y="220" text-anchor="middle" font-size="10" fill="var(--muted)">t</text>
+    <path d="M60,200 L${px},${200 - stop * 120}" fill="none" stroke="${col}" stroke-width="3"/>
+    ${abort ? `<path d="M${px},${200 - stop * 120} L${px + 20},${200 - stop * 120}" stroke="var(--bad)" stroke-width="3" stroke-dasharray="4 4"/>
+      <line x1="${px}" y1="40" x2="${px}" y2="210" stroke="var(--bad)" stroke-width="1" stroke-dasharray="3 3"/>
+      <text x="${px}" y="36" text-anchor="middle" font-size="10.5" fill="var(--bad)">cancel()</text>` : ''}
+    <circle cx="${px}" cy="${200 - stop * 120}" r="5" fill="${col}"/>
+    <rect x="${abort ? px - 40 : 320}" y="${200 - stop * 120 - 34}" width="86" height="22" rx="11" fill="${abort ? 'var(--bad-soft)' : 'var(--good-soft)'}" stroke="${col}"/>
+    <text x="${abort ? px + 3 : 363}" y="${200 - stop * 120 - 19}" text-anchor="middle" font-size="11" font-weight="700" font-family="ui-monospace,Menlo" fill="${col}">${endLabel}</text>
+  </svg>`;
+}
+
+function rateSvg() {
+  let bars = '';
+  for (let i = 0; i < 24; i++) bars += `<rect x="${62 + i * 15}" y="90" width="9" height="70" rx="2" fill="var(--accent)" opacity="${0.5 + 0.5 * (i % 3 === 0)}"/>`;
+  return `<svg viewBox="0 0 470 240">
+    <text x="235" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink)">joint_state stream · 100 Hz</text>
+    ${bars}
+    <line x1="55" y1="175" x2="440" y2="175" stroke="var(--line-strong)"/>
+    <text x="248" y="200" text-anchor="middle" font-size="11.5" fill="var(--ink-2)">~100 msgs / second</text>
+    <rect x="150" y="212" width="196" height="22" rx="11" fill="var(--good-soft)" stroke="var(--good)"/>
+    <text x="248" y="227" text-anchor="middle" font-size="11" font-weight="700" fill="var(--good)">pass floor ≥ 50 / s</text>
+  </svg>`;
+}
+
+function seqSvg() {
+  const lanes = [['human', 72, 'var(--ink-2)'], ['/human_input', 180, 'var(--accent)'], ['McpClient (LLM)', 300, 'var(--violet)'], ['sum_numbers', 410, 'var(--good)']];
+  let head = '', lines = '';
+  lanes.forEach(([l, x, c]) => {
+    head += `<text x="${x}" y="26" text-anchor="middle" font-size="11" font-weight="700" fill="${c}">${l}</text>`;
+    lines += `<line x1="${x}" y1="36" x2="${x}" y2="250" stroke="var(--line)" stroke-dasharray="3 4"/>`;
+  });
+  const msg = (y, x1, x2, t, c) => {
+    const dir = x2 > x1 ? 1 : -1;
+    return `<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${c}" stroke-width="1.8" marker-end="url(#sh)"/>
+      <text x="${(x1 + x2) / 2}" y="${y - 6}" text-anchor="middle" font-size="10" fill="var(--ink-2)">${t}</text>`;
+  };
+  return `<svg viewBox="0 0 470 270"><defs><marker id="sh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="var(--muted)"/></marker></defs>
+    ${head}${lines}
+    ${msg(64, 72, 180, '"52983 + 587237"', 'var(--accent)')}
+    ${msg(104, 180, 300, 'prompt', 'var(--violet)')}
+    ${msg(144, 300, 410, 'call sum_numbers()', 'var(--good)')}
+    ${msg(184, 410, 300, '→ 640220', 'var(--good)')}
+    ${msg(224, 300, 72, '/agent: "640220"', 'var(--accent)')}
+    <rect x="250" y="236" width="180" height="22" rx="11" fill="var(--good-soft)" stroke="var(--good)"/>
+    <text x="340" y="251" text-anchor="middle" font-size="10.5" font-weight="700" fill="var(--good)">req + res both on bus</text>
+  </svg>`;
+}
+
+function fsmSvg() {
+  const st = (x, y, l, c, active) => `<rect x="${x - 55}" y="${y - 20}" width="110" height="40" rx="20"
+    fill="${active ? c.replace('--', '--') + '' : 'var(--surface)'}" fill-opacity="${active ? 0.18 : 1}" stroke="${c}" stroke-width="2.5"/>
+    <text x="${x}" y="${y + 5}" text-anchor="middle" font-size="12.5" font-weight="700" font-family="ui-monospace,Menlo" fill="${c}">${l}</text>`;
+  const arr = (x1, x2, y, t) => `<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="var(--muted)" stroke-width="2" marker-end="url(#fh)"/>
+    <text x="${(x1 + x2) / 2}" y="${y - 8}" text-anchor="middle" font-size="10" fill="var(--ink-2)">${t}</text>`;
+  return `<svg viewBox="0 0 470 200"><defs><marker id="fh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="var(--muted)"/></marker></defs>
+    <text x="235" y="30" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink)">/security_state machine</text>
+    ${st(75, 110, 'PATROL', 'var(--accent)', false)}
+    ${st(235, 110, 'DETECTED', 'var(--amber)', false)}
+    ${st(400, 110, 'FOLLOWING', 'var(--good)', true)}
+    ${arr(130, 180, 110, 'sees person')}
+    ${arr(290, 345, 110, 'lock on')}
+    <text x="400" y="160" text-anchor="middle" font-size="10.5" fill="var(--good)">← test asserts this</text>
+  </svg>`;
+}
+
+/* ---------- build page ---------- */
+const chipClass = { ci: 'ci', 'self_hosted': 'gpu', 'self_hosted_large': 'gpu', 'skipif_no_openai': 'openai', 'skipif_in_ci': 'ci', mujoco: 'sim', dimsim: 'sim' };
+document.getElementById('sections').innerHTML = CATS.map(cat => `
+  <div class="sec-head"><h2>${cat.name}</h2><span class="count">${cat.tests.length} test${cat.tests.length > 1 ? 's' : ''} · ${cat.tag}</span></div>
+  <p class="sec-desc">${cat.desc}</p>
+  ${cat.tests.map(t => `
+    <div class="card"><div class="card-grid">
+      <div class="card-body">
+        <h3>${t.name}</h3>
+        <p class="file"><a href="/dimos/e2e_tests/${t.file}">${t.file}</a> · <span class="mono">${t.fn}</span></p>
+        <div class="chips">${t.chips.map(([cls, l]) => `<span class="chip ${chipClass[l] || cls}">${l}</span>`).join('')}</div>
+        <p class="desc">${t.desc}</p>
+        <div class="meta">
+          <div class="meta-row"><span class="k">launches</span><span class="v"><div class="cmd">dimos run ${t.cmd}</div></span></div>
+          <div class="meta-row"><span class="k">passes if</span><span class="v pass-wrap">${t.pass}</span></div>
+        </div>
+      </div>
+      <div class="card-viz">${renderViz(t.viz)}</div>
+    </div></div>`).join('')}
+`).join('');
+</script>
+</body>
+</html>
