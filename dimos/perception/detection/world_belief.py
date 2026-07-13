@@ -54,6 +54,7 @@ BASIS_NEW = "new"
 BASIS_TRACKED = "tracked"
 BASIS_REACQUIRED = "reacquired"
 BASIS_RESTORED = "restored"  # past-session identity restored from the gallery store
+BASIS_UNRESOLVED = "unresolved"  # visible observation without a defensible identity
 
 DEFAULT_DINO_MODEL = "facebook/dinov2-base"
 
@@ -257,6 +258,7 @@ class WorldBelief:
     def __init__(self, config: WorldBeliefConfig | None = None) -> None:
         self._cfg = config or WorldBeliefConfig()
         self._tracks: dict[str, _Track] = {}
+        self._unresolved: list[Object] = []
         # Strictly increasing fold watermark.
         self._now: float = float("-inf")
         # A history path enables cross-session identity persistence.
@@ -298,23 +300,38 @@ class WorldBelief:
             # Normalize the center before association and publication.
             obj.set_center(self._observation_center(obj))
 
-        matched, unmatched, seen = self._match_frame(objects)
+        matched, unmatched, unresolved, seen = self._match_frame(objects, ts)
         self._now = ts  # advance only after identity lookup succeeds
-        for identity, obj in matched:
+        for obj in unresolved:
+            obj.identity_status = None
+            obj.identity_basis = BASIS_UNRESOLVED
+            obj.last_seen_ts = ts
+        self._unresolved = unresolved
+        for identity, obj, similarity in matched:
             if isinstance(identity, str):
                 self._insert(obj, ts, viewpoint, force_id=identity, basis=BASIS_RESTORED)
                 track = self._tracks[identity]
                 seen.add(id(track))
                 logger.info(
-                    "belief: %s (%s) restored from a previous session at (%.2f, %.2f)",
+                    "belief: %s (%s) restored from persistent gallery cos=%.3f at (%.2f, %.2f)",
                     identity[:8],
                     obj.name,
+                    similarity,
                     obj.center.x,
                     obj.center.y,
                 )
                 continue
+            gap = ts - identity.last_seen
             basis = BASIS_TRACKED if identity.last_seen == previous_ts else BASIS_REACQUIRED
             self._hit(identity, obj, ts, viewpoint, basis)
+            if basis == BASIS_REACQUIRED:
+                logger.info(
+                    "belief: %s (%s) reacquired cos=%.3f gap=%.2fs",
+                    identity.obj.object_id[:8],
+                    identity.modal_label,
+                    similarity,
+                    gap,
+                )
         for obj in unmatched:
             self._insert(obj, ts, viewpoint, basis=BASIS_NEW)
             seen.add(id(self._tracks[obj.object_id]))
@@ -323,12 +340,16 @@ class WorldBelief:
         self._prune(ts)
 
     def _match_frame(
-        self, objects: list[Object]
-    ) -> tuple[list[tuple[_Track | str, Object]], list[Object], set[int]]:
+        self, objects: list[Object], ts: float
+    ) -> tuple[list[tuple[_Track | str, Object, float]], list[Object], list[Object], set[int]]:
         """Globally associate RAM and persisted identities by appearance."""
-        tracks = list(self._tracks.values())
+        tracks = [
+            track
+            for track in self._tracks.values()
+            if track.established or ts - track.last_seen <= self._cfg.candidate_ttl_s
+        ]
         if not objects:
-            return [], [], set()
+            return [], [], [], set()
 
         history = [
             self._gallery.lookup(obj) if self._gallery is not None else {} for obj in objects
@@ -343,7 +364,7 @@ class WorldBelief:
         ]
         candidate_count = len(labels)
         if candidate_count == 0:
-            return [], objects, set()
+            return [], objects, [], set()
 
         scores = np.full((len(objects), candidate_count + len(objects)), self._cfg.reacq_cos)
         appearance = np.full((len(objects), candidate_count), np.nan)
@@ -352,6 +373,9 @@ class WorldBelief:
             vec = _appearance_vec(obj)
             for col, track in enumerate(tracks):
                 cos = gallery_cos(vec, track.appearance_views())
+                stored = history[row].get(track.obj.object_id)
+                if stored is not None and (cos is None or stored[0] > cos):
+                    cos = stored[0]
                 if cos is not None:
                     appearance[row, col] = cos
                 threshold = (
@@ -377,7 +401,7 @@ class WorldBelief:
 
         rows, cols = linear_sum_assignment(scores, maximize=True)
         best_total = float(scores[rows, cols].sum())
-        matched: list[tuple[_Track | str, Object]] = []
+        matched: list[tuple[_Track | str, Object, float]] = []
         used_tracks: set[int] = set()
         used_objs: set[int] = set()
         # Do not mint identities from ambiguous appearance evidence.
@@ -410,7 +434,7 @@ class WorldBelief:
             identity: _Track | str = (
                 tracks[col] if col < len(tracks) else history_ids[col - len(tracks)]
             )
-            matched.append((identity, objects[row]))
+            matched.append((identity, objects[row], float(scores[row, col])))
             if isinstance(identity, _Track):
                 used_tracks.add(id(identity))
             used_objs.add(id(objects[row]))
@@ -423,6 +447,7 @@ class WorldBelief:
                 for row, obj in enumerate(objects)
                 if id(obj) not in used_objs and row not in ambiguous_rows
             ],
+            [obj for row, obj in enumerate(objects) if row in ambiguous_rows],
             used_tracks,
         )
 
@@ -461,6 +486,7 @@ class WorldBelief:
         basis: str,
     ) -> None:
         was_absent = track.state == "absent"
+        was_established = track.established
         reacquired = was_absent or basis == BASIS_REACQUIRED
         track.state = "active"
         track.absent_votes = 0
@@ -508,6 +534,14 @@ class WorldBelief:
         ):
             track.viewpoints.append(viewpoint)
         self._update_identity_facts(track)
+        if not was_established and track.established:
+            logger.info(
+                "belief: %s (%s) established frames=%d span=%.2fs",
+                track.obj.object_id[:8],
+                track.modal_label,
+                track.n_frames,
+                ts - track.first_ts,
+            )
         if self._gallery is not None and track.established:
             self._gallery.remember(
                 track.obj.object_id,
@@ -610,6 +644,10 @@ class WorldBelief:
                 self._update_identity_facts(track)
                 present.append(track.obj)
         return present
+
+    def observations(self) -> list[Object]:
+        """Return stable present identities plus latest unresolved physical observations."""
+        return [*self.present(), *self._unresolved]
 
     def close(self) -> None:
         """Close persistent gallery storage."""

@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import hashlib
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from dimos.memory2.embed import EmbedImages
 from dimos.memory2.transform import QualityWindow
@@ -82,6 +82,7 @@ def build_frame_clip_index(
     )
     n = 0
     for obs in pipeline:
+        embedded = cast("EmbeddedObservation[Image]", obs)
         payload = obs.data
         if index_store is not None:
             payload, _scale = payload.resize_to_fit(thumbnail_px, thumbnail_px)
@@ -90,7 +91,7 @@ def build_frame_clip_index(
             ts=obs.ts,
             pose=obs.pose,
             tags={"rec": source_tag} if source_tag else {},
-            embedding=obs.embedding,
+            embedding=embedded.embedding,
         )
         n += 1
     logger.info(

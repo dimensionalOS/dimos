@@ -251,7 +251,7 @@ class SceneScanner:
         if not frames:
             if source_end_ts <= previous_as_of:
                 return SceneScan(
-                    objects=belief.present(),
+                    objects=belief.observations(),
                     source_end_ts=source_end_ts,
                     as_of_ts=previous_as_of,
                     selected_frames=0,
@@ -287,7 +287,7 @@ class SceneScanner:
                 f"fold stopped at {belief.last_fold_ts}, before source end {source_end_ts}"
             )
         return SceneScan(
-            objects=belief.present(),
+            objects=belief.observations(),
             source_end_ts=source_end_ts,
             as_of_ts=belief.last_fold_ts,
             selected_frames=len(selected),
@@ -355,6 +355,9 @@ class SceneScanner:
         frame_id = color_img.frame_id or ""
         in_target = frame_id in ("", self._target_frame)
         camera_transform = None if in_target else Transform.from_pose(frame_id, obs.pose)
+        if camera_transform is not None:
+            camera_transform.frame_id = self._target_frame
+            camera_transform.ts = float(obs.ts)
         objects = Object.from_2d_to_list(
             detections_2d=detections,
             color_image=color_img,
@@ -362,6 +365,8 @@ class SceneScanner:
             camera_info=camera_info,
             camera_transform=camera_transform,
         )
+        for obj in objects:
+            obj.frame_id = obj.pose.frame_id = obj.pointcloud.frame_id = self._target_frame
         objects = [o for o in objects if float(o.confidence) >= self._detector_conf]
         # Remove overlapping prompts and same-depth contained regions; a contained object
         # at a different depth survives.

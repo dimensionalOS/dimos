@@ -123,7 +123,7 @@ class Object(Detection3D):
         """Return canonical geometry without refitting the point cloud."""
         center = self.center
         size = self.size
-        orientation = getattr(self.pose, "orientation", Quaternion(0.0, 0.0, 0.0, 1.0))
+        orientation = self.pose.orientation
         return (
             Vector3(center.x, center.y, center.z),
             Quaternion(orientation.x, orientation.y, orientation.z, orientation.w),

@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Any
+from typing import Any, cast
 
 import rerun.blueprint as rrb
 
@@ -54,7 +54,10 @@ def _topic_to_entity(topic: Any) -> str:
 
 
 def _camera_info_to_rerun(msg: Any, image_topic: str) -> list[tuple[str, Any]]:
-    return msg.to_rerun(image_topic=image_topic, optical_frame=getattr(msg, "frame_id", None))
+    return cast(
+        "list[tuple[str, Any]]",
+        msg.to_rerun(image_topic=image_topic, optical_frame=getattr(msg, "frame_id", None)),
+    )
 
 
 def _rerun_blueprint() -> rrb.Blueprint:
