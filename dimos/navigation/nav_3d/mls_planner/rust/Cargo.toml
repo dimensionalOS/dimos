@@ -33,3 +33,5 @@ numpy = "0.25"
 [profile.release]
 lto = "thin"
 codegen-units = 1
+strip = true      # strip symbols from the binary (binary-only, lighter output)
+debug = false     # no debug info in the release build
