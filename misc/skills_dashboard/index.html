@@ -1,0 +1,590 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>dimos Skills Wishlist</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  /* Dark is the default theme; light is opt-in via the toggle. */
+  :root {
+    color-scheme: dark;
+    --bg: #0e1521;
+    --surface: #152134;
+    --surface-2: #1a2940;
+    --ink: #e8eef7;
+    --ink-2: #b4c2d6;
+    --muted: #7d8ca3;
+    --line: #24344e;
+    --line-strong: #33476a;
+    --accent: #82abe8;
+    --accent-soft: #1c3050;
+    --good: #35b535;
+    --good-soft: #14301a;
+    --amber: #e3a53a;
+    --amber-soft: #33290f;
+    --bad: #e66767;
+    --bad-soft: #3a1717;
+    --idea: #8b99ad;
+    --code-bg: #0b111c;
+    --code-ink: #cfdcee;
+    --code-accent: #8fb8dd;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f4f6f9; --surface: #ffffff; --surface-2: #eef1f6;
+    --ink: #131a24; --ink-2: #49566a; --muted: #7d879a;
+    --line: #dde3ec; --line-strong: #c6cfdd;
+    --accent: #2a5fb8; --accent-soft: #e3ecf9;
+    --good: #067a06; --good-soft: #e2f3e2;
+    --amber: #8a5c00; --amber-soft: #f7edd6;
+    --bad: #b23434; --bad-soft: #f8e4e4; --idea: #6b7686;
+    --code-bg: #101826; --code-ink: #d5e2f4; --code-accent: #8fb8dd;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e1521; --surface: #152134; --surface-2: #1a2940;
+    --ink: #e8eef7; --ink-2: #b4c2d6; --muted: #7d8ca3;
+    --line: #24344e; --line-strong: #33476a;
+    --accent: #82abe8; --accent-soft: #1c3050;
+    --good: #35b535; --good-soft: #14301a;
+    --amber: #e3a53a; --amber-soft: #33290f;
+    --bad: #e66767; --bad-soft: #3a1717; --idea: #8b99ad;
+    --code-bg: #0b111c; --code-ink: #cfdcee; --code-accent: #8fb8dd;
+  }
+
+  /* theme-conditional images (dark shown by default) */
+  .only-light { display: none; }
+  :root[data-theme="light"] .only-light { display: block; }
+  :root[data-theme="light"] .only-dark { display: none; }
+  :root[data-theme="dark"] .only-light { display: none; }
+  :root[data-theme="dark"] .only-dark { display: block; }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 24px 80px; }
+
+  .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+  .eyebrow {
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent); margin: 0 0 6px;
+  }
+  h1 { font-size: 26px; line-height: 1.2; margin: 0 0 6px; text-wrap: balance; }
+  .sub { color: var(--ink-2); margin: 0 0 24px; max-width: 68ch; }
+  .sub a, a.filelink { color: var(--accent); }
+  #theme-toggle {
+    appearance: none; cursor: pointer; flex: none;
+    background: var(--surface); color: var(--ink-2);
+    border: 1px solid var(--line-strong); border-radius: 6px;
+    font: 600 12px/1 ui-monospace, "SF Mono", Menlo, monospace;
+    padding: 8px 12px; letter-spacing: 0.06em;
+  }
+  #theme-toggle:hover { color: var(--ink); border-color: var(--accent); }
+  #theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .kpis {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px; margin-bottom: 28px;
+  }
+  .kpi {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 6px; padding: 14px 16px;
+  }
+  .kpi .label {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 4px;
+  }
+  .kpi .value { font-size: 26px; font-weight: 650; line-height: 1.1; }
+  .kpi .note { font-size: 12.5px; color: var(--ink-2); margin-top: 3px; }
+  .kpi .value .ok { color: var(--good); }
+  .kpi .value .fail { color: var(--bad); }
+
+  .tabs {
+    display: flex; gap: 4px; overflow-x: auto; padding-bottom: 2px;
+    border-bottom: 2px solid var(--line); scrollbar-width: thin;
+  }
+  .tab {
+    appearance: none; background: none; border: none; cursor: pointer;
+    padding: 9px 13px 11px; margin-bottom: -2px;
+    border-bottom: 2px solid transparent;
+    color: var(--ink-2); font: 600 13.5px/1.2 system-ui, sans-serif;
+    white-space: nowrap; display: flex; align-items: center; gap: 7px;
+    border-radius: 4px 4px 0 0;
+  }
+  .tab:hover { background: var(--surface-2); color: var(--ink); }
+  .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+  .tab .n {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px; color: var(--muted);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.impl { background: var(--good); }
+  .dot.wip  { background: var(--accent); }
+  .dot.proto{ background: var(--amber); }
+  .dot.blocked { background: var(--bad); }
+  .dot.idea { background: transparent; border: 1.5px solid var(--muted); }
+
+  .legend {
+    display: flex; gap: 18px; flex-wrap: wrap; align-items: center;
+    font-size: 12px; color: var(--ink-2); margin: 10px 0 26px;
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .panel-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin: 4px 0 8px; }
+  .panel-head h2 { font-size: 21px; margin: 0; text-wrap: balance; }
+  .pill {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase;
+    padding: 3px 9px; border-radius: 99px; font-weight: 600; white-space: nowrap;
+  }
+  .pill.impl  { background: var(--good-soft);  color: var(--good); }
+  .pill.wip   { background: var(--accent-soft); color: var(--accent); }
+  .pill.proto { background: var(--amber-soft); color: var(--amber); }
+  .pill.blocked { background: var(--bad-soft); color: var(--bad); }
+  .pill.idea  { background: var(--surface-2);  color: var(--idea); }
+  .lede { color: var(--ink-2); max-width: 72ch; margin: 0 0 22px; }
+  .lede.scope { font-size: 13.5px; margin-top: 14px; }
+
+  h3 {
+    font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    color: var(--muted); margin: 30px 0 12px; font-weight: 600;
+  }
+
+  figure { margin: 0 0 8px; }
+  .fig {
+    display: block; width: 100%; height: auto;
+    border: 1px solid var(--line); border-radius: 6px;
+  }
+  .fig.blueprint { border-color: #2a5488; }
+  figcaption, .code-cap {
+    font-size: 12px; color: var(--muted); margin: 6px 2px 18px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
+  .pipe { list-style: none; margin: 0; padding: 0; }
+  .pipe li {
+    display: grid; grid-template-columns: 34px 1fr; gap: 12px;
+    padding: 11px 0;
+  }
+  .pipe li + li { border-top: 1px dashed var(--line); }
+  .pipe .step {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px; color: var(--accent); font-weight: 600; padding-top: 2px;
+  }
+  .pipe b { font-weight: 650; }
+  .pipe p { margin: 2px 0 0; color: var(--ink-2); font-size: 13.5px; max-width: 78ch; }
+
+  .flow {
+    display: flex; align-items: stretch; gap: 0; overflow-x: auto;
+    padding: 4px 0 8px;
+  }
+  .flow .node {
+    background: var(--surface); border: 1px solid var(--line-strong);
+    border-radius: 6px; padding: 9px 13px; min-width: 118px; flex: none;
+    text-align: center;
+  }
+  .flow .node b { display: block; font-size: 12.5px; }
+  .flow .node span { font-size: 11px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
+  .flow .node.hl { border-color: var(--accent); background: var(--accent-soft); }
+  .flow .arrow {
+    flex: none; align-self: center; color: var(--muted);
+    padding: 0 7px; font-family: ui-monospace, Menlo, monospace; font-size: 13px;
+  }
+
+  .tbl-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th {
+    text-align: left; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600;
+    padding: 10px 14px; border-bottom: 1px solid var(--line-strong);
+    white-space: nowrap;
+  }
+  td { padding: 9px 14px; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--ink-2); }
+  tr:last-child td { border-bottom: none; }
+  td:first-child { color: var(--ink); }
+  td.mono, .tmono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em;
+    padding: 2px 8px; border-radius: 4px; white-space: nowrap;
+  }
+  .badge.pass { background: var(--good-soft); color: var(--good); }
+  .badge.fail { background: var(--bad-soft); color: var(--bad); }
+  .badge.skip { background: var(--amber-soft); color: var(--amber); }
+  .badge.ci   { background: var(--accent-soft); color: var(--accent); }
+
+  pre {
+    background: var(--code-bg); color: var(--code-ink);
+    border-radius: 6px; padding: 14px 16px; overflow-x: auto;
+    font: 12.5px/1.55 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    margin: 0;
+  }
+  pre .c { color: #6f87a6; }
+  pre .k { color: var(--code-accent); }
+  pre .s { color: #a8d49a; }
+
+  .next {
+    border-left: 3px solid var(--accent); background: var(--surface);
+    border-radius: 0 6px 6px 0; padding: 12px 16px; margin-top: 26px;
+    font-size: 13.5px; color: var(--ink-2);
+  }
+  .next b { color: var(--ink); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 6px; padding: 14px 16px; font-size: 13.5px; color: var(--ink-2);
+  }
+  .card b { color: var(--ink); display: block; margin-bottom: 4px; }
+  .dep {
+    display: inline-block; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px; background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: 4px; padding: 1px 7px; margin: 2px 4px 0 0; color: var(--ink-2);
+  }
+  .files { font-size: 12.5px; color: var(--muted); margin-top: 22px; }
+  .files code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px;
+    background: var(--surface-2); padding: 1px 6px; border-radius: 4px; border: 1px solid var(--line);
+    color: var(--accent);
+  }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .split { grid-template-columns: 1fr; } }
+
+  .concept {
+    background: var(--surface); border: 1px dashed var(--line-strong);
+    border-radius: 6px; padding: 14px 16px 8px; max-width: 560px;
+  }
+  .concept svg { width: 100%; height: auto; display: block; }
+  .concept .cap {
+    font-size: 11px; color: var(--muted); margin: 6px 0 4px;
+    font-family: ui-monospace, Menlo, monospace; letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  #load-error {
+    display: none; border-left: 3px solid var(--bad); background: var(--bad-soft);
+    color: var(--bad); border-radius: 0 6px 6px 0; padding: 12px 16px; margin: 20px 0;
+    font-size: 13.5px;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .panel.active { animation: fade .18s ease; }
+    @keyframes fade { from { opacity: 0; transform: translateY(3px); } }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <p class="eyebrow">dimos · robot skills backlog · <span id="updated-note">loading…</span></p>
+      <h1>Skills Wishlist Dashboard</h1>
+    </div>
+    <button id="theme-toggle" aria-label="Toggle color theme">◐ THEME</button>
+  </div>
+  <p class="sub">Candidate skills for reasoning about the environment the robot observes —
+  mapping, object &amp; scene understanding, and activity over time. Source of truth:
+  <a class="filelink" href="/dimos/skills/SKILLS_WISHLIST.md">dimos/skills/SKILLS_WISHLIST.md</a>;
+  this page renders whatever is published under
+  <a class="filelink" href="data/">misc/skills_dashboard/data/</a>.</p>
+
+  <div id="load-error"></div>
+  <div class="kpis" id="kpis"></div>
+  <div class="tabs" role="tablist" aria-label="Wishlist items" id="tabs"></div>
+  <div class="legend">
+    <span><span class="dot impl"></span> implemented</span>
+    <span><span class="dot wip"></span> in progress</span>
+    <span><span class="dot proto"></span> prototype</span>
+    <span><span class="dot idea"></span> idea</span>
+    <span><span class="dot blocked"></span> blocked</span>
+  </div>
+  <div id="panels"></div>
+
+  <p class="files" id="footer-note"></p>
+</div>
+
+<script>
+"use strict";
+
+// ---------------------------------------------------------------- theme ----
+const root = document.documentElement;
+const savedTheme = localStorage.getItem('skills-dash-theme');
+root.dataset.theme = savedTheme || 'dark';  // dark by default; toggle persists
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+  localStorage.setItem('skills-dash-theme', root.dataset.theme);
+});
+
+// ------------------------------------------------------------- rendering ----
+const STATUS = {
+  'implemented': { cls: 'impl', label: 'implemented' },
+  'in-progress': { cls: 'wip', label: 'in progress' },
+  'prototype':   { cls: 'proto', label: 'prototype' },
+  'blocked':     { cls: 'blocked', label: 'blocked' },
+  'idea':        { cls: 'idea', label: 'idea' },
+};
+const ACTIVE_STATUSES = new Set(['implemented', 'in-progress', 'prototype']);
+
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                          .replace(/"/g, '&quot;');
+
+// Data must always be fresh — bust both the browser cache (?v=) and any
+// intermediary with no-store, so republished results show on plain reload.
+const BUST = Date.now();
+const bust = url => url + (url.includes('?') ? '&' : '?') + 'v=' + BUST;
+
+async function fetchJSON(url) {
+  const r = await fetch(bust(url), { cache: 'no-store' });
+  if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
+  return r.json();
+}
+async function fetchTextOrNull(url) {
+  try {
+    const r = await fetch(bust(url), { cache: 'no-store' });
+    return r.ok ? r.text() : null;
+  } catch { return null; }
+}
+
+// Parse a pytest --junit-xml report into rows + suite stats.
+function parseJunit(xmlText) {
+  const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
+  if (doc.querySelector('parsererror')) return null;
+  const suites = [...doc.querySelectorAll('testsuite')];
+  const cases = [...doc.querySelectorAll('testcase')].map(tc => {
+    const failure = tc.querySelector('failure, error');
+    const skipped = tc.querySelector('skipped');
+    return {
+      name: tc.getAttribute('name'),
+      classname: tc.getAttribute('classname') || '',
+      time: parseFloat(tc.getAttribute('time') || '0'),
+      status: failure ? 'fail' : skipped ? 'skip' : 'pass',
+      detail: failure ? failure.getAttribute('message') || failure.textContent.slice(0, 400) : null,
+    };
+  });
+  const ts = suites.map(s => s.getAttribute('timestamp')).filter(Boolean).sort().pop() || null;
+  const time = suites.reduce((a, s) => a + parseFloat(s.getAttribute('time') || '0'), 0);
+  return { cases, timestamp: ts, time };
+}
+
+function figureHTML(dir, f) {
+  const frame = f.frame === 'blueprint' ? ' blueprint' : '';
+  const light = bust(`${dir}/${f.light}`);
+  const dark = f.dark ? bust(`${dir}/${f.dark}`) : null;
+  const imgs = dark
+    ? `<img class="fig only-light${frame}" src="${esc(light)}" alt="${esc(f.alt || '')}">
+       <img class="fig only-dark${frame}" src="${esc(dark)}" alt="${esc(f.alt || '')}">`
+    : `<img class="fig${frame}" src="${esc(light)}" alt="${esc(f.alt || '')}">`;
+  return `${f.heading ? `<h3>${esc(f.heading)}</h3>` : ''}
+    <figure>${imgs}${f.caption_html ? `<figcaption>${f.caption_html}</figcaption>` : ''}</figure>`;
+}
+
+function testsHTML(item, junit) {
+  if (!junit && !(item.manual_tests || []).length) return '';
+  const rows = [];
+  if (junit) {
+    for (const tc of junit.cases) {
+      const desc = (item.test_descriptions || {})[tc.name] || '';
+      const badge = tc.status === 'pass' ? '<span class="badge pass">PASS</span>'
+        : tc.status === 'skip' ? '<span class="badge skip">SKIP</span>'
+        : `<span class="badge fail" title="${esc(tc.detail || '')}">FAIL</span>`;
+      rows.push(`<tr><td class="mono">${esc(tc.name.replace(/^test_/, ''))}</td><td>${desc}</td><td class="num">${badge}</td></tr>`);
+    }
+  }
+  for (const mt of item.manual_tests || []) {
+    rows.push(`<tr><td class="mono">${esc(mt.name.replace(/^test_/, ''))}</td><td>${mt.desc_html || ''}</td><td class="num"><span class="badge ci">${esc(mt.badge || 'CI')}</span></td></tr>`);
+  }
+  const stats = junit
+    ? (() => {
+        const p = junit.cases.filter(c => c.status === 'pass').length;
+        const f = junit.cases.filter(c => c.status === 'fail').length;
+        return `${p}/${junit.cases.length} pass${f ? ` · ${f} FAILING` : ''}`;
+      })()
+    : 'no local suite';
+  const when = junit && junit.timestamp ? ` · run ${junit.timestamp.slice(0, 10)} (${junit.time.toFixed(1)} s)` : '';
+  const note = item.tests_note_html ? ` · ${item.tests_note_html}` : '';
+  return `<h3>Performance on test data — ${esc(stats)}</h3>
+    <div class="tbl-scroll"><table>
+      <tr><th>Test</th><th>What it verifies</th><th class="num">Result</th></tr>
+      ${rows.join('\n')}
+    </table></div>
+    <p class="code-cap">source: results.xml (pytest --junit-xml)${when}${note}</p>`;
+}
+
+function skillsHTML(item) {
+  const skills = item.skills || [];
+  if (!skills.length && !item.skills_note) return '';
+  const rows = skills.map(s => `<tr>
+    <td class="mono">${esc(s.name)}${s.container ? `<div style="color:var(--muted);font-size:11px">${esc(s.container)}</div>` : ''}</td>
+    <td>${s.desc_html || ''}</td>
+    <td class="mono"><a class="filelink" href="/${esc(s.file)}">${esc(s.file)}</a></td>
+  </tr>`).join('\n');
+  const note = item.skills_note ? `<p class="code-cap">${item.skills_note}</p>` : '';
+  const table = skills.length
+    ? `<div class="tbl-scroll"><table>
+        <tr><th>Skill</th><th>What an agent gets</th><th>File</th></tr>${rows}
+      </table></div>`
+    : '';
+  return `<h3>Agent skills</h3>${table}${note}`;
+}
+
+function evidenceHTML(item) {
+  const ev = item.evidence;
+  if (!ev) return '';
+  return `<h3>Performance on test data</h3>
+    <div class="tbl-scroll"><table>
+      <tr>${ev.headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr>
+      ${ev.rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('\n')}
+    </table></div>`;
+}
+
+function panelHTML(idx, dir, item, junit, conceptHtml) {
+  const st = STATUS[item.status] || STATUS.idea;
+  const flow = (item.flow || []).length
+    ? `<h3>How it works</h3><div class="flow" aria-label="Data flow">${item.flow.map((n, i) =>
+        `${i ? '<div class="arrow">→</div>' : ''}<div class="node${n.hl ? ' hl' : ''}"><b>${esc(n.label)}</b><span>${esc(n.sub || '')}</span></div>`
+      ).join('')}</div>`
+    : '';
+  const pipe = (item.how_it_works || []).length
+    ? `${flow ? '' : '<h3>How it works</h3>'}<ol class="pipe">${item.how_it_works.map((s, i) =>
+        `<li><span class="step">${String(i + 1).padStart(2, '0')}</span><div><b>${esc(s.title)}</b><p>${s.html}</p></div></li>`
+      ).join('')}</ol>`
+    : '';
+  const figs = (item.figures || []).map(f => figureHTML(dir, f)).join('\n');
+  const scope = item.scope_note_html ? `<p class="lede scope">${item.scope_note_html}</p>` : '';
+  const splitExamples = (item.examples || []).filter(e => e.split);
+  const wideExamples = (item.examples || []).filter(e => !e.split);
+  const exHTML = (item.examples || []).length
+    ? `<h3>Examples</h3>
+       ${splitExamples.length ? `<div class="split">${splitExamples.map(e =>
+         `<div><pre>${e.pre_html}</pre><p class="code-cap">${esc(e.caption || '')}</p></div>`).join('')}</div>` : ''}
+       ${wideExamples.map(e => `<pre>${e.pre_html}</pre><p class="code-cap">${esc(e.caption || '')}</p>`).join('')}`
+    : '';
+  const cards = (item.cards || []).length
+    ? `<h3>${esc(item.cards_heading || 'Notes')}</h3><div class="cards">${item.cards.map(c =>
+        `<div class="card"><b>${esc(c.title)}</b>${c.html}</div>`).join('')}</div>`
+    : '';
+  const deps = (item.dependencies || []).length
+    ? `<h3>Dependencies</h3><p>${item.dependencies.map(d => `<span class="dep">${esc(d)}</span>`).join('')}</p>`
+    : '';
+  const concept = conceptHtml ? `<h3>Concept sketch — not built</h3>${conceptHtml}` : '';
+  const next = item.next_step_html ? `<div class="next"><b>Next step:</b> ${item.next_step_html}</div>` : '';
+  const sources = (item.sources || []).length
+    ? `<p class="files">Source: ${item.sources.map(s =>
+        `<a href="/${esc(s)}"><code>${esc(s)}</code></a>`).join(' · ')} ·
+        data: <a href="${esc(dir)}/"><code>${esc(dir)}/</code></a></p>`
+    : `<p class="files">data: <a href="${esc(dir)}/"><code>${esc(dir)}/</code></a></p>`;
+
+  return `<section class="panel" role="tabpanel" id="panel-${idx}" aria-labelledby="tab-${idx}" hidden>
+    <div class="panel-head"><h2>${esc(item.title)}</h2><span class="pill ${st.cls}">${esc(st.label)}</span></div>
+    <p class="lede">${item.summary_html || ''}</p>
+    ${skillsHTML(item)}
+    ${item.figures && item.figures.length && item.figures[0].hero !== false ? figs : ''}
+    ${flow}${pipe}${scope}
+    ${junit || (item.manual_tests || []).length ? testsHTML(item, junit) : evidenceHTML(item)}
+    ${concept}${cards}${exHTML}${deps}${next}${sources}
+  </section>`;
+}
+
+// ------------------------------------------------------------------ boot ----
+(async () => {
+  const errBox = document.getElementById('load-error');
+  try {
+    const index = await fetchJSON('data/items.json');
+    const loaded = await Promise.all(index.items.map(async slug => {
+      const dir = `data/${slug}`;
+      const item = await fetchJSON(`${dir}/item.json`);
+      const junitText = await fetchTextOrNull(`${dir}/results.xml`);
+      const junit = junitText ? parseJunit(junitText) : null;
+      const conceptHtml = item.concept_file ? await fetchTextOrNull(`${dir}/${item.concept_file}`) : null;
+      return { slug, dir, item, junit, conceptHtml };
+    }));
+
+    // KPIs
+    const active = loaded.filter(l => ACTIVE_STATUSES.has(l.item.status)).length;
+    const ideas = loaded.length - active;
+    let pass = 0, fail = 0, total = 0, newest = null, suiteTime = 0;
+    for (const l of loaded) {
+      if (!l.junit) continue;
+      for (const c of l.junit.cases) {
+        total++;
+        if (c.status === 'pass') pass++;
+        if (c.status === 'fail') fail++;
+      }
+      suiteTime += l.junit.time;
+      if (l.junit.timestamp && (!newest || l.junit.timestamp > newest)) newest = l.junit.timestamp;
+    }
+    const manual = loaded.reduce((a, l) => a + (l.item.manual_tests || []).length, 0);
+    const testCls = fail ? 'fail' : 'ok';
+    document.getElementById('kpis').innerHTML = `
+      <div class="kpi"><div class="label">Items tracked</div><div class="value">${loaded.length}</div>
+        <div class="note">${active} active · ${ideas} ideas</div></div>
+      <div class="kpi"><div class="label">Unit tests</div>
+        <div class="value"><span class="${testCls}">${pass} / ${total}</span></div>
+        <div class="note">${fail ? fail + ' failing · ' : 'pass · '}${newest ? 'run ' + newest.slice(0, 10) + ', ' : ''}${suiteTime.toFixed(1)} s total</div></div>
+      <div class="kpi"><div class="label">CI-only tests</div><div class="value">${manual}</div>
+        <div class="note">self-hosted / real-data suites</div></div>
+      <div class="kpi"><div class="label">Data folders</div><div class="value">${loaded.filter(l => l.junit).length}<span style="font-size:15px;color:var(--muted)"> / ${loaded.length}</span></div>
+        <div class="note">publish results.xml to light these up</div></div>`;
+    document.getElementById('updated-note').textContent =
+      newest ? `results published ${newest.slice(0, 10)}` : 'no test results published yet';
+
+    // Tabs + panels
+    document.getElementById('tabs').innerHTML = loaded.map((l, i) => {
+      const st = STATUS[l.item.status] || STATUS.idea;
+      return `<button class="tab" role="tab" id="tab-${i + 1}" aria-controls="panel-${i + 1}"
+        aria-selected="${i === 0}"><span class="dot ${st.cls}"></span><span class="n">${i + 1}</span>${esc(l.item.tab_label || l.item.title)}</button>`;
+    }).join('');
+    document.getElementById('panels').innerHTML =
+      loaded.map((l, i) => panelHTML(i + 1, l.dir, l.item, l.junit, l.conceptHtml)).join('\n');
+
+    document.getElementById('footer-note').innerHTML =
+      `Each tab renders <code>item.json</code> + <code>results.xml</code> + figures from its folder under
+       <a class="filelink" href="data/">data/</a> — republish those (see the "Publishing to the dashboard"
+       section of <a class="filelink" href="/dimos/skills/SKILLS_WISHLIST.md">SKILLS_WISHLIST.md</a>) and
+       reload; this page needs no edits.`;
+
+    // Tab behavior
+    const tabs = [...document.querySelectorAll('.tab')];
+    const panels = [...document.querySelectorAll('.panel')];
+    function select(tab) {
+      tabs.forEach(t => t.setAttribute('aria-selected', t === tab ? 'true' : 'false'));
+      panels.forEach(p => {
+        const on = p.id === tab.getAttribute('aria-controls');
+        p.classList.toggle('active', on);
+        p.hidden = !on;
+      });
+      history.replaceState(null, '', '#' + tab.getAttribute('aria-controls'));
+    }
+    tabs.forEach((tab, i) => {
+      tab.addEventListener('click', () => select(tab));
+      tab.addEventListener('keydown', e => {
+        let j = null;
+        if (e.key === 'ArrowRight') j = (i + 1) % tabs.length;
+        if (e.key === 'ArrowLeft') j = (i - 1 + tabs.length) % tabs.length;
+        if (e.key === 'Home') j = 0;
+        if (e.key === 'End') j = tabs.length - 1;
+        if (j !== null) { e.preventDefault(); tabs[j].focus(); select(tabs[j]); }
+      });
+    });
+    const hash = location.hash.replace('#', '');
+    select(tabs.find(t => t.getAttribute('aria-controls') === hash) || tabs[0]);
+  } catch (err) {
+    errBox.style.display = 'block';
+    errBox.textContent = 'Failed to load dashboard data: ' + err.message +
+      ' — serve this page over HTTP from the repo root (see misc/skills_dashboard/serve.sh); ' +
+      'fetch() does not work from file://';
+    document.getElementById('updated-note').textContent = 'load error';
+  }
+})();
+</script>
+</body>
+</html>

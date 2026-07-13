@@ -1,0 +1,11 @@
+{
+  "title": "Identify specific activity (\"human does X\")",
+  "tab_label": "Activity recognition",
+  "status": "idea",
+  "summary_html": "Activity and action recognition over a temporal window of observations — distinct from item 2's static object detection, which answers <em>what is there</em>, not <em>what is happening</em>.",
+  "concept_file": "concept.html",
+  "dependencies": [
+    "none hard — new temporal model needed"
+  ],
+  "skills_note": "no skill yet (idea) — needs a temporal model; no file exists"
+}

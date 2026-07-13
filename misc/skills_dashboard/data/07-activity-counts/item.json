@@ -1,0 +1,12 @@
+{
+  "title": "Count occurrences of activity over time",
+  "tab_label": "Activity counts",
+  "status": "idea",
+  "summary_html": "Aggregate activity-recognition events into counts and rates over time — the activity analogue of item 4's item counting. Blocked until item 6 exists.",
+  "concept_file": "concept.html",
+  "dependencies": [
+    "item 6 — activity recognition",
+    "pattern from item 4 — temporal aggregation"
+  ],
+  "skills_note": "no skill yet (idea) — blocked on item 6's event stream"
+}

@@ -1,0 +1,107 @@
+{
+  "title": "Contextual labeling / educated guesses / external data",
+  "tab_label": "Contextual labeling",
+  "status": "implemented",
+  "summary_html": "When the detector is unsure or produces a useless label (\"object\", <span class='tmono'>class_17</span>, low confidence), ask a vision-language model for an educated guess — feeding it evidence the detector never uses: the cropped detection image, the detector's own guess + confidence, the object's <b>measured real-world size</b>, and <b>what else is nearby</b>. A \"mouse\" next to a keyboard and monitor is a computer mouse, not an animal. Exposed as agent skills on <span class='tmono'>ObjectSceneRegistrationModule</span>.",
+  "skills": [
+    {
+      "name": "identify_object(object_id)",
+      "container": "ObjectSceneRegistrationModule",
+      "desc_html": "Refine one observed object's label with the VLM (crop + size + neighbors as context); the refined name persists in the ObjectDB",
+      "file": "dimos/perception/object_scene_registration.py"
+    },
+    {
+      "name": "refine_observed_labels()",
+      "container": "ObjectSceneRegistrationModule",
+      "desc_html": "Batch sweep over every ambiguous permanent object (low confidence / generic name); item 2's <span class='tmono'>catalog_scene()</span> calls this automatically",
+      "file": "dimos/perception/object_scene_registration.py"
+    }
+  ],
+  "skills_note": "pure helpers (prompt building, ambiguity gate, VLM call) live in <span class='tmono'>dimos/perception/contextual_labeling.py</span>",
+  "flow": [
+    {
+      "label": "Object",
+      "sub": "raw label + crop"
+    },
+    {
+      "label": "is_ambiguous?",
+      "sub": "conf < 0.5 | generic",
+      "hl": true
+    },
+    {
+      "label": "context prompt",
+      "sub": "size + neighbors"
+    },
+    {
+      "label": "VlModel",
+      "sub": "query_json(crop)"
+    },
+    {
+      "label": "refined_name",
+      "sub": "persists in ObjectDB"
+    }
+  ],
+  "how_it_works": [
+    {
+      "title": "Gate on ambiguity",
+      "html": "<span class='tmono'>is_ambiguous()</span> selects only detections worth a VLM call: confidence below 0.5, an empty/generic name (<span class='tmono'>object</span>, <span class='tmono'>thing</span>, <span class='tmono'>unknown</span>…), or a raw <span class='tmono'>class_N</span> id. Confident specific labels are left alone."
+    },
+    {
+      "title": "Build the context prompt",
+      "html": "<span class='tmono'>build_context_prompt()</span> assembles what the robot knows but the detector ignored: detector guess + confidence, measured world size (from item 2's localization), and up to 8 nearest neighbors from the <span class='tmono'>ObjectDB</span> scene as \"keyboard (0.4m away)\" lines, nearest first."
+    },
+    {
+      "title": "Ask the VLM",
+      "html": "<span class='tmono'>contextual_label()</span> crops the stored detection image (20 px padding), queries the configured <span class='tmono'>VlModel</span> (<span class='tmono'>global_config.detection_model</span>) for strict JSON, and returns a <span class='tmono'>ContextualLabel</span> (label, one-line description, clamped confidence). Query failures or malformed JSON return None — the raw detector label is kept."
+    },
+    {
+      "title": "Persist the refinement",
+      "html": "<span class='tmono'>Object</span> gained <span class='tmono'>refined_name</span> / <span class='tmono'>refined_description</span>; the raw detector <span class='tmono'>name</span> is preserved alongside. Encoders and <span class='tmono'>find_by_name</span> prefer/accept the refined label, and refinement survives <span class='tmono'>update_object()</span> merges. Skills: <span class='tmono'>identify_object(object_id)</span> (one item) and <span class='tmono'>refine_observed_labels()</span> (batch over ambiguous permanent objects), plus a <span class='tmono'>refine_object_labels()</span> RPC."
+    }
+  ],
+  "test_descriptions": {
+    "test_is_ambiguous_low_confidence": "Sub-threshold confidence triggers refinement",
+    "test_is_ambiguous_generic_or_classid_name": "\"object\"/\"thing\"/class_N labels trigger refinement",
+    "test_confident_specific_name_is_not_ambiguous": "A confident \"cup\" is left alone — no VLM call",
+    "test_prompt_includes_detector_guess_size_and_neighbors": "Prompt carries guess + confidence, real-world size, neighbor lines",
+    "test_describe_neighbors_sorted_and_excludes_self": "Neighbor context is nearest-first and never includes the object itself",
+    "test_describe_neighbors_caps_count": "Neighbor list capped at 8 to bound prompt size",
+    "test_contextual_label_happy_path": "Stub VLM JSON becomes a ContextualLabel with label/description/confidence",
+    "test_contextual_label_clamps_and_defaults_confidence": "Out-of-range/missing VLM confidence is clamped to [0, 1] / defaulted",
+    "test_contextual_label_rejects_bad_responses": "Query failures and malformed JSON return None (raw label kept)",
+    "test_contextual_label_requires_image": "Objects without a stored crop are skipped, not crashed on",
+    "test_display_name_prefers_refined": "display_name shows the refined label once one exists",
+    "test_locate_encode_surfaces_refined_name_and_detector_name": "Agent encoding exposes refined name and preserves the detector's raw name",
+    "test_update_object_preserves_refinement": "Refinement survives ObjectDB merges of new sightings",
+    "test_identify_object_skill_refines_and_persists": "identify_object(object_id) refines one item and persists it in the DB",
+    "test_identify_object_skill_unknown_id": "Unknown object_id answers gracefully",
+    "test_refine_observed_labels_only_targets_ambiguous": "Batch skill only spends VLM calls on ambiguous objects",
+    "test_refine_observed_labels_nothing_to_do": "No ambiguous objects → explicit \"nothing to refine\" answer",
+    "test_prompt_carries_neighbor_and_size_context": "Skill-verification: the VLM prompt for an ambiguous \"mouse\" carries its detector guess, measured real-world size, and keyboard/monitor neighbors",
+    "test_refine_only_relabels_ambiguous_and_report": "Skill-verification: <span class='tmono'>refine_observed_labels()</span> refines the ambiguous item (stub VLM) and leaves confident ones; writes a before/after label table for review"
+  },
+  "tests_note_html": "VLM stubbed in unit tests; live model comes from <span class='tmono'>global_config.detection_model</span>. The last two rows are from the skill-verification suite (<span class='tmono'>dimos/skills/skill_verification</span>), which drives the real refinement path and writes a before/after label table to <span class='tmono'>test_outputs/</span> (indexed by <span class='tmono'>REVIEW.md</span>)",
+  "examples": [
+    {
+      "pre_html": "<span class='c'># the detector saw a blurry blob on the desk</span>\n&gt;&gt;&gt; module.identify_object(<span class='s'>\"a1b2c3d4\"</span>)\nRefined 'object' (conf 0.31) → <span class='s'>'espresso machine'</span> (conf 0.78):\n  \"Compact chrome espresso machine with a portafilter.\"\n\n<span class='c'># or sweep everything ambiguous in one call</span>\n&gt;&gt;&gt; module.refine_observed_labels()",
+      "caption": "identify_object / refine_observed_labels skills — VLM answer persisted as refined_name"
+    }
+  ],
+  "next_step_html": "External data sources (e.g. OSM lookups via <span class='tmono'>dimos/agents/skills/osm.py</span>, object databases) as additional context, and live validation on the Go2 (the VLM path is already exercised for real against item 2's replayed session).",
+  "dependencies": [
+    "item 2 — raw detections + ObjectDB scene"
+  ],
+  "sources": [
+    "dimos/perception/contextual_labeling.py",
+    "dimos/perception/test_contextual_labeling.py",
+    "dimos/perception/object_scene_registration.py",
+    "dimos/skills/skill_verification/test_05_contextual_labeling.py"
+  ],
+  "manual_tests": [
+    {
+      "name": "test_replay_catalog_with_vlm_descriptions",
+      "desc_html": "Real moondream VLM refines all 18 objects catalogued by item 2's Go2 session replay; every description lands in the <span class='tmono'>list_observed_items()</span> catalog",
+      "badge": "SELF-HOSTED CI"
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "title": "Convert lidar to numpy signals",
+  "tab_label": "Lidar → numpy",
+  "status": "implemented",
+  "summary_html": "A client-side utility, <span class='tmono'>LidarPointCloudClient</span>, that lets any script or skill running <em>outside</em> the module graph subscribe to live lidar over LCM and pull the accumulated cloud as a plain <span class='tmono'>(N, 3)</span> float32 numpy array — no hand-rolled subscribe/accumulate/vstack bookkeeping. Extracted from the floorplan demo's ad-hoc collector, which now uses it.",
+  "skills_note": "no agent skill (by design) — this is a library API: <span class='tmono'>LidarPointCloudClient</span> in <span class='tmono'>dimos/mapping/pointclouds/live.py</span>, consumed by item 1's collection stage; wrap as a skill only when item 2/4 has a concrete need",
+  "figures": [
+    {
+      "light": "lidar_accumulation_light.png",
+      "dark": "lidar_accumulation_dark.png",
+      "alt": "Left: step chart of snapshot() point count growing over 48 lidar messages to 35,962 points. Right: top-down view of the accumulated cloud forming a 6 by 4 meter room with a round pillar",
+      "caption_html": "The actual client accumulating 48 sector scans of a synthetic 6×4 m room (one scanner revolution). Left: snapshot() grows monotonically as /lidar chunks arrive. Right: the final (35,962 × 3) float32 array plotted top-down — walls and a 0.36 m pillar reconstructed, ready for plain numpy work. Regenerate: <span class='tmono'>uv run python misc/skills_dashboard/scripts/gen_figures.py</span>",
+      "heading": "What it does — real class fed a spinning synthetic scanner"
+    }
+  ],
+  "how_it_works": [
+    { "title": "Subscribe", "html": "Opens <span class='tmono'>LCMTransport</span> subscriptions to <span class='tmono'>/lidar</span> (per-scan chunks) and optionally <span class='tmono'>/global_map</span> (an already-accumulated map). Usable as a context manager: <span class='tmono'>with LidarPointCloudClient() as client:</span>." },
+    { "title": "Accumulate", "html": "Each <span class='tmono'>/lidar</span> message is converted with <span class='tmono'>points_f32()</span> and appended to a chunk list; empty messages are ignored. <span class='tmono'>/global_map</span> is cumulative upstream, so it's <em>latest-wins</em> rather than appended. All state is behind one lock." },
+    { "title": "Snapshot on demand", "html": "<span class='tmono'>snapshot()</span> returns a thread-safe vstack of buffered chunks + global map as <span class='tmono'>(N, 3)</span> float32 (or <span class='tmono'>(0, 3)</span> when nothing arrived). <span class='tmono'>clear()</span> drops the chunks but deliberately keeps the last global map." }
+  ],
+  "scope_note_html": "Scope note: single-message conversion (<span class='tmono'>PointCloud2.points_f32()</span> / <span class='tmono'>.as_numpy()</span>) and in-graph accumulation + occupancy rasterization already existed and are unchanged — this fills the gap for <em>client-side</em> consumers only.",
+  "test_descriptions": {
+    "test_empty_snapshot_is_zero_by_three": "No messages → well-formed <span class='tmono'>(0, 3)</span> float32 array, never an error",
+    "test_lidar_chunks_accumulate": "Successive <span class='tmono'>/lidar</span> scans stack into one growing cloud",
+    "test_global_map_included_alongside_lidar_chunks": "Snapshot merges the global map with buffered scans",
+    "test_global_map_is_latest_wins": "A newer <span class='tmono'>/global_map</span> replaces (not appends to) the old one",
+    "test_clear_drops_lidar_chunks_but_keeps_global_map": "<span class='tmono'>clear()</span> resets scan buffer while preserving the map",
+    "test_empty_pointcloud_message_is_ignored": "Zero-point messages don't pollute the buffer or the count",
+    "test_lidar_snapshot_accumulates_numpy_cloud": "Skill-verification: a synthetic scanner sweep grows <span class='tmono'>snapshot()</span> into an <span class='tmono'>(N, 3)</span> float cloud spanning the room; saves the accumulation curve + top-down cloud for review"
+  },
+  "tests_note_html": "the last row is from the skill-verification suite (<span class='tmono'>dimos/skills/skill_verification</span>), which drives the real client end-to-end and writes a review figure to <span class='tmono'>test_outputs/</span> (indexed by <span class='tmono'>REVIEW.md</span>)",
+  "examples": [
+    {
+      "pre_html": "<span class='k'>from</span> dimos.mapping.pointclouds.live <span class='k'>import</span> LidarPointCloudClient\n\n<span class='k'>with</span> LidarPointCloudClient() <span class='k'>as</span> client:   <span class='c'># /lidar + /global_map</span>\n    time.sleep(5.0)                        <span class='c'># let scans arrive</span>\n    pts = client.snapshot()                <span class='c'># (N, 3) float32, world frame</span>\n    heights = pts[:, 2]                    <span class='c'># plain numpy from here on</span>",
+      "caption": "the floorplan demo (item 1) consumes exactly this API for its collection stage"
+    }
+  ],
+  "next_step_html": "Wrap as a callable skill once item 2 or 4 has a concrete need for live client-side points. (Item 2's lidar localizer takes an already-accumulated <span class='tmono'>PointCloud2</span> from its own in-graph module, so it doesn't need this client.)",
+  "sources": [
+    "dimos/mapping/pointclouds/live.py",
+    "dimos/mapping/pointclouds/test_live.py",
+    "dimos/skills/skill_verification/test_03_lidar_to_numpy.py"
+  ]
+}

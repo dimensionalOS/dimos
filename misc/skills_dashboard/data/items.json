@@ -1,0 +1,12 @@
+{
+  "items": [
+    "01-floorplan",
+    "02-identify-locate",
+    "03-lidar-to-numpy",
+    "04-temporal-item-counts",
+    "05-contextual-labeling",
+    "06-activity-recognition",
+    "07-activity-counts",
+    "08-scene-3d-model"
+  ]
+}

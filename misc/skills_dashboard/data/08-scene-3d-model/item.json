@@ -1,0 +1,73 @@
+{
+  "title": "Full 3D scene model with cross-sections",
+  "tab_label": "3D scene model",
+  "status": "prototype",
+  "summary_html": "<span class='tmono'>SceneModel</span> fuses everything a mapping session produced — the lidar cloud and robot trajectory from a Rerun recording, plus (optionally) the recorded camera stream for color — into one queryable 3D model of the space, sliceable into horizontal plan cuts and vertical elevations for viewing and analysis. The foundation item 1's floorplan generation builds on.",
+  "figures": [
+    {
+      "light": "scene_model_light.png",
+      "dark": "scene_model_dark.png",
+      "alt": "Left: 3D scatter of a synthetic two-story house point cloud with a horizontal cut plane at z=1.5 and a vertical cut line. Middle: the plan cut showing the four walls, stair volume and no table. Right: the elevation showing two floor slabs, roof, table and stair volume.",
+      "caption_html": "The real class run on a synthetic two-story house (42k points). Left: the model with both cut planes indicated. Middle: <span class='tmono'>horizontal_section(z=1.5)</span> — walls and stair volume, no low furniture. Right: <span class='tmono'>vertical_section()</span> across both stories — slabs, roof, table, stairs. Regenerate: <span class='tmono'>uv run python misc/skills_dashboard/scripts/gen_scene_model_figures.py</span>",
+      "heading": "What it does — plan cuts and elevations from one model"
+    }
+  ],
+  "how_it_works": [
+    {
+      "title": "Ingest",
+      "html": "<span class='tmono'>SceneModel.from_rrd()</span> walks the recording's chunks collecting every <span class='tmono'>Points3D</span> batch (the map) and <span class='tmono'>LineStrips3D</span> strip (the trajectory), then clips z outliers by percentile. The shared loader <span class='tmono'>load_rrd_points()</span> is what item 1's floorplan script now uses."
+    },
+    {
+      "title": "Colorize from imagery",
+      "html": "<span class='tmono'>colorize_from_session()</span> correlates the session's stamped poses (<span class='tmono'>gtsam_odom.tum</span>) with the recorded <span class='tmono'>color_image</span> stream (<span class='tmono'>mem2.db</span>), projects sampled frames through the calibrated camera (<span class='tmono'>camera_intrinsics.json</span>), and paints each point from its closest view (nearest-view-wins z-test). 50% of the 6.4M-point china-office cloud colorized from 84 frames in ~30 s."
+    },
+    {
+      "title": "Slice",
+      "html": "<span class='tmono'>horizontal_section(z)</span> and <span class='tmono'>vertical_section(p1, p2)</span> rasterize a thick planar cut into a <span class='tmono'>Section</span> — hit-count density plus mean RGB where colorized — with world-meter extents. An optional <span class='tmono'>bounds</span> window makes multiple sections cell-aligned so they can be combined directly: item 1's floorplan builds all of its per-level evidence rasters (occupancy / structural / ceiling bands) exactly this way."
+    },
+    {
+      "title": "Voxelize & seal (new)",
+      "html": "<span class='tmono'>voxel_occupancy(voxel=0.1)</span> bins the cloud into a dense <span class='tmono'>(nz, ny, nx)</span> hit-count grid — the analytic 3D voxel model (~20 MB for a whole office building). <span class='tmono'>VoxelOccupancy.closed_region()</span> then seals each connected area the robot drove through: progressive morphological closing (0.3 → 2.5 m kernels, smallest that seals wins) with a leak test against the raster border, optionally bounded by a caller barrier (item 1 passes its ceiling-evidence indoor mask so ground floors don't leak through entrances). Yields a watertight interior, closed room-loop polygons, and <span class='tmono'>bridged</span> — the cells the closing inferred (glass, unscanned gaps)."
+    },
+    {
+      "title": "Export 3D",
+      "html": "<span class='tmono'>save_rerun()</span> writes an interactive colored model (<span class='tmono'>dimos-viewer model.rrd</span>); <span class='tmono'>save_rerun_sliceable()</span> additionally logs one horizontal section per z-step on a <span class='tmono'>cut_z</span> timeline, so the viewer's time slider sweeps a cut plane through the property (used by item 1's <span class='tmono'>--viewer</span>); <span class='tmono'>to_mesh()</span> runs Poisson surface reconstruction with low-support trimming and <span class='tmono'>save_mesh()</span> exports GLB/glTF/OBJ/PLY/STL with vertex colors — drops straight into Blender/three.js/CAD."
+    }
+  ],
+  "test_descriptions": {
+    "test_horizontal_section_shows_walls_not_table": "A 1.5 m plan cut sees the room's walls but not 0.8 m furniture",
+    "test_horizontal_section_at_table_height_shows_table": "A 0.78 m cut picks up the table blob in the room center",
+    "test_vertical_section_profile": "An elevation across the room shows floor, both walls, and empty air above the table",
+    "test_empty_section_is_well_formed": "A cut through empty space returns a well-formed empty Section, never an error",
+    "test_section_save_png": "Section renders and writes a valid PNG",
+    "test_quat_identity_and_yaw": "Quaternion→matrix helper is correct for identity and yaw rotations",
+    "test_colors_default_uncolored": "Without imagery, no point claims a color and sections carry no color layer",
+    "test_to_pointcloud_downsamples": "Open3D export voxel-downsamples the cloud",
+    "test_save_mesh_formats": "Poisson mesh exports to GLB, OBJ and PLY (format by suffix)",
+    "test_sections_with_shared_bounds_are_aligned": "Sections with a shared bounds window are cell-aligned and combinable",
+    "test_voxel_occupancy_dims_and_origin": "Voxel grid has the right shape/origin; wall columns occupied, room air empty",
+    "test_voxel_slab_aligns_with_section": "A voxel slab and a horizontal_section over the same bounds agree on >90% of cells",
+    "test_closed_region_seals_gap": "A 1 m unscanned wall opening is bridged (≤1.2 m kernel) and the interior no longer leaks",
+    "test_closed_region_interior_area": "Sealed interior area matches the room's true 24 m² within 15%",
+    "test_room_loops_closed": "Every room loop is explicitly closed (first == last) with the right enclosed area",
+    "test_closed_region_intact_room_no_bridging": "A fully scanned room seals at the smallest kernel with ~zero inferred cells (over-closing guard)",
+    "test_save_rerun_sliceable": "The sliceable .rrd (cut_z timeline) is written and non-trivial",
+    "test_scene_model_sections_and_exports": "Skill-verification: a synthetic two-story house yields non-empty horizontal + vertical section rasters and a mesh (.glb) + sliceable .rrd; saves a plan/elevation figure for review"
+  },
+  "tests_note_html": "the last row is from the skill-verification suite (<span class='tmono'>dimos/skills/skill_verification</span>), which builds the real <span class='tmono'>SceneModel</span> end-to-end and writes the section figure, mesh and .rrd to <span class='tmono'>test_outputs/</span> (indexed by <span class='tmono'>REVIEW.md</span>)",
+  "examples": [
+    {
+      "pre_html": "<span class='k'>from</span> dimos.mapping.reconstruction.scene_model <span class='k'>import</span> SceneModel\n\nmodel = SceneModel.from_rrd(<span class='s'>\"chinaOffice.rrd\"</span>)\nmodel.colorize_from_session(<span class='s'>\"~/session_dir\"</span>)      <span class='c'># camera → RGB points</span>\nplan = model.horizontal_section(z=<span class='n'>1.6</span>)              <span class='c'># plan cut</span>\nelev = model.vertical_section((<span class='n'>5</span>, -<span class='n'>35</span>), (<span class='n'>10</span>, <span class='n'>25</span>))    <span class='c'># elevation</span>\nmodel.save_rerun(<span class='s'>\"model.rrd\"</span>)                        <span class='c'># dimos-viewer model.rrd</span>\nmodel.save_mesh(<span class='s'>\"model.glb\"</span>)                          <span class='c'># or .obj/.ply/.stl</span>",
+      "caption": "scripts/demo_rrd_3d_model.py wraps exactly this flow; on the china-office scan it produced 3 plan cuts, a full-building elevation, and a 509k-triangle colored GLB in under a minute"
+    }
+  ],
+  "next_step_html": "Wrap as a callable skill (\"model the space seen so far\", \"show me a section at z=4.8\"). Item 1's migration is complete — the floorplan pipeline slices this model first, then draws.",
+  "dependencies": [],
+  "sources": [
+    "dimos/mapping/reconstruction/scene_model.py",
+    "dimos/mapping/reconstruction/test_scene_model.py",
+    "dimos/skills/skill_verification/test_08_scene_model.py",
+    "scripts/demo_rrd_3d_model.py"
+  ],
+  "skills_note": "no agent skill yet — library API: <span class='tmono'>SceneModel</span> / <span class='tmono'>VoxelOccupancy</span> in <span class='tmono'>dimos/mapping/reconstruction/scene_model.py</span> (demo CLI: <span class='tmono'>scripts/demo_rrd_3d_model.py</span>); next step wraps \"model the space\" / \"show me a section at z\" as skills"
+}

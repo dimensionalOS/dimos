@@ -1,0 +1,122 @@
+{
+  "title": "Architectural floorplan generation",
+  "tab_label": "Floorplan generation",
+  "status": "implemented",
+  "summary_html": "Multi-story architectural drawing sets (DXF with AIA layers + JPEG sheets) from lidar — live or from a .rrd recording — now wrapped as an agent-callable <span class='tmono'>@skill</span>: <span class='tmono'>FloorplanSkillContainer.generate_floorplan()</span> generates the drawings and returns measured attributes of the navigated space (levels + FFLs, wall/door/stair counts, glazed fraction, mezzanines/sunken areas, extents). Debug artifacts and 3D-model output are OFF by default for MCP callers and cleaned up automatically.",
+  "skills": [
+    {
+      "name": "generate_floorplan(rrd_path?, duration?, explore?, …)",
+      "container": "FloorplanSkillContainer",
+      "desc_html": "Generates the DXF + JPEG drawing set (optionally exploring first, or from a recording) and answers with measured attributes of the space: levels + FFLs, wall/door/stair counts, glazed fraction, extents. Optional <span class='tmono'>save_3d_model</span> for the sliceable .rrd.",
+      "file": "dimos/skills/mapping/floorplan_skill.py"
+    }
+  ],
+  "skills_note": "pipeline implementation: <span class='tmono'>dimos/mapping/floorplan/generator.py</span> · CLI wrapper: <span class='tmono'>scripts/demo_lidar_floorplan.py</span>",
+  "figures": [
+    {
+      "light": "chinaoffice_sheet_loops.jpg",
+      "alt": "Three cyanotype floor-plan sheets (LEVEL 1-3) of a real office building with sealed room-loop outlines: double-line walls, glazing, door swings, dimension strings, north arrows, scale bars, and a CHINA OFFICE title block",
+      "caption_html": "Best result to date: the script's own JPEG sheet from the real <span class='tmono'>chinaOffice.rrd</span> recording (67 MB, repo root), now with <b>sealed room loops</b> from the voxel model (dashed hairlines; 29 gap walls bridged across the three levels, all sealed at the smallest 0.3 m closing kernel). Three levels auto-detected (FFL +0.08 / +3.28 / +6.78 m), 64 door openings — 55 inferred from trajectory crossings — and glazing separated from solid wall. Raw CAD file with the A-AREA loop layer: <a class='filelink' href='chinaoffice_loops.dxf'>chinaoffice_loops.dxf</a>",
+      "heading": "Sample output — real office recording, three levels, sealed loops",
+      "frame": "blueprint"
+    },
+    {
+      "light": "voxel_slicing_light.png",
+      "dark": "voxel_slicing_dark.png",
+      "alt": "Left: 3D voxel model of the china office with a translucent cut plane at 1.6 m and the slab's voxels highlighted red. Right: the horizontal section at that height showing crisp wall outlines.",
+      "caption_html": "What <span class='tmono'>--viewer</span> shows live in dimos-viewer, rendered statically: the analytic voxel model (<span class='tmono'>SceneModel.voxel_occupancy()</span>, 1.3M occupied voxels at 0.15 m) with the sweeping cut plane, and the wall section at that height. In the viewer the <b>time slider is the cut plane</b> — one horizontal section per z-step is logged on a <span class='tmono'>cut_z</span> timeline, so scrubbing sweeps the cut through the property; sealed room loops (cyan) and closure-inferred cells (orange) are overlaid. Regenerate: <span class='tmono'>uv run python misc/skills_dashboard/scripts/gen_voxel_slicing_figure.py</span>",
+      "heading": "Voxel model + cross-section slicing (--viewer)"
+    }
+  ],
+  "how_it_works": [
+    {
+      "title": "Collect",
+      "html": "Subscribes to <span class='tmono'>/lidar</span> + <span class='tmono'>/global_map</span> via <span class='tmono'>LidarPointCloudClient</span> (item 3) and tracks pose on <span class='tmono'>/odom</span>, optionally driving the robot (<span class='tmono'>--explore</span> / <span class='tmono'>--spin</span>). Alternatively loads an offline Rerun recording with <span class='tmono'>--rrd building.rrd</span>."
+    },
+    {
+      "title": "Detect floor levels",
+      "html": "The robot's trajectory z-histogram reveals which floors it walked on. Stories must be ≥ 1.8 m apart; each level's occupancy band is capped 2.6 m above its floor, so roof points above the top story are excluded. Multi-story recordings become one sheet per level."
+    },
+    {
+      "title": "Rasterize & classify",
+      "html": "Points are binned into occupancy grids per level. A cell is <em>structural</em> (wall) when lidar sees returns well above furniture height there; <em>indoor</em> is distinguished from outdoor by ceiling evidence — returns above head height. Trees, vehicles, and ground clutter drop out."
+    },
+    {
+      "title": "Vectorize",
+      "html": "Finds the dominant wall angle, unrotates the grid, and extracts straight wall runs. Gaps &lt; 0.35 m are bridged as noise; runs &lt; 0.8 m are dropped; gaps of 0.55–1.25 m — and points where the robot's own trajectory crossed a wall run — become door openings with swing arcs. Envelope runs the lidar saw <em>through</em> are drawn as glazing (thin double line, layer A-GLAZ) rather than solid wall. Furniture keeps thin outlines on its own layer."
+    },
+    {
+      "title": "Seal room loops (voxel model)",
+      "html": "The 3D <span class='tmono'>VoxelOccupancy</span> model (item 8) seals each connected area the robot drove through: progressive morphological closing finds the smallest kernel (0.3 → 2.5 m) at which the trajectory-seeded interior flood no longer leaks, bounded by the ceiling-evidence indoor mask so ground floors don't escape through entrances. The resulting closed loops land on layer A-AREA, and boundary spans not explained by any wall or door become bridging wall segments — doors stay open (the trajectory proved them passable). Disable with <span class='tmono'>--no-close-loops</span>."
+    },
+    {
+      "title": "AI review (optional)",
+      "html": "A GPT-4o pass (<span class='tmono'>--ai-review</span>, on by default when <span class='tmono'>OPENAI_API_KEY</span> is set) inspects a rendered debug image of each level and can flip misclassified wall/furniture clusters."
+    },
+    {
+      "title": "Draft & export",
+      "html": "Writes <span class='tmono'>&lt;out&gt;.dxf</span> (ANSI31 wall hatch, dimension strings in mm, layers A-WALL, A-WALL-PATT, A-DOOR, A-FURN, A-ANNO-DIMS, A-ANNO-SYMB, A-ANNO-TTLB) and a cyanotype JPEG sheet with title block and sheet numbers."
+    }
+  ],
+  "evidence": {
+    "headers": [
+      "Evidence",
+      "Input",
+      "Result"
+    ],
+    "rows": [
+      [
+        "Real building (rendered above)",
+        "<span class='tmono'>chinaOffice.rrd</span> — 67 MB lidar recording",
+        "3 levels auto-detected; 287 interior wall runs, 64 doors, glazing separated from solid walls; 45 sealed room loops (A-AREA) with 29 gap walls bridged, every level sealed at the smallest 0.3 m kernel; regression-checked: <span class='tmono'>--no-close-loops</span> reproduces the baseline exactly (doors identical) · <a class='filelink' href='chinaoffice_sheet_loops.jpg'>full sheet</a> / <a class='filelink' href='chinaoffice_loops.dxf'>DXF</a> (run 2026-07-10)"
+      ],
+      [
+        "3D viewer export",
+        "same recording, <span class='tmono'>--viewer</span>",
+        "39 MB <span class='tmono'>.model.rrd</span> with 125 cut steps written in ~2 s and opened in dimos-viewer; unit-tested in item 8's suite (<span class='tmono'>test_save_rerun_sliceable</span> + 6 voxel/loop tests, all pass)"
+      ],
+      [
+        "Live Go2 sim run",
+        "<span class='tmono'>/lidar + /global_map, live</span>",
+        "<a class='filelink' href='/floorplan.dxf'><span class='tmono'>floorplan.dxf</span></a> (repo root) — valid DXF, but sparse fragmented coverage from a short sim walk; motivated the level-detection + trajectory-door improvements used above"
+      ],
+      [
+        "Unit tests",
+        "—",
+        "None yet — script-stage prototype; its collection layer is covered by item 3's 6 tests"
+      ]
+    ]
+  },
+  "examples": [
+    {
+      "pre_html": "<span class='c'># from a recording, with project title block</span>\npython scripts/demo_lidar_floorplan.py --rrd chinaOffice.rrd --project <span class='s'>\"CHINA OFFICE\"</span>\n\n<span class='c'># same, plus the sliceable 3D model opened in dimos-viewer</span>\npython scripts/demo_lidar_floorplan.py --rrd chinaOffice.rrd --viewer\n\n<span class='c'># live: explore for 2 minutes, then draft (no room-loop sealing)</span>\npython scripts/demo_lidar_floorplan.py --duration 120 --explore --no-close-loops",
+      "caption": "outputs: <out>.dxf + <out>.jpg (+ <out>.model.rrd with --viewer)"
+    }
+  ],
+  "next_step_html": "Compose <span class='tmono'>floorplan_skill_container</span> into the agentic Go2 blueprints so the skill is live over MCP, and migrate the remaining rasterizing internals onto item 8's shared sections as they evolve.",
+  "sources": [
+    "dimos/mapping/floorplan/generator.py",
+    "dimos/skills/mapping/floorplan_skill.py",
+    "dimos/mapping/floorplan/test_generator.py",
+    "dimos/skills/mapping/test_floorplan_skill.py",
+    "dimos/skills/skill_verification/test_01_floorplan.py",
+    "scripts/demo_lidar_floorplan.py"
+  ],
+  "dependencies": [
+    "item 8 — SceneModel sections are the shared representation"
+  ],
+  "test_descriptions": {
+    "test_generate_floorplan_from_injected_model": "Full pipeline on a synthetic building: DXF+JPEG written, doorway found, no debug artifacts leak, summary reports the space attributes",
+    "test_generate_floorplan_save_3d_model": "save_3d_model=True writes the sliceable .model.rrd and the summary points at dimos-viewer",
+    "test_skill_registers_with_schema": "The @skill registers; its MCP schema documents every parameter and defaults debug/3D output OFF",
+    "test_skill_fails_gracefully_on_missing_recording": "A bad recording path returns an error string instead of raising"
+  },
+  "tests_note_html": "the skill-verification suite (<span class='tmono'>dimos/skills/skill_verification</span>) also runs the real generator on a recorded session (marked self-hosted — needs a recording + GPU) and writes the DXF, JPEG sheet and a DXF render to <span class='tmono'>test_outputs/</span> for eyeball review, indexed by <span class='tmono'>REVIEW.md</span>",
+  "manual_tests": [
+    {
+      "name": "test_generate_floorplan_from_recording",
+      "desc_html": "Skill-verification: <span class='tmono'>generate_floorplan()</span> on a real recording (chinaOffice.rrd) yields a DXF with wall geometry on <span class='tmono'>A-WALL</span> + a JPEG sheet; renders the DXF to a PNG for review",
+      "badge": "SELF-HOSTED CI"
+    }
+  ]
+}

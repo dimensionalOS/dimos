@@ -1,0 +1,210 @@
+{
+  "title": "Identify, list, and locate observed items",
+  "tab_label": "Identify & locate items",
+  "status": "implemented",
+  "summary_html": "Open-vocabulary scene inventory: the robot detects whatever it sees (no prompt needed), localizes each detection in the world frame, deduplicates repeat sightings into a persistent object database, and answers \"what have you seen and where is it?\" as a prompt-free agent skill — a robot can navigate a space and this skill finds and catalogs everything in it, no target object required. New in this pass: the catalog now <b>fuses in spatial memory</b> — <span class='tmono'>catalog_scene()</span> folds the robot's named/tagged places (e.g. \"kitchen\", \"charging dock\", which object detection alone can't produce) into the inventory and tags each detected object with its nearest place, and a new <span class='tmono'>locate(query)</span> skill resolves \"where is X?\" through a three-tier fallback (catalogued object &rarr; tagged place &rarr; CLIP visual recall of the space). The link is an <b>optional</b> dependency, so the catalog degrades cleanly to objects-only when no spatial-memory module is running. Prior pass: the whole lidar pipeline is <b>replay-validated end-to-end</b> on an 87s recorded Go2 session (camera + mid360 + odom) — 16 permanent objects catalogued with world position, size, confidence and a VLM description each — and two production bugs were fixed (<span class='tmono'>ObjectDB</span> wall-clock TTLs; coplanar-cluster Qhull crash, OBB &rarr; AABB fallback).",
+  "skills": [
+    {
+      "name": "catalog_scene()",
+      "container": "ObjectSceneRegistrationModule",
+      "desc_html": "One-call bundle: find and catalog everything in the navigated space — refines ambiguous labels via the item 5 VLM pass, folds in spatial memory's named places, tags each object with its nearest place, and returns the fused inventory",
+      "file": "dimos/perception/object_scene_registration.py"
+    },
+    {
+      "name": "locate(query)",
+      "container": "ObjectSceneRegistrationModule",
+      "desc_html": "Answer \"where is X?\" for one subject via a three-tier fallback: matching catalogued object &rarr; tagged place &rarr; CLIP visual recall of the space (spatial memory)",
+      "file": "dimos/perception/object_scene_registration.py"
+    },
+    {
+      "name": "list_observed_items()",
+      "container": "ObjectSceneRegistrationModule",
+      "desc_html": "Prompt-free inventory: one line per observed item with world position, size, confidence, observation count (+ description when refined)",
+      "file": "dimos/perception/object_scene_registration.py"
+    },
+    {
+      "name": "detect(*prompts)",
+      "container": "ObjectSceneRegistrationModule",
+      "desc_html": "Prompted open-vocab search, e.g. <span class='tmono'>detect(\"cup\", \"mouse\")</span> — returns matches with stable object_ids",
+      "file": "dimos/perception/object_scene_registration.py"
+    },
+    {
+      "name": "select(track_id)",
+      "container": "ObjectSceneRegistrationModule",
+      "desc_html": "Promote a tracked detection to a permanent object",
+      "file": "dimos/perception/object_scene_registration.py"
+    }
+  ],
+  "skills_note": "run on a Go2 via the <span class='tmono'>unitree-go2-scene</span> blueprint (objects only), or <span class='tmono'>unitree-go2-scene-memory</span> to add spatial memory so the fusion + <span class='tmono'>locate</span> recall activate; every skill is also an MCP tool through the matching <span class='tmono'>-agentic</span> blueprint",
+  "flow": [
+    {
+      "label": "camera",
+      "sub": "/color_image"
+    },
+    {
+      "label": "YOLO-E",
+      "sub": "open-vocab 2D"
+    },
+    {
+      "label": "localize",
+      "sub": "depth | lidar",
+      "hl": true
+    },
+    {
+      "label": "Object",
+      "sub": "world xyz + size"
+    },
+    {
+      "label": "ObjectDB",
+      "sub": "dedup ≤ 0.2/0.35 m"
+    },
+    {
+      "label": "VLM refine",
+      "sub": "item 5, ambiguous only"
+    },
+    {
+      "label": "+ spatial memory",
+      "sub": "tagged places, optional",
+      "hl": true
+    },
+    {
+      "label": "catalog_scene() / locate()",
+      "sub": "objects + places + recall",
+      "hl": true
+    }
+  ],
+  "how_it_works": [
+    {
+      "title": "Detect (2D, open-vocab)",
+      "html": "YOLO-E (<span class='tmono'>yoloe-11l-seg-pf.pt</span>, prompt-free LRPC mode by default) runs on each camera frame inside <span class='tmono'>ObjectSceneRegistrationModule</span>. Frames are timestamp-aligned with the depth image or lidar cloud before processing."
+    },
+    {
+      "title": "Localize (depth or lidar)",
+      "html": "Two interchangeable paths feed the same <span class='tmono'>Object</span> type. <b>Depth</b> (default, unchanged for xarm-class robots): back-project the masked RGBD region via Open3D. <b>Lidar</b> (new, <span class='tmono'>localization=\"lidar\"</span>): project the world-frame lidar cloud into each 2D bbox via <span class='tmono'>Object.from_2d_to_list_lidar()</span>, strip occluded/stray points (raycast + outlier filters), fit an oriented bounding box, and fall back to axis-aligned when sparse near-coplanar clusters make OBB fitting fail."
+    },
+    {
+      "title": "Deduplicate & persist",
+      "html": "<span class='tmono'>ObjectDB</span> merges repeat sightings within a dedup radius into one object (0.2 m for depth localization; the Go2 lidar blueprint widens it to 0.35 m because sparse mid360 returns jitter more), accumulates its pointcloud, and promotes it from <em>pending</em> to <em>permanent</em> after 6 detections (tunable) — so one physical cup seen 40 times is one database row with <span class='tmono'>detections_count = 40</span>."
+    },
+    {
+      "title": "Answer",
+      "html": "Agent-facing surface: <span class='tmono'>catalog_scene()</span> is the bundled one-call answer to \"what have you found while navigating this space?\" — it refines any ambiguously-labeled item with item 5's VLM pass, then returns the full inventory (name, object_id, world position, size, confidence, sighting count, description). Its pieces are also callable standalone: <span class='tmono'>list_observed_items()</span> for the same catalog without spending time on refinement, <span class='tmono'>detect(\"cup\", \"mouse\")</span> for prompted search, <span class='tmono'>identify_object</span>/<span class='tmono'>refine_observed_labels</span> to control refinement, and RPCs — <span class='tmono'>get_located_objects()</span>, per-object pointclouds, full-scene clouds."
+    },
+    {
+      "title": "Fuse spatial memory (optional)",
+      "html": "Detection knows discrete <em>objects</em>; <span class='tmono'>SpatialMemory</span> knows <em>places</em> — named locations tagged during exploration (\"kitchen\", \"charging dock\") plus a CLIP embedding of every view it recorded. The catalog links to it through an <b>optional</b> <span class='tmono'>SceneMemorySpec</span> dependency: when a <span class='tmono'>SpatialMemory</span> module shares the graph it auto-injects (backed by a new read-only <span class='tmono'>get_tagged_locations()</span>), otherwise the attribute stays <span class='tmono'>None</span> and every skill degrades to objects-only. With it wired, <span class='tmono'>catalog_scene()</span> adds a <em>Known places</em> section and tags each object with its nearest place (e.g. <span class='tmono'>cup … — near 'kitchen counter' (0.3m)</span>), and <span class='tmono'>locate(query)</span> resolves \"where is X?\" in order of precision: a catalogued object whose name matches &rarr; a semantically-matched tagged place &rarr; CLIP text-to-image recall of the remembered views (gated by a similarity threshold). Combined build: <span class='tmono'>unitree-go2-scene-memory(-agentic)</span>."
+    }
+  ],
+  "figures": [
+    {
+      "light": "lidar_localization_light.png",
+      "dark": "lidar_localization_dark.png",
+      "alt": "Two panels: camera view with cup and chair bounding boxes over projected lidar points; top-down world view with localized object centers and error annotations",
+      "caption_html": "Object.from_2d_to_list_lidar() run on a synthetic room (wall + floor clutter + two object clusters), default filter stack. Left: the camera view — lidar points projected into the image with the two 2D detections. Right: world frame from above — each detection's frustum points are filtered and boxed; recovered centers land <b>±0.05 m</b> (cup) and <b>±0.16 m</b> (chair) from ground truth despite the wall directly behind both objects. Regenerate: <span class='tmono'>uv run python misc/skills_dashboard/scripts/gen_figures.py</span>",
+      "heading": "The lidar path, visualized — real code on a synthetic scene"
+    }
+  ],
+  "test_descriptions": {
+    "test_locate_encode_includes_world_position_and_confidence": "Encoding exposes name, xyz position, frame, size, rounded confidence, detection count",
+    "test_from_2d_to_list_lidar_places_blob_at_world_center": "Synthetic 40-point blob 2 m ahead is localized to within <b>±0.1 m</b> of ground truth",
+    "test_from_2d_to_list_lidar_ignores_detection_with_no_points": "A bbox with no lidar points behind it yields no ghost object",
+    "test_list_observed_items_reports_positions": "Catalog line includes object_id, position, size, confidence and observation count",
+    "test_list_observed_items_empty": "Empty database answers \"No objects observed yet.\"",
+    "test_get_located_objects_permanent_only_by_default": "Fresh (pending) objects are hidden unless <span class='tmono'>include_pending=True</span>",
+    "test_object_db_runs_on_stream_time_not_wall_clock": "Replayed detections (timestamps months in the past) dedup and promote exactly like live data",
+    "test_object_db_stream_time_still_prunes_stale_pending": "Pending objects unseen for &gt; TTL of <em>stream</em> time are still pruned",
+    "test_to_detection3d_msg_survives_flat_pointcloud": "Coplanar (all-floor) cluster falls back to an axis-aligned box instead of crashing Qhull",
+    "test_catalog_scene_without_spatial_memory_is_objects_only": "With no spatial memory wired, catalog_scene() returns the objects-only inventory — no places section, no \"near\" tags",
+    "test_catalog_scene_fuses_tagged_places_and_nearest_annotation": "catalog_scene() lists every tagged place and tags each object with its nearest one (cup at 0.5 m &rarr; kitchen, not the far garage)",
+    "test_catalog_scene_place_beyond_radius_not_attached": "A place past <span class='tmono'>place_radius</span> is still enumerated but not attached to a distant object",
+    "test_nearest_place_gating": "_nearest_place() returns the closest place within radius, and None when the nearest is out of range or none exist",
+    "test_locate_matches_catalogued_object": "locate(\"the backpack\") substring-matches the catalogued \"backpack\" and reports its position + nearest place",
+    "test_locate_falls_back_to_tagged_place": "With no matching object, locate() returns the semantically-matched tagged place and its position",
+    "test_locate_semantic_recall_when_confident": "With no object or tagged place, locate() falls back to CLIP recall and returns the best remembered spot when similarity clears the threshold",
+    "test_locate_semantic_recall_below_threshold_reports_not_found": "A low-similarity recall match is rejected — locate() reports it could not find the subject",
+    "test_locate_without_spatial_memory": "locate() with no spatial memory says so explicitly instead of silently failing",
+    "test_spatial_vector_db_get_tagged_locations_roundtrip": "SpatialVectorDB tags two places and enumerates them back (feeds the catalog's places section)",
+    "test_catalog_scene_refines_then_lists": "catalog_scene() refines ambiguous items then returns the same catalog as list_observed_items(), unrefined confident items included",
+    "test_catalog_scene_empty_scene": "catalog_scene() on an empty database answers \"No objects observed yet.\"",
+    "test_lidar_localization_places_objects_at_world_centers": "Skill-verification: the lidar back-projection recovers a synthetic cup + chair's world center within tolerance (cup ≤0.12 m, chair ≤0.30 m); saves a camera + top-down overlay for review",
+    "test_list_observed_items_catalogs_the_scene": "Skill-verification: <span class='tmono'>list_observed_items()</span> catalogs a 3-object ObjectDB with each item's world position, size and confidence; writes the catalog text for review"
+  },
+  "manual_tests": [
+    {
+      "name": "test_from_2d_to_list_lidar_locates_real_go2_objects",
+      "desc_html": "Real Go2 moment (image + lidar + tf) with a real YOLO detector: every localized object sits inside the lidar cloud with a non-degenerate box",
+      "badge": "SELF-HOSTED CI"
+    },
+    {
+      "name": "test_replay_processes_most_of_the_session",
+      "desc_html": "Full-session replay: &ge;100 frames through the production module, &le;20% skipped by camera/lidar alignment",
+      "badge": "SELF-HOSTED CI"
+    },
+    {
+      "name": "test_replay_accumulates_permanent_objects",
+      "desc_html": "Replay yields a populated scene (16 permanent objects), each corroborated &ge;6&times;, with effective dedup vs raw detections",
+      "badge": "SELF-HOSTED CI"
+    },
+    {
+      "name": "test_replay_objects_are_localized_in_world",
+      "desc_html": "Every permanent object's center lies within the session's lidar bounds with non-degenerate size and confidence",
+      "badge": "SELF-HOSTED CI"
+    },
+    {
+      "name": "test_replay_catalog_lists_observed_items",
+      "desc_html": "list_observed_items() catalogs every permanent object with object_id, position and size",
+      "badge": "SELF-HOSTED CI"
+    },
+    {
+      "name": "test_replay_catalog_with_vlm_descriptions",
+      "desc_html": "Local VLM (moondream) refines every catalogued object; descriptions appear in the final catalog",
+      "badge": "SELF-HOSTED CI"
+    },
+    {
+      "name": "test_replay_module_exposes_catalog_scene_skill",
+      "desc_html": "catalog_scene() is registered as an agent-callable skill (get_skills()) on the production, replay-driven module",
+      "badge": "SELF-HOSTED CI"
+    }
+  ],
+  "tests_note_html": "replay + real-data tests download the Go2 dataset, YOLO-E weights and the moondream VLM, so they run on self-hosted CI (deselected in local runs); all 7 pass locally on GPU (~5 min). The two skill-verification rows (<span class='tmono'>dimos/skills/skill_verification</span>) run headless and write a localization overlay + catalog to <span class='tmono'>test_outputs/</span> (indexed by <span class='tmono'>REVIEW.md</span>)",
+  "examples": [
+    {
+      "pre_html": "<span class='c'># the whole find-and-catalog workflow, one call — real Go2 recording</span>\n&gt;&gt;&gt; module.catalog_scene()\nObserving 16 item(s):\n  - Leather chair (object_id='ddd001e7'):\n      pos=(0.66, 2.76, 0.29)m size=(0.94x0.69x0.32)m\n      conf=0.66 seen 47x, last 0s ago\n      The object appears to be a leather chair.\n  - Speaker (object_id='352e2efc'):\n      pos=(1.20, 1.49, 0.02)m size=(0.35x0.27x0.11)m\n      conf=0.74 seen 22x, last 0s ago\n      The object appears to be a speaker with a\n      rectangular shape and a visible speaker grill.\n  - luggage (object_id='e8ca8cb3'):\n      pos=(-2.99, 0.15, 0.05)m size=(0.25x0.19x0.14)m\n      conf=0.76 seen 29x, last 17s ago\n      The object appears to be a suitcase or similar\n      piece of luggage.\n  ...",
+      "caption": "catalog_scene() = refine ambiguous labels + list_observed_items(), in one agent-callable skill",
+      "split": true
+    },
+    {
+      "pre_html": "<span class='c'># fused catalog — objects + tagged places, each object near a place</span>\n&gt;&gt;&gt; module.catalog_scene()\nKnown places (2):\n  - kitchen counter: (1.50, 2.00)m\n  - charging dock: (-4.00, 0.50)m\n\nObserving 3 item(s):\n  - cup (object_id='9c8760ce'): pos=(1.20, 2.10, 0.80)m\n      conf=0.88 seen 1x, last 0s ago <span class='s'>&mdash; near 'kitchen counter' (0.3m)</span>\n  - backpack (object_id='c7bc7b9a'): pos=(-3.80, 0.60, 0.40)m\n      conf=0.79 seen 1x, last 0s ago <span class='s'>&mdash; near 'charging dock' (0.2m)</span>\n\n<span class='c'># one-subject lookup with three-tier fallback</span>\n&gt;&gt;&gt; module.locate(\"the reading nook\")\n<span class='c'># no such object or tagged place -> CLIP recall of the space</span>\n\"No catalogued 'the reading nook', but from what I've seen it best\n matches a spot near (5.00, 6.00)m (similarity 0.31).\"",
+      "caption": "catalog_scene() fuses spatial memory's places; locate() falls back object &rarr; place &rarr; visual recall",
+      "split": true
+    },
+    {
+      "pre_html": "<span class='c'># Object.locate_encode() → structured RPC form</span>\n{ <span class='s'>\"name\"</span>: <span class='s'>\"cup\"</span>,\n  <span class='s'>\"position\"</span>: {<span class='s'>\"x\"</span>: 1.0, <span class='s'>\"y\"</span>: 2.0, <span class='s'>\"z\"</span>: 3.0},\n  <span class='s'>\"frame\"</span>: <span class='s'>\"world\"</span>,\n  <span class='s'>\"confidence\"</span>: 0.87,\n  <span class='s'>\"size\"</span>: {<span class='s'>\"x\"</span>: 0.1, <span class='s'>\"y\"</span>: 0.2, <span class='s'>\"z\"</span>: 0.3},\n  <span class='s'>\"detections\"</span>: 1,\n  <span class='s'>\"last_seen\"</span>: <span class='s'>\"2s ago\"</span> }",
+      "caption": "get_located_objects() item — from the passing unit test",
+      "split": true
+    },
+    {
+      "pre_html": "<span class='c'># run the whole stack on a Go2 (camera + world-frame lidar, no depth camera)</span>\ndimos run unitree-go2-scene\n\n<span class='c'># replay the recorded session locally with the catalog printed</span>\nuv run pytest dimos/perception/test_object_scene_registration_replay.py -s -m self_hosted",
+      "caption": "blueprint: unitree_go2 + ObjectSceneRegistrationModule(localization=\"lidar\")"
+    }
+  ],
+  "next_step_html": "Validate live on the Go2 via <span class='tmono'>unitree-go2-scene(-agentic)</span> (replay validation done; live odom is restamped on receive so the recording's clock quirk doesn't apply), then feed item 4 (temporal counts) from <span class='tmono'>ObjectDB</span>.",
+  "sources": [
+    "dimos/perception/object_scene_registration.py",
+    "dimos/perception/detection/type/detection3d/object.py",
+    "dimos/perception/detection/objectDB.py",
+    "dimos/perception/contextual_labeling.py",
+    "dimos/perception/spatial_memory_spec.py",
+    "dimos/perception/spatial_perception.py",
+    "dimos/perception/spatial_vector_db.py",
+    "dimos/robot/unitree/go2/blueprints/smart/unitree_go2_scene.py",
+    "dimos/robot/unitree/go2/blueprints/smart/unitree_go2_scene_memory.py",
+    "dimos/robot/unitree/go2/blueprints/agentic/unitree_go2_scene_agentic.py",
+    "dimos/robot/unitree/go2/blueprints/agentic/unitree_go2_scene_memory_agentic.py",
+    "dimos/perception/test_object_scene_registration.py",
+    "dimos/perception/test_contextual_labeling.py",
+    "dimos/perception/detection/type/test_object_lidar_localization.py",
+    "dimos/perception/test_object_scene_registration_replay.py",
+    "dimos/skills/skill_verification/test_02_identify_locate.py"
+  ]
+}

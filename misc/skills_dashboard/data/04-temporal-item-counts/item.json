@@ -1,0 +1,27 @@
+{
+  "title": "Temporally count items",
+  "tab_label": "Temporal item counts",
+  "status": "idea",
+  "summary_html": "Track counts of detected items and entities over time — how many chairs today vs. yesterday, how often the cup moves. No implementation yet, but item 2 has already laid the groundwork.",
+  "concept_file": "concept.html",
+  "cards": [
+    {
+      "title": "Dedup over time exists",
+      "html": "<span class='tmono'>ObjectDB</span> already merges repeat sightings, so \"how many distinct cups\" is a database query, not new perception work."
+    },
+    {
+      "title": "Per-item counters exist",
+      "html": "Every <span class='tmono'>Object.detections_count</span> is a running observation count, incremented on each merged sighting."
+    },
+    {
+      "title": "What's missing",
+      "html": "A time axis: snapshotting counts per interval, retention, and a query/skill surface for \"counts over the last hour/day.\""
+    }
+  ],
+  "cards_heading": "Already unblocked by item 2",
+  "dependencies": [
+    "item 2 — per-frame detection",
+    "item 3 — shared pointcloud/array representation"
+  ],
+  "skills_note": "no skill yet (idea) — will build on ObjectDB (dimos/perception/detection/objectDB.py) and Object.detections_count"
+}
