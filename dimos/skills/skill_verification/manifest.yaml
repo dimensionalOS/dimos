@@ -1,0 +1,196 @@
+# MCP skill verification manifest.
+#
+# One entry per SKILLS_WISHLIST skill covered by this suite. This file is the
+# human-readable source of truth: it says, for each skill, which test drives
+# it, what input (synthetic or recorded) it runs on, HOW and WHY it's tested,
+# and what artifacts land in test_outputs/ for a human to review.
+#
+# test_00_manifest.py asserts this file and the test modules stay in sync
+# (every entry has its test_file; every test_NN_*.py has an entry). conftest.py
+# renders test_outputs/REVIEW.md from the `outputs` + `review_summary` fields
+# after a run, tagging which artifacts were actually produced.
+#
+# tier:   headless   -> runs anywhere, synthetic/in-code inputs, no GPU/keys/net
+#         real-data  -> needs a recording or downloaded dataset; marked so the
+#                       default `pytest` run (which deselects self_hosted) skips it
+# marker: pytest marker applied to the real-data tests (see dimos/conftest.py)
+
+suite: MCP skill verification
+wishlist: dimos/skills/SKILLS_WISHLIST.md
+description: >
+  Regression/acceptance harness for the perception & scene-understanding skills
+  in the wishlist. Run it after code cleanup or when changing perception code to
+  confirm each skill still works and to eyeball its output. Machine-checkable
+  invariants are asserted in-test; everything a human should look at is written
+  to test_outputs/ and indexed by test_outputs/REVIEW.md.
+
+# Idea-stage wishlist items with no implementation yet, hence no test here.
+not_covered:
+  - item: 4
+    title: Temporally count items
+    reason: >
+      idea-stage; partially subsumed by ObjectDB.detections_count, which the
+      item-2 catalog test already exercises. No standalone skill to verify yet.
+  - item: 6
+    title: Identify specific activity
+    reason: idea-stage, unimplemented.
+  - item: 7
+    title: Count occurrences of activity over time
+    reason: idea-stage, depends on item 6.
+
+skills:
+  - id: 01-floorplan
+    wishlist_item: 1
+    title: Architectural floorplan generation
+    status: prototype
+    mcp_skills: [generate_floorplan]
+    module: dimos.skills.mapping.floorplan_skill.FloorplanSkillContainer
+    entrypoint: dimos.mapping.floorplan.generator.generate_floorplan
+    test_file: test_01_floorplan.py
+    tier: real-data
+    marker: self_hosted
+    fixture: >
+      A Rerun recording of a mapping session. Defaults to chinaOffice.rrd at the
+      repo root (65 MB, gitignored — supply locally or set SKILL_VERIFY_RRD).
+      Skips cleanly if no recording is present.
+    how: >
+      Runs generate_floorplan() on the recording with AI passes disabled (no
+      OPENAI_API_KEY needed), producing a multi-level DXF + rendered JPEG sheet,
+      then renders the DXF to a PNG for review. Asserts the DXF opens, carries
+      the expected AIA layers (WALLS/DOORS/...), and has non-empty modelspace.
+    why: >
+      The floorplan pipeline (floor segmentation, wall-vs-furniture by height,
+      door carving) has no headless synthetic proxy — its correctness is only
+      visible on a real traversed space, so this is a look-at-the-drawing check.
+    outputs:
+      - file: floorplan.dxf
+        review: Opens in any DXF/CAD viewer; walls closed into rooms, doors where the robot crossed thresholds, no stray geometry.
+      - file: floorplan_sheet.jpg
+        review: The titled architectural sheet; rooms legible, dimensions/poché present, robot trajectory sane.
+      - file: floorplan_render.png
+        review: Our DXF-to-PNG render; should match the sheet — a quick confirm the DXF layers draw.
+    review_summary: >
+      You should recognize the traversed space as a floorplan: closed rooms,
+      walls at real thickness, doorways on the trajectory. Compare against the
+      committed reference in misc/skills_dashboard/data/01-floorplan/.
+
+  - id: 02-identify-locate
+    wishlist_item: 2
+    title: Identify, list, and locate observed items
+    status: implemented
+    mcp_skills: [detect, select, list_observed_items, catalog_scene, locate]
+    module: dimos.perception.object_scene_registration.ObjectSceneRegistrationModule
+    test_file: test_02_identify_locate.py
+    tier: headless
+    marker: null
+    fixture: >
+      Synthetic optical-frame scene built in-code (two object blobs — cup + chair
+      — plus wall and floor clutter) fed as a world-frame PointCloud2, same setup
+      as the dashboard figure and the unit test. Plus in-code Objects in an
+      ObjectDB for the catalog. No detector weights, GPU, or network.
+    how: >
+      Drives the real Object.from_2d_to_list_lidar() localizer on the synthetic
+      scene and asserts each object's recovered world center lands within
+      tolerance of ground truth (cup <=0.12 m, chair <=0.30 m); renders the
+      camera-view + top-down overlay. Separately builds an ObjectDB and checks
+      list_observed_items() catalogs every permanent item with position/size.
+    why: >
+      The lidar back-projection + dedup is the core of the scene inventory skill;
+      the synthetic scene exercises the same code the Go2 blueprint runs live,
+      with a known-answer localization error to catch regressions numerically.
+    outputs:
+      - file: lidar_localization.png
+        review: Left camera view has cup/chair bboxes over projected points; right top-down shows each recovered center (x) landing on its cluster with a small +/- error annotation.
+      - file: catalog.txt
+        review: list_observed_items() output — one line per item with world position, size, confidence, sighting count; positions match what you'd expect.
+    review_summary: >
+      Recovered object centers should sit on their point clusters with small
+      errors, and the catalog should read like a sensible inventory of the scene.
+
+  - id: 03-lidar-to-numpy
+    wishlist_item: 3
+    title: Convert lidar to numpy signals
+    status: implemented
+    mcp_skills: []
+    module: dimos.mapping.pointclouds.live.LidarPointCloudClient
+    test_file: test_03_lidar_to_numpy.py
+    tier: headless
+    marker: null
+    fixture: >
+      Synthetic mid360-ish scanner sweeping a 6x4 m room with a pillar, fed to
+      the real client callbacks one sector per message (48 messages/revolution).
+      No hardware or LCM bus.
+    how: >
+      Feeds the synthetic sweep into LidarPointCloudClient._on_lidar and asserts
+      snapshot() returns a growing (N, 3) float array and message_count tracks;
+      renders the accumulation curve + final top-down cloud.
+    why: >
+      This client is the client-side lidar->numpy bridge other skills/scripts
+      build on; the test pins its accumulation and array contract.
+    outputs:
+      - file: lidar_accumulation.png
+        review: Left curve rises as messages arrive and plateaus after one revolution; right top-down cloud clearly outlines the rectangular room + pillar.
+    review_summary: >
+      The accumulated cloud should reconstruct the room outline, and the growth
+      curve should climb then flatten once the scanner has swept all around.
+
+  - id: 05-contextual-labeling
+    wishlist_item: 5
+    title: Contextual labeling / educated guesses
+    status: implemented
+    mcp_skills: [identify_object, refine_observed_labels]
+    module: dimos.perception.contextual_labeling
+    test_file: test_05_contextual_labeling.py
+    tier: headless
+    marker: null
+    fixture: >
+      In-code Objects (an ambiguous low-confidence "mouse" next to a keyboard and
+      monitor) plus a stub VlModel returning a canned refined label. No model
+      weights, GPU, or API access.
+    how: >
+      Runs is_ambiguous()/build_context_prompt()/contextual_label() and the
+      module's refine_observed_labels(); asserts the prompt carries the neighbor
+      context, ambiguous items get refined and confident ones are left alone.
+      Writes a before/after label table.
+    why: >
+      Refinement changes what the robot reports an object is; the test locks in
+      which items get refined and that the neighbor/size context reaches the VLM.
+    outputs:
+      - file: labels_before_after.txt
+        review: Table of each object's detector label vs refined label + the VLM prompt for the ambiguous one; the mouse should be refined using its keyboard/monitor neighbors, confident items unchanged.
+    review_summary: >
+      Ambiguous detections should gain a specific label informed by nearby
+      objects; clearly-labeled, confident detections should be left as-is.
+
+  - id: 08-scene-3d-model
+    wishlist_item: 8
+    title: Full 3D scene model with cross-sections
+    status: prototype
+    mcp_skills: []
+    module: dimos.mapping.reconstruction.scene_model.SceneModel
+    test_file: test_08_scene_model.py
+    tier: headless
+    marker: null
+    fixture: >
+      Synthetic two-story house point cloud (floor slabs, four walls per story,
+      roof, a table, a stair volume) built in-code, same scene as the dashboard
+      figure. No recording needed. (To inspect the model on a real space instead,
+      run scripts/demo_rrd_3d_model.py --rrd <recording>.)
+    how: >
+      Feeds the cloud to SceneModel, takes a horizontal_section() plan cut and a
+      vertical_section() elevation, and exports a mesh (.glb) and sliceable .rrd.
+      Asserts sections are non-empty rasters and the mesh has vertices/faces.
+    why: >
+      The scene model underpins item 1 and the "show me a section at z" skill;
+      the section rasters and mesh are what a human would inspect, so they're
+      produced every run for review.
+    outputs:
+      - file: scene_sections.png
+        review: 3D scatter of the model + a horizontal plan cut (room outline at z=1.5) + a vertical elevation (two stories stacked); geometry should read as a two-floor house.
+      - file: scene_model.glb
+        review: Open in any glTF viewer (or Blender); a coarse but recognizable two-story shell.
+      - file: scene_model.rrd
+        review: Open with dimos-viewer / rerun; the sliceable model — drag the cut plane and watch the section update.
+    review_summary: >
+      Plan and elevation cuts should show recognizable building cross-sections,
+      and the exported mesh/rrd should open as a two-story shell.
