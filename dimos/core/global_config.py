@@ -60,6 +60,10 @@ class GlobalConfig(BaseSettings):
     rerun_web: bool = RERUN_ENABLE_WEB
     rerun_host: str | None = None
     rerun_websocket_server_port: int = 3030
+    # When set (env `RERUN_SAVE_PATH` or `.env`), the Rerun bridge tees its live
+    # stream to this .rrd file in addition to any viewer — a saved recording of
+    # everything the robot observed. Empty/None = live-only (no file written).
+    rerun_save_path: str | None = None
     n_workers: int = 2
     memory_limit: str = "auto"
     mujoco_camera_position: str | None = None

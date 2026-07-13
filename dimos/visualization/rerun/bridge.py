@@ -217,6 +217,7 @@ class Config(ModuleConfig):
     entity_prefix: str = "world"
     topic_to_entity: Callable[[Any], str] | None = None
     connect_url: str | None = None
+    save_path: str | None = None
     memory_limit: str = "25%"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB
@@ -369,12 +370,17 @@ class RerunBridgeModule(Module):
         if connect_url is None:
             connect_url = f"rerun+http://{self.host}:{RERUN_GRPC_PORT}/proxy"
 
+        # An explicit module-config save_path wins; otherwise honor the global
+        # `rerun_save_path` (env `RERUN_SAVE_PATH` / `.env`), so a run can tee a
+        # .rrd of everything the robot observed without any blueprint change.
+        save_path = self.config.save_path or self.config.g.rerun_save_path or None
         server_uri = rerun_init(
             start_grpc=True,
             grpc_config={
                 "connect_url": connect_url,
                 "server_memory_limit": self.config.memory_limit,
             },
+            save_path=save_path,
         )
         assert server_uri is not None  # start_grpc=True guarantees a URI
 

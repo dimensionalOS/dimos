@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import socket
 from typing import Any
 from urllib.parse import urlparse
@@ -28,12 +29,17 @@ from dimos.visualization.rerun.constants import RERUN_GRPC_PORT
 
 logger = setup_logger()
 
+# Keeps the dedicated server recording alive when teeing to a file (see
+# rerun_init): dropping it would shut down the gRPC server.
+_server_recording: rr.RecordingStream | None = None
+
 
 def rerun_init(
     app_id: str = "dimos",
     *,
     start_grpc: bool = False,
     grpc_config: dict[str, Any] | None = None,
+    save_path: str | None = None,
     **kwargs: Any,
 ) -> str | None:
     """
@@ -41,7 +47,13 @@ def rerun_init(
 
     This exists to consolidate visualization settings across modules
     Note only the rerun bridge module should have start_grpc=True
+
+    ``save_path`` (only honored with ``start_grpc=True``) tees everything
+    logged on this recording to a ``.rrd`` file in addition to the live gRPC
+    stream.
     """
+    global _server_recording
+
     rr.init(app_id, **kwargs)  # type: ignore[arg-type]
 
     server_uri: str | None = None
@@ -68,8 +80,24 @@ def rerun_init(
 
         if port_in_use:
             logger.info(f"gRPC port {grpc_port} already in use, connecting to existing server")
-            rr.connect_grpc(url=connect_url)
+            if save_path is not None:
+                _set_tee_sinks(connect_url, save_path)
+            else:
+                rr.connect_grpc(url=connect_url)
             server_uri = connect_url
+        elif save_path is not None:
+            # A recording's sink can be either the in-process gRPC server or
+            # a (GrpcSink, FileSink) tee, not both. So give the server its
+            # own recording (kept alive via _server_recording) and point this
+            # recording's tee at it over loopback.
+            _server_recording = rr.RecordingStream(app_id)
+            server_uri = rr.serve_grpc(
+                grpc_port=grpc_port,
+                server_memory_limit=server_memory_limit,
+                recording=_server_recording,
+            )
+            _set_tee_sinks(server_uri, save_path)
+            logger.info(f"Rerun gRPC server ready at {server_uri}")
         else:
             server_uri = rr.serve_grpc(
                 grpc_port=grpc_port,
@@ -80,3 +108,10 @@ def rerun_init(
     # the important part of this function (consolidate them)
     register_colormap_annotation("turbo")
     return server_uri
+
+
+def _set_tee_sinks(grpc_url: str, save_path: str) -> None:
+    """Tee the active recording to the gRPC server at ``grpc_url`` and a file."""
+    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+    rr.set_sinks(rr.GrpcSink(url=grpc_url), rr.FileSink(save_path))
+    logger.info(f"Rerun recording saving to {save_path}")
