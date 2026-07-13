@@ -22,6 +22,7 @@ from dimos.core.transport import pLCMTransport
 from dimos.e2e_tests.conf_types import StartPersonTrack
 from dimos.e2e_tests.dim_sim_client import DimSimClient
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
+from dimos.e2e_tests.human_activity import HumanActivityDriver, HumanTaskScenario
 from dimos.e2e_tests.lcm_spy import LcmSpy
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -167,6 +168,48 @@ def dim_sim():
     client.start()
     yield client
     client.stop()
+
+
+@pytest.fixture
+def run_human_activity(
+    dim_sim: DimSimClient,
+) -> Generator[Callable[[HumanTaskScenario], HumanActivityDriver], None, None]:
+    """Spawn scheduled human NPCs in DimSim and step their schedule in the background.
+
+    Returns ``start(scenario)`` which spawns one NPC per human and spins a daemon
+    thread that walks each toward its currently-scheduled task location (mirrors
+    the ``start_person_track`` fixture). The returned ``HumanActivityDriver`` can
+    be queried by the test (schedule, current task, live NPC positions).
+    """
+    driver: HumanActivityDriver | None = None
+    stop_event = threading.Event()
+    thread: threading.Thread | None = None
+
+    def start(scenario: HumanTaskScenario) -> HumanActivityDriver:
+        nonlocal driver, thread
+        driver = HumanActivityDriver(dim_sim, scenario)
+        driver.spawn()
+
+        dt_s = 1 / 30
+
+        def run() -> None:
+            start_t = time.monotonic()
+            while not stop_event.is_set():
+                elapsed = time.monotonic() - start_t
+                driver.step(elapsed, dt_s)
+                time.sleep(dt_s)
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        return driver
+
+    yield start
+
+    stop_event.set()
+    if thread is not None:
+        thread.join(timeout=2.0)
+    if driver is not None:
+        driver.teardown()
 
 
 @pytest.fixture
