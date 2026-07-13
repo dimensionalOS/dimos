@@ -99,15 +99,12 @@ impl RayTracingVoxelMap {
             return;
         }
 
-        // Transform sensor-frame points into the world by the odom pose.
-        let rot = rotation.to_rotation_matrix();
-        let points: Vec<(f32, f32, f32)> = points
-            .iter()
-            .map(|&(x, y, z)| {
-                let p = rot * Vector3::new(x, y, z) + translation;
-                (p.x, p.y, p.z)
-            })
-            .collect();
+        let points = register_points(
+            &points,
+            translation,
+            rotation,
+            self.config.registered_clouds,
+        );
 
         let out_frame_id = "world";
 
@@ -234,6 +231,27 @@ fn nearest_pose(
     } else {
         None
     }
+}
+
+fn register_points(
+    points: &[(f32, f32, f32)],
+    translation: Vector3<f32>,
+    rotation: UnitQuaternion<f32>,
+    registered_clouds: bool,
+) -> Vec<(f32, f32, f32)> {
+    if registered_clouds {
+        return points.to_vec();
+    }
+
+    // Transform sensor-frame points into the world by the odom pose.
+    let rot = rotation.to_rotation_matrix();
+    points
+        .iter()
+        .map(|&(x, y, z)| {
+            let p = rot * Vector3::new(x, y, z) + translation;
+            (p.x, p.y, p.z)
+        })
+        .collect()
 }
 
 struct ExtractError(&'static str);
@@ -402,6 +420,33 @@ mod tests {
         );
         assert_eq!(poses.front().unwrap().0, 10.0, "oldest 10 evicted");
         assert_eq!(poses.back().unwrap().0, (POSE_BUFFER_LEN + 9) as f64);
+    }
+
+    #[test]
+    fn register_points_leaves_registered_clouds_unchanged() {
+        let points = vec![(1.0, 2.0, 3.0), (-1.0, 0.5, 4.0)];
+        let out = register_points(
+            &points,
+            Vector3::new(10.0, 20.0, 30.0),
+            UnitQuaternion::from_euler_angles(0.0, 0.0, std::f32::consts::FRAC_PI_2),
+            true,
+        );
+        assert_eq!(out, points);
+    }
+
+    #[test]
+    fn register_points_transforms_sensor_frame_clouds() {
+        let points = vec![(1.0, 0.0, 2.0)];
+        let out = register_points(
+            &points,
+            Vector3::new(10.0, 20.0, 30.0),
+            UnitQuaternion::from_euler_angles(0.0, 0.0, std::f32::consts::FRAC_PI_2),
+            false,
+        );
+        assert_eq!(out.len(), 1);
+        assert!((out[0].0 - 10.0).abs() < 1e-6);
+        assert!((out[0].1 - 21.0).abs() < 1e-6);
+        assert!((out[0].2 - 32.0).abs() < 1e-6);
     }
 
     fn cloud_points(c: &PointCloud2) -> AHashSet<(u32, u32, u32)> {

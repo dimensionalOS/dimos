@@ -93,9 +93,12 @@ voxel_size = 0.1
 # the ray origins for clearing. Outputs land on ``global_map`` / ``local_map``,
 # which the rerun bridge shows under ``world/`` in the 3D view.
 ray_tracer = RayTracingVoxelMap.blueprint(
+    executable="target/release/voxel_ray_tracing",
+    build_command="cargo build --release --bin voxel_ray_tracing",
     voxel_size=voxel_size,
     emit_every=2,
     global_emit_every=10,
+    auto_build=True,
     registered_clouds=True,
 ).remappings(
     [

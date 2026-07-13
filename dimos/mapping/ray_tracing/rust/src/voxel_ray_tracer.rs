@@ -31,6 +31,8 @@ pub struct Config {
     pub max_range: f32,
     #[validate(range(min = 1))]
     pub ray_subsample: u32,
+    /// Input cloud points are already expressed in the odometry/world frame.
+    pub registered_clouds: bool,
     #[validate(range(min = 0.0))]
     pub shadow_depth: f32,
     #[validate(range(min = 0.0))]
@@ -723,6 +725,7 @@ mod tests {
             voxel_size: 1.0,
             max_range: 100.0,
             ray_subsample: 1,
+            registered_clouds: true,
             shadow_depth: 2.0,
             grace_depth: 0.0,
             min_health: 0,
@@ -930,6 +933,7 @@ mod tests {
             voxel_size,
             max_range: 50.0,
             ray_subsample: 1,
+            registered_clouds: true,
             shadow_depth: 0.2,
             grace_depth: 0.2,
             min_health: 0,
@@ -1085,6 +1089,7 @@ mod tests {
             voxel_size,
             max_range: 50.0,
             ray_subsample: 1,
+            registered_clouds: true,
             shadow_depth: 0.2,
             grace_depth: 0.2,
             min_health: 0,
@@ -1159,6 +1164,7 @@ mod tests {
             voxel_size,
             max_range: 50.0,
             ray_subsample: 1,
+            registered_clouds: true,
             shadow_depth: 0.2,
             grace_depth: 0.2,
             min_health: 0,
@@ -1221,6 +1227,7 @@ mod tests {
             voxel_size,
             max_range: 50.0,
             ray_subsample: 1,
+            registered_clouds: true,
             shadow_depth: 0.2,
             grace_depth: 0.2,
             min_health: 0,
@@ -1352,6 +1359,7 @@ mod tests {
             voxel_size,
             max_range: 50.0,
             ray_subsample: 1,
+            registered_clouds: true,
             shadow_depth: 0.2,
             grace_depth: 0.2,
             min_health: 0,

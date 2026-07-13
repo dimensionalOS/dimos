@@ -106,6 +106,7 @@ impl VoxelRayMapper {
             max_health,
             graze_cos,
             support_min,
+            registered_clouds: true,
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,

@@ -44,6 +44,8 @@ map_save_dir = Path(__file__).resolve().parent / "map_save"
 map_save_path = map_save_dir / "m20_accumulated_map.pcd"
 
 _m20_slam_ray_tracer = RayTracingVoxelMap.blueprint(
+    executable="target/release/voxel_ray_tracing",
+    build_command="cargo build --release --bin voxel_ray_tracing",
     voxel_size=voxel_size,
     max_range=99.0,
     shadow_depth=0.1,
